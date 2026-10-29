@@ -18,6 +18,14 @@ Oracle: `prop_physics` spawned by the probe on a dedicated server, `PhysObj` tra
 - Contact happens in the tick the hull crosses the surface, with the body left at the contact depth (the tilted crate stops at -115.77 where its corner reaches the floor). Jolt only predicts contacts 2 cm ahead and would land every prop a tick late and 2 to 3 u deep; `SPECULATIVE_CONTACT_M` is raised to 0.15 m through a small C++ shim (JoltC 0.3.1 does not expose `PhysicsSettings`), after which the contact tick matches in all four traces. PHY hulls get a 5 mm convex radius instead of Jolt's 5 cm so corners stay sharp.
 - Open: the response after contact. An edge landing (`drop_tilted`) gets its spin mostly about x in the game (-242, -186, -56 deg/s) and about y in Jolt (-87, -231, 0), and comes to rest 10 u away with 23 degrees of yaw difference; the oil drum hitting its bottom edge is kicked to -x with a -206 deg/s yaw spin in the game and to +x with +120 in Jolt (which first vertex of the 24-gon takes the hit); the thrown can bounces differently. These are the solver's contact ordering and friction model, not geometry or free flight; they are kept as failing harnesses with their numbers rather than tuned by hand.
 
+## Constraints (weld, rope)
+
+Harness group `constraint_*` (3 traces on 2026.09.17: `weld_pair` two crates welded side by side and dropped, `rope_hang` a crate on an 80 u rope under a frozen crate, `stack_pair` a crate dropped on a resting crate). The probe spawns several props, applies `constraint.Weld` / `constraint.Rope` (the game creates `phys_constraint` / `phys_lengthconstraint`) and records every prop per tick.
+
+- gm-physics: JoltC 0.3.1 has no constraint bindings, so the shim creates Jolt `FixedConstraint` (weld, auto detected point) and `DistanceConstraint` (rope, world space points, min 0 or the length when rigid) on the raw `PhysicsSystem`; `World::weld`, `World::rope`, `World::remove_constraint`.
+- Measured and matched: the welded pair falls as one body with the same air drag per crate (positions equal to the tick until the landing); the roped crate swings with the same period for the first 40 ticks (within 1 u) and keeps the rope taut at 80 u.
+- Open: the welded pair's landing (both crates come to rest 5 u away, 3 degrees of yaw) and the stack (the game lets the resting bottom crate sink 4 u under the impact and lands the top one 2 ticks earlier) are the contact response again; the rope swing drifts after half a period (9 u, the game damps the pendulum differently). 0 of 3 within tolerance, kept red with the numbers.
+
 ## Implementation notes
 
 - Jolt 5.0 through `joltc-sys`/`rolt` 0.3.1, metres and Y up inside, Source units and Z up at the API: `jolt = (x, z, -y) * 0.0254`, the same mapping IVP used so PHY data converts one to one.

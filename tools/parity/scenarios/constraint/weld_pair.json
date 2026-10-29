@@ -1,0 +1,6 @@
+{ "name": "constraint_weld_pair", "kind": "constraint", "map": "gm_construct", "ticks": 240,
+  "props": [
+    { "model": "models/props_junk/wood_crate001a.mdl", "pos": [823.235, -500.0, -60.0], "angles": [0, 0, 0] },
+    { "model": "models/props_junk/wood_crate001a.mdl", "pos": [823.235, -459.0, -40.0], "angles": [0, 0, 0] }
+  ],
+  "constraints": [ { "kind": "weld", "a": 1, "b": 2 } ] }

@@ -309,3 +309,39 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1000
+
+[[harness]]
+name = "constraint_weld_pair"
+scenario = "constraint/weld_pair"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_rope_hang"
+scenario = "constraint/rope_hang"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_stack_pair"
+scenario = "constraint/nocollide_stack"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1

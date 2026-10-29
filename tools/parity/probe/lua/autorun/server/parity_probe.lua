@@ -32,7 +32,7 @@ local function findFlat(dir, namePattern, searchPath)
 end
 
 local SCENARIOS = {}
-local ASYNC = { move = true, phys = true, physgun = true }
+local ASYNC = { move = true, phys = true, physgun = true, constraint = true }
 
 -- { kind = "file_find", globs = { "models/props_c17/*.mdl", "materials/**/*.vmt" }, search = "GAME" }
 SCENARIOS.file_find = function(scn)
@@ -335,6 +335,66 @@ SCENARIOS.physgun = function(scn, done)
 				},
 				ticks = ticks,
 			})
+		end
+	end)
+end
+
+-- constraint: several props, constraint.* calls between them, every prop recorded per tick
+SCENARIOS.constraint = function(scn, done)
+	local ents_ = {}
+	for i, pr in ipairs(scn.props) do
+		local ent = ents.Create("prop_physics")
+		ent:SetModel(pr.model)
+		ent:SetPos(Vector(pr.pos[1], pr.pos[2], pr.pos[3]))
+		ent:SetAngles(Angle(pr.angles and pr.angles[1] or 0, pr.angles and pr.angles[2] or 0, pr.angles and pr.angles[3] or 0))
+		ent:Spawn()
+		ent:Activate()
+		local ph = ent:GetPhysicsObject()
+		if IsValid(ph) then
+			ph:Wake()
+			if pr.frozen then ph:EnableMotion(false) end
+		end
+		ents_[i] = ent
+	end
+	local made = {}
+	for _, c in ipairs(scn.constraints or {}) do
+		local a, b = ents_[c.a], ents_[c.b]
+		local la = c.local_a and Vector(c.local_a[1], c.local_a[2], c.local_a[3]) or Vector(0, 0, 0)
+		local lb = c.local_b and Vector(c.local_b[1], c.local_b[2], c.local_b[3]) or Vector(0, 0, 0)
+		local ok, err
+		if c.kind == "weld" then
+			ok = constraint.Weld(a, b, 0, 0, c.force or 0, c.nocollide or false, false)
+		elseif c.kind == "rope" then
+			ok = constraint.Rope(a, b, 0, 0, la, lb, c.length or 0, c.addlength or 0, c.force or 0, c.width or 1, "cable/rope", c.rigid or false)
+		elseif c.kind == "axis" then
+			ok = constraint.Axis(a, b, 0, 0, la, lb, c.force or 0, c.torque or 0, c.friction or 0, c.nocollide and 1 or 0, c.axis and Vector(c.axis[1], c.axis[2], c.axis[3]) or nil)
+		elseif c.kind == "nocollide" then
+			ok = constraint.NoCollide(a, b, 0, 0)
+		end
+		made[#made + 1] = { kind = c.kind, ok = IsValid(ok) and ok:GetClass() or tostring(ok) }
+	end
+	local total = scn.ticks or 200
+	local tick, ticks = 0, {}
+	hook.Add("Tick", "parity_constraint", function()
+		local row = { t = tick, props = {} }
+		for i, ent in ipairs(ents_) do
+			local ph = IsValid(ent) and ent:GetPhysicsObject()
+			if ph and IsValid(ph) then
+				local p, a, v, av = ph:GetPos(), ph:GetAngles(), ph:GetVelocity(), ph:GetAngleVelocity()
+				row.props[i] = { pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r }, vel = { v.x, v.y, v.z }, angvel = { av.x, av.y, av.z }, asleep = ph:IsAsleep() }
+			end
+		end
+		ticks[#ticks + 1] = row
+		tick = tick + 1
+		if tick >= total then
+			hook.Remove("Tick", "parity_constraint")
+			local info = {}
+			for i, ent in ipairs(ents_) do
+				local ph = IsValid(ent) and ent:GetPhysicsObject()
+				info[i] = ph and IsValid(ph) and { mass = ph:GetMass(), material = ph:GetMaterial() } or {}
+				if IsValid(ent) then ent:Remove() end
+			end
+			done({ constraints = made, info = info, ticks = ticks })
 		end
 	end)
 end

@@ -1,0 +1,6 @@
+{ "name": "constraint_rope_hang", "kind": "constraint", "map": "gm_construct", "ticks": 300,
+  "props": [
+    { "model": "models/props_junk/wood_crate001a.mdl", "pos": [700.0, -500.0, 20.0], "angles": [0, 0, 0], "frozen": true },
+    { "model": "models/props_junk/wood_crate001a.mdl", "pos": [700.0, -440.0, -60.0], "angles": [0, 0, 0] }
+  ],
+  "constraints": [ { "kind": "rope", "a": 1, "b": 2, "local_a": [0, 0, -20], "local_b": [0, 0, 20], "length": 80 } ] }

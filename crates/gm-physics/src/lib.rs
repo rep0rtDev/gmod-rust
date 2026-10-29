@@ -15,7 +15,30 @@ extern "C" {
     fn gmp_set_contact_settings(system: *mut JPC_PhysicsSystem, speculative: f32, slop: f32);
     fn gmp_get_speculative_distance(system: *const JPC_PhysicsSystem) -> f32;
     fn gmp_get_penetration_slop(system: *const JPC_PhysicsSystem) -> f32;
+    fn gmp_add_fixed_constraint(
+        system: *mut JPC_PhysicsSystem,
+        id1: u32,
+        id2: u32,
+    ) -> *mut std::ffi::c_void;
+    #[allow(clippy::too_many_arguments)]
+    fn gmp_add_distance_constraint(
+        system: *mut JPC_PhysicsSystem,
+        id1: u32,
+        id2: u32,
+        x1: f32,
+        y1: f32,
+        z1: f32,
+        x2: f32,
+        y2: f32,
+        z2: f32,
+        min_d: f32,
+        max_d: f32,
+    ) -> *mut std::ffi::c_void;
+    fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConstraintHandle(*mut std::ffi::c_void);
 
 /// Jolt only predicts contacts this far ahead (metres); props cross up to 0.11 m per tick at
 /// typical speeds and the game resolves the hit in the tick it happens, so the default 0.02 m
@@ -501,6 +524,47 @@ impl World {
 
     pub fn is_frozen(&self, body: BodyHandle) -> bool {
         self.frozen.contains(&body.0)
+    }
+
+    /// Weld: the two bodies keep their current relative pose.
+    pub fn weld(&mut self, a: BodyHandle, b: BodyHandle) -> Option<ConstraintHandle> {
+        let c = unsafe { gmp_add_fixed_constraint(self.system.as_raw(), a.0, b.0) };
+        (!c.is_null()).then_some(ConstraintHandle(c))
+    }
+
+    /// Rope between two world space points (Source units), slack up to `length`.
+    pub fn rope(
+        &mut self,
+        a: BodyHandle,
+        b: BodyHandle,
+        pa: Vec3,
+        pb: Vec3,
+        length: f32,
+        rigid: bool,
+    ) -> Option<ConstraintHandle> {
+        let (ja, jb) = (to_jolt(pa), to_jolt(pb));
+        let max = length * UNITS_TO_METERS;
+        let min = if rigid { max } else { 0.0 };
+        let c = unsafe {
+            gmp_add_distance_constraint(
+                self.system.as_raw(),
+                a.0,
+                b.0,
+                ja.x,
+                ja.y,
+                ja.z,
+                jb.x,
+                jb.y,
+                jb.z,
+                min,
+                max,
+            )
+        };
+        (!c.is_null()).then_some(ConstraintHandle(c))
+    }
+
+    pub fn remove_constraint(&mut self, c: ConstraintHandle) {
+        unsafe { gmp_remove_constraint(self.system.as_raw(), c.0) }
     }
 
     pub fn is_held(&self, body: BodyHandle) -> bool {

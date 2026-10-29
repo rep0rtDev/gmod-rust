@@ -101,6 +101,35 @@ struct Scenario {
     prop: Option<[f32; 3]>,
     #[serde(default)]
     prop_angles: Option<[f32; 3]>,
+    #[serde(default)]
+    props: Vec<PropSpec>,
+    #[serde(default)]
+    constraints: Vec<ConstraintSpec>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PropSpec {
+    model: String,
+    pos: [f32; 3],
+    #[serde(default)]
+    angles: Option<[f32; 3]>,
+    #[serde(default)]
+    frozen: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ConstraintSpec {
+    kind: String,
+    a: usize,
+    b: usize,
+    #[serde(default)]
+    local_a: Option<[f32; 3]>,
+    #[serde(default)]
+    local_b: Option<[f32; 3]>,
+    #[serde(default)]
+    length: f32,
+    #[serde(default)]
+    rigid: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -176,6 +205,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "move" => run_move(scn)?,
         "phys" => run_phys(scn)?,
         "physgun" => run_physgun(scn)?,
+        "constraint" => run_constraint(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
     Ok(Trace {
@@ -453,6 +483,108 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
     )
 }
 
+fn run_constraint(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{PropDesc, Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let table = gm_physics::surface::SurfaceTable::parse(&[&String::from_utf8_lossy(
+        &mount.read("scripts/surfaceproperties.txt")?,
+    )]);
+    let world_sp = table.get("concrete");
+    let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    world.add_static_hulls(
+        &world_hulls,
+        Surface {
+            friction: world_sp.friction,
+            elasticity: world_sp.elasticity,
+        },
+    )?;
+    let mut bodies = Vec::new();
+    let mut infos = Vec::new();
+    for pr in &scn.props {
+        let phy_path = pr
+            .model
+            .strip_suffix(".mdl")
+            .map(|m| format!("{m}.phy"))
+            .unwrap_or_else(|| pr.model.clone());
+        let phy = gm_formats::phy::Phy::parse(&mount.read(&phy_path)?)?;
+        let solid = phy.solids.first().context("PHY has no solids")?;
+        let props = phy.props.first().cloned().unwrap_or_default();
+        let hulls: Vec<Vec<Vec3>> = solid
+            .convexes
+            .iter()
+            .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
+            .collect();
+        let sp = table.get(&props.surfaceprop);
+        let a = pr.angles.unwrap_or([0.0; 3]);
+        let body = world.add_prop(&PropDesc {
+            hulls: &hulls,
+            mass: if props.mass > 0.0 { props.mass } else { 1.0 },
+            volume: props.volume,
+            position: Vec3::from(pr.pos),
+            angles: (a[0], a[1], a[2]),
+            velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            surface: Surface {
+                friction: sp.friction,
+                elasticity: sp.elasticity,
+            },
+            linear_damping: props.damping,
+            angular_damping: props.rotdamping,
+            drag_axis_areas: Vec3::from(solid.drag_axis_areas),
+        })?;
+        if pr.frozen {
+            world.freeze(body);
+        }
+        bodies.push(body);
+        infos.push(serde_json::json!({ "mass": props.mass, "material": props.surfaceprop }));
+    }
+    let mut made = Vec::new();
+    for c in &scn.constraints {
+        let (a, b) = (bodies[c.a - 1], bodies[c.b - 1]);
+        let (sa, sb) = (world.state(a), world.state(b));
+        let ok = match c.kind.as_str() {
+            "weld" => world.weld(a, b).is_some(),
+            "rope" => {
+                let pa = sa.position + sa.rotation * Vec3::from(c.local_a.unwrap_or([0.0; 3]));
+                let pb = sb.position + sb.rotation * Vec3::from(c.local_b.unwrap_or([0.0; 3]));
+                world.rope(a, b, pa, pb, c.length, c.rigid).is_some()
+            }
+            _ => false,
+        };
+        made.push(serde_json::json!({ "kind": c.kind, "ok": ok }));
+    }
+    world.optimize();
+    let total = scn.ticks.unwrap_or(200);
+    let mut ticks = Vec::with_capacity(total as usize);
+    for t in 0..total {
+        let props: Vec<Value> = bodies
+            .iter()
+            .map(|&b| {
+                let st = world.state(b);
+                serde_json::json!({
+                    "pos": [st.position.x, st.position.y, st.position.z],
+                    "ang": [st.angles.0, st.angles.1, st.angles.2],
+                    "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
+                    "angvel": [st.angular_velocity.x, st.angular_velocity.y, st.angular_velocity.z],
+                    "asleep": !st.active,
+                })
+            })
+            .collect();
+        ticks.push(serde_json::json!({ "t": t, "props": props }));
+        world.step();
+    }
+    Ok(serde_json::json!({ "constraints": made, "info": infos, "ticks": ticks }))
+}
+
 fn run_phys(scn: &Scenario) -> Result<Value> {
     use glam::Vec3;
     use gm_physics::{PropDesc, Surface, World};
@@ -543,6 +675,43 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
 /// not expected from a different solver, so the check is "same contact tick within `contact`
 /// ticks, position within `pos` for every tick, final pose within `rest`".
 fn compare_rigid(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let first = theirs
+        .get("ticks")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first());
+    if let Some(n) = first
+        .and_then(|f| f.get("props"))
+        .and_then(Value::as_array)
+        .map(Vec::len)
+    {
+        let split = |v: &Value, i: usize| -> Value {
+            let rows: Vec<Value> = v
+                .get("ticks")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|r| {
+                            r.get("props")
+                                .and_then(Value::as_array)
+                                .and_then(|p| p.get(i))
+                                .cloned()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            serde_json::json!({ "ticks": rows })
+        };
+        let mut ok = true;
+        for i in 0..n {
+            println!("  prop {}", i + 1);
+            ok &= compare_rigid_one(&split(theirs, i), &split(ours, i), tol);
+        }
+        return ok;
+    }
+    compare_rigid_one(theirs, ours, tol)
+}
+
+fn compare_rigid_one(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(2.0) as f32;
     let rest_tol = tol.get("rest").and_then(|v| v.as_float()).unwrap_or(0.5) as f32;
     let ang_tol = tol.get("ang").and_then(|v| v.as_float()).unwrap_or(5.0) as f32;
