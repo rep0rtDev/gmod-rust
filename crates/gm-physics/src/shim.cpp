@@ -421,10 +421,9 @@ public:
 		// friction tilt: tan(angle) = f (1 + sqrt(e)); push = c n - s (tangential part of the
 		// unit relative velocity) unless the motion is already inside the friction cone
 		float tilt = std::atan(friction * (1.0f + std::sqrt(elasticity)));
-		// a face landing (three or more hull vertices approaching in the same step) is one
-		// flat impact whose friction is Coulomb on the weight alone: the game's tilted crate
-		// keeps -68 of -80 u/s of slide landing flat at 167 u/s (`phys_drop_tilted`), the
-		// tilted vertex pushes would take it all
+		// diagnostic only: how many hull vertices arrive on the plane in this step (a face
+		// landing keeps the tilted vertex pushes - both flat landings of `phys_drop_tilted`
+		// lose f * dJn of slide in the game, see docs/spec/physics.md)
 		{
 			int approaching = 0;
 			float vn_face = 0.0f;
@@ -433,11 +432,6 @@ public:
 				if (pt.d <= 0.001f + 0.02f && vn < 0.0f) { ++approaching; vn_face = std::max(vn_face, -vn); }
 			}
 			if (debug) fprintf(stderr, "DBGFACE t=%d id=%u pts=%zu approaching=%d vn_face=%.3f lv=(%.3f %.3f %.3f) n=(%.2f %.2f %.2f)\n", tick, dyn.GetID().GetIndex(), pts.size(), approaching, vn_face, lv0.GetX(), lv0.GetY(), lv0.GetZ(), n.GetX(), n.GetY(), n.GetZ());
-			if (approaching >= 3) {
-				tilt = 0.0f;
-				float g_dt = (sys ? sys->GetGravity().Length() : gravity) * dyn.GetMotionProperties()->GetGravityFactor() * step_dt;
-				s.mCombinedFriction = friction * g_dt / (vn_face + g_dt);
-			}
 		}
 		float c = std::cos(tilt), sn = std::sin(tilt);
 		auto direction = [&](JPH::Vec3Arg vrel, JPH::Vec3Arg prev) {
