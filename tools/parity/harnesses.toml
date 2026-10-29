@@ -405,3 +405,12 @@ realm = "server"
 crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
+
+[[harness]]
+name = "toolgun_axis"
+scenario = "toolgun/axis"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1

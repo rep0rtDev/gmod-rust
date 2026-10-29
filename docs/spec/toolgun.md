@@ -32,7 +32,7 @@ Two left clicks on props (the world is refused as the first object): `CheckLimit
 
 ## Axis
 
-Only the first click is measured (a prop sets stage 1, the world is refused); the second click (align, move by 0.2 u along the second normal, `constraint.Axis` as `phys_hinge`) is not implemented yet.
+Two left clicks (`toolgun_axis`, frozen crates so nothing drifts): the first must hit a prop (the world is refused, stage stays 0); on the second the first prop is turned like the weld's right click (`AlignAngles` of the hit normals) and moved so that its hit point sits 0.2 u in front of the second hit along the second normal (`TargetPos = WPos2 + (centre - grabbed) + Norm2 * 0.2`); the hinge axis is `LPos1 = Phys1:WorldToLocal(WPos2 + Norm2)` in the moved prop, `LPos2` the stored local hit of the second object (world position for the world). Measured: crate grabbed on its -x face (hit 879.942, -500, -111.74) onto the second crate's -x face at 879.942, -455.696, -105.192 ends at 859.683, -455.696, -117.152 facing yaw 180 with `LPos1` -19.258, 0, 11.96 and `LPos2` -20.058, -15.696, 18.508; onto the floor at 855.719, -518.755 it ends at 836.042, -513.528, -123.857 with angles 0, -90, -90 and `LPos1` 5.227, 19.112, 19.677. Ours equal within 0.001 u and 0.04 degrees. `phys_hinge`, undo `Axis` (`Undone #tool.axis.name`), `AddCount("constraints")`, cleanup `constraints`; forcelimit, torquelimit, hingefriction, nocollide from the client convars (a bot: 0).
 
 ## Undo and cleanup
 
@@ -40,4 +40,4 @@ Only the first click is measured (a prop sets stage 1, the world is refused); th
 
 ## Not yet measured
 
-The second click of the axis tool, the other stools (ballsocket, slider, ...), the hull-trace fallback, ragdoll bones, ropes with a width (keyframe_rope), the limits when hit.
+The other stools (ballsocket, slider, ...), the hull-trace fallback, ragdoll bones, ropes with a width (keyframe_rope), the limits when hit.

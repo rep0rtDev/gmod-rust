@@ -987,6 +987,9 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
             .map(|p| p.model.clone())
             .collect::<Vec<_>>(),
     );
+    for (i, pr) in scn.props.iter().enumerate() {
+        sb.set_frozen(i as u32 + 1, pr.frozen);
+    }
     let entref = |e: Option<u32>| -> Value {
         match e {
             None => json!({ "index": 0, "class": "worldspawn" }),
@@ -1001,6 +1004,11 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 ConstraintKind::Weld { forcelimit, nocollide } => json!({
                     "class": "phys_constraint", "type": "Weld", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
                     "forcelimit": forcelimit, "nocollide": nocollide,
+                }),
+                ConstraintKind::Axis { lpos1, lpos2, local_axis, forcelimit, torquelimit, friction, nocollide } => json!({
+                    "class": "phys_hinge", "type": "Axis", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
+                    "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos2": [lpos2.x, lpos2.y, lpos2.z], "local_axis": [local_axis.x, local_axis.y, local_axis.z],
+                    "forcelimit": forcelimit, "torquelimit": torquelimit, "friction": friction, "nocollide": nocollide,
                 }),
                 ConstraintKind::NoCollide => json!({
                     "class": "logic_collision_pair", "type": "NoCollide", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
@@ -1271,6 +1279,11 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     ent_key(&b["ent2"])
                 );
                 ok = false;
+            }
+            if a["type"] == json!("Axis") {
+                max_lpos = max_lpos
+                    .max((v3(&a["lpos1"]) - v3(&b["lpos1"])).length())
+                    .max((v3(&a["lpos2"]) - v3(&b["lpos2"])).length());
             }
             if a["type"] == json!("Rope") {
                 max_lpos = max_lpos
