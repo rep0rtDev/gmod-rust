@@ -664,6 +664,135 @@ SCENARIOS.toolgun = function(scn, done)
 end
 ASYNC.toolgun = true
 
+
+-- player: a bot's life cycle. Spawned fresh, killed at the given ticks, recorded every server
+-- tick (position, health, armour, weapons, ragdoll) with the gamemode's spawn/death events and
+-- the map's spawn points, so the respawn rule and spawn point choice can be measured.
+SCENARIOS.player = function(scn, done)
+	local bot = player.GetBots()[1]
+	if not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.player(scn, done) end)
+		return
+	end
+	local spawnClasses = { "info_player_start", "info_player_deathmatch", "info_player_combine", "info_player_rebel",
+		"info_player_counterterrorist", "info_player_terrorist", "gmod_player_start", "info_player_allies", "info_player_axis" }
+	local spawns = {}
+	for _, cls in ipairs(spawnClasses) do
+		for _, e in ipairs(ents.FindByClass(cls)) do
+			local p, a = e:GetPos(), e:GetAngles()
+			spawns[#spawns + 1] = { class = cls, pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r }, name = e:GetName() }
+		end
+	end
+	local killAt = {}
+	for _, t in ipairs(scn.kill_at or {}) do killAt[t] = true end
+	local pressAt = {}
+	for _, t in ipairs(scn.press_at or {}) do pressAt[t] = true end
+	local total = scn.ticks or 600
+	local tick = -5
+	local ticks, events = {}, {}
+	local lastWeapons = ""
+	local function weaponList(ply)
+		local names = {}
+		for _, w in ipairs(ply:GetWeapons()) do names[#names + 1] = w:GetClass() end
+		table.sort(names)
+		return table.concat(names, ",")
+	end
+	local function ev(name, ply, extra)
+		if ply ~= bot then return end
+		local p = ply:GetPos()
+		local e = { t = tick, event = name, pos = { p.x, p.y, p.z }, alive = ply:Alive(), health = ply:Health() }
+		for k, v in pairs(extra or {}) do e[k] = v end
+		events[#events + 1] = e
+	end
+	hook.Add("PlayerSpawn", "parity_player", function(ply) ev("PlayerSpawn", ply) end)
+	hook.Add("PlayerDeath", "parity_player", function(ply, inflictor, attacker)
+		ev("PlayerDeath", ply, { attacker = IsValid(attacker) and attacker:GetClass() or tostring(attacker) })
+	end)
+	hook.Add("PostPlayerDeath", "parity_player", function(ply) ev("PostPlayerDeath", ply) end)
+	hook.Add("PlayerSelectSpawn", "parity_player", function(ply) ev("PlayerSelectSpawn", ply) end)
+	hook.Add("PlayerLoadout", "parity_player", function(ply) ev("PlayerLoadout", ply) end)
+	hook.Add("PlayerSetModel", "parity_player", function(ply) ev("PlayerSetModel", ply) end)
+	hook.Add("PlayerDeathThink", "parity_player", function(ply)
+		if ply == bot and (ticks[#ticks] or {}).t ~= tick then
+			-- note the first death-think tick of each death
+			if not events.deathThinkMarked then
+				events.deathThinkMarked = true
+				ev("PlayerDeathThink", ply)
+			end
+		end
+	end)
+	hook.Add("StartCommand", "parity_player", function(ply, cmd)
+		if ply ~= bot then return end
+		cmd:ClearButtons()
+		cmd:ClearMovement()
+		if pressAt[tick] then cmd:SetButtons(IN_ATTACK) end
+	end)
+	bot:Spawn()
+	hook.Add("Tick", "parity_player", function()
+		if not IsValid(bot) then return end
+		if tick >= 0 then
+			if killAt[tick] then
+				events.deathThinkMarked = false
+				bot:Kill()
+			end
+			local p, v = bot:GetPos(), bot:GetVelocity()
+			local w = weaponList(bot)
+			local rag = bot:GetRagdollEntity()
+			local aw = bot:GetActiveWeapon()
+			local row = {
+				t = tick,
+				pos = { p.x, p.y, p.z },
+				vel = { v.x, v.y, v.z },
+				alive = bot:Alive(),
+				health = bot:Health(),
+				armor = bot:Armor(),
+				movetype = bot:GetMoveType(),
+				ragdoll = IsValid(rag),
+				deaths = bot:Deaths(),
+				frags = bot:Frags(),
+				active = IsValid(aw) and aw:GetClass() or "",
+				team = bot:Team(),
+				obs = bot:GetObserverMode(),
+			}
+			if w ~= lastWeapons then
+				row.weapons = w
+				lastWeapons = w
+			end
+			if tick == 0 then
+				row.model = bot:GetModel()
+				row.maxhealth = bot:GetMaxHealth()
+				row.hull = { mins = { bot:OBBMins().x, bot:OBBMins().y, bot:OBBMins().z }, maxs = { bot:OBBMaxs().x, bot:OBBMaxs().y, bot:OBBMaxs().z } }
+			end
+			if IsValid(rag) then
+				local rp = rag:GetPos()
+				row.ragdoll_pos = { rp.x, rp.y, rp.z }
+			end
+			ticks[#ticks + 1] = row
+		end
+		tick = tick + 1
+		if tick >= total then
+			for _, h in ipairs({ "PlayerSpawn", "PlayerDeath", "PostPlayerDeath", "PlayerSelectSpawn", "PlayerLoadout", "PlayerSetModel", "PlayerDeathThink", "StartCommand", "Tick" }) do
+				hook.Remove(h, "parity_player")
+			end
+			events.deathThinkMarked = nil
+			done({
+				spawns = spawns,
+				ticks = ticks,
+				events = events,
+				convars = {
+					sbox_playershurtplayers = GetConVar("sbox_playershurtplayers") and GetConVar("sbox_playershurtplayers"):GetInt(),
+					sbox_godmode = GetConVar("sbox_godmode") and GetConVar("sbox_godmode"):GetInt(),
+					sbox_weapons = GetConVar("sbox_weapons") and GetConVar("sbox_weapons"):GetInt(),
+					mp_falldamage = GetConVar("mp_falldamage") and GetConVar("mp_falldamage"):GetInt(),
+					sv_gravity = GetConVar("sv_gravity") and GetConVar("sv_gravity"):GetInt(),
+				},
+			})
+		end
+	end)
+end
+ASYNC.player = true
+
 local function runAll()
 	file.CreateDir(OUT_DIR)
 	local files = file.Find(SCN_DIR .. "/*.json", "DATA")

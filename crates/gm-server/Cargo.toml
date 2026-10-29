@@ -8,6 +8,7 @@ description = "Server tick: players (gm-move), sandbox commands (gm-sandbox) and
 [dependencies]
 gm-core = { path = "../gm-core" }
 gm-collision = { path = "../gm-collision" }
+gm-formats = { path = "../gm-formats" }
 gm-move = { path = "../gm-move" }
 gm-physics = { path = "../gm-physics" }
 gm-sandbox = { path = "../gm-sandbox" }

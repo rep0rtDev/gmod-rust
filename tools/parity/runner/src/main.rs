@@ -101,6 +101,9 @@ struct Scenario {
     segments: Vec<Segment>,
     #[serde(default)]
     model: Option<String>,
+    /// player scenarios: ticks at which the bot is killed
+    #[serde(default)]
+    kill_at: Vec<u32>,
     #[serde(default)]
     velocity: Option<[f32; 3]>,
     #[serde(default)]
@@ -244,6 +247,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         }
         "move" => run_move(scn)?,
         "phys" => run_phys(scn)?,
+        "player" => run_player(scn)?,
         "physgun" => run_physgun(scn)?,
         "constraint" => run_constraint(scn)?,
         "sandbox" => run_sandbox(scn)?,
@@ -1108,6 +1112,155 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
         drag_axis_areas: Vec3::from(solid.drag_axis_areas),
         inertia: Some(Vec3::from(solid.rotation_inertia)),
     })
+}
+
+/// A bot's life cycle through the server loop: spawned, killed at the scenario's ticks,
+/// respawned by the server's rule; recorded like the probe's `player` scenario.
+fn run_player(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let world_body = physics.add_static_hulls(
+        &world_hulls,
+        Surface {
+            friction: 0.8,
+            elasticity: 0.25,
+        },
+    )?;
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    server.set_spawn_points_from_bsp(&bsp);
+    let player = 1u32;
+    server.add_player(player, Vec3::ZERO, Vec3::ZERO);
+    server.spawn_player(player);
+    let total = scn.ticks.unwrap_or(600);
+    let mut ticks = Vec::with_capacity(total as usize);
+    let mut last_weapons = String::new();
+    let mut cmds = std::collections::BTreeMap::new();
+    cmds.insert(player, gm_server::PlayerCmd::default());
+    for t in 0..total {
+        if scn.kill_at.contains(&t) {
+            server.kill_player(player);
+        }
+        let p = &server.players[&player];
+        let weapons = p.weapons.join(",");
+        let mut row = json!({
+            "t": t,
+            "pos": [p.state.origin.x, p.state.origin.y, p.state.origin.z],
+            "vel": [p.state.velocity.x, p.state.velocity.y, p.state.velocity.z],
+            "alive": p.alive,
+            "health": p.health,
+            "armor": p.armor,
+            "ragdoll": p.ragdoll.is_some(),
+            "deaths": p.deaths,
+            "frags": p.frags,
+            "active": p.active_weapon,
+        });
+        if weapons != last_weapons || t == 0 {
+            row["weapons"] = json!(weapons);
+            last_weapons = weapons;
+        }
+        if t == 0 {
+            row["model"] = json!(p.model);
+            row["maxhealth"] = json!(p.max_health);
+        }
+        ticks.push(row);
+        server.tick(&cmds);
+    }
+    Ok(json!({
+        "spawns": server.spawn_points.iter().map(|s| json!({ "class": "info_player_start", "pos": [s.pos.x, s.pos.y, s.pos.z], "ang": [s.angles.x, s.angles.y, s.angles.z] })).collect::<Vec<_>>(),
+        "ticks": ticks,
+    }))
+}
+
+/// Life cycle: alive, health, armour, deaths, ragdoll and the weapon list equal every tick,
+/// respawns on the same ticks, each spawn position within `pos` of one of the game's spawn
+/// points (the game picks one at random, so the point itself may differ).
+fn compare_player(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(2.0) as f32;
+    let empty = Vec::new();
+    let tr = theirs["ticks"].as_array().unwrap_or(&empty);
+    let or = ours["ticks"].as_array().unwrap_or(&empty);
+    let v3 = |v: &Value| -> glam::Vec3 {
+        let a = v.as_array().cloned().unwrap_or_default();
+        glam::Vec3::new(
+            a.first().and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(1).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(2).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+        )
+    };
+    let spawns: Vec<glam::Vec3> = theirs["spawns"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .map(|s| v3(&s["pos"]))
+        .collect();
+    let mut ok = tr.len() == or.len();
+    if !ok {
+        println!("  {} ticks theirs, {} ours", tr.len(), or.len());
+    }
+    let (mut tw, mut ow) = (String::new(), String::new());
+    let mut mismatches = 0;
+    let mut spawns_checked = 0;
+    let mut worst_spawn = 0.0f32;
+    let mut was_alive = true;
+    for (i, (a, b)) in tr.iter().zip(or.iter()).enumerate() {
+        if let Some(w) = a["weapons"].as_str() {
+            tw = w.to_string();
+        }
+        if let Some(w) = b["weapons"].as_str() {
+            ow = w.to_string();
+        }
+        let mut diff = Vec::new();
+        for key in ["alive", "health", "armor", "deaths", "ragdoll"] {
+            if a[key] != b[key] {
+                diff.push(format!("{key} {} vs {}", a[key], b[key]));
+            }
+        }
+        if tw != ow {
+            diff.push(format!("weapons [{tw}] vs [{ow}]"));
+        }
+        let alive = a["alive"].as_bool().unwrap_or(false);
+        if alive && !was_alive {
+            // a spawn tick: ours must stand within pos_tol of some spawn point (1 u above it)
+            let p = v3(&b["pos"]);
+            let d = spawns
+                .iter()
+                .map(|s| (p - (*s + glam::Vec3::new(0.0, 0.0, 1.0))).length())
+                .fold(f32::INFINITY, f32::min);
+            spawns_checked += 1;
+            worst_spawn = worst_spawn.max(d);
+            if d > pos_tol {
+                diff.push(format!("spawn {d:.2} u from the nearest spawn point"));
+            }
+        }
+        was_alive = alive;
+        if !diff.is_empty() {
+            mismatches += 1;
+            if mismatches <= 5 {
+                println!("  tick {i}: {}", diff.join(", "));
+            }
+            ok = false;
+        }
+    }
+    println!(
+        "  {} ticks, {} differing, {} respawns checked (worst {:.2} u from a spawn point, tol {pos_tol}): {}",
+        tr.len(),
+        mismatches,
+        spawns_checked,
+        worst_spawn,
+        if ok { "equal" } else { "DIFF" }
+    );
+    ok
 }
 
 /// The whole server loop: a bot runs sandbox commands and the props live in Jolt between them.
@@ -2663,6 +2816,7 @@ fn main() -> Result<()> {
                     "trajectory" => compare_trajectory(&t.result, &o.result, &h.tolerance),
                     "rigid" => compare_rigid(&t.result, &o.result, &h.tolerance),
                     "sandbox" => compare_sandbox(&t.result, &o.result, &h.tolerance),
+                    "player" => compare_player(&t.result, &o.result, &h.tolerance),
                     "server" => compare_server(&t.result, &o.result, &h.tolerance),
                     "toolgun" => compare_toolgun(&t.result, &o.result, &h.tolerance),
                     other => {

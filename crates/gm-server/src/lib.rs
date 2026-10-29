@@ -70,6 +70,75 @@ pub struct Player {
     pub view_angles: Vec3,
     /// The prop held by the physgun and how it was grabbed.
     pub held: Option<(u32, Grab)>,
+    pub alive: bool,
+    pub health: i32,
+    pub armor: i32,
+    pub max_health: i32,
+    pub model: String,
+    /// Weapon classes carried, sorted (`Player:GetWeapons`).
+    pub weapons: Vec<String>,
+    pub active_weapon: String,
+    pub deaths: u32,
+    pub frags: u32,
+    /// Where the ragdoll of the last death lies, while the player is dead.
+    pub ragdoll: Option<Vec3>,
+    /// Tick of the last death: the player respawns `RESPAWN_TICKS` later.
+    death_tick: Option<u64>,
+}
+
+impl Player {
+    pub fn new(origin: Vec3, view_angles: Vec3) -> Self {
+        Player {
+            state: gm_move::PlayerState {
+                origin,
+                ..Default::default()
+            },
+            view_angles,
+            held: None,
+            alive: true,
+            health: PLAYER_HEALTH,
+            armor: 0,
+            max_health: PLAYER_HEALTH,
+            model: PLAYER_MODEL.to_string(),
+            weapons: LOADOUT.iter().map(|w| w.to_string()).collect(),
+            active_weapon: SPAWN_WEAPON.to_string(),
+            deaths: 0,
+            frags: 0,
+            ragdoll: None,
+            death_tick: None,
+        }
+    }
+}
+
+/// Measured on the real sandbox (`player_lifecycle`): spawn health 100, armour 0, Kleiner, the
+/// 13 weapon loadout with the crowbar out, a ragdoll the tick of death, weapons stripped the
+/// tick after, respawn 135 ticks after death at a random spawn point 1 u above it.
+pub const PLAYER_HEALTH: i32 = 100;
+pub const PLAYER_MODEL: &str = "models/player/kleiner.mdl";
+pub const SPAWN_WEAPON: &str = "weapon_crowbar";
+pub const RESPAWN_TICKS: u64 = 135;
+pub const SPAWN_Z_OFFSET: f32 = 1.0;
+pub const LOADOUT: [&str; 13] = [
+    "gmod_camera",
+    "gmod_tool",
+    "weapon_357",
+    "weapon_ar2",
+    "weapon_crossbow",
+    "weapon_crowbar",
+    "weapon_frag",
+    "weapon_physcannon",
+    "weapon_physgun",
+    "weapon_pistol",
+    "weapon_rpg",
+    "weapon_shotgun",
+    "weapon_smg1",
+];
+
+/// `info_player_start`: where players (re)spawn, picked at random.
+#[derive(Clone, Debug)]
+pub struct SpawnPoint {
+    pub pos: Vec3,
+    pub angles: Vec3,
 }
 
 /// `IN_ATTACK`, `IN_USE`, `IN_ATTACK2` of a usercmd.
@@ -106,6 +175,9 @@ pub struct Server<'w> {
     /// Loads a model the first time something spawns it (the dedicated server reads the MDL/PHY
     /// from the mounted content on demand).
     pub model_loader: Option<ModelLoader>,
+    pub spawn_points: Vec<SpawnPoint>,
+    spawn_rng: u64,
+    tick_count: u64,
 }
 
 impl<'w> Server<'w> {
@@ -125,7 +197,89 @@ impl<'w> Server<'w> {
             events: Vec::new(),
             physgun_params: PhysgunParams::default(),
             model_loader: None,
+            spawn_points: Vec::new(),
+            spawn_rng: 0x9E37_79B9_7F4A_7C15,
+            tick_count: 0,
         }
+    }
+
+    pub fn tick_count(&self) -> u64 {
+        self.tick_count
+    }
+
+    /// Spawn points from the map's entities.
+    pub fn set_spawn_points_from_bsp(&mut self, bsp: &gm_formats::bsp::Bsp) {
+        self.spawn_points = bsp
+            .entities
+            .iter()
+            .filter(|e| e.classname() == "info_player_start")
+            .filter_map(|e| {
+                e.origin().map(|o| SpawnPoint {
+                    pos: Vec3::from(o),
+                    angles: Vec3::from(e.angles().unwrap_or([0.0; 3])),
+                })
+            })
+            .collect();
+    }
+
+    fn pick_spawn(&mut self) -> Option<SpawnPoint> {
+        if self.spawn_points.is_empty() {
+            return None;
+        }
+        // xorshift64*: deterministic for the harnesses, uniform like the game's random pick
+        let mut x = self.spawn_rng;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.spawn_rng = x;
+        let r = x.wrapping_mul(0x2545_F491_4F6C_DD1D);
+        let i = (r >> 33) as usize % self.spawn_points.len();
+        Some(self.spawn_points[i].clone())
+    }
+
+    /// `Player:Spawn`: full health, the loadout, a spawn point 1 u above its origin.
+    pub fn spawn_player(&mut self, id: u32) {
+        let spawn = self.pick_spawn();
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
+        if let Some(sp) = spawn {
+            p.state = gm_move::PlayerState {
+                origin: sp.pos + Vec3::new(0.0, 0.0, SPAWN_Z_OFFSET),
+                ..Default::default()
+            };
+            p.view_angles = sp.angles;
+        } else {
+            p.state.velocity = Vec3::ZERO;
+        }
+        p.alive = true;
+        p.health = p.max_health;
+        p.armor = 0;
+        p.weapons = LOADOUT.iter().map(|w| w.to_string()).collect();
+        p.active_weapon = SPAWN_WEAPON.to_string();
+        p.ragdoll = None;
+        p.death_tick = None;
+        p.held = None;
+    }
+
+    /// `Player:Kill`: dead where they stood, ragdoll there, weapons gone next tick, respawn in
+    /// `RESPAWN_TICKS`.
+    pub fn kill_player(&mut self, id: u32) {
+        let tick = self.tick_count;
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
+        if !p.alive {
+            return;
+        }
+        p.alive = false;
+        p.health = 0;
+        p.deaths += 1;
+        p.ragdoll = Some(p.state.origin);
+        p.death_tick = Some(tick);
+        p.active_weapon.clear();
+        p.held = None;
+        p.state.velocity = Vec3::ZERO;
     }
 
     pub fn register_model(&mut self, name: &str, info: ModelInfo) {
@@ -135,17 +289,7 @@ impl<'w> Server<'w> {
     }
 
     pub fn add_player(&mut self, id: u32, origin: Vec3, view_angles: Vec3) {
-        self.players.insert(
-            id,
-            Player {
-                state: gm_move::PlayerState {
-                    origin,
-                    ..Default::default()
-                },
-                view_angles,
-                held: None,
-            },
-        );
+        self.players.insert(id, Player::new(origin, view_angles));
     }
 
     /// Props already on the map (owner 0): registered models at given poses, optionally frozen.
@@ -491,13 +635,35 @@ impl<'w> Server<'w> {
     /// One fixed tick: weapons fire with the pre-move eye, physics steps, players move, prop
     /// poses flow back into the sandbox.
     pub fn tick(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
+        self.tick_count += 1;
+        let tick = self.tick_count;
+        let mut respawn = Vec::new();
+        for (id, p) in self.players.iter_mut() {
+            if p.alive {
+                continue;
+            }
+            if let Some(d) = p.death_tick {
+                if tick == d + 1 {
+                    p.weapons.clear();
+                }
+                if tick >= d + RESPAWN_TICKS {
+                    respawn.push(*id);
+                }
+            }
+        }
+        for id in respawn {
+            self.spawn_player(id);
+        }
         for (id, pc) in cmds {
-            if self.players.contains_key(id) {
+            if self.players.get(id).is_some_and(|p| p.alive) {
                 self.physgun(*id, pc);
             }
         }
         self.physics.step();
         for (id, p) in self.players.iter_mut() {
+            if !p.alive {
+                continue;
+            }
             if let Some(pc) = cmds.get(id) {
                 p.view_angles = pc.cmd.view_angles;
                 let cmd = gm_move::UserCmd {

@@ -39,3 +39,14 @@ contact response of `phys_*`).
 ## Not yet
 
 Networking and client prediction, multiple players in one recording, spawn menu, the remaining stools.
+
+## Player life cycle (measured, `player_lifecycle`)
+
+Recorded on a real sandbox server with a bot killed four times (`Player:Kill`) and left to the gamemode:
+
+- Spawn: health 100 (max 100), armour 0, model `models/player/kleiner.mdl`, hull (-16, -16, 0) to (16, 16, 72), 13 weapons (`gmod_camera`, `gmod_tool`, `weapon_357`, `weapon_ar2`, `weapon_crossbow`, `weapon_crowbar`, `weapon_frag`, `weapon_physcannon`, `weapon_physgun`, `weapon_pistol`, `weapon_rpg`, `weapon_shotgun`, `weapon_smg1`) with the crowbar out; `PlayerSelectSpawn`, `PlayerSpawn`, `PlayerLoadout`, `PlayerSetModel` fire in that order on the spawn tick.
+- Spawn point: one of the map's `info_player_start` (33 on gm_construct) at random (observed sequence 13, 17, 12, 2, 17 of 33: repeats allowed, no visible order), the player placed 1 u above the entity's origin and settling onto the floor over the next ticks.
+- Death: the same tick `Alive()` is false, health 0, move type 5, a ragdoll exists, `Deaths` +1; the weapons are still listed that tick (the active one reads `weapon_357` for that tick, a weapon switch artefact) and are gone the next tick; `PlayerDeathThink` starts the tick after.
+- Respawn: exactly 135 ticks after the death tick for a bot (2.025 s at 66.67 Hz; deaths at 60, 300, 540, 780 -> spawns at 195, 435, 675, 915), without any input. Convars during the recording: `sbox_godmode 0`, `sbox_playershurtplayers 1`, `sbox_weapons 1`, `mp_falldamage 0`, `sv_gravity 600`.
+
+`gm-server` reproduces this: `Player` carries `alive`, `health`, `armor`, `max_health`, `model`, `weapons`, `active_weapon`, `deaths`, `frags`, `ragdoll`; `Server::spawn_player` picks a spawn point with a deterministic xorshift (the harness only checks membership and the 1 u offset since the game's pick is random), `kill_player` records the death tick, `tick` strips the weapons the tick after and respawns at death + `RESPAWN_TICKS` (135); dead players neither move nor use the physgun. Harness `player_lifecycle`: 1100 ticks equal (alive, health, armour, deaths, ragdoll, weapon list), the four respawns within 0.07 u of a spawn point. Open: the ragdoll as a physics entity, damage (no damage sources yet), fall damage, the human player's respawn on `IN_ATTACK`.

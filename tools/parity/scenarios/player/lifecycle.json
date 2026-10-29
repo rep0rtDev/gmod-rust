@@ -1,0 +1,8 @@
+{
+  "name": "player_lifecycle",
+  "kind": "player",
+  "map": "gm_construct",
+  "ticks": 1100,
+  "kill_at": [60, 300, 540, 780],
+  "press_at": [1000]
+}

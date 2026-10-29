@@ -849,3 +849,10 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1
+
+[[harness]]
+name = "player_lifecycle"
+scenario = "player/lifecycle"
+compare = "player"
+realm = "server"
+crates = ["gm-server"]
