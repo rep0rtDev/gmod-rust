@@ -32,7 +32,7 @@ local function findFlat(dir, namePattern, searchPath)
 end
 
 local SCENARIOS = {}
-local ASYNC = { move = true }
+local ASYNC = { move = true, phys = true }
 
 -- { kind = "file_find", globs = { "models/props_c17/*.mdl", "materials/**/*.vmt" }, search = "GAME" }
 SCENARIOS.file_find = function(scn)
@@ -178,6 +178,60 @@ SCENARIOS.move = function(scn, done)
 				hull = { mins = { ply:OBBMins().x, ply:OBBMins().y, ply:OBBMins().z }, maxs = { ply:OBBMaxs().x, ply:OBBMaxs().y, ply:OBBMaxs().z } },
 				speeds = { walk = ply:GetWalkSpeed(), run = ply:GetRunSpeed(), crouched = ply:GetCrouchedWalkSpeed(), jump = ply:GetJumpPower(), duck = ply:GetDuckSpeed(), unduck = ply:GetUnDuckSpeed(), step = ply:GetStepSize() },
 			})
+		end
+	end)
+end
+
+-- phys: spawn a prop_physics, optionally give it a velocity, record its transform every tick
+SCENARIOS.phys = function(scn, done)
+	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
+	local ang = Angle(scn.angles and scn.angles[1] or 0, scn.angles and scn.angles[2] or 0, scn.angles and scn.angles[3] or 0)
+	local ent = ents.Create("prop_physics")
+	ent:SetModel(scn.model)
+	ent:SetPos(start)
+	ent:SetAngles(ang)
+	ent:Spawn()
+	ent:Activate()
+	local phys = ent:GetPhysicsObject()
+	if not IsValid(phys) then
+		done({ error = "no physics object for " .. tostring(scn.model) })
+		ent:Remove()
+		return
+	end
+	phys:Wake()
+	if scn.velocity then phys:SetVelocity(Vector(scn.velocity[1], scn.velocity[2], scn.velocity[3])) end
+	if scn.angular then phys:AddAngleVelocity(Vector(scn.angular[1], scn.angular[2], scn.angular[3])) end
+	local info = {
+		mass = phys:GetMass(),
+		material = phys:GetMaterial(),
+		volume = phys:GetVolume(),
+		surface_area = phys:GetSurfaceArea(),
+		inertia = { phys:GetInertia().x, phys:GetInertia().y, phys:GetInertia().z },
+		mass_center = { phys:GetMassCenter().x, phys:GetMassCenter().y, phys:GetMassCenter().z },
+		damping = { phys:GetDamping() },
+		aabb = { mins = { phys:GetAABB() }, },
+		mesh_convexes = #phys:GetMeshConvexes(),
+	}
+	local mins, maxs = phys:GetAABB()
+	info.aabb = { mins = { mins.x, mins.y, mins.z }, maxs = { maxs.x, maxs.y, maxs.z } }
+	local total = scn.ticks or 200
+	local tick, ticks = 0, {}
+	hook.Add("Tick", "parity_phys", function()
+		if not IsValid(ent) then return end
+		local p, a, v, av = phys:GetPos(), phys:GetAngles(), phys:GetVelocity(), phys:GetAngleVelocity()
+		ticks[#ticks + 1] = {
+			t = tick,
+			pos = { p.x, p.y, p.z },
+			ang = { a.p, a.y, a.r },
+			vel = { v.x, v.y, v.z },
+			angvel = { av.x, av.y, av.z },
+			asleep = phys:IsAsleep(),
+		}
+		tick = tick + 1
+		if tick >= total then
+			hook.Remove("Tick", "parity_phys")
+			ent:Remove()
+			done({ start = { start.x, start.y, start.z }, model = scn.model, info = info, ticks = ticks })
 		end
 	end)
 end
