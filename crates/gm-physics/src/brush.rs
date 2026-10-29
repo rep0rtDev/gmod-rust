@@ -20,9 +20,10 @@ pub fn is_physics_solid(contents: i32) -> bool {
     contents & (contents::SOLID | contents::WINDOW | contents::GRATE) != 0
 }
 
-/// Hulls of every brush of a model (0 = the world). Brushes with fewer than 4 distinct
-/// vertices (degenerate) are skipped.
-pub fn model_hulls(bsp: &Bsp<'_>, model: usize) -> Vec<BrushHull> {
+/// Hulls of every brush of a model (0 = the world), every side pushed out by `inflate` units
+/// (the game keeps resting bodies about 1 cm = 0.39 u off the surface, see
+/// docs/spec/physics.md). Brushes with fewer than 4 distinct vertices (degenerate) are skipped.
+pub fn model_hulls(bsp: &Bsp<'_>, model: usize, inflate: f32) -> Vec<BrushHull> {
     let Some(m) = bsp.models.get(model) else {
         return Vec::new();
     };
@@ -45,7 +46,7 @@ pub fn model_hulls(bsp: &Bsp<'_>, model: usize) -> Vec<BrushHull> {
                 .map(|s| {
                     let side = &bsp.brush_sides[brush.first_side as usize + s];
                     let p = &bsp.planes[side.plane_num as usize];
-                    (Vec3::from(p.normal), p.dist)
+                    (Vec3::from(p.normal), p.dist + inflate)
                 })
                 .collect();
             let points = hull_points(&planes);

@@ -86,9 +86,17 @@ struct Scenario {
     #[serde(default)]
     start: Option<[f32; 3]>,
     #[serde(default)]
-    angles: Option<[f32; 2]>,
+    angles: Option<Vec<f32>>,
     #[serde(default)]
     segments: Vec<Segment>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    velocity: Option<[f32; 3]>,
+    #[serde(default)]
+    angular: Option<[f32; 3]>,
+    #[serde(default)]
+    ticks: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -158,6 +166,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
             Value::Object(map)
         }
         "move" => run_move(scn)?,
+        "phys" => run_phys(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
     Ok(Trace {
@@ -180,7 +189,11 @@ fn run_move(scn: &Scenario) -> Result<Value> {
     let world = gm_collision::World::from_bsp(&bsp);
     let mover = Mover::new(gm_move::MoveConfig::default(), &world);
     let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
-    let view = scn.angles.unwrap_or([0.0, 0.0]);
+    let ang = scn.angles.clone().unwrap_or_default();
+    let view = [
+        ang.first().copied().unwrap_or(0.0),
+        ang.get(1).copied().unwrap_or(0.0),
+    ];
     let mut st = PlayerState {
         origin: start,
         ..Default::default()
@@ -223,6 +236,161 @@ fn run_move(scn: &Scenario) -> Result<Value> {
         "ticks": ticks,
         "final": [st.origin.x, st.origin.y, st.origin.z],
     }))
+}
+
+fn run_phys(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{PropDesc, Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let model = scn
+        .model
+        .as_deref()
+        .context("phys scenario needs a model")?;
+    let phy_path = model
+        .strip_suffix(".mdl")
+        .map(|m| format!("{m}.phy"))
+        .unwrap_or_else(|| model.to_string());
+    let phy = gm_formats::phy::Phy::parse(&mount.read(&phy_path)?)?;
+    let solid = phy.solids.first().context("PHY has no solids")?;
+    let props = phy.props.first().cloned().unwrap_or_default();
+    let hulls: Vec<Vec<Vec3>> = solid
+        .convexes
+        .iter()
+        .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
+        .collect();
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let table = gm_physics::surface::SurfaceTable::parse(&[&String::from_utf8_lossy(
+        &mount.read("scripts/surfaceproperties.txt")?,
+    )]);
+    let world_sp = table.get("concrete");
+    let prop_sp = table.get(&props.surfaceprop);
+    let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    world.add_static_hulls(
+        &world_hulls,
+        Surface {
+            friction: world_sp.friction,
+            elasticity: world_sp.elasticity,
+        },
+    )?;
+    let ang = scn.angles.clone().unwrap_or_default();
+    let angles = (
+        ang.first().copied().unwrap_or(0.0),
+        ang.get(1).copied().unwrap_or(0.0),
+        ang.get(2).copied().unwrap_or(0.0),
+    );
+    let body = world.add_prop(&PropDesc {
+        hulls: &hulls,
+        mass: if props.mass > 0.0 { props.mass } else { 1.0 },
+        volume: props.volume,
+        position: Vec3::from(scn.start.unwrap_or([0.0; 3])),
+        angles,
+        velocity: Vec3::from(scn.velocity.unwrap_or([0.0; 3])),
+        angular_velocity: Vec3::from(scn.angular.unwrap_or([0.0; 3])),
+        surface: Surface {
+            friction: prop_sp.friction,
+            elasticity: prop_sp.elasticity,
+        },
+        linear_damping: props.damping,
+        angular_damping: props.rotdamping,
+        drag_coefficient: 1.0,
+    })?;
+    world.optimize();
+    let total = scn.ticks.unwrap_or(200);
+    let mut ticks = Vec::with_capacity(total as usize);
+    for t in 0..total {
+        let st = world.state(body);
+        ticks.push(serde_json::json!({
+            "t": t,
+            "pos": [st.position.x, st.position.y, st.position.z],
+            "ang": [st.angles.0, st.angles.1, st.angles.2],
+            "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
+            "angvel": [st.angular_velocity.x, st.angular_velocity.y, st.angular_velocity.z],
+            "asleep": !st.active,
+        }));
+        world.step();
+    }
+    Ok(serde_json::json!({
+        "start": scn.start.unwrap_or([0.0; 3]),
+        "model": model,
+        "info": { "mass": props.mass, "material": props.surfaceprop, "volume": props.volume, "mesh_convexes": solid.convexes.len() },
+        "ticks": ticks,
+    }))
+}
+
+/// Rigid body traces: position, orientation and the tick of first contact. Bit exactness is
+/// not expected from a different solver, so the check is "same contact tick within `contact`
+/// ticks, position within `pos` for every tick, final pose within `rest`".
+fn compare_rigid(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(2.0) as f32;
+    let rest_tol = tol.get("rest").and_then(|v| v.as_float()).unwrap_or(0.5) as f32;
+    let ang_tol = tol.get("ang").and_then(|v| v.as_float()).unwrap_or(5.0) as f32;
+    let contact_tol = tol.get("contact").and_then(|v| v.as_integer()).unwrap_or(1);
+    let empty = Vec::new();
+    let a = theirs
+        .get("ticks")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    let b = ours
+        .get("ticks")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    let n = a.len().min(b.len());
+    let v3 = |v: &Value, k: &str| -> [f32; 3] {
+        let arr = v.get(k).and_then(Value::as_array);
+        let f = |i: usize| {
+            arr.and_then(|a| a.get(i))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0) as f32
+        };
+        [f(0), f(1), f(2)]
+    };
+    // first tick where the vertical speed stops following free fall
+    let contact = |t: &[Value]| -> Option<usize> {
+        (1..t.len()).find(|&i| {
+            let dz = v3(&t[i], "vel")[2] - v3(&t[i - 1], "vel")[2];
+            (dz + 9.0).abs() > 2.5
+        })
+    };
+    let (ca, cb) = (contact(a), contact(b));
+    let ang_err = |x: f32, y: f32| ((x - y + 540.0).rem_euclid(360.0) - 180.0).abs();
+    let mut max_pos = 0f32;
+    let mut first_bad = None;
+    for i in 0..n {
+        let (pa, pb) = (v3(&a[i], "pos"), v3(&b[i], "pos"));
+        let dp = (0..3).map(|k| (pa[k] - pb[k]).abs()).fold(0f32, f32::max);
+        max_pos = max_pos.max(dp);
+        if first_bad.is_none() && dp > pos_tol {
+            first_bad = Some(i);
+            println!("  first divergence at tick {i}: theirs pos {pa:?}; ours pos {pb:?}");
+        }
+    }
+    let (ra, rb) = (&a[n.saturating_sub(1)], &b[n.saturating_sub(1)]);
+    let (pa, pb) = (v3(ra, "pos"), v3(rb, "pos"));
+    let rest_err = (0..3).map(|k| (pa[k] - pb[k]).abs()).fold(0f32, f32::max);
+    let (aa, ab) = (v3(ra, "ang"), v3(rb, "ang"));
+    let rest_ang = (0..3).map(|k| ang_err(aa[k], ab[k])).fold(0f32, f32::max);
+    let contact_ok = match (ca, cb) {
+        (Some(x), Some(y)) => (x as i64 - y as i64).abs() <= contact_tol,
+        (None, None) => true,
+        _ => false,
+    };
+    let ok = first_bad.is_none()
+        && a.len() == b.len()
+        && rest_err <= rest_tol
+        && rest_ang <= ang_tol
+        && contact_ok;
+    println!(
+        "  {n} ticks, contact tick theirs {ca:?} ours {cb:?}, max pos err {max_pos:.3} (tol {pos_tol}), rest err {rest_err:.3} (tol {rest_tol}), rest angle err {rest_ang:.2} (tol {ang_tol}): {}",
+        if ok { "equal" } else { "DIFF" }
+    );
+    ok
 }
 
 fn compare_trajectory(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
@@ -430,6 +598,7 @@ fn main() -> Result<()> {
                 let ok = match h.compare.as_str() {
                     "set-equal" => compare_set_equal(&h.name, &t.result, &o.result),
                     "trajectory" => compare_trajectory(&t.result, &o.result, &h.tolerance),
+                    "rigid" => compare_rigid(&t.result, &o.result, &h.tolerance),
                     other => {
                         println!("  unknown compare mode {other}");
                         false

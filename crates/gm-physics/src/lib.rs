@@ -8,6 +8,7 @@
 //! the gravity factor, so 600 u/s^2 is `600 * 0.0254 / 9.81`.
 
 pub mod brush;
+pub mod surface;
 
 use glam::{Quat, Vec3};
 use joltc_sys::*;
@@ -19,6 +20,8 @@ use std::sync::Once;
 pub const UNITS_TO_METERS: f32 = 0.0254;
 pub const METERS_TO_UNITS: f32 = 1.0 / UNITS_TO_METERS;
 pub const JOLT_GRAVITY: f32 = 9.81;
+/// Resting distance the game keeps between bodies and the world (IVP's 1 cm tolerance), units.
+pub const REST_GAP: f32 = 0.01 * METERS_TO_UNITS;
 const DEG: f32 = std::f32::consts::PI / 180.0;
 
 const LAYER_STATIC: u16 = 0;
@@ -144,6 +147,11 @@ impl rolt::ObjectLayerPairFilter for Layers {
 }
 
 /// Material response of a body, Source `surfaceprop` numbers.
+///
+/// Measured: a wood crate (elasticity 0.1) on the concrete floor (0.2) rebounds with 0.15 of
+/// its speed, so the game averages the two elasticities. Jolt takes the max of the pair, so
+/// the world body carries 0 and every prop carries the average of its own elasticity and the
+/// world's; prop against prop then gets the larger of two averages, close to the game.
 #[derive(Debug, Clone, Copy)]
 pub struct Surface {
     pub friction: f32,
@@ -173,6 +181,8 @@ pub struct PropDesc<'a> {
     pub surface: Surface,
     pub linear_damping: f32,
     pub angular_damping: f32,
+    /// Source `drag_coefficient`, 1 for props.
+    pub drag_coefficient: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -190,8 +200,16 @@ pub struct BodyState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BodyHandle(u32);
 
+struct Drag {
+    body: u32,
+    /// Local axis drag factors `k` in 1/units: `a = -k * |v| * v` along each body axis.
+    linear: Vec3,
+}
+
 pub struct World {
     system: rolt::PhysicsSystem,
+    drags: Vec<Drag>,
+    world_elasticity: f32,
     temp: *mut JPC_TempAllocatorImpl,
     jobs: *mut JPC_JobSystemThreadPool,
     shapes: Vec<*mut JPC_Shape>,
@@ -219,6 +237,8 @@ impl World {
             temp,
             jobs,
             shapes: Vec::new(),
+            drags: Vec::new(),
+            world_elasticity: 0.2,
             gravity,
             tick_interval,
         }
@@ -310,13 +330,29 @@ impl World {
             settings.ObjectLayer = LAYER_STATIC;
             settings.MotionType = JPC_MOTION_TYPE_STATIC;
             settings.Friction = surface.friction;
-            settings.Restitution = surface.elasticity;
+            settings.Restitution = 0.0;
+            self.world_elasticity = surface.elasticity;
             settings.Shape = shape;
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
             let id =
                 JPC_BodyInterface_CreateAndAddBody(bi, &settings, JPC_ACTIVATION_DONT_ACTIVATE);
             Ok(BodyHandle(id))
         }
+    }
+
+    /// Measured on the real game: a falling crate loses `k * v^2` of acceleration with
+    /// `k = A / m` where A is the body's projected area in m^2 along the axis of motion and m
+    /// its mass (`drag_coefficient` 1): see docs/spec/physics.md.
+    fn drag_factors(hulls: &[Vec<Vec3>], mass: f32, drag_coefficient: f32) -> Vec3 {
+        let mut mins = Vec3::splat(f32::MAX);
+        let mut maxs = Vec3::splat(f32::MIN);
+        for p in hulls.iter().flatten() {
+            mins = mins.min(*p);
+            maxs = maxs.max(*p);
+        }
+        let e = (maxs - mins).max(Vec3::ZERO) * UNITS_TO_METERS;
+        let area = Vec3::new(e.y * e.z, e.x * e.z, e.x * e.y);
+        area * drag_coefficient / mass.max(1e-3) * UNITS_TO_METERS
     }
 
     pub fn add_prop(&mut self, desc: &PropDesc<'_>) -> Result<BodyHandle> {
@@ -341,13 +377,17 @@ impl World {
             settings.ObjectLayer = LAYER_MOVING;
             settings.MotionType = JPC_MOTION_TYPE_DYNAMIC;
             settings.Friction = desc.surface.friction;
-            settings.Restitution = desc.surface.elasticity;
+            settings.Restitution = 0.5 * (desc.surface.elasticity + self.world_elasticity);
             settings.LinearDamping = desc.linear_damping;
             settings.AngularDamping = desc.angular_damping;
             settings.GravityFactor = self.gravity_factor();
             settings.Shape = shape;
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
             let id = JPC_BodyInterface_CreateAndAddBody(bi, &settings, JPC_ACTIVATION_ACTIVATE);
+            self.drags.push(Drag {
+                body: id,
+                linear: Self::drag_factors(desc.hulls, desc.mass, desc.drag_coefficient),
+            });
             Ok(BodyHandle(id))
         }
     }
@@ -356,8 +396,40 @@ impl World {
         self.system.optimize_broad_phase();
     }
 
+    fn apply_drag(&self) {
+        let dt = self.tick_interval;
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            for d in &self.drags {
+                if !JPC_BodyInterface_IsActive(bi, d.body) {
+                    continue;
+                }
+                let mut p = jv(Vec3::ZERO);
+                let mut r = jq(Quat::IDENTITY);
+                JPC_BodyInterface_GetPositionAndRotation(bi, d.body, &mut p, &mut r);
+                let rot = quat_from_jolt(gq(r)).normalize();
+                let mut lv = jv(Vec3::ZERO);
+                let mut av = jv(Vec3::ZERO);
+                JPC_BodyInterface_GetLinearAndAngularVelocity(bi, d.body, &mut lv, &mut av);
+                let local = rot.inverse() * from_jolt(gv(lv));
+                let speed = local.length();
+                if speed < 1e-3 {
+                    continue;
+                }
+                // implicit `v' = v / (1 + k |v| dt)` per body axis stays stable at any speed
+                let damped = Vec3::new(
+                    local.x / (1.0 + d.linear.x * speed * dt),
+                    local.y / (1.0 + d.linear.y * speed * dt),
+                    local.z / (1.0 + d.linear.z * speed * dt),
+                );
+                JPC_BodyInterface_SetLinearVelocity(bi, d.body, jv(to_jolt(rot * damped)));
+            }
+        }
+    }
+
     /// Advance one server tick.
     pub fn step(&mut self) {
+        self.apply_drag();
         unsafe {
             self.system
                 .update(self.tick_interval, 1, self.temp, self.jobs);
@@ -450,6 +522,7 @@ mod tests {
                 surface: Surface::default(),
                 linear_damping: 0.0,
                 angular_damping: 0.0,
+                drag_coefficient: 1.0,
             })
             .unwrap();
         w.optimize();
@@ -458,6 +531,16 @@ mod tests {
         assert!(
             (s.velocity.z + 9.0).abs() < 0.05,
             "first tick gravity {}",
+            s.velocity.z
+        );
+        for _ in 0..29 {
+            w.step();
+        }
+        // measured: the real crate is at -260.4 after 30 ticks, free fall would give -270
+        let s = w.state(b);
+        assert!(
+            (s.velocity.z + 260.4).abs() < 2.0,
+            "drag after 30 ticks {}",
             s.velocity.z
         );
         for _ in 0..300 {

@@ -20,4 +20,6 @@ gm-formats = { path = "../../../crates/gm-formats" }
 gm-content = { path = "../../../crates/gm-content" }
 gm-collision = { path = "../../../crates/gm-collision" }
 gm-move = { path = "../../../crates/gm-move" }
+gm-physics = { path = "../../../crates/gm-physics" }
+gm-core = { path = "../../../crates/gm-core" }
 glam = { workspace = true }
