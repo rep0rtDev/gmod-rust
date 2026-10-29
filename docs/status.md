@@ -6,8 +6,8 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 |---|---|---|---|
 | Formats: VPK | 0.75 | 2 / 2 | `fmt_vpk_index_garrysmod`, `fmt_vpk_index_hl2_models` equal to `file.Find` on a real server (version 2026.09.17) |
 | Formats: KeyValues | 0.5 | | gameinfo, VMT, appmanifest parse; no dedicated harness yet |
-| Formats: BSP | 0.25 | 0 | header and lump directory only |
-| Formats: VTF | 0.25 | 0 | header only, checked on 200 real textures in integration tests |
+| Formats: BSP | 0.5 | 0 | header, planes, vertices, edges, faces, texinfo/texdata, models, nodes, leafs, brushes, lightmaps, entities; gm_construct parses end to end. Displacements, PVS, game lump, PHY pending |
+| Formats: VTF | 0.5 | 0 | header, resources, mip addressing, decode to RGBA8 for DXT1/3/5, BGR(A/X)8888, BGR888, I8/A8/IA88, 565, UV88, RGBA16F; 300 real HL2 textures decode |
 | Formats: MDL/VVD/VTX/PHY | 0 | 0 | |
 | Content mounting | 0.75 | 2 / 2 | GMod order without addons/workshop; client vs server difference documented |
 | Measured facts | | | `fmt_convars_defaults`, `fmt_info` recorded: see `docs/spec/convars-defaults.md` |

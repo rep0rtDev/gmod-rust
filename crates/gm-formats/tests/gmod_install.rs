@@ -111,3 +111,48 @@ fn gm_construct_lumps_parse() {
     assert!(lit > 100, "{lit} lit faces");
     assert!(bsp.tex_names.iter().any(|n| n.starts_with("tools/")));
 }
+
+#[test]
+fn hl2_vtf_mips_decode() {
+    let Some(dir) = gmod_dir() else {
+        return;
+    };
+    let ar = gm_formats::vpk::Archive::open(dir.join("sourceengine/hl2_textures_dir.vpk")).unwrap();
+    let mut decoded = 0;
+    let mut formats = std::collections::BTreeMap::new();
+    for (k, e) in ar.directory.iter_prefix("materials") {
+        if !k.ends_with(".vtf") || decoded >= 300 {
+            continue;
+        }
+        let bytes = ar.read_entry(e).unwrap();
+        let h = gm_formats::vtf::Header::parse(&bytes).unwrap();
+        if h.depth != 1 || h.high_res_format.bits_per_pixel() == 0 {
+            continue;
+        }
+        let Ok(slice) = gm_formats::vtf::decode::mip_slice(&h, &bytes, 0, 0, 0, 0) else {
+            panic!(
+                "{k}: mip 0 out of range (format {:?}, {}x{})",
+                h.high_res_format, h.width, h.height
+            );
+        };
+        let rgba = gm_formats::vtf::decode::decode_rgba8(
+            h.high_res_format,
+            h.width as u32,
+            h.height as u32,
+            slice,
+        )
+        .unwrap_or_else(|e| panic!("{k}: {e}"));
+        assert_eq!(rgba.len(), (h.width as usize) * (h.height as usize) * 4);
+        assert!(rgba.iter().any(|&b| b != 0), "{k}: all zero");
+        let last = h.mipmap_count as u32 - 1;
+        let (w, hh, _) = gm_formats::vtf::decode::mip_dims(&h, last);
+        let s = gm_formats::vtf::decode::mip_slice(&h, &bytes, last, 0, 0, 0).unwrap();
+        assert_eq!(s.len(), h.high_res_format.image_size(w, hh) as usize);
+        *formats
+            .entry(format!("{:?}", h.high_res_format))
+            .or_insert(0) += 1;
+        decoded += 1;
+    }
+    eprintln!("decoded {decoded} textures: {formats:?}");
+    assert!(decoded >= 100);
+}

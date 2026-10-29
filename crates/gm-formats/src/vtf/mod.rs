@@ -1,6 +1,8 @@
 //! Valve Texture Format header (7.0 to 7.5). Image data decoding comes with
 //! the content pipeline; this module reads geometry, formats and mip counts.
 
+pub mod decode;
+
 use crate::{FormatError, Reader, Result};
 
 pub const SIGNATURE: &[u8; 4] = b"VTF\0";
