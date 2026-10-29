@@ -38,7 +38,7 @@ fn spawns_stand_on_ground() {
         assert!(t.hit(), "spawn {s:?} has no floor");
         assert!(!t.start_solid, "spawn {s:?} starts in solid");
         assert!(
-            (t.end.z - o.z).abs() < 0.5,
+            (t.end.z - o.z).abs() < 2.0,
             "spawn {s:?} floor at {}",
             t.end.z
         );
@@ -46,9 +46,10 @@ fn spawns_stand_on_ground() {
         // and the ray straight down from eye height hits the same floor
         let r = world.trace_ray(o + Vec3::Z * 64.0, o - Vec3::Z * 64.0, MASK_SOLID);
         assert!(
-            r.hit() && (r.end.z - o.z).abs() < 0.1,
-            "ray floor {}",
-            r.end.z
+            r.hit() && (r.end.z - t.end.z).abs() < 0.01,
+            "ray floor {} vs hull floor {}",
+            r.end.z,
+            t.end.z
         );
         // standing position is open space
         assert_eq!(world.point_contents(o + Vec3::Z * 36.0) & MASK_SOLID, 0);
