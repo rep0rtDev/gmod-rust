@@ -412,6 +412,18 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// Moves one player by one usercmd outside the tick (catching up a usercmd backlog).
+    pub fn move_player(&mut self, player: u32, pc: &PlayerCmd) {
+        if let Some(p) = self.players.get_mut(&player) {
+            p.view_angles = pc.cmd.view_angles;
+            let cmd = gm_move::UserCmd {
+                buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
+                ..pc.cmd
+            };
+            self.mover.tick(&mut p.state, &cmd);
+        }
+    }
+
     /// One fixed tick: weapons fire with the pre-move eye, physics steps, players move, prop
     /// poses flow back into the sandbox.
     pub fn tick(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {

@@ -82,6 +82,13 @@ pub struct UndoEntry {
     pub name: String,
 }
 
+/// The receiving client's own movement state after its last run usercmd, for reconciliation
+/// (all of `gm_move::PlayerState`, so a replay from it is bit-exact).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LocalPlayer {
+    pub state: gm_move::PlayerState,
+}
+
 /// What the receiving client's own sandbox looks like (count, undo stack): per client.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OwnSandbox {
@@ -108,6 +115,7 @@ pub enum ServerMsg {
         entities: Vec<EntityState>,
         removed: Vec<u32>,
         own: OwnSandbox,
+        local: Option<LocalPlayer>,
     },
     /// Reliable: the server tells the client about a sandbox event (LimitHit etc.).
     Event {
@@ -207,6 +215,51 @@ fn r_cmd(r: &mut Reader, prev: &NetCmd, tick: u32) -> Result<NetCmd, Truncated> 
         c.weapon = r.u8()?;
     }
     Ok(c)
+}
+
+fn w_state(w: &mut Writer, s: &gm_move::PlayerState) {
+    w.vec3(s.origin);
+    w.vec3(s.velocity);
+    w.bool(s.on_ground);
+    w.vec3(s.ground_normal);
+    w.bool(s.ducked);
+    w.bool(s.ducking);
+    w.bool(s.unducking);
+    w.f32(s.duck_timer);
+    w.bool(s.jump_held);
+    w.bool(s.boost_pending);
+    w.f32(s.boost_forward);
+    w.f32(s.boost_yaw);
+    w.bool(s.ducked_at_tick_start);
+    w.f32(s.surface_friction);
+    w.u8(match s.move_type {
+        gm_move::MoveType::Walk => 0,
+        gm_move::MoveType::Noclip => 1,
+    });
+}
+
+fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
+    Ok(gm_move::PlayerState {
+        origin: r.vec3()?,
+        velocity: r.vec3()?,
+        on_ground: r.bool()?,
+        ground_normal: r.vec3()?,
+        ducked: r.bool()?,
+        ducking: r.bool()?,
+        unducking: r.bool()?,
+        duck_timer: r.f32()?,
+        jump_held: r.bool()?,
+        boost_pending: r.bool()?,
+        boost_forward: r.f32()?,
+        boost_yaw: r.f32()?,
+        ducked_at_tick_start: r.bool()?,
+        surface_friction: r.f32()?,
+        move_type: if r.u8()? == 0 {
+            gm_move::MoveType::Walk
+        } else {
+            gm_move::MoveType::Noclip
+        },
+    })
 }
 
 impl ClientMsg {
@@ -338,6 +391,7 @@ impl ServerMsg {
                 entities,
                 removed,
                 own,
+                local,
             } => {
                 w.u8(2);
                 w.u32(*tick);
@@ -372,6 +426,13 @@ impl ServerMsg {
                 for u in &own.undos {
                     w.u32(u.id);
                     w.str(&u.name);
+                }
+                match local {
+                    None => w.u8(0),
+                    Some(l) => {
+                        w.u8(1);
+                        w_state(w, &l.state);
+                    }
                 }
             }
             ServerMsg::Event { seq, text } => {
@@ -441,6 +502,11 @@ impl ServerMsg {
                         name: r.str()?,
                     });
                 }
+                let local = if r.u8()? != 0 {
+                    Some(LocalPlayer { state: r_state(r)? })
+                } else {
+                    None
+                };
                 ServerMsg::Snapshot {
                     tick,
                     baseline,
@@ -454,6 +520,7 @@ impl ServerMsg {
                         undos,
                         max_props,
                     },
+                    local,
                 }
             }
             3 => ServerMsg::Event {

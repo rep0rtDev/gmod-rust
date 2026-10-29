@@ -552,3 +552,43 @@ realm = "server"
 crates = ["gm-net", "gm-server"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "net_predict_walk_flat"
+scenario = "net/predict_walk_flat"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-net", "gm-move", "gm-server"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "net_predict_jump_forward"
+scenario = "net/predict_jump_forward"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-net", "gm-move", "gm-server"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "net_predict_stairs_up"
+scenario = "net/predict_stairs_up"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-net", "gm-move", "gm-server"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "net_predict_airstrafe"
+scenario = "net/predict_airstrafe"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-net", "gm-move", "gm-server"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5

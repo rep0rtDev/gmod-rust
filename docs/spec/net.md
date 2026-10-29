@@ -47,8 +47,25 @@ reliable resends, no snapshot skipped for a lost baseline. Bytes: client 49 per 
 previous one in the batch, only the first tick; 8 identical usercmds cost 10 bytes plus the first
 one in full), 3.2 kB/s at 66 Hz; server 135 per packet on this near-empty map.
 
+## Client prediction
+
+The client runs every usercmd through `gm-move` the tick it sends it (`Prediction`) and keeps the
+last 128 predicted states; every snapshot carries the server's full `PlayerState` after the
+client's last run usercmd (`LocalPlayer`, all fields: duck timers, jump held, boost, surface
+friction, so a replay is bit-exact), and when it differs from what was predicted for that usercmd
+the client replaces it and replays the later usercmds from it. The server runs the usercmds in
+order, catching up a backlog after a lost packet with up to 3 per tick (the extra ones move the
+player only) and letting the player stand when none is due, like the engine.
+
+Measured (`net_predict_*`: the movement recordings sent as usercmds through the loopback at 2
+ticks one way): walk, jump, stairs and airstrafe predicted bit for bit equal to the real server's
+recording with zero corrections, and the final predicted state equals the server's. With 20 % loss
+the prediction still ends equal to the server's state; the corrections are the ticks where the
+server stood because no usercmd was due yet (see the numbers in the harness output, they vary with
+the loss seed).
+
 ## Not yet
 
 Bit packing of snapshots, interest management (PVS + radius), snapshot compression
-above 1 200 bytes, client prediction and reconciliation of the local player, interpolation, lag
+above 1 200 bytes, interpolation of other players and props, lag
 compensation, encryption and authentication, UDP/QUIC transports, voice.

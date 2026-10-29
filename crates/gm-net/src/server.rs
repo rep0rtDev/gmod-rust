@@ -3,7 +3,8 @@
 
 use crate::channel::Channel;
 use crate::msg::{
-    ClientMsg, Command, EntityState, OwnSandbox, PlayerSnap, ServerMsg, UndoEntry, PROTOCOL,
+    ClientMsg, Command, EntityState, LocalPlayer, OwnSandbox, PlayerSnap, ServerMsg, UndoEntry,
+    PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -144,14 +145,20 @@ impl ServerNet {
         self.tick += 1;
         let mut cmds = BTreeMap::new();
         for slot in self.clients.values_mut() {
-            // run the oldest unrun command at most one per tick to keep order with the game
-            let due: Vec<u32> = slot.cmds.keys().copied().take(1).collect();
-            if let Some(t) = due.first() {
-                let pc = slot.cmds.remove(t).unwrap();
-                slot.last_cmd = pc.clone();
-                slot.last_cmd_tick = *t;
+            // like the engine: the backlog after a lost packet is caught up (up to 3 usercmds in
+            // one tick, the extra ones move the player only), and with none due the player stands
+            let due: Vec<u32> = slot.cmds.keys().copied().take(3).collect();
+            let n = due.len();
+            for (i, t) in due.into_iter().enumerate() {
+                let pc = slot.cmds.remove(&t).unwrap();
+                slot.last_cmd_tick = t;
+                if i + 1 < n {
+                    server.move_player(slot.player, &pc);
+                } else {
+                    slot.last_cmd = pc.clone();
+                    cmds.insert(slot.player, pc);
+                }
             }
-            cmds.insert(slot.player, slot.last_cmd.clone());
         }
         server.tick(&cmds);
         for slot in self.clients.values_mut() {
@@ -270,6 +277,10 @@ impl ServerNet {
                         .collect(),
                     max_props: server.sandbox.limits.max_props,
                 };
+                let local = server
+                    .players
+                    .get(&slot.player)
+                    .map(|p| LocalPlayer { state: p.state });
                 let mut w = Writer::default();
                 ServerMsg::Snapshot {
                     tick: self.tick,
@@ -279,6 +290,7 @@ impl ServerNet {
                     entities,
                     removed,
                     own,
+                    local,
                 }
                 .write(&mut w);
                 unreliable.push(w.buf);

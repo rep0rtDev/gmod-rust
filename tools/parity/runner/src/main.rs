@@ -1258,6 +1258,9 @@ fn run_net(scn: &Scenario) -> Result<Value> {
     }
     let mut server = gm_server::Server::new(&collision, physics, world_body);
     let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    if !scn.segments.is_empty() {
+        return run_net_predict(scn, &collision, server, start);
+    }
     let mut known: std::collections::HashSet<String> = Default::default();
     for m in scn
         .props
@@ -1385,6 +1388,123 @@ fn run_net(scn: &Scenario) -> Result<Value> {
             "dropped": net.dropped, "reliable_resends": st.reliable_resends + sst.reliable_resends,
             "snapshots_without_baseline": client.dropped_snapshots,
         },
+    }))
+}
+
+/// A movement recording through the network with client prediction: the client runs every
+/// usercmd locally the tick it sends it and reconciles against the server's state in snapshots;
+/// the recorded trajectory is the prediction (same shape as `run_move`, so the movement golden
+/// applies bit for bit when no correction happens).
+fn run_net_predict(
+    scn: &Scenario,
+    collision: &gm_collision::World,
+    mut server: gm_server::Server<'_>,
+    start: glam::Vec3,
+) -> Result<Value> {
+    use glam::Vec3;
+    use gm_net::{ClientNet, Loopback, NetCmd, Prediction, ServerNet};
+    let loss: f32 = std::env::var("GM_NET_LOSS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+    let mut net = Loopback::new(2, loss, 0x5eed);
+    let mut sn = ServerNet::new(scn.map.as_deref().unwrap_or("gm_construct"), start);
+    let mut client = ClientNet::new(1, "bot");
+    let ang = scn.angles.clone().unwrap_or_default();
+    let view0 = Vec3::new(
+        ang.first().copied().unwrap_or(0.0),
+        ang.get(1).copied().unwrap_or(0.0),
+        0.0,
+    );
+    // the probe's pre-roll: origin and velocity reset every tick, then one movement tick;
+    // the server player does the same so both sides start from the identical settled state
+    let settle = |server: &mut gm_server::Server<'_>, st: &mut gm_move::PlayerState| {
+        if let Some(p) = server.players.get_mut(&1) {
+            p.state.origin = start;
+            p.state.velocity = Vec3::ZERO;
+        }
+        st.origin = start;
+        st.velocity = Vec3::ZERO;
+    };
+    let mut local = gm_move::PlayerState {
+        origin: start,
+        ..Default::default()
+    };
+    let idle_cmd = NetCmd {
+        view_angles: view0,
+        ..Default::default()
+    };
+    let mover = gm_move::Mover::new(gm_move::MoveConfig::default(), collision);
+    for _ in 0..20 {
+        settle(&mut server, &mut local);
+        client.tick(idle_cmd.clone(), &mut net);
+        net.tick();
+        sn.receive(&mut server, &mut net);
+        sn.tick(&mut server);
+        sn.send(&server, &mut net);
+        client.receive(&mut net);
+        mover.tick(&mut local, &Prediction::usercmd(&idle_cmd));
+    }
+    // from here the server only runs what the client sends; wait until the pipe is primed
+    let mut pred = Prediction::new(collision, local);
+    let mut ticks = Vec::new();
+    let mut t = 0u32;
+    let mut cmd_tick = 20u32;
+    for seg in &scn.segments {
+        let cmd = NetCmd {
+            buttons: seg.buttons,
+            view_angles: Vec3::new(seg.pitch, seg.yaw, 0.0),
+            forward_move: seg.forward,
+            side_move: seg.side,
+            up_move: seg.up,
+            ..Default::default()
+        };
+        for _ in 0..seg.ticks {
+            cmd_tick += 1;
+            pred.predict(cmd_tick, &cmd);
+            client.tick(cmd.clone(), &mut net);
+            net.tick();
+            sn.receive(&mut server, &mut net);
+            sn.tick(&mut server);
+            sn.send(&server, &mut net);
+            client.receive(&mut net);
+            if let Some(l) = &client.world.local {
+                pred.reconcile(client.world.last_cmd_tick, &l.state);
+            }
+            let st = &pred.state;
+            ticks.push(serde_json::json!({
+                "t": t,
+                "pos": [st.origin.x, st.origin.y, st.origin.z],
+                "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
+                "ground": st.on_ground,
+                "ducked": st.ducked,
+            }));
+            t += 1;
+        }
+    }
+    // drain: the server catches up with the last usercmds and the final states must agree
+    for _ in 0..12 {
+        net.tick();
+        sn.receive(&mut server, &mut net);
+        sn.tick(&mut server);
+        sn.send(&server, &mut net);
+        client.receive(&mut net);
+        if let Some(l) = &client.world.local {
+            pred.reconcile(client.world.last_cmd_tick, &l.state);
+        }
+    }
+    let server_state = server.players[&1].state;
+    let st = pred.state;
+    Ok(serde_json::json!({
+        "start": [start.x, start.y, start.z],
+        "ticks": ticks,
+        "final": [st.origin.x, st.origin.y, st.origin.z],
+        "server_final": [server_state.origin.x, server_state.origin.y, server_state.origin.z],
+        "agree": st == server_state,
+        "corrections": pred.corrections,
+        "max_correction": pred.max_correction,
+        "loss": loss,
+        "dropped": net.dropped,
     }))
 }
 

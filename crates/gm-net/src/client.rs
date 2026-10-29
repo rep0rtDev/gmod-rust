@@ -3,7 +3,8 @@
 
 use crate::channel::Channel;
 use crate::msg::{
-    ClientMsg, Command, EntityState, NetCmd, OwnSandbox, PlayerSnap, ServerMsg, PROTOCOL,
+    ClientMsg, Command, EntityState, LocalPlayer, NetCmd, OwnSandbox, PlayerSnap, ServerMsg,
+    PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -16,6 +17,85 @@ pub struct ClientWorld {
     pub entities: BTreeMap<u32, EntityState>,
     pub own: OwnSandbox,
     pub last_cmd_tick: u32,
+    pub local: Option<LocalPlayer>,
+}
+
+/// Client-side prediction of the local player: every usercmd is run through `gm-move` at once;
+/// when a snapshot brings the server's state after usercmd `n`, the prediction recorded for `n`
+/// is compared and, if it differs, replaced and the later usercmds replayed from it.
+pub struct Prediction<'w> {
+    mover: gm_move::Mover<'w>,
+    pub state: gm_move::PlayerState,
+    history: VecDeque<(u32, gm_move::UserCmd, gm_move::PlayerState)>,
+    pub corrections: u64,
+    pub max_correction: f32,
+    pub reconciled_tick: u32,
+}
+
+impl<'w> Prediction<'w> {
+    pub fn new(world: &'w gm_collision::World, state: gm_move::PlayerState) -> Self {
+        Prediction {
+            mover: gm_move::Mover::new(gm_move::MoveConfig::default(), world),
+            state,
+            history: VecDeque::new(),
+            corrections: 0,
+            max_correction: 0.0,
+            reconciled_tick: 0,
+        }
+    }
+
+    pub fn usercmd(c: &NetCmd) -> gm_move::UserCmd {
+        gm_move::UserCmd {
+            buttons: c.buttons & !(1 | 32 | 2048),
+            view_angles: c.view_angles,
+            forward_move: c.forward_move,
+            side_move: c.side_move,
+            up_move: c.up_move,
+        }
+    }
+
+    /// Runs usercmd `tick` locally.
+    pub fn predict(&mut self, tick: u32, cmd: &NetCmd) {
+        let uc = Self::usercmd(cmd);
+        self.mover.tick(&mut self.state, &uc);
+        self.history.push_back((tick, uc, self.state));
+        while self.history.len() > 128 {
+            self.history.pop_front();
+        }
+    }
+
+    /// The server's state after usercmd `last_cmd_tick` arrived.
+    pub fn reconcile(&mut self, last_cmd_tick: u32, authoritative: &gm_move::PlayerState) {
+        if last_cmd_tick <= self.reconciled_tick {
+            return;
+        }
+        self.reconciled_tick = last_cmd_tick;
+        let Some(pos) = self
+            .history
+            .iter()
+            .position(|(t, _, _)| *t == last_cmd_tick)
+        else {
+            return;
+        };
+        let predicted = self.history[pos].2;
+        if predicted == *authoritative {
+            self.history.drain(..pos);
+            return;
+        }
+        self.corrections += 1;
+        self.max_correction = self
+            .max_correction
+            .max((predicted.origin - authoritative.origin).length());
+        self.history[pos].2 = *authoritative;
+        let mut st = *authoritative;
+        for i in pos + 1..self.history.len() {
+            let uc = self.history[i].1;
+            self.mover.tick(&mut st, &uc);
+            self.history[i].2 = st;
+        }
+        self.state = st;
+        self.history.drain(..pos);
+    }
 }
 
 pub struct ClientNet {
@@ -131,6 +211,7 @@ impl ClientNet {
                         entities,
                         removed,
                         own,
+                        local,
                     } => {
                         if tick <= self.world.tick {
                             continue;
@@ -162,6 +243,7 @@ impl ClientNet {
                             entities: world,
                             own,
                             last_cmd_tick,
+                            local,
                         };
                         self.server_tick = tick;
                     }

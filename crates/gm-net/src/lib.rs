@@ -10,7 +10,7 @@ pub mod server;
 pub mod transport;
 pub mod wire;
 
-pub use client::ClientNet;
+pub use client::{ClientNet, Prediction};
 pub use msg::{ClientMsg, Command, NetCmd, ServerMsg};
 pub use server::ServerNet;
 pub use transport::{Loopback, Transport};
@@ -87,6 +87,14 @@ mod tests {
                 }],
                 max_props: 200,
             },
+            local: Some(LocalPlayer {
+                state: gm_move::PlayerState {
+                    origin: Vec3::new(1.0, 2.0, 3.0),
+                    ducked: true,
+                    duck_timer: 0.4,
+                    ..Default::default()
+                },
+            }),
         };
         let mut w = Writer::default();
         snap.write(&mut w);
