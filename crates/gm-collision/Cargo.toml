@@ -1,0 +1,13 @@
+[package]
+name = "gm-collision"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "BSP brush collision: ray and box sweeps, point contents"
+
+[dependencies]
+gm-formats = { path = "../gm-formats" }
+glam = { workspace = true }
+
+[dev-dependencies]
+gm-content = { path = "../gm-content" }
