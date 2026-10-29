@@ -356,6 +356,10 @@ public:
 					if (a > best) { best = a; lead = &pt; }
 				}
 				if (lead) {
+					// the resting face carries the weight: cancel this step's fall into the rest gap
+					// first, the anchor's lift then comes out whole (the game's 13.7 u/s on the drum)
+					float fall = std::max(-(dyn.GetLinearVelocity() - other.GetLinearVelocity()).Dot(nd), 0.0f);
+					push(dyn, c, nd * (mass * std::min(fall, g_dt)));
 					JPH::Vec3 r = JPH::Vec3(lead->p - c);
 					JPH::Mat44 rx = JPH::Mat44::sCrossProduct(r);
 					JPH::Mat44 k = JPH::Mat44::sScale(dyn.GetMotionProperties()->GetInverseMass()) - rx * dyn.GetInverseInertia() * rx;
