@@ -43,6 +43,13 @@ fn main() -> Result<()> {
     if !args.addon.is_empty() {
         let mut rt = gm_script::Runtime::new();
         for (i, path) in args.addon.iter().enumerate() {
+            if path.is_dir() {
+                let m = rt
+                    .load_addon(path)
+                    .map_err(|e| anyhow::anyhow!("addon {}: {e}", path.display()))?;
+                println!("addon {} {} (priority {})", m.id, m.version, m.priority);
+                continue;
+            }
             let source =
                 std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
             let name = path

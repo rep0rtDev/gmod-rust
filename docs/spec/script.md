@@ -21,6 +21,16 @@ Luau's own sandbox mode is not used because it freezes every global table (`stat
 - The server hooks (`gm_server::ServerHooks`) are called by `ServerNet` around the tick and the
   spawn command; `gm-dedicated --addon file.luau` loads actors (file name = actor name).
 
+## Manifest
+
+An addon is a directory with `manifest.toml` (`id`, `version`, `priority`, `realms`,
+`capabilities`, `[[actors]]` with `name`, `source`, `realm`, `cpu_ms`) and its Luau sources;
+sources may not leave the directory. `world-write` in `capabilities` is what lets an actor queue
+writes. `addons/examples/freeze_crates` refuses cans and freezes spawned crates; the integration
+test `gm-dedicated/tests/addon_hooks.rs` runs it through map, server loop, loopback network and
+hooks: the can never appears, the crate is frozen in the sandbox, in Jolt and in the client's
+snapshot.
+
 ## Budgets
 
 The VM's interrupt callback (Luau interrupt points: loop back-edges, calls) checks a deadline of
@@ -38,6 +48,6 @@ refusing cans stops the request before the priority 10 actor sees it.
 
 ## Not yet
 
-Manifests and `.gmr` packages, client realm, the rest of the API (entity write views, players,
+`.gmr` packaging, client realm, the rest of the API (entity write views, players,
 phys traces and constraints, net, timers, tools, spawn menu, storage, cvars), WASM components,
 hot reload command, the sandbox gamemode in Luau on top of this API.

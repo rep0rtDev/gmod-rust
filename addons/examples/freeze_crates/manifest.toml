@@ -1,0 +1,10 @@
+id = "freeze_crates"
+version = "0.1.0"
+priority = 5
+realms = ["server"]
+capabilities = ["world-read", "world-write"]
+
+[[actors]]
+name = "main"
+source = "src/main.luau"
+cpu_ms = 2

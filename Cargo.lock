@@ -558,7 +558,9 @@ dependencies = [
  "gm-sandbox",
  "gm-server",
  "mlua",
+ "serde",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

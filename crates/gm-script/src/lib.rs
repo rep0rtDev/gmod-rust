@@ -7,9 +7,11 @@
 
 pub mod actor;
 pub mod api;
+pub mod manifest;
 pub mod snapshot;
 
 pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite};
+pub use manifest::Manifest;
 pub use snapshot::{EntitySnap, PlayerSnap, Snapshot};
 
 use gm_server::Server;
@@ -47,6 +49,18 @@ impl Runtime {
             tick: 0,
             log: Vec::new(),
         }
+    }
+
+    /// Loads every server actor of an addon directory (`manifest.toml`).
+    pub fn load_addon(
+        &mut self,
+        dir: &std::path::Path,
+    ) -> Result<Manifest, Box<dyn std::error::Error>> {
+        let (m, specs) = Manifest::load(dir)?;
+        for spec in specs {
+            self.load(spec)?;
+        }
+        Ok(m)
     }
 
     pub fn load(&mut self, spec: ActorSpec) -> Result<usize, mlua::Error> {
