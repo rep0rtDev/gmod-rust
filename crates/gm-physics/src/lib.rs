@@ -35,6 +35,13 @@ extern "C" {
         max_d: f32,
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
+    fn gmp_set_solver(
+        system: *mut JPC_PhysicsSystem,
+        baumgarte: f32,
+        velocity_steps: u32,
+        position_steps: u32,
+        min_velocity_for_restitution: f32,
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -565,6 +572,26 @@ impl World {
 
     pub fn remove_constraint(&mut self, c: ConstraintHandle) {
         unsafe { gmp_remove_constraint(self.system.as_raw(), c.0) }
+    }
+
+    /// Solver tuning: Baumgarte position correction factor, velocity and position iterations,
+    /// minimum relative velocity for restitution (m/s).
+    pub fn set_solver(
+        &mut self,
+        baumgarte: f32,
+        velocity_steps: u32,
+        position_steps: u32,
+        min_restitution_velocity: f32,
+    ) {
+        unsafe {
+            gmp_set_solver(
+                self.system.as_raw(),
+                baumgarte,
+                velocity_steps,
+                position_steps,
+                min_restitution_velocity,
+            )
+        }
     }
 
     pub fn is_held(&self, body: BodyHandle) -> bool {

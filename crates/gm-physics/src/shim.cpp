@@ -70,3 +70,18 @@ void gmp_remove_constraint(void *system, void *constraint) {
 }
 
 }
+
+extern "C" {
+
+// solver tuning for the contact response experiments
+void gmp_set_solver(void *system, float baumgarte, unsigned int velocity_steps, unsigned int position_steps, float min_velocity_for_restitution) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::PhysicsSettings s = sys->GetPhysicsSettings();
+	s.mBaumgarte = baumgarte;
+	s.mNumVelocitySteps = velocity_steps;
+	s.mNumPositionSteps = position_steps;
+	s.mMinVelocityForRestitution = min_velocity_for_restitution;
+	sys->SetPhysicsSettings(s);
+}
+
+}

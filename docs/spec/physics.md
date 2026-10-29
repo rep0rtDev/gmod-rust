@@ -26,6 +26,10 @@ Harness group `constraint_*` (3 traces on 2026.09.17: `weld_pair` two crates wel
 - Measured and matched: the welded pair falls as one body with the same air drag per crate (positions equal to the tick until the landing); the roped crate swings with the same period for the first 40 ticks (within 1 u) and keeps the rope taut at 80 u.
 - Open: the welded pair's landing (both crates come to rest 5 u away, 3 degrees of yaw) and the stack (the game lets the resting bottom crate sink 4 u under the impact and lands the top one 2 ticks earlier) are the contact response again; the rope swing drifts after half a period (9 u, the game damps the pendulum differently). 0 of 3 within tolerance, kept red with the numbers.
 
+## Solver settings do not close the gap (measured)
+
+`World::set_solver` (shim) exposes Jolt's Baumgarte factor, velocity and position iterations and the restitution velocity threshold; the runner takes `GMP_SOLVER=baumgarte,vel_steps,pos_steps,min_restitution_velocity` for experiments. Sweeping Baumgarte 0.02 to 0.2, position steps 0 to 2, velocity steps 4 to 10 and the restitution threshold 0.1 to 1 m/s over all `phys_*`, `physgun_*` and `constraint_*` traces moves the errors by under 1 u (tilted crate stays at 5 to 6 u and 12 to 18 degrees, barrel at 135 to 200 u, can at 19 to 51 u, stack at 4 u). The mismatch is the contact model itself (IVP's impact and friction solver), not the amount of position correction, so the defaults stay and no tuning is baked in.
+
 ## Implementation notes
 
 - Jolt 5.0 through `joltc-sys`/`rolt` 0.3.1, metres and Y up inside, Source units and Z up at the API: `jolt = (x, z, -y) * 0.0254`, the same mapping IVP used so PHY data converts one to one.

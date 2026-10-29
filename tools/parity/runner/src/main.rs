@@ -353,6 +353,7 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
     )]);
     let (world_sp, prop_sp) = (table.get("concrete"), table.get(&props.surfaceprop));
     let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    tune_solver(&mut world);
     world.add_static_hulls(
         &world_hulls,
         Surface {
@@ -500,6 +501,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
     )]);
     let world_sp = table.get("concrete");
     let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    tune_solver(&mut world);
     world.add_static_hulls(
         &world_hulls,
         Surface {
@@ -585,6 +587,16 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
     Ok(serde_json::json!({ "constraints": made, "info": infos, "ticks": ticks }))
 }
 
+/// `GMP_SOLVER=baumgarte,velocity_steps,position_steps,min_restitution_velocity` for experiments.
+fn tune_solver(world: &mut gm_physics::World) {
+    if let Ok(v) = std::env::var("GMP_SOLVER") {
+        let f: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        if f.len() == 4 {
+            world.set_solver(f[0], f[1] as u32, f[2] as u32, f[3]);
+        }
+    }
+}
+
 fn run_phys(scn: &Scenario) -> Result<Value> {
     use glam::Vec3;
     use gm_physics::{PropDesc, Surface, World};
@@ -619,6 +631,7 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
     let world_sp = table.get("concrete");
     let prop_sp = table.get(&props.surfaceprop);
     let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    tune_solver(&mut world);
     world.add_static_hulls(
         &world_hulls,
         Surface {
