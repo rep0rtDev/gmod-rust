@@ -121,30 +121,92 @@ pub enum ServerMsg {
 
 pub const PROTOCOL: u16 = 1;
 
-fn w_cmd(w: &mut Writer, c: &NetCmd) {
-    w.u32(c.tick);
-    w.u32(c.buttons);
-    w.vec3(c.view_angles);
-    w.f32(c.forward_move);
-    w.f32(c.side_move);
-    w.f32(c.up_move);
-    w.f32(c.mouse_x);
-    w.f32(c.mouse_y);
-    w.u8(c.weapon);
+/// Usercmds are coded as deltas against the previous one in the batch (the first against the
+/// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
+/// first tick is sent.
+const CMD_BUTTONS: u8 = 1;
+const CMD_VIEW: u8 = 2;
+const CMD_FORWARD: u8 = 4;
+const CMD_SIDE: u8 = 8;
+const CMD_UP: u8 = 16;
+const CMD_MOUSE: u8 = 32;
+const CMD_WEAPON: u8 = 64;
+
+fn w_cmd(w: &mut Writer, c: &NetCmd, prev: &NetCmd) {
+    let mut mask = 0u8;
+    if c.buttons != prev.buttons {
+        mask |= CMD_BUTTONS;
+    }
+    if c.view_angles != prev.view_angles {
+        mask |= CMD_VIEW;
+    }
+    if c.forward_move != prev.forward_move {
+        mask |= CMD_FORWARD;
+    }
+    if c.side_move != prev.side_move {
+        mask |= CMD_SIDE;
+    }
+    if c.up_move != prev.up_move {
+        mask |= CMD_UP;
+    }
+    if c.mouse_x != prev.mouse_x || c.mouse_y != prev.mouse_y {
+        mask |= CMD_MOUSE;
+    }
+    if c.weapon != prev.weapon {
+        mask |= CMD_WEAPON;
+    }
+    w.u8(mask);
+    if mask & CMD_BUTTONS != 0 {
+        w.varint(c.buttons as u64);
+    }
+    if mask & CMD_VIEW != 0 {
+        w.vec3(c.view_angles);
+    }
+    if mask & CMD_FORWARD != 0 {
+        w.f32(c.forward_move);
+    }
+    if mask & CMD_SIDE != 0 {
+        w.f32(c.side_move);
+    }
+    if mask & CMD_UP != 0 {
+        w.f32(c.up_move);
+    }
+    if mask & CMD_MOUSE != 0 {
+        w.f32(c.mouse_x);
+        w.f32(c.mouse_y);
+    }
+    if mask & CMD_WEAPON != 0 {
+        w.u8(c.weapon);
+    }
 }
 
-fn r_cmd(r: &mut Reader) -> Result<NetCmd, Truncated> {
-    Ok(NetCmd {
-        tick: r.u32()?,
-        buttons: r.u32()?,
-        view_angles: r.vec3()?,
-        forward_move: r.f32()?,
-        side_move: r.f32()?,
-        up_move: r.f32()?,
-        mouse_x: r.f32()?,
-        mouse_y: r.f32()?,
-        weapon: r.u8()?,
-    })
+fn r_cmd(r: &mut Reader, prev: &NetCmd, tick: u32) -> Result<NetCmd, Truncated> {
+    let mask = r.u8()?;
+    let mut c = prev.clone();
+    c.tick = tick;
+    if mask & CMD_BUTTONS != 0 {
+        c.buttons = r.varint()? as u32;
+    }
+    if mask & CMD_VIEW != 0 {
+        c.view_angles = r.vec3()?;
+    }
+    if mask & CMD_FORWARD != 0 {
+        c.forward_move = r.f32()?;
+    }
+    if mask & CMD_SIDE != 0 {
+        c.side_move = r.f32()?;
+    }
+    if mask & CMD_UP != 0 {
+        c.up_move = r.f32()?;
+    }
+    if mask & CMD_MOUSE != 0 {
+        c.mouse_x = r.f32()?;
+        c.mouse_y = r.f32()?;
+    }
+    if mask & CMD_WEAPON != 0 {
+        c.weapon = r.u8()?;
+    }
+    Ok(c)
 }
 
 impl ClientMsg {
@@ -162,8 +224,11 @@ impl ClientMsg {
             ClientMsg::Cmds { cmds } => {
                 w.u8(2);
                 w.u8(cmds.len() as u8);
+                w.u32(cmds.first().map(|c| c.tick).unwrap_or(0));
+                let mut prev = NetCmd::default();
                 for c in cmds {
-                    w_cmd(w, c);
+                    w_cmd(w, c, &prev);
+                    prev = c.clone();
                 }
             }
             ClientMsg::Command { seq, cmd } => {
@@ -208,9 +273,13 @@ impl ClientMsg {
             },
             2 => {
                 let n = r.u8()? as usize;
+                let first = r.u32()?;
                 let mut cmds = Vec::with_capacity(n);
-                for _ in 0..n {
-                    cmds.push(r_cmd(r)?);
+                let mut prev = NetCmd::default();
+                for i in 0..n {
+                    let c = r_cmd(r, &prev, first + i as u32)?;
+                    prev = c.clone();
+                    cmds.push(c);
                 }
                 ClientMsg::Cmds { cmds }
             }

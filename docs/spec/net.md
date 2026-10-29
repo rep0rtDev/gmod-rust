@@ -43,12 +43,12 @@ way (30 ms) and 20 % loss, with the recorded state being what the client rebuilt
 plus the delay later than the recording's sample, so a prop still settling reads slightly off),
 `net_weld_rope` 20 ops within 0.12 u, `net_axis` 8 ops within 0.02 u. A command's round trip is
 4 to 7 ticks (60 to 105 ms) including retries after loss; 107 of 534 packets dropped, 125
-reliable resends, no snapshot skipped for a lost baseline. Bytes: client 354 per packet (8 usercmds
-of 41 bytes, uncompressed: 23 kB/s at 66 Hz, far above the budget; the usercmd delta encoding of
-the design is the next step), server 135 per packet on this near-empty map.
+reliable resends, no snapshot skipped for a lost baseline. Bytes: client 49 per packet with the usercmds delta coded (a change mask per usercmd against the
+previous one in the batch, only the first tick; 8 identical usercmds cost 10 bytes plus the first
+one in full), 3.2 kB/s at 66 Hz; server 135 per packet on this near-empty map.
 
 ## Not yet
 
-Usercmd delta coding and bit packing, interest management (PVS + radius), snapshot compression
+Bit packing of snapshots, interest management (PVS + radius), snapshot compression
 above 1 200 bytes, client prediction and reconciliation of the local player, interpolation, lag
 compensation, encryption and authentication, UDP/QUIC transports, voice.

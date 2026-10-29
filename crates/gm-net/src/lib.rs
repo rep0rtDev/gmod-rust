@@ -94,6 +94,26 @@ mod tests {
     }
 
     #[test]
+    fn usercmd_batch_is_delta_coded() {
+        let mut cmds = Vec::new();
+        for i in 0..8u32 {
+            cmds.push(NetCmd {
+                tick: 100 + i,
+                buttons: 8,
+                view_angles: Vec3::new(5.0, 90.0 + i as f32 * 0.5, 0.0),
+                forward_move: 400.0,
+                ..Default::default()
+            });
+        }
+        let m = ClientMsg::Cmds { cmds: cmds.clone() };
+        let mut w = Writer::default();
+        m.write(&mut w);
+        // 1 type + 1 count + 4 first tick + first cmd (1 + 1 + 12 + 4) + 7 * (1 + 12)
+        assert_eq!(w.buf.len(), 6 + 18 + 7 * 13, "{} bytes", w.buf.len());
+        assert_eq!(ClientMsg::read(&mut Reader::new(&w.buf)).unwrap(), m);
+    }
+
+    #[test]
     fn reliable_messages_survive_loss_and_are_not_duplicated() {
         let (mut a, mut b) = (Channel::default(), Channel::default());
         a.send_reliable(b"hello".to_vec());
