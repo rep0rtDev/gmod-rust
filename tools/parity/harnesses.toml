@@ -765,3 +765,15 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1
+
+[[harness]]
+name = "phys_drop_tilted_plastic"
+scenario = "phys/drop_tilted_plastic"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
