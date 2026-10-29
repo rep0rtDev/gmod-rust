@@ -1,0 +1,12 @@
+[package]
+name = "gm-content"
+description = "Mounts the player's Garry's Mod installation: search paths, VPK archives and loose directories in game order"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gm-formats = { path = "../gm-formats" }
+thiserror = { workspace = true }
+walkdir = { workspace = true }

@@ -32,3 +32,7 @@ Lookups are case-insensitive and use forward slashes. The first hit in order win
 
 - `fmt_vpk_index_garrysmod`: the probe lists `models/*.mdl` and `materials/**/*.vmt` through `file.Find(..., "GAME")` on a server with `-noaddons -noworkshop`; gmod-rust lists the same globs over its mounted set. Compare as sets. Expected: equal.
 - `fmt_vpk_index_hl2_models`: same for `models/props_c17/*.mdl` and `models/props_junk/*.mdl`.
+
+## Client vs dedicated server content
+
+App 4000 (client) and app 4020 (dedicated server) ship different `garrysmod_dir.vpk` builds. Measured on client build 26229091 (x86-64 branch) against server version 2026.09.17: the client has three `models/props_wasteland/cargo_container*` models the server lacks; otherwise the `fmt_vpk_index_*` globs match exactly. Server-realm behaviour is compared against the server install, client-realm against the client install. Harness: `fmt_vpk_index_hl2_models`, `fmt_vpk_index_garrysmod` (green on 2026-10-29 against the server install).

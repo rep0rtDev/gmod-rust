@@ -147,13 +147,13 @@ gmod-rust/
 | Тик | 66.67 Гц (0.015 с) | движение считается на тике, рендер интерполирует |
 | Хулл стоя | 32 x 32 x 72, глаза на 64 | `VEC_HULL_MIN/MAX`, `VEC_VIEW` |
 | Хулл сидя | 32 x 32 x 36, глаза на 28 | переход 0.4 с вниз (`duck` анимация), вверх мгновенно если есть место |
-| Гравитация | 800 u/s^2 | `sv_gravity` |
+| Гравитация | **600** u/s^2 (измерено: GMod ставит `sv_gravity 600`, не 800 как Source) | см. `docs/spec/convars-defaults.md` |
 | Скорость ходьбы / бега | 200 / 400 u/s | sandbox: `Player:SetWalkSpeed(200)`, `SetRunSpeed(400)` |
 | Сидя | 0.3 от скорости | `CrouchedWalkSpeed` |
 | Прыжок | 200 u/s вверх (`JumpPower`) | sandbox дефолт; bhop не режется (нет `sv_enablebunnyhopping`-ограничений в sandbox) |
 | Ускорение на земле | 10 (`sv_accelerate`) | `accel = accelerate * wishspeed * dt`, cap до `wishspeed - currentspeed` |
 | Ускорение в воздухе | 10 (`sv_airaccelerate`), wishspeed cap 30 | даёт airstrafe как в Source |
-| Трение | 4 (`sv_friction`), `sv_stopspeed` 100 | `control = max(speed, stopspeed); drop = control * friction * dt` |
+| Трение | **8** (`sv_friction`), `sv_stopspeed` **10** (измерено; Source по умолчанию 4/100) | `control = max(speed, stopspeed); drop = control * friction * dt` |
 | Шаг | 18 u (`sv_stepsize`) | step-up со сдвигом, затем проверка земли |
 | Максимальная скорость | 3 500 u/s (`sv_maxvelocity`) по компонентам | |
 | Лестницы | `func_ladder`/`func_useableladder`, скорость 200 вдоль | |
@@ -174,7 +174,7 @@ gmod-rust/
 | Формы | convex hulls из `.phy` (до 16 на модель у пропов), brush-энтити = набор convex, мир = BSP-полигоны | те же `.phy` хуллы -> `ConvexHullShape`/`StaticCompoundShape`; мир -> `MeshShape` с BVH |
 | Масса | из `.phy` (`$mass`) или плотность `surfaceproperties` x объём | то же, та же таблица |
 | Материалы | `surfaceproperties.txt`: friction, elasticity, density, dampening, thickness, звуки удара/скольжения | парсим ту же таблицу, маппим на Jolt `PhysicsMaterial`; звуки по тем же порогам скорости удара (VPhysics: impact soft > 100 u/s, hard > 300 u/s - уточнить) |
-| Гравитация | `sv_gravity` 800 u/s^2 и для игрока, и для VPhysics-тел (проверить: у тел возможен свой множитель) | **харнесс** `phys_drop_crate_1m`: измеряем падение пропа и берём то, что покажет GMod |
+| Гравитация | `sv_gravity` **600** u/s^2 (измерено на сервере GMod); для VPhysics-тел проверить множитель | **харнесс** `phys_drop_crate_1m` |
 | Шаг симуляции | VPhysics ~ 1/66 с внутри тика, субшаги | Jolt `Update(dt=0.015, collisionSteps=2)`; при тонких объектах 4 |
 | Сон | тело засыпает при скорости < 0.1 u/s ~1 с | Jolt sleep thresholds подгоняем по харнессу "стопка 10 ящиков успокаивается за T с" |
 | Констрейнты | weld, axis, ballsocket, rope, slider, elastic, hydraulic, motor, pulley, winch, keepupright, nocollide | Fixed, Hinge, Point, Distance(min/max) + rope render, Slider, SpringDistance, Hinge+motor, Pulley, Distance с мотором, SwingTwist/custom, collision-filter |
@@ -190,7 +190,7 @@ gmod-rust/
 |---|---|
 | Дальность захвата | трассировка 4 096 u (`physgun_maxrange`) |
 | Захват | ЛКМ: трасса -> `PhysObj` -> точка на объекте сохраняется в локальных координатах объекта |
-| Удержание | объект тянется к точке "луч x дистанция" через shadow-контроллер: `max speed 2048 u/s`, `max angular 1024 deg/s`, damping, teleport при дистанции > 32 u? (харнесс) |
+| Удержание | объект тянется к точке "луч x дистанция" через shadow-контроллер; измерено: `physgun_maxSpeed` 5000, `physgun_maxAngular` 5000, `physgun_DampingFactor` 0.8, `physgun_timeToArrive` 0.05, `physgun_teleportDistance` 0, damping caps 10000 |
 | Колесо мыши | меняет дистанцию, шаг ~ 50 u (харнесс) |
 | ПКМ при удержании | заморозка (motion disabled, остаётся где есть), снятие заморозки: `R` на объекте или релоад снимает все заморозки игрока |
 | Shift + мышь | вращение объекта вокруг осей вида, `E` снап к 45 градусам |
@@ -209,7 +209,7 @@ Construction: `remover`, `duplicator` (копирует энтити+конст�
 
 Каждый инструмент: `LeftClick`, `RightClick`, `Reload` с трассой 4 096 u? (у тулгана дальность трассы `tool_trace` - харнесс), ghost-энтити (полупрозрачный предпросмотр), контекстные настройки (`ControlPanel`), лимиты `sbox_max<thing>`.
 
-Лимиты sandbox по умолчанию (GMod `cfg/sandbox.cfg`... харнесс выписывает актуальные): `sbox_maxprops`, `sbox_maxragdolls`, `sbox_maxnpcs`, `sbox_maxvehicles`, `sbox_maxballoons`, `sbox_maxeffects`, `sbox_maxdynamite`, `sbox_maxlamps`, `sbox_maxthrusters`, `sbox_maxwheels`, `sbox_maxhoverballs`, `sbox_maxbuttons`, `sbox_maxemitters`, `sbox_maxlights`, `sbox_maxcameras`, `sbox_maxsents`, `sbox_godmode`, `sbox_noclip`, `sbox_playershurtplayers`, `sbox_weapons`, `sbox_bonemanip_*`. HUD показывает счётчики как GMod (верхний левый угол).
+Лимиты sandbox по умолчанию (измерено харнессом `fmt_convars_defaults`, см. `docs/spec/convars-defaults.md`: props 200, ragdolls 10, npcs 10, vehicles 4, balloons 100, effects 200, dynamite 10, lamps 3, thrusters 50, wheels 50, hoverballs 50, buttons 50, emitters 20, lights 5, cameras 10, sents 100): `sbox_maxprops`, `sbox_maxragdolls`, `sbox_maxnpcs`, `sbox_maxvehicles`, `sbox_maxballoons`, `sbox_maxeffects`, `sbox_maxdynamite`, `sbox_maxlamps`, `sbox_maxthrusters`, `sbox_maxwheels`, `sbox_maxhoverballs`, `sbox_maxbuttons`, `sbox_maxemitters`, `sbox_maxlights`, `sbox_maxcameras`, `sbox_maxsents`, `sbox_godmode`, `sbox_noclip`, `sbox_playershurtplayers`, `sbox_weapons`, `sbox_bonemanip_*`. HUD показывает счётчики как GMod (верхний левый угол).
 
 ### 3.5 Спавн-меню и контекстное меню
 
@@ -224,7 +224,7 @@ Construction: `remover`, `duplicator` (копирует энтити+конст�
 
 `weapon_crowbar`, `weapon_stunstick`, `weapon_pistol`, `weapon_357`, `weapon_smg1` (+ гранаты alt), `weapon_ar2` (+ шар), `weapon_shotgun`, `weapon_crossbow`, `weapon_frag`, `weapon_rpg` (лазерное наведение), `weapon_slam`, `weapon_bugbait`, `weapon_physcannon` (гравипушка, отдельная механика: punt/pull, дальность 250/`physcannon_tracelength` 250, `physcannon_pullforce` 4000, `physcannon_maxforce` 1500, `physcannon_cone` 0.97, `physcannon_ball_cone` 0.997, мегапушка нет), `weapon_physgun`, `gmod_tool`, `gmod_camera`, `weapon_medkit`, `weapon_fists`, `weapon_flechettegun`? (нет, это не база GMod; есть `manhack_welder` нет). Для каждого: скрипт `scripts/weapon_*.txt` (clip, ammo type, viewmodel, worldmodel, HUD иконки из шрифтов `HalfLife2.ttf`), spread, damage (`sk_plr_dmg_*` дефолты), fire rate, анимации viewmodel (из `.mdl`, последовательности `idle`, `fire`, `reload`, `draw`), звуки из `game_sounds_weapons.txt`. Урон по хитбоксам с множителями (`sk_player_head` 3.0, chest 1.0, stomach 1.0, arm 1.0, leg 1.0 - харнесс).
 
-Боеприпасы: таблица `ammo_*` типов с `max carry` (Pistol 150, SMG1 225, AR2 60, Buckshot 30, 357 12, XBowBolt 10, RPG_Round 3, Grenade 5, slam 5, AR2AltFire 3, SMG1_Grenade 3 - сверить).
+Боеприпасы (измерено): Pistol 150, SMG1 225, AR2 60, Buckshot 30, 357 12, XBowBolt 10, RPG_Round 3, Grenade 5, AR2AltFire 3, SMG1_Grenade 3. Урон за попадание: pistol 5, smg1 4, ar2 8, 357 40, дробь 8/дробина, crossbow 100, crowbar 10, stunstick 10, rpg 100, grenade 150, smg1_grenade 100.
 
 ### 3.7 NPC HL2 и транспорт (длинный хвост)
 

@@ -1,0 +1,2 @@
+{ "name": "fmt_vpk_index_garrysmod", "kind": "file_find", "search": "GAME",
+  "globs": ["models/weapons/*.mdl", "materials/models/weapons/**/*.vmt", "settings/spawnlist/*.txt", "scripts/*.txt", "maps/*.bsp"] }
