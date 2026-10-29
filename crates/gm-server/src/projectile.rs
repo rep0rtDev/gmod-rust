@@ -30,11 +30,11 @@ const BOLT_GRAVITY: f32 = 0.05;
 const BOLT_REFLECT: f32 = 0.75;
 /// The bolt's collision box half-extent: it stops that far before the surface (6.4 u short on
 /// the grazing ramp of `fire_crossbow_proj`).
-const BOLT_HALF: f32 = 1.0;
+pub const BOLT_HALF: f32 = 1.0;
 const BALL_SPEED: f32 = 1000.0;
 /// The ball is a 10 u sphere: its centre reflects 10 u (along the normal) before the surface
 /// (45 u early on the grazing ramp of `fire_ar2_proj`).
-const BALL_RADIUS: f32 = 10.0;
+pub const BALL_RADIUS: f32 = 10.0;
 const BALL_STOP_TICKS: u32 = 267;
 const BALL_LIFE_TICKS: u32 = 300;
 /// Grenade (`npc_grenade_frag`): a VPHYSICS body of `GRENADE_MODEL` thrown from 8 u right of

@@ -1188,6 +1188,10 @@ fn run_hit(scn: &Scenario) -> Result<Value> {
     let pose = gm_server::weapons::sequence_pose(&anm_data, &anm, &ani, "idle_melee")
         .context("idle_melee pose")?;
     server.hit_model = Some(gm_server::weapons::HitModel::posed(&mdl_data, &mdl, &pose));
+    server.register_model(
+        gm_server::projectile::GRENADE_MODEL,
+        model_info(&mount, gm_server::projectile::GRENADE_MODEL)?,
+    );
     let class = scn.weapon.clone().context("hit scenario needs `weapon`")?;
     let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
     let tpos = start + Vec3::new(0.0, scn.dist.unwrap_or(200.0), 0.0);
@@ -1218,7 +1222,8 @@ fn run_hit(scn: &Scenario) -> Result<Value> {
     // the probe spawns at tick -10 and selects the weapon at tick -8
     for pre in -10i32..0 {
         if pre == -8 {
-            server.select_weapon(shooter, &class);
+            // the same spawn-then-select setup as `fire_*`: a fresh give of the weapon
+            server.give_weapon(shooter, &class);
         }
         cmds.insert(shooter, idle(aim));
         cmds.insert(target, idle(back));
@@ -1235,12 +1240,24 @@ fn run_hit(scn: &Scenario) -> Result<Value> {
             cmds.insert(target, idle(back));
             let before = server.hits.len();
             server.tick(&cmds);
-            for h in &server.hits[before..] {
-                hits.push(json!({ "t": t, "damage": h.damage, "hitgroup": h.hitgroup, "pos": [h.pos.x, h.pos.y, h.pos.z], "ammo": h.ammo }));
+            for h in server.hits[before..].iter().filter(|h| h.target == target) {
+                hits.push(json!({ "t": t, "damage": h.damage, "hitgroup": h.hitgroup, "type": h.dmg_type, "inflictor": h.inflictor,
+                    "pos": [h.pos.x, h.pos.y, h.pos.z], "ammo": h.ammo }));
             }
             let p = &server.players[&target];
             let sh = &server.players[&shooter];
-            ticks.push(json!({ "t": t, "health": p.health, "armor": p.armor, "alive": p.alive, "shots": sh.inventory.shots }));
+            let (tp, tv) = (p.state.origin, p.state.velocity + p.state.impulse);
+            let mut row = json!({ "t": t, "health": p.health, "armor": p.armor, "alive": p.alive, "shots": sh.inventory.shots,
+                "target_pos": [tp.x, tp.y, tp.z], "target_vel": [tv.x, tv.y, tv.z] });
+            let projs: Vec<Value> = server
+                .projectiles
+                .iter()
+                .map(|pr| json!({ "class": pr.kind.class(), "pos": [pr.origin.x, pr.origin.y, pr.origin.z], "vel": [pr.velocity.x, pr.velocity.y, pr.velocity.z] }))
+                .collect();
+            if !projs.is_empty() {
+                row["projectiles"] = json!(projs);
+            }
+            ticks.push(row);
             t += 1;
         }
     }
@@ -1255,11 +1272,30 @@ fn run_hit(scn: &Scenario) -> Result<Value> {
 fn compare_hit(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     // the game hits the model's hit boxes, a few units inside the hull we hit
     let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(12.0) as f32;
+    // explosion damage is a float of the distance; bullets are whole
+    let dmg_tol = tol.get("damage").and_then(|v| v.as_float()).unwrap_or(0.01);
+    // knockback of the target while alive (u/s)
+    let vel_tol = tol.get("vel").and_then(|v| v.as_float()).unwrap_or(1.0) as f32;
     let random = tol.get("random").and_then(|v| v.as_bool()).unwrap_or(false);
+    let v3 = |v: &Value| -> Option<[f32; 3]> {
+        let a = v.as_array()?;
+        Some([
+            a.first()?.as_f64()? as f32,
+            a.get(1)?.as_f64()? as f32,
+            a.get(2)?.as_f64()? as f32,
+        ])
+    };
     let empty = Vec::new();
     let tr = theirs["ticks"].as_array().unwrap_or(&empty);
     let or = ours["ticks"].as_array().unwrap_or(&empty);
-    let th = theirs["hits"].as_array().unwrap_or(&empty);
+    // the game logs the kill of a dissolved player as a second, empty damage event
+    let th: Vec<Value> = theirs["hits"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter(|h| h["damage"].as_f64().unwrap_or(1.0) > 0.0)
+        .cloned()
+        .collect();
     let ts = theirs["scales"].as_array().unwrap_or(&empty);
     let oh = ours["hits"].as_array().unwrap_or(&empty);
     let mut ok = tr.len() == or.len();
@@ -1274,22 +1310,34 @@ fn compare_hit(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             if first_only && a["t"].as_u64().unwrap_or(0) > first_hit_t {
                 break;
             }
+            let mut vel_err = 0.0f32;
+            if a["alive"].as_bool() == Some(true) {
+                if let (Some(va), Some(vb)) = (v3(&a["target_vel"]), v3(&b["target_vel"])) {
+                    vel_err = ((va[0] - vb[0]).powi(2)
+                        + (va[1] - vb[1]).powi(2)
+                        + (va[2] - vb[2]).powi(2))
+                    .sqrt();
+                }
+            }
             if a["health"] != b["health"]
                 || a["armor"] != b["armor"]
                 || a["alive"] != b["alive"]
                 || a["shots"] != b["shots"]
+                || vel_err > vel_tol
             {
                 diffs += 1;
                 if diffs <= 4 {
                     println!(
-                        "  tick {}: game hp {} ar {} shots {} | ours hp {} ar {} shots {}",
+                        "  tick {}: game hp {} ar {} shots {} vel {} | ours hp {} ar {} shots {} vel {}",
                         a["t"],
                         a["health"],
                         a["armor"],
                         a["shots"],
+                        a["target_vel"],
                         b["health"],
                         b["armor"],
-                        b["shots"]
+                        b["shots"],
+                        b["target_vel"]
                     );
                 }
                 ok = false;
@@ -1304,14 +1352,6 @@ fn compare_hit(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         println!("  hits: game {} ours {}", th.len(), oh.len());
         ok = false;
     }
-    let v3 = |v: &Value| -> Option<[f32; 3]> {
-        let a = v.as_array()?;
-        Some([
-            a.first()?.as_f64()? as f32,
-            a.get(1)?.as_f64()? as f32,
-            a.get(2)?.as_f64()? as f32,
-        ])
-    };
     let mut max_pos = 0.0f32;
     for (i, (a, b)) in th.iter().zip(oh).enumerate() {
         if first_only && i > 0 {
@@ -1323,8 +1363,20 @@ fn compare_hit(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             .unwrap_or(Value::Null);
         let mut bad = a["t"] != b["t"];
         if !random {
-            bad |= a["damage"].as_f64() != b["damage"].as_f64();
+            let (da, db) = (
+                a["damage"].as_f64().unwrap_or(0.0),
+                b["damage"].as_f64().unwrap_or(0.0),
+            );
+            bad |= (da - db).abs() > dmg_tol;
+            // bullets: the hit group the game scaled; explosions and projectiles have none
             bad |= group != b["hitgroup"];
+            if let (Some(ta), Some(tb)) = (a["type"].as_u64(), b["type"].as_u64()) {
+                bad |= ta != tb;
+            }
+            // projectile hits name the entity; bullets come from the weapon
+            if let (Some(ia), Some(ib)) = (a["inflictor"].as_str(), b["inflictor"].as_str()) {
+                bad |= ib != "player" && ia != ib;
+            }
             if let (Some(pa), Some(pb)) = (v3(&a["pos"]), v3(&b["pos"])) {
                 let d =
                     ((pa[0] - pb[0]).powi(2) + (pa[1] - pb[1]).powi(2) + (pa[2] - pb[2]).powi(2))

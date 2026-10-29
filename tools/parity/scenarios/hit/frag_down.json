@@ -1,0 +1,29 @@
+{
+ "kind": "hit",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 89,
+ "dist": 100,
+ "target_health": 1000,
+ "name": "hit_frag_down",
+ "weapon": "weapon_frag",
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 260,
+   "buttons": 0
+  }
+ ]
+}

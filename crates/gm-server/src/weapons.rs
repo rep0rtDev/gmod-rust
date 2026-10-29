@@ -40,6 +40,18 @@ pub enum Launch {
     Ball,
 }
 
+impl Launch {
+    /// The game's entity class.
+    pub fn class(self) -> &'static str {
+        match self {
+            Launch::Rocket => "rpg_missile",
+            Launch::Bolt => "crossbow_bolt",
+            Launch::Grenade => "npc_grenade_frag",
+            Launch::Ball => "prop_combine_ball",
+        }
+    }
+}
+
 /// How a weapon fires (recordings `fire_*`): every timer is relative to the server tick the
 /// usercmd belongs to, so a value set to `x` reads `x - 0.015` in the tick's recording.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -829,6 +841,17 @@ pub fn bullet_damage(ammo: &str) -> Option<f32> {
 
 pub const DMG_BULLET: u32 = 2;
 pub const DMG_BUCKSHOT: u32 = 1 << 29;
+pub const DMG_ALWAYSGIB: u32 = 1 << 13;
+
+/// Damage type of a bullet by ammo (`hit_*`): pistol and SMG1 4098, .357 8194, buckshot
+/// 536875010.
+pub fn bullet_dmg_type(ammo: &str) -> u32 {
+    match ammo {
+        "357" => DMG_BULLET | DMG_ALWAYSGIB,
+        "Buckshot" => DMG_BULLET | DMG_NEVERGIB | DMG_BUCKSHOT,
+        _ => DMG_BULLET | DMG_NEVERGIB,
+    }
+}
 /// Hit groups as the game numbers them.
 pub const HITGROUP_GENERIC: u8 = 0;
 pub const HITGROUP_HEAD: u8 = 1;
@@ -864,6 +887,40 @@ pub fn hitgroup_at(rel_z: f32) -> Option<u8> {
 /// the aim: 24 damage -> 100.4 u/s, 12 -> 50.1, 150 -> 636 (recordings `hit_*`; linear in the
 /// damage, the .357 and shotgun deviate by +1.5 / -2 %, open). The push shows in the same tick.
 pub const KNOCKBACK_PER_DAMAGE: f32 = 4.18;
+
+pub const DMG_CRUSH: u32 = 1;
+pub const DMG_BLAST: u32 = 64;
+pub const DMG_NEVERGIB: u32 = 1 << 12;
+pub const DMG_DISSOLVE: u32 = 1 << 26;
+
+/// Explosions (recordings `hit_rpg_floor*`, `hit_rpg_armor`, `hit_frag_down`,
+/// `hit_smg1_grenade`): base damage and radius. The damage falls off linearly with the
+/// distance from the explosion to the first point of the target's hull along the ray to the
+/// target's eye (0 when the explosion is inside the hull: a rocket that hit the player deals
+/// the full 150): rocket 150 over 300 u (111.9 at 76.2 u, 86.5 at 127.1, 19.3 at 261.4), frag
+/// grenade 150 over 250 (49.3 at 168.0), SMG1 grenade 100 over 250 (98.2 at 4.6).
+pub fn explosion(kind: Launch) -> Option<(f32, f32)> {
+    match kind {
+        Launch::Rocket => Some((150.0, 300.0)),
+        Launch::Grenade => Some((150.0, 250.0)),
+        _ => None,
+    }
+}
+
+/// A crossbow bolt hitting a player: 100 damage as DMG_BULLET | DMG_NEVERGIB, the bolt removed
+/// where it stopped (`hit_crossbow`).
+pub const BOLT_DAMAGE: f32 = 100.0;
+/// A combine ball hitting a player kills it (damage equal to its health) as
+/// DMG_DISSOLVE | DMG_CRUSH and flies on (`hit_ball`: 1000 against 1000 hp).
+pub const BALL_DMG_TYPE: u32 = DMG_DISSOLVE | DMG_CRUSH;
+/// Knockback of explosions and projectiles: `PUSH_PER_DAMAGE` u/s per point of damage (before
+/// armour) from 10 u below the inflictor's position toward the target's centre (origin + 36),
+/// vertical part capped at `PUSH_MAX_Z` (measured 250 twice, 134 and 111 uncapped).
+pub const PUSH_PER_DAMAGE: f32 = 5.0;
+pub const PUSH_MAX_Z: f32 = 250.0;
+pub const PUSH_INFLICTOR_DROP: f32 = 10.0;
+pub const PLAYER_CENTER_Z: f32 = 36.0;
+pub const PLAYER_EYE_Z: f32 = 64.0;
 
 /// A player model's hit boxes in its bind pose, each as a world transform and an AABB in box
 /// space; the model faces -y in that pose (kleiner: toes and face toward -y), so a player with

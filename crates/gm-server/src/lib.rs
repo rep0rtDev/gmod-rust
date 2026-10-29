@@ -86,8 +86,11 @@ pub struct Player {
     pub frags: u32,
     /// The ragdoll of the last death, while the player is dead.
     pub ragdoll: Option<Ragdoll>,
-    /// Tick of the last death: the player respawns `RESPAWN_TICKS` later.
+    /// Tick of the last death: the player respawns `respawn_ticks` later.
     death_tick: Option<u64>,
+    /// `RESPAWN_TICKS` for a death in the command phase (bullets, falls), one less for a death
+    /// in the entity phase (projectiles, explosions; measured `hit_ball`: 134).
+    respawn_ticks: u64,
     /// Fractional damage carried to the next hit (health is whole); measured to survive
     /// `SetHealth` and respawns, so it is only ever reset with the player.
     damage_acc: f32,
@@ -134,6 +137,7 @@ impl Player {
             frags: 0,
             ragdoll: None,
             death_tick: None,
+            respawn_ticks: RESPAWN_TICKS,
             damage_acc: 0.0,
             prev_vz: 0.0,
             prev_on_ground: true,
@@ -209,9 +213,37 @@ pub struct Hit {
     pub attacker: u32,
     pub target: u32,
     pub damage: f32,
-    pub hitgroup: u8,
+    pub dmg_type: u32,
+    /// Hit group for bullets; explosions and projectiles have none.
+    pub hitgroup: Option<u8>,
     pub pos: Vec3,
     pub ammo: &'static str,
+    /// Entity class the damage came from (`rpg_missile`, `crossbow_bolt`, ...).
+    pub inflictor: &'static str,
+}
+
+/// Distance along `dir` (unit) from `start` to the box `lo..hi`, 0 when `start` is inside,
+/// None when the ray misses or the box is behind `start`.
+fn ray_box_entry(start: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
+    let (mut t0, mut t1) = (0.0f32, f32::MAX);
+    for a in 0..3 {
+        if dir[a].abs() < 1e-9 {
+            if start[a] < lo[a] || start[a] > hi[a] {
+                return None;
+            }
+            continue;
+        }
+        let (mut ta, mut tb) = ((lo[a] - start[a]) / dir[a], (hi[a] - start[a]) / dir[a]);
+        if ta > tb {
+            std::mem::swap(&mut ta, &mut tb);
+        }
+        t0 = t0.max(ta);
+        t1 = t1.min(tb);
+        if t0 > t1 {
+            return None;
+        }
+    }
+    Some(t0)
 }
 
 pub struct Server<'w> {
@@ -298,6 +330,11 @@ impl<'w> Server<'w> {
     /// `Entity:TakeDamage` on a player: armour share, whole-point health with the fraction
     /// carried over, death at zero. Returns the health damage applied.
     pub fn damage_player(&mut self, id: u32, amount: f32, dmg_type: u32) -> f32 {
+        self.hurt(id, amount, dmg_type, RESPAWN_TICKS)
+    }
+
+    /// `damage_player` with the respawn delay of the phase the death happens in.
+    fn hurt(&mut self, id: u32, amount: f32, dmg_type: u32, respawn_ticks: u64) -> f32 {
         let tick = self.tick_count;
         let Some(p) = self.players.get_mut(&id) else {
             return 0.0;
@@ -340,6 +377,7 @@ impl<'w> Server<'w> {
             } else {
                 p.health = 0;
                 p.death_tick = Some(tick);
+                p.respawn_ticks = respawn_ticks;
             }
         }
         to_health
@@ -422,6 +460,20 @@ impl<'w> Server<'w> {
         true
     }
 
+    /// A fresh `Give` of a weapon the player already carries right after a spawn (the probe's
+    /// `fire_*`/`hit_*` setup): selected with the give timers and reserve (`Inventory::give`).
+    pub fn give_weapon(&mut self, id: u32, class: &str) -> bool {
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        if !p.alive || !p.weapons.iter().any(|w| w == class) {
+            return false;
+        }
+        p.active_weapon = class.to_string();
+        p.inventory.give(class);
+        true
+    }
+
     /// A trigger pull: the bullet (all pellets along the aim, no spread yet) against the other
     /// live players' hulls and the world; the hit group from the height on the target
     /// (`weapons::hitgroup_at`), the ammo's multiplayer damage scaled by it, applied as
@@ -495,19 +547,17 @@ impl<'w> Server<'w> {
             return;
         }
         let damage = base * weapons::hitgroup_scale(group) * shot.pellets as f32;
-        let dmg_type = if shot.pellets > 1 {
-            weapons::DMG_BULLET | weapons::DMG_BUCKSHOT
-        } else {
-            weapons::DMG_BULLET
-        };
+        let dmg_type = weapons::bullet_dmg_type(shot.ammo);
         self.hits.push(Hit {
             tick: self.tick_count,
             attacker,
             target,
             damage,
-            hitgroup: group,
+            dmg_type,
+            hitgroup: Some(group),
             pos,
             ammo: shot.ammo,
+            inflictor: "player",
         });
         let push = Vec3::new(forward.x, forward.y, 0.0).normalize_or_zero()
             * (weapons::KNOCKBACK_PER_DAMAGE * damage);
@@ -517,9 +567,144 @@ impl<'w> Server<'w> {
         self.damage_player(target, damage, dmg_type);
     }
 
+    /// Knockback of a hit from `from` (the inflictor's position): see `weapons::PUSH_PER_DAMAGE`.
+    fn push_player(&mut self, id: u32, from: Vec3, damage: f32) {
+        let Some(t) = self.players.get_mut(&id) else {
+            return;
+        };
+        let center = t.state.origin + Vec3::new(0.0, 0.0, weapons::PLAYER_CENTER_Z);
+        let dir = (center - (from - Vec3::new(0.0, 0.0, weapons::PUSH_INFLICTOR_DROP)))
+            .normalize_or_zero();
+        let mut push = dir * (weapons::PUSH_PER_DAMAGE * damage);
+        push.z = push.z.min(weapons::PUSH_MAX_Z);
+        t.state.velocity += push;
+        if t.state.on_ground {
+            t.state.ground_push = true;
+        }
+    }
+
+    /// Radius damage of an explosion at `at` (the inflictor's position; the blast itself is
+    /// 1 u above it): `weapons::explosion` for the law. A player whose eye the blast cannot
+    /// see takes nothing.
+    fn explode(&mut self, at: Vec3, attacker: u32, base: f32, radius: f32, class: &'static str) {
+        let src = at + Vec3::new(0.0, 0.0, 1.0);
+        let ids: Vec<u32> = self.players.keys().copied().collect();
+        for id in ids {
+            let p = &self.players[&id];
+            if !p.alive {
+                continue;
+            }
+            let (mins, maxs) = self.mover.hull(p.state.ducked);
+            let (lo, hi) = (p.state.origin + mins, p.state.origin + maxs);
+            let eye = p.state.origin + Vec3::new(0.0, 0.0, weapons::PLAYER_EYE_Z);
+            let to = eye - src;
+            let len = to.length();
+            if len < 1e-3 {
+                continue;
+            }
+            let dir = to / len;
+            let Some(dist) = ray_box_entry(src, dir, lo, hi) else {
+                continue;
+            };
+            if dist >= radius {
+                continue;
+            }
+            let world = self
+                .collision
+                .trace_ray(src, eye, gm_collision::MASK_PLAYERSOLID);
+            if world.fraction * len < dist {
+                continue;
+            }
+            let damage = base * (1.0 - dist / radius);
+            self.hits.push(Hit {
+                tick: self.tick_count,
+                attacker,
+                target: id,
+                damage,
+                dmg_type: weapons::DMG_BLAST,
+                hitgroup: None,
+                pos: src,
+                ammo: "",
+                inflictor: class,
+            });
+            self.push_player(id, at, damage);
+            self.hurt(id, damage, weapons::DMG_BLAST, RESPAWN_TICKS - 1);
+        }
+    }
+
+    /// The first player (other than `owner`, alive) whose hit boxes the segment crosses: what a
+    /// rocket collides with and the laser dot lands on (`hit_rpg_direct`: the game's rocket
+    /// passed 2 u under the hull's top, over the head box, without touching). Without a hit
+    /// model the hull stands in.
+    fn hitbox_touch(&self, owner: u32, start: Vec3, end: Vec3) -> Option<(u32, Vec3)> {
+        let Some(model) = &self.hit_model else {
+            return self.projectile_touch(owner, start, end, 0.0, true);
+        };
+        let mut best: Option<(u32, f32, Vec3)> = None;
+        for (id, p) in &self.players {
+            if *id == owner || !p.alive {
+                continue;
+            }
+            if let Some((frac, _, pos)) = model.trace(p.state.origin, p.view_angles.y, start, end) {
+                if best.is_none_or(|b| frac < b.1) {
+                    best = Some((*id, frac, pos));
+                }
+            }
+        }
+        best.map(|(id, _, pos)| (id, pos))
+    }
+
+    /// The player hull (other than `owner`, alive) a projectile touches: `end` inside a hull
+    /// grown by `grow` (rockets and balls are resolved where they end the tick), or, with
+    /// `sweep`, the first hull on the way from `start` (bolts stop at the hull).
+    fn projectile_touch(
+        &self,
+        owner: u32,
+        start: Vec3,
+        end: Vec3,
+        grow: f32,
+        sweep: bool,
+    ) -> Option<(u32, Vec3)> {
+        let d = end - start;
+        let len = d.length();
+        let mut best: Option<(u32, f32)> = None;
+        for (id, p) in &self.players {
+            if *id == owner || !p.alive {
+                continue;
+            }
+            let (mins, maxs) = self.mover.hull(p.state.ducked);
+            let lo = p.state.origin + mins - Vec3::splat(grow);
+            let hi = p.state.origin + maxs + Vec3::splat(grow);
+            let t = if sweep && len > 1e-6 {
+                match ray_box_entry(start, d / len, lo, hi) {
+                    Some(t) if t <= len => t,
+                    _ => continue,
+                }
+            } else if end.cmpge(lo).all() && end.cmple(hi).all() {
+                len
+            } else {
+                continue;
+            };
+            if best.is_none_or(|b| t < b.1) {
+                best = Some((*id, t));
+            }
+        }
+        best.map(|(id, t)| {
+            (
+                id,
+                if len > 1e-6 {
+                    start + d * (t / len)
+                } else {
+                    end
+                },
+            )
+        })
+    }
+
     /// Existing projectiles fly one tick, then this tick's launches spawn (their first tick is
-    /// the launch tick, recorded as such); a rocket's death reloads its owner's RPG. Explosion
-    /// and bolt damage are not measured yet and not applied.
+    /// the launch tick, recorded as such); a rocket's death reloads its owner's RPG. Rockets and
+    /// grenades explode where they die (`explode`), a bolt or rocket that reaches a player hits
+    /// it, a ball kills whoever it passes through (`weapons`).
     fn tick_projectiles(&mut self, launches: Vec<(u32, weapons::Launch, Vec3, Vec3)>) {
         if launches.iter().any(|l| l.1 == weapons::Launch::Grenade)
             && !self.models.contains_key(projectile::GRENADE_MODEL)
@@ -538,28 +723,117 @@ impl<'w> Server<'w> {
             grenade: self.models.get(projectile::GRENADE_MODEL),
             rng: &mut self.spawn_rng,
         };
+        let mut steps = Vec::with_capacity(self.projectiles.len());
+        for pr in &mut self.projectiles {
+            let prev = pr.origin;
+            steps.push((prev, pr.step(world, Some(&mut phys))));
+        }
+        // (kind, owner, where it died) for every projectile removed this tick
         let mut died = Vec::new();
-        self.projectiles
-            .retain_mut(|pr| match pr.step(world, Some(&mut phys)) {
-                projectile::Event::Removed(_) => {
-                    if pr.kind == weapons::Launch::Rocket {
-                        died.push(pr.owner);
-                    }
-                    false
+        let mut keep = Vec::with_capacity(self.projectiles.len());
+        for (i, (prev, ev)) in steps.into_iter().enumerate() {
+            let pr = &self.projectiles[i];
+            match ev {
+                projectile::Event::Removed(at) => {
+                    died.push((pr.kind, pr.owner, at));
+                    keep.push(false);
                 }
-                projectile::Event::None => true,
-            });
-        for owner in died {
-            if let Some(p) = self.players.get_mut(&owner) {
-                p.inventory.rocket_died();
+                projectile::Event::None => {
+                    let (kind, owner, end) = (pr.kind, pr.owner, pr.origin);
+                    let touch = match kind {
+                        weapons::Launch::Rocket => self.hitbox_touch(owner, prev, end),
+                        weapons::Launch::Bolt => {
+                            self.projectile_touch(owner, prev, end, projectile::BOLT_HALF, true)
+                        }
+                        weapons::Launch::Ball => {
+                            self.projectile_touch(owner, prev, end, projectile::BALL_RADIUS, false)
+                        }
+                        weapons::Launch::Grenade => None,
+                    };
+                    match (kind, touch) {
+                        (weapons::Launch::Rocket, Some((_, at))) => {
+                            died.push((kind, owner, at));
+                            keep.push(false);
+                        }
+                        (weapons::Launch::Bolt, Some((target, at))) => {
+                            self.projectiles[i].origin = at;
+                            self.hits.push(Hit {
+                                tick: self.tick_count,
+                                attacker: owner,
+                                target,
+                                damage: weapons::BOLT_DAMAGE,
+                                dmg_type: weapons::DMG_BULLET | weapons::DMG_NEVERGIB,
+                                hitgroup: Some(0),
+                                pos: at,
+                                ammo: "",
+                                inflictor: "crossbow_bolt",
+                            });
+                            self.push_player(target, at, weapons::BOLT_DAMAGE);
+                            self.hurt(
+                                target,
+                                weapons::BOLT_DAMAGE,
+                                weapons::DMG_BULLET | weapons::DMG_NEVERGIB,
+                                RESPAWN_TICKS - 1,
+                            );
+                            keep.push(false);
+                        }
+                        (weapons::Launch::Ball, Some((target, _))) => {
+                            let t = &self.players[&target];
+                            let (mins, maxs) = self.mover.hull(t.state.ducked);
+                            let at = end.clamp(t.state.origin + mins, t.state.origin + maxs);
+                            let hp = t.health as f32;
+                            self.hits.push(Hit {
+                                tick: self.tick_count,
+                                attacker: owner,
+                                target,
+                                damage: hp,
+                                dmg_type: weapons::BALL_DMG_TYPE,
+                                hitgroup: None,
+                                pos: at,
+                                ammo: "",
+                                inflictor: "prop_combine_ball",
+                            });
+                            self.hurt(target, hp, weapons::BALL_DMG_TYPE, RESPAWN_TICKS - 1);
+                            keep.push(true);
+                        }
+                        _ => keep.push(true),
+                    }
+                }
             }
         }
+        let mut k = keep.into_iter();
+        self.projectiles.retain(|_| k.next().unwrap_or(true));
+        for (kind, owner, at) in died {
+            if kind == weapons::Launch::Rocket {
+                if let Some(p) = self.players.get_mut(&owner) {
+                    p.inventory.rocket_died();
+                }
+            }
+            if let Some((base, radius)) = weapons::explosion(kind) {
+                self.explode(at, owner, base, radius, kind.class());
+            }
+        }
+        let mut phys = projectile::Physics {
+            world: &mut self.physics,
+            grenade: self.models.get(projectile::GRENADE_MODEL),
+            rng: &mut self.spawn_rng,
+        };
+        let mut spawned = Vec::new();
         for (owner, kind, eye, angles) in launches {
             if let Some(pr) =
                 projectile::spawn(kind, owner, eye, angles.x, angles.y, world, Some(&mut phys))
             {
-                self.projectiles.push(pr);
+                spawned.push((eye, pr));
             }
+        }
+        for (eye, mut pr) in spawned {
+            if pr.kind == weapons::Launch::Rocket {
+                // the laser dot sits on a player standing in the aim before the wall
+                if let Some((_, at)) = self.hitbox_touch(pr.owner, eye, pr.target) {
+                    pr.target = at;
+                }
+            }
+            self.projectiles.push(pr);
         }
     }
 
@@ -953,7 +1227,7 @@ impl<'w> Server<'w> {
                     p.weapons.clear();
                     p.inventory.clear();
                 }
-                if tick >= d + RESPAWN_TICKS {
+                if tick >= d + p.respawn_ticks {
                     respawn.push(*id);
                 }
             }
@@ -991,7 +1265,6 @@ impl<'w> Server<'w> {
         for (attacker, eye, forward, shot) in shots {
             self.resolve_shot(attacker, eye, forward, shot);
         }
-        self.tick_projectiles(launches);
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -1008,6 +1281,9 @@ impl<'w> Server<'w> {
                 p.prev_on_ground = !was_airborne;
             }
         }
+        // entities after the players' moves: a projectile's hit or blast this tick pushes and
+        // hurts a target that has already moved (its velocity shows the push raw)
+        self.tick_projectiles(launches);
         let landed: Vec<(u32, f32)> = self
             .players
             .iter()

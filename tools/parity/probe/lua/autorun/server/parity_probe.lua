@@ -982,6 +982,14 @@ SCENARIOS.hit = function(scn, done)
 	local tick = -10
 	local ticks, hits, scales = {}, {}, {}
 	local shotCount = 0
+	local PROJ = { rpg_missile = true, crossbow_bolt = true, npc_grenade_frag = true, prop_combine_ball = true, grenade_ar2 = true, env_laserdot = true }
+	local removed = {}
+	hook.Add("EntityRemoved", "parity_hit", function(ent)
+		if PROJ[ent:GetClass()] and tick >= 0 then
+			local p = ent:GetPos()
+			removed[#removed + 1] = { t = tick, class = ent:GetClass(), id = ent:EntIndex(), pos = { p.x, p.y, p.z } }
+		end
+	end)
 	local function segAt(t)
 		local acc = 0
 		for _, sg in ipairs(segs) do
@@ -1000,10 +1008,13 @@ SCENARIOS.hit = function(scn, done)
 	hook.Add("EntityTakeDamage", "parity_hit", function(ent, dmg)
 		if ent == target and tick >= 0 then
 			local inf, att = dmg:GetInflictor(), dmg:GetAttacker()
-			local pos = dmg:GetDamagePosition()
+			local pos, f = dmg:GetDamagePosition(), dmg:GetDamageForce()
+			local ipos = IsValid(inf) and inf:GetPos() or Vector(0, 0, 0)
+			local tp = target:GetPos()
 			hits[#hits + 1] = { t = tick, damage = dmg:GetDamage(), base = dmg:GetBaseDamage(), type = dmg:GetDamageType(),
 				inflictor = IsValid(inf) and inf:GetClass() or "", attacker = IsValid(att) and att:GetClass() or "",
-				ammo = dmg:GetAmmoType(), pos = { pos.x, pos.y, pos.z }, force = dmg:GetDamageForce():Length(),
+				ammo = dmg:GetAmmoType(), pos = { pos.x, pos.y, pos.z }, force = f:Length(), force_vec = { f.x, f.y, f.z },
+				inflictor_pos = { ipos.x, ipos.y, ipos.z }, target_pos = { tp.x, tp.y, tp.z },
 				health_before = target:Health(), armor_before = target:Armor(), shots = shotCount }
 		end
 	end)
@@ -1032,16 +1043,30 @@ SCENARIOS.hit = function(scn, done)
 			target:SetEyeAngles(Angle(0, -90, 0))
 			if scn.target_health then target:SetHealth(scn.target_health) end
 			if scn.target_armor then target:SetArmor(scn.target_armor) end
+			if scn.ammo then for k, v in pairs(scn.ammo) do bot:GiveAmmo(v, k, true) end end
 		end
 		if tick == -8 then bot:SelectWeapon(scn.weapon) end
 		if tick >= 0 then
-			local p = target:GetPos()
-			ticks[#ticks + 1] = { t = tick, health = target:Health(), armor = target:Armor(), alive = target:Alive(), shots = shotCount,
-				target_pos = { p.x, p.y, p.z } }
+			local p, tv = target:GetPos(), target:GetVelocity()
+			local row = { t = tick, health = target:Health(), armor = target:Armor(), alive = target:Alive(), shots = shotCount,
+				target_pos = { p.x, p.y, p.z }, target_vel = { tv.x, tv.y, tv.z } }
+			local projs = {}
+			for cls in pairs(PROJ) do
+				for _, e in ipairs(ents.FindByClass(cls)) do
+					local pp, a = e:GetPos(), e:GetAngles()
+					local v = e:GetVelocity()
+					local ph = e:GetPhysicsObject()
+					if IsValid(ph) then v = ph:GetVelocity() end
+					projs[#projs + 1] = { class = cls, id = e:EntIndex(), pos = { pp.x, pp.y, pp.z }, vel = { v.x, v.y, v.z }, ang = { a.p, a.y, a.r },
+						movetype = e:GetMoveType(), owner = IsValid(e:GetOwner()) and e:GetOwner():EntIndex() or -1 }
+				end
+			end
+			if #projs > 0 then row.projectiles = projs end
+			ticks[#ticks + 1] = row
 		end
 		tick = tick + 1
 		if tick >= total then
-			for _, h in ipairs({ "Tick", "StartCommand", "EntityFireBullets", "EntityTakeDamage", "ScalePlayerDamage" }) do hook.Remove(h, "parity_hit") end
+			for _, h in ipairs({ "Tick", "StartCommand", "EntityFireBullets", "EntityTakeDamage", "ScalePlayerDamage", "EntityRemoved" }) do hook.Remove(h, "parity_hit") end
 			local cv = {}
 			for _, n in ipairs({ "sk_plr_dmg_pistol", "sk_plr_dmg_smg1", "sk_plr_dmg_ar2", "sk_plr_dmg_357", "sk_plr_dmg_buckshot", "sk_plr_dmg_crossbow",
 				"sk_plr_dmg_rpg_round", "sk_plr_dmg_grenade", "sk_plr_dmg_smg1_grenade", "sk_plr_dmg_crowbar", "sk_npc_dmg_pistol", "sk_npc_dmg_smg1",
@@ -1051,7 +1076,7 @@ SCENARIOS.hit = function(scn, done)
 				cv[n] = c and c:GetString() or nil
 			end
 			local eye = bot:GetShootPos()
-			done({ weapon = scn.weapon, dist = dist, ticks = ticks, hits = hits, scales = scales, shots = shotCount, convars = cv,
+			done({ weapon = scn.weapon, dist = dist, ticks = ticks, hits = hits, scales = scales, shots = shotCount, convars = cv, removed = removed,
 				eye = { eye.x, eye.y, eye.z }, target_mins = { target:OBBMins().x, target:OBBMins().y, target:OBBMins().z },
 				target_maxs = { target:OBBMaxs().x, target:OBBMaxs().y, target:OBBMaxs().z }, target_model = target:GetModel() })
 		end

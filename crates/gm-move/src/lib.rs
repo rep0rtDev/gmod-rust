@@ -105,6 +105,10 @@ pub struct PlayerState {
     /// knock-back shows in the hit tick undiminished, measured `hit_*`).
     pub impulse: Vec3,
     pub on_ground: bool,
+    /// Set with a knockback on a grounded player: measured (`hit_rpg_floor*`), a blast's
+    /// vertical push of up to 250 u/s shows in that tick's velocity but does not lift the
+    /// player; `categorize` keeps the ground once and clears it.
+    pub ground_push: bool,
     pub ground_normal: Vec3,
     pub ducked: bool,
     pub ducking: bool,
@@ -130,6 +134,7 @@ impl Default for PlayerState {
             origin: Vec3::ZERO,
             velocity: Vec3::ZERO,
             impulse: Vec3::ZERO,
+            ground_push: false,
             on_ground: false,
             ground_normal: Vec3::Z,
             ducked: false,
@@ -224,7 +229,9 @@ impl<'a> Mover<'a> {
             st.surface_friction = 1.0;
             st.velocity.z = 0.0;
             self.friction(st, dt);
-            st.velocity += st.impulse;
+            // measured (`hit_rpg_floor*`, `hit_crossbow`): a blast's vertical push shows in the
+            // velocity of the hit tick, but the player stays on the ground and loses it
+            st.velocity += Vec3::new(st.impulse.x, st.impulse.y, 0.0);
             st.impulse = Vec3::ZERO;
             self.walk_move(st, cmd, dt);
         } else {
@@ -260,10 +267,11 @@ impl<'a> Mover<'a> {
     pub fn categorize(&self, st: &mut PlayerState) {
         // only rising fast rules the ground out: a fall of 1089 u/s is grounded by the probe
         // 0.3 u above the floor (damage_fall_progressive)
-        if st.velocity.z > NON_JUMP_VELOCITY {
+        if st.velocity.z > NON_JUMP_VELOCITY && !st.ground_push {
             st.on_ground = false;
             return;
         }
+        st.ground_push = false;
         let t = self.trace(st, st.origin, st.origin - Vec3::Z * self.cfg.ground_probe);
         if !t.hit() || t.normal.z < self.cfg.ground_normal_z {
             st.on_ground = false;
