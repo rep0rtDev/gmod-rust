@@ -11,9 +11,9 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 | Formats: MDL/VVD/VTX | 0.5 | 0 | header v44 to v49, bones, body parts, meshes, textures, skins, VVD fixups, VTX strips to triangle lists; 60 props_c17 models verified. PHY pending |
 | Content mounting | 0.75 | 2 / 2 | GMod order without addons/workshop; client vs server difference documented |
 | Measured facts | | | `fmt_convars_defaults`, `fmt_info` recorded: see `docs/spec/convars-defaults.md` |
-| Parity harness tooling | 0.5 | | probe addon, `gm-parity stage / run-ours / compare`; server launch is manual |
+| Parity harness tooling | 0.5 | | probe addon with sync and async scenarios (bot driven movement), `gm-parity stage / run-ours / compare` with set-equal and trajectory modes; server launch is manual |
 | Research lab | 0.25 | | `prepare.py`, `symbols.py` (unstripped srcds: 64 973 symbols in server, 7 294 in vphysics) |
 | Render: world | 0.25 | 0 | `gm-render`: headless wgpu (lavapipe works), BSP faces and displacements with lightmap atlas and base textures, 3D skybox pass, patched material resolution, static props baked with skins and alpha test, `render_map` example writes a PNG. No bump/detail/blend, no fog, no 2D sky, no vertex lighting from vrad, no transparency sorting yet |
 | Collision | 0.25 | 0 | `gm-collision`: ray and box sweeps through the brush tree with DIST_EPSILON, point contents; all 33 gm_construct spawns land on their floor. No displacements, no models (PHY), no entity brushes yet |
-| Movement | 0.25 | 0 | `gm-move`: walk, run, friction, air control, jump, step, duck, noclip on the measured defaults; unit tests on a synthetic box world (apex 33.3 u, 44 tick airtime, 16 u step yes, 24 u no). Spec in docs/spec/movement.md. No ladders, water, moving ground, fall damage |
+| Movement | 0.75 | 7 / 7 | `gm-move`: walk, run, friction, air control, jump with forward boost, step, duck/unduck timing, noclip. `move_walk_flat`, `move_run_stop`, `move_jump_single`, `move_jump_forward`, `move_sprint_jump`, `move_strafe_jump`, `move_duck_walk` bit-exact against a real server bot (max position error 0.0000). No ladders, water, moving ground, fall damage, stairs or slopes recorded yet |
 | Everything else | 0 | 0 | see docs/design.md section 8 |

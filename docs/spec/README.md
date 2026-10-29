@@ -8,4 +8,4 @@ A statement without a harness is a hypothesis and is marked `(unconfirmed)`.
 |---|---|---|
 | [content-mounting.md](content-mounting.md) | `fmt_*` | draft |
 | [convars-defaults.md](convars-defaults.md) | `fmt_convars_defaults` | measured on build 260917 |
-| [movement.md](movement.md) | `move_*` | spec written, no traces yet |
+| [movement.md](movement.md) | `move_*` | 7 harnesses bit-exact on 2026.09.17 |

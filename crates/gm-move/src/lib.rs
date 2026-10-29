@@ -37,6 +37,7 @@ pub struct MoveConfig {
     pub run_speed: f32,
     pub crouched_walk_speed: f32,
     pub duck_time: f32,
+    pub unduck_time: f32,
     pub hull_half: f32,
     pub stand_height: f32,
     pub duck_height: f32,
@@ -63,6 +64,7 @@ impl Default for MoveConfig {
             run_speed: 400.0,
             crouched_walk_speed: 0.3,
             duck_time: 0.4,
+            unduck_time: 0.1,
             hull_half: 16.0,
             stand_height: 72.0,
             duck_height: 36.0,
@@ -98,9 +100,14 @@ pub struct PlayerState {
     pub ground_normal: Vec3,
     pub ducked: bool,
     pub ducking: bool,
-    /// Seconds remaining of the duck transition.
+    pub unducking: bool,
+    /// Seconds elapsed in the current duck or unduck transition.
     pub duck_timer: f32,
     pub jump_held: bool,
+    /// A jump happened last tick; its forward boost lands this tick.
+    pub boost_pending: bool,
+    /// Duck state at the start of the tick; the speed limit lags the duck by one tick.
+    pub ducked_at_tick_start: bool,
     pub move_type: MoveType,
 }
 
@@ -113,8 +120,11 @@ impl Default for PlayerState {
             ground_normal: Vec3::Z,
             ducked: false,
             ducking: false,
+            unducking: false,
             duck_timer: 0.0,
             jump_held: false,
+            boost_pending: false,
+            ducked_at_tick_start: false,
             move_type: MoveType::Walk,
         }
     }
@@ -131,6 +141,9 @@ fn angle_vectors(angles: Vec3) -> (Vec3, Vec3) {
     let right = Vec3::new(y.sin(), -y.cos(), 0.0);
     (forward, right)
 }
+
+/// Vertical speed above which the player is never considered on the ground.
+pub const NON_JUMP_VELOCITY: f32 = 140.0;
 
 /// Remove the component of `v` going into `normal`, with the standard overbounce of 1.
 pub fn clip_velocity(v: Vec3, normal: Vec3, overbounce: f32) -> Vec3 {
@@ -182,8 +195,13 @@ impl<'a> Mover<'a> {
             self.noclip(st, cmd, dt);
             return;
         }
+        st.ducked_at_tick_start = st.ducked;
         self.duck(st, cmd, dt);
         self.categorize(st);
+        if st.boost_pending {
+            st.boost_pending = false;
+            self.jump_boost(st, cmd);
+        }
         self.check_jump(st, cmd);
         if st.on_ground {
             st.velocity.z = 0.0;
@@ -216,7 +234,7 @@ impl<'a> Mover<'a> {
 
     /// Ground test: a short downward sweep; moving up fast leaves the ground.
     pub fn categorize(&self, st: &mut PlayerState) {
-        if st.velocity.z > 180.0 {
+        if st.velocity.z.abs() > NON_JUMP_VELOCITY {
             st.on_ground = false;
             return;
         }
@@ -226,9 +244,6 @@ impl<'a> Mover<'a> {
         } else {
             st.on_ground = true;
             st.ground_normal = t.normal;
-            if !t.start_solid && !t.all_solid {
-                st.origin = t.end;
-            }
         }
     }
 
@@ -249,13 +264,7 @@ impl<'a> Mover<'a> {
         right.z = 0.0;
         forward = forward.normalize_or_zero();
         right = right.normalize_or_zero();
-        let max_speed = if st.ducked || st.ducking {
-            self.cfg.walk_speed * self.cfg.crouched_walk_speed
-        } else if cmd.buttons & buttons::SPEED != 0 {
-            self.cfg.run_speed
-        } else {
-            self.cfg.walk_speed
-        };
+        let max_speed = self.max_speed(st, cmd);
         let fmove = cmd.forward_move.clamp(-max_speed, max_speed);
         let smove = cmd.side_move.clamp(-max_speed, max_speed);
         let wish = forward * fmove + right * smove;
@@ -293,6 +302,29 @@ impl<'a> Mover<'a> {
             return;
         }
         self.step_move(st, dt);
+        self.stay_on_ground(st);
+    }
+
+    /// Keep a walking player glued to the floor: up 2, then down a step, and take the
+    /// floor hit if it moved us by more than half the coordinate resolution.
+    fn stay_on_ground(&self, st: &mut PlayerState) {
+        let up = self.trace(st, st.origin, st.origin + Vec3::Z * 2.0);
+        let start = up.end;
+        let down = self.trace(
+            st,
+            start,
+            Vec3::new(start.x, start.y, st.origin.z - self.cfg.step_size),
+        );
+        if down.fraction > 0.0
+            && down.fraction < 1.0
+            && !down.start_solid
+            && down.normal.z >= self.cfg.ground_normal_z
+        {
+            let delta = (st.origin.z - down.end.z).abs();
+            if delta > 0.5 * gm_collision::DIST_EPSILON {
+                st.origin = down.end;
+            }
+        }
     }
 
     fn air_move(&self, st: &mut PlayerState, cmd: &UserCmd, dt: f32) {
@@ -398,24 +430,81 @@ impl<'a> Mover<'a> {
         }
         st.on_ground = false;
         st.velocity.z = self.cfg.jump_power;
+        // the jump finishes the current tick's gravity itself, on top of the air move's halves
+        st.velocity.z -= self.cfg.gravity * self.cfg.tick_interval * 0.5;
+        st.boost_pending = true;
         st.jump_held = true;
     }
 
+    /// Forward jump boost: a share of the forward input is added along the view yaw,
+    /// clipped so the horizontal speed does not exceed max speed times (1 + share).
+    fn jump_boost(&self, st: &mut PlayerState, cmd: &UserCmd) {
+        let (mut forward, _) = angle_vectors(cmd.view_angles);
+        forward.z = 0.0;
+        let forward = forward.normalize_or_zero();
+        let share = if st.ducked { 0.1 } else { 0.5 };
+        let max_speed = self.max_speed(st, cmd);
+        let mut addition = cmd.forward_move.abs() * share;
+        let cap = max_speed + max_speed * share;
+        let new_speed = addition + st.velocity.truncate().length();
+        if new_speed > cap {
+            addition -= new_speed - cap;
+        }
+        if cmd.forward_move < 0.0 {
+            addition = -addition;
+        }
+        st.velocity += forward * addition;
+    }
+
+    fn max_speed(&self, st: &PlayerState, cmd: &UserCmd) -> f32 {
+        if st.ducked_at_tick_start {
+            self.cfg.walk_speed * self.cfg.crouched_walk_speed
+        } else if cmd.buttons & buttons::SPEED != 0 {
+            self.cfg.run_speed
+        } else {
+            self.cfg.walk_speed
+        }
+    }
+
+    /// Duck timing follows the original: the press tick starts the clock, every later
+    /// tick adds dt, and the transition completes once the clock exceeds the duration.
     fn duck(&self, st: &mut PlayerState, cmd: &UserCmd, dt: f32) {
         let want = cmd.buttons & buttons::DUCK != 0;
         if want {
+            if st.unducking {
+                st.unducking = false;
+                st.duck_timer = 0.0;
+            }
             if !st.ducked {
                 if !st.ducking {
                     st.ducking = true;
-                    st.duck_timer = self.cfg.duck_time;
+                    st.duck_timer = 0.0;
+                } else {
+                    st.duck_timer += dt;
                 }
-                st.duck_timer -= dt;
-                if st.duck_timer <= 0.0 || !st.on_ground {
+                if st.duck_timer > self.cfg.duck_time || !st.on_ground {
                     self.finish_duck(st);
                 }
             }
         } else if st.ducked || st.ducking {
-            self.try_unduck(st);
+            if st.ducking && !st.ducked {
+                // released before finishing: stand straight away
+                st.ducking = false;
+                st.duck_timer = 0.0;
+                return;
+            }
+            if !st.unducking {
+                if !self.can_unduck(st) {
+                    return;
+                }
+                st.unducking = true;
+                st.duck_timer = 0.0;
+            } else {
+                st.duck_timer += dt;
+            }
+            if st.duck_timer > self.cfg.unduck_time || !st.on_ground {
+                self.try_unduck(st);
+            }
         }
     }
 
@@ -429,21 +518,31 @@ impl<'a> Mover<'a> {
         }
     }
 
-    fn try_unduck(&self, st: &mut PlayerState) {
+    fn standing_origin(&self, st: &PlayerState) -> Vec3 {
+        if !st.on_ground && st.ducked {
+            st.origin - Vec3::Z * ((self.cfg.stand_height - self.cfg.duck_height) * 0.5)
+        } else {
+            st.origin
+        }
+    }
+
+    fn can_unduck(&self, st: &PlayerState) -> bool {
         let mut standing = *st;
         standing.ducked = false;
-        standing.ducking = false;
-        if !st.on_ground && st.ducked {
-            standing.origin.z -= (self.cfg.stand_height - self.cfg.duck_height) * 0.5;
-        }
+        standing.origin = self.standing_origin(st);
         let t = self.trace(&standing, standing.origin, standing.origin);
-        if t.start_solid || t.all_solid {
+        !t.start_solid && !t.all_solid
+    }
+
+    fn try_unduck(&self, st: &mut PlayerState) {
+        if !self.can_unduck(st) {
             return;
         }
+        st.origin = self.standing_origin(st);
         st.ducked = false;
         st.ducking = false;
+        st.unducking = false;
         st.duck_timer = 0.0;
-        st.origin = standing.origin;
     }
 
     fn noclip(&self, st: &mut PlayerState, cmd: &UserCmd, dt: f32) {
@@ -540,7 +639,11 @@ mod tests {
         assert!((apex - z0 - 33.3).abs() < 2.0, "apex {}", apex - z0);
         // airtime 2v/g = 0.667 s = 44 ticks
         assert!((ticks - 44i32).abs() <= 2, "{ticks} ticks");
-        assert!((st.origin.z - z0).abs() < 0.1);
+        assert!(
+            (st.origin.z - gm_collision::DIST_EPSILON).abs() < 0.1,
+            "landed at {}",
+            st.origin.z
+        );
     }
 
     #[test]

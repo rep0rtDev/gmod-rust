@@ -18,3 +18,6 @@ serde_json = { workspace = true }
 toml = { workspace = true }
 gm-formats = { path = "../../../crates/gm-formats" }
 gm-content = { path = "../../../crates/gm-content" }
+gm-collision = { path = "../../../crates/gm-collision" }
+gm-move = { path = "../../../crates/gm-move" }
+glam = { workspace = true }

@@ -1,0 +1,9 @@
+{ "name": "move_strafe_jump", "kind": "move", "map": "gm_construct",
+  "start": [823.235, -657.0, -143.0], "angles": [0, 90],
+  "segments": [
+    { "ticks": 40, "buttons": 131080, "forward": 10000, "side": 0, "up": 0, "pitch": 0, "yaw": 90 },
+    { "ticks": 2, "buttons": 131082, "forward": 10000, "side": 0, "up": 0, "pitch": 0, "yaw": 90 },
+    { "ticks": 20, "buttons": 131592, "forward": 10000, "side": -10000, "up": 0, "pitch": 0, "yaw": 100 },
+    { "ticks": 20, "buttons": 132104, "forward": 10000, "side": 10000, "up": 0, "pitch": 0, "yaw": 80 },
+    { "ticks": 40, "buttons": 0, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90 }
+  ] }

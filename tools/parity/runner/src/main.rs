@@ -81,6 +81,31 @@ struct Scenario {
     globs: Vec<String>,
     #[serde(default)]
     search: Option<String>,
+    #[serde(default)]
+    map: Option<String>,
+    #[serde(default)]
+    start: Option<[f32; 3]>,
+    #[serde(default)]
+    angles: Option<[f32; 2]>,
+    #[serde(default)]
+    segments: Vec<Segment>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct Segment {
+    ticks: u32,
+    #[serde(default)]
+    buttons: u32,
+    #[serde(default)]
+    forward: f32,
+    #[serde(default)]
+    side: f32,
+    #[serde(default)]
+    up: f32,
+    #[serde(default)]
+    pitch: f32,
+    #[serde(default)]
+    yaw: f32,
 }
 
 /// Same shape the probe writes.
@@ -132,6 +157,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
             }
             Value::Object(map)
         }
+        "move" => run_move(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
     Ok(Trace {
@@ -141,6 +167,118 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         result,
         error: None,
     })
+}
+
+fn run_move(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_move::{Mover, PlayerState, UserCmd};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let world = gm_collision::World::from_bsp(&bsp);
+    let mover = Mover::new(gm_move::MoveConfig::default(), &world);
+    let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    let view = scn.angles.unwrap_or([0.0, 0.0]);
+    let mut st = PlayerState {
+        origin: start,
+        ..Default::default()
+    };
+    // settle onto the ground like the probe's pre-roll
+    let settle_cmd = UserCmd {
+        view_angles: Vec3::new(view[0], view[1], 0.0),
+        ..Default::default()
+    };
+    for _ in 0..20 {
+        mover.tick(&mut st, &settle_cmd);
+        st.origin.x = start.x;
+        st.origin.y = start.y;
+        st.velocity = Vec3::ZERO;
+    }
+    let mut ticks = Vec::new();
+    let mut t = 0u32;
+    for seg in &scn.segments {
+        let cmd = UserCmd {
+            buttons: seg.buttons,
+            view_angles: Vec3::new(seg.pitch, seg.yaw, 0.0),
+            forward_move: seg.forward,
+            side_move: seg.side,
+            up_move: seg.up,
+        };
+        for _ in 0..seg.ticks {
+            mover.tick(&mut st, &cmd);
+            ticks.push(serde_json::json!({
+                "t": t,
+                "pos": [st.origin.x, st.origin.y, st.origin.z],
+                "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
+                "ground": st.on_ground,
+                "ducked": st.ducked,
+            }));
+            t += 1;
+        }
+    }
+    Ok(serde_json::json!({
+        "start": [start.x, start.y, start.z],
+        "ticks": ticks,
+        "final": [st.origin.x, st.origin.y, st.origin.z],
+    }))
+}
+
+fn compare_trajectory(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(0.05) as f32;
+    let vel_tol = tol.get("vel").and_then(|v| v.as_float()).unwrap_or(0.5) as f32;
+    let empty = Vec::new();
+    let a = theirs
+        .get("ticks")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    let b = ours
+        .get("ticks")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    let n = a.len().min(b.len());
+    if a.len() != b.len() {
+        println!("  tick count theirs {} ours {}", a.len(), b.len());
+    }
+    let v3 = |v: &Value, k: &str| -> [f32; 3] {
+        let arr = v.get(k).and_then(Value::as_array);
+        let f = |i: usize| {
+            arr.and_then(|a| a.get(i))
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0) as f32
+        };
+        [f(0), f(1), f(2)]
+    };
+    let mut max_pos = 0f32;
+    let mut max_vel = 0f32;
+    let mut first_bad: Option<usize> = None;
+    let mut ground_mismatch = 0;
+    for i in 0..n {
+        let (pa, pb) = (v3(&a[i], "pos"), v3(&b[i], "pos"));
+        let (va, vb) = (v3(&a[i], "vel"), v3(&b[i], "vel"));
+        let dp = (0..3).map(|k| (pa[k] - pb[k]).abs()).fold(0f32, f32::max);
+        let dv = (0..3).map(|k| (va[k] - vb[k]).abs()).fold(0f32, f32::max);
+        max_pos = max_pos.max(dp);
+        max_vel = max_vel.max(dv);
+        let ga = a[i].get("ground").and_then(Value::as_bool);
+        let gb = b[i].get("ground").and_then(Value::as_bool);
+        if ga != gb {
+            ground_mismatch += 1;
+        }
+        if first_bad.is_none() && (dp > pos_tol || dv > vel_tol || ga != gb) {
+            first_bad = Some(i);
+            println!(
+                "  first divergence at tick {i}: theirs pos {pa:?} vel {va:?} ground {ga:?}; ours pos {pb:?} vel {vb:?} ground {gb:?}"
+            );
+        }
+    }
+    let ok = first_bad.is_none() && a.len() == b.len();
+    println!(
+        "  {n} ticks compared, max pos err {max_pos:.4} (tol {pos_tol}), max vel err {max_vel:.3} (tol {vel_tol}), ground mismatches {ground_mismatch}: {}",
+        if ok { "equal" } else { "DIFF" }
+    );
+    ok
 }
 
 #[derive(Default)]
@@ -291,6 +429,7 @@ fn main() -> Result<()> {
                 println!("{} [{}]", h.name, h.compare);
                 let ok = match h.compare.as_str() {
                     "set-equal" => compare_set_equal(&h.name, &t.result, &o.result),
+                    "trajectory" => compare_trajectory(&t.result, &o.result, &h.tolerance),
                     other => {
                         println!("  unknown compare mode {other}");
                         false

@@ -1,0 +1,7 @@
+{ "name": "move_jump_single", "kind": "move", "map": "gm_construct",
+  "start": [823.235, -657.0, -143.0], "angles": [0, 90],
+  "segments": [
+    { "ticks": 10, "buttons": 0, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90 },
+    { "ticks": 2, "buttons": 2, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90 },
+    { "ticks": 80, "buttons": 0, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90 }
+  ] }

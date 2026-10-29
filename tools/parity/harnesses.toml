@@ -15,3 +15,73 @@ scenario = "fmt/vpk_index_hl2_models"
 compare = "set-equal"
 realm = "server"
 crates = ["gm-formats", "gm-content"]
+
+[[harness]]
+name = "move_walk_flat"
+scenario = "move/walk_flat"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_run_stop"
+scenario = "move/run_stop"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_jump_single"
+scenario = "move/jump_single"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_strafe_jump"
+scenario = "move/strafe_jump"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.5
+vel = 2.0
+
+[[harness]]
+name = "move_duck_walk"
+scenario = "move/duck_walk"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_jump_forward"
+scenario = "move/jump_forward"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_sprint_jump"
+scenario = "move/sprint_jump"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5

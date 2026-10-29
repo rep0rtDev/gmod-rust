@@ -338,8 +338,11 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
+ "glam",
+ "gm-collision",
  "gm-content",
  "gm-formats",
+ "gm-move",
  "serde",
  "serde_json",
  "toml",
