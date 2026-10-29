@@ -627,3 +627,12 @@ crates = ["gm-net", "gm-server", "gm-physics"]
 pos = 2.0
 rest = 2.0
 ang = 5.0
+
+[[harness]]
+name = "script_weld_rope"
+scenario = "script/weld_rope"
+compare = "server"
+realm = "server"
+crates = ["gm-script", "gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0

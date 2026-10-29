@@ -214,6 +214,38 @@ impl Actor {
         f.call::<Option<String>>(()).ok().flatten()
     }
 
+    pub fn has_tool(&self, name: &str) -> bool {
+        let f: mlua::Result<mlua::Function> = self.lua.globals().get("__has_tool");
+        f.and_then(|f| f.call::<bool>(name)).unwrap_or(false)
+    }
+
+    /// Runs a scripted stool's handler within the budget and returns its ops.
+    pub fn dispatch_tool(
+        &mut self,
+        snap: &Arc<Snapshot>,
+        tool: &str,
+        button: &str,
+        payload: &Payload,
+    ) -> mlua::Result<Vec<api::ToolOp>> {
+        *self.shared.snapshot.write().unwrap() = snap.clone();
+        let start = Instant::now();
+        *self.deadline.lock().unwrap() = Some(start + self.spec.config.cpu_budget);
+        self.over_budget.store(false, Ordering::Relaxed);
+        let result: mlua::Result<Vec<api::ToolOp>> = (|| {
+            let f: mlua::Function = self.lua.globals().get("__tool")?;
+            let p = api::payload_table(&self.lua, payload)?;
+            let v: Value = f.call((tool, button, p))?;
+            api::tool_ops(v)
+        })();
+        *self.deadline.lock().unwrap() = None;
+        self.cpu_total
+            .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        if result.is_err() && !self.over_budget.load(Ordering::Relaxed) {
+            self.restart();
+        }
+        result
+    }
+
     pub fn take_queue(&mut self) -> Vec<(u64, QueuedWrite)> {
         std::mem::take(&mut *self.shared.queue.lock().unwrap())
     }

@@ -193,8 +193,12 @@ impl ServerNet {
                     } => {
                         if reload {
                             server.sandbox.tool_reload(slot.player);
-                        } else {
-                            server.tool_click(slot.player, &tool, right);
+                        } else if let gm_server::ToolClick::Unknown(hit) =
+                            server.tool_click_full(slot.player, &tool, right)
+                        {
+                            if let Some(h) = self.hooks.as_mut() {
+                                h.tool_click(server, slot.player, &tool, &hit, right);
+                            }
                         }
                     }
                     Command::Cvar { name, value } => {

@@ -217,6 +217,52 @@ impl Runtime {
         self.ask(server, "prop.spawn_request", p)
     }
 
+    /// A click of a stool registered by a script (`tool.register`): the first actor in priority
+    /// order that has it runs its handler; the returned ops are applied at once.
+    pub fn tool_click(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        hit: &gm_sandbox::ToolHit,
+        right: bool,
+    ) -> bool {
+        let snap = self.snapshot(server);
+        let mut order: Vec<usize> = (0..self.actors.len()).collect();
+        order.sort_by_key(|&i| (self.actors[i].priority(), i));
+        let tg = server.sandbox.tool(player);
+        let mut payload = api::Payload::default();
+        payload.ints.push(("player", player as i64));
+        payload.ints.push(("stage", tg.stage as i64));
+        payload.hit = Some((hit.ent.unwrap_or(0), hit.pos, hit.normal));
+        payload.objects = tg
+            .objects
+            .iter()
+            .map(|o| {
+                (
+                    o.ent.unwrap_or(0),
+                    server.sandbox.object_world_pos(o),
+                    server.sandbox.object_world_normal(o),
+                )
+            })
+            .collect();
+        let button = if right { "right" } else { "left" };
+        for i in order {
+            if !self.actors[i].has_tool(tool) {
+                continue;
+            }
+            let a = &mut self.actors[i];
+            return match a.dispatch_tool(&snap, tool, button, &payload) {
+                Ok(ops) => api::apply_tool_ops(server, player, hit, &ops),
+                Err(e) => {
+                    self.log.push(format!("[{}] {e}", a.label()));
+                    false
+                }
+            };
+        }
+        false
+    }
+
     pub fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32) -> Applied {
         let mut p = api::Payload::default();
         p.ints.push(("player", player as i64));
@@ -231,6 +277,16 @@ impl gm_server::ServerHooks for Runtime {
     }
     fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32) {
         Runtime::entity_spawned(self, server, player, ent);
+    }
+    fn tool_click(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        hit: &gm_sandbox::ToolHit,
+        right: bool,
+    ) -> bool {
+        Runtime::tool_click(self, server, player, tool, hit, right)
     }
     fn pre_tick(&mut self, server: &mut Server<'_>) {
         Runtime::pre_tick(self, server);

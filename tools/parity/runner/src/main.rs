@@ -109,6 +109,9 @@ struct Scenario {
     ops: Vec<OpSpec>,
     #[serde(default)]
     snapshot_every: Option<u32>,
+    /// An addon directory (relative to the repo root) whose scripted stools handle unknown tools.
+    #[serde(default)]
+    addon: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -788,6 +791,14 @@ fn model_hull_planes(
 
 /// The recorded trace of this scenario, if any (`tools/parity/golden/*/<name>.json`): the
 /// sandbox runner takes the poses of props under physics from it as inputs.
+/// The repository root (the runner lives in tools/parity/runner).
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
 fn golden_trace(name: &str) -> Option<Value> {
     let mut found = None;
     for dir in std::fs::read_dir("tools/parity/golden").ok()?.flatten() {
@@ -1073,6 +1084,15 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         .collect();
     server.add_existing_props(&existing);
     let all_props = !scn.props.is_empty();
+    let mut script = match &scn.addon {
+        Some(dir) => {
+            let mut rt = gm_script::Runtime::new();
+            rt.load_addon(&repo_root().join(dir))
+                .map_err(|e| anyhow::anyhow!("addon {dir}: {e}"))?;
+            Some(rt)
+        }
+        None => None,
+    };
     // the probe's pre-roll: the bot stands still on the ground
     let idle = std::collections::BTreeMap::from([(player, gm_server::PlayerCmd::default())]);
     for _ in 0..20 {
@@ -1108,7 +1128,16 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 let tool = op.tool.clone().unwrap_or_default();
                 let ret = match op.button.as_deref() {
                     Some("reload") => server.sandbox.tool_reload(player),
-                    b => server.tool_click(player, &tool, b == Some("right")),
+                    b => match server.tool_click_full(player, &tool, b == Some("right")) {
+                        gm_server::ToolClick::Done(r) => r,
+                        gm_server::ToolClick::Miss => false,
+                        gm_server::ToolClick::Unknown(hit) => match script.as_mut() {
+                            Some(rt) => {
+                                rt.tool_click(&mut server, player, &tool, &hit, b == Some("right"))
+                            }
+                            None => false,
+                        },
+                    },
                 };
                 rec["ret"] = json!(ret);
             }

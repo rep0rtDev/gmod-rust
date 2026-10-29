@@ -25,4 +25,5 @@ gm-core = { path = "../../../crates/gm-core" }
 gm-sandbox = { path = "../../../crates/gm-sandbox" }
 gm-server = { path = "../../../crates/gm-server" }
 gm-net = { path = "../../../crates/gm-net" }
+gm-script = { path = "../../../crates/gm-script" }
 glam = { workspace = true }

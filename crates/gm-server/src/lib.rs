@@ -25,12 +25,34 @@ pub struct ModelInfo {
     pub inertia: Option<Vec3>,
 }
 
+/// Result of a tool gun click on the server.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ToolClick {
+    /// A Rust stool handled it (its return value).
+    Done(bool),
+    /// No hit at all.
+    Miss,
+    /// The sandbox has no such stool: scripts may (hit passed on).
+    Unknown(ToolHit),
+}
+
 /// Game-logic hooks around server commands (the addon runtime implements them).
 pub trait ServerHooks {
     /// `prop.spawn_request`: false refuses the spawn.
     fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool;
     /// `entity.spawned` after a prop was created.
     fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32);
+    /// A click of a stool the sandbox does not know: a scripted tool may handle it.
+    fn tool_click(
+        &mut self,
+        _server: &mut Server<'_>,
+        _player: u32,
+        _tool: &str,
+        _hit: &ToolHit,
+        _right: bool,
+    ) -> bool {
+        false
+    }
     /// Around every tick.
     fn pre_tick(&mut self, server: &mut Server<'_>);
     fn post_tick(&mut self, server: &mut Server<'_>);
@@ -195,15 +217,26 @@ impl<'w> Server<'w> {
 
     /// A tool gun click of `player` with the current view.
     pub fn tool_click(&mut self, player: u32, tool: &str, right: bool) -> bool {
+        matches!(
+            self.tool_click_full(player, tool, right),
+            ToolClick::Done(true)
+        )
+    }
+
+    /// Like `tool_click`, telling the caller when the stool is not a Rust one.
+    pub fn tool_click_full(&mut self, player: u32, tool: &str, right: bool) -> ToolClick {
         let Some((eye, eye_angles)) = self.eye(player) else {
-            return false;
+            return ToolClick::Miss;
         };
         let bodies = self.trace_bodies();
         let dir = gm_sandbox::forward(eye_angles.x, eye_angles.y);
         let Some(hit): Option<ToolHit> = gm_sandbox::tool_trace(self.collision, &bodies, eye, dir)
         else {
-            return false;
+            return ToolClick::Miss;
         };
+        if !Sandbox::knows_tool(tool) {
+            return ToolClick::Unknown(hit);
+        }
         let mut events = Vec::new();
         let ret = if right {
             self.sandbox
@@ -214,7 +247,12 @@ impl<'w> Server<'w> {
         };
         self.events.extend(events);
         self.sync_physics();
-        ret
+        ToolClick::Done(ret)
+    }
+
+    /// After a scripted tool changed the sandbox (constraints, poses): mirror into physics.
+    pub fn sync_after_script(&mut self) {
+        self.sync_physics();
     }
 
     pub fn undo(&mut self, player: u32) {

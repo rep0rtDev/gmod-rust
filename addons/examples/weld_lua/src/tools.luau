@@ -1,0 +1,20 @@
+--!strict
+-- The weld stool written against the tool API, with the rules measured on the real gamemode:
+-- first click stores the object (stage 1), second click welds object 1 to the hit and clears;
+-- the world is never object 1 twice (constraint.Weld swaps it), reload clears.
+tool.register("weld_lua", {
+    left = function(ctx)
+        if #ctx.objects == 0 then
+            return { { op = "set_object" } }
+        end
+        local ent1 = ctx.objects[1].ent
+        local ent2 = ctx.hit.ent
+        return {
+            { op = "weld", ent1 = ent1, ent2 = ent2, forcelimit = 0, nocollide = false, undo = "Weld" },
+            { op = "clear" },
+        }
+    end,
+    reload = function(ctx)
+        return { { op = "clear" } }
+    end,
+})

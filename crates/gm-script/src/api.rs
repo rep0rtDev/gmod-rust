@@ -12,6 +12,28 @@ use std::sync::{Arc, Mutex, RwLock};
 pub struct Payload {
     pub ints: Vec<(&'static str, i64)>,
     pub strs: Vec<(&'static str, String)>,
+    /// Tool click: (entity or 0 for the world, position, normal).
+    pub hit: Option<(u32, Vec3, Vec3)>,
+    pub objects: Vec<(u32, Vec3, Vec3)>,
+}
+
+/// What a scripted stool asks the sandbox to do after a click (applied at once, in order).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ToolOp {
+    SetObject,
+    Clear,
+    Weld {
+        ent1: u32,
+        ent2: u32,
+        forcelimit: f32,
+        nocollide: bool,
+        undo: String,
+    },
+    NoCollide {
+        ent1: u32,
+        ent2: u32,
+        undo: String,
+    },
 }
 
 /// A write an actor asked for; applied in the serial phase.
@@ -78,6 +100,21 @@ function __dispatch(name: string, payload)
     return nil
 end
 state = state or {}
+tool = {}
+local tools = {}
+function tool.register(name: string, def)
+    tools[name] = def
+end
+function __has_tool(name: string)
+    return tools[name] ~= nil
+end
+function __tool(name: string, button: string, ctx)
+    local d = tools[name]
+    if d == nil then return nil end
+    local f = d[button]
+    if f == nil then return nil end
+    return f(ctx)
+end
 "#;
 
 /// Installs the sandbox and the host namespaces into a fresh VM.
@@ -225,7 +262,139 @@ pub fn payload_table(lua: &Lua, p: &Payload) -> Result<Table> {
     for (k, v) in &p.strs {
         t.set(*k, v.as_str())?;
     }
+    if let Some((ent, pos, normal)) = p.hit {
+        let h = lua.create_table()?;
+        h.set("ent", ent)?;
+        h.set("pos", vec3_table(lua, pos)?)?;
+        h.set("normal", vec3_table(lua, normal)?)?;
+        t.set("hit", h)?;
+    }
+    if p.hit.is_some() {
+        let objs = lua.create_table()?;
+        for (ent, pos, normal) in &p.objects {
+            let o = lua.create_table()?;
+            o.set("ent", *ent)?;
+            o.set("pos", vec3_table(lua, *pos)?)?;
+            o.set("normal", vec3_table(lua, *normal)?)?;
+            objs.push(o)?;
+        }
+        t.set("objects", objs)?;
+    }
     Ok(t)
+}
+
+/// The ops a stool handler returned: an array of `{ op = "...", ... }` tables (or nothing).
+pub fn tool_ops(v: Value) -> Result<Vec<ToolOp>> {
+    let Value::Table(list) = v else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for item in list.sequence_values::<Table>() {
+        let t = item?;
+        let op: String = t.get("op")?;
+        out.push(match op.as_str() {
+            "set_object" => ToolOp::SetObject,
+            "clear" => ToolOp::Clear,
+            "weld" => ToolOp::Weld {
+                ent1: t.get::<Option<u32>>("ent1")?.unwrap_or(0),
+                ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
+                forcelimit: t.get::<Option<f32>>("forcelimit")?.unwrap_or(0.0),
+                nocollide: t.get::<Option<bool>>("nocollide")?.unwrap_or(false),
+                undo: t
+                    .get::<Option<String>>("undo")?
+                    .unwrap_or_else(|| "Weld".into()),
+            },
+            "nocollide" => ToolOp::NoCollide {
+                ent1: t.get::<Option<u32>>("ent1")?.unwrap_or(0),
+                ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
+                undo: t
+                    .get::<Option<String>>("undo")?
+                    .unwrap_or_else(|| "NoCollide".into()),
+            },
+            other => return Err(mlua::Error::runtime(format!("unknown tool op {other}"))),
+        });
+    }
+    Ok(out)
+}
+
+/// Applies a scripted stool's ops with the same bookkeeping as the Rust stools.
+pub fn apply_tool_ops(
+    server: &mut Server<'_>,
+    player: u32,
+    hit: &gm_sandbox::ToolHit,
+    ops: &[ToolOp],
+) -> bool {
+    let ent = |e: u32| if e == 0 { None } else { Some(e) };
+    let mut events = Vec::new();
+    let mut did = false;
+    for op in ops {
+        match op {
+            ToolOp::SetObject => {
+                let n = server.sandbox.set_object(player, hit);
+                server.sandbox.set_stage(player, n as u32);
+                did = true;
+            }
+            ToolOp::Clear => {
+                server.sandbox.clear_objects(player);
+                did = true;
+            }
+            ToolOp::Weld {
+                ent1,
+                ent2,
+                forcelimit,
+                nocollide,
+                undo,
+            } => {
+                did = true;
+                if !server
+                    .sandbox
+                    .check_limit(player, "constraints", &mut events)
+                {
+                    continue;
+                }
+                if let Some(id) =
+                    server
+                        .sandbox
+                        .weld(player, ent(*ent1), ent(*ent2), *forcelimit, *nocollide)
+                {
+                    let key = undo.to_lowercase();
+                    server.sandbox.push_undo(
+                        player,
+                        undo,
+                        format!("#tool.{key}.name"),
+                        Some(format!("Undone #tool.{key}.name")),
+                        vec![id],
+                    );
+                    server.sandbox.add_count(player, "constraints", id);
+                    server.sandbox.add_cleanup(player, "constraints", id);
+                }
+            }
+            ToolOp::NoCollide { ent1, ent2, undo } => {
+                did = true;
+                if !server
+                    .sandbox
+                    .check_limit(player, "constraints", &mut events)
+                {
+                    continue;
+                }
+                if let Some(id) = server.sandbox.nocollide(player, ent(*ent1), ent(*ent2)) {
+                    let key = undo.to_lowercase();
+                    server.sandbox.push_undo(
+                        player,
+                        undo,
+                        format!("#tool.{key}.name"),
+                        Some(format!("Undone #tool.{key}.name")),
+                        vec![id],
+                    );
+                    server.sandbox.add_count(player, "constraints", id);
+                    server.sandbox.add_cleanup(player, "nocollide", id);
+                }
+            }
+        }
+    }
+    server.events.extend(events);
+    server.sync_after_script();
+    did
 }
 
 /// Serial phase: one queued write onto the server; false when the entity is gone or the write

@@ -491,7 +491,7 @@ impl Sandbox {
     }
 
     /// `Player:CheckLimit(kind)`: refused once `count > max - 1`; negative max is unlimited.
-    fn check_limit(&self, player: u32, kind: &str, events: &mut Vec<Event>) -> bool {
+    pub fn check_limit(&self, player: u32, kind: &str, events: &mut Vec<Event>) -> bool {
         let max = self.limits.get(kind);
         if max < 0 {
             return true;
@@ -503,7 +503,7 @@ impl Sandbox {
         true
     }
 
-    fn push_undo(
+    pub fn push_undo(
         &mut self,
         player: u32,
         name: &str,
@@ -522,7 +522,7 @@ impl Sandbox {
         });
     }
 
-    fn add_cleanup(&mut self, player: u32, kind: &str, id: u32) {
+    pub fn add_cleanup(&mut self, player: u32, kind: &str, id: u32) {
         self.cleanup
             .entry(player)
             .or_default()
@@ -531,7 +531,7 @@ impl Sandbox {
             .push(id);
     }
 
-    fn add_count(&mut self, player: u32, kind: &str, id: u32) {
+    pub fn add_count(&mut self, player: u32, kind: &str, id: u32) {
         self.counts
             .entry(player)
             .or_default()
@@ -624,7 +624,7 @@ impl Sandbox {
             .map(|p| (p.pos, rotation(p.angles)))
     }
 
-    fn object_world_pos(&self, o: &ToolObject) -> Vec3 {
+    pub fn object_world_pos(&self, o: &ToolObject) -> Vec3 {
         match o.ent.and_then(|e| self.prop_pose(e)) {
             Some((pos, rot)) => pos + rot * o.pos,
             None => o.pos,
@@ -632,7 +632,7 @@ impl Sandbox {
     }
 
     /// `ToolObj:GetNormal`: the stored normal point back in world space, minus the position.
-    fn object_world_normal(&self, o: &ToolObject) -> Vec3 {
+    pub fn object_world_normal(&self, o: &ToolObject) -> Vec3 {
         match o.ent.and_then(|e| self.prop_pose(e)) {
             Some((pos, rot)) => (pos + rot * o.normal) - self.object_world_pos(o),
             None => o.normal,
@@ -737,7 +737,7 @@ impl Sandbox {
     }
 
     /// `ToolObj:SetObject`: the hit is stored in the entity frame (world space for the world).
-    fn set_object(&mut self, player: u32, hit: &ToolHit) -> usize {
+    pub fn set_object(&mut self, player: u32, hit: &ToolHit) -> usize {
         let obj = match hit.ent.and_then(|e| self.prop_pose(e)) {
             Some((pos, rot)) => {
                 let inv = rot.inverse();
@@ -760,7 +760,7 @@ impl Sandbox {
         tool.objects.len()
     }
 
-    fn clear_objects(&mut self, player: u32) {
+    pub fn clear_objects(&mut self, player: u32) {
         let tool = self.tools.entry(player).or_default();
         tool.objects.clear();
         tool.stage = 0;
@@ -774,6 +774,16 @@ impl Sandbox {
 
     /// Left click of `weld` or `rope` on what the tool trace hit. Returns what `TOOL:LeftClick`
     /// returns (whether the gun fires its effect).
+    /// Tool stage of a player (scripted stools set it like the Rust ones).
+    pub fn set_stage(&mut self, player: u32, stage: u32) {
+        self.tools.entry(player).or_default().stage = stage;
+    }
+
+    /// Whether the Rust sandbox implements this stool (others may come from scripts).
+    pub fn knows_tool(tool: &str) -> bool {
+        matches!(tool, "weld" | "rope" | "axis" | "nocollide")
+    }
+
     pub fn tool_left_click(
         &mut self,
         player: u32,

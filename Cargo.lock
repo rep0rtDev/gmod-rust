@@ -506,6 +506,7 @@ dependencies = [
  "gm-net",
  "gm-physics",
  "gm-sandbox",
+ "gm-script",
  "gm-server",
  "serde",
  "serde_json",
