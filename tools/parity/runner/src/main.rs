@@ -1355,7 +1355,7 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
     let class = scn.weapon.clone().context("fire scenario needs `weapon`")?;
     let mut inv = Inventory::default();
     inv.give_loadout();
-    inv.select(&class);
+    inv.give(&class);
     // the probe selects the weapon 8 ticks before the first recorded tick: 7 full ticks pass
     // before the first recorded command
     for _ in 0..7 {
@@ -1372,6 +1372,7 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
             let mut row = json!({
                 "t": t, "active": class, "clip1": clip[0], "clip2": clip[1],
                 "ammo1": if def.ammo1.is_empty() { -1 } else { inv.ammo.get(def.ammo1).copied().unwrap_or(0) },
+                "ammo2": if def.ammo2.is_empty() { -1 } else { inv.ammo.get(def.ammo2).copied().unwrap_or(0) },
                 "next_primary": inv.next_primary, "next_secondary": inv.next_secondary, "shots": inv.shots,
             });
             if let Some(s) = shot {
@@ -1400,6 +1401,9 @@ fn compare_fire(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     for (a, b) in tr.iter().zip(or) {
         let mut bad =
             a["clip1"] != b["clip1"] || a["ammo1"] != b["ammo1"] || a["shots"] != b["shots"];
+        if !a["ammo2"].is_null() && !b["ammo2"].is_null() {
+            bad |= a["ammo2"] != b["ammo2"];
+        }
         if let (Some(x), Some(y)) = (a["next_primary"].as_f64(), b["next_primary"].as_f64()) {
             let d = (x - y).abs() as f32;
             max_dt = max_dt.max(d);

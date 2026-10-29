@@ -1,0 +1,23 @@
+{
+ "kind": "fire",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 0,
+ "name": "fire_shotgun_alt",
+ "weapon": "weapon_shotgun",
+ "segments": [
+  {
+   "ticks": 120,
+   "buttons": 2048
+  },
+  {
+   "ticks": 60,
+   "buttons": 0
+  }
+ ]
+}

@@ -1,0 +1,23 @@
+{
+ "kind": "fire",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 0,
+ "name": "fire_ar2_hold",
+ "weapon": "weapon_ar2",
+ "segments": [
+  {
+   "ticks": 150,
+   "buttons": 1
+  },
+  {
+   "ticks": 60,
+   "buttons": 0
+  }
+ ]
+}

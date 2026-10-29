@@ -24,6 +24,11 @@ pub struct WeaponDef {
     pub deploy: Option<f32>,
     /// Firing rules measured with a bot (`fire_*`); `None` for weapons not measured yet.
     pub fire: Option<Fire>,
+    /// (primary, secondary) timers after a fresh `Give` where they differ from `deploy` (crowbar
+    /// 0.2033 against 0.2333 on select; physcannon leaves the secondary at now).
+    pub give: Option<(f32, f32)>,
+    /// Reserve ammo a fresh `Give` adds on top of the loadout (crossbow 4, RPG 3, frag 1).
+    pub give_ammo: i32,
 }
 
 /// How a weapon fires (recordings `fire_*`): every timer is relative to the server tick the
@@ -51,9 +56,75 @@ pub struct Fire {
     /// Empty clip and the button down once the primary timer expired: (primary timer, refire
     /// gate) of the dry fire (pistol 0.4, 0.2). An empty clip with the button up reloads.
     pub dry_fire: Option<(f32, f32)>,
+    /// Held repeats set the primary timer to `cycle` from now, not from its expired value
+    /// (crowbar swings every 27 ticks, physcannon punts every 34).
+    pub from_now: bool,
+    /// Secondary timer set with a shot (crowbar 0.6667, crossbow 0.75); untouched otherwise.
+    pub secondary_after: Option<f32>,
+    /// Reload starting this many ticks after a shot whatever the button, for this long
+    /// (crossbow: 7 ticks, 1.8333).
+    pub auto_reload: Option<(u32, f32)>,
+    /// Pull-back grenade instead of a bullet (frag).
+    pub throw: Option<Throw>,
+    pub alt: Alt,
 }
 
+/// Frag: a press (primary timer expired, reserve left) pulls back and parks the primary timer at
+/// `f32::MAX`; the throw animation starts at the release or `drawback_ticks` after the press,
+/// whichever is later, the grenade leaves `throw_ticks` later (reserve -1, both timers `cycle`);
+/// `redraw` is set on both timers once `cycle` expired. Fitted on five recordings (holds of 1,
+/// 2, 5, 20, 90 ticks). The grenade entity itself is not simulated yet.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Throw {
+    pub drawback_ticks: u32,
+    pub throw_ticks: u32,
+    pub cycle: f32,
+    pub redraw: f32,
+}
+
+/// Secondary fire (IN_ATTACK2) as measured; `None` for weapons whose secondary is unmeasured.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Alt {
+    None,
+    /// Shotgun: `n` shells at once when the primary timer expired, primary timer `cycle` then the
+    /// usual pump (shot every 70 ticks); `pellets` in one `FireBullets` (12, same cone).
+    Shells {
+        n: i32,
+        pellets: u8,
+        cycle: f32,
+    },
+    /// AR2 ball: a press with both timers expired and alt ammo left sets both to `delay`; when
+    /// the primary expires the ball leaves (alt ammo -1) and both timers become `cycle`.
+    Ball {
+        delay: f32,
+        cycle: f32,
+    },
+    /// SMG1 grenade with no grenades: a press with the secondary expired sets it to `cycle`;
+    /// with grenades not measured.
+    GrenadeEmpty {
+        cycle: f32,
+    },
+}
+
+const BASE: Fire = Fire {
+    auto: false,
+    cycle: 0.0,
+    refire_min: None,
+    pellets: 0,
+    spread: 0.0,
+    spread_max: None,
+    pump: None,
+    reload: None,
+    dry_fire: None,
+    from_now: false,
+    secondary_after: None,
+    auto_reload: None,
+    throw: None,
+    alt: Alt::None,
+};
+
 pub const IN_ATTACK: u32 = 1;
+pub const IN_ATTACK2: u32 = 1 << 11;
 pub const IN_RELOAD: u32 = 1 << 13;
 const PISTOL: Fire = Fire {
     auto: true,
@@ -65,6 +136,7 @@ const PISTOL: Fire = Fire {
     pump: None,
     reload: Some(1.4333),
     dry_fire: Some((0.4, 0.2)),
+    ..BASE
 };
 const SMG1: Fire = Fire {
     auto: true,
@@ -76,6 +148,8 @@ const SMG1: Fire = Fire {
     pump: None,
     reload: None,
     dry_fire: None,
+    alt: Alt::GrenadeEmpty { cycle: 0.5 },
+    ..BASE
 };
 const SHOTGUN: Fire = Fire {
     auto: false,
@@ -87,6 +161,12 @@ const SHOTGUN: Fire = Fire {
     pump: Some(0.5333),
     reload: None,
     dry_fire: None,
+    alt: Alt::Shells {
+        n: 2,
+        pellets: 12,
+        cycle: 0.5,
+    },
+    ..BASE
 };
 const REVOLVER: Fire = Fire {
     auto: false,
@@ -98,6 +178,56 @@ const REVOLVER: Fire = Fire {
     pump: None,
     reload: None,
     dry_fire: None,
+    ..BASE
+};
+/// Automatic like the SMG1 at 0.1 s per shot, cone 0.02618 (1.5 degrees); the secondary timer
+/// is untouched by shots.
+const AR2: Fire = Fire {
+    auto: true,
+    cycle: 0.1,
+    pellets: 1,
+    spread: 0.02618,
+    alt: Alt::Ball {
+        delay: 0.5,
+        cycle: 1.0,
+    },
+    ..BASE
+};
+/// One bolt (an entity, not `FireBullets`: no shot recorded; the bolt itself is not simulated
+/// yet), both timers 0.75; the reload (1.8333) starts 7 ticks after the shot whatever the button
+/// and refills the clip when it expires (expiry not in the recording yet).
+const CROSSBOW: Fire = Fire {
+    cycle: 0.75,
+    secondary_after: Some(0.75),
+    auto_reload: Some((7, 1.8333)),
+    ..BASE
+};
+/// Swing into nothing: primary 0.4 from now, secondary 0.6667; repeats while held.
+const CROWBAR: Fire = Fire {
+    auto: true,
+    from_now: true,
+    cycle: 0.4,
+    secondary_after: Some(0.6667),
+    ..BASE
+};
+/// Punt into nothing: primary 0.5 from now, secondary untouched; repeats while held.
+const PHYSCANNON: Fire = Fire {
+    auto: true,
+    from_now: true,
+    cycle: 0.5,
+    ..BASE
+};
+/// Rocket: reserve -1, primary 0.5, secondary untouched. The rocket entity and the 1.6667 reload
+/// of both timers when it dies are not simulated yet.
+const RPG: Fire = Fire { cycle: 0.5, ..BASE };
+const FRAG: Fire = Fire {
+    throw: Some(Throw {
+        drawback_ticks: 4,
+        throw_ticks: 3,
+        cycle: 0.5,
+        redraw: 1.2667,
+    }),
+    ..BASE
 };
 
 pub const WEAPONS: [WeaponDef; 13] = [
@@ -113,6 +243,8 @@ pub const WEAPONS: [WeaponDef; 13] = [
         hold_type: "camera",
         deploy: None,
         fire: None,
+        give: None,
+        give_ammo: 0,
     },
     WeaponDef {
         class: "gmod_tool",
@@ -126,6 +258,8 @@ pub const WEAPONS: [WeaponDef; 13] = [
         hold_type: "revolver",
         deploy: None,
         fire: None,
+        give: None,
+        give_ammo: 0,
     },
     WeaponDef {
         class: "weapon_357",
@@ -139,6 +273,8 @@ pub const WEAPONS: [WeaponDef; 13] = [
         hold_type: "revolver",
         deploy: Some(0.25),
         fire: Some(REVOLVER),
+        give: None,
+        give_ammo: 0,
     },
     WeaponDef {
         class: "weapon_ar2",
@@ -150,8 +286,10 @@ pub const WEAPONS: [WeaponDef; 13] = [
         slot_pos: 1,
         weight: 5,
         hold_type: "ar2",
-        deploy: None,
-        fire: None,
+        deploy: Some(0.2083),
+        fire: Some(AR2),
+        give: None,
+        give_ammo: 0,
     },
     WeaponDef {
         class: "weapon_crossbow",
@@ -163,8 +301,10 @@ pub const WEAPONS: [WeaponDef; 13] = [
         slot_pos: 1,
         weight: 6,
         hold_type: "crossbow",
-        deploy: None,
-        fire: None,
+        deploy: Some(0.25),
+        fire: Some(CROSSBOW),
+        give: None,
+        give_ammo: 4,
     },
     WeaponDef {
         class: "weapon_crowbar",
@@ -177,7 +317,9 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 0,
         hold_type: "melee",
         deploy: Some(0.2333),
-        fire: None,
+        fire: Some(CROWBAR),
+        give: Some((0.2033, 0.2033)),
+        give_ammo: 0,
     },
     WeaponDef {
         class: "weapon_frag",
@@ -189,8 +331,10 @@ pub const WEAPONS: [WeaponDef; 13] = [
         slot_pos: 0,
         weight: 1,
         hold_type: "grenade",
-        deploy: None,
-        fire: None,
+        deploy: Some(0.3167),
+        fire: Some(FRAG),
+        give: None,
+        give_ammo: 1,
     },
     WeaponDef {
         class: "weapon_physcannon",
@@ -203,7 +347,9 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 0,
         hold_type: "physgun",
         deploy: None,
-        fire: None,
+        fire: Some(PHYSCANNON),
+        give: Some((0.605, 0.0)),
+        give_ammo: 0,
     },
     WeaponDef {
         class: "weapon_physgun",
@@ -217,6 +363,8 @@ pub const WEAPONS: [WeaponDef; 13] = [
         hold_type: "physgun",
         deploy: Some(0.2417),
         fire: None,
+        give: None,
+        give_ammo: 0,
     },
     WeaponDef {
         class: "weapon_pistol",
@@ -230,6 +378,8 @@ pub const WEAPONS: [WeaponDef; 13] = [
         hold_type: "pistol",
         deploy: Some(0.2),
         fire: Some(PISTOL),
+        give: None,
+        give_ammo: 0,
     },
     WeaponDef {
         class: "weapon_rpg",
@@ -242,7 +392,9 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 0,
         hold_type: "rpg",
         deploy: Some(0.275),
-        fire: None,
+        fire: Some(RPG),
+        give: None,
+        give_ammo: 3,
     },
     WeaponDef {
         class: "weapon_shotgun",
@@ -256,6 +408,8 @@ pub const WEAPONS: [WeaponDef; 13] = [
         hold_type: "shotgun",
         deploy: Some(0.1833),
         fire: Some(SHOTGUN),
+        give: None,
+        give_ammo: 0,
     },
     WeaponDef {
         class: "weapon_smg1",
@@ -269,6 +423,8 @@ pub const WEAPONS: [WeaponDef; 13] = [
         hold_type: "smg",
         deploy: Some(0.2083),
         fire: Some(SMG1),
+        give: None,
+        give_ammo: 0,
     },
 ];
 
@@ -309,6 +465,13 @@ pub struct Inventory {
     /// Deploying or reloading: a fresh press does not shortcut the primary timer.
     pub busy: bool,
     pub shots: u32,
+    /// Ticks since the last shot while an `auto_reload` is due.
+    pub since_shot: Option<u32>,
+    pub ball_pending: bool,
+    /// Frag: ticks since the pull-back press; ticks left until the grenade leaves; a redraw due.
+    pub throw_press: Option<u32>,
+    pub throw_in: Option<u32>,
+    pub redraw_pending: bool,
 }
 
 /// Bullets fired by one trigger pull.
@@ -354,6 +517,21 @@ impl Inventory {
         self.busy = true;
     }
 
+    /// A fresh `Give` of a weapon: like `select`, with the measured give timers and reserve.
+    pub fn give(&mut self, class: &str) {
+        self.select(class);
+        if let Some(w) = def(class) {
+            if let Some((p, s)) = w.give {
+                self.next_primary = p;
+                self.next_secondary = s;
+                self.soonest_primary = p;
+            }
+            if w.give_ammo > 0 {
+                *self.ammo.entry(w.ammo1.to_string()).or_insert(0) += w.give_ammo;
+            }
+        }
+    }
+
     /// The usercmd of one tick for the active weapon `class`, before `tick`: reload, pump and
     /// shots as the game resolves them against the timers of the command's tick.
     pub fn command(&mut self, class: &str, buttons: u32) -> Option<Shot> {
@@ -369,6 +547,50 @@ impl Inventory {
             .or_insert([w.clip1, w.clip2]);
         if self.busy && self.next_primary <= 0.0 {
             self.busy = false;
+        }
+        let pressed2 = buttons & IN_ATTACK2 != 0;
+        if let Some(th) = f.throw {
+            return self.throw_command(w, th, pressed);
+        }
+        if let Some(n) = self.since_shot.as_mut() {
+            *n += 1;
+            if let Some((after, time)) = f.auto_reload {
+                if *n >= after {
+                    self.since_shot = None;
+                    self.reloading = true;
+                    self.busy = true;
+                    self.next_primary = time;
+                    self.next_secondary = time;
+                    self.soonest_primary = time;
+                }
+            }
+        }
+        if let Alt::Ball { delay, cycle } = f.alt {
+            let ammo2 = self.ammo.entry(w.ammo2.to_string()).or_insert(0);
+            if self.ball_pending {
+                if self.next_primary <= 0.0 {
+                    self.ball_pending = false;
+                    *ammo2 -= 1;
+                    self.next_primary = cycle;
+                    self.next_secondary = cycle;
+                }
+                return None;
+            }
+            if pressed2 && self.next_primary <= 0.0 && self.next_secondary <= 0.0 && *ammo2 > 0 {
+                self.ball_pending = true;
+                self.next_primary = delay;
+                self.next_secondary = delay;
+                return None;
+            }
+        }
+        if let Alt::GrenadeEmpty { cycle } = f.alt {
+            if pressed2
+                && self.next_secondary <= 0.0
+                && self.ammo.get(w.ammo2).copied().unwrap_or(0) == 0
+            {
+                self.next_secondary = cycle;
+                return None;
+            }
         }
         if self.reloading {
             if self.next_primary > 0.0 {
@@ -421,7 +643,23 @@ impl Inventory {
             }
             return None;
         }
+        if let Alt::Shells { n, pellets, cycle } = f.alt {
+            if pressed2 && !pressed && self.next_primary <= 0.0 && clip[0] >= n {
+                clip[0] -= n;
+                self.next_primary = cycle;
+                self.need_pump = f.pump.is_some();
+                self.shots += 1;
+                return Some(Shot {
+                    pellets,
+                    spread: f.spread,
+                    ammo: w.ammo1,
+                });
+            }
+        }
         if !pressed {
+            return None;
+        }
+        if w.clip1 < 0 && !w.ammo1.is_empty() && self.ammo.get(w.ammo1).copied().unwrap_or(0) <= 0 {
             return None;
         }
         let fresh_press =
@@ -429,7 +667,7 @@ impl Inventory {
         if !fresh_press && self.next_primary > 0.0 {
             return None;
         }
-        if fresh_press || !f.auto {
+        if fresh_press || !f.auto || f.from_now {
             self.next_primary = f.cycle;
         } else {
             self.next_primary += f.cycle;
@@ -445,15 +683,68 @@ impl Inventory {
         if f.spread_max.is_some() {
             self.penalty += 0.2;
         }
-        clip[0] -= 1;
+        if w.clip1 < 0 {
+            if !w.ammo1.is_empty() {
+                *self.ammo.entry(w.ammo1.to_string()).or_insert(0) -= 1;
+            }
+        } else {
+            clip[0] -= 1;
+        }
+        if let Some(t) = f.secondary_after {
+            self.next_secondary = t;
+        }
+        if f.auto_reload.is_some() {
+            self.since_shot = Some(0);
+        }
         self.need_pump = f.pump.is_some();
         self.pistol_relaxed = false;
+        if f.pellets == 0 {
+            return None;
+        }
         self.shots += 1;
         Some(Shot {
             pellets: f.pellets,
             spread,
             ammo: w.ammo1,
         })
+    }
+
+    fn throw_command(&mut self, w: &WeaponDef, th: Throw, pressed: bool) -> Option<Shot> {
+        if let Some(n) = self.throw_press.as_mut() {
+            *n += 1;
+        }
+        if let Some(left) = self.throw_in {
+            if left > 0 {
+                self.throw_in = Some(left - 1);
+                return None;
+            }
+            self.throw_in = None;
+            *self.ammo.entry(w.ammo1.to_string()).or_insert(0) -= 1;
+            self.next_primary = th.cycle;
+            self.next_secondary = th.cycle;
+            self.redraw_pending = true;
+            return None;
+        }
+        if let Some(n) = self.throw_press {
+            if !pressed && n >= th.drawback_ticks {
+                self.throw_press = None;
+                self.throw_in = Some(th.throw_ticks - 1);
+            }
+            return None;
+        }
+        if self.redraw_pending {
+            if self.next_primary <= 0.0 {
+                self.redraw_pending = false;
+                self.next_primary = th.redraw;
+                self.next_secondary = th.redraw;
+            }
+            return None;
+        }
+        if pressed && self.next_primary <= 0.0 && self.ammo.get(w.ammo1).copied().unwrap_or(0) > 0 {
+            self.throw_press = Some(0);
+            self.next_primary = f32::MAX;
+        }
+        None
     }
 
     /// One server tick for the active weapon `class`.

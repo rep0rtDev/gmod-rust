@@ -1,0 +1,27 @@
+{
+ "kind": "fire",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 0,
+ "name": "fire_frag_hold5",
+ "weapon": "weapon_frag",
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0
+  },
+  {
+   "ticks": 5,
+   "buttons": 1
+  },
+  {
+   "ticks": 120,
+   "buttons": 0
+  }
+ ]
+}
