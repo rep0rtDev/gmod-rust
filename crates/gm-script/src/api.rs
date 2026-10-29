@@ -246,6 +246,30 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         lua.create_function(move |_, ()| Ok(sh.snapshot.read().unwrap().tick))?,
     )?;
     g.set("game", game)?;
+    let phys = lua.create_table()?;
+    let sh = shared.clone();
+    phys.set(
+        "trace",
+        lua.create_function(move |lua, (start, end): (Table, Table)| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            let t = lua.create_table()?;
+            match snap.trace(table_vec3(&start)?, table_vec3(&end)?) {
+                Some(h) => {
+                    t.set("hit", true)?;
+                    t.set("pos", vec3_table(lua, h.pos)?)?;
+                    t.set("normal", vec3_table(lua, h.normal)?)?;
+                    t.set("ent", h.ent.unwrap_or(0))?;
+                    t.set("fraction", h.fraction)?;
+                }
+                None => {
+                    t.set("hit", false)?;
+                    t.set("fraction", 1.0)?;
+                }
+            }
+            Ok(t)
+        })?,
+    )?;
+    g.set("phys", phys)?;
     lua.load(PRELUDE).set_name("prelude").exec()?;
     Ok(())
 }

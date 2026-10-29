@@ -10,7 +10,8 @@ Luau's own sandbox mode is not used because it freezes every global table (`stat
 - Parallel phase: every actor on its own thread with the same immutable `Snapshot` (entities:
   id, model, pos, angles, frozen, owner; players: origin, velocity, view, held prop; counts).
   `world.get(id)`, `world.find(model?)`, `world.players()`, `world.count()`, `game.tick()` read
-  it; `world.queue(op, ent, arg)` queues a write (`set_pos`, `set_angles`, `freeze`, `remove`);
+  it; `phys.trace(start, end)` traces the world (brushes, displacements) and the prop hulls like
+  the tool gun (`hit`, `pos`, `normal`, `ent` or 0, `fraction`); `world.queue(op, ent, arg)` queues a write (`set_pos`, `set_angles`, `freeze`, `remove`);
   actors without the `world-write` capability get an error from `queue`.
 - Serial phase: queued writes are applied in addon priority, then actor id, then enqueue order;
   a write to an entity that is gone is rejected and counted.
@@ -64,5 +65,5 @@ refusing cans stops the request before the priority 10 actor sees it.
 ## Not yet
 
 `.gmr` packaging, client realm, the rest of the API (entity write views, players,
-phys traces and constraints, net, timers, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
+constraints, net, timers, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
 hot reload command, the sandbox gamemode in Luau on top of this API.

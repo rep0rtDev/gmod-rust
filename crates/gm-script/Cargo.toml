@@ -6,6 +6,7 @@ license = "MIT"
 description = "Addon runtime: Luau actors (one VM each) with a parallel read-only phase over a world snapshot, a serial phase applying queued writes in priority order, CPU/memory budgets, restart on error"
 
 [dependencies]
+gm-collision = { path = "../gm-collision" }
 gm-move = { path = "../gm-move" }
 gm-sandbox = { path = "../gm-sandbox" }
 gm-server = { path = "../gm-server" }

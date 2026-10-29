@@ -52,6 +52,19 @@ fn freeze_crates_addon_through_the_server() {
     for _ in 0..30 {
         step(&mut sn, &mut client, &mut server);
     }
+    // phys.trace from a second runtime over the same live server: the floor under the player
+    let mut rt2 = gm_script::Runtime::new();
+    rt2.load_addon(&root).unwrap();
+    rt2.post_tick(&mut server);
+    let floor_z: f32 = rt2.actors()[0].eval("return state.floor_z").unwrap();
+    let floor_ent: u32 = rt2.actors()[0].eval("return state.floor_ent").unwrap();
+    let origin = server.players.values().next().unwrap().state.origin;
+    assert!(
+        (floor_z - origin.z).abs() < 0.1,
+        "floor {floor_z} vs player {}",
+        origin.z
+    );
+    assert_eq!(floor_ent, 0, "the world");
     let props = server.sandbox.props();
     assert_eq!(props.len(), 1, "the can was refused: {props:?}");
     assert_eq!(props[0].model, "models/props_junk/wood_crate001a.mdl");

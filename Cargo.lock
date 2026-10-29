@@ -555,6 +555,7 @@ name = "gm-script"
 version = "0.1.0"
 dependencies = [
  "glam 0.29.3",
+ "gm-collision",
  "gm-move",
  "gm-sandbox",
  "gm-server",

@@ -179,7 +179,16 @@ impl Runtime {
         }
     }
 
+    /// After a phase: no actor keeps a snapshot that points into the server's world.
+    fn release_snapshots(&mut self) {
+        let empty = Arc::new(Snapshot::default());
+        for a in self.actors.iter_mut() {
+            a.set_snapshot(&empty);
+        }
+    }
+
     fn serial(&mut self, server: &mut Server<'_>) -> Applied {
+        self.release_snapshots();
         let writes = self.drain_writes();
         let mut applied = Applied::default();
         for (_, _, _, w) in writes {
@@ -251,11 +260,13 @@ impl Runtime {
             if !self.actors[i].has_tool(tool) {
                 continue;
             }
-            let a = &mut self.actors[i];
-            return match a.dispatch_tool(&snap, tool, button, &payload) {
+            let label = self.actors[i].label();
+            let r = self.actors[i].dispatch_tool(&snap, tool, button, &payload);
+            self.release_snapshots();
+            return match r {
                 Ok(ops) => api::apply_tool_ops(server, player, hit, &ops),
                 Err(e) => {
-                    self.log.push(format!("[{}] {e}", a.label()));
+                    self.log.push(format!("[{label}] {e}"));
                     false
                 }
             };

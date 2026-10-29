@@ -246,6 +246,10 @@ impl Actor {
         result
     }
 
+    pub fn set_snapshot(&mut self, snap: &Arc<Snapshot>) {
+        *self.shared.snapshot.write().unwrap() = snap.clone();
+    }
+
     pub fn take_queue(&mut self) -> Vec<(u64, QueuedWrite)> {
         std::mem::take(&mut *self.shared.queue.lock().unwrap())
     }

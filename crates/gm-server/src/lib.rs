@@ -172,7 +172,7 @@ impl<'w> Server<'w> {
     }
 
     /// Props as the traces see them, at their current physics poses.
-    fn trace_bodies(&self) -> Vec<PropBody> {
+    pub fn trace_bodies(&self) -> Vec<PropBody> {
         self.sandbox
             .props()
             .iter()

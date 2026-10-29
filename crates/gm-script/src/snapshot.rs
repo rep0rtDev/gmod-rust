@@ -23,9 +23,26 @@ pub struct PlayerSnap {
     pub held: Option<u32>,
 }
 
+/// The server's collision world for traces during a dispatch. The snapshot only lives while the
+/// runtime holds `&mut Server`, and the actors' handles are reset to an empty snapshot right
+/// after every phase, so the pointer never outlives the world it points at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorldRef(pub *const gm_collision::World);
+unsafe impl Send for WorldRef {}
+unsafe impl Sync for WorldRef {}
+
+impl Default for WorldRef {
+    fn default() -> Self {
+        WorldRef(std::ptr::null())
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub tick: u64,
+    pub world: WorldRef,
+    /// Prop collision hulls for `phys.trace`.
+    pub props: Vec<gm_sandbox::PropBody>,
     pub entities: BTreeMap<u32, EntitySnap>,
     pub players: BTreeMap<u32, PlayerSnap>,
     pub prop_count: usize,
@@ -33,9 +50,21 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// `phys.trace`: world brushes/displacements and prop hulls, like the tool gun's trace.
+    pub fn trace(&self, start: glam::Vec3, end: glam::Vec3) -> Option<gm_sandbox::ToolHit> {
+        if self.world.0.is_null() {
+            return None;
+        }
+        // see WorldRef: valid while the snapshot is in use
+        let world = unsafe { &*self.world.0 };
+        gm_sandbox::trace_line(world, &self.props, start, end)
+    }
+
     pub fn of(server: &Server<'_>, tick: u64) -> Self {
         Snapshot {
             tick,
+            world: WorldRef(server.collision as *const _),
+            props: server.trace_bodies(),
             entities: server
                 .sandbox
                 .props()
