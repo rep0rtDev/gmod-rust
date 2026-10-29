@@ -405,6 +405,7 @@ public:
 				float vn = rel(pt.p).Dot(n);
 				if (pt.d <= 0.001f + 0.02f && vn < 0.0f) { ++approaching; vn_face = std::max(vn_face, -vn); }
 			}
+			if (debug) fprintf(stderr, "DBGFACE pts=%zu approaching=%d vn_face=%.3f lv=(%.3f %.3f %.3f) n=(%.2f %.2f %.2f)\n", pts.size(), approaching, vn_face, lv0.GetX(), lv0.GetY(), lv0.GetZ(), n.GetX(), n.GetY(), n.GetZ());
 			if (approaching >= 3) {
 				tilt = 0.0f;
 				float g_dt = (sys ? sys->GetGravity().Length() : gravity) * dyn.GetMotionProperties()->GetGravityFactor() * step_dt;
