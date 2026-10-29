@@ -336,7 +336,8 @@ public:
 			float mass = 1.0f / dyn.GetMotionProperties()->GetInverseMass();
 			JPH::RVec3 c = dyn.GetCenterOfMassPosition();
 			float vn_in = std::max(-(point_velocity(dyn, c) - point_velocity(other, c)).Dot(nd) - g_dt, 0.0f);
-			bool pushed = rs.vt_prev < 0.02f && vt > 0.1f;
+			// a pair that just went through vertex impacts (phase 3) is a landing, not a push from rest
+			bool pushed = rs.phase != 3 && rs.vt_prev < 0.02f && vt > 0.1f;
 			if (pushed && vn_in > 0.02f) {
 				// pushed into the floor: the floor takes the normal part with friction on the
 				// weight alone (the drum loses 6-9 u/s whether pushed at 20 or 334 u/s)
@@ -440,6 +441,7 @@ public:
 		const float tie_eps = 0.0005f;
 		JPH::uint64 pair_key = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
 		std::vector<size_t> &cps = contact_points[pair_key];
+		rest[pair_key].phase = 3; // landing in progress: the resting branch must not read it as a push
 		if (verts_of_b2_used) cps.clear();
 		for (int round = 0; round < 8; ++round) {
 			// the vertex that reaches the surface first: least time d / |vn| (the first round
