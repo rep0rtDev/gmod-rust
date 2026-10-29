@@ -363,7 +363,10 @@ public:
 					float jn = std::max(j.Dot(nd), 0.0f);
 					JPH::Vec3 jt = j - nd * j.Dot(nd);
 					// Coulomb cap solved with the anchor's own normal part scaling along: J_t = f (ratio J_t + m (g dt + vn_stored))
-					float ratio = jt.Length() > 1e-9f ? jn / jt.Length() : 0.0f;
+					// the anchor's normal part only counts while the face is still flat (the game
+					// loses 15.3 u/s in the push step, then f g dt per step once the drum tips)
+					bool flat = dyn.GetAngularVelocity().Length() < 0.4f;
+					float ratio = flat && jt.Length() > 1e-9f ? jn / jt.Length() : 0.0f;
 					float denom = 1.0f - friction * ratio;
 					float cap = denom > 1e-3f ? friction * mass * (g_dt + rs.vn_in) / denom : 1e30f;
 					float scale = jt.Length() > cap ? cap / jt.Length() : 1.0f;
