@@ -1,0 +1,29 @@
+{
+ "kind": "hit",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 0,
+ "dist": 200,
+ "target_health": 1000,
+ "name": "hit_shotgun",
+ "weapon": "weapon_shotgun",
+ "segments": [
+  {
+   "ticks": 15,
+   "buttons": 0
+  },
+  {
+   "ticks": 130,
+   "buttons": 1
+  },
+  {
+   "ticks": 30,
+   "buttons": 0
+  }
+ ]
+}

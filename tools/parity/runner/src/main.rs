@@ -119,6 +119,10 @@ struct Scenario {
     #[serde(default)]
     select: Vec<(u32, String)>,
     weapon: Option<String>,
+    dist: Option<f32>,
+    target_health: Option<i32>,
+    target_armor: Option<i32>,
+    pitch: Option<f32>,
     #[serde(default)]
     yaw: Option<f32>,
     /// damage scenarios: drop heights every `spacing` ticks, hits, convar and start values
@@ -280,6 +284,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "player" => run_player(scn)?,
         "weapon" => run_weapon(scn)?,
         "fire" => run_fire(scn)?,
+        "hit" => run_hit(scn)?,
         "damage" => run_damage(scn)?,
         "ragdoll" => run_ragdoll(scn)?,
         "physgun" => run_physgun(scn)?,
@@ -1150,6 +1155,191 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
 
 /// A bot's life cycle through the server loop: spawned, killed at the scenario's ticks,
 /// respawned by the server's rule; recorded like the probe's `player` scenario.
+/// Two players through the server loop: the shooter fires at the target `dist` ahead; the
+/// target's health and armour per tick and every hit (tick, damage, hit group, position).
+fn run_hit(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let world_body = physics.add_static_hulls(
+        &world_hulls,
+        Surface {
+            friction: 0.8,
+            elasticity: 0.25,
+        },
+    )?;
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    server.set_spawn_points_from_bsp(&bsp);
+    let class = scn.weapon.clone().context("hit scenario needs `weapon`")?;
+    let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    let tpos = start + Vec3::new(0.0, scn.dist.unwrap_or(200.0), 0.0);
+    let aim = Vec3::new(scn.pitch.unwrap_or(0.0), scn.yaw.unwrap_or(90.0), 0.0);
+    let back = Vec3::new(0.0, -90.0, 0.0);
+    let (shooter, target) = (1u32, 2u32);
+    server.add_player(shooter, start, aim);
+    server.add_player(target, tpos, back);
+    for id in [shooter, target] {
+        server.spawn_player(id);
+    }
+    server.teleport_player(shooter, start);
+    server.teleport_player(target, tpos);
+    if let Some(h) = scn.target_health {
+        server.set_player_health(target, h);
+    }
+    if let Some(a) = scn.target_armor {
+        server.set_player_armor(target, a);
+    }
+    let mut cmds = std::collections::BTreeMap::new();
+    let idle = |ang: Vec3| gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: ang,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    // the probe spawns at tick -10 and selects the weapon at tick -8
+    for pre in -10i32..0 {
+        if pre == -8 {
+            server.select_weapon(shooter, &class);
+        }
+        cmds.insert(shooter, idle(aim));
+        cmds.insert(target, idle(back));
+        server.tick(&cmds);
+    }
+    let mut ticks = Vec::new();
+    let mut hits = Vec::new();
+    let mut t = 0u32;
+    for seg in &scn.segments {
+        for _ in 0..seg.ticks {
+            let mut c = idle(aim);
+            c.cmd.buttons = seg.buttons;
+            cmds.insert(shooter, c);
+            cmds.insert(target, idle(back));
+            let before = server.hits.len();
+            server.tick(&cmds);
+            for h in &server.hits[before..] {
+                hits.push(json!({ "t": t, "damage": h.damage, "hitgroup": h.hitgroup, "pos": [h.pos.x, h.pos.y, h.pos.z], "ammo": h.ammo }));
+            }
+            let p = &server.players[&target];
+            let sh = &server.players[&shooter];
+            ticks.push(json!({ "t": t, "health": p.health, "armor": p.armor, "alive": p.alive, "shots": sh.inventory.shots }));
+            t += 1;
+        }
+    }
+    Ok(
+        json!({ "weapon": class, "ticks": ticks, "hits": hits, "shots": server.players[&shooter].inventory.shots }),
+    )
+}
+
+/// Target health, armour and life every tick; every hit on the same tick with the same damage
+/// and hit group, position within `pos` (the game hits the model's hit boxes, we hit the hull).
+/// With `random = true` (shotgun pellets) only the hit ticks are compared.
+fn compare_hit(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    // the game hits the model's hit boxes, a few units inside the hull we hit
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(12.0) as f32;
+    let random = tol.get("random").and_then(|v| v.as_bool()).unwrap_or(false);
+    let empty = Vec::new();
+    let tr = theirs["ticks"].as_array().unwrap_or(&empty);
+    let or = ours["ticks"].as_array().unwrap_or(&empty);
+    let th = theirs["hits"].as_array().unwrap_or(&empty);
+    let ts = theirs["scales"].as_array().unwrap_or(&empty);
+    let oh = ours["hits"].as_array().unwrap_or(&empty);
+    let mut ok = tr.len() == or.len();
+    let mut diffs = 0;
+    // a spread weapon's later shots miss or land at random: when the game's hit count is below
+    // its shot count, rows and hits are compared through the first hit only
+    let shots = theirs["shots"].as_u64().unwrap_or(0) as usize;
+    let first_only = !random && th.len() < shots;
+    let first_hit_t = th.first().and_then(|h| h["t"].as_u64()).unwrap_or(u64::MAX);
+    if !random {
+        for (a, b) in tr.iter().zip(or) {
+            if first_only && a["t"].as_u64().unwrap_or(0) > first_hit_t {
+                break;
+            }
+            if a["health"] != b["health"]
+                || a["armor"] != b["armor"]
+                || a["alive"] != b["alive"]
+                || a["shots"] != b["shots"]
+            {
+                diffs += 1;
+                if diffs <= 4 {
+                    println!(
+                        "  tick {}: game hp {} ar {} shots {} | ours hp {} ar {} shots {}",
+                        a["t"],
+                        a["health"],
+                        a["armor"],
+                        a["shots"],
+                        b["health"],
+                        b["armor"],
+                        b["shots"]
+                    );
+                }
+                ok = false;
+            }
+        }
+    }
+    if th.len() != oh.len() && !first_only {
+        println!("  hits: game {} ours {}", th.len(), oh.len());
+        ok = false;
+    }
+    if first_only && th.is_empty() != oh.is_empty() {
+        println!("  hits: game {} ours {}", th.len(), oh.len());
+        ok = false;
+    }
+    let v3 = |v: &Value| -> Option<[f32; 3]> {
+        let a = v.as_array()?;
+        Some([
+            a.first()?.as_f64()? as f32,
+            a.get(1)?.as_f64()? as f32,
+            a.get(2)?.as_f64()? as f32,
+        ])
+    };
+    let mut max_pos = 0.0f32;
+    for (i, (a, b)) in th.iter().zip(oh).enumerate() {
+        if first_only && i > 0 {
+            break;
+        }
+        let group = ts
+            .get(i)
+            .map(|s| s["hitgroup"].clone())
+            .unwrap_or(Value::Null);
+        let mut bad = a["t"] != b["t"];
+        if !random {
+            bad |= a["damage"].as_f64() != b["damage"].as_f64();
+            bad |= group != b["hitgroup"];
+            if let (Some(pa), Some(pb)) = (v3(&a["pos"]), v3(&b["pos"])) {
+                let d =
+                    ((pa[0] - pb[0]).powi(2) + (pa[1] - pb[1]).powi(2) + (pa[2] - pb[2]).powi(2))
+                        .sqrt();
+                max_pos = max_pos.max(d);
+                bad |= d > pos_tol;
+            }
+        }
+        if bad {
+            println!(
+                "  hit {i}: game t {} dmg {} group {} pos {} | ours t {} dmg {} group {} pos {}",
+                a["t"], a["damage"], group, a["pos"], b["t"], b["damage"], b["hitgroup"], b["pos"]
+            );
+            ok = false;
+        }
+    }
+    println!(
+        "  {} ticks, {} hits (ours {}), {} rows differing, max hit position err {max_pos:.2} u (tol {pos_tol}){}: {}",
+        tr.len(), th.len(), oh.len(), diffs, if random { ", pellets random: ticks only" } else if first_only { ", spread misses: first hit only" } else { "" }, if ok { "equal" } else { "DIFF" }
+    );
+    ok
+}
+
 /// Firing one weapon with a bot's buttons per segment: `Inventory::command` per tick, then the
 /// timers; the clip, reserve ammo, timers and shots are the recording's rows.
 fn run_fire(scn: &Scenario) -> Result<Value> {
@@ -3412,6 +3602,7 @@ fn main() -> Result<()> {
                     "player" => compare_player(&t.result, &o.result, &h.tolerance),
                     "weapon" => compare_weapon(&t.result, &o.result, &h.tolerance),
                     "fire" => compare_fire(&t.result, &o.result, &h.tolerance),
+                    "hit" => compare_hit(&t.result, &o.result, &h.tolerance),
                     "damage" => compare_damage(&t.result, &o.result, &h.tolerance),
                     "ragdoll" => compare_ragdoll(&t.result, &o.result, &h.tolerance),
                     "net_player" => compare_net_player(&t.result, &o.result, &h.tolerance),

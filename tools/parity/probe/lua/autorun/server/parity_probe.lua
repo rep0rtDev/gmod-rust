@@ -939,6 +939,104 @@ end
 ASYNC.fire = true
 
 
+-- hit: two bots; the shooter fires one weapon at the target standing `dist` units ahead; every
+-- EntityTakeDamage / ScalePlayerDamage on the target is recorded with the target's health and
+-- armour per tick, plus the sk_* damage convars, to measure the damage per bullet and hitgroup.
+SCENARIOS.hit = function(scn, done)
+	local bots = player.GetBots()
+	if #bots < 2 then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.hit(scn, done) end)
+		return
+	end
+	local bot, target = bots[1], bots[2]
+	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
+	local dist = scn.dist or 200
+	local tpos = start + Vector(0, dist, 0)
+	local segs = scn.segments or {}
+	local total = 0
+	for _, sg in ipairs(segs) do total = total + (sg.ticks or 0) end
+	local tick = -10
+	local ticks, hits, scales = {}, {}, {}
+	local shotCount = 0
+	local function segAt(t)
+		local acc = 0
+		for _, sg in ipairs(segs) do
+			acc = acc + (sg.ticks or 0)
+			if t < acc then return sg end
+		end
+	end
+	hook.Add("EntityFireBullets", "parity_hit", function(ent, data)
+		if ent == bot then shotCount = shotCount + 1 end
+	end)
+	hook.Add("ScalePlayerDamage", "parity_hit", function(ply, hitgroup, dmg)
+		if ply == target and tick >= 0 then
+			scales[#scales + 1] = { t = tick, hitgroup = hitgroup, damage = dmg:GetDamage(), type = dmg:GetDamageType() }
+		end
+	end)
+	hook.Add("EntityTakeDamage", "parity_hit", function(ent, dmg)
+		if ent == target and tick >= 0 then
+			local inf, att = dmg:GetInflictor(), dmg:GetAttacker()
+			local pos = dmg:GetDamagePosition()
+			hits[#hits + 1] = { t = tick, damage = dmg:GetDamage(), base = dmg:GetBaseDamage(), type = dmg:GetDamageType(),
+				inflictor = IsValid(inf) and inf:GetClass() or "", attacker = IsValid(att) and att:GetClass() or "",
+				ammo = dmg:GetAmmoType(), pos = { pos.x, pos.y, pos.z }, force = dmg:GetDamageForce():Length(),
+				health_before = target:Health(), armor_before = target:Armor(), shots = shotCount }
+		end
+	end)
+	hook.Add("StartCommand", "parity_hit", function(ply, cmd)
+		if ply ~= bot and ply ~= target then return end
+		cmd:ClearButtons()
+		cmd:ClearMovement()
+		if ply == target then
+			cmd:SetViewAngles(Angle(0, -90, 0))
+			return
+		end
+		cmd:SetViewAngles(Angle(scn.pitch or 0, scn.yaw or 90, 0))
+		local sg = tick >= 0 and segAt(tick) or nil
+		if sg then cmd:SetButtons(sg.buttons or 0) end
+	end)
+	hook.Add("Tick", "parity_hit", function()
+		if tick == -10 then
+			for _, b in ipairs({ bot, target }) do
+				b:StripWeapons()
+				b:RemoveAllAmmo()
+				b:Spawn()
+			end
+			bot:SetPos(start)
+			bot:SetEyeAngles(Angle(scn.pitch or 0, scn.yaw or 90, 0))
+			target:SetPos(tpos)
+			target:SetEyeAngles(Angle(0, -90, 0))
+			if scn.target_health then target:SetHealth(scn.target_health) end
+			if scn.target_armor then target:SetArmor(scn.target_armor) end
+		end
+		if tick == -8 then bot:SelectWeapon(scn.weapon) end
+		if tick >= 0 then
+			local p = target:GetPos()
+			ticks[#ticks + 1] = { t = tick, health = target:Health(), armor = target:Armor(), alive = target:Alive(), shots = shotCount,
+				target_pos = { p.x, p.y, p.z } }
+		end
+		tick = tick + 1
+		if tick >= total then
+			for _, h in ipairs({ "Tick", "StartCommand", "EntityFireBullets", "EntityTakeDamage", "ScalePlayerDamage" }) do hook.Remove(h, "parity_hit") end
+			local cv = {}
+			for _, n in ipairs({ "sk_plr_dmg_pistol", "sk_plr_dmg_smg1", "sk_plr_dmg_ar2", "sk_plr_dmg_357", "sk_plr_dmg_buckshot", "sk_plr_dmg_crossbow",
+				"sk_plr_dmg_rpg_round", "sk_plr_dmg_grenade", "sk_plr_dmg_smg1_grenade", "sk_plr_dmg_crowbar", "sk_npc_dmg_pistol", "sk_npc_dmg_smg1",
+				"sk_npc_dmg_buckshot", "sk_npc_dmg_357", "sk_max_pistol", "sk_max_smg1", "sk_max_buckshot", "sk_max_357", "sk_max_ar2",
+				"sbox_playershurtplayers", "mp_friendlyfire", "sv_cheats" }) do
+				local c = GetConVar(n)
+				cv[n] = c and c:GetString() or nil
+			end
+			local eye = bot:GetShootPos()
+			done({ weapon = scn.weapon, dist = dist, ticks = ticks, hits = hits, scales = scales, shots = shotCount, convars = cv,
+				eye = { eye.x, eye.y, eye.z }, target_mins = { target:OBBMins().x, target:OBBMins().y, target:OBBMins().z },
+				target_maxs = { target:OBBMaxs().x, target:OBBMaxs().y, target:OBBMaxs().z }, target_model = target:GetModel() })
+		end
+	end)
+end
+ASYNC.hit = true
+
+
 -- damage: a bot dropped from the scenario's heights (fall damage) and hit with TakeDamage of
 -- given amounts at given armour, recorded every tick with the damage events, to measure the
 -- fall damage rule, armour absorption and death.

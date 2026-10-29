@@ -477,3 +477,54 @@ impl Inventory {
         }
     }
 }
+
+/// Damage of one bullet of an ammo type on a player (recordings `hit_*`: the multiplayer ammo
+/// table, not the `sk_plr_dmg_*` convars the server also carries: pistol 12 against sk 5, SMG1
+/// 12 against 4, .357 75 against 40, buckshot 4 per pellet against 8). Unmeasured types are
+/// `None` until recorded.
+pub fn bullet_damage(ammo: &str) -> Option<f32> {
+    match ammo {
+        "Pistol" | "SMG1" => Some(12.0),
+        "357" => Some(75.0),
+        "Buckshot" => Some(4.0),
+        _ => None,
+    }
+}
+
+pub const DMG_BULLET: u32 = 2;
+pub const DMG_BUCKSHOT: u32 = 1 << 29;
+/// Hit groups as the game numbers them.
+pub const HITGROUP_GENERIC: u8 = 0;
+pub const HITGROUP_HEAD: u8 = 1;
+pub const HITGROUP_CHEST: u8 = 2;
+pub const HITGROUP_STOMACH: u8 = 3;
+
+/// The gamemode's damage scale per hit group: the head doubles (12 -> 24, 75 -> 150), chest and
+/// stomach are unscaled; limbs not measured yet (a centre-line shot passes between the legs).
+pub fn hitgroup_scale(group: u8) -> f32 {
+    if group == HITGROUP_HEAD {
+        2.0
+    } else {
+        1.0
+    }
+}
+
+/// Hit group from the height of the hit above the player's feet, bands measured on the standing
+/// `kleiner` model at 200 u: 64 u head, 51 chest, 37 stomach, 71 and 20 (centre line) miss. An
+/// interim stand-in for the model's hit boxes.
+pub fn hitgroup_at(rel_z: f32) -> Option<u8> {
+    if rel_z > 69.0 || rel_z < 26.0 {
+        None
+    } else if rel_z >= 58.0 {
+        Some(HITGROUP_HEAD)
+    } else if rel_z >= 44.0 {
+        Some(HITGROUP_CHEST)
+    } else {
+        Some(HITGROUP_STOMACH)
+    }
+}
+
+/// Knock-back of a bullet hit on a player, horizontal speed per point of (scaled) damage along
+/// the aim: 24 damage -> 100.4 u/s, 12 -> 50.1, 150 -> 636 (recordings `hit_*`; linear in the
+/// damage, the .357 and shotgun deviate by +1.5 / -2 %, open). The push shows in the same tick.
+pub const KNOCKBACK_PER_DAMAGE: f32 = 4.18;

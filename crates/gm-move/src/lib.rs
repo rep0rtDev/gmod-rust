@@ -101,6 +101,9 @@ pub enum MoveType {
 pub struct PlayerState {
     pub origin: Vec3,
     pub velocity: Vec3,
+    /// Velocity added this tick by a hit, after friction and before the move (the game's
+    /// knock-back shows in the hit tick undiminished, measured `hit_*`).
+    pub impulse: Vec3,
     pub on_ground: bool,
     pub ground_normal: Vec3,
     pub ducked: bool,
@@ -126,6 +129,7 @@ impl Default for PlayerState {
         PlayerState {
             origin: Vec3::ZERO,
             velocity: Vec3::ZERO,
+            impulse: Vec3::ZERO,
             on_ground: false,
             ground_normal: Vec3::Z,
             ducked: false,
@@ -220,9 +224,13 @@ impl<'a> Mover<'a> {
             st.surface_friction = 1.0;
             st.velocity.z = 0.0;
             self.friction(st, dt);
+            st.velocity += st.impulse;
+            st.impulse = Vec3::ZERO;
             self.walk_move(st, cmd, dt);
         } else {
             self.start_gravity(st, dt);
+            st.velocity += st.impulse;
+            st.impulse = Vec3::ZERO;
             self.air_move(st, cmd, dt);
             // measured: the air friction multiplier follows the vertical speed before the second half of gravity
             st.surface_friction = if st.velocity.z > 0.0 { 0.25 } else { 1.0 };

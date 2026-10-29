@@ -1,0 +1,73 @@
+{
+ "kind": "hit",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "dist": 200,
+ "target_health": 1000,
+ "weapon": "weapon_pistol",
+ "name": "hit_pistol_stomach",
+ "pitch": 8.0,
+ "segments": [
+  {
+   "ticks": 15,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 20,
+   "buttons": 0
+  }
+ ]
+}

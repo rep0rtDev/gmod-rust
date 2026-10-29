@@ -1023,3 +1023,92 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
+
+[[harness]]
+name = "hit_pistol"
+scenario = "hit/pistol"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_smg1"
+scenario = "hit/smg1"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_357"
+scenario = "hit/357"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_shotgun"
+scenario = "hit/shotgun"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+random = true
+
+
+[[harness]]
+name = "hit_pistol_armor"
+scenario = "hit/pistol_armor"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+[[harness]]
+name = "hit_pistol_chest"
+scenario = "hit/pistol_chest"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_pistol_stomach"
+scenario = "hit/pistol_stomach"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_pistol_legs"
+scenario = "hit/pistol_legs"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_pistol_feet"
+scenario = "hit/pistol_feet"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_pistol_high"
+scenario = "hit/pistol_high"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]

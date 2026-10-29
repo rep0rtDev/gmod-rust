@@ -286,6 +286,7 @@ fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
     Ok(gm_move::PlayerState {
         origin: r.vec3()?,
         velocity: r.vec3()?,
+        impulse: glam::Vec3::ZERO,
         on_ground: r.bool()?,
         ground_normal: r.vec3()?,
         ducked: r.bool()?,

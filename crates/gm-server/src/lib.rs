@@ -201,7 +201,20 @@ pub struct PlayerCmd {
     pub mouse_y: f32,
 }
 
+/// One bullet (or pellet group) that hit a player this tick.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hit {
+    pub tick: u64,
+    pub attacker: u32,
+    pub target: u32,
+    pub damage: f32,
+    pub hitgroup: u8,
+    pub pos: Vec3,
+    pub ammo: &'static str,
+}
+
 pub struct Server<'w> {
+    pub hits: Vec<Hit>,
     pub collision: &'w gm_collision::World,
     pub physics: World,
     /// The static world body constraints to the world attach to.
@@ -230,6 +243,7 @@ pub struct Server<'w> {
 impl<'w> Server<'w> {
     pub fn new(collision: &'w gm_collision::World, physics: World, world_body: BodyHandle) -> Self {
         Server {
+            hits: Vec::new(),
             collision,
             physics,
             world_body,
@@ -291,7 +305,8 @@ impl<'w> Server<'w> {
             if to_armor > p.armor as f32 {
                 to_armor = p.armor as f32;
             }
-            p.armor -= to_armor as i32;
+            // the armour value is kept as a float by the game and read truncated: 50 - 19.2 -> 30
+            p.armor = (p.armor as f32 - to_armor).floor() as i32;
             to_health = amount - to_armor;
         }
         p.damage_acc += to_health;
@@ -399,6 +414,86 @@ impl<'w> Server<'w> {
         p.active_weapon = class.to_string();
         p.inventory.select(class);
         true
+    }
+
+    /// A trigger pull: the bullet (all pellets along the aim, no spread yet) against the other
+    /// live players' hulls and the world; the hit group from the height on the target
+    /// (`weapons::hitgroup_at`), the ammo's multiplayer damage scaled by it, applied as
+    /// DMG_BULLET the same tick (recordings `hit_*`).
+    fn resolve_shot(&mut self, attacker: u32, eye: Vec3, forward: Vec3, shot: weapons::Shot) {
+        let Some(base) = weapons::bullet_damage(shot.ammo) else {
+            return;
+        };
+        const MAX_TRACE: f32 = 56755.84;
+        let end = eye + forward * MAX_TRACE;
+        let world = self
+            .collision
+            .trace_ray(eye, end, gm_collision::MASK_PLAYERSOLID);
+        let d = end - eye;
+        let mut best: Option<(u32, f32)> = None;
+        for (id, p) in &self.players {
+            if *id == attacker || !p.alive {
+                continue;
+            }
+            let (mins, maxs) = self.mover.hull(p.state.ducked);
+            let (lo, hi) = (p.state.origin + mins, p.state.origin + maxs);
+            let (mut t0, mut t1) = (0.0f32, 1.0f32);
+            let mut inside = true;
+            for a in 0..3 {
+                if d[a].abs() < 1e-6 {
+                    if eye[a] < lo[a] || eye[a] > hi[a] {
+                        inside = false;
+                        break;
+                    }
+                    continue;
+                }
+                let (mut ta, mut tb) = ((lo[a] - eye[a]) / d[a], (hi[a] - eye[a]) / d[a]);
+                if ta > tb {
+                    std::mem::swap(&mut ta, &mut tb);
+                }
+                t0 = t0.max(ta);
+                t1 = t1.min(tb);
+                if t0 > t1 {
+                    inside = false;
+                    break;
+                }
+            }
+            if inside && best.is_none_or(|b| t0 < b.1) {
+                best = Some((*id, t0));
+            }
+        }
+        let Some((target, frac)) = best else {
+            return;
+        };
+        if world.fraction < frac {
+            return;
+        }
+        let pos = eye + d * frac;
+        let rel_z = pos.z - self.players[&target].state.origin.z;
+        let Some(group) = weapons::hitgroup_at(rel_z) else {
+            return;
+        };
+        let damage = base * weapons::hitgroup_scale(group) * shot.pellets as f32;
+        let dmg_type = if shot.pellets > 1 {
+            weapons::DMG_BULLET | weapons::DMG_BUCKSHOT
+        } else {
+            weapons::DMG_BULLET
+        };
+        self.hits.push(Hit {
+            tick: self.tick_count,
+            attacker,
+            target,
+            damage,
+            hitgroup: group,
+            pos,
+            ammo: shot.ammo,
+        });
+        let push = Vec3::new(forward.x, forward.y, 0.0).normalize_or_zero()
+            * (weapons::KNOCKBACK_PER_DAMAGE * damage);
+        if let Some(t) = self.players.get_mut(&target) {
+            t.state.impulse += push;
+        }
+        self.damage_player(target, damage, dmg_type);
     }
 
     pub fn kill_player(&mut self, id: u32) {
@@ -805,6 +900,25 @@ impl<'w> Server<'w> {
             }
         }
         self.physics.step();
+        // weapons first: a hit pushes and hurts the target in the tick of the shot, before the
+        // target's own move (recordings `hit_*`)
+        let mut shots = Vec::new();
+        for (id, p) in self.players.iter_mut() {
+            if !p.alive {
+                continue;
+            }
+            if let Some(pc) = cmds.get(id) {
+                if let Some(shot) = p.inventory.command(&p.active_weapon, pc.cmd.buttons) {
+                    let eye = p.state.origin + Vec3::new(0.0, 0.0, self.mover.eye_height(&p.state));
+                    let forward = gm_sandbox::forward(pc.cmd.view_angles.x, pc.cmd.view_angles.y);
+                    shots.push((*id, eye, forward, shot));
+                }
+                p.inventory.tick(&p.active_weapon);
+            }
+        }
+        for (attacker, eye, forward, shot) in shots {
+            self.resolve_shot(attacker, eye, forward, shot);
+        }
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -816,7 +930,6 @@ impl<'w> Server<'w> {
                     ..pc.cmd
                 };
                 let (prev_vz, was_airborne) = (p.state.velocity.z, !p.state.on_ground);
-                p.inventory.tick(&p.active_weapon);
                 self.mover.tick(&mut p.state, &cmd);
                 p.prev_vz = prev_vz;
                 p.prev_on_ground = !was_airborne;

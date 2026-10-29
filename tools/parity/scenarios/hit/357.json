@@ -1,0 +1,265 @@
+{
+ "kind": "hit",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 0,
+ "dist": 200,
+ "target_health": 1000,
+ "name": "hit_357",
+ "weapon": "weapon_357",
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 30,
+   "buttons": 0
+  }
+ ]
+}
