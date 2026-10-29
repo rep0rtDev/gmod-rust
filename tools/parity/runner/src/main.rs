@@ -44,6 +44,16 @@ enum Cmd {
         #[arg(default_value = "")]
         prefix: String,
     },
+    /// Replay a phys scenario from the game's recorded state at tick `from` (pose and
+    /// velocities of the golden trace) for a few ticks and print ours against the game's
+    Replay {
+        /// scenario json, e.g. tools/parity/scenarios/phys/spin_crate_x200.json
+        scenario: PathBuf,
+        #[arg(long)]
+        from: usize,
+        #[arg(long, default_value_t = 3)]
+        ticks: usize,
+    },
     /// Compare traces from the real game (`--theirs`, e.g. `<srcds>/garrysmod/data/parity/out`) with ours
     Compare {
         #[arg(long)]
@@ -664,7 +674,7 @@ fn local_angvel(st: &gm_physics::BodyState) -> [f32; 3] {
     [w.x, w.y, w.z]
 }
 
-fn run_phys(scn: &Scenario) -> Result<Value> {
+fn phys_setup(scn: &Scenario) -> Result<PhysSetup> {
     use glam::Vec3;
     use gm_physics::{PropDesc, Surface, World};
     let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
@@ -741,6 +751,37 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
         inertia: Some(Vec3::from(solid.rotation_inertia)),
     })?;
     world.optimize();
+    Ok(PhysSetup {
+        world,
+        body,
+        mass: props.mass,
+        material: props.surfaceprop.clone(),
+        volume: props.volume,
+        convexes: solid.convexes.len(),
+        model: model.to_string(),
+    })
+}
+
+struct PhysSetup {
+    world: gm_physics::World,
+    body: gm_physics::BodyHandle,
+    mass: f32,
+    material: String,
+    volume: f32,
+    convexes: usize,
+    model: String,
+}
+
+fn run_phys(scn: &Scenario) -> Result<Value> {
+    let PhysSetup {
+        mut world,
+        body,
+        mass,
+        material,
+        volume,
+        convexes,
+        model,
+    } = phys_setup(scn)?;
     let total = scn.ticks.unwrap_or(200);
     let mut ticks = Vec::with_capacity(total as usize);
     for t in 0..total {
@@ -758,9 +799,63 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
     Ok(serde_json::json!({
         "start": scn.start.unwrap_or([0.0; 3]),
         "model": model,
-        "info": { "mass": props.mass, "material": props.surfaceprop, "volume": props.volume, "mesh_convexes": solid.convexes.len() },
+        "info": { "mass": mass, "material": material, "volume": volume, "mesh_convexes": convexes },
         "ticks": ticks,
     }))
+}
+
+/// Our contact model from the game's own state: the prop is put at the golden pose and
+/// velocities of tick `from` and stepped, so a differing impact response shows without the
+/// drift of the ticks before it.
+fn replay_phys(scenario: &std::path::Path, from: usize, n: usize) -> Result<()> {
+    use glam::Vec3;
+    let scn: Scenario = serde_json::from_str(&std::fs::read_to_string(scenario)?)?;
+    let golden = golden_trace(&scn.name).context("no golden trace for this scenario")?;
+    let rows = golden["result"]["ticks"]
+        .as_array()
+        .context("golden has no ticks")?;
+    let PhysSetup {
+        mut world, body, ..
+    } = phys_setup(&scn)?;
+    let v3 = |v: &Value| -> Vec3 {
+        let a: Vec<f32> = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_f64().unwrap() as f32)
+            .collect();
+        Vec3::new(a[0], a[1], a[2])
+    };
+    let g0 = &rows[from];
+    let ang = v3(&g0["ang"]);
+    let q = gm_physics::quat_from_angles(ang.x, ang.y, ang.z);
+    world.teleport(body, v3(&g0["pos"]), q);
+    world.set_velocity(body, v3(&g0["vel"]), q * v3(&g0["angvel"]));
+    for k in 0..=n {
+        let st = world.state(body);
+        let w = local_angvel(&st);
+        println!(
+            "t{} ours pos ({:.2} {:.2} {:.2}) ang ({:.2} {:.2} {:.2}) v ({:.1} {:.1} {:.1}) w ({:.1} {:.1} {:.1})",
+            from + k, st.position.x, st.position.y, st.position.z, st.angles.0, st.angles.1, st.angles.2,
+            st.velocity.x, st.velocity.y, st.velocity.z, w[0], w[1], w[2]
+        );
+        if let Some(g) = rows.get(from + k) {
+            let (p, a, v, w) = (
+                v3(&g["pos"]),
+                v3(&g["ang"]),
+                v3(&g["vel"]),
+                v3(&g["angvel"]),
+            );
+            println!(
+                "t{} game pos ({:.2} {:.2} {:.2}) ang ({:.2} {:.2} {:.2}) v ({:.1} {:.1} {:.1}) w ({:.1} {:.1} {:.1})",
+                from + k, p.x, p.y, p.z, a.x, a.y, a.z, v.x, v.y, v.z, w.x, w.y, w.z
+            );
+        }
+        if k < n {
+            world.step();
+        }
+    }
+    Ok(())
 }
 
 /// Rigid body traces: position, orientation and the tick of first contact. Bit exactness is
@@ -2523,6 +2618,11 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Cmd::Replay {
+            scenario,
+            from,
+            ticks,
+        } => replay_phys(&scenario, from, ticks)?,
         Cmd::Compare {
             theirs,
             ours,

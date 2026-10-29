@@ -109,6 +109,16 @@ pub struct ConstraintHandle(*mut std::ffi::c_void);
 /// typical speeds and the game resolves the hit in the tick it happens, so the default 0.02 m
 /// (which lands bodies a tick late, penetrating) is widened.
 pub const SPECULATIVE_CONTACT_M: f32 = 0.15;
+
+/// Speculative contact distance actually used (metres): `GMP_SPECULATIVE` overrides the
+/// default for experiments (the game catches a contact anywhere inside the step, Jolt only
+/// within this distance).
+fn speculative_contact_m() -> f32 {
+    std::env::var("GMP_SPECULATIVE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(SPECULATIVE_CONTACT_M)
+}
 pub const PENETRATION_SLOP_M: f32 = 0.02;
 
 use glam::{Quat, Vec3};
@@ -346,7 +356,7 @@ impl World {
             // layout check: the shim reads Jolt's defaults back before changing them
             debug_assert!((gmp_get_speculative_distance(raw) - 0.02).abs() < 1e-6);
             debug_assert!((gmp_get_penetration_slop(raw) - 0.02).abs() < 1e-6);
-            gmp_set_contact_settings(raw, SPECULATIVE_CONTACT_M, PENETRATION_SLOP_M);
+            gmp_set_contact_settings(raw, speculative_contact_m(), PENETRATION_SLOP_M);
             gmp_install_impact_listener(raw);
             gmp_set_impact_step(raw, tick_interval);
         }
@@ -982,7 +992,7 @@ mod tests {
         let w = World::new(600.0, 0.015, 1);
         unsafe {
             let raw = w.system.as_raw();
-            assert!((gmp_get_speculative_distance(raw) - SPECULATIVE_CONTACT_M).abs() < 1e-6);
+            assert!((gmp_get_speculative_distance(raw) - speculative_contact_m()).abs() < 1e-6);
             assert!((gmp_get_penetration_slop(raw) - PENETRATION_SLOP_M).abs() < 1e-6);
         }
     }
