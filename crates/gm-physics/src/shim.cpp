@@ -204,7 +204,7 @@ public:
 	std::unordered_map<JPH::uint64, std::vector<size_t>> contact_points; // pair -> hull vertex indices that already impacted
 	// resting contact anchors: a body pushed while at rest keeps its tangential velocity in the
 	// push step (no friction) and is caught at its leading edge the step after
-	struct RestState { float vt_prev = 0.0f; float vn_in = 0.0f; int phase = 0; };
+	struct RestState { float vt_prev = 0.0f; float vn_in = 0.0f; int phase = 0; int landed_tick = -1; };
 	std::unordered_map<JPH::uint64, RestState> rest;
 	// the game integrates up to the moment of impact with the old velocity and the rest of the
 	// step with the new one; Jolt integrates the whole step with the new one, so after the step
@@ -354,6 +354,8 @@ public:
 			const JPH::Body &other = b1.IsDynamic() ? b2 : b1;
 			JPH::uint64 key = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
 			RestState &rs = rest[key];
+			// a face that was just solved as an impact this step is bouncing, not resting
+			if (rs.landed_tick == tick) return;
 			JPH::Vec3 nd = b1.IsDynamic() ? n : -n; // away from the surface, whichever body is dynamic
 			JPH::Vec3 v = dyn.GetLinearVelocity();
 			JPH::Vec3 vt_vec = v - nd * v.Dot(nd);
@@ -415,6 +417,7 @@ public:
 		const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
 		JPH::Vec3 lv0 = dyn.GetLinearVelocity(), av0 = dyn.GetAngularVelocity();
 		float t_impact = -1.0f;
+		bool face_done = false;
 		float e_eff = elasticity;
 		float extra = 0.0f;
 		auto rel = [&](JPH::RVec3Arg p) { return point_velocity(b1, p) - point_velocity(b2, p); };
@@ -483,6 +486,102 @@ public:
 		rest[pair_key].phase = 3; // landing in progress: the resting branch must not read it as a push
 		if (verts_of_b2_used) cps.clear();
 		for (int round = 0; round < 8; ++round) {
+			// a face arriving flat (three or more vertices reach the plane this step, fastest
+			// above 0.3 m/s) is one simultaneous impact, not a chain of vertex impacts: every
+			// arriving vertex is driven to sqrt(e) of its own approach along its tilted push
+			// direction (Gauss-Seidel, accumulated impulses never pull). The game's flat crate
+			// at 653 u/s bounces 98 u/s with its yaw spin 148 -> 0 deg/s (`phys_spin_crate_z200`);
+			// the vertex chain gave no bounce and a 211/169 deg/s tumble
+			if (round == 0) {
+				std::vector<Pt *> face;
+				float fastest = 0.0f, t_first = step_dt;
+				for (Pt &pt : pts) {
+					float vn = rel(pt.p).Dot(n);
+					if (vn >= -threshold || (pt.d > 0.0f && pt.d > -vn * step_dt)) continue;
+					bool dup = false;
+					for (const Pt *f : face) if ((f->p - pt.p).LengthSq() < 1e-6f) { dup = true; break; }
+					if (dup) continue;
+					pt.vn0 = vn;
+					pt.dir = direction(rel(pt.p), n);
+					face.push_back(&pt);
+					fastest = std::max(fastest, -vn);
+					t_first = std::min(t_first, std::max(pt.d, 0.0f) / -vn);
+				}
+				// only vertices reaching the plane together (within 5 mm of the nearest) form the
+				// face: a corner region of a chamfered hull has several vertices inside one step
+				if (face.size() >= 3) {
+					float d_min = 1e30f;
+					for (const Pt *f : face) d_min = std::min(d_min, f->d);
+					std::vector<Pt *> keep;
+					for (Pt *f : face) if (f->d <= d_min + 0.005f) keep.push_back(f);
+					face.swap(keep);
+				}
+				// a landing only: the face is still above the rest gap (a resting face pushed into
+				// the floor - the shot drum - stays with the resting rules)
+				float d_face = 1e30f;
+				for (const Pt *f : face) d_face = std::min(d_face, f->d);
+				if (face.size() >= 3 && fastest > 0.3f && d_face > 0.02f) {
+					std::vector<float> acc(face.size(), 0.0f);
+					for (int it = 0; it < 60; ++it) {
+						float moved = 0.0f;
+						for (size_t k = 0; k < face.size(); ++k) {
+							Pt &pt = *face[k];
+							JPH::Vec3 v = rel(pt.p);
+							float vn = v.Dot(n);
+							float wanted = extra + std::sqrt(e_eff) * (-pt.vn0) - vn;
+							push(b1, pt.p, pt.dir);
+							push(b2, pt.p, -pt.dir);
+							float dvn = rel(pt.p).Dot(n) - vn;
+							push(b1, pt.p, -pt.dir);
+							push(b2, pt.p, pt.dir);
+							if (dvn <= 1e-6f) continue;
+							float j = wanted / dvn;
+							if (acc[k] + j < 0.0f) j = -acc[k];
+							if (std::fabs(j) < 1e-5f) continue;
+							acc[k] += j;
+							moved = std::max(moved, std::fabs(j * dvn));
+							push(b1, pt.p, pt.dir * j);
+							push(b2, pt.p, -pt.dir * j);
+						}
+						if (moved < 1e-4f) break;
+					}
+					// inside the friction cone the vertices stick: the tangential velocity of each
+					// is removed, bounded by f times its normal impulse (the game's flat crate
+					// lands with its 148 deg/s yaw spin gone)
+					for (int it = 0; it < 20; ++it) {
+						float moved = 0.0f;
+						for (size_t k = 0; k < face.size(); ++k) {
+							Pt &pt = *face[k];
+							JPH::Vec3 v = rel(pt.p);
+							JPH::Vec3 vt = v - n * v.Dot(n);
+							float len = vt.Length();
+							if (len < 1e-4f) continue;
+							JPH::Vec3 th = vt / len;
+							push(b1, pt.p, -th);
+							push(b2, pt.p, th);
+							float dvt = len - (rel(pt.p) - n * rel(pt.p).Dot(n)).Dot(th);
+							push(b1, pt.p, th);
+							push(b2, pt.p, -th);
+							if (dvt <= 1e-6f) continue;
+							float jt = std::min(len / dvt, friction * acc[k] * pt.dir.Dot(n));
+							if (jt <= 0.0f) continue;
+							moved = std::max(moved, jt * dvt);
+							push(b1, pt.p, -th * jt);
+							push(b2, pt.p, th * jt);
+						}
+						if (moved < 1e-4f) break;
+					}
+					t_impact = t_first;
+					rest[pair_key].landed_tick = tick;
+					// the contact is fully solved here: Jolt's own constraint on this manifold would
+					// take the bounce back (vz 0 instead of +93 u/s), and the game leaves the body
+					// exactly at the contact position for this step (z -123.55 = rest height)
+					s.mIsSensor = true;
+					face_done = true;
+					if (debug) fprintf(stderr, "face impact t=%d verts=%zu fastest=%.3f e=%.3f lv=(%.3f %.3f %.3f)->(%.3f %.3f %.3f) av=(%.2f %.2f %.2f)->(%.2f %.2f %.2f)\n", tick, face.size(), fastest, std::sqrt(e_eff), lv0.GetX(), lv0.GetY(), lv0.GetZ(), dyn.GetLinearVelocity().GetX(), dyn.GetLinearVelocity().GetY(), dyn.GetLinearVelocity().GetZ(), av0.GetX(), av0.GetY(), av0.GetZ(), dyn.GetAngularVelocity().GetX(), dyn.GetAngularVelocity().GetY(), dyn.GetAngularVelocity().GetZ());
+					break;
+				}
+			}
 			// the vertex that reaches the surface first: least time d / |vn| (the first round
 			// has every vertex at the same distance, later rounds are decided by the rotation
 			// the previous impact added); ties keep hull order
@@ -500,6 +599,16 @@ public:
 			}
 			if (pick == nullptr) break;
 			if (t_impact < 0.0f) t_impact = std::min(std::max(best_t, 0.0f), step_dt);
+			if (debug && pick) {
+				std::vector<const Pt *> cand;
+				for (const Pt &pt : pts) cand.push_back(&pt);
+				std::sort(cand.begin(), cand.end(), [&](const Pt *a, const Pt *b) { return a->d < b->d; });
+				JPH::RVec3 com = dyn.GetCenterOfMassPosition();
+				for (size_t k = 0; k < cand.size() && k < 4; ++k) {
+					JPH::Vec3 r = JPH::Vec3(cand[k]->p - com);
+					fprintf(stderr, "  cand t=%d d=%.4f vn=%.3f r=(%.4f %.4f %.4f)%s\n", tick, cand[k]->d, rel(cand[k]->p).Dot(n), r.GetX(), r.GetY(), r.GetZ(), cand[k] == pick ? " <pick" : "");
+				}
+			}
 			// the game's impact system also re-pushes the pair's existing contact points (corners
 			// that impacted earlier and still touch) along the normal while this one is resolved
 			std::vector<Pt *> old;
@@ -566,8 +675,8 @@ public:
 			}
 		}
 		if (t_impact > 0.0f) {
-			JPH::Vec3 dl = (lv0 - dyn.GetLinearVelocity()) * t_impact;
-			JPH::Vec3 da = (av0 - dyn.GetAngularVelocity()) * t_impact;
+			JPH::Vec3 dl = face_done ? lv0 * (t_impact - step_dt) : (lv0 - dyn.GetLinearVelocity()) * t_impact;
+			JPH::Vec3 da = face_done ? av0 * (t_impact - step_dt) : (av0 - dyn.GetAngularVelocity()) * t_impact;
 			std::lock_guard<std::mutex> lock(offsets_mutex);
 			Offset &o = offsets[dyn.GetID().GetIndexAndSequenceNumber()];
 			o.dpos += dl;
