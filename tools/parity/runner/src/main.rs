@@ -131,6 +131,8 @@ struct Scenario {
     prop_z: Option<f32>,
     #[serde(default)]
     frozen: bool,
+    #[serde(default)]
+    record_setup: bool,
     target_armor: Option<i32>,
     pitch: Option<f32>,
     #[serde(default)]
@@ -1350,6 +1352,7 @@ fn run_shoot_prop(scn: &Scenario) -> Result<Value> {
         },
         ..Default::default()
     };
+    let mut setup_ticks = Vec::new();
     for pre in -70i32..0 {
         if pre == -8 {
             server.give_weapon(shooter, &class);
@@ -1361,6 +1364,19 @@ fn run_shoot_prop(scn: &Scenario) -> Result<Value> {
         }
         cmds.insert(shooter, idle(aim));
         server.tick(&cmds);
+        if scn.record_setup {
+            if let Some(b) = server.body_of(prop_id) {
+                let st = server.physics.state(b);
+                setup_ticks.push(json!({
+                    "t": pre,
+                    "pos": [st.position.x, st.position.y, st.position.z],
+                    "ang": [st.angles.0, st.angles.1, st.angles.2],
+                    "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
+                    "angvel": [st.angular_velocity.x, st.angular_velocity.y, st.angular_velocity.z],
+                    "asleep": !st.active,
+                }));
+            }
+        }
     }
     let mut ticks = Vec::new();
     let mut hits = Vec::new();
@@ -1425,7 +1441,7 @@ fn run_shoot_prop(scn: &Scenario) -> Result<Value> {
     }
     Ok(
         json!({ "weapon": class, "model": model, "dist": dist, "ticks": ticks, "hits": hits, "removed": removed,
-        "shots": server.players[&shooter].inventory.shots }),
+        "shots": server.players[&shooter].inventory.shots, "setup_ticks": setup_ticks }),
     )
 }
 

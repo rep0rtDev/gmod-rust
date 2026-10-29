@@ -1115,7 +1115,7 @@ SCENARIOS.shoot_prop = function(scn, done)
 	local total = 0
 	for _, sg in ipairs(segs) do total = total + (sg.ticks or 0) end
 	local tick = -70
-	local ticks, hits, removed = {}, {}, {}
+	local ticks, hits, removed, setup = {}, {}, {}, {}
 	local shotCount = 0
 	local PROJ = { rpg_missile = true, crossbow_bolt = true, npc_grenade_frag = true, prop_combine_ball = true, grenade_ar2 = true }
 	local function segAt(t)
@@ -1165,6 +1165,10 @@ SCENARIOS.shoot_prop = function(scn, done)
 			if scn.ammo then for k, v in pairs(scn.ammo) do bot:GiveAmmo(v, k, true) end end
 		end
 		if tick == -8 then bot:SelectWeapon(scn.weapon) end
+		if tick < 0 and scn.record_setup and IsValid(prop) and IsValid(ph) then
+			local p, a, v, av = prop:GetPos(), prop:GetAngles(), ph:GetVelocity(), ph:GetAngleVelocity()
+			setup[#setup + 1] = { t = tick, pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r }, vel = { v.x, v.y, v.z }, angvel = { av.x, av.y, av.z }, asleep = ph:IsAsleep() }
+		end
 		if tick >= 0 then
 			local row = { t = tick, shots = shotCount, alive = IsValid(prop) }
 			if IsValid(prop) then
@@ -1196,7 +1200,7 @@ SCENARIOS.shoot_prop = function(scn, done)
 				prop:Remove()
 			end
 			local eye = bot:GetShootPos()
-			done({ weapon = scn.weapon, model = scn.model, dist = dist, ticks = ticks, hits = hits, removed = removed, shots = shotCount, prop = info,
+			done({ weapon = scn.weapon, model = scn.model, dist = dist, ticks = ticks, hits = hits, removed = removed, shots = shotCount, prop = info, setup_ticks = scn.record_setup and setup or nil,
 				eye = { eye.x, eye.y, eye.z }, phys_pushscale = GetConVar("phys_pushscale") and GetConVar("phys_pushscale"):GetFloat() or nil })
 		end
 	end)

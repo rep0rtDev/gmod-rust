@@ -1,0 +1,22 @@
+{
+ "kind": "shoot_prop",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 23,
+ "dist": 100,
+ "model": "models/props_c17/oildrum001.mdl",
+ "name": "shoot_prop_drum_settle",
+ "weapon": "weapon_pistol",
+ "segments": [
+  {
+   "ticks": 5,
+   "buttons": 0
+  }
+ ],
+ "record_setup": true
+}

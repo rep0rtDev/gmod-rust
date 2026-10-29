@@ -1567,6 +1567,14 @@ crates = ["gm-server"]
 [harness.tolerance]
 
 [[harness]]
+name = "shoot_prop_drum_settle"
+scenario = "shoot_prop/drum_settle"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+[[harness]]
 name = "shoot_prop_pistol_drum"
 scenario = "shoot_prop/pistol_drum"
 compare = "shoot_prop"
