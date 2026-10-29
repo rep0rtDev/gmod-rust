@@ -346,6 +346,7 @@ public:
 					float scale = dvt_full > 1e-6f ? std::min(1.0f, rs.vn_in / dvt_full) : 0.0f;
 					j *= scale;
 					push(dyn, lead->p, j);
+					if (scale <= 0.0f) { rs.phase = 2; rs.vt_prev = vt; return; } // nothing caught: Jolt's friction stays
 					if (debug) fprintf(stderr, "rest catch r=(%.4f %.4f %.4f) j=(%.3f %.3f %.3f) v=(%.3f %.3f %.3f)\n", (double)r.GetX(), (double)r.GetY(), (double)r.GetZ(), (double)j.GetX(), (double)j.GetY(), (double)j.GetZ(), (double)dyn.GetLinearVelocity().GetX(), (double)dyn.GetLinearVelocity().GetY(), (double)dyn.GetLinearVelocity().GetZ());
 				}
 				s.mCombinedFriction = 0.0f;
@@ -355,7 +356,8 @@ public:
 				// loses 6-9 u/s whether the push is 20 or 334 u/s), not on the impulsive normal part
 				float g_dt = gravity * step_dt;
 				JPH::RVec3 c = dyn.GetCenterOfMassPosition();
-				float vn_in = std::max(-(point_velocity(b1, c) - point_velocity(b2, c)).Dot(n), 0.0f);
+				// the body's own fall into the 1 cm rest gap (g dt per step) is not part of the push
+				float vn_in = std::max(-(point_velocity(b1, c) - point_velocity(b2, c)).Dot(n) - g_dt, 0.0f);
 				s.mCombinedFriction = friction * g_dt / (vn_in + g_dt);
 				rs.vn_in = vn_in;
 				rs.phase = 1;
