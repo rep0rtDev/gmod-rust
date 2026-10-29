@@ -589,6 +589,9 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
 
 /// `GMP_SOLVER=baumgarte,velocity_steps,position_steps,min_restitution_velocity` for experiments.
 fn tune_solver(world: &mut gm_physics::World) {
+    if std::env::var("GMP_IMPACT").as_deref() == Ok("0") {
+        world.set_impact_enabled(false);
+    }
     if let Ok(v) = std::env::var("GMP_SOLVER") {
         let f: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
         if f.len() == 4 {

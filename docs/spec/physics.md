@@ -26,6 +26,19 @@ Harness group `constraint_*` (3 traces on 2026.09.17: `weld_pair` two crates wel
 - Measured and matched: the welded pair falls as one body with the same air drag per crate (positions equal to the tick until the landing); the roped crate swings with the same period for the first 40 ticks (within 1 u) and keeps the rope taut at 80 u.
 - Open: the welded pair's landing (both crates come to rest 5 u away, 3 degrees of yaw) and the stack (the game lets the resting bottom crate sink 4 u under the impact and lands the top one 2 ticks earlier) are the contact response again; the rope swing drifts after half a period (9 u, the game damps the pendulum differently). 0 of 3 within tolerance, kept red with the numbers.
 
+## Impact response (IVP style, clean room)
+
+The real game resolves the first touch of a pair as an *impact* at the contact points, not through the resting contact solver. Behaviour measured on the traces and confirmed by the symbol inventory of `vphysics_srv.so` (`IVP_Impact_Solver`, `IVP_Impact_System`, `IVP_Material_Manager`), implemented in the shim as a Jolt `ContactListener` (`gm-physics/src/shim.cpp`, toggle `World::set_impact_enabled`, runner `GMP_IMPACT=0` for A/B):
+
+- Pair materials: elasticity is the product `e1 * e2`, friction the product `f1 * f2` (both clamped to [0, 1]). The separation speed after the impact is `sqrt(e1 e2) * |vn|`, which is where the measured 0.15 for wood on concrete came from (sqrt(0.1 * 0.2) = 0.141 plus the residual of the push loop).
+- Impact set: every manifold point that reaches the surface within the step (a flat face lands on all four corners at once, an edge on one point). Speculative points further away than `|vn| dt` are left to Jolt.
+- Push: estimate `-2 vn m_eff` from the virtual masses along the direction, applied in tenths round robin over the points until no point approaches any more (max 100 rounds), then one scaled push per point up to the wanted separation speed. Jolt's own restitution for that contact is zeroed; its solver only keeps the bodies apart afterwards.
+- Friction tilt: `tan(angle) = f (1 + sqrt(e))`, push = `cos * n - sin * (tangential part of the unit relative velocity)` unless the motion is already inside that cone (then along the normal). Not renormalised.
+- Static bodies get a virtual mass of 1e5 times the other body.
+- Persisted contacts count as an impact only above 0.3 m/s approach speed; resting contact stays with Jolt. Repeated impact counting (IVP relaxes the elasticity towards 1 with the impact count) is left out: with Jolt resting contacts it made settling bodies bounce more every tick.
+
+Effect: the tilted crate now lands right (rest 0.9 u and 2 degrees against 5 u and 18 degrees before, 3.5 u peak during the tumble), the flat crate gets the small sideways kick and spin the game shows (6 u/s and 9 deg/s against 8.7 and 11.4) but in a different horizontal direction, so its rest drifts 2.6 u. The barrel and the can still pick a different first vertex of their 24-gons and roll the other way; the push loop is right, the contact geometry is not yet.
+
 ## Solver settings do not close the gap (measured)
 
 `World::set_solver` (shim) exposes Jolt's Baumgarte factor, velocity and position iterations and the restitution velocity threshold; the runner takes `GMP_SOLVER=baumgarte,vel_steps,pos_steps,min_restitution_velocity` for experiments. Sweeping Baumgarte 0.02 to 0.2, position steps 0 to 2, velocity steps 4 to 10 and the restitution threshold 0.1 to 1 m/s over all `phys_*`, `physgun_*` and `constraint_*` traces moves the errors by under 1 u (tilted crate stays at 5 to 6 u and 12 to 18 degrees, barrel at 135 to 200 u, can at 19 to 51 u, stack at 4 u). The mismatch is the contact model itself (IVP's impact and friction solver), not the amount of position correction, so the defaults stay and no tuning is baked in.

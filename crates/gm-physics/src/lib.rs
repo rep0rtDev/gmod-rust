@@ -35,6 +35,15 @@ extern "C" {
         max_d: f32,
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
+    fn gmp_install_impact_listener(system: *mut JPC_PhysicsSystem);
+    fn gmp_set_surface(
+        system: *mut JPC_PhysicsSystem,
+        body_id: u32,
+        friction: f32,
+        elasticity: f32,
+    );
+    fn gmp_set_impact_step(system: *mut JPC_PhysicsSystem, dt: f32);
+    fn gmp_set_impact_enabled(system: *mut JPC_PhysicsSystem, enabled: i32);
     fn gmp_set_solver(
         system: *mut JPC_PhysicsSystem,
         baumgarte: f32,
@@ -283,6 +292,8 @@ impl World {
             debug_assert!((gmp_get_speculative_distance(raw) - 0.02).abs() < 1e-6);
             debug_assert!((gmp_get_penetration_slop(raw) - 0.02).abs() < 1e-6);
             gmp_set_contact_settings(raw, SPECULATIVE_CONTACT_M, PENETRATION_SLOP_M);
+            gmp_install_impact_listener(raw);
+            gmp_set_impact_step(raw, tick_interval);
         }
         let (temp, jobs) = unsafe {
             (
@@ -399,6 +410,12 @@ impl World {
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
             let id =
                 JPC_BodyInterface_CreateAndAddBody(bi, &settings, JPC_ACTIVATION_DONT_ACTIVATE);
+            gmp_set_surface(
+                self.system.as_raw(),
+                id,
+                surface.friction,
+                surface.elasticity,
+            );
             Ok(BodyHandle(id))
         }
     }
@@ -454,6 +471,12 @@ impl World {
                 body: id,
                 areas: Self::drag_factors(desc.hulls, desc.mass, desc.drag_axis_areas),
             });
+            gmp_set_surface(
+                self.system.as_raw(),
+                id,
+                desc.surface.friction,
+                desc.surface.elasticity,
+            );
             Ok(BodyHandle(id))
         }
     }
@@ -592,6 +615,11 @@ impl World {
                 min_restitution_velocity,
             )
         }
+    }
+
+    /// Toggle the IVP style single point impact response (on by default).
+    pub fn set_impact_enabled(&mut self, enabled: bool) {
+        unsafe { gmp_set_impact_enabled(self.system.as_raw(), enabled as i32) }
     }
 
     pub fn is_held(&self, body: BodyHandle) -> bool {
