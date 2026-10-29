@@ -6,9 +6,9 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 |---|---|---|---|
 | Formats: VPK | 0.75 | 2 / 2 | `fmt_vpk_index_garrysmod`, `fmt_vpk_index_hl2_models` equal to `file.Find` on a real server (version 2026.09.17) |
 | Formats: KeyValues | 0.5 | | gameinfo, VMT, appmanifest parse; no dedicated harness yet |
-| Formats: BSP | 0.5 | 0 | header, planes, vertices, edges, faces, texinfo/texdata, models, nodes, leafs, brushes, lightmaps, entities; gm_construct parses end to end. Displacements, PVS, game lump, PHY pending |
+| Formats: BSP | 0.5 | 0 | header, planes, vertices, edges, faces, texinfo/texdata, models, nodes, leafs, brushes, lightmaps, entities; gm_construct parses end to end; static props (sprp v4 to v11), displacements built to meshes, PVS decode and point to leaf. PHY and leaf ambient lighting pending |
 | Formats: VTF | 0.5 | 0 | header, resources, mip addressing, decode to RGBA8 for DXT1/3/5, BGR(A/X)8888, BGR888, I8/A8/IA88, 565, UV88, RGBA16F; 300 real HL2 textures decode |
-| Formats: MDL/VVD/VTX/PHY | 0 | 0 | |
+| Formats: MDL/VVD/VTX | 0.5 | 0 | header v44 to v49, bones, body parts, meshes, textures, skins, VVD fixups, VTX strips to triangle lists; 60 props_c17 models verified. PHY pending |
 | Content mounting | 0.75 | 2 / 2 | GMod order without addons/workshop; client vs server difference documented |
 | Measured facts | | | `fmt_convars_defaults`, `fmt_info` recorded: see `docs/spec/convars-defaults.md` |
 | Parity harness tooling | 0.5 | | probe addon, `gm-parity stage / run-ours / compare`; server launch is manual |

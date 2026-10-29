@@ -224,3 +224,58 @@ fn hl2_props_mdl_vvd_vtx_parse() {
     }
     assert!(checked >= 20, "checked {checked}");
 }
+
+#[test]
+fn gm_construct_props_disps_pvs() {
+    let Some(dir) = gmod_dir() else {
+        return;
+    };
+    let data = std::fs::read(dir.join("garrysmod/maps/gm_construct.bsp")).unwrap();
+    let bsp = gm_formats::bsp::Bsp::parse(&data).unwrap();
+    let props = gm_formats::bsp::extra::StaticProps::parse(&bsp).unwrap();
+    assert_eq!(props.version, 6);
+    assert_eq!(props.props.len(), 182);
+    assert_eq!(props.models.len(), 17);
+    assert!(
+        props
+            .models
+            .iter()
+            .all(|m| m.starts_with("models/") && m.ends_with(".mdl")),
+        "{:?}",
+        props.models
+    );
+    for p in &props.props {
+        assert!((p.model as usize) < props.models.len());
+        assert!(p.origin.iter().all(|v| v.abs() < 16384.0));
+    }
+    let infos = gm_formats::bsp::extra::disp_infos(&bsp).unwrap();
+    let verts = gm_formats::bsp::extra::disp_verts(&bsp).unwrap();
+    assert_eq!(infos.len(), 110);
+    let mut tris = 0;
+    for d in &infos {
+        let m = gm_formats::bsp::extra::build_disp_mesh(&bsp, d, &verts).unwrap();
+        assert_eq!(m.positions.len(), d.vert_count());
+        assert_eq!(m.indices.len(), d.tri_count() * 3);
+        tris += d.tri_count();
+    }
+    assert!(tris > 1000);
+    let vis = gm_formats::bsp::extra::Visibility::parse(&bsp).unwrap();
+    assert!(vis.num_clusters > 100, "{}", vis.num_clusters);
+    let spawn = bsp
+        .entities
+        .iter()
+        .find(|e| e.classname() == "info_player_start")
+        .and_then(|e| e.origin())
+        .unwrap();
+    let leaf = bsp.leaf_at([spawn[0], spawn[1], spawn[2] + 32.0]);
+    let cluster = bsp.leafs[leaf].cluster;
+    assert!(cluster >= 0, "spawn leaf {leaf} has cluster {cluster}");
+    let pvs = vis.pvs(&bsp, cluster as usize).unwrap();
+    let visible = pvs.iter().filter(|&&v| v).count();
+    assert!(pvs[cluster as usize], "cluster sees itself");
+    assert!(
+        visible > 1 && visible < vis.num_clusters,
+        "{visible}/{}",
+        vis.num_clusters
+    );
+}

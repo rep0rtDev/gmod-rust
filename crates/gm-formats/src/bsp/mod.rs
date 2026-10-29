@@ -3,6 +3,7 @@
 //! Lump payload parsers live in submodules as they are implemented; this module
 //! only locates them. Layout per the public VDC "Source BSP File Format" page.
 
+pub mod extra;
 pub mod lumps;
 
 use crate::{FormatError, Reader, Result};
