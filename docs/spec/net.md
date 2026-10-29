@@ -75,8 +75,8 @@ Measured (`net_interp_*`: a prop falls on the server, the client interpolates, t
 indexed by render tick is compared with the real game's recording like `phys_*`): in flight the
 interpolated crate is within 0.07 u of our server's truth (the linear lerp of a parabola over
 30 ms), but at the impact tick it is 2.5 u off, because the two snapshots around it straddle the
-bounce; so `net_interp_drop_crate` at 33 Hz is DIFF against the game by that one tick (2.50 u at
-tol 2, contact tick 35 vs 36), and `net_interp_drop_crate_66hz` with a snapshot every tick is
+bounce; so `net_interp_drop_crate` at 33 Hz is DIFF against the game by that one tick (2.13 u at
+tol 2 after the impact-time shift in gm-physics, contact tick 35 vs 36), and `net_interp_drop_crate_66hz` with a snapshot every tick is
 equal (1.19 u, the same as `phys_drop_crate` itself). The tossed can is within 0.20 u and 6
 degrees of our server at 33 Hz (it spins at about 400 degrees per second) and DIFF against the
 game for the physics reason `phys_toss_can` is.
