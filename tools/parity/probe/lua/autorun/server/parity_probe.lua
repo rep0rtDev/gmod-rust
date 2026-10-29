@@ -1087,6 +1087,123 @@ end
 ASYNC.hit = true
 
 
+-- shoot_prop: a bot fires one weapon at a prop_physics spawned `dist` units ahead (model,
+-- angles, frozen); every EntityTakeDamage on the prop, its pose/velocity/health per tick, its
+-- removal (break) and the projectiles are recorded, to measure bullet/blast forces on props.
+SCENARIOS.shoot_prop = function(scn, done)
+	if scn.convars then for k, v in pairs(scn.convars) do RunConsoleCommand(k, tostring(v)) end end
+	local bot = player.GetBots()[1]
+	if not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.shoot_prop(scn, done) end)
+		return
+	end
+	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
+	local dist = scn.dist or 100
+	local ppos = start + Vector(0, dist, scn.prop_z or 0)
+	local prop = ents.Create("prop_physics")
+	prop:SetModel(scn.model)
+	prop:SetPos(ppos)
+	if scn.prop_angles then prop:SetAngles(Angle(scn.prop_angles[1], scn.prop_angles[2], scn.prop_angles[3])) end
+	prop:Spawn()
+	prop:Activate()
+	local ph = prop:GetPhysicsObject()
+	if not IsValid(ph) then done({ error = "no physics object for " .. tostring(scn.model) }) prop:Remove() return end
+	ph:Wake()
+	if scn.frozen then ph:EnableMotion(false) end
+	local segs = scn.segments or {}
+	local total = 0
+	for _, sg in ipairs(segs) do total = total + (sg.ticks or 0) end
+	local tick = -70
+	local ticks, hits, removed = {}, {}, {}
+	local shotCount = 0
+	local PROJ = { rpg_missile = true, crossbow_bolt = true, npc_grenade_frag = true, prop_combine_ball = true, grenade_ar2 = true }
+	local function segAt(t)
+		local acc = 0
+		for _, sg in ipairs(segs) do
+			acc = acc + (sg.ticks or 0)
+			if t < acc then return sg end
+		end
+	end
+	hook.Add("EntityFireBullets", "parity_shoot_prop", function(ent, data) if ent == bot then shotCount = shotCount + 1 end end)
+	hook.Add("EntityTakeDamage", "parity_shoot_prop", function(ent, dmg)
+		if ent == prop and tick >= 0 then
+			local inf, att = dmg:GetInflictor(), dmg:GetAttacker()
+			local pos, f = dmg:GetDamagePosition(), dmg:GetDamageForce()
+			local ipos = IsValid(inf) and inf:GetPos() or Vector(0, 0, 0)
+			local pp = prop:GetPos()
+			local pv = IsValid(ph) and ph:GetVelocity() or Vector(0, 0, 0)
+			local pa = IsValid(ph) and ph:GetAngleVelocity() or Vector(0, 0, 0)
+			hits[#hits + 1] = { t = tick, damage = dmg:GetDamage(), base = dmg:GetBaseDamage(), type = dmg:GetDamageType(),
+				inflictor = IsValid(inf) and inf:GetClass() or "", attacker = IsValid(att) and att:GetClass() or "",
+				ammo = dmg:GetAmmoType(), pos = { pos.x, pos.y, pos.z }, force = f:Length(), force_vec = { f.x, f.y, f.z },
+				inflictor_pos = { ipos.x, ipos.y, ipos.z }, prop_pos = { pp.x, pp.y, pp.z }, prop_vel = { pv.x, pv.y, pv.z }, prop_angvel = { pa.x, pa.y, pa.z },
+				health_before = prop:Health(), shots = shotCount }
+		end
+	end)
+	hook.Add("EntityRemoved", "parity_shoot_prop", function(ent)
+		if tick >= 0 and (ent == prop or PROJ[ent:GetClass()]) then
+			local p = ent:GetPos()
+			removed[#removed + 1] = { t = tick, class = ent:GetClass(), id = ent:EntIndex(), pos = { p.x, p.y, p.z }, is_prop = ent == prop }
+		end
+	end)
+	hook.Add("StartCommand", "parity_shoot_prop", function(ply, cmd)
+		if ply ~= bot then return end
+		cmd:ClearButtons()
+		cmd:ClearMovement()
+		cmd:SetViewAngles(Angle(scn.pitch or 0, scn.yaw or 90, 0))
+		local sg = tick >= 0 and segAt(tick) or nil
+		if sg then cmd:SetButtons(sg.buttons or 0) end
+	end)
+	hook.Add("Tick", "parity_shoot_prop", function()
+		if tick == -10 then
+			bot:StripWeapons()
+			bot:RemoveAllAmmo()
+			bot:Spawn()
+			bot:SetPos(start)
+			bot:SetEyeAngles(Angle(scn.pitch or 0, scn.yaw or 90, 0))
+			if scn.ammo then for k, v in pairs(scn.ammo) do bot:GiveAmmo(v, k, true) end end
+		end
+		if tick == -8 then bot:SelectWeapon(scn.weapon) end
+		if tick >= 0 then
+			local row = { t = tick, shots = shotCount, alive = IsValid(prop) }
+			if IsValid(prop) then
+				local p, a = prop:GetPos(), prop:GetAngles()
+				local v, av = Vector(0, 0, 0), Vector(0, 0, 0)
+				if IsValid(ph) then v, av = ph:GetVelocity(), ph:GetAngleVelocity() end
+				row.pos = { p.x, p.y, p.z } row.ang = { a.p, a.y, a.r } row.vel = { v.x, v.y, v.z } row.angvel = { av.x, av.y, av.z }
+				row.health = prop:Health() row.asleep = IsValid(ph) and ph:IsAsleep() or false
+			end
+			local projs = {}
+			for cls in pairs(PROJ) do
+				for _, e in ipairs(ents.FindByClass(cls)) do
+					local pp, aa = e:GetPos(), e:GetAngles()
+					local v = e:GetVelocity()
+					local eph = e:GetPhysicsObject()
+					if IsValid(eph) then v = eph:GetVelocity() end
+					projs[#projs + 1] = { class = cls, id = e:EntIndex(), pos = { pp.x, pp.y, pp.z }, vel = { v.x, v.y, v.z }, ang = { aa.p, aa.y, aa.r }, movetype = e:GetMoveType() }
+				end
+			end
+			if #projs > 0 then row.projectiles = projs end
+			ticks[#ticks + 1] = row
+		end
+		tick = tick + 1
+		if tick >= total then
+			for _, h in ipairs({ "Tick", "StartCommand", "EntityFireBullets", "EntityTakeDamage", "EntityRemoved" }) do hook.Remove(h, "parity_shoot_prop") end
+			local info = {}
+			if IsValid(prop) then
+				info = { health = prop:Health(), max_health = prop:GetMaxHealth(), mass = IsValid(ph) and ph:GetMass() or 0, material = IsValid(ph) and ph:GetMaterial() or "" }
+				prop:Remove()
+			end
+			local eye = bot:GetShootPos()
+			done({ weapon = scn.weapon, model = scn.model, dist = dist, ticks = ticks, hits = hits, removed = removed, shots = shotCount, prop = info,
+				eye = { eye.x, eye.y, eye.z }, phys_pushscale = GetConVar("phys_pushscale") and GetConVar("phys_pushscale"):GetFloat() or nil })
+		end
+	end)
+end
+ASYNC.shoot_prop = true
+
+
 -- damage: a bot dropped from the scenario's heights (fall damage) and hit with TakeDamage of
 -- given amounts at given armour, recorded every tick with the damage events, to measure the
 -- fall damage rule, armour absorption and death.

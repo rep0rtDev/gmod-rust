@@ -1,0 +1,32 @@
+{
+ "kind": "shoot_prop",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 20,
+ "dist": 150,
+ "model": "models/props_c17/oildrum001.mdl",
+ "name": "shoot_prop_smg1_grenade_drum",
+ "weapon": "weapon_smg1",
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 2048
+  },
+  {
+   "ticks": 200,
+   "buttons": 0
+  }
+ ],
+ "ammo": {
+  "SMG1_Grenade": 3
+ }
+}

@@ -1,0 +1,29 @@
+{
+ "kind": "shoot_prop",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 23,
+ "dist": 100,
+ "model": "models/props_c17/oildrum001.mdl",
+ "name": "shoot_prop_ball_drum",
+ "weapon": "weapon_ar2",
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0
+  },
+  {
+   "ticks": 40,
+   "buttons": 2048
+  },
+  {
+   "ticks": 300,
+   "buttons": 0
+  }
+ ]
+}

@@ -1,0 +1,29 @@
+{
+ "kind": "shoot_prop",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 23,
+ "dist": 100,
+ "model": "models/props_c17/oildrum001.mdl",
+ "name": "shoot_prop_pistol_drum_hold",
+ "weapon": "weapon_pistol",
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0
+  },
+  {
+   "ticks": 150,
+   "buttons": 1
+  },
+  {
+   "ticks": 60,
+   "buttons": 0
+  }
+ ]
+}

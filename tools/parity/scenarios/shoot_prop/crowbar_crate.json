@@ -1,0 +1,29 @@
+{
+ "kind": "shoot_prop",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 48,
+ "dist": 40,
+ "model": "models/props_junk/wood_crate001a.mdl",
+ "name": "shoot_prop_crowbar_crate",
+ "weapon": "weapon_crowbar",
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 120,
+   "buttons": 0
+  }
+ ]
+}
