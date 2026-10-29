@@ -967,6 +967,7 @@ ASYNC.fire = true
 -- EntityTakeDamage / ScalePlayerDamage on the target is recorded with the target's health and
 -- armour per tick, plus the sk_* damage convars, to measure the damage per bullet and hitgroup.
 SCENARIOS.hit = function(scn, done)
+	if scn.convars then for k, v in pairs(scn.convars) do RunConsoleCommand(k, tostring(v)) end end
 	local bots = player.GetBots()
 	if #bots < 2 then
 		RunConsoleCommand("bot")

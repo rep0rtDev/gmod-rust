@@ -120,6 +120,9 @@ struct Scenario {
     select: Vec<(u32, String)>,
     weapon: Option<String>,
     dist: Option<f32>,
+    /// Console variables the probe sets before the scenario.
+    #[serde(default)]
+    convars: Option<std::collections::BTreeMap<String, Value>>,
     /// `GiveAmmo` after the spawn (ammo type -> count).
     #[serde(default)]
     ammo: Option<std::collections::BTreeMap<String, i32>>,
@@ -1183,6 +1186,13 @@ fn run_hit(scn: &Scenario) -> Result<Value> {
     )?;
     let mut server = gm_server::Server::new(&collision, physics, world_body);
     server.set_spawn_points_from_bsp(&bsp);
+    if let Some(v) = scn
+        .convars
+        .as_ref()
+        .and_then(|c| c.get("sbox_playershurtplayers"))
+    {
+        server.players_hurt_players = v.as_i64() != Some(0);
+    }
     let mdl_data = mount.read(gm_server::PLAYER_MODEL)?;
     let mdl = gm_formats::mdl::Mdl::parse(&mdl_data)?;
     let anm_data = mount.read("models/m_anm.mdl")?;

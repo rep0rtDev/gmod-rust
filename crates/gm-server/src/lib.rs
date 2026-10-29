@@ -269,6 +269,9 @@ pub struct Server<'w> {
     /// Loads a model the first time something spawns it (the dedicated server reads the MDL/PHY
     /// from the mounted content on demand).
     pub model_loader: Option<ModelLoader>,
+    /// `sbox_playershurtplayers`: with it off hits are still resolved and recorded but neither
+    /// hurt nor push (`hit_pistol_nohurt`, `hit_rpg_nohurt`).
+    pub players_hurt_players: bool,
     pub spawn_points: Vec<SpawnPoint>,
     spawn_rng: u64,
     tick_count: u64,
@@ -296,6 +299,7 @@ impl<'w> Server<'w> {
             physgun_params: PhysgunParams::default(),
             projectiles: Vec::new(),
             model_loader: None,
+            players_hurt_players: true,
             spawn_points: Vec::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
@@ -559,12 +563,65 @@ impl<'w> Server<'w> {
             ammo: shot.ammo,
             inflictor: "player",
         });
+        if !self.players_hurt_players {
+            return;
+        }
         let push = Vec3::new(forward.x, forward.y, 0.0).normalize_or_zero()
             * (weapons::KNOCKBACK_PER_DAMAGE * damage);
         if let Some(t) = self.players.get_mut(&target) {
             t.state.impulse += push;
         }
         self.damage_player(target, damage, dmg_type);
+    }
+
+    /// A crowbar swing (`weapons::MELEE_*`): the first player hull on the aim within reach,
+    /// before the world.
+    fn resolve_melee(&mut self, attacker: u32, eye: Vec3, forward: Vec3) {
+        let end = eye + forward * weapons::MELEE_RANGE;
+        let world = self
+            .collision
+            .trace_ray(eye, end, gm_collision::MASK_PLAYERSOLID);
+        let mut best: Option<(u32, f32)> = None;
+        for (id, p) in &self.players {
+            if *id == attacker || !p.alive {
+                continue;
+            }
+            let (mins, maxs) = self.mover.hull(p.state.ducked);
+            if let Some(t) =
+                ray_box_entry(eye, forward, p.state.origin + mins, p.state.origin + maxs)
+            {
+                if t <= weapons::MELEE_RANGE && best.is_none_or(|b| t < b.1) {
+                    best = Some((*id, t));
+                }
+            }
+        }
+        let Some((target, t)) = best else {
+            return;
+        };
+        if world.fraction * weapons::MELEE_RANGE < t {
+            return;
+        }
+        let damage = weapons::MELEE_DAMAGE;
+        self.hits.push(Hit {
+            tick: self.tick_count,
+            attacker,
+            target,
+            damage,
+            dmg_type: weapons::DMG_CLUB,
+            hitgroup: Some(0),
+            pos: eye + forward * (t - 1.0 / 32.0),
+            ammo: "",
+            inflictor: "weapon_crowbar",
+        });
+        if !self.players_hurt_players {
+            return;
+        }
+        let push = Vec3::new(forward.x, forward.y, 0.0).normalize_or_zero()
+            * (weapons::MELEE_PUSH_PER_DAMAGE * damage);
+        if let Some(t) = self.players.get_mut(&target) {
+            t.state.impulse += push;
+        }
+        self.damage_player(target, damage, weapons::DMG_CLUB);
     }
 
     /// Knockback of a hit from `from` (the inflictor's position): see `weapons::PUSH_PER_DAMAGE`.
@@ -630,6 +687,9 @@ impl<'w> Server<'w> {
                 ammo: "",
                 inflictor: class,
             });
+            if !self.players_hurt_players {
+                continue;
+            }
             self.push_player(id, at, damage);
             self.hurt(id, damage, weapons::DMG_BLAST, RESPAWN_TICKS - 1);
         }
@@ -780,13 +840,15 @@ impl<'w> Server<'w> {
                                 ammo: "",
                                 inflictor: "crossbow_bolt",
                             });
-                            self.push_player(target, at, weapons::BOLT_DAMAGE);
-                            self.hurt(
-                                target,
-                                weapons::BOLT_DAMAGE,
-                                weapons::DMG_BULLET | weapons::DMG_NEVERGIB,
-                                RESPAWN_TICKS - 1,
-                            );
+                            if self.players_hurt_players {
+                                self.push_player(target, at, weapons::BOLT_DAMAGE);
+                                self.hurt(
+                                    target,
+                                    weapons::BOLT_DAMAGE,
+                                    weapons::DMG_BULLET | weapons::DMG_NEVERGIB,
+                                    RESPAWN_TICKS - 1,
+                                );
+                            }
                             keep.push(false);
                         }
                         (weapons::Launch::Ball, Some((target, _))) => {
@@ -805,7 +867,9 @@ impl<'w> Server<'w> {
                                 ammo: "",
                                 inflictor: "prop_combine_ball",
                             });
-                            self.hurt(target, hp, weapons::BALL_DMG_TYPE, RESPAWN_TICKS - 1);
+                            if self.players_hurt_players {
+                                self.hurt(target, hp, weapons::BALL_DMG_TYPE, RESPAWN_TICKS - 1);
+                            }
                             keep.push(true);
                         }
                         _ => keep.push(true),
@@ -1256,6 +1320,7 @@ impl<'w> Server<'w> {
         // weapons first: a hit pushes and hurts the target in the tick of the shot, before the
         // target's own move (recordings `hit_*`)
         let mut shots = Vec::new();
+        let mut swings = Vec::new();
         let mut launches = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
@@ -1268,6 +1333,10 @@ impl<'w> Server<'w> {
                     let forward = gm_sandbox::forward(pc.cmd.view_angles.x, pc.cmd.view_angles.y);
                     shots.push((*id, eye, forward, shot));
                 }
+                if p.inventory.swung {
+                    let forward = gm_sandbox::forward(pc.cmd.view_angles.x, pc.cmd.view_angles.y);
+                    swings.push((*id, eye, forward));
+                }
                 if let Some(kind) = p.inventory.launched.take() {
                     launches.push((*id, kind, eye, pc.cmd.view_angles));
                 }
@@ -1276,6 +1345,9 @@ impl<'w> Server<'w> {
         }
         for (attacker, eye, forward, shot) in shots {
             self.resolve_shot(attacker, eye, forward, shot);
+        }
+        for (attacker, eye, forward) in swings {
+            self.resolve_melee(attacker, eye, forward);
         }
         for (id, p) in self.players.iter_mut() {
             if !p.alive {

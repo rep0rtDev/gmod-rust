@@ -1,0 +1,29 @@
+{
+ "kind": "hit",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 0,
+ "dist": 50,
+ "target_health": 1000,
+ "name": "hit_physcannon_alt",
+ "weapon": "weapon_physcannon",
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 2048
+  },
+  {
+   "ticks": 60,
+   "buttons": 0
+  }
+ ]
+}

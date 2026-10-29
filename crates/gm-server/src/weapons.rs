@@ -96,6 +96,8 @@ pub struct Fire {
     /// Pull-back grenade instead of a bullet (frag).
     pub throw: Option<Throw>,
     pub alt: Alt,
+    /// A swing that hits players in reach (crowbar: `MELEE_*`).
+    pub melee: bool,
 }
 
 /// Frag: a press (primary timer expired, reserve left) pulls back and parks the primary timer at
@@ -147,6 +149,7 @@ const BASE: Fire = Fire {
     reload: None,
     dry_fire: None,
     from_now: false,
+    melee: false,
     launch: None,
     secondary_after: None,
     auto_reload: None,
@@ -238,6 +241,7 @@ const CROSSBOW: Fire = Fire {
 };
 /// Swing into nothing: primary 0.4 from now, secondary 0.6667; repeats while held.
 const CROWBAR: Fire = Fire {
+    melee: true,
     auto: true,
     from_now: true,
     cycle: 0.4,
@@ -515,6 +519,8 @@ pub struct Inventory {
     /// The projectile the last `command` launched (rocket/bolt in the shot tick, the grenade in
     /// its throw tick, the ball when the AR2's 0.5 s charge expires).
     pub launched: Option<Launch>,
+    /// A melee swing happened in this command (`Fire::melee`).
+    pub swung: bool,
     /// A `rearm_after_reload` refill happened last tick.
     pub rearm: bool,
 }
@@ -581,6 +587,7 @@ impl Inventory {
     /// shots as the game resolves them against the timers of the command's tick.
     pub fn command(&mut self, class: &str, buttons: u32) -> Option<Shot> {
         self.launched = None;
+        self.swung = false;
         let pressed = buttons & IN_ATTACK != 0;
         let edge = pressed && !self.prev_attack;
         self.prev_attack = pressed;
@@ -759,6 +766,7 @@ impl Inventory {
         self.need_pump = f.pump.is_some();
         self.pistol_relaxed = false;
         self.launched = f.launch;
+        self.swung = f.melee;
         if f.pellets == 0 {
             return None;
         }
@@ -922,6 +930,15 @@ pub fn explosion(kind: Launch) -> Option<(f32, f32)> {
 /// A crossbow bolt hitting a player: 100 damage as DMG_BULLET | DMG_NEVERGIB, the bolt removed
 /// where it stopped (`hit_crossbow`).
 pub const BOLT_DAMAGE: f32 = 100.0;
+/// Crowbar on a player (`hit_crowbar*`): a ray from the eye along the aim reaching the hull
+/// within 75 u (50 u away hits, 110 misses; aimed 20 deg up at 50 u it passes over the hull),
+/// 10 damage as DMG_CLUB with the generic hit group in the tick of the swing, every 27 ticks
+/// while held. The push is 17.4 u/s for the 10 damage, 10 deg off the aim to the right in the
+/// recording (unexplained; applied along the aim). The physcannon does nothing to players.
+pub const MELEE_RANGE: f32 = 75.0;
+pub const MELEE_DAMAGE: f32 = 10.0;
+pub const MELEE_PUSH_PER_DAMAGE: f32 = 1.74;
+pub const DMG_CLUB: u32 = 128;
 /// Timers set by an SMG1 grenade launch.
 pub const SMG1_GRENADE_PRIMARY: f32 = 0.5;
 pub const SMG1_GRENADE_SECONDARY: f32 = 1.0;

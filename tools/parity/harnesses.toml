@@ -1169,6 +1169,100 @@ crates = ["gm-server"]
 
 
 [[harness]]
+name = "hit_crowbar"
+scenario = "hit/crowbar"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+# the game's 17.4 u/s push points 10 deg right of the aim (3.1 u/s sideways, unexplained)
+vel = 4.0
+
+
+[[harness]]
+name = "hit_crowbar_hold"
+scenario = "hit/crowbar_hold"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+# the game's 17.4 u/s push points 10 deg right of the aim (3.1 u/s sideways, unexplained)
+vel = 4.0
+
+
+[[harness]]
+name = "hit_crowbar_far"
+scenario = "hit/crowbar_far"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_crowbar_head"
+scenario = "hit/crowbar_head"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_physcannon"
+scenario = "hit/physcannon"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_physcannon_hold"
+scenario = "hit/physcannon_hold"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_physcannon_alt"
+scenario = "hit/physcannon_alt"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_pistol_nohurt"
+scenario = "hit/pistol_nohurt"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_rpg_nohurt"
+scenario = "hit/rpg_nohurt"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "hit_pistol_hurt_reset"
+scenario = "hit/pistol_hurt_reset"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
 name = "hit_smg1_grenade"
 scenario = "hit/smg1_grenade"
 compare = "hit"
