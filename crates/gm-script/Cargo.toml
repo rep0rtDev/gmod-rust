@@ -8,6 +8,7 @@ description = "Addon runtime: Luau actors (one VM each) with a parallel read-onl
 [dependencies]
 gm-collision = { path = "../gm-collision" }
 gm-move = { path = "../gm-move" }
+gm-net = { path = "../gm-net" }
 gm-sandbox = { path = "../gm-sandbox" }
 gm-server = { path = "../gm-server" }
 mlua = { workspace = true }

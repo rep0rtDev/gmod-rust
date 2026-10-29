@@ -73,11 +73,19 @@ impl Manifest {
     }
 
     pub fn load(dir: &Path) -> Result<(Manifest, Vec<ActorSpec>), ManifestError> {
+        Manifest::load_realm(dir, "server")
+    }
+
+    /// The actors of one realm (`server` or `client`; `shared` actors belong to both).
+    pub fn load_realm(
+        dir: &Path,
+        realm: &str,
+    ) -> Result<(Manifest, Vec<ActorSpec>), ManifestError> {
         let text = std::fs::read_to_string(dir.join("manifest.toml"))?;
         let m: Manifest = toml::from_str(&text)?;
         let mut specs = Vec::new();
         for a in &m.actors {
-            if a.realm != "server" {
+            if a.realm != realm && a.realm != "shared" {
                 continue;
             }
             if a.source.contains("..") || Path::new(&a.source).is_absolute() {
@@ -88,7 +96,10 @@ impl Manifest {
                 ));
             }
             let source = std::fs::read_to_string(dir.join(&a.source))?;
-            specs.push(m.actor_spec(a, source));
+            let mut spec = m.actor_spec(a, source);
+            // the client never writes the world
+            spec.config.can_write &= realm == "server";
+            specs.push(spec);
         }
         Ok((m, specs))
     }

@@ -188,3 +188,38 @@ fn gmr_pack_and_load_roundtrip() {
     assert_eq!(loaded.id, "freeze_crates");
     assert_eq!(rt.actors().len(), 1);
 }
+
+#[test]
+fn client_realm_sees_the_assembled_world() {
+    let mut rt = Runtime::client();
+    rt.load(spec(
+        "hud",
+        0,
+        "events.on('snapshot.received', function(p) state.snaps = (state.snaps or 0) + 1; state.tick = p.tick end)
+         events.on('tick.client', function() state.frames = (state.frames or 0) + 1; state.props = world.count(); local e = world.find('crate')[1]; if e then state.z = e.pos.z end; state.tr = phys.trace({x=0,y=0,z=0},{x=0,y=0,z=-100}).hit end)",
+    ))
+    .unwrap();
+    let mut world = gm_net::ClientWorld {
+        tick: 40,
+        ..Default::default()
+    };
+    world.entities.insert(
+        3,
+        gm_net::EntityState {
+            id: 3,
+            model: "crate".into(),
+            pos: glam::Vec3::new(1.0, 2.0, 3.5),
+            ..Default::default()
+        },
+    );
+    world.own.count = 1;
+    rt.client_tick(&world, true);
+    rt.client_tick(&world, false);
+    let (snaps, frames, tick, props, z, tr): (u64, u64, u64, u64, f32, bool) = rt.actors()[0]
+        .eval("return state.snaps, state.frames, state.tick, state.props, state.z, state.tr")
+        .unwrap();
+    assert_eq!(
+        (snaps, frames, tick, props, z, tr),
+        (1, 2, 40, 1, 3.5, false)
+    );
+}

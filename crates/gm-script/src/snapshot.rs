@@ -60,6 +60,51 @@ impl Snapshot {
         gm_sandbox::trace_line(world, &self.props, start, end)
     }
 
+    /// The client realm's view: what the client assembled from snapshots (no world ref, so
+    /// `phys.trace` misses; no prop hulls).
+    pub fn of_client(world: &gm_net::ClientWorld) -> Self {
+        Snapshot {
+            tick: world.tick as u64,
+            world: WorldRef::default(),
+            props: Vec::new(),
+            entities: world
+                .entities
+                .values()
+                .map(|e| {
+                    (
+                        e.id,
+                        EntitySnap {
+                            id: e.id,
+                            model: e.model.clone(),
+                            pos: e.pos,
+                            angles: e.angles,
+                            frozen: e.frozen,
+                            owner: e.owner,
+                        },
+                    )
+                })
+                .collect(),
+            players: world
+                .players
+                .iter()
+                .map(|p| {
+                    (
+                        p.id,
+                        PlayerSnap {
+                            id: p.id,
+                            origin: p.origin,
+                            velocity: p.velocity,
+                            view_angles: p.view_angles,
+                            held: p.held,
+                        },
+                    )
+                })
+                .collect(),
+            prop_count: world.own.count as usize,
+            constraint_count: 0,
+        }
+    }
+
     pub fn of(server: &Server<'_>, tick: u64) -> Self {
         Snapshot {
             tick,

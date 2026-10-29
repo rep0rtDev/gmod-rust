@@ -10,7 +10,8 @@ pub mod server;
 pub mod transport;
 pub mod wire;
 
-pub use client::{ClientNet, Interpolator, Prediction};
+pub use client::{ClientNet, ClientWorld, Interpolator, Prediction};
+pub use msg::EntityState;
 pub use msg::{ClientMsg, Command, NetCmd, ServerMsg};
 pub use server::ServerNet;
 pub use transport::{Loopback, LoopbackEndpoint, Transport, Udp};

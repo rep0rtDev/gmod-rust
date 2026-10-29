@@ -60,7 +60,7 @@ pub enum ClientMsg {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct EntityState {
     pub id: u32,
     pub model: String,

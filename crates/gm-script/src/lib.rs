@@ -32,6 +32,8 @@ pub struct ActorSpec {
 }
 
 pub struct Runtime {
+    /// `server` (default) or `client`: which actors `load_addon` takes.
+    pub realm: String,
     /// Where every loaded addon came from (directory or `.gmr`), for reloads by id.
     pub addon_paths: std::collections::BTreeMap<String, std::path::PathBuf>,
     actors: Vec<Actor>,
@@ -49,6 +51,7 @@ pub struct Applied {
 impl Runtime {
     pub fn new() -> Self {
         Runtime {
+            realm: "server".into(),
             addon_paths: std::collections::BTreeMap::new(),
             actors: Vec::new(),
             tick: 0,
@@ -61,12 +64,37 @@ impl Runtime {
         &mut self,
         path: &std::path::Path,
     ) -> Result<Manifest, Box<dyn std::error::Error>> {
-        let (m, specs) = read_addon(path)?;
+        let (m, specs) = read_addon(path, &self.realm)?;
         for spec in specs {
             self.load(spec)?;
         }
         self.addon_paths.insert(m.id.clone(), path.to_path_buf());
         Ok(m)
+    }
+
+    /// A client-realm runtime.
+    pub fn client() -> Self {
+        let mut rt = Runtime::new();
+        rt.realm = "client".into();
+        rt
+    }
+
+    /// Client realm: every actor sees the client's assembled world (parallel, read-only);
+    /// `snapshot.received` when a new server tick arrived, then `tick.client` every frame.
+    /// Writes are not applied on the client (the manifest never grants them there).
+    pub fn client_tick(&mut self, world: &gm_net::ClientWorld, new_snapshot: bool) {
+        let snap = Arc::new(Snapshot::of_client(world));
+        self.tick = snap.tick;
+        if new_snapshot {
+            let mut p = api::Payload::default();
+            p.ints.push(("tick", world.tick as i64));
+            self.parallel(&snap, "snapshot.received", &p);
+        }
+        self.parallel(&snap, "tick.client", &api::Payload::default());
+        self.release_snapshots();
+        for a in self.actors.iter_mut() {
+            a.take_queue();
+        }
     }
 
     /// Hot reload of a loaded addon by id, from where it was loaded.
@@ -85,7 +113,7 @@ impl Runtime {
         &mut self,
         path: &std::path::Path,
     ) -> Result<Manifest, Box<dyn std::error::Error>> {
-        let (m, specs) = read_addon(path)?;
+        let (m, specs) = read_addon(path, &self.realm)?;
         let mut keep: Vec<String> = Vec::new();
         for spec in specs {
             keep.push(spec.name.clone());
@@ -330,11 +358,12 @@ impl Runtime {
 
 fn read_addon(
     path: &std::path::Path,
+    realm: &str,
 ) -> Result<(Manifest, Vec<ActorSpec>), manifest::ManifestError> {
     if path.is_dir() {
-        Manifest::load(path)
+        Manifest::load_realm(path, realm)
     } else {
-        Package::open(path)?.load()
+        Package::open(path)?.load_realm(realm)
     }
 }
 

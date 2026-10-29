@@ -637,6 +637,7 @@ dependencies = [
  "glam 0.29.3",
  "gm-collision",
  "gm-move",
+ "gm-net",
  "gm-sandbox",
  "gm-server",
  "mlua",

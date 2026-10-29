@@ -96,6 +96,10 @@ impl Package {
 
     /// The manifest and the server actors, like `Manifest::load` for a directory.
     pub fn load(&self) -> Result<(Manifest, Vec<ActorSpec>), ManifestError> {
+        self.load_realm("server")
+    }
+
+    pub fn load_realm(&self, realm: &str) -> Result<(Manifest, Vec<ActorSpec>), ManifestError> {
         let text = self.files.get("manifest.toml").ok_or_else(|| {
             ManifestError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -107,14 +111,16 @@ impl Package {
         })?)?;
         let mut specs = Vec::new();
         for a in &m.actors {
-            if a.realm != "server" {
+            if a.realm != realm && a.realm != "shared" {
                 continue;
             }
             let data = self.files.get(&a.source).ok_or_else(|| {
                 ManifestError::Escape(m.id.clone(), a.name.clone(), a.source.clone())
             })?;
             let source = String::from_utf8_lossy(data).to_string();
-            specs.push(m.actor_spec(a, source));
+            let mut spec = m.actor_spec(a, source);
+            spec.config.can_write &= realm == "server";
+            specs.push(spec);
         }
         Ok((m, specs))
     }

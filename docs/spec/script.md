@@ -52,6 +52,16 @@ Over the network: `Command::Reload { addon }` (reliable, tag 6) from a player in
 `reload_over_the_network` edits an addon on disk, reloads it as admin and the counter keeps its
 value and continues with the new code.
 
+## Client realm
+
+`Runtime::client()` loads the `client` (and `shared`) actors of a manifest; `gm-bot --addon` runs
+them. Every client frame `client_tick(world, new_snapshot)` builds the snapshot from what the
+client assembled (`ClientWorld`: entities with pose/model/frozen/owner, players, own prop count),
+dispatches `snapshot.received` (payload `tick`) when a new server tick arrived and `tick.client`
+every frame, in parallel and read-only: `world-write` is never granted on the client, write queues
+are dropped, `phys.trace` always misses (no world on the client yet). Test
+`client_realm_sees_the_assembled_world`.
+
 ## Manifest
 
 An addon is a directory with `manifest.toml` (`id`, `version`, `priority`, `realms`,
@@ -79,6 +89,6 @@ refusing cans stops the request before the priority 10 actor sees it.
 
 ## Not yet
 
-client realm, the rest of the API (entity write views, players,
+client HUD/draw API, client-side world for traces, the rest of the API (entity write views, players,
 constraints, net, timers, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
 file watching for reloads, the sandbox gamemode in Luau on top of this API.

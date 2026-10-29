@@ -13,6 +13,9 @@ struct Args {
     name: String,
     #[arg(long, default_value_t = 400)]
     ticks: u32,
+    /// Client-realm addons (directory or .gmr) to run against the assembled world.
+    #[arg(long)]
+    addon: Vec<std::path::PathBuf>,
     /// Model to spawn at tick 100.
     #[arg(long, default_value = "models/props_junk/wood_crate001a.mdl")]
     spawn: String,
@@ -22,6 +25,19 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let mut udp = gm_net::Udp::client(args.server.parse().context("server address")?)?;
     let mut client = gm_net::ClientNet::new(1, &args.name);
+    let mut script = gm_script::Runtime::client();
+    for a in &args.addon {
+        let m = script
+            .load_addon(a)
+            .unwrap_or_else(|e| panic!("addon {}: {e}", a.display()));
+        println!(
+            "client addon {} {} ({} actors)",
+            m.id,
+            m.version,
+            script.actors().len()
+        );
+    }
+    let mut last_snapshot_tick = 0u32;
     let interval = Duration::from_secs_f32(gm_core::tick::DEFAULT_TICK_INTERVAL);
     let mut next = Instant::now();
     let mut welcomed_at = None;
@@ -47,6 +63,14 @@ fn main() -> Result<()> {
             spawned = true;
         }
         client.receive(&mut udp);
+        if !args.addon.is_empty() {
+            let fresh = client.server_tick != last_snapshot_tick;
+            last_snapshot_tick = client.server_tick;
+            script.client_tick(&client.world, fresh);
+            for line in script.log.drain(..) {
+                println!("{line}");
+            }
+        }
         if let (None, Some(pid)) = (welcomed_at, client.player_id) {
             welcomed_at = Some(t);
             println!(
