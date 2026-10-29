@@ -40,11 +40,16 @@ pub fn canonical_name(name: &str) -> String {
 
 pub fn load(mount: &Mount, name: &str) -> Result<Material> {
     let canon = canonical_name(name);
+    load_path(mount, &canon, &format!("materials/{canon}.vmt"))
+}
+
+/// Load a VMT by full mounted path (`materials/.../x.vmt`), following `patch` includes.
+pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> {
     let mut mat = Material {
-        name: canon.clone(),
+        name: name.to_string(),
         ..Default::default()
     };
-    let mut path = format!("materials/{canon}.vmt");
+    let mut path = vmt_path.to_string();
     for _ in 0..4 {
         let text = mount.read_string(&path)?;
         let doc = keyvalues::parse(&text)?;

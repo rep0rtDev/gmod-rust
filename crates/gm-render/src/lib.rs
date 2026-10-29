@@ -5,6 +5,7 @@
 pub mod gpu;
 pub mod lightmap;
 pub mod material;
+pub mod props;
 pub mod world;
 
 pub use gpu::Gpu;

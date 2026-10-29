@@ -50,10 +50,12 @@ fn main() -> Result<()> {
     eprintln!("adapter: {}", gpu.adapter_name());
     let world = WorldRenderer::new(&gpu, &mount, &bsp, wgpu::TextureFormat::Rgba8UnormSrgb)?;
     eprintln!(
-        "world: {} faces ({} in 3D skybox), {} displacements, {} triangles, {} materials, {} missing, {} lightmap overflow, built in {:.1}s",
+        "world: {} faces ({} in 3D skybox), {} displacements, {} props ({} models), {} triangles, {} materials, {} missing, {} lightmap overflow, built in {:.1}s",
         world.stats.faces,
         world.stats.skybox_faces,
         world.stats.displacements,
+        world.stats.props,
+        world.stats.prop_models,
         world.stats.triangles,
         world.stats.materials,
         world.stats.missing_materials.len(),

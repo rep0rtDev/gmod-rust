@@ -21,6 +21,15 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub uv: [f32; 2],
     pub lm_uv: [f32; 2],
+    /// Multiplier on top of the lightmap: 1 for world faces, baked vertex light for props.
+    pub color: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct MaterialParams {
+    alpha_test: u32,
+    pad: [u32; 3],
 }
 
 #[repr(C)]
@@ -88,6 +97,8 @@ pub struct Stats {
     pub displacements: usize,
     pub triangles: usize,
     pub skybox_faces: usize,
+    pub props: usize,
+    pub prop_models: usize,
     pub materials: usize,
     pub missing_materials: Vec<String>,
     pub lightmap_overflow: usize,
@@ -181,6 +192,7 @@ impl WorldRenderer {
             }
         }
         let mut per_material_sky: HashMap<String, Vec<u32>> = HashMap::new();
+        let white_uv = atlas.luxel_center(&white, 0.0, 0.0);
 
         let mut resolve = |name: &str, stats: &mut Stats| -> Option<(String, u32, u32)> {
             let canon = material::canonical_name(name);
@@ -189,7 +201,7 @@ impl WorldRenderer {
                 if m.no_draw {
                     return None;
                 }
-                if m.water {
+                if m.water || m.shader.contains("reflective") || m.shader.contains("refract") {
                     return Some((
                         m,
                         material::Rgba {
@@ -199,8 +211,17 @@ impl WorldRenderer {
                         },
                     ));
                 }
-                let tex = m.base_texture.as_deref().unwrap_or("debug/debugempty");
-                match material::load_texture(mount, tex, 1024) {
+                let Some(tex) = m.base_texture.clone() else {
+                    return Some((
+                        m,
+                        material::Rgba {
+                            width: 1,
+                            height: 1,
+                            pixels: vec![128, 128, 128, 255],
+                        },
+                    ));
+                };
+                match material::load_texture(mount, &tex, 1024) {
                     Ok(rgba) => Some((m, rgba)),
                     Err(_) => {
                         stats.missing_materials.push(format!("{canon} -> {tex}"));
@@ -237,7 +258,6 @@ impl WorldRenderer {
             } else {
                 (white, false)
             };
-            let white_uv = atlas.luxel_center(&white, 0.0, 0.0);
             let in_sky = skybox_faces.contains(&fi);
             if in_sky {
                 stats.skybox_faces += 1;
@@ -267,6 +287,7 @@ impl WorldRenderer {
                         } else {
                             white_uv
                         },
+                        color: [1.0; 3],
                     });
                 }
                 indices.extend(mesh.indices.iter().map(|i| base + i));
@@ -288,6 +309,7 @@ impl WorldRenderer {
                     } else {
                         white_uv
                     },
+                    color: [1.0; 3],
                 });
             }
             for i in 1..poly.len() as u32 - 1 {
@@ -296,6 +318,24 @@ impl WorldRenderer {
             stats.faces += 1;
             stats.triangles += poly.len() - 2;
         }
+
+        drop(resolve);
+        let sun = crate::props::sun_direction(bsp);
+        let prop_stats = crate::props::collect_static_props(
+            mount,
+            bsp,
+            sun,
+            white_uv,
+            &mut vertices,
+            &mut materials,
+            &mut per_material,
+            &mut per_material_sky,
+            &skybox_faces_bounds(bsp, &skybox_faces),
+        )?;
+        stats.props = prop_stats.0;
+        stats.prop_models = prop_stats.1;
+        stats.triangles += prop_stats.2;
+        stats.missing_materials.extend(prop_stats.3);
 
         // GPU resources
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -368,6 +408,16 @@ impl WorldRenderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -416,9 +466,17 @@ impl WorldRenderer {
         }
         jobs.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(b.0)));
         for (name, idx, sky) in jobs {
-            let Some(Some((_, rgba))) = materials.get(name) else {
+            let Some(Some((mat, rgba))) = materials.get(name) else {
                 continue;
             };
+            let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("material params"),
+                contents: bytemuck::bytes_of(&MaterialParams {
+                    alpha_test: mat.translucent as u32,
+                    pad: [0; 3],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
             let tex = upload_rgba(
                 gpu,
                 &rgba.pixels,
@@ -440,6 +498,10 @@ impl WorldRenderer {
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(&base_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: params.as_entire_binding(),
                     },
                 ],
             });
@@ -480,7 +542,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -615,6 +677,23 @@ impl WorldRenderer {
         }
         gpu.queue.submit([enc.finish()]);
     }
+}
+
+/// Bounding box of the 3D skybox faces, used to sort props into the skybox pass.
+fn skybox_faces_bounds(bsp: &Bsp<'_>, faces: &HashSet<usize>) -> Option<([f32; 3], [f32; 3])> {
+    let mut mins = [f32::MAX; 3];
+    let mut maxs = [f32::MIN; 3];
+    let mut any = false;
+    for &fi in faces {
+        for v in bsp.face_vertices(&bsp.faces[fi]) {
+            for k in 0..3 {
+                mins[k] = mins[k].min(v[k]);
+                maxs[k] = maxs[k].max(v[k]);
+            }
+            any = true;
+        }
+    }
+    any.then_some((mins, maxs))
 }
 
 pub fn upload_rgba(
