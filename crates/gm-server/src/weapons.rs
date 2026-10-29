@@ -537,16 +537,39 @@ pub const KNOCKBACK_PER_DAMAGE: f32 = 4.18;
 #[derive(Debug, Clone, Default)]
 pub struct HitModel {
     pub boxes: Vec<(u8, glam::Mat4, glam::Vec3, glam::Vec3)>,
+    /// Degrees added to the player's yaw to face the model forward: 90 for kleiner's bind pose
+    /// (it faces -y), 0 for a pose from the shared animation model (its root faces +x).
+    pub yaw_offset: f32,
 }
 
 impl HitModel {
     pub fn from_mdl(data: &[u8], mdl: &gm_formats::mdl::Mdl) -> Self {
+        Self::posed(data, mdl, &[])
+    }
+
+    /// The hit boxes in the pose of a static animation: `pose` maps bone names to (position,
+    /// quaternion) overrides from `gm_formats::mdl::static_pose` of the shared animation model,
+    /// bones without an entry keep the bind pose.
+    pub fn posed(
+        data: &[u8],
+        mdl: &gm_formats::mdl::Mdl,
+        pose: &[(String, Option<[f32; 3]>, Option<[f32; 4]>)],
+    ) -> Self {
         use glam::{Mat4, Quat, Vec3};
         let mut world: Vec<Mat4> = Vec::with_capacity(mdl.bones.len());
         for b in &mdl.bones {
+            let (mut pos, mut quat) = (b.pos, b.quat);
+            if let Some((_, p, q)) = pose.iter().find(|(n, _, _)| *n == b.name) {
+                if let Some(p) = p {
+                    pos = *p;
+                }
+                if let Some(q) = q {
+                    quat = *q;
+                }
+            }
             let local = Mat4::from_rotation_translation(
-                Quat::from_xyzw(b.quat[0], b.quat[1], b.quat[2], b.quat[3]),
-                Vec3::from(b.pos),
+                Quat::from_xyzw(quat[0], quat[1], quat[2], quat[3]),
+                Vec3::from(pos),
             );
             let m = if b.parent >= 0 {
                 world[b.parent as usize] * local
@@ -567,7 +590,10 @@ impl HitModel {
                 ))
             })
             .collect();
-        HitModel { boxes }
+        HitModel {
+            boxes,
+            yaw_offset: if pose.is_empty() { 90.0 } else { 0.0 },
+        }
     }
 
     /// The nearest hit box along the ray from `start` to `end` on a model standing at `origin`
@@ -581,7 +607,7 @@ impl HitModel {
     ) -> Option<(f32, u8, glam::Vec3)> {
         use glam::{Mat4, Quat};
         let place = Mat4::from_rotation_translation(
-            Quat::from_rotation_z((yaw + 90.0).to_radians()),
+            Quat::from_rotation_z((yaw + self.yaw_offset).to_radians()),
             origin,
         );
         let mut best: Option<(f32, u8)> = None;
@@ -616,4 +642,42 @@ impl HitModel {
         }
         best.map(|(t, g)| (t, g, start + (end - start) * t))
     }
+}
+
+/// The pose of sequence `seq` of a shared animation model (`anim_mdl` / its `.ani` data) as
+/// bone-name overrides for `HitModel::posed`; `None` when the sequence is missing or its
+/// animation is not a static raw pose.
+pub fn sequence_pose(
+    anim_mdl_data: &[u8],
+    anim_mdl: &gm_formats::mdl::Mdl,
+    ani: &[u8],
+    seq: &str,
+) -> Option<Vec<(String, Option<[f32; 3]>, Option<[f32; 4]>)>> {
+    let s = gm_formats::mdl::sequences(anim_mdl_data, &anim_mdl.header)
+        .into_iter()
+        .find(|s| s.name == seq)?;
+    let desc = gm_formats::mdl::anim_descs(anim_mdl_data, &anim_mdl.header)
+        .into_iter()
+        .nth(s.anim.max(0) as usize)?;
+    let pose = if desc.block == 0 {
+        gm_formats::mdl::static_pose(
+            anim_mdl_data,
+            anim_mdl.header.local_anim_offset as usize + desc.index as usize,
+        )?
+    } else {
+        let (_, blocks) = gm_formats::mdl::anim_blocks(anim_mdl_data);
+        let (start, _) = *blocks.get(desc.block as usize)?;
+        gm_formats::mdl::static_pose(ani, start + desc.index as usize)?
+    };
+    Some(
+        pose.into_iter()
+            .filter_map(|b| {
+                Some((
+                    anim_mdl.bones.get(b.bone as usize)?.name.clone(),
+                    b.pos,
+                    b.quat,
+                ))
+            })
+            .collect(),
+    )
 }

@@ -297,6 +297,187 @@ pub fn hitboxes(data: &[u8], header: &Header) -> Vec<HitBox> {
     out
 }
 
+/// A sequence of the model (`mstudioseqdesc_t`, 212 bytes): its label and the first animation
+/// of its blend grid.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sequence {
+    pub name: String,
+    pub anim: i16,
+}
+
+/// An animation (`mstudioanimdesc_t`, 100 bytes).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimDesc {
+    pub name: String,
+    pub fps: f32,
+    pub flags: i32,
+    pub frames: i32,
+    /// External animation block (0 = the data is in the `.mdl`).
+    pub block: i32,
+    pub index: i32,
+}
+
+/// One bone of a static (single-frame) pose read from an animation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BonePose {
+    pub bone: u8,
+    pub pos: Option<[f32; 3]>,
+    pub quat: Option<[f32; 4]>,
+}
+
+fn i32_at(data: &[u8], o: usize) -> Option<i32> {
+    data.get(o..o + 4)
+        .map(|b| i32::from_le_bytes(b.try_into().unwrap()))
+}
+
+fn i16_at(data: &[u8], o: usize) -> Option<i16> {
+    data.get(o..o + 2)
+        .map(|b| i16::from_le_bytes(b.try_into().unwrap()))
+}
+
+fn name_at(data: &[u8], o: usize) -> Option<String> {
+    cstr_at(data, o).ok().map(str::to_owned)
+}
+
+/// The sequences of a model.
+pub fn sequences(data: &[u8], header: &Header) -> Vec<Sequence> {
+    let mut out = Vec::new();
+    for i in 0..header.local_seq_count.max(0) as usize {
+        let o = header.local_seq_offset as usize + i * 212;
+        let (Some(name_off), Some(anim_idx)) = (i32_at(data, o + 4), i32_at(data, o + 60)) else {
+            break;
+        };
+        let (Some(name), Some(anim)) = (
+            name_at(data, o + name_off as usize),
+            i16_at(data, o + anim_idx as usize),
+        ) else {
+            break;
+        };
+        out.push(Sequence { name, anim });
+    }
+    out
+}
+
+/// The animations of a model.
+pub fn anim_descs(data: &[u8], header: &Header) -> Vec<AnimDesc> {
+    let mut out = Vec::new();
+    for i in 0..header.local_anim_count.max(0) as usize {
+        let o = header.local_anim_offset as usize + i * 100;
+        let Some(name_off) = i32_at(data, o + 4) else {
+            break;
+        };
+        let Some(name) = name_at(data, o + name_off as usize) else {
+            break;
+        };
+        let fps = f32::from_bits(i32_at(data, o + 8).unwrap_or(0) as u32);
+        out.push(AnimDesc {
+            name,
+            fps,
+            flags: i32_at(data, o + 12).unwrap_or(0),
+            frames: i32_at(data, o + 16).unwrap_or(0),
+            block: i32_at(data, o + 52).unwrap_or(0),
+            index: i32_at(data, o + 56).unwrap_or(0),
+        });
+    }
+    out
+}
+
+/// The external animation block file (`.ani`) name and the `(start, end)` byte ranges of the
+/// blocks in it. The header triple sits at byte 0x15C (`szanimblocknameindex`, `numanimblocks`,
+/// `animblockindex`), after the fields `Header` reads.
+pub fn anim_blocks(data: &[u8]) -> (String, Vec<(usize, usize)>) {
+    let name = i32_at(data, 0x15c)
+        .and_then(|o| name_at(data, o as usize))
+        .unwrap_or_default();
+    let n = i32_at(data, 0x160).unwrap_or(0).max(0) as usize;
+    let off = i32_at(data, 0x164).unwrap_or(0) as usize;
+    let blocks = (0..n)
+        .filter_map(|b| {
+            Some((
+                i32_at(data, off + b * 8)? as usize,
+                i32_at(data, off + b * 8 + 4)? as usize,
+            ))
+        })
+        .collect();
+    (name, blocks)
+}
+
+fn f16_to_f32(h: u16) -> f32 {
+    let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exp = ((h >> 10) & 0x1f) as i32;
+    let mant = (h & 0x3ff) as f32;
+    match exp {
+        0 => sign * mant * 2f32.powi(-24),
+        31 => {
+            if mant == 0.0 {
+                sign * f32::INFINITY
+            } else {
+                f32::NAN
+            }
+        }
+        _ => sign * (1.0 + mant / 1024.0) * 2f32.powi(exp - 15),
+    }
+}
+
+fn quat64(b: &[u8]) -> [f32; 4] {
+    let v = u64::from_le_bytes(b[..8].try_into().unwrap());
+    let c = |bits: u64| (bits as f32 - 1_048_576.0) * (1.0 / 1_048_576.5);
+    let x = c(v & 0x1f_ffff);
+    let y = c((v >> 21) & 0x1f_ffff);
+    let z = c((v >> 42) & 0x1f_ffff);
+    let w = (1.0 - x * x - y * y - z * z).max(0.0).sqrt();
+    [x, y, z, if v >> 63 != 0 { -w } else { w }]
+}
+
+fn quat48(b: &[u8]) -> [f32; 4] {
+    let u = |i: usize| u16::from_le_bytes(b[i..i + 2].try_into().unwrap());
+    let c = |v: u16| (v as f32 - 32768.0) * (1.0 / 32768.0);
+    let (x, y) = (c(u(0)), c(u(2)));
+    let zw = u(4);
+    let z = c(zw & 0x7fff);
+    let w = (1.0 - x * x - y * y - z * z).max(0.0).sqrt();
+    [x, y, z, if zw & 0x8000 != 0 { -w } else { w }]
+}
+
+/// The per-bone values of an animation whose bones are all raw (single-frame) encodings:
+/// flags 0x01 raw position (three 16-bit floats), 0x02 48-bit quaternion, 0x20 64-bit
+/// quaternion. Returns `None` on a run-length encoded bone (flags 0x04 / 0x08), which this does
+/// not decode. `data` is the `.mdl` for block 0, else the `.ani`; `start` is the block start
+/// plus the animation's `index`.
+pub fn static_pose(data: &[u8], start: usize) -> Option<Vec<BonePose>> {
+    let mut out = Vec::new();
+    let mut p = start;
+    loop {
+        let bone = *data.get(p)?;
+        let flags = *data.get(p + 1)?;
+        let next = i16_at(data, p + 2)?;
+        if flags & 0x0c != 0 {
+            return None;
+        }
+        let mut q = p + 4;
+        let mut quat = None;
+        if flags & 0x20 != 0 {
+            quat = Some(quat64(data.get(q..q + 8)?));
+            q += 8;
+        } else if flags & 0x02 != 0 {
+            quat = Some(quat48(data.get(q..q + 6)?));
+            q += 6;
+        }
+        let mut pos = None;
+        if flags & 0x01 != 0 {
+            let b = data.get(q..q + 6)?;
+            let h = |i: usize| f16_to_f32(u16::from_le_bytes(b[i..i + 2].try_into().unwrap()));
+            pos = Some([h(0), h(2), h(4)]);
+        }
+        out.push(BonePose { bone, pos, quat });
+        if next == 0 {
+            break;
+        }
+        p += next as usize;
+    }
+    Some(out)
+}
+
 impl Mdl {
     pub fn parse(data: &[u8]) -> Result<Self> {
         let header = Header::parse(data)?;

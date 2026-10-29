@@ -1182,7 +1182,12 @@ fn run_hit(scn: &Scenario) -> Result<Value> {
     server.set_spawn_points_from_bsp(&bsp);
     let mdl_data = mount.read(gm_server::PLAYER_MODEL)?;
     let mdl = gm_formats::mdl::Mdl::parse(&mdl_data)?;
-    server.hit_model = Some(gm_server::weapons::HitModel::from_mdl(&mdl_data, &mdl));
+    let anm_data = mount.read("models/m_anm.mdl")?;
+    let anm = gm_formats::mdl::Mdl::parse(&anm_data)?;
+    let ani = mount.read("models/m_anm.ani")?;
+    let pose = gm_server::weapons::sequence_pose(&anm_data, &anm, &ani, "idle_melee")
+        .context("idle_melee pose")?;
+    server.hit_model = Some(gm_server::weapons::HitModel::posed(&mdl_data, &mdl, &pose));
     let class = scn.weapon.clone().context("hit scenario needs `weapon`")?;
     let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
     let tpos = start + Vec3::new(0.0, scn.dist.unwrap_or(200.0), 0.0);
