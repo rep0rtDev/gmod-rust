@@ -35,6 +35,12 @@ const BALL_SPEED: f32 = 1000.0;
 /// The ball is a 10 u sphere: its centre reflects 10 u (along the normal) before the surface
 /// (45 u early on the grazing ramp of `fire_ar2_proj`).
 pub const BALL_RADIUS: f32 = 10.0;
+/// SMG1 grenade (`fire_smg1_grenade*`, `hit_smg1_grenade`): 1000 along the aim from the eye,
+/// FLYGRAVITY at 400 u/s^2 (6 u/s per tick), a 3-u box; it stops on the surface it hits and is
+/// removed (exploding) the next tick, a player it reaches explodes it at once.
+const AR2_GRENADE_SPEED: f32 = 1000.0;
+const AR2_GRENADE_GRAVITY: f32 = 400.0 / 600.0;
+pub const AR2_GRENADE_HALF: f32 = 3.0;
 const BALL_STOP_TICKS: u32 = 267;
 const BALL_LIFE_TICKS: u32 = 300;
 /// Grenade (`npc_grenade_frag`): a VPHYSICS body of `GRENADE_MODEL` thrown from 8 u right of
@@ -84,6 +90,8 @@ pub struct Projectile {
     pub turn: glam::Vec2,
     /// The grenade's rigid body.
     pub body: Option<BodyHandle>,
+    /// Touched the world: removed (exploding) on the next step, the SMG1 grenade's rule.
+    pub dead: bool,
 }
 
 /// What a step did to the world.
@@ -100,6 +108,7 @@ pub fn class_name(kind: Launch) -> &'static str {
         Launch::Bolt => "crossbow_bolt",
         Launch::Grenade => "npc_grenade_frag",
         Launch::Ball => "prop_combine_ball",
+        Launch::Smg1Grenade => "grenade_ar2",
     }
 }
 
@@ -142,6 +151,7 @@ pub fn spawn(
             heading: glam::Vec2::new(pitch, yaw),
             turn: glam::Vec2::ZERO,
             body: None,
+            dead: false,
             gravity: 1.0,
         },
         Launch::Bolt => Projectile {
@@ -156,7 +166,23 @@ pub fn spawn(
             heading: glam::Vec2::new(pitch, yaw),
             turn: glam::Vec2::ZERO,
             body: None,
+            dead: false,
             gravity: BOLT_GRAVITY,
+        },
+        Launch::Smg1Grenade => Projectile {
+            kind,
+            owner,
+            origin: eye,
+            velocity: forward * AR2_GRENADE_SPEED,
+            movetype: MoveType::FlyGravity,
+            age: 0,
+            target,
+            aim: forward,
+            heading: glam::Vec2::new(pitch, yaw),
+            turn: glam::Vec2::ZERO,
+            body: None,
+            dead: false,
+            gravity: AR2_GRENADE_GRAVITY,
         },
         Launch::Ball => Projectile {
             kind,
@@ -170,6 +196,7 @@ pub fn spawn(
             heading: glam::Vec2::new(pitch, yaw),
             turn: glam::Vec2::ZERO,
             body: None,
+            dead: false,
             gravity: 0.0,
         },
         Launch::Grenade => {
@@ -213,6 +240,7 @@ pub fn spawn(
                 turn: glam::Vec2::ZERO,
                 gravity: GRAVITY,
                 body: Some(body),
+                dead: false,
             }
         }
     };
@@ -220,7 +248,7 @@ pub fn spawn(
         Launch::Rocket => {
             p.fly(world);
         }
-        Launch::Bolt => {
+        Launch::Bolt | Launch::Smg1Grenade => {
             p.gravity_half();
             p.fly(world);
             p.gravity_half();
@@ -242,7 +270,38 @@ impl Projectile {
             Launch::Bolt => self.step_bolt(world),
             Launch::Ball => self.step_ball(world),
             Launch::Grenade => self.step_grenade(phys),
+            Launch::Smg1Grenade => self.step_ar2_grenade(world),
         }
+    }
+
+    /// The contact tick shows the grenade at the surface with its velocity; it is removed the
+    /// tick after (a player it reaches is resolved by the server at once).
+    fn step_ar2_grenade(&mut self, world: &World) -> Event {
+        if self.dead {
+            return Event::Removed(self.origin);
+        }
+        self.gravity_half();
+        let hit = self.fly(world).is_some();
+        self.gravity_half();
+        // a touch, not a trace hit: the game's trace counts a box ending within its 1/32-u
+        // plane epsilon as a hit (`fire_smg1_grenade`: the floor was 0.008 u under the box);
+        // probe 1/8 u on along the flight, which covers that gap down to 15 deg of incidence
+        // (probed per axis: gm-collision misses an oblique 0.125-u box sweep that crosses a
+        // plane 0.008 u away, the straight probe hits it - open)
+        let touching = || {
+            let dir = self.velocity.normalize_or_zero();
+            (0..3).any(|a| {
+                dir[a] != 0.0 && {
+                    let mut probe = Vec3::ZERO;
+                    probe[a] = dir[a].signum() * 0.125;
+                    self.trace(world, self.origin + probe).fraction < 1.0
+                }
+            })
+        };
+        if hit || touching() {
+            self.dead = true;
+        }
+        Event::None
     }
 
     /// The grenade follows its rigid body; the fuse removes it.
@@ -268,8 +327,13 @@ impl Projectile {
     }
 
     fn trace(&self, world: &World, end: Vec3) -> gm_collision::Trace {
-        if self.kind == Launch::Bolt {
-            let h = Vec3::splat(BOLT_HALF);
+        let half = match self.kind {
+            Launch::Bolt => Some(BOLT_HALF),
+            Launch::Smg1Grenade => Some(AR2_GRENADE_HALF),
+            _ => None,
+        };
+        if let Some(half) = half {
+            let h = Vec3::splat(half);
             world.trace_box(self.origin, end, -h, h, MASK_SOLID)
         } else {
             world.trace_ray(self.origin, end, MASK_SOLID)

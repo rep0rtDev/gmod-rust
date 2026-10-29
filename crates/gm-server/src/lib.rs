@@ -603,7 +603,9 @@ impl<'w> Server<'w> {
                 continue;
             }
             let dir = to / len;
-            let Some(dist) = ray_box_entry(src, dir, lo, hi) else {
+            // the game's trace to the eye stops 1/32 u before the hull
+            let Some(dist) = ray_box_entry(src, dir, lo, hi).map(|d| (d - 1.0 / 32.0).max(0.0))
+            else {
                 continue;
             };
             if dist >= radius {
@@ -622,7 +624,8 @@ impl<'w> Server<'w> {
                 target: id,
                 damage,
                 dmg_type: weapons::DMG_BLAST,
-                hitgroup: None,
+                // the game runs blasts through ScalePlayerDamage with the generic group
+                hitgroup: Some(0),
                 pos: src,
                 ammo: "",
                 inflictor: class,
@@ -689,7 +692,9 @@ impl<'w> Server<'w> {
                 best = Some((*id, t));
             }
         }
+        // a swept box stops 1/32 u short of what it hits, like the game's traces
         best.map(|(id, t)| {
+            let t = if sweep { (t - 1.0 / 32.0).max(0.0) } else { t };
             (
                 id,
                 if len > 1e-6 {
@@ -748,10 +753,17 @@ impl<'w> Server<'w> {
                         weapons::Launch::Ball => {
                             self.projectile_touch(owner, prev, end, projectile::BALL_RADIUS, false)
                         }
+                        weapons::Launch::Smg1Grenade => self.projectile_touch(
+                            owner,
+                            prev,
+                            end,
+                            projectile::AR2_GRENADE_HALF,
+                            true,
+                        ),
                         weapons::Launch::Grenade => None,
                     };
                     match (kind, touch) {
-                        (weapons::Launch::Rocket, Some((_, at))) => {
+                        (weapons::Launch::Rocket | weapons::Launch::Smg1Grenade, Some((_, at))) => {
                             died.push((kind, owner, at));
                             keep.push(false);
                         }

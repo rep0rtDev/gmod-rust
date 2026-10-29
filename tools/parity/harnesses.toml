@@ -1169,6 +1169,17 @@ crates = ["gm-server"]
 
 
 [[harness]]
+name = "hit_smg1_grenade"
+scenario = "hit/smg1_grenade"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+# 98.19 measured against 98.18 computed: the hull point the game measured to is 0.03 u off
+damage = 0.02
+
+
+[[harness]]
 name = "hit_rpg_direct"
 scenario = "hit/rpg_direct"
 compare = "hit"
@@ -1356,6 +1367,24 @@ crates = ["gm-server"]
 [[harness]]
 name = "fire_rpg_proj_yaw"
 scenario = "fire/rpg_proj_yaw"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_smg1_grenade"
+scenario = "fire/smg1_grenade"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_smg1_grenade_hold"
+scenario = "fire/smg1_grenade_hold"
 compare = "fire"
 realm = "server"
 crates = ["gm-server"]

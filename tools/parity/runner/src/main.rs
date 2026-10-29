@@ -120,6 +120,9 @@ struct Scenario {
     select: Vec<(u32, String)>,
     weapon: Option<String>,
     dist: Option<f32>,
+    /// `GiveAmmo` after the spawn (ammo type -> count).
+    #[serde(default)]
+    ammo: Option<std::collections::BTreeMap<String, i32>>,
     target_health: Option<i32>,
     target_armor: Option<i32>,
     pitch: Option<f32>,
@@ -1224,6 +1227,11 @@ fn run_hit(scn: &Scenario) -> Result<Value> {
         if pre == -8 {
             // the same spawn-then-select setup as `fire_*`: a fresh give of the weapon
             server.give_weapon(shooter, &class);
+            if let Some(p) = server.players.get_mut(&shooter) {
+                for (ammo, n) in scn.ammo.iter().flatten() {
+                    *p.inventory.ammo.entry(ammo.clone()).or_insert(0) += n;
+                }
+            }
         }
         cmds.insert(shooter, idle(aim));
         cmds.insert(target, idle(back));
@@ -1408,6 +1416,9 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
     let mut inv = Inventory::default();
     inv.give_loadout();
     inv.give(&class);
+    for (ammo, n) in scn.ammo.iter().flatten() {
+        *inv.ammo.entry(ammo.clone()).or_insert(0) += n;
+    }
     // the probe selects the weapon 8 ticks before the first recorded tick: 7 full ticks pass
     // before the first recorded command
     for _ in 0..7 {

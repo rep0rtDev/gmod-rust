@@ -1,0 +1,30 @@
+{
+ "kind": "fire",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": -10,
+ "name": "fire_smg1_grenade_hold",
+ "weapon": "weapon_smg1",
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0
+  },
+  {
+   "ticks": 120,
+   "buttons": 2048
+  },
+  {
+   "ticks": 100,
+   "buttons": 0
+  }
+ ],
+ "ammo": {
+  "SMG1_Grenade": 3
+ }
+}

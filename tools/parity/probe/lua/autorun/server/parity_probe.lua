@@ -918,6 +918,7 @@ SCENARIOS.fire = function(scn, done)
 			bot:Spawn()
 			bot:SetPos(start)
 			bot:SetEyeAngles(Angle(scn.pitch or 0, scn.yaw or 90, 0))
+			if scn.ammo then for k, v in pairs(scn.ammo) do bot:GiveAmmo(v, k, true) end end
 		end
 		if tick == -8 then bot:SelectWeapon(scn.weapon) end
 		if tick >= 0 then

@@ -38,6 +38,8 @@ pub enum Launch {
     Bolt,
     Grenade,
     Ball,
+    /// The SMG1's grenade (`grenade_ar2`).
+    Smg1Grenade,
 }
 
 impl Launch {
@@ -48,6 +50,7 @@ impl Launch {
             Launch::Bolt => "crossbow_bolt",
             Launch::Grenade => "npc_grenade_frag",
             Launch::Ball => "prop_combine_ball",
+            Launch::Smg1Grenade => "grenade_ar2",
         }
     }
 }
@@ -125,8 +128,9 @@ pub enum Alt {
         delay: f32,
         cycle: f32,
     },
-    /// SMG1 grenade with no grenades: a press with the secondary expired sets it to `cycle`;
-    /// with grenades not measured.
+    /// SMG1 grenade: with grenades, a press (or hold) with both timers expired launches one the
+    /// same tick (alt ammo -1, primary 0.5, secondary 1.0: a hold fires every 67 ticks,
+    /// `fire_smg1_grenade*`); with none, a press with the secondary expired sets it to `cycle`.
     GrenadeEmpty {
         cycle: f32,
     },
@@ -632,12 +636,19 @@ impl Inventory {
             }
         }
         if let Alt::GrenadeEmpty { cycle } = f.alt {
-            if pressed2
-                && self.next_secondary <= 0.0
-                && self.ammo.get(w.ammo2).copied().unwrap_or(0) == 0
-            {
-                self.next_secondary = cycle;
-                return None;
+            if pressed2 && self.next_secondary <= 0.0 {
+                let have = self.ammo.entry(w.ammo2.to_string()).or_insert(0);
+                if *have == 0 {
+                    self.next_secondary = cycle;
+                    return None;
+                }
+                if self.next_primary <= 0.0 {
+                    *have -= 1;
+                    self.launched = Some(Launch::Smg1Grenade);
+                    self.next_primary = SMG1_GRENADE_PRIMARY;
+                    self.next_secondary = SMG1_GRENADE_SECONDARY;
+                    return None;
+                }
             }
         }
         if self.reloading {
@@ -903,6 +914,7 @@ pub fn explosion(kind: Launch) -> Option<(f32, f32)> {
     match kind {
         Launch::Rocket => Some((150.0, 300.0)),
         Launch::Grenade => Some((150.0, 250.0)),
+        Launch::Smg1Grenade => Some((100.0, 250.0)),
         _ => None,
     }
 }
@@ -910,6 +922,9 @@ pub fn explosion(kind: Launch) -> Option<(f32, f32)> {
 /// A crossbow bolt hitting a player: 100 damage as DMG_BULLET | DMG_NEVERGIB, the bolt removed
 /// where it stopped (`hit_crossbow`).
 pub const BOLT_DAMAGE: f32 = 100.0;
+/// Timers set by an SMG1 grenade launch.
+pub const SMG1_GRENADE_PRIMARY: f32 = 0.5;
+pub const SMG1_GRENADE_SECONDARY: f32 = 1.0;
 /// A combine ball hitting a player kills it (damage equal to its health) as
 /// DMG_DISSOLVE | DMG_CRUSH and flies on (`hit_ball`: 1000 against 1000 hp).
 pub const BALL_DMG_TYPE: u32 = DMG_DISSOLVE | DMG_CRUSH;
