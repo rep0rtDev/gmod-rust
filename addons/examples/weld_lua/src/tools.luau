@@ -18,3 +18,22 @@ tool.register("weld_lua", {
         return { { op = "clear" } }
     end,
 })
+
+-- rope and axis: two clicks store the objects, the second finishes the constraint with the
+-- measured rules (length between the stored points; axis alignment and hinge).
+for _, name in ipairs({ "rope", "axis" }) do
+    tool.register(name .. "_lua", {
+        left = function(ctx)
+            if name == "axis" and #ctx.objects == 0 and ctx.hit.ent == 0 then
+                return nil
+            end
+            if #ctx.objects == 0 then
+                return { { op = "set_object" } }
+            end
+            return { { op = "set_object" }, { op = name }, { op = "clear" } }
+        end,
+        reload = function(ctx)
+            return { { op = "clear" } }
+        end,
+    })
+end

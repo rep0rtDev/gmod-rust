@@ -636,3 +636,12 @@ realm = "server"
 crates = ["gm-script", "gm-server", "gm-sandbox"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "script_axis"
+scenario = "script/axis"
+compare = "server"
+realm = "server"
+crates = ["gm-script", "gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0

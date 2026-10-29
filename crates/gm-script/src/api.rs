@@ -34,6 +34,10 @@ pub enum ToolOp {
         ent2: u32,
         undo: String,
     },
+    /// `constraint.Rope` between the two stored tool objects (length = their distance now).
+    Rope,
+    /// `constraint.Axis` between the two stored tool objects (align, 0.2 u offset, hinge).
+    Axis,
 }
 
 /// A write an actor asked for; applied in the serial phase.
@@ -304,6 +308,8 @@ pub fn tool_ops(v: Value) -> Result<Vec<ToolOp>> {
                     .get::<Option<String>>("undo")?
                     .unwrap_or_else(|| "Weld".into()),
             },
+            "rope" => ToolOp::Rope,
+            "axis" => ToolOp::Axis,
             "nocollide" => ToolOp::NoCollide {
                 ent1: t.get::<Option<u32>>("ent1")?.unwrap_or(0),
                 ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
@@ -368,6 +374,14 @@ pub fn apply_tool_ops(
                     server.sandbox.add_count(player, "constraints", id);
                     server.sandbox.add_cleanup(player, "constraints", id);
                 }
+            }
+            ToolOp::Rope => {
+                did = true;
+                server.sandbox.finish_rope(player, &mut events);
+            }
+            ToolOp::Axis => {
+                did = true;
+                server.sandbox.finish_axis(player, &mut events);
             }
             ToolOp::NoCollide { ent1, ent2, undo } => {
                 did = true;

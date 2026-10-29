@@ -784,6 +784,106 @@ impl Sandbox {
         matches!(tool, "weld" | "rope" | "axis" | "nocollide")
     }
 
+    /// The rope stool's second click on the two stored objects (the Rust rules; scripted stools
+    /// call it through the `rope` tool op).
+    pub fn finish_rope(&mut self, player: u32, events: &mut Vec<Event>) -> bool {
+        let objs = self.tool(player).objects;
+        if objs.len() < 2 {
+            return false;
+        }
+        let (o1, o2) = (&objs[0], &objs[1]);
+
+        if !self.check_limit(player, "ropeconstraints", events) {
+            self.clear_objects(player);
+            return false;
+        }
+        let s = self.tool_settings.clone();
+        let (w1, w2) = (self.object_world_pos(o1), self.object_world_pos(o2));
+        let length = (w1 - w2).length();
+        let id = self.rope(player, o1.ent, o2.ent, o1.pos, o2.pos, length, &s);
+        if let Some(id) = id {
+            self.push_undo(
+                player,
+                "Rope",
+                "#tool.rope.name".into(),
+                Some("Undone #tool.rope.name".into()),
+                vec![id],
+            );
+            self.add_count(player, "ropeconstraints", id);
+            self.add_cleanup(player, "ropeconstraints", id);
+        }
+        self.clear_objects(player);
+        true
+    }
+
+    /// The axis stool's second click on the two stored objects (the Rust rules; scripted stools
+    /// call it through the `axis` tool op).
+    pub fn finish_axis(&mut self, player: u32, events: &mut Vec<Event>) -> bool {
+        let objs = self.tool(player).objects;
+        if objs.len() < 2 {
+            return false;
+        }
+        let (o1, o2) = (&objs[0], &objs[1]);
+
+        if !self.check_limit(player, "constraints", events) {
+            self.clear_objects(player);
+            return false;
+        }
+        let (o1, o2) = (o1.clone(), o2.clone());
+        let s = self.tool_settings.clone();
+        if let Some(ent1) = o1.ent {
+            // turn the first object so its hit face meets the second surface, put the hit
+            // point 0.2 u in front of the second hit, hinge axis along the second normal
+            let norm1 = self.object_world_normal(&o1);
+            let norm2 = self.object_world_normal(&o2);
+            let wpos2 = self.object_world_pos(&o2);
+            let (centre, _) = self.prop_pose(ent1).unwrap_or_default();
+            let current = self
+                .props
+                .iter()
+                .find(|p| p.id == ent1)
+                .map(|p| p.angles)
+                .unwrap_or_default();
+            let target = align_angles(current, angle_of(norm1), angle_of(-norm2));
+            self.set_prop_pose(ent1, centre, target);
+            let grabbed = self.object_world_pos(&o1);
+            let target_pos = wpos2 + (centre - grabbed) + norm2 * 0.2;
+            self.set_prop_pose(ent1, target_pos, target);
+            let (pos1, rot1) = self.prop_pose(ent1).unwrap_or_default();
+            let lpos1 = rot1.inverse() * (wpos2 + norm2 - pos1);
+            if o2.ent != o1.ent {
+                let id = self.next_id;
+                self.next_id += 1;
+                self.constraints.push(Constraint {
+                    id,
+                    owner: player,
+                    ent1: o1.ent,
+                    ent2: o2.ent,
+                    kind: ConstraintKind::Axis {
+                        lpos1,
+                        lpos2: o2.pos,
+                        local_axis: lpos1,
+                        forcelimit: s.axis_forcelimit,
+                        torquelimit: s.axis_torquelimit,
+                        friction: s.axis_friction,
+                        nocollide: s.axis_nocollide,
+                    },
+                });
+                self.push_undo(
+                    player,
+                    "Axis",
+                    "#tool.axis.name".into(),
+                    Some("Undone #tool.axis.name".into()),
+                    vec![id],
+                );
+                self.add_count(player, "constraints", id);
+                self.add_cleanup(player, "constraints", id);
+            }
+        }
+        self.clear_objects(player);
+        true
+    }
+
     pub fn tool_left_click(
         &mut self,
         player: u32,
@@ -827,88 +927,8 @@ impl Sandbox {
                 self.clear_objects(player);
                 true
             }
-            "rope" => {
-                if !self.check_limit(player, "ropeconstraints", events) {
-                    self.clear_objects(player);
-                    return false;
-                }
-                let s = self.tool_settings.clone();
-                let (w1, w2) = (self.object_world_pos(o1), self.object_world_pos(o2));
-                let length = (w1 - w2).length();
-                let id = self.rope(player, o1.ent, o2.ent, o1.pos, o2.pos, length, &s);
-                if let Some(id) = id {
-                    self.push_undo(
-                        player,
-                        "Rope",
-                        "#tool.rope.name".into(),
-                        Some("Undone #tool.rope.name".into()),
-                        vec![id],
-                    );
-                    self.add_count(player, "ropeconstraints", id);
-                    self.add_cleanup(player, "ropeconstraints", id);
-                }
-                self.clear_objects(player);
-                true
-            }
-            "axis" => {
-                if !self.check_limit(player, "constraints", events) {
-                    self.clear_objects(player);
-                    return false;
-                }
-                let (o1, o2) = (o1.clone(), o2.clone());
-                let s = self.tool_settings.clone();
-                if let Some(ent1) = o1.ent {
-                    // turn the first object so its hit face meets the second surface, put the hit
-                    // point 0.2 u in front of the second hit, hinge axis along the second normal
-                    let norm1 = self.object_world_normal(&o1);
-                    let norm2 = self.object_world_normal(&o2);
-                    let wpos2 = self.object_world_pos(&o2);
-                    let (centre, _) = self.prop_pose(ent1).unwrap_or_default();
-                    let current = self
-                        .props
-                        .iter()
-                        .find(|p| p.id == ent1)
-                        .map(|p| p.angles)
-                        .unwrap_or_default();
-                    let target = align_angles(current, angle_of(norm1), angle_of(-norm2));
-                    self.set_prop_pose(ent1, centre, target);
-                    let grabbed = self.object_world_pos(&o1);
-                    let target_pos = wpos2 + (centre - grabbed) + norm2 * 0.2;
-                    self.set_prop_pose(ent1, target_pos, target);
-                    let (pos1, rot1) = self.prop_pose(ent1).unwrap_or_default();
-                    let lpos1 = rot1.inverse() * (wpos2 + norm2 - pos1);
-                    if o2.ent != o1.ent {
-                        let id = self.next_id;
-                        self.next_id += 1;
-                        self.constraints.push(Constraint {
-                            id,
-                            owner: player,
-                            ent1: o1.ent,
-                            ent2: o2.ent,
-                            kind: ConstraintKind::Axis {
-                                lpos1,
-                                lpos2: o2.pos,
-                                local_axis: lpos1,
-                                forcelimit: s.axis_forcelimit,
-                                torquelimit: s.axis_torquelimit,
-                                friction: s.axis_friction,
-                                nocollide: s.axis_nocollide,
-                            },
-                        });
-                        self.push_undo(
-                            player,
-                            "Axis",
-                            "#tool.axis.name".into(),
-                            Some("Undone #tool.axis.name".into()),
-                            vec![id],
-                        );
-                        self.add_count(player, "constraints", id);
-                        self.add_cleanup(player, "constraints", id);
-                    }
-                }
-                self.clear_objects(player);
-                true
-            }
+            "rope" => self.finish_rope(player, events),
+            "axis" => self.finish_axis(player, events),
             "nocollide" => {
                 if !self.check_limit(player, "constraints", events) {
                     self.clear_objects(player);

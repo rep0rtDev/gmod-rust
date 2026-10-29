@@ -23,5 +23,5 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 | Server tick (`gm-server`) | 0.2 | 8 / 10 |
 | Network (`gm-net`) | 0.3 | 8 / 10 |
 | Dedicated server (`gm-dedicated`, `gm-bot`) | 0.1 | two-process UDP check |
-| Addon runtime (`gm-script`, Luau actors, scripted stools) | 0.2 | 4 tests + script 1 / 1 |
+| Addon runtime (`gm-script`, Luau actors, scripted stools) | 0.3 | 4 tests + script 2 / 2 |
 | Everything else | 0 | 0 | see docs/design.md section 8 |

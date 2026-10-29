@@ -55,13 +55,13 @@
   },
   {
    "op": "click",
-   "tool": "rope",
+   "tool": "rope_lua",
    "pitch": 25.0,
    "yaw": 0.0
   },
   {
    "op": "click",
-   "tool": "rope",
+   "tool": "rope_lua",
    "pitch": 20.0,
    "yaw": 38.0
   },
@@ -119,13 +119,13 @@
   },
   {
    "op": "click",
-   "tool": "rope",
+   "tool": "rope_lua",
    "pitch": 25.0,
    "yaw": 0.0
   },
   {
    "op": "click",
-   "tool": "rope",
+   "tool": "rope_lua",
    "pitch": 60.0,
    "yaw": -30.0
   },

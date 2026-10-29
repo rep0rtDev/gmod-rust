@@ -28,10 +28,13 @@ the Rust sandbox does not know (`ToolClick::Unknown`) goes to the first actor in
 that registered it; `ctx` carries `player`, `stage`, `hit` (`ent` or 0 for the world, `pos`,
 `normal`) and `objects` (the stored tool objects in world space). The handler returns an array of
 ops applied at once with the same bookkeeping as the Rust stools: `set_object`, `clear`, `weld`
-(`ent1`, `ent2`, `forcelimit`, `nocollide`, `undo`), `nocollide`; limits, undo entries, counts and
-cleanup lists follow. `addons/examples/weld_lua` is the weld stool written this way; the harness
-`script_weld_rope` replays the `toolgun_weld_rope` recording with `weld` replaced by `weld_lua`
-through the server loop and is equal (20 ops within 0.12 u), the same result as the Rust weld.
+(`ent1`, `ent2`, `forcelimit`, `nocollide`, `undo`), `nocollide`, `rope` and `axis` (the two
+stored objects, the measured constraint rules in Rust: length between the stored points, axis
+alignment with the 0.2 u offset and the hinge); limits, undo entries, counts and cleanup lists
+follow. `addons/examples/weld_lua` holds `weld_lua`, `rope_lua` and `axis_lua` written this way; the
+harnesses `script_weld_rope` and `script_axis` replay the tool gun recordings with the Rust stools
+replaced by the Luau ones through the server loop and are equal (20 ops within 0.12 u, 8 ops within
+0.02 u), the same results as the Rust stools.
 
 ## Manifest
 
@@ -61,5 +64,5 @@ refusing cans stops the request before the priority 10 actor sees it.
 ## Not yet
 
 `.gmr` packaging, client realm, the rest of the API (entity write views, players,
-phys traces and constraints, net, timers, the remaining tool ops (rope, axis, ghost, panels), spawn menu, storage, cvars), WASM components,
+phys traces and constraints, net, timers, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
 hot reload command, the sandbox gamemode in Luau on top of this API.
