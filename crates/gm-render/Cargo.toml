@@ -1,0 +1,18 @@
+[package]
+name = "gm-render"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "wgpu renderer for Source maps and models"
+
+[dependencies]
+gm-core = { path = "../gm-core" }
+gm-formats = { path = "../gm-formats" }
+gm-content = { path = "../gm-content" }
+wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12"] }
+pollster = "1"
+bytemuck = { workspace = true }
+glam = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+png = "0.18"

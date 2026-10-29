@@ -13,4 +13,5 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 | Measured facts | | | `fmt_convars_defaults`, `fmt_info` recorded: see `docs/spec/convars-defaults.md` |
 | Parity harness tooling | 0.5 | | probe addon, `gm-parity stage / run-ours / compare`; server launch is manual |
 | Research lab | 0.25 | | `prepare.py`, `symbols.py` (unstripped srcds: 64 973 symbols in server, 7 294 in vphysics) |
+| Render: world | 0.25 | 0 | `gm-render`: headless wgpu (lavapipe works), BSP faces and displacements with lightmap atlas and base textures, 3D skybox pass, patched material resolution; `render_map` example writes a PNG. No props, no bump/detail/blend, no fog, no 2D sky yet |
 | Everything else | 0 | 0 | see docs/design.md section 8 |
