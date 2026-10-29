@@ -1,0 +1,13 @@
+[package]
+name = "gm-formats"
+description = "Parsers for Source engine file formats: VPK, KeyValues, BSP, VTF"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+memmap2 = { workspace = true }
+
+[dev-dependencies]

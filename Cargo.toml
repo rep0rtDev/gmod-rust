@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "tools/parity/runner"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/rep0rtDev/gmod-rust"
+
+[workspace.dependencies]
+thiserror = "2"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+glam = "0.29"
+bytemuck = { version = "1", features = ["derive"] }
+rayon = "1.10"
+tracing = "0.1"
+sha2 = "0.10"
+walkdir = "2"
+memmap2 = "0.9"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+debug = 1

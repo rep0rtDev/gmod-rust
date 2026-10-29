@@ -1,0 +1,6 @@
+/target
+/.local/
+*.log
+.DS_Store
+/tools/parity/out/
+/tools/parity/golden/*.tmp

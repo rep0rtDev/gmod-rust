@@ -1,0 +1,17 @@
+# Parity harnesses. Each entry names a scenario under tools/parity/scenarios/,
+# the comparison mode and its tolerance, and the crates whose changes should
+# trigger it in CI. See docs/design.md section 4.
+
+[[harness]]
+name = "fmt_vpk_index_garrysmod"
+scenario = "fmt/vpk_index_garrysmod"
+compare = "set-equal"
+realm = "server"
+crates = ["gm-formats", "gm-content"]
+
+[[harness]]
+name = "fmt_vpk_index_hl2_models"
+scenario = "fmt/vpk_index_hl2_models"
+compare = "set-equal"
+realm = "server"
+crates = ["gm-formats", "gm-content"]

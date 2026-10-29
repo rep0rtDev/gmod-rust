@@ -1,0 +1,9 @@
+# Behaviour specifications
+
+One file per subsystem. A spec states behaviour as numbers, formulas, state machines and edge cases, each with the parity harness that confirms it. Specs are written from public documentation, from measurements on the real game, and from reference material read for behaviour only (Source SDK 2013, the GMod Lua base, the research lab notes). They never contain code from any of those sources.
+
+A statement without a harness is a hypothesis and is marked `(unconfirmed)`.
+
+| Spec | Harness group | State |
+|---|---|---|
+| [content-mounting.md](content-mounting.md) | `fmt_*` | draft |
