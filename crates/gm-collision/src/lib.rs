@@ -340,6 +340,12 @@ impl World {
             true
         };
         for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            // the bound slab along the face normal of an axis-aligned triangle has no
+            // thickness: as a leave plane it meets the enter fraction to float precision and
+            // rejected point rays through flat ground (the face plane already clips it)
+            if t.normal.dot(axis).abs() > 0.999 {
+                continue;
+            }
             let hi = t.v.iter().map(|v| v.dot(axis)).fold(f32::MIN, f32::max);
             let lo = t.v.iter().map(|v| v.dot(axis)).fold(f32::MAX, f32::min);
             if !clip(axis, hi) || !clip(-axis, -lo) {
