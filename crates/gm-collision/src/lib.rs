@@ -360,6 +360,13 @@ impl World {
                     continue;
                 }
                 let mut m = m.normalize();
+                // an edge bevel parallel to the face normal is the face plane again (an edge in
+                // the xy plane crossed with X or Y gives +-Z); as a leave plane it meets the
+                // enter fraction to float precision and rejected point rays through flat
+                // ground on gm_construct (`move_settle_edge`)
+                if m.dot(t.normal).abs() > 0.999 {
+                    continue;
+                }
                 if m.dot(c - a) > 0.0 {
                     m = -m;
                 }
