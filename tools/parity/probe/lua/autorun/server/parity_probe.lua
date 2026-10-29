@@ -413,6 +413,80 @@ SCENARIOS.constraint = function(scn, done)
 	end)
 end
 
+
+-- sandbox: drive the real sandbox gamemode as a bot (gm_spawn, gmod_undo, gmod_cleanup, sbox_* limits)
+-- and record what the server does after every op: props of the bot (pos, angles, frozen), the
+-- spawn trace, the undo stack, the counts and every LimitHit / SendLua sent to the bot.
+-- { kind = "sandbox", start = {x,y,z}, ops = { {op="spawn", model=..., pitch=30, yaw=0}, {op="undo"}, {op="cleanup"}, {op="cvar", name="sbox_maxprops", value="3"} } }
+SCENARIOS.sandbox = function(scn, done)
+	local bot = player.GetBots()[1]
+	if not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.sandbox(scn, done) end)
+		return
+	end
+	if not bot:Alive() then bot:Spawn() end
+	bot:SetPos(Vector(scn.start[1], scn.start[2], scn.start[3]))
+	bot:SetLocalVelocity(Vector(0, 0, 0))
+	local meta = FindMetaTable("Player")
+	local messages = {}
+	local oldSendLua, oldLimitHit = meta.SendLua, meta.LimitHit
+	meta.SendLua = function(ply, str) if ply == bot then messages[#messages + 1] = { t = engine.TickCount(), lua = str } end return oldSendLua(ply, str) end
+	meta.LimitHit = function(ply, str) if ply == bot then messages[#messages + 1] = { t = engine.TickCount(), limit = str } end return oldLimitHit(ply, str) end
+	local function snapshot()
+		local props = {}
+		for _, e in ipairs(ents.FindByClass("prop_physics")) do
+			if e:GetCreator() == bot then
+				local ph = e:GetPhysicsObject()
+				local p, a = e:GetPos(), e:GetAngles()
+				props[#props + 1] = { id = e:EntIndex(), model = e:GetModel(), pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r },
+					frozen = IsValid(ph) and not ph:IsMotionEnabled() or false, asleep = IsValid(ph) and ph:IsAsleep() or false,
+					obb_mins = { e:OBBMins().x, e:OBBMins().y, e:OBBMins().z }, obb_maxs = { e:OBBMaxs().x, e:OBBMaxs().y, e:OBBMaxs().z } }
+			end
+		end
+		table.sort(props, function(a, b) return a.id < b.id end)
+		local undos = undo.GetTable()[bot:UniqueID()] or {}
+		local ulist = {}
+		for k, u in pairs(undos) do ulist[#ulist + 1] = { id = k, name = u.Name, text = u.NiceText, n = #u.Entities } end
+		table.sort(ulist, function(a, b) return a.id < b.id end)
+		return { props = props, count = bot:GetCount("props"), undos = ulist, maxprops = GetConVar("sbox_maxprops"):GetInt() }
+	end
+	local ops, results, i = scn.ops, {}, 0
+	local function step()
+		i = i + 1
+		local op = ops[i]
+		if not op then
+			meta.SendLua, meta.LimitHit = oldSendLua, oldLimitHit
+			done({ results = results, messages = messages, eye = { bot:GetShootPos().x, bot:GetShootPos().y, bot:GetShootPos().z } })
+			return
+		end
+		local rec = { op = op.op, t = engine.TickCount() }
+		if op.op == "spawn" then
+			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			local eye = bot:GetShootPos()
+			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 2048, filter = { bot } })
+			rec.trace = { hit = tr.Hit, pos = { tr.HitPos.x, tr.HitPos.y, tr.HitPos.z }, normal = { tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z }, ent = IsValid(tr.Entity) and tr.Entity:GetClass() or "world", eye = { eye.x, eye.y, eye.z } }
+			rec.model = op.model
+			concommand.Run(bot, "gm_spawn", { op.model }, op.model)
+		elseif op.op == "undo" then
+			concommand.Run(bot, "gmod_undo", {}, "")
+		elseif op.op == "cleanup" then
+			concommand.Run(bot, "gmod_cleanup", {}, "")
+		elseif op.op == "cvar" then
+			RunConsoleCommand(op.name, op.value)
+		end
+		rec.immediate = snapshot()
+		timer.Simple(engine.TickInterval() * (op.wait or 3), function()
+			rec.after = snapshot()
+			rec.t_after = engine.TickCount()
+			results[#results + 1] = rec
+			step()
+		end)
+	end
+	step()
+end
+ASYNC.sandbox = true
+
 local function runAll()
 	file.CreateDir(OUT_DIR)
 	local files = file.Find(SCN_DIR .. "/*.json", "DATA")
