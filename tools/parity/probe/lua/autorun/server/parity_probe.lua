@@ -32,7 +32,7 @@ local function findFlat(dir, namePattern, searchPath)
 end
 
 local SCENARIOS = {}
-local ASYNC = { move = true, phys = true }
+local ASYNC = { move = true, phys = true, physgun = true }
 
 -- { kind = "file_find", globs = { "models/props_c17/*.mdl", "materials/**/*.vmt" }, search = "GAME" }
 SCENARIOS.file_find = function(scn)
@@ -232,6 +232,106 @@ SCENARIOS.phys = function(scn, done)
 			hook.Remove("Tick", "parity_phys")
 			ent:Remove()
 			done({ start = { start.x, start.y, start.z }, model = scn.model, info = info, ticks = ticks })
+		end
+	end)
+end
+
+-- physgun: a bot holding weapon_physgun drives IN_ATTACK and view angles over a prop,
+-- the prop's transform and the bot's eye are recorded every tick
+SCENARIOS.physgun = function(scn, done)
+	local bot = player.GetBots()[1]
+	if not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.physgun(scn, done) end)
+		return
+	end
+	if not bot:Alive() then bot:Spawn() end
+	bot:StripWeapons()
+	bot:Give("weapon_physgun")
+	bot:SelectWeapon("weapon_physgun")
+	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
+	local ang = Angle(scn.angles and scn.angles[1] or 0, scn.angles and scn.angles[2] or 0, 0)
+	bot:SetPos(start)
+	bot:SetEyeAngles(ang)
+	bot:SetLocalVelocity(Vector(0, 0, 0))
+	bot:SetMoveType(MOVETYPE_WALK)
+	local ent = ents.Create("prop_physics")
+	ent:SetModel(scn.model)
+	ent:SetPos(Vector(scn.prop[1], scn.prop[2], scn.prop[3]))
+	ent:SetAngles(Angle(scn.prop_angles and scn.prop_angles[1] or 0, scn.prop_angles and scn.prop_angles[2] or 0, scn.prop_angles and scn.prop_angles[3] or 0))
+	ent:Spawn()
+	ent:Activate()
+	local phys = ent:GetPhysicsObject()
+	local segs = scn.segments
+	local total = 0
+	for _, sg in ipairs(segs) do total = total + sg.ticks end
+	local settle = 60
+	local tick = -settle
+	local ticks = {}
+	local function segmentAt(t)
+		local acc = 0
+		for _, sg in ipairs(segs) do
+			acc = acc + sg.ticks
+			if t < acc then return sg end
+		end
+		return nil
+	end
+	hook.Add("StartCommand", "parity_physgun", function(ply, cmd)
+		if ply ~= bot then return end
+		local sg = tick >= 0 and segmentAt(tick) or nil
+		local a = sg and Angle(sg.pitch or 0, sg.yaw or 0, 0) or ang
+		cmd:ClearButtons()
+		cmd:ClearMovement()
+		cmd:SetButtons(sg and sg.buttons or 0)
+		cmd:SetViewAngles(a)
+		cmd:SetMouseX(sg and sg.mouse_x or 0)
+		cmd:SetMouseY(sg and sg.mouse_y or 0)
+	end)
+	hook.Add("SetupMove", "parity_physgun", function(ply, mv, cmd)
+		if ply ~= bot then return end
+		if tick < 0 then
+			mv:SetOrigin(start)
+			mv:SetVelocity(Vector(0, 0, 0))
+			if tick == -30 then bot:SelectWeapon("weapon_physgun") end
+		end
+	end)
+	hook.Add("FinishMove", "parity_physgun", function(ply, mv)
+		if ply ~= bot then return end
+		if tick >= 0 and IsValid(ent) and IsValid(phys) then
+			local p, a, v, av = phys:GetPos(), phys:GetAngles(), phys:GetVelocity(), phys:GetAngleVelocity()
+			local e, ea = ply:EyePos(), ply:EyeAngles()
+			ticks[#ticks + 1] = {
+				t = tick,
+				pos = { p.x, p.y, p.z },
+				ang = { a.p, a.y, a.r },
+				vel = { v.x, v.y, v.z },
+				angvel = { av.x, av.y, av.z },
+				held = ent:IsPlayerHolding(),
+				weapon = IsValid(ply:GetActiveWeapon()) and ply:GetActiveWeapon():GetClass() or "",
+				eye = { e.x, e.y, e.z },
+				eye_ang = { ea.p, ea.y, ea.r },
+			}
+		end
+		tick = tick + 1
+		if tick >= total then
+			hook.Remove("StartCommand", "parity_physgun")
+			hook.Remove("SetupMove", "parity_physgun")
+			hook.Remove("FinishMove", "parity_physgun")
+			local info = IsValid(phys) and { mass = phys:GetMass(), material = phys:GetMaterial() } or {}
+			if IsValid(ent) then ent:Remove() end
+			done({
+				start = { start.x, start.y, start.z },
+				model = scn.model,
+				info = info,
+				convars = {
+					maxspeed = GetConVar("physgun_maxSpeed") and GetConVar("physgun_maxSpeed"):GetFloat(),
+					maxangular = GetConVar("physgun_maxAngular") and GetConVar("physgun_maxAngular"):GetFloat(),
+					damping = GetConVar("physgun_dampingFactor") and GetConVar("physgun_dampingFactor"):GetFloat(),
+					timetoarrive = GetConVar("physgun_timeToArrive") and GetConVar("physgun_timeToArrive"):GetFloat(),
+					teleport = GetConVar("physgun_teleportDistance") and GetConVar("physgun_teleportDistance"):GetFloat(),
+				},
+				ticks = ticks,
+			})
 		end
 	end)
 end
