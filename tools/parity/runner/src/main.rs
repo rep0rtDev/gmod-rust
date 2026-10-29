@@ -299,7 +299,7 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
         },
         linear_damping: props.damping,
         angular_damping: props.rotdamping,
-        drag_coefficient: 1.0,
+        drag_axis_areas: Vec3::from(solid.drag_axis_areas),
     })?;
     world.optimize();
     let total = scn.ticks.unwrap_or(200);

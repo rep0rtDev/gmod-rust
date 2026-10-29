@@ -472,6 +472,7 @@ dependencies = [
 name = "gm-physics"
 version = "0.0.1"
 dependencies = [
+ "cc",
  "glam 0.29.3",
  "gm-core",
  "gm-formats",

@@ -10,6 +10,18 @@
 pub mod brush;
 pub mod surface;
 
+extern "C" {
+    fn gmp_set_contact_settings(system: *mut JPC_PhysicsSystem, speculative: f32, slop: f32);
+    fn gmp_get_speculative_distance(system: *const JPC_PhysicsSystem) -> f32;
+    fn gmp_get_penetration_slop(system: *const JPC_PhysicsSystem) -> f32;
+}
+
+/// Jolt only predicts contacts this far ahead (metres); props cross up to 0.11 m per tick at
+/// typical speeds and the game resolves the hit in the tick it happens, so the default 0.02 m
+/// (which lands bodies a tick late, penetrating) is widened.
+pub const SPECULATIVE_CONTACT_M: f32 = 0.15;
+pub const PENETRATION_SLOP_M: f32 = 0.02;
+
 use glam::{Quat, Vec3};
 use joltc_sys::*;
 use rolt::{BroadPhaseLayer, ObjectLayer};
@@ -148,6 +160,10 @@ impl rolt::ObjectLayerPairFilter for Layers {
 
 /// Material response of a body, Source `surfaceprop` numbers.
 ///
+/// Measured: a crate sliding on concrete decelerates at 0.64 g, the product of the two
+/// frictions (0.8 * 0.8). Jolt combines friction as `sqrt(f1 * f2)`, so each body carries its
+/// friction squared and the pair comes out as the product.
+///
 /// Measured: a wood crate (elasticity 0.1) on the concrete floor (0.2) rebounds with 0.15 of
 /// its speed, so the game averages the two elasticities. Jolt takes the max of the pair, so
 /// the world body carries 0 and every prop carries the average of its own elasticity and the
@@ -181,8 +197,9 @@ pub struct PropDesc<'a> {
     pub surface: Surface,
     pub linear_damping: f32,
     pub angular_damping: f32,
-    /// Source `drag_coefficient`, 1 for props.
-    pub drag_coefficient: f32,
+    /// PHY header `dragAxisAreas` in Source axis order: projected hull area over the
+    /// collision box face area per axis (1 for a box, about 0.77 across a cylinder).
+    pub drag_axis_areas: Vec3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -202,8 +219,9 @@ pub struct BodyHandle(u32);
 
 struct Drag {
     body: u32,
-    /// Local axis drag factors `k` in 1/units: `a = -k * |v| * v` along each body axis.
-    linear: Vec3,
+    /// Projected face areas of the local collision box over mass, scaled so that
+    /// `a = -(sum_i areas.i * |dir.i|) * |v| * v` is in units per second squared.
+    areas: Vec3,
 }
 
 pub struct World {
@@ -226,6 +244,13 @@ impl World {
         init_jolt();
         let mut system = rolt::PhysicsSystem::new();
         system.init(10240, 0, 65536, 20480, Layers, Layers, Layers);
+        unsafe {
+            let raw = system.as_raw();
+            // layout check: the shim reads Jolt's defaults back before changing them
+            debug_assert!((gmp_get_speculative_distance(raw) - 0.02).abs() < 1e-6);
+            debug_assert!((gmp_get_penetration_slop(raw) - 0.02).abs() < 1e-6);
+            gmp_set_contact_settings(raw, SPECULATIVE_CONTACT_M, PENETRATION_SLOP_M);
+        }
         let (temp, jobs) = unsafe {
             (
                 JPC_TempAllocatorImpl_new(32 * 1024 * 1024),
@@ -256,6 +281,9 @@ impl World {
             settings.Points = pts.as_ptr();
             settings.PointsLen = pts.len();
             settings.Density = density;
+            // IVP hulls have sharp corners; Jolt's default 5 cm rounding would lift a tilted
+            // crate's first contact by about 1 u
+            settings.MaxConvexRadius = 0.005;
             self.create_shape(|out, err| JPC_ConvexHullShapeSettings_Create(&settings, out, err))
         }
     }
@@ -329,7 +357,7 @@ impl World {
             settings.Rotation = jq(Quat::IDENTITY);
             settings.ObjectLayer = LAYER_STATIC;
             settings.MotionType = JPC_MOTION_TYPE_STATIC;
-            settings.Friction = surface.friction;
+            settings.Friction = surface.friction * surface.friction;
             settings.Restitution = 0.0;
             self.world_elasticity = surface.elasticity;
             settings.Shape = shape;
@@ -343,7 +371,7 @@ impl World {
     /// Measured on the real game: a falling crate loses `k * v^2` of acceleration with
     /// `k = A / m` where A is the body's projected area in m^2 along the axis of motion and m
     /// its mass (`drag_coefficient` 1): see docs/spec/physics.md.
-    fn drag_factors(hulls: &[Vec<Vec3>], mass: f32, drag_coefficient: f32) -> Vec3 {
+    fn drag_factors(hulls: &[Vec<Vec3>], mass: f32, drag_axis_areas: Vec3) -> Vec3 {
         let mut mins = Vec3::splat(f32::MAX);
         let mut maxs = Vec3::splat(f32::MIN);
         for p in hulls.iter().flatten() {
@@ -352,7 +380,7 @@ impl World {
         }
         let e = (maxs - mins).max(Vec3::ZERO) * UNITS_TO_METERS;
         let area = Vec3::new(e.y * e.z, e.x * e.z, e.x * e.y);
-        area * drag_coefficient / mass.max(1e-3) * UNITS_TO_METERS
+        area * drag_axis_areas / mass.max(1e-3) * UNITS_TO_METERS
     }
 
     pub fn add_prop(&mut self, desc: &PropDesc<'_>) -> Result<BodyHandle> {
@@ -376,7 +404,9 @@ impl World {
             settings.AngularVelocity = jv(dir_to_jolt(desc.angular_velocity) * DEG);
             settings.ObjectLayer = LAYER_MOVING;
             settings.MotionType = JPC_MOTION_TYPE_DYNAMIC;
-            settings.Friction = desc.surface.friction;
+            // props cross several units per tick; a discrete step lands them a tick late
+            settings.MotionQuality = JPC_MOTION_QUALITY_LINEAR_CAST;
+            settings.Friction = desc.surface.friction * desc.surface.friction;
             settings.Restitution = 0.5 * (desc.surface.elasticity + self.world_elasticity);
             settings.LinearDamping = desc.linear_damping;
             settings.AngularDamping = desc.angular_damping;
@@ -384,9 +414,10 @@ impl World {
             settings.Shape = shape;
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
             let id = JPC_BodyInterface_CreateAndAddBody(bi, &settings, JPC_ACTIVATION_ACTIVATE);
+            JPC_BodyInterface_SetMotionQuality(bi, id, JPC_MOTION_QUALITY_LINEAR_CAST);
             self.drags.push(Drag {
                 body: id,
-                linear: Self::drag_factors(desc.hulls, desc.mass, desc.drag_coefficient),
+                areas: Self::drag_factors(desc.hulls, desc.mass, desc.drag_axis_areas),
             });
             Ok(BodyHandle(id))
         }
@@ -396,6 +427,10 @@ impl World {
         self.system.optimize_broad_phase();
     }
 
+    /// Measured on the real game (docs/spec/physics.md): the body loses `k |v| v dt` from the
+    /// velocity gravity gives it this tick, before the position integrates; so it is taken off
+    /// ahead of the Jolt step from the predicted velocity, and the loss is with `k = A(dir) / m`, A(dir) the collision box's projected area along
+    /// the velocity, `sum_i A_i |dir_i|` in body axes (a tilted crate drags 1.43 times more).
     fn apply_drag(&self) {
         let dt = self.tick_interval;
         unsafe {
@@ -411,18 +446,16 @@ impl World {
                 let mut lv = jv(Vec3::ZERO);
                 let mut av = jv(Vec3::ZERO);
                 JPC_BodyInterface_GetLinearAndAngularVelocity(bi, d.body, &mut lv, &mut av);
-                let local = rot.inverse() * from_jolt(gv(lv));
-                let speed = local.length();
+                let v = from_jolt(gv(lv));
+                let predicted = v + Vec3::new(0.0, 0.0, -self.gravity * dt);
+                let speed = predicted.length();
                 if speed < 1e-3 {
                     continue;
                 }
-                // implicit `v' = v / (1 + k |v| dt)` per body axis stays stable at any speed
-                let damped = Vec3::new(
-                    local.x / (1.0 + d.linear.x * speed * dt),
-                    local.y / (1.0 + d.linear.y * speed * dt),
-                    local.z / (1.0 + d.linear.z * speed * dt),
-                );
-                JPC_BodyInterface_SetLinearVelocity(bi, d.body, jv(to_jolt(rot * damped)));
+                let dir = (rot.inverse() * predicted) / speed;
+                let k = d.areas.dot(dir.abs());
+                let loss = predicted * (k * speed * dt).min(1.0);
+                JPC_BodyInterface_SetLinearVelocity(bi, d.body, jv(to_jolt(v - loss)));
             }
         }
     }
@@ -484,6 +517,16 @@ mod tests {
     }
 
     #[test]
+    fn contact_settings_reach_jolt() {
+        let w = World::new(600.0, 0.015, 1);
+        unsafe {
+            let raw = w.system.as_raw();
+            assert!((gmp_get_speculative_distance(raw) - SPECULATIVE_CONTACT_M).abs() < 1e-6);
+            assert!((gmp_get_penetration_slop(raw) - PENETRATION_SLOP_M).abs() < 1e-6);
+        }
+    }
+
+    #[test]
     fn angles_roundtrip() {
         for (p, y, r) in [(0.0, 0.0, 0.0), (20.0, 35.0, 10.0), (-45.0, 170.0, -30.0)] {
             let (p2, y2, r2) = angles_from_quat(quat_from_angles(p, y, r));
@@ -522,7 +565,7 @@ mod tests {
                 surface: Surface::default(),
                 linear_damping: 0.0,
                 angular_damping: 0.0,
-                drag_coefficient: 1.0,
+                drag_axis_areas: Vec3::ONE,
             })
             .unwrap();
         w.optimize();

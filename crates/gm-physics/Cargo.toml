@@ -13,3 +13,6 @@ gm-formats = { path = "../gm-formats" }
 joltc-sys = "0.3.1"
 rolt = "0.3.1"
 thiserror = { workspace = true }
+
+[build-dependencies]
+cc = "1"

@@ -49,6 +49,7 @@ pub struct Convex {
 pub struct Solid {
     pub version: u16,
     pub model_type: u16,
+    /// Projected hull area over collision box face area per axis, Source axis order (Z up).
     pub drag_axis_areas: [f32; 3],
     pub axis_map_size: u32,
     /// Source units, Z up.
@@ -153,7 +154,8 @@ fn parse_solid(d: &[u8]) -> Result<Solid> {
         let version = u16_at(d, 4, "solid header")?;
         let model_type = u16_at(d, 6, "solid header")?;
         let surface_size = u32_at(d, 8, "solid header")? as usize;
-        let drag_axis_areas = vec3_at(d, 12, "solid header")?;
+        let da = vec3_at(d, 12, "solid header")?;
+        let drag_axis_areas = [da[0], da[2], da[1]];
         let axis_map_size = u32_at(d, 24, "solid header")?;
         if version != 0x100 {
             return Err(Error::Version(version));

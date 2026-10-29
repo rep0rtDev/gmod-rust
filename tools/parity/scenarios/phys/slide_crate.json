@@ -1,0 +1,3 @@
+{ "name": "phys_slide_crate", "kind": "phys", "map": "gm_construct",
+  "model": "models/props_junk/wood_crate001a.mdl",
+  "start": [823.235, -500.0, -123.6], "angles": [0, 0, 0], "velocity": [0, 300, 0], "ticks": 200 }

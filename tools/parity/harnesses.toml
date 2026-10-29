@@ -213,3 +213,15 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1
+
+[[harness]]
+name = "phys_slide_crate"
+scenario = "phys/slide_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
