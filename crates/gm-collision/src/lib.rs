@@ -130,6 +130,46 @@ impl World {
         }
     }
 
+    /// A world made of axis-aligned solid boxes with no tree (one leaf), for tests and tools.
+    pub fn from_boxes(boxes: &[(Vec3, Vec3)]) -> Self {
+        let mut planes = Vec::new();
+        let mut side_planes = Vec::new();
+        let mut brushes = Vec::new();
+        for (mins, maxs) in boxes {
+            let first = side_planes.len() as u32;
+            for (n, d) in [
+                (Vec3::X, maxs.x),
+                (Vec3::NEG_X, -mins.x),
+                (Vec3::Y, maxs.y),
+                (Vec3::NEG_Y, -mins.y),
+                (Vec3::Z, maxs.z),
+                (Vec3::NEG_Z, -mins.z),
+            ] {
+                side_planes.push(planes.len() as u32);
+                planes.push(Plane { normal: n, dist: d });
+            }
+            brushes.push(Brush {
+                first_side: first,
+                num_sides: 6,
+                contents: contents::SOLID,
+            });
+        }
+        let leaf_brushes: Vec<u16> = (0..brushes.len() as u16).collect();
+        World {
+            planes,
+            nodes: Vec::new(),
+            leafs: vec![Leaf {
+                contents: 0,
+                first_brush: 0,
+                num_brushes: brushes.len() as u32,
+            }],
+            leaf_brushes,
+            brushes,
+            side_planes,
+            head_node: -1,
+        }
+    }
+
     pub fn leaf_index(&self, point: Vec3) -> usize {
         let mut node = self.head_node;
         while node >= 0 {

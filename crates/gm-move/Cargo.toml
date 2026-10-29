@@ -1,0 +1,11 @@
+[package]
+name = "gm-move"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Player movement: walking, air control, jumping, ducking, stepping"
+
+[dependencies]
+gm-core = { path = "../gm-core" }
+gm-collision = { path = "../gm-collision" }
+glam = { workspace = true }

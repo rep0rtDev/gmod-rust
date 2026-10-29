@@ -324,6 +324,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gm-move"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "gm-collision",
+ "gm-core",
+]
+
+[[package]]
 name = "gm-parity"
 version = "0.0.1"
 dependencies = [
