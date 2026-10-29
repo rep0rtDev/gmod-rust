@@ -22,7 +22,83 @@ pub struct WeaponDef {
     pub hold_type: &'static str,
     /// Seconds until the next primary/secondary fire after selecting it; `None` not measured yet.
     pub deploy: Option<f32>,
+    /// Firing rules measured with a bot (`fire_*`); `None` for weapons not measured yet.
+    pub fire: Option<Fire>,
 }
+
+/// How a weapon fires (recordings `fire_*`): every timer is relative to the server tick the
+/// usercmd belongs to, so a value set to `x` reads `x - 0.015` in the tick's recording.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Fire {
+    /// Shots while the button is held: the primary timer advances by `cycle` from its own expired
+    /// value (SMG1, held pistol), not from now.
+    pub auto: bool,
+    /// Primary timer after a shot (from now for a pressed semi-auto shot and the shotgun).
+    pub cycle: f32,
+    /// Semi-auto: a fresh press fires once this much time passed since the last shot, even while
+    /// `cycle` has not expired (pistol 0.1).
+    pub refire_min: Option<f32>,
+    pub pellets: u8,
+    /// Cone half-angle as the game's spread vector component (sin), at zero penalty.
+    pub spread: f32,
+    /// Pistol accuracy penalty: spread lerps to this at penalty 1.5, +0.2 per shot, -dt per tick
+    /// when the button is not held and `refire_min` has passed.
+    pub spread_max: Option<f32>,
+    /// Pump after each shot once `cycle` expired, this long (shotgun 0.5333).
+    pub pump: Option<f32>,
+    /// Reload time after IN_RELOAD with a non-full clip; the clip fills when it expires.
+    pub reload: Option<f32>,
+    /// Empty clip and the button down once the primary timer expired: (primary timer, refire
+    /// gate) of the dry fire (pistol 0.4, 0.2). An empty clip with the button up reloads.
+    pub dry_fire: Option<(f32, f32)>,
+}
+
+pub const IN_ATTACK: u32 = 1;
+pub const IN_RELOAD: u32 = 1 << 13;
+const PISTOL: Fire = Fire {
+    auto: true,
+    cycle: 0.5,
+    refire_min: Some(0.1),
+    pellets: 1,
+    spread: 0.00873,
+    spread_max: Some(0.05234),
+    pump: None,
+    reload: Some(1.4333),
+    dry_fire: Some((0.4, 0.2)),
+};
+const SMG1: Fire = Fire {
+    auto: true,
+    cycle: 0.075,
+    refire_min: None,
+    pellets: 1,
+    spread: 0.0436,
+    spread_max: None,
+    pump: None,
+    reload: None,
+    dry_fire: None,
+};
+const SHOTGUN: Fire = Fire {
+    auto: false,
+    cycle: 0.3333,
+    refire_min: None,
+    pellets: 7,
+    spread: 0.0872,
+    spread_max: None,
+    pump: Some(0.5333),
+    reload: None,
+    dry_fire: None,
+};
+const REVOLVER: Fire = Fire {
+    auto: false,
+    cycle: 0.75,
+    refire_min: None,
+    pellets: 1,
+    spread: 0.0,
+    spread_max: None,
+    pump: None,
+    reload: None,
+    dry_fire: None,
+};
 
 pub const WEAPONS: [WeaponDef; 13] = [
     WeaponDef {
@@ -36,6 +112,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 5,
         hold_type: "camera",
         deploy: None,
+        fire: None,
     },
     WeaponDef {
         class: "gmod_tool",
@@ -48,6 +125,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 5,
         hold_type: "revolver",
         deploy: None,
+        fire: None,
     },
     WeaponDef {
         class: "weapon_357",
@@ -59,7 +137,8 @@ pub const WEAPONS: [WeaponDef; 13] = [
         slot_pos: 1,
         weight: 7,
         hold_type: "revolver",
-        deploy: None,
+        deploy: Some(0.25),
+        fire: Some(REVOLVER),
     },
     WeaponDef {
         class: "weapon_ar2",
@@ -72,6 +151,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 5,
         hold_type: "ar2",
         deploy: None,
+        fire: None,
     },
     WeaponDef {
         class: "weapon_crossbow",
@@ -84,6 +164,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 6,
         hold_type: "crossbow",
         deploy: None,
+        fire: None,
     },
     WeaponDef {
         class: "weapon_crowbar",
@@ -96,6 +177,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 0,
         hold_type: "melee",
         deploy: Some(0.2333),
+        fire: None,
     },
     WeaponDef {
         class: "weapon_frag",
@@ -108,6 +190,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 1,
         hold_type: "grenade",
         deploy: None,
+        fire: None,
     },
     WeaponDef {
         class: "weapon_physcannon",
@@ -120,6 +203,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 0,
         hold_type: "physgun",
         deploy: None,
+        fire: None,
     },
     WeaponDef {
         class: "weapon_physgun",
@@ -132,6 +216,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 2,
         hold_type: "physgun",
         deploy: Some(0.2417),
+        fire: None,
     },
     WeaponDef {
         class: "weapon_pistol",
@@ -144,6 +229,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 2,
         hold_type: "pistol",
         deploy: Some(0.2),
+        fire: Some(PISTOL),
     },
     WeaponDef {
         class: "weapon_rpg",
@@ -156,6 +242,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 0,
         hold_type: "rpg",
         deploy: Some(0.275),
+        fire: None,
     },
     WeaponDef {
         class: "weapon_shotgun",
@@ -168,6 +255,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 4,
         hold_type: "shotgun",
         deploy: Some(0.1833),
+        fire: Some(SHOTGUN),
     },
     WeaponDef {
         class: "weapon_smg1",
@@ -180,6 +268,7 @@ pub const WEAPONS: [WeaponDef; 13] = [
         weight: 3,
         hold_type: "smg",
         deploy: Some(0.2083),
+        fire: Some(SMG1),
     },
 ];
 
@@ -208,9 +297,26 @@ pub struct Inventory {
     pub ammo: BTreeMap<String, i32>,
     pub next_primary: f32,
     pub next_secondary: f32,
-    /// The pistol snaps its primary timer to 0.1 s in the past once its deploy has expired
-    /// (measured: -0.01 then -0.115 instead of -0.025); done once per selection.
+    /// The pistol parks its primary timer 0.1 s in the past once `soonest_primary` has passed
+    /// with the button up (measured: -0.01 then -0.115 instead of -0.025); once per arming.
     pub pistol_relaxed: bool,
+    /// Semi-auto: time until a fresh press may fire again.
+    pub soonest_primary: f32,
+    pub penalty: f32,
+    pub need_pump: bool,
+    pub reloading: bool,
+    pub prev_attack: bool,
+    /// Deploying or reloading: a fresh press does not shortcut the primary timer.
+    pub busy: bool,
+    pub shots: u32,
+}
+
+/// Bullets fired by one trigger pull.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shot {
+    pub pellets: u8,
+    pub spread: f32,
+    pub ammo: &'static str,
 }
 
 impl Inventory {
@@ -240,17 +346,134 @@ impl Inventory {
         if let Some(d) = def(class).and_then(|w| w.deploy) {
             self.next_primary = d;
             self.next_secondary = d;
+            self.soonest_primary = d;
         }
         self.pistol_relaxed = false;
+        self.need_pump = false;
+        self.reloading = false;
+        self.busy = true;
+    }
+
+    /// The usercmd of one tick for the active weapon `class`, before `tick`: reload, pump and
+    /// shots as the game resolves them against the timers of the command's tick.
+    pub fn command(&mut self, class: &str, buttons: u32) -> Option<Shot> {
+        let pressed = buttons & IN_ATTACK != 0;
+        let edge = pressed && !self.prev_attack;
+        self.prev_attack = pressed;
+        let (Some(w), Some(f)) = (def(class), def(class).and_then(|w| w.fire)) else {
+            return None;
+        };
+        let clip = self
+            .clips
+            .entry(class.to_string())
+            .or_insert([w.clip1, w.clip2]);
+        if self.busy && self.next_primary <= 0.0 {
+            self.busy = false;
+        }
+        if self.reloading {
+            if self.next_primary > 0.0 {
+                return None;
+            }
+            let reserve = self.ammo.entry(w.ammo1.to_string()).or_insert(0);
+            let take = (w.clip1 - clip[0]).min(*reserve).max(0);
+            clip[0] += take;
+            *reserve -= take;
+            self.reloading = false;
+        }
+        if self.need_pump {
+            if self.next_primary > 0.0 {
+                return None;
+            }
+            self.need_pump = false;
+            self.next_primary = f.pump.unwrap_or(0.0);
+            return None;
+        }
+        if buttons & IN_RELOAD != 0
+            && f.reload.is_some()
+            && clip[0] < w.clip1
+            && self.ammo.get(w.ammo1).copied().unwrap_or(0) > 0
+        {
+            self.reloading = true;
+            self.busy = true;
+            self.next_primary = f.reload.unwrap_or(0.0);
+            self.next_secondary = self.next_primary;
+            self.soonest_primary = self.next_primary;
+            self.pistol_relaxed = false;
+            return None;
+        }
+        if clip[0] == 0 {
+            if self.next_primary > 0.0 {
+                return None;
+            }
+            if pressed {
+                if let Some((timer, gate)) = f.dry_fire {
+                    self.next_primary = timer;
+                    self.soonest_primary = gate;
+                    self.pistol_relaxed = false;
+                }
+            } else if f.reload.is_some() && self.ammo.get(w.ammo1).copied().unwrap_or(0) > 0 {
+                self.reloading = true;
+                self.busy = true;
+                self.next_primary = f.reload.unwrap_or(0.0);
+                self.next_secondary = self.next_primary;
+                self.soonest_primary = self.next_primary;
+                self.pistol_relaxed = false;
+            }
+            return None;
+        }
+        if !pressed {
+            return None;
+        }
+        let fresh_press =
+            edge && !self.busy && f.refire_min.is_some_and(|_| self.soonest_primary <= 0.0);
+        if !fresh_press && self.next_primary > 0.0 {
+            return None;
+        }
+        if fresh_press || !f.auto {
+            self.next_primary = f.cycle;
+        } else {
+            self.next_primary += f.cycle;
+        }
+        if let Some(r) = f.refire_min {
+            self.soonest_primary = r;
+        }
+        // the penalty accumulates unclamped (18 shots reach 1.65) and is clamped in the cone
+        let spread = match f.spread_max {
+            Some(m) => f.spread + (m - f.spread) * (self.penalty.min(1.5) / 1.5),
+            None => f.spread,
+        };
+        if f.spread_max.is_some() {
+            self.penalty += 0.2;
+        }
+        clip[0] -= 1;
+        self.need_pump = f.pump.is_some();
+        self.pistol_relaxed = false;
+        self.shots += 1;
+        Some(Shot {
+            pellets: f.pellets,
+            spread,
+            ammo: w.ammo1,
+        })
     }
 
     /// One server tick for the active weapon `class`.
     pub fn tick(&mut self, class: &str) {
-        if class == "weapon_pistol" && self.next_primary < 0.0 && !self.pistol_relaxed {
+        // the pistol parks its primary timer 0.1 s in the past once the refire gate has passed
+        // and the button is up (after a deploy, a reload, a shot or a release), once per arming
+        if class == "weapon_pistol"
+            && !self.pistol_relaxed
+            && !self.reloading
+            && self.soonest_primary <= 0.0
+            && !self.prev_attack
+        {
             self.next_primary = -0.1;
             self.pistol_relaxed = true;
         }
         self.next_primary -= TICK_DT;
         self.next_secondary -= TICK_DT;
+        self.soonest_primary -= TICK_DT;
+        if self.soonest_primary <= 0.0 && !self.prev_attack {
+            self.penalty = (self.penalty - TICK_DT).max(0.0);
+        }
     }
 }

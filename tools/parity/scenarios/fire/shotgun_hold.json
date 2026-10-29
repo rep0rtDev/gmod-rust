@@ -1,0 +1,23 @@
+{
+ "name": "fire_shotgun_hold",
+ "kind": "fire",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 0,
+ "weapon": "weapon_shotgun",
+ "segments": [
+  {
+   "ticks": 200,
+   "buttons": 1
+  },
+  {
+   "ticks": 60,
+   "buttons": 0
+  }
+ ]
+}

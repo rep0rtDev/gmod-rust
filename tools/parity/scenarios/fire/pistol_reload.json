@@ -1,0 +1,55 @@
+{
+ "kind": "fire",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 0,
+ "weapon": "weapon_pistol",
+ "name": "fire_pistol_reload",
+ "segments": [
+  {
+   "ticks": 10,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 1,
+   "buttons": 0
+  },
+  {
+   "ticks": 10,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 8192
+  },
+  {
+   "ticks": 200,
+   "buttons": 0
+  }
+ ]
+}

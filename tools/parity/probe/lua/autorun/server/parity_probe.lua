@@ -861,6 +861,84 @@ end
 ASYNC.weapon = true
 
 
+-- fire: a bot holding one weapon drives IN_ATTACK / IN_ATTACK2 / IN_RELOAD per segment; every
+-- tick the clip, the reserve ammo, the fire timers and the bullets fired (EntityFireBullets)
+-- are recorded, to measure fire rate, semi-auto behaviour, clip use and reload timing.
+SCENARIOS.fire = function(scn, done)
+	local bot = player.GetBots()[1]
+	if not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.fire(scn, done) end)
+		return
+	end
+	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
+	local segs = scn.segments or {}
+	local total = 0
+	for _, sg in ipairs(segs) do total = total + (sg.ticks or 0) end
+	local tick = -10
+	local ticks, shots = {}, {}
+	local shotCount, lastShot = 0, nil
+	local function segAt(t)
+		local acc = 0
+		for _, sg in ipairs(segs) do
+			acc = acc + (sg.ticks or 0)
+			if t < acc then return sg end
+		end
+	end
+	hook.Add("EntityFireBullets", "parity_fire", function(ent, data)
+		if ent == bot then
+			shotCount = shotCount + 1
+			lastShot = { num = data.Num, spread = { data.Spread.x, data.Spread.y, data.Spread.z }, damage = data.Damage, force = data.Force,
+				tracer = data.Tracer, tracername = data.TracerName, ammo = data.AmmoType, dir = { data.Dir.x, data.Dir.y, data.Dir.z },
+				src = { data.Src.x, data.Src.y, data.Src.z }, dist = data.Distance }
+		end
+	end)
+	hook.Add("StartCommand", "parity_fire", function(ply, cmd)
+		if ply ~= bot then return end
+		cmd:ClearButtons()
+		cmd:ClearMovement()
+		cmd:SetViewAngles(Angle(scn.pitch or 0, scn.yaw or 90, 0))
+		local sg = tick >= 0 and segAt(tick) or nil
+		if sg then cmd:SetButtons(sg.buttons or 0) end
+	end)
+	hook.Add("Tick", "parity_fire", function()
+		if tick == -10 then
+			-- a fresh loadout: clips and ammo otherwise carry over between scenarios
+			bot:StripWeapons()
+			bot:RemoveAllAmmo()
+			bot:Spawn()
+			bot:SetPos(start)
+			bot:SetEyeAngles(Angle(scn.pitch or 0, scn.yaw or 90, 0))
+		end
+		if tick == -8 then bot:SelectWeapon(scn.weapon) end
+		if tick >= 0 then
+			local aw = bot:GetActiveWeapon()
+			local row = { t = tick, active = IsValid(aw) and aw:GetClass() or "", shots = shotCount }
+			if IsValid(aw) then
+				row.clip1 = aw:Clip1()
+				row.clip2 = aw:Clip2()
+				row.ammo1 = aw:GetPrimaryAmmoType() >= 0 and bot:GetAmmoCount(aw:GetPrimaryAmmoType()) or -1
+				row.ammo2 = aw:GetSecondaryAmmoType() >= 0 and bot:GetAmmoCount(aw:GetSecondaryAmmoType()) or -1
+				row.next_primary = math.Round(aw:GetNextPrimaryFire() - CurTime(), 4)
+				row.next_secondary = math.Round(aw:GetNextSecondaryFire() - CurTime(), 4)
+				row.sequence = aw:GetSequence()
+				row.cycle = math.Round(aw:GetCycle(), 4)
+			end
+			if lastShot then row.shot = lastShot; lastShot = nil end
+			ticks[#ticks + 1] = row
+		end
+		tick = tick + 1
+		if tick >= total then
+			hook.Remove("Tick", "parity_fire")
+			hook.Remove("StartCommand", "parity_fire")
+			hook.Remove("EntityFireBullets", "parity_fire")
+			done({ weapon = scn.weapon, ticks = ticks, shots = shotCount, tickinterval = engine.TickInterval() })
+		end
+	end)
+end
+ASYNC.fire = true
+
+
 -- damage: a bot dropped from the scenario's heights (fall damage) and hit with TakeDamage of
 -- given amounts at given armour, recorded every tick with the damage events, to measure the
 -- fall damage rule, armour absorption and death.

@@ -961,3 +961,65 @@ compare = "weapon"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
+
+[[harness]]
+name = "fire_pistol_tap"
+scenario = "fire/pistol_tap"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "fire_pistol_hold"
+scenario = "fire/pistol_hold"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "fire_smg1_hold"
+scenario = "fire/smg1_hold"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "fire_shotgun_hold"
+scenario = "fire/shotgun_hold"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "fire_357_tap"
+scenario = "fire/357_tap"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "fire_pistol_empty"
+scenario = "fire/pistol_empty"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+[[harness]]
+name = "fire_pistol_reload"
+scenario = "fire/pistol_reload"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]

@@ -118,6 +118,7 @@ struct Scenario {
     kill_at: Vec<u32>,
     #[serde(default)]
     select: Vec<(u32, String)>,
+    weapon: Option<String>,
     #[serde(default)]
     yaw: Option<f32>,
     /// damage scenarios: drop heights every `spacing` ticks, hits, convar and start values
@@ -278,6 +279,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "phys" => run_phys(scn)?,
         "player" => run_player(scn)?,
         "weapon" => run_weapon(scn)?,
+        "fire" => run_fire(scn)?,
         "damage" => run_damage(scn)?,
         "ragdoll" => run_ragdoll(scn)?,
         "physgun" => run_physgun(scn)?,
@@ -1148,6 +1150,89 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
 
 /// A bot's life cycle through the server loop: spawned, killed at the scenario's ticks,
 /// respawned by the server's rule; recorded like the probe's `player` scenario.
+/// Firing one weapon with a bot's buttons per segment: `Inventory::command` per tick, then the
+/// timers; the clip, reserve ammo, timers and shots are the recording's rows.
+fn run_fire(scn: &Scenario) -> Result<Value> {
+    use gm_server::weapons::Inventory;
+    let class = scn.weapon.clone().context("fire scenario needs `weapon`")?;
+    let mut inv = Inventory::default();
+    inv.give_loadout();
+    inv.select(&class);
+    // the probe selects the weapon 8 ticks before the first recorded tick: 7 full ticks pass
+    // before the first recorded command
+    for _ in 0..7 {
+        inv.tick(&class);
+    }
+    let def = gm_server::weapons::def(&class).context("unknown weapon")?;
+    let mut ticks = Vec::new();
+    let mut t = 0u32;
+    for seg in &scn.segments {
+        for _ in 0..seg.ticks {
+            let shot = inv.command(&class, seg.buttons);
+            inv.tick(&class);
+            let clip = inv.clip(&class);
+            let mut row = json!({
+                "t": t, "active": class, "clip1": clip[0], "clip2": clip[1],
+                "ammo1": if def.ammo1.is_empty() { -1 } else { inv.ammo.get(def.ammo1).copied().unwrap_or(0) },
+                "next_primary": inv.next_primary, "next_secondary": inv.next_secondary, "shots": inv.shots,
+            });
+            if let Some(s) = shot {
+                row["shot"] = json!({ "num": s.pellets, "spread": [s.spread, s.spread, 0.0], "ammo": s.ammo });
+            }
+            ticks.push(row);
+            t += 1;
+        }
+    }
+    Ok(json!({ "weapon": class, "ticks": ticks, "shots": inv.shots }))
+}
+
+/// Clip, reserve ammo and shot count every tick, the primary timer within `time`, pellets and
+/// spread of every shot within `spread`.
+fn compare_fire(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let time_tol = tol.get("time").and_then(|v| v.as_float()).unwrap_or(0.001) as f32;
+    let spread_tol = tol
+        .get("spread")
+        .and_then(|v| v.as_float())
+        .unwrap_or(0.0003) as f32;
+    let empty = Vec::new();
+    let tr = theirs["ticks"].as_array().unwrap_or(&empty);
+    let or = ours["ticks"].as_array().unwrap_or(&empty);
+    let mut ok = tr.len() == or.len();
+    let (mut diffs, mut max_dt, mut max_ds) = (0, 0.0f32, 0.0f32);
+    for (a, b) in tr.iter().zip(or) {
+        let mut bad =
+            a["clip1"] != b["clip1"] || a["ammo1"] != b["ammo1"] || a["shots"] != b["shots"];
+        if let (Some(x), Some(y)) = (a["next_primary"].as_f64(), b["next_primary"].as_f64()) {
+            let d = (x - y).abs() as f32;
+            max_dt = max_dt.max(d);
+            bad |= d > time_tol;
+        }
+        if a["shot"].is_object() || b["shot"].is_object() {
+            let (sa, sb) = (&a["shot"], &b["shot"]);
+            bad |= sa["num"] != sb["num"];
+            let (x, y) = (
+                sa["spread"][0].as_f64().unwrap_or(-1.0),
+                sb["spread"][0].as_f64().unwrap_or(-1.0),
+            );
+            let d = (x - y).abs() as f32;
+            max_ds = max_ds.max(d);
+            bad |= d > spread_tol;
+        }
+        if bad {
+            diffs += 1;
+            if diffs <= 6 {
+                println!("  tick {}: game clip {} ammo {} shots {} next {} shot {} | ours clip {} ammo {} shots {} next {} shot {}", a["t"], a["clip1"], a["ammo1"], a["shots"], a["next_primary"], a["shot"], b["clip1"], b["ammo1"], b["shots"], b["next_primary"], b["shot"]);
+            }
+            ok = false;
+        }
+    }
+    println!(
+        "  {} ticks, {} shots (ours {}), {} differing, max timer err {max_dt:.4} s (tol {time_tol}), max spread err {max_ds:.5} (tol {spread_tol}): {}",
+        tr.len(), theirs["shots"], ours["shots"], diffs, if ok { "equal" } else { "DIFF" }
+    );
+    ok
+}
+
 /// The sandbox loadout and weapon switching: `Inventory` from gm-server driven by the
 /// scenario's `select` list, the active weapon, its clips and fire timers recorded every tick.
 fn run_weapon(scn: &Scenario) -> Result<Value> {
@@ -3326,6 +3411,7 @@ fn main() -> Result<()> {
                     "sandbox" => compare_sandbox(&t.result, &o.result, &h.tolerance),
                     "player" => compare_player(&t.result, &o.result, &h.tolerance),
                     "weapon" => compare_weapon(&t.result, &o.result, &h.tolerance),
+                    "fire" => compare_fire(&t.result, &o.result, &h.tolerance),
                     "damage" => compare_damage(&t.result, &o.result, &h.tolerance),
                     "ragdoll" => compare_ragdoll(&t.result, &o.result, &h.tolerance),
                     "net_player" => compare_net_player(&t.result, &o.result, &h.tolerance),
