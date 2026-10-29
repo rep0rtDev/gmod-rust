@@ -534,6 +534,9 @@ pub const KNOCKBACK_PER_DAMAGE: f32 = 4.18;
 /// view yaw `yaw` carries it rotated by `yaw + 90` degrees about z. The standing idle pose
 /// differs from the bind pose by a few units (measured head hit 5.7 u in front of the bind
 /// head box), open until animation is read.
+/// A bone-name override from a static animation pose: (bone name, position, quaternion).
+pub type BonePoseOverride = (String, Option<[f32; 3]>, Option<[f32; 4]>);
+
 #[derive(Debug, Clone, Default)]
 pub struct HitModel {
     pub boxes: Vec<(u8, glam::Mat4, glam::Vec3, glam::Vec3)>,
@@ -550,11 +553,7 @@ impl HitModel {
     /// The hit boxes in the pose of a static animation: `pose` maps bone names to (position,
     /// quaternion) overrides from `gm_formats::mdl::static_pose` of the shared animation model,
     /// bones without an entry keep the bind pose.
-    pub fn posed(
-        data: &[u8],
-        mdl: &gm_formats::mdl::Mdl,
-        pose: &[(String, Option<[f32; 3]>, Option<[f32; 4]>)],
-    ) -> Self {
+    pub fn posed(data: &[u8], mdl: &gm_formats::mdl::Mdl, pose: &[BonePoseOverride]) -> Self {
         use glam::{Mat4, Quat, Vec3};
         let mut world: Vec<Mat4> = Vec::with_capacity(mdl.bones.len());
         for b in &mdl.bones {
@@ -652,7 +651,7 @@ pub fn sequence_pose(
     anim_mdl: &gm_formats::mdl::Mdl,
     ani: &[u8],
     seq: &str,
-) -> Option<Vec<(String, Option<[f32; 3]>, Option<[f32; 4]>)>> {
+) -> Option<Vec<BonePoseOverride>> {
     let s = gm_formats::mdl::sequences(anim_mdl_data, &anim_mdl.header)
         .into_iter()
         .find(|s| s.name == seq)?;
