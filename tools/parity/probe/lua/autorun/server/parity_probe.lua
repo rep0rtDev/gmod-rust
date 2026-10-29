@@ -878,6 +878,15 @@ SCENARIOS.fire = function(scn, done)
 	local tick = -10
 	local ticks, shots = {}, {}
 	local shotCount, lastShot = 0, nil
+	-- projectiles the weapon spawns (rocket, bolt, grenade, ball): tracked every tick until removed
+	local PROJ = { rpg_missile = true, crossbow_bolt = true, npc_grenade_frag = true, prop_combine_ball = true, grenade_ar2 = true }
+	local removed = {}
+	hook.Add("EntityRemoved", "parity_fire", function(ent)
+		if PROJ[ent:GetClass()] and tick >= 0 then
+			local p = ent:GetPos()
+			removed[#removed + 1] = { t = tick, class = ent:GetClass(), id = ent:EntIndex(), pos = { p.x, p.y, p.z } }
+		end
+	end)
 	local function segAt(t)
 		local acc = 0
 		for _, sg in ipairs(segs) do
@@ -925,6 +934,19 @@ SCENARIOS.fire = function(scn, done)
 				row.cycle = math.Round(aw:GetCycle(), 4)
 			end
 			if lastShot then row.shot = lastShot; lastShot = nil end
+			local projs = {}
+			for cls in pairs(PROJ) do
+				for _, e in ipairs(ents.FindByClass(cls)) do
+					local p, a = e:GetPos(), e:GetAngles()
+					local v = e:GetVelocity()
+					local ph = e:GetPhysicsObject()
+					if IsValid(ph) then v = ph:GetVelocity() end
+					projs[#projs + 1] = { class = cls, id = e:EntIndex(), pos = { p.x, p.y, p.z }, vel = { v.x, v.y, v.z }, ang = { a.p, a.y, a.r },
+						movetype = e:GetMoveType(), phys = IsValid(ph), owner = IsValid(e:GetOwner()) and e:GetOwner():EntIndex() or -1,
+						created = math.Round(CurTime() - e:GetCreationTime(), 4) }
+				end
+			end
+			if #projs > 0 then row.projectiles = projs end
 			ticks[#ticks + 1] = row
 		end
 		tick = tick + 1
@@ -932,7 +954,8 @@ SCENARIOS.fire = function(scn, done)
 			hook.Remove("Tick", "parity_fire")
 			hook.Remove("StartCommand", "parity_fire")
 			hook.Remove("EntityFireBullets", "parity_fire")
-			done({ weapon = scn.weapon, ticks = ticks, shots = shotCount, tickinterval = engine.TickInterval() })
+			hook.Remove("EntityRemoved", "parity_fire")
+			done({ weapon = scn.weapon, ticks = ticks, shots = shotCount, removed = removed, tickinterval = engine.TickInterval() })
 		end
 	end)
 end
