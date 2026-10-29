@@ -11,3 +11,4 @@ A statement without a harness is a hypothesis and is marked `(unconfirmed)`.
 | [movement.md](movement.md) | `move_*` | 17 harnesses bit-exact on 2026.09.17 |
 | [physgun.md](physgun.md) | `physgun_*` | 5 / 7 within tolerance on 2026.09.17 (hold, yaw, pitch, freeze, rotate; walking lag and the landing after release open) |
 | [physics.md](physics.md) | `phys_*`, `constraint_*` | 1 / 5 within tolerance on 2026.09.17 (free flight and contact tick exact, contact response open) |
+- [sandbox.md](sandbox.md): prop spawning placement, undo, cleanup, limits

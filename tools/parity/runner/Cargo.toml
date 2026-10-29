@@ -22,4 +22,5 @@ gm-collision = { path = "../../../crates/gm-collision" }
 gm-move = { path = "../../../crates/gm-move" }
 gm-physics = { path = "../../../crates/gm-physics" }
 gm-core = { path = "../../../crates/gm-core" }
+gm-sandbox = { path = "../../../crates/gm-sandbox" }
 glam = { workspace = true }

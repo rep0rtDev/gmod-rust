@@ -366,3 +366,13 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1
+
+[[harness]]
+name = "sandbox_spawn_basic"
+scenario = "sandbox/spawn_basic"
+compare = "sandbox"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+ang = 0.1

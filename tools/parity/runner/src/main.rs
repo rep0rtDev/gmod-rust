@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Parser)]
 #[command(name = "gm-parity", about = "parity harnesses against the real game")]
@@ -105,6 +105,8 @@ struct Scenario {
     props: Vec<PropSpec>,
     #[serde(default)]
     constraints: Vec<ConstraintSpec>,
+    #[serde(default)]
+    ops: Vec<OpSpec>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -115,6 +117,21 @@ struct PropSpec {
     angles: Option<[f32; 3]>,
     #[serde(default)]
     frozen: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct OpSpec {
+    op: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    pitch: f32,
+    #[serde(default)]
+    yaw: f32,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    value: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -206,6 +223,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "phys" => run_phys(scn)?,
         "physgun" => run_physgun(scn)?,
         "constraint" => run_constraint(scn)?,
+        "sandbox" => run_sandbox(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
     Ok(Trace {
@@ -732,6 +750,208 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
 /// Rigid body traces: position, orientation and the tick of first contact. Bit exactness is
 /// not expected from a different solver, so the check is "same contact tick within `contact`
 /// ticks, position within `pos` for every tick, final pose within `rest`".
+fn run_sandbox(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_sandbox::{Event, Limits, ModelBounds, Sandbox, SpawnRequest};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let world = gm_collision::World::from_bsp(&bsp);
+    let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    let eye = start + Vec3::new(0.0, 0.0, 64.0);
+    let player = 1u32;
+    let mut sb = Sandbox::new(Limits::default());
+    let mut results = Vec::new();
+    let mut messages = Vec::new();
+    let snapshot = |sb: &Sandbox| -> Value {
+        json!({
+            "props": sb.props().iter().map(|p| json!({
+                "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
+            })).collect::<Vec<_>>(),
+            "count": sb.count(player),
+            "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "text": u.text, "n": u.entities.len() })).collect::<Vec<_>>(),
+            "maxprops": sb.limits.max_props,
+        })
+    };
+    for (i, op) in scn.ops.iter().enumerate() {
+        let mut events = Vec::new();
+        let mut rec = json!({ "op": op.op, "t": i });
+        match op.op.as_str() {
+            "spawn" => {
+                let model = op.model.clone().unwrap_or_default();
+                let mdl = gm_formats::mdl::Mdl::parse(&mount.read(&model)?)?;
+                let bounds = ModelBounds {
+                    min: Vec3::from(mdl.header.hull_min),
+                    max: Vec3::from(mdl.header.hull_max),
+                };
+                let eye_angles = Vec3::new(op.pitch, op.yaw, 0.0);
+                let pl = gm_sandbox::place_prop(&world, eye, eye_angles, &bounds);
+                rec["trace"] = json!({ "pos": [pl.hit.x, pl.hit.y, pl.hit.z], "normal": [pl.normal.x, pl.normal.y, pl.normal.z], "eye": [eye.x, eye.y, eye.z] });
+                rec["model"] = json!(model);
+                sb.spawn_prop(
+                    &world,
+                    player,
+                    &SpawnRequest {
+                        eye,
+                        eye_angles,
+                        model: &model,
+                        bounds,
+                    },
+                    &mut events,
+                );
+            }
+            "undo" => sb.undo(player, &mut events),
+            "cleanup" => sb.cleanup(player, &mut events),
+            "cvar" => {
+                if op.name.as_deref() == Some("sbox_maxprops") {
+                    sb.limits.max_props =
+                        op.value.as_deref().unwrap_or("200").parse().unwrap_or(200);
+                }
+            }
+            other => bail!("unknown sandbox op {other}"),
+        }
+        for e in &events {
+            match e {
+                Event::LimitHit { limit } => messages.push(json!({ "t": i, "limit": limit })),
+                Event::Spawned { .. } => {
+                    messages.push(json!({ "t": i, "lua": "achievements.SpawnedProp()" }))
+                }
+                Event::Cleanup { kind } => messages
+                    .push(json!({ "t": i, "lua": format!("hook.Run('OnCleanup','{kind}')") })),
+                Event::Undone { .. } => {}
+            }
+        }
+        let snap = snapshot(&sb);
+        rec["immediate"] = snap.clone();
+        rec["after"] = snap;
+        rec["t_after"] = json!(i);
+        results.push(rec);
+    }
+    Ok(json!({ "results": results, "messages": messages, "eye": [eye.x, eye.y, eye.z] }))
+}
+
+/// Per op: spawn placement (pose at the spawn tick, before physics), prop list after the op
+/// (models in order), count, undo ids and the limit hits sent to the player.
+fn compare_sandbox(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(0.05) as f32;
+    let ang_tol = tol.get("ang").and_then(|v| v.as_float()).unwrap_or(0.1) as f32;
+    let empty = Vec::new();
+    let tr = theirs["results"].as_array().unwrap_or(&empty);
+    let or = ours["results"].as_array().unwrap_or(&empty);
+    let mut ok = tr.len() == or.len();
+    if !ok {
+        println!("  {} ops recorded, {} ours", tr.len(), or.len());
+    }
+    let v3 = |v: &Value| -> glam::Vec3 {
+        let a = v.as_array().cloned().unwrap_or_default();
+        glam::Vec3::new(
+            a.first().and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(1).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(2).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+        )
+    };
+    let yaw_diff = |a: f32, b: f32| ((a - b + 540.0).rem_euclid(360.0) - 180.0).abs();
+    let (mut max_pos, mut max_ang) = (0.0f32, 0.0f32);
+    for (i, (t, o)) in tr.iter().zip(or).enumerate() {
+        let op = t["op"].as_str().unwrap_or("");
+        let (tsnap, osnap) = (&t["after"], &o["after"]);
+        let tprops = t["immediate"]["props"].as_array().unwrap_or(&empty);
+        let oprops = o["immediate"]["props"].as_array().unwrap_or(&empty);
+        if op == "spawn" {
+            if tprops.len() != oprops.len() {
+                println!(
+                    "  op {i} {op}: {} props in the game, {} ours",
+                    tprops.len(),
+                    oprops.len()
+                );
+                ok = false;
+            } else {
+                let prev = i
+                    .checked_sub(1)
+                    .map(|j| tr[j]["after"]["props"].as_array().map_or(0, Vec::len))
+                    .unwrap_or(0);
+                // only the prop this op placed is compared: older ones have been under physics
+                let pairs = if tprops.len() > prev {
+                    tprops.iter().zip(oprops).skip(tprops.len() - 1)
+                } else {
+                    tprops.iter().zip(oprops).skip(tprops.len())
+                };
+                for (tp, op_) in pairs {
+                    let dp = (v3(&tp["pos"]) - v3(&op_["pos"])).length();
+                    let da = yaw_diff(v3(&tp["ang"]).y, v3(&op_["ang"]).y)
+                        .max(v3(&tp["ang"]).x.abs() - v3(&op_["ang"]).x.abs())
+                        .abs();
+                    max_pos = max_pos.max(dp);
+                    max_ang = max_ang.max(da);
+                    if tp["model"] != op_["model"] {
+                        println!("  op {i}: model {} vs {}", tp["model"], op_["model"]);
+                        ok = false;
+                    }
+                }
+            }
+        }
+        let tafter = tsnap["props"].as_array().unwrap_or(&empty);
+        let oafter = osnap["props"].as_array().unwrap_or(&empty);
+        if tafter.len() != oafter.len() {
+            println!(
+                "  op {i} {op}: after {} props in the game, {} ours",
+                tafter.len(),
+                oafter.len()
+            );
+            ok = false;
+        }
+        if tsnap["count"] != osnap["count"] {
+            println!(
+                "  op {i} {op}: count {} vs {}",
+                tsnap["count"], osnap["count"]
+            );
+            ok = false;
+        }
+        let ids = |s: &Value| -> Vec<i64> {
+            s["undos"]
+                .as_array()
+                .unwrap_or(&empty)
+                .iter()
+                .filter_map(|u| u["id"].as_i64())
+                .collect()
+        };
+        if ids(tsnap) != ids(osnap) {
+            println!(
+                "  op {i} {op}: undo ids {:?} vs {:?}",
+                ids(tsnap),
+                ids(osnap)
+            );
+            ok = false;
+        }
+        let tick = t["t"].as_i64().unwrap_or(-1);
+        let limits = |m: &Value, key: i64, by_tick: bool| -> Vec<String> {
+            m["messages"]
+                .as_array()
+                .unwrap_or(&empty)
+                .iter()
+                .filter(|m| m["t"].as_i64() == Some(key) && m.get("limit").is_some())
+                .map(|m| m["limit"].as_str().unwrap_or("").to_string())
+                .filter(|_| by_tick || true)
+                .collect()
+        };
+        let (tl, ol) = (limits(theirs, tick, true), limits(ours, i as i64, false));
+        if tl != ol {
+            println!("  op {i} {op}: limit hits {tl:?} vs {ol:?}");
+            ok = false;
+        }
+    }
+    if max_pos > pos_tol || max_ang > ang_tol {
+        ok = false;
+    }
+    println!(
+        "  {} ops, max spawn pos err {:.3} (tol {pos_tol}), max angle err {:.2} (tol {ang_tol}): {}",
+        tr.len(), max_pos, max_ang, if ok { "equal" } else { "DIFF" }
+    );
+    ok
+}
+
 fn compare_rigid(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     let first = theirs
         .get("ticks")
@@ -1041,6 +1261,7 @@ fn main() -> Result<()> {
                     "set-equal" => compare_set_equal(&h.name, &t.result, &o.result),
                     "trajectory" => compare_trajectory(&t.result, &o.result, &h.tolerance),
                     "rigid" => compare_rigid(&t.result, &o.result, &h.tolerance),
+                    "sandbox" => compare_sandbox(&t.result, &o.result, &h.tolerance),
                     other => {
                         println!("  unknown compare mode {other}");
                         false

@@ -1,0 +1,10 @@
+[package]
+name = "gm-sandbox"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Sandbox server core: prop spawning placement, undo stacks, cleanup, sbox_* limits"
+
+[dependencies]
+gm-collision = { path = "../gm-collision" }
+glam = { workspace = true }
