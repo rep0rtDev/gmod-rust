@@ -1300,6 +1300,42 @@ crates = ["gm-server"]
 [harness.tolerance]
 
 [[harness]]
+name = "fire_rpg_proj_p10"
+scenario = "fire/rpg_proj_p10"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_rpg_proj_p5d"
+scenario = "fire/rpg_proj_p5d"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_rpg_proj_yaw45"
+scenario = "fire/rpg_proj_yaw45"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_rpg_proj_yaw135"
+scenario = "fire/rpg_proj_yaw135"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
 name = "fire_rpg_proj_down"
 scenario = "fire/rpg_proj_down"
 compare = "fire"

@@ -942,7 +942,7 @@ SCENARIOS.fire = function(scn, done)
 					local ph = e:GetPhysicsObject()
 					if IsValid(ph) then v = ph:GetVelocity() end
 					projs[#projs + 1] = { class = cls, id = e:EntIndex(), pos = { p.x, p.y, p.z }, vel = { v.x, v.y, v.z }, ang = { a.p, a.y, a.r },
-						movetype = e:GetMoveType(), phys = IsValid(ph), model = e:GetModel(), mass = IsValid(ph) and ph:GetMass() or 0, owner = IsValid(e:GetOwner()) and e:GetOwner():EntIndex() or -1,
+						movetype = e:GetMoveType(), phys = IsValid(ph), model = e:GetModel(), mass = IsValid(ph) and ph:GetMass() or 0, angvel = { e:GetLocalAngularVelocity().x, e:GetLocalAngularVelocity().y, e:GetLocalAngularVelocity().z }, owner = IsValid(e:GetOwner()) and e:GetOwner():EntIndex() or -1,
 						created = math.Round(CurTime() - e:GetCreationTime(), 4) }
 				end
 			end
