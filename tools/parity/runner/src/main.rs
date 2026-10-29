@@ -361,6 +361,17 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
             elasticity: world_sp.elasticity,
         },
     )?;
+    let (disp_pos, disp_idx) = gm_physics::brush::displacement_mesh(&bsp, gm_physics::REST_GAP);
+    if !disp_idx.is_empty() {
+        world.add_static_mesh(
+            &disp_pos,
+            &disp_idx,
+            Surface {
+                friction: world_sp.friction,
+                elasticity: world_sp.elasticity,
+            },
+        )?;
+    }
     let pa = scn.prop_angles.unwrap_or([0.0; 3]);
     let body = world.add_prop(&PropDesc {
         hulls: &hulls,
@@ -510,6 +521,17 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
             elasticity: world_sp.elasticity,
         },
     )?;
+    let (disp_pos, disp_idx) = gm_physics::brush::displacement_mesh(&bsp, gm_physics::REST_GAP);
+    if !disp_idx.is_empty() {
+        world.add_static_mesh(
+            &disp_pos,
+            &disp_idx,
+            Surface {
+                friction: world_sp.friction,
+                elasticity: world_sp.elasticity,
+            },
+        )?;
+    }
     let mut bodies = Vec::new();
     let mut infos = Vec::new();
     for pr in &scn.props {
@@ -650,6 +672,17 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
             elasticity: world_sp.elasticity,
         },
     )?;
+    let (disp_pos, disp_idx) = gm_physics::brush::displacement_mesh(&bsp, gm_physics::REST_GAP);
+    if !disp_idx.is_empty() {
+        world.add_static_mesh(
+            &disp_pos,
+            &disp_idx,
+            Surface {
+                friction: world_sp.friction,
+                elasticity: world_sp.elasticity,
+            },
+        )?;
+    }
     let ang = scn.angles.clone().unwrap_or_default();
     let angles = (
         ang.first().copied().unwrap_or(0.0),

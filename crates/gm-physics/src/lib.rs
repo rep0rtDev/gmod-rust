@@ -15,6 +15,15 @@ extern "C" {
     fn gmp_set_contact_settings(system: *mut JPC_PhysicsSystem, speculative: f32, slop: f32);
     fn gmp_get_speculative_distance(system: *const JPC_PhysicsSystem) -> f32;
     fn gmp_get_penetration_slop(system: *const JPC_PhysicsSystem) -> f32;
+    fn gmp_add_static_mesh(
+        system: *mut JPC_PhysicsSystem,
+        xyz: *const f32,
+        nverts: u32,
+        idx: *const u32,
+        ntris: u32,
+        layer: u16,
+        friction: f32,
+    ) -> u32;
     fn gmp_add_fixed_constraint(
         system: *mut JPC_PhysicsSystem,
         id1: u32,
@@ -437,6 +446,46 @@ impl World {
             );
             Ok(BodyHandle(id))
         }
+    }
+
+    /// Static triangle soup (displacement ground), Source units and axes like the hulls.
+    pub fn add_static_mesh(
+        &mut self,
+        positions: &[Vec3],
+        indices: &[u32],
+        surface: Surface,
+    ) -> Result<BodyHandle> {
+        if positions.is_empty() || indices.len() < 3 {
+            return Err(Error::EmptyShape);
+        }
+        let mut xyz = Vec::with_capacity(positions.len() * 3);
+        for &p in positions {
+            let q = to_jolt(p);
+            xyz.extend_from_slice(&[q.x, q.y, q.z]);
+        }
+        let id = unsafe {
+            gmp_add_static_mesh(
+                self.system.as_raw(),
+                xyz.as_ptr(),
+                positions.len() as u32,
+                indices.as_ptr(),
+                (indices.len() / 3) as u32,
+                LAYER_STATIC as u16,
+                surface.friction * surface.friction,
+            )
+        };
+        if id == u32::MAX {
+            return Err(Error::EmptyShape);
+        }
+        unsafe {
+            gmp_set_surface(
+                self.system.as_raw(),
+                id,
+                surface.friction,
+                surface.elasticity,
+            )
+        };
+        Ok(BodyHandle(id))
     }
 
     /// Measured on the real game: a falling crate loses `k * v^2` of acceleration with

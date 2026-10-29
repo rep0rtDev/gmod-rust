@@ -29,8 +29,32 @@ float gmp_get_penetration_slop(const void *system) {
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
 
 extern "C" {
+
+// static triangle mesh (displacement ground) in Jolt metres/axes; JoltC has no MeshShape
+unsigned int gmp_add_static_mesh(void *system, const float *xyz, unsigned int nverts, const unsigned int *idx,
+                                 unsigned int ntris, unsigned short layer, float friction) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::VertexList verts;
+	verts.reserve(nverts);
+	for (unsigned int i = 0; i < nverts; ++i) verts.push_back(JPH::Float3(xyz[3 * i], xyz[3 * i + 1], xyz[3 * i + 2]));
+	JPH::IndexedTriangleList tris;
+	tris.reserve(ntris);
+	for (unsigned int i = 0; i < ntris; ++i) tris.push_back(JPH::IndexedTriangle(idx[3 * i], idx[3 * i + 1], idx[3 * i + 2]));
+	JPH::MeshShapeSettings ms(verts, tris);
+	JPH::ShapeSettings::ShapeResult r = ms.Create();
+	if (r.HasError()) return 0xffffffffu;
+	JPH::BodyCreationSettings bs(r.Get(), JPH::RVec3::sZero(), JPH::Quat::sIdentity(), JPH::EMotionType::Static, layer);
+	bs.mFriction = friction;
+	bs.mRestitution = 0.0f;
+	JPH::Body *b = sys->GetBodyInterface().CreateBody(bs);
+	if (!b) return 0xffffffffu;
+	sys->GetBodyInterface().AddBody(b->GetID(), JPH::EActivation::DontActivate);
+	return b->GetID().GetIndexAndSequenceNumber();
+}
 
 // weld: both bodies keep their current relative pose
 void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2) {
