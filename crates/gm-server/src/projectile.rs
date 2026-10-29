@@ -5,6 +5,7 @@
 use crate::weapons::Launch;
 use glam::Vec3;
 use gm_collision::{World, MASK_SOLID};
+use gm_physics::{BodyHandle, PropDesc};
 
 pub const DT: f32 = 0.015;
 const GRAVITY: f32 = 600.0;
@@ -36,6 +37,25 @@ const BALL_SPEED: f32 = 1000.0;
 const BALL_RADIUS: f32 = 10.0;
 const BALL_STOP_TICKS: u32 = 267;
 const BALL_LIFE_TICKS: u32 = 300;
+/// Grenade (`npc_grenade_frag`): a VPHYSICS body of `GRENADE_MODEL` thrown from 8 u right of
+/// the eye, 33.7 u ahead and 13.9 u up (yaw frame; measured at pitch -20 only) at 1189 along
+/// the aim plus 110 up, spinning 600 deg/s about the aim plus a random pitch spin (three
+/// throws: 487, -633, 200 deg/s), so its path after the first bounce is random; it explodes
+/// 175 ticks after the throw whatever it hit.
+pub const GRENADE_MODEL: &str = "models/weapons/w_npcnade.mdl";
+const GRENADE_SPEED: f32 = 1189.0;
+const GRENADE_KICK: f32 = 110.0;
+const GRENADE_OFFSET: Vec3 = Vec3::new(8.0, 33.69, 13.91);
+const GRENADE_ROLL: f32 = 600.0;
+const GRENADE_SPIN: f32 = 700.0;
+const GRENADE_FUSE_TICKS: u32 = 175;
+
+/// The rigid-body world grenades live in, with their model and the server's random stream.
+pub struct Physics<'a> {
+    pub world: &'a mut gm_physics::World,
+    pub grenade: Option<&'a crate::ModelInfo>,
+    pub rng: &'a mut u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MoveType {
@@ -62,6 +82,8 @@ pub struct Projectile {
     /// Rocket heading (pitch, yaw in degrees) and its turn per tick once ignited.
     pub heading: glam::Vec2,
     pub turn: glam::Vec2,
+    /// The grenade's rigid body.
+    pub body: Option<BodyHandle>,
 }
 
 /// What a step did to the world.
@@ -98,6 +120,7 @@ pub fn spawn(
     pitch: f32,
     yaw: f32,
     world: &World,
+    phys: Option<&mut Physics<'_>>,
 ) -> Option<Projectile> {
     let (forward, right, up) = basis(pitch, yaw);
     let target = world
@@ -118,6 +141,7 @@ pub fn spawn(
             aim: forward,
             heading: glam::Vec2::new(pitch, yaw),
             turn: glam::Vec2::ZERO,
+            body: None,
             gravity: 1.0,
         },
         Launch::Bolt => Projectile {
@@ -131,6 +155,7 @@ pub fn spawn(
             aim: forward,
             heading: glam::Vec2::new(pitch, yaw),
             turn: glam::Vec2::ZERO,
+            body: None,
             gravity: BOLT_GRAVITY,
         },
         Launch::Ball => Projectile {
@@ -144,9 +169,52 @@ pub fn spawn(
             aim: forward,
             heading: glam::Vec2::new(pitch, yaw),
             turn: glam::Vec2::ZERO,
+            body: None,
             gravity: 0.0,
         },
-        Launch::Grenade => return None,
+        Launch::Grenade => {
+            let phys = phys?;
+            let info = phys.grenade?;
+            let (forward, right, _) = basis(pitch, yaw);
+            let ahead = gm_sandbox::forward(0.0, yaw);
+            let origin = eye
+                + right * GRENADE_OFFSET.x
+                + ahead * GRENADE_OFFSET.y
+                + Vec3::Z * GRENADE_OFFSET.z;
+            let velocity = forward * GRENADE_SPEED + Vec3::Z * GRENADE_KICK;
+            let spin = (xorshift(phys.rng) * 2.0 - 1.0) * GRENADE_SPIN;
+            let body = phys
+                .world
+                .add_prop(&PropDesc {
+                    hulls: &info.hulls,
+                    mass: info.mass,
+                    volume: info.volume,
+                    position: origin,
+                    angles: (0.0, yaw, 0.0),
+                    velocity,
+                    angular_velocity: forward * GRENADE_ROLL + right * spin,
+                    surface: info.surface,
+                    linear_damping: info.linear_damping,
+                    angular_damping: info.angular_damping,
+                    drag_axis_areas: info.drag_axis_areas,
+                    inertia: info.inertia,
+                })
+                .ok()?;
+            Projectile {
+                kind,
+                owner,
+                origin,
+                velocity,
+                movetype: MoveType::VPhysics,
+                age: 0,
+                target: origin,
+                aim: forward,
+                heading: glam::Vec2::new(pitch, yaw),
+                turn: glam::Vec2::ZERO,
+                gravity: GRAVITY,
+                body: Some(body),
+            }
+        }
     };
     match kind {
         Launch::Rocket => {
@@ -167,14 +235,30 @@ pub fn spawn(
 
 impl Projectile {
     /// One tick; `Event::Removed` means the projectile is gone after this call.
-    pub fn step(&mut self, world: &World) -> Event {
+    pub fn step(&mut self, world: &World, phys: Option<&mut Physics<'_>>) -> Event {
         self.age += 1;
         match self.kind {
             Launch::Rocket => self.step_rocket(world),
             Launch::Bolt => self.step_bolt(world),
             Launch::Ball => self.step_ball(world),
-            Launch::Grenade => Event::None,
+            Launch::Grenade => self.step_grenade(phys),
         }
+    }
+
+    /// The grenade follows its rigid body; the fuse removes it.
+    fn step_grenade(&mut self, phys: Option<&mut Physics<'_>>) -> Event {
+        let (Some(phys), Some(body)) = (phys, self.body) else {
+            return Event::Removed(self.origin);
+        };
+        let st = phys.world.state(body);
+        self.origin = st.position;
+        self.velocity = st.velocity;
+        if self.age >= GRENADE_FUSE_TICKS {
+            phys.world.remove_body(body);
+            self.body = None;
+            return Event::Removed(self.origin);
+        }
+        Event::None
     }
 
     /// Half a tick of gravity: MOVETYPE_FLYGRAVITY applies it before and after the move, so the
@@ -309,4 +393,14 @@ fn heading_of(v: Vec3) -> glam::Vec2 {
         -v.z.atan2(v.x.hypot(v.y)).to_degrees(),
         v.y.atan2(v.x).to_degrees(),
     )
+}
+
+/// One xorshift64* step as a uniform number in [0, 1).
+fn xorshift(state: &mut u64) -> f32 {
+    let mut x = *state;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    *state = x;
+    (x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) as f32 / (1u64 << 24) as f32
 }

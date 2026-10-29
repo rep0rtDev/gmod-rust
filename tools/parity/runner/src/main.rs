@@ -1363,6 +1363,8 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
     }
     let def = gm_server::weapons::def(&class).context("unknown weapon")?;
     // the projectile weapons fly their rocket/bolt/ball through the map (`projectile`)
+    let mut phys_world: Option<gm_physics::World> = None;
+    let mut grenade_info: Option<gm_server::ModelInfo> = None;
     let world = if def
         .fire
         .is_some_and(|f| f.launch.is_some() || !matches!(f.alt, gm_server::weapons::Alt::None))
@@ -1374,10 +1376,29 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
         let map = scn.map.as_deref().unwrap_or("gm_construct");
         let data = mount.read(&format!("maps/{map}.bsp"))?;
         let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+        // the grenade is a rigid body: the map's brushes in a Jolt world
+        if def.fire.is_some_and(|f| f.throw.is_some()) {
+            let world_hulls: Vec<Vec<glam::Vec3>> =
+                gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+                    .into_iter()
+                    .map(|h| h.points)
+                    .collect();
+            let mut pw = gm_physics::World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+            pw.add_static_hulls(
+                &world_hulls,
+                gm_physics::Surface {
+                    friction: 0.8,
+                    elasticity: 0.25,
+                },
+            )?;
+            phys_world = Some(pw);
+            grenade_info = Some(model_info(&mount, gm_server::projectile::GRENADE_MODEL)?);
+        }
         Some(gm_collision::World::from_bsp(&bsp))
     } else {
         None
     };
+    let mut rng = 0x9E37_79B9_7F4A_7C15u64;
     let start = scn.start.context("fire scenario needs `start`")?;
     let eye = glam::Vec3::new(start[0], start[1], start[2] + 64.0);
     let (pitch, yaw) = (scn.pitch.unwrap_or(0.0), scn.yaw.unwrap_or(90.0));
@@ -1389,8 +1410,16 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
         for _ in 0..seg.ticks {
             let shot = inv.command(&class, seg.buttons);
             if let Some(world) = &world {
+                let mut phys = phys_world.as_mut().map(|w| {
+                    w.step();
+                    gm_server::projectile::Physics {
+                        world: w,
+                        grenade: grenade_info.as_ref(),
+                        rng: &mut rng,
+                    }
+                });
                 let mut died = false;
-                projs.retain_mut(|pr| match pr.step(world) {
+                projs.retain_mut(|pr| match pr.step(world, phys.as_mut()) {
                     gm_server::projectile::Event::Removed(at) => {
                         died |= pr.kind == gm_server::weapons::Launch::Rocket;
                         removed.push(json!({ "t": t, "class": gm_server::projectile::class_name(pr.kind), "pos": [at.x, at.y, at.z] }));
@@ -1402,7 +1431,8 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
                     inv.rocket_died();
                 }
                 if let Some(kind) = inv.launched.take() {
-                    if let Some(pr) = gm_server::projectile::spawn(kind, 1, eye, pitch, yaw, world)
+                    if let Some(pr) =
+                        gm_server::projectile::spawn(kind, 1, eye, pitch, yaw, world, phys.as_mut())
                     {
                         projs.push(pr);
                     }
@@ -1464,6 +1494,8 @@ fn compare_fire(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         ((c(x, 0) - c(y, 0)).powi(2) + (c(x, 1) - c(y, 1)).powi(2) + (c(x, 2) - c(y, 2)).powi(2))
             .sqrt()
     };
+    // the grenade's spin is random: compare it until the game's first bounce (vz rising)
+    let (mut bounced, mut prev_vz) = (false, None::<f32>);
     for (a, b) in tr.iter().zip(or) {
         let mut bad =
             a["clip1"] != b["clip1"] || a["ammo1"] != b["ammo1"] || a["shots"] != b["shots"];
@@ -1488,6 +1520,15 @@ fn compare_fire(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             bad = true;
         } else if let (Some(pa), Some(pb)) = (pa, pb) {
             for (x, y) in pa.iter().zip(pb) {
+                if x["class"] == "npc_grenade_frag" {
+                    let vz = x["vel"][2].as_f64().unwrap_or(0.0) as f32;
+                    bounced |= prev_vz.is_some_and(|p| vz > p + 1.0);
+                    prev_vz = Some(vz);
+                    if bounced {
+                        bad |= x["class"] != y["class"];
+                        continue;
+                    }
+                }
                 let dp = dist3(&x["pos"], &y["pos"]);
                 let dv = dist3(&x["vel"], &y["vel"]);
                 max_dp = max_dp.max(dp);
@@ -1547,6 +1588,27 @@ fn compare_fire(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     );
                 }
             }
+            ok = false;
+        }
+    }
+    if !theirs["removed"].is_null() {
+        let (ra, rb) = (
+            theirs["removed"].as_array().unwrap_or(&empty),
+            ours["removed"].as_array().unwrap_or(&empty),
+        );
+        let mut rbad = ra.len() != rb.len();
+        for (x, y) in ra.iter().zip(rb) {
+            rbad |= x["t"] != y["t"] || x["class"] != y["class"];
+            // the grenade's resting place is random (spin)
+            if x["class"] != "npc_grenade_frag" {
+                rbad |= dist3(&x["pos"], &y["pos"]) > proj_pos_tol;
+            }
+        }
+        if rbad {
+            println!(
+                "  removed: game {} | ours {}",
+                theirs["removed"], ours["removed"]
+            );
             ok = false;
         }
     }

@@ -1301,3 +1301,12 @@ realm = "server"
 crates = ["gm-server"]
 
 [harness.tolerance]
+
+[[harness]]
+name = "fire_frag_proj_rep"
+scenario = "fire/frag_proj_rep"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]

@@ -521,24 +521,43 @@ impl<'w> Server<'w> {
     /// the launch tick, recorded as such); a rocket's death reloads its owner's RPG. Explosion
     /// and bolt damage are not measured yet and not applied.
     fn tick_projectiles(&mut self, launches: Vec<(u32, weapons::Launch, Vec3, Vec3)>) {
-        let world = self.collision;
-        let mut died = Vec::new();
-        self.projectiles.retain_mut(|pr| match pr.step(world) {
-            projectile::Event::Removed(_) => {
-                if pr.kind == weapons::Launch::Rocket {
-                    died.push(pr.owner);
-                }
-                false
+        if launches.iter().any(|l| l.1 == weapons::Launch::Grenade)
+            && !self.models.contains_key(projectile::GRENADE_MODEL)
+        {
+            if let Some(loaded) = self
+                .model_loader
+                .as_mut()
+                .and_then(|f| f(projectile::GRENADE_MODEL))
+            {
+                self.register_model(projectile::GRENADE_MODEL, loaded);
             }
-            projectile::Event::None => true,
-        });
+        }
+        let world = self.collision;
+        let mut phys = projectile::Physics {
+            world: &mut self.physics,
+            grenade: self.models.get(projectile::GRENADE_MODEL),
+            rng: &mut self.spawn_rng,
+        };
+        let mut died = Vec::new();
+        self.projectiles
+            .retain_mut(|pr| match pr.step(world, Some(&mut phys)) {
+                projectile::Event::Removed(_) => {
+                    if pr.kind == weapons::Launch::Rocket {
+                        died.push(pr.owner);
+                    }
+                    false
+                }
+                projectile::Event::None => true,
+            });
         for owner in died {
             if let Some(p) = self.players.get_mut(&owner) {
                 p.inventory.rocket_died();
             }
         }
         for (owner, kind, eye, angles) in launches {
-            if let Some(pr) = projectile::spawn(kind, owner, eye, angles.x, angles.y, world) {
+            if let Some(pr) =
+                projectile::spawn(kind, owner, eye, angles.x, angles.y, world, Some(&mut phys))
+            {
                 self.projectiles.push(pr);
             }
         }
