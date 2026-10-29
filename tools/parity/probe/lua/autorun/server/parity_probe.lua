@@ -794,6 +794,73 @@ end
 ASYNC.player = true
 
 
+-- weapon: a bot with the sandbox loadout; every weapon's clips and ammo on spawn, then
+-- SelectWeapon at the scenario's ticks, the active weapon and its clips recorded every tick
+-- (switch latency, deploy), the player's ammo per type.
+SCENARIOS.weapon = function(scn, done)
+	local bot = player.GetBots()[1]
+	if not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.weapon(scn, done) end)
+		return
+	end
+	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
+	local selectAt = {}
+	for _, e in ipairs(scn.select or {}) do selectAt[e[1]] = e[2] end
+	local total = scn.ticks or 200
+	local tick = -5
+	local ticks, loadout = {}, {}
+	local function ammoName(id) return id and id >= 0 and game.GetAmmoName(id) or "" end
+	local function ammoTable(ply)
+		local t = {}
+		for id = 1, 32 do
+			local n = game.GetAmmoName(id)
+			if n then t[n] = ply:GetAmmoCount(id) end
+		end
+		return t
+	end
+	hook.Add("Tick", "parity_weapon", function()
+		if tick == -5 then
+			bot:Spawn()
+			bot:SetPos(start)
+			bot:SetEyeAngles(Angle(0, 90, 0))
+		end
+		if tick == 0 then
+			for _, w in ipairs(bot:GetWeapons()) do
+				loadout[#loadout + 1] = {
+					class = w:GetClass(), clip1 = w:Clip1(), clip2 = w:Clip2(),
+					maxclip1 = w:GetMaxClip1(), maxclip2 = w:GetMaxClip2(),
+					ammo1 = ammoName(w:GetPrimaryAmmoType()), ammo2 = ammoName(w:GetSecondaryAmmoType()),
+					ammo1_id = w:GetPrimaryAmmoType(), ammo2_id = w:GetSecondaryAmmoType(),
+					slot = w:GetSlot(), slotpos = w:GetSlotPos(), weight = w:GetWeight(),
+					holdtype = w:GetHoldType(), printname = w:GetPrintName(),
+				}
+			end
+			table.sort(loadout, function(a, b) return a.class < b.class end)
+		end
+		if tick >= 0 then
+			if selectAt[tick] then bot:SelectWeapon(selectAt[tick]) end
+			local aw = bot:GetActiveWeapon()
+			local row = { t = tick, active = IsValid(aw) and aw:GetClass() or "" }
+			if IsValid(aw) then
+				row.clip1 = aw:Clip1()
+				row.clip2 = aw:Clip2()
+				row.next_primary = math.Round(aw:GetNextPrimaryFire() - CurTime(), 4)
+				row.next_secondary = math.Round(aw:GetNextSecondaryFire() - CurTime(), 4)
+			end
+			if tick == 0 or selectAt[tick] then row.ammo = ammoTable(bot) end
+			ticks[#ticks + 1] = row
+		end
+		tick = tick + 1
+		if tick >= total then
+			hook.Remove("Tick", "parity_weapon")
+			done({ loadout = loadout, ticks = ticks, ammo = ammoTable(bot), tickinterval = engine.TickInterval() })
+		end
+	end)
+end
+ASYNC.weapon = true
+
+
 -- damage: a bot dropped from the scenario's heights (fall damage) and hit with TakeDamage of
 -- given amounts at given armour, recorded every tick with the damage events, to measure the
 -- fall damage rule, armour absorption and death.

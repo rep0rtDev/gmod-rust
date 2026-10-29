@@ -117,6 +117,8 @@ struct Scenario {
     #[serde(default)]
     kill_at: Vec<u32>,
     #[serde(default)]
+    select: Vec<(u32, String)>,
+    #[serde(default)]
     yaw: Option<f32>,
     /// damage scenarios: drop heights every `spacing` ticks, hits, convar and start values
     #[serde(default)]
@@ -275,6 +277,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "move" => run_move(scn)?,
         "phys" => run_phys(scn)?,
         "player" => run_player(scn)?,
+        "weapon" => run_weapon(scn)?,
         "damage" => run_damage(scn)?,
         "ragdoll" => run_ragdoll(scn)?,
         "physgun" => run_physgun(scn)?,
@@ -1145,6 +1148,127 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
 
 /// A bot's life cycle through the server loop: spawned, killed at the scenario's ticks,
 /// respawned by the server's rule; recorded like the probe's `player` scenario.
+/// The sandbox loadout and weapon switching: `Inventory` from gm-server driven by the
+/// scenario's `select` list, the active weapon, its clips and fire timers recorded every tick.
+fn run_weapon(scn: &Scenario) -> Result<Value> {
+    use gm_server::weapons::{Inventory, WEAPONS};
+    let mut inv = Inventory::default();
+    inv.give_loadout();
+    let mut active = gm_server::SPAWN_WEAPON.to_string();
+    let carried: Vec<&str> = gm_server::LOADOUT.to_vec();
+    let total = scn.ticks.unwrap_or(200);
+    let mut ticks = Vec::with_capacity(total as usize);
+    let mut selected_once = false;
+    for t in 0..total {
+        if t > 0 {
+            inv.tick(&active);
+        }
+        if let Some((_, class)) = scn.select.iter().find(|(st, _)| *st == t) {
+            if carried.contains(&class.as_str()) && *class != active {
+                active = class.clone();
+                inv.select(class);
+                selected_once = true;
+            }
+        }
+        let clip = inv.clip(&active);
+        let mut row = json!({ "t": t, "active": active, "clip1": clip[0], "clip2": clip[1] });
+        if selected_once && gm_server::weapons::def(&active).is_some_and(|d| d.deploy.is_some()) {
+            row["next_primary"] = json!(inv.next_primary);
+            row["next_secondary"] = json!(inv.next_secondary);
+        }
+        ticks.push(row);
+    }
+    let loadout: Vec<Value> = WEAPONS
+        .iter()
+        .map(|w| {
+            json!({
+                "class": w.class, "clip1": w.clip1, "clip2": w.clip2, "maxclip1": w.clip1, "maxclip2": w.clip2,
+                "ammo1": w.ammo1, "ammo2": w.ammo2, "slot": w.slot, "slotpos": w.slot_pos, "weight": w.weight,
+                "holdtype": w.hold_type,
+            })
+        })
+        .collect();
+    let ammo: serde_json::Map<String, Value> = inv
+        .ammo
+        .iter()
+        .map(|(k, v)| (k.clone(), json!(v)))
+        .collect();
+    Ok(json!({ "loadout": loadout, "ticks": ticks, "ammo": ammo }))
+}
+
+/// Loadout table, reserve ammo, the active weapon and clips every tick, the fire timers where
+/// we have a deploy time (within `time` seconds, the recording rounds to 0.1 ms).
+fn compare_weapon(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let time_tol = tol.get("time").and_then(|v| v.as_float()).unwrap_or(0.001) as f32;
+    let empty = Vec::new();
+    let mut ok = true;
+    let tl = theirs["loadout"].as_array().unwrap_or(&empty);
+    let ol = ours["loadout"].as_array().unwrap_or(&empty);
+    if tl.len() != ol.len() {
+        println!("  loadout: game {} weapons, ours {}", tl.len(), ol.len());
+        ok = false;
+    }
+    let fields = [
+        "class", "clip1", "clip2", "maxclip1", "maxclip2", "ammo1", "ammo2", "slot", "slotpos",
+        "weight", "holdtype",
+    ];
+    for (a, b) in tl.iter().zip(ol) {
+        for f in fields {
+            if a[f] != b[f] {
+                println!("  loadout {}: {f} game {} ours {}", a["class"], a[f], b[f]);
+                ok = false;
+            }
+        }
+    }
+    let ta = theirs["ammo"].as_object();
+    let oa = ours["ammo"].as_object();
+    if let (Some(ta), Some(oa)) = (ta, oa) {
+        for (k, v) in ta {
+            let o = oa.get(k).cloned().unwrap_or(json!(0));
+            if v.as_i64().unwrap_or(0) != o.as_i64().unwrap_or(0) {
+                println!("  ammo {k}: game {v} ours {o}");
+                ok = false;
+            }
+        }
+    }
+    let tr = theirs["ticks"].as_array().unwrap_or(&empty);
+    let or = ours["ticks"].as_array().unwrap_or(&empty);
+    let mut diffs = 0;
+    let mut max_dt = 0.0f32;
+    for (a, b) in tr.iter().zip(or) {
+        let mut bad =
+            a["active"] != b["active"] || a["clip1"] != b["clip1"] || a["clip2"] != b["clip2"];
+        if let (Some(x), Some(y)) = (a["next_primary"].as_f64(), b["next_primary"].as_f64()) {
+            let d = (x - y).abs() as f32;
+            max_dt = max_dt.max(d);
+            bad |= d > time_tol;
+        }
+        if bad {
+            diffs += 1;
+            if diffs <= 5 {
+                println!(
+                    "  tick {}: game {} {}/{} next {} | ours {} {}/{} next {}",
+                    a["t"],
+                    a["active"],
+                    a["clip1"],
+                    a["clip2"],
+                    a["next_primary"],
+                    b["active"],
+                    b["clip1"],
+                    b["clip2"],
+                    b["next_primary"]
+                );
+            }
+            ok = false;
+        }
+    }
+    println!(
+        "  {} weapons, {} ticks, {} differing, max fire-timer err {max_dt:.4} s (tol {time_tol}): {}",
+        tl.len(), tr.len(), diffs, if ok { "equal" } else { "DIFF" }
+    );
+    ok
+}
+
 fn run_player(scn: &Scenario) -> Result<Value> {
     use glam::Vec3;
     use gm_physics::{Surface, World};
@@ -3201,6 +3325,7 @@ fn main() -> Result<()> {
                     "rigid" => compare_rigid(&t.result, &o.result, &h.tolerance),
                     "sandbox" => compare_sandbox(&t.result, &o.result, &h.tolerance),
                     "player" => compare_player(&t.result, &o.result, &h.tolerance),
+                    "weapon" => compare_weapon(&t.result, &o.result, &h.tolerance),
                     "damage" => compare_damage(&t.result, &o.result, &h.tolerance),
                     "ragdoll" => compare_ragdoll(&t.result, &o.result, &h.tolerance),
                     "net_player" => compare_net_player(&t.result, &o.result, &h.tolerance),

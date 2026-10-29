@@ -1,0 +1,37 @@
+{
+  "name": "weapon_switch",
+  "kind": "weapon",
+  "map": "gm_construct",
+  "start": [
+    703.4,
+    -513.0,
+    -143.0
+  ],
+  "ticks": 220,
+  "select": [
+    [
+      20,
+      "weapon_pistol"
+    ],
+    [
+      60,
+      "weapon_shotgun"
+    ],
+    [
+      100,
+      "weapon_crowbar"
+    ],
+    [
+      140,
+      "weapon_rpg"
+    ],
+    [
+      141,
+      "weapon_smg1"
+    ],
+    [
+      180,
+      "weapon_physgun"
+    ]
+  ]
+}

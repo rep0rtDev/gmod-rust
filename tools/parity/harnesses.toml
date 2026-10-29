@@ -953,3 +953,11 @@ crates = ["gm-move", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
+
+[[harness]]
+name = "weapon_switch"
+scenario = "weapon/switch"
+compare = "weapon"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]

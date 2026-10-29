@@ -2,6 +2,8 @@
 //! props and constraints the sandbox owns mirrored into the Jolt world of `gm-physics`
 //! (weld -> fixed, rope -> distance, axis -> hinge). Nothing here is networked yet.
 
+pub mod weapons;
+
 use glam::Vec3;
 use gm_physics::physgun::{Grab, PhysgunParams};
 use gm_physics::{BodyHandle, ConstraintHandle, PropDesc, Surface, World};
@@ -78,6 +80,7 @@ pub struct Player {
     /// Weapon classes carried, sorted (`Player:GetWeapons`).
     pub weapons: Vec<String>,
     pub active_weapon: String,
+    pub inventory: weapons::Inventory,
     pub deaths: u32,
     pub frags: u32,
     /// The ragdoll of the last death, while the player is dead.
@@ -121,6 +124,11 @@ impl Player {
             model: PLAYER_MODEL.to_string(),
             weapons: LOADOUT.iter().map(|w| w.to_string()).collect(),
             active_weapon: SPAWN_WEAPON.to_string(),
+            inventory: {
+                let mut inv = weapons::Inventory::default();
+                inv.give_loadout();
+                inv
+            },
             deaths: 0,
             frags: 0,
             ragdoll: None,
@@ -370,6 +378,8 @@ impl<'w> Server<'w> {
         p.armor = 0;
         p.weapons = LOADOUT.iter().map(|w| w.to_string()).collect();
         p.active_weapon = SPAWN_WEAPON.to_string();
+        p.inventory.give_loadout();
+        p.inventory.select(SPAWN_WEAPON);
         p.ragdoll = None;
         p.death_tick = None;
         p.held = None;
@@ -377,6 +387,20 @@ impl<'w> Server<'w> {
 
     /// `Player:Kill`: dead where they stood, ragdoll there, weapons gone next tick, respawn in
     /// `RESPAWN_TICKS`.
+    /// `SelectWeapon`: a carried weapon becomes active in the same tick, its deploy time arms the
+    /// fire timers (measured `weapon_switch`). Dead players and unknown classes are ignored.
+    pub fn select_weapon(&mut self, id: u32, class: &str) -> bool {
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        if !p.alive || !p.weapons.iter().any(|w| w == class) || p.active_weapon == class {
+            return false;
+        }
+        p.active_weapon = class.to_string();
+        p.inventory.select(class);
+        true
+    }
+
     pub fn kill_player(&mut self, id: u32) {
         let tick = self.tick_count;
         let Some(p) = self.players.get_mut(&id) else {
@@ -765,6 +789,7 @@ impl<'w> Server<'w> {
             if let Some(d) = p.death_tick {
                 if tick == d + 1 {
                     p.weapons.clear();
+                    p.inventory.clear();
                 }
                 if tick >= d + RESPAWN_TICKS {
                     respawn.push(*id);
@@ -791,6 +816,7 @@ impl<'w> Server<'w> {
                     ..pc.cmd
                 };
                 let (prev_vz, was_airborne) = (p.state.velocity.z, !p.state.on_ground);
+                p.inventory.tick(&p.active_weapon);
                 self.mover.tick(&mut p.state, &cmd);
                 p.prev_vz = prev_vz;
                 p.prev_on_ground = !was_airborne;
