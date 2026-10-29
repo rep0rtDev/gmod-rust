@@ -331,7 +331,8 @@ public:
 			JPH::Vec3 v = dyn.GetLinearVelocity();
 			JPH::Vec3 vt_vec = v - nd * v.Dot(nd);
 			float vt = vt_vec.Length();
-			float g_dt = (sys ? sys->GetGravity().Length() : gravity) * step_dt;
+			// the world's gravity is Jolt's 9.81 scaled per body (gravity factor) to the game's 600 u/s^2
+			float g_dt = (sys ? sys->GetGravity().Length() : gravity) * dyn.GetMotionProperties()->GetGravityFactor() * step_dt;
 			float mass = 1.0f / dyn.GetMotionProperties()->GetInverseMass();
 			JPH::RVec3 c = dyn.GetCenterOfMassPosition();
 			float vn_in = std::max(-(point_velocity(dyn, c) - point_velocity(other, c)).Dot(nd) - g_dt, 0.0f);
@@ -361,7 +362,10 @@ public:
 					JPH::Vec3 j = k.Inversed3x3().Multiply3x3(-point_velocity(dyn, lead->p));
 					float jn = std::max(j.Dot(nd), 0.0f);
 					JPH::Vec3 jt = j - nd * j.Dot(nd);
-					float cap = friction * (jn + mass * (g_dt + rs.vn_in));
+					// Coulomb cap solved with the anchor's own normal part scaling along: J_t = f (ratio J_t + m (g dt + vn_stored))
+					float ratio = jt.Length() > 1e-9f ? jn / jt.Length() : 0.0f;
+					float denom = 1.0f - friction * ratio;
+					float cap = denom > 1e-3f ? friction * mass * (g_dt + rs.vn_in) / denom : 1e30f;
 					float scale = jt.Length() > cap ? cap / jt.Length() : 1.0f;
 					push(dyn, lead->p, j * scale);
 					if (debug) fprintf(stderr, "rest anchor r=(%.4f %.4f %.4f) j=(%.3f %.3f %.3f) scale=%.3f stored=%.3f v=(%.3f %.3f %.3f)\n", (double)r.GetX(), (double)r.GetY(), (double)r.GetZ(), (double)j.GetX(), (double)j.GetY(), (double)j.GetZ(), (double)scale, (double)rs.vn_in, (double)dyn.GetLinearVelocity().GetX(), (double)dyn.GetLinearVelocity().GetY(), (double)dyn.GetLinearVelocity().GetZ());
