@@ -46,6 +46,11 @@ directory or a `.gmr`; `gm-dedicated --addon x.gmr` too. `Runtime::reload_addon(
 reload: every actor of the addon keeps its id and `state` (serialised as on restart) and gets the
 new source in a fresh VM, actors new to the manifest are loaded, removed ones dropped; the test
 `hot_reload_keeps_state` carries `state.n = 3` into a new source that reads it.
+Over the network: `Command::Reload { addon }` (reliable, tag 6) from a player in
+`ServerNet::admins` re-reads the addon from where it was loaded and answers with an event
+(`Reload <id> ok <id> <version> actors n -> m`, `... denied`, `... failed <why>`); the test
+`reload_over_the_network` edits an addon on disk, reloads it as admin and the counter keeps its
+value and continues with the new code.
 
 ## Manifest
 
@@ -76,4 +81,4 @@ refusing cans stops the request before the priority 10 actor sees it.
 
 client realm, the rest of the API (entity write views, players,
 constraints, net, timers, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
-the `gmr reload` server command and file watching, the sandbox gamemode in Luau on top of this API.
+file watching for reloads, the sandbox gamemode in Luau on top of this API.

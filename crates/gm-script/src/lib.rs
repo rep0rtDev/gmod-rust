@@ -32,6 +32,8 @@ pub struct ActorSpec {
 }
 
 pub struct Runtime {
+    /// Where every loaded addon came from (directory or `.gmr`), for reloads by id.
+    pub addon_paths: std::collections::BTreeMap<String, std::path::PathBuf>,
     actors: Vec<Actor>,
     pub tick: u64,
     pub log: Vec<String>,
@@ -47,6 +49,7 @@ pub struct Applied {
 impl Runtime {
     pub fn new() -> Self {
         Runtime {
+            addon_paths: std::collections::BTreeMap::new(),
             actors: Vec::new(),
             tick: 0,
             log: Vec::new(),
@@ -62,7 +65,18 @@ impl Runtime {
         for spec in specs {
             self.load(spec)?;
         }
+        self.addon_paths.insert(m.id.clone(), path.to_path_buf());
         Ok(m)
+    }
+
+    /// Hot reload of a loaded addon by id, from where it was loaded.
+    pub fn reload_addon_by_id(&mut self, id: &str) -> Result<Manifest, Box<dyn std::error::Error>> {
+        let path = self
+            .addon_paths
+            .get(id)
+            .cloned()
+            .ok_or_else(|| format!("addon {id} is not loaded"))?;
+        self.reload_addon(&path)
     }
 
     /// Hot reload of an addon already loaded: actors keep their ids and `state`, get the new
@@ -340,6 +354,17 @@ impl gm_server::ServerHooks for Runtime {
         right: bool,
     ) -> bool {
         Runtime::tool_click(self, server, player, tool, hit, right)
+    }
+    fn reload_addon(&mut self, addon: &str) -> Result<String, String> {
+        let before = self.actors.len();
+        let m = Runtime::reload_addon_by_id(self, addon).map_err(|e| e.to_string())?;
+        Ok(format!(
+            "{} {} actors {} -> {}",
+            m.id,
+            m.version,
+            before,
+            self.actors.len()
+        ))
     }
     fn pre_tick(&mut self, server: &mut Server<'_>) {
         Runtime::pre_tick(self, server);

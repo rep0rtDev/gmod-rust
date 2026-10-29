@@ -38,6 +38,8 @@ pub struct ServerNet {
     next_player: u32,
     pub spawn_origin: Vec3,
     pub hooks: Option<Box<dyn gm_server::ServerHooks>>,
+    /// Players allowed to run admin commands (`Command::Reload`).
+    pub admins: std::collections::BTreeSet<u32>,
 }
 
 impl ServerNet {
@@ -50,6 +52,7 @@ impl ServerNet {
             next_player: 1,
             spawn_origin,
             hooks: None,
+            admins: std::collections::BTreeSet::new(),
         }
     }
 
@@ -205,6 +208,20 @@ impl ServerNet {
                         if name == "sbox_maxprops" {
                             server.sandbox.limits.max_props = value.parse().unwrap_or(200);
                         }
+                    }
+                    Command::Reload { addon } => {
+                        let msg = if !self.admins.contains(&slot.player) {
+                            format!("Reload {addon} denied")
+                        } else {
+                            match self.hooks.as_mut() {
+                                Some(h) => match h.reload_addon(&addon) {
+                                    Ok(info) => format!("Reload {addon} ok {info}"),
+                                    Err(e) => format!("Reload {addon} failed {e}"),
+                                },
+                                None => format!("Reload {addon} failed no addon runtime"),
+                            }
+                        };
+                        slot.pending_events.push(msg);
                     }
                 }
                 for e in &server.events[n..] {

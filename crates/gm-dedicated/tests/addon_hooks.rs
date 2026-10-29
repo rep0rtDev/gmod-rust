@@ -83,3 +83,96 @@ fn freeze_crates_addon_through_the_server() {
         "the client sees it frozen: {seen:?}"
     );
 }
+
+#[test]
+fn reload_over_the_network() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    // a copy of the example addon we can edit
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("reload_addon");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("manifest.toml"),
+        "id = \"counter\"\ncapabilities = [\"world-read\"]\n[[actors]]\nname = \"main\"\nsource = \"src/main.luau\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.luau"),
+        "events.on('tick.post', function() state.n = (state.n or 0) + 1 end)",
+    )
+    .unwrap();
+    let mut rt = gm_script::Runtime::new();
+    rt.load_addon(&dir).unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    sn.hooks = Some(Box::new(rt));
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>| {
+        client.tick(gm_net::NetCmd::default(), &mut c_ep);
+        net.tick();
+        sn.receive(server, &mut s_ep);
+        sn.tick(server);
+        sn.send(server, &mut s_ep);
+        client.receive(&mut c_ep);
+    };
+    for _ in 0..10 {
+        step(&mut sn, &mut client, &mut server);
+    }
+    // not an admin yet: denied
+    client.command(gm_net::Command::Reload {
+        addon: "counter".into(),
+    });
+    for _ in 0..10 {
+        step(&mut sn, &mut client, &mut server);
+    }
+    assert!(
+        client.events.iter().any(|e| e == "Reload counter denied"),
+        "{:?}",
+        client.events
+    );
+    // new source: the counter keeps its value and counts by 100
+    std::fs::write(
+        dir.join("src/main.luau"),
+        "events.on('tick.post', function() state.n = state.n + 100 end)",
+    )
+    .unwrap();
+    let pid = *server.players.keys().next().unwrap();
+    sn.admins.insert(pid);
+    client.command(gm_net::Command::Reload {
+        addon: "counter".into(),
+    });
+    for _ in 0..10 {
+        step(&mut sn, &mut client, &mut server);
+    }
+    assert!(
+        client
+            .events
+            .iter()
+            .any(|e| e.starts_with("Reload counter ok counter 0.1.0 actors 1 -> 1")),
+        "{:?}",
+        client.events
+    );
+    client.command(gm_net::Command::Reload {
+        addon: "nope".into(),
+    });
+    for _ in 0..10 {
+        step(&mut sn, &mut client, &mut server);
+    }
+    assert!(
+        client
+            .events
+            .iter()
+            .any(|e| e == "Reload nope failed addon nope is not loaded"),
+        "{:?}",
+        client.events
+    );
+}

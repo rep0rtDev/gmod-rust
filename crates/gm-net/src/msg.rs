@@ -35,6 +35,10 @@ pub enum Command {
         name: String,
         value: String,
     },
+    /// Admin: hot reload of a loaded addon by id (its files are re-read on the server).
+    Reload {
+        addon: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -313,6 +317,10 @@ impl ClientMsg {
                         w.str(name);
                         w.str(value);
                     }
+                    Command::Reload { addon } => {
+                        w.u8(6);
+                        w.str(addon);
+                    }
                 }
             }
             ClientMsg::AckSnapshot { tick } => {
@@ -355,6 +363,7 @@ impl ClientMsg {
                         name: r.str()?,
                         value: r.str()?,
                     },
+                    6 => Command::Reload { addon: r.str()? },
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }

@@ -53,6 +53,10 @@ pub trait ServerHooks {
     ) -> bool {
         false
     }
+    /// Admin command: hot reload of a loaded addon by id.
+    fn reload_addon(&mut self, _addon: &str) -> Result<String, String> {
+        Err("no addon runtime".into())
+    }
     /// Around every tick.
     fn pre_tick(&mut self, server: &mut Server<'_>);
     fn post_tick(&mut self, server: &mut Server<'_>);

@@ -104,3 +104,5 @@ client and one prop (the physics world is already loaded).
 Bit packing of snapshots, interest management (PVS + radius), snapshot compression
 above 1 200 bytes, lag
 compensation, encryption and authentication, QUIC transport, voice, a server browser / master server.
+
+Admin commands: `Command::Reload { addon }` (tag 6) hot-reloads an addon on the server for players in `ServerNet::admins`; the answer is an event string on the player's reliable channel.
