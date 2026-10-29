@@ -64,8 +64,25 @@ recording with zero corrections, and the final predicted state equals the server
 packet and the backlog catch-up on the server mean no usercmd is ever missing when its tick comes,
 so the server never has to stand still.
 
+## Interpolation
+
+Other players and props are drawn `interp_ticks` behind the newest snapshot (two snapshot
+intervals: 4 ticks, 60 ms at 33 Hz) between the two snapshots around that render time, positions
+linearly, angles by quaternion slerp (`Interpolator`); ahead of the newest snapshot (a late one)
+the pose is extrapolated from the snapshot's velocity, which entity states carry for that.
+
+Measured (`net_interp_*`: a prop falls on the server, the client interpolates, the client's pose
+indexed by render tick is compared with the real game's recording like `phys_*`): in flight the
+interpolated crate is within 0.07 u of our server's truth (the linear lerp of a parabola over
+30 ms), but at the impact tick it is 2.5 u off, because the two snapshots around it straddle the
+bounce; so `net_interp_drop_crate` at 33 Hz is DIFF against the game by that one tick (2.50 u at
+tol 2, contact tick 35 vs 36), and `net_interp_drop_crate_66hz` with a snapshot every tick is
+equal (1.19 u, the same as `phys_drop_crate` itself). The tossed can is within 0.20 u and 6
+degrees of our server at 33 Hz (it spins at about 400 degrees per second) and DIFF against the
+game for the physics reason `phys_toss_can` is.
+
 ## Not yet
 
 Bit packing of snapshots, interest management (PVS + radius), snapshot compression
-above 1 200 bytes, interpolation of other players and props, lag
+above 1 200 bytes, lag
 compensation, encryption and authentication, UDP/QUIC transports, voice.

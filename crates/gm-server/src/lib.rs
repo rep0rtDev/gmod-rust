@@ -450,6 +450,11 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// Physics state of a sandbox prop (velocity in Source units, angular body-local deg/s).
+    pub fn prop_state(&self, prop: u32) -> Option<gm_physics::BodyState> {
+        self.bodies.get(&prop).map(|b| self.physics.state(*b))
+    }
+
     pub fn body_of(&self, prop: u32) -> Option<BodyHandle> {
         self.bodies.get(&prop).copied()
     }

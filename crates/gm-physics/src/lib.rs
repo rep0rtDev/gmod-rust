@@ -735,6 +735,20 @@ impl World {
         (!c.is_null()).then_some(ConstraintHandle(c))
     }
 
+    /// `PhysObj:SetVelocity` + `AddAngleVelocity`: Source units per second and body-local
+    /// degrees per second.
+    pub fn set_velocity(&mut self, body: BodyHandle, velocity: Vec3, angular: Vec3) {
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_SetLinearAndAngularVelocity(
+                bi,
+                body.0,
+                jv(to_jolt(velocity)),
+                jv(dir_to_jolt(angular) * DEG),
+            );
+        }
+    }
+
     /// `PhysObj:SetPos` + `SetAngles`: moves a body at rest to a pose (Source units, Z up).
     pub fn teleport(&mut self, body: BodyHandle, position: Vec3, rotation: Quat) {
         let p = to_jolt(position);

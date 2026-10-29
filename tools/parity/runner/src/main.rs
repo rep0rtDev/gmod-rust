@@ -107,6 +107,8 @@ struct Scenario {
     constraints: Vec<ConstraintSpec>,
     #[serde(default)]
     ops: Vec<OpSpec>,
+    #[serde(default)]
+    snapshot_every: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1261,6 +1263,9 @@ fn run_net(scn: &Scenario) -> Result<Value> {
     if !scn.segments.is_empty() {
         return run_net_predict(scn, &collision, server, start);
     }
+    if scn.ops.is_empty() && scn.model.is_some() {
+        return run_net_interp(scn, &mount, server, start);
+    }
     let mut known: std::collections::HashSet<String> = Default::default();
     for m in scn
         .props
@@ -1505,6 +1510,118 @@ fn run_net_predict(
         "max_correction": pred.max_correction,
         "loss": loss,
         "dropped": net.dropped,
+    }))
+}
+
+/// A rigid body recording through the network: the prop falls on the server, the client gets
+/// 33 Hz snapshots and interpolates two snapshot intervals behind; the recorded trajectory is the
+/// client's interpolated pose indexed by render tick, so the physics golden applies.
+fn run_net_interp(
+    scn: &Scenario,
+    mount: &gm_content::Mount,
+    mut server: gm_server::Server<'_>,
+    start: glam::Vec3,
+) -> Result<Value> {
+    use glam::Vec3;
+    use gm_net::{ClientNet, Interpolator, Loopback, NetCmd, ServerNet};
+    let model = scn
+        .model
+        .as_deref()
+        .context("interp scenario needs a model")?;
+    server.register_model(model, model_info(mount, model)?);
+    let player_start = Vec3::new(start.x, start.y - 200.0, -143.0);
+    let mut net = Loopback::new(2, 0.0, 0x5eed);
+    let mut sn = ServerNet::new(scn.map.as_deref().unwrap_or("gm_construct"), player_start);
+    if let Some(n) = scn.snapshot_every {
+        sn.snapshot_every = n.max(1);
+    }
+    let mut client = ClientNet::new(1, "bot");
+    let mut interp = Interpolator::new(2.0 * sn.snapshot_every as f32);
+    let idle = NetCmd::default();
+    let angles = scn.angles.clone().unwrap_or_default();
+    let mut body = None;
+    // the prop appears right before the last warm-up snapshot, so the client has its spawn pose
+    for i in 0..20 {
+        client.tick(idle.clone(), &mut net);
+        net.tick();
+        sn.receive(&mut server, &mut net);
+        sn.tick(&mut server);
+        if i == 19 {
+            server.add_existing_props(&[(
+                model.to_string(),
+                start,
+                Vec3::new(
+                    angles.first().copied().unwrap_or(0.0),
+                    angles.get(1).copied().unwrap_or(0.0),
+                    angles.get(2).copied().unwrap_or(0.0),
+                ),
+                false,
+            )]);
+            let b = server.body_of(1).context("prop body")?;
+            if let Some(v) = scn.velocity {
+                server.physics.set_velocity(
+                    b,
+                    Vec3::from(v),
+                    Vec3::from(scn.angular.unwrap_or([0.0; 3])),
+                );
+            }
+            body = Some(b);
+        }
+        sn.send(&server, &mut net);
+        client.receive(&mut net);
+    }
+    let body = body.context("prop body")?;
+    let total = scn.ticks.unwrap_or(200);
+    let spawn_tick = sn.tick;
+    let mut truth: Vec<(Vec3, glam::Quat)> = Vec::new();
+    let mut ticks = Vec::new();
+    let (mut max_pos_err, mut max_ang_err, mut extrapolated) = (0.0f32, 0.0f32, 0u32);
+    // the prop's tick t is the server tick spawn_tick + 1 + t; the client renders behind
+    let lag = interp.interp_ticks as u32 + 3;
+    for i in 0..(total + lag) {
+        if i < total {
+            let st = server.physics.state(body);
+            truth.push((
+                st.position,
+                gm_sandbox::rotation(Vec3::new(st.angles.0, st.angles.1, st.angles.2)),
+            ));
+        }
+        client.tick(idle.clone(), &mut net);
+        net.tick();
+        sn.receive(&mut server, &mut net);
+        sn.tick(&mut server);
+        sn.send(&server, &mut net);
+        client.receive(&mut net);
+        interp.push(client.world.tick, &client.world.entities);
+        let render = interp.render_tick(sn.tick);
+        let t = render - spawn_tick as f32;
+        if t >= 0.0 && (t as u32) < total && t.fract() == 0.0 {
+            let t = t as u32;
+            if let Some(p) = interp.sample(1, render) {
+                let (tp, tr) = truth[t as usize];
+                let dp = (p.pos - tp).length();
+                let da = gm_sandbox::rotation(p.angles)
+                    .angle_between(tr)
+                    .to_degrees();
+                max_pos_err = max_pos_err.max(dp);
+                max_ang_err = max_ang_err.max(da);
+                extrapolated += p.extrapolated as u32;
+                ticks.push(serde_json::json!({
+                    "t": t,
+                    "pos": [p.pos.x, p.pos.y, p.pos.z],
+                    "ang": [p.angles.x, p.angles.y, p.angles.z],
+                    "vel": [p.vel.x, p.vel.y, p.vel.z],
+                    "angvel": [p.angvel.x, p.angvel.y, p.angvel.z],
+                    "interp_err": dp,
+                }));
+            }
+        }
+    }
+    Ok(serde_json::json!({
+        "start": scn.start.unwrap_or([0.0; 3]), "model": model,
+        "info": { "interp_ticks": interp.interp_ticks, "snapshot_every": sn.snapshot_every },
+        "ticks": ticks,
+        "interp": { "max_pos_err_vs_server": max_pos_err, "max_ang_err_vs_server": max_ang_err, "extrapolated_ticks": extrapolated, "ticks": ticks.len() },
     }))
 }
 

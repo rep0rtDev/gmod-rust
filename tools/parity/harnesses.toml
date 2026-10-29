@@ -592,3 +592,38 @@ crates = ["gm-net", "gm-move", "gm-server"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
+
+[[harness]]
+name = "net_interp_drop_crate"
+scenario = "net/interp_drop_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-net", "gm-server", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "net_interp_toss_can"
+scenario = "net/interp_toss_can"
+compare = "rigid"
+realm = "server"
+crates = ["gm-net", "gm-server", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "net_interp_drop_crate_66hz"
+scenario = "net/interp_drop_crate_66hz"
+compare = "rigid"
+realm = "server"
+crates = ["gm-net", "gm-server", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0

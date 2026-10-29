@@ -1,0 +1,27 @@
+{
+ "name": "net_interp_toss_can",
+ "kind": "net",
+ "map": "gm_construct",
+ "model": "models/props_junk/garbage_metalcan001a.mdl",
+ "start": [
+  600.0,
+  -500.0,
+  -100.0
+ ],
+ "angles": [
+  0,
+  0,
+  0
+ ],
+ "velocity": [
+  100,
+  200,
+  300
+ ],
+ "angular": [
+  200,
+  50,
+  0
+ ],
+ "ticks": 300
+}

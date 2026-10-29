@@ -62,6 +62,10 @@ pub struct EntityState {
     pub model: String,
     pub pos: Vec3,
     pub angles: Vec3,
+    /// Source units per second and body-local degrees per second (for interpolation and the
+    /// client's extrapolation when a snapshot is late).
+    pub vel: Vec3,
+    pub angvel: Vec3,
     pub frozen: bool,
     pub owner: u32,
 }
@@ -412,6 +416,8 @@ impl ServerMsg {
                     w.str(&e.model);
                     w.vec3(e.pos);
                     w.vec3(e.angles);
+                    w.vec3(e.vel);
+                    w.vec3(e.angvel);
                     w.bool(e.frozen);
                     w.u32(e.owner);
                 }
@@ -482,6 +488,8 @@ impl ServerMsg {
                         model: r.str()?,
                         pos: r.vec3()?,
                         angles: r.vec3()?,
+                        vel: r.vec3()?,
+                        angvel: r.vec3()?,
                         frozen: r.bool()?,
                         owner: r.u32()?,
                     });

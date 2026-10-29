@@ -10,7 +10,7 @@ pub mod server;
 pub mod transport;
 pub mod wire;
 
-pub use client::{ClientNet, Prediction};
+pub use client::{ClientNet, Interpolator, Prediction};
 pub use msg::{ClientMsg, Command, NetCmd, ServerMsg};
 pub use server::ServerNet;
 pub use transport::{Loopback, Transport};
@@ -74,6 +74,8 @@ mod tests {
                 model: "models/props_junk/wood_crate001a.mdl".into(),
                 pos: Vec3::new(900.0, -500.0, -123.7),
                 angles: Vec3::new(0.0, 180.0, 0.0),
+                vel: Vec3::new(0.0, 0.0, -9.0),
+                angvel: Vec3::ZERO,
                 frozen: false,
                 owner: 1,
             }],

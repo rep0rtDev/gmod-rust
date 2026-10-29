@@ -8,6 +8,7 @@ use crate::msg::{
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
+use glam::Vec3;
 use std::collections::{BTreeMap, VecDeque};
 
 #[derive(Default)]
@@ -18,6 +19,98 @@ pub struct ClientWorld {
     pub own: OwnSandbox,
     pub last_cmd_tick: u32,
     pub local: Option<LocalPlayer>,
+}
+
+/// Interpolation of other players' and props' poses between the two snapshots around a render
+/// time `interp_ticks` behind the newest snapshot (two snapshot intervals by default, 60 ms at
+/// 33 Hz); angles go through quaternion slerp. Ahead of the newest snapshot (a late one) the pose
+/// is extrapolated from the snapshot's velocity.
+pub struct Interpolator {
+    pub interp_ticks: f32,
+    snapshots: VecDeque<(u32, BTreeMap<u32, EntityState>)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InterpPose {
+    pub pos: Vec3,
+    pub angles: Vec3,
+    pub vel: Vec3,
+    pub angvel: Vec3,
+    pub extrapolated: bool,
+}
+
+impl Interpolator {
+    pub fn new(interp_ticks: f32) -> Self {
+        Interpolator {
+            interp_ticks,
+            snapshots: VecDeque::new(),
+        }
+    }
+
+    /// Call with every applied snapshot (the client world after it).
+    pub fn push(&mut self, tick: u32, entities: &BTreeMap<u32, EntityState>) {
+        if self.snapshots.back().is_some_and(|(t, _)| *t >= tick) {
+            return;
+        }
+        self.snapshots.push_back((tick, entities.clone()));
+        while self.snapshots.len() > 32 {
+            self.snapshots.pop_front();
+        }
+    }
+
+    /// The render time for the client's tick `now`.
+    pub fn render_tick(&self, now: u32) -> f32 {
+        now as f32 - self.interp_ticks
+    }
+
+    pub fn sample(&self, id: u32, render_tick: f32) -> Option<InterpPose> {
+        let newest = self.snapshots.back()?;
+        if render_tick > newest.0 as f32 {
+            let e = newest.1.get(&id)?;
+            let dt = (render_tick - newest.0 as f32) * gm_core::tick::DEFAULT_TICK_INTERVAL;
+            return Some(InterpPose {
+                pos: e.pos + e.vel * dt,
+                angles: e.angles,
+                vel: e.vel,
+                angvel: e.angvel,
+                extrapolated: true,
+            });
+        }
+        let after = self
+            .snapshots
+            .iter()
+            .position(|(t, _)| *t as f32 >= render_tick)?;
+        let (tb, b) = &self.snapshots[after];
+        let eb = b.get(&id)?;
+        if after == 0 {
+            return Some(InterpPose {
+                pos: eb.pos,
+                angles: eb.angles,
+                vel: eb.vel,
+                angvel: eb.angvel,
+                extrapolated: false,
+            });
+        }
+        let (ta, a) = &self.snapshots[after - 1];
+        let Some(ea) = a.get(&id) else {
+            return Some(InterpPose {
+                pos: eb.pos,
+                angles: eb.angles,
+                vel: eb.vel,
+                angvel: eb.angvel,
+                extrapolated: false,
+            });
+        };
+        let f = ((render_tick - *ta as f32) / (*tb as f32 - *ta as f32).max(1.0)).clamp(0.0, 1.0);
+        let rot = gm_sandbox::rotation(ea.angles).slerp(gm_sandbox::rotation(eb.angles), f);
+        Some(InterpPose {
+            pos: ea.pos.lerp(eb.pos, f),
+            angles: gm_sandbox::angles_of(rot),
+            vel: ea.vel.lerp(eb.vel, f),
+            angvel: ea.angvel.lerp(eb.angvel, f),
+            extrapolated: false,
+        })
+    }
 }
 
 /// Client-side prediction of the local player: every usercmd is run through `gm-move` at once;

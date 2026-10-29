@@ -205,6 +205,7 @@ impl ServerNet {
             .props()
             .iter()
             .map(|p| {
+                let st = server.prop_state(p.id);
                 (
                     p.id,
                     EntityState {
@@ -212,6 +213,8 @@ impl ServerNet {
                         model: p.model.clone(),
                         pos: p.pos,
                         angles: p.angles,
+                        vel: st.map(|s| s.velocity).unwrap_or_default(),
+                        angvel: st.map(|s| s.angular_velocity).unwrap_or_default(),
                         frozen: p.frozen,
                         owner: p.owner,
                     },
