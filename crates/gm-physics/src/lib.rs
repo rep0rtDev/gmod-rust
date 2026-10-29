@@ -229,6 +229,7 @@ pub struct World {
     system: rolt::PhysicsSystem,
     drags: Vec<Drag>,
     held: std::collections::HashSet<u32>,
+    frozen: std::collections::HashSet<u32>,
     world_elasticity: f32,
     temp: *mut JPC_TempAllocatorImpl,
     jobs: *mut JPC_JobSystemThreadPool,
@@ -266,6 +267,7 @@ impl World {
             shapes: Vec::new(),
             drags: Vec::new(),
             held: std::collections::HashSet::new(),
+            frozen: std::collections::HashSet::new(),
             world_elasticity: 0.2,
             gravity,
             tick_interval,
@@ -459,6 +461,46 @@ impl World {
                 JPC_BodyInterface_SetGravityFactor(bi, body.0, self.gravity_factor());
             }
         }
+    }
+
+    /// Physgun freeze: the body stops where it is and ignores forces until unfrozen.
+    pub fn freeze(&mut self, body: BodyHandle) {
+        self.held.remove(&body.0);
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_SetLinearAndAngularVelocity(
+                bi,
+                body.0,
+                jv(Vec3::ZERO),
+                jv(Vec3::ZERO),
+            );
+            JPC_BodyInterface_SetMotionType(
+                bi,
+                body.0,
+                JPC_MOTION_TYPE_KINEMATIC,
+                JPC_ACTIVATION_DONT_ACTIVATE,
+            );
+        }
+        self.frozen.insert(body.0);
+    }
+
+    pub fn unfreeze(&mut self, body: BodyHandle) {
+        if self.frozen.remove(&body.0) {
+            unsafe {
+                let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+                JPC_BodyInterface_SetMotionType(
+                    bi,
+                    body.0,
+                    JPC_MOTION_TYPE_DYNAMIC,
+                    JPC_ACTIVATION_ACTIVATE,
+                );
+                JPC_BodyInterface_SetGravityFactor(bi, body.0, self.gravity_factor());
+            }
+        }
+    }
+
+    pub fn is_frozen(&self, body: BodyHandle) -> bool {
+        self.frozen.contains(&body.0)
     }
 
     pub fn is_held(&self, body: BodyHandle) -> bool {

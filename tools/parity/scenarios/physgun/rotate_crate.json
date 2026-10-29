@@ -1,0 +1,12 @@
+{ "name": "physgun_rotate_crate", "kind": "physgun", "map": "gm_construct",
+  "model": "models/props_junk/wood_crate001a.mdl",
+  "start": [823.235, -600.0, -143.6], "angles": [20, 90, 0],
+  "prop": [823.235, -480.0, -123.6], "prop_angles": [0, 0, 0],
+  "segments": [
+    { "ticks": 20, "buttons": 0, "pitch": 20, "yaw": 90 },
+    { "ticks": 60, "buttons": 1, "pitch": 20, "yaw": 90 },
+    { "ticks": 30, "buttons": 33, "pitch": 20, "yaw": 90, "mouse_x": 20 },
+    { "ticks": 40, "buttons": 1, "pitch": 20, "yaw": 90 },
+    { "ticks": 30, "buttons": 33, "pitch": 20, "yaw": 90, "mouse_y": 20 },
+    { "ticks": 60, "buttons": 1, "pitch": 20, "yaw": 90 }
+  ] }

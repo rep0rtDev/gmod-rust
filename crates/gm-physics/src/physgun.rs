@@ -40,7 +40,19 @@ pub struct Grab {
     pub rotation: Quat,
 }
 
+/// Degrees of prop rotation per mouse unit in rotate mode (E held): 20 units per tick turned
+/// the crate 1 degree per tick.
+pub const ROTATE_DEG_PER_UNIT: f32 = 0.05;
+
 impl Grab {
+    /// Rotate mode: mouse x turns the wanted orientation about world up, mouse y about the
+    /// view's right axis (`right` in world space), both by `ROTATE_DEG_PER_UNIT`.
+    pub fn rotate(&mut self, mouse_x: f32, mouse_y: f32, right: Vec3) {
+        let yaw = Quat::from_rotation_z((mouse_x * ROTATE_DEG_PER_UNIT).to_radians());
+        let pitch = Quat::from_axis_angle(right, (mouse_y * ROTATE_DEG_PER_UNIT).to_radians());
+        self.rotation = (pitch * yaw * self.rotation).normalize();
+    }
+
     pub fn new(
         eye: Vec3,
         forward: Vec3,

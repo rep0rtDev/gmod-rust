@@ -284,6 +284,8 @@ SCENARIOS.physgun = function(scn, done)
 		cmd:ClearMovement()
 		cmd:SetButtons(sg and sg.buttons or 0)
 		cmd:SetViewAngles(a)
+		cmd:SetForwardMove(sg and sg.forward or 0)
+		cmd:SetSideMove(sg and sg.side or 0)
 		cmd:SetMouseX(sg and sg.mouse_x or 0)
 		cmd:SetMouseY(sg and sg.mouse_y or 0)
 	end)
@@ -307,6 +309,7 @@ SCENARIOS.physgun = function(scn, done)
 				vel = { v.x, v.y, v.z },
 				angvel = { av.x, av.y, av.z },
 				held = ent:IsPlayerHolding(),
+				frozen = not phys:IsMotionEnabled(),
 				weapon = IsValid(ply:GetActiveWeapon()) and ply:GetActiveWeapon():GetClass() or "",
 				eye = { e.x, e.y, e.z },
 				eye_ang = { ea.p, ea.y, ea.r },

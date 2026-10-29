@@ -118,6 +118,10 @@ struct Segment {
     pitch: f32,
     #[serde(default)]
     yaw: f32,
+    #[serde(default)]
+    mouse_x: f32,
+    #[serde(default)]
+    mouse_y: f32,
 }
 
 /// Same shape the probe writes.
@@ -348,13 +352,35 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
     for _ in 0..60 {
         world.step();
     }
-    let eye = Vec3::from(scn.start.unwrap_or([0.0; 3])) + Vec3::new(0.0, 0.0, 64.0);
+    // the bot itself moves through gm-move so the eye follows the real player movement
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let mover = gm_move::Mover::new(gm_move::MoveConfig::default(), &collision);
+    let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    let view0 = scn.angles.clone().unwrap_or_default();
+    let mut player = gm_move::PlayerState {
+        origin: start,
+        ..Default::default()
+    };
+    let settle_cmd = gm_move::UserCmd {
+        view_angles: Vec3::new(
+            view0.first().copied().unwrap_or(0.0),
+            view0.get(1).copied().unwrap_or(0.0),
+            0.0,
+        ),
+        ..Default::default()
+    };
+    for _ in 0..60 {
+        player.origin = start;
+        player.velocity = Vec3::ZERO;
+        mover.tick(&mut player, &settle_cmd);
+    }
     let params = PhysgunParams::default();
     let mut grab: Option<Grab> = None;
     let mut ticks = Vec::new();
     let mut t = 0u32;
     for sg in &scn.segments {
         for _ in 0..sg.ticks {
+            let eye = player.origin + Vec3::new(0.0, 0.0, mover.eye_height(&player));
             let st = world.state(body);
             ticks.push(serde_json::json!({
                 "t": t,
@@ -363,15 +389,18 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
                 "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
                 "angvel": [st.angular_velocity.x, st.angular_velocity.y, st.angular_velocity.z],
                 "held": grab.is_some(),
+                "frozen": world.is_frozen(body),
                 "eye": [eye.x, eye.y, eye.z],
                 "eye_ang": [sg.pitch, sg.yaw, 0.0],
             }));
             let (sp, cp) = (sg.pitch.to_radians().sin(), sg.pitch.to_radians().cos());
             let (sy, cy) = (sg.yaw.to_radians().sin(), sg.yaw.to_radians().cos());
             let forward = Vec3::new(cp * cy, cp * sy, -sp);
+            let right = Vec3::new(sy, -cy, 0.0);
             let attack = sg.buttons & 1 != 0;
-            if attack && grab.is_none() {
-                // hit test against the prop's hulls in their current pose
+            let use_key = sg.buttons & 32 != 0;
+            let attack2 = sg.buttons & 2048 != 0;
+            if attack && grab.is_none() && !world.is_frozen(body) {
                 let inv = st.rotation.inverse();
                 let (lo, ld) = (inv * (eye - st.position), inv * forward);
                 let hit = solid
@@ -396,11 +425,26 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
                 grab = None;
                 world.release(body);
             }
-            if let Some(g) = &grab {
+            if grab.is_some() && attack2 {
+                grab = None;
+                world.freeze(body);
+            }
+            if let Some(g) = &mut grab {
+                if use_key {
+                    g.rotate(sg.mouse_x, sg.mouse_y, right);
+                }
                 let (tp, tr): (Vec3, Quat) = g.target(eye, forward, sg.yaw, st.rotation);
                 world.hold(body, tp, tr, &params);
             }
             world.step();
+            let cmd = gm_move::UserCmd {
+                buttons: sg.buttons & !(1 | 32 | 2048),
+                view_angles: Vec3::new(sg.pitch, sg.yaw, 0.0),
+                forward_move: sg.forward,
+                side_move: sg.side,
+                ..Default::default()
+            };
+            mover.tick(&mut player, &cmd);
             t += 1;
         }
     }

@@ -1,0 +1,11 @@
+{ "name": "physgun_freeze_crate", "kind": "physgun", "map": "gm_construct",
+  "model": "models/props_junk/wood_crate001a.mdl",
+  "start": [823.235, -600.0, -143.6], "angles": [20, 90, 0],
+  "prop": [823.235, -480.0, -123.6], "prop_angles": [0, 0, 0],
+  "segments": [
+    { "ticks": 20, "buttons": 0, "pitch": 20, "yaw": 90 },
+    { "ticks": 40, "buttons": 1, "pitch": 20, "yaw": 90 },
+    { "ticks": 60, "buttons": 1, "pitch": -10, "yaw": 90 },
+    { "ticks": 1, "buttons": 2049, "pitch": -10, "yaw": 90 },
+    { "ticks": 100, "buttons": 0, "pitch": -10, "yaw": 90 }
+  ] }
