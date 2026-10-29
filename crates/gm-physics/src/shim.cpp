@@ -114,6 +114,7 @@ public:
 	float step_dt = 0.015f;
 	float persisted_threshold = 0.3f; // m/s, resting contacts stay with Jolt
 	bool debug = getenv("GMP_IMPACT_DEBUG") != nullptr;
+	std::unordered_map<JPH::uint64, std::vector<size_t>> contact_points; // pair -> hull vertex indices that already impacted
 
 	GmpSurface surface(const JPH::Body &b) const {
 		auto it = surfaces.find(b.GetID().GetIndexAndSequenceNumber());
@@ -145,6 +146,10 @@ public:
 		mp->SetAngularVelocityClamped(mp->GetAngularVelocity() + b.GetInverseInertia().Multiply3x3(r.Cross(impulse)));
 	}
 
+	void OnContactRemoved(const JPH::SubShapeIDPair &pair) override {
+		contact_points.erase((JPH::uint64(pair.GetBody1ID().GetIndexAndSequenceNumber()) << 32) | pair.GetBody2ID().GetIndexAndSequenceNumber());
+	}
+
 	void OnContactPersisted(const JPH::Body &b1, const JPH::Body &b2, const JPH::ContactManifold &m, JPH::ContactSettings &s) override {
 		impact(b1, b2, m, s, persisted_threshold);
 	}
@@ -168,8 +173,9 @@ public:
 		// impact set: the hull vertices of the dynamic body that reach the contact plane within
 		// this step, deepest first (the game impacts one closest feature pair at a time and
 		// re-tests the others after each push); manifold points when no hull is known
-		struct Pt { JPH::RVec3 p; float d; float vn0; JPH::Vec3 dir; float step; };
+		struct Pt { JPH::RVec3 p; float d; float vn0; JPH::Vec3 dir; float step; size_t index; };
 		std::vector<Pt> pts;
+		bool verts_of_b2_used = false;
 		auto vertices_of = [&](const JPH::Body &b) -> const std::vector<JPH::Vec3> * {
 			if (!b.IsDynamic()) return nullptr;
 			auto it = hulls.find(b.GetID().GetIndexAndSequenceNumber());
@@ -181,7 +187,7 @@ public:
 			float pen = (m.mRelativeContactPointsOn1[i] - m.mRelativeContactPointsOn2[i]).Dot(m.mWorldSpaceNormal);
 			if (pen > best_pen) { best_pen = pen; best = i; }
 		}
-		auto consider = [&](JPH::RVec3Arg p, float d) { pts.push_back(Pt{p, d, 0.0f, n, 0.0f}); };
+		auto consider = [&](JPH::RVec3Arg p, float d) { pts.push_back(Pt{p, d, 0.0f, n, 0.0f, pts.size()}); };
 		if (const auto *verts = vertices_of(b1)) {
 			JPH::RVec3 p0 = m.GetWorldSpaceContactPointOn2(best);
 			JPH::RMat44 xf = b1.GetWorldTransform();
@@ -190,6 +196,7 @@ public:
 				consider(w, float(JPH::Vec3(w - p0).Dot(n)));
 			}
 		} else if (const auto *verts = vertices_of(b2)) {
+			verts_of_b2_used = true;
 			JPH::RVec3 p0 = m.GetWorldSpaceContactPointOn1(best);
 			JPH::RMat44 xf = b2.GetWorldTransform();
 			for (const JPH::Vec3 &lv : *verts) {
@@ -255,6 +262,9 @@ public:
 		// with the new velocities; the game shows two impacts for a flat crate (a corner, then
 		// the opposite one) and one rim vertex for the barrel
 		const float tie_eps = 0.0005f;
+		JPH::uint64 pair_key = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
+		std::vector<size_t> &cps = contact_points[pair_key];
+		if (verts_of_b2_used) cps.clear();
 		for (int round = 0; round < 8; ++round) {
 			// the vertex that reaches the surface first: least time d / |vn| (the first round
 			// has every vertex at the same distance, later rounds are decided by the rotation
@@ -269,7 +279,60 @@ public:
 				if (pick == nullptr || t < best_t - tie_eps * 0.01f) { pick = &pt; best_t = t; }
 			}
 			if (pick == nullptr) break;
-			resolve(*pick);
+			// the game's impact system also re-pushes the pair's existing contact points (corners
+			// that impacted earlier and still touch) along the normal while this one is resolved
+			std::vector<Pt *> old;
+			for (size_t idx : cps)
+				if (idx < pts.size() && &pts[idx] != pick && std::fabs(pts[idx].d - pick->d) < 0.002f) old.push_back(&pts[idx]);
+			if (old.empty()) {
+				resolve(*pick);
+			} else {
+				JPH::Vec3 v = rel(pick->p);
+				pick->vn0 = v.Dot(n);
+				pick->dir = direction(v, n);
+				float mv1 = virt_mass(b1, pick->p, pick->dir, m2, static_mass_factor);
+				float mv2 = virt_mass(b2, pick->p, pick->dir, m1, static_mass_factor);
+				pick->step = 0.1f * (-2.0f * pick->vn0 * (mv1 * mv2 / (mv1 + mv2)));
+				for (Pt *o : old) {
+					float ov1 = virt_mass(b1, o->p, n, m2, static_mass_factor);
+					float ov2 = virt_mass(b2, o->p, n, m1, static_mass_factor);
+					o->step = 0.1f * (-2.0f * pick->vn0 * (ov1 * ov2 / (ov1 + ov2)));
+				}
+				float c1 = b1.IsDynamic() ? b1.GetLinearVelocity().Dot(n) : -b2.GetLinearVelocity().Dot(n);
+				for (int it = 0; it < 100; ++it) {
+					bool approaching = false;
+					JPH::Vec3 vp = rel(pick->p);
+					if (vp.Dot(n) < 0.0f) {
+						approaching = true;
+						pick->dir = direction(vp, pick->dir);
+						push(b1, pick->p, pick->dir * pick->step);
+						push(b2, pick->p, -pick->dir * pick->step);
+					}
+					for (Pt *o : old) {
+						if (rel(o->p).Dot(n) >= 0.0f) continue;
+						approaching = true;
+						push(b1, o->p, n * o->step);
+						push(b2, o->p, -n * o->step);
+					}
+					if (!approaching) break;
+				}
+				// restitution measured at the centre: sqrt(e) of the centre's approach speed
+				float c2 = b1.IsDynamic() ? b1.GetLinearVelocity().Dot(n) : -b2.GetLinearVelocity().Dot(n);
+				float wanted = extra + std::sqrt(e_eff) * std::max(-c1, 0.0f) - c2;
+				if (wanted > 0.0f) {
+					push(b1, pick->p, n);
+					push(b2, pick->p, -n);
+					float c3 = b1.IsDynamic() ? b1.GetLinearVelocity().Dot(n) : -b2.GetLinearVelocity().Dot(n);
+					push(b1, pick->p, -n);
+					push(b2, pick->p, n);
+					float dvn = c3 - c2;
+					if (std::fabs(dvn) > 1e-4f) {
+						push(b1, pick->p, n * (wanted / dvn));
+						push(b2, pick->p, -n * (wanted / dvn));
+					}
+				}
+			}
+			if (std::find(cps.begin(), cps.end(), pick->index) == cps.end()) cps.push_back(pick->index);
 			if (debug) {
 				JPH::Vec3 lv = b1.IsDynamic() ? b1.GetLinearVelocity() : b2.GetLinearVelocity();
 				JPH::Vec3 av = b1.IsDynamic() ? b1.GetAngularVelocity() : b2.GetAngularVelocity();
