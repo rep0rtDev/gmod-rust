@@ -91,6 +91,7 @@ extern "C" {
     fn gmp_set_impact_step(system: *mut JPC_PhysicsSystem, dt: f32);
     fn gmp_set_impact_skip(system: *mut JPC_PhysicsSystem, body_id: u32, on: i32);
     fn gmp_set_impact_enabled(system: *mut JPC_PhysicsSystem, enabled: i32);
+    fn gmp_set_pair_collision(system: *mut JPC_PhysicsSystem, id1: u32, id2: u32, enabled: i32);
     fn gmp_set_solver(
         system: *mut JPC_PhysicsSystem,
         baumgarte: f32,
@@ -785,6 +786,11 @@ impl World {
     }
 
     /// Toggle the IVP style single point impact response (on by default).
+    /// `constraint.NoCollide`: whether two bodies collide with each other (default yes).
+    pub fn set_pair_collision(&mut self, a: BodyHandle, b: BodyHandle, enabled: bool) {
+        unsafe { gmp_set_pair_collision(self.system.as_raw(), a.0, b.0, enabled as i32) }
+    }
+
     pub fn set_impact_enabled(&mut self, enabled: bool) {
         unsafe { gmp_set_impact_enabled(self.system.as_raw(), enabled as i32) }
     }
@@ -915,6 +921,47 @@ mod tests {
         let b = quat_to_jolt(q) * to_jolt(v);
         assert!(a.distance(b) < 1e-5, "{a} {b}");
         assert!((quat_from_jolt(quat_to_jolt(q)).dot(q).abs() - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn nocollided_crate_falls_through_a_frozen_one() {
+        let mut w = World::new(600.0, 0.015, 1);
+        let floor = box_hull(Vec3::new(0.0, 0.0, -160.0), Vec3::new(512.0, 512.0, 16.0));
+        w.add_static_hulls(&[floor], Surface::default()).unwrap();
+        let hull = box_hull(Vec3::ZERO, Vec3::splat(20.0));
+        let desc = |z: f32| PropDesc {
+            hulls: std::slice::from_ref(&hull),
+            mass: 30.0,
+            volume: 64000.0,
+            position: Vec3::new(0.0, 0.0, z),
+            angles: (0.0, 0.0, 0.0),
+            velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            surface: Surface::default(),
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+            drag_axis_areas: Vec3::ONE,
+            inertia: None,
+        };
+        let lower = w.add_prop(&desc(-124.0)).unwrap();
+        w.freeze(lower);
+        let upper = w.add_prop(&desc(-40.0)).unwrap();
+        w.set_pair_collision(lower, upper, false);
+        w.optimize();
+        for _ in 0..200 {
+            w.step();
+        }
+        let s = w.state(upper);
+        assert!(
+            s.position.z < -110.0,
+            "no-collided crate should pass the frozen one, z {}",
+            s.position.z
+        );
+        assert!(
+            s.position.z > -130.0,
+            "but rest on the floor, z {}",
+            s.position.z
+        );
     }
 
     #[test]

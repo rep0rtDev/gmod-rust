@@ -57,6 +57,8 @@ pub struct Server<'w> {
     mover: gm_move::Mover<'w>,
     bodies: BTreeMap<u32, BodyHandle>,
     constraints: BTreeMap<u32, ConstraintHandle>,
+    /// NoCollide pairs by sandbox constraint id.
+    nocollides: BTreeMap<u32, (BodyHandle, BodyHandle)>,
     models: BTreeMap<String, ModelInfo>,
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
@@ -74,6 +76,7 @@ impl<'w> Server<'w> {
             mover: gm_move::Mover::new(gm_move::MoveConfig::default(), collision),
             bodies: BTreeMap::new(),
             constraints: BTreeMap::new(),
+            nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
             hull_planes: BTreeMap::new(),
             events: Vec::new(),
@@ -219,6 +222,13 @@ impl<'w> Server<'w> {
                 self.physics.remove_constraint(c);
             }
         }
+        for (id, pair) in std::mem::take(&mut self.nocollides) {
+            if live_c.contains(&id) {
+                self.nocollides.insert(id, pair);
+            } else {
+                self.physics.set_pair_collision(pair.0, pair.1, true);
+            }
+        }
         for (id, b) in std::mem::take(&mut self.bodies) {
             if live.contains(&id) {
                 self.bodies.insert(id, b);
@@ -272,7 +282,7 @@ impl<'w> Server<'w> {
         }
         let constraints: Vec<_> = self.sandbox.constraints().to_vec();
         for c in &constraints {
-            if self.constraints.contains_key(&c.id) {
+            if self.constraints.contains_key(&c.id) || self.nocollides.contains_key(&c.id) {
                 continue;
             }
             let body = |e: Option<u32>| -> Option<BodyHandle> {
@@ -320,7 +330,11 @@ impl<'w> Server<'w> {
                     let axis = if axis == Vec3::ZERO { Vec3::Z } else { axis };
                     self.physics.hinge(a, b, point, axis)
                 }
-                ConstraintKind::NoCollide => None,
+                ConstraintKind::NoCollide => {
+                    self.physics.set_pair_collision(a, b, false);
+                    self.nocollides.insert(c.id, (a, b));
+                    None
+                }
             };
             if let Some(h) = handle {
                 self.constraints.insert(c.id, h);

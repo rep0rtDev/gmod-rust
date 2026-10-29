@@ -11,7 +11,7 @@ constraints the sandbox owns are mirrored into the Jolt world of `gm-physics`:
   velocity cleared) and its frozen flag follows `EnableMotion`;
 - weld -> Jolt fixed constraint, rope -> distance constraint between the recorded local points
   (`length + addlength`, rigid as min = max), axis -> hinge through `LPos1` along the axis towards
-  `LocalAxis`, nocollide -> no body constraint (a collision filter later); the world is a static
+  `LocalAxis`, nocollide -> the pair is rejected in the Jolt contact validation (a prop dropped onto a no-collided frozen prop falls through it to the floor), re-enabled when the constraint goes; the world is a static
   body, so constraints to the world attach to it;
 - undo and cleanup remove constraints first, then bodies;
 - after the physics step every body's pose flows back into the sandbox, so the next trace or
@@ -38,5 +38,4 @@ contact response of `phys_*`).
 
 ## Not yet
 
-Networking and client prediction, multiple players in one recording, nocollide as a Jolt
-collision filter, spawn menu, the remaining stools.
+Networking and client prediction, multiple players in one recording, spawn menu, the remaining stools.

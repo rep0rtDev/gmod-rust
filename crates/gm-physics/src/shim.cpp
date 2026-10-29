@@ -154,6 +154,7 @@ void gmp_set_solver(void *system, float baumgarte, unsigned int velocity_steps, 
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Body/Body.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -169,6 +170,18 @@ public:
 	std::unordered_map<JPH::uint32, GmpSurface> surfaces;
 	std::unordered_map<JPH::uint32, std::vector<JPH::Vec3>> hulls;
 	bool enabled = true;
+	// body pairs that never collide (constraint.NoCollide); key is (min id << 32 | max id)
+	std::unordered_set<unsigned long long> nocollide;
+	static unsigned long long pair_key(JPH::uint32 a, JPH::uint32 b) {
+		return ((unsigned long long)std::min(a, b) << 32) | std::max(a, b);
+	}
+	JPH::ValidateResult OnContactValidate(const JPH::Body &b1, const JPH::Body &b2, JPH::RVec3Arg,
+	                                      const JPH::CollideShapeResult &) override {
+		if (!nocollide.empty() && nocollide.count(pair_key(b1.GetID().GetIndexAndSequenceNumber(),
+		                                                   b2.GetID().GetIndexAndSequenceNumber())))
+			return JPH::ValidateResult::RejectAllContactsForThisBodyPair;
+		return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
+	}
 	float static_mass_factor = 100000.0f;
 	float step_dt = 0.015f;
 	float persisted_threshold = 0.3f; // m/s, resting contacts stay with Jolt
@@ -461,6 +474,14 @@ void gmp_set_impact_skip(void *system, unsigned int body_id, int on) {
 	if (auto *l = listener_of(system)) {
 		if (on) l->skip[body_id] = true; else l->skip.erase(body_id);
 	}
+}
+
+// constraint.NoCollide between two bodies: the pair is rejected at contact validation
+void gmp_set_pair_collision(void *system, unsigned int id1, unsigned int id2, int enabled) {
+	auto *l = listener_of(system);
+	if (!l) return;
+	auto key = GmpImpactListener::pair_key(id1, id2);
+	if (enabled) l->nocollide.erase(key); else l->nocollide.insert(key);
 }
 
 void gmp_set_impact_enabled(void *system, int enabled) {
