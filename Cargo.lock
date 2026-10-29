@@ -655,6 +655,7 @@ dependencies = [
  "glam 0.29.3",
  "gm-collision",
  "gm-core",
+ "gm-formats",
  "gm-move",
  "gm-physics",
  "gm-sandbox",
