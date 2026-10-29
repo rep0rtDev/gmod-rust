@@ -19,6 +19,7 @@ bytemuck = { version = "1", features = ["derive"] }
 rayon = "1.10"
 tracing = "0.1"
 sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 walkdir = "2"
 memmap2 = "0.9"
 clap = { version = "4", features = ["derive"] }

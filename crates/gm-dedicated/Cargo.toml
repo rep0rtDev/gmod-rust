@@ -27,3 +27,7 @@ path = "src/bin/dedicated.rs"
 [[bin]]
 name = "gm-bot"
 path = "src/bin/bot.rs"
+
+[[bin]]
+name = "gmr"
+path = "src/bin/gmr.rs"

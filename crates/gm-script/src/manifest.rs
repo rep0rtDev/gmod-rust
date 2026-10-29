@@ -53,10 +53,28 @@ pub enum ManifestError {
 }
 
 impl Manifest {
+    /// The spec of one actor of this manifest with its source text.
+    pub fn actor_spec(&self, a: &ActorEntry, source: String) -> ActorSpec {
+        let can_write = self.capabilities.iter().any(|c| c == "world-write");
+        let mut config = ActorConfig {
+            can_write,
+            ..Default::default()
+        };
+        if let Some(ms) = a.cpu_ms {
+            config.cpu_budget = Duration::from_secs_f32(ms.clamp(0.1, 10.0) / 1000.0);
+        }
+        ActorSpec {
+            addon: self.id.clone(),
+            name: a.name.clone(),
+            priority: self.priority,
+            source,
+            config,
+        }
+    }
+
     pub fn load(dir: &Path) -> Result<(Manifest, Vec<ActorSpec>), ManifestError> {
         let text = std::fs::read_to_string(dir.join("manifest.toml"))?;
         let m: Manifest = toml::from_str(&text)?;
-        let can_write = m.capabilities.iter().any(|c| c == "world-write");
         let mut specs = Vec::new();
         for a in &m.actors {
             if a.realm != "server" {
@@ -70,20 +88,7 @@ impl Manifest {
                 ));
             }
             let source = std::fs::read_to_string(dir.join(&a.source))?;
-            let mut config = ActorConfig {
-                can_write,
-                ..Default::default()
-            };
-            if let Some(ms) = a.cpu_ms {
-                config.cpu_budget = Duration::from_secs_f32((ms.clamp(0.1, 10.0)) / 1000.0);
-            }
-            specs.push(ActorSpec {
-                addon: m.id.clone(),
-                name: a.name.clone(),
-                priority: m.priority,
-                source,
-                config,
-            });
+            specs.push(m.actor_spec(a, source));
         }
         Ok((m, specs))
     }

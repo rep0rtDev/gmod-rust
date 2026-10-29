@@ -14,4 +14,6 @@ mlua = { workspace = true }
 glam = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
+zip = { workspace = true }
+sha2 = { workspace = true }
 serde = { workspace = true }

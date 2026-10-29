@@ -40,7 +40,7 @@ pub enum ActorStatus {
 
 pub struct Actor {
     id: u32,
-    spec: ActorSpec,
+    pub spec: ActorSpec,
     lua: Lua,
     shared: Arc<Shared>,
     deadline: Arc<Mutex<Option<Instant>>>,
@@ -171,6 +171,13 @@ impl Actor {
                 Err(e)
             }
         }
+    }
+
+    /// Hot reload: new source, fresh VM, `state` carried over (the restart counter is not bumped).
+    pub fn reload(&mut self, source: String) -> mlua::Result<()> {
+        self.spec.source = source;
+        self.saved_state = self.serialise_state();
+        self.boot()
     }
 
     /// Serialises `state` (numbers, strings, booleans, nested tables) and boots a fresh VM.

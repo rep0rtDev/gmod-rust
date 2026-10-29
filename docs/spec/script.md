@@ -37,6 +37,16 @@ harnesses `script_weld_rope` and `script_axis` replay the tool gun recordings wi
 replaced by the Luau ones through the server loop and are equal (20 ops within 0.12 u, 8 ops within
 0.02 u), the same results as the Rust stools.
 
+## Package and hot reload
+
+`gmr pack <dir> <out.gmr>` zips `manifest.toml`, `src/**/*.luau`, `wasm/`, `assets/` (deflate,
+entries sorted, fixed timestamps: the same tree packs to the same bytes), `gmr inspect` prints
+manifest, actors, files and the sha256 that identifies the package. `Runtime::load_addon` takes a
+directory or a `.gmr`; `gm-dedicated --addon x.gmr` too. `Runtime::reload_addon(path)` is the hot
+reload: every actor of the addon keeps its id and `state` (serialised as on restart) and gets the
+new source in a fresh VM, actors new to the manifest are loaded, removed ones dropped; the test
+`hot_reload_keeps_state` carries `state.n = 3` into a new source that reads it.
+
 ## Manifest
 
 An addon is a directory with `manifest.toml` (`id`, `version`, `priority`, `realms`,
@@ -64,6 +74,6 @@ refusing cans stops the request before the priority 10 actor sees it.
 
 ## Not yet
 
-`.gmr` packaging, client realm, the rest of the API (entity write views, players,
+client realm, the rest of the API (entity write views, players,
 constraints, net, timers, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
-hot reload command, the sandbox gamemode in Luau on top of this API.
+the `gmr reload` server command and file watching, the sandbox gamemode in Luau on top of this API.

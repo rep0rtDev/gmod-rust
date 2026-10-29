@@ -130,3 +130,61 @@ fn cancel_and_queue_order() {
     );
     assert!(matches!(order[1].3, gm_script::QueuedWrite::Freeze { .. }));
 }
+
+#[test]
+fn hot_reload_keeps_state() {
+    let mut rt = Runtime::new();
+    rt.load(spec(
+        "a",
+        0,
+        "events.on('tick.pre', function() state.n = (state.n or 0) + 1 end)",
+    ))
+    .unwrap();
+    let snap = Arc::new(Snapshot::default());
+    for tick in 1..=3u64 {
+        rt.actors_mut()[0]
+            .dispatch(&snap, "tick.pre", &Payload::default(), tick)
+            .unwrap();
+    }
+    rt.actors_mut()[0]
+        .reload(
+            "state.m = state.n * 2; events.on('tick.pre', function() state.n = state.n + 10 end)"
+                .into(),
+        )
+        .unwrap();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 4)
+        .unwrap();
+    let (n, m): (u64, u64) = rt.actors()[0].eval("return state.n, state.m").unwrap();
+    assert_eq!((n, m), (13, 6));
+    assert_eq!(rt.actors()[0].restarts, 0);
+}
+
+#[test]
+fn gmr_pack_and_load_roundtrip() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../addons/examples/freeze_crates");
+    let bytes = gm_script::package::pack(&root).unwrap();
+    let again = gm_script::package::pack(&root).unwrap();
+    assert_eq!(bytes, again, "deterministic");
+    let pkg = gm_script::Package::read(&bytes).unwrap();
+    assert_eq!(
+        pkg.files.keys().cloned().collect::<Vec<_>>(),
+        vec!["manifest.toml", "src/main.luau"]
+    );
+    let (m, specs) = pkg.load().unwrap();
+    assert_eq!(m.id, "freeze_crates");
+    assert_eq!(specs.len(), 1);
+    assert!(specs[0].config.can_write);
+    let (dm, dspecs) = gm_script::Manifest::load(&root).unwrap();
+    assert_eq!(
+        (dm.id, dspecs[0].source.clone()),
+        (m.id, specs[0].source.clone())
+    );
+    let out = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("freeze_crates.gmr");
+    std::fs::write(&out, &bytes).unwrap();
+    let mut rt = Runtime::new();
+    let loaded = rt.load_addon(&out).unwrap();
+    assert_eq!(loaded.id, "freeze_crates");
+    assert_eq!(rt.actors().len(), 1);
+}

@@ -8,10 +8,12 @@
 pub mod actor;
 pub mod api;
 pub mod manifest;
+pub mod package;
 pub mod snapshot;
 
 pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite};
 pub use manifest::Manifest;
+pub use package::Package;
 pub use snapshot::{EntitySnap, PlayerSnap, Snapshot};
 
 use gm_server::Server;
@@ -51,15 +53,45 @@ impl Runtime {
         }
     }
 
-    /// Loads every server actor of an addon directory (`manifest.toml`).
+    /// Loads every server actor of an addon: a directory with `manifest.toml` or a `.gmr`.
     pub fn load_addon(
         &mut self,
-        dir: &std::path::Path,
+        path: &std::path::Path,
     ) -> Result<Manifest, Box<dyn std::error::Error>> {
-        let (m, specs) = Manifest::load(dir)?;
+        let (m, specs) = read_addon(path)?;
         for spec in specs {
             self.load(spec)?;
         }
+        Ok(m)
+    }
+
+    /// Hot reload of an addon already loaded: actors keep their ids and `state`, get the new
+    /// sources; actors added by the new manifest are loaded, removed ones dropped.
+    pub fn reload_addon(
+        &mut self,
+        path: &std::path::Path,
+    ) -> Result<Manifest, Box<dyn std::error::Error>> {
+        let (m, specs) = read_addon(path)?;
+        let mut keep: Vec<String> = Vec::new();
+        for spec in specs {
+            keep.push(spec.name.clone());
+            match self
+                .actors
+                .iter_mut()
+                .find(|a| a.spec.addon == spec.addon && a.spec.name == spec.name)
+            {
+                Some(a) => {
+                    a.spec.priority = spec.priority;
+                    a.spec.config = spec.config;
+                    a.reload(spec.source)?;
+                }
+                None => {
+                    self.load(spec)?;
+                }
+            }
+        }
+        self.actors
+            .retain(|a| a.spec.addon != m.id || keep.contains(&a.spec.name));
         Ok(m)
     }
 
@@ -279,6 +311,16 @@ impl Runtime {
         p.ints.push(("player", player as i64));
         p.ints.push(("entity", ent as i64));
         self.run_event(server, "entity.spawned", p)
+    }
+}
+
+fn read_addon(
+    path: &std::path::Path,
+) -> Result<(Manifest, Vec<ActorSpec>), manifest::ManifestError> {
+    if path.is_dir() {
+        Manifest::load(path)
+    } else {
+        Package::open(path)?.load()
     }
 }
 
