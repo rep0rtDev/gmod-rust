@@ -441,3 +441,87 @@ realm = "server"
 crates = ["gm-server", "gm-sandbox", "gm-physics", "gm-move"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_physgun_freeze_crate"
+scenario = "server/physgun_freeze_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-server", "gm-physics", "gm-move"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "server_physgun_hold_crate"
+scenario = "server/physgun_hold_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-server", "gm-physics", "gm-move"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "server_physgun_offcentre"
+scenario = "server/physgun_offcentre"
+compare = "rigid"
+realm = "server"
+crates = ["gm-server", "gm-physics", "gm-move"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "server_physgun_pitch_steps"
+scenario = "server/physgun_pitch_steps"
+compare = "rigid"
+realm = "server"
+crates = ["gm-server", "gm-physics", "gm-move"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "server_physgun_rotate_crate"
+scenario = "server/physgun_rotate_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-server", "gm-physics", "gm-move"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "server_physgun_walk_hold"
+scenario = "server/physgun_walk_hold"
+compare = "rigid"
+realm = "server"
+crates = ["gm-server", "gm-physics", "gm-move"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "server_physgun_yaw_steps"
+scenario = "server/physgun_yaw_steps"
+compare = "rigid"
+realm = "server"
+crates = ["gm-server", "gm-physics", "gm-move"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000

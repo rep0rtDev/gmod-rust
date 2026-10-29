@@ -1,0 +1,58 @@
+{
+ "name": "server_physgun_hold_crate",
+ "kind": "server",
+ "map": "gm_construct",
+ "model": "models/props_junk/wood_crate001a.mdl",
+ "start": [
+  823.235,
+  -600.0,
+  -143.6
+ ],
+ "angles": [
+  20,
+  90,
+  0
+ ],
+ "prop": [
+  823.235,
+  -480.0,
+  -123.6
+ ],
+ "prop_angles": [
+  0,
+  0,
+  0
+ ],
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0,
+   "pitch": 20,
+   "yaw": 90
+  },
+  {
+   "ticks": 80,
+   "buttons": 1,
+   "pitch": 20,
+   "yaw": 90
+  },
+  {
+   "ticks": 80,
+   "buttons": 1,
+   "pitch": -10,
+   "yaw": 90
+  },
+  {
+   "ticks": 80,
+   "buttons": 1,
+   "pitch": -10,
+   "yaw": 120
+  },
+  {
+   "ticks": 100,
+   "buttons": 0,
+   "pitch": -10,
+   "yaw": 120
+  }
+ ]
+}

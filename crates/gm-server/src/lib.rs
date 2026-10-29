@@ -3,6 +3,7 @@
 //! (weld -> fixed, rope -> distance, axis -> hinge). Nothing here is networked yet.
 
 use glam::Vec3;
+use gm_physics::physgun::{Grab, PhysgunParams};
 use gm_physics::{BodyHandle, ConstraintHandle, PropDesc, Surface, World};
 use gm_sandbox::{ConstraintKind, Event, ModelBounds, PropBody, Sandbox, SpawnRequest, ToolHit};
 use std::collections::BTreeMap;
@@ -27,6 +28,23 @@ pub struct ModelInfo {
 pub struct Player {
     pub state: gm_move::PlayerState,
     pub view_angles: Vec3,
+    /// The prop held by the physgun and how it was grabbed.
+    pub held: Option<(u32, Grab)>,
+}
+
+/// `IN_ATTACK`, `IN_USE`, `IN_ATTACK2` of a usercmd.
+pub const IN_ATTACK: u32 = 1;
+pub const IN_USE: u32 = 32;
+pub const IN_ATTACK2: u32 = 2048;
+
+/// A player's input for one tick: movement plus what the held weapon needs.
+#[derive(Clone, Debug, Default)]
+pub struct PlayerCmd {
+    pub cmd: gm_move::UserCmd,
+    /// The player holds `weapon_physgun`: attack grabs, attack2 freezes, use + mouse rotates.
+    pub physgun: bool,
+    pub mouse_x: f32,
+    pub mouse_y: f32,
 }
 
 pub struct Server<'w> {
@@ -42,6 +60,7 @@ pub struct Server<'w> {
     models: BTreeMap<String, ModelInfo>,
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
+    pub physgun_params: PhysgunParams,
 }
 
 impl<'w> Server<'w> {
@@ -58,6 +77,7 @@ impl<'w> Server<'w> {
             models: BTreeMap::new(),
             hull_planes: BTreeMap::new(),
             events: Vec::new(),
+            physgun_params: PhysgunParams::default(),
         }
     }
 
@@ -76,6 +96,7 @@ impl<'w> Server<'w> {
                     ..Default::default()
                 },
                 view_angles,
+                held: None,
             },
         );
     }
@@ -100,7 +121,8 @@ impl<'w> Server<'w> {
         self.sync_physics();
     }
 
-    fn eye(&self, player: u32) -> Option<(Vec3, Vec3)> {
+    /// `GetShootPos()` and view angles of a player.
+    pub fn eye(&self, player: u32) -> Option<(Vec3, Vec3)> {
         let p = self.players.get(&player)?;
         let eye = p.state.origin + Vec3::new(0.0, 0.0, self.mover.eye_height(&p.state));
         Some((eye, p.view_angles))
@@ -306,15 +328,95 @@ impl<'w> Server<'w> {
         }
     }
 
-    /// One fixed tick: players move, physics steps, prop poses flow back into the sandbox.
-    pub fn tick(&mut self, cmds: &BTreeMap<u32, gm_move::UserCmd>) {
-        for (id, p) in self.players.iter_mut() {
-            if let Some(cmd) = cmds.get(id) {
-                p.view_angles = cmd.view_angles;
-                self.mover.tick(&mut p.state, cmd);
+    /// The physgun of one player for this tick, with the eye before the player moves (the weapon
+    /// fires in the player's think before movement and physics).
+    fn physgun(&mut self, player: u32, pc: &PlayerCmd) {
+        let Some((eye, _)) = self.eye(player) else {
+            return;
+        };
+        let view = pc.cmd.view_angles;
+        let forward = gm_sandbox::forward(view.x, view.y);
+        let (sy, cy) = (view.y.to_radians().sin(), view.y.to_radians().cos());
+        let right = Vec3::new(sy, -cy, 0.0);
+        let attack = pc.cmd.buttons & IN_ATTACK != 0;
+        let use_key = pc.cmd.buttons & IN_USE != 0;
+        let attack2 = pc.cmd.buttons & IN_ATTACK2 != 0;
+        let held = self.players.get(&player).and_then(|p| p.held);
+        let held = match held {
+            None if attack && pc.physgun => {
+                let bodies = self.trace_bodies();
+                let hit = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward);
+                match hit.and_then(|h| h.ent.map(|e| (e, h))) {
+                    Some((ent, h))
+                        if !self.sandbox.props().iter().any(|p| p.id == ent && p.frozen) =>
+                    {
+                        let body = self.bodies.get(&ent).copied();
+                        body.map(|b| {
+                            let st = self.physics.state(b);
+                            (
+                                ent,
+                                Grab::new(eye, forward, h.pos, st.position, st.rotation, view.y),
+                            )
+                        })
+                    }
+                    _ => None,
+                }
+            }
+            Some((ent, _)) if !attack => {
+                if let Some(b) = self.bodies.get(&ent).copied() {
+                    self.physics.release(b);
+                }
+                None
+            }
+            Some((ent, _)) if attack2 => {
+                if let Some(b) = self.bodies.get(&ent).copied() {
+                    self.physics.freeze(b);
+                }
+                self.sandbox.set_frozen(ent, true);
+                None
+            }
+            other => other,
+        };
+        let held = match held {
+            Some((ent, mut g)) => {
+                if let Some(b) = self.bodies.get(&ent).copied() {
+                    if use_key {
+                        g.rotate(pc.mouse_x, pc.mouse_y, right);
+                    }
+                    let st = self.physics.state(b);
+                    let (tp, tr) = g.target(eye, forward, view.y, st.rotation);
+                    self.physics.hold(b, tp, tr, &self.physgun_params);
+                    Some((ent, g))
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
+        if let Some(p) = self.players.get_mut(&player) {
+            p.held = held;
+        }
+    }
+
+    /// One fixed tick: weapons fire with the pre-move eye, physics steps, players move, prop
+    /// poses flow back into the sandbox.
+    pub fn tick(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
+        for (id, pc) in cmds {
+            if self.players.contains_key(id) {
+                self.physgun(*id, pc);
             }
         }
         self.physics.step();
+        for (id, p) in self.players.iter_mut() {
+            if let Some(pc) = cmds.get(id) {
+                p.view_angles = pc.cmd.view_angles;
+                let cmd = gm_move::UserCmd {
+                    buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
+                    ..pc.cmd
+                };
+                self.mover.tick(&mut p.state, &cmd);
+            }
+        }
         for (id, body) in &self.bodies {
             let st = self.physics.state(*body);
             self.sandbox

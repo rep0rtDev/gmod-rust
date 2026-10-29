@@ -1033,7 +1033,16 @@ fn run_server(scn: &Scenario) -> Result<Value> {
     let mut server = gm_server::Server::new(&collision, physics, world_body);
     let player = 1u32;
     let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
-    server.add_player(player, start, Vec3::ZERO);
+    let ang = scn.angles.clone().unwrap_or_default();
+    let view0 = Vec3::new(
+        ang.first().copied().unwrap_or(0.0),
+        ang.get(1).copied().unwrap_or(0.0),
+        0.0,
+    );
+    server.add_player(player, start, view0);
+    if !scn.segments.is_empty() {
+        return run_server_segments(scn, &mount, server, player, start, view0);
+    }
     let mut known: std::collections::HashSet<String> = Default::default();
     for pr in &scn.props {
         if known.insert(pr.model.clone()) {
@@ -1062,7 +1071,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
     server.add_existing_props(&existing);
     let all_props = !scn.props.is_empty();
     // the probe's pre-roll: the bot stands still on the ground
-    let idle = std::collections::BTreeMap::from([(player, gm_move::UserCmd::default())]);
+    let idle = std::collections::BTreeMap::from([(player, gm_server::PlayerCmd::default())]);
     for _ in 0..20 {
         server.tick(&idle);
     }
@@ -1129,6 +1138,89 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         results.push(rec);
     }
     Ok(json!({ "results": results, "messages": messages }))
+}
+
+/// A segment scenario (the physgun recordings) through the server loop: one prop on the map, the
+/// bot's buttons and view per tick, the prop's state recorded like `run_physgun`.
+fn run_server_segments(
+    scn: &Scenario,
+    mount: &gm_content::Mount,
+    mut server: gm_server::Server<'_>,
+    player: u32,
+    start: glam::Vec3,
+    view0: glam::Vec3,
+) -> Result<Value> {
+    use glam::Vec3;
+    let model = scn
+        .model
+        .as_deref()
+        .context("segment scenario needs a model")?;
+    server.register_model(model, model_info(mount, model)?);
+    server.add_existing_props(&[(
+        model.to_string(),
+        Vec3::from(scn.prop.unwrap_or([0.0; 3])),
+        Vec3::from(scn.prop_angles.unwrap_or([0.0; 3])),
+        false,
+    )]);
+    let body = server.body_of(1).context("prop body")?;
+    // the probe's pre-roll: the bot is reset to the start every tick while the prop settles
+    let settle = std::collections::BTreeMap::from([(
+        player,
+        gm_server::PlayerCmd {
+            cmd: gm_move::UserCmd {
+                view_angles: view0,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )]);
+    for _ in 0..60 {
+        if let Some(p) = server.players.get_mut(&player) {
+            p.state.origin = start;
+            p.state.velocity = Vec3::ZERO;
+        }
+        server.tick(&settle);
+    }
+    let mut ticks = Vec::new();
+    let mut t = 0u32;
+    for sg in &scn.segments {
+        for _ in 0..sg.ticks {
+            let st = server.physics.state(body);
+            let p = &server.players[&player];
+            let eye = server.eye(player).map(|e| e.0).unwrap_or_default();
+            ticks.push(serde_json::json!({
+                "t": t,
+                "pos": [st.position.x, st.position.y, st.position.z],
+                "ang": [st.angles.0, st.angles.1, st.angles.2],
+                "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
+                "angvel": local_angvel(&st),
+                "held": p.held.is_some(),
+                "frozen": server.physics.is_frozen(body),
+                "eye": [eye.x, eye.y, eye.z],
+                "eye_ang": [sg.pitch, sg.yaw, 0.0],
+            }));
+            let cmds = std::collections::BTreeMap::from([(
+                player,
+                gm_server::PlayerCmd {
+                    cmd: gm_move::UserCmd {
+                        buttons: sg.buttons,
+                        view_angles: Vec3::new(sg.pitch, sg.yaw, 0.0),
+                        forward_move: sg.forward,
+                        side_move: sg.side,
+                        ..Default::default()
+                    },
+                    physgun: true,
+                    mouse_x: sg.mouse_x,
+                    mouse_y: sg.mouse_y,
+                },
+            )]);
+            server.tick(&cmds);
+            t += 1;
+        }
+    }
+    Ok(
+        serde_json::json!({ "start": scn.start.unwrap_or([0.0; 3]), "model": model, "ticks": ticks }),
+    )
 }
 
 /// Per op: the sandbox state (count, undo stack) and every prop's pose under physics after the
