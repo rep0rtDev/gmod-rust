@@ -45,6 +45,8 @@ The floor under both corners is one world convex (checked with `GetMeshConvexes(
 
 Tie break between vertices at the same depth and speed: the game took the +x bottom corner of the flat crate and the +x rim vertex of the sliding barrel (the one perpendicular to its motion), so the listener picks the largest world x; measured on those two cases only, the real IVP rule (how the mindist picks its first synapse on a flat face) is still unknown. With it the barrel's first impact comes out at -66, 173, 87 u/s and -364, 0, -204 deg/s against the game's -60, 159, 105 and -394, -11, -206, and its trace error drops from 196 u to 44 u.
 
+Props integrate rotation with the gyroscopic term (`ApplyGyroscopicForce`): the game's barrel, inertia 3.41 / 3.41 / 1.31, precesses in flight (body axes angular velocity -394, -11, -206 to -336, -146, -190 deg/s over 12 ticks with no contact), ours now follows it to within 6 deg/s; the can's rest orientation error drops from 179 to 46 degrees.
+
 Effect: flat crate within tolerance (rest 1.2 u), tilted crate first impact right but the second one (3 ticks later) and the tumble after it differ (rest 4.3 u, 4.3 degrees). Open: after the second corner impact the game's crate leaves the floor at +45.9 u/s while ours still falls at -10; the game's impulse per impact is 2 to 8 times what the point's effective mass gives, so IVP's push (`test_push_core`, `calc_correct_virt_mass`, `get_relative_speed_vector`) is not the plain point impulse yet; the barrel and the can inherit the same gap.
 
 ## Solver settings do not close the gap (measured)

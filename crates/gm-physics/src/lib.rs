@@ -479,6 +479,7 @@ impl World {
             settings.MotionQuality = JPC_MOTION_QUALITY_LINEAR_CAST;
             settings.Friction = desc.surface.friction * desc.surface.friction;
             settings.Restitution = 0.5 * (desc.surface.elasticity + self.world_elasticity);
+            settings.ApplyGyroscopicForce = true;
             settings.LinearDamping = desc.linear_damping;
             settings.AngularDamping = desc.angular_damping;
             settings.GravityFactor = self.gravity_factor();
