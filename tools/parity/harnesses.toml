@@ -27,6 +27,16 @@ pos = 0.05
 vel = 0.5
 
 [[harness]]
+name = "move_walk_disp"
+scenario = "move/walk_disp"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
 name = "move_run_stop"
 scenario = "move/run_stop"
 compare = "trajectory"

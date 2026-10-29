@@ -70,3 +70,7 @@ Measured since: `move_fall_200` (the 140 u/s rule holds when landing from 200 u)
 `move_air_left`, `move_air_right`, `move_air_alt` (alternating strafes through a whole jump) and `move_airstrafe` pin the air friction rule; `move_stairs_down` recorded.
 
 Open: slopes, ladders, water, moving ground.
+
+## Displacements
+
+The trace stops on displacement surfaces, not on the brush under them (the brush below gm_construct's ground at 600, -500 tops out at -152 and carries contents 0x100; the displacement holds the player at -147.969). `gm_collision` sweeps the player box against displacement triangles after the brush pass, one-sided, with the same 1/32 epsilon. Measured: `move_walk_disp` (walk +x from 600, -500 over the displacement and up the 4 u step onto the brush at 823) is bit-exact against the server, 160 ticks.

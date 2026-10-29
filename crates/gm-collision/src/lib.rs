@@ -42,7 +42,23 @@ struct Brush {
     contents: i32,
 }
 
+struct DispTri {
+    v: [Vec3; 3],
+    normal: Vec3,
+    dist: f32,
+}
+
+/// One displacement surface: its triangles and bounds. The engine traces displacements as
+/// one-sided triangle soup on top of the brushes (the brush under a displacement is not solid
+/// to the trace; gm_construct's ground at 600, -500 is 4 u above its brush).
+struct Disp {
+    mins: Vec3,
+    maxs: Vec3,
+    tris: Vec<DispTri>,
+}
+
 pub struct World {
+    disps: Vec<Disp>,
     planes: Vec<Plane>,
     nodes: Vec<Node>,
     leafs: Vec<Leaf>,
@@ -90,6 +106,7 @@ struct Sweep {
 impl World {
     pub fn from_bsp(bsp: &Bsp<'_>) -> Self {
         World {
+            disps: displacements(bsp),
             planes: bsp
                 .planes
                 .iter()
@@ -156,6 +173,7 @@ impl World {
         }
         let leaf_brushes: Vec<u16> = (0..brushes.len() as u16).collect();
         World {
+            disps: Vec::new(),
             planes,
             nodes: Vec::new(),
             leafs: vec![Leaf {
@@ -238,6 +256,9 @@ impl World {
         }
         let (s0, e0) = (sw.start, sw.end);
         self.trace_node(&mut sw, self.head_node, 0.0, 1.0, s0, e0);
+        if sw.mask & contents::SOLID != 0 {
+            self.trace_disps(&mut sw);
+        }
         let end = if sw.fraction >= 1.0 {
             end
         } else {
@@ -251,6 +272,107 @@ impl World {
             start_solid: sw.start_solid,
             all_solid: sw.all_solid,
             contents: sw.contents,
+        }
+    }
+
+    fn trace_disps(&self, sw: &mut Sweep) {
+        let pad = sw.extents + Vec3::splat(DIST_EPSILON);
+        let lo = sw.start.min(sw.end) - pad;
+        let hi = sw.start.max(sw.end) + pad;
+        for d in &self.disps {
+            if d.mins.cmpgt(hi).any() || d.maxs.cmplt(lo).any() {
+                continue;
+            }
+            for t in &d.tris {
+                let (tlo, thi) = (
+                    t.v[0].min(t.v[1]).min(t.v[2]),
+                    t.v[0].max(t.v[1]).max(t.v[2]),
+                );
+                if tlo.cmpgt(hi).any() || thi.cmplt(lo).any() {
+                    continue;
+                }
+                self.trace_tri(sw, t);
+            }
+        }
+    }
+
+    /// Sweep against one triangle as a one-sided bevelled convex: its plane, the axis planes of
+    /// its bounds and the edge-by-axis bevels, each pushed out by the box extents.
+    fn trace_tri(&self, sw: &mut Sweep, t: &DispTri) {
+        let expand = |n: Vec3| {
+            if sw.is_point {
+                0.0
+            } else {
+                n.abs().dot(sw.extents)
+            }
+        };
+        let dist = t.dist + expand(t.normal);
+        let d1 = t.normal.dot(sw.start) - dist;
+        let d2 = t.normal.dot(sw.end) - dist;
+        if d1 <= 0.0 || d2 >= d1 {
+            return;
+        }
+        let mut enter_frac = (d1 - DIST_EPSILON) / (d1 - d2);
+        let mut leave_frac = 1.0f32;
+        let mut clip_plane = (t.normal, dist);
+        let mut clip = |normal: Vec3, plane_dist: f32| -> bool {
+            let dist = plane_dist + expand(normal);
+            let d1 = normal.dot(sw.start) - dist;
+            let d2 = normal.dot(sw.end) - dist;
+            if d1 > 0.0 && d2 >= d1 {
+                return false;
+            }
+            if d1 <= 0.0 && d2 <= 0.0 {
+                return true;
+            }
+            if d1 > d2 {
+                let f = (d1 - DIST_EPSILON) / (d1 - d2);
+                if f > enter_frac {
+                    enter_frac = f;
+                    clip_plane = (normal, dist);
+                }
+            } else {
+                let f = (d1 + DIST_EPSILON) / (d1 - d2);
+                if f < leave_frac {
+                    leave_frac = f;
+                }
+            }
+            true
+        };
+        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            let hi = t.v.iter().map(|v| v.dot(axis)).fold(f32::MIN, f32::max);
+            let lo = t.v.iter().map(|v| v.dot(axis)).fold(f32::MAX, f32::min);
+            if !clip(axis, hi) || !clip(-axis, -lo) {
+                return;
+            }
+        }
+        for i in 0..3 {
+            let (a, b, c) = (t.v[i], t.v[(i + 1) % 3], t.v[(i + 2) % 3]);
+            let e = b - a;
+            let mut bevels = [Vec3::X, Vec3::Y, Vec3::Z].map(|axis| e.cross(axis));
+            bevels[0] = if bevels[0].length_squared() < 1e-6 {
+                e.cross(t.normal)
+            } else {
+                bevels[0]
+            };
+            for m in [bevels[0], bevels[1], bevels[2], e.cross(t.normal)] {
+                if m.length_squared() < 1e-6 {
+                    continue;
+                }
+                let mut m = m.normalize();
+                if m.dot(c - a) > 0.0 {
+                    m = -m;
+                }
+                if !clip(m, m.dot(a)) {
+                    return;
+                }
+            }
+        }
+        if enter_frac < leave_frac && enter_frac < sw.fraction {
+            sw.fraction = enter_frac.max(0.0);
+            sw.normal = clip_plane.0;
+            sw.plane_dist = clip_plane.1;
+            sw.contents = contents::SOLID;
         }
     }
 
@@ -390,6 +512,56 @@ impl World {
     }
 }
 
+fn displacements(bsp: &Bsp<'_>) -> Vec<Disp> {
+    use gm_formats::bsp::extra::{build_disp_mesh, disp_infos, disp_verts};
+    let (Ok(infos), Ok(verts)) = (disp_infos(bsp), disp_verts(bsp)) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for info in &infos {
+        let Ok(mesh) = build_disp_mesh(bsp, info, &verts) else {
+            continue;
+        };
+        let Some(face) = bsp.faces.get(info.map_face as usize) else {
+            continue;
+        };
+        let Some(plane) = bsp.planes.get(face.plane_num as usize) else {
+            continue;
+        };
+        let mut up = Vec3::from(plane.normal);
+        if face.side != 0 {
+            up = -up;
+        }
+        let (mut mins, mut maxs) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        let mut tris = Vec::new();
+        for t in mesh.indices.as_chunks::<3>().0 {
+            let mut v = t.map(|i| Vec3::from(mesh.positions[i as usize]));
+            let mut normal = (v[1] - v[0]).cross(v[2] - v[0]);
+            if normal.length_squared() < 1e-8 {
+                continue;
+            }
+            if normal.dot(up) < 0.0 {
+                v.swap(1, 2);
+                normal = -normal;
+            }
+            let normal = normal.normalize();
+            for p in v {
+                mins = mins.min(p);
+                maxs = maxs.max(p);
+            }
+            tris.push(DispTri {
+                v,
+                normal,
+                dist: normal.dot(v[0]),
+            });
+        }
+        if !tris.is_empty() {
+            out.push(Disp { mins, maxs, tris });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,6 +595,7 @@ mod tests {
             },
         ];
         World {
+            disps: Vec::new(),
             planes,
             // single node splitting on z=0: above is leaf 0 (empty), below leaf 1 (the brush)
             nodes: vec![Node {
