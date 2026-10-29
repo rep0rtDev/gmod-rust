@@ -44,6 +44,18 @@ extern "C" {
         max_d: f32,
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
+    fn gmp_add_hinge_constraint(
+        system: *mut JPC_PhysicsSystem,
+        id1: u32,
+        id2: u32,
+        px: f32,
+        py: f32,
+        pz: f32,
+        ax: f32,
+        ay: f32,
+        az: f32,
+    ) -> *mut std::ffi::c_void;
+    fn gmp_remove_body(system: *mut JPC_PhysicsSystem, id: u32);
     fn gmp_install_impact_listener(system: *mut JPC_PhysicsSystem);
     fn gmp_set_surface(
         system: *mut JPC_PhysicsSystem,
@@ -683,6 +695,39 @@ impl World {
             )
         };
         (!c.is_null()).then_some(ConstraintHandle(c))
+    }
+
+    /// Hinge (`phys_hinge`) through a world space point along a world axis (Source units).
+    pub fn hinge(
+        &mut self,
+        a: BodyHandle,
+        b: BodyHandle,
+        point: Vec3,
+        axis: Vec3,
+    ) -> Option<ConstraintHandle> {
+        let p = to_jolt(point);
+        let ax = to_jolt(axis + Vec3::ZERO) - to_jolt(Vec3::ZERO);
+        let c = unsafe {
+            gmp_add_hinge_constraint(
+                self.system.as_raw(),
+                a.0,
+                b.0,
+                p.x,
+                p.y,
+                p.z,
+                ax.x,
+                ax.y,
+                ax.z,
+            )
+        };
+        (!c.is_null()).then_some(ConstraintHandle(c))
+    }
+
+    /// Removes a prop from the world (constraints attached to it must be removed first).
+    pub fn remove_body(&mut self, body: BodyHandle) {
+        self.release(body);
+        self.frozen.remove(&body.0);
+        unsafe { gmp_remove_body(self.system.as_raw(), body.0) }
     }
 
     pub fn remove_constraint(&mut self, c: ConstraintHandle) {

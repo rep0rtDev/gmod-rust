@@ -89,6 +89,32 @@ void *gmp_add_distance_constraint(void *system, unsigned int id1, unsigned int i
 	return c;
 }
 
+// hinge (phys_hinge): world space point and axis in Jolt metres/axes
+void *gmp_add_hinge_constraint(void *system, unsigned int id1, unsigned int id2, float px, float py, float pz,
+                               float ax, float ay, float az) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyID ids[2] = { JPH::BodyID(id1), JPH::BodyID(id2) };
+	JPH::BodyLockMultiWrite lock(sys->GetBodyLockInterface(), ids, 2);
+	JPH::Body *a = lock.GetBody(0), *b = lock.GetBody(1);
+	if (!a || !b) return nullptr;
+	JPH::HingeConstraintSettings s;
+	s.mSpace = JPH::EConstraintSpace::WorldSpace;
+	s.mPoint1 = s.mPoint2 = JPH::RVec3(px, py, pz);
+	JPH::Vec3 axis = JPH::Vec3(ax, ay, az).Normalized();
+	s.mHingeAxis1 = s.mHingeAxis2 = axis;
+	s.mNormalAxis1 = s.mNormalAxis2 = axis.GetNormalizedPerpendicular();
+	JPH::Constraint *c = s.Create(*a, *b);
+	sys->AddConstraint(c);
+	return c;
+}
+
+void gmp_remove_body(void *system, unsigned int id) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyID bid(id);
+	sys->GetBodyInterface().RemoveBody(bid);
+	sys->GetBodyInterface().DestroyBody(bid);
+}
+
 void gmp_remove_constraint(void *system, void *constraint) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
 	sys->RemoveConstraint(reinterpret_cast<JPH::Constraint *>(constraint));
