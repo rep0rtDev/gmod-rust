@@ -192,6 +192,7 @@ public:
 	}
 	float static_mass_factor = 100000.0f;
 	float step_dt = 0.015f;
+	float gravity = 9.81f; // m/s^2, the push step's resting friction comes from the weight only
 	float persisted_threshold = 0.3f; // m/s, resting contacts stay with Jolt
 	// size of one push as a fraction of the point's full stopping impulse; measured on the tilted
 	// crate's corner impact: 0.03 to 0.075 reproduce the game's impulse within 0.5 %, 0.1 misses by 4.5 %
@@ -199,6 +200,10 @@ public:
 	float push_fraction = getenv("GMP_PUSH_FRACTION") ? (float)atof(getenv("GMP_PUSH_FRACTION")) : 0.075f;
 	bool debug = getenv("GMP_IMPACT_DEBUG") != nullptr;
 	std::unordered_map<JPH::uint64, std::vector<size_t>> contact_points; // pair -> hull vertex indices that already impacted
+	// resting contact anchors: a body pushed while at rest keeps its tangential velocity in the
+	// push step (no friction) and is caught at its leading edge the step after
+	struct RestState { float vt_prev = 0.0f; int phase = 0; };
+	std::unordered_map<JPH::uint64, RestState> rest;
 	// the game integrates up to the moment of impact with the old velocity and the rest of the
 	// step with the new one; Jolt integrates the whole step with the new one, so after the step
 	// every impacted body is moved by (v_old - v_new) * t_impact (and turned likewise)
@@ -239,6 +244,7 @@ public:
 
 	void OnContactRemoved(const JPH::SubShapeIDPair &pair) override {
 		contact_points.erase((JPH::uint64(pair.GetBody1ID().GetIndexAndSequenceNumber()) << 32) | pair.GetBody2ID().GetIndexAndSequenceNumber());
+		rest.erase((JPH::uint64(pair.GetBody1ID().GetIndexAndSequenceNumber()) << 32) | pair.GetBody2ID().GetIndexAndSequenceNumber());
 	}
 
 	void OnContactPersisted(const JPH::Body &b1, const JPH::Body &b2, const JPH::ContactManifold &m, JPH::ContactSettings &s) override {
@@ -309,7 +315,48 @@ public:
 		// would give it the sliding barrel's yaw spin and sideways kick
 		int touching = 0;
 		for (const Pt &pt : pts) if (pt.d <= 0.001f) ++touching;
-		if (touching >= 3) return;
+		if (touching >= 3) {
+			const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
+			const JPH::Body &other = b1.IsDynamic() ? b2 : b1;
+			JPH::uint64 key = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
+			RestState &rs = rest[key];
+			JPH::Vec3 v = dyn.GetLinearVelocity();
+			JPH::Vec3 vt_vec = v - n * v.Dot(n);
+			float vt = vt_vec.Length();
+			if (rs.phase == 1 && !other.IsDynamic() && vt > 0.05f) {
+				// inelastic catch at the leading edge: the touching vertex furthest along the slide
+				JPH::Vec3 dir = vt_vec / vt;
+				const Pt *lead = nullptr;
+				float best = -1e30f;
+				for (const Pt &pt : pts) {
+					if (pt.d > 0.001f) continue;
+					float a = JPH::Vec3(pt.p - dyn.GetCenterOfMassPosition()).Dot(dir);
+					if (a > best) { best = a; lead = &pt; }
+				}
+				if (lead) {
+					JPH::Vec3 r = JPH::Vec3(lead->p - dyn.GetCenterOfMassPosition());
+					JPH::Mat44 rx = JPH::Mat44::sCrossProduct(r);
+					JPH::Mat44 k = JPH::Mat44::sScale(dyn.GetMotionProperties()->GetInverseMass()) - rx * dyn.GetInverseInertia() * rx;
+					JPH::Vec3 j = k.Inversed3x3().Multiply3x3(-point_velocity(dyn, lead->p));
+					push(dyn, lead->p, j);
+					if (debug) fprintf(stderr, "rest catch r=(%.4f %.4f %.4f) j=(%.3f %.3f %.3f) v=(%.3f %.3f %.3f)\n", (double)r.GetX(), (double)r.GetY(), (double)r.GetZ(), (double)j.GetX(), (double)j.GetY(), (double)j.GetZ(), (double)dyn.GetLinearVelocity().GetX(), (double)dyn.GetLinearVelocity().GetY(), (double)dyn.GetLinearVelocity().GetZ());
+				}
+				s.mCombinedFriction = 0.0f;
+				rs.phase = 2;
+			} else if (rs.phase == 0 && rs.vt_prev < 0.02f && vt > 0.1f) {
+				// the game's friction in the push step is Coulomb on the weight alone (the drum
+				// loses 6-9 u/s whether the push is 20 or 334 u/s), not on the impulsive normal part
+				float g_dt = gravity * step_dt;
+				JPH::RVec3 c = dyn.GetCenterOfMassPosition();
+				float vn_in = std::max(-(point_velocity(b1, c) - point_velocity(b2, c)).Dot(n), 0.0f);
+				s.mCombinedFriction = friction * g_dt / (vn_in + g_dt);
+				rs.phase = 1;
+			} else if (vt < 0.02f) {
+				rs.phase = 0;
+			}
+			rs.vt_prev = vt;
+			return;
+		}
 		const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
 		JPH::Vec3 lv0 = dyn.GetLinearVelocity(), av0 = dyn.GetAngularVelocity();
 		float t_impact = -1.0f;
@@ -530,7 +577,7 @@ void gmp_apply_impact_offsets(void *system) {
 }
 
 void gmp_set_impact_step(void *system, float dt) {
-	if (auto *l = listener_of(system)) l->step_dt = dt;
+	if (auto *l = listener_of(system)) { l->step_dt = dt; l->gravity = reinterpret_cast<JPH::PhysicsSystem *>(system)->GetGravity().Length(); }
 }
 
 void gmp_set_impact_skip(void *system, unsigned int body_id, int on) {
