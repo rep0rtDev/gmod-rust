@@ -156,3 +156,71 @@ fn hl2_vtf_mips_decode() {
     eprintln!("decoded {decoded} textures: {formats:?}");
     assert!(decoded >= 100);
 }
+
+#[test]
+fn hl2_props_mdl_vvd_vtx_parse() {
+    let Some(dir) = gmod_dir() else {
+        return;
+    };
+    let ar = gm_formats::vpk::Archive::open(dir.join("sourceengine/hl2_misc_dir.vpk")).unwrap();
+    let mut checked = 0;
+    for (k, e) in ar.directory.iter_prefix("models/props_c17") {
+        if !k.ends_with(".mdl") || checked >= 60 {
+            continue;
+        }
+        let stem = k.trim_end_matches(".mdl");
+        let (Some(vvd_e), Some(vtx_e)) = (
+            ar.directory.get(&format!("{stem}.vvd")),
+            ar.directory.get(&format!("{stem}.dx90.vtx")),
+        ) else {
+            continue;
+        };
+        let mdl_bytes = ar.read_entry(e).unwrap();
+        let mdl =
+            gm_formats::mdl::Mdl::parse(&mdl_bytes).unwrap_or_else(|err| panic!("{k}: {err}"));
+        assert!(!mdl.bones.is_empty(), "{k}: no bones");
+        assert!(!mdl.body_parts.is_empty(), "{k}: no body parts");
+        assert!(!mdl.textures.is_empty(), "{k}: no textures");
+        assert!(!mdl.surface_prop.is_empty(), "{k}: no surfaceprop");
+        let vvd = gm_formats::mdl::Vvd::parse(&ar.read_entry(vvd_e).unwrap(), 0)
+            .unwrap_or_else(|err| panic!("{k}: {err}"));
+        assert_eq!(vvd.checksum, mdl.header.checksum, "{k}: vvd checksum");
+        let total: i32 = mdl
+            .body_parts
+            .iter()
+            .flat_map(|b| b.models.iter())
+            .map(|m| m.num_vertices)
+            .sum();
+        assert!(
+            vvd.vertices.len() as i32 >= total,
+            "{k}: {} vvd verts < {total}",
+            vvd.vertices.len()
+        );
+        let vtx = gm_formats::mdl::Vtx::parse(&ar.read_entry(vtx_e).unwrap(), &mdl)
+            .unwrap_or_else(|err| panic!("{k}: {err}"));
+        assert_eq!(vtx.checksum, mdl.header.checksum, "{k}: vtx checksum");
+        let mut tris = 0;
+        for (bi, bp) in vtx.body_parts.iter().enumerate() {
+            for (mi, m) in bp.models.iter().enumerate() {
+                let mdl_model = &mdl.body_parts[bi].models[mi];
+                let base = (mdl_model.vertex_index / 48) as u32;
+                for lod in m.lods.iter().take(1) {
+                    for mesh in &lod.meshes {
+                        assert_eq!(mesh.indices.len() % 3, 0, "{k}: index count");
+                        for &i in &mesh.indices {
+                            assert!(
+                                ((base + i) as usize) < vvd.vertices.len(),
+                                "{k}: index {i} + base {base} out of {}",
+                                vvd.vertices.len()
+                            );
+                        }
+                        tris += mesh.indices.len() / 3;
+                    }
+                }
+            }
+        }
+        assert!(tris > 0, "{k}: no triangles");
+        checked += 1;
+    }
+    assert!(checked >= 20, "checked {checked}");
+}

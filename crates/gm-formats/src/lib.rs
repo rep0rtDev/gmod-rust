@@ -8,6 +8,7 @@
 
 pub mod bsp;
 pub mod keyvalues;
+pub mod mdl;
 pub mod vpk;
 pub mod vtf;
 

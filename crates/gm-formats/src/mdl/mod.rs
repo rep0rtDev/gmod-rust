@@ -1,0 +1,721 @@
+//! Studio models: `.mdl` (header, bones, body parts, textures), `.vvd`
+//! (vertices) and `.vtx` (triangle strips per LOD). Versions 44 to 49, as
+//! shipped with Half-Life 2 and Garry's Mod. Layouts follow the public
+//! "MDL (Source)", "VVD" and "VTX" documentation.
+
+use crate::{FormatError, Reader, Result};
+
+pub const MDL_ID: &[u8; 4] = b"IDST";
+pub const VVD_ID: &[u8; 4] = b"IDSV";
+
+fn vec3(r: &mut Reader<'_>) -> Result<[f32; 3]> {
+    Ok([r.f32()?, r.f32()?, r.f32()?])
+}
+
+fn cstr_at(data: &[u8], pos: usize) -> Result<&str> {
+    let mut r = Reader::at(data, pos);
+    r.cstr()
+}
+
+fn offset(base: usize, rel: i32) -> usize {
+    (base as i64 + rel as i64).max(0) as usize
+}
+
+#[derive(Clone, Debug)]
+pub struct Header {
+    pub version: i32,
+    pub checksum: i32,
+    pub name: String,
+    pub length: i32,
+    pub eye_position: [f32; 3],
+    pub illum_position: [f32; 3],
+    pub hull_min: [f32; 3],
+    pub hull_max: [f32; 3],
+    pub view_bbmin: [f32; 3],
+    pub view_bbmax: [f32; 3],
+    pub flags: i32,
+    pub bone_count: i32,
+    pub bone_offset: i32,
+    pub hitbox_set_count: i32,
+    pub hitbox_set_offset: i32,
+    pub local_anim_count: i32,
+    pub local_anim_offset: i32,
+    pub local_seq_count: i32,
+    pub local_seq_offset: i32,
+    pub texture_count: i32,
+    pub texture_offset: i32,
+    pub texture_dir_count: i32,
+    pub texture_dir_offset: i32,
+    pub skin_reference_count: i32,
+    pub skin_family_count: i32,
+    pub skin_reference_offset: i32,
+    pub body_part_count: i32,
+    pub body_part_offset: i32,
+    pub attachment_count: i32,
+    pub attachment_offset: i32,
+    pub surface_prop_offset: i32,
+    pub key_value_offset: i32,
+    pub key_value_count: i32,
+    pub mass: f32,
+    pub contents: i32,
+    pub include_model_count: i32,
+    pub include_model_offset: i32,
+    pub root_lod: u8,
+    pub allowed_root_lods: u8,
+}
+
+impl Header {
+    pub const SIZE: usize = 408;
+
+    pub fn parse(data: &[u8]) -> Result<Self> {
+        let mut r = Reader::new(data);
+        let id = r.array::<4>()?;
+        if &id != MDL_ID {
+            return Err(FormatError::BadMagic {
+                expected: "IDST",
+                found: id.to_vec(),
+            });
+        }
+        let version = r.i32()?;
+        if !(44..=49).contains(&version) {
+            return Err(FormatError::UnsupportedVersion {
+                what: "MDL",
+                version: version as u32,
+            });
+        }
+        let checksum = r.i32()?;
+        let name_bytes = r.bytes(64)?;
+        let name = String::from_utf8_lossy(name_bytes.split(|&b| b == 0).next().unwrap_or(&[]))
+            .into_owned();
+        let length = r.i32()?;
+        let eye_position = vec3(&mut r)?;
+        let illum_position = vec3(&mut r)?;
+        let hull_min = vec3(&mut r)?;
+        let hull_max = vec3(&mut r)?;
+        let view_bbmin = vec3(&mut r)?;
+        let view_bbmax = vec3(&mut r)?;
+        let flags = r.i32()?;
+        let bone_count = r.i32()?;
+        let bone_offset = r.i32()?;
+        r.skip(8)?; // bone controllers
+        let hitbox_set_count = r.i32()?;
+        let hitbox_set_offset = r.i32()?;
+        let local_anim_count = r.i32()?;
+        let local_anim_offset = r.i32()?;
+        let local_seq_count = r.i32()?;
+        let local_seq_offset = r.i32()?;
+        r.skip(8)?; // activity list version, events indexed
+        let texture_count = r.i32()?;
+        let texture_offset = r.i32()?;
+        let texture_dir_count = r.i32()?;
+        let texture_dir_offset = r.i32()?;
+        let skin_reference_count = r.i32()?;
+        let skin_family_count = r.i32()?;
+        let skin_reference_offset = r.i32()?;
+        let body_part_count = r.i32()?;
+        let body_part_offset = r.i32()?;
+        let attachment_count = r.i32()?;
+        let attachment_offset = r.i32()?;
+        r.skip(12)?; // local nodes
+        r.skip(8)?; // flex descs
+        r.skip(8)?; // flex controllers
+        r.skip(8)?; // flex rules
+        r.skip(8)?; // ik chains
+        r.skip(8)?; // mouths
+        r.skip(8)?; // local pose params
+        let surface_prop_offset = r.i32()?;
+        let key_value_offset = r.i32()?;
+        let key_value_count = r.i32()?;
+        r.skip(8)?; // ik locks
+        let mass = r.f32()?;
+        let contents = r.i32()?;
+        let include_model_count = r.i32()?;
+        let include_model_offset = r.i32()?;
+        r.skip(4)?; // virtual model ptr
+        r.skip(16)?; // anim blocks
+        r.skip(4)?; // bone table name index
+        r.skip(8)?; // vertex base, offset2
+        r.skip(1)?; // directional dot product
+        let root_lod = r.u8()?;
+        let allowed_root_lods = r.u8()?;
+        Ok(Header {
+            version,
+            checksum,
+            name,
+            length,
+            eye_position,
+            illum_position,
+            hull_min,
+            hull_max,
+            view_bbmin,
+            view_bbmax,
+            flags,
+            bone_count,
+            bone_offset,
+            hitbox_set_count,
+            hitbox_set_offset,
+            local_anim_count,
+            local_anim_offset,
+            local_seq_count,
+            local_seq_offset,
+            texture_count,
+            texture_offset,
+            texture_dir_count,
+            texture_dir_offset,
+            skin_reference_count,
+            skin_family_count,
+            skin_reference_offset,
+            body_part_count,
+            body_part_offset,
+            attachment_count,
+            attachment_offset,
+            surface_prop_offset,
+            key_value_offset,
+            key_value_count,
+            mass,
+            contents,
+            include_model_count,
+            include_model_offset,
+            root_lod,
+            allowed_root_lods,
+        })
+    }
+
+    pub fn is_static_prop(&self) -> bool {
+        self.flags & 0x10 != 0
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Bone {
+    pub name: String,
+    pub parent: i32,
+    pub pos: [f32; 3],
+    pub quat: [f32; 4],
+    pub rot: [f32; 3],
+    /// Row-major 3x4 pose-to-bone matrix.
+    pub pose_to_bone: [[f32; 4]; 3],
+    pub flags: i32,
+    pub physics_bone: i32,
+    pub surface_prop: String,
+    pub contents: i32,
+}
+
+#[derive(Clone, Debug)]
+pub struct Mesh {
+    pub material: i32,
+    pub model_index: i32,
+    pub num_vertices: i32,
+    pub vertex_offset: i32,
+    pub mesh_id: i32,
+    pub center: [f32; 3],
+}
+
+#[derive(Clone, Debug)]
+pub struct Model {
+    pub name: String,
+    pub bounding_radius: f32,
+    pub meshes: Vec<Mesh>,
+    pub num_vertices: i32,
+    /// Byte offset of this model's first vertex in the VVD vertex block.
+    pub vertex_index: i32,
+}
+
+#[derive(Clone, Debug)]
+pub struct BodyPart {
+    pub name: String,
+    pub base: i32,
+    pub models: Vec<Model>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Texture {
+    pub name: String,
+    pub flags: i32,
+}
+
+/// Parsed `.mdl`.
+#[derive(Clone, Debug)]
+pub struct Mdl {
+    pub header: Header,
+    pub bones: Vec<Bone>,
+    pub body_parts: Vec<BodyPart>,
+    pub textures: Vec<Texture>,
+    pub texture_dirs: Vec<String>,
+    /// `skins[family][reference]` = texture index.
+    pub skins: Vec<Vec<i16>>,
+    pub surface_prop: String,
+    pub key_values: String,
+}
+
+impl Mdl {
+    pub fn parse(data: &[u8]) -> Result<Self> {
+        let header = Header::parse(data)?;
+        let mut bones = Vec::with_capacity(header.bone_count.max(0) as usize);
+        for i in 0..header.bone_count.max(0) as usize {
+            let base = header.bone_offset as usize + i * 216;
+            let mut r = Reader::at(data, base);
+            let name_idx = r.i32()?;
+            let parent = r.i32()?;
+            r.skip(24)?; // bone controllers
+            let pos = vec3(&mut r)?;
+            let quat = [r.f32()?, r.f32()?, r.f32()?, r.f32()?];
+            let rot = vec3(&mut r)?;
+            r.skip(24)?; // pos/rot scale
+            let mut m = [[0f32; 4]; 3];
+            for row in m.iter_mut() {
+                for v in row.iter_mut() {
+                    *v = r.f32()?;
+                }
+            }
+            r.skip(16)?; // alignment quat
+            let flags = r.i32()?;
+            r.skip(8)?; // proc type/index
+            let physics_bone = r.i32()?;
+            let sp_idx = r.i32()?;
+            let contents = r.i32()?;
+            bones.push(Bone {
+                name: cstr_at(data, offset(base, name_idx))?.to_string(),
+                parent,
+                pos,
+                quat,
+                rot,
+                pose_to_bone: m,
+                flags,
+                physics_bone,
+                surface_prop: if sp_idx != 0 {
+                    cstr_at(data, offset(base, sp_idx))?.to_string()
+                } else {
+                    String::new()
+                },
+                contents,
+            });
+        }
+
+        let mut body_parts = Vec::new();
+        for i in 0..header.body_part_count.max(0) as usize {
+            let base = header.body_part_offset as usize + i * 16;
+            let mut r = Reader::at(data, base);
+            let name_idx = r.i32()?;
+            let num_models = r.i32()?;
+            let bp_base = r.i32()?;
+            let model_index = r.i32()?;
+            let mut models = Vec::new();
+            for m in 0..num_models.max(0) as usize {
+                let mbase = offset(base, model_index) + m * 148;
+                let mut mr = Reader::at(data, mbase);
+                let name_bytes = mr.bytes(64)?;
+                let name =
+                    String::from_utf8_lossy(name_bytes.split(|&b| b == 0).next().unwrap_or(&[]))
+                        .into_owned();
+                mr.skip(4)?; // type
+                let bounding_radius = mr.f32()?;
+                let num_meshes = mr.i32()?;
+                let mesh_index = mr.i32()?;
+                let num_vertices = mr.i32()?;
+                let vertex_index = mr.i32()?;
+                let mut meshes = Vec::new();
+                for k in 0..num_meshes.max(0) as usize {
+                    let kbase = offset(mbase, mesh_index) + k * 116;
+                    let mut kr = Reader::at(data, kbase);
+                    let material = kr.i32()?;
+                    let model_index = kr.i32()?;
+                    let num_vertices = kr.i32()?;
+                    let vertex_offset = kr.i32()?;
+                    kr.skip(8)?; // flexes
+                    kr.skip(8)?; // material type/param
+                    let mesh_id = kr.i32()?;
+                    let center = vec3(&mut kr)?;
+                    meshes.push(Mesh {
+                        material,
+                        model_index,
+                        num_vertices,
+                        vertex_offset,
+                        mesh_id,
+                        center,
+                    });
+                }
+                models.push(Model {
+                    name,
+                    bounding_radius,
+                    meshes,
+                    num_vertices,
+                    vertex_index,
+                });
+            }
+            body_parts.push(BodyPart {
+                name: cstr_at(data, offset(base, name_idx))?.to_string(),
+                base: bp_base,
+                models,
+            });
+        }
+
+        let mut textures = Vec::new();
+        for i in 0..header.texture_count.max(0) as usize {
+            let base = header.texture_offset as usize + i * 64;
+            let mut r = Reader::at(data, base);
+            let name_idx = r.i32()?;
+            let flags = r.i32()?;
+            textures.push(Texture {
+                name: cstr_at(data, offset(base, name_idx))?
+                    .replace('\\', "/")
+                    .to_ascii_lowercase(),
+                flags,
+            });
+        }
+        let mut texture_dirs = Vec::new();
+        for i in 0..header.texture_dir_count.max(0) as usize {
+            let mut r = Reader::at(data, header.texture_dir_offset as usize + i * 4);
+            let off = r.i32()?;
+            texture_dirs.push(
+                cstr_at(data, off as usize)?
+                    .replace('\\', "/")
+                    .to_ascii_lowercase(),
+            );
+        }
+        let mut skins = Vec::new();
+        let mut r = Reader::at(data, header.skin_reference_offset as usize);
+        for _ in 0..header.skin_family_count.max(0) {
+            let mut fam = Vec::new();
+            for _ in 0..header.skin_reference_count.max(0) {
+                fam.push(r.u16()? as i16);
+            }
+            skins.push(fam);
+        }
+        let surface_prop = if header.surface_prop_offset > 0 {
+            cstr_at(data, header.surface_prop_offset as usize)?.to_string()
+        } else {
+            String::new()
+        };
+        let key_values = if header.key_value_count > 1 {
+            let s = header.key_value_offset as usize;
+            String::from_utf8_lossy(
+                &data[s..(s + header.key_value_count as usize - 1).min(data.len())],
+            )
+            .into_owned()
+        } else {
+            String::new()
+        };
+        Ok(Mdl {
+            header,
+            bones,
+            body_parts,
+            textures,
+            texture_dirs,
+            skins,
+            surface_prop,
+            key_values,
+        })
+    }
+
+    /// Material path candidates for a texture: `materials/<dir><name>.vmt` for each directory.
+    pub fn material_paths(&self, texture: usize) -> Vec<String> {
+        let Some(t) = self.textures.get(texture) else {
+            return Vec::new();
+        };
+        self.texture_dirs
+            .iter()
+            .map(|d| {
+                let d = d.trim_matches('/');
+                if d.is_empty() {
+                    format!("materials/{}.vmt", t.name)
+                } else {
+                    format!("materials/{d}/{}.vmt", t.name)
+                }
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Vertex {
+    pub weights: [f32; 3],
+    pub bones: [u8; 3],
+    pub num_bones: u8,
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
+}
+
+/// Parsed `.vvd` with fixups applied for the root LOD.
+#[derive(Clone, Debug)]
+pub struct Vvd {
+    pub checksum: i32,
+    pub num_lods: i32,
+    pub lod_vertex_counts: [i32; 8],
+    pub vertices: Vec<Vertex>,
+    pub tangents: Vec<[f32; 4]>,
+}
+
+impl Vvd {
+    pub fn parse(data: &[u8], lod: usize) -> Result<Self> {
+        let mut r = Reader::new(data);
+        let id = r.array::<4>()?;
+        if &id != VVD_ID {
+            return Err(FormatError::BadMagic {
+                expected: "IDSV",
+                found: id.to_vec(),
+            });
+        }
+        let version = r.i32()?;
+        if version != 4 {
+            return Err(FormatError::UnsupportedVersion {
+                what: "VVD",
+                version: version as u32,
+            });
+        }
+        let checksum = r.i32()?;
+        let num_lods = r.i32()?;
+        let mut lod_vertex_counts = [0i32; 8];
+        for c in lod_vertex_counts.iter_mut() {
+            *c = r.i32()?;
+        }
+        let num_fixups = r.i32()?;
+        let fixup_start = r.i32()? as usize;
+        let vertex_start = r.i32()? as usize;
+        let tangent_start = r.i32()? as usize;
+        let total = lod_vertex_counts[0].max(0) as usize;
+        let read_vertex = |i: usize| -> Result<Vertex> {
+            let mut vr = Reader::at(data, vertex_start + i * 48);
+            let weights = [vr.f32()?, vr.f32()?, vr.f32()?];
+            let bones = vr.array::<3>()?;
+            let num_bones = vr.u8()?;
+            let position = vec3(&mut vr)?;
+            let normal = vec3(&mut vr)?;
+            let uv = [vr.f32()?, vr.f32()?];
+            Ok(Vertex {
+                weights,
+                bones,
+                num_bones,
+                position,
+                normal,
+                uv,
+            })
+        };
+        let read_tangent = |i: usize| -> Result<[f32; 4]> {
+            let mut tr = Reader::at(data, tangent_start + i * 16);
+            Ok([tr.f32()?, tr.f32()?, tr.f32()?, tr.f32()?])
+        };
+        let has_tangents = tangent_start != 0 && tangent_start + total * 16 <= data.len();
+        let mut vertices = Vec::new();
+        let mut tangents = Vec::new();
+        if num_fixups > 0 {
+            let mut fr = Reader::at(data, fixup_start);
+            for _ in 0..num_fixups {
+                let f_lod = fr.i32()?;
+                let src = fr.i32()? as usize;
+                let n = fr.i32()? as usize;
+                if f_lod < lod as i32 {
+                    continue;
+                }
+                for i in src..src + n {
+                    vertices.push(read_vertex(i)?);
+                    if has_tangents {
+                        tangents.push(read_tangent(i)?);
+                    }
+                }
+            }
+        } else {
+            let n = lod_vertex_counts.get(lod).copied().unwrap_or(0).max(0) as usize;
+            for i in 0..n {
+                vertices.push(read_vertex(i)?);
+                if has_tangents {
+                    tangents.push(read_tangent(i)?);
+                }
+            }
+        }
+        Ok(Vvd {
+            checksum,
+            num_lods,
+            lod_vertex_counts,
+            vertices,
+            tangents,
+        })
+    }
+}
+
+/// One drawable mesh for one LOD: indices into the VVD vertex list (after fixups).
+#[derive(Clone, Debug, Default)]
+pub struct VtxMesh {
+    pub flags: u8,
+    /// Triangle list; each index is `vertex_index` into `Vvd::vertices` for the
+    /// owning model (mesh vertex offset and model vertex base already applied).
+    pub indices: Vec<u32>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct VtxLod {
+    pub switch_point: f32,
+    pub meshes: Vec<VtxMesh>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct VtxModel {
+    pub lods: Vec<VtxLod>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct VtxBodyPart {
+    pub models: Vec<VtxModel>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Vtx {
+    pub version: i32,
+    pub checksum: i32,
+    pub num_lods: i32,
+    pub body_parts: Vec<VtxBodyPart>,
+}
+
+impl Vtx {
+    /// `mdl` is needed to resolve each mesh's vertex offset into the shared VVD list.
+    pub fn parse(data: &[u8], mdl: &Mdl) -> Result<Self> {
+        let mut r = Reader::new(data);
+        let version = r.i32()?;
+        if version != 7 {
+            return Err(FormatError::UnsupportedVersion {
+                what: "VTX",
+                version: version as u32,
+            });
+        }
+        r.skip(4)?; // vert cache size
+        r.skip(4)?; // max bones per strip, per tri
+        r.skip(4)?; // max bones per vert
+        let checksum = r.i32()?;
+        let num_lods = r.i32()?;
+        r.skip(4)?; // material replacement list offset
+        let num_body_parts = r.i32()?;
+        let body_part_offset = r.i32()?;
+        let v49 = mdl.header.version >= 49;
+        let strip_group_size = if v49 { 33 } else { 25 };
+        let strip_size = if v49 { 35 } else { 27 };
+
+        let mut body_parts = Vec::new();
+        for bp in 0..num_body_parts.max(0) as usize {
+            let bp_base = body_part_offset as usize + bp * 8;
+            let mut br = Reader::at(data, bp_base);
+            let num_models = br.i32()?;
+            let model_offset = br.i32()?;
+            let mdl_bp = mdl.body_parts.get(bp);
+            let mut models = Vec::new();
+            for m in 0..num_models.max(0) as usize {
+                let m_base = offset(bp_base, model_offset) + m * 8;
+                let mut mr = Reader::at(data, m_base);
+                let num_lods_m = mr.i32()?;
+                let lod_offset = mr.i32()?;
+                let mdl_model = mdl_bp.and_then(|b| b.models.get(m));
+                let mut lods = Vec::new();
+                for l in 0..num_lods_m.max(0) as usize {
+                    let l_base = offset(m_base, lod_offset) + l * 12;
+                    let mut lr = Reader::at(data, l_base);
+                    let num_meshes = lr.i32()?;
+                    let mesh_offset = lr.i32()?;
+                    let switch_point = lr.f32()?;
+                    let mut meshes = Vec::new();
+                    for k in 0..num_meshes.max(0) as usize {
+                        let k_base = offset(l_base, mesh_offset) + k * 9;
+                        let mut kr = Reader::at(data, k_base);
+                        let num_sg = kr.i32()?;
+                        let sg_offset = kr.i32()?;
+                        let flags = kr.u8()?;
+                        let mesh_vertex_base = mdl_model
+                            .and_then(|mm| mm.meshes.get(k))
+                            .map(|me| me.vertex_offset)
+                            .unwrap_or(0)
+                            .max(0) as u32;
+                        let mut indices = Vec::new();
+                        for s in 0..num_sg.max(0) as usize {
+                            let s_base = offset(k_base, sg_offset) + s * strip_group_size;
+                            let mut sr = Reader::at(data, s_base);
+                            let num_verts = sr.i32()?;
+                            let vert_offset = sr.i32()?;
+                            let _num_indices = sr.i32()?;
+                            let index_offset = sr.i32()?;
+                            let num_strips = sr.i32()?;
+                            let strip_offset = sr.i32()?;
+                            let _sg_flags = sr.u8()?;
+                            // vertex table: orig mesh vertex id per strip-group vertex
+                            let mut orig = Vec::with_capacity(num_verts.max(0) as usize);
+                            for v in 0..num_verts.max(0) as usize {
+                                let mut vr = Reader::at(data, offset(s_base, vert_offset) + v * 9);
+                                vr.skip(4)?; // bone weight indices, num bones
+                                orig.push(vr.u16()?);
+                            }
+                            let idx_base = offset(s_base, index_offset);
+                            for st in 0..num_strips.max(0) as usize {
+                                let mut tr = Reader::at(
+                                    data,
+                                    offset(s_base, strip_offset) + st * strip_size,
+                                );
+                                let n_idx = tr.i32()?;
+                                let i_off = tr.i32()?;
+                                tr.skip(8)?; // num verts, vert offset
+                                tr.skip(2)?; // num bones
+                                let s_flags = tr.u8()?;
+                                let is_trilist = s_flags & 0x1 != 0;
+                                let mut ir = Reader::at(data, idx_base + i_off as usize * 2);
+                                let mut strip_idx = Vec::with_capacity(n_idx.max(0) as usize);
+                                for _ in 0..n_idx.max(0) {
+                                    let i = ir.u16()? as usize;
+                                    let o = *orig.get(i).ok_or_else(|| FormatError::Malformed {
+                                        what: "VTX",
+                                        detail: format!(
+                                            "strip index {i} out of {} verts",
+                                            orig.len()
+                                        ),
+                                    })?;
+                                    strip_idx.push(mesh_vertex_base + o as u32);
+                                }
+                                if is_trilist || s_flags & 0x2 == 0 {
+                                    indices.extend_from_slice(&strip_idx);
+                                } else {
+                                    for (t, w) in strip_idx.windows(3).enumerate() {
+                                        if t % 2 == 0 {
+                                            indices.extend_from_slice(&[w[0], w[1], w[2]]);
+                                        } else {
+                                            indices.extend_from_slice(&[w[1], w[0], w[2]]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        meshes.push(VtxMesh { flags, indices });
+                    }
+                    lods.push(VtxLod {
+                        switch_point,
+                        meshes,
+                    });
+                }
+                models.push(VtxModel { lods });
+            }
+            body_parts.push(VtxBodyPart { models });
+        }
+        Ok(Vtx {
+            version,
+            checksum,
+            num_lods,
+            body_parts,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_wrong_magic_and_version() {
+        assert!(matches!(
+            Header::parse(b"NOPE").unwrap_err(),
+            FormatError::BadMagic { .. }
+        ));
+        let mut v = Vec::new();
+        v.extend_from_slice(MDL_ID);
+        v.extend_from_slice(&10i32.to_le_bytes());
+        v.extend_from_slice(&[0u8; 400]);
+        assert!(matches!(
+            Header::parse(&v).unwrap_err(),
+            FormatError::UnsupportedVersion { .. }
+        ));
+    }
+}
