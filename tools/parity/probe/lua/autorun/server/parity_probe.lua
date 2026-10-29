@@ -199,8 +199,9 @@ SCENARIOS.phys = function(scn, done)
 		return
 	end
 	phys:Wake()
-	if scn.velocity then phys:SetVelocity(Vector(scn.velocity[1], scn.velocity[2], scn.velocity[3])) end
-	if scn.angular then phys:AddAngleVelocity(Vector(scn.angular[1], scn.angular[2], scn.angular[3])) end
+	-- push_tick: the body rests first and gets its velocity at that tick (a push on a resting body)
+	if scn.velocity and not scn.push_tick then phys:SetVelocity(Vector(scn.velocity[1], scn.velocity[2], scn.velocity[3])) end
+	if scn.angular and not scn.push_tick then phys:AddAngleVelocity(Vector(scn.angular[1], scn.angular[2], scn.angular[3])) end
 	local info = {
 		mass = phys:GetMass(),
 		material = phys:GetMaterial(),
@@ -232,6 +233,11 @@ SCENARIOS.phys = function(scn, done)
 	end)
 	hook.Add("Tick", "parity_phys", function()
 		if not IsValid(ent) then return end
+		if scn.push_tick and tick == scn.push_tick then
+			phys:Wake()
+			if scn.velocity then phys:SetVelocity(Vector(scn.velocity[1], scn.velocity[2], scn.velocity[3])) end
+			if scn.angular then phys:AddAngleVelocity(Vector(scn.angular[1], scn.angular[2], scn.angular[3])) end
+		end
 		local p, a, v, av = phys:GetPos(), phys:GetAngles(), phys:GetVelocity(), phys:GetAngleVelocity()
 		ticks[#ticks + 1] = {
 			t = tick,

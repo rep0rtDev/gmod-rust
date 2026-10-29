@@ -1,0 +1,23 @@
+{
+ "name": "phys_push_drum_v80",
+ "kind": "phys",
+ "map": "gm_construct",
+ "model": "models/props_c17/oildrum001.mdl",
+ "start": [
+  703.4,
+  -413.0,
+  -143.0
+ ],
+ "angles": [
+  0,
+  0,
+  0
+ ],
+ "velocity": [
+  0,
+  80,
+  0
+ ],
+ "push_tick": 70,
+ "ticks": 160
+}

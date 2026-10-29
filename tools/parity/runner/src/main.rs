@@ -153,6 +153,8 @@ struct Scenario {
     #[serde(default)]
     velocity: Option<[f32; 3]>,
     #[serde(default)]
+    push_tick: Option<u32>,
+    #[serde(default)]
     angular: Option<[f32; 3]>,
     #[serde(default)]
     ticks: Option<u32>,
@@ -795,8 +797,16 @@ fn phys_setup(scn: &Scenario) -> Result<PhysSetup> {
         volume: props.volume,
         position: Vec3::from(scn.start.unwrap_or([0.0; 3])),
         angles,
-        velocity: Vec3::from(scn.velocity.unwrap_or([0.0; 3])),
-        angular_velocity: Vec3::from(scn.angular.unwrap_or([0.0; 3])),
+        velocity: if scn.push_tick.is_some() {
+            Vec3::ZERO
+        } else {
+            Vec3::from(scn.velocity.unwrap_or([0.0; 3]))
+        },
+        angular_velocity: if scn.push_tick.is_some() {
+            Vec3::ZERO
+        } else {
+            Vec3::from(scn.angular.unwrap_or([0.0; 3]))
+        },
         surface: Surface {
             friction: prop_sp.friction,
             elasticity: prop_sp.elasticity,
@@ -841,6 +851,14 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
     let total = scn.ticks.unwrap_or(200);
     let mut ticks = Vec::with_capacity(total as usize);
     for t in 0..total {
+        if scn.push_tick == Some(t) {
+            // the push on a resting body (`push_tick`): velocity set in the tick, recorded raw
+            world.set_velocity(
+                body,
+                glam::Vec3::from(scn.velocity.unwrap_or([0.0; 3])),
+                glam::Vec3::from(scn.angular.unwrap_or([0.0; 3])),
+            );
+        }
         let st = world.state(body);
         ticks.push(serde_json::json!({
             "t": t,

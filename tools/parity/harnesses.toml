@@ -1660,3 +1660,69 @@ compare = "shoot_prop"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
+
+[[harness]]
+name = "phys_push_drum_v10"
+scenario = "phys/push_drum_v10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+
+[[harness]]
+name = "phys_push_drum_v20"
+scenario = "phys/push_drum_v20"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+
+[[harness]]
+name = "phys_push_drum_v40"
+scenario = "phys/push_drum_v40"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+
+[[harness]]
+name = "phys_push_drum_v80"
+scenario = "phys/push_drum_v80"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+
+[[harness]]
+name = "phys_push_drum_v160"
+scenario = "phys/push_drum_v160"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+
+[[harness]]
+name = "phys_push_drum_v320"
+scenario = "phys/push_drum_v320"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0

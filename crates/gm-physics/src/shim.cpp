@@ -202,7 +202,7 @@ public:
 	std::unordered_map<JPH::uint64, std::vector<size_t>> contact_points; // pair -> hull vertex indices that already impacted
 	// resting contact anchors: a body pushed while at rest keeps its tangential velocity in the
 	// push step (no friction) and is caught at its leading edge the step after
-	struct RestState { float vt_prev = 0.0f; int phase = 0; };
+	struct RestState { float vt_prev = 0.0f; float vn_in = 0.0f; int phase = 0; };
 	std::unordered_map<JPH::uint64, RestState> rest;
 	// the game integrates up to the moment of impact with the old velocity and the rest of the
 	// step with the new one; Jolt integrates the whole step with the new one, so after the step
@@ -338,6 +338,13 @@ public:
 					JPH::Mat44 rx = JPH::Mat44::sCrossProduct(r);
 					JPH::Mat44 k = JPH::Mat44::sScale(dyn.GetMotionProperties()->GetInverseMass()) - rx * dyn.GetInverseInertia() * rx;
 					JPH::Vec3 j = k.Inversed3x3().Multiply3x3(-point_velocity(dyn, lead->p));
+					// the catch is as strong as the normal part the floor took in the push step: a
+					// pure horizontal push (`phys_push_drum_*`) is not caught at all, the .357's
+					// and the bolt's drums (push 23 deg down) get the full pivot
+					JPH::Vec3 jt = j - n * j.Dot(n);
+					float dvt_full = jt.Length() * dyn.GetMotionProperties()->GetInverseMass();
+					float scale = dvt_full > 1e-6f ? std::min(1.0f, rs.vn_in / dvt_full) : 0.0f;
+					j *= scale;
 					push(dyn, lead->p, j);
 					if (debug) fprintf(stderr, "rest catch r=(%.4f %.4f %.4f) j=(%.3f %.3f %.3f) v=(%.3f %.3f %.3f)\n", (double)r.GetX(), (double)r.GetY(), (double)r.GetZ(), (double)j.GetX(), (double)j.GetY(), (double)j.GetZ(), (double)dyn.GetLinearVelocity().GetX(), (double)dyn.GetLinearVelocity().GetY(), (double)dyn.GetLinearVelocity().GetZ());
 				}
@@ -350,6 +357,7 @@ public:
 				JPH::RVec3 c = dyn.GetCenterOfMassPosition();
 				float vn_in = std::max(-(point_velocity(b1, c) - point_velocity(b2, c)).Dot(n), 0.0f);
 				s.mCombinedFriction = friction * g_dt / (vn_in + g_dt);
+				rs.vn_in = vn_in;
 				rs.phase = 1;
 			} else if (vt < 0.02f) {
 				rs.phase = 0;
