@@ -579,7 +579,7 @@ SCENARIOS.toolgun = function(scn, done)
 				out.constraints[#out.constraints + 1] = { index = c:EntIndex(), class = cls, type = t.Type,
 					ent1 = entref(t.Ent1), ent2 = entref(t.Ent2), bone1 = t.Bone1, bone2 = t.Bone2,
 					lpos1 = vec(t.LPos1), lpos2 = vec(t.LPos2), length = t.length, addlength = t.addlength,
-					forcelimit = t.forcelimit, nocollide = t.nocollide, rigid = t.rigid, width = t.width, material = t.material,
+					forcelimit = t.forcelimit, nocollide = t.nocollide, rigid = t.rigid, width = t.width, material = t.material, torquelimit = t.torquelimit, friction = t.friction,
 					pos = vec(c:GetPos()) }
 			end
 		end
@@ -625,6 +625,7 @@ SCENARIOS.toolgun = function(scn, done)
 			return
 		end
 		local rec = { op = op.op, t = engine.TickCount() }
+		rec.before = snapshot().props
 		local wait = op.wait or 3
 		if op.op == "click" then
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))

@@ -1002,6 +1002,9 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                     "class": "phys_constraint", "type": "Weld", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
                     "forcelimit": forcelimit, "nocollide": nocollide,
                 }),
+                ConstraintKind::NoCollide => json!({
+                    "class": "logic_collision_pair", "type": "NoCollide", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
+                }),
                 ConstraintKind::Rope { lpos1, lpos2, length, addlength, width, material, rigid } => json!({
                     "class": "phys_lengthconstraint", "type": "Rope", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
                     "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos2": [lpos2.x, lpos2.y, lpos2.z],
@@ -1014,15 +1017,45 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
             "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "text": u.text, "custom": u.custom, "n": u.entities.len() })).collect::<Vec<_>>(),
             "counts": { "constraints": sb.count_of(player, "constraints"), "ropeconstraints": sb.count_of(player, "ropeconstraints"), "props": sb.count(player) },
             "stage": sb.tool(player).stage,
+            "props": sb.props().iter().map(|p| json!({ "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen })).collect::<Vec<_>>(),
         })
+    };
+    let golden = golden_trace(&scn.name);
+    let v3 = |v: &Value| -> Vec3 {
+        let a = v.as_array().cloned().unwrap_or_default();
+        Vec3::new(
+            a.first().and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(1).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(2).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+        )
     };
     let mut results = Vec::new();
     let mut messages = Vec::new();
     for (i, op) in scn.ops.iter().enumerate() {
         let mut events = Vec::new();
         let mut rec = json!({ "op": op.op, "t": i });
+        // where the game had the props right before this op (they drift and tumble under physics)
+        if let Some(before) = golden
+            .as_ref()
+            .map(|g| &g["result"]["results"][i]["before"])
+        {
+            let ids: Vec<u32> = sb.props().iter().map(|p| p.id).collect();
+            for (id, p) in ids.iter().zip(before.as_array().unwrap_or(&Vec::new())) {
+                if p["pos"].is_array() {
+                    sb.set_prop_pose(*id, v3(&p["pos"]), v3(&p["ang"]));
+                }
+            }
+        }
+        let poses_before: Vec<(Vec3, Vec3)> =
+            sb.props().iter().map(|p| (p.pos, p.angles)).collect();
         match op.op.as_str() {
             "click" => {
+                for b in bodies.iter_mut() {
+                    if let Some(p) = sb.props().iter().find(|p| p.id == b.id) {
+                        b.pos = p.pos;
+                        b.angles = p.angles;
+                    }
+                }
                 let dir = gm_sandbox::forward(op.pitch, op.yaw);
                 let hit = gm_sandbox::tool_trace(&world, &bodies, eye, dir);
                 let tool = op.tool.clone().unwrap_or_default();
@@ -1033,7 +1066,7 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                         rec["trace"] = json!({ "hit": true, "pos": [h.pos.x, h.pos.y, h.pos.z], "normal": [h.normal.x, h.normal.y, h.normal.z], "ent": entref(h.ent), "eye": [eye.x, eye.y, eye.z], "fraction": h.fraction });
                         let ret = match op.button.as_deref() {
                             Some("reload") => sb.tool_reload(player),
-                            Some("right") => false,
+                            Some("right") => sb.tool_right_click(player, &tool, &h, &mut events),
                             _ => sb.tool_left_click(player, &tool, &h, &mut events),
                         };
                         rec["ok"] = json!(true);
@@ -1074,6 +1107,18 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 Event::Spawned { .. } | Event::Undone { .. } => {}
             }
         }
+        let moved: Vec<usize> = sb
+            .props()
+            .iter()
+            .enumerate()
+            .filter(|(k, p)| {
+                poses_before
+                    .get(*k)
+                    .is_none_or(|(pp, pa)| *pp != p.pos || *pa != p.angles)
+            })
+            .map(|(k, _)| k)
+            .collect();
+        rec["moved"] = json!(moved);
         let snap = snapshot(&sb);
         rec["immediate"] = snap.clone();
         rec["after"] = snap;
@@ -1138,6 +1183,25 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             }
         }
         let (ta, oa) = (&t["after"], &o["after"]);
+        for k in o["moved"]
+            .as_array()
+            .unwrap_or(&empty)
+            .iter()
+            .filter_map(Value::as_u64)
+        {
+            let (tp, op_) = (
+                &t["after"]["props"][k as usize],
+                &o["immediate"]["props"][k as usize],
+            );
+            let dp = (v3(&tp["pos"]) - v3(&op_["pos"])).length();
+            let da = gm_sandbox::rotation(v3(&tp["ang"]))
+                .angle_between(gm_sandbox::rotation(v3(&op_["ang"])))
+                .to_degrees();
+            println!("  op {i}: prop {} placed by the tool, pos err {dp:.3}, angle err {da:.2}, frozen {} vs {}", k + 1, tp["frozen"], op_["frozen"]);
+            if dp > pos_tol || da > 0.5 || tp["frozen"] != op_["frozen"] {
+                ok = false;
+            }
+        }
         if ta["stage"] != oa["stage"] {
             println!("  op {i} {op}: stage {} vs {}", ta["stage"], oa["stage"]);
             ok = false;

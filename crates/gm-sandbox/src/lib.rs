@@ -22,6 +22,8 @@ pub struct Prop {
     pub pos: Vec3,
     /// Source angles: pitch, yaw, roll in degrees.
     pub angles: Vec3,
+    /// `PhysObj:EnableMotion(false)`.
+    pub frozen: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -100,6 +102,8 @@ pub struct Placement {
 pub enum ConstraintKind {
     /// `constraint.Weld`: `phys_constraint`.
     Weld { forcelimit: f32, nocollide: bool },
+    /// `constraint.NoCollide`: `logic_collision_pair` with collisions disabled.
+    NoCollide,
     /// `constraint.Rope`: `phys_lengthconstraint`; local attachment points are in the entity
     /// frame (world position for the world).
     Rope {
@@ -313,6 +317,48 @@ pub fn rotation(angles: Vec3) -> Quat {
         * Quat::from_rotation_x(angles.z.to_radians())
 }
 
+/// `Vector:Angle()`: pitch and yaw of a direction, roll 0.
+pub fn angle_of(dir: Vec3) -> Vec3 {
+    // straight up or down: the engine's VectorAngles keeps yaw 0 (atan2(-0, -0) would say 180)
+    let yaw = if dir.x == 0.0 && dir.y == 0.0 {
+        0.0
+    } else {
+        dir.y.atan2(dir.x).to_degrees()
+    };
+    let pitch = (-dir.z)
+        .atan2((dir.x * dir.x + dir.y * dir.y).sqrt())
+        .to_degrees();
+    Vec3::new(pitch, yaw, 0.0)
+}
+
+/// Source angles of a rotation (`MatrixAngles`).
+pub fn angles_of(rot: Quat) -> Vec3 {
+    let forward = rot * Vec3::X;
+    let left = rot * Vec3::Y;
+    let up = rot * Vec3::Z;
+    let xy = (forward.x * forward.x + forward.y * forward.y).sqrt();
+    if xy > 0.001 {
+        Vec3::new(
+            (-forward.z).atan2(xy).to_degrees(),
+            forward.y.atan2(forward.x).to_degrees(),
+            left.z.atan2(up.z).to_degrees(),
+        )
+    } else {
+        Vec3::new(
+            (-forward.z).atan2(xy).to_degrees(),
+            (-left.x).atan2(left.y).to_degrees(),
+            0.0,
+        )
+    }
+}
+
+/// `PhysObj:AlignAngles(from, to)`: the object's current rotation turned by the rotation that
+/// takes `from` to `to`.
+pub fn align_angles(current: Vec3, from: Vec3, to: Vec3) -> Vec3 {
+    let delta = rotation(to) * rotation(from).inverse();
+    angles_of(delta * rotation(current))
+}
+
 fn normalize_angle(a: f32) -> f32 {
     let mut a = a % 360.0;
     if a > 180.0 {
@@ -498,6 +544,7 @@ impl Sandbox {
             model: model.to_string(),
             pos: placement.pos,
             angles: placement.angles,
+            frozen: false,
         });
         events.push(Event::Spawned { prop: id });
         self.push_undo(
@@ -521,6 +568,7 @@ impl Sandbox {
                 model: model.clone(),
                 pos: b.pos,
                 angles: b.angles,
+                frozen: false,
             });
             self.next_id = self.next_id.max(b.id + 1);
         }
@@ -547,6 +595,111 @@ impl Sandbox {
             Some((pos, rot)) => pos + rot * o.pos,
             None => o.pos,
         }
+    }
+
+    /// `ToolObj:GetNormal`: the stored normal point back in world space, minus the position.
+    fn object_world_normal(&self, o: &ToolObject) -> Vec3 {
+        match o.ent.and_then(|e| self.prop_pose(e)) {
+            Some((pos, rot)) => (pos + rot * o.normal) - self.object_world_pos(o),
+            None => o.normal,
+        }
+    }
+
+    /// Right click of the weld tool: grab a prop, place it with the grabbed face against the
+    /// second hit (frozen), weld it to the second object on the third click.
+    pub fn tool_right_click(
+        &mut self,
+        player: u32,
+        tool: &str,
+        hit: &ToolHit,
+        events: &mut Vec<Event>,
+    ) -> bool {
+        if tool != "weld" {
+            return false;
+        }
+        let n = self.tool(player).objects.len();
+        if n == 0 && hit.ent.is_none() {
+            return false;
+        }
+        let n = self.set_object(player, hit);
+        if n == 1 {
+            self.tools.entry(player).or_default().stage = 1;
+            return true;
+        }
+        let objs = self.tool(player).objects;
+        if n == 2 {
+            let (o1, o2) = (&objs[0], &objs[1]);
+            let Some(ent1) = o1.ent else {
+                self.clear_objects(player);
+                return false;
+            };
+            let norm1 = self.object_world_normal(o1);
+            let norm2 = self.object_world_normal(o2);
+            let wpos2 = self.object_world_pos(o2);
+            let (centre, _) = self.prop_pose(ent1).unwrap_or_default();
+            let current = self
+                .props
+                .iter()
+                .find(|p| p.id == ent1)
+                .map(|p| p.angles)
+                .unwrap_or_default();
+            let target = align_angles(current, angle_of(norm1), angle_of(-norm2));
+            self.set_prop_pose(ent1, centre, target);
+            let grabbed = self.object_world_pos(o1);
+            let target_pos = wpos2 + (centre - grabbed);
+            self.set_prop_pose(ent1, target_pos, target);
+            if let Some(p) = self.props.iter_mut().find(|p| p.id == ent1) {
+                p.frozen = true;
+            }
+            self.tools.entry(player).or_default().stage = 2;
+            return true;
+        }
+        if !self.check_limit(player, "constraints", events) {
+            self.clear_objects(player);
+            return false;
+        }
+        let (o1, o2) = (objs[0].clone(), objs[1].clone());
+        let s = self.tool_settings.clone();
+        if let Some(id) = self.weld(player, o1.ent, o2.ent, s.weld_forcelimit, s.weld_nocollide) {
+            if let Some(p) = self.props.iter_mut().find(|p| Some(p.id) == o1.ent) {
+                p.frozen = false;
+            }
+            self.push_undo(
+                player,
+                "Weld",
+                "#tool.weld.name".into(),
+                Some("Undone #tool.weld.name".into()),
+                vec![id],
+            );
+            self.add_count(player, "constraints", id);
+            self.add_cleanup(player, "constraints", id);
+        }
+        self.clear_objects(player);
+        true
+    }
+
+    /// `constraint.NoCollide`: nothing for the same object or an existing pair.
+    pub fn nocollide(&mut self, owner: u32, ent1: Option<u32>, ent2: Option<u32>) -> Option<u32> {
+        if ent1 == ent2 {
+            return None;
+        }
+        let exists = self.constraints.iter().any(|c| {
+            matches!(c.kind, ConstraintKind::NoCollide)
+                && ((c.ent1 == ent1 && c.ent2 == ent2) || (c.ent1 == ent2 && c.ent2 == ent1))
+        });
+        if exists {
+            return None;
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        self.constraints.push(Constraint {
+            id,
+            owner,
+            ent1,
+            ent2,
+            kind: ConstraintKind::NoCollide,
+        });
+        Some(id)
     }
 
     /// `ToolObj:SetObject`: the hit is stored in the entity frame (world space for the world).
@@ -594,6 +747,12 @@ impl Sandbox {
         hit: &ToolHit,
         events: &mut Vec<Event>,
     ) -> bool {
+        if (tool == "nocollide" || tool == "axis")
+            && hit.ent.is_none()
+            && self.tool(player).objects.is_empty()
+        {
+            return false;
+        }
         let n = self.set_object(player, hit);
         if n == 1 {
             self.tools.entry(player).or_default().stage = 1;
@@ -643,6 +802,25 @@ impl Sandbox {
                     );
                     self.add_count(player, "ropeconstraints", id);
                     self.add_cleanup(player, "ropeconstraints", id);
+                }
+                self.clear_objects(player);
+                true
+            }
+            "nocollide" => {
+                if !self.check_limit(player, "constraints", events) {
+                    self.clear_objects(player);
+                    return false;
+                }
+                if let Some(id) = self.nocollide(player, o1.ent, o2.ent) {
+                    self.push_undo(
+                        player,
+                        "NoCollide",
+                        "#tool.nocollide.name".into(),
+                        Some("Undone #tool.nocollide.name".into()),
+                        vec![id],
+                    );
+                    self.add_count(player, "constraints", id);
+                    self.add_cleanup(player, "nocollide", id);
                 }
                 self.clear_objects(player);
                 true

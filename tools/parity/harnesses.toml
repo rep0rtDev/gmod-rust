@@ -395,3 +395,13 @@ crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
 ang = 0.1
+
+
+[[harness]]
+name = "toolgun_nocollide_axis_weldworld"
+scenario = "toolgun/nocollide_axis_weldworld"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
