@@ -9,5 +9,5 @@ A statement without a harness is a hypothesis and is marked `(unconfirmed)`.
 | [content-mounting.md](content-mounting.md) | `fmt_*` | draft |
 | [convars-defaults.md](convars-defaults.md) | `fmt_convars_defaults` | measured on build 260917 |
 | [movement.md](movement.md) | `move_*` | 17 harnesses bit-exact on 2026.09.17 |
-| [physgun.md](physgun.md) | `physgun_*` | 4 / 7 within tolerance on 2026.09.17 (hold, yaw, pitch, freeze exact; rotate axis and walking lag just outside) |
+| [physgun.md](physgun.md) | `physgun_*` | 5 / 7 within tolerance on 2026.09.17 (hold, yaw, pitch, freeze, rotate; walking lag and the landing after release open) |
 | [physics.md](physics.md) | `phys_*`, `constraint_*` | 1 / 5 within tolerance on 2026.09.17 (free flight and contact tick exact, contact response open) |

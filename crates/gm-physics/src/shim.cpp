@@ -115,6 +115,7 @@ public:
 	float persisted_threshold = 0.3f; // m/s, resting contacts stay with Jolt
 	bool debug = getenv("GMP_IMPACT_DEBUG") != nullptr;
 	std::unordered_map<JPH::uint64, std::vector<size_t>> contact_points; // pair -> hull vertex indices that already impacted
+	std::unordered_map<JPH::uint32, bool> skip; // bodies under a shadow controller (physgun) keep Jolt's contact
 
 	GmpSurface surface(const JPH::Body &b) const {
 		auto it = surfaces.find(b.GetID().GetIndexAndSequenceNumber());
@@ -165,6 +166,7 @@ public:
 		s.mCombinedFriction = friction;
 		s.mCombinedRestitution = 0.0f;
 		if (!enabled || m.mRelativeContactPointsOn1.empty()) return;
+		if (skip.count(b1.GetID().GetIndexAndSequenceNumber()) || skip.count(b2.GetID().GetIndexAndSequenceNumber())) return;
 		JPH::Vec3 n = -m.mWorldSpaceNormal; // pushes body 1 away from body 2
 		float m1 = b1.IsDynamic() ? 1.0f / b1.GetMotionProperties()->GetInverseMass() : 0.0f;
 		float m2 = b2.IsDynamic() ? 1.0f / b2.GetMotionProperties()->GetInverseMass() : 0.0f;
@@ -391,6 +393,12 @@ void gmp_set_inertia(void *system, unsigned int body_id, float mass, float ix, f
 
 void gmp_set_impact_step(void *system, float dt) {
 	if (auto *l = listener_of(system)) l->step_dt = dt;
+}
+
+void gmp_set_impact_skip(void *system, unsigned int body_id, int on) {
+	if (auto *l = listener_of(system)) {
+		if (on) l->skip[body_id] = true; else l->skip.erase(body_id);
+	}
 }
 
 void gmp_set_impact_enabled(void *system, int enabled) {

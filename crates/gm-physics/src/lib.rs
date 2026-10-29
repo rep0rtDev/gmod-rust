@@ -57,6 +57,7 @@ extern "C" {
         iz: f32,
     );
     fn gmp_set_impact_step(system: *mut JPC_PhysicsSystem, dt: f32);
+    fn gmp_set_impact_skip(system: *mut JPC_PhysicsSystem, body_id: u32, on: i32);
     fn gmp_set_impact_enabled(system: *mut JPC_PhysicsSystem, enabled: i32);
     fn gmp_set_solver(
         system: *mut JPC_PhysicsSystem,
@@ -543,10 +544,12 @@ impl World {
             JPC_BodyInterface_ActivateBody(bi, body.0);
         }
         self.held.insert(body.0);
+        unsafe { gmp_set_impact_skip(self.system.as_raw(), body.0, 1) };
     }
 
     /// Let a held body go: gravity is back from this tick on, the velocity is kept.
     pub fn release(&mut self, body: BodyHandle) {
+        unsafe { gmp_set_impact_skip(self.system.as_raw(), body.0, 0) };
         if self.held.remove(&body.0) {
             unsafe {
                 let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());

@@ -1,6 +1,6 @@
 # Physics gun
 
-Status: implemented (`gm_physics::physgun`, `World::hold` / `release` / `freeze`), 4 of 7 `physgun_*` harnesses within tolerance (pitch steps, yaw steps, off centre grab, freeze); `rotate_crate` peaks at 2.04 u against a 2 u tolerance, `walk_hold` at 3.0 u while the player accelerates and settles exact, `hold_crate` matches while held and diverges only after the release when the crate lands (contact response, see physics.md). Traces recorded on 2026.09.17 (7 scenarios, bot with `weapon_physgun` driven through `StartCommand`, prop transform and `IsPlayerHolding` / `IsMotionEnabled` recorded every tick in `FinishMove`).
+Status: implemented (`gm_physics::physgun`, `World::hold` / `release` / `freeze`), 5 of 7 `physgun_*` harnesses within tolerance (pitch steps, yaw steps, off centre grab, freeze, rotate at 1.97 u; held bodies are excluded from the impact listener, the shadow controller owns them), `walk_hold` at 3.0 u while the player accelerates and settles exact, `hold_crate` matches while held and diverges only after the release when the crate lands (contact response, see physics.md). Traces recorded on 2026.09.17 (7 scenarios, bot with `weapon_physgun` driven through `StartCommand`, prop transform and `IsPlayerHolding` / `IsMotionEnabled` recorded every tick in `FinishMove`).
 
 Convars read back from the server: `physgun_maxSpeed` 5000, `physgun_maxAngular` 5000, `physgun_dampingFactor` 0.8, `physgun_timeToArrive` 0.05, `physgun_teleportDistance` 0.
 
