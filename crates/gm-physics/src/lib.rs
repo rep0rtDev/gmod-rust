@@ -315,6 +315,8 @@ struct Drag {
     /// Projected face areas of the local collision box over mass, scaled so that
     /// `a = -(sum_i areas.i * |dir.i|) * |v| * v` is in units per second squared.
     areas: Vec3,
+    /// Angular drag per body axis (1/rad): `dw_i = -ang_i * w_i |w_i| dt`, see `angular_drag_factors`.
+    ang: Vec3,
 }
 
 pub struct World {
@@ -528,6 +530,46 @@ impl World {
         area * drag_axis_areas / mass.max(1e-3) * UNITS_TO_METERS
     }
 
+    /// Measured on the real game (props spun in free fall about each axis at 200 and 400
+    /// deg/s): the angular speed about body axis i decays as `dw_i/dt = -k_i w_i |w_i|` with
+    /// `k_i = (1/16) / I_i * (a_k T(d_i, d_j, d_k) + a_j T(d_i, d_k, d_j))`,
+    /// `T(l, w, h) = w^2 l^3 / 3 + w^4 l / 2 + l w^2 h^2`, d the hull box in metres, a the PHY
+    /// `dragAxisAreas`, I the body inertia in kg m^2; 7 measurements on 3 bodies agree within
+    /// 0.1 % (docs/spec/physics.md).
+    fn angular_drag_factors(
+        hulls: &[Vec<Vec3>],
+        inertia: Option<Vec3>,
+        mass: f32,
+        a: Vec3,
+    ) -> Vec3 {
+        let Some(i) = inertia else {
+            return Vec3::ZERO;
+        };
+        let mut mins = Vec3::splat(f32::MAX);
+        let mut maxs = Vec3::splat(f32::MIN);
+        for p in hulls.iter().flatten() {
+            mins = mins.min(*p);
+            maxs = maxs.max(*p);
+        }
+        let d = (maxs - mins).max(Vec3::ZERO) * UNITS_TO_METERS;
+        let t = |l: f32, w: f32, h: f32| {
+            w * w * l * l * l / 3.0 + w * w * w * w * l / 2.0 + l * w * w * h * h
+        };
+        let inertia = i * mass;
+        let axis = |di: f32, dj: f32, dk: f32, aj: f32, ak: f32, ii: f32| {
+            if ii <= 0.0 {
+                0.0
+            } else {
+                (ak * t(di, dj, dk) + aj * t(di, dk, dj)) / (16.0 * ii)
+            }
+        };
+        Vec3::new(
+            axis(d.x, d.y, d.z, a.y, a.z, inertia.x),
+            axis(d.y, d.x, d.z, a.x, a.z, inertia.y),
+            axis(d.z, d.x, d.y, a.x, a.y, inertia.z),
+        )
+    }
+
     pub fn add_prop(&mut self, desc: &PropDesc<'_>) -> Result<BodyHandle> {
         let volume_m3 = desc.volume.max(1.0) * UNITS_TO_METERS * UNITS_TO_METERS * UNITS_TO_METERS;
         let density = desc.mass / volume_m3;
@@ -561,9 +603,30 @@ impl World {
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
             let id = JPC_BodyInterface_CreateAndAddBody(bi, &settings, JPC_ACTIVATION_ACTIVATE);
             JPC_BodyInterface_SetMotionQuality(bi, id, JPC_MOTION_QUALITY_LINEAR_CAST);
+            if std::env::var_os("GMP_DRAG_DEBUG").is_some() {
+                let mut mins = Vec3::splat(f32::MAX);
+                let mut maxs = Vec3::splat(f32::MIN);
+                for p in desc.hulls.iter().flatten() {
+                    mins = mins.min(*p);
+                    maxs = maxs.max(*p);
+                }
+                eprintln!(
+                    "drag body mass {} axis_areas {:?} inertia {:?} hull_box {:?}",
+                    desc.mass,
+                    desc.drag_axis_areas,
+                    desc.inertia,
+                    maxs - mins
+                );
+            }
             self.drags.push(Drag {
                 body: id,
                 areas: Self::drag_factors(desc.hulls, desc.mass, desc.drag_axis_areas),
+                ang: Self::angular_drag_factors(
+                    desc.hulls,
+                    desc.inertia,
+                    desc.mass,
+                    desc.drag_axis_areas,
+                ),
             });
             gmp_set_surface(
                 self.system.as_raw(),
@@ -838,6 +901,12 @@ impl World {
                 let mut av = jv(Vec3::ZERO);
                 JPC_BodyInterface_GetLinearAndAngularVelocity(bi, d.body, &mut lv, &mut av);
                 let v = from_jolt(gv(lv));
+                if d.ang != Vec3::ZERO {
+                    let w = rot.inverse() * dir_from_jolt(gv(av));
+                    let loss = d.ang * w * w.abs() * dt;
+                    let w = w - loss.clamp(-w.abs(), w.abs());
+                    JPC_BodyInterface_SetAngularVelocity(bi, d.body, jv(dir_to_jolt(rot * w)));
+                }
                 let predicted = v + Vec3::new(0.0, 0.0, -self.gravity * dt);
                 let speed = predicted.length();
                 if speed < 1e-3 {
