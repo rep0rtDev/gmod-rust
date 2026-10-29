@@ -278,7 +278,10 @@ public:
 				if (vn >= -threshold) continue;
 				if (pt.d > 0.0f && pt.d > -vn * step_dt) continue;
 				float t = std::max(pt.d, 0.0f) / -vn;
-				if (pick == nullptr || t < best_t - tie_eps * 0.01f) { pick = &pt; best_t = t; }
+				// ties: the game took the +x corner of the crate and the +x rim vertex of the barrel
+				bool better = pick == nullptr || t < best_t - tie_eps * 0.01f ||
+					(std::fabs(t - best_t) <= tie_eps * 0.01f && pt.p.GetX() > pick->p.GetX());
+				if (better) { pick = &pt; best_t = t; }
 			}
 			if (pick == nullptr) break;
 			// the game's impact system also re-pushes the pair's existing contact points (corners
