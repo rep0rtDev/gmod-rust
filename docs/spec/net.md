@@ -60,9 +60,9 @@ player only) and letting the player stand when none is due, like the engine.
 Measured (`net_predict_*`: the movement recordings sent as usercmds through the loopback at 2
 ticks one way): walk, jump, stairs and airstrafe predicted bit for bit equal to the real server's
 recording with zero corrections, and the final predicted state equals the server's. With 20 % loss
-the prediction still ends equal to the server's state; the corrections are the ticks where the
-server stood because no usercmd was due yet (see the numbers in the harness output, they vary with
-the loss seed).
+(52 and 41 packets dropped on walk and jump) there is still no correction: the 8 usercmds in every
+packet and the backlog catch-up on the server mean no usercmd is ever missing when its tick comes,
+so the server never has to stand still.
 
 ## Not yet
 
