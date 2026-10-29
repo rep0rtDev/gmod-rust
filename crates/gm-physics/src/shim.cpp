@@ -193,6 +193,7 @@ public:
 	float static_mass_factor = 100000.0f;
 	float step_dt = 0.015f;
 	float gravity = 9.81f; // m/s^2, the push step's resting friction comes from the weight only
+	JPH::PhysicsSystem *sys = nullptr; // the world's gravity is read live (set after install)
 	float persisted_threshold = 0.3f; // m/s, resting contacts stay with Jolt
 	// size of one push as a fraction of the point's full stopping impulse; measured on the tilted
 	// crate's corner impact: 0.03 to 0.075 reproduce the game's impulse within 0.5 %, 0.1 misses by 4.5 %
@@ -330,7 +331,7 @@ public:
 			JPH::Vec3 v = dyn.GetLinearVelocity();
 			JPH::Vec3 vt_vec = v - nd * v.Dot(nd);
 			float vt = vt_vec.Length();
-			float g_dt = gravity * step_dt;
+			float g_dt = (sys ? sys->GetGravity().Length() : gravity) * step_dt;
 			float mass = 1.0f / dyn.GetMotionProperties()->GetInverseMass();
 			JPH::RVec3 c = dyn.GetCenterOfMassPosition();
 			float vn_in = std::max(-(point_velocity(dyn, c) - point_velocity(other, c)).Dot(nd) - g_dt, 0.0f);
@@ -550,7 +551,11 @@ extern "C" {
 
 void gmp_install_impact_listener(void *system) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
-	if (sys->GetContactListener() == nullptr) sys->SetContactListener(new GmpImpactListener());
+	if (sys->GetContactListener() == nullptr) {
+		auto *l = new GmpImpactListener();
+		l->sys = sys;
+		sys->SetContactListener(l);
+	}
 }
 
 void gmp_set_surface(void *system, unsigned int body_id, float friction, float elasticity) {
