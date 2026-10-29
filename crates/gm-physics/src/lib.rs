@@ -42,6 +42,20 @@ extern "C" {
         friction: f32,
         elasticity: f32,
     );
+    fn gmp_set_hull_points(
+        system: *mut JPC_PhysicsSystem,
+        body_id: u32,
+        xyz: *const f32,
+        count: u32,
+    );
+    fn gmp_set_inertia(
+        system: *mut JPC_PhysicsSystem,
+        body_id: u32,
+        mass: f32,
+        ix: f32,
+        iy: f32,
+        iz: f32,
+    );
     fn gmp_set_impact_step(system: *mut JPC_PhysicsSystem, dt: f32);
     fn gmp_set_impact_enabled(system: *mut JPC_PhysicsSystem, enabled: i32);
     fn gmp_set_solver(
@@ -240,6 +254,10 @@ pub struct PropDesc<'a> {
     /// PHY header `dragAxisAreas` in Source axis order: projected hull area over the
     /// collision box face area per axis (1 for a box, about 0.77 across a cylinder).
     pub drag_axis_areas: Vec3,
+    /// Rotation inertia per unit mass about the mass centre in Source axes (PHY
+    /// `rotation_inertia`; the game's `GetInertia` is this times the mass). `None` lets Jolt
+    /// derive it from the hull (about 1.4 times larger for the crate).
+    pub inertia: Option<Vec3>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -477,6 +495,27 @@ impl World {
                 desc.surface.friction,
                 desc.surface.elasticity,
             );
+            let verts: Vec<f32> = desc
+                .hulls
+                .iter()
+                .flat_map(|h| h.iter().flat_map(|&p| to_jolt(p).to_array()))
+                .collect();
+            gmp_set_hull_points(
+                self.system.as_raw(),
+                id,
+                verts.as_ptr(),
+                (verts.len() / 3) as u32,
+            );
+            if let Some(i) = desc.inertia {
+                gmp_set_inertia(
+                    self.system.as_raw(),
+                    id,
+                    desc.mass,
+                    i.x * desc.mass,
+                    i.z * desc.mass,
+                    i.y * desc.mass,
+                );
+            }
             Ok(BodyHandle(id))
         }
     }
@@ -769,6 +808,7 @@ mod tests {
                 linear_damping: 0.0,
                 angular_damping: 0.0,
                 drag_axis_areas: Vec3::ONE,
+                inertia: None,
             })
             .unwrap();
         w.optimize();

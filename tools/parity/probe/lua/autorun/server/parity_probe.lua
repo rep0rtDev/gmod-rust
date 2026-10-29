@@ -216,6 +216,20 @@ SCENARIOS.phys = function(scn, done)
 	info.aabb = { mins = { mins.x, mins.y, mins.z }, maxs = { maxs.x, maxs.y, maxs.z } }
 	local total = scn.ticks or 200
 	local tick, ticks = 0, {}
+	-- every impact the engine resolves: point, normal, speed and the velocities before it
+	local collisions = {}
+	ent:AddCallback("PhysicsCollide", function(_, d)
+		collisions[#collisions + 1] = {
+			t = tick,
+			pos = { d.HitPos.x, d.HitPos.y, d.HitPos.z },
+			normal = { d.HitNormal.x, d.HitNormal.y, d.HitNormal.z },
+			speed = d.Speed,
+			our_old_vel = { d.OurOldVelocity.x, d.OurOldVelocity.y, d.OurOldVelocity.z },
+			their_old_vel = { d.TheirOldVelocity.x, d.TheirOldVelocity.y, d.TheirOldVelocity.z },
+			delta_time = d.DeltaTime,
+			hit = IsValid(d.HitEntity) and d.HitEntity:GetClass() or "world",
+		}
+	end)
 	hook.Add("Tick", "parity_phys", function()
 		if not IsValid(ent) then return end
 		local p, a, v, av = phys:GetPos(), phys:GetAngles(), phys:GetVelocity(), phys:GetAngleVelocity()
@@ -231,7 +245,7 @@ SCENARIOS.phys = function(scn, done)
 		if tick >= total then
 			hook.Remove("Tick", "parity_phys")
 			ent:Remove()
-			done({ start = { start.x, start.y, start.z }, model = scn.model, info = info, ticks = ticks })
+			done({ start = { start.x, start.y, start.z }, model = scn.model, info = info, ticks = ticks, collisions = collisions })
 		end
 	end)
 end

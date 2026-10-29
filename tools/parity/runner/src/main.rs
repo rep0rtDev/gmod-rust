@@ -377,6 +377,7 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
         linear_damping: props.damping,
         angular_damping: props.rotdamping,
         drag_axis_areas: Vec3::from(solid.drag_axis_areas),
+        inertia: Some(Vec3::from(solid.rotation_inertia)),
     })?;
     world.optimize();
     // the probe lets the prop settle for 60 ticks before the first segment
@@ -418,7 +419,7 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
                 "pos": [st.position.x, st.position.y, st.position.z],
                 "ang": [st.angles.0, st.angles.1, st.angles.2],
                 "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
-                "angvel": [st.angular_velocity.x, st.angular_velocity.y, st.angular_velocity.z],
+                "angvel": local_angvel(&st),
                 "held": grab.is_some(),
                 "frozen": world.is_frozen(body),
                 "eye": [eye.x, eye.y, eye.z],
@@ -542,6 +543,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
             linear_damping: props.damping,
             angular_damping: props.rotdamping,
             drag_axis_areas: Vec3::from(solid.drag_axis_areas),
+            inertia: Some(Vec3::from(solid.rotation_inertia)),
         })?;
         if pr.frozen {
             world.freeze(body);
@@ -576,7 +578,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
                     "pos": [st.position.x, st.position.y, st.position.z],
                     "ang": [st.angles.0, st.angles.1, st.angles.2],
                     "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
-                    "angvel": [st.angular_velocity.x, st.angular_velocity.y, st.angular_velocity.z],
+                    "angvel": local_angvel(&st),
                     "asleep": !st.active,
                 })
             })
@@ -598,6 +600,12 @@ fn tune_solver(world: &mut gm_physics::World) {
             world.set_solver(f[0], f[1] as u32, f[2] as u32, f[3]);
         }
     }
+}
+
+/// The game reports angular velocity in the body's own axes (`GetAngleVelocity`), degrees per second.
+fn local_angvel(st: &gm_physics::BodyState) -> [f32; 3] {
+    let w = st.rotation.inverse() * st.angular_velocity;
+    [w.x, w.y, w.z]
 }
 
 fn run_phys(scn: &Scenario) -> Result<Value> {
@@ -663,6 +671,7 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
         linear_damping: props.damping,
         angular_damping: props.rotdamping,
         drag_axis_areas: Vec3::from(solid.drag_axis_areas),
+        inertia: Some(Vec3::from(solid.rotation_inertia)),
     })?;
     world.optimize();
     let total = scn.ticks.unwrap_or(200);
@@ -674,7 +683,7 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
             "pos": [st.position.x, st.position.y, st.position.z],
             "ang": [st.angles.0, st.angles.1, st.angles.2],
             "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
-            "angvel": [st.angular_velocity.x, st.angular_velocity.y, st.angular_velocity.z],
+            "angvel": local_angvel(&st),
             "asleep": !st.active,
         }));
         world.step();
