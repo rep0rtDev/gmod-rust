@@ -15,3 +15,4 @@ A statement without a harness is a hypothesis and is marked `(unconfirmed)`.
 - [toolgun.md](toolgun.md): tool gun trace, weld and rope stools, counts and undo
 - [server.md](server.md): the server tick composing movement, sandbox and physics
 - [net.md](net.md): own protocol, packets, commands, delta snapshots, measured loopback numbers
+- [script.md](script.md): Luau actor runtime, phases, budgets, host API v1

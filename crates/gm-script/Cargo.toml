@@ -1,0 +1,14 @@
+[package]
+name = "gm-script"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Addon runtime: Luau actors (one VM each) with a parallel read-only phase over a world snapshot, a serial phase applying queued writes in priority order, CPU/memory budgets, restart on error"
+
+[dependencies]
+gm-move = { path = "../gm-move" }
+gm-sandbox = { path = "../gm-sandbox" }
+gm-server = { path = "../gm-server" }
+mlua = { workspace = true }
+glam = { workspace = true }
+thiserror = { workspace = true }

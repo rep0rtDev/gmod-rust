@@ -592,6 +592,15 @@ impl Sandbox {
         }
     }
 
+    /// Removes a prop or constraint by id (`Entity:Remove`): constraints attached to a removed
+    /// prop go with it, undo entries keep their ids (they skip dead entities when run).
+    pub fn remove_entity(&mut self, id: u32) {
+        let was_prop = self.props.iter().any(|p| p.id == id);
+        self.props.retain(|p| p.id != id);
+        self.constraints
+            .retain(|c| c.id != id && !(was_prop && (c.ent1 == Some(id) || c.ent2 == Some(id))));
+    }
+
     /// `PhysObj:EnableMotion(!frozen)`.
     pub fn set_frozen(&mut self, id: u32, frozen: bool) {
         if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {

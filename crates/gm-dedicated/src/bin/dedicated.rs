@@ -20,6 +20,9 @@ struct Args {
     /// Print a status line every N ticks (0 = never).
     #[arg(long, default_value_t = 0)]
     status_every: u64,
+    /// Luau actor sources to load (repeatable); the file name is the actor name.
+    #[arg(long)]
+    addon: Vec<std::path::PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -37,6 +40,27 @@ fn main() -> Result<()> {
     }));
     let spawn = glam::Vec3::new(args.spawn[0], args.spawn[1], args.spawn[2]);
     let mut net = gm_net::ServerNet::new(&args.map, spawn);
+    if !args.addon.is_empty() {
+        let mut rt = gm_script::Runtime::new();
+        for (i, path) in args.addon.iter().enumerate() {
+            let source =
+                std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            rt.load(gm_script::ActorSpec {
+                addon: name.clone(),
+                name,
+                priority: i as i32,
+                source,
+                config: Default::default(),
+            })
+            .with_context(|| format!("addon {}", path.display()))?;
+        }
+        println!("gm-dedicated: {} actors loaded", rt.actors().len());
+        net.hooks = Some(Box::new(rt));
+    }
     let mut udp = gm_net::Udp::server(args.bind.parse().context("bind address")?)?;
     println!(
         "gm-dedicated: {} loaded in {:.2} s, listening on {}, tick {:.3} s",

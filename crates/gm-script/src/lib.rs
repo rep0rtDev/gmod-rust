@@ -1,0 +1,227 @@
+//! Addon runtime over the server tick. Every actor is its own Luau VM (own globals, GC, budget);
+//! a tick has a parallel phase (all actors at once on their own threads, reading an immutable
+//! snapshot of the world and queueing writes) and a serial phase (queues applied in addon
+//! priority, then actor, then enqueue order; cancelable events run in priority order and the
+//! first handler returning `false` cancels). An actor over its CPU budget 5 ticks in a row is
+//! throttled to one run in two ticks; an actor that errors is restarted with its declared `state`.
+
+pub mod actor;
+pub mod api;
+pub mod snapshot;
+
+pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite};
+pub use snapshot::{EntitySnap, PlayerSnap, Snapshot};
+
+use gm_server::Server;
+use std::sync::Arc;
+use std::time::Duration;
+
+/// One addon's actor declaration (what a manifest will carry; loaded from `.gmr` later).
+#[derive(Clone, Debug)]
+pub struct ActorSpec {
+    pub addon: String,
+    pub name: String,
+    /// Lower runs first in the serial phase (addon priority).
+    pub priority: i32,
+    pub source: String,
+    pub config: ActorConfig,
+}
+
+pub struct Runtime {
+    actors: Vec<Actor>,
+    pub tick: u64,
+    pub log: Vec<String>,
+}
+
+/// What the serial phase did to the server this tick.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Applied {
+    pub writes: usize,
+    pub rejected: usize,
+}
+
+impl Runtime {
+    pub fn new() -> Self {
+        Runtime {
+            actors: Vec::new(),
+            tick: 0,
+            log: Vec::new(),
+        }
+    }
+
+    pub fn load(&mut self, spec: ActorSpec) -> Result<usize, mlua::Error> {
+        let id = self.actors.len() as u32;
+        let actor = Actor::new(id, spec)?;
+        self.actors.push(actor);
+        Ok(id as usize)
+    }
+
+    pub fn actors(&self) -> &[Actor] {
+        &self.actors
+    }
+
+    pub fn actors_mut(&mut self) -> &mut [Actor] {
+        &mut self.actors
+    }
+
+    /// Every queued write in serial order (addon priority, actor id, enqueue order) without
+    /// applying it.
+    pub fn drain_writes(&mut self) -> Vec<(i32, u32, u64, QueuedWrite)> {
+        let mut writes: Vec<(i32, u32, u64, QueuedWrite)> = Vec::new();
+        for a in self.actors.iter_mut() {
+            let p = a.priority();
+            for (n, w) in a.take_queue() {
+                writes.push((p, a.id(), n, w));
+            }
+        }
+        writes.sort_by_key(|(p, id, n, _)| (*p, *id, *n));
+        writes
+    }
+
+    fn snapshot(&self, server: &Server<'_>) -> Arc<Snapshot> {
+        Arc::new(Snapshot::of(server, self.tick))
+    }
+
+    /// Parallel phase for one event (every actor on its own thread with the same snapshot), then
+    /// the serial phase applying every queued write in order.
+    pub fn run_event(
+        &mut self,
+        server: &mut Server<'_>,
+        event: &str,
+        payload: api::Payload,
+    ) -> Applied {
+        let snap = self.snapshot(server);
+        self.parallel(&snap, event, &payload);
+        self.serial(server)
+    }
+
+    /// Before the server tick: `tick.pre`.
+    pub fn pre_tick(&mut self, server: &mut Server<'_>) -> Applied {
+        self.tick += 1;
+        self.run_event(server, "tick.pre", api::Payload::default())
+    }
+
+    /// After the server tick: `tick.post`.
+    pub fn post_tick(&mut self, server: &mut Server<'_>) -> Applied {
+        self.run_event(server, "tick.post", api::Payload::default())
+    }
+
+    /// Cancelable event in the serial phase: actors in priority order, the first `false` cancels.
+    pub fn ask(&mut self, server: &mut Server<'_>, event: &str, payload: api::Payload) -> bool {
+        let snap = self.snapshot(server);
+        let mut order: Vec<usize> = (0..self.actors.len()).collect();
+        order.sort_by_key(|&i| (self.actors[i].priority(), i));
+        let mut allowed = true;
+        for i in order {
+            let a = &mut self.actors[i];
+            if !a.may_run(self.tick) {
+                continue;
+            }
+            match a.dispatch(&snap, event, &payload, self.tick) {
+                Ok(Some(false)) => {
+                    allowed = false;
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+            }
+        }
+        self.serial(server);
+        allowed
+    }
+
+    fn parallel(&mut self, snap: &Arc<Snapshot>, event: &str, payload: &api::Payload) {
+        let tick = self.tick;
+        let results: Vec<Result<Option<bool>, mlua::Error>> = std::thread::scope(|s| {
+            let handles: Vec<_> = self
+                .actors
+                .iter_mut()
+                .map(|a| {
+                    let snap = snap.clone();
+                    s.spawn(move || {
+                        if a.may_run(tick) {
+                            a.dispatch(&snap, event, payload, tick)
+                        } else {
+                            Ok(None)
+                        }
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err(mlua::Error::runtime("actor thread panicked")))
+                })
+                .collect()
+        });
+        for (a, r) in self.actors.iter_mut().zip(results) {
+            if let Err(e) = r {
+                self.log.push(format!("[{}] {e}", a.label()));
+            }
+            for line in a.take_prints() {
+                self.log.push(format!("[{}] {line}", a.label()));
+            }
+        }
+    }
+
+    fn serial(&mut self, server: &mut Server<'_>) -> Applied {
+        let writes = self.drain_writes();
+        let mut applied = Applied::default();
+        for (_, _, _, w) in writes {
+            if api::apply(server, &w) {
+                applied.writes += 1;
+            } else {
+                applied.rejected += 1;
+            }
+        }
+        applied
+    }
+
+    pub fn total_cpu(&self) -> Duration {
+        self.actors.iter().map(|a| a.cpu_total()).sum()
+    }
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `ServerNet` hook: `prop.spawn_request` before `gm_spawn`, `entity.spawned` after.
+impl Runtime {
+    pub fn prop_spawn_request(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        model: &str,
+    ) -> bool {
+        let mut p = api::Payload::default();
+        p.ints.push(("player", player as i64));
+        p.strs.push(("model", model.to_string()));
+        self.ask(server, "prop.spawn_request", p)
+    }
+
+    pub fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32) -> Applied {
+        let mut p = api::Payload::default();
+        p.ints.push(("player", player as i64));
+        p.ints.push(("entity", ent as i64));
+        self.run_event(server, "entity.spawned", p)
+    }
+}
+
+impl gm_server::ServerHooks for Runtime {
+    fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool {
+        Runtime::prop_spawn_request(self, server, player, model)
+    }
+    fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32) {
+        Runtime::entity_spawned(self, server, player, ent);
+    }
+    fn pre_tick(&mut self, server: &mut Server<'_>) {
+        Runtime::pre_tick(self, server);
+    }
+    fn post_tick(&mut self, server: &mut Server<'_>) {
+        Runtime::post_tick(self, server);
+    }
+}

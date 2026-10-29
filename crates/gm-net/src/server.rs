@@ -37,6 +37,7 @@ pub struct ServerNet {
     pub clients: BTreeMap<usize, ClientSlot>,
     next_player: u32,
     pub spawn_origin: Vec3,
+    pub hooks: Option<Box<dyn gm_server::ServerHooks>>,
 }
 
 impl ServerNet {
@@ -48,6 +49,7 @@ impl ServerNet {
             clients: BTreeMap::new(),
             next_player: 1,
             spawn_origin,
+            hooks: None,
         }
     }
 
@@ -157,14 +159,30 @@ impl ServerNet {
                 }
             }
         }
+        if let Some(h) = self.hooks.as_mut() {
+            h.pre_tick(server);
+        }
         server.tick(&cmds);
+        if let Some(h) = self.hooks.as_mut() {
+            h.post_tick(server);
+        }
         for slot in self.clients.values_mut() {
             while let Some(cmd) = slot.commands.remove(&slot.next_command) {
                 slot.next_command += 1;
                 let n = server.events.len();
                 match cmd {
                     Command::Spawn { model } => {
-                        server.spawn_prop(slot.player, &model);
+                        let allowed = self
+                            .hooks
+                            .as_mut()
+                            .is_none_or(|h| h.prop_spawn_request(server, slot.player, &model));
+                        if allowed {
+                            if let Some(ent) = server.spawn_prop(slot.player, &model) {
+                                if let Some(h) = self.hooks.as_mut() {
+                                    h.entity_spawned(server, slot.player, ent);
+                                }
+                            }
+                        }
                     }
                     Command::Undo => server.undo(slot.player),
                     Command::Cleanup => server.cleanup(slot.player),

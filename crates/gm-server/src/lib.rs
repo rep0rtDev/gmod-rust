@@ -25,6 +25,17 @@ pub struct ModelInfo {
     pub inertia: Option<Vec3>,
 }
 
+/// Game-logic hooks around server commands (the addon runtime implements them).
+pub trait ServerHooks {
+    /// `prop.spawn_request`: false refuses the spawn.
+    fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool;
+    /// `entity.spawned` after a prop was created.
+    fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32);
+    /// Around every tick.
+    fn pre_tick(&mut self, server: &mut Server<'_>);
+    fn post_tick(&mut self, server: &mut Server<'_>);
+}
+
 /// Loads a model by name on first use.
 pub type ModelLoader = Box<dyn FnMut(&str) -> Option<ModelInfo>>;
 
@@ -459,6 +470,38 @@ impl<'w> Server<'w> {
             self.sandbox
                 .set_prop_pose(*id, st.position, gm_sandbox::angles_of(st.rotation));
         }
+    }
+
+    /// `Entity:SetPos/SetAngles` from a script: the sandbox pose and the body move together.
+    pub fn teleport_prop(&mut self, id: u32, pos: Vec3, angles: Vec3) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == id) {
+            return false;
+        }
+        self.sandbox.set_prop_pose(id, pos, angles);
+        if let Some(&b) = self.bodies.get(&id) {
+            self.physics.teleport(b, pos, gm_sandbox::rotation(angles));
+        }
+        true
+    }
+
+    /// `PhysObj:EnableMotion` from a script.
+    pub fn set_prop_frozen(&mut self, id: u32, frozen: bool) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == id) {
+            return false;
+        }
+        self.sandbox.set_frozen(id, frozen);
+        self.sync_physics();
+        true
+    }
+
+    /// `Entity:Remove` from a script: constraints on it go too, like the sandbox's own removal.
+    pub fn remove_prop(&mut self, id: u32) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == id) {
+            return false;
+        }
+        self.sandbox.remove_entity(id);
+        self.sync_physics();
+        true
     }
 
     /// Physics state of a sandbox prop (velocity in Source units, angular body-local deg/s).
