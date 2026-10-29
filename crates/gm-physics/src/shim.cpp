@@ -1,5 +1,6 @@
 // Settings JoltC 0.3.1 does not expose. JPC_PhysicsSystem is a reinterpret_cast of
 // JPH::PhysicsSystem (JoltC.cpp OPAQUE_WRAPPER), so the same cast works here.
+#include <mutex>
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
@@ -187,6 +188,12 @@ public:
 	float persisted_threshold = 0.3f; // m/s, resting contacts stay with Jolt
 	bool debug = getenv("GMP_IMPACT_DEBUG") != nullptr;
 	std::unordered_map<JPH::uint64, std::vector<size_t>> contact_points; // pair -> hull vertex indices that already impacted
+	// the game integrates up to the moment of impact with the old velocity and the rest of the
+	// step with the new one; Jolt integrates the whole step with the new one, so after the step
+	// every impacted body is moved by (v_old - v_new) * t_impact (and turned likewise)
+	struct Offset { JPH::Vec3 dpos; JPH::Vec3 drot; };
+	std::unordered_map<JPH::uint32, Offset> offsets;
+	std::mutex offsets_mutex;
 	std::unordered_map<JPH::uint32, bool> skip; // bodies under a shadow controller (physgun) keep Jolt's contact
 
 	GmpSurface surface(const JPH::Body &b) const {
@@ -285,6 +292,9 @@ public:
 			}
 		}
 		if (pts.empty()) return;
+		const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
+		JPH::Vec3 lv0 = dyn.GetLinearVelocity(), av0 = dyn.GetAngularVelocity();
+		float t_impact = -1.0f;
 		float e_eff = elasticity;
 		float extra = 0.0f;
 		auto rel = [&](JPH::RVec3Arg p) { return point_velocity(b1, p) - point_velocity(b2, p); };
@@ -356,6 +366,7 @@ public:
 				if (better) { pick = &pt; best_t = t; }
 			}
 			if (pick == nullptr) break;
+			if (t_impact < 0.0f) t_impact = std::min(std::max(best_t, 0.0f), step_dt);
 			// the game's impact system also re-pushes the pair's existing contact points (corners
 			// that impacted earlier and still touch) along the normal while this one is resolved
 			std::vector<Pt *> old;
@@ -416,6 +427,30 @@ public:
 				fprintf(stderr, "impact round %d p=(%.3f %.3f %.3f) d=%.4f vn0=%.3f -> v=(%.2f %.2f %.2f) w=(%.2f %.2f %.2f)\n", round, (double)pick->p.GetX(), (double)pick->p.GetY(), (double)pick->p.GetZ(), (double)pick->d, (double)pick->vn0, (double)lv.GetX(), (double)lv.GetY(), (double)lv.GetZ(), (double)av.GetX(), (double)av.GetY(), (double)av.GetZ());
 			}
 		}
+		if (t_impact > 0.0f) {
+			JPH::Vec3 dl = (lv0 - dyn.GetLinearVelocity()) * t_impact;
+			JPH::Vec3 da = (av0 - dyn.GetAngularVelocity()) * t_impact;
+			std::lock_guard<std::mutex> lock(offsets_mutex);
+			Offset &o = offsets[dyn.GetID().GetIndexAndSequenceNumber()];
+			o.dpos += dl;
+			o.drot += da;
+		}
+	}
+
+	void apply_offsets(JPH::PhysicsSystem &sys) {
+		if (getenv("GMP_NO_IMPACT_OFFSET")) { offsets.clear(); return; } // experiment knob, see docs/spec/physics.md
+		std::lock_guard<std::mutex> lock(offsets_mutex);
+		JPH::BodyInterface &bi = sys.GetBodyInterfaceNoLock();
+		for (auto &[id, o] : offsets) {
+			JPH::BodyID bid(id);
+			if (!bi.IsAdded(bid)) continue;
+			JPH::RVec3 p = bi.GetPosition(bid);
+			JPH::Quat r = bi.GetRotation(bid);
+			float ang = o.drot.Length();
+			if (ang > 1e-9f) r = (JPH::Quat::sRotation(o.drot / ang, ang) * r).Normalized();
+			bi.SetPositionAndRotation(bid, p + o.dpos, r, JPH::EActivation::DontActivate);
+		}
+		offsets.clear();
 	}
 };
 
@@ -464,6 +499,11 @@ void gmp_set_inertia(void *system, unsigned int body_id, float mass, float ix, f
 		JPH::Vec3 after = motion->GetInverseInertiaDiagonal();
 		fprintf(stderr, "inertia body %u mass %.3f jolt I=(%.4f %.4f %.4f) phy I=(%.4f %.4f %.4f) now I=(%.4f %.4f %.4f) invmass %.5f\n", body_id, (double)mass, 1.0 / before.GetX(), 1.0 / before.GetY(), 1.0 / before.GetZ(), (double)ix, (double)iy, (double)iz, 1.0 / after.GetX(), 1.0 / after.GetY(), 1.0 / after.GetZ(), (double)motion->GetInverseMass());
 	}
+}
+
+void gmp_apply_impact_offsets(void *system) {
+	auto *l = listener_of(system);
+	if (l) l->apply_offsets(*reinterpret_cast<JPH::PhysicsSystem *>(system));
 }
 
 void gmp_set_impact_step(void *system, float dt) {

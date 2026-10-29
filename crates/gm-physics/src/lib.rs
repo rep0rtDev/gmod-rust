@@ -89,6 +89,7 @@ extern "C" {
         iz: f32,
     );
     fn gmp_set_impact_step(system: *mut JPC_PhysicsSystem, dt: f32);
+    fn gmp_apply_impact_offsets(system: *mut JPC_PhysicsSystem);
     fn gmp_set_impact_skip(system: *mut JPC_PhysicsSystem, body_id: u32, on: i32);
     fn gmp_set_impact_enabled(system: *mut JPC_PhysicsSystem, enabled: i32);
     fn gmp_set_pair_collision(system: *mut JPC_PhysicsSystem, id1: u32, id2: u32, enabled: i32);
@@ -856,6 +857,7 @@ impl World {
         unsafe {
             self.system
                 .update(self.tick_interval, 1, self.temp, self.jobs);
+            gmp_apply_impact_offsets(self.system.as_raw());
         }
     }
 

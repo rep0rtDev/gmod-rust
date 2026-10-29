@@ -1,6 +1,6 @@
 # Rigid body physics (gm-physics)
 
-Status: first Jolt implementation (`gm-physics`), 1 of 5 `phys_*` harnesses within tolerance (`phys_drop_crate`; `phys_slide_crate` is 10 u short, `phys_drop_tilted`, `phys_slide_barrel`, `phys_toss_can` diverge after contact). Traces recorded on 2026.09.17.
+Status: Jolt implementation (`gm-physics`) with an IVP style impact listener, 1 of 5 `phys_*` harnesses within tolerance (`phys_drop_crate`; `phys_slide_crate` is 10 u short, `phys_drop_tilted`, `phys_slide_barrel`, `phys_toss_can` diverge after contact). Traces recorded on 2026.09.17.
 
 Oracle: `prop_physics` spawned by the probe on a dedicated server, `PhysObj` transform, velocity and angular velocity recorded every server tick, plus mass, inertia, mass centre, material, volume, surface area and damping from the physics object.
 
@@ -64,3 +64,9 @@ Effect: flat crate within tolerance (rest 1.2 u), tilted crate first impact righ
 ## Target
 
 Jolt (through `rolt` / `joltc-sys`, Jolt 5.0) with the world built from BSP brushes and props from their PHY convex hulls, surface properties from `scripts/surfaceproperties*.txt` (friction, elasticity, density), tuned until the `phys_*` traces match within tolerance. Bit exactness is not a goal here (different solver); the bar is the same contact tick, the same resting pose within 0.5 u, the same rebound within 10 percent, the same sleep behaviour.
+
+## Impact time inside the step
+
+The game integrates a body up to the moment its vertex reaches the surface with the old velocity and the rest of the tick with the new one: the tilted crate falls at -279.4 u/s, hits with its corner 1.75 u (0.0444 m) above the floor at the start of tick 34 and ends the tick at z -115.77 with vz -65, which is `-113.34 - 279.4 t - 65 (0.015 - t)` for `t = 6.8 ms`; its x (0 before, -108.9 after) gives the same `t`, and so does the barrel's z. Jolt solves the speculative contact first and then moves the body for the whole step with the new velocity (ours ended at -114.43, 1.3 u high, and the second corner then touched one tick late). The listener now records, per impacted body, `(v_old - v_new) t` and `(w_old - w_new) t` with `t = d / |vn|` of the first vertex it resolved (clamped to the step) and applies them after `update` (`gmp_apply_impact_offsets`): the crate's pose at tick 34 is then 699.1, -499.7, -115.7 and 18.3 / 34.2 / 7.4 degrees against the game's 699.1, -499.6, -115.8 and 18.5 / 34.3 / 7.7, and the second impact lands on tick 37 as in the game. The barrel does not follow the rule in y (it moved 2.0 u in its impact tick where either integration gives at least 2.4), left open.
+
+Effect on the harnesses (before -> after): `phys_toss_can` 59.7 -> 51.9 u, `phys_slide_crate` 10.6 -> 9.2 u, `constraint_stack_disp` 3.8 -> 2.1 u, `phys_drop_crate` 1.19 (unchanged), `constraint_stack_pair` 0.65 / 0.99 -> 0.72 / 1.10 u; `phys_drop_tilted` rest 4.3 -> 7.2 u but rest angle 3.7 -> 1.3 degrees and the contact ticks now match; `phys_slide_barrel` 80 -> 101 u (its first impulse is already off: vz 87 against 105 u/s, w -364 against -394 deg/s). The impulses themselves are the remaining gap: scaling the PHY inertia 1.12 or 1.25 moves the first-impact velocities away from the game (tilted vx -101 -> -98 against -109), so the game's extra tangential velocity change is not an inertia matter. `GMP_NO_IMPACT_OFFSET=1` disables the offsets for experiments.
