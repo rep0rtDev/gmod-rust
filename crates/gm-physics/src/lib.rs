@@ -12,7 +12,12 @@ pub mod physgun;
 pub mod surface;
 
 extern "C" {
-    fn gmp_set_contact_settings(system: *mut JPC_PhysicsSystem, speculative: f32, slop: f32);
+    fn gmp_set_contact_settings(
+        system: *mut JPC_PhysicsSystem,
+        speculative: f32,
+        slop: f32,
+        linear_cast_threshold: f32,
+    );
     fn gmp_get_speculative_distance(system: *const JPC_PhysicsSystem) -> f32;
     fn gmp_get_penetration_slop(system: *const JPC_PhysicsSystem) -> f32;
     fn gmp_add_static_mesh(
@@ -109,6 +114,13 @@ pub struct ConstraintHandle(*mut std::ffi::c_void);
 /// typical speeds and the game resolves the hit in the tick it happens, so the default 0.02 m
 /// (which lands bodies a tick late, penetrating) is widened.
 pub const SPECULATIVE_CONTACT_M: f32 = 0.15;
+
+/// Fraction of a body's inner radius it may move in one step before Jolt sweeps it to its time
+/// of impact (`PhysicsSettings::mLinearCastThreshold`, Jolt default 0.75). The game's
+/// event-driven collision catches a contact anywhere inside the step; with Jolt's default a
+/// crate falling 9 u per tick from 5.9 u above the floor passes the speculative distance and
+/// lands a tick late. 0.03 to 0.25 give identical harness results, see docs/spec/physics.md.
+pub const LINEAR_CAST_THRESHOLD: f32 = 0.1;
 
 /// Speculative contact distance actually used (metres): `GMP_SPECULATIVE` overrides the
 /// default for experiments (the game catches a contact anywhere inside the step, Jolt only
@@ -356,7 +368,12 @@ impl World {
             // layout check: the shim reads Jolt's defaults back before changing them
             debug_assert!((gmp_get_speculative_distance(raw) - 0.02).abs() < 1e-6);
             debug_assert!((gmp_get_penetration_slop(raw) - 0.02).abs() < 1e-6);
-            gmp_set_contact_settings(raw, speculative_contact_m(), PENETRATION_SLOP_M);
+            gmp_set_contact_settings(
+                raw,
+                speculative_contact_m(),
+                PENETRATION_SLOP_M,
+                LINEAR_CAST_THRESHOLD,
+            );
             gmp_install_impact_listener(raw);
             gmp_set_impact_step(raw, tick_interval);
         }

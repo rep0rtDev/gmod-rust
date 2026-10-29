@@ -6,11 +6,18 @@
 
 extern "C" {
 
-void gmp_set_contact_settings(void *system, float speculative_distance, float penetration_slop) {
+void gmp_set_contact_settings(void *system, float speculative_distance, float penetration_slop,
+                              float linear_cast_threshold) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
 	JPH::PhysicsSettings s = sys->GetPhysicsSettings();
 	s.mSpeculativeContactDistance = speculative_distance;
 	s.mPenetrationSlop = penetration_slop;
+	// a LinearCast body that moves more than this fraction of its inner radius in a step is
+	// swept to its time of impact (Jolt's default 0.75 lets a prop falling 9 u per tick pass
+	// the speculative distance and land a tick late, see docs/spec/physics.md)
+	s.mLinearCastThreshold = linear_cast_threshold;
+	if (const char *t = getenv("GMP_LINEARCAST_THRESHOLD")) s.mLinearCastThreshold = (float)atof(t); // experiment knob
+	if (const char *t = getenv("GMP_LINEARCAST_MAXPEN")) s.mLinearCastMaxPenetration = (float)atof(t);
 	sys->SetPhysicsSettings(s);
 }
 
