@@ -1,0 +1,15 @@
+[package]
+name = "gm-physics"
+description = "Rigid body physics on Jolt: BSP brush world, PHY convex props, Source units and tick"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+gm-core = { path = "../gm-core" }
+gm-formats = { path = "../gm-formats" }
+joltc-sys = "0.3.1"
+rolt = "0.3.1"
+thiserror = { workspace = true }

@@ -164,7 +164,7 @@ fn hl2_props_mdl_vvd_vtx_parse() {
     };
     let ar = gm_formats::vpk::Archive::open(dir.join("sourceengine/hl2_misc_dir.vpk")).unwrap();
     let mut checked = 0;
-    for (k, e) in ar.directory.iter_prefix("models/props_c17") {
+    for (k, e) in ar.directory.iter_prefix("models") {
         if !k.ends_with(".mdl") || checked >= 60 {
             continue;
         }
@@ -278,4 +278,53 @@ fn gm_construct_props_disps_pvs() {
         "{visible}/{}",
         vis.num_clusters
     );
+}
+
+#[test]
+fn hl2_props_phy_parse() {
+    let Some(dir) = gmod_dir() else {
+        return;
+    };
+    let ar = gm_formats::vpk::Archive::open(dir.join("sourceengine/hl2_misc_dir.vpk")).unwrap();
+    let crate_phy = ar.read("models/props_junk/wood_crate001a.phy").unwrap();
+    let phy = gm_formats::phy::Phy::parse(&crate_phy).unwrap();
+    assert_eq!(phy.solids.len(), 1);
+    assert_eq!(phy.solids[0].convexes.len(), 1);
+    let hull = &phy.solids[0].convexes[0];
+    assert_eq!(hull.points.len(), 8);
+    assert_eq!(hull.triangles.len(), 12);
+    for p in &hull.points {
+        for c in p {
+            assert!((c.abs() - 20.0).abs() < 1.0, "crate point {p:?}");
+        }
+    }
+    assert_eq!(phy.props.len(), 1);
+    assert_eq!(phy.props[0].surfaceprop, "Wood_Crate");
+    assert!((phy.props[0].mass - 30.0).abs() < 1e-3);
+
+    let (mut files, mut solids, mut convexes) = (0, 0, 0);
+    for (k, e) in ar.directory.iter_prefix("models") {
+        if !k.ends_with(".phy") {
+            continue;
+        }
+        let bytes = ar.read_entry(e).unwrap();
+        let phy = gm_formats::phy::Phy::parse(&bytes).unwrap_or_else(|e| panic!("{k}: {e}"));
+        assert!(!phy.solids.is_empty(), "{k}");
+        for s in &phy.solids {
+            for c in &s.convexes {
+                assert!(c.points.len() >= 3 && !c.triangles.is_empty(), "{k}");
+                for t in &c.triangles {
+                    assert!(t.iter().all(|&i| (i as usize) < c.points.len()), "{k}");
+                }
+                for p in &c.points {
+                    assert!(p.iter().all(|c| c.abs() < 16384.0), "{k} {p:?}");
+                }
+            }
+            convexes += s.convexes.len();
+        }
+        solids += phy.solids.len();
+        files += 1;
+    }
+    eprintln!("{files} hl2_misc PHY files, {solids} solids, {convexes} convexes");
+    assert!(files > 1000);
 }
