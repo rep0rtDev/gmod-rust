@@ -123,6 +123,10 @@ struct PropSpec {
 struct OpSpec {
     op: String,
     #[serde(default)]
+    tool: Option<String>,
+    #[serde(default)]
+    button: Option<String>,
+    #[serde(default)]
     model: Option<String>,
     #[serde(default)]
     pitch: f32,
@@ -224,6 +228,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "physgun" => run_physgun(scn)?,
         "constraint" => run_constraint(scn)?,
         "sandbox" => run_sandbox(scn)?,
+        "toolgun" => run_toolgun(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
     Ok(Trace {
@@ -832,6 +837,303 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
     Ok(json!({ "results": results, "messages": messages, "eye": [eye.x, eye.y, eye.z] }))
 }
 
+fn run_toolgun(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_sandbox::{ConstraintKind, Event, Limits, PropBody, Sandbox};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let world = gm_collision::World::from_bsp(&bsp);
+    let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    let eye = start + Vec3::new(0.0, 0.0, 64.0);
+    let player = 1u32;
+    let mut sb = Sandbox::new(Limits::default());
+    // props at rest where the scenario put them (the probe lets them settle before clicking)
+    let mut bodies = Vec::new();
+    for (i, pr) in scn.props.iter().enumerate() {
+        let phy_path = pr
+            .model
+            .strip_suffix(".mdl")
+            .map(|m| format!("{m}.phy"))
+            .unwrap_or_else(|| pr.model.clone());
+        let phy = gm_formats::phy::Phy::parse(&mount.read(&phy_path)?)?;
+        let solid = phy.solids.first().context("PHY has no solids")?;
+        let hulls = solid
+            .convexes
+            .iter()
+            .map(|c| {
+                let pts: Vec<Vec3> = c.points.iter().map(|&p| Vec3::from(p)).collect();
+                gm_sandbox::hull_planes(&pts, &c.triangles)
+            })
+            .collect();
+        let a = pr.angles.unwrap_or([0.0; 3]);
+        bodies.push(PropBody {
+            id: i as u32 + 1,
+            pos: Vec3::from(pr.pos),
+            angles: Vec3::from(a),
+            hulls,
+        });
+    }
+    sb.place_existing(
+        player,
+        &bodies,
+        &scn.props
+            .iter()
+            .map(|p| p.model.clone())
+            .collect::<Vec<_>>(),
+    );
+    let entref = |e: Option<u32>| -> Value {
+        match e {
+            None => json!({ "index": 0, "class": "worldspawn" }),
+            Some(id) => json!({ "prop": id, "class": "prop_physics" }),
+        }
+    };
+    let snapshot = |sb: &Sandbox| -> Value {
+        let constraints: Vec<Value> = sb
+            .constraints()
+            .iter()
+            .map(|c| match &c.kind {
+                ConstraintKind::Weld { forcelimit, nocollide } => json!({
+                    "class": "phys_constraint", "type": "Weld", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
+                    "forcelimit": forcelimit, "nocollide": nocollide,
+                }),
+                ConstraintKind::Rope { lpos1, lpos2, length, addlength, width, material, rigid } => json!({
+                    "class": "phys_lengthconstraint", "type": "Rope", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
+                    "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos2": [lpos2.x, lpos2.y, lpos2.z],
+                    "length": length, "addlength": addlength, "width": width, "material": material, "rigid": rigid,
+                }),
+            })
+            .collect();
+        json!({
+            "constraints": constraints,
+            "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "text": u.text, "custom": u.custom, "n": u.entities.len() })).collect::<Vec<_>>(),
+            "counts": { "constraints": sb.count_of(player, "constraints"), "ropeconstraints": sb.count_of(player, "ropeconstraints"), "props": sb.count(player) },
+            "stage": sb.tool(player).stage,
+        })
+    };
+    let mut results = Vec::new();
+    let mut messages = Vec::new();
+    for (i, op) in scn.ops.iter().enumerate() {
+        let mut events = Vec::new();
+        let mut rec = json!({ "op": op.op, "t": i });
+        match op.op.as_str() {
+            "click" => {
+                let dir = gm_sandbox::forward(op.pitch, op.yaw);
+                let hit = gm_sandbox::tool_trace(&world, &bodies, eye, dir);
+                let tool = op.tool.clone().unwrap_or_default();
+                rec["tool"] = json!(tool);
+                rec["button"] = json!(op.button.clone().unwrap_or_else(|| "left".into()));
+                match hit {
+                    Some(h) => {
+                        rec["trace"] = json!({ "hit": true, "pos": [h.pos.x, h.pos.y, h.pos.z], "normal": [h.normal.x, h.normal.y, h.normal.z], "ent": entref(h.ent), "eye": [eye.x, eye.y, eye.z], "fraction": h.fraction });
+                        let ret = match op.button.as_deref() {
+                            Some("reload") => sb.tool_reload(player),
+                            Some("right") => false,
+                            _ => sb.tool_left_click(player, &tool, &h, &mut events),
+                        };
+                        rec["ok"] = json!(true);
+                        rec["ret"] = json!(ret);
+                    }
+                    None => {
+                        rec["trace"] = json!({ "hit": false });
+                        rec["ok"] = json!(false);
+                        rec["ret"] = json!("miss");
+                    }
+                }
+            }
+            "undo" => sb.undo(player, &mut events),
+            "cleanup" => sb.cleanup(player, &mut events),
+            "cvar" => match op.name.as_deref() {
+                Some("sbox_maxconstraints") => {
+                    sb.limits.max_constraints =
+                        op.value.as_deref().unwrap_or("100").parse().unwrap_or(100)
+                }
+                Some("sbox_maxropeconstraints") => {
+                    sb.limits.max_ropeconstraints =
+                        op.value.as_deref().unwrap_or("100").parse().unwrap_or(100)
+                }
+                Some("sbox_maxprops") => {
+                    sb.limits.max_props =
+                        op.value.as_deref().unwrap_or("200").parse().unwrap_or(200)
+                }
+                _ => {}
+            },
+            "wait" => {}
+            other => bail!("unknown toolgun op {other}"),
+        }
+        for e in &events {
+            match e {
+                Event::LimitHit { limit } => messages.push(json!({ "t": i, "limit": limit })),
+                Event::Cleanup { kind } => messages
+                    .push(json!({ "t": i, "lua": format!("hook.Run('OnCleanup','{kind}')") })),
+                Event::Spawned { .. } | Event::Undone { .. } => {}
+            }
+        }
+        let snap = snapshot(&sb);
+        rec["immediate"] = snap.clone();
+        rec["after"] = snap;
+        results.push(rec);
+    }
+    Ok(json!({ "results": results, "messages": messages, "eye": [eye.x, eye.y, eye.z] }))
+}
+
+/// Per op: the tool trace (hit point and entity), the tool stage, counts, undo entries by id and
+/// name, and every constraint (type, both ends, local attachment points, length).
+fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(0.1) as f32;
+    let empty = Vec::new();
+    let tr = theirs["results"].as_array().unwrap_or(&empty);
+    let or = ours["results"].as_array().unwrap_or(&empty);
+    let mut ok = tr.len() == or.len();
+    if !ok {
+        println!("  {} ops recorded, {} ours", tr.len(), or.len());
+    }
+    let v3 = |v: &Value| -> glam::Vec3 {
+        let a = v.as_array().cloned().unwrap_or_default();
+        glam::Vec3::new(
+            a.first().and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(1).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(2).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+        )
+    };
+    let ent_key = |e: &Value| -> String {
+        if e["index"].as_i64() == Some(0) {
+            "world".into()
+        } else {
+            format!("prop{}", e["prop"].as_i64().unwrap_or(-1))
+        }
+    };
+    let (mut max_trace, mut max_lpos, mut max_len) = (0.0f32, 0.0f32, 0.0f32);
+    for (i, (t, o)) in tr.iter().zip(or).enumerate() {
+        let op = t["op"].as_str().unwrap_or("");
+        if op == "click" {
+            let (tt, ot) = (&t["trace"], &o["trace"]);
+            if tt["hit"] != ot["hit"]
+                || (tt["hit"] == json!(true) && ent_key(&tt["ent"]) != ent_key(&ot["ent"]))
+            {
+                println!(
+                    "  op {i}: trace hit {} {} vs {} {}",
+                    tt["hit"],
+                    ent_key(&tt["ent"]),
+                    ot["hit"],
+                    ent_key(&ot["ent"])
+                );
+                ok = false;
+            } else if tt["hit"] == json!(true) {
+                max_trace = max_trace.max((v3(&tt["pos"]) - v3(&ot["pos"])).length());
+            }
+            let ret = |v: &Value| {
+                v.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string())
+            };
+            if ret(&t["ret"]) != ret(&o["ret"]) {
+                println!("  op {i}: tool returned {} vs {}", t["ret"], o["ret"]);
+                ok = false;
+            }
+        }
+        let (ta, oa) = (&t["after"], &o["after"]);
+        if ta["stage"] != oa["stage"] {
+            println!("  op {i} {op}: stage {} vs {}", ta["stage"], oa["stage"]);
+            ok = false;
+        }
+        for k in ["constraints", "ropeconstraints"] {
+            if ta["counts"][k] != oa["counts"][k] {
+                println!(
+                    "  op {i} {op}: count {k} {} vs {}",
+                    ta["counts"][k], oa["counts"][k]
+                );
+                ok = false;
+            }
+        }
+        let undos = |s: &Value| -> Vec<(i64, String)> {
+            s["undos"]
+                .as_array()
+                .unwrap_or(&empty)
+                .iter()
+                .map(|u| {
+                    (
+                        u["id"].as_i64().unwrap_or(-1),
+                        u["name"].as_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect()
+        };
+        if undos(ta) != undos(oa) {
+            println!("  op {i} {op}: undos {:?} vs {:?}", undos(ta), undos(oa));
+            ok = false;
+        }
+        // the game lists constraints by class, ours by creation: pair them by type and ends
+        let sorted = |s: &Value| -> Vec<Value> {
+            let mut v = s["constraints"].as_array().cloned().unwrap_or_default();
+            v.sort_by_key(|c| {
+                format!(
+                    "{} {} {}",
+                    c["type"],
+                    ent_key(&c["ent1"]),
+                    ent_key(&c["ent2"])
+                )
+            });
+            v
+        };
+        let (tc, oc) = (sorted(ta), sorted(oa));
+        let (tc, oc) = (&tc, &oc);
+        if tc.len() != oc.len() {
+            println!(
+                "  op {i} {op}: {} constraints in the game, {} ours",
+                tc.len(),
+                oc.len()
+            );
+            ok = false;
+            continue;
+        }
+        for (a, b) in tc.iter().zip(oc) {
+            if a["type"] != b["type"]
+                || ent_key(&a["ent1"]) != ent_key(&b["ent1"])
+                || ent_key(&a["ent2"]) != ent_key(&b["ent2"])
+            {
+                println!(
+                    "  op {i} {op}: constraint {} {}-{} vs {} {}-{}",
+                    a["type"],
+                    ent_key(&a["ent1"]),
+                    ent_key(&a["ent2"]),
+                    b["type"],
+                    ent_key(&b["ent1"]),
+                    ent_key(&b["ent2"])
+                );
+                ok = false;
+            }
+            if a["type"] == json!("Rope") {
+                max_lpos = max_lpos
+                    .max((v3(&a["lpos1"]) - v3(&b["lpos1"])).length())
+                    .max((v3(&a["lpos2"]) - v3(&b["lpos2"])).length());
+                max_len = max_len.max(
+                    (a["length"].as_f64().unwrap_or(0.0) - b["length"].as_f64().unwrap_or(0.0))
+                        .abs() as f32,
+                );
+                let num = |v: &Value| v.as_f64().unwrap_or(0.0);
+                if a["rigid"] != b["rigid"] || num(&a["addlength"]) != num(&b["addlength"]) {
+                    println!(
+                        "  op {i}: rope settings {} {} vs {} {}",
+                        a["rigid"], a["addlength"], b["rigid"], b["addlength"]
+                    );
+                    ok = false;
+                }
+            }
+        }
+    }
+    if max_trace > pos_tol || max_lpos > pos_tol || max_len > pos_tol {
+        ok = false;
+    }
+    println!(
+        "  {} ops, max trace err {:.3}, max attachment err {:.3}, max length err {:.3} (tol {pos_tol}): {}",
+        tr.len(), max_trace, max_lpos, max_len, if ok { "equal" } else { "DIFF" }
+    );
+    ok
+}
+
 /// Per op: spawn placement (pose at the spawn tick, before physics), prop list after the op
 /// (models in order), count, undo ids and the limit hits sent to the player.
 fn compare_sandbox(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
@@ -1262,6 +1564,7 @@ fn main() -> Result<()> {
                     "trajectory" => compare_trajectory(&t.result, &o.result, &h.tolerance),
                     "rigid" => compare_rigid(&t.result, &o.result, &h.tolerance),
                     "sandbox" => compare_sandbox(&t.result, &o.result, &h.tolerance),
+                    "toolgun" => compare_toolgun(&t.result, &o.result, &h.tolerance),
                     other => {
                         println!("  unknown compare mode {other}");
                         false

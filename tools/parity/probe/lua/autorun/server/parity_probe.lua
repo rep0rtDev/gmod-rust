@@ -428,6 +428,8 @@ SCENARIOS.sandbox = function(scn, done)
 	if not bot:Alive() then bot:Spawn() end
 	bot:SetPos(Vector(scn.start[1], scn.start[2], scn.start[3]))
 	bot:SetLocalVelocity(Vector(0, 0, 0))
+	for _, e in ipairs(ents.FindByClass("prop_physics")) do e:Remove() end
+	undo.GetTable()[bot:UniqueID()] = nil
 	local meta = FindMetaTable("Player")
 	local messages = {}
 	local oldSendLua, oldLimitHit = meta.SendLua, meta.LimitHit
@@ -486,6 +488,160 @@ SCENARIOS.sandbox = function(scn, done)
 	step()
 end
 ASYNC.sandbox = true
+
+
+-- toolgun: props at rest, a bot with gmod_tool clicks real stools (weld, rope, ...) through the
+-- weapon's own trace (DoToolTrace: line with the tool mask, hull fallback) and the tool object;
+-- after every op the constraints (their ctable), props, undo stack, counts and messages are recorded.
+-- { kind = "toolgun", start = {x,y,z}, props = { {model=..., pos={...}, angles={...}, frozen=false} },
+--   ops = { {op="click", tool="weld", pitch=30, yaw=0, button="left"}, {op="undo"}, {op="wait", ticks=10}, {op="cvar", name=..., value=...} } }
+SCENARIOS.toolgun = function(scn, done)
+	local bot = player.GetBots()[1]
+	if not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.toolgun(scn, done) end)
+		return
+	end
+	if not bot:Alive() then bot:Spawn() end
+	bot:SetPos(Vector(scn.start[1], scn.start[2], scn.start[3]))
+	bot:SetLocalVelocity(Vector(0, 0, 0))
+	bot:StripWeapons()
+	bot:Give("gmod_tool")
+	bot:SelectWeapon("gmod_tool")
+	-- a clean table: leftovers of earlier scenarios would collide with the props placed here
+	for _, cls in ipairs({ "prop_physics", "phys_constraint", "phys_lengthconstraint", "keyframe_rope" }) do
+		for _, e in ipairs(ents.FindByClass(cls)) do e:Remove() end
+	end
+	undo.GetTable()[bot:UniqueID()] = nil
+	local props = {}
+	for i, pr in ipairs(scn.props or {}) do
+		local ent = ents.Create("prop_physics")
+		ent:SetModel(pr.model)
+		ent:SetPos(Vector(pr.pos[1], pr.pos[2], pr.pos[3]))
+		ent:SetAngles(Angle(pr.angles and pr.angles[1] or 0, pr.angles and pr.angles[2] or 0, pr.angles and pr.angles[3] or 0))
+		ent:Spawn()
+		ent:Activate()
+		local ph = ent:GetPhysicsObject()
+		if IsValid(ph) then
+			ph:Wake()
+			if pr.frozen then ph:EnableMotion(false) end
+		end
+		props[i] = ent
+	end
+	local meta = FindMetaTable("Player")
+	local messages = {}
+	local oldSendLua, oldLimitHit = meta.SendLua, meta.LimitHit
+	meta.SendLua = function(ply, str) if ply == bot then messages[#messages + 1] = { t = engine.TickCount(), lua = str } end return oldSendLua(ply, str) end
+	meta.LimitHit = function(ply, str) if ply == bot then messages[#messages + 1] = { t = engine.TickCount(), limit = str } end return oldLimitHit(ply, str) end
+	local function vec(v) if not v then return nil end return { v.x, v.y, v.z } end
+	local function entref(e)
+		if e == nil then return nil end
+		if not IsValid(e) then if e == game.GetWorld() then return { index = 0, class = "worldspawn" } end return { index = -1 } end
+		local idx = 0
+		for i, pe in ipairs(props) do if pe == e then idx = i end end
+		return { index = e:EntIndex(), class = e:GetClass(), prop = idx }
+	end
+	local function snapshot()
+		local out = { props = {}, constraints = {}, ropes = {} }
+		for i, e in ipairs(props) do
+			if IsValid(e) then
+				local ph = e:GetPhysicsObject()
+				local p, a, v = e:GetPos(), e:GetAngles(), IsValid(ph) and ph:GetVelocity() or Vector(0, 0, 0)
+				out.props[i] = { index = e:EntIndex(), pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r }, vel = { v.x, v.y, v.z },
+					frozen = IsValid(ph) and not ph:IsMotionEnabled() or false, asleep = IsValid(ph) and ph:IsAsleep() or false }
+			else
+				out.props[i] = { index = -1 }
+			end
+		end
+		for _, cls in ipairs({ "phys_constraint", "phys_lengthconstraint", "phys_ballsocket", "phys_hinge", "phys_slideconstraint", "logic_collision_pair" }) do
+			for _, c in ipairs(ents.FindByClass(cls)) do
+				local t = c:GetTable()
+				out.constraints[#out.constraints + 1] = { index = c:EntIndex(), class = cls, type = t.Type,
+					ent1 = entref(t.Ent1), ent2 = entref(t.Ent2), bone1 = t.Bone1, bone2 = t.Bone2,
+					lpos1 = vec(t.LPos1), lpos2 = vec(t.LPos2), length = t.length, addlength = t.addlength,
+					forcelimit = t.forcelimit, nocollide = t.nocollide, rigid = t.rigid, width = t.width, material = t.material,
+					pos = vec(c:GetPos()) }
+			end
+		end
+		table.sort(out.constraints, function(a, b) return a.index < b.index end)
+		for _, r in ipairs(ents.FindByClass("keyframe_rope")) do
+			out.ropes[#out.ropes + 1] = { index = r:EntIndex(), pos = vec(r:GetPos()), length = r:GetKeyValues().Length, width = r:GetKeyValues().Width }
+		end
+		local undos = undo.GetTable()[bot:UniqueID()] or {}
+		local ulist = {}
+		for k, u in pairs(undos) do ulist[#ulist + 1] = { id = k, name = u.Name, text = u.NiceText, custom = u.CustomUndoText, n = #u.Entities } end
+		table.sort(ulist, function(a, b) return a.id < b.id end)
+		out.undos = ulist
+		out.counts = { constraints = bot:GetCount("constraints"), ropeconstraints = bot:GetCount("ropeconstraints"), props = bot:GetCount("props") }
+		local wep = bot:GetWeapon("gmod_tool")
+		out.stage = IsValid(wep) and wep:GetNWInt("Stage", 0) or -1
+		return out
+	end
+	local toolMask = bit.bor(CONTENTS_SOLID, CONTENTS_MOVEABLE, CONTENTS_MONSTER, CONTENTS_WINDOW, CONTENTS_DEBRIS, CONTENTS_GRATE, CONTENTS_AUX)
+	local function toolTrace()
+		local tr = util.GetPlayerTrace(bot)
+		tr.mask = toolMask
+		tr.mins = vector_origin
+		tr.maxs = tr.mins
+		tr.filter = { bot, bot:GetVehicle() }
+		local trace = util.TraceLine(tr)
+		if not trace.Hit or not IsValid(trace.Entity) then
+			local hulltrace = util.TraceHull(tr)
+			if IsValid(hulltrace.Entity) then
+				trace = hulltrace
+				trace.HullTrace = true
+			end
+		end
+		return trace
+	end
+	local ops, results, i = scn.ops, {}, 0
+	local function step()
+		i = i + 1
+		local op = ops[i]
+		if not op then
+			meta.SendLua, meta.LimitHit = oldSendLua, oldLimitHit
+			local eye = bot:GetShootPos()
+			done({ results = results, messages = messages, eye = { eye.x, eye.y, eye.z } })
+			return
+		end
+		local rec = { op = op.op, t = engine.TickCount() }
+		local wait = op.wait or 3
+		if op.op == "click" then
+			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			local tr = toolTrace()
+			local eye = bot:GetShootPos()
+			rec.tool, rec.button = op.tool, op.button or "left"
+			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal), start = vec(tr.StartPos), eye = { eye.x, eye.y, eye.z },
+				ent = entref(tr.Entity), bone = tr.PhysicsBone, hull = tr.HullTrace or false, fraction = tr.Fraction }
+			local wep = bot:GetWeapon("gmod_tool")
+			local tool = IsValid(wep) and wep:GetToolObject(op.tool) or nil
+			if tool and tr.Hit then
+				local fn = (op.button == "right") and tool.RightClick or (op.button == "reload") and tool.Reload or tool.LeftClick
+				local ok, ret = pcall(fn, tool, tr)
+				rec.ok, rec.ret = ok, ok and ret or tostring(ret)
+			else
+				rec.ok, rec.ret = false, tool and "miss" or "no tool"
+			end
+		elseif op.op == "undo" then
+			concommand.Run(bot, "gmod_undo", {}, "")
+		elseif op.op == "cleanup" then
+			concommand.Run(bot, "gmod_cleanup", {}, "")
+		elseif op.op == "cvar" then
+			RunConsoleCommand(op.name, op.value)
+		elseif op.op == "wait" then
+			wait = op.ticks or 10
+		end
+		rec.immediate = snapshot()
+		timer.Simple(engine.TickInterval() * wait, function()
+			rec.after = snapshot()
+			rec.t_after = engine.TickCount()
+			results[#results + 1] = rec
+			step()
+		end)
+	end
+	timer.Simple(engine.TickInterval() * (scn.settle or 40), step)
+end
+ASYNC.toolgun = true
 
 local function runAll()
 	file.CreateDir(OUT_DIR)

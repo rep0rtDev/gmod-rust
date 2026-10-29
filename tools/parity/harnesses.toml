@@ -376,3 +376,12 @@ crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 ang = 0.1
+
+[[harness]]
+name = "toolgun_weld_rope"
+scenario = "toolgun/weld_rope"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
