@@ -192,6 +192,7 @@ public:
 	}
 	float static_mass_factor = 100000.0f;
 	float step_dt = 0.015f;
+	int tick = 0;
 	float gravity = 9.81f; // m/s^2, the push step's resting friction comes from the weight only
 	JPH::PhysicsSystem *sys = nullptr; // the world's gravity is read live (set after install)
 	float persisted_threshold = 0.3f; // m/s, resting contacts stay with Jolt
@@ -250,10 +251,20 @@ public:
 
 	void OnContactPersisted(const JPH::Body &b1, const JPH::Body &b2, const JPH::ContactManifold &m, JPH::ContactSettings &s) override {
 		impact(b1, b2, m, s, persisted_threshold);
+		if (debug) {
+			const JPH::Body &d = b1.IsDynamic() ? b1 : b2;
+			JPH::Vec3 lv = d.GetLinearVelocity(), av = d.GetAngularVelocity();
+			fprintf(stderr, "DBGCB t=%d id=%u persisted m=%.1f pts=%u pen=%.4f f=%.3f n=(%.2f %.2f %.2f) lv=(%.3f %.3f %.3f) av=(%.2f %.2f %.2f)\n", tick, d.GetID().GetIndex(), 1.0f / d.GetMotionProperties()->GetInverseMass(), m.mRelativeContactPointsOn1.size(), m.mPenetrationDepth, s.mCombinedFriction, m.mWorldSpaceNormal.GetX(), m.mWorldSpaceNormal.GetY(), m.mWorldSpaceNormal.GetZ(), lv.GetX(), lv.GetY(), lv.GetZ(), av.GetX(), av.GetY(), av.GetZ());
+		}
 	}
 
 	void OnContactAdded(const JPH::Body &b1, const JPH::Body &b2, const JPH::ContactManifold &m, JPH::ContactSettings &s) override {
 		impact(b1, b2, m, s, 1e-4f);
+		if (debug) {
+			const JPH::Body &d = b1.IsDynamic() ? b1 : b2;
+			JPH::Vec3 lv = d.GetLinearVelocity(), av = d.GetAngularVelocity();
+			fprintf(stderr, "DBGCB t=%d id=%u added m=%.1f pts=%u pen=%.4f f=%.3f n=(%.2f %.2f %.2f) lv=(%.3f %.3f %.3f) av=(%.2f %.2f %.2f)\n", tick, d.GetID().GetIndex(), 1.0f / d.GetMotionProperties()->GetInverseMass(), m.mRelativeContactPointsOn1.size(), m.mPenetrationDepth, s.mCombinedFriction, m.mWorldSpaceNormal.GetX(), m.mWorldSpaceNormal.GetY(), m.mWorldSpaceNormal.GetZ(), lv.GetX(), lv.GetY(), lv.GetZ(), av.GetX(), av.GetY(), av.GetZ());
+		}
 	}
 
 	void impact(const JPH::Body &b1, const JPH::Body &b2, const JPH::ContactManifold &m, JPH::ContactSettings &s, float threshold) {
@@ -263,6 +274,22 @@ public:
 		s.mCombinedFriction = friction;
 		s.mCombinedRestitution = 0.0f;
 		if (!enabled || m.mRelativeContactPointsOn1.empty()) return;
+		// a manifold against the world whose normal is not the world surface normal under
+		// the contact point is an edge contact at a seam between two brushes (the normal
+		// turns from tick to tick: (-0.87,-0.49) then (-0.46,-0.89) on `phys_drop_tilted`);
+		// the game has no such contact, so it is not a collision here either
+		if (b1.IsDynamic() != b2.IsDynamic()) {
+			const JPH::Body &st = b1.IsDynamic() ? b2 : b1;
+			JPH::SubShapeID sid = b1.IsDynamic() ? m.mSubShapeID2 : m.mSubShapeID1;
+			JPH::RVec3 cp = b1.IsDynamic() ? m.GetWorldSpaceContactPointOn2(0) : m.GetWorldSpaceContactPointOn1(0);
+			JPH::Vec3 outward = b1.IsDynamic() ? -m.mWorldSpaceNormal : m.mWorldSpaceNormal;
+			JPH::Vec3 surf = st.GetWorldSpaceSurfaceNormal(sid, cp);
+			if (surf.Dot(outward) < 0.985f && m.mPenetrationDepth < -0.005f) {
+				if (debug) fprintf(stderr, "seam contact t=%d n=(%.2f %.2f %.2f) surf=(%.2f %.2f %.2f) pts=%u pen=%.4f\n", tick, outward.GetX(), outward.GetY(), outward.GetZ(), surf.GetX(), surf.GetY(), surf.GetZ(), m.mRelativeContactPointsOn1.size(), m.mPenetrationDepth);
+				s.mIsSensor = true;
+				return;
+			}
+		}
 		if (skip.count(b1.GetID().GetIndexAndSequenceNumber()) || skip.count(b2.GetID().GetIndexAndSequenceNumber())) return;
 		JPH::Vec3 n = -m.mWorldSpaceNormal; // pushes body 1 away from body 2
 		float m1 = b1.IsDynamic() ? 1.0f / b1.GetMotionProperties()->GetInverseMass() : 0.0f;
@@ -405,7 +432,7 @@ public:
 				float vn = rel(pt.p).Dot(n);
 				if (pt.d <= 0.001f + 0.02f && vn < 0.0f) { ++approaching; vn_face = std::max(vn_face, -vn); }
 			}
-			if (debug) fprintf(stderr, "DBGFACE pts=%zu approaching=%d vn_face=%.3f lv=(%.3f %.3f %.3f) n=(%.2f %.2f %.2f)\n", pts.size(), approaching, vn_face, lv0.GetX(), lv0.GetY(), lv0.GetZ(), n.GetX(), n.GetY(), n.GetZ());
+			if (debug) fprintf(stderr, "DBGFACE t=%d id=%u pts=%zu approaching=%d vn_face=%.3f lv=(%.3f %.3f %.3f) n=(%.2f %.2f %.2f)\n", tick, dyn.GetID().GetIndex(), pts.size(), approaching, vn_face, lv0.GetX(), lv0.GetY(), lv0.GetZ(), n.GetX(), n.GetY(), n.GetZ());
 			if (approaching >= 3) {
 				tilt = 0.0f;
 				float g_dt = (sys ? sys->GetGravity().Length() : gravity) * dyn.GetMotionProperties()->GetGravityFactor() * step_dt;
@@ -624,7 +651,7 @@ void gmp_set_inertia(void *system, unsigned int body_id, float mass, float ix, f
 
 void gmp_apply_impact_offsets(void *system) {
 	auto *l = listener_of(system);
-	if (l) l->apply_offsets(*reinterpret_cast<JPH::PhysicsSystem *>(system));
+	if (l) { l->apply_offsets(*reinterpret_cast<JPH::PhysicsSystem *>(system)); ++l->tick; }
 }
 
 void gmp_set_impact_step(void *system, float dt) {
