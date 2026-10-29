@@ -1574,7 +1574,6 @@ impl<'w> Server<'w> {
         for (attacker, eye, forward) in swings {
             self.resolve_melee(attacker, eye, forward);
         }
-        self.physics.step();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -1594,6 +1593,9 @@ impl<'w> Server<'w> {
         // entities after the players' moves: a projectile's hit or blast this tick pushes and
         // hurts a target that has already moved (its velocity shows the push raw)
         self.tick_projectiles(launches);
+        // the physics step after bullets, moves and projectiles: a prop hit by any of them takes
+        // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
+        self.physics.step();
         let landed: Vec<(u32, f32)> = self
             .players
             .iter()
