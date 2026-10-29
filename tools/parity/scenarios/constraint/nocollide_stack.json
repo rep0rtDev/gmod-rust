@@ -1,6 +1,35 @@
-{ "name": "constraint_stack_pair", "kind": "constraint", "map": "gm_construct", "ticks": 240,
-  "props": [
-    { "model": "models/props_junk/wood_crate001a.mdl", "pos": [600.0, -500.0, -123.6], "angles": [0, 0, 0] },
-    { "model": "models/props_junk/wood_crate001a.mdl", "pos": [600.0, -500.0, -60.0], "angles": [0, 15, 0] }
-  ],
-  "constraints": [] }
+{
+ "name": "constraint_stack_pair",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "ticks": 240,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -123.6
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -60.0
+   ],
+   "angles": [
+    0,
+    15,
+    0
+   ]
+  }
+ ],
+ "constraints": []
+}

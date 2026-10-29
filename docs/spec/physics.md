@@ -24,7 +24,8 @@ Harness group `constraint_*` (3 traces on 2026.09.17: `weld_pair` two crates wel
 
 - gm-physics: JoltC 0.3.1 has no constraint bindings, so the shim creates Jolt `FixedConstraint` (weld, auto detected point) and `DistanceConstraint` (rope, world space points, min 0 or the length when rigid) on the raw `PhysicsSystem`; `World::weld`, `World::rope`, `World::remove_constraint`.
 - Measured and matched: the welded pair falls as one body with the same air drag per crate (positions equal to the tick until the landing); the roped crate swings with the same period for the first 40 ticks (within 1 u) and keeps the rope taut at 80 u.
-- Open: the welded pair's landing (both crates come to rest 5 u away, 3 degrees of yaw) and the stack (the game lets the resting bottom crate sink 4 u under the impact and lands the top one 2 ticks earlier) are the contact response again; the rope swing drifts after half a period (9 u, the game damps the pendulum differently). 0 of 3 within tolerance, kept red with the numbers.
+- Stack (crate dropped from 60 u onto a resting crate, re-recorded on the flat floor at 823, -500 since the first spot sits over a brush where our static world is 4 u lower than the game's, see the open item below): both crates within 1 u and 0.3 degrees with the impact listener. Open: the welded pair's landing (7 u, 3 degrees of yaw) and the rope swing after half a period (4.6 u, pendulum damping). 1 of 3 within tolerance.
+- Open world geometry: under (600, -500) the game's floor supports a crate at z = -127.6, ours at -131.7; no displacement there, so `brush::model_hulls` misses or mis-selects a brush. To check against a `gm_collision` trace.
 
 ## Impact response (IVP style, clean room)
 
