@@ -1,0 +1,27 @@
+{
+ "kind": "fire",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 0,
+ "pitch": 0,
+ "name": "fire_rpg_proj_yaw",
+ "weapon": "weapon_rpg",
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0
+  },
+  {
+   "ticks": 1,
+   "buttons": 1
+  },
+  {
+   "ticks": 400,
+   "buttons": 0
+  }
+ ]
+}

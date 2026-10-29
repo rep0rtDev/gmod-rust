@@ -1229,3 +1229,75 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
+
+[[harness]]
+name = "fire_rpg_proj"
+scenario = "fire/rpg_proj"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_rpg_proj_up"
+scenario = "fire/rpg_proj_up"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_crossbow_proj"
+scenario = "fire/crossbow_proj"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_frag_proj"
+scenario = "fire/frag_proj"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_frag_proj_hold"
+scenario = "fire/frag_proj_hold"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_ar2_proj"
+scenario = "fire/ar2_proj"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_rpg_proj_yaw"
+scenario = "fire/rpg_proj_yaw"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]
+
+[[harness]]
+name = "fire_rpg_proj_down"
+scenario = "fire/rpg_proj_down"
+compare = "fire"
+realm = "server"
+crates = ["gm-server"]
+
+[harness.tolerance]

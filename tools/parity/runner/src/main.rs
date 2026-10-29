@@ -1362,11 +1362,52 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
         inv.tick(&class);
     }
     let def = gm_server::weapons::def(&class).context("unknown weapon")?;
+    // the projectile weapons fly their rocket/bolt/ball through the map (`projectile`)
+    let world = if def
+        .fire
+        .is_some_and(|f| f.launch.is_some() || !matches!(f.alt, gm_server::weapons::Alt::None))
+        || def.fire.is_some_and(|f| f.throw.is_some())
+    {
+        let inst =
+            gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+        let mount = gm_content::Mount::for_install(&inst)?;
+        let map = scn.map.as_deref().unwrap_or("gm_construct");
+        let data = mount.read(&format!("maps/{map}.bsp"))?;
+        let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+        Some(gm_collision::World::from_bsp(&bsp))
+    } else {
+        None
+    };
+    let start = scn.start.context("fire scenario needs `start`")?;
+    let eye = glam::Vec3::new(start[0], start[1], start[2] + 64.0);
+    let (pitch, yaw) = (scn.pitch.unwrap_or(0.0), scn.yaw.unwrap_or(90.0));
+    let mut projs: Vec<gm_server::projectile::Projectile> = Vec::new();
+    let mut removed = Vec::new();
     let mut ticks = Vec::new();
     let mut t = 0u32;
     for seg in &scn.segments {
         for _ in 0..seg.ticks {
             let shot = inv.command(&class, seg.buttons);
+            if let Some(world) = &world {
+                let mut died = false;
+                projs.retain_mut(|pr| match pr.step(world) {
+                    gm_server::projectile::Event::Removed(at) => {
+                        died |= pr.kind == gm_server::weapons::Launch::Rocket;
+                        removed.push(json!({ "t": t, "class": gm_server::projectile::class_name(pr.kind), "pos": [at.x, at.y, at.z] }));
+                        false
+                    }
+                    gm_server::projectile::Event::None => true,
+                });
+                if died {
+                    inv.rocket_died();
+                }
+                if let Some(kind) = inv.launched.take() {
+                    if let Some(pr) = gm_server::projectile::spawn(kind, 1, eye, pitch, yaw, world)
+                    {
+                        projs.push(pr);
+                    }
+                }
+            }
             inv.tick(&class);
             let clip = inv.clip(&class);
             let mut row = json!({
@@ -1378,11 +1419,22 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
             if let Some(s) = shot {
                 row["shot"] = json!({ "num": s.pellets, "spread": [s.spread, s.spread, 0.0], "ammo": s.ammo });
             }
+            if !projs.is_empty() {
+                row["projectiles"] = json!(projs
+                    .iter()
+                    .map(|pr| json!({
+                        "class": gm_server::projectile::class_name(pr.kind),
+                        "pos": [pr.origin.x, pr.origin.y, pr.origin.z],
+                        "vel": [pr.velocity.x, pr.velocity.y, pr.velocity.z],
+                        "movetype": pr.movetype as i32,
+                    }))
+                    .collect::<Vec<_>>());
+            }
             ticks.push(row);
             t += 1;
         }
     }
-    Ok(json!({ "weapon": class, "ticks": ticks, "shots": inv.shots }))
+    Ok(json!({ "weapon": class, "ticks": ticks, "shots": inv.shots, "removed": removed }))
 }
 
 /// Clip, reserve ammo and shot count every tick, the primary timer within `time`, pellets and
@@ -1396,11 +1448,59 @@ fn compare_fire(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     let empty = Vec::new();
     let tr = theirs["ticks"].as_array().unwrap_or(&empty);
     let or = ours["ticks"].as_array().unwrap_or(&empty);
+    let proj_pos_tol = tol
+        .get("proj_pos")
+        .and_then(|v| v.as_float())
+        .unwrap_or(1.0) as f32;
+    let proj_vel_tol = tol
+        .get("proj_vel")
+        .and_then(|v| v.as_float())
+        .unwrap_or(5.0) as f32;
     let mut ok = tr.len() == or.len();
     let (mut diffs, mut max_dt, mut max_ds) = (0, 0.0f32, 0.0f32);
+    let (mut max_dp, mut max_dv) = (0.0f32, 0.0f32);
+    let dist3 = |x: &Value, y: &Value| -> f32 {
+        let c = |v: &Value, i: usize| v[i].as_f64().unwrap_or(0.0) as f32;
+        ((c(x, 0) - c(y, 0)).powi(2) + (c(x, 1) - c(y, 1)).powi(2) + (c(x, 2) - c(y, 2)).powi(2))
+            .sqrt()
+    };
     for (a, b) in tr.iter().zip(or) {
         let mut bad =
             a["clip1"] != b["clip1"] || a["ammo1"] != b["ammo1"] || a["shots"] != b["shots"];
+        // older recordings did not track projectiles (no `removed` list): nothing to compare
+        let track = !theirs["removed"].is_null();
+        // the laser dot is a pointer entity, not a projectile we simulate
+        let modelled = |v: &Value| -> Option<Vec<Value>> {
+            v.as_array().map(|l| {
+                l.iter()
+                    .filter(|p| p["class"] != "env_laserdot")
+                    .cloned()
+                    .collect()
+            })
+        };
+        let (pa, pb) = (modelled(&a["projectiles"]), modelled(&b["projectiles"]));
+        let (pa, pb) = (
+            pa.as_ref().filter(|l| !l.is_empty()),
+            pb.as_ref().filter(|l| !l.is_empty()),
+        );
+        if !track {
+        } else if pa.map(|v| v.len()).unwrap_or(0) != pb.map(|v| v.len()).unwrap_or(0) {
+            bad = true;
+        } else if let (Some(pa), Some(pb)) = (pa, pb) {
+            for (x, y) in pa.iter().zip(pb) {
+                let dp = dist3(&x["pos"], &y["pos"]);
+                let dv = dist3(&x["vel"], &y["vel"]);
+                max_dp = max_dp.max(dp);
+                max_dv = max_dv.max(dv);
+                if x["class"] != y["class"]
+                    || dp > proj_pos_tol
+                    || dv > proj_vel_tol
+                    || x["movetype"] != y["movetype"]
+                {
+                    bad = true;
+                }
+            }
+        }
         if !a["ammo2"].is_null() && !b["ammo2"].is_null() {
             bad |= a["ammo2"] != b["ammo2"];
         }
@@ -1424,12 +1524,34 @@ fn compare_fire(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             diffs += 1;
             if diffs <= 6 {
                 println!("  tick {}: game clip {} ammo {} shots {} next {} shot {} | ours clip {} ammo {} shots {} next {} shot {}", a["t"], a["clip1"], a["ammo1"], a["shots"], a["next_primary"], a["shot"], b["clip1"], b["ammo1"], b["shots"], b["next_primary"], b["shot"]);
+                if a["projectiles"].is_array() || b["projectiles"].is_array() {
+                    let brief = |v: &Value| -> String {
+                        v.as_array()
+                            .map(|l| {
+                                l.iter()
+                                    .map(|p| {
+                                        format!(
+                                            "{} mt{} pos {} vel {}",
+                                            p["class"], p["movetype"], p["pos"], p["vel"]
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("; ")
+                            })
+                            .unwrap_or_default()
+                    };
+                    println!(
+                        "    game proj [{}] | ours [{}]",
+                        brief(&a["projectiles"]),
+                        brief(&b["projectiles"])
+                    );
+                }
             }
             ok = false;
         }
     }
     println!(
-        "  {} ticks, {} shots (ours {}), {} differing, max timer err {max_dt:.4} s (tol {time_tol}), max spread err {max_ds:.5} (tol {spread_tol}): {}",
+        "  {} ticks, {} shots (ours {}), {} differing, max timer err {max_dt:.4} s (tol {time_tol}), max spread err {max_ds:.5} (tol {spread_tol}), projectile pos {max_dp:.2} u vel {max_dv:.1} (tol {proj_pos_tol} / {proj_vel_tol}): {}",
         tr.len(), theirs["shots"], ours["shots"], diffs, if ok { "equal" } else { "DIFF" }
     );
     ok

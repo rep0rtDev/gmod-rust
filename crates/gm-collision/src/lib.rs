@@ -65,6 +65,8 @@ pub struct World {
     leaf_brushes: Vec<u16>,
     brushes: Vec<Brush>,
     side_planes: Vec<u32>,
+    /// Per brush side: its texture is the sky (`SURF_SKY`/`SURF_SKY2D`); empty when unknown.
+    side_sky: Vec<bool>,
     head_node: i32,
 }
 
@@ -143,6 +145,21 @@ impl World {
                 })
                 .collect(),
             side_planes: bsp.brush_sides.iter().map(|s| s.plane_num as u32).collect(),
+            side_sky: bsp
+                .brush_sides
+                .iter()
+                .map(|s| {
+                    usize::try_from(s.tex_info)
+                        .ok()
+                        .and_then(|i| bsp.tex_infos.get(i))
+                        .is_some_and(|t| {
+                            t.flags
+                                & (gm_formats::bsp::lumps::surf::SKY
+                                    | gm_formats::bsp::lumps::surf::SKY2D)
+                                != 0
+                        })
+                })
+                .collect(),
             head_node: bsp.models.first().map(|m| m.head_node).unwrap_or(0),
         }
     }
@@ -184,6 +201,7 @@ impl World {
             leaf_brushes,
             brushes,
             side_planes,
+            side_sky: Vec::new(),
             head_node: -1,
         }
     }
@@ -226,6 +244,36 @@ impl World {
     }
 
     /// Ray trace.
+    /// Whether the surface at `point` (on it, within 0.1 u), facing `normal`, is a sky brush
+    /// side (a box trace ends its box extent plus 1/32 before the surface; pass the surface point): the solid brush touching the point whose side plane matches, by its texture flags.
+    pub fn is_sky(&self, point: Vec3, normal: Vec3) -> bool {
+        if self.side_sky.is_empty() {
+            return false;
+        }
+        const EPS: f32 = 0.1;
+        'brush: for b in &self.brushes {
+            if b.contents & contents::SOLID == 0 {
+                continue;
+            }
+            let mut on_side: Option<usize> = None;
+            for i in 0..b.num_sides {
+                let si = (b.first_side + i) as usize;
+                let p = &self.planes[self.side_planes[si] as usize];
+                let d = p.normal.dot(point) - p.dist;
+                if d > EPS {
+                    continue 'brush;
+                }
+                if d.abs() <= EPS && p.normal.dot(normal) > 0.99 {
+                    on_side = Some(si);
+                }
+            }
+            if let Some(si) = on_side {
+                return self.side_sky.get(si).copied().unwrap_or(false);
+            }
+        }
+        false
+    }
+
     pub fn trace_ray(&self, start: Vec3, end: Vec3, mask: i32) -> Trace {
         self.trace_box(start, end, Vec3::ZERO, Vec3::ZERO, mask)
     }
@@ -634,6 +682,7 @@ mod tests {
                 contents: contents::SOLID,
             }],
             side_planes: vec![0, 1, 2, 3, 4, 5],
+            side_sky: Vec::new(),
             head_node: 0,
         }
     }

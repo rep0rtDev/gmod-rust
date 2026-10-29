@@ -2,6 +2,7 @@
 //! props and constraints the sandbox owns mirrored into the Jolt world of `gm-physics`
 //! (weld -> fixed, rope -> distance, axis -> hinge). Nothing here is networked yet.
 
+pub mod projectile;
 pub mod weapons;
 
 use glam::Vec3;
@@ -232,6 +233,7 @@ pub struct Server<'w> {
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
     pub physgun_params: PhysgunParams,
+    pub projectiles: Vec<projectile::Projectile>,
     /// Loads a model the first time something spawns it (the dedicated server reads the MDL/PHY
     /// from the mounted content on demand).
     pub model_loader: Option<ModelLoader>,
@@ -260,6 +262,7 @@ impl<'w> Server<'w> {
             hull_planes: BTreeMap::new(),
             events: Vec::new(),
             physgun_params: PhysgunParams::default(),
+            projectiles: Vec::new(),
             model_loader: None,
             spawn_points: Vec::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
@@ -512,6 +515,33 @@ impl<'w> Server<'w> {
             t.state.impulse += push;
         }
         self.damage_player(target, damage, dmg_type);
+    }
+
+    /// Existing projectiles fly one tick, then this tick's launches spawn (their first tick is
+    /// the launch tick, recorded as such); a rocket's death reloads its owner's RPG. Explosion
+    /// and bolt damage are not measured yet and not applied.
+    fn tick_projectiles(&mut self, launches: Vec<(u32, weapons::Launch, Vec3, Vec3)>) {
+        let world = self.collision;
+        let mut died = Vec::new();
+        self.projectiles.retain_mut(|pr| match pr.step(world) {
+            projectile::Event::Removed(_) => {
+                if pr.kind == weapons::Launch::Rocket {
+                    died.push(pr.owner);
+                }
+                false
+            }
+            projectile::Event::None => true,
+        });
+        for owner in died {
+            if let Some(p) = self.players.get_mut(&owner) {
+                p.inventory.rocket_died();
+            }
+        }
+        for (owner, kind, eye, angles) in launches {
+            if let Some(pr) = projectile::spawn(kind, owner, eye, angles.x, angles.y, world) {
+                self.projectiles.push(pr);
+            }
+        }
     }
 
     pub fn kill_player(&mut self, id: u32) {
@@ -921,15 +951,20 @@ impl<'w> Server<'w> {
         // weapons first: a hit pushes and hurts the target in the tick of the shot, before the
         // target's own move (recordings `hit_*`)
         let mut shots = Vec::new();
+        let mut launches = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
             }
             if let Some(pc) = cmds.get(id) {
-                if let Some(shot) = p.inventory.command(&p.active_weapon, pc.cmd.buttons) {
-                    let eye = p.state.origin + Vec3::new(0.0, 0.0, self.mover.eye_height(&p.state));
+                let shot = p.inventory.command(&p.active_weapon, pc.cmd.buttons);
+                let eye = p.state.origin + Vec3::new(0.0, 0.0, self.mover.eye_height(&p.state));
+                if let Some(shot) = shot {
                     let forward = gm_sandbox::forward(pc.cmd.view_angles.x, pc.cmd.view_angles.y);
                     shots.push((*id, eye, forward, shot));
+                }
+                if let Some(kind) = p.inventory.launched.take() {
+                    launches.push((*id, kind, eye, pc.cmd.view_angles));
                 }
                 p.inventory.tick(&p.active_weapon);
             }
@@ -937,6 +972,7 @@ impl<'w> Server<'w> {
         for (attacker, eye, forward, shot) in shots {
             self.resolve_shot(attacker, eye, forward, shot);
         }
+        self.tick_projectiles(launches);
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;

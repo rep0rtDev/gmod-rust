@@ -31,6 +31,15 @@ pub struct WeaponDef {
     pub give_ammo: i32,
 }
 
+/// What a trigger pull launches instead of bullets (`projectile::Projectile`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Launch {
+    Rocket,
+    Bolt,
+    Grenade,
+    Ball,
+}
+
 /// How a weapon fires (recordings `fire_*`): every timer is relative to the server tick the
 /// usercmd belongs to, so a value set to `x` reads `x - 0.015` in the tick's recording.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,11 +68,16 @@ pub struct Fire {
     /// Held repeats set the primary timer to `cycle` from now, not from its expired value
     /// (crowbar swings every 27 ticks, physcannon punts every 34).
     pub from_now: bool,
+    /// The entity a shot launches (recorded per tick by the probe, `fire_*_proj`).
+    pub launch: Option<Launch>,
     /// Secondary timer set with a shot (crowbar 0.6667, crossbow 0.75); untouched otherwise.
     pub secondary_after: Option<f32>,
     /// Reload starting this many ticks after a shot whatever the button, for this long
     /// (crossbow: 7 ticks, 1.8333).
     pub auto_reload: Option<(u32, f32)>,
+    /// The tick after a reload refills the clip both timers restart from now (crossbow: -0.0267
+    /// at the refill, -0.015 the next tick).
+    pub rearm_after_reload: bool,
     /// Pull-back grenade instead of a bullet (frag).
     pub throw: Option<Throw>,
     pub alt: Alt,
@@ -117,8 +131,10 @@ const BASE: Fire = Fire {
     reload: None,
     dry_fire: None,
     from_now: false,
+    launch: None,
     secondary_after: None,
     auto_reload: None,
+    rearm_after_reload: false,
     throw: None,
     alt: Alt::None,
 };
@@ -198,8 +214,10 @@ const AR2: Fire = Fire {
 /// and refills the clip when it expires (expiry not in the recording yet).
 const CROSSBOW: Fire = Fire {
     cycle: 0.75,
+    launch: Some(Launch::Bolt),
     secondary_after: Some(0.75),
     auto_reload: Some((7, 1.8333)),
+    rearm_after_reload: true,
     ..BASE
 };
 /// Swing into nothing: primary 0.4 from now, secondary 0.6667; repeats while held.
@@ -219,7 +237,13 @@ const PHYSCANNON: Fire = Fire {
 };
 /// Rocket: reserve -1, primary 0.5, secondary untouched. The rocket entity and the 1.6667 reload
 /// of both timers when it dies are not simulated yet.
-const RPG: Fire = Fire { cycle: 0.5, ..BASE };
+const RPG: Fire = Fire {
+    cycle: 0.5,
+    launch: Some(Launch::Rocket),
+    ..BASE
+};
+/// Both timers when the rocket dies (wall or sky), whatever the time since the shot.
+pub const RPG_ROCKET_DIED: f32 = 1.6667;
 const FRAG: Fire = Fire {
     throw: Some(Throw {
         drawback_ticks: 4,
@@ -472,6 +496,11 @@ pub struct Inventory {
     pub throw_press: Option<u32>,
     pub throw_in: Option<u32>,
     pub redraw_pending: bool,
+    /// The projectile the last `command` launched (rocket/bolt in the shot tick, the grenade in
+    /// its throw tick, the ball when the AR2's 0.5 s charge expires).
+    pub launched: Option<Launch>,
+    /// A `rearm_after_reload` refill happened last tick.
+    pub rearm: bool,
 }
 
 /// Bullets fired by one trigger pull.
@@ -535,6 +564,7 @@ impl Inventory {
     /// The usercmd of one tick for the active weapon `class`, before `tick`: reload, pump and
     /// shots as the game resolves them against the timers of the command's tick.
     pub fn command(&mut self, class: &str, buttons: u32) -> Option<Shot> {
+        self.launched = None;
         let pressed = buttons & IN_ATTACK != 0;
         let edge = pressed && !self.prev_attack;
         self.prev_attack = pressed;
@@ -547,6 +577,11 @@ impl Inventory {
             .or_insert([w.clip1, w.clip2]);
         if self.busy && self.next_primary <= 0.0 {
             self.busy = false;
+        }
+        if self.rearm {
+            self.rearm = false;
+            self.next_primary = 0.0;
+            self.next_secondary = 0.0;
         }
         let pressed2 = buttons & IN_ATTACK2 != 0;
         if let Some(th) = f.throw {
@@ -571,6 +606,7 @@ impl Inventory {
                 if self.next_primary <= 0.0 {
                     self.ball_pending = false;
                     *ammo2 -= 1;
+                    self.launched = Some(Launch::Ball);
                     self.next_primary = cycle;
                     self.next_secondary = cycle;
                 }
@@ -601,6 +637,7 @@ impl Inventory {
             clip[0] += take;
             *reserve -= take;
             self.reloading = false;
+            self.rearm = f.rearm_after_reload;
         }
         if self.need_pump {
             if self.next_primary > 0.0 {
@@ -698,6 +735,7 @@ impl Inventory {
         }
         self.need_pump = f.pump.is_some();
         self.pistol_relaxed = false;
+        self.launched = f.launch;
         if f.pellets == 0 {
             return None;
         }
@@ -720,6 +758,7 @@ impl Inventory {
             }
             self.throw_in = None;
             *self.ammo.entry(w.ammo1.to_string()).or_insert(0) -= 1;
+            self.launched = Some(Launch::Grenade);
             self.next_primary = th.cycle;
             self.next_secondary = th.cycle;
             self.redraw_pending = true;
@@ -745,6 +784,12 @@ impl Inventory {
             self.next_primary = f32::MAX;
         }
         None
+    }
+
+    /// The owner's rocket died: the RPG reloads, both timers to `RPG_ROCKET_DIED`.
+    pub fn rocket_died(&mut self) {
+        self.next_primary = RPG_ROCKET_DIED;
+        self.next_secondary = RPG_ROCKET_DIED;
     }
 
     /// One server tick for the active weapon `class`.

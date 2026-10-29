@@ -879,7 +879,7 @@ SCENARIOS.fire = function(scn, done)
 	local ticks, shots = {}, {}
 	local shotCount, lastShot = 0, nil
 	-- projectiles the weapon spawns (rocket, bolt, grenade, ball): tracked every tick until removed
-	local PROJ = { rpg_missile = true, crossbow_bolt = true, npc_grenade_frag = true, prop_combine_ball = true, grenade_ar2 = true }
+	local PROJ = { rpg_missile = true, crossbow_bolt = true, npc_grenade_frag = true, prop_combine_ball = true, grenade_ar2 = true, env_laserdot = true }
 	local removed = {}
 	hook.Add("EntityRemoved", "parity_fire", function(ent)
 		if PROJ[ent:GetClass()] and tick >= 0 then
@@ -942,7 +942,7 @@ SCENARIOS.fire = function(scn, done)
 					local ph = e:GetPhysicsObject()
 					if IsValid(ph) then v = ph:GetVelocity() end
 					projs[#projs + 1] = { class = cls, id = e:EntIndex(), pos = { p.x, p.y, p.z }, vel = { v.x, v.y, v.z }, ang = { a.p, a.y, a.r },
-						movetype = e:GetMoveType(), phys = IsValid(ph), owner = IsValid(e:GetOwner()) and e:GetOwner():EntIndex() or -1,
+						movetype = e:GetMoveType(), phys = IsValid(ph), model = e:GetModel(), mass = IsValid(ph) and ph:GetMass() or 0, owner = IsValid(e:GetOwner()) and e:GetOwner():EntIndex() or -1,
 						created = math.Round(CurTime() - e:GetCreationTime(), 4) }
 				end
 			end
