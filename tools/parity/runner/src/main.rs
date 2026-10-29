@@ -1336,6 +1336,9 @@ fn run_shoot_prop(scn: &Scenario) -> Result<Value> {
     server.add_player(shooter, start, aim);
     server.spawn_player(shooter);
     server.teleport_player(shooter, start);
+    if std::env::var("GMP_IMPACT").as_deref() == Ok("0") {
+        server.physics.set_impact_enabled(false);
+    }
     // the probe spawns the prop before its 70 setup ticks: it settles on the floor meanwhile
     server.add_existing_props(&[(model.clone(), ppos, pang, scn.frozen)]);
     let prop_id = server.sandbox.props().last().map(|p| p.id).unwrap_or(1);
