@@ -793,6 +793,80 @@ SCENARIOS.player = function(scn, done)
 end
 ASYNC.player = true
 
+
+-- damage: a bot dropped from the scenario's heights (fall damage) and hit with TakeDamage of
+-- given amounts at given armour, recorded every tick with the damage events, to measure the
+-- fall damage rule, armour absorption and death.
+SCENARIOS.damage = function(scn, done)
+	local bot = player.GetBots()[1]
+	if not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.damage(scn, done) end)
+		return
+	end
+	if scn.falldamage ~= nil then RunConsoleCommand("mp_falldamage", tostring(scn.falldamage)) end
+	if not bot:Alive() then bot:Spawn() end
+	local base = Vector(scn.start[1], scn.start[2], scn.start[3])
+	local drops = {}
+	for i, h in ipairs(scn.heights or {}) do drops[(i - 1) * (scn.spacing or 200)] = h end
+	local hits = {}
+	for _, h in ipairs(scn.hits or {}) do hits[h.t] = h end
+	local total = scn.ticks or 600
+	local tick = -5
+	local ticks, events = {}, {}
+	hook.Add("EntityTakeDamage", "parity_damage", function(ent, dmg)
+		if ent ~= bot then return end
+		events[#events + 1] = { t = tick, event = "EntityTakeDamage", amount = dmg:GetDamage(), type = dmg:GetDamageType(),
+			health = ent:Health(), armor = ent:Armor() }
+	end)
+	hook.Add("PlayerHurt", "parity_damage", function(ply, attacker, remaining, taken)
+		if ply ~= bot then return end
+		events[#events + 1] = { t = tick, event = "PlayerHurt", taken = taken, remaining = remaining, armor = ply:Armor() }
+	end)
+	hook.Add("PlayerDeath", "parity_damage", function(ply) if ply == bot then events[#events + 1] = { t = tick, event = "PlayerDeath" } end end)
+	hook.Add("PlayerSpawn", "parity_damage", function(ply) if ply == bot then events[#events + 1] = { t = tick, event = "PlayerSpawn" } end end)
+	hook.Add("StartCommand", "parity_damage", function(ply, cmd)
+		if ply ~= bot then return end
+		cmd:ClearButtons()
+		cmd:ClearMovement()
+	end)
+	hook.Add("Tick", "parity_damage", function()
+		if not IsValid(bot) then return end
+		if tick >= 0 then
+			local h = drops[tick]
+			if h then
+				if not bot:Alive() then bot:Spawn() end
+				bot:SetHealth(scn.health or 100)
+				bot:SetArmor(scn.armor or 0)
+				bot:SetPos(base + Vector(0, 0, h))
+				bot:SetLocalVelocity(Vector(0, 0, 0))
+				events[#events + 1] = { t = tick, event = "drop", height = h }
+			end
+			local hit = hits[tick]
+			if hit then
+				if hit.armor then bot:SetArmor(hit.armor) end
+				if hit.health then bot:SetHealth(hit.health) end
+				local d = DamageInfo()
+				d:SetDamage(hit.amount)
+				d:SetAttacker(game.GetWorld())
+				d:SetInflictor(game.GetWorld())
+				d:SetDamageType(hit.type or DMG_GENERIC)
+				bot:TakeDamageInfo(d)
+				events[#events + 1] = { t = tick, event = "hit", amount = hit.amount, type = hit.type or DMG_GENERIC }
+			end
+			local p, v = bot:GetPos(), bot:GetVelocity()
+			ticks[#ticks + 1] = { t = tick, pos = { p.x, p.y, p.z }, vel = { v.x, v.y, v.z }, health = bot:Health(), armor = bot:Armor(),
+				alive = bot:Alive(), ground = bot:IsOnGround() }
+		end
+		tick = tick + 1
+		if tick >= total then
+			for _, hk in ipairs({ "EntityTakeDamage", "PlayerHurt", "PlayerDeath", "PlayerSpawn", "StartCommand", "Tick" }) do hook.Remove(hk, "parity_damage") end
+			done({ ticks = ticks, events = events, falldamage = GetConVar("mp_falldamage"):GetInt() })
+		end
+	end)
+end
+ASYNC.damage = true
+
 local function runAll()
 	file.CreateDir(OUT_DIR)
 	local files = file.Find(SCN_DIR .. "/*.json", "DATA")

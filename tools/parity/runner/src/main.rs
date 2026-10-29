@@ -70,6 +70,18 @@ pub struct Manifest {
     pub harness: Vec<Harness>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+struct Hit {
+    t: u32,
+    amount: f32,
+    #[serde(default)]
+    armor: Option<i32>,
+    #[serde(default)]
+    health: Option<i32>,
+    #[serde(rename = "type", default)]
+    dmg_type: Option<u32>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Harness {
     pub name: String,
@@ -104,6 +116,19 @@ struct Scenario {
     /// player scenarios: ticks at which the bot is killed
     #[serde(default)]
     kill_at: Vec<u32>,
+    /// damage scenarios: drop heights every `spacing` ticks, hits, convar and start values
+    #[serde(default)]
+    heights: Vec<f32>,
+    #[serde(default)]
+    spacing: Option<u32>,
+    #[serde(default)]
+    falldamage: Option<i32>,
+    #[serde(default)]
+    armor: Option<i32>,
+    #[serde(default)]
+    health: Option<i32>,
+    #[serde(default)]
+    hits: Vec<Hit>,
     #[serde(default)]
     velocity: Option<[f32; 3]>,
     #[serde(default)]
@@ -248,6 +273,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "move" => run_move(scn)?,
         "phys" => run_phys(scn)?,
         "player" => run_player(scn)?,
+        "damage" => run_damage(scn)?,
         "physgun" => run_physgun(scn)?,
         "constraint" => run_constraint(scn)?,
         "sandbox" => run_sandbox(scn)?,
@@ -1258,6 +1284,112 @@ fn compare_player(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         mismatches,
         spawns_checked,
         worst_spawn,
+        if ok { "equal" } else { "DIFF" }
+    );
+    ok
+}
+
+/// Fall damage and `TakeDamage` through the server loop, recorded like the probe's `damage`
+/// scenario: the bot is dropped from each height every `spacing` ticks and hit at given ticks.
+fn run_damage(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let world_body = physics.add_static_hulls(
+        &world_hulls,
+        Surface {
+            friction: 0.8,
+            elasticity: 0.25,
+        },
+    )?;
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    server.set_spawn_points_from_bsp(&bsp);
+    server.fall_damage_progressive = scn.falldamage.unwrap_or(0) != 0;
+    let player = 1u32;
+    let base = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    server.add_player(player, base, Vec3::ZERO);
+    server.spawn_player(player);
+    let spacing = scn.spacing.unwrap_or(200);
+    let total = scn.ticks.unwrap_or(600);
+    let mut ticks = Vec::with_capacity(total as usize);
+    let mut cmds = std::collections::BTreeMap::new();
+    cmds.insert(player, gm_server::PlayerCmd::default());
+    for t in 0..total {
+        if t % spacing == 0 {
+            if let Some(h) = scn.heights.get((t / spacing) as usize) {
+                if !server.players[&player].alive {
+                    server.spawn_player(player);
+                }
+                server.set_player_health(player, scn.health.unwrap_or(100));
+                server.set_player_armor(player, scn.armor.unwrap_or(0));
+                server.teleport_player(player, base + Vec3::new(0.0, 0.0, *h));
+            }
+        }
+        if let Some(hit) = scn.hits.iter().find(|h| h.t == t) {
+            if let Some(a) = hit.armor {
+                server.set_player_armor(player, a);
+            }
+            if let Some(h) = hit.health {
+                server.set_player_health(player, h);
+            }
+            server.damage_player(player, hit.amount, hit.dmg_type.unwrap_or(0));
+        }
+        let p = &server.players[&player];
+        ticks.push(json!({
+            "t": t,
+            "pos": [p.state.origin.x, p.state.origin.y, p.state.origin.z],
+            "vel": [p.state.velocity.x, p.state.velocity.y, p.state.velocity.z],
+            "health": p.health,
+            "armor": p.armor,
+            "alive": p.alive,
+            "ground": p.state.on_ground,
+        }));
+        server.tick(&cmds);
+    }
+    Ok(json!({ "ticks": ticks, "falldamage": scn.falldamage.unwrap_or(0) }))
+}
+
+/// Health, armour and life equal every tick; a landing tick is allowed to differ by `contact`
+/// ticks (the hit itself is then compared at the game's tick).
+fn compare_damage(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let slack = tol.get("contact").and_then(|v| v.as_integer()).unwrap_or(1) as usize;
+    let empty = Vec::new();
+    let tr = theirs["ticks"].as_array().unwrap_or(&empty);
+    let or = ours["ticks"].as_array().unwrap_or(&empty);
+    let mut ok = tr.len() == or.len();
+    let mut mismatches = 0;
+    for (i, a) in tr.iter().enumerate() {
+        // the game's value must appear in ours within the slack window
+        let lo = i.saturating_sub(slack);
+        let hi = (i + slack).min(or.len().saturating_sub(1));
+        let same = |b: &Value| ["health", "armor", "alive"].iter().all(|k| a[*k] == b[*k]);
+        let hit = (lo..=hi).any(|j| or.get(j).is_some_and(same));
+        if !hit {
+            mismatches += 1;
+            if mismatches <= 6 {
+                let b = or.get(i).cloned().unwrap_or(Value::Null);
+                println!(
+                    "  tick {i}: theirs hp {} ar {} alive {} | ours hp {} ar {} alive {}",
+                    a["health"], a["armor"], a["alive"], b["health"], b["armor"], b["alive"]
+                );
+            }
+            ok = false;
+        }
+    }
+    println!(
+        "  {} ticks, {} differing (slack {slack}): {}",
+        tr.len(),
+        mismatches,
         if ok { "equal" } else { "DIFF" }
     );
     ok
@@ -2817,6 +2949,7 @@ fn main() -> Result<()> {
                     "rigid" => compare_rigid(&t.result, &o.result, &h.tolerance),
                     "sandbox" => compare_sandbox(&t.result, &o.result, &h.tolerance),
                     "player" => compare_player(&t.result, &o.result, &h.tolerance),
+                    "damage" => compare_damage(&t.result, &o.result, &h.tolerance),
                     "server" => compare_server(&t.result, &o.result, &h.tolerance),
                     "toolgun" => compare_toolgun(&t.result, &o.result, &h.tolerance),
                     other => {

@@ -856,3 +856,41 @@ scenario = "player/lifecycle"
 compare = "player"
 realm = "server"
 crates = ["gm-server"]
+
+[[harness]]
+name = "damage_fall"
+scenario = "damage/fall"
+compare = "damage"
+realm = "server"
+crates = ["gm-server"]
+
+
+[[harness]]
+name = "damage_fall_progressive"
+scenario = "damage/fall_progressive"
+compare = "damage"
+realm = "server"
+crates = ["gm-server"]
+
+
+[[harness]]
+name = "damage_hits"
+scenario = "damage/hits"
+compare = "damage"
+realm = "server"
+crates = ["gm-server"]
+
+[[harness]]
+name = "damage_fall_threshold"
+scenario = "damage/fall_threshold"
+compare = "damage"
+realm = "server"
+crates = ["gm-server"]
+
+
+[[harness]]
+name = "damage_fall_armor"
+scenario = "damage/fall_armor"
+compare = "damage"
+realm = "server"
+crates = ["gm-server"]

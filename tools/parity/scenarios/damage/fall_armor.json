@@ -1,0 +1,19 @@
+{
+  "name": "damage_fall_armor",
+  "kind": "damage",
+  "map": "gm_construct",
+  "start": [
+    600.0,
+    -500.0,
+    -143.0
+  ],
+  "ticks": 600,
+  "spacing": 200,
+  "falldamage": 1,
+  "armor": 100,
+  "heights": [
+    600,
+    400,
+    600
+  ]
+}

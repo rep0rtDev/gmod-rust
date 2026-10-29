@@ -84,7 +84,26 @@ pub struct Player {
     pub ragdoll: Option<Vec3>,
     /// Tick of the last death: the player respawns `RESPAWN_TICKS` later.
     death_tick: Option<u64>,
+    /// Fractional damage carried to the next hit (health is whole); measured to survive
+    /// `SetHealth` and respawns, so it is only ever reset with the player.
+    damage_acc: f32,
+    /// Vertical velocity before the last movement tick, for fall damage on landing.
+    prev_vz: f32,
+    prev_on_ground: bool,
 }
+
+/// Damage types (`DMG_*` bits) that matter to the rules here.
+pub const DMG_FALL: u32 = 32;
+pub const DMG_DROWN: u32 = 16384;
+/// Measured (`damage_hits`): armour takes 80 % of a hit up to what it has, health the rest;
+/// fall and drowning damage ignore armour.
+pub const ARMOR_SHARE: f32 = 0.8;
+/// Measured (`damage_fall_*`): landing with the previous tick's downward speed above this
+/// hurts, 10 flat with `mp_falldamage 0`, `(v - threshold) * 25/99` with `mp_falldamage 1`
+/// (fits 540 to 1197 u/s to 0.01; 522 u/s is safe, 540 is not).
+pub const FALL_SAFE_SPEED: f32 = 526.5;
+pub const FALL_DAMAGE_PER_SPEED: f32 = 25.0 / 99.0;
+pub const FALL_DAMAGE_FLAT: f32 = 10.0;
 
 impl Player {
     pub fn new(origin: Vec3, view_angles: Vec3) -> Self {
@@ -106,6 +125,9 @@ impl Player {
             frags: 0,
             ragdoll: None,
             death_tick: None,
+            damage_acc: 0.0,
+            prev_vz: 0.0,
+            prev_on_ground: true,
         }
     }
 }
@@ -178,6 +200,8 @@ pub struct Server<'w> {
     pub spawn_points: Vec<SpawnPoint>,
     spawn_rng: u64,
     tick_count: u64,
+    /// `mp_falldamage`: progressive fall damage instead of the flat 10.
+    pub fall_damage_progressive: bool,
 }
 
 impl<'w> Server<'w> {
@@ -200,7 +224,74 @@ impl<'w> Server<'w> {
             spawn_points: Vec::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
+            fall_damage_progressive: false,
         }
+    }
+
+    /// `Player:SetPos` with the velocity cleared (how the probe drops a bot).
+    pub fn teleport_player(&mut self, id: u32, pos: Vec3) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.state.origin = pos;
+            p.state.velocity = Vec3::ZERO;
+            p.state.on_ground = false;
+            p.prev_vz = 0.0;
+            p.prev_on_ground = false;
+        }
+    }
+
+    pub fn set_player_health(&mut self, id: u32, health: i32) {
+        // measured: the fractional damage carried over survives `SetHealth` (and respawns)
+        if let Some(p) = self.players.get_mut(&id) {
+            p.health = health;
+        }
+    }
+
+    pub fn set_player_armor(&mut self, id: u32, armor: i32) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.armor = armor;
+        }
+    }
+
+    /// `Entity:TakeDamage` on a player: armour share, whole-point health with the fraction
+    /// carried over, death at zero. Returns the health damage applied.
+    pub fn damage_player(&mut self, id: u32, amount: f32, dmg_type: u32) -> f32 {
+        let tick = self.tick_count;
+        let Some(p) = self.players.get_mut(&id) else {
+            return 0.0;
+        };
+        if !p.alive || amount <= 0.0 {
+            return 0.0;
+        }
+        let mut to_health = amount;
+        if p.armor > 0 && dmg_type & (DMG_FALL | DMG_DROWN) == 0 {
+            let mut to_armor = amount * ARMOR_SHARE;
+            if to_armor > p.armor as f32 {
+                to_armor = p.armor as f32;
+            }
+            p.armor -= to_armor as i32;
+            to_health = amount - to_armor;
+        }
+        p.damage_acc += to_health;
+        let whole = p.damage_acc.floor();
+        p.damage_acc -= whole;
+        p.health -= whole as i32;
+        if p.health <= 0 {
+            p.alive = false;
+            p.deaths += 1;
+            p.ragdoll = Some(p.state.origin);
+            p.active_weapon.clear();
+            p.held = None;
+            p.state.velocity = Vec3::ZERO;
+            if dmg_type & DMG_FALL != 0 {
+                // measured: a bot killed by a fall keeps the negative health and does not
+                // respawn by itself within the recording
+                p.death_tick = None;
+            } else {
+                p.health = 0;
+                p.death_tick = Some(tick);
+            }
+        }
+        to_health
     }
 
     pub fn tick_count(&self) -> u64 {
@@ -670,8 +761,27 @@ impl<'w> Server<'w> {
                     buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
                     ..pc.cmd
                 };
+                let (prev_vz, was_airborne) = (p.state.velocity.z, !p.state.on_ground);
                 self.mover.tick(&mut p.state, &cmd);
+                p.prev_vz = prev_vz;
+                p.prev_on_ground = !was_airborne;
             }
+        }
+        let landed: Vec<(u32, f32)> = self
+            .players
+            .iter()
+            .filter(|(_, p)| {
+                p.alive && p.state.on_ground && !p.prev_on_ground && -p.prev_vz > FALL_SAFE_SPEED
+            })
+            .map(|(id, p)| (*id, -p.prev_vz))
+            .collect();
+        for (id, speed) in landed {
+            let dmg = if self.fall_damage_progressive {
+                (speed - FALL_SAFE_SPEED) * FALL_DAMAGE_PER_SPEED
+            } else {
+                FALL_DAMAGE_FLAT
+            };
+            self.damage_player(id, dmg, DMG_FALL);
         }
         for (id, body) in &self.bodies {
             let st = self.physics.state(*body);
