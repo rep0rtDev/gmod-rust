@@ -58,12 +58,9 @@ fn freeze_crates_addon_through_the_server() {
     rt2.post_tick(&mut server);
     let floor_z: f32 = rt2.actors()[0].eval("return state.floor_z").unwrap();
     let floor_ent: u32 = rt2.actors()[0].eval("return state.floor_ent").unwrap();
-    let origin = server.players.values().next().unwrap().state.origin;
-    assert!(
-        (floor_z - origin.z).abs() < 0.1,
-        "floor {floor_z} vs player {}",
-        origin.z
-    );
+    // the floor brush under the recordings' spawn point: -143.969 (the engine's 1/32 u
+    // pull-back from -144); the player origin -143 is the spawn height, it never moved here
+    assert!((floor_z - -143.969).abs() < 0.01, "floor {floor_z}");
     assert_eq!(floor_ent, 0, "the world");
     let props = server.sandbox.props();
     assert_eq!(props.len(), 1, "the can was refused: {props:?}");
