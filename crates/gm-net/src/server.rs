@@ -53,11 +53,8 @@ impl ServerNet {
 
     /// Reads everything the transport has for the server (endpoint 0), connecting new clients.
     pub fn receive(&mut self, server: &mut Server<'_>, transport: &mut dyn Transport) {
-        for packet in transport.recv(0) {
-            let Some(from) = packet_sender(&packet) else {
-                continue;
-            };
-            let body = &packet[1..];
+        for (from, packet) in transport.recv() {
+            let body = &packet[..];
             if !self.clients.contains_key(&from) {
                 let player = self.next_player;
                 self.next_player += 1;
@@ -303,8 +300,7 @@ impl ServerNet {
                 }
             }
             if !unreliable.is_empty() || slot.channel.pending_reliable() > 0 {
-                let mut packet = vec![0u8];
-                packet.extend(slot.channel.build(&unreliable));
+                let packet = slot.channel.build(&unreliable);
                 transport.send(endpoint, packet);
             }
         }
@@ -313,10 +309,4 @@ impl ServerNet {
     pub fn stats(&self, endpoint: usize) -> Option<&crate::channel::Stats> {
         self.clients.get(&endpoint).map(|c| &c.channel.stats)
     }
-}
-
-/// Packets carry the sender endpoint in their first byte on the loopback (a real transport knows
-/// the address).
-pub fn packet_sender(packet: &[u8]) -> Option<usize> {
-    packet.first().map(|b| *b as usize)
 }

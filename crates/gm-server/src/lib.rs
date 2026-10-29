@@ -25,6 +25,9 @@ pub struct ModelInfo {
     pub inertia: Option<Vec3>,
 }
 
+/// Loads a model by name on first use.
+pub type ModelLoader = Box<dyn FnMut(&str) -> Option<ModelInfo>>;
+
 pub struct Player {
     pub state: gm_move::PlayerState,
     pub view_angles: Vec3,
@@ -63,6 +66,9 @@ pub struct Server<'w> {
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
     pub physgun_params: PhysgunParams,
+    /// Loads a model the first time something spawns it (the dedicated server reads the MDL/PHY
+    /// from the mounted content on demand).
+    pub model_loader: Option<ModelLoader>,
 }
 
 impl<'w> Server<'w> {
@@ -81,6 +87,7 @@ impl<'w> Server<'w> {
             hull_planes: BTreeMap::new(),
             events: Vec::new(),
             physgun_params: PhysgunParams::default(),
+            model_loader: None,
         }
     }
 
@@ -151,6 +158,10 @@ impl<'w> Server<'w> {
     /// `gm_spawn <model>` by a player.
     pub fn spawn_prop(&mut self, player: u32, model: &str) -> Option<u32> {
         let (eye, eye_angles) = self.eye(player)?;
+        if !self.models.contains_key(model) {
+            let loaded = self.model_loader.as_mut().and_then(|f| f(model))?;
+            self.register_model(model, loaded);
+        }
         let info = self.models.get(model)?.clone();
         let bodies = self.trace_bodies();
         let mut events = Vec::new();

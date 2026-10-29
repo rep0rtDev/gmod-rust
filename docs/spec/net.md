@@ -81,8 +81,26 @@ equal (1.19 u, the same as `phys_drop_crate` itself). The tossed can is within 0
 degrees of our server at 33 Hz (it spins at about 400 degrees per second) and DIFF against the
 game for the physics reason `phys_toss_can` is.
 
+## Transports and the dedicated server
+
+`Transport` is one object per endpoint (`send(to, packet)`, `recv() -> (from, packet)`): the
+loopback hub hands out endpoints for harnesses, `Udp` wraps a non-blocking `std` socket (the
+server numbers peers 1.. as they first appear, a client talks to endpoint 0; 1 400 byte packets).
+`gm-dedicated --map gm_construct --bind 0.0.0.0:27015` loads the map from the local game copy
+(brushes and displacements into both worlds, 0.07 s for gm_construct), ticks at 66.67 Hz with a
+monotonic schedule (sleeps to the next tick, resyncs after a 200 ms stall) and loads models on
+first spawn from MDL/PHY. `gm-bot --server host:port` is a headless client: it walks, spawns a
+crate and prints what its snapshots say.
+
+Measured on this machine, two processes over UDP on localhost: welcome after 1 client tick, first
+snapshot after 2; the bot walking forward at 200 u/s for 100 ticks moved 309 u as the server
+simulated it; its `gm_spawn` landed a crate at rest in front of it (count 1, one undo entry) and
+the client saw it in the next snapshots; 155 packets received over 400 client ticks (33 Hz
+snapshots), 26 kB down and 19 kB up; the server's tick took 0.012 ms idle and 0.044 ms with one
+client and one prop (the physics world is already loaded).
+
 ## Not yet
 
 Bit packing of snapshots, interest management (PVS + radius), snapshot compression
 above 1 200 bytes, lag
-compensation, encryption and authentication, UDP/QUIC transports, voice.
+compensation, encryption and authentication, QUIC transport, voice, a server browser / master server.

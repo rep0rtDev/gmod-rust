@@ -269,15 +269,14 @@ impl ClientNet {
             .write(&mut w);
             unreliable.push(w.buf);
         }
-        let mut packet = vec![self.endpoint as u8];
-        packet.extend(self.channel.build(&unreliable));
+        let packet = self.channel.build(&unreliable);
         transport.send(0, packet);
     }
 
     /// Applies everything that arrived.
     pub fn receive(&mut self, transport: &mut dyn Transport) {
-        for packet in transport.recv(self.endpoint) {
-            let Ok(msgs) = self.channel.receive(&packet[1..]) else {
+        for (_, packet) in transport.recv() {
+            let Ok(msgs) = self.channel.receive(&packet) else {
                 continue;
             };
             for m in msgs {

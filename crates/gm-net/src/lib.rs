@@ -13,7 +13,7 @@ pub mod wire;
 pub use client::{ClientNet, Interpolator, Prediction};
 pub use msg::{ClientMsg, Command, NetCmd, ServerMsg};
 pub use server::ServerNet;
-pub use transport::{Loopback, Transport};
+pub use transport::{Loopback, LoopbackEndpoint, Transport, Udp};
 
 #[cfg(test)]
 mod tests {

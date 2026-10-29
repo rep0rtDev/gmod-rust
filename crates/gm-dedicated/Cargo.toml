@@ -1,0 +1,28 @@
+[package]
+name = "gm-dedicated"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Dedicated server binary (map, 66.67 Hz tick, UDP clients) and a headless bot client; world loading shared with the parity runner"
+
+[dependencies]
+gm-core = { path = "../gm-core" }
+gm-formats = { path = "../gm-formats" }
+gm-content = { path = "../gm-content" }
+gm-collision = { path = "../gm-collision" }
+gm-move = { path = "../gm-move" }
+gm-physics = { path = "../gm-physics" }
+gm-sandbox = { path = "../gm-sandbox" }
+gm-server = { path = "../gm-server" }
+gm-net = { path = "../gm-net" }
+glam = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+
+[[bin]]
+name = "gm-dedicated"
+path = "src/bin/dedicated.rs"
+
+[[bin]]
+name = "gm-bot"
+path = "src/bin/bot.rs"

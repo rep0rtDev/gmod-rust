@@ -1292,13 +1292,15 @@ fn run_net(scn: &Scenario) -> Result<Value> {
     server.add_existing_props(&existing);
     let all_props = !scn.props.is_empty();
     // 2 ticks one way (30 ms), 20 % loss, fixed seed
-    let mut net = Loopback::new(2, 0.2, 0x5eed);
+    let net = Loopback::new(2, 0.2, 0x5eed);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
     let mut sn = ServerNet::new(map, start);
     let mut client = ClientNet::new(1, "bot");
     let mut view = Vec3::ZERO;
     let step = |sn: &mut ServerNet,
                 client: &mut ClientNet,
-                net: &mut Loopback,
+                s_ep: &mut gm_net::LoopbackEndpoint,
+                c_ep: &mut gm_net::LoopbackEndpoint,
                 server: &mut gm_server::Server<'_>,
                 view: Vec3| {
         client.tick(
@@ -1306,16 +1308,23 @@ fn run_net(scn: &Scenario) -> Result<Value> {
                 view_angles: view,
                 ..Default::default()
             },
-            net,
+            c_ep,
         );
         net.tick();
-        sn.receive(server, net);
+        sn.receive(server, s_ep);
         sn.tick(server);
-        sn.send(server, net);
-        client.receive(net);
+        sn.send(server, s_ep);
+        client.receive(c_ep);
     };
     for _ in 0..40 {
-        step(&mut sn, &mut client, &mut net, &mut server, view);
+        step(
+            &mut sn,
+            &mut client,
+            &mut s_ep,
+            &mut c_ep,
+            &mut server,
+            view,
+        );
     }
     let snapshot = |client: &ClientNet| -> Value {
         let me = client.player_id.unwrap_or(0);
@@ -1336,7 +1345,14 @@ fn run_net(scn: &Scenario) -> Result<Value> {
         view = Vec3::new(op.pitch, op.yaw, 0.0);
         // the view must be on the server before the command runs: one usercmd ahead
         for _ in 0..4 {
-            step(&mut sn, &mut client, &mut net, &mut server, view);
+            step(
+                &mut sn,
+                &mut client,
+                &mut s_ep,
+                &mut c_ep,
+                &mut server,
+                view,
+            );
         }
         match op.op.as_str() {
             "spawn" => client.command(Command::Spawn {
@@ -1360,7 +1376,14 @@ fn run_net(scn: &Scenario) -> Result<Value> {
         let want = client.acked_commands + if op.op == "wait" { 0 } else { 1 };
         let mut spent = 0;
         while client.acked_commands < want && spent < 200 {
-            step(&mut sn, &mut client, &mut net, &mut server, view);
+            step(
+                &mut sn,
+                &mut client,
+                &mut s_ep,
+                &mut c_ep,
+                &mut server,
+                view,
+            );
             spent += 1;
         }
         rec["round_trip_ticks"] = json!(spent);
@@ -1371,11 +1394,25 @@ fn run_net(scn: &Scenario) -> Result<Value> {
             op.wait.unwrap_or(3)
         };
         for _ in 0..ticks {
-            step(&mut sn, &mut client, &mut net, &mut server, view);
+            step(
+                &mut sn,
+                &mut client,
+                &mut s_ep,
+                &mut c_ep,
+                &mut server,
+                view,
+            );
         }
         // the client sees the state 2 ticks + snapshot interval later: let the snapshot arrive
         for _ in 0..4 {
-            step(&mut sn, &mut client, &mut net, &mut server, view);
+            step(
+                &mut sn,
+                &mut client,
+                &mut s_ep,
+                &mut c_ep,
+                &mut server,
+                view,
+            );
         }
         rec["after"] = snapshot(&client);
         for e in client.events.drain(..) {
@@ -1390,7 +1427,7 @@ fn run_net(scn: &Scenario) -> Result<Value> {
         "net": {
             "client_packets": st.packets_sent, "client_bytes": st.bytes_sent,
             "server_packets": sst.packets_sent, "server_bytes": sst.bytes_sent,
-            "dropped": net.dropped, "reliable_resends": st.reliable_resends + sst.reliable_resends,
+            "dropped": net.dropped(), "reliable_resends": st.reliable_resends + sst.reliable_resends,
             "snapshots_without_baseline": client.dropped_snapshots,
         },
     }))
@@ -1412,7 +1449,8 @@ fn run_net_predict(
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0);
-    let mut net = Loopback::new(2, loss, 0x5eed);
+    let net = Loopback::new(2, loss, 0x5eed);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
     let mut sn = ServerNet::new(scn.map.as_deref().unwrap_or("gm_construct"), start);
     let mut client = ClientNet::new(1, "bot");
     let ang = scn.angles.clone().unwrap_or_default();
@@ -1442,12 +1480,12 @@ fn run_net_predict(
     let mover = gm_move::Mover::new(gm_move::MoveConfig::default(), collision);
     for _ in 0..20 {
         settle(&mut server, &mut local);
-        client.tick(idle_cmd.clone(), &mut net);
+        client.tick(idle_cmd.clone(), &mut c_ep);
         net.tick();
-        sn.receive(&mut server, &mut net);
+        sn.receive(&mut server, &mut s_ep);
         sn.tick(&mut server);
-        sn.send(&server, &mut net);
-        client.receive(&mut net);
+        sn.send(&server, &mut s_ep);
+        client.receive(&mut c_ep);
         mover.tick(&mut local, &Prediction::usercmd(&idle_cmd));
     }
     // from here the server only runs what the client sends; wait until the pipe is primed
@@ -1467,12 +1505,12 @@ fn run_net_predict(
         for _ in 0..seg.ticks {
             cmd_tick += 1;
             pred.predict(cmd_tick, &cmd);
-            client.tick(cmd.clone(), &mut net);
+            client.tick(cmd.clone(), &mut c_ep);
             net.tick();
-            sn.receive(&mut server, &mut net);
+            sn.receive(&mut server, &mut s_ep);
             sn.tick(&mut server);
-            sn.send(&server, &mut net);
-            client.receive(&mut net);
+            sn.send(&server, &mut s_ep);
+            client.receive(&mut c_ep);
             if let Some(l) = &client.world.local {
                 pred.reconcile(client.world.last_cmd_tick, &l.state);
             }
@@ -1490,10 +1528,10 @@ fn run_net_predict(
     // drain: the server catches up with the last usercmds and the final states must agree
     for _ in 0..12 {
         net.tick();
-        sn.receive(&mut server, &mut net);
+        sn.receive(&mut server, &mut s_ep);
         sn.tick(&mut server);
-        sn.send(&server, &mut net);
-        client.receive(&mut net);
+        sn.send(&server, &mut s_ep);
+        client.receive(&mut c_ep);
         if let Some(l) = &client.world.local {
             pred.reconcile(client.world.last_cmd_tick, &l.state);
         }
@@ -1509,7 +1547,7 @@ fn run_net_predict(
         "corrections": pred.corrections,
         "max_correction": pred.max_correction,
         "loss": loss,
-        "dropped": net.dropped,
+        "dropped": net.dropped(),
     }))
 }
 
@@ -1530,7 +1568,8 @@ fn run_net_interp(
         .context("interp scenario needs a model")?;
     server.register_model(model, model_info(mount, model)?);
     let player_start = Vec3::new(start.x, start.y - 200.0, -143.0);
-    let mut net = Loopback::new(2, 0.0, 0x5eed);
+    let net = Loopback::new(2, 0.0, 0x5eed);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
     let mut sn = ServerNet::new(scn.map.as_deref().unwrap_or("gm_construct"), player_start);
     if let Some(n) = scn.snapshot_every {
         sn.snapshot_every = n.max(1);
@@ -1542,9 +1581,9 @@ fn run_net_interp(
     let mut body = None;
     // the prop appears right before the last warm-up snapshot, so the client has its spawn pose
     for i in 0..20 {
-        client.tick(idle.clone(), &mut net);
+        client.tick(idle.clone(), &mut c_ep);
         net.tick();
-        sn.receive(&mut server, &mut net);
+        sn.receive(&mut server, &mut s_ep);
         sn.tick(&mut server);
         if i == 19 {
             server.add_existing_props(&[(
@@ -1567,8 +1606,8 @@ fn run_net_interp(
             }
             body = Some(b);
         }
-        sn.send(&server, &mut net);
-        client.receive(&mut net);
+        sn.send(&server, &mut s_ep);
+        client.receive(&mut c_ep);
     }
     let body = body.context("prop body")?;
     let total = scn.ticks.unwrap_or(200);
@@ -1586,12 +1625,12 @@ fn run_net_interp(
                 gm_sandbox::rotation(Vec3::new(st.angles.0, st.angles.1, st.angles.2)),
             ));
         }
-        client.tick(idle.clone(), &mut net);
+        client.tick(idle.clone(), &mut c_ep);
         net.tick();
-        sn.receive(&mut server, &mut net);
+        sn.receive(&mut server, &mut s_ep);
         sn.tick(&mut server);
-        sn.send(&server, &mut net);
-        client.receive(&mut net);
+        sn.send(&server, &mut s_ep);
+        client.receive(&mut c_ep);
         interp.push(client.world.tick, &client.world.entities);
         let render = interp.render_tick(sn.tick);
         let t = render - spawn_tick as f32;

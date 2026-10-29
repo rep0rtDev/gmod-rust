@@ -434,6 +434,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "gm-dedicated"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "glam 0.29.3",
+ "gm-collision",
+ "gm-content",
+ "gm-core",
+ "gm-formats",
+ "gm-move",
+ "gm-net",
+ "gm-physics",
+ "gm-sandbox",
+ "gm-server",
+]
+
+[[package]]
 name = "gm-formats"
 version = "0.0.1"
 dependencies = [
