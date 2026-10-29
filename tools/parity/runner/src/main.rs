@@ -1494,8 +1494,8 @@ fn compare_fire(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         ((c(x, 0) - c(y, 0)).powi(2) + (c(x, 1) - c(y, 1)).powi(2) + (c(x, 2) - c(y, 2)).powi(2))
             .sqrt()
     };
-    // the grenade's spin is random: compare it until the game's first bounce (vz rising)
-    let (mut bounced, mut prev_vz) = (false, None::<f32>);
+    // the grenade's spin is random: compare it until the first bounce (vz rising)
+    let (mut bounced, mut prev_vz, mut prev_ours_vz) = (false, None::<f32>, None::<f32>);
     for (a, b) in tr.iter().zip(or) {
         let mut bad =
             a["clip1"] != b["clip1"] || a["ammo1"] != b["ammo1"] || a["shots"] != b["shots"];
@@ -1521,9 +1521,14 @@ fn compare_fire(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         } else if let (Some(pa), Some(pb)) = (pa, pb) {
             for (x, y) in pa.iter().zip(pb) {
                 if x["class"] == "npc_grenade_frag" {
+                    // either side's first bounce ends the comparison (a tick apart throws
+                    // the velocities hundreds of u/s apart)
                     let vz = x["vel"][2].as_f64().unwrap_or(0.0) as f32;
-                    bounced |= prev_vz.is_some_and(|p| vz > p + 1.0);
+                    let ovz = y["vel"][2].as_f64().unwrap_or(0.0) as f32;
+                    bounced |= prev_vz.is_some_and(|p| vz > p + 1.0)
+                        || prev_ours_vz.is_some_and(|p| ovz > p + 1.0);
                     prev_vz = Some(vz);
+                    prev_ours_vz = Some(ovz);
                     if bounced {
                         bad |= x["class"] != y["class"];
                         continue;

@@ -1265,6 +1265,9 @@ realm = "server"
 crates = ["gm-server"]
 
 [harness.tolerance]
+# the game's own throws differ by up to 8.5 u / 9.5 u/s before the bounce (random spin)
+proj_pos = 9.0
+proj_vel = 10.0
 
 [[harness]]
 name = "fire_frag_proj_hold"
@@ -1274,6 +1277,9 @@ realm = "server"
 crates = ["gm-server"]
 
 [harness.tolerance]
+# the game's own throws differ by up to 8.5 u / 9.5 u/s before the bounce (random spin)
+proj_pos = 9.0
+proj_vel = 10.0
 
 [[harness]]
 name = "fire_ar2_proj"
@@ -1310,3 +1316,6 @@ realm = "server"
 crates = ["gm-server"]
 
 [harness.tolerance]
+# the game's own throws differ by up to 8.5 u / 9.5 u/s before the bounce (random spin)
+proj_pos = 9.0
+proj_vel = 10.0

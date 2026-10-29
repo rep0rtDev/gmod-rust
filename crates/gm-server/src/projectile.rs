@@ -39,9 +39,9 @@ const BALL_STOP_TICKS: u32 = 267;
 const BALL_LIFE_TICKS: u32 = 300;
 /// Grenade (`npc_grenade_frag`): a VPHYSICS body of `GRENADE_MODEL` thrown from 8 u right of
 /// the eye, 33.7 u ahead and 13.9 u up (yaw frame; measured at pitch -20 only) at 1189 along
-/// the aim plus 110 up, spinning 600 deg/s about the aim plus a random pitch spin (three
-/// throws: 487, -633, 200 deg/s), so its path after the first bounce is random; it explodes
-/// 175 ticks after the throw whatever it hit.
+/// the aim plus 110 up, its body x axis to the right of the aim (angles (0, yaw - 90, 0)),
+/// rolling 600 deg/s about it plus a random pitch spin (three throws: 487, -633, 200 deg/s),
+/// so its path after the first bounce is random; it explodes 175 ticks after the throw.
 pub const GRENADE_MODEL: &str = "models/weapons/w_npcnade.mdl";
 const GRENADE_SPEED: f32 = 1189.0;
 const GRENADE_KICK: f32 = 110.0;
@@ -190,9 +190,9 @@ pub fn spawn(
                     mass: info.mass,
                     volume: info.volume,
                     position: origin,
-                    angles: (0.0, yaw, 0.0),
+                    angles: (0.0, yaw - 90.0, 0.0),
                     velocity,
-                    angular_velocity: forward * GRENADE_ROLL + right * spin,
+                    angular_velocity: right * GRENADE_ROLL + ahead * spin,
                     surface: info.surface,
                     linear_damping: info.linear_damping,
                     angular_damping: info.angular_damping,
