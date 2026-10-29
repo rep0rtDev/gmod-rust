@@ -1,0 +1,1 @@
+{"name": "phys_drop_tilted_ammocan", "kind": "phys", "map": "gm_construct", "model": "models/props/de_prodigy/ammo_can_02.mdl", "start": [700.0, -500.0, -40.0], "angles": [20, 35, 10], "ticks": 300}

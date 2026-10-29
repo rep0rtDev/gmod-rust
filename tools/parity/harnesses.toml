@@ -813,3 +813,39 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1
+
+[[harness]]
+name = "phys_drop_tilted_ammocan"
+scenario = "phys/drop_tilted_ammocan"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_drop_tilted_lightbox"
+scenario = "phys/drop_tilted_lightbox"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_drop_tilted_chunk"
+scenario = "phys/drop_tilted_chunk"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
