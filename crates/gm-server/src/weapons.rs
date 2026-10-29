@@ -528,3 +528,92 @@ pub fn hitgroup_at(rel_z: f32) -> Option<u8> {
 /// the aim: 24 damage -> 100.4 u/s, 12 -> 50.1, 150 -> 636 (recordings `hit_*`; linear in the
 /// damage, the .357 and shotgun deviate by +1.5 / -2 %, open). The push shows in the same tick.
 pub const KNOCKBACK_PER_DAMAGE: f32 = 4.18;
+
+/// A player model's hit boxes in its bind pose, each as a world transform and an AABB in box
+/// space; the model faces -y in that pose (kleiner: toes and face toward -y), so a player with
+/// view yaw `yaw` carries it rotated by `yaw + 90` degrees about z. The standing idle pose
+/// differs from the bind pose by a few units (measured head hit 5.7 u in front of the bind
+/// head box), open until animation is read.
+#[derive(Debug, Clone, Default)]
+pub struct HitModel {
+    pub boxes: Vec<(u8, glam::Mat4, glam::Vec3, glam::Vec3)>,
+}
+
+impl HitModel {
+    pub fn from_mdl(data: &[u8], mdl: &gm_formats::mdl::Mdl) -> Self {
+        use glam::{Mat4, Quat, Vec3};
+        let mut world: Vec<Mat4> = Vec::with_capacity(mdl.bones.len());
+        for b in &mdl.bones {
+            let local = Mat4::from_rotation_translation(
+                Quat::from_xyzw(b.quat[0], b.quat[1], b.quat[2], b.quat[3]),
+                Vec3::from(b.pos),
+            );
+            let m = if b.parent >= 0 {
+                world[b.parent as usize] * local
+            } else {
+                local
+            };
+            world.push(m);
+        }
+        let boxes = gm_formats::mdl::hitboxes(data, &mdl.header)
+            .into_iter()
+            .filter_map(|h| {
+                let m = *world.get(h.bone as usize)?;
+                Some((
+                    h.group.clamp(0, 255) as u8,
+                    m,
+                    Vec3::from(h.mins),
+                    Vec3::from(h.maxs),
+                ))
+            })
+            .collect();
+        HitModel { boxes }
+    }
+
+    /// The nearest hit box along the ray from `start` to `end` on a model standing at `origin`
+    /// with view yaw `yaw`: (fraction, hit group, world position).
+    pub fn trace(
+        &self,
+        origin: glam::Vec3,
+        yaw: f32,
+        start: glam::Vec3,
+        end: glam::Vec3,
+    ) -> Option<(f32, u8, glam::Vec3)> {
+        use glam::{Mat4, Quat};
+        let place = Mat4::from_rotation_translation(
+            Quat::from_rotation_z((yaw + 90.0).to_radians()),
+            origin,
+        );
+        let mut best: Option<(f32, u8)> = None;
+        for (group, m, mins, maxs) in &self.boxes {
+            let inv = (place * *m).inverse();
+            let (s, e) = (inv.transform_point3(start), inv.transform_point3(end));
+            let d = e - s;
+            let (mut t0, mut t1) = (0.0f32, 1.0f32);
+            let mut hit = true;
+            for a in 0..3 {
+                if d[a].abs() < 1e-6 {
+                    if s[a] < mins[a] || s[a] > maxs[a] {
+                        hit = false;
+                        break;
+                    }
+                    continue;
+                }
+                let (mut ta, mut tb) = ((mins[a] - s[a]) / d[a], (maxs[a] - s[a]) / d[a]);
+                if ta > tb {
+                    std::mem::swap(&mut ta, &mut tb);
+                }
+                t0 = t0.max(ta);
+                t1 = t1.min(tb);
+                if t0 > t1 {
+                    hit = false;
+                    break;
+                }
+            }
+            if hit && best.is_none_or(|b| t0 < b.0) {
+                best = Some((t0, *group));
+            }
+        }
+        best.map(|(t, g)| (t, g, start + (end - start) * t))
+    }
+}

@@ -215,6 +215,8 @@ pub struct Hit {
 
 pub struct Server<'w> {
     pub hits: Vec<Hit>,
+    /// Hit boxes of the player model; without one, bullets use the hull and height bands.
+    pub hit_model: Option<weapons::HitModel>,
     pub collision: &'w gm_collision::World,
     pub physics: World,
     /// The static world body constraints to the world attach to.
@@ -244,6 +246,7 @@ impl<'w> Server<'w> {
     pub fn new(collision: &'w gm_collision::World, physics: World, world_body: BodyHandle) -> Self {
         Server {
             hits: Vec::new(),
+            hit_model: None,
             collision,
             physics,
             world_body,
@@ -468,11 +471,26 @@ impl<'w> Server<'w> {
         if world.fraction < frac {
             return;
         }
-        let pos = eye + d * frac;
-        let rel_z = pos.z - self.players[&target].state.origin.z;
-        let Some(group) = weapons::hitgroup_at(rel_z) else {
-            return;
+        let (frac, group, pos) = match &self.hit_model {
+            Some(model) => {
+                let p = &self.players[&target];
+                let Some(h) = model.trace(p.state.origin, p.view_angles.y, eye, end) else {
+                    return;
+                };
+                h
+            }
+            None => {
+                let pos = eye + d * frac;
+                let rel_z = pos.z - self.players[&target].state.origin.z;
+                let Some(group) = weapons::hitgroup_at(rel_z) else {
+                    return;
+                };
+                (frac, group, pos)
+            }
         };
+        if world.fraction < frac {
+            return;
+        }
         let damage = base * weapons::hitgroup_scale(group) * shot.pellets as f32;
         let dmg_type = if shot.pellets > 1 {
             weapons::DMG_BULLET | weapons::DMG_BUCKSHOT

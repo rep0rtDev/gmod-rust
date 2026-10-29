@@ -248,6 +248,55 @@ pub struct Mdl {
     pub key_values: String,
 }
 
+/// One hit box of the model's default hit box set (`mstudiobbox_t`): an AABB in its bone's
+/// space, with the hit group the game reports (1 head, 2 chest, 3 stomach, 4/5 arms, 6/7 legs).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HitBox {
+    pub bone: i32,
+    pub group: i32,
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
+}
+
+/// The default hit box set (set 0) of a model, empty when the model has none.
+pub fn hitboxes(data: &[u8], header: &Header) -> Vec<HitBox> {
+    let mut out = Vec::new();
+    if header.hitbox_set_count <= 0 || header.hitbox_set_offset <= 0 {
+        return out;
+    }
+    let i32_at = |o: usize| -> Option<i32> {
+        data.get(o..o + 4)
+            .map(|b| i32::from_le_bytes(b.try_into().unwrap()))
+    };
+    let f32_at = |o: usize| -> Option<f32> {
+        data.get(o..o + 4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+    };
+    let so = header.hitbox_set_offset as usize;
+    let (Some(n), Some(off)) = (i32_at(so + 4), i32_at(so + 8)) else {
+        return out;
+    };
+    for i in 0..n.max(0) as usize {
+        let o = so + off as usize + i * 68;
+        let (Some(bone), Some(group)) = (i32_at(o), i32_at(o + 4)) else {
+            break;
+        };
+        let v = |k: usize| -> Option<[f32; 3]> {
+            Some([f32_at(o + k)?, f32_at(o + k + 4)?, f32_at(o + k + 8)?])
+        };
+        let (Some(mins), Some(maxs)) = (v(8), v(20)) else {
+            break;
+        };
+        out.push(HitBox {
+            bone,
+            group,
+            mins,
+            maxs,
+        });
+    }
+    out
+}
+
 impl Mdl {
     pub fn parse(data: &[u8]) -> Result<Self> {
         let header = Header::parse(data)?;
