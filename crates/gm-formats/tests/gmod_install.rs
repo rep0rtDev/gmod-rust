@@ -74,3 +74,40 @@ fn hl2_vpk_vtf_headers_parse() {
     }
     assert!(checked > 0);
 }
+
+#[test]
+fn gm_construct_lumps_parse() {
+    let Some(dir) = gmod_dir() else {
+        return;
+    };
+    let data = std::fs::read(dir.join("garrysmod/maps/gm_construct.bsp")).unwrap();
+    let bsp = gm_formats::bsp::Bsp::parse(&data).unwrap();
+    assert!(bsp.faces.len() > 1000, "{} faces", bsp.faces.len());
+    assert!(!bsp.models.is_empty() && !bsp.leafs.is_empty() && !bsp.nodes.is_empty());
+    assert_eq!(bsp.models[0].first_face, 0);
+    let ws = bsp.worldspawn().expect("worldspawn");
+    assert!(ws.get("skyname").is_some());
+    assert!(bsp
+        .entities
+        .iter()
+        .any(|e| e.classname() == "info_player_start"));
+    let mut lit = 0;
+    for f in bsp.faces.iter().take(500) {
+        let verts = bsp.face_vertices(f);
+        assert!(
+            verts.len() >= 3 || f.num_edges == 0,
+            "face with {} verts",
+            verts.len()
+        );
+        let m = bsp.face_material(f).expect("material");
+        assert!(!m.is_empty());
+        if f.light_ofs >= 0 {
+            let lm = bsp.face_lightmap(f).unwrap();
+            let (w, h) = f.lightmap_dims();
+            assert_eq!(lm.len(), (w * h) as usize * f.light_styles());
+            lit += 1;
+        }
+    }
+    assert!(lit > 100, "{lit} lit faces");
+    assert!(bsp.tex_names.iter().any(|n| n.starts_with("tools/")));
+}

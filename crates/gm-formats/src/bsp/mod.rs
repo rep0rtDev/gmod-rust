@@ -3,7 +3,10 @@
 //! Lump payload parsers live in submodules as they are implemented; this module
 //! only locates them. Layout per the public VDC "Source BSP File Format" page.
 
+pub mod lumps;
+
 use crate::{FormatError, Reader, Result};
+use lumps::{read_all, Record};
 
 pub const IDENT: &[u8; 4] = b"VBSP";
 pub const HEADER_LUMPS: usize = 64;
@@ -145,6 +148,109 @@ impl Header {
             offset: start,
             needed: l.length as usize,
         })
+    }
+}
+
+/// Parsed world geometry lumps of a map. Game lump, displacements, PVS and
+/// physics data are read by their own modules as they are implemented.
+pub struct Bsp<'a> {
+    pub data: &'a [u8],
+    pub header: Header,
+    pub planes: Vec<lumps::Plane>,
+    pub vertexes: Vec<lumps::Vertex>,
+    pub edges: Vec<lumps::Edge>,
+    pub surf_edges: Vec<lumps::SurfEdge>,
+    pub faces: Vec<lumps::Face>,
+    pub tex_infos: Vec<lumps::TexInfo>,
+    pub tex_datas: Vec<lumps::TexData>,
+    pub tex_names: Vec<String>,
+    pub models: Vec<lumps::Model>,
+    pub nodes: Vec<lumps::Node>,
+    pub leafs: Vec<lumps::Leaf>,
+    pub leaf_faces: Vec<u16>,
+    pub leaf_brushes: Vec<u16>,
+    pub brushes: Vec<lumps::Brush>,
+    pub brush_sides: Vec<lumps::BrushSide>,
+    pub entities: Vec<lumps::Entity>,
+}
+
+impl<'a> Bsp<'a> {
+    pub fn parse(data: &'a [u8]) -> Result<Self> {
+        let header = Header::parse(data)?;
+        let lump = |id: Lump| header.lump_data(data, id);
+        let tex_datas: Vec<lumps::TexData> = read_all("texdata", lump(Lump::TexData)?)?;
+        let string_data = lump(Lump::TexDataStringData)?;
+        let offsets: Vec<i32> = read_all("texdata string table", lump(Lump::TexDataStringTable)?)?;
+        let mut tex_names = Vec::with_capacity(offsets.len());
+        for off in offsets {
+            let mut r = Reader::at(string_data, off as usize);
+            tex_names.push(r.cstr()?.to_ascii_lowercase());
+        }
+        let leaf_info = header.lump(Lump::Leafs);
+        Ok(Bsp {
+            data,
+            planes: read_all("planes", lump(Lump::Planes)?)?,
+            vertexes: read_all("vertexes", lump(Lump::Vertexes)?)?,
+            edges: read_all("edges", lump(Lump::Edges)?)?,
+            surf_edges: read_all("surfedges", lump(Lump::SurfEdges)?)?,
+            faces: read_all("faces", lump(Lump::Faces)?)?,
+            tex_infos: read_all("texinfo", lump(Lump::TexInfo)?)?,
+            tex_datas,
+            tex_names,
+            models: read_all("models", lump(Lump::Models)?)?,
+            nodes: read_all("nodes", lump(Lump::Nodes)?)?,
+            leafs: lumps::Leaf::read_lump(leaf_info.version, lump(Lump::Leafs)?)?,
+            leaf_faces: read_all("leaffaces", lump(Lump::LeafFaces)?)?,
+            leaf_brushes: read_all("leafbrushes", lump(Lump::LeafBrushes)?)?,
+            brushes: read_all("brushes", lump(Lump::Brushes)?)?,
+            brush_sides: read_all("brushsides", lump(Lump::BrushSides)?)?,
+            entities: lumps::parse_entities(lump(Lump::Entities)?)?,
+            header,
+        })
+    }
+
+    /// Material name (`concrete/concretefloor001a`) for a face, if any.
+    pub fn face_material(&self, face: &lumps::Face) -> Option<&str> {
+        let ti = self.tex_infos.get(usize::try_from(face.tex_info).ok()?)?;
+        let td = self.tex_datas.get(usize::try_from(ti.tex_data).ok()?)?;
+        self.tex_names
+            .get(usize::try_from(td.name_string_table_id).ok()?)
+            .map(String::as_str)
+    }
+
+    /// Vertex positions of a face polygon, in winding order.
+    pub fn face_vertices(&self, face: &lumps::Face) -> Vec<lumps::Vertex> {
+        let start = face.first_edge as usize;
+        let n = face.num_edges.max(0) as usize;
+        let mut out = Vec::with_capacity(n);
+        for se in self.surf_edges.iter().skip(start).take(n) {
+            let edge = &self.edges[se.unsigned_abs() as usize];
+            let v = if *se >= 0 { edge.v[0] } else { edge.v[1] };
+            out.push(self.vertexes[v as usize]);
+        }
+        out
+    }
+
+    /// LDR lightmap samples for a face: `styles * w * h` entries, style-major.
+    pub fn face_lightmap(&self, face: &lumps::Face) -> Result<Vec<lumps::ColorRgbExp32>> {
+        if face.light_ofs < 0 {
+            return Ok(Vec::new());
+        }
+        let (w, h) = face.lightmap_dims();
+        let count = (w * h) as usize * face.light_styles();
+        let lighting = self.header.lump_data(self.data, Lump::Lighting)?;
+        let start = face.light_ofs as usize;
+        let bytes = lighting
+            .get(start..start + count * lumps::ColorRgbExp32::SIZE)
+            .ok_or(FormatError::Eof {
+                offset: start,
+                needed: count * 4,
+            })?;
+        read_all("lighting", bytes)
+    }
+
+    pub fn worldspawn(&self) -> Option<&lumps::Entity> {
+        self.entities.iter().find(|e| e.classname() == "worldspawn")
     }
 }
 
