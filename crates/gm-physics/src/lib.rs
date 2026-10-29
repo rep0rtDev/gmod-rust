@@ -470,7 +470,7 @@ impl World {
                 positions.len() as u32,
                 indices.as_ptr(),
                 (indices.len() / 3) as u32,
-                LAYER_STATIC as u16,
+                LAYER_STATIC,
                 surface.friction * surface.friction,
             )
         };

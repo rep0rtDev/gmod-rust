@@ -106,6 +106,48 @@ pub fn hull_points(planes: &[(Vec3, f32)]) -> Vec<Vec3> {
     points
 }
 
+/// Displacement surfaces of the map as one triangle soup, wound to face along the plane of
+/// the brush face they sit on and pushed out by `inflate` along it (the same rest gap as the
+/// brush hulls). The game's brush trace stops on the displacement, not on the brush under it
+/// (gm_construct's ground at 600, -500 is 4 u above the brush below it), so props need this.
+pub fn displacement_mesh(bsp: &Bsp<'_>, inflate: f32) -> (Vec<Vec3>, Vec<u32>) {
+    use gm_formats::bsp::extra::{build_disp_mesh, disp_infos, disp_verts};
+    let (mut positions, mut indices) = (Vec::new(), Vec::new());
+    let (Ok(infos), Ok(verts)) = (disp_infos(bsp), disp_verts(bsp)) else {
+        return (positions, indices);
+    };
+    for info in &infos {
+        let Ok(mesh) = build_disp_mesh(bsp, info, &verts) else {
+            continue;
+        };
+        let Some(face) = bsp.faces.get(info.map_face as usize) else {
+            continue;
+        };
+        let Some(plane) = bsp.planes.get(face.plane_num as usize) else {
+            continue;
+        };
+        let mut normal = Vec3::from(plane.normal);
+        if face.side != 0 {
+            normal = -normal;
+        }
+        let base = positions.len() as u32;
+        for &p in &mesh.positions {
+            positions.push(Vec3::from(p) + normal * inflate);
+        }
+        for t in mesh.indices.as_chunks::<3>().0 {
+            let (a, b, c) = (
+                Vec3::from(mesh.positions[t[0] as usize]),
+                Vec3::from(mesh.positions[t[1] as usize]),
+                Vec3::from(mesh.positions[t[2] as usize]),
+            );
+            let flip = (b - a).cross(c - a).dot(normal) < 0.0;
+            let (i1, i2) = if flip { (t[2], t[1]) } else { (t[1], t[2]) };
+            indices.extend_from_slice(&[base + t[0], base + i1, base + i2]);
+        }
+    }
+    (positions, indices)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,46 +187,4 @@ mod tests {
         ];
         assert_eq!(hull_points(&planes).len(), 6);
     }
-}
-
-/// Displacement surfaces of the map as one triangle soup, wound to face along the plane of
-/// the brush face they sit on and pushed out by `inflate` along it (the same rest gap as the
-/// brush hulls). The game's brush trace stops on the displacement, not on the brush under it
-/// (gm_construct's ground at 600, -500 is 4 u above the brush below it), so props need this.
-pub fn displacement_mesh(bsp: &Bsp<'_>, inflate: f32) -> (Vec<Vec3>, Vec<u32>) {
-    use gm_formats::bsp::extra::{build_disp_mesh, disp_infos, disp_verts};
-    let (mut positions, mut indices) = (Vec::new(), Vec::new());
-    let (Ok(infos), Ok(verts)) = (disp_infos(bsp), disp_verts(bsp)) else {
-        return (positions, indices);
-    };
-    for info in &infos {
-        let Ok(mesh) = build_disp_mesh(bsp, info, &verts) else {
-            continue;
-        };
-        let Some(face) = bsp.faces.get(info.map_face as usize) else {
-            continue;
-        };
-        let Some(plane) = bsp.planes.get(face.plane_num as usize) else {
-            continue;
-        };
-        let mut normal = Vec3::from(plane.normal);
-        if face.side != 0 {
-            normal = -normal;
-        }
-        let base = positions.len() as u32;
-        for &p in &mesh.positions {
-            positions.push(Vec3::from(p) + normal * inflate);
-        }
-        for t in mesh.indices.chunks_exact(3) {
-            let (a, b, c) = (
-                Vec3::from(mesh.positions[t[0] as usize]),
-                Vec3::from(mesh.positions[t[1] as usize]),
-                Vec3::from(mesh.positions[t[2] as usize]),
-            );
-            let flip = (b - a).cross(c - a).dot(normal) < 0.0;
-            let (i1, i2) = if flip { (t[2], t[1]) } else { (t[1], t[2]) };
-            indices.extend_from_slice(&[base + t[0], base + i1, base + i2]);
-        }
-    }
-    (positions, indices)
 }
