@@ -430,6 +430,19 @@ SCENARIOS.sandbox = function(scn, done)
 	bot:SetLocalVelocity(Vector(0, 0, 0))
 	for _, e in ipairs(ents.FindByClass("prop_physics")) do e:Remove() end
 	undo.GetTable()[bot:UniqueID()] = nil
+	-- props that are already on the table (not the bot's): spawn targets
+	local placed = {}
+	for i, pr in ipairs(scn.props or {}) do
+		local ent = ents.Create("prop_physics")
+		ent:SetModel(pr.model)
+		ent:SetPos(Vector(pr.pos[1], pr.pos[2], pr.pos[3]))
+		ent:SetAngles(Angle(pr.angles and pr.angles[1] or 0, pr.angles and pr.angles[2] or 0, pr.angles and pr.angles[3] or 0))
+		ent:Spawn()
+		ent:Activate()
+		local ph = ent:GetPhysicsObject()
+		if IsValid(ph) and pr.frozen then ph:EnableMotion(false) end
+		placed[i] = ent
+	end
 	local meta = FindMetaTable("Player")
 	local messages = {}
 	local oldSendLua, oldLimitHit = meta.SendLua, meta.LimitHit
@@ -459,15 +472,22 @@ SCENARIOS.sandbox = function(scn, done)
 		local op = ops[i]
 		if not op then
 			meta.SendLua, meta.LimitHit = oldSendLua, oldLimitHit
-			done({ results = results, messages = messages, eye = { bot:GetShootPos().x, bot:GetShootPos().y, bot:GetShootPos().z } })
+			local pl = {}
+			for i, pe in ipairs(placed) do if IsValid(pe) then local p, a = pe:GetPos(), pe:GetAngles() pl[i] = { pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r } } end end
+			done({ results = results, messages = messages, placed = pl, eye = { bot:GetShootPos().x, bot:GetShootPos().y, bot:GetShootPos().z } })
 			return
 		end
 		local rec = { op = op.op, t = engine.TickCount() }
+		-- the table before the op: poses of the placed props and of everything spawned so far
+		rec.before = { placed = {}, props = snapshot().props }
+		for i, pe in ipairs(placed) do if IsValid(pe) then local p, a = pe:GetPos(), pe:GetAngles() rec.before.placed[i] = { pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r } } end end
 		if op.op == "spawn" then
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
 			local eye = bot:GetShootPos()
 			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 2048, filter = { bot } })
-			rec.trace = { hit = tr.Hit, pos = { tr.HitPos.x, tr.HitPos.y, tr.HitPos.z }, normal = { tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z }, ent = IsValid(tr.Entity) and tr.Entity:GetClass() or "world", eye = { eye.x, eye.y, eye.z } }
+			local placedIndex = 0
+			for i, pe in ipairs(placed) do if pe == tr.Entity then placedIndex = i end end
+			rec.trace = { hit = tr.Hit, pos = { tr.HitPos.x, tr.HitPos.y, tr.HitPos.z }, normal = { tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z }, ent = IsValid(tr.Entity) and tr.Entity:GetClass() or "world", placed = placedIndex, eye = { eye.x, eye.y, eye.z } }
 			rec.model = op.model
 			concommand.Run(bot, "gm_spawn", { op.model }, op.model)
 		elseif op.op == "undo" then
@@ -485,7 +505,7 @@ SCENARIOS.sandbox = function(scn, done)
 			step()
 		end)
 	end
-	step()
+	timer.Simple(engine.TickInterval() * (scn.settle or 40), step)
 end
 ASYNC.sandbox = true
 

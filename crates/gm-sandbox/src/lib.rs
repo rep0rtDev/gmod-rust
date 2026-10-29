@@ -4,7 +4,7 @@
 //! re-implemented and checked by the `sandbox_*` harnesses.
 
 use glam::{Quat, Vec3};
-use gm_collision::{World, MASK_SOLID};
+use gm_collision::{World, DIST_EPSILON, MASK_SOLID};
 use std::collections::BTreeMap;
 
 /// Model bounds the game uses for placement (`OBBMins`/`OBBMaxs`, the studio hull).
@@ -90,6 +90,8 @@ pub struct SpawnRequest<'a> {
 pub struct Placement {
     pub hit: Vec3,
     pub normal: Vec3,
+    /// The prop the spawn ray hit, `None` for the world.
+    pub hit_ent: Option<u32>,
     pub pos: Vec3,
     pub angles: Vec3,
 }
@@ -232,24 +234,27 @@ fn ray_convex(start: Vec3, end: Vec3, planes: &[(Vec3, f32)]) -> Option<(f32, Ve
         if d1 <= 0.0 && d2 <= 0.0 {
             continue;
         }
-        let t = d1 / (d1 - d2);
         if d1 > d2 {
+            // the engine stops the ray 1/32 u in front of the surface, like the brush trace
+            let t = (d1 - DIST_EPSILON) / (d1 - d2);
             if t > t_in {
                 t_in = t;
                 normal = n;
             }
-        } else if t < t_out {
-            t_out = t;
+        } else {
+            let t = (d1 + DIST_EPSILON) / (d1 - d2);
+            if t < t_out {
+                t_out = t;
+            }
         }
     }
     (t_in <= t_out && normal != Vec3::ZERO).then_some((t_in, normal))
 }
 
-/// The tool gun's line trace from the eye: world brushes (and displacements) against the
-/// props' collision hulls, nearest hit wins.
-pub fn tool_trace(world: &World, props: &[PropBody], eye: Vec3, dir: Vec3) -> Option<ToolHit> {
-    let end = eye + dir * MAX_TRACE_LENGTH;
-    let tr = world.trace_ray(eye, end, MASK_SOLID);
+/// A line trace against the world (brushes and displacements, `MASK_SOLID`) and the props'
+/// collision hulls; the nearest hit wins. `None` entity is the world.
+pub fn trace_line(world: &World, props: &[PropBody], start: Vec3, end: Vec3) -> Option<ToolHit> {
+    let tr = world.trace_ray(start, end, MASK_SOLID);
     let mut best = tr.hit().then_some(ToolHit {
         pos: tr.end,
         normal: tr.normal,
@@ -259,12 +264,12 @@ pub fn tool_trace(world: &World, props: &[PropBody], eye: Vec3, dir: Vec3) -> Op
     for p in props {
         let rot = rotation(p.angles);
         let inv = rot.inverse();
-        let (ls, le) = (inv * (eye - p.pos), inv * (end - p.pos));
+        let (ls, le) = (inv * (start - p.pos), inv * (end - p.pos));
         for hull in &p.hulls {
             if let Some((t, n)) = ray_convex(ls, le, hull) {
                 if best.is_none_or(|b| t < b.fraction) {
                     best = Some(ToolHit {
-                        pos: eye + (end - eye) * t,
+                        pos: start + (end - start) * t,
                         normal: rot * n,
                         ent: Some(p.id),
                         fraction: t,
@@ -274,6 +279,11 @@ pub fn tool_trace(world: &World, props: &[PropBody], eye: Vec3, dir: Vec3) -> Op
         }
     }
     best
+}
+
+/// The tool gun's line trace from the eye (`SWEP:DoToolTrace`).
+pub fn tool_trace(world: &World, props: &[PropBody], eye: Vec3, dir: Vec3) -> Option<ToolHit> {
+    trace_line(world, props, eye, eye + dir * MAX_TRACE_LENGTH)
 }
 
 #[derive(Default)]
@@ -323,10 +333,19 @@ fn nearest_point(pos: Vec3, rot: Quat, b: &ModelBounds, q: Vec3) -> Vec3 {
 /// the hit point facing the player (yaw + 180, no pitch or roll), then moved so the point of
 /// its box nearest to 512 u behind the surface sits on the hit point, then nudged out of walls
 /// along each of its axes.
-pub fn place_prop(world: &World, eye: Vec3, eye_angles: Vec3, bounds: &ModelBounds) -> Placement {
+pub fn place_prop(
+    world: &World,
+    props: &[PropBody],
+    eye: Vec3,
+    eye_angles: Vec3,
+    bounds: &ModelBounds,
+) -> Placement {
     let dir = forward(eye_angles.x, eye_angles.y);
-    let tr = world.trace_ray(eye, eye + dir * 2048.0, MASK_SOLID);
-    let (hit, normal) = (tr.end, if tr.hit() { tr.normal } else { Vec3::ZERO });
+    let end = eye + dir * 2048.0;
+    let (hit, normal, hit_ent) = match trace_line(world, props, eye, end) {
+        Some(h) => (h.pos, h.normal, h.ent),
+        None => (end, Vec3::ZERO, None),
+    };
     let angles = Vec3::new(0.0, normalize_angle(eye_angles.y + 180.0), 0.0);
     let rot = rotation(angles);
     let far = hit - normal * 512.0;
@@ -339,21 +358,22 @@ pub fn place_prop(world: &World, eye: Vec3, eye_angles: Vec3, bounds: &ModelBoun
         hi[axis] = bounds.max[axis];
         let end_d = pos + rot * lo;
         let end_u = pos + rot * hi;
-        let tr_d = world.trace_ray(pos, end_d, MASK_SOLID);
-        let tr_u = world.trace_ray(pos, end_u, MASK_SOLID);
-        if tr_d.hit() && tr_u.hit() {
+        let tr_d = trace_line(world, props, pos, end_d);
+        let tr_u = trace_line(world, props, pos, end_u);
+        if tr_d.is_some() && tr_u.is_some() {
             continue;
         }
-        if tr_d.hit() {
-            pos += tr_d.end - end_d;
+        if let Some(t) = tr_d {
+            pos += t.pos - end_d;
         }
-        if tr_u.hit() {
-            pos += tr_u.end - end_u;
+        if let Some(t) = tr_u {
+            pos += t.pos - end_u;
         }
     }
     Placement {
         hit,
         normal,
+        hit_ent,
         pos,
         angles,
     }
@@ -460,6 +480,7 @@ impl Sandbox {
     pub fn spawn_prop(
         &mut self,
         world: &World,
+        props: &[PropBody],
         player: u32,
         req: &SpawnRequest<'_>,
         events: &mut Vec<Event>,
@@ -468,7 +489,7 @@ impl Sandbox {
             return None;
         }
         let model = req.model;
-        let placement = place_prop(world, req.eye, req.eye_angles, &req.bounds);
+        let placement = place_prop(world, props, req.eye, req.eye_angles, &req.bounds);
         let id = self.next_id;
         self.next_id += 1;
         self.props.push(Prop {
@@ -502,6 +523,14 @@ impl Sandbox {
                 angles: b.angles,
             });
             self.next_id = self.next_id.max(b.id + 1);
+        }
+    }
+
+    /// Moves a prop (physics or a recording telling where it is now).
+    pub fn set_prop_pose(&mut self, id: u32, pos: Vec3, angles: Vec3) {
+        if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
+            p.pos = pos;
+            p.angles = angles;
         }
     }
 
@@ -765,6 +794,7 @@ mod tests {
     fn floor_spawn_sits_flush_facing_the_player() {
         let p = place_prop(
             &floor(),
+            &[],
             Vec3::new(823.235, -500.0, -79.0),
             Vec3::new(30.0, 0.0, 0.0),
             &crate_bounds(),
@@ -792,14 +822,14 @@ mod tests {
             bounds: b,
         };
         for yaw in [0.0, 45.0, 90.0] {
-            sb.spawn_prop(&w, 1, &req(yaw), &mut ev);
+            sb.spawn_prop(&w, &[], 1, &req(yaw), &mut ev);
         }
         assert_eq!(sb.count(1), 2);
         assert!(matches!(ev.last(), Some(Event::LimitHit { .. })));
         assert_eq!(sb.undos(1).iter().map(|u| u.id).collect::<Vec<_>>(), [1, 2]);
         sb.undo(1, &mut ev);
         assert_eq!(sb.count(1), 1);
-        sb.spawn_prop(&w, 1, &req(135.0), &mut ev);
+        sb.spawn_prop(&w, &[], 1, &req(135.0), &mut ev);
         assert_eq!(sb.undos(1).iter().map(|u| u.id).collect::<Vec<_>>(), [1, 2]);
         sb.cleanup(1, &mut ev);
         assert_eq!(sb.count(1), 0);
@@ -818,6 +848,7 @@ mod tests {
         let a = sb
             .spawn_prop(
                 &w,
+                &[],
                 1,
                 &SpawnRequest {
                     eye,
@@ -831,6 +862,7 @@ mod tests {
         let c = sb
             .spawn_prop(
                 &w,
+                &[],
                 1,
                 &SpawnRequest {
                     eye,

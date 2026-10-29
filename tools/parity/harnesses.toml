@@ -385,3 +385,13 @@ realm = "server"
 crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
+
+[[harness]]
+name = "sandbox_spawn_on_prop"
+scenario = "sandbox/spawn_on_prop"
+compare = "sandbox"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+ang = 0.1

@@ -755,9 +755,47 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
 /// Rigid body traces: position, orientation and the tick of first contact. Bit exactness is
 /// not expected from a different solver, so the check is "same contact tick within `contact`
 /// ticks, position within `pos` for every tick, final pose within `rest`".
+/// Collision hulls of a model as outward planes per convex (entity frame), for the spawn and
+/// tool traces.
+fn model_hull_planes(
+    mount: &gm_content::Mount,
+    model: &str,
+) -> Result<Vec<Vec<(glam::Vec3, f32)>>> {
+    use glam::Vec3;
+    let phy_path = model
+        .strip_suffix(".mdl")
+        .map(|m| format!("{m}.phy"))
+        .unwrap_or_else(|| model.to_string());
+    let phy = gm_formats::phy::Phy::parse(&mount.read(&phy_path)?)?;
+    let solid = phy.solids.first().context("PHY has no solids")?;
+    Ok(solid
+        .convexes
+        .iter()
+        .map(|c| {
+            let pts: Vec<Vec3> = c.points.iter().map(|&p| Vec3::from(p)).collect();
+            gm_sandbox::hull_planes(&pts, &c.triangles)
+        })
+        .collect())
+}
+
+/// The recorded trace of this scenario, if any (`tools/parity/golden/*/<name>.json`): the
+/// sandbox runner takes the poses of props under physics from it as inputs.
+fn golden_trace(name: &str) -> Option<Value> {
+    let mut found = None;
+    for dir in std::fs::read_dir("tools/parity/golden").ok()?.flatten() {
+        let path = dir.path().join(format!("{name}.json"));
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                found = Some(v);
+            }
+        }
+    }
+    found
+}
+
 fn run_sandbox(scn: &Scenario) -> Result<Value> {
     use glam::Vec3;
-    use gm_sandbox::{Event, Limits, ModelBounds, Sandbox, SpawnRequest};
+    use gm_sandbox::{Event, Limits, ModelBounds, PropBody, Sandbox, SpawnRequest};
     let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
     let mount = gm_content::Mount::for_install(&inst)?;
     let map = scn.map.as_deref().unwrap_or("gm_construct");
@@ -768,11 +806,47 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
     let eye = start + Vec3::new(0.0, 0.0, 64.0);
     let player = 1u32;
     let mut sb = Sandbox::new(Limits::default());
+    let v3 = |v: &Value| -> Vec3 {
+        let a = v.as_array().cloned().unwrap_or_default();
+        Vec3::new(
+            a.first().and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(1).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(2).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+        )
+    };
+    // props already on the table (spawn targets); their poses under physics come from the recording
+    let mut hull_cache: std::collections::HashMap<String, Vec<Vec<(Vec3, f32)>>> =
+        Default::default();
+    let mut placed = Vec::new();
+    for (i, pr) in scn.props.iter().enumerate() {
+        let hulls = model_hull_planes(&mount, &pr.model)?;
+        hull_cache.insert(pr.model.clone(), hulls.clone());
+        placed.push(PropBody {
+            id: i as u32 + 1,
+            pos: Vec3::from(pr.pos),
+            angles: Vec3::from(pr.angles.unwrap_or([0.0; 3])),
+            hulls,
+        });
+    }
+    let n_placed = placed.len() as u32;
+    sb.place_existing(
+        0,
+        &placed,
+        &scn.props
+            .iter()
+            .map(|p| p.model.clone())
+            .collect::<Vec<_>>(),
+    );
+    let golden = if scn.props.is_empty() {
+        None
+    } else {
+        golden_trace(&scn.name)
+    };
     let mut results = Vec::new();
     let mut messages = Vec::new();
     let snapshot = |sb: &Sandbox| -> Value {
         json!({
-            "props": sb.props().iter().map(|p| json!({
+            "props": sb.props().iter().filter(|p| p.owner == player).map(|p| json!({
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
             })).collect::<Vec<_>>(),
             "count": sb.count(player),
@@ -781,6 +855,48 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
         })
     };
     for (i, op) in scn.ops.iter().enumerate() {
+        // where the game had everything right before this op
+        if let Some(before) = golden
+            .as_ref()
+            .map(|g| &g["result"]["results"][i]["before"])
+        {
+            for (j, p) in before["placed"]
+                .as_array()
+                .unwrap_or(&Vec::new())
+                .iter()
+                .enumerate()
+            {
+                if let Some(body) = placed.get_mut(j) {
+                    body.pos = v3(&p["pos"]);
+                    body.angles = v3(&p["ang"]);
+                    sb.set_prop_pose(body.id, body.pos, body.angles);
+                }
+            }
+            let mine: Vec<u32> = sb
+                .props()
+                .iter()
+                .filter(|p| p.owner == player)
+                .map(|p| p.id)
+                .collect();
+            for (id, p) in mine
+                .iter()
+                .zip(before["props"].as_array().unwrap_or(&Vec::new()))
+            {
+                sb.set_prop_pose(*id, v3(&p["pos"]), v3(&p["ang"]));
+            }
+        }
+        let mut bodies = placed.clone();
+        for p in sb.props().iter().filter(|p| p.owner == player) {
+            if !hull_cache.contains_key(&p.model) {
+                hull_cache.insert(p.model.clone(), model_hull_planes(&mount, &p.model)?);
+            }
+            bodies.push(PropBody {
+                id: p.id,
+                pos: p.pos,
+                angles: p.angles,
+                hulls: hull_cache[&p.model].clone(),
+            });
+        }
         let mut events = Vec::new();
         let mut rec = json!({ "op": op.op, "t": i });
         match op.op.as_str() {
@@ -792,11 +908,14 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
                     max: Vec3::from(mdl.header.hull_max),
                 };
                 let eye_angles = Vec3::new(op.pitch, op.yaw, 0.0);
-                let pl = gm_sandbox::place_prop(&world, eye, eye_angles, &bounds);
-                rec["trace"] = json!({ "pos": [pl.hit.x, pl.hit.y, pl.hit.z], "normal": [pl.normal.x, pl.normal.y, pl.normal.z], "eye": [eye.x, eye.y, eye.z] });
+                let pl = gm_sandbox::place_prop(&world, &bodies, eye, eye_angles, &bounds);
+                let placed_index = pl.hit_ent.filter(|&e| e <= n_placed).unwrap_or(0);
+                rec["trace"] = json!({ "pos": [pl.hit.x, pl.hit.y, pl.hit.z], "normal": [pl.normal.x, pl.normal.y, pl.normal.z], "eye": [eye.x, eye.y, eye.z],
+                    "ent": if pl.hit_ent.is_some() { "prop_physics" } else { "world" }, "placed": placed_index });
                 rec["model"] = json!(model);
                 sb.spawn_prop(
                     &world,
+                    &bodies,
                     player,
                     &SpawnRequest {
                         eye,
@@ -853,27 +972,11 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
     // props at rest where the scenario put them (the probe lets them settle before clicking)
     let mut bodies = Vec::new();
     for (i, pr) in scn.props.iter().enumerate() {
-        let phy_path = pr
-            .model
-            .strip_suffix(".mdl")
-            .map(|m| format!("{m}.phy"))
-            .unwrap_or_else(|| pr.model.clone());
-        let phy = gm_formats::phy::Phy::parse(&mount.read(&phy_path)?)?;
-        let solid = phy.solids.first().context("PHY has no solids")?;
-        let hulls = solid
-            .convexes
-            .iter()
-            .map(|c| {
-                let pts: Vec<Vec3> = c.points.iter().map(|&p| Vec3::from(p)).collect();
-                gm_sandbox::hull_planes(&pts, &c.triangles)
-            })
-            .collect();
-        let a = pr.angles.unwrap_or([0.0; 3]);
         bodies.push(PropBody {
             id: i as u32 + 1,
             pos: Vec3::from(pr.pos),
-            angles: Vec3::from(a),
-            hulls,
+            angles: Vec3::from(pr.angles.unwrap_or([0.0; 3])),
+            hulls: model_hull_planes(&mount, &pr.model)?,
         });
     }
     sb.place_existing(
@@ -1162,6 +1265,15 @@ fn compare_sandbox(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         let tprops = t["immediate"]["props"].as_array().unwrap_or(&empty);
         let oprops = o["immediate"]["props"].as_array().unwrap_or(&empty);
         if op == "spawn" {
+            let (tt, ot) = (&t["trace"], &o["trace"]);
+            let placed = |v: &Value| v["placed"].as_i64().unwrap_or(0);
+            if tt["ent"] != ot["ent"] || placed(tt) != placed(ot) {
+                println!(
+                    "  op {i}: spawn trace hit {} {} vs {} {}",
+                    tt["ent"], tt["placed"], ot["ent"], ot["placed"]
+                );
+                ok = false;
+            }
             if tprops.len() != oprops.len() {
                 println!(
                     "  op {i} {op}: {} props in the game, {} ours",

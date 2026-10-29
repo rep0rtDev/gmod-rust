@@ -1,0 +1,66 @@
+{
+ "name": "sandbox_spawn_on_prop",
+ "kind": "sandbox",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "model": "models/props_c17/oildrum001.mdl",
+   "pos": [
+    900.0,
+    -430.0,
+    -143.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "ops": [
+  {
+   "op": "spawn",
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pitch": 15.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_junk/popcan01a.mdl",
+   "pitch": 28.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pitch": 10.0,
+   "yaw": 42.0
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_c17/oildrum001.mdl",
+   "pitch": 30.0,
+   "yaw": -40.0,
+   "wait": 30
+  }
+ ]
+}
