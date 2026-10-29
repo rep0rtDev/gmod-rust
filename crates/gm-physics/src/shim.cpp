@@ -303,6 +303,13 @@ public:
 			}
 		}
 		if (pts.empty()) return;
+		// a face already resting on the surface (three or more vertices at it) is a resting
+		// contact, not an impact: the game's drum pushed by a bullet keeps its whole horizontal
+		// velocity and loses the vertical (`shoot_prop_357_drum`), a rim vertex impact here
+		// would give it the sliding barrel's yaw spin and sideways kick
+		int touching = 0;
+		for (const Pt &pt : pts) if (pt.d <= 0.001f) ++touching;
+		if (touching >= 3) return;
 		const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
 		JPH::Vec3 lv0 = dyn.GetLinearVelocity(), av0 = dyn.GetAngularVelocity();
 		float t_impact = -1.0f;
