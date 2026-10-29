@@ -1,0 +1,1 @@
+{"name": "move_settle_brush", "kind": "move", "map": "gm_construct", "start": [823.0, -657.0, -139.0], "angles": [0, 90], "segments": [{"ticks": 60, "buttons": 0, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90}]}

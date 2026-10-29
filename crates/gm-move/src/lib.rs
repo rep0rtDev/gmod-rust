@@ -45,6 +45,10 @@ pub struct MoveConfig {
     pub duck_eye: f32,
     /// Ground is any surface with normal z at or above this.
     pub ground_normal_z: f32,
+    /// Reach of the downward ground probe in `categorize`. Measured on gm_construct: a player
+    /// 0.97 u above the floor is grounded, 1.32 u (landing a jump at 191.5 u/s) and 1.66 u
+    /// (settling at 63 u/s) are not; every value from 1.1 to 1.3 reproduces all recordings.
+    pub ground_probe: f32,
     pub tick_interval: f32,
 }
 
@@ -71,6 +75,7 @@ impl Default for MoveConfig {
             stand_eye: 64.0,
             duck_eye: 28.0,
             ground_normal_z: 0.7,
+            ground_probe: 1.2,
             tick_interval: gm_core::tick::DEFAULT_TICK_INTERVAL,
         }
     }
@@ -245,11 +250,13 @@ impl<'a> Mover<'a> {
 
     /// Ground test: a short downward sweep; moving up fast leaves the ground.
     pub fn categorize(&self, st: &mut PlayerState) {
-        if st.velocity.z.abs() > NON_JUMP_VELOCITY {
+        // only rising fast rules the ground out: a fall of 1089 u/s is grounded by the probe
+        // 0.3 u above the floor (damage_fall_progressive)
+        if st.velocity.z > NON_JUMP_VELOCITY {
             st.on_ground = false;
             return;
         }
-        let t = self.trace(st, st.origin, st.origin - Vec3::Z * 2.0);
+        let t = self.trace(st, st.origin, st.origin - Vec3::Z * self.cfg.ground_probe);
         if !t.hit() || t.normal.z < self.cfg.ground_normal_z {
             st.on_ground = false;
         } else {

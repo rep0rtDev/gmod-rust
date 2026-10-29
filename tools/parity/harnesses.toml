@@ -921,3 +921,35 @@ crates = ["gm-net", "gm-server"]
 [harness.tolerance]
 pos = 2.0
 contact = 3
+
+[[harness]]
+name = "move_settle_disp2"
+scenario = "move/settle_disp2"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+
+[[harness]]
+name = "move_settle_disp3"
+scenario = "move/settle_disp3"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+
+[[harness]]
+name = "move_settle_brush"
+scenario = "move/settle_brush"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
