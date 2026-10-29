@@ -190,11 +190,11 @@ fn run_move(scn: &Scenario) -> Result<Value> {
         view_angles: Vec3::new(view[0], view[1], 0.0),
         ..Default::default()
     };
+    // the probe resets origin and velocity at the start of each pre-roll tick, then the tick runs
     for _ in 0..20 {
-        mover.tick(&mut st, &settle_cmd);
-        st.origin.x = start.x;
-        st.origin.y = start.y;
+        st.origin = start;
         st.velocity = Vec3::ZERO;
+        mover.tick(&mut st, &settle_cmd);
     }
     let mut ticks = Vec::new();
     let mut t = 0u32;

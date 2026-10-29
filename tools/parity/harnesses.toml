@@ -85,3 +85,53 @@ crates = ["gm-move", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
+
+[[harness]]
+name = "move_fall_200"
+scenario = "move/fall_200"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_crouch_jump"
+scenario = "move/crouch_jump"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_airstrafe"
+scenario = "move/airstrafe"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_stairs_up"
+scenario = "move/stairs_up"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_stairs_down"
+scenario = "move/stairs_down"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5

@@ -106,6 +106,9 @@ pub struct PlayerState {
     pub jump_held: bool,
     /// A jump happened last tick; its forward boost lands this tick.
     pub boost_pending: bool,
+    /// Forward input and view yaw of the jump tick, used by the boost.
+    pub boost_forward: f32,
+    pub boost_yaw: f32,
     /// Duck state at the start of the tick; the speed limit lags the duck by one tick.
     pub ducked_at_tick_start: bool,
     pub move_type: MoveType,
@@ -124,6 +127,8 @@ impl Default for PlayerState {
             duck_timer: 0.0,
             jump_held: false,
             boost_pending: false,
+            boost_forward: 0.0,
+            boost_yaw: 0.0,
             ducked_at_tick_start: false,
             move_type: MoveType::Walk,
         }
@@ -329,8 +334,14 @@ impl<'a> Mover<'a> {
 
     fn air_move(&self, st: &mut PlayerState, cmd: &UserCmd, dt: f32) {
         let (wish_dir, wish_speed) = self.wish(st, cmd);
+        // the cap limits how much speed can be added, the rate still uses the full wish speed
         let capped = wish_speed.min(self.cfg.air_wish_cap);
-        self.accelerate(st, wish_dir, capped, self.cfg.air_accelerate, dt);
+        let current = st.velocity.dot(wish_dir);
+        let add = capped - current;
+        if add > 0.0 {
+            let accel_speed = (self.cfg.air_accelerate * dt * wish_speed).min(add);
+            st.velocity += wish_dir * accel_speed;
+        }
         self.slide_move(st, dt);
     }
 
@@ -433,24 +444,27 @@ impl<'a> Mover<'a> {
         // the jump finishes the current tick's gravity itself, on top of the air move's halves
         st.velocity.z -= self.cfg.gravity * self.cfg.tick_interval * 0.5;
         st.boost_pending = true;
+        st.boost_forward = cmd.forward_move;
+        st.boost_yaw = cmd.view_angles.y;
         st.jump_held = true;
     }
 
     /// Forward jump boost: a share of the forward input is added along the view yaw,
     /// clipped so the horizontal speed does not exceed max speed times (1 + share).
     fn jump_boost(&self, st: &mut PlayerState, cmd: &UserCmd) {
-        let (mut forward, _) = angle_vectors(cmd.view_angles);
+        let (mut forward, _) = angle_vectors(Vec3::new(0.0, st.boost_yaw, 0.0));
         forward.z = 0.0;
         let forward = forward.normalize_or_zero();
         let share = if st.ducked { 0.1 } else { 0.5 };
         let max_speed = self.max_speed(st, cmd);
-        let mut addition = cmd.forward_move.abs() * share;
+        let forward_move = st.boost_forward;
+        let mut addition = forward_move.abs() * share;
         let cap = max_speed + max_speed * share;
         let new_speed = addition + st.velocity.truncate().length();
         if new_speed > cap {
             addition -= new_speed - cap;
         }
-        if cmd.forward_move < 0.0 {
+        if forward_move < 0.0 {
             addition = -addition;
         }
         st.velocity += forward * addition;
@@ -513,14 +527,14 @@ impl<'a> Mover<'a> {
         st.ducking = false;
         st.duck_timer = 0.0;
         if !st.on_ground {
-            // in the air the hull shrinks from the top, the feet move up
-            st.origin.z += (self.cfg.stand_height - self.cfg.duck_height) * 0.5;
+            // in the air the hull shrinks from the top and the origin moves up by the full height difference
+            st.origin.z += self.cfg.stand_height - self.cfg.duck_height;
         }
     }
 
     fn standing_origin(&self, st: &PlayerState) -> Vec3 {
         if !st.on_ground && st.ducked {
-            st.origin - Vec3::Z * ((self.cfg.stand_height - self.cfg.duck_height) * 0.5)
+            st.origin - Vec3::Z * (self.cfg.stand_height - self.cfg.duck_height)
         } else {
             st.origin
         }

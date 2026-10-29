@@ -1,0 +1,6 @@
+{ "name": "move_stairs_down", "kind": "move", "map": "gm_construct",
+  "start": [-5460.0, -3140.0, 249.0], "angles": [0, 90],
+  "segments": [
+    { "ticks": 130, "buttons": 8, "forward": 10000, "side": 0, "up": 0, "pitch": 0, "yaw": 90 },
+    { "ticks": 40, "buttons": 0, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90 }
+  ] }
