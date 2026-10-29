@@ -13,3 +13,4 @@ A statement without a harness is a hypothesis and is marked `(unconfirmed)`.
 | [physics.md](physics.md) | `phys_*`, `constraint_*` | 1 / 5 within tolerance on 2026.09.17 (free flight and contact tick exact, contact response open) |
 - [sandbox.md](sandbox.md): prop spawning placement, undo, cleanup, limits
 - [toolgun.md](toolgun.md): tool gun trace, weld and rope stools, counts and undo
+- [server.md](server.md): the server tick composing movement, sandbox and physics

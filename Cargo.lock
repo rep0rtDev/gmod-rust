@@ -464,6 +464,7 @@ dependencies = [
  "gm-move",
  "gm-physics",
  "gm-sandbox",
+ "gm-server",
  "serde",
  "serde_json",
  "toml",
@@ -504,6 +505,18 @@ version = "0.1.0"
 dependencies = [
  "glam 0.29.3",
  "gm-collision",
+]
+
+[[package]]
+name = "gm-server"
+version = "0.1.0"
+dependencies = [
+ "glam 0.29.3",
+ "gm-collision",
+ "gm-core",
+ "gm-move",
+ "gm-physics",
+ "gm-sandbox",
 ]
 
 [[package]]

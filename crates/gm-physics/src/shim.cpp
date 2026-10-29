@@ -108,6 +108,15 @@ void *gmp_add_hinge_constraint(void *system, unsigned int id1, unsigned int id2,
 	return c;
 }
 
+// teleport (PhysObj:SetPos/SetAngles): Jolt metres, quaternion xyzw
+void gmp_set_pose(void *system, unsigned int id, float px, float py, float pz, float qx, float qy, float qz,
+                  float qw) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	sys->GetBodyInterface().SetPositionAndRotation(JPH::BodyID(id), JPH::RVec3(px, py, pz),
+	                                               JPH::Quat(qx, qy, qz, qw), JPH::EActivation::Activate);
+	sys->GetBodyInterface().SetLinearAndAngularVelocity(JPH::BodyID(id), JPH::Vec3::sZero(), JPH::Vec3::sZero());
+}
+
 void gmp_remove_body(void *system, unsigned int id) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
 	JPH::BodyID bid(id);

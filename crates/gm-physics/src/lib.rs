@@ -56,6 +56,17 @@ extern "C" {
         az: f32,
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_body(system: *mut JPC_PhysicsSystem, id: u32);
+    fn gmp_set_pose(
+        system: *mut JPC_PhysicsSystem,
+        id: u32,
+        px: f32,
+        py: f32,
+        pz: f32,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+        qw: f32,
+    );
     fn gmp_install_impact_listener(system: *mut JPC_PhysicsSystem);
     fn gmp_set_surface(
         system: *mut JPC_PhysicsSystem,
@@ -721,6 +732,25 @@ impl World {
             )
         };
         (!c.is_null()).then_some(ConstraintHandle(c))
+    }
+
+    /// `PhysObj:SetPos` + `SetAngles`: moves a body at rest to a pose (Source units, Z up).
+    pub fn teleport(&mut self, body: BodyHandle, position: Vec3, rotation: Quat) {
+        let p = to_jolt(position);
+        let q = quat_to_jolt(rotation);
+        unsafe {
+            gmp_set_pose(
+                self.system.as_raw(),
+                body.0,
+                p.x,
+                p.y,
+                p.z,
+                q.x,
+                q.y,
+                q.z,
+                q.w,
+            )
+        }
     }
 
     /// Removes a prop from the world (constraints attached to it must be removed first).

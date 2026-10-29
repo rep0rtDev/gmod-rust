@@ -136,6 +136,10 @@ struct OpSpec {
     name: Option<String>,
     #[serde(default)]
     value: Option<String>,
+    #[serde(default)]
+    wait: Option<u32>,
+    #[serde(default)]
+    ticks: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -228,6 +232,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "physgun" => run_physgun(scn)?,
         "constraint" => run_constraint(scn)?,
         "sandbox" => run_sandbox(scn)?,
+        "server" => run_server(scn)?,
         "toolgun" => run_toolgun(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
@@ -954,6 +959,249 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
         results.push(rec);
     }
     Ok(json!({ "results": results, "messages": messages, "eye": [eye.x, eye.y, eye.z] }))
+}
+
+/// Loads what `gm-server` needs to spawn and trace a model: MDL hull box, PHY convexes and
+/// physics properties.
+fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::ModelInfo> {
+    use glam::Vec3;
+    let mdl = gm_formats::mdl::Mdl::parse(&mount.read(model)?)?;
+    let phy_path = model
+        .strip_suffix(".mdl")
+        .map(|m| format!("{m}.phy"))
+        .unwrap_or_else(|| model.to_string());
+    let phy = gm_formats::phy::Phy::parse(&mount.read(&phy_path)?)?;
+    let solid = phy.solids.first().context("PHY has no solids")?;
+    let props = phy.props.first().cloned().unwrap_or_default();
+    let table = gm_physics::surface::SurfaceTable::parse(&[&String::from_utf8_lossy(
+        &mount.read("scripts/surfaceproperties.txt")?,
+    )]);
+    let sp = table.get(&props.surfaceprop);
+    Ok(gm_server::ModelInfo {
+        bounds: gm_sandbox::ModelBounds {
+            min: Vec3::from(mdl.header.hull_min),
+            max: Vec3::from(mdl.header.hull_max),
+        },
+        hulls: solid
+            .convexes
+            .iter()
+            .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
+            .collect(),
+        hull_planes: model_hull_planes(mount, model)?,
+        mass: if props.mass > 0.0 { props.mass } else { 1.0 },
+        volume: props.volume,
+        surface: gm_physics::Surface {
+            friction: sp.friction,
+            elasticity: sp.elasticity,
+        },
+        linear_damping: props.damping,
+        angular_damping: props.rotdamping,
+        drag_axis_areas: Vec3::from(solid.drag_axis_areas),
+        inertia: Some(Vec3::from(solid.rotation_inertia)),
+    })
+}
+
+/// The whole server loop: a bot runs sandbox commands and the props live in Jolt between them.
+fn run_server(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let table = gm_physics::surface::SurfaceTable::parse(&[&String::from_utf8_lossy(
+        &mount.read("scripts/surfaceproperties.txt")?,
+    )]);
+    let world_sp = table.get("concrete");
+    let world_surface = Surface {
+        friction: world_sp.friction,
+        elasticity: world_sp.elasticity,
+    };
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    tune_solver(&mut physics);
+    let world_body = physics.add_static_hulls(&world_hulls, world_surface)?;
+    let (disp_pos, disp_idx) = gm_physics::brush::displacement_mesh(&bsp, gm_physics::REST_GAP);
+    if !disp_idx.is_empty() {
+        physics.add_static_mesh(&disp_pos, &disp_idx, world_surface)?;
+    }
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    let player = 1u32;
+    let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    server.add_player(player, start, Vec3::ZERO);
+    let mut known: std::collections::HashSet<String> = Default::default();
+    for pr in &scn.props {
+        if known.insert(pr.model.clone()) {
+            server.register_model(&pr.model, model_info(&mount, &pr.model)?);
+        }
+    }
+    for op in &scn.ops {
+        if let Some(m) = &op.model {
+            if known.insert(m.clone()) {
+                server.register_model(m, model_info(&mount, m)?);
+            }
+        }
+    }
+    let existing: Vec<(String, Vec3, Vec3, bool)> = scn
+        .props
+        .iter()
+        .map(|p| {
+            (
+                p.model.clone(),
+                Vec3::from(p.pos),
+                Vec3::from(p.angles.unwrap_or([0.0; 3])),
+                p.frozen,
+            )
+        })
+        .collect();
+    server.add_existing_props(&existing);
+    let all_props = !scn.props.is_empty();
+    // the probe's pre-roll: the bot stands still on the ground
+    let idle = std::collections::BTreeMap::from([(player, gm_move::UserCmd::default())]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let snapshot = |server: &gm_server::Server| -> Value {
+        let sb = &server.sandbox;
+        json!({
+            "props": sb.props().iter().filter(|p| all_props || p.owner == player).map(|p| json!({
+                "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen,
+            })).collect::<Vec<_>>(),
+            "count": sb.count(player),
+            "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "n": u.entities.len() })).collect::<Vec<_>>(),
+            "constraints": sb.constraints().len(),
+        })
+    };
+    let mut results = Vec::new();
+    let mut messages = Vec::new();
+    for (i, op) in scn.ops.iter().enumerate() {
+        let mut rec = json!({ "op": op.op, "t": i });
+        let view = Vec3::new(op.pitch, op.yaw, 0.0);
+        if let Some(p) = server.players.get_mut(&player) {
+            p.view_angles = view;
+        }
+        let n_before = server.events.len();
+        match op.op.as_str() {
+            "spawn" => {
+                let model = op.model.clone().unwrap_or_default();
+                rec["model"] = json!(model);
+                server.spawn_prop(player, &model);
+            }
+            "click" => {
+                let tool = op.tool.clone().unwrap_or_default();
+                let ret = match op.button.as_deref() {
+                    Some("reload") => server.sandbox.tool_reload(player),
+                    b => server.tool_click(player, &tool, b == Some("right")),
+                };
+                rec["ret"] = json!(ret);
+            }
+            "undo" => server.undo(player),
+            "cleanup" => server.cleanup(player),
+            "wait" => {}
+            "cvar" => {
+                if op.name.as_deref() == Some("sbox_maxprops") {
+                    server.sandbox.limits.max_props =
+                        op.value.as_deref().unwrap_or("200").parse().unwrap_or(200);
+                }
+            }
+            other => bail!("unknown server op {other}"),
+        }
+        for e in &server.events[n_before..] {
+            if let gm_sandbox::Event::LimitHit { limit } = e {
+                messages.push(json!({ "t": i, "limit": limit }));
+            }
+        }
+        rec["immediate"] = snapshot(&server);
+        let ticks = if op.op == "wait" {
+            op.ticks.unwrap_or(3)
+        } else {
+            op.wait.unwrap_or(3)
+        };
+        for _ in 0..ticks {
+            server.tick(&idle);
+        }
+        rec["after"] = snapshot(&server);
+        results.push(rec);
+    }
+    Ok(json!({ "results": results, "messages": messages }))
+}
+
+/// Per op: the sandbox state (count, undo stack) and every prop's pose under physics after the
+/// op's wait, against the recording.
+fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(2.0) as f32;
+    let empty = Vec::new();
+    let v3 = |v: &Value| -> glam::Vec3 {
+        let a = v.as_array().cloned().unwrap_or_default();
+        glam::Vec3::new(
+            a.first().and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(1).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(2).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+        )
+    };
+    let (tr, or) = (
+        theirs["results"].as_array().unwrap_or(&empty),
+        ours["results"].as_array().unwrap_or(&empty),
+    );
+    let mut ok = tr.len() == or.len();
+    let (mut max_pos, mut max_ang) = (0.0f32, 0.0f32);
+    for (i, (t, o)) in tr.iter().zip(or).enumerate() {
+        let (ta, oa) = (&t["after"], &o["after"]);
+        if !ta["count"].is_null() && ta["count"] != oa["count"] {
+            println!("  op {i}: count {} vs {}", ta["count"], oa["count"]);
+            ok = false;
+        }
+        let (tu, ou) = (
+            ta["undos"].as_array().unwrap_or(&empty),
+            oa["undos"].as_array().unwrap_or(&empty),
+        );
+        if tu.len() != ou.len()
+            || tu
+                .iter()
+                .zip(ou)
+                .any(|(a, b)| a["id"] != b["id"] || a["name"] != b["name"])
+        {
+            println!("  op {i}: undo stack {} vs {}", tu.len(), ou.len());
+            ok = false;
+        }
+        let (tp, op_) = (
+            ta["props"].as_array().unwrap_or(&empty),
+            oa["props"].as_array().unwrap_or(&empty),
+        );
+        if tp.len() != op_.len() {
+            println!("  op {i}: {} props vs {}", tp.len(), op_.len());
+            ok = false;
+            continue;
+        }
+        for (k, (a, b)) in tp.iter().zip(op_).enumerate() {
+            let dp = (v3(&a["pos"]) - v3(&b["pos"])).length();
+            let da = gm_sandbox::rotation(v3(&a["ang"]))
+                .angle_between(gm_sandbox::rotation(v3(&b["ang"])))
+                .to_degrees();
+            max_pos = max_pos.max(dp);
+            max_ang = max_ang.max(da);
+            if dp > pos_tol || da > 5.0 {
+                println!(
+                    "  op {i}: prop {} pos err {dp:.3} angle err {da:.2} ({:?} vs {:?})",
+                    k + 1,
+                    v3(&a["pos"]),
+                    v3(&b["pos"])
+                );
+                ok = false;
+            }
+        }
+    }
+    println!(
+        "  {} ops, max pose err {max_pos:.3} u / {max_ang:.2} deg (tol {pos_tol}): {}",
+        tr.len(),
+        if ok { "equal" } else { "DIFF" }
+    );
+    ok
 }
 
 fn run_toolgun(scn: &Scenario) -> Result<Value> {
@@ -1753,6 +2001,7 @@ fn main() -> Result<()> {
                     "trajectory" => compare_trajectory(&t.result, &o.result, &h.tolerance),
                     "rigid" => compare_rigid(&t.result, &o.result, &h.tolerance),
                     "sandbox" => compare_sandbox(&t.result, &o.result, &h.tolerance),
+                    "server" => compare_server(&t.result, &o.result, &h.tolerance),
                     "toolgun" => compare_toolgun(&t.result, &o.result, &h.tolerance),
                     other => {
                         println!("  unknown compare mode {other}");

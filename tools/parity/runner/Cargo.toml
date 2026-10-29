@@ -23,4 +23,5 @@ gm-move = { path = "../../../crates/gm-move" }
 gm-physics = { path = "../../../crates/gm-physics" }
 gm-core = { path = "../../../crates/gm-core" }
 gm-sandbox = { path = "../../../crates/gm-sandbox" }
+gm-server = { path = "../../../crates/gm-server" }
 glam = { workspace = true }

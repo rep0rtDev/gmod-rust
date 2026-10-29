@@ -414,3 +414,30 @@ realm = "server"
 crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
+
+[[harness]]
+name = "server_spawn_basic"
+scenario = "server/spawn_basic"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox", "gm-physics", "gm-move"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_weld_rope"
+scenario = "server/weld_rope"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox", "gm-physics", "gm-move"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_axis"
+scenario = "server/axis"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox", "gm-physics", "gm-move"]
+[harness.tolerance]
+pos = 2.0
