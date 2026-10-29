@@ -451,6 +451,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gm-net"
+version = "0.1.0"
+dependencies = [
+ "glam 0.29.3",
+ "gm-core",
+ "gm-move",
+ "gm-sandbox",
+ "gm-server",
+]
+
+[[package]]
 name = "gm-parity"
 version = "0.0.1"
 dependencies = [
@@ -462,6 +473,7 @@ dependencies = [
  "gm-core",
  "gm-formats",
  "gm-move",
+ "gm-net",
  "gm-physics",
  "gm-sandbox",
  "gm-server",

@@ -1,0 +1,13 @@
+[package]
+name = "gm-net"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Own network protocol: packets with ack bitfields, reliable command channel, usercmd batches, delta snapshots; transport-agnostic with an in-memory loopback"
+
+[dependencies]
+gm-core = { path = "../gm-core" }
+gm-move = { path = "../gm-move" }
+gm-sandbox = { path = "../gm-sandbox" }
+gm-server = { path = "../gm-server" }
+glam = { workspace = true }

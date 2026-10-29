@@ -233,6 +233,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "constraint" => run_constraint(scn)?,
         "sandbox" => run_sandbox(scn)?,
         "server" => run_server(scn)?,
+        "net" => run_net(scn)?,
         "toolgun" => run_toolgun(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
@@ -1221,6 +1222,170 @@ fn run_server_segments(
     Ok(
         serde_json::json!({ "start": scn.start.unwrap_or([0.0; 3]), "model": model, "ticks": ticks }),
     )
+}
+
+/// The server scenario again, but every input travels as packets: a headless client sends
+/// usercmds (last 8 per packet) and reliable sandbox commands through a lossy, delayed loopback
+/// to `ServerNet`, and the recorded state is what the client rebuilt from delta snapshots.
+fn run_net(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_net::{ClientNet, Command, Loopback, NetCmd, ServerNet};
+    use gm_physics::{Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let table = gm_physics::surface::SurfaceTable::parse(&[&String::from_utf8_lossy(
+        &mount.read("scripts/surfaceproperties.txt")?,
+    )]);
+    let world_sp = table.get("concrete");
+    let world_surface = Surface {
+        friction: world_sp.friction,
+        elasticity: world_sp.elasticity,
+    };
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    tune_solver(&mut physics);
+    let world_body = physics.add_static_hulls(&world_hulls, world_surface)?;
+    let (disp_pos, disp_idx) = gm_physics::brush::displacement_mesh(&bsp, gm_physics::REST_GAP);
+    if !disp_idx.is_empty() {
+        physics.add_static_mesh(&disp_pos, &disp_idx, world_surface)?;
+    }
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    let mut known: std::collections::HashSet<String> = Default::default();
+    for m in scn
+        .props
+        .iter()
+        .map(|p| &p.model)
+        .chain(scn.ops.iter().filter_map(|o| o.model.as_ref()))
+    {
+        if known.insert(m.clone()) {
+            server.register_model(m, model_info(&mount, m)?);
+        }
+    }
+    let existing: Vec<(String, Vec3, Vec3, bool)> = scn
+        .props
+        .iter()
+        .map(|p| {
+            (
+                p.model.clone(),
+                Vec3::from(p.pos),
+                Vec3::from(p.angles.unwrap_or([0.0; 3])),
+                p.frozen,
+            )
+        })
+        .collect();
+    server.add_existing_props(&existing);
+    let all_props = !scn.props.is_empty();
+    // 2 ticks one way (30 ms), 20 % loss, fixed seed
+    let mut net = Loopback::new(2, 0.2, 0x5eed);
+    let mut sn = ServerNet::new(map, start);
+    let mut client = ClientNet::new(1, "bot");
+    let mut view = Vec3::ZERO;
+    let step = |sn: &mut ServerNet,
+                client: &mut ClientNet,
+                net: &mut Loopback,
+                server: &mut gm_server::Server<'_>,
+                view: Vec3| {
+        client.tick(
+            NetCmd {
+                view_angles: view,
+                ..Default::default()
+            },
+            net,
+        );
+        net.tick();
+        sn.receive(server, net);
+        sn.tick(server);
+        sn.send(server, net);
+        client.receive(net);
+    };
+    for _ in 0..40 {
+        step(&mut sn, &mut client, &mut net, &mut server, view);
+    }
+    let snapshot = |client: &ClientNet| -> Value {
+        let me = client.player_id.unwrap_or(0);
+        json!({
+            "props": client.world.entities.values().filter(|e| all_props || e.owner == me).map(|e| json!({
+                "model": e.model, "pos": [e.pos.x, e.pos.y, e.pos.z], "ang": [e.angles.x, e.angles.y, e.angles.z], "frozen": e.frozen,
+            })).collect::<Vec<_>>(),
+            "count": client.world.own.count,
+            "undos": client.world.own.undos.iter().map(|u| json!({ "id": u.id, "name": u.name })).collect::<Vec<_>>(),
+            "constraints": client.world.own.constraints,
+            "tick": client.world.tick,
+        })
+    };
+    let mut results = Vec::new();
+    let mut messages = Vec::new();
+    for (i, op) in scn.ops.iter().enumerate() {
+        let mut rec = json!({ "op": op.op, "t": i });
+        view = Vec3::new(op.pitch, op.yaw, 0.0);
+        // the view must be on the server before the command runs: one usercmd ahead
+        for _ in 0..4 {
+            step(&mut sn, &mut client, &mut net, &mut server, view);
+        }
+        match op.op.as_str() {
+            "spawn" => client.command(Command::Spawn {
+                model: op.model.clone().unwrap_or_default(),
+            }),
+            "click" => client.command(Command::ToolClick {
+                tool: op.tool.clone().unwrap_or_default(),
+                right: op.button.as_deref() == Some("right"),
+                reload: op.button.as_deref() == Some("reload"),
+            }),
+            "undo" => client.command(Command::Undo),
+            "cleanup" => client.command(Command::Cleanup),
+            "wait" => {}
+            "cvar" => client.command(Command::Cvar {
+                name: op.name.clone().unwrap_or_default(),
+                value: op.value.clone().unwrap_or_default(),
+            }),
+            other => bail!("unknown net op {other}"),
+        }
+        // the command needs a round trip (and retries under loss) before the wait starts
+        let want = client.acked_commands + if op.op == "wait" { 0 } else { 1 };
+        let mut spent = 0;
+        while client.acked_commands < want && spent < 200 {
+            step(&mut sn, &mut client, &mut net, &mut server, view);
+            spent += 1;
+        }
+        rec["round_trip_ticks"] = json!(spent);
+        rec["immediate"] = snapshot(&client);
+        let ticks = if op.op == "wait" {
+            op.ticks.unwrap_or(3)
+        } else {
+            op.wait.unwrap_or(3)
+        };
+        for _ in 0..ticks {
+            step(&mut sn, &mut client, &mut net, &mut server, view);
+        }
+        // the client sees the state 2 ticks + snapshot interval later: let the snapshot arrive
+        for _ in 0..4 {
+            step(&mut sn, &mut client, &mut net, &mut server, view);
+        }
+        rec["after"] = snapshot(&client);
+        for e in client.events.drain(..) {
+            messages.push(json!({ "t": i, "event": e }));
+        }
+        results.push(rec);
+    }
+    let st = client.stats().clone();
+    let sst = sn.stats(1).cloned().unwrap_or_default();
+    Ok(json!({
+        "results": results, "messages": messages,
+        "net": {
+            "client_packets": st.packets_sent, "client_bytes": st.bytes_sent,
+            "server_packets": sst.packets_sent, "server_bytes": sst.bytes_sent,
+            "dropped": net.dropped, "reliable_resends": st.reliable_resends + sst.reliable_resends,
+            "snapshots_without_baseline": client.dropped_snapshots,
+        },
+    }))
 }
 
 /// Per op: the sandbox state (count, undo stack) and every prop's pose under physics after the

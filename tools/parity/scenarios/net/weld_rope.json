@@ -1,0 +1,140 @@
+{
+ "name": "net_weld_rope",
+ "kind": "net",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -440.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ]
+  }
+ ],
+ "ops": [
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 30.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 25.0,
+   "yaw": 38.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "rope",
+   "pitch": 25.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "click",
+   "tool": "rope",
+   "pitch": 20.0,
+   "yaw": 38.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 30.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 60.0,
+   "yaw": -30.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 30.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 30.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 30.0,
+   "yaw": 0.0,
+   "button": "reload"
+  },
+  {
+   "op": "click",
+   "tool": "rope",
+   "pitch": 25.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "click",
+   "tool": "rope",
+   "pitch": 60.0,
+   "yaw": -30.0
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "cleanup"
+  }
+ ]
+}

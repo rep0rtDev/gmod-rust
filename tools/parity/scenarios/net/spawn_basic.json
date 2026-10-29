@@ -1,0 +1,92 @@
+{
+ "name": "net_spawn_basic",
+ "kind": "net",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "ops": [
+  {
+   "op": "spawn",
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pitch": 30,
+   "yaw": 0
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_c17/oildrum001.mdl",
+   "pitch": 45,
+   "yaw": 90
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_junk/popcan01a.mdl",
+   "pitch": 20,
+   "yaw": 180
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pitch": -10,
+   "yaw": 0
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "cvar",
+   "name": "sbox_maxprops",
+   "value": "2"
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pitch": 30,
+   "yaw": 0
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pitch": 30,
+   "yaw": 45
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pitch": 30,
+   "yaw": 90
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pitch": 30,
+   "yaw": 135
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "cvar",
+   "name": "sbox_maxprops",
+   "value": "200"
+  },
+  {
+   "op": "spawn",
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pitch": 30,
+   "yaw": 0,
+   "wait": 40
+  }
+ ]
+}

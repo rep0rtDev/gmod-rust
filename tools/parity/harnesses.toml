@@ -525,3 +525,30 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1000
+
+[[harness]]
+name = "net_spawn_basic"
+scenario = "net/spawn_basic"
+compare = "server"
+realm = "server"
+crates = ["gm-net", "gm-server"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "net_weld_rope"
+scenario = "net/weld_rope"
+compare = "server"
+realm = "server"
+crates = ["gm-net", "gm-server"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "net_axis"
+scenario = "net/axis"
+compare = "server"
+realm = "server"
+crates = ["gm-net", "gm-server"]
+[harness.tolerance]
+pos = 2.0
