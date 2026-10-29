@@ -116,6 +116,8 @@ struct Scenario {
     /// player scenarios: ticks at which the bot is killed
     #[serde(default)]
     kill_at: Vec<u32>,
+    #[serde(default)]
+    yaw: Option<f32>,
     /// damage scenarios: drop heights every `spacing` ticks, hits, convar and start values
     #[serde(default)]
     heights: Vec<f32>,
@@ -274,6 +276,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "phys" => run_phys(scn)?,
         "player" => run_player(scn)?,
         "damage" => run_damage(scn)?,
+        "ragdoll" => run_ragdoll(scn)?,
         "physgun" => run_physgun(scn)?,
         "constraint" => run_constraint(scn)?,
         "sandbox" => run_sandbox(scn)?,
@@ -1391,6 +1394,115 @@ fn compare_damage(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         tr.len(),
         mismatches,
         if ok { "equal" } else { "DIFF" }
+    );
+    ok
+}
+
+/// The server side of a player's death: what entity stands in for the body, where, and how
+/// many physics objects it has on the server (recorded by the probe's `ragdoll` scenario).
+fn run_ragdoll(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let world_body = physics.add_static_hulls(
+        &world_hulls,
+        Surface {
+            friction: 0.8,
+            elasticity: 0.25,
+        },
+    )?;
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    server.set_spawn_points_from_bsp(&bsp);
+    let player = 1u32;
+    let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    server.add_player(player, start, Vec3::new(0.0, scn.yaw.unwrap_or(0.0), 0.0));
+    server.spawn_player(player);
+    server.teleport_player(player, start);
+    let kill_at = scn.kill_at.first().copied().unwrap_or(20);
+    let total = scn.ticks.unwrap_or(300);
+    let mut ticks = Vec::with_capacity(total as usize);
+    let mut info = Value::Null;
+    let mut cmds = std::collections::BTreeMap::new();
+    cmds.insert(player, gm_server::PlayerCmd::default());
+    for t in 0..total {
+        if t == kill_at {
+            server.kill_player(player);
+        }
+        let p = &server.players[&player];
+        if info.is_null() {
+            if let Some(r) = &p.ragdoll {
+                info = json!({
+                    "class": r.class,
+                    "model": r.model,
+                    "count": 0,
+                    "origin": [r.origin.x, r.origin.y, r.origin.z],
+                    "angles": [r.angles.x, r.angles.y, r.angles.z],
+                    "tick": t,
+                });
+            }
+        }
+        ticks.push(json!({
+            "t": t,
+            "pos": [p.state.origin.x, p.state.origin.y, p.state.origin.z],
+            "alive": p.alive,
+        }));
+        server.tick(&cmds);
+    }
+    Ok(json!({ "ticks": ticks, "ragdoll": info }))
+}
+
+/// The ragdoll record: same tick, class and physics object count, origin within `pos`; alive
+/// equal every tick.
+fn compare_ragdoll(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(1.0) as f32;
+    let v3 = |v: &Value| -> glam::Vec3 {
+        let a = v.as_array().cloned().unwrap_or_default();
+        glam::Vec3::new(
+            a.first().and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(1).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(2).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+        )
+    };
+    let (a, b) = (&theirs["ragdoll"], &ours["ragdoll"]);
+    let mut diff = Vec::new();
+    for key in ["class", "count", "tick"] {
+        if a[key] != b[key] {
+            diff.push(format!("{key} {} vs {}", a[key], b[key]));
+        }
+    }
+    let d = (v3(&a["origin"]) - v3(&b["origin"])).length();
+    if d > pos_tol {
+        diff.push(format!("origin {d:.2} u apart"));
+    }
+    let empty = Vec::new();
+    let tr = theirs["ticks"].as_array().unwrap_or(&empty);
+    let or = ours["ticks"].as_array().unwrap_or(&empty);
+    let alive_diffs = tr
+        .iter()
+        .zip(or.iter())
+        .filter(|(x, y)| x["alive"] != y["alive"])
+        .count();
+    if alive_diffs > 0 || tr.len() != or.len() {
+        diff.push(format!("alive differs on {alive_diffs} ticks"));
+    }
+    let ok = diff.is_empty();
+    println!(
+        "  ragdoll {} with {} server physics objects at tick {}, origin {d:.2} u apart (tol {pos_tol}): {}{}",
+        a["class"],
+        a["count"],
+        a["tick"],
+        if ok { "equal" } else { "DIFF " },
+        diff.join(", ")
     );
     ok
 }
@@ -2950,6 +3062,7 @@ fn main() -> Result<()> {
                     "sandbox" => compare_sandbox(&t.result, &o.result, &h.tolerance),
                     "player" => compare_player(&t.result, &o.result, &h.tolerance),
                     "damage" => compare_damage(&t.result, &o.result, &h.tolerance),
+                    "ragdoll" => compare_ragdoll(&t.result, &o.result, &h.tolerance),
                     "server" => compare_server(&t.result, &o.result, &h.tolerance),
                     "toolgun" => compare_toolgun(&t.result, &o.result, &h.tolerance),
                     other => {

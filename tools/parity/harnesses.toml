@@ -894,3 +894,10 @@ scenario = "damage/fall_armor"
 compare = "damage"
 realm = "server"
 crates = ["gm-server"]
+
+[[harness]]
+name = "ragdoll_still"
+scenario = "ragdoll/still"
+compare = "ragdoll"
+realm = "server"
+crates = ["gm-server", "gm-physics"]

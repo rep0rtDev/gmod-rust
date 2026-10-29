@@ -867,6 +867,80 @@ SCENARIOS.damage = function(scn, done)
 end
 ASYNC.damage = true
 
+
+-- ragdoll: the bot is killed standing still; every physics object of its ragdoll (position,
+-- angles, velocity) is recorded per tick, with the bone names and masses, to measure how the
+-- player ragdoll is built and how it falls.
+SCENARIOS.ragdoll = function(scn, done)
+	local bot = player.GetBots()[1]
+	if not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.ragdoll(scn, done) end)
+		return
+	end
+	if not bot:Alive() then bot:Spawn() end
+	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
+	local ang = Angle(0, scn.yaw or 0, 0)
+	bot:SetPos(start)
+	bot:SetEyeAngles(ang)
+	bot:SetLocalVelocity(Vector(0, 0, 0))
+	local total = scn.ticks or 300
+	local killAt = scn.kill_at or 20
+	local tick = -10
+	local ticks, info = {}, nil
+	hook.Add("StartCommand", "parity_ragdoll", function(ply, cmd)
+		if ply ~= bot then return end
+		cmd:ClearButtons()
+		cmd:ClearMovement()
+		cmd:SetViewAngles(ang)
+	end)
+	hook.Add("Tick", "parity_ragdoll", function()
+		if not IsValid(bot) then return end
+		if tick >= 0 then
+			if tick == killAt then
+				bot:Kill()
+			end
+			local row = { t = tick }
+			local p, v = bot:GetPos(), bot:GetVelocity()
+			row.pos = { p.x, p.y, p.z }
+			row.vel = { v.x, v.y, v.z }
+			row.alive = bot:Alive()
+			local rag = bot:GetRagdollEntity()
+			if IsValid(rag) then
+				local n = rag:GetPhysicsObjectCount()
+				if not info then
+					info = { model = rag:GetModel(), class = rag:GetClass(), count = n, bones = {} }
+					for i = 0, n - 1 do
+						local po = rag:GetPhysicsObjectNum(i)
+						local bone = rag:TranslatePhysBoneToBone(i)
+						info.bones[i + 1] = { bone = bone, name = rag:GetBoneName(bone), mass = po:GetMass(),
+							material = po:GetMaterial(), surfacearea = po:GetSurfaceArea(), volume = po:GetVolume() }
+					end
+					local rp, ra = rag:GetPos(), rag:GetAngles()
+					info.origin = { rp.x, rp.y, rp.z }
+					info.angles = { ra.p, ra.y, ra.r }
+					info.tick = tick
+				end
+				row.objects = {}
+				for i = 0, n - 1 do
+					local po = rag:GetPhysicsObjectNum(i)
+					local pp, pa, pv, pw = po:GetPos(), po:GetAngles(), po:GetVelocity(), po:GetAngleVelocity()
+					row.objects[i + 1] = { pos = { pp.x, pp.y, pp.z }, ang = { pa.p, pa.y, pa.r }, vel = { pv.x, pv.y, pv.z },
+						angvel = { pw.x, pw.y, pw.z }, asleep = po:IsAsleep() }
+				end
+			end
+			ticks[#ticks + 1] = row
+		end
+		tick = tick + 1
+		if tick >= total then
+			hook.Remove("StartCommand", "parity_ragdoll")
+			hook.Remove("Tick", "parity_ragdoll")
+			done({ ticks = ticks, ragdoll = info })
+		end
+	end)
+end
+ASYNC.ragdoll = true
+
 local function runAll()
 	file.CreateDir(OUT_DIR)
 	local files = file.Find(SCN_DIR .. "/*.json", "DATA")

@@ -80,8 +80,8 @@ pub struct Player {
     pub active_weapon: String,
     pub deaths: u32,
     pub frags: u32,
-    /// Where the ragdoll of the last death lies, while the player is dead.
-    pub ragdoll: Option<Vec3>,
+    /// The ragdoll of the last death, while the player is dead.
+    pub ragdoll: Option<Ragdoll>,
     /// Tick of the last death: the player respawns `RESPAWN_TICKS` later.
     death_tick: Option<u64>,
     /// Fractional damage carried to the next hit (health is whole); measured to survive
@@ -155,6 +155,21 @@ pub const LOADOUT: [&str; 13] = [
     "weapon_shotgun",
     "weapon_smg1",
 ];
+
+/// Measured (`ragdoll_still`): the server side of a dead player is an `hl2mp_ragdoll` entity
+/// at the player's origin with zero angles and no physics objects at all (0 on the server; the
+/// ragdoll is simulated on each client), so the server only keeps the record.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Ragdoll {
+    pub class: &'static str,
+    pub model: String,
+    pub origin: Vec3,
+    pub angles: Vec3,
+    pub velocity: Vec3,
+    pub tick: u64,
+}
+
+pub const RAGDOLL_CLASS: &str = "hl2mp_ragdoll";
 
 /// `info_player_start`: where players (re)spawn, picked at random.
 #[derive(Clone, Debug)]
@@ -278,7 +293,14 @@ impl<'w> Server<'w> {
         if p.health <= 0 {
             p.alive = false;
             p.deaths += 1;
-            p.ragdoll = Some(p.state.origin);
+            p.ragdoll = Some(Ragdoll {
+            class: RAGDOLL_CLASS,
+            model: p.model.clone(),
+            origin: p.state.origin,
+            angles: Vec3::ZERO,
+            velocity: p.state.velocity,
+            tick,
+        });
             p.active_weapon.clear();
             p.held = None;
             p.state.velocity = Vec3::ZERO;
@@ -366,7 +388,14 @@ impl<'w> Server<'w> {
         p.alive = false;
         p.health = 0;
         p.deaths += 1;
-        p.ragdoll = Some(p.state.origin);
+        p.ragdoll = Some(Ragdoll {
+            class: RAGDOLL_CLASS,
+            model: p.model.clone(),
+            origin: p.state.origin,
+            angles: Vec3::ZERO,
+            velocity: p.state.velocity,
+            tick,
+        });
         p.death_tick = Some(tick);
         p.active_weapon.clear();
         p.held = None;
