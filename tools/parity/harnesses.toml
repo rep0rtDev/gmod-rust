@@ -135,3 +135,33 @@ crates = ["gm-move", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
+
+[[harness]]
+name = "move_air_left"
+scenario = "move/air_left"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_air_right"
+scenario = "move/air_right"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_air_alt"
+scenario = "move/air_alt"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5

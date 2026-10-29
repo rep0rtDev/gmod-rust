@@ -1,0 +1,8 @@
+{ "name": "move_air_left", "kind": "move", "map": "gm_construct",
+  "start": [823.235, -657.0, -143.0], "angles": [0, 90],
+  "segments": [
+    { "ticks": 30, "buttons": 8, "forward": 10000, "side": 0, "up": 0, "pitch": 0, "yaw": 90 },
+    { "ticks": 1, "buttons": 10, "forward": 10000, "side": 0, "up": 0, "pitch": 0, "yaw": 90 },
+    { "ticks": 40, "buttons": 512, "forward": 0, "side": -200, "up": 0, "pitch": 0, "yaw": 90 },
+    { "ticks": 30, "buttons": 0, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90 }
+  ] }

@@ -111,6 +111,8 @@ pub struct PlayerState {
     pub boost_yaw: f32,
     /// Duck state at the start of the tick; the speed limit lags the duck by one tick.
     pub ducked_at_tick_start: bool,
+    /// Surface friction multiplier; 1 on the ground, 0.25 after leaving it upwards.
+    pub surface_friction: f32,
     pub move_type: MoveType,
 }
 
@@ -130,6 +132,7 @@ impl Default for PlayerState {
             boost_forward: 0.0,
             boost_yaw: 0.0,
             ducked_at_tick_start: false,
+            surface_friction: 1.0,
             move_type: MoveType::Walk,
         }
     }
@@ -209,12 +212,15 @@ impl<'a> Mover<'a> {
         }
         self.check_jump(st, cmd);
         if st.on_ground {
+            st.surface_friction = 1.0;
             st.velocity.z = 0.0;
             self.friction(st, dt);
             self.walk_move(st, cmd, dt);
         } else {
             self.start_gravity(st, dt);
             self.air_move(st, cmd, dt);
+            // measured: the air friction multiplier follows the vertical speed before the second half of gravity
+            st.surface_friction = if st.velocity.z > 0.0 { 0.25 } else { 1.0 };
             self.finish_gravity(st, dt);
         }
         self.categorize(st);
@@ -339,7 +345,8 @@ impl<'a> Mover<'a> {
         let current = st.velocity.dot(wish_dir);
         let add = capped - current;
         if add > 0.0 {
-            let accel_speed = (self.cfg.air_accelerate * dt * wish_speed).min(add);
+            let accel_speed =
+                (self.cfg.air_accelerate * dt * wish_speed * st.surface_friction).min(add);
             st.velocity += wish_dir * accel_speed;
         }
         self.slide_move(st, dt);

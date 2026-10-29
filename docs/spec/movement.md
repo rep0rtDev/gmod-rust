@@ -40,7 +40,7 @@ Harness group: `move_*`: 7 harnesses recorded on a dedicated server bot (version
 - Friction: `speed < 0.1` does nothing; `control = max(speed, stop_speed)`; `drop = control * friction * dt`; `v *= max(speed - drop, 0) / speed`.
 - Accelerate: `add = wish_speed - dot(v, wish_dir)`; if `add > 0`: `v += wish_dir * min(accel * dt * wish_speed, add)`.
 - Measured: friction runs before acceleration, so a walking player reaches exactly 200 u/s (30 u/s added on the first tick, 24 u/s of friction removed per tick at 200). Releasing the keys decays 200 -> 176 -> 154.88 -> ... with friction alone.
-- Air acceleration: the 30 u/s cap limits how much can be added, the rate is `air_accelerate * dt * wish_speed` with the uncapped wish speed.
+- Air acceleration: the 30 u/s cap limits how much can be added, the rate is `air_accelerate * dt * wish_speed * surface_friction` with the uncapped wish speed. Measured: `surface_friction` is 0.25 while the vertical speed measured before the second half of gravity is positive (rising, and the first tick past the apex), 1 otherwise and on the ground. A rising player gains 7.5 u/s per tick sideways, a falling one 30.
 - Jump: vertical speed is set to 200 and the jump itself applies half a tick of gravity, so with the air move's two halves the jump tick ends at `200 - 1.5 * 600 * 0.015 = 186.5`, then minus 9 per tick. Measured and exact.
 - Forward jump boost (the HL2 single player rule is active in GMod multiplayer): on the first tick after a jump, `share = 0.1 if ducked else 0.5`; `addition = |forward_move| * share`, clipped so horizontal speed does not exceed `max_speed * (1 + share)`; added along the flattened view direction with the sign of `forward_move`. Walking 200 becomes 300, running 400 becomes 600. The sprint button does not lower the share.
 - Ground state: the 2 u downward test is skipped while vertical speed exceeds 140 u/s in either direction; a falling player is grounded only once the move itself touches the floor. CategorizePosition never moves the origin. StayOnGround (up 2 u, then down a step) runs after a walk move and snaps the origin to the floor when the difference is over 1/64 u; a player standing still 1 u above the floor stays there.
@@ -67,4 +67,6 @@ A server bot (`bot` console command) is driven through `StartCommand` (buttons, 
 
 Measured since: `move_fall_200` (the 140 u/s rule holds when landing from 200 u), `move_crouch_jump` (ducking in the air raises the origin by the full 36 u, standing lowers it by 36 u), `move_stairs_up` (real 8 u stairs on gm_construct, bit-exact), `move_airstrafe` partially.
 
-Open: `move_airstrafe` diverges on the MOVELEFT segments (tick 51 on): the real game adds 7.5 u/s per tick at yaw 105 and 22.5 at yaw 100 where the SDK formula gives 30; the MOVERIGHT segments (no acceleration because the current speed along the wish exceeds 30) match. `move_stairs_down` needs re-recording with the start above the top step. Slopes, ladders, water.
+`move_air_left`, `move_air_right`, `move_air_alt` (alternating strafes through a whole jump) and `move_airstrafe` pin the air friction rule; `move_stairs_down` recorded.
+
+Open: slopes, ladders, water, moving ground.
