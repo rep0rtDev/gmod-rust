@@ -186,6 +186,10 @@ public:
 	float static_mass_factor = 100000.0f;
 	float step_dt = 0.015f;
 	float persisted_threshold = 0.3f; // m/s, resting contacts stay with Jolt
+	// size of one push as a fraction of the point's full stopping impulse; measured on the tilted
+	// crate's corner impact: 0.03 to 0.075 reproduce the game's impulse within 0.5 %, 0.1 misses by 4.5 %
+	// (docs/spec/physics.md); GMP_PUSH_FRACTION overrides for experiments
+	float push_fraction = getenv("GMP_PUSH_FRACTION") ? (float)atof(getenv("GMP_PUSH_FRACTION")) : 0.075f;
 	bool debug = getenv("GMP_IMPACT_DEBUG") != nullptr;
 	std::unordered_map<JPH::uint64, std::vector<size_t>> contact_points; // pair -> hull vertex indices that already impacted
 	// the game integrates up to the moment of impact with the old velocity and the rest of the
@@ -319,7 +323,7 @@ public:
 			pt.dir = direction(v, n);
 			float mv1 = virt_mass(b1, pt.p, pt.dir, m2, static_mass_factor);
 			float mv2 = virt_mass(b2, pt.p, pt.dir, m1, static_mass_factor);
-			pt.step = 0.1f * (-2.0f * vn * (mv1 * mv2 / (mv1 + mv2)));
+			pt.step = push_fraction * (-2.0f * vn * (mv1 * mv2 / (mv1 + mv2)));
 			for (int it = 0; it < 100 && vn < 0.0f; ++it) {
 				push(b1, pt.p, pt.dir * pt.step);
 				push(b2, pt.p, -pt.dir * pt.step);
@@ -380,11 +384,11 @@ public:
 				pick->dir = direction(v, n);
 				float mv1 = virt_mass(b1, pick->p, pick->dir, m2, static_mass_factor);
 				float mv2 = virt_mass(b2, pick->p, pick->dir, m1, static_mass_factor);
-				pick->step = 0.1f * (-2.0f * pick->vn0 * (mv1 * mv2 / (mv1 + mv2)));
+				pick->step = push_fraction * (-2.0f * pick->vn0 * (mv1 * mv2 / (mv1 + mv2)));
 				for (Pt *o : old) {
 					float ov1 = virt_mass(b1, o->p, n, m2, static_mass_factor);
 					float ov2 = virt_mass(b2, o->p, n, m1, static_mass_factor);
-					o->step = 0.1f * (-2.0f * pick->vn0 * (ov1 * ov2 / (ov1 + ov2)));
+					o->step = push_fraction * (-2.0f * pick->vn0 * (ov1 * ov2 / (ov1 + ov2)));
 				}
 				float c1 = b1.IsDynamic() ? b1.GetLinearVelocity().Dot(n) : -b2.GetLinearVelocity().Dot(n);
 				for (int it = 0; it < 100; ++it) {
@@ -422,6 +426,11 @@ public:
 			}
 			if (std::find(cps.begin(), cps.end(), pick->index) == cps.end()) cps.push_back(pick->index);
 			if (debug) {
+				const JPH::Body &db = b1.IsDynamic() ? b1 : b2;
+				JPH::Vec3 r = JPH::Vec3(pick->p - db.GetCenterOfMassPosition());
+				JPH::Vec3 ii = db.GetMotionProperties()->GetInverseInertiaDiagonal();
+				JPH::Quat q = db.GetRotation();
+				fprintf(stderr, "impact body m=%.4f invI=(%.5f %.5f %.5f) q=(%.6f %.6f %.6f %.6f) r=(%.5f %.5f %.5f) n=(%.4f %.4f %.4f) dir=(%.4f %.4f %.4f) f=%.3f e=%.3f v0=(%.4f %.4f %.4f) w0=(%.4f %.4f %.4f)\n", 1.0 / db.GetMotionProperties()->GetInverseMass(), (double)ii.GetX(), (double)ii.GetY(), (double)ii.GetZ(), (double)q.GetX(), (double)q.GetY(), (double)q.GetZ(), (double)q.GetW(), (double)r.GetX(), (double)r.GetY(), (double)r.GetZ(), (double)n.GetX(), (double)n.GetY(), (double)n.GetZ(), (double)pick->dir.GetX(), (double)pick->dir.GetY(), (double)pick->dir.GetZ(), (double)friction, (double)elasticity, (double)lv0.GetX(), (double)lv0.GetY(), (double)lv0.GetZ(), (double)av0.GetX(), (double)av0.GetY(), (double)av0.GetZ());
 				JPH::Vec3 lv = b1.IsDynamic() ? b1.GetLinearVelocity() : b2.GetLinearVelocity();
 				JPH::Vec3 av = b1.IsDynamic() ? b1.GetAngularVelocity() : b2.GetAngularVelocity();
 				fprintf(stderr, "impact round %d p=(%.3f %.3f %.3f) d=%.4f vn0=%.3f -> v=(%.2f %.2f %.2f) w=(%.2f %.2f %.2f)\n", round, (double)pick->p.GetX(), (double)pick->p.GetY(), (double)pick->p.GetZ(), (double)pick->d, (double)pick->vn0, (double)lv.GetX(), (double)lv.GetY(), (double)lv.GetZ(), (double)av.GetX(), (double)av.GetY(), (double)av.GetZ());
