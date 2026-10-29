@@ -97,6 +97,10 @@ struct Scenario {
     angular: Option<[f32; 3]>,
     #[serde(default)]
     ticks: Option<u32>,
+    #[serde(default)]
+    prop: Option<[f32; 3]>,
+    #[serde(default)]
+    prop_angles: Option<[f32; 3]>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -167,6 +171,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         }
         "move" => run_move(scn)?,
         "phys" => run_phys(scn)?,
+        "physgun" => run_physgun(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
     Ok(Trace {
@@ -236,6 +241,172 @@ fn run_move(scn: &Scenario) -> Result<Value> {
         "ticks": ticks,
         "final": [st.origin.x, st.origin.y, st.origin.z],
     }))
+}
+
+/// Ray against a convex (triangles with outward normals derived from the centroid): entry distance.
+fn ray_convex(
+    origin: glam::Vec3,
+    dir: glam::Vec3,
+    points: &[glam::Vec3],
+    tris: &[[u16; 3]],
+) -> Option<f32> {
+    let centroid = points.iter().sum::<glam::Vec3>() / points.len() as f32;
+    let (mut t_in, mut t_out) = (0.0f32, f32::MAX);
+    for t in tris {
+        let (a, b, c) = (
+            points[t[0] as usize],
+            points[t[1] as usize],
+            points[t[2] as usize],
+        );
+        let mut n = (b - a).cross(c - a);
+        if n.length_squared() < 1e-8 {
+            continue;
+        }
+        n = n.normalize();
+        if n.dot(a - centroid) < 0.0 {
+            n = -n;
+        }
+        let dist = n.dot(a);
+        let denom = n.dot(dir);
+        let num = dist - n.dot(origin);
+        if denom.abs() < 1e-8 {
+            if num < 0.0 {
+                return None;
+            }
+            continue;
+        }
+        let t = num / denom;
+        if denom < 0.0 {
+            t_in = t_in.max(t);
+        } else {
+            t_out = t_out.min(t);
+        }
+    }
+    (t_in <= t_out).then_some(t_in)
+}
+
+fn run_physgun(scn: &Scenario) -> Result<Value> {
+    use glam::{Quat, Vec3};
+    use gm_physics::physgun::{Grab, PhysgunParams};
+    use gm_physics::{PropDesc, Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let model = scn
+        .model
+        .as_deref()
+        .context("physgun scenario needs a model")?;
+    let phy_path = model
+        .strip_suffix(".mdl")
+        .map(|m| format!("{m}.phy"))
+        .unwrap_or_else(|| model.to_string());
+    let phy = gm_formats::phy::Phy::parse(&mount.read(&phy_path)?)?;
+    let solid = phy.solids.first().context("PHY has no solids")?;
+    let props = phy.props.first().cloned().unwrap_or_default();
+    let hulls: Vec<Vec<Vec3>> = solid
+        .convexes
+        .iter()
+        .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
+        .collect();
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let table = gm_physics::surface::SurfaceTable::parse(&[&String::from_utf8_lossy(
+        &mount.read("scripts/surfaceproperties.txt")?,
+    )]);
+    let (world_sp, prop_sp) = (table.get("concrete"), table.get(&props.surfaceprop));
+    let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    world.add_static_hulls(
+        &world_hulls,
+        Surface {
+            friction: world_sp.friction,
+            elasticity: world_sp.elasticity,
+        },
+    )?;
+    let pa = scn.prop_angles.unwrap_or([0.0; 3]);
+    let body = world.add_prop(&PropDesc {
+        hulls: &hulls,
+        mass: if props.mass > 0.0 { props.mass } else { 1.0 },
+        volume: props.volume,
+        position: Vec3::from(scn.prop.context("physgun scenario needs a prop position")?),
+        angles: (pa[0], pa[1], pa[2]),
+        velocity: Vec3::ZERO,
+        angular_velocity: Vec3::ZERO,
+        surface: Surface {
+            friction: prop_sp.friction,
+            elasticity: prop_sp.elasticity,
+        },
+        linear_damping: props.damping,
+        angular_damping: props.rotdamping,
+        drag_axis_areas: Vec3::from(solid.drag_axis_areas),
+    })?;
+    world.optimize();
+    // the probe lets the prop settle for 60 ticks before the first segment
+    for _ in 0..60 {
+        world.step();
+    }
+    let eye = Vec3::from(scn.start.unwrap_or([0.0; 3])) + Vec3::new(0.0, 0.0, 64.0);
+    let params = PhysgunParams::default();
+    let mut grab: Option<Grab> = None;
+    let mut ticks = Vec::new();
+    let mut t = 0u32;
+    for sg in &scn.segments {
+        for _ in 0..sg.ticks {
+            let st = world.state(body);
+            ticks.push(serde_json::json!({
+                "t": t,
+                "pos": [st.position.x, st.position.y, st.position.z],
+                "ang": [st.angles.0, st.angles.1, st.angles.2],
+                "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
+                "angvel": [st.angular_velocity.x, st.angular_velocity.y, st.angular_velocity.z],
+                "held": grab.is_some(),
+                "eye": [eye.x, eye.y, eye.z],
+                "eye_ang": [sg.pitch, sg.yaw, 0.0],
+            }));
+            let (sp, cp) = (sg.pitch.to_radians().sin(), sg.pitch.to_radians().cos());
+            let (sy, cy) = (sg.yaw.to_radians().sin(), sg.yaw.to_radians().cos());
+            let forward = Vec3::new(cp * cy, cp * sy, -sp);
+            let attack = sg.buttons & 1 != 0;
+            if attack && grab.is_none() {
+                // hit test against the prop's hulls in their current pose
+                let inv = st.rotation.inverse();
+                let (lo, ld) = (inv * (eye - st.position), inv * forward);
+                let hit = solid
+                    .convexes
+                    .iter()
+                    .filter_map(|c| {
+                        let pts: Vec<Vec3> = c.points.iter().map(|&p| Vec3::from(p)).collect();
+                        ray_convex(lo, ld, &pts, &c.triangles)
+                    })
+                    .fold(None, |m: Option<f32>, d| Some(m.map_or(d, |x| x.min(d))));
+                if let Some(d) = hit {
+                    grab = Some(Grab::new(
+                        eye,
+                        forward,
+                        eye + forward * d,
+                        st.position,
+                        st.rotation,
+                        sg.yaw,
+                    ));
+                }
+            } else if !attack && grab.is_some() {
+                grab = None;
+                world.release(body);
+            }
+            if let Some(g) = &grab {
+                let (tp, tr): (Vec3, Quat) = g.target(eye, forward, sg.yaw, st.rotation);
+                world.hold(body, tp, tr, &params);
+            }
+            world.step();
+            t += 1;
+        }
+    }
+    Ok(
+        serde_json::json!({ "start": scn.start.unwrap_or([0.0; 3]), "model": model, "ticks": ticks }),
+    )
 }
 
 fn run_phys(scn: &Scenario) -> Result<Value> {

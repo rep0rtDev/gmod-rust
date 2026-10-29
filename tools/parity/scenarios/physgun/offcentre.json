@@ -1,0 +1,5 @@
+{ "name": "physgun_offcentre", "kind": "physgun", "map": "gm_construct",
+  "model": "models/props_junk/wood_crate001a.mdl",
+  "start": [823.235, -600.0, -143.6], "angles": [20,95],
+  "prop": [823.235, -480.0, -123.6], "prop_angles": [0, 0, 0],
+  "segments": [ {"ticks":20,"buttons":0,"pitch":20,"yaw":95}, {"ticks":60,"buttons":1,"pitch":20,"yaw":95}, {"ticks":60,"buttons":1,"pitch":0,"yaw":95}, {"ticks":60,"buttons":1,"pitch":0,"yaw":120} ] }

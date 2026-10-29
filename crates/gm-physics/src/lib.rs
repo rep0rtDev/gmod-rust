@@ -8,6 +8,7 @@
 //! the gravity factor, so 600 u/s^2 is `600 * 0.0254 / 9.81`.
 
 pub mod brush;
+pub mod physgun;
 pub mod surface;
 
 extern "C" {
@@ -227,6 +228,7 @@ struct Drag {
 pub struct World {
     system: rolt::PhysicsSystem,
     drags: Vec<Drag>,
+    held: std::collections::HashSet<u32>,
     world_elasticity: f32,
     temp: *mut JPC_TempAllocatorImpl,
     jobs: *mut JPC_JobSystemThreadPool,
@@ -263,6 +265,7 @@ impl World {
             jobs,
             shapes: Vec::new(),
             drags: Vec::new(),
+            held: std::collections::HashSet::new(),
             world_elasticity: 0.2,
             gravity,
             tick_interval,
@@ -423,6 +426,45 @@ impl World {
         }
     }
 
+    /// Drive a held body toward `target_pos` / `target_rot` for the coming tick (gravity off).
+    pub fn hold(
+        &mut self,
+        body: BodyHandle,
+        target_pos: Vec3,
+        target_rot: Quat,
+        p: &physgun::PhysgunParams,
+    ) {
+        let st = self.state(body);
+        let v = physgun::controller(st.velocity, target_pos - st.position, p);
+        let w = physgun::angular_controller(st.angular_velocity, st.rotation, target_rot, p);
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_SetGravityFactor(bi, body.0, 0.0);
+            JPC_BodyInterface_SetLinearAndAngularVelocity(
+                bi,
+                body.0,
+                jv(to_jolt(v)),
+                jv(dir_to_jolt(w) * DEG),
+            );
+            JPC_BodyInterface_ActivateBody(bi, body.0);
+        }
+        self.held.insert(body.0);
+    }
+
+    /// Let a held body go: gravity is back from this tick on, the velocity is kept.
+    pub fn release(&mut self, body: BodyHandle) {
+        if self.held.remove(&body.0) {
+            unsafe {
+                let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+                JPC_BodyInterface_SetGravityFactor(bi, body.0, self.gravity_factor());
+            }
+        }
+    }
+
+    pub fn is_held(&self, body: BodyHandle) -> bool {
+        self.held.contains(&body.0)
+    }
+
     pub fn optimize(&self) {
         self.system.optimize_broad_phase();
     }
@@ -436,7 +478,7 @@ impl World {
         unsafe {
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
             for d in &self.drags {
-                if !JPC_BodyInterface_IsActive(bi, d.body) {
+                if !JPC_BodyInterface_IsActive(bi, d.body) || self.held.contains(&d.body) {
                     continue;
                 }
                 let mut p = jv(Vec3::ZERO);

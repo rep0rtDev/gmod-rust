@@ -225,3 +225,51 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1
+
+[[harness]]
+name = "physgun_hold_crate"
+scenario = "physgun/hold_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "physgun_pitch_steps"
+scenario = "physgun/pitch_steps"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "physgun_yaw_steps"
+scenario = "physgun/yaw_steps"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "physgun_offcentre"
+scenario = "physgun/offcentre"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
