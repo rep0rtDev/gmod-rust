@@ -901,3 +901,13 @@ scenario = "ragdoll/still"
 compare = "ragdoll"
 realm = "server"
 crates = ["gm-server", "gm-physics"]
+
+[[harness]]
+name = "move_settle_edge"
+scenario = "move/settle_edge"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
