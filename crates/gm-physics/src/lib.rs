@@ -840,6 +840,21 @@ impl World {
         }
     }
 
+    /// `PhysObj:ApplyForceOffset` with a damage force: an impulse in kg * units/s at a world
+    /// point (Source units), waking the body; a frozen body ignores it like the game's.
+    pub fn add_impulse_at(&mut self, body: BodyHandle, point: Vec3, impulse: Vec3) {
+        if self.frozen.contains(&body.0) {
+            return;
+        }
+        let i = dir_to_jolt(impulse) * UNITS_TO_METERS;
+        let p = to_jolt(point);
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_ActivateBody(bi, body.0);
+            JPC_BodyInterface_AddImpulse3(bi, body.0, jv(i), jv(p));
+        }
+    }
+
     /// `PhysObj:SetPos` + `SetAngles`: moves a body at rest to a pose (Source units, Z up).
     pub fn teleport(&mut self, body: BodyHandle, position: Vec3, rotation: Quat) {
         let p = to_jolt(position);

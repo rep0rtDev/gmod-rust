@@ -127,6 +127,10 @@ struct Scenario {
     #[serde(default)]
     ammo: Option<std::collections::BTreeMap<String, i32>>,
     target_health: Option<i32>,
+    #[serde(default)]
+    prop_z: Option<f32>,
+    #[serde(default)]
+    frozen: bool,
     target_armor: Option<i32>,
     pitch: Option<f32>,
     #[serde(default)]
@@ -291,6 +295,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "weapon" => run_weapon(scn)?,
         "fire" => run_fire(scn)?,
         "hit" => run_hit(scn)?,
+        "shoot_prop" => run_shoot_prop(scn)?,
         "damage" => run_damage(scn)?,
         "ragdoll" => run_ragdoll(scn)?,
         "physgun" => run_physgun(scn)?,
@@ -1282,6 +1287,255 @@ fn run_hit(scn: &Scenario) -> Result<Value> {
     Ok(
         json!({ "weapon": class, "ticks": ticks, "hits": hits, "shots": server.players[&shooter].inventory.shots }),
     )
+}
+
+/// A bot fires one weapon at a prop spawned `dist` ahead (`shoot_prop_*`): the prop's pose and
+/// velocity per tick, every damage event on it, its removal and the projectiles.
+fn run_shoot_prop(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let world_body = physics.add_static_hulls(
+        &world_hulls,
+        Surface {
+            friction: 0.8,
+            elasticity: 0.25,
+        },
+    )?;
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    server.set_spawn_points_from_bsp(&bsp);
+    let model = scn
+        .model
+        .clone()
+        .context("shoot_prop scenario needs `model`")?;
+    server.register_model(&model, model_info(&mount, &model)?);
+    server.register_model(
+        gm_server::projectile::GRENADE_MODEL,
+        model_info(&mount, gm_server::projectile::GRENADE_MODEL)?,
+    );
+    let class = scn
+        .weapon
+        .clone()
+        .context("shoot_prop scenario needs `weapon`")?;
+    let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    let dist = scn.dist.unwrap_or(100.0);
+    let ppos = start + Vec3::new(0.0, dist, scn.prop_z.unwrap_or(0.0));
+    let pang = Vec3::from(scn.prop_angles.unwrap_or([0.0; 3]));
+    let aim = Vec3::new(scn.pitch.unwrap_or(0.0), scn.yaw.unwrap_or(90.0), 0.0);
+    let shooter = 1u32;
+    server.add_player(shooter, start, aim);
+    server.spawn_player(shooter);
+    server.teleport_player(shooter, start);
+    // the probe spawns the prop before its 70 setup ticks: it settles on the floor meanwhile
+    server.add_existing_props(&[(model.clone(), ppos, pang, scn.frozen)]);
+    let prop_id = server.sandbox.props().last().map(|p| p.id).unwrap_or(1);
+    let mut cmds = std::collections::BTreeMap::new();
+    let idle = |ang: Vec3| gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: ang,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    for pre in -70i32..0 {
+        if pre == -8 {
+            server.give_weapon(shooter, &class);
+            if let Some(p) = server.players.get_mut(&shooter) {
+                for (ammo, n) in scn.ammo.iter().flatten() {
+                    *p.inventory.ammo.entry(ammo.clone()).or_insert(0) += n;
+                }
+            }
+        }
+        cmds.insert(shooter, idle(aim));
+        server.tick(&cmds);
+    }
+    let mut ticks = Vec::new();
+    let mut hits = Vec::new();
+    let mut removed = Vec::new();
+    let mut t = 0u32;
+    let mut alive = true;
+    for seg in &scn.segments {
+        for _ in 0..seg.ticks {
+            let mut c = idle(aim);
+            c.cmd.buttons = seg.buttons;
+            cmds.insert(shooter, c);
+            let before = server.prop_hits.len();
+            let projs_before: Vec<&'static str> =
+                server.projectiles.iter().map(|p| p.kind.class()).collect();
+            server.tick(&cmds);
+            for h in server.prop_hits[before..]
+                .iter()
+                .filter(|h| h.prop == prop_id)
+            {
+                hits.push(json!({ "t": t, "damage": h.damage, "type": h.dmg_type, "inflictor": h.inflictor,
+                    "pos": [h.pos.x, h.pos.y, h.pos.z], "force": h.force.length(), "force_vec": [h.force.x, h.force.y, h.force.z] }));
+                if h.broke {
+                    alive = false;
+                    removed.push(json!({ "t": t, "class": "prop_physics", "is_prop": true, "pos": [h.pos.x, h.pos.y, h.pos.z] }));
+                }
+            }
+            let now: Vec<&'static str> =
+                server.projectiles.iter().map(|p| p.kind.class()).collect();
+            for cls in &projs_before {
+                if !now.contains(cls) {
+                    removed.push(json!({ "t": t, "class": cls, "is_prop": false }));
+                }
+            }
+            let sh = &server.players[&shooter];
+            let mut row = json!({ "t": t, "shots": sh.inventory.shots, "alive": alive });
+            if alive {
+                if let Some(body) = server.body_of(prop_id) {
+                    let st = server.physics.state(body);
+                    row["pos"] = json!([st.position.x, st.position.y, st.position.z]);
+                    row["ang"] = json!([st.angles.0, st.angles.1, st.angles.2]);
+                    row["vel"] = json!([st.velocity.x, st.velocity.y, st.velocity.z]);
+                    row["angvel"] = json!([
+                        st.angular_velocity.x,
+                        st.angular_velocity.y,
+                        st.angular_velocity.z
+                    ]);
+                    row["asleep"] = json!(!st.active);
+                }
+                row["health"] = json!(server.prop_health.get(&prop_id).copied().unwrap_or(0));
+            }
+            let projs: Vec<Value> = server
+                .projectiles
+                .iter()
+                .map(|pr| json!({ "class": pr.kind.class(), "pos": [pr.origin.x, pr.origin.y, pr.origin.z], "vel": [pr.velocity.x, pr.velocity.y, pr.velocity.z] }))
+                .collect();
+            if !projs.is_empty() {
+                row["projectiles"] = json!(projs);
+            }
+            ticks.push(row);
+            t += 1;
+        }
+    }
+    Ok(
+        json!({ "weapon": class, "model": model, "dist": dist, "ticks": ticks, "hits": hits, "removed": removed,
+        "shots": server.players[&shooter].inventory.shots }),
+    )
+}
+
+/// Every damage event on the prop on the same tick with the same damage, type and force
+/// (`force` tolerance, default 12 = a 1 deg spread cone on the pistol's 668; the vector within
+/// it too), position within `pos`; the prop's velocity per
+/// tick within `vel` and its removal tick. With `random = true` (pellets) only hit ticks and the
+/// removal are compared.
+fn compare_shoot_prop(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(3.0) as f32;
+    let dmg_tol = tol.get("damage").and_then(|v| v.as_float()).unwrap_or(0.01);
+    let force_tol = tol.get("force").and_then(|v| v.as_float()).unwrap_or(12.0) as f32;
+    let vel_tol = tol.get("vel").and_then(|v| v.as_float()).unwrap_or(10.0) as f32;
+    let random = tol.get("random").and_then(|v| v.as_bool()).unwrap_or(false);
+    let v3 = |v: &Value| -> Option<[f32; 3]> {
+        let a = v.as_array()?;
+        Some([
+            a[0].as_f64()? as f32,
+            a[1].as_f64()? as f32,
+            a[2].as_f64()? as f32,
+        ])
+    };
+    let dist = |a: [f32; 3], b: [f32; 3]| {
+        ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+    };
+    let mut ok = true;
+    let th: Vec<&Value> = theirs["hits"]
+        .as_array()
+        .map(|a| a.iter().collect())
+        .unwrap_or_default();
+    let oh: Vec<&Value> = ours["hits"]
+        .as_array()
+        .map(|a| a.iter().collect())
+        .unwrap_or_default();
+    if th.len() != oh.len() {
+        println!("  hits: game {} ours {}", th.len(), oh.len());
+        ok = false;
+    }
+    for (i, (a, b)) in th.iter().zip(oh.iter()).enumerate() {
+        let same_t = a["t"] == b["t"];
+        let same_dmg = (a["damage"].as_f64().unwrap_or(0.0) - b["damage"].as_f64().unwrap_or(0.0))
+            .abs()
+            <= dmg_tol;
+        let same_type = a["type"] == b["type"];
+        let same_force = (a["force"].as_f64().unwrap_or(0.0) as f32
+            - b["force"].as_f64().unwrap_or(0.0) as f32)
+            .abs()
+            <= force_tol;
+        let fv = match (v3(&a["force_vec"]), v3(&b["force_vec"])) {
+            (Some(x), Some(y)) => dist(x, y) <= force_tol.max(1.0),
+            _ => true,
+        };
+        let same_pos = match (v3(&a["pos"]), v3(&b["pos"])) {
+            (Some(x), Some(y)) => dist(x, y) <= pos_tol,
+            _ => true,
+        };
+        if !(same_t && same_dmg && same_type && (random || (same_force && fv && same_pos))) {
+            println!("  hit {i}: game {a} | ours {b}");
+            ok = false;
+        }
+    }
+    let tr: Vec<&Value> = theirs["removed"]
+        .as_array()
+        .map(|a| a.iter().collect())
+        .unwrap_or_default();
+    let or: Vec<&Value> = ours["removed"]
+        .as_array()
+        .map(|a| a.iter().collect())
+        .unwrap_or_default();
+    let key = |r: &Value| {
+        (
+            r["t"].as_u64().unwrap_or(0),
+            r["class"].as_str().unwrap_or("").to_string(),
+        )
+    };
+    let mut tk: Vec<_> = tr.iter().map(|r| key(r)).collect();
+    let mut okk: Vec<_> = or.iter().map(|r| key(r)).collect();
+    tk.sort();
+    okk.sort();
+    if tk != okk {
+        println!("  removed: game {tk:?} | ours {okk:?}");
+        ok = false;
+    }
+    if !random {
+        let tt = theirs["ticks"].as_array().cloned().unwrap_or_default();
+        let ot = ours["ticks"].as_array().cloned().unwrap_or_default();
+        let mut shown = 0;
+        for (a, b) in tt.iter().zip(ot.iter()) {
+            let (Some(va), Some(vb)) = (v3(&a["vel"]), v3(&b["vel"])) else {
+                if a["alive"] != b["alive"] {
+                    println!(
+                        "  tick {}: game alive {} | ours alive {}",
+                        a["t"], a["alive"], b["alive"]
+                    );
+                    ok = false;
+                    shown += 1;
+                    if shown >= 4 {
+                        break;
+                    }
+                }
+                continue;
+            };
+            if dist(va, vb) > vel_tol || a["alive"] != b["alive"] {
+                println!("  tick {}: game vel {:?} | ours vel {:?}", a["t"], va, vb);
+                ok = false;
+                shown += 1;
+                if shown >= 4 {
+                    break;
+                }
+            }
+        }
+    }
+    ok
 }
 
 /// Target health, armour and life every tick; every hit on the same tick with the same damage
@@ -3877,6 +4131,7 @@ fn main() -> Result<()> {
                     "weapon" => compare_weapon(&t.result, &o.result, &h.tolerance),
                     "fire" => compare_fire(&t.result, &o.result, &h.tolerance),
                     "hit" => compare_hit(&t.result, &o.result, &h.tolerance),
+                    "shoot_prop" => compare_shoot_prop(&t.result, &o.result, &h.tolerance),
                     "damage" => compare_damage(&t.result, &o.result, &h.tolerance),
                     "ragdoll" => compare_ragdoll(&t.result, &o.result, &h.tolerance),
                     "net_player" => compare_net_player(&t.result, &o.result, &h.tolerance),

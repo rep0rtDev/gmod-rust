@@ -207,6 +207,21 @@ pub struct PlayerCmd {
 }
 
 /// One bullet (or pellet group) that hit a player this tick.
+/// `EntityTakeDamage` on a prop (`shoot_prop_*`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PropHit {
+    pub tick: u64,
+    pub attacker: u32,
+    pub prop: u32,
+    pub damage: f32,
+    pub dmg_type: u32,
+    pub pos: Vec3,
+    pub force: Vec3,
+    pub inflictor: &'static str,
+    /// The prop broke (removed this tick).
+    pub broke: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hit {
     pub tick: u64,
@@ -272,6 +287,9 @@ pub struct Server<'w> {
     /// `sbox_playershurtplayers`: with it off hits are still resolved and recorded but neither
     /// hurt nor push (`hit_pistol_nohurt`, `hit_rpg_nohurt`).
     pub players_hurt_players: bool,
+    pub prop_hits: Vec<PropHit>,
+    /// Remaining health of breakable props (`weapons::prop_health`).
+    pub prop_health: BTreeMap<u32, i32>,
     pub spawn_points: Vec<SpawnPoint>,
     spawn_rng: u64,
     tick_count: u64,
@@ -300,6 +318,8 @@ impl<'w> Server<'w> {
             projectiles: Vec::new(),
             model_loader: None,
             players_hurt_players: true,
+            prop_hits: Vec::new(),
+            prop_health: BTreeMap::new(),
             spawn_points: Vec::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
@@ -482,7 +502,14 @@ impl<'w> Server<'w> {
     /// live players' hulls and the world; the hit group from the height on the target
     /// (`weapons::hitgroup_at`), the ammo's multiplayer damage scaled by it, applied as
     /// DMG_BULLET the same tick (recordings `hit_*`).
-    fn resolve_shot(&mut self, attacker: u32, eye: Vec3, forward: Vec3, shot: weapons::Shot) {
+    fn resolve_shot(
+        &mut self,
+        attacker: u32,
+        eye: Vec3,
+        forward: Vec3,
+        shot: weapons::Shot,
+        class: &'static str,
+    ) {
         let Some(base) = weapons::bullet_damage(shot.ammo) else {
             return;
         };
@@ -492,6 +519,8 @@ impl<'w> Server<'w> {
             .collision
             .trace_ray(eye, end, gm_collision::MASK_PLAYERSOLID);
         let d = end - eye;
+        let prop = gm_sandbox::trace_line(self.collision, &self.prop_bodies(), eye, end)
+            .filter(|h| h.ent.is_some());
         let mut best: Option<(u32, f32)> = None;
         for (id, p) in &self.players {
             if *id == attacker || !p.alive {
@@ -522,6 +551,23 @@ impl<'w> Server<'w> {
             }
             if inside && best.is_none_or(|b| t0 < b.1) {
                 best = Some((*id, t0));
+            }
+        }
+        if let Some(h) = prop {
+            if best.is_none_or(|b| h.fraction < b.1) {
+                if let Some(damage) = weapons::prop_bullet_damage(shot.ammo) {
+                    let n = shot.pellets as f32;
+                    self.hit_prop(
+                        h.ent.unwrap_or(0),
+                        attacker,
+                        damage * n,
+                        weapons::prop_bullet_dmg_type(shot.ammo),
+                        h.pos,
+                        forward * (weapons::prop_bullet_force(shot.ammo) * n),
+                        class,
+                    );
+                }
+                return;
             }
         }
         let Some((target, frac)) = best else {
@@ -574,6 +620,70 @@ impl<'w> Server<'w> {
         self.damage_player(target, damage, dmg_type);
     }
 
+    /// Sandbox props as trace bodies (hull planes in the entity frame).
+    fn prop_bodies(&self) -> Vec<PropBody> {
+        self.sandbox
+            .props()
+            .iter()
+            .filter_map(|p| {
+                let hulls = self.hull_planes.get(&p.model)?.clone();
+                Some(PropBody {
+                    id: p.id,
+                    pos: p.pos,
+                    angles: p.angles,
+                    hulls,
+                })
+            })
+            .collect()
+    }
+
+    /// `Entity:TakeDamage` on a prop: the hit is logged, the damage force applied at the hit
+    /// point as an impulse (`weapons::prop_bullet_force`), a breakable prop loses the damage and
+    /// is removed at zero.
+    #[allow(clippy::too_many_arguments)]
+    fn hit_prop(
+        &mut self,
+        prop: u32,
+        attacker: u32,
+        damage: f32,
+        dmg_type: u32,
+        pos: Vec3,
+        force: Vec3,
+        inflictor: &'static str,
+    ) {
+        let max = self
+            .sandbox
+            .props()
+            .iter()
+            .find(|p| p.id == prop)
+            .map(|p| weapons::prop_health(&p.model))
+            .unwrap_or(0);
+        let mut broke = false;
+        if max > 0 {
+            let hp = self.prop_health.entry(prop).or_insert(max);
+            *hp -= damage as i32;
+            broke = *hp <= 0;
+        }
+        self.prop_hits.push(PropHit {
+            tick: self.tick_count,
+            attacker,
+            prop,
+            damage,
+            dmg_type,
+            pos,
+            force,
+            inflictor,
+            broke,
+        });
+        if broke {
+            self.prop_health.remove(&prop);
+            self.sandbox.remove_entity(prop);
+            self.sync_physics();
+        } else if let Some(&body) = self.bodies.get(&prop) {
+            self.physics.add_impulse_at(body, pos, force);
+        }
+    }
+
     /// A crowbar swing (`weapons::MELEE_*`): the first player hull on the aim within reach,
     /// before the world.
     fn resolve_melee(&mut self, attacker: u32, eye: Vec3, forward: Vec3) {
@@ -593,6 +703,22 @@ impl<'w> Server<'w> {
                 if t <= weapons::MELEE_RANGE && best.is_none_or(|b| t < b.1) {
                     best = Some((*id, t));
                 }
+            }
+        }
+        let prop = gm_sandbox::trace_line(self.collision, &self.prop_bodies(), eye, end)
+            .filter(|h| h.ent.is_some());
+        if let Some(h) = prop {
+            if best.is_none_or(|b| h.fraction * weapons::MELEE_RANGE < b.1) {
+                self.hit_prop(
+                    h.ent.unwrap_or(0),
+                    attacker,
+                    weapons::MELEE_DAMAGE,
+                    weapons::DMG_CLUB,
+                    h.pos,
+                    forward * weapons::MELEE_PROP_FORCE,
+                    "weapon_crowbar",
+                );
+                return;
             }
         }
         let Some((target, t)) = best else {
@@ -645,6 +771,44 @@ impl<'w> Server<'w> {
     /// see takes nothing.
     fn explode(&mut self, at: Vec3, attacker: u32, base: f32, radius: f32, class: &'static str) {
         let src = at + Vec3::new(0.0, 0.0, 1.0);
+        let bodies = self.prop_bodies();
+        let targets: Vec<(u32, Vec3)> = self
+            .sandbox
+            .props()
+            .iter()
+            .filter_map(|p| {
+                let b = self.models.get(&p.model)?.bounds;
+                Some((p.id, p.pos + Vec3::new(0.0, 0.0, (b.min.z + b.max.z) * 0.5)))
+            })
+            .collect();
+        for (id, center) in targets {
+            let to = center - src;
+            let len = to.length();
+            if len < 1e-3 {
+                continue;
+            }
+            let dir = to / len;
+            let dist = match gm_sandbox::trace_line(self.collision, &bodies, src, center) {
+                Some(h) if h.ent == Some(id) => ((h.pos - src).length() - 1.0 / 32.0).max(0.0),
+                Some(h) if h.ent.is_none() => continue,
+                Some(_) => continue,
+                None => 0.0,
+            };
+            if dist >= radius {
+                continue;
+            }
+            let damage = base * (1.0 - dist / radius);
+            let force = (damage * weapons::BLAST_FORCE_PER_DAMAGE).min(weapons::BLAST_FORCE_MAX);
+            self.hit_prop(
+                id,
+                attacker,
+                damage,
+                weapons::DMG_BLAST,
+                src,
+                dir * force,
+                class,
+            );
+        }
         let ids: Vec<u32> = self.players.keys().copied().collect();
         for id in ids {
             let p = &self.players[&id];
@@ -822,6 +986,63 @@ impl<'w> Server<'w> {
                         ),
                         weapons::Launch::Grenade => None,
                     };
+                    let prop_touch = if kind == weapons::Launch::Grenade
+                        || self.sandbox.props().is_empty()
+                    {
+                        None
+                    } else {
+                        gm_sandbox::trace_line(world, &self.prop_bodies(), prev, end).filter(|h| {
+                            h.ent.is_some()
+                                && touch.is_none_or(|(_, at)| {
+                                    (h.pos - prev).length() < (at - prev).length()
+                                })
+                        })
+                    };
+                    if let Some(h) = prop_touch {
+                        let prop = h.ent.unwrap_or(0);
+                        let dir = (end - prev).normalize_or_zero();
+                        // the swept box stops its half extent short of the hull
+                        let back = match kind {
+                            weapons::Launch::Bolt => projectile::BOLT_HALF,
+                            weapons::Launch::Smg1Grenade => projectile::AR2_GRENADE_HALF,
+                            weapons::Launch::Ball => projectile::BALL_RADIUS,
+                            _ => 1.0 / 32.0,
+                        };
+                        let at = h.pos - dir * back;
+                        match kind {
+                            weapons::Launch::Rocket | weapons::Launch::Smg1Grenade => {
+                                died.push((kind, owner, at));
+                                keep.push(false);
+                            }
+                            weapons::Launch::Bolt => {
+                                self.projectiles[i].origin = at;
+                                self.projectiles[i].velocity = Vec3::ZERO;
+                                self.hit_prop(
+                                    prop,
+                                    owner,
+                                    weapons::BOLT_DAMAGE,
+                                    weapons::DMG_BULLET | weapons::DMG_NEVERGIB,
+                                    h.pos,
+                                    dir * weapons::BOLT_PROP_FORCE,
+                                    "crossbow_bolt",
+                                );
+                                keep.push(true);
+                            }
+                            _ => {
+                                self.hit_prop(
+                                    prop,
+                                    owner,
+                                    weapons::BALL_PROP_DAMAGE,
+                                    weapons::BALL_DMG_TYPE,
+                                    h.pos,
+                                    dir * weapons::BALL_PROP_FORCE,
+                                    "prop_combine_ball",
+                                );
+                                keep.push(true);
+                            }
+                        }
+                        continue;
+                    }
                     match (kind, touch) {
                         (weapons::Launch::Rocket | weapons::Launch::Smg1Grenade, Some((_, at))) => {
                             died.push((kind, owner, at));
@@ -1316,9 +1537,9 @@ impl<'w> Server<'w> {
                 self.physgun(*id, pc);
             }
         }
-        self.physics.step();
         // weapons first: a hit pushes and hurts the target in the tick of the shot, before the
-        // target's own move (recordings `hit_*`)
+        // target's own move (recordings `hit_*`); a prop takes the damage impulse before this
+        // tick's physics step (`shoot_prop_357_drum`: the floor eats its downward part in the hit tick)
         let mut shots = Vec::new();
         let mut swings = Vec::new();
         let mut launches = Vec::new();
@@ -1331,7 +1552,11 @@ impl<'w> Server<'w> {
                 let eye = p.state.origin + Vec3::new(0.0, 0.0, self.mover.eye_height(&p.state));
                 if let Some(shot) = shot {
                     let forward = gm_sandbox::forward(pc.cmd.view_angles.x, pc.cmd.view_angles.y);
-                    shots.push((*id, eye, forward, shot));
+                    let class = weapons::WEAPONS
+                        .iter()
+                        .find(|w| w.class == p.active_weapon.as_str())
+                        .map_or("player", |w| w.class);
+                    shots.push((*id, eye, forward, shot, class));
                 }
                 if p.inventory.swung {
                     let forward = gm_sandbox::forward(pc.cmd.view_angles.x, pc.cmd.view_angles.y);
@@ -1343,12 +1568,13 @@ impl<'w> Server<'w> {
                 p.inventory.tick(&p.active_weapon);
             }
         }
-        for (attacker, eye, forward, shot) in shots {
-            self.resolve_shot(attacker, eye, forward, shot);
+        for (attacker, eye, forward, shot, class) in shots {
+            self.resolve_shot(attacker, eye, forward, shot, class);
         }
         for (attacker, eye, forward) in swings {
             self.resolve_melee(attacker, eye, forward);
         }
+        self.physics.step();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;

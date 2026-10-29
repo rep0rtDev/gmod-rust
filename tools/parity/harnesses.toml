@@ -1541,3 +1541,114 @@ crates = ["gm-server"]
 # the game's own throws differ by up to 8.5 u / 9.5 u/s before the bounce (random spin)
 proj_pos = 9.0
 proj_vel = 10.0
+
+[[harness]]
+name = "shoot_prop_357_crate"
+scenario = "shoot_prop/357_crate"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+[[harness]]
+name = "shoot_prop_pistol_crate"
+scenario = "shoot_prop/pistol_crate"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+[[harness]]
+name = "shoot_prop_357_drum"
+scenario = "shoot_prop/357_drum"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+[[harness]]
+name = "shoot_prop_pistol_drum"
+scenario = "shoot_prop/pistol_drum"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+[[harness]]
+name = "shoot_prop_pistol_drum_hold"
+scenario = "shoot_prop/pistol_drum_hold"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+[[harness]]
+name = "shoot_prop_shotgun_drum"
+scenario = "shoot_prop/shotgun_drum"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+random = true
+
+[[harness]]
+name = "shoot_prop_crowbar_drum"
+scenario = "shoot_prop/crowbar_drum"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+[[harness]]
+name = "shoot_prop_crowbar_crate"
+scenario = "shoot_prop/crowbar_crate"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+[[harness]]
+name = "shoot_prop_crossbow_drum"
+scenario = "shoot_prop/crossbow_drum"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+[[harness]]
+name = "shoot_prop_rpg_drum"
+scenario = "shoot_prop/rpg_drum"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+force = 4600.0
+vel = 200.0
+
+[[harness]]
+name = "shoot_prop_smg1_grenade_drum"
+scenario = "shoot_prop/smg1_grenade_drum"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+damage = 0.2
+force = 4600.0
+vel = 200.0
+
+[[harness]]
+name = "shoot_prop_ball_drum"
+scenario = "shoot_prop/ball_drum"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+random = true
+
+[[harness]]
+name = "shoot_prop_frozen_357_drum"
+scenario = "shoot_prop/frozen_357_drum"
+compare = "shoot_prop"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]

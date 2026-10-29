@@ -939,6 +939,51 @@ pub const MELEE_RANGE: f32 = 75.0;
 pub const MELEE_DAMAGE: f32 = 10.0;
 pub const MELEE_PUSH_PER_DAMAGE: f32 = 1.74;
 pub const DMG_CLUB: u32 = 128;
+/// Weapons on props (`shoot_prop_*`): bullets deal the single-player `sk_plr_dmg_*` to props
+/// (pistol 5, .357 40, buckshot 8 per pellet) with the damage type without NEVERGIB; the damage
+/// force is a per-ammo constant along the shot (pistol 668, .357 10906, buckshot 1309 per
+/// pellet, crowbar 3000, bolt 21000), applied at the hit point as an impulse (velocity changes
+/// by force / mass). Props with health break at zero (wood crate 30); health 0 is unbreakable.
+pub fn prop_bullet_damage(ammo: &str) -> Option<f32> {
+    match ammo {
+        "Pistol" | "SMG1" => Some(5.0),
+        "357" => Some(40.0),
+        "Buckshot" => Some(8.0),
+        "AR2" => Some(8.0),
+        _ => None,
+    }
+}
+pub fn prop_bullet_force(ammo: &str) -> f32 {
+    match ammo {
+        "Pistol" | "SMG1" => 668.0,
+        "357" => 10906.0,
+        "Buckshot" => 1309.0,
+        _ => 668.0,
+    }
+}
+pub fn prop_bullet_dmg_type(ammo: &str) -> u32 {
+    match ammo {
+        "Buckshot" => DMG_BULLET | DMG_BUCKSHOT,
+        _ => DMG_BULLET,
+    }
+}
+pub const MELEE_PROP_FORCE: f32 = 3000.0;
+/// Blast force on a prop: 300 per point of (fallen-off) damage, capped at 30000, times the
+/// game's random 0.85-1.15 (we use 1), along the blast-to-prop-center direction at the blast.
+pub const BLAST_FORCE_PER_DAMAGE: f32 = 300.0;
+pub const BLAST_FORCE_MAX: f32 = 30000.0;
+/// A combine ball on a prop: 1000 damage every touch; the game's force depends on the ball's
+/// contact (31765-39760 measured), we use the lower.
+pub const BALL_PROP_DAMAGE: f32 = 1000.0;
+pub const BALL_PROP_FORCE: f32 = 31765.0;
+pub const BOLT_PROP_FORCE: f32 = 21000.0;
+/// `prop_data` health by model (`scripts/propdata.txt` of the game, read per model later).
+pub fn prop_health(model: &str) -> i32 {
+    match model {
+        m if m.contains("wood_crate") => 30,
+        _ => 0,
+    }
+}
 /// Timers set by an SMG1 grenade launch.
 pub const SMG1_GRENADE_PRIMARY: f32 = 0.5;
 pub const SMG1_GRENADE_SECONDARY: f32 = 1.0;
