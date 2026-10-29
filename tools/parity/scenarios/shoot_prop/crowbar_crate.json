@@ -8,7 +8,7 @@
  ],
  "yaw": 90,
  "pitch": 48,
- "dist": 40,
+ "dist": 50,
  "model": "models/props_junk/wood_crate001a.mdl",
  "name": "shoot_prop_crowbar_crate",
  "weapon": "weapon_crowbar",
