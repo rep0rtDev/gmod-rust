@@ -13,6 +13,11 @@ Crate (`wood_crate001a`, mass 30) resting at (823.2, -480, -123.6), bot eye at (
 - Swing (aim yaw 90 -> 120 in one tick): the prop is carried around the player on the aim ray (first tick 1038 u/s, same decay), and its yaw turns with the player, 0 -> 17.1 -> 27.8 -> 29.9 -> 30.0 degrees over the same ticks (the prop keeps its orientation relative to the view).
 - Release (`IN_ATTACK` up at tick 260): held is false from tick 262 and the prop falls from rest (velocity -18 u/s at tick 262, -44.8 at 265), i.e. gravity resumes one tick after the release registers; it then lands with the usual contact response.
 
+## Derived from the trace (to confirm with more scenarios)
+
+- The first tick's velocity equals (final held position - start) / `timeToArrive`: (4.8, 54.4) u over 0.05 s gives 1092 u/s against the recorded 1096. So the controller computes the hold target once per tick and asks for `delta / timeToArrive`, and the following ticks shrink the remaining delta geometrically (660, 226, 9.5: about 0.6 per tick, the damping).
+- The held centre does not sit on the view ray: with the aim at -10 degrees the crate centre settles 125.2 u from the eye at only +4.8 degrees, 12 u below the ray point at the grab distance (127.8 u). The grab offset is therefore kept in some frame other than "same distance along the current ray"; the next scenarios (pure pitch changes of 10, 20, 30 degrees, pure yaw, a prop grabbed off centre) isolate it.
+
 ## Target
 
 A shadow controller on the Jolt body: each tick the target is the aim ray point at the grab distance plus the grab offset rotated by the view delta, velocity and angular velocity are set to reach it within `timeToArrive`, clamped to `maxSpeed` / `maxAngular`, damped by `dampingFactor`, gravity off while held. The `physgun_*` harnesses compare the held prop's position and angles per tick; tolerances per harness in `tools/parity/harnesses.toml` once the implementation exists.
