@@ -316,53 +316,58 @@ public:
 		int touching = 0;
 		for (const Pt &pt : pts) if (pt.d <= 0.001f) ++touching;
 		if (touching >= 3) {
+			// resting contact anchors (`phys_push_drum_*`, `shoot_prop_*_drum`): a sliding resting
+			// face is held by its leading bottom edge - the impulse that stops that edge's
+			// tangential and normal velocity, its tangential part Coulomb-capped by
+			// f (N_anchor + m g dt + N_stored), N_stored the normal impulse the floor took when
+			// the body was pushed into it (a shot drum: no anchor in the push step, caught the
+			// step after); the game's drum pushed at 10-320 u/s loses 0.4236 v until the cap
 			const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
 			const JPH::Body &other = b1.IsDynamic() ? b2 : b1;
 			JPH::uint64 key = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
 			RestState &rs = rest[key];
+			JPH::Vec3 nd = b1.IsDynamic() ? n : -n; // away from the surface, whichever body is dynamic
 			JPH::Vec3 v = dyn.GetLinearVelocity();
-			JPH::Vec3 vt_vec = v - n * v.Dot(n);
+			JPH::Vec3 vt_vec = v - nd * v.Dot(nd);
 			float vt = vt_vec.Length();
-			if (rs.phase == 1 && !other.IsDynamic() && vt > 0.05f) {
-				// inelastic catch at the leading edge: the touching vertex furthest along the slide
+			float g_dt = gravity * step_dt;
+			float mass = 1.0f / dyn.GetMotionProperties()->GetInverseMass();
+			JPH::RVec3 c = dyn.GetCenterOfMassPosition();
+			float vn_in = std::max(-(point_velocity(dyn, c) - point_velocity(other, c)).Dot(nd) - g_dt, 0.0f);
+			bool pushed = rs.vt_prev < 0.02f && vt > 0.1f;
+			if (pushed && vn_in > 0.02f) {
+				// pushed into the floor: the floor takes the normal part with friction on the
+				// weight alone (the drum loses 6-9 u/s whether pushed at 20 or 334 u/s)
+				s.mCombinedFriction = friction * g_dt / (vn_in + g_dt);
+				rs.vn_in = vn_in;
+				rs.phase = 1;
+			} else if (other.IsDynamic() || vt < 0.02f) {
+				rs.phase = 0;
+				rs.vn_in = 0.0f;
+			} else {
 				JPH::Vec3 dir = vt_vec / vt;
 				const Pt *lead = nullptr;
 				float best = -1e30f;
 				for (const Pt &pt : pts) {
 					if (pt.d > 0.001f) continue;
-					float a = JPH::Vec3(pt.p - dyn.GetCenterOfMassPosition()).Dot(dir);
+					float a = JPH::Vec3(pt.p - c).Dot(dir);
 					if (a > best) { best = a; lead = &pt; }
 				}
 				if (lead) {
-					JPH::Vec3 r = JPH::Vec3(lead->p - dyn.GetCenterOfMassPosition());
+					JPH::Vec3 r = JPH::Vec3(lead->p - c);
 					JPH::Mat44 rx = JPH::Mat44::sCrossProduct(r);
 					JPH::Mat44 k = JPH::Mat44::sScale(dyn.GetMotionProperties()->GetInverseMass()) - rx * dyn.GetInverseInertia() * rx;
 					JPH::Vec3 j = k.Inversed3x3().Multiply3x3(-point_velocity(dyn, lead->p));
-					// the catch is as strong as the normal part the floor took in the push step: a
-					// pure horizontal push (`phys_push_drum_*`) is not caught at all, the .357's
-					// and the bolt's drums (push 23 deg down) get the full pivot
-					JPH::Vec3 jt = j - n * j.Dot(n);
-					float dvt_full = jt.Length() * dyn.GetMotionProperties()->GetInverseMass();
-					float scale = dvt_full > 1e-6f ? std::min(1.0f, rs.vn_in / dvt_full) : 0.0f;
-					j *= scale;
-					push(dyn, lead->p, j);
-					if (scale <= 0.0f) { rs.phase = 2; rs.vt_prev = vt; return; } // nothing caught: Jolt's friction stays
-					if (debug) fprintf(stderr, "rest catch r=(%.4f %.4f %.4f) j=(%.3f %.3f %.3f) v=(%.3f %.3f %.3f)\n", (double)r.GetX(), (double)r.GetY(), (double)r.GetZ(), (double)j.GetX(), (double)j.GetY(), (double)j.GetZ(), (double)dyn.GetLinearVelocity().GetX(), (double)dyn.GetLinearVelocity().GetY(), (double)dyn.GetLinearVelocity().GetZ());
+					float jn = std::max(j.Dot(nd), 0.0f);
+					JPH::Vec3 jt = j - nd * j.Dot(nd);
+					float cap = friction * (jn + mass * (g_dt + rs.vn_in));
+					float scale = jt.Length() > cap ? cap / jt.Length() : 1.0f;
+					push(dyn, lead->p, j * scale);
+					if (debug) fprintf(stderr, "rest anchor r=(%.4f %.4f %.4f) j=(%.3f %.3f %.3f) scale=%.3f stored=%.3f v=(%.3f %.3f %.3f)\n", (double)r.GetX(), (double)r.GetY(), (double)r.GetZ(), (double)j.GetX(), (double)j.GetY(), (double)j.GetZ(), (double)scale, (double)rs.vn_in, (double)dyn.GetLinearVelocity().GetX(), (double)dyn.GetLinearVelocity().GetY(), (double)dyn.GetLinearVelocity().GetZ());
+					s.mCombinedFriction = 0.0f;
 				}
-				s.mCombinedFriction = 0.0f;
+				rs.vn_in = 0.0f;
 				rs.phase = 2;
-			} else if (rs.phase == 0 && rs.vt_prev < 0.02f && vt > 0.1f) {
-				// the game's friction in the push step is Coulomb on the weight alone (the drum
-				// loses 6-9 u/s whether the push is 20 or 334 u/s), not on the impulsive normal part
-				float g_dt = gravity * step_dt;
-				JPH::RVec3 c = dyn.GetCenterOfMassPosition();
-				// the body's own fall into the 1 cm rest gap (g dt per step) is not part of the push
-				float vn_in = std::max(-(point_velocity(b1, c) - point_velocity(b2, c)).Dot(n) - g_dt, 0.0f);
-				s.mCombinedFriction = friction * g_dt / (vn_in + g_dt);
-				rs.vn_in = vn_in;
-				rs.phase = 1;
-			} else if (vt < 0.02f) {
-				rs.phase = 0;
 			}
 			rs.vt_prev = vt;
 			return;
