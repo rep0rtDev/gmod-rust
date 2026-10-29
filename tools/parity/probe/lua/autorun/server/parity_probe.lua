@@ -885,7 +885,7 @@ SCENARIOS.ragdoll = function(scn, done)
 	bot:SetEyeAngles(ang)
 	bot:SetLocalVelocity(Vector(0, 0, 0))
 	local total = scn.ticks or 300
-	local killAt = scn.kill_at or 20
+	local killAt = type(scn.kill_at) == "table" and scn.kill_at[1] or scn.kill_at or 20
 	local tick = -10
 	local ticks, info = {}, nil
 	hook.Add("StartCommand", "parity_ragdoll", function(ply, cmd)

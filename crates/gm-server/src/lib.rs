@@ -294,13 +294,13 @@ impl<'w> Server<'w> {
             p.alive = false;
             p.deaths += 1;
             p.ragdoll = Some(Ragdoll {
-            class: RAGDOLL_CLASS,
-            model: p.model.clone(),
-            origin: p.state.origin,
-            angles: Vec3::ZERO,
-            velocity: p.state.velocity,
-            tick,
-        });
+                class: RAGDOLL_CLASS,
+                model: p.model.clone(),
+                origin: p.state.origin,
+                angles: Vec3::ZERO,
+                velocity: p.state.velocity,
+                tick,
+            });
             p.active_weapon.clear();
             p.held = None;
             p.state.velocity = Vec3::ZERO;

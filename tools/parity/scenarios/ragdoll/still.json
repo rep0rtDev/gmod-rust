@@ -3,11 +3,13 @@
   "kind": "ragdoll",
   "map": "gm_construct",
   "start": [
-    600.0,
-    -500.0,
+    703.4,
+    -513.0,
     -143.0
   ],
   "yaw": 90,
   "ticks": 300,
-  "kill_at": 20
+  "kill_at": [
+    20
+  ]
 }
