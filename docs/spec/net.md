@@ -106,3 +106,7 @@ above 1 200 bytes, lag
 compensation, encryption and authentication, QUIC transport, voice, a server browser / master server.
 
 Admin commands: `Command::Reload { addon }` (tag 6) hot-reloads an addon on the server for players in `ServerNet::admins`; the answer is an event string on the player's reliable channel.
+
+## Player life in the snapshot
+
+`PlayerSnap` carries `alive`, `health` (i16), `armor` (i16), `weapons` (a bit per entry of `gm_server::LOADOUT`, the weapon registry until scripted weapons bring a string table) and `active` (registry index, 255 none): 7 bytes per player per snapshot. Harness `net_player_lifecycle` runs the `player_lifecycle` recording through the loopback (2 ticks each way, no loss): the client's view of life, health, armour and weapons matches the game's recording within the snapshot lag (max 2 ticks), the four respawns are seen within 0.07 u of a spawn point. The death tick's transient (weapons still listed for one tick, stripped the next) cannot appear in a snapshot two ticks later; the comparison accepts the next tick's list there.

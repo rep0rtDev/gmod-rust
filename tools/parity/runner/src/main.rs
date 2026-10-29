@@ -1781,6 +1781,10 @@ fn run_net(scn: &Scenario) -> Result<Value> {
     }
     let mut server = gm_server::Server::new(&collision, physics, world_body);
     let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
+    if !scn.kill_at.is_empty() {
+        server.set_spawn_points_from_bsp(&bsp);
+        return run_net_lifecycle(scn, server, start);
+    }
     if !scn.segments.is_empty() {
         return run_net_predict(scn, &collision, server, start);
     }
@@ -2070,6 +2074,142 @@ fn run_net_predict(
         "loss": loss,
         "dropped": net.dropped(),
     }))
+}
+
+/// The player life cycle through the network: the server kills the player at the scenario's
+/// ticks, the client reads life, health, armour and weapons from the snapshots.
+fn run_net_lifecycle(
+    scn: &Scenario,
+    mut server: gm_server::Server<'_>,
+    start: glam::Vec3,
+) -> Result<Value> {
+    use gm_net::{ClientNet, Loopback, NetCmd, ServerNet};
+    let net = Loopback::new(2, 0.0, 0x5eed);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut sn = ServerNet::new(scn.map.as_deref().unwrap_or("gm_construct"), start);
+    let mut client = ClientNet::new(1, "bot");
+    let idle = NetCmd::default();
+    let mut step = |server: &mut gm_server::Server<'_>, client: &mut ClientNet| {
+        client.tick(idle.clone(), &mut c_ep);
+        net.tick();
+        sn.receive(server, &mut s_ep);
+        sn.tick(server);
+        sn.send(server, &mut s_ep);
+        client.receive(&mut c_ep);
+    };
+    for _ in 0..20 {
+        step(&mut server, &mut client);
+    }
+    server.spawn_player(1);
+    let total = scn.ticks.unwrap_or(600);
+    let mut ticks = Vec::with_capacity(total as usize);
+    for t in 0..total {
+        if scn.kill_at.contains(&t) {
+            server.kill_player(1);
+        }
+        step(&mut server, &mut client);
+        let seen = client.world.players.iter().find(|p| p.id == 1);
+        let sp = &server.players[&1];
+        ticks.push(json!({
+            "t": t,
+            "pos": seen.map(|p| [p.origin.x, p.origin.y, p.origin.z]),
+            "alive": seen.map(|p| p.alive),
+            "health": seen.map(|p| p.health),
+            "armor": seen.map(|p| p.armor),
+            "weapons": seen.map(|p| gm_net::msg::weapon_names(p.weapons).join(",")),
+            "active": seen.map(|p| gm_net::msg::weapon_names(1u16.checked_shl(p.active as u32).unwrap_or(0)).join("")),
+            "server": { "alive": sp.alive, "health": sp.health, "armor": sp.armor },
+        }));
+    }
+    Ok(
+        json!({ "ticks": ticks, "spawns": server.spawn_points.iter().map(|s| json!({ "pos": [s.pos.x, s.pos.y, s.pos.z] })).collect::<Vec<_>>() }),
+    )
+}
+
+/// The client's view of the life cycle against the game's recording: life, health, armour and
+/// the weapon list must appear within `contact` ticks (snapshot latency), each respawn position
+/// within `pos` of a spawn point.
+fn compare_net_player(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let slack = tol.get("contact").and_then(|v| v.as_integer()).unwrap_or(3) as usize;
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(2.0) as f32;
+    let empty = Vec::new();
+    let tr = theirs["ticks"].as_array().unwrap_or(&empty);
+    let or = ours["ticks"].as_array().unwrap_or(&empty);
+    let v3 = |v: &Value| -> glam::Vec3 {
+        let a = v.as_array().cloned().unwrap_or_default();
+        glam::Vec3::new(
+            a.first().and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(1).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+            a.get(2).and_then(Value::as_f64).unwrap_or(0.0) as f32,
+        )
+    };
+    let spawns: Vec<glam::Vec3> = theirs["spawns"]
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .map(|s| v3(&s["pos"]))
+        .collect();
+    let mut ok = tr.len() == or.len();
+    // the game's weapon list per tick (only sent when it changes)
+    let mut weapons = Vec::with_capacity(tr.len());
+    let mut tw = String::new();
+    for a in tr {
+        if let Some(w) = a["weapons"].as_str() {
+            tw = w.to_string();
+        }
+        weapons.push(tw.clone());
+    }
+    let mut mismatches = 0;
+    let mut was_alive = true;
+    let mut worst_spawn = 0.0f32;
+    let mut max_lag = 0usize;
+    for (i, a) in tr.iter().enumerate() {
+        let tw = &weapons[i];
+        // the death tick still lists the weapons for one tick; a snapshot two ticks later
+        // cannot show that transient, so the next tick's list is accepted too
+        let tw_next = weapons.get(i + 1).unwrap_or(tw);
+        let same = |b: &Value| {
+            let w = b["weapons"].as_str().unwrap_or("");
+            a["alive"] == b["alive"]
+                && a["health"] == b["health"]
+                && a["armor"] == b["armor"]
+                && (w == tw || w == tw_next)
+        };
+        let found = (i..=(i + slack).min(or.len().saturating_sub(1)))
+            .find(|j| or.get(*j).is_some_and(same));
+        match found {
+            Some(j) => max_lag = max_lag.max(j - i),
+            None => {
+                mismatches += 1;
+                if mismatches <= 5 {
+                    let b = or.get(i).cloned().unwrap_or(Value::Null);
+                    println!("  tick {i}: game alive {} hp {} ar {} [{tw}] | client alive {} hp {} ar {} [{}]", a["alive"], a["health"], a["armor"], b["alive"], b["health"], b["armor"], b["weapons"]);
+                }
+                ok = false;
+            }
+        }
+        let alive = a["alive"].as_bool().unwrap_or(false);
+        if alive && !was_alive {
+            if let Some(b) = or.get((i + slack).min(or.len().saturating_sub(1))) {
+                let p = v3(&b["pos"]);
+                let d = spawns
+                    .iter()
+                    .map(|s| (p - (*s + glam::Vec3::new(0.0, 0.0, 1.0))).length())
+                    .fold(f32::INFINITY, f32::min);
+                worst_spawn = worst_spawn.max(d);
+                if d > pos_tol {
+                    println!("  tick {i}: respawn seen {d:.2} u from a spawn point");
+                    ok = false;
+                }
+            }
+        }
+        was_alive = alive;
+    }
+    println!(
+        "  {} ticks, {} differing, max snapshot lag {max_lag} ticks (slack {slack}), respawns within {worst_spawn:.2} u (tol {pos_tol}): {}",
+        tr.len(), mismatches, if ok { "equal" } else { "DIFF" }
+    );
+    ok
 }
 
 /// A rigid body recording through the network: the prop falls on the server, the client gets
@@ -3063,6 +3203,7 @@ fn main() -> Result<()> {
                     "player" => compare_player(&t.result, &o.result, &h.tolerance),
                     "damage" => compare_damage(&t.result, &o.result, &h.tolerance),
                     "ragdoll" => compare_ragdoll(&t.result, &o.result, &h.tolerance),
+                    "net_player" => compare_net_player(&t.result, &o.result, &h.tolerance),
                     "server" => compare_server(&t.result, &o.result, &h.tolerance),
                     "toolgun" => compare_toolgun(&t.result, &o.result, &h.tolerance),
                     other => {

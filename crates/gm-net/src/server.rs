@@ -267,6 +267,11 @@ impl ServerNet {
                 view_angles: p.view_angles,
                 ducked: p.state.ducked,
                 held: p.held.map(|h| h.0),
+                alive: p.alive,
+                health: p.health.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                armor: p.armor.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                weapons: crate::msg::weapon_mask(&p.weapons),
+                active: crate::msg::weapon_index(&p.active_weapon),
             })
             .collect();
         for (&endpoint, slot) in self.clients.iter_mut() {

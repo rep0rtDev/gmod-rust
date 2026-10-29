@@ -15,6 +15,9 @@ impl Writer {
     pub fn u16(&mut self, v: u16) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
+    pub fn i16(&mut self, v: i16) {
+        self.u16(v as u16);
+    }
     pub fn u32(&mut self, v: u32) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
@@ -75,6 +78,9 @@ impl<'a> Reader<'a> {
     }
     pub fn u16(&mut self) -> Result<u16, Truncated> {
         Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
+    }
+    pub fn i16(&mut self) -> Result<i16, Truncated> {
+        Ok(self.u16()? as i16)
     }
     pub fn u32(&mut self) -> Result<u32, Truncated> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))

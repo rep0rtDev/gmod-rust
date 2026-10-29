@@ -69,6 +69,11 @@ mod tests {
                 view_angles: Vec3::Y,
                 ducked: true,
                 held: Some(2),
+                alive: true,
+                health: 100,
+                armor: 0,
+                weapons: 0x1fff,
+                active: 5,
             }],
             entities: vec![EntityState {
                 id: 2,

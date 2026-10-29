@@ -82,6 +82,42 @@ pub struct PlayerSnap {
     pub view_angles: Vec3,
     pub ducked: bool,
     pub held: Option<u32>,
+    pub alive: bool,
+    pub health: i16,
+    pub armor: i16,
+    /// Weapons carried as a bit per entry of `gm_server::LOADOUT` (the weapon registry for
+    /// now; a string table comes with scripted weapons).
+    pub weapons: u16,
+    /// Index into `gm_server::LOADOUT` of the weapon out, 255 for none.
+    pub active: u8,
+}
+
+/// Weapon class names to the registry bitmask and back.
+pub fn weapon_mask(names: &[String]) -> u16 {
+    let mut m = 0u16;
+    for (i, w) in gm_server::LOADOUT.iter().enumerate() {
+        if names.iter().any(|n| n == w) {
+            m |= 1 << i;
+        }
+    }
+    m
+}
+
+pub fn weapon_names(mask: u16) -> Vec<String> {
+    gm_server::LOADOUT
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| mask & (1 << i) != 0)
+        .map(|(_, w)| w.to_string())
+        .collect()
+}
+
+pub fn weapon_index(name: &str) -> u8 {
+    gm_server::LOADOUT
+        .iter()
+        .position(|w| *w == name)
+        .map(|i| i as u8)
+        .unwrap_or(255)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -418,6 +454,11 @@ impl ServerMsg {
                     w.vec3(p.view_angles);
                     w.bool(p.ducked);
                     w.u32(p.held.unwrap_or(0));
+                    w.bool(p.alive);
+                    w.i16(p.health);
+                    w.i16(p.armor);
+                    w.u16(p.weapons);
+                    w.u8(p.active);
                 }
                 w.varint(entities.len() as u64);
                 for e in entities {
@@ -487,6 +528,11 @@ impl ServerMsg {
                             0 => None,
                             h => Some(h),
                         },
+                        alive: r.bool()?,
+                        health: r.i16()?,
+                        armor: r.i16()?,
+                        weapons: r.u16()?,
+                        active: r.u8()?,
                     });
                 }
                 let n = r.varint()? as usize;
