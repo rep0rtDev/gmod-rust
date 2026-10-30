@@ -405,6 +405,13 @@ pub struct Player {
     pub model: String,
     /// The player's model choice (`cl_playermodel`), applied on the next spawn.
     pub wanted_model: String,
+    /// `Entity:GetSkin` / `GetBodyGroups` of the worn model: set on the spawn from the wanted
+    /// values, stored as given (measured: the game keeps `SetSkin(7)` on a one-skin model).
+    pub skin: u8,
+    pub body: String,
+    /// `cl_playerskin` / `cl_playerbodygroups`, applied on the next spawn.
+    pub wanted_skin: u8,
+    pub wanted_body: String,
     /// Weapon classes carried, sorted (`Player:GetWeapons`).
     pub weapons: Vec<String>,
     pub active_weapon: String,
@@ -472,6 +479,10 @@ impl Player {
             max_health: PLAYER_HEALTH,
             model: PLAYER_MODEL.to_string(),
             wanted_model: String::new(),
+            skin: 0,
+            body: String::new(),
+            wanted_skin: 0,
+            wanted_body: String::new(),
             weapons: LOADOUT.iter().map(|w| w.to_string()).collect(),
             active_weapon: SPAWN_WEAPON.to_string(),
             inventory: {
@@ -1014,6 +1025,8 @@ impl<'w> Server<'w> {
         };
         if let Some(p) = self.players.get_mut(&id) {
             p.model = model;
+            p.skin = p.wanted_skin;
+            p.body = p.wanted_body.clone();
         }
         self.give_loadout(id);
     }
@@ -1127,6 +1140,15 @@ impl<'w> Server<'w> {
     }
 
     /// `cl_playermodel`: remembered now, worn from the next spawn on (as in the game).
+    /// `cl_playerskin` / `cl_playerbodygroups`: worn from the next spawn, the body string cut
+    /// to its digits (one per body part, at most 32).
+    pub fn set_wanted_skin_body(&mut self, id: u32, skin: u8, body: &str) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.wanted_skin = skin;
+            p.wanted_body = body.chars().filter(char::is_ascii_digit).take(32).collect();
+        }
+    }
+
     pub fn set_wanted_model(&mut self, id: u32, name: &str) {
         if let Some(p) = self.players.get_mut(&id) {
             p.wanted_model = name.chars().take(64).collect();

@@ -87,6 +87,8 @@ mod tests {
                 alt: -1,
                 vm_act: 0,
                 vm_serial: 0,
+                skin: 0,
+                body: String::new(),
             }],
             entities: vec![EntityState {
                 id: 2,

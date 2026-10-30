@@ -74,6 +74,13 @@ pub enum Command {
         name: String,
     },
     /// `cl_playermodel`: the model name (the game's table) to wear from the next spawn.
+    /// `cl_playerskin` / `cl_playerbodygroups`: worn from the next spawn.
+    PlayerSkin {
+        skin: u8,
+        body: String,
+    },
+    /// The `kill` console command: the player dies and respawns.
+    Kill,
     PlayerModel {
         name: String,
     },
@@ -147,6 +154,9 @@ pub struct PlayerSnap {
     pub on_ground: bool,
     /// `gm_server::player_models` index of the player model (255: not in the table).
     pub model: u8,
+    /// Skin family and `SetBodyGroups` digits of the player model, as set (unclamped).
+    pub skin: u8,
+    pub body: String,
     pub held: Option<u32>,
     pub alive: bool,
     pub health: i16,
@@ -585,6 +595,12 @@ impl ClientMsg {
                         w.u8(13);
                         w.str(name);
                     }
+                    Command::PlayerSkin { skin, body } => {
+                        w.u8(14);
+                        w.u8(*skin);
+                        w.str(body);
+                    }
+                    Command::Kill => w.u8(15),
                 }
             }
             ClientMsg::AckSnapshot { tick } => {
@@ -663,6 +679,11 @@ impl ClientMsg {
                     11 => Command::Noclip { on: r.bool()? },
                     12 => Command::Property { name: r.str()? },
                     13 => Command::PlayerModel { name: r.str()? },
+                    14 => Command::PlayerSkin {
+                        skin: r.u8()?,
+                        body: r.str()?,
+                    },
+                    15 => Command::Kill,
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }
@@ -736,6 +757,8 @@ impl ServerMsg {
                     w.bool(p.ducked);
                     w.bool(p.on_ground);
                     w.u8(p.model);
+                    w.u8(p.skin);
+                    w.str(&p.body);
                     w.u32(p.held.unwrap_or(0));
                     w.bool(p.alive);
                     w.i16(p.health);
@@ -919,6 +942,8 @@ impl ServerMsg {
                         ducked: r.bool()?,
                         on_ground: r.bool()?,
                         model: r.u8()?,
+                        skin: r.u8()?,
+                        body: r.str()?,
                         held: match r.u32()? {
                             0 => None,
                             h => Some(h),

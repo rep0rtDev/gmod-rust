@@ -3845,6 +3845,36 @@ fn player_model_choice_is_worn_from_the_next_spawn_and_player_set_model_may_repl
         "models/player/combine_soldier.mdl"
     );
     assert_eq!(snap_model(&client), "models/player/combine_soldier.mdl");
+    // `cl_playerskin` / `cl_playerbodygroups` ride along from the next spawn, unclamped as the
+    // game keeps them (measured `lua_skin_body`: SetSkin(7) on a one-skin model stays 7), the
+    // body string cut to its digits; the `kill` console command is the respawn here
+    client.command(gm_net::Command::PlayerSkin {
+        skin: 7,
+        body: "x1y".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 5);
+    assert_eq!(
+        (server.players[&1].skin, server.players[&1].body.as_str()),
+        (0, "")
+    );
+    client.command(gm_net::Command::Kill);
+    step(&mut sn, &mut client, &mut server, &mut crt, 5);
+    assert!(!server.players[&1].alive, "kill command");
+    step(&mut sn, &mut client, &mut server, &mut crt, 160);
+    assert!(server.players[&1].alive, "respawned after kill");
+    assert_eq!(
+        (server.players[&1].skin, server.players[&1].body.as_str()),
+        (7, "1")
+    );
+    let snap_skin = |client: &gm_net::ClientNet| {
+        let p = client.world.players.iter().find(|p| p.id == 1).unwrap();
+        (p.skin, p.body.clone())
+    };
+    assert_eq!(snap_skin(&client), (7, "1".to_string()));
+    client.command(gm_net::Command::PlayerSkin {
+        skin: 0,
+        body: String::new(),
+    });
     // an unknown name falls back to kleiner
     client.command(gm_net::Command::PlayerModel {
         name: "nonsense".into(),

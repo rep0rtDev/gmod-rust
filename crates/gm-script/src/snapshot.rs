@@ -28,6 +28,8 @@ pub struct PlayerSnap {
     /// Authenticated identity (ed25519 public key, hex) or `None`.
     pub identity: Option<String>,
     pub model: String,
+    pub skin: u8,
+    pub body: String,
     pub weapons: Vec<String>,
     pub active_weapon: String,
     pub frags: u32,
@@ -188,6 +190,8 @@ impl Snapshot {
                                 .identity
                                 .map(|k| k.iter().map(|x| format!("{x:02x}")).collect()),
                             model: p.model.clone(),
+                            skin: p.skin,
+                            body: p.body.clone(),
                             weapons: p.weapons.clone(),
                             active_weapon: p.active_weapon.clone(),
                             frags: p.frags,

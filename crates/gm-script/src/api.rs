@@ -272,6 +272,8 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("max_health", p.max_health)?;
     t.set("identity", p.identity.as_deref())?;
     t.set("model", p.model.as_str())?;
+    t.set("skin", p.skin)?;
+    t.set("body", p.body.as_str())?;
     t.set("weapons", p.weapons.clone())?;
     t.set("active_weapon", p.active_weapon.as_str())?;
     t.set("frags", p.frags)?;

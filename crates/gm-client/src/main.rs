@@ -236,6 +236,16 @@ fn slider_value(s: &gm_server::ToolSetting, t: f32) -> String {
     v.to_string()
 }
 
+/// The `Gfx::models` key of a player's model with its skin and body groups.
+fn player_model_key(p: &PlayerSnap) -> String {
+    format!(
+        "{}#{}#{}",
+        gm_server::player_models::path_of_index(p.model),
+        p.skin,
+        p.body
+    )
+}
+
 fn panel_layout(w: f32, h: f32, lh: f32) -> (f32, f32, f32, f32, f32) {
     let (px, py, pw, _, rows_y) = menu_layout(w, h, lh);
     let tw = (pw * 0.34).round();
@@ -622,6 +632,9 @@ struct App {
     spawn_models: Vec<String>,
     spawn_lists_seen: usize,
     cursor: (f32, f32),
+    /// `cl_playerskin` / `cl_playerbodygroups` as typed, sent together.
+    player_skin: u8,
+    player_body: String,
     /// A slider row being dragged (left button held since a press on it).
     panel_drag: Option<usize>,
     /// A text row with the keyboard focus and the text typed so far.
@@ -848,6 +861,13 @@ impl App {
         };
         self.set_tool_setting(&s.name, value);
         true
+    }
+
+    fn send_player_skin(&mut self) {
+        self.sim.client.command(Command::PlayerSkin {
+            skin: self.player_skin,
+            body: self.player_body.clone(),
+        });
     }
 
     fn set_tool_setting(&mut self, key: &str, value: String) {
@@ -1155,20 +1175,27 @@ impl App {
         for model in ents
             .values()
             .map(|e| e.model.as_str())
-            .chain(
-                self.sim
-                    .client
-                    .world
-                    .players
-                    .iter()
-                    .map(|p| gm_server::player_models::path_of_index(p.model)),
-            )
             .chain(held_models)
             .chain(ghost_models)
         {
             if !g.models.contains_key(model) {
                 let m = g.world.load_model(&g.gpu, &self.mount, model);
                 g.models.insert(model.to_string(), m);
+            }
+        }
+        // player models by model, skin and body groups (`cl_playerskin` / `cl_playerbodygroups`
+        // of each player, worn from their spawn)
+        for p in &self.sim.client.world.players {
+            let key = player_model_key(p);
+            if !g.models.contains_key(&key) {
+                let m = g.world.load_model_variant(
+                    &g.gpu,
+                    &self.mount,
+                    gm_server::player_models::path_of_index(p.model),
+                    p.skin,
+                    &p.body,
+                );
+                g.models.insert(key, m);
             }
         }
         let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
@@ -1205,10 +1232,7 @@ impl App {
             if Some(p.id) == me || !p.alive {
                 continue;
             }
-            let player_model = g
-                .models
-                .get(gm_server::player_models::path_of_index(p.model))
-                .and_then(|m| m.as_ref());
+            let player_model = g.models.get(&player_model_key(p)).and_then(|m| m.as_ref());
             // the player model animated from the snapshot, the hull box when it is missing
             match player_model {
                 Some(m) => {
@@ -2082,6 +2106,17 @@ impl App {
                     name: rest.join(" "),
                 });
             }
+            // `cl_playerskin` / `cl_playerbodygroups`: both ride in one command, so each keeps
+            // the other's current value
+            "playerskin" if !rest.is_empty() => {
+                self.player_skin = rest[0].parse().unwrap_or(0);
+                self.send_player_skin();
+            }
+            "playerbodygroups" => {
+                self.player_body = rest.join("");
+                self.send_player_skin();
+            }
+            "kill" => self.sim.client.command(Command::Kill),
             "say" => self.sim.client.command(Command::Chat {
                 text: rest.join(" "),
             }),
@@ -2091,7 +2126,7 @@ impl App {
             }
             "help" => {
                 self.console
-                    .log("client: spawn [model] | tool [name] | bot | say <text> | noclip | undo | cleanup | clear | quit; server:");
+                    .log("client: spawn [model] | tool [name] | bot | say <text> | noclip | kill | playermodel <name> | playerskin <n> | playerbodygroups <digits> | undo | cleanup | clear | quit; server:");
                 self.sim.client.command(Command::Console {
                     line: line.to_string(),
                 });
@@ -2454,6 +2489,8 @@ fn main() -> Result<()> {
         spawn_lists_seen: usize::MAX,
         cursor: (0.0, 0.0),
         panel_drag: None,
+        player_skin: 0,
+        player_body: String::new(),
         panel_text: None,
         grabbed: false,
         last: Instant::now(),

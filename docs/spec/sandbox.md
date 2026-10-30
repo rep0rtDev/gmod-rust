@@ -136,7 +136,20 @@ model from the same table (`gm_server::player_models::hands`: model path, skin f
 `SetBodyGroups` digit string, loaded with `WorldRenderer::load_model_variant`; one digit per
 body part, a missing or out-of-range digit means model 0, a skin past the table means 0), e.g.
 `c_arms_refugee` skin 1 body `0100000` for the refugee set, citizen hands until the first
-snapshot names a model. Not yet: skins and bodygroups of the player model itself.
+snapshot names a model.
+
+Skins and body groups of the player model: `Command::PlayerSkin { skin, body }` (console
+`playerskin <n>`, `playerbodygroups <digits>`) is `cl_playerskin` / `cl_playerbodygroups`:
+remembered at once, worn from the next spawn together with the model, the body string cut to
+its digits (32 at most). Measured on srcds (`lua_skin_body`): the game stores the skin as set,
+unclamped (`SetSkin(7)` and `SetSkin(-1)` on the one-skin kleiner read back 7 and -1, and the
+value survives `SetModel`), a respawn goes back to the player's cvars (a bot: skin 0, no body
+groups), and `cl_playerskin` / `cl_playerbodygroups` are client userinfo cvars (`GetInfo`), not
+server ones; the player models tried (kleiner, group03/male_01, combine_soldier) have a single
+body group with one option, so body-group parsing was not observable there. The snapshot carries
+skin and body with the model index; the native client draws other players with
+`load_model_variant` (an out-of-range skin or digit shows family/model 0, ours). `Command::Kill`
+(console `kill`) is the game's `kill`: the player dies and respawns.
 
 ## Not yet measured
 

@@ -723,6 +723,14 @@ impl ServerNet {
                         server.apply_property(slot.player, &name);
                     }
                     Command::PlayerModel { name } => server.set_wanted_model(slot.player, &name),
+                    Command::PlayerSkin { skin, body } => {
+                        server.set_wanted_skin_body(slot.player, skin, &body)
+                    }
+                    Command::Kill => {
+                        if server.players.get(&slot.player).is_some_and(|p| p.alive) {
+                            server.kill_player(slot.player);
+                        }
+                    }
                     Command::SelectWeapon { class } => {
                         server.select_weapon(slot.player, &class);
                     }
@@ -912,6 +920,8 @@ impl ServerNet {
                 ducked: p.state.ducked,
                 on_ground: p.state.on_ground,
                 model: gm_server::player_models::index_of(&p.model),
+                skin: p.skin,
+                body: p.body.clone(),
                 held: p.held.map(|h| h.0),
                 alive: p.alive,
                 health: p.health.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
