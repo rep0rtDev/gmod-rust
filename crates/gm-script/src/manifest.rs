@@ -36,6 +36,13 @@ pub struct ActorEntry {
     /// CPU budget per tick in milliseconds (server clamps to 10).
     #[serde(default)]
     pub cpu_ms: Option<f32>,
+    /// `luau` (default) or `wasm`: a `.wasm` component under `wasm/` as `source`.
+    #[serde(default = "default_kind")]
+    pub kind: String,
+}
+
+fn default_kind() -> String {
+    "luau".into()
 }
 
 fn default_realm() -> String {
@@ -97,8 +104,13 @@ impl Manifest {
                     a.source.clone(),
                 ));
             }
-            let source = std::fs::read_to_string(dir.join(&a.source))?;
+            let (source, wasm) = if a.kind == "wasm" {
+                (String::new(), Some(std::fs::read(dir.join(&a.source))?))
+            } else {
+                (std::fs::read_to_string(dir.join(&a.source))?, None)
+            };
             let mut spec = m.actor_spec(a, source);
+            spec.config.wasm = wasm;
             // the client never writes the world
             spec.config.can_write &= realm == "server";
             specs.push(spec);

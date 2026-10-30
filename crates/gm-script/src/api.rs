@@ -1308,6 +1308,47 @@ fn table_arg(v: &Value) -> Result<Table> {
 }
 
 /// Lua table for an event payload.
+/// The payload as a JSON object (WASM guests): numbers, vectors as `{x, y, z}`, `hit` as
+/// `{ent, pos, normal}`, `settings` as an object, `net` as `{name}` (the data stays binary).
+pub fn payload_json(p: &Payload) -> String {
+    use serde_json::{json, Map, Value as J};
+    let v3 = |v: Vec3| json!({ "x": v.x, "y": v.y, "z": v.z });
+    let mut m = Map::new();
+    for (k, v) in &p.ints {
+        m.insert(k.to_string(), json!(v));
+    }
+    for (k, v) in &p.floats {
+        m.insert(k.to_string(), json!(v));
+    }
+    for (k, v) in &p.vecs {
+        m.insert(k.to_string(), v3(*v));
+    }
+    for (k, v) in &p.bools {
+        m.insert(k.to_string(), json!(v));
+    }
+    for (k, v) in &p.strs {
+        m.insert(k.to_string(), json!(v));
+    }
+    if !p.settings.is_empty() {
+        let s: Map<String, J> = p
+            .settings
+            .iter()
+            .map(|(k, v)| (k.clone(), json!(v)))
+            .collect();
+        m.insert("settings".into(), J::Object(s));
+    }
+    if let Some((ent, pos, normal)) = p.hit {
+        m.insert(
+            "hit".into(),
+            json!({ "ent": ent, "pos": v3(pos), "normal": v3(normal) }),
+        );
+    }
+    if let Some((name, _)) = &p.net {
+        m.insert("name".into(), json!(name));
+    }
+    J::Object(m).to_string()
+}
+
 pub fn payload_table(lua: &Lua, p: &Payload) -> Result<Table> {
     let t = lua.create_table()?;
     if let Some((name, data)) = &p.net {

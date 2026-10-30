@@ -21,6 +21,9 @@ pub struct ActorConfig {
     pub can_write: bool,
     /// `storage` capability: the addon's persistent key/value store.
     pub can_storage: bool,
+    /// A WASM component (`kind = "wasm"` in the manifest): the events go to its `gm_event`
+    /// instead of Lua handlers; the Lua VM stays for `state`, `eval` and the write parser.
+    pub wasm: Option<Vec<u8>>,
 }
 
 impl Default for ActorConfig {
@@ -31,6 +34,7 @@ impl Default for ActorConfig {
             memory_limit: 256 << 20,
             can_write: true,
             can_storage: true,
+            wasm: None,
         }
     }
 }
@@ -66,6 +70,7 @@ pub struct Actor {
     pub overruns_total: u64,
     cpu_total: Arc<AtomicU64>,
     saved_state: Option<String>,
+    wasm: Option<crate::wasm::WasmGuest>,
 }
 
 impl Actor {
@@ -97,6 +102,7 @@ impl Actor {
             overruns_total: 0,
             cpu_total: Arc::new(AtomicU64::new(0)),
             saved_state: None,
+            wasm: None,
         };
         a.boot()?;
         Ok(a)
@@ -126,7 +132,45 @@ impl Actor {
             .set_name(format!("{}/{}", self.spec.addon, self.spec.name))
             .exec()?;
         self.lua = lua;
+        if let Some(bytes) = &self.spec.config.wasm {
+            let cpu_ms = self.spec.config.cpu_budget.as_secs_f32() * 1000.0;
+            self.wasm = Some(
+                crate::wasm::WasmGuest::new(bytes, self.spec.config.memory_limit, cpu_ms)
+                    .map_err(|e| mlua::Error::runtime(format!("wasm: {e}")))?,
+            );
+        }
         Ok(())
+    }
+
+    /// A WASM actor's dispatch: the payload as JSON to `gm_event`, then the writes the guest
+    /// queued go through the Lua `world.queue` (same parsing and capability checks).
+    fn dispatch_wasm(&mut self, event: &str, payload: &Payload) -> mlua::Result<Value> {
+        let json = api::payload_json(payload);
+        let guest = self.wasm.as_mut().expect("wasm actor");
+        let cancel = guest
+            .event(event, &json)
+            .map_err(|e| mlua::Error::runtime(format!("wasm: {e}")))?;
+        let over = guest.over_budget;
+        let queued = guest.take_queue();
+        for line in guest.take_log() {
+            self.shared.prints.lock().unwrap().push(line);
+        }
+        if over {
+            self.over_budget.store(true, Ordering::Relaxed);
+        }
+        let world: mlua::Table = self.lua.globals().get("world")?;
+        let queue: mlua::Function = world.get("queue")?;
+        for (op, ent, arg) in queued {
+            let v: serde_json::Value = serde_json::from_str(&arg)
+                .map_err(|e| mlua::Error::runtime(format!("wasm queue {op}: {e}")))?;
+            let arg = mlua::LuaSerdeExt::to_value(&self.lua, &v)?;
+            queue.call::<()>((op, ent, arg))?;
+        }
+        Ok(if cancel {
+            Value::Boolean(false)
+        } else {
+            Value::Nil
+        })
     }
 
     pub fn id(&self) -> u32 {
@@ -178,11 +222,15 @@ impl Actor {
         let start = Instant::now();
         *self.deadline.lock().unwrap() = Some(start + self.spec.config.cpu_budget);
         self.over_budget.store(false, Ordering::Relaxed);
-        let result: mlua::Result<Value> = (|| {
-            let dispatch: mlua::Function = self.lua.globals().get("__dispatch")?;
-            let p = api::payload_table(&self.lua, payload)?;
-            dispatch.call((event, p))
-        })();
+        let result: mlua::Result<Value> = if self.wasm.is_some() {
+            self.dispatch_wasm(event, payload)
+        } else {
+            (|| {
+                let dispatch: mlua::Function = self.lua.globals().get("__dispatch")?;
+                let p = api::payload_table(&self.lua, payload)?;
+                dispatch.call((event, p))
+            })()
+        };
         *self.deadline.lock().unwrap() = None;
         self.cpu_total
             .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);

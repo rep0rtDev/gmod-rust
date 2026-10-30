@@ -27,7 +27,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 walkdir = "2"
 memmap2 = "0.9"
 clap = { version = "4", features = ["derive"] }
-mlua = { version = "0.12", features = ["luau", "send", "vendored"] }
+mlua = { version = "0.12", features = ["luau", "send", "vendored", "serialize"] }
 
 [profile.release]
 debug = 1

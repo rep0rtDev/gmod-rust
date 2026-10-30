@@ -556,6 +556,32 @@ button script against a semi and an automatic weapon gives the recorded call seq
 three primaries at 80/100/120; one secondary; a reload; holster + deploy on the switch; five
 automatic primaries 14 ticks apart; a reload on the empty press) with the recorded clips.
 
+## WASM components
+
+An actor can be a WASM module instead of Luau handlers: `kind = "wasm"` in its manifest entry,
+`source` a `.wasm` (or `.wat`) under the addon's `wasm/` (packed by `gmr pack`). The guest runs
+on wasmtime with a flat ABI, no component model: it exports `memory`, `gm_alloc(len) -> ptr` and
+`gm_event(name_ptr, name_len, json_ptr, json_len) -> i32` (0 pass, 1 cancel, the same answer a
+Luau handler gives with `return false`), and imports `gm.queue(op_ptr, op_len, ent, json_ptr,
+json_len)` and `gm.log(ptr, len)`. Every event the Luau actors get (`tick.pre`, requests, game
+events, net messages) reaches `gm_event` with the payload as a JSON object (numbers, booleans,
+strings, vectors as `{x, y, z}`, `hit` as `{ent, pos, normal}`, `settings` as an object, a net
+message's `name`; its binary data is not passed yet). `gm.queue` is `world.queue(op, ent, arg)`
+with `arg` as JSON: the writes go through the actor's own Lua `world.queue`, so the parsing, the
+`world-write` capability and the per-run cap are the same, and they land in the serial phase
+with everyone else's. `gm.log` is `print`.
+
+Limits like a Luau actor's: the store's memory limit is the actor's (256 MiB default), the CPU
+budget becomes wasmtime fuel per dispatch (`cpu_ms * 2,000,000`); running out traps, counts an
+overrun and throttles the same way; any trap restarts the actor (a fresh instance; there is no
+`state` carried over for a guest). The Lua VM of a WASM actor still exists (`state`, `eval` in
+tests, the write parser) but gets no events.
+
+Measured (`cargo test -p gm-script --test actors a_wasm_component`): a hand-written `.wat`
+guest counts three `tick.pre`, queues `freeze` of entity 7 with `true` on the third, logs a
+line and cancels `prop.spawn_request`; the queue holds exactly `Freeze { ent: 7, frozen: true }`
+and the request dispatch answers `Some(false)`.
+
 ## Sandbox gamemode package
 
 `addons/gamemodes/sandbox` is the sandbox gamemode's Luau side as one package (`gm-dedicated

@@ -16,6 +16,7 @@ pub mod pool;
 pub mod registry;
 pub mod snapshot;
 pub mod storage;
+pub mod wasm;
 
 pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite, Reply};
 pub use api::{set_font_metrics, text_size, DrawCmd, TextMetrics};

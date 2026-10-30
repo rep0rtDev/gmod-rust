@@ -252,6 +252,90 @@ fn client_actors_hear_the_clients_key_edges() {
     assert_eq!(seen, ["KeyE+", "MouseLeft+", "KeyE-"].map(String::from));
 }
 
+/// A WASM guest on the flat ABI: counts `tick.pre` in a global, queues `freeze` of entity 7
+/// on the third one, logs once, and cancels `prop.spawn_request`.
+const WAT_GUEST: &str = r#"(module
+  (import "gm" "queue" (func $queue (param i32 i32 i32 i32 i32)))
+  (import "gm" "log" (func $log (param i32 i32)))
+  (memory (export "memory") 1)
+  (global $ticks (mut i32) (i32.const 0))
+  (global $heap (mut i32) (i32.const 1024))
+  (data (i32.const 0) "freeze")
+  (data (i32.const 16) "true")
+  (data (i32.const 32) "hello from wasm")
+  (data (i32.const 64) "tick.pre")
+  (data (i32.const 80) "prop.spawn_request")
+  (func (export "gm_alloc") (param $len i32) (result i32)
+    (local $p i32)
+    (local.set $p (global.get $heap))
+    (global.set $heap (i32.add (global.get $heap) (local.get $len)))
+    (local.get $p))
+  (func $streq (param $a i32) (param $alen i32) (param $b i32) (param $blen i32) (result i32)
+    (local $i i32)
+    (if (i32.ne (local.get $alen) (local.get $blen)) (then (return (i32.const 0))))
+    (block $done (loop $l
+      (br_if $done (i32.ge_u (local.get $i) (local.get $alen)))
+      (if (i32.ne (i32.load8_u (i32.add (local.get $a) (local.get $i)))
+                  (i32.load8_u (i32.add (local.get $b) (local.get $i))))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (i32.const 1))
+  (func (export "gm_event") (param $np i32) (param $nl i32) (param $jp i32) (param $jl i32) (result i32)
+    (if (call $streq (local.get $np) (local.get $nl) (i32.const 64) (i32.const 8))
+      (then
+        (global.set $ticks (i32.add (global.get $ticks) (i32.const 1)))
+        (if (i32.eq (global.get $ticks) (i32.const 3))
+          (then
+            (call $queue (i32.const 0) (i32.const 6) (i32.const 7) (i32.const 16) (i32.const 4))
+            (call $log (i32.const 32) (i32.const 15))))))
+    (if (call $streq (local.get $np) (local.get $nl) (i32.const 80) (i32.const 18))
+      (then (return (i32.const 1))))
+    (i32.const 0))
+)"#;
+
+#[test]
+fn a_wasm_component_counts_ticks_queues_a_write_and_cancels_a_request() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "wasm".into(),
+        name: "guest".into(),
+        priority: 0,
+        source: String::new(),
+        config: ActorConfig {
+            wasm: Some(WAT_GUEST.as_bytes().to_vec()),
+            can_write: true,
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    // the guest counts tick.pre: dispatch the actor directly
+    let snap = std::sync::Arc::new(gm_script::snapshot::Snapshot::default());
+    let a = &mut rt.actors_mut()[0];
+    for _ in 0..3 {
+        a.dispatch(&snap, "tick.pre", &gm_script::api::Payload::default(), 1)
+            .unwrap();
+    }
+    let queued = a.take_queue();
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    assert_eq!(
+        queued[0].1,
+        gm_script::actor::QueuedWrite::Freeze {
+            ent: 7,
+            frozen: true
+        }
+    );
+    let cancel = a
+        .dispatch(
+            &snap,
+            "prop.spawn_request",
+            &gm_script::api::Payload::default(),
+            1,
+        )
+        .unwrap();
+    assert_eq!(cancel, Some(false), "the guest cancels spawn requests");
+}
+
 fn tick(rt: &mut Runtime, t: u64) {
     let snap = Arc::new(Snapshot {
         tick: t,
