@@ -13,6 +13,8 @@ use gm_sandbox::{ConstraintKind, Event, ModelBounds, PropBody, Sandbox, SpawnReq
 use std::collections::BTreeMap;
 
 /// Everything the server needs to know about a model to spawn and trace it.
+pub mod player_models;
+
 #[derive(Clone, Debug)]
 pub struct ModelInfo {
     pub bounds: ModelBounds,
@@ -142,6 +144,9 @@ pub enum Request {
     PlayerPickup { player: u32, ent: u32 },
     /// `CanProperty`: the player asked for a context-menu property on a prop.
     Property { player: u32, ent: u32, name: String },
+    /// `PlayerSetModel` on (re)spawn with the model the player's choice translates to;
+    /// `Text` replaces it.
+    SetModel { player: u32, model: String },
     /// `PlayerLoadout`: the player (re)spawned with an empty inventory; `Cancel` skips the
     /// default loadout (the hook gives its own with `player.give_weapon`).
     Loadout { player: u32 },
@@ -196,12 +201,14 @@ impl ToolSettingKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Verdict {
     Allow,
     Cancel,
     /// `PlayerDamage` only: deal this amount instead.
     Amount(f32),
+    /// `SetModel` only: use this model path instead.
+    Text(String),
 }
 
 /// Answers `Request`s; the server lets go of the hook while it runs, so the hook may use the
@@ -336,6 +343,8 @@ pub struct Player {
     pub armor: i32,
     pub max_health: i32,
     pub model: String,
+    /// The player's model choice (`cl_playermodel`), applied on the next spawn.
+    pub wanted_model: String,
     /// Weapon classes carried, sorted (`Player:GetWeapons`).
     pub weapons: Vec<String>,
     pub active_weapon: String,
@@ -402,6 +411,7 @@ impl Player {
             armor: 0,
             max_health: PLAYER_HEALTH,
             model: PLAYER_MODEL.to_string(),
+            wanted_model: String::new(),
             weapons: LOADOUT.iter().map(|w| w.to_string()).collect(),
             active_weapon: SPAWN_WEAPON.to_string(),
             inventory: {
@@ -745,6 +755,7 @@ impl<'w> Server<'w> {
             Verdict::Cancel => return 0.0,
             Verdict::Amount(a) => a,
             Verdict::Allow => amount,
+            Verdict::Text(_) => amount,
         };
         let Some(p) = self.players.get_mut(&id) else {
             return 0.0;
@@ -933,7 +944,26 @@ impl<'w> Server<'w> {
         p.ragdoll = None;
         p.death_tick = None;
         p.held = None;
+        // `PlayerSetModel`: the choice through the game's table, a hook may replace it
+        let model = player_models::translate(&p.wanted_model).to_string();
+        let model = match self.ask(Request::SetModel {
+            player: id,
+            model: model.clone(),
+        }) {
+            Verdict::Text(t) => t,
+            _ => model,
+        };
+        if let Some(p) = self.players.get_mut(&id) {
+            p.model = model;
+        }
         self.give_loadout(id);
+    }
+
+    /// `cl_playermodel`: remembered now, worn from the next spawn on (as in the game).
+    pub fn set_wanted_model(&mut self, id: u32, name: &str) {
+        if let Some(p) = self.players.get_mut(&id) {
+            p.wanted_model = name.chars().take(64).collect();
+        }
     }
 
     /// `PlayerLoadout`: the inventory is emptied, `Request::Loadout` asked (a hook may give
@@ -2613,6 +2643,7 @@ impl<'w> Server<'w> {
                 Verdict::Cancel => continue,
                 Verdict::Amount(a) => a,
                 Verdict::Allow => dmg,
+                Verdict::Text(_) => dmg,
             };
             self.damage_player(id, dmg, DMG_FALL);
         }

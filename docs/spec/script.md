@@ -540,6 +540,12 @@ after the tick) until the next +use press, death, the prop's removal or a physgu
 The native client sends `IN_USE` on E.
 Not yet: use on players, hold-to-use.
 
+## Player models
+
+`player.set_model {player, model}` is `PlayerSetModel`, asked on every (re)spawn with the path
+the player's choice translates to (`gm_server::player_models`, kleiner for an unknown name);
+`return "<path>"` makes the player wear that instead.
+
 ## Properties
 
 `player.property_request {player, entity, property}` is `CanProperty`, asked synchronously

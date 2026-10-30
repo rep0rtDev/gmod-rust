@@ -103,6 +103,21 @@ Implemented, by `Command::Property { name }` on the prop under the crosshair:
 - Not yet: `ignite` / `extinguish` (no fire), `drive`, `skin`, `bodygroups`, the menu itself in
   the native client (the console's `property <name>` sends the command).
 
+## Player models
+
+Measured on srcds (`lua_models_full`): `player_manager.AllValidModels()` has 87 names
+(`kleiner`, `alyx`, `combine`, `male01`..., `models/player/...`), each with view hands
+(`TranslatePlayerHands`: `c_arms_citizen` for 39 of them, `c_arms_refugee` 30, `c_arms_cstrike`
+8, `c_arms_combine` 7, `c_arms_dod` 2, `c_arms_chell` 1, with a skin and bodygroups); an
+unknown name or an empty `cl_playermodel` translates to `models/player/kleiner.mdl` with the
+citizen hands, which is what a fresh bot wears. The table is `gm_server::player_models`,
+recorded verbatim. `Command::PlayerModel { name }` (console `playermodel <name>`) is the
+player's `cl_playermodel`: remembered at once, worn from the next spawn, when
+`player.set_model {player, model}` (`PlayerSetModel`) may return another path. The snapshot
+carries the table index, so other clients draw and animate that model; a path outside the
+table draws as kleiner. Not yet: the hands on the view model, skins and bodygroups of the
+player model itself.
+
 ## Not yet measured
 
 Spawning onto other props (the spawn ray only hits the world in our trace), ragdolls and effects, `gmod_undonum`, `gmod_admin_cleanup`, cleanup of one type, `sbox_maxragdolls` and the other limits, prop spawn effects and sounds.

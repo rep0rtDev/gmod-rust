@@ -722,6 +722,7 @@ impl ServerNet {
                     Command::Property { name } => {
                         server.apply_property(slot.player, &name);
                     }
+                    Command::PlayerModel { name } => server.set_wanted_model(slot.player, &name),
                     Command::SelectWeapon { class } => {
                         server.select_weapon(slot.player, &class);
                     }
@@ -910,6 +911,7 @@ impl ServerNet {
                 view_angles: p.view_angles,
                 ducked: p.state.ducked,
                 on_ground: p.state.on_ground,
+                model: gm_server::player_models::index_of(&p.model),
                 held: p.held.map(|h| h.0),
                 alive: p.alive,
                 health: p.health.clamp(i16::MIN as i32, i16::MAX as i32) as i16,

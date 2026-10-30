@@ -73,6 +73,10 @@ pub enum Command {
     Property {
         name: String,
     },
+    /// `cl_playermodel`: the model name (the game's table) to wear from the next spawn.
+    PlayerModel {
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -141,6 +145,8 @@ pub struct PlayerSnap {
     pub ducked: bool,
     /// Standing on something (false in the air: jump / fall animation).
     pub on_ground: bool,
+    /// `gm_server::player_models` index of the player model (255: not in the table).
+    pub model: u8,
     pub held: Option<u32>,
     pub alive: bool,
     pub health: i16,
@@ -575,6 +581,10 @@ impl ClientMsg {
                         w.u8(12);
                         w.str(name);
                     }
+                    Command::PlayerModel { name } => {
+                        w.u8(13);
+                        w.str(name);
+                    }
                 }
             }
             ClientMsg::AckSnapshot { tick } => {
@@ -652,6 +662,7 @@ impl ClientMsg {
                     10 => Command::Chat { text: r.str()? },
                     11 => Command::Noclip { on: r.bool()? },
                     12 => Command::Property { name: r.str()? },
+                    13 => Command::PlayerModel { name: r.str()? },
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }
@@ -724,6 +735,7 @@ impl ServerMsg {
                     w.qang(p.view_angles);
                     w.bool(p.ducked);
                     w.bool(p.on_ground);
+                    w.u8(p.model);
                     w.u32(p.held.unwrap_or(0));
                     w.bool(p.alive);
                     w.i16(p.health);
@@ -906,6 +918,7 @@ impl ServerMsg {
                         view_angles: r.qang()?,
                         ducked: r.bool()?,
                         on_ground: r.bool()?,
+                        model: r.u8()?,
                         held: match r.u32()? {
                             0 => None,
                             h => Some(h),

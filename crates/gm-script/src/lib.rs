@@ -628,6 +628,32 @@ impl Runtime {
 
     /// `ask` that also takes a number: `player.damage` handlers return the amount to deal (the
     /// last number wins), `false` cancels and stops the chain.
+    /// A request answered with a string (`player.set_model`: the model path to wear instead).
+    pub fn ask_text(
+        &mut self,
+        server: &mut Server<'_>,
+        event: &str,
+        payload: api::Payload,
+    ) -> gm_server::Verdict {
+        let snap = self.snapshot(server);
+        let mut order: Vec<usize> = (0..self.actors.len()).collect();
+        order.sort_by_key(|&i| (self.actors[i].priority(), i));
+        let mut verdict = gm_server::Verdict::Allow;
+        for i in order {
+            let a = &mut self.actors[i];
+            if !a.may_run(self.tick) {
+                continue;
+            }
+            match a.dispatch_reply(&snap, event, &payload, self.tick) {
+                Ok(Reply::Text(t)) => verdict = gm_server::Verdict::Text(t),
+                Ok(_) => {}
+                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+            }
+        }
+        self.serial(server);
+        verdict
+    }
+
     pub fn ask_amount(
         &mut self,
         server: &mut Server<'_>,
@@ -793,6 +819,11 @@ impl Runtime {
                 } else {
                     gm_server::Verdict::Cancel
                 }
+            }
+            gm_server::Request::SetModel { player, model } => {
+                p.ints.push(("player", *player as i64));
+                p.strs.push(("model", model.clone()));
+                self.ask_text(server, "player.set_model", p)
             }
             gm_server::Request::Property { player, ent, name } => {
                 p.ints.push(("player", *player as i64));

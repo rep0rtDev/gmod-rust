@@ -1038,7 +1038,6 @@ impl App {
         let aspect = g.config.width as f32 / g.config.height as f32;
         g.world.draw(&g.gpu, &camera, &view, &g.depth, aspect);
         let ents = &self.sim.client.world.entities;
-        let others = self.sim.client.world.players.len() > 1;
         let me = self.sim.client.player_id;
         let held_models = self
             .sim
@@ -1051,7 +1050,14 @@ impl App {
         for model in ents
             .values()
             .map(|e| e.model.as_str())
-            .chain(others.then_some(gm_server::PLAYER_MODEL))
+            .chain(
+                self.sim
+                    .client
+                    .world
+                    .players
+                    .iter()
+                    .map(|p| gm_server::player_models::path_of_index(p.model)),
+            )
             .chain(held_models)
             .chain(ghost_models)
         {
@@ -1068,13 +1074,14 @@ impl App {
         let gestures = &mut self.gestures;
         let sounds = &mut self.sounds;
         let mount = &self.mount;
-        type PlayerPose = (
+        type PlayerPose<'a> = (
             Vec3,
             f32,
             Option<Vec<glam::Mat4>>,
             Option<(&'static str, Vec<glam::Mat4>)>,
+            &'a gm_render::world::DynModel,
         );
-        let mut player_poses: Vec<PlayerPose> = Vec::new();
+        let mut player_poses: Vec<PlayerPose<'_>> = Vec::new();
         let mut items: Vec<_> = ents
             .values()
             .filter_map(|e| {
@@ -1089,14 +1096,14 @@ impl App {
                 })
             })
             .collect();
-        let player_model = g
-            .models
-            .get(gm_server::PLAYER_MODEL)
-            .and_then(|m| m.as_ref());
         for p in &self.sim.client.world.players {
             if Some(p.id) == me || !p.alive {
                 continue;
             }
+            let player_model = g
+                .models
+                .get(gm_server::player_models::path_of_index(p.model))
+                .and_then(|m| m.as_ref());
             // the player model animated from the snapshot, the hull box when it is missing
             match player_model {
                 Some(m) => {
@@ -1150,7 +1157,7 @@ impl App {
                         Some(s) => (s.pos, s.angles.y),
                         None => (p.origin, p.view_angles.y),
                     };
-                    player_poses.push((origin, yaw, pose, held));
+                    player_poses.push((origin, yaw, pose, held, m));
                 }
                 None => {
                     let h = if p.ducked { 36.0 } else { 72.0 };
@@ -1164,8 +1171,8 @@ impl App {
                 }
             }
         }
-        if let Some(m) = player_model {
-            for (origin, yaw, pose, held) in &player_poses {
+        {
+            for (origin, yaw, pose, held, m) in &player_poses {
                 let transform =
                     gm_render::world::model_transform(*origin, Vec3::new(0.0, *yaw, 0.0));
                 items.push(DrawItem {
@@ -1847,6 +1854,11 @@ impl App {
             "property" if !rest.is_empty() => self.sim.client.command(Command::Property {
                 name: rest.join(" "),
             }),
+            "playermodel" if !rest.is_empty() => {
+                self.sim.client.command(Command::PlayerModel {
+                    name: rest.join(" "),
+                });
+            }
             "say" => self.sim.client.command(Command::Chat {
                 text: rest.join(" "),
             }),

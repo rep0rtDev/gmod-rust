@@ -3646,3 +3646,110 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
         .unwrap();
     assert_eq!((asked, applied, last.as_str()), (7, 6, "remove"));
 }
+
+#[test]
+fn player_model_choice_is_worn_from_the_next_spawn_and_player_set_model_may_replace_it() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "model".into(),
+        priority: 1,
+        source: "state.n = 0
+            events.on('player.set_model', function(e)
+                state.n += 1
+                state.last = e.model
+                if e.model == 'models/player/alyx.mdl' then return 'models/player/breen.mdl' end
+            end)
+            events.on('tick.post', function()
+                if game.tick() % 5 == 0 then
+                    for _, pl in ipairs(world.players()) do
+                        net.send('log', { n = state.n, last = state.last or '' }, pl.id)
+                    end
+                end
+            end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -600.0, -143.6));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut crt = gm_script::Runtime::client();
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "probe".into(),
+        priority: 1,
+        source: "net.receive('log', function(p) state.d = p.data end)".into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>,
+                    crt: &mut gm_script::Runtime,
+                    n: usize| {
+        for _ in 0..n {
+            client.tick(gm_net::NetCmd::default(), &mut c_ep);
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+            crt.client_tick(&client.world, true);
+            let inbox = std::mem::take(&mut client.addon_msgs);
+            crt.client_net(&client.world, inbox);
+        }
+    };
+    step(&mut sn, &mut client, &mut server, &mut crt, 20);
+    // a fresh player is kleiner, as a fresh bot in the game
+    assert_eq!(server.players[&1].model, "models/player/kleiner.mdl");
+    let snap_model = |client: &gm_net::ClientNet| {
+        gm_server::player_models::path_of_index(client.world.players[0].model).to_string()
+    };
+    assert_eq!(snap_model(&client), "models/player/kleiner.mdl");
+    // the choice is remembered now and worn after the respawn
+    client.command(gm_net::Command::PlayerModel {
+        name: "combine".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 5);
+    assert_eq!(server.players[&1].model, "models/player/kleiner.mdl");
+    server.kill_player(1);
+    step(&mut sn, &mut client, &mut server, &mut crt, 160);
+    assert!(server.players[&1].alive, "respawned");
+    assert_eq!(
+        server.players[&1].model,
+        "models/player/combine_soldier.mdl"
+    );
+    assert_eq!(snap_model(&client), "models/player/combine_soldier.mdl");
+    // an unknown name falls back to kleiner
+    client.command(gm_net::Command::PlayerModel {
+        name: "nonsense".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 5);
+    server.kill_player(1);
+    step(&mut sn, &mut client, &mut server, &mut crt, 160);
+    assert_eq!(server.players[&1].model, "models/player/kleiner.mdl");
+    // the hook replaces alyx with breen
+    client.command(gm_net::Command::PlayerModel {
+        name: "alyx".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 5);
+    server.kill_player(1);
+    step(&mut sn, &mut client, &mut server, &mut crt, 160);
+    assert_eq!(server.players[&1].model, "models/player/breen.mdl");
+    assert_eq!(snap_model(&client), "models/player/breen.mdl");
+    let (n, last): (i64, String) = crt.actors()[0]
+        .eval("return state.d.n, state.d.last")
+        .unwrap();
+    assert_eq!(last, "models/player/alyx.mdl");
+    assert!(n >= 3, "asked on every spawn, {n}");
+}
