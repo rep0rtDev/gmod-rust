@@ -1,0 +1,6 @@
+{
+ "name": "script_cvar_callbacks",
+ "kind": "cvar_callbacks",
+ "map": "gm_construct",
+ "ticks": 30
+}

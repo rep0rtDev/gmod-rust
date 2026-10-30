@@ -1968,3 +1968,10 @@ scenario = "script/hooks"
 compare = "timers"
 realm = "server"
 crates = ["gm-script", "gm-server", "gm-sandbox"]
+
+[[harness]]
+name = "script_cvar_callbacks"
+scenario = "script/cvar_callbacks"
+compare = "timers"
+realm = "server"
+crates = ["gm-script", "gm-server"]

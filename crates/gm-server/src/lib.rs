@@ -71,6 +71,9 @@ pub trait ServerHooks {
     /// Around every tick.
     fn pre_tick(&mut self, server: &mut Server<'_>);
     fn post_tick(&mut self, server: &mut Server<'_>);
+    /// After the tick's player commands were applied (the game runs console commands at the end
+    /// of the frame, after `Tick`): `cvar.changed` for what they changed.
+    fn after_commands(&mut self, _server: &mut Server<'_>) {}
 }
 
 /// Loads a model by name on first use.

@@ -310,6 +310,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "toolgun" => run_toolgun(scn)?,
         "timers" => run_timers(scn)?,
         "hooks" => run_hooks(scn)?,
+        "cvar_callbacks" => run_cvar_callbacks(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
     Ok(Trace {
@@ -3477,6 +3478,105 @@ events.on("entity.removed", function() ev("removed") end)
     Ok(serde_json::json!({
         "events": events,
         "props": server.sandbox.props().len(),
+    }))
+}
+
+/// `cvar.changed` against the game's `cvars.AddChangeCallback`: changes made in the Think phase
+/// (a set, a set to the same value, an addon convar set by code and by command).
+fn run_cvar_callbacks(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{Surface, World};
+    use gm_script::{ActorConfig, ActorSpec, Runtime};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let table = gm_physics::surface::SurfaceTable::parse(&[&String::from_utf8_lossy(
+        &mount.read("scripts/surfaceproperties.txt")?,
+    )]);
+    let world_sp = table.get("concrete");
+    let world_surface = Surface {
+        friction: world_sp.friction,
+        elasticity: world_sp.elasticity,
+    };
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    tune_solver(&mut physics);
+    let world_body = physics.add_static_hulls(&world_hulls, world_surface)?;
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    server.create_cvar("parity_cv", gm_server::Cvar::replicated("1"));
+    let total = scn.ticks.unwrap_or(30) as u64;
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "parity".into(),
+        name: "cvars".into(),
+        priority: 0,
+        source: r#"
+state.lines = {}
+state.seq = 0
+local function ev(what)
+    state.seq += 1
+    table.insert(state.lines, string.format("%d %d %s", state.seq, game.tick() - state.t0, what))
+end
+events.on("tick.pre", function() if not state.t0 then state.t0 = game.tick() end ev("think") end)
+events.on("tick.post", function() ev("tick") end)
+events.on("cvar.changed", function(p)
+    if p.name == "sbox_maxprops" or p.name == "parity_cv" then ev("cb:" .. p.name .. ":" .. p.old .. ">" .. p.value) end
+end)
+"#
+        .into(),
+        config: ActorConfig::default(),
+    })
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let idle = std::collections::BTreeMap::new();
+    for t in 0..=total {
+        rt.pre_tick(&mut server);
+        // a convar set by code (`ConVar:SetInt`) applies in the Think phase
+        if t == 15 {
+            server.set_cvar("parity_cv", "7");
+        }
+        server.tick(&idle);
+        rt.post_tick(&mut server);
+        // console commands (`RunConsoleCommand`, a client's `Command::Cvar`) run at the end of
+        // the frame, after Tick, like the net layer's command loop
+        match t {
+            5 | 10 => {
+                server.set_cvar("sbox_maxprops", "50");
+            }
+            20 => {
+                server.set_cvar("parity_cv", "9");
+            }
+            25 => {
+                server.set_cvar("sbox_maxprops", "200");
+            }
+            _ => {}
+        }
+        rt.after_commands(&mut server);
+        server.take_cvar_changes();
+    }
+    let lines: Vec<String> = rt.actors()[0]
+        .eval("return state.lines")
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let events: Vec<Value> = lines
+        .iter()
+        .filter_map(|l| {
+            let mut it = l.splitn(3, ' ');
+            let seq: i64 = it.next()?.parse().ok()?;
+            let tick: i64 = it.next()?.parse().ok()?;
+            let what = it.next()?;
+            Some(serde_json::json!({ "seq": seq, "tick": tick, "what": what }))
+        })
+        .filter(|e| e["tick"].as_i64().unwrap_or(0) <= total as i64)
+        .collect();
+    Ok(serde_json::json!({
+        "events": events,
+        "maxprops": server.cvar("sbox_maxprops").and_then(|v| v.parse::<i64>().ok()),
+        "parity_cv": server.cvar("parity_cv"),
     }))
 }
 

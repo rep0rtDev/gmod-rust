@@ -1459,6 +1459,47 @@ SCENARIOS.hooks = function(scn, done)
 end
 ASYNC.hooks = true
 
+-- { kind = "cvar_callbacks", ticks = N }: when cvars.AddChangeCallback fires relative to Think
+-- and Tick for a change from Think, a set to the same value, and an addon-made convar.
+SCENARIOS.cvar_callbacks = function(scn, done)
+	local total = scn.ticks or 30
+	local events, seq, t0, started = {}, 0, 0, false
+	local function ev(what)
+		seq = seq + 1
+		events[#events + 1] = { seq = seq, tick = engine.TickCount() - t0, what = what }
+	end
+	RunConsoleCommand("sbox_maxprops", "200")
+	local cv = CreateConVar("parity_cv", "1", FCVAR_REPLICATED)
+	cv:SetString("1")
+	hook.Add("Think", "parity_cvars", function()
+		if not started then
+			started = true
+			t0 = engine.TickCount()
+			cvars.AddChangeCallback("sbox_maxprops", function(name, old, new) ev("cb:" .. name .. ":" .. old .. ">" .. new) end, "parity")
+			cvars.AddChangeCallback("parity_cv", function(name, old, new) ev("cb:" .. name .. ":" .. old .. ">" .. new) end, "parity")
+		end
+		ev("think")
+		local t = engine.TickCount() - t0
+		if t == 5 then RunConsoleCommand("sbox_maxprops", "50") end
+		if t == 10 then RunConsoleCommand("sbox_maxprops", "50") end
+		if t == 15 then cv:SetInt(7) end
+		if t == 20 then RunConsoleCommand("parity_cv", "9") end
+		if t == 25 then RunConsoleCommand("sbox_maxprops", "200") end
+	end)
+	hook.Add("Tick", "parity_cvars", function()
+		if not started then return end
+		ev("tick")
+		if engine.TickCount() - t0 >= total then
+			hook.Remove("Think", "parity_cvars")
+			hook.Remove("Tick", "parity_cvars")
+			cvars.RemoveChangeCallback("sbox_maxprops", "parity")
+			cvars.RemoveChangeCallback("parity_cv", "parity")
+			done({ events = events, maxprops = GetConVar("sbox_maxprops"):GetInt(), parity_cv = cv:GetString() })
+		end
+	end)
+end
+ASYNC.cvar_callbacks = true
+
 local function runAll()
 	file.CreateDir(OUT_DIR)
 	local files = file.Find(SCN_DIR .. "/*.json", "DATA")

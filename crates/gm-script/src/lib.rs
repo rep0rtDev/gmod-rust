@@ -365,6 +365,11 @@ impl Runtime {
         applied
     }
 
+    /// After the tick's commands: `cvar.changed` for the variables they set, still in this tick.
+    pub fn after_commands(&mut self, server: &mut Server<'_>) {
+        self.dispatch_cvar_changes(server);
+    }
+
     /// `cvar.changed` (name, old, value) for every change logged on the server since the last
     /// call; the net layer takes the log after the hooks, which resets the cursor.
     fn dispatch_cvar_changes(&mut self, server: &mut Server<'_>) {
@@ -615,6 +620,9 @@ impl gm_server::ServerHooks for Runtime {
     }
     fn entity_removed(&mut self, server: &mut Server<'_>, player: u32, ent: u32) {
         Runtime::entity_removed(self, server, player, ent);
+    }
+    fn after_commands(&mut self, server: &mut Server<'_>) {
+        Runtime::after_commands(self, server);
     }
     fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool {
         Runtime::prop_spawn_request(self, server, player, model)

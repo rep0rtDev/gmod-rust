@@ -278,6 +278,9 @@ impl ServerNet {
                 }
             }
         }
+        if let Some(h) = self.hooks.as_mut() {
+            h.after_commands(server);
+        }
     }
 
     /// Sends this tick's packets: a snapshot every `snapshot_every` ticks plus pending reliables.
