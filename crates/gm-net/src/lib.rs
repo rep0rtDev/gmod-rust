@@ -14,7 +14,7 @@ pub mod wire;
 pub use client::{ClientNet, ClientWorld, Interpolator, Prediction};
 pub use master::{MasterMsg, MasterNet, ServerEntry, ServerInfo};
 pub use msg::EntityState;
-pub use msg::{AddonInfo, ClientMsg, Command, NetCmd, ServerMsg};
+pub use msg::{auth_message, AddonInfo, ClientMsg, Command, NetCmd, ServerMsg, AUTH_PREFIX};
 pub use server::ServerNet;
 pub use transport::{Loopback, LoopbackEndpoint, Transport, Udp};
 

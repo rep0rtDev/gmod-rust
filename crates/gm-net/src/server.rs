@@ -3,8 +3,8 @@
 
 use crate::channel::Channel;
 use crate::msg::{
-    ClientMsg, Command, EntityState, LocalPlayer, OwnSandbox, PlayerSnap, ServerMsg, UndoEntry,
-    PROTOCOL,
+    auth_message, ClientMsg, Command, EntityState, LocalPlayer, OwnSandbox, PlayerSnap, ServerMsg,
+    UndoEntry, PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -42,6 +42,11 @@ pub struct ClientSlot {
     /// weight in the budget order).
     last_sent_player: BTreeMap<u32, u32>,
     last_sent_entity: BTreeMap<u32, u32>,
+    /// Nonce of the `Challenge` sent after `Hello` (zero before).
+    nonce: [u8; 32],
+    /// Proven identity (ed25519 public key) of this connection.
+    pub identity: Option<[u8; 32]>,
+    welcomed: bool,
 }
 
 /// An addon package the server hands out to clients (its client-realm actors run there).
@@ -81,6 +86,8 @@ pub struct ServerNet {
     /// Interest by PVS: besides the radius, an entity or player must be in a cluster visible
     /// from the player's cluster (`gm_collision::World::visible`).
     pub use_pvs: bool,
+    /// Only authenticated connections (`ClientMsg::Auth` with a valid signature) are welcomed.
+    pub require_auth: bool,
     /// Interest: a client gets entities and other players within this distance of its player
     /// (Source units); what leaves the radius is removed on the client, what enters is sent whole.
     pub interest_radius: f32,
@@ -104,6 +111,7 @@ impl ServerNet {
             models: Vec::new(),
             model_ids: BTreeMap::new(),
             use_pvs: true,
+            require_auth: false,
             interest_radius: DEFAULT_INTEREST_RADIUS,
             snapshot_budget: DEFAULT_SNAPSHOT_BUDGET,
             info: crate::master::ServerInfo {
@@ -197,6 +205,9 @@ impl ServerNet {
                         models_sent: 0,
                         last_sent_player: BTreeMap::new(),
                         last_sent_entity: BTreeMap::new(),
+                        nonce: [0; 32],
+                        identity: None,
+                        welcomed: false,
                     },
                 );
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
@@ -213,27 +224,31 @@ impl ServerNet {
                     ClientMsg::Hello { name, protocol } => {
                         if protocol == PROTOCOL {
                             slot.name = name;
+                            let mut nonce = [0u8; 32];
+                            rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut nonce);
+                            slot.nonce = nonce;
                             let mut w = Writer::default();
-                            ServerMsg::Welcome {
-                                player_id: slot.player,
-                                tick_interval: gm_core::tick::DEFAULT_TICK_INTERVAL,
-                                map: self.map.clone(),
-                                tick: self.tick,
-                            }
-                            .write(&mut w);
+                            ServerMsg::Challenge { nonce }.write(&mut w);
                             slot.channel.send_reliable(w.buf);
-                            if !self.addons.is_empty() {
-                                let mut w = Writer::default();
-                                ServerMsg::Addons {
-                                    list: addon_list_of(&self.addons),
-                                }
-                                .write(&mut w);
-                                slot.channel.send_reliable(w.buf);
+                            if !self.require_auth {
+                                welcome(slot, &self.map, self.tick, &self.addons, server);
                             }
-                            for (n, c) in &server.cvars {
-                                if c.replicated {
-                                    slot.pending_cvars.push((n.clone(), c.value.clone()));
-                                }
+                        }
+                    }
+                    ClientMsg::Auth { pubkey, sig } => {
+                        let ok = slot.nonce != [0; 32]
+                            && ed25519_dalek::VerifyingKey::from_bytes(&pubkey).is_ok_and(|k| {
+                                ed25519_dalek::Signature::from_slice(&sig).is_ok_and(|s| {
+                                    k.verify_strict(&auth_message(&slot.nonce), &s).is_ok()
+                                })
+                            });
+                        if ok {
+                            slot.identity = Some(pubkey);
+                            if let Some(p) = server.players.get_mut(&slot.player) {
+                                p.identity = Some(pubkey);
+                            }
+                            if !slot.welcomed {
+                                welcome(slot, &self.map, self.tick, &self.addons, server);
                             }
                         }
                     }
@@ -689,4 +704,37 @@ fn addon_list_of(addons: &[PublishedAddon]) -> Vec<crate::msg::AddonInfo> {
         latest.insert(a.info.id.as_str(), &a.info);
     }
     latest.into_values().cloned().collect()
+}
+
+/// `Welcome`, the published addon list and the replicated cvars: the client is on the server.
+fn welcome(
+    slot: &mut ClientSlot,
+    map: &str,
+    tick: u32,
+    addons: &[PublishedAddon],
+    server: &gm_server::Server<'_>,
+) {
+    slot.welcomed = true;
+    let mut w = Writer::default();
+    ServerMsg::Welcome {
+        player_id: slot.player,
+        tick_interval: gm_core::tick::DEFAULT_TICK_INTERVAL,
+        map: map.to_string(),
+        tick,
+    }
+    .write(&mut w);
+    slot.channel.send_reliable(w.buf);
+    if !addons.is_empty() {
+        let mut w = Writer::default();
+        ServerMsg::Addons {
+            list: addon_list_of(addons),
+        }
+        .write(&mut w);
+        slot.channel.send_reliable(w.buf);
+    }
+    for (n, c) in &server.cvars {
+        if c.replicated {
+            slot.pending_cvars.push((n.clone(), c.value.clone()));
+        }
+    }
 }

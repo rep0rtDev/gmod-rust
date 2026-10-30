@@ -1471,3 +1471,63 @@ fn lag_compensation_hits_the_target_where_the_shooter_saw_it() {
         server.players[&target].health
     );
 }
+
+#[test]
+fn a_server_requiring_auth_welcomes_only_clients_that_prove_an_identity() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
+    let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
+    sn.require_auth = true;
+    let net = gm_net::Loopback::new(2, 0.1, 7);
+    let (mut s_ep, mut c1, mut c2) = (net.endpoint(0), net.endpoint(1), net.endpoint(2));
+    let (secret, public) = gm_script::package::keygen();
+    let mut anon = gm_net::ClientNet::new(1, "anon");
+    let mut known = gm_net::ClientNet::new(1, "known").with_key(&secret);
+    assert_eq!(known.identity, Some(public));
+    for _ in 0..60 {
+        anon.tick(gm_net::NetCmd::default(), &mut c1);
+        known.tick(gm_net::NetCmd::default(), &mut c2);
+        net.tick();
+        sn.receive(&mut server, &mut s_ep);
+        sn.tick(&mut server);
+        sn.send(&server, &mut s_ep);
+        anon.receive(&mut c1);
+        known.receive(&mut c2);
+    }
+    assert!(anon.player_id.is_none(), "no key, no Welcome");
+    let id = known
+        .player_id
+        .expect("the signed challenge gets the Welcome");
+    assert_eq!(server.players[&id].identity, Some(public));
+    // without the requirement everyone is welcomed, and a key still proves the identity
+    let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
+    let mut server2 = gm_server::Server::new(
+        &world.collision,
+        gm_physics::World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1),
+        world.world_body,
+    );
+    let net = gm_net::Loopback::new(2, 0.0, 8);
+    let (mut s_ep, mut c1, mut c2) = (net.endpoint(0), net.endpoint(1), net.endpoint(2));
+    let mut anon = gm_net::ClientNet::new(1, "anon");
+    let mut known = gm_net::ClientNet::new(1, "known").with_key(&secret);
+    for _ in 0..60 {
+        anon.tick(gm_net::NetCmd::default(), &mut c1);
+        known.tick(gm_net::NetCmd::default(), &mut c2);
+        net.tick();
+        sn.receive(&mut server2, &mut s_ep);
+        sn.tick(&mut server2);
+        sn.send(&server2, &mut s_ep);
+        anon.receive(&mut c1);
+        known.receive(&mut c2);
+    }
+    let a = anon.player_id.expect("welcomed without a key");
+    let k = known.player_id.expect("welcomed with a key");
+    assert_eq!(server2.players[&a].identity, None);
+    assert_eq!(server2.players[&k].identity, Some(public));
+}

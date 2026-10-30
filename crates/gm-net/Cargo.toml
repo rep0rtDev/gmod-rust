@@ -12,3 +12,5 @@ gm-move = { path = "../gm-move" }
 gm-sandbox = { path = "../gm-sandbox" }
 gm-server = { path = "../gm-server" }
 glam = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand_core = { workspace = true }

@@ -32,6 +32,9 @@ struct Args {
     /// Public key (hex) addons must be signed by; repeatable, none means any addon loads
     #[arg(long)]
     trust: Vec<String>,
+    /// Only clients that prove an identity (ed25519 key, `gm-bot --key`) enter the server.
+    #[arg(long)]
+    require_auth: bool,
     /// Addon registry (directory or `http://` base url): `--addon id@requirement` (e.g.
     /// `wire@^1.2`, or a bare id) is resolved against its index with dependencies and installed
     /// into `<data>/registry`.
@@ -62,6 +65,7 @@ fn main() -> Result<()> {
     }));
     let spawn = glam::Vec3::new(args.spawn[0], args.spawn[1], args.spawn[2]);
     let mut net = gm_net::ServerNet::new(&args.map, spawn);
+    net.require_auth = args.require_auth;
     if !args.addon.is_empty() {
         let mut rt = gm_script::Runtime::new();
         rt.data_dir = Some(args.data.clone());

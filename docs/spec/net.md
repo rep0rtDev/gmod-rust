@@ -170,6 +170,16 @@ Measured after both (model table below, half-budget players, staleness order): 5
 per client (36 KB/s), every client knows 798-800 of the 2 000 crates after 200 ticks (~265 per
 second, 8x), `send` 7.0 ms per tick for 64 clients, no snapshot dropped.
 
+Authentication (v1, own accounts, no Steam AppID): a client's identity is an ed25519 public key
+(`gm-bot --key <file>`, the same key format as package signing). After `Hello` the server sends
+`ServerMsg::Challenge { nonce }` (32 random bytes, tag 11); a client with a key answers
+`ClientMsg::Auth { pubkey, sig }` (tag 7) with the signature over `"gmr-auth1" ++ nonce`. A valid
+answer sets the connection's identity (`Player::identity`, the stable id for bans, ownership and
+storage); `gm-dedicated --require-auth` holds the `Welcome` (and the addon list and cvars) until
+it arrives, so an anonymous client never enters. Not yet: binding the signature to the server
+address (a relaying server could replay the challenge), which comes with transport encryption; a
+registration/name service and Steam OpenID binding on top of the keys.
+
 Lag compensation: every usercmd carries `seen_tick`, the server tick the client was rendering
 when it made the command (`NetCmd::seen_tick`, delta-coded like the other fields; 0 = unknown).
 The server keeps the last 64 ticks of (origin, ducked) per player and resolves a shot of that

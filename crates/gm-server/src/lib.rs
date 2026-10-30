@@ -94,6 +94,8 @@ pub type ModelLoader = Box<dyn FnMut(&str) -> Option<ModelInfo>>;
 
 pub struct Player {
     pub state: gm_move::PlayerState,
+    /// Authenticated identity (ed25519 public key) once the connection proved it.
+    pub identity: Option<[u8; 32]>,
     /// (tick, origin, ducked) after each of the last 64 ticks, for lag compensation.
     pub history: std::collections::VecDeque<(u32, Vec3, bool)>,
     pub view_angles: Vec3,
@@ -142,6 +144,7 @@ impl Player {
     pub fn new(origin: Vec3, view_angles: Vec3) -> Self {
         Player {
             history: Default::default(),
+            identity: None,
             state: gm_move::PlayerState {
                 origin,
                 ..Default::default()

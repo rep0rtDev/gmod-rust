@@ -3,8 +3,8 @@
 
 use crate::channel::Channel;
 use crate::msg::{
-    ClientMsg, Command, EntityState, LocalPlayer, NetCmd, OwnSandbox, PlayerSnap, ServerMsg,
-    PROTOCOL,
+    auth_message, ClientMsg, Command, EntityState, LocalPlayer, NetCmd, OwnSandbox, PlayerSnap,
+    ServerMsg, PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -194,6 +194,10 @@ impl<'w> Prediction<'w> {
 }
 
 pub struct ClientNet {
+    /// Identity key: answers the server's `Challenge` with `ClientMsg::Auth`.
+    key: Option<ed25519_dalek::SigningKey>,
+    /// Identity the server was shown (the public key of `key`).
+    pub identity: Option<[u8; 32]>,
     pub endpoint: usize,
     channel: Channel,
     pub player_id: Option<u32>,
@@ -243,6 +247,8 @@ impl ClientNet {
             downloading: BTreeMap::new(),
             downloaded: Vec::new(),
             dropped_snapshots: 0,
+            key: None,
+            identity: None,
         };
         let mut w = Writer::default();
         ClientMsg::Hello {
@@ -282,6 +288,15 @@ impl ClientNet {
     }
 
     /// One client tick: records the usercmd and sends a packet with the last 8 plus acks.
+    /// Use `secret` (ed25519 seed) as this client's identity; must be set before the server's
+    /// `Challenge` arrives, i.e. right after `new`.
+    pub fn with_key(mut self, secret: &[u8; 32]) -> Self {
+        let key = ed25519_dalek::SigningKey::from_bytes(secret);
+        self.identity = Some(key.verifying_key().to_bytes());
+        self.key = Some(key);
+        self
+    }
+
     pub fn tick(&mut self, mut cmd: NetCmd, transport: &mut dyn Transport) {
         if cmd.seen_tick == 0 {
             cmd.seen_tick = self.world.tick;
@@ -397,6 +412,18 @@ impl ClientNet {
                         self.world.cvars.insert(name, value);
                     }
                     ServerMsg::Undos { entries, .. } => self.world.own.undos = entries,
+                    ServerMsg::Challenge { nonce } => {
+                        if let Some(key) = &self.key {
+                            let sig = ed25519_dalek::Signer::sign(key, &auth_message(&nonce));
+                            let mut w = Writer::default();
+                            ClientMsg::Auth {
+                                pubkey: key.verifying_key().to_bytes(),
+                                sig: sig.to_bytes().to_vec(),
+                            }
+                            .write(&mut w);
+                            self.channel.send_reliable(w.buf);
+                        }
+                    }
                     ServerMsg::Models { from, names } => {
                         for (i, n) in names.into_iter().enumerate() {
                             let id = from as usize + i;

@@ -13,6 +13,10 @@ struct Args {
     name: String,
     #[arg(long, default_value_t = 400)]
     ticks: u32,
+    /// Identity key file (32 hex bytes of ed25519 seed); created when missing. Answers the
+    /// server's challenge, required by servers started with `--require-auth`.
+    #[arg(long)]
+    key: Option<std::path::PathBuf>,
     /// Client-realm addons (directory or .gmr) to run against the assembled world.
     #[arg(long)]
     addon: Vec<std::path::PathBuf>,
@@ -40,6 +44,25 @@ fn main() -> Result<()> {
     }
     let mut udp = gm_net::Udp::client(args.server.parse().context("server address")?)?;
     let mut client = gm_net::ClientNet::new(1, &args.name);
+    if let Some(path) = &args.key {
+        let secret = match std::fs::read_to_string(path) {
+            Ok(hex) => parse_secret(hex.trim()).with_context(|| format!("{}", path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let (secret, public) = gm_script::package::keygen();
+                std::fs::write(path, hex_of(&secret))
+                    .with_context(|| format!("{}", path.display()))?;
+                eprintln!(
+                    "new identity {} written to {}",
+                    hex_of(&public),
+                    path.display()
+                );
+                secret
+            }
+            Err(e) => return Err(e).with_context(|| format!("{}", path.display())),
+        };
+        client = client.with_key(&secret);
+        eprintln!("identity {}", hex_of(&client.identity.unwrap()));
+    }
     let mut script = gm_script::Runtime::client();
     for a in &args.addon {
         let m = script
@@ -292,4 +315,17 @@ fn browse(master: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn hex_of(b: &[u8; 32]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn parse_secret(hex: &str) -> anyhow::Result<[u8; 32]> {
+    anyhow::ensure!(hex.len() == 64, "a key is 32 hex bytes");
+    let mut out = [0u8; 32];
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)?;
+    }
+    Ok(out)
 }

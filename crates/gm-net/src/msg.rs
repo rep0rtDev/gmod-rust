@@ -67,6 +67,12 @@ pub enum ClientMsg {
     WantAddon {
         sha: [u8; 32],
     },
+    /// Answer to `ServerMsg::Challenge`: the client's identity (ed25519 public key) and its
+    /// signature over `AUTH_PREFIX ++ nonce`.
+    Auth {
+        pubkey: [u8; 32],
+        sig: Vec<u8>,
+    },
     AckSnapshot {
         tick: u32,
     },
@@ -216,6 +222,11 @@ pub enum ServerMsg {
     },
     /// Reliable: new entries of the connection's model table, `names[i]` is model `from + i`
     /// (ids start at 1); sent before the first snapshot that uses them.
+    /// Reliable, right after `Hello`: a random nonce the client signs to prove its identity
+    /// (`ClientMsg::Auth`). With `ServerNet::require_auth` the `Welcome` waits for it.
+    Challenge {
+        nonce: [u8; 32],
+    },
     Models {
         from: u32,
         names: Vec<String>,
@@ -462,6 +473,11 @@ impl ClientMsg {
                 w.u8(6);
                 w.buf.extend_from_slice(sha);
             }
+            ClientMsg::Auth { pubkey, sig } => {
+                w.u8(7);
+                w.buf.extend_from_slice(pubkey);
+                w.bytes(sig);
+            }
         }
     }
 
@@ -509,6 +525,10 @@ impl ClientMsg {
                 data: r.bytes()?.to_vec(),
             },
             6 => ClientMsg::WantAddon { sha: sha(r)? },
+            7 => ClientMsg::Auth {
+                pubkey: sha(r)?,
+                sig: r.bytes()?.to_vec(),
+            },
             _ => return Err(Truncated),
         })
     }
@@ -647,6 +667,10 @@ impl ServerMsg {
                     w.u32(u.id);
                     w.str(&u.name);
                 }
+            }
+            ServerMsg::Challenge { nonce } => {
+                w.u8(11);
+                w.buf.extend_from_slice(nonce);
             }
             ServerMsg::Models { from, names } => {
                 w.u8(10);
@@ -791,7 +815,17 @@ impl ServerMsg {
                 }
                 ServerMsg::Models { from, names }
             }
+            11 => ServerMsg::Challenge { nonce: sha(r)? },
             _ => return Err(Truncated),
         })
     }
+}
+
+/// Domain separator of the authentication signature: `AUTH_PREFIX ++ nonce`.
+pub const AUTH_PREFIX: &[u8] = b"gmr-auth1";
+
+pub fn auth_message(nonce: &[u8; 32]) -> Vec<u8> {
+    let mut m = AUTH_PREFIX.to_vec();
+    m.extend_from_slice(nonce);
+    m
 }
