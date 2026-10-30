@@ -10,6 +10,7 @@ pub mod api;
 pub mod manifest;
 pub mod netval;
 pub mod package;
+pub mod pool;
 pub mod snapshot;
 pub mod storage;
 
@@ -51,6 +52,7 @@ pub struct Runtime {
     /// Poll the loaded addons' files every 33 ticks and hot reload the changed ones.
     pub watch: bool,
     addon_stamps: std::collections::BTreeMap<String, u64>,
+    pool: pool::Pool,
 }
 
 /// What the serial phase did to the server this tick.
@@ -74,6 +76,12 @@ impl Runtime {
             stores: Default::default(),
             watch: false,
             addon_stamps: Default::default(),
+            pool: pool::Pool::new(
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+                    .min(16),
+            ),
         }
     }
 
@@ -400,29 +408,34 @@ impl Runtime {
 
     fn parallel(&mut self, snap: &Arc<Snapshot>, event: &str, payload: &api::Payload) {
         let tick = self.tick;
-        let results: Vec<Result<Option<bool>, mlua::Error>> = std::thread::scope(|s| {
-            let handles: Vec<_> = self
+        let mut results: Vec<Result<Option<bool>, mlua::Error>> = (0..self.actors.len())
+            .map(|_| Err(mlua::Error::runtime("actor thread panicked")))
+            .collect();
+        if self.actors.len() == 1 {
+            let a = &mut self.actors[0];
+            results[0] = if a.may_run(tick) {
+                a.dispatch(snap, event, payload, tick)
+            } else {
+                Ok(None)
+            };
+        } else {
+            let jobs: Vec<Box<dyn FnOnce() + Send + '_>> = self
                 .actors
                 .iter_mut()
-                .map(|a| {
+                .zip(results.iter_mut())
+                .map(|(a, slot)| {
                     let snap = snap.clone();
-                    s.spawn(move || {
-                        if a.may_run(tick) {
+                    Box::new(move || {
+                        *slot = if a.may_run(tick) {
                             a.dispatch(&snap, event, payload, tick)
                         } else {
                             Ok(None)
-                        }
-                    })
+                        };
+                    }) as Box<dyn FnOnce() + Send + '_>
                 })
                 .collect();
-            handles
-                .into_iter()
-                .map(|h| {
-                    h.join()
-                        .unwrap_or_else(|_| Err(mlua::Error::runtime("actor thread panicked")))
-                })
-                .collect()
-        });
+            self.pool.run(jobs);
+        }
         for (a, r) in self.actors.iter_mut().zip(results) {
             if let Err(e) = r {
                 self.log.push(format!("[{}] {e}", a.label()));

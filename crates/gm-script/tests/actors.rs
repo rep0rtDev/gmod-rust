@@ -420,3 +420,34 @@ fn file_watch_reloads_changed_addons_and_survives_a_broken_edit() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn pool_runs_every_job_and_survives_a_panic() {
+    let pool = gm_script::pool::Pool::new(3);
+    let hits = std::sync::atomic::AtomicUsize::new(0);
+    let mut slots = [0u32; 50];
+    {
+        let jobs: Vec<Box<dyn FnOnce() + Send + '_>> = slots
+            .iter_mut()
+            .enumerate()
+            .map(|(i, s)| {
+                let hits = &hits;
+                Box::new(move || {
+                    hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if i == 7 {
+                        panic!("job 7 dies");
+                    }
+                    *s = i as u32 + 1;
+                }) as Box<dyn FnOnce() + Send + '_>
+            })
+            .collect();
+        pool.run(jobs);
+    }
+    assert_eq!(hits.load(std::sync::atomic::Ordering::Relaxed), 50);
+    assert_eq!(slots[7], 0);
+    assert!(slots
+        .iter()
+        .enumerate()
+        .all(|(i, &v)| i == 7 || v == i as u32 + 1));
+    pool.run(vec![Box::new(|| {}) as Box<dyn FnOnce() + Send + '_>]);
+}

@@ -7,7 +7,8 @@ Luau's own sandbox mode is not used because it freezes every global table (`stat
 
 ## Tick
 
-- Parallel phase: every actor on its own thread with the same immutable `Snapshot` (entities:
+- Parallel phase: every actor as one job on a fixed worker pool (`available_parallelism`, at
+  most 16 threads; a lone actor runs inline), all with the same immutable `Snapshot` (entities:
   id, model, pos, angles, frozen, owner; players: origin, velocity, view, held prop; counts).
   `world.get(id)`, `world.find(model?)`, `world.players()`, `world.count()`, `game.tick()` read
   it; `phys.trace(start, end)` traces the world (brushes, displacements) and the prop hulls like
@@ -72,6 +73,14 @@ writes. `addons/examples/freeze_crates` refuses cans and freezes spawned crates;
 test `gm-dedicated/tests/addon_hooks.rs` runs it through map, server loop, loopback network and
 hooks: the can never appears, the crate is frozen in the sandbox, in Jolt and in the client's
 snapshot.
+
+## Worker pool
+
+The parallel phase used to spawn a thread per actor per dispatch; measured in release on the 8-core
+VM with trivial `tick.client` handlers: 48 us per tick for one actor, 125 for 8, 559 for 32. With
+the fixed pool (`pool.rs`: mpsc jobs, a latch counted down by a drop guard so a panicking job
+still completes the run, jobs borrow `&mut Actor` for the run's duration) the same ticks take
+1.6, 46 and 138 us. A job that panics is logged as `actor thread panicked` for that actor only.
 
 ## Budgets
 
