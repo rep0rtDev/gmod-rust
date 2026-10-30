@@ -29,7 +29,13 @@ pub struct Vertex {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct MaterialParams {
     alpha_test: u32,
-    pad: [u32; 3],
+    /// `UnlitGeneric`: the base texture is shown as is, no lightmap.
+    unlit: u32,
+    pad: [u32; 2],
+}
+
+fn is_unlit(shader: &str) -> bool {
+    shader.eq_ignore_ascii_case("unlitgeneric")
 }
 
 #[repr(C)]
@@ -147,7 +153,8 @@ fn build_sky_cube(
         label: Some("sky params"),
         contents: bytemuck::bytes_of(&MaterialParams {
             alpha_test: 0,
-            pad: [0; 3],
+            unlit: 0,
+            pad: [0; 2],
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });
@@ -648,7 +655,8 @@ impl WorldRenderer {
                 label: Some("material params"),
                 contents: bytemuck::bytes_of(&MaterialParams {
                     alpha_test: mat.translucent as u32,
-                    pad: [0; 3],
+                    unlit: is_unlit(&mat.shader) as u32,
+                    pad: [0; 2],
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -981,7 +989,8 @@ impl WorldRenderer {
                     label: Some("model material params"),
                     contents: bytemuck::bytes_of(&MaterialParams {
                         alpha_test: mat.translucent as u32,
-                        pad: [0; 3],
+                        unlit: is_unlit(&mat.shader) as u32,
+                        pad: [0; 2],
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
@@ -1030,7 +1039,8 @@ impl WorldRenderer {
             label: Some("solid params"),
             contents: bytemuck::bytes_of(&MaterialParams {
                 alpha_test: 0,
-                pad: [0; 3],
+                unlit: 0,
+                pad: [0; 2],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });

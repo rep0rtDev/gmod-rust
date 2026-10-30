@@ -10,7 +10,7 @@ struct Camera {
 
 struct MaterialParams {
     alpha_test: u32,
-    pad0: u32,
+    unlit: u32,
     pad1: u32,
     pad2: u32,
 };
@@ -47,6 +47,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     // lightmap atlas stores linear light / 2 so the Source overbright range fits in 8 bits
-    let light = textureSample(lightmap, lightmap_sampler, in.lm_uv).rgb * 2.0;
+    var light = textureSample(lightmap, lightmap_sampler, in.lm_uv).rgb * 2.0;
+    if material.unlit != 0u {
+        light = vec3<f32>(1.0);
+    }
     return vec4<f32>(albedo.rgb * light * in.color, 1.0);
 }
