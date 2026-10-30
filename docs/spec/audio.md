@@ -40,9 +40,16 @@ eye), so the sound and the shot are the same event on every client:
 | `Dry` (3) | `Weapon_<X>.Empty` |
 
 `<X>` is the loadout class: `Pistol`, `357`, `SMG1`, `AR2`, `Shotgun`, `Crossbow`, `RPG`,
-`Crowbar`, `PhysCannon`. The physgun has no sound yet (its sounds live in the game's binary,
-to be measured through the server's sound hook); the camera's `NPC_CScanner.TakePhoto` is
-not wired (the server has no camera click yet). The owner's
+`Crowbar`, `PhysCannon`. The physgun is silent on purpose: measured through the probe's
+`EntityEmitSound` hook (`physgun_sound_hold`, `physgun_sound_freeze`), the server emits no
+sound for pick-up, hold, freeze or release, so whatever the game's physgun plays is
+client-only and not measurable from the server (open). The camera's
+`NPC_CScanner.TakePhoto` is not wired (the server has no camera click yet).
+
+Measured but not played yet: prop impacts. In `physgun_sound_hold` the released crate's
+landing emits `physics/wood/wood_crate_impact_hard5.wav` on `CHAN_STATIC` (6), volume
+0.3672, pitch 99, `SNDLVL_NORM` (75), 29 ticks after release (the surface-property impact
+sound system: the wave set from `surfaceproperties.txt`, volume from the impact speed). The owner's
 viewmodel `fire` sequence also plays on the `Fire` event now, not on the click, so held
 automatic fire and dry fire show and sound as the server resolved them. Open: the shotgun's
 secondary (double) also arrives as `Fire` and plays `.Single`, not `.Double`. The .357's

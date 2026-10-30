@@ -2073,3 +2073,27 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
+
+[[harness]]
+name = "physgun_sound_hold"
+scenario = "physgun/sound_hold"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "physgun_sound_freeze"
+scenario = "physgun/sound_freeze"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000

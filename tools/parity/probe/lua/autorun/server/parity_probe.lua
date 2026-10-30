@@ -296,6 +296,21 @@ SCENARIOS.physgun = function(scn, done)
 		end
 		return nil
 	end
+	-- every sound the server emits during the run (the physgun's live in the binary)
+	local sounds = {}
+	hook.Add("EntityEmitSound", "parity_physgun", function(d)
+		if tick < 0 then return end
+		sounds[#sounds + 1] = {
+			t = tick,
+			ent = IsValid(d.Entity) and d.Entity:GetClass() or "",
+			name = d.OriginalSoundName or d.SoundName,
+			wave = d.SoundName,
+			vol = d.Volume,
+			level = d.SoundLevel,
+			pitch = d.Pitch,
+			chan = d.Channel,
+		}
+	end)
 	hook.Add("StartCommand", "parity_physgun", function(ply, cmd)
 		if ply ~= bot then return end
 		local sg = tick >= 0 and segmentAt(tick) or nil
@@ -340,6 +355,7 @@ SCENARIOS.physgun = function(scn, done)
 			hook.Remove("StartCommand", "parity_physgun")
 			hook.Remove("SetupMove", "parity_physgun")
 			hook.Remove("FinishMove", "parity_physgun")
+			hook.Remove("EntityEmitSound", "parity_physgun")
 			local info = IsValid(phys) and { mass = phys:GetMass(), material = phys:GetMaterial() } or {}
 			if IsValid(ent) then ent:Remove() end
 			done({
@@ -353,6 +369,7 @@ SCENARIOS.physgun = function(scn, done)
 					timetoarrive = GetConVar("physgun_timeToArrive") and GetConVar("physgun_timeToArrive"):GetFloat(),
 					teleport = GetConVar("physgun_teleportDistance") and GetConVar("physgun_teleportDistance"):GetFloat(),
 				},
+				sounds = sounds,
 				ticks = ticks,
 			})
 		end
