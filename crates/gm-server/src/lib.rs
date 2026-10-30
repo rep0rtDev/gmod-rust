@@ -79,6 +79,14 @@ pub enum GameEvent {
         player: u32,
         ent: u32,
     },
+    /// A recorded prop impact (the same capture that makes impact sounds, no speed cut): one
+    /// per prop involved, `other` 0 for the world.
+    Collide {
+        ent: u32,
+        other: u32,
+        point: Vec3,
+        speed: f32,
+    },
 }
 
 /// Something about to happen that the addon runtime may veto or change (`request_hook`), asked
@@ -2281,6 +2289,28 @@ impl<'w> Server<'w> {
         }
         let mut heard: Vec<u32> = Vec::new();
         for imp in impacts {
+            let prop_of = |body: BodyHandle| -> Option<u32> {
+                if body == self.world_body {
+                    return Some(0);
+                }
+                self.bodies
+                    .iter()
+                    .find(|(_, b)| **b == body)
+                    .map(|(id, _)| *id)
+            };
+            let ids = [prop_of(imp.bodies[0]), prop_of(imp.bodies[1])];
+            for (me, other) in [(ids[0], ids[1]), (ids[1], ids[0])] {
+                if let (Some(ent), Some(other)) = (me, other) {
+                    if ent != 0 {
+                        self.game_events.push(GameEvent::Collide {
+                            ent,
+                            other,
+                            point: imp.point,
+                            speed: imp.speed,
+                        });
+                    }
+                }
+            }
             let Some(volume) = impact_volume(imp.speed) else {
                 continue;
             };

@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, RwLock};
 pub struct Payload {
     pub ints: Vec<(&'static str, i64)>,
     pub floats: Vec<(&'static str, f64)>,
+    pub vecs: Vec<(&'static str, Vec3)>,
     pub strs: Vec<(&'static str, String)>,
     /// Tool click: (entity or 0 for the world, position, normal).
     pub hit: Option<(u32, Vec3, Vec3)>,
@@ -841,6 +842,9 @@ pub fn payload_table(lua: &Lua, p: &Payload) -> Result<Table> {
     }
     for (k, v) in &p.floats {
         t.set(*k, *v)?;
+    }
+    for (k, v) in &p.vecs {
+        t.set(*k, vec3_table(lua, *v)?)?;
     }
     for (k, v) in &p.strs {
         t.set(*k, v.as_str())?;

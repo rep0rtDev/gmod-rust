@@ -783,7 +783,8 @@ impl Runtime {
         self.run_event(server, "player.disconnected", p)
     }
 
-    /// The server's game events of the tick, in order: `player.spawned {player}`,
+    /// The server's game events of the tick, in order (`entity.collide {entity, other, pos,
+    /// speed}` for every recorded prop impact, `other` 0 = world), `player.spawned {player}`,
     /// `player.damaged {player, amount, type}` (health damage applied), `player.death {player,
     /// type}` (type 0 for a scripted kill), `physgun.pickup` / `physgun.drop` / `physgun.freeze`
     /// `{player, entity}`.
@@ -815,6 +816,18 @@ impl Runtime {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("type", dmg_type as i64));
                     "player.death"
+                }
+                E::Collide {
+                    ent,
+                    other,
+                    point,
+                    speed,
+                } => {
+                    p.ints.push(("entity", ent as i64));
+                    p.ints.push(("other", other as i64));
+                    p.vecs.push(("pos", point));
+                    p.floats.push(("speed", speed as f64));
+                    "entity.collide"
                 }
                 E::PhysgunPickup { player, ent }
                 | E::PhysgunDrop { player, ent }

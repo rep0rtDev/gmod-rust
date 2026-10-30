@@ -2108,6 +2108,13 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
                 if state.vetoed == 0 then state.vetoed = 1 return false end
             end)
             events.on('player.damage', function(e) return e.amount * 0.5 end)
+            state.collided = 0
+            events.on('entity.collide', function(e)
+                state.collided += 1
+                state.other = e.other
+                state.collide_z = e.pos.z
+                state.collide_speed = e.speed
+            end)
             events.on('physgun.pickup', function(e) put('pickup ' .. e.player .. ' ' .. e.entity) end)
             events.on('physgun.drop', function(e) put('drop ' .. e.player .. ' ' .. e.entity) end)
             events.on('physgun.freeze', function(e)
@@ -2121,7 +2128,8 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
             events.on('player.death', function(e) put('death ' .. e.player .. ' ' .. e.type) end)
             events.on('player.spawned', function(e)
                 put('spawned ' .. e.player)
-                net.send('log', { log = state.log, vetoed = state.vetoed }, e.player)
+                net.send('log', { log = state.log, vetoed = state.vetoed, collided = state.collided,
+                    other = state.other, collide_z = state.collide_z, collide_speed = state.collide_speed }, e.player)
             end)"
             .into(),
         config: relaxed(),
@@ -2134,7 +2142,7 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
         addon: "test".into(),
         name: "hud".into(),
         priority: 1,
-        source: "net.receive('log', function(p) state.log = p.data.log state.vetoed = p.data.vetoed end)".into(),
+        source: "net.receive('log', function(p) state.d = p.data end)".into(),
         config: relaxed(),
     })
     .unwrap();
@@ -2187,8 +2195,20 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
     );
     // damage from the server side, as a bullet or a fall deals it: the handler halves it
     assert_eq!(server.damage_player(1, 30.0, 0), 15.0);
+    // a second crate dropped from 100 u: a recorded impact against the world
+    let dropped = server
+        .spawn_prop(1, "models/props_junk/wood_crate001a.mdl")
+        .unwrap();
+    let pos = server
+        .sandbox
+        .props()
+        .iter()
+        .find(|p| p.id == dropped)
+        .unwrap()
+        .pos;
+    assert!(server.teleport_prop(dropped, pos + glam::Vec3::Z * 100.0, glam::Vec3::ZERO));
     step(&mut sn, &mut client, &mut server, &mut crt, 0, 200);
-    let log: Vec<String> = crt.actors()[0].eval("return state.log").unwrap();
+    let log: Vec<String> = crt.actors()[0].eval("return state.d.log").unwrap();
     assert_eq!(
         log,
         vec![
@@ -2201,8 +2221,16 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
             "spawned 1".to_string(),
         ]
     );
-    let vetoed: u32 = crt.actors()[0].eval("return state.vetoed").unwrap();
+    let vetoed: u32 = crt.actors()[0].eval("return state.d.vetoed").unwrap();
     assert_eq!(vetoed, 1, "the first pick-up was refused by the script");
+    let collided: u32 = crt.actors()[0].eval("return state.d.collided").unwrap();
+    assert!(collided >= 1, "the dropped crate hit the floor");
+    let (other, z, speed): (u32, f32, f32) = crt.actors()[0]
+        .eval("return state.d.other, state.d.collide_z, state.d.collide_speed")
+        .unwrap();
+    assert_eq!(other, 0, "against the world");
+    assert!((-146.0..-140.0).contains(&z), "contact at the floor: {z}");
+    assert!(speed > 0.0, "approach speed {speed}");
     assert!(server.sandbox.props()[0].frozen);
     let shot = client
         .sounds

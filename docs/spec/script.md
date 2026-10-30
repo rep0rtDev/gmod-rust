@@ -359,7 +359,7 @@ waits for a real client; a published package is capped at 50 MiB.
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API (tool ghosts and panels, spawn menu), WASM components,
-`entity.collide`, the sandbox gamemode in Luau on top of this API.
+`player.use` / `noclip`, `tool.before` / `after`, the sandbox gamemode in Luau on top of this API.
 
 ## Server events
 
@@ -381,6 +381,14 @@ when the physgun's trace finds an unfrozen prop with attack held, `false` keeps 
 hand (asked again every tick the button stays down). A request raised by a write of a running
 handler (a `player.damage` queued from inside an event) is not asked again: handlers are never
 re-entered, the write applies as queued.
+
+`entity.collide {entity, other, pos, speed}` fires for every prop impact the physics shim
+records (the capture behind impact sounds: the first approaching vertex or face contact of a pair
+in a step, no speed cut), once per prop involved with `other` the second prop or 0 for the
+world, `pos` the contact point and `speed` the approach speed in u/s. A prop set down from the
+physgun onto the floor it already rests on records nothing; the measured series
+(`phys_sound_drop_*`) says which drops the game voices. Measured (`addon_hooks game_events`): a
+crate teleported 100 u up collides with the world at the floor height with a positive speed.
 
 `player.chat {player, text}` runs when a client's `Command::Chat` arrives (the line is cut at 127
 characters as the game's `say` is, blank lines are dropped before asking): `false` drops the
