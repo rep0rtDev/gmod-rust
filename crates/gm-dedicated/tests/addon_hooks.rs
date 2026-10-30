@@ -2957,3 +2957,71 @@ fn a_stools_setting_schema_reaches_the_client_and_shapes_the_clicks_settings() {
         "an unparsable number falls back to the default"
     );
 }
+
+#[test]
+fn a_stools_ghost_is_drawn_at_the_clients_trace_hit() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    let mut crt = gm_script::Runtime::client();
+    crt.set_client_world(
+        &world.collision,
+        Box::new(move |m: &str| gm_dedicated::model_info(&m2, m).ok().map(|i| i.hull_planes)),
+    );
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "ghost".into(),
+        priority: 1,
+        source: "tool.register('crate_lua', {
+                ghost = function(ctx)
+                    if ctx.hit.ent ~= 0 then return nil end
+                    local rise = tonumber(ctx.settings.rise) or 0
+                    return {
+                        model = 'models/props_junk/wood_crate001a.mdl',
+                        pos = { x = ctx.hit.pos.x, y = ctx.hit.pos.y, z = ctx.hit.pos.z + rise },
+                        angles = { x = 0, y = 90, z = 0 },
+                        alpha = 102,
+                    }
+                end,
+            })"
+        .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let cw = gm_net::ClientWorld::default();
+    let eye = glam::Vec3::new(823.235, -500.0, -143.0 + 64.0);
+    let down = glam::Vec3::NEG_Z;
+    let settings = vec![("rise".to_string(), "12".to_string())];
+    let draws = crt.client_ghost(&cw, "crate_lua", &settings, eye, down);
+    assert_eq!(draws.len(), 1, "one ghost for the floor hit: {draws:?}");
+    let gm_script::DrawCmd::Model {
+        model,
+        pos,
+        angles,
+        alpha,
+    } = &draws[0]
+    else {
+        panic!("{draws:?}");
+    };
+    assert_eq!(model, "models/props_junk/wood_crate001a.mdl");
+    assert!(
+        (pos.z - (-143.969 + 12.0)).abs() < 0.01,
+        "floor plus rise: {pos}"
+    );
+    assert!((pos.x - eye.x).abs() < 0.01 && (pos.y - eye.y).abs() < 0.01);
+    assert_eq!(*angles, glam::Vec3::new(0.0, 90.0, 0.0));
+    assert!((alpha - 0.4).abs() < 0.001, "102/255: {alpha}");
+    assert!(
+        crt.client_ghost(&cw, "crate_lua", &[], eye, glam::Vec3::Z)
+            .is_empty(),
+        "nothing above the spawn within reach"
+    );
+    assert!(
+        crt.client_ghost(&cw, "weld", &[], eye, down).is_empty(),
+        "a tool without a ghost draws nothing"
+    );
+}

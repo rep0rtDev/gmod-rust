@@ -352,6 +352,39 @@ impl Runtime {
         out
     }
 
+    /// Client realm: the selected stool's ghost for this frame. Traces from `eye` along
+    /// `forward` over the client's world and props, then dispatches `render.ghost` with the hit,
+    /// the tool and the client's settings; the prelude turns the stool's `ghost(ctx)` into
+    /// `draw.model`. No hit, no ghost.
+    pub fn client_ghost(
+        &mut self,
+        world: &gm_net::ClientWorld,
+        tool: &str,
+        settings: &[(String, String)],
+        eye: glam::Vec3,
+        forward: glam::Vec3,
+    ) -> Vec<DrawCmd> {
+        let snap = self.client_snapshot(world);
+        let Some(hit) = snap.trace(eye, eye + forward * gm_sandbox::MAX_TRACE_LENGTH) else {
+            self.release_snapshots();
+            return Vec::new();
+        };
+        let mut p = api::Payload {
+            hit: Some((hit.ent.unwrap_or(0), hit.pos, hit.normal)),
+            settings: settings.to_vec(),
+            ..Default::default()
+        };
+        p.strs.push(("tool", tool.to_owned()));
+        self.parallel(&snap, "render.ghost", &p);
+        self.release_snapshots();
+        let mut out = Vec::new();
+        for a in self.actors.iter_mut() {
+            a.take_queue();
+            out.extend(a.take_draws());
+        }
+        out
+    }
+
     /// Client realm: addon messages from the server, one `net.message` dispatch each (`name`,
     /// `data`), in arrival order.
     pub fn client_net(&mut self, world: &gm_net::ClientWorld, msgs: Vec<(String, Vec<u8>)>) {

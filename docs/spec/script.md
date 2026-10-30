@@ -382,8 +382,9 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-fonts/textures/3D2D in `draw`, tool ghosts and setting panels (only the console sets tool
-settings), spawn menu icons, WASM components, +use on players and the +use pickup of small props, the
+fonts/textures/3D2D in `draw`, tool setting panels (only the console sets tool settings),
+ghosts following the stool's own placement rules (the stool computes them in `ghost`), spawn
+menu icons, WASM components, +use on players and the +use pickup of small props, the
 sandbox gamemode in Luau on top of this API.
 
 ## Server events
@@ -461,6 +462,20 @@ does not know pass through, and `tool <name>` in the console lists the schema wi
 values. Measured (`addon_hooks setting_schema`): a three-setting schema reaches the client in
 one version step; `forcelimit=5000` becomes `1000`, `nocollide=true` becomes `1`, `lots`
 becomes the default `10`. Not yet: panels (sliders, checkboxes) drawn from the schema.
+
+## Tool ghosts
+
+A stool's client part declares `ghost = function(ctx)` in its `tool.register`. Every frame the
+native client, with the tool gun out, traces from the eyes along the view over the client's
+world and prop hulls (`Runtime::client_ghost`) and dispatches `render.ghost` with
+`ctx.hit {ent, pos, normal}`, `ctx.tool` and `ctx.settings` (the same shaped values the click
+would carry); the prelude calls the selected stool's `ghost(ctx)` and turns its
+`{ model, pos?, angles?, alpha? }` (pos defaults to the hit, angles to zero, alpha 0..255 to
+150) into `draw.model`, which any handler may also call directly. The client draws
+`DrawCmd::Model` as a translucent model (alpha-blended, no depth write) after the opaque
+models; no hit, no ghost. Measured (`addon_hooks ghost`): a stool returning a crate 12 u above
+the floor hit under the spawn draws one model at z -131.969, yaw 90, alpha 0.4 (102/255); a
+trace into the sky and a tool without `ghost` draw nothing.
 
 ## +use
 

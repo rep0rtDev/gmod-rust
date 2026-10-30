@@ -896,6 +896,7 @@ impl App {
         let alpha = self.acc / gm_core::tick::DEFAULT_TICK_INTERVAL;
         let vm = viewmodel(self.weapon);
         let vm_seq = vm.as_ref().map(|vm| self.vm_sequence(vm));
+        let ghost_tool = (self.weapon == 2).then(|| (self.tool.clone(), self.tool_settings_list()));
         let Some(g) = &mut self.gfx else { return };
         let frame = match g.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
@@ -919,6 +920,24 @@ impl App {
             near: 3.0,
             far: 28000.0,
         };
+        let ghost_draws = match &ghost_tool {
+            Some((tool, settings)) => {
+                let (p, y) = (self.view.x.to_radians(), self.view.y.to_radians());
+                let fwd = Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin());
+                self.sim.script.client_ghost(
+                    &self.sim.client.world,
+                    tool,
+                    settings,
+                    camera.position,
+                    fwd,
+                )
+            }
+            None => Vec::new(),
+        };
+        let ghost_models = ghost_draws.iter().filter_map(|d| match d {
+            gm_script::DrawCmd::Model { model, .. } => Some(model.as_str()),
+            _ => None,
+        });
         let yaw = self.view.y.to_radians();
         self.sounds.mixer.set_listener(gm_audio::Listener {
             position: camera.position,
@@ -942,6 +961,7 @@ impl App {
             .map(|e| e.model.as_str())
             .chain(others.then_some(gm_server::PLAYER_MODEL))
             .chain(held_models)
+            .chain(ghost_models)
         {
             if !g.models.contains_key(model) {
                 let m = g.world.load_model(&g.gpu, &self.mount, model);
@@ -1117,8 +1137,32 @@ impl App {
             depth: &g.depth,
             aspect,
             clear_depth: false,
+            alpha: 1.0,
         };
         g.world.draw_models(&g.gpu, &camera, &target, &items);
+        for d in &ghost_draws {
+            let gm_script::DrawCmd::Model {
+                model,
+                pos,
+                angles,
+                alpha,
+            } = d
+            else {
+                continue;
+            };
+            if let Some(m) = g.models.get(model.as_str()).and_then(|m| m.as_ref()) {
+                let ghost = [DrawItem {
+                    model: m,
+                    transform: gm_render::world::model_transform(*pos, *angles),
+                    bones: None,
+                }];
+                let target = ModelTarget {
+                    alpha: *alpha,
+                    ..target
+                };
+                g.world.draw_models(&g.gpu, &camera, &target, &ghost);
+            }
+        }
         // viewmodel: own projection (narrower fov, near plane at 1 u) over a cleared depth buffer
         if let (Some(vm), Some((seq, t))) = (vm, vm_seq) {
             let path = vm.path;
@@ -1299,6 +1343,8 @@ impl App {
             // client addons' `render.hud`
             for d in &self.sim.hud_draws {
                 items.push(match d {
+                    // a world draw from a HUD handler: nothing on the 2D layer
+                    gm_script::DrawCmd::Model { .. } => continue,
                     gm_script::DrawCmd::Rect { x, y, w, h, color } => UiItem::Rect {
                         x: *x,
                         y: *y,

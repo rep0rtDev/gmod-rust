@@ -171,6 +171,13 @@ pub enum DrawCmd {
         text: String,
         color: [f32; 4],
     },
+    /// `draw.model`: a model drawn in the world, translucent (alpha 0..1); tool ghosts.
+    Model {
+        model: String,
+        pos: Vec3,
+        angles: Vec3,
+        alpha: f32,
+    },
 }
 
 /// Shared between the Rust side of an actor and the closures its VM calls.
@@ -438,6 +445,16 @@ function __tool(name: string, button: string, ctx)
     if f == nil then return nil end
     return f(ctx)
 end
+-- client realm: the selected stool's `ghost(ctx)` runs every frame with the player's trace
+-- (`ctx.hit`, `ctx.settings`) and returns { model, pos?, angles?, alpha? } or nil
+events.on("render.ghost", function(p)
+    local d = tools[p.tool]
+    if d == nil or d.ghost == nil then return end
+    local g = d.ghost(p)
+    if g ~= nil and g.model ~= nil then
+        draw.model(g.model, g.pos or p.hit.pos, g.angles, g.alpha)
+    end
+end)
 "#;
 
 /// Installs the sandbox and the host namespaces into a fresh VM.
@@ -488,6 +505,27 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     .lock()
                     .unwrap()
                     .push(DrawCmd::Rect { x, y, w, h, color });
+                Ok(())
+            },
+        )?,
+    )?;
+    let sh = shared.clone();
+    draw.set(
+        "model",
+        lua.create_function(
+            move |_, (model, pos, angles, alpha): (String, Table, Option<Table>, Option<f32>)| {
+                let pos = table_vec3(&pos)?;
+                let angles = angles
+                    .map(|t| table_vec3(&t))
+                    .transpose()?
+                    .unwrap_or(Vec3::ZERO);
+                let alpha = (alpha.unwrap_or(150.0) / 255.0).clamp(0.0, 1.0);
+                sh.draws.lock().unwrap().push(DrawCmd::Model {
+                    model,
+                    pos,
+                    angles,
+                    alpha,
+                });
                 Ok(())
             },
         )?,

@@ -42,6 +42,9 @@ fn is_unlit(shader: &str) -> bool {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct CameraUniform {
     view_proj: [[f32; 4]; 4],
+    /// Output alpha of every fragment (1 opaque; `ModelTarget::alpha` for translucent models).
+    alpha: f32,
+    _pad: [f32; 3],
 }
 
 /// Source camera: position in units, angles in degrees (pitch, yaw, roll), horizontal FOV.
@@ -88,6 +91,8 @@ pub struct SkyCamera {
 
 pub struct WorldRenderer {
     pipeline: wgpu::RenderPipeline,
+    /// Alpha-blended, no depth write: models drawn with `ModelTarget::alpha` below 1 (ghosts).
+    translucent_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
@@ -476,6 +481,8 @@ pub struct ModelTarget<'a> {
     pub depth: &'a wgpu::TextureView,
     pub aspect: f32,
     pub clear_depth: bool,
+    /// 1 draws opaque; below 1 draws alpha-blended without depth writes (tool ghosts).
+    pub alpha: f32,
 }
 
 /// Bone-name override for [`DynModel::bone_world`]: the transform another skeleton gives a bone.
@@ -1170,8 +1177,9 @@ impl WorldRenderer {
             bind_group_layouts: &[Some(&camera_layout), Some(&material_layout)],
             ..Default::default()
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("world"),
+        let make_pipeline = |label: &str, blend: Option<wgpu::BlendState>, depth_write: bool| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -1190,7 +1198,7 @@ impl WorldRenderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: Some(true),
+                depth_write_enabled: Some(depth_write),
                 depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
                 bias: Default::default(),
@@ -1202,16 +1210,24 @@ impl WorldRenderer {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,
-                    blend: None,
+                    blend,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             multiview_mask: None,
             cache: None,
-        });
+        })
+        };
+        let pipeline = make_pipeline("world", None, true);
+        let translucent_pipeline = make_pipeline(
+            "models translucent",
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+        );
 
         Ok(WorldRenderer {
             pipeline,
+            translucent_pipeline,
             camera_buffer,
             camera_bind_group,
             vertex_buffer,
@@ -1282,6 +1298,8 @@ impl WorldRenderer {
             0,
             bytemuck::bytes_of(&CameraUniform {
                 view_proj: cam.view_proj(aspect).to_cols_array_2d(),
+                alpha: 1.0,
+                _pad: [0.0; 3],
             }),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
@@ -1339,6 +1357,8 @@ impl WorldRenderer {
             0,
             bytemuck::bytes_of(&CameraUniform {
                 view_proj: vp.to_cols_array_2d(),
+                alpha: 1.0,
+                _pad: [0.0; 3],
             }),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
@@ -1582,6 +1602,7 @@ impl WorldRenderer {
             depth,
             aspect,
             clear_depth,
+            alpha,
         } = *target;
         let mut verts: Vec<Vertex> = Vec::new();
         let mut idx: Vec<u32> = Vec::new();
@@ -1632,6 +1653,8 @@ impl WorldRenderer {
             0,
             bytemuck::bytes_of(&CameraUniform {
                 view_proj: camera.view_proj(aspect).to_cols_array_2d(),
+                alpha,
+                _pad: [0.0; 3],
             }),
         );
         let mut enc = device.create_command_encoder(&Default::default());
@@ -1663,7 +1686,11 @@ impl WorldRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(if alpha < 1.0 {
+                &self.translucent_pipeline
+            } else {
+                &self.pipeline
+            });
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_vertex_buffer(0, vb.slice(..));
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
