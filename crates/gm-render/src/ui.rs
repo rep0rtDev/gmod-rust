@@ -586,6 +586,29 @@ impl UiRenderer {
         present
     }
 
+    /// Registers an already rendered texture (a spawn icon) under `name` for `UiItem::Image`.
+    pub fn register_image_view(&mut self, gpu: &Gpu, name: &str, view: &wgpu::TextureView) {
+        let bg = texture_bind_group(
+            gpu,
+            &self.layout,
+            &self.sampler,
+            &self.screen_buffer,
+            view,
+            "ui icon",
+        );
+        self.images.insert(name.to_string(), Some(bg));
+    }
+
+    /// Remembers `name` as an image that could not be made, so it is not retried.
+    pub fn register_missing_image(&mut self, name: &str) {
+        self.images.insert(name.to_string(), None);
+    }
+
+    /// Whether `name` is a registered image (present or known missing).
+    pub fn has_image(&self, name: &str) -> bool {
+        self.images.contains_key(name)
+    }
+
     /// Vertices of `items` in order with one batch per run of the same texture.
     fn build(
         &self,

@@ -421,8 +421,8 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-ghosts following the stool's own placement rules (the stool computes them in `ghost`), spawn
-menu icons, WASM components, +use on players, the rest of the sandbox gamemode
+ghosts following the stool's own placement rules (the stool computes them in `ghost`), WASM
+components, +use on players, the rest of the sandbox gamemode
 in Luau (`PlayerSpawnedProp` ownership rules; `CanProperty`, player models, the +use pickup and
 the spawn menu's own lists are done; the gamemode as one package is not).
 

@@ -469,6 +469,8 @@ impl AnimSource {
 
 pub struct DynModel {
     parts: Vec<DynPart>,
+    /// Axis-aligned bounds of the rest-pose vertices (model space).
+    bounds: (Vec3, Vec3),
     /// Drawn at full brightness (beams, markers), not shaded by the sun.
     unlit: bool,
     skeleton: Option<Skeleton>,
@@ -497,6 +499,11 @@ pub struct DrawItem<'a> {
 }
 
 impl DynModel {
+    /// Rest-pose vertex bounds in model space (min, max).
+    pub fn bounds(&self) -> (Vec3, Vec3) {
+        self.bounds
+    }
+
     /// Names of the model's sequences.
     pub fn sequences(&self) -> impl Iterator<Item = &str> {
         self.skeleton
@@ -1537,7 +1544,16 @@ impl WorldRenderer {
             bones: mdl.bones.clone(),
             anims: AnimSource::for_model(mount, bytes, &mdl),
         });
+        let mut bounds = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for (_, verts, _) in &parts {
+            for v in verts {
+                let p = Vec3::from(v.position);
+                bounds.0 = bounds.0.min(p);
+                bounds.1 = bounds.1.max(p);
+            }
+        }
         (!parts.is_empty()).then_some(DynModel {
+            bounds,
             parts,
             unlit: false,
             skeleton,
@@ -1608,6 +1624,7 @@ impl WorldRenderer {
             }
         }
         DynModel {
+            bounds: (Vec3::splat(-0.5), Vec3::splat(0.5)),
             parts: vec![(bg, verts, idx)],
             unlit,
             skeleton: None,
@@ -1785,6 +1802,41 @@ pub fn upload_rgba(
         size,
     );
     tex
+}
+
+/// A square icon target: a color texture in the world pipeline's (swapchain) format that can
+/// also be sampled (spawn-menu icons), and its depth buffer.
+pub fn icon_targets(
+    gpu: &Gpu,
+    size: u32,
+    format: wgpu::TextureFormat,
+) -> (wgpu::Texture, wgpu::Texture) {
+    let extent = wgpu::Extent3d {
+        width: size,
+        height: size,
+        depth_or_array_layers: 1,
+    };
+    let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("icon"),
+        size: extent,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let depth = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("icon depth"),
+        size: extent,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    (color, depth)
 }
 
 /// Create an offscreen color + depth target pair.

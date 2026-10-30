@@ -166,6 +166,8 @@ impl Sim {
 }
 
 struct Gfx {
+    /// Spawn-menu icon textures, kept alive for their UI bind groups.
+    icon_textures: Vec<wgpu::Texture>,
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
@@ -708,6 +710,7 @@ impl App {
             );
         }
         self.gfx = Some(Gfx {
+            icon_textures: Vec::new(),
             window,
             surface,
             config,
@@ -863,6 +866,80 @@ impl App {
         };
         self.set_tool_setting(&s.name, value);
         true
+    }
+
+    /// Spawn-menu icons: with the menu open, up to two visible rows without an icon get their
+    /// model rendered once into a 64 px square (the game's spawnicon pose: from the front-right,
+    /// a little above, framed on the model's bounds) and registered as a UI image.
+    fn render_spawn_icons(
+        spawn_models: &[String],
+        menu: Option<&SpawnMenu>,
+        mount: &gm_content::Mount,
+        g: &mut Gfx,
+    ) {
+        let Some(menu) = menu else { return };
+        let (w, h) = (g.config.width as f32, g.config.height as f32);
+        let lh = g.ui.line_height();
+        let (_, py, _, ph, rows_y) = menu_layout(w, h, lh);
+        let visible = ((py + ph - 8.0 - rows_y) / lh).max(0.0) as usize;
+        let mut budget = 2;
+        for model in spawn_models.iter().skip(menu.scroll).take(visible) {
+            if budget == 0 {
+                break;
+            }
+            let key = format!("icon:{model}");
+            if g.ui.has_image(&key) {
+                continue;
+            }
+            if !g.models.contains_key(model.as_str()) {
+                let m = g.world.load_model(&g.gpu, mount, model);
+                g.models.insert(model.clone(), m);
+            }
+            budget -= 1;
+            let Some(m) = g.models.get(model.as_str()).and_then(|m| m.as_ref()) else {
+                // no drawable mesh: remember the miss so the row is not retried every frame
+                g.ui.register_missing_image(&key);
+                continue;
+            };
+            let (lo, hi) = m.bounds();
+            let center = (lo + hi) * 0.5;
+            let radius = ((hi - lo).length() * 0.5).max(1.0);
+            let angles = glam::Vec3::new(20.0, 135.0, 0.0);
+            let dir = Camera {
+                position: glam::Vec3::ZERO,
+                angles,
+                fov_x: 50.0,
+                near: 1.0,
+                far: 1.0,
+            }
+            .forward();
+            let dist = radius / (25f32.to_radians().tan()) * 1.05;
+            let camera = Camera {
+                position: center - dir * dist,
+                angles,
+                fov_x: 50.0,
+                near: (dist - radius).max(0.5),
+                far: dist + radius * 2.0,
+            };
+            let (color, depth) = gm_render::world::icon_targets(&g.gpu, 64, g.config.format);
+            let color_view = color.create_view(&Default::default());
+            let depth_view = depth.create_view(&Default::default());
+            let target = gm_render::world::ModelTarget {
+                color: &color_view,
+                depth: &depth_view,
+                aspect: 1.0,
+                clear_depth: true,
+                alpha: 1.0,
+            };
+            let item = DrawItem {
+                model: m,
+                transform: glam::Mat4::IDENTITY,
+                bones: None,
+            };
+            g.world.draw_models(&g.gpu, &camera, &target, &[item]);
+            g.ui.register_image_view(&g.gpu, &key, &color_view);
+            g.icon_textures.push(color);
+        }
     }
 
     fn send_player_skin(&mut self) {
@@ -1117,6 +1194,9 @@ impl App {
                 body: "",
             });
         let Some(g) = &mut self.gfx else { return };
+        if self.menu.is_some() {
+            Self::render_spawn_icons(&self.spawn_models, self.menu.as_ref(), &self.mount, g);
+        }
         let frame = match g.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
             | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
@@ -1598,9 +1678,20 @@ impl App {
                         color: [1.0, 1.0, 1.0, 0.15],
                     });
                 }
+                let icon = format!("icon:{model}");
+                if g.ui.has_image(&icon) {
+                    items.push(UiItem::Image {
+                        x: px + 8.0,
+                        y: y + 1.0,
+                        w: lh - 2.0,
+                        h: lh - 2.0,
+                        material: icon,
+                        color: white,
+                    });
+                }
                 items.push(UiItem::Text {
                     font: None,
-                    x: px + 12.0,
+                    x: px + 12.0 + lh,
                     y,
                     text: model.trim_start_matches("models/").to_string(),
                     color: [0.85, 0.85, 0.85, 1.0],
