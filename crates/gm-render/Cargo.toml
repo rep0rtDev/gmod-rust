@@ -16,3 +16,4 @@ glam = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 png = "0.18"
+ab_glyph = "0.2"

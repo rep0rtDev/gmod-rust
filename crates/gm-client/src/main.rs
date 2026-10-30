@@ -3,9 +3,11 @@
 //!
 //! `GMOD_DIR=... cargo run --release -p gm-client -- [map] [yaw] [pitch]`
 //! WASD move, mouse look, space jump, ctrl duck, shift run, LMB/RMB fire, 1/2/3 weapon
-//! (none, physgun, tool gun), Q spawn a prop, Z undo, Esc release the mouse / quit.
+//! (none, physgun, tool gun), Q spawn a prop, Z undo, Esc release the mouse / quit,
+//! ` (grave) console: `help`, `spawn [model]`, `undo`, `cleanup`, `clear`, `quit`, server
+//! console lines (`status`, `cvar`, `save`, `load`, ...).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -13,6 +15,7 @@ use anyhow::{anyhow, Result};
 use glam::Vec3;
 use gm_move::buttons;
 use gm_net::{ClientNet, Command, Loopback, LoopbackEndpoint, NetCmd, ServerNet};
+use gm_render::ui::{UiItem, UiRenderer};
 use gm_render::{Camera, Gpu, WorldRenderer};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
@@ -81,6 +84,59 @@ struct Gfx {
     models: std::collections::HashMap<String, Option<gm_render::world::DynModel>>,
     player_box: gm_render::world::DynModel,
     beam: gm_render::world::DynModel,
+    ui: UiRenderer,
+}
+
+const CONSOLE_LOG_LINES: usize = 500;
+
+/// Drop-down console: the log of our lines and the server's replies, an input
+/// line with history, and a scroll offset in lines from the bottom.
+struct Console {
+    open: bool,
+    input: String,
+    lines: VecDeque<String>,
+    history: Vec<String>,
+    history_at: Option<usize>,
+    scroll: usize,
+    opened_at: Instant,
+}
+
+impl Console {
+    fn new() -> Self {
+        Console {
+            open: false,
+            input: String::new(),
+            lines: VecDeque::new(),
+            history: Vec::new(),
+            history_at: None,
+            scroll: 0,
+            opened_at: Instant::now(),
+        }
+    }
+
+    fn log(&mut self, line: impl Into<String>) {
+        if self.lines.len() == CONSOLE_LOG_LINES {
+            self.lines.pop_front();
+        }
+        self.lines.push_back(line.into());
+    }
+
+    fn history_step(&mut self, back: bool) {
+        if self.history.is_empty() {
+            return;
+        }
+        let last = self.history.len() - 1;
+        self.history_at = match (self.history_at, back) {
+            (None, true) => Some(last),
+            (Some(i), true) => Some(i.saturating_sub(1)),
+            (Some(i), false) if i < last => Some(i + 1),
+            _ => None,
+        };
+        self.input = self
+            .history_at
+            .map(|i| self.history[i].clone())
+            .unwrap_or_default();
+    }
 }
 
 struct App {
@@ -98,6 +154,7 @@ struct App {
     frames: u32,
     fps_at: Instant,
     error: Option<anyhow::Error>,
+    console: Console,
 }
 
 fn depth_view(gpu: &Gpu, w: u32, h: u32) -> wgpu::TextureView {
@@ -145,6 +202,7 @@ impl App {
         let depth = depth_view(&gpu, config.width, config.height);
         let player_box = world.solid_box(&gpu, [200, 120, 60, 255], false);
         let beam = world.solid_box(&gpu, [90, 200, 255, 255], true);
+        let ui = UiRenderer::new(&gpu, &self.mount, format)?;
         self.gfx = Some(Gfx {
             window,
             surface,
@@ -155,6 +213,7 @@ impl App {
             models: Default::default(),
             player_box,
             beam,
+            ui,
         });
         self.set_grab(true);
         Ok(())
@@ -240,6 +299,7 @@ impl App {
             self.acc -= dt;
             for e in self.sim.client.events.drain(..) {
                 println!("{e}");
+                self.console.log(e);
             }
         }
     }
@@ -346,6 +406,9 @@ impl App {
         }
         g.world
             .draw_models(&g.gpu, &camera, &view, &g.depth, aspect, &items);
+        let ui_items = self.ui_items(o);
+        let g = self.gfx.as_ref().unwrap();
+        g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);
         g.gpu.queue.present(frame);
         self.frames += 1;
         let el = self.fps_at.elapsed().as_secs_f32();
@@ -362,6 +425,159 @@ impl App {
             ));
             self.frames = 0;
             self.fps_at = Instant::now();
+        }
+    }
+}
+
+impl App {
+    fn ui_items(&self, o: Vec3) -> Vec<UiItem> {
+        let Some(g) = &self.gfx else {
+            return Vec::new();
+        };
+        let (w, h) = (g.config.width as f32, g.config.height as f32);
+        let lh = g.ui.line_height();
+        let mut items = Vec::new();
+        let white = [0.92, 0.92, 0.92, 1.0];
+        if !self.console.open {
+            let hud = format!(
+                "props {}  weapon {}  pos {:.0} {:.0} {:.0}",
+                self.sim.client.world.entities.len(),
+                ["none", "physgun", "toolgun"][self.weapon as usize % 3],
+                o.x,
+                o.y,
+                o.z
+            );
+            items.push(UiItem::Rect {
+                x: 4.0,
+                y: 4.0,
+                w: g.ui.text_width(&hud) + 12.0,
+                h: lh + 6.0,
+                color: [0.0, 0.0, 0.0, 0.45],
+            });
+            items.push(UiItem::Text {
+                x: 10.0,
+                y: 7.0,
+                text: hud,
+                color: white,
+            });
+            return items;
+        }
+        let panel = (h * 0.5).round();
+        items.push(UiItem::Rect {
+            x: 0.0,
+            y: 0.0,
+            w,
+            h: panel,
+            color: [0.05, 0.05, 0.07, 0.88],
+        });
+        items.push(UiItem::Rect {
+            x: 0.0,
+            y: panel - lh - 8.0,
+            w,
+            h: 1.0,
+            color: [0.4, 0.4, 0.45, 1.0],
+        });
+        let visible = ((panel - lh - 12.0) / lh).max(0.0) as usize;
+        let total = self.console.lines.len();
+        let scroll = self.console.scroll.min(total.saturating_sub(visible));
+        let end = total - scroll;
+        let start = end.saturating_sub(visible);
+        let top = panel - lh - 12.0 - (end - start) as f32 * lh;
+        for (i, line) in self.console.lines.range(start..end).enumerate() {
+            let n = g.ui.fit(line, w - 16.0);
+            let color = if line.starts_with("] ") {
+                [1.0, 0.85, 0.5, 1.0]
+            } else {
+                white
+            };
+            items.push(UiItem::Text {
+                x: 8.0,
+                y: top + i as f32 * lh,
+                text: line.chars().take(n).collect(),
+                color,
+            });
+        }
+        let blink = (self.console.opened_at.elapsed().as_millis() / 500).is_multiple_of(2);
+        let shown: String = {
+            let full = format!("] {}", self.console.input);
+            let max = g.ui.fit(&full, w - 24.0);
+            let skip = full.chars().count().saturating_sub(max);
+            full.chars().skip(skip).collect()
+        };
+        items.push(UiItem::Text {
+            x: 8.0,
+            y: panel - lh - 4.0,
+            text: format!("{shown}{}", if blink { "_" } else { "" }),
+            color: white,
+        });
+        items
+    }
+
+    fn toggle_console(&mut self) {
+        self.console.open = !self.console.open;
+        self.console.opened_at = Instant::now();
+        self.keys.clear();
+        self.mouse.clear();
+        let open = self.console.open;
+        self.set_grab(!open);
+    }
+
+    fn console_key(&mut self, el: &ActiveEventLoop, code: Option<KeyCode>, text: Option<&str>) {
+        match code {
+            Some(KeyCode::Enter | KeyCode::NumpadEnter) => {
+                let line = std::mem::take(&mut self.console.input);
+                self.console.history_at = None;
+                self.run_console(el, &line);
+            }
+            Some(KeyCode::Backspace) => {
+                self.console.input.pop();
+            }
+            Some(KeyCode::Escape) => self.toggle_console(),
+            Some(KeyCode::ArrowUp) => self.console.history_step(true),
+            Some(KeyCode::ArrowDown) => self.console.history_step(false),
+            Some(KeyCode::PageUp) => self.console.scroll += 5,
+            Some(KeyCode::PageDown) => self.console.scroll = self.console.scroll.saturating_sub(5),
+            _ => {
+                if let Some(t) = text {
+                    self.console
+                        .input
+                        .extend(t.chars().filter(|c| !c.is_control()));
+                }
+            }
+        }
+    }
+
+    fn run_console(&mut self, el: &ActiveEventLoop, line: &str) {
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+        self.console.log(format!("] {line}"));
+        if self.console.history.last().map(String::as_str) != Some(line) {
+            self.console.history.push(line.to_string());
+        }
+        self.console.scroll = 0;
+        let mut words = line.split_whitespace();
+        let verb = words.next().unwrap_or("");
+        let rest: Vec<&str> = words.collect();
+        match verb {
+            "quit" | "exit" => el.exit(),
+            "clear" => self.console.lines.clear(),
+            "spawn" => self.sim.client.command(Command::Spawn {
+                model: rest.first().unwrap_or(&SPAWN_MODEL).to_string(),
+            }),
+            "undo" => self.sim.client.command(Command::Undo),
+            "cleanup" => self.sim.client.command(Command::Cleanup),
+            "help" => {
+                self.console
+                    .log("client: spawn [model] | undo | cleanup | clear | quit; server:");
+                self.sim.client.command(Command::Console {
+                    line: line.to_string(),
+                });
+            }
+            _ => self.sim.client.command(Command::Console {
+                line: line.to_string(),
+            }),
         }
     }
 }
@@ -388,10 +604,22 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                let PhysicalKey::Code(code) = event.physical_key else {
-                    return;
+                let code = match event.physical_key {
+                    PhysicalKey::Code(code) => Some(code),
+                    _ => None,
                 };
                 let down = event.state == ElementState::Pressed;
+                if down && !event.repeat && code == Some(KeyCode::Backquote) {
+                    self.toggle_console();
+                    return;
+                }
+                if self.console.open {
+                    if down {
+                        self.console_key(el, code, event.text.as_deref());
+                    }
+                    return;
+                }
+                let Some(code) = code else { return };
                 if down && !event.repeat {
                     match code {
                         KeyCode::Escape if self.grabbed => self.set_grab(false),
@@ -413,6 +641,9 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                if self.console.open {
+                    return;
+                }
                 if !self.grabbed && state == ElementState::Pressed {
                     self.set_grab(true);
                     return;
@@ -522,6 +753,7 @@ fn main() -> Result<()> {
         frames: 0,
         fps_at: Instant::now(),
         error: None,
+        console: Console::new(),
     };
     let el = EventLoop::new()?;
     el.set_control_flow(ControlFlow::Poll);
