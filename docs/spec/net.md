@@ -210,7 +210,16 @@ mark, props, constraints), `kick <player> [reason]`, `ban <player>`, `unban <key
 `cvar <name> [value]` (get or set; the client's bare `Command::Cvar` is admin-only too),
 `reload <addon>`, `say <text>` (an `Event` to everyone as `[server] ...`), `admins`, `help`;
 anyone else gets `Console denied`. `gm-bot --key admin.key --rcon "status"` connects, runs the
-line, prints the replies and leaves. Measured in
+line, prints the replies and leaves.
+
+Saves (`.rdup`, our duplicator format, not the game's `.dupe`): `gm_server::save::Save` is JSON
+with the map name, every prop (model, pos, angles, frozen) and every constraint between saved
+props or the world (weld, nocollide, axis, rope with their parameters) by prop index; ownership
+is not saved. Console `save <name>` writes `<data>/saves/<name>.rdup`, `load <name>` adds it to
+the running world as the admin's props (like a duplicator paste: no limits or undo entries,
+bodies and joints built by the physics sync); `gm-dedicated --load <name>` does the same at
+start as player 0. Measured in `a_saved_world_loads_into_a_fresh_server_...`: two crates, a weld
+and a rope round-trip with identical poses and the welded pair holds within 2 u over a second. Measured in
 `connections_time_out_get_kicked_banned_refused_when_full_and_leave`.
 
 Encryption: `Hello` carries the client's ephemeral X25519 public key and `Challenge` the

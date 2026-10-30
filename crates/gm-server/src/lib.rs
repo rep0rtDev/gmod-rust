@@ -3,6 +3,7 @@
 //! (weld -> fixed, rope -> distance, axis -> hinge). Nothing here is networked yet.
 
 pub mod projectile;
+pub mod save;
 pub mod weapons;
 
 use glam::Vec3;

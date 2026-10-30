@@ -454,6 +454,49 @@ impl Sandbox {
         }
     }
 
+    /// A prop record straight from a save: no placement, limits or undo entry; the server
+    /// builds its body on the next physics sync.
+    pub fn restore_prop(
+        &mut self,
+        owner: u32,
+        model: &str,
+        pos: Vec3,
+        angles: Vec3,
+        frozen: bool,
+    ) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.props.push(Prop {
+            id,
+            owner,
+            model: model.to_string(),
+            pos,
+            angles,
+            frozen,
+        });
+        id
+    }
+
+    /// A constraint record straight from a save (no limits, undo entry or duplicate check).
+    pub fn restore_constraint(
+        &mut self,
+        owner: u32,
+        ent1: Option<u32>,
+        ent2: Option<u32>,
+        kind: ConstraintKind,
+    ) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.constraints.push(Constraint {
+            id,
+            owner,
+            ent1,
+            ent2,
+            kind,
+        });
+        id
+    }
+
     pub fn props(&self) -> &[Prop] {
         &self.props
     }

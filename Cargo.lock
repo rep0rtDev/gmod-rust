@@ -678,6 +678,7 @@ dependencies = [
  "gm-script",
  "gm-server",
  "serde",
+ "serde_json",
  "toml",
 ]
 
@@ -711,6 +712,7 @@ dependencies = [
  "gm-sandbox",
  "gm-server",
  "rand_core",
+ "serde_json",
  "sha2",
  "x25519-dalek",
 ]
@@ -806,6 +808,8 @@ dependencies = [
  "gm-move",
  "gm-physics",
  "gm-sandbox",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

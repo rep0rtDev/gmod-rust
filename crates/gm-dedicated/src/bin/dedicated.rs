@@ -44,6 +44,9 @@ struct Args {
     /// Banned identity (public key hex); `<data>/bans.txt` (one per line) is loaded and kept too.
     #[arg(long)]
     ban: Vec<String>,
+    /// Load `<data>/saves/<name>.rdup` into the world at start (owner: player 0, the server).
+    #[arg(long)]
+    load: Option<String>,
     /// Seconds without a packet before a client is dropped.
     #[arg(long, default_value_t = 10.0)]
     timeout: f32,
@@ -122,6 +125,21 @@ fn main() -> Result<()> {
         }
     }
     let mut net = gm_net::ServerNet::new(&args.map, spawn);
+    net.saves_dir = Some(args.data.join("saves"));
+    if let Some(name) = &args.load {
+        let path = args
+            .data
+            .join("saves")
+            .join(format!("{name}.{}", gm_server::save::EXTENSION));
+        let bytes = std::fs::read(&path).with_context(|| path.display().to_string())?;
+        let save: gm_server::save::Save =
+            serde_json::from_slice(&bytes).with_context(|| path.display().to_string())?;
+        let (p, c) = server.load_world(&save, 0);
+        println!(
+            "loaded {name}: {p} props, {c} constraints (saved on {})",
+            save.map
+        );
+    }
     net.require_auth = args.require_auth;
     net.max_players = args.max_players as usize;
     net.timeout_ticks = (args.timeout / gm_core::tick::DEFAULT_TICK_INTERVAL).round() as u32;

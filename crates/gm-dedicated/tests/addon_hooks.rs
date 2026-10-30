@@ -1815,3 +1815,121 @@ fn the_admin_console_answers_status_cvar_say_and_denies_others() {
     );
     assert!(!p.contains("gm_construct tick"), "{p}");
 }
+
+#[test]
+fn a_saved_world_loads_into_a_fresh_server_with_the_same_poses_and_constraints() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, spawn, glam::Vec3::new(20.0, 0.0, 0.0));
+    let crate_model = "models/props_junk/wood_crate001a.mdl";
+    let a = server.spawn_prop(1, crate_model).unwrap();
+    let b = server.spawn_prop(1, crate_model).unwrap();
+    server.teleport_prop(
+        b,
+        spawn + glam::Vec3::new(150.0, 0.0, 200.0),
+        glam::Vec3::new(0.0, 45.0, 0.0),
+    );
+    server.sandbox.set_frozen(a, true);
+    assert!(server
+        .sandbox
+        .weld(1, Some(a), Some(b), 0.0, false)
+        .is_some());
+    assert!(server
+        .sandbox
+        .rope(
+            1,
+            Some(b),
+            None,
+            glam::Vec3::ZERO,
+            spawn + glam::Vec3::new(150.0, 0.0, 400.0),
+            250.0,
+            &gm_sandbox::ToolSettings::default()
+        )
+        .is_some());
+    server.sync_after_script();
+    for _ in 0..30 {
+        server.tick(&BTreeMap::new());
+    }
+    let save = server.save_world("gm_construct");
+    assert_eq!(save.props.len(), 2);
+    assert_eq!(save.constraints.len(), 2);
+    let json = serde_json::to_string(&save).unwrap();
+    let back: gm_server::save::Save = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, save);
+    // a fresh server on the same map
+    let world2 = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut fresh = gm_server::Server::new(&world2.collision, world2.physics, world2.world_body);
+    let m3 = gm_content::Mount::for_install(&inst).unwrap();
+    fresh.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m3, m).ok()
+    }));
+    fresh.add_player(7, spawn, glam::Vec3::ZERO);
+    assert_eq!(fresh.load_world(&back, 7), (2, 2));
+    let before: Vec<_> = server
+        .sandbox
+        .props()
+        .iter()
+        .map(|p| (p.pos, p.angles, p.frozen))
+        .collect();
+    let after: Vec<_> = fresh
+        .sandbox
+        .props()
+        .iter()
+        .map(|p| (p.pos, p.angles, p.frozen))
+        .collect();
+    for (x, y) in before.iter().zip(&after) {
+        assert!(
+            x.0.distance(y.0) < 0.01 && x.1.distance(y.1) < 0.01 && x.2 == y.2,
+            "{x:?} vs {y:?}"
+        );
+    }
+    assert!(fresh.sandbox.props().iter().all(|p| p.owner == 7));
+    let kinds: Vec<_> = fresh
+        .sandbox
+        .constraints()
+        .iter()
+        .map(|c| std::mem::discriminant(&c.kind))
+        .collect();
+    let kinds0: Vec<_> = server
+        .sandbox
+        .constraints()
+        .iter()
+        .map(|c| std::mem::discriminant(&c.kind))
+        .collect();
+    assert_eq!(kinds, kinds0);
+    // the weld holds: the frozen crate keeps the hanging one in place over a second of physics
+    let (fa, fb) = (fresh.sandbox.props()[0].id, fresh.sandbox.props()[1].id);
+    let rel0 = fresh.sandbox.props()[1].pos - fresh.sandbox.props()[0].pos;
+    for _ in 0..66 {
+        fresh.tick(&BTreeMap::new());
+    }
+    let pa = fresh
+        .sandbox
+        .props()
+        .iter()
+        .find(|p| p.id == fa)
+        .unwrap()
+        .pos;
+    let pb = fresh
+        .sandbox
+        .props()
+        .iter()
+        .find(|p| p.id == fb)
+        .unwrap()
+        .pos;
+    assert!(
+        (pb - pa).distance(rel0) < 2.0,
+        "welded pair drifted {} u",
+        (pb - pa).distance(rel0)
+    );
+}

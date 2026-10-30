@@ -13,3 +13,5 @@ gm-move = { path = "../gm-move" }
 gm-physics = { path = "../gm-physics" }
 gm-sandbox = { path = "../gm-sandbox" }
 glam = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
