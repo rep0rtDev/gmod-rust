@@ -1,0 +1,27 @@
+{
+ "kind": "fire",
+ "map": "gm_construct",
+ "start": [
+  703.4,
+  -513.0,
+  -143.0
+ ],
+ "yaw": 90,
+ "pitch": 0,
+ "weapon": "weapon_smg1",
+ "name": "fire_smg1_empty_hold",
+ "segments": [
+  {
+   "ticks": 10,
+   "buttons": 0
+  },
+  {
+   "ticks": 260,
+   "buttons": 1
+  },
+  {
+   "ticks": 250,
+   "buttons": 0
+  }
+ ]
+}

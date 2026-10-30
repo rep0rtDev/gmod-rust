@@ -180,6 +180,10 @@ struct Viewmodel {
     /// viewmodel events (`PlayerSnap::vm_act`), not guessed from the buttons.
     pump: Option<&'static str>,
     dry: Option<&'static str>,
+    /// Shell-by-shell reload: one shell going in and the end (shotgun `reload2` / `reload3`;
+    /// `reload` is its start).
+    reload_shell: Option<&'static str>,
+    reload_end: Option<&'static str>,
 }
 
 const fn vm(
@@ -202,6 +206,8 @@ const fn vm(
         alt: None,
         pump: None,
         dry: None,
+        reload_shell: None,
+        reload_end: None,
     }
 }
 
@@ -284,6 +290,8 @@ const WEAPONS: [Viewmodel; 10] = [
     Viewmodel {
         alt: Some("altfire"),
         reload: Some("reload1"),
+        reload_shell: Some("reload2"),
+        reload_end: Some("reload3"),
         pump: Some("pump"),
         dry: Some("dryfire"),
         ..vm(
@@ -624,6 +632,8 @@ impl App {
                     1 => vm.reload,
                     2 => vm.pump,
                     3 => vm.dry,
+                    4 => vm.reload_shell,
+                    5 => vm.reload_end,
                     _ => None,
                 };
                 if let Some(seq) = seq {

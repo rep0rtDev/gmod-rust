@@ -75,8 +75,13 @@ pub struct Fire {
     pub spread_max: Option<f32>,
     /// Pump after each shot once `cycle` expired, this long (shotgun 0.5333).
     pub pump: Option<f32>,
-    /// Reload time after IN_RELOAD with a non-full clip; the clip fills when it expires.
+    /// Reload time after IN_RELOAD with a non-full clip; the clip fills when it expires
+    /// (pistol 1.4333, SMG1 1.5, AR2 1.5667, .357 3.6667).
     pub reload: Option<f32>,
+    /// Shell-by-shell reload (shotgun): (start, per shell, end) timers. The first shell goes in
+    /// when `start` expires, one more per `shell` while the clip can take one, then `end` plays
+    /// and the weapon is back; a press at a shell boundary with rounds in the clip fires instead.
+    pub shells: Option<(f32, f32, f32)>,
     /// Empty clip and the button down once the primary timer expired: (primary timer, refire
     /// gate) of the dry fire (pistol 0.4, 0.2). An empty clip with the button up reloads.
     pub dry_fire: Option<(f32, f32)>,
@@ -147,6 +152,7 @@ const BASE: Fire = Fire {
     spread_max: None,
     pump: None,
     reload: None,
+    shells: None,
     dry_fire: None,
     from_now: false,
     melee: false,
@@ -181,7 +187,7 @@ const SMG1: Fire = Fire {
     spread: 0.0436,
     spread_max: None,
     pump: None,
-    reload: None,
+    reload: Some(1.5),
     dry_fire: None,
     alt: Alt::GrenadeEmpty { cycle: 0.5 },
     ..BASE
@@ -195,6 +201,7 @@ const SHOTGUN: Fire = Fire {
     spread_max: None,
     pump: Some(0.5333),
     reload: None,
+    shells: Some((0.5, 0.4, 0.4333)),
     dry_fire: None,
     alt: Alt::Shells {
         n: 2,
@@ -211,7 +218,7 @@ const REVOLVER: Fire = Fire {
     spread: 0.0,
     spread_max: None,
     pump: None,
-    reload: None,
+    reload: Some(3.6667),
     dry_fire: None,
     ..BASE
 };
@@ -222,6 +229,7 @@ const AR2: Fire = Fire {
     cycle: 0.1,
     pellets: 1,
     spread: 0.02618,
+    reload: Some(1.5667),
     alt: Alt::Ball {
         delay: 0.5,
         cycle: 1.0,
@@ -527,6 +535,11 @@ pub struct Inventory {
     /// changes on every new one (the snapshot carries both).
     pub vm_act: VmAct,
     pub vm_serial: u8,
+    /// Shell-by-shell reload stage: 0 none, 1 start, 2 shells, 3 end.
+    pub reload_stage: u8,
+    /// A held press on an empty clip without a dry fire arms this on its first expired tick; the
+    /// reload starts on the next one (SMG1 held empty: reload 6 ticks after the emptying shot).
+    pub fire_on_empty: bool,
 }
 
 /// Viewmodel events the server decides: a reload starting (manual, empty clip with the button
@@ -539,6 +552,9 @@ pub enum VmAct {
     Reload = 1,
     Pump = 2,
     Dry = 3,
+    /// One shell going in (shotgun `reload2`) and the end of a shell reload (`reload3`).
+    ReloadShell = 4,
+    ReloadEnd = 5,
 }
 
 fn vm_event(slot: &mut VmAct, serial: &mut u8, act: VmAct) {
@@ -572,6 +588,23 @@ impl Inventory {
     }
 
     /// Clip state of a carried weapon, `[-1, -1]` for weapons without clips.
+    fn start_reload(&mut self, f: Fire) {
+        self.reloading = true;
+        self.busy = true;
+        self.fire_on_empty = false;
+        vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Reload);
+        self.next_primary = match f.shells {
+            Some((start, _, _)) => {
+                self.reload_stage = 1;
+                start
+            }
+            None => f.reload.unwrap_or(0.0),
+        };
+        self.next_secondary = self.next_primary;
+        self.soonest_primary = self.next_primary;
+        self.pistol_relaxed = false;
+    }
+
     pub fn clip(&self, class: &str) -> [i32; 2] {
         self.clips.get(class).copied().unwrap_or([-1, -1])
     }
@@ -586,6 +619,8 @@ impl Inventory {
         self.pistol_relaxed = false;
         self.need_pump = false;
         self.reloading = false;
+        self.reload_stage = 0;
+        self.fire_on_empty = false;
         self.busy = true;
     }
 
@@ -611,6 +646,9 @@ impl Inventory {
         self.swung = false;
         let pressed = buttons & IN_ATTACK != 0;
         let edge = pressed && !self.prev_attack;
+        if !pressed {
+            self.fire_on_empty = false;
+        }
         self.prev_attack = pressed;
         let (Some(w), Some(f)) = (def(class), def(class).and_then(|w| w.fire)) else {
             return None;
@@ -685,11 +723,44 @@ impl Inventory {
                 return None;
             }
             let reserve = self.ammo.entry(w.ammo1.to_string()).or_insert(0);
-            let take = (w.clip1 - clip[0]).min(*reserve).max(0);
-            clip[0] += take;
-            *reserve -= take;
-            self.reloading = false;
-            self.rearm = f.rearm_after_reload;
+            if let Some((_, shell, end)) = f.shells {
+                match self.reload_stage {
+                    3 => {
+                        self.reloading = false;
+                        self.reload_stage = 0;
+                    }
+                    2 if pressed && clip[0] > 0 => {
+                        // a press at the shell boundary fires instead of loading on
+                        self.reloading = false;
+                        self.reload_stage = 0;
+                    }
+                    _ if self.reload_stage == 1 || (clip[0] < w.clip1 && *reserve > 0) => {
+                        clip[0] += 1;
+                        *reserve -= 1;
+                        self.reload_stage = 2;
+                        self.next_primary = shell;
+                        self.next_secondary = shell;
+                        vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::ReloadShell);
+                        return None;
+                    }
+                    _ => {
+                        self.reload_stage = 3;
+                        self.next_primary = end;
+                        self.next_secondary = end;
+                        vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::ReloadEnd);
+                        return None;
+                    }
+                }
+            } else {
+                let take = (w.clip1 - clip[0]).min(*reserve).max(0);
+                clip[0] += take;
+                *reserve -= take;
+                self.reloading = false;
+                self.rearm = f.rearm_after_reload;
+                // both timers restart from the refill (SMG1, AR2, .357: -0.015 on that tick)
+                self.next_primary = 0.0;
+                self.next_secondary = 0.0;
+            }
         }
         if self.need_pump {
             if self.next_primary > 0.0 {
@@ -701,14 +772,11 @@ impl Inventory {
             return None;
         }
         if buttons & IN_RELOAD != 0
-            && f.reload.is_some()
+            && (f.reload.is_some() || f.shells.is_some())
             && clip[0] < w.clip1
             && self.ammo.get(w.ammo1).copied().unwrap_or(0) > 0
         {
-            self.reloading = true;
-            self.busy = true;
-            vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Reload);
-            self.next_primary = f.reload.unwrap_or(0.0);
+            self.start_reload(f);
             self.next_secondary = self.next_primary;
             self.soonest_primary = self.next_primary;
             self.pistol_relaxed = false;
@@ -718,21 +786,21 @@ impl Inventory {
             if self.next_primary > 0.0 {
                 return None;
             }
-            if pressed {
-                if let Some((timer, gate)) = f.dry_fire {
-                    vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Dry);
-                    self.next_primary = timer;
-                    self.soonest_primary = gate;
-                    self.pistol_relaxed = false;
-                }
-            } else if f.reload.is_some() && self.ammo.get(w.ammo1).copied().unwrap_or(0) > 0 {
-                self.reloading = true;
-                self.busy = true;
-                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Reload);
-                self.next_primary = f.reload.unwrap_or(0.0);
-                self.next_secondary = self.next_primary;
-                self.soonest_primary = self.next_primary;
+            // a dry fire while pressed where the weapon has one (pistol); otherwise the empty
+            // clip reloads whatever the button (SMG1 held empty reloads after its cycle)
+            if let (true, Some((timer, gate))) = (pressed, f.dry_fire) {
+                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Dry);
+                self.next_primary = timer;
+                self.soonest_primary = gate;
                 self.pistol_relaxed = false;
+            } else if (f.reload.is_some() || f.shells.is_some())
+                && self.ammo.get(w.ammo1).copied().unwrap_or(0) > 0
+            {
+                if pressed && !self.fire_on_empty {
+                    self.fire_on_empty = true;
+                } else {
+                    self.start_reload(f);
+                }
             }
             return None;
         }
@@ -760,7 +828,9 @@ impl Inventory {
         if !fresh_press && self.next_primary > 0.0 {
             return None;
         }
-        if fresh_press || !f.auto || f.from_now {
+        // held repeats of an automatic weapon advance from the expired value; a press is from
+        // now (SMG1 pressed 4 ticks after its deploy: 0.075 from the press, not from the expiry)
+        if fresh_press || edge || !f.auto || f.from_now {
             self.next_primary = f.cycle;
         } else {
             self.next_primary += f.cycle;
@@ -1216,6 +1286,113 @@ mod vm_event_tests {
         // the cycle (0.3333 s) runs out, then the pump starts: 22-23 ticks
         assert!((22..=24).contains(&ticks), "pump after {ticks} ticks");
         assert_eq!(inv.clip(class)[0], 5);
+    }
+
+    fn events_until(inv: &mut Inventory, class: &str, buttons: u32, act: VmAct) -> u32 {
+        let serial = inv.vm_serial;
+        let mut ticks = 0;
+        while inv.vm_serial == serial || inv.vm_act != act {
+            step(inv, class, buttons);
+            ticks += 1;
+            assert!(ticks < 400, "no {act:?} event");
+        }
+        ticks
+    }
+
+    #[test]
+    fn shotgun_reloads_shell_by_shell_and_a_press_fires_at_the_boundary() {
+        let class = "weapon_shotgun";
+        let mut inv = Inventory::default();
+        inv.give_loadout();
+        inv.select(class);
+        settle(&mut inv, class);
+        for _ in 0..2 {
+            assert!(step(&mut inv, class, IN_ATTACK).is_some());
+            settle(&mut inv, class);
+        }
+        assert_eq!(inv.clip(class)[0], 4);
+        assert_eq!(step(&mut inv, class, IN_RELOAD), None);
+        assert_eq!(inv.vm_act, VmAct::Reload);
+        // start 0.5 s, then the first shell goes in
+        let t1 = events_until(&mut inv, class, 0, VmAct::ReloadShell);
+        assert!((33..=35).contains(&t1), "first shell after {t1} ticks");
+        assert_eq!(inv.clip(class)[0], 5);
+        // 0.4 s per shell
+        let t2 = events_until(&mut inv, class, 0, VmAct::ReloadShell);
+        assert!((26..=28).contains(&t2), "second shell after {t2} ticks");
+        assert_eq!(inv.clip(class)[0], 6);
+        // full: one more shell period, then the end for 0.4333 s, then the weapon is back
+        let t3 = events_until(&mut inv, class, 0, VmAct::ReloadEnd);
+        assert!((26..=28).contains(&t3), "end after {t3} ticks");
+        let mut back = 0;
+        while inv.reloading {
+            step(&mut inv, class, 0);
+            back += 1;
+        }
+        assert!((28..=30).contains(&back), "idle after {back} ticks");
+        assert_eq!(inv.ammo["Buckshot"], 62);
+
+        // a press at the shell boundary fires instead of loading on
+        step(&mut inv, class, IN_ATTACK);
+        settle(&mut inv, class);
+        assert_eq!(step(&mut inv, class, IN_RELOAD), None);
+        events_until(&mut inv, class, 0, VmAct::ReloadShell);
+        for _ in 0..26 {
+            assert_eq!(step(&mut inv, class, 0), None);
+        }
+        assert!(
+            step(&mut inv, class, IN_ATTACK).is_some(),
+            "the shot leaves"
+        );
+        assert!(!inv.reloading);
+        assert_eq!(inv.clip(class)[0], 5);
+    }
+
+    #[test]
+    fn smg1_held_empty_reloads_six_ticks_after_the_last_shot() {
+        let class = "weapon_smg1";
+        let mut inv = Inventory::default();
+        inv.give_loadout();
+        inv.select(class);
+        settle(&mut inv, class);
+        let mut ticks = 0;
+        while inv.clip(class)[0] > 0 {
+            step(&mut inv, class, IN_ATTACK);
+            ticks += 1;
+            assert!(ticks < 400);
+        }
+        let t = events_until(&mut inv, class, IN_ATTACK, VmAct::Reload);
+        assert_eq!(t, 6, "reload after {t} ticks");
+        // (the recording releases before the refill; held through it is not measured)
+        let mut done = 0;
+        while inv.reloading {
+            step(&mut inv, class, 0);
+            done += 1;
+        }
+        // 1.5 s, the clip is full and both timers restart from the refill
+        assert_eq!(done, 101);
+        assert_eq!(inv.clip(class)[0], 45);
+        assert!(inv.next_primary <= 0.0 && inv.next_primary > -0.03);
+    }
+
+    #[test]
+    fn revolver_reloads_in_one_go_after_3_6667_s() {
+        let class = "weapon_357";
+        let mut inv = Inventory::default();
+        inv.give_loadout();
+        inv.select(class);
+        settle(&mut inv, class);
+        assert!(step(&mut inv, class, IN_ATTACK).is_some());
+        settle(&mut inv, class);
+        assert_eq!(step(&mut inv, class, IN_RELOAD), None);
+        let mut done = 0;
+        while inv.reloading {
+            assert_eq!(inv.clip(class)[0], 5, "no shell goes in before the end");
+            step(&mut inv, class, 0);
+            done += 1;
+        }
+        assert_eq!(done, 245);
+        assert_eq!(inv.clip(class)[0], 6);
     }
 
     #[test]
