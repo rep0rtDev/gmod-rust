@@ -225,9 +225,10 @@ fn client_realm_sees_the_assembled_world() {
 }
 
 fn tick(rt: &mut Runtime, t: u64) {
-    let mut snap = Snapshot::default();
-    snap.tick = t;
-    let snap = Arc::new(snap);
+    let snap = Arc::new(Snapshot {
+        tick: t,
+        ..Default::default()
+    });
     for a in rt.actors_mut() {
         a.dispatch(&snap, "tick.pre", &Payload::default(), t)
             .unwrap();
