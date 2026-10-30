@@ -176,3 +176,59 @@ fn reload_over_the_network() {
         client.events
     );
 }
+
+#[test]
+fn script_writes_weld_nocollide_and_velocity() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.add_player(
+        1,
+        glam::Vec3::new(823.235, -500.0, -143.0),
+        glam::Vec3::new(30.0, 0.0, 0.0),
+    );
+    let crate_model = "models/props_junk/wood_crate001a.mdl";
+    let e1 = server.spawn_prop(1, crate_model).unwrap();
+    server.teleport_player(1, glam::Vec3::new(823.235, -400.0, -143.0));
+    let e2 = server.spawn_prop(1, crate_model).unwrap();
+    assert_ne!(e1, e2);
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "writer".into(),
+        priority: 0,
+        source: format!(
+            "events.on('tick.pre', function()
+                if state.done then return end
+                state.done = true
+                world.queue('weld', {e1}, {{ ent2 = {e2}, forcelimit = 0 }})
+                world.queue('nocollide', {e2}, {{ ent2 = 0 }})
+                world.queue('set_velocity', {e1}, {{ x = 0, y = 0, z = 120, angular = {{ x = 0, y = 0, z = 90 }} }})
+                world.queue('weld', 9999, {{ ent2 = {e2} }})
+            end)"
+        ),
+        config: gm_script::ActorConfig {
+            can_write: true,
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let applied = rt.pre_tick(&mut server);
+    assert_eq!(applied.writes, 3, "{applied:?}");
+    assert_eq!(applied.rejected, 1, "{applied:?}");
+    let cons = server.sandbox.constraints();
+    assert_eq!(cons.len(), 2, "{cons:?}");
+    let st = server.prop_state(e1).unwrap();
+    assert!((st.velocity.z - 120.0).abs() < 0.5, "{:?}", st.velocity);
+    // The second actor run queues nothing: the weld survives a tick and the server keeps running.
+    server.tick(&BTreeMap::new());
+    assert_eq!(server.sandbox.constraints().len(), 2);
+}

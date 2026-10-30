@@ -43,10 +43,38 @@ pub enum ToolOp {
 /// A write an actor asked for; applied in the serial phase.
 #[derive(Clone, Debug, PartialEq)]
 pub enum QueuedWrite {
-    SetPos { ent: u32, pos: Vec3 },
-    SetAngles { ent: u32, angles: Vec3 },
-    Freeze { ent: u32, frozen: bool },
-    Remove { ent: u32 },
+    SetPos {
+        ent: u32,
+        pos: Vec3,
+    },
+    SetAngles {
+        ent: u32,
+        angles: Vec3,
+    },
+    Freeze {
+        ent: u32,
+        frozen: bool,
+    },
+    Remove {
+        ent: u32,
+    },
+    SetVelocity {
+        ent: u32,
+        velocity: Vec3,
+        angular: Vec3,
+    },
+    /// `constraint.Weld` owned by the server (owner 0: no player limits, no undo entry).
+    Weld {
+        ent: u32,
+        ent2: u32,
+        forcelimit: f32,
+        nocollide: bool,
+    },
+    /// `constraint.NoCollide` owned by the server (`ent2` 0 = the world).
+    NoCollide {
+        ent: u32,
+        ent2: u32,
+    },
 }
 
 /// Shared between the Rust side of an actor and the closures its VM calls.
@@ -327,6 +355,30 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     frozen: !matches!(arg, Value::Boolean(false)),
                 },
                 "remove" => QueuedWrite::Remove { ent },
+                "set_velocity" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::SetVelocity {
+                        ent,
+                        velocity: table_vec3(&t)?,
+                        angular: match t.get::<Option<Table>>("angular")? {
+                            Some(a) => table_vec3(&a)?,
+                            None => Vec3::ZERO,
+                        },
+                    }
+                }
+                "weld" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::Weld {
+                        ent,
+                        ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
+                        forcelimit: t.get::<Option<f32>>("forcelimit")?.unwrap_or(0.0),
+                        nocollide: t.get::<Option<bool>>("nocollide")?.unwrap_or(false),
+                    }
+                }
+                "nocollide" => QueuedWrite::NoCollide {
+                    ent,
+                    ent2: table_arg(&arg)?.get::<Option<u32>>("ent2")?.unwrap_or(0),
+                },
                 other => return Err(mlua::Error::runtime(format!("unknown write {other}"))),
             };
             let mut n = sh.queued.lock().unwrap();
@@ -569,5 +621,49 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         }
         QueuedWrite::Freeze { ent, frozen } => server.set_prop_frozen(*ent, *frozen),
         QueuedWrite::Remove { ent } => server.remove_prop(*ent),
+        QueuedWrite::SetVelocity {
+            ent,
+            velocity,
+            angular,
+        } => match server.body_of(*ent) {
+            Some(body) => {
+                server.physics.set_velocity(body, *velocity, *angular);
+                true
+            }
+            None => false,
+        },
+        QueuedWrite::Weld {
+            ent,
+            ent2,
+            forcelimit,
+            nocollide,
+        } => {
+            let world = |e: u32| if e == 0 { None } else { Some(e) };
+            if !exists(server, *ent) || (*ent2 != 0 && !exists(server, *ent2)) {
+                return false;
+            }
+            let made = server
+                .sandbox
+                .weld(0, world(*ent), world(*ent2), *forcelimit, *nocollide)
+                .is_some();
+            if made {
+                server.sync_after_script();
+            }
+            made
+        }
+        QueuedWrite::NoCollide { ent, ent2 } => {
+            let world = |e: u32| if e == 0 { None } else { Some(e) };
+            if !exists(server, *ent) || (*ent2 != 0 && !exists(server, *ent2)) {
+                return false;
+            }
+            let made = server
+                .sandbox
+                .nocollide(0, world(*ent), world(*ent2))
+                .is_some();
+            if made {
+                server.sync_after_script();
+            }
+            made
+        }
     }
 }

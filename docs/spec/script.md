@@ -11,7 +11,8 @@ Luau's own sandbox mode is not used because it freezes every global table (`stat
   id, model, pos, angles, frozen, owner; players: origin, velocity, view, held prop; counts).
   `world.get(id)`, `world.find(model?)`, `world.players()`, `world.count()`, `game.tick()` read
   it; `phys.trace(start, end)` traces the world (brushes, displacements) and the prop hulls like
-  the tool gun (`hit`, `pos`, `normal`, `ent` or 0, `fraction`); `world.queue(op, ent, arg)` queues a write (`set_pos`, `set_angles`, `freeze`, `remove`);
+  the tool gun (`hit`, `pos`, `normal`, `ent` or 0, `fraction`); `world.queue(op, ent, arg)` queues a write (`set_pos`, `set_angles`, `freeze`, `remove`,
+  `set_velocity`, `weld`, `nocollide`, see Writes);
   actors without the `world-write` capability get an error from `queue`.
 - Serial phase: queued writes are applied in addon priority, then actor id, then enqueue order;
   a write to an entity that is gone is rejected and counted.
@@ -87,6 +88,23 @@ counting ticks; an actor calling `error` is restarted once with `state.count` ca
 priority 0 actor's `set_pos` is applied before a priority 10 actor's `freeze`; a priority 0 actor
 refusing cans stops the request before the priority 10 actor sees it.
 
+## Writes
+
+`world.queue(op, ent, arg)` ops: `set_pos` / `set_angles` (`{x, y, z}`, the other half of the
+transform is kept), `freeze` (`false` thaws), `remove`, `set_velocity` (`{x, y, z, angular =
+{x, y, z}?}` in u/s and deg/s, through the physics body), `weld` (`{ent2, forcelimit?, nocollide?}`;
+`ent2` 0 welds to the world) and `nocollide` (`{ent2}`). Script constraints are owned by the server
+(owner 0): no `sbox_maxconstraints` check, no undo entry, not touched by a player's cleanup, so
+an addon cannot spend a player's limits and a player cannot undo an addon's weld. A duplicate
+weld of the same pair, a self weld or a write to an entity that is gone is rejected and counted in
+`Applied.rejected`. After a constraint write the server resyncs the physics constraints the same
+way as after a scripted stool click.
+
+Measured (`cargo test -p gm-dedicated --test addon_hooks script_writes`, needs the game install):
+an actor queueing weld(e1, e2), nocollide(e2, world), set_velocity(e1, 120 u/s up) and a weld to
+a missing entity gets `writes` 3, `rejected` 1, two sandbox constraints and e1 moving up at 120
+u/s before the next server tick; the constraints survive the tick.
+
 ## Timers
 
 `timer` lives in the actor's VM (prelude), so a timer runs in the realm and budget of the actor
@@ -107,6 +125,5 @@ never fires and still exists.
 
 ## Not yet
 
-client HUD/draw API, client-side world for traces, the rest of the API (entity write views, players,
-constraints, net, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
+client HUD/draw API, client-side world for traces, the rest of the API (players, net, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
 file watching for reloads, the sandbox gamemode in Luau on top of this API.
