@@ -91,6 +91,8 @@ struct Gfx {
 const CONSOLE_LOG_LINES: usize = 500;
 /// GMod's default `viewmodel_fov`.
 const VIEWMODEL_FOV: f32 = 54.0;
+/// Hands drawn on the `c_` viewmodels' arm bones (GMod's default player hands).
+const HANDS_MODEL: &str = "models/weapons/c_arms_citizen.mdl";
 
 /// Viewmodel of a weapon slot and its idle sequence.
 fn viewmodel(weapon: u8) -> Option<(&'static str, &'static str)> {
@@ -454,24 +456,47 @@ impl App {
                 let m = g.world.load_model(&g.gpu, &self.mount, path);
                 g.models.insert(path.to_string(), m);
             }
+            if !g.models.contains_key(HANDS_MODEL) {
+                let m = g.world.load_model(&g.gpu, &self.mount, HANDS_MODEL);
+                g.models.insert(HANDS_MODEL.to_string(), m);
+            }
             if let Some(m) = g.models.get(path).and_then(|m| m.as_ref()) {
-                let pose = m.pose(idle, self.fps_at.elapsed().as_secs_f32());
+                let world = m.bone_world(idle, self.fps_at.elapsed().as_secs_f32(), None);
+                let pose = world.as_ref().map(|w| m.skin_matrices(w));
+                let hands = g.models.get(HANDS_MODEL).and_then(|h| h.as_ref());
+                let hands_pose = match (hands, &world) {
+                    (Some(h), Some(w)) => h.pose_merged("idle", 0.0, m, w),
+                    _ => None,
+                };
+                // Source fovs are given for 4:3; wider screens widen the horizontal fov
+                let fov_x = 2.0
+                    * ((VIEWMODEL_FOV.to_radians() * 0.5).tan() * aspect * 0.75)
+                        .atan()
+                        .to_degrees();
                 let vm_camera = Camera {
-                    fov_x: VIEWMODEL_FOV,
+                    fov_x,
                     near: 1.0,
                     far: 512.0,
                     ..camera
                 };
-                let item = DrawItem {
+                let transform = gm_render::world::model_transform(camera.position, self.view);
+                let mut vm_items = vec![DrawItem {
                     model: m,
-                    transform: gm_render::world::model_transform(camera.position, self.view),
+                    transform,
                     bones: pose.as_deref(),
-                };
+                }];
+                if let (Some(h), Some(hp)) = (hands, &hands_pose) {
+                    vm_items.push(DrawItem {
+                        model: h,
+                        transform,
+                        bones: Some(hp),
+                    });
+                }
                 let target = ModelTarget {
                     clear_depth: true,
                     ..target
                 };
-                g.world.draw_models(&g.gpu, &vm_camera, &target, &[item]);
+                g.world.draw_models(&g.gpu, &vm_camera, &target, &vm_items);
             }
         }
         let ui_items = self.ui_items(o);

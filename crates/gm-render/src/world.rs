@@ -279,6 +279,9 @@ pub struct ModelTarget<'a> {
     pub clear_depth: bool,
 }
 
+/// Bone-name override for [`DynModel::bone_world`]: the transform another skeleton gives a bone.
+pub type BoneMerge<'a> = &'a dyn Fn(&str) -> Option<Mat4>;
+
 /// A `DynModel` to draw: its placement and, for a skinned pose, one matrix per bone from
 /// [`DynModel::pose`].
 pub struct DrawItem<'a> {
@@ -299,6 +302,60 @@ impl DynModel {
     /// from its start: looping sequences wrap, others hold their last frame. `None` without a
     /// skeleton, an unknown sequence or tracks in an external `.ani` block.
     pub fn pose(&self, name: &str, time: f32) -> Option<Vec<Mat4>> {
+        let world = self.bone_world(name, time, None)?;
+        Some(self.skin_matrices(&world))
+    }
+
+    /// Like [`pose`](Self::pose) with the bones that `host` also has (by name) taken from
+    /// `host_world`, the host's bone transforms from [`bone_world`](Self::bone_world): the
+    /// hands model follows the weapon's skeleton.
+    pub fn pose_merged(
+        &self,
+        name: &str,
+        time: f32,
+        host: &DynModel,
+        host_world: &[Mat4],
+    ) -> Option<Vec<Mat4>> {
+        let hs = host.skeleton.as_ref()?;
+        let lookup = |bone: &str| {
+            hs.bones
+                .iter()
+                .position(|b| b.name == bone)
+                .and_then(|i| host_world.get(i).copied())
+        };
+        let world = self.bone_world(name, time, Some(&lookup))?;
+        Some(self.skin_matrices(&world))
+    }
+
+    /// Skinning matrices from bone transforms: bone world times pose-to-bone.
+    pub fn skin_matrices(&self, world: &[Mat4]) -> Vec<Mat4> {
+        let Some(sk) = self.skeleton.as_ref() else {
+            return Vec::new();
+        };
+        world
+            .iter()
+            .zip(&sk.bones)
+            .map(|(w, b)| {
+                let r = &b.pose_to_bone;
+                let p2b = Mat4::from_cols_array_2d(&[
+                    [r[0][0], r[1][0], r[2][0], 0.0],
+                    [r[0][1], r[1][1], r[2][1], 0.0],
+                    [r[0][2], r[1][2], r[2][2], 0.0],
+                    [r[0][3], r[1][3], r[2][3], 1.0],
+                ]);
+                *w * p2b
+            })
+            .collect()
+    }
+
+    /// Model-space transform of every bone at `time` of sequence `name`; `merge` overrides
+    /// a bone's transform by name (bone merge onto another skeleton).
+    pub fn bone_world(
+        &self,
+        name: &str,
+        time: f32,
+        merge: Option<BoneMerge<'_>>,
+    ) -> Option<Vec<Mat4>> {
         let sk = self.skeleton.as_ref()?;
         let seq = sk.sequences.iter().find(|s| s.name == name)?;
         let anim = sk.anims.get(seq.anim.max(0) as usize)?;
@@ -314,13 +371,18 @@ impl DynModel {
         };
         let (start, frame) = anim.frame_data(&sk.mdl, frame)?;
         let local = gm_formats::mdl::anim_pose(&sk.mdl, start, &sk.bones, frame)?;
-        let mut world = Vec::with_capacity(local.len());
+        let mut world: Vec<Mat4> = Vec::with_capacity(local.len());
         for (i, (pos, quat)) in local.iter().enumerate() {
+            let bone = &sk.bones[i];
+            if let Some(m) = merge.and_then(|f| f(&bone.name)) {
+                world.push(m);
+                continue;
+            }
             let m = Mat4::from_rotation_translation(
                 glam::Quat::from_array(*quat).normalize(),
                 Vec3::from(*pos),
             );
-            let parent = sk.bones[i].parent;
+            let parent = bone.parent;
             let m = if parent >= 0 && (parent as usize) < i {
                 world[parent as usize] * m
             } else {
@@ -328,22 +390,7 @@ impl DynModel {
             };
             world.push(m);
         }
-        Some(
-            world
-                .iter()
-                .zip(&sk.bones)
-                .map(|(w, b)| {
-                    let r = &b.pose_to_bone;
-                    let p2b = Mat4::from_cols_array_2d(&[
-                        [r[0][0], r[1][0], r[2][0], 0.0],
-                        [r[0][1], r[1][1], r[2][1], 0.0],
-                        [r[0][2], r[1][2], r[2][2], 0.0],
-                        [r[0][3], r[1][3], r[2][3], 1.0],
-                    ]);
-                    *w * p2b
-                })
-                .collect(),
-        )
+        Some(world)
     }
 }
 

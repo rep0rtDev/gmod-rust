@@ -27,6 +27,20 @@ fn main() {
                     h.hull_min, h.hull_max, h.eye_position,
                     h.include_model_count, mdl.body_parts.len(), vtx.body_parts.len()
                 );
+                let mut materials: gm_render::props::MaterialMap = Default::default();
+                let mut missing = Vec::new();
+                let keys: Vec<Option<String>> = (0..mdl.textures.len())
+                    .map(|t| {
+                        gm_render::props::resolve_model_texture(
+                            &mount,
+                            &mdl,
+                            t,
+                            &mut materials,
+                            &mut missing,
+                        )
+                    })
+                    .collect();
+                println!("  materials {keys:?} missing {missing:?}");
                 let seqs = gm_formats::mdl::sequences(&bytes, h);
                 let anims = gm_formats::mdl::anim_descs(&bytes, h);
                 let (ani, blocks) = gm_formats::mdl::anim_blocks(&bytes);
@@ -41,6 +55,11 @@ fn main() {
                     );
                 }
                 println!("  {} seqs, {} anims", seqs.len(), anims.len());
+                if std::env::var_os("BONES").is_some() {
+                    for (i, b) in mdl.bones.iter().enumerate() {
+                        println!("  bone {i} {} parent {}", b.name, b.parent);
+                    }
+                }
             }
         }
     }
