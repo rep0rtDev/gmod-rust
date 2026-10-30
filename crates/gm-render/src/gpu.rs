@@ -39,6 +39,30 @@ impl Gpu {
         })
     }
 
+    /// An adapter that can present to `surface`'s window (created from the same `instance`).
+    pub fn for_surface(instance: wgpu::Instance, surface: &wgpu::Surface<'_>) -> Result<Self> {
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: Some(surface),
+            apply_limit_buckets: false,
+        }))
+        .map_err(|e| anyhow!("no GPU adapter for the window: {e}"))?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("gm-render"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
+            ..Default::default()
+        }))
+        .context("request_device")?;
+        Ok(Gpu {
+            instance,
+            adapter,
+            device,
+            queue,
+        })
+    }
+
     pub fn adapter_name(&self) -> String {
         self.adapter.get_info().name
     }
