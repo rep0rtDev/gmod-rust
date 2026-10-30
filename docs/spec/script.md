@@ -61,8 +61,12 @@ them. Every client frame `client_tick(world, new_snapshot)` builds the snapshot 
 client assembled (`ClientWorld`: entities with pose/model/frozen/owner, players, own prop count),
 dispatches `snapshot.received` (payload `tick`) when a new server tick arrived and `tick.client`
 every frame, in parallel and read-only: `world-write` is never granted on the client, write queues
-are dropped, `phys.trace` always misses (no world on the client yet). Test
-`client_realm_sees_the_assembled_world`.
+are dropped. `phys.trace` on the client traces the client's own collision world (brushes,
+displacements) and the PHY hulls of the props in the snapshot (`Runtime::set_client_world(world,
+hull_loader)`; the native client passes its map and `model_info`, `gm-bot` has no world so its
+traces miss), the same `trace_line` as the server's. Tests `client_realm_sees_the_assembled_world`,
+`a_client_actor_traces_the_clients_world_and_the_props_it_knows` (the spawn floor at -143.969
+with `ent` 0, a crate's hull by its id, a trace ending in the air misses).
 
 HUD: every frame the client dispatches `render.hud` with `{w, h}` (the screen in pixels);
 `hud.register(name, fn, priority?)` is `events.on("render.hud", ...)`. Handlers draw with
@@ -373,7 +377,7 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-client-side world for traces, fonts/textures/3D2D in `draw`, the rest of the API (tool ghosts and panels, spawn menu), WASM components,
+fonts/textures/3D2D in `draw`, the rest of the API (tool ghosts and panels, spawn menu), WASM components,
 `player.use` (nothing on the server reacts to +use yet), the sandbox gamemode in Luau on top of this API.
 
 ## Server events

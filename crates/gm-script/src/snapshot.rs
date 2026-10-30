@@ -76,10 +76,20 @@ impl Snapshot {
     /// The client realm's view: what the client assembled from snapshots (no world ref, so
     /// `phys.trace` misses; no prop hulls).
     pub fn of_client(world: &gm_net::ClientWorld) -> Self {
+        Self::of_client_with(world, WorldRef::default(), Vec::new())
+    }
+
+    /// `of_client` with the client's own collision world and the prop hulls it knows, so
+    /// `phys.trace` works on the client (`Runtime::set_client_world`).
+    pub fn of_client_with(
+        world: &gm_net::ClientWorld,
+        world_ref: WorldRef,
+        props: Vec<gm_sandbox::PropBody>,
+    ) -> Self {
         Snapshot {
             tick: world.tick as u64,
-            world: WorldRef::default(),
-            props: Vec::new(),
+            world: world_ref,
+            props,
             entities: world
                 .entities
                 .values()

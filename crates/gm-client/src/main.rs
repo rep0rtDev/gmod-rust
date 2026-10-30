@@ -1810,7 +1810,19 @@ fn main() -> Result<()> {
         prev_origin: spawn,
         origin: spawn,
         ducked: false,
-        script: gm_script::Runtime::client(),
+        script: {
+            let mut rt = gm_script::Runtime::client();
+            let hulls = gm_content::Mount::for_install(&inst)?;
+            rt.set_client_world(
+                collision,
+                Box::new(move |m: &str| {
+                    gm_dedicated::model_info(&hulls, m)
+                        .ok()
+                        .map(|i| i.hull_planes)
+                }),
+            );
+            rt
+        },
         addons_seen: BTreeSet::new(),
         cache: std::env::var_os("GMOD_RUST_CACHE")
             .map(std::path::PathBuf::from)

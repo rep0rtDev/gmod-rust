@@ -65,7 +65,17 @@ pub struct Runtime {
     /// Version of every loaded addon by id (what `depends` is checked against).
     pub addon_versions: std::collections::BTreeMap<String, String>,
     pool: pool::Pool,
+    /// Client realm: the client's collision world for `phys.trace` (null until
+    /// `set_client_world`); it must outlive the runtime.
+    client_world: snapshot::WorldRef,
+    /// Client realm: PHY hull planes of a model for the prop part of `phys.trace`.
+    hull_loader: Option<HullLoader>,
+    hulls: std::collections::BTreeMap<String, Option<HullPlanes>>,
 }
+
+/// Hull planes (outward normal, distance) of every PHY convex of a model, entity frame.
+pub type HullPlanes = Vec<Vec<(glam::Vec3, f32)>>;
+pub type HullLoader = Box<dyn FnMut(&str) -> Option<HullPlanes> + Send>;
 
 /// What the serial phase did to the server this tick.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -91,6 +101,9 @@ impl Runtime {
             addon_stamps: Default::default(),
             addon_versions: Default::default(),
             trusted: Vec::new(),
+            client_world: snapshot::WorldRef::default(),
+            hull_loader: None,
+            hulls: std::collections::BTreeMap::new(),
             pool: pool::Pool::new(
                 std::thread::available_parallelism()
                     .map(|n| n.get())
@@ -258,11 +271,41 @@ impl Runtime {
         rt
     }
 
+    /// Client realm: gives `phys.trace` the client's collision world (brushes, displacements)
+    /// and, through `hulls`, the PHY hulls of the props in the snapshot, so a trace on the
+    /// client hits what the tool gun's trace hits on the server. `world` must outlive the runtime.
+    pub fn set_client_world(&mut self, world: &gm_collision::World, hulls: HullLoader) {
+        self.client_world = snapshot::WorldRef(world as *const _);
+        self.hull_loader = Some(hulls);
+    }
+
+    fn client_snapshot(&mut self, world: &gm_net::ClientWorld) -> Arc<Snapshot> {
+        if self.client_world.0.is_null() {
+            return Arc::new(Snapshot::of_client(world));
+        }
+        let mut props = Vec::new();
+        for e in world.entities.values() {
+            if !self.hulls.contains_key(&e.model) {
+                let loaded = self.hull_loader.as_mut().and_then(|f| f(&e.model));
+                self.hulls.insert(e.model.clone(), loaded);
+            }
+            if let Some(Some(hulls)) = self.hulls.get(&e.model) {
+                props.push(gm_sandbox::PropBody {
+                    id: e.id,
+                    pos: e.pos,
+                    angles: e.angles,
+                    hulls: hulls.clone(),
+                });
+            }
+        }
+        Arc::new(Snapshot::of_client_with(world, self.client_world, props))
+    }
+
     /// Client realm: every actor sees the client's assembled world (parallel, read-only);
     /// `snapshot.received` when a new server tick arrived, then `tick.client` every frame.
     /// Writes are not applied on the client (the manifest never grants them there).
     pub fn client_tick(&mut self, world: &gm_net::ClientWorld, new_snapshot: bool) {
-        let snap = Arc::new(Snapshot::of_client(world));
+        let snap = self.client_snapshot(world);
         self.tick = snap.tick;
         if new_snapshot {
             self.watch_tick(None);
@@ -295,7 +338,7 @@ impl Runtime {
     /// for the client to draw over its own HUD. Writes queued here are dropped like in
     /// `client_tick`.
     pub fn client_render(&mut self, world: &gm_net::ClientWorld, w: u32, h: u32) -> Vec<DrawCmd> {
-        let snap = Arc::new(Snapshot::of_client(world));
+        let snap = self.client_snapshot(world);
         let mut p = api::Payload::default();
         p.ints.push(("w", w as i64));
         p.ints.push(("h", h as i64));
@@ -315,7 +358,7 @@ impl Runtime {
         if msgs.is_empty() {
             return;
         }
-        let snap = Arc::new(Snapshot::of_client(world));
+        let snap = self.client_snapshot(world);
         for (name, data) in msgs {
             let p = api::Payload {
                 net: Some((name, data)),

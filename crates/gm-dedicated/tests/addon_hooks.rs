@@ -2482,3 +2482,65 @@ fn a_client_actor_draws_its_hud_through_render_hud() {
         "every frame anew"
     );
 }
+
+#[test]
+fn a_client_actor_traces_the_clients_world_and_the_props_it_knows() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut crt = gm_script::Runtime::client();
+    let hulls = gm_content::Mount::for_install(&inst).unwrap();
+    crt.set_client_world(
+        &world.collision,
+        Box::new(move |m: &str| {
+            gm_dedicated::model_info(&hulls, m)
+                .ok()
+                .map(|i| i.hull_planes)
+        }),
+    );
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "probe".into(),
+        priority: 1,
+        source: "events.on('tick.client', function()
+                local floor = phys.trace({ x = 823.235, y = -500, z = -100 }, { x = 823.235, y = -500, z = -300 })
+                state.floor_hit, state.floor_z, state.floor_ent = floor.hit, floor.pos.z, floor.ent
+                local crate = phys.trace({ x = 900, y = -500, z = -100 }, { x = 900, y = -500, z = -300 })
+                state.crate_hit, state.crate_ent, state.crate_z = crate.hit, crate.ent, crate.pos.z
+                local air = phys.trace({ x = 823.235, y = -500, z = -100 }, { x = 823.235, y = -500, z = -130 })
+                state.air = air.hit
+            end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut cw = gm_net::ClientWorld::default();
+    cw.entities.insert(
+        7,
+        gm_net::msg::EntityState {
+            id: 7,
+            model: "models/props_junk/wood_crate001a.mdl".into(),
+            pos: glam::Vec3::new(900.0, -500.0, -120.0),
+            ..Default::default()
+        },
+    );
+    crt.client_tick(&cw, true);
+    let (floor_hit, floor_z, floor_ent): (bool, f32, u32) = crt.actors()[0]
+        .eval("return state.floor_hit, state.floor_z, state.floor_ent")
+        .unwrap();
+    assert!(floor_hit && floor_ent == 0);
+    assert!((floor_z - -143.969).abs() < 0.01, "floor {floor_z}");
+    let (crate_hit, crate_ent, crate_z): (bool, u32, f32) = crt.actors()[0]
+        .eval("return state.crate_hit, state.crate_ent, state.crate_z")
+        .unwrap();
+    assert!(
+        crate_hit && crate_ent == 7,
+        "the crate's PHY hull: {crate_ent}"
+    );
+    assert!(crate_z > -120.0 && crate_z < -90.0, "crate top {crate_z}");
+    let air: bool = crt.actors()[0].eval("return state.air").unwrap();
+    assert!(!air, "a trace ending above the floor misses");
+}
