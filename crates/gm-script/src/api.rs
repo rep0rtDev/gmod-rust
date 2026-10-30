@@ -4,7 +4,7 @@
 use crate::snapshot::Snapshot;
 use glam::Vec3;
 use gm_server::Server;
-use mlua::{Lua, Result, Table, Value};
+use mlua::{FromLua, Lua, Result, Table, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -89,6 +89,52 @@ pub enum QueuedWrite {
         ent: u32,
         velocity: Vec3,
         angular: Vec3,
+    },
+    /// `ents.Create("prop_physics")` + `Spawn`: a prop at a pose; `owner` 0 is the server's,
+    /// a player id goes through that player's limits and cleanup; `tag` comes back in
+    /// `entity.spawned`.
+    Spawn {
+        owner: u32,
+        model: String,
+        pos: Vec3,
+        angles: Vec3,
+        frozen: bool,
+        tag: String,
+    },
+    SetSkin {
+        ent: u32,
+        skin: u8,
+    },
+    /// One body part's model digit (`SetBodyGroups`).
+    SetBody {
+        ent: u32,
+        part: usize,
+        model: char,
+    },
+    SetGravity {
+        ent: u32,
+        on: bool,
+    },
+    SetCollide {
+        ent: u32,
+        on: bool,
+    },
+    KeepUpright {
+        ent: u32,
+        on: bool,
+    },
+    /// `Entity:Ignite(seconds)`.
+    Ignite {
+        ent: u32,
+        seconds: f32,
+    },
+    Extinguish {
+        ent: u32,
+    },
+    /// `Entity:SetHealth` on a prop (its `prop_data` health).
+    SetHealth {
+        ent: u32,
+        health: i32,
     },
     /// `constraint.Weld` owned by the server (owner 0: no player limits, no undo entry).
     Weld {
@@ -749,7 +795,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
     let sh = shared.clone();
     world.set(
         "queue",
-        lua.create_function(move |_, (op, ent, arg): (String, u32, Value)| {
+        lua.create_function(move |lua, (op, ent, arg): (String, u32, Value)| {
             if !sh.can_write {
                 return Err(mlua::Error::runtime(
                     "this actor has no world-write capability",
@@ -831,6 +877,58 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         },
                     }
                 }
+                "spawn" => {
+                    let t = table_arg(&arg)?;
+                    let pos: Table = t.get("pos")?;
+                    QueuedWrite::Spawn {
+                        owner: t.get::<Option<u32>>("owner")?.unwrap_or(0),
+                        model: t.get("model")?,
+                        pos: table_vec3(&pos)?,
+                        angles: match t.get::<Option<Table>>("angles")? {
+                            Some(a) => table_vec3(&a)?,
+                            None => Vec3::ZERO,
+                        },
+                        frozen: t.get::<Option<bool>>("frozen")?.unwrap_or(false),
+                        tag: t.get::<Option<String>>("tag")?.unwrap_or_default(),
+                    }
+                }
+                "set_skin" => QueuedWrite::SetSkin {
+                    ent,
+                    skin: u8::try_from(i64::from_lua(arg, lua)?).unwrap_or(u8::MAX),
+                },
+                "set_body" => {
+                    let t = table_arg(&arg)?;
+                    let model: i64 = t.get("model")?;
+                    QueuedWrite::SetBody {
+                        ent,
+                        part: t.get::<Option<usize>>("part")?.unwrap_or(0),
+                        model: char::from_digit(model.clamp(0, 10) as u32, 10).unwrap_or('a'),
+                    }
+                }
+                "set_gravity" => QueuedWrite::SetGravity {
+                    ent,
+                    on: bool::from_lua(arg, lua)?,
+                },
+                "set_collide" => QueuedWrite::SetCollide {
+                    ent,
+                    on: bool::from_lua(arg, lua)?,
+                },
+                "keep_upright" => QueuedWrite::KeepUpright {
+                    ent,
+                    on: bool::from_lua(arg, lua)?,
+                },
+                "ignite" => QueuedWrite::Ignite {
+                    ent,
+                    seconds: match arg {
+                        Value::Nil => gm_server::PROPERTY_IGNITE_SECONDS,
+                        v => f32::from_lua(v, lua)?,
+                    },
+                },
+                "extinguish" => QueuedWrite::Extinguish { ent },
+                "set_health" => QueuedWrite::SetHealth {
+                    ent,
+                    health: i64::from_lua(arg, lua)?.clamp(0, i32::MAX as i64) as i32,
+                },
                 "weld" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::Weld {
@@ -1372,6 +1470,40 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             }
             None => false,
         },
+        QueuedWrite::Spawn {
+            owner,
+            model,
+            pos,
+            angles,
+            frozen,
+            tag,
+        } => match server.script_spawn_prop(*owner, model, *pos, *angles, *frozen) {
+            Some(ent) => {
+                server
+                    .game_events
+                    .push(gm_server::GameEvent::ScriptSpawned {
+                        owner: *owner,
+                        ent,
+                        tag: tag.clone(),
+                    });
+                true
+            }
+            None => false,
+        },
+        QueuedWrite::SetSkin { ent, skin } => server.set_prop_skin(*ent, *skin),
+        QueuedWrite::SetBody { ent, part, model } => server.set_prop_body_part(*ent, *part, *model),
+        QueuedWrite::SetGravity { ent, on } => server.set_prop_gravity(*ent, *on),
+        QueuedWrite::SetCollide { ent, on } => server.set_prop_collide(*ent, *on),
+        QueuedWrite::KeepUpright { ent, on } => server.set_prop_upright(*ent, *on),
+        QueuedWrite::Ignite { ent, seconds } => server.ignite(*ent, *seconds),
+        QueuedWrite::Extinguish { ent } => server.extinguish(*ent),
+        QueuedWrite::SetHealth { ent, health } => {
+            if !exists(server, *ent) {
+                return false;
+            }
+            server.sandbox.set_health(*ent, *health);
+            true
+        }
         QueuedWrite::Weld {
             ent,
             ent2,

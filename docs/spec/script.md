@@ -165,6 +165,27 @@ an actor queueing weld(e1, e2), nocollide(e2, world), set_velocity(e1, 120 u/s u
 a missing entity gets `writes` 3, `rejected` 1, two sandbox constraints and e1 moving up at 120
 u/s before the next server tick; the constraints survive the tick.
 
+Prop state ops on `world.queue`, the same paths as the context-menu properties: `set_skin`
+(number; refused past the model's skin families), `set_body` (`{part, model}`, one `SetBodyGroups`
+digit; refused when the model has no such part or model), `set_gravity` / `set_collide` /
+`keep_upright` (boolean), `ignite` (seconds, default the property's 360) / `extinguish` (refused
+when not burning), `set_health` (number, the prop's `prop_data` health).
+
+`world.queue("spawn", 0, {model, pos, angles?, frozen?, owner?, tag?})` is `ents.Create
+("prop_physics")` + `SetModel` + `Spawn` at a pose: `owner` 0 (default) is the server's prop (no
+limits, undo or cleanup, like script constraints); a player id goes through `sbox_maxprops` and
+that player's cleanup list like a duplicator paste, with no undo entry (the script pushes one
+with `undo.push` if it wants); an unknown model, player or a hit limit is rejected. The prop
+exists after the write phase; the actors hear `entity.spawned {player = owner, entity, tag}`
+with the game events of that tick (not `entity.created`, which follows a player's spawn).
+
+Measured (`cargo test -p gm-dedicated --test addon_hooks script_spawns`): a server spawn
+(frozen, yaw 90) and a player-owned one land where asked and count for the player; a spawn for
+player 7 and of an unknown model, a skin past the crate's two families, a body part the crate
+does not have and an extinguish of a missing entity are rejected; skin, gravity, collisions,
+keep-upright, fire and health show on the prop before the next tick; both spawned events carry
+their tags.
+
 ## Players
 
 `world.players()` and `world.player(id)` (nil when gone) read the snapshot: `id`, `origin`,

@@ -234,6 +234,91 @@ fn script_writes_weld_nocollide_and_velocity() {
 }
 
 #[test]
+fn script_spawns_props_and_sets_their_state() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.add_player(
+        1,
+        glam::Vec3::new(823.235, -500.0, -143.0),
+        glam::Vec3::new(30.0, 0.0, 0.0),
+    );
+    let crate_model = "models/props_junk/wood_crate001a.mdl";
+    let e1 = server.spawn_prop(1, crate_model).unwrap();
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "spawner".into(),
+        priority: 0,
+        source: format!(
+            "state.spawned = {{}}
+            events.on('entity.spawned', function(e)
+                table.insert(state.spawned, (e.tag or '-') .. ':' .. tostring(e.player))
+            end)
+            events.on('tick.pre', function()
+                if state.done then return end
+                state.done = true
+                world.queue('spawn', 0, {{ model = '{crate_model}', pos = {{ x = 700, y = -300, z = -100 }},
+                    angles = {{ x = 0, y = 90, z = 0 }}, frozen = true, tag = 'server' }})
+                world.queue('spawn', 0, {{ model = '{crate_model}', pos = {{ x = 760, y = -300, z = -100 }},
+                    owner = 1, tag = 'mine' }})
+                world.queue('spawn', 0, {{ model = '{crate_model}', pos = {{ x = 0, y = 0, z = 0 }}, owner = 7 }})
+                world.queue('spawn', 0, {{ model = 'models/nope.mdl', pos = {{ x = 0, y = 0, z = 0 }} }})
+                world.queue('set_skin', {e1}, 1)
+                world.queue('set_skin', {e1}, 9)
+                world.queue('set_body', {e1}, {{ part = 0, model = 1 }})
+                world.queue('set_gravity', {e1}, false)
+                world.queue('set_collide', {e1}, false)
+                world.queue('keep_upright', {e1}, true)
+                world.queue('ignite', {e1}, 3)
+                world.queue('extinguish', 9999)
+                world.queue('set_health', {e1}, 7)
+            end)"
+        ),
+        config: gm_script::ActorConfig {
+            can_write: true,
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let applied = rt.pre_tick(&mut server);
+    let props = server.sandbox.props();
+    assert_eq!(props.len(), 3, "two spawns landed");
+    let s = &props[1];
+    assert_eq!((s.owner, s.frozen), (0, true));
+    assert_eq!(s.pos, glam::Vec3::new(700.0, -300.0, -100.0));
+    assert_eq!(s.angles, glam::Vec3::new(0.0, 90.0, 0.0));
+    assert!(s.health > 0, "prop_data health");
+    let m = &props[2];
+    assert_eq!((m.owner, m.frozen), (1, false));
+    assert_eq!(
+        server.sandbox.count_of(1, "props"),
+        2,
+        "the owned spawn counts"
+    );
+    let c = &props[0];
+    assert_eq!(c.skin, 1);
+    assert_eq!(c.body, "", "no body part with a choice on a crate");
+    assert!(!c.gravity && !c.collide && c.upright.is_some() && c.fire.is_some());
+    assert_eq!(c.health, 7);
+    assert_eq!((applied.writes, applied.rejected), (8, 5), "{applied:?}");
+    // the spawned events reach the actors with the tag after the tick
+    server.tick(&BTreeMap::new());
+    let events = std::mem::take(&mut server.game_events);
+    rt.game_events(&mut server, events);
+    let tags: Vec<String> = rt.actors()[0].eval("return state.spawned").unwrap();
+    assert_eq!(tags, vec!["server:0".to_string(), "mine:1".to_string()]);
+}
+
+#[test]
 fn script_reads_and_writes_players() {
     let Some(inst) = gm_content::find_install() else {
         eprintln!("skipped: no Garry's Mod install");

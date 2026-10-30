@@ -1070,6 +1070,12 @@ impl Runtime {
                     p.strs.push(("property", name));
                     "player.property"
                 }
+                E::ScriptSpawned { owner, ent, tag } => {
+                    p.ints.push(("player", owner as i64));
+                    p.ints.push(("entity", ent as i64));
+                    p.strs.push(("tag", tag));
+                    "entity.spawned"
+                }
                 E::PropBreak { ent } => {
                     p.ints.push(("entity", ent as i64));
                     "entity.break"

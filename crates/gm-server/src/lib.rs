@@ -173,6 +173,12 @@ pub enum GameEvent {
         ent: u32,
         name: String,
     },
+    /// A script spawned a prop (`world.queue("spawn", ...)`); `tag` is the script's own.
+    ScriptSpawned {
+        owner: u32,
+        ent: u32,
+        tag: String,
+    },
     /// The physgun's reload unfroze this many of the player's props (`PhysgunUnfreeze`).
     Unfroze {
         player: u32,
@@ -3087,7 +3093,6 @@ impl<'w> Server<'w> {
         {
             return false;
         }
-        let body = self.bodies.get(&ent).copied();
         match name {
             "remove" => {
                 self.remove_prop(ent);
@@ -3103,21 +3108,13 @@ impl<'w> Server<'w> {
                 }
             }
             "gravity" => {
-                self.sandbox.set_gravity(ent, !prop.gravity);
-                if let Some(b) = body {
-                    self.physics.set_gravity(b, !prop.gravity);
-                }
+                self.set_prop_gravity(ent, !prop.gravity);
             }
             "collision_off" | "collision_on" => {
-                let on = name == "collision_on";
-                self.sandbox.set_collide(ent, on);
-                if let Some(b) = body {
-                    self.physics.set_world_only(b, !on);
-                }
+                self.set_prop_collide(ent, name == "collision_on");
             }
             "keepupright" => {
-                let angles = body.map_or(prop.angles, |b| self.physics.state(b).angles.into());
-                self.sandbox.set_upright(ent, Some(angles));
+                self.set_prop_upright(ent, true);
             }
             "ignite" => {
                 self.ignite(ent, PROPERTY_IGNITE_SECONDS);
@@ -3129,17 +3126,14 @@ impl<'w> Server<'w> {
                 let mut it = arg.split_whitespace();
                 let part: usize = it.next().and_then(|p| p.parse().ok()).unwrap_or(0);
                 let model = it.next().and_then(|m| m.chars().next()).unwrap_or('0');
-                let mut body: Vec<char> = prop.body.chars().collect();
-                while body.len() <= part {
-                    body.push('0');
-                }
-                body[part] = model;
-                self.sandbox.set_body(ent, body.into_iter().collect());
+                self.set_prop_body_part(ent, part, model);
             }
             "extinguish" => {
                 self.extinguish(ent);
             }
-            _ => self.sandbox.set_upright(ent, None),
+            _ => {
+                self.set_prop_upright(ent, false);
+            }
         }
         self.game_events.push(GameEvent::Property {
             player,
@@ -3147,6 +3141,117 @@ impl<'w> Server<'w> {
             name: name.to_string(),
         });
         true
+    }
+
+    /// Gravity on or off for a prop (the `gravity` property / `PhysObj:EnableGravity`).
+    pub fn set_prop_gravity(&mut self, ent: u32, on: bool) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == ent) {
+            return false;
+        }
+        self.sandbox.set_gravity(ent, on);
+        if let Some(b) = self.body_of(ent) {
+            self.physics.set_gravity(b, on);
+        }
+        true
+    }
+
+    /// Collisions with other props on or off (`collision_off` puts the prop in
+    /// `COLLISION_GROUP_WORLD`: the world still holds it).
+    pub fn set_prop_collide(&mut self, ent: u32, on: bool) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == ent) {
+            return false;
+        }
+        self.sandbox.set_collide(ent, on);
+        if let Some(b) = self.body_of(ent) {
+            self.physics.set_world_only(b, !on);
+        }
+        true
+    }
+
+    /// `keepupright` on (towards the current angles) or off.
+    pub fn set_prop_upright(&mut self, ent: u32, on: bool) -> bool {
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent) else {
+            return false;
+        };
+        let angles = self
+            .body_of(ent)
+            .map_or(prop.angles, |b| self.physics.state(b).angles.into());
+        self.sandbox.set_upright(ent, on.then_some(angles));
+        true
+    }
+
+    /// Skin family of a prop; out of the model's range is refused.
+    pub fn set_prop_skin(&mut self, ent: u32, skin: u8) -> bool {
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent) else {
+            return false;
+        };
+        let skins = self.models.get(&prop.model).map_or(1, |m| m.skins);
+        if skin >= skins {
+            return false;
+        }
+        self.sandbox.set_skin(ent, skin);
+        true
+    }
+
+    /// One body part's model digit in the prop's `SetBodyGroups` string (parts past the end
+    /// are padded with 0); refused when the model has no such part or model.
+    pub fn set_prop_body_part(&mut self, ent: u32, part: usize, model: char) -> bool {
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent) else {
+            return false;
+        };
+        let n = model.to_digit(10).unwrap_or(10) as u8;
+        let ok = self
+            .models
+            .get(&prop.model)
+            .is_some_and(|m| m.body_groups.get(part).is_some_and(|&c| n < c));
+        if !ok {
+            return false;
+        }
+        let mut body: Vec<char> = prop.body.chars().collect();
+        while body.len() <= part {
+            body.push('0');
+        }
+        body[part] = model;
+        self.sandbox.set_body(ent, body.into_iter().collect());
+        true
+    }
+
+    /// A prop placed by a script at a pose (`ents.Create("prop_physics")` + `Spawn`): owner 0 is
+    /// the server's (no limits, undo or cleanup, like script constraints); a player's goes
+    /// through `sbox_maxprops` and the player's cleanup list like a duplicator paste, no undo
+    /// entry (the script pushes one with `undo.push` if it wants). Health from `prop_data`.
+    pub fn script_spawn_prop(
+        &mut self,
+        owner: u32,
+        model: &str,
+        pos: Vec3,
+        angles: Vec3,
+        frozen: bool,
+    ) -> Option<u32> {
+        if !self.models.contains_key(model) {
+            let loaded = self.model_loader.as_mut().and_then(|f| f(model))?;
+            self.register_model(model, loaded);
+        }
+        let health = self.models.get(model)?.prop_data.health;
+        let mut events = Vec::new();
+        if owner != 0 {
+            if !self.players.contains_key(&owner) {
+                return None;
+            }
+            if !self.sandbox.check_limit(owner, "props", &mut events) {
+                self.events.extend(events);
+                return None;
+            }
+        }
+        let id = self.sandbox.restore_prop(owner, model, pos, angles, frozen);
+        self.sandbox.set_health(id, health);
+        if owner != 0 {
+            self.sandbox.add_count(owner, "props", id);
+            self.sandbox.add_cleanup(owner, "props", id);
+        }
+        self.events.extend(events);
+        self.sync_physics();
+        Some(id)
     }
 
     /// `Entity:Remove` from a script: constraints on it go too, like the sandbox's own removal.
