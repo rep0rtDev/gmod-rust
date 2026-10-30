@@ -1,0 +1,10 @@
+id = "hud_lua"
+version = "0.1.0"
+priority = 0
+realms = ["client"]
+capabilities = ["world-read"]
+
+[[actors]]
+name = "hud"
+source = "src/hud.luau"
+realm = "client"

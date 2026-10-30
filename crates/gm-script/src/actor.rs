@@ -81,6 +81,7 @@ impl Actor {
             prints: Mutex::new(Vec::new()),
             can_write: spec.config.can_write,
             net_out: Mutex::new(Vec::new()),
+            draws: Mutex::new(Vec::new()),
             store,
         });
         let mut a = Actor {
@@ -298,6 +299,11 @@ impl Actor {
 
     pub fn take_queue(&mut self) -> Vec<(u64, QueuedWrite)> {
         std::mem::take(&mut *self.shared.queue.lock().unwrap())
+    }
+
+    /// The `draw.*` calls since the last take (client realm, after `render.hud`).
+    pub fn take_draws(&mut self) -> Vec<crate::api::DrawCmd> {
+        std::mem::take(&mut *self.shared.draws.lock().unwrap())
     }
 
     pub fn take_net(&mut self) -> Vec<(u32, String, Vec<u8>)> {

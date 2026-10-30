@@ -143,6 +143,24 @@ pub enum QueuedWrite {
     },
 }
 
+/// A 2D draw command of a client actor's `render.hud` handler, screen pixels, colors 0..1.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DrawCmd {
+    Rect {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: [f32; 4],
+    },
+    Text {
+        x: f32,
+        y: f32,
+        text: String,
+        color: [f32; 4],
+    },
+}
+
 /// Shared between the Rust side of an actor and the closures its VM calls.
 pub struct Shared {
     pub snapshot: RwLock<Arc<Snapshot>>,
@@ -152,6 +170,8 @@ pub struct Shared {
     pub can_write: bool,
     /// Outgoing addon messages: (player or 0 for everyone / the server, name, payload).
     pub net_out: Mutex<Vec<(u32, String, Vec<u8>)>>,
+    /// `draw.*` calls of the current `render.hud` dispatch (client realm).
+    pub draws: Mutex<Vec<DrawCmd>>,
     /// The addon's store when it has the `storage` capability.
     pub store: Option<Arc<Mutex<crate::storage::Store>>>,
 }
@@ -374,6 +394,11 @@ function __dispatch(name: string, payload)
 end
 state = state or {}
 net = net or {}
+hud = hud or {}
+-- `hud.register(name, fn)`: fn(screen) runs every frame with { w, h } and draws with `draw.*`
+function hud.register(name: string, fn, priority: number?)
+    events.on("render.hud", fn, priority)
+end
 function net.receive(name: string, fn, priority: number?)
     events.on("net.message", function(p)
         if p.name == name then return fn(p) end
@@ -430,6 +455,39 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             Ok(())
         })?,
     )?;
+    // `draw.rect(x, y, w, h, color?)` / `draw.text(x, y, text, color?)`: color is a table
+    // {r, g, b, a?} in 0..255 (the game's Color), white when omitted; the client draws the list
+    // after the handler returned, in call order
+    let draw = lua.create_table()?;
+    let sh = shared.clone();
+    draw.set(
+        "rect",
+        lua.create_function(
+            move |_, (x, y, w, h, color): (f32, f32, f32, f32, Option<Table>)| {
+                let color = color_of(color.as_ref())?;
+                sh.draws
+                    .lock()
+                    .unwrap()
+                    .push(DrawCmd::Rect { x, y, w, h, color });
+                Ok(())
+            },
+        )?,
+    )?;
+    let sh = shared.clone();
+    draw.set(
+        "text",
+        lua.create_function(
+            move |_, (x, y, text, color): (f32, f32, String, Option<Table>)| {
+                let color = color_of(color.as_ref())?;
+                sh.draws
+                    .lock()
+                    .unwrap()
+                    .push(DrawCmd::Text { x, y, text, color });
+                Ok(())
+            },
+        )?,
+    )?;
+    g.set("draw", draw)?;
     let world = lua.create_table()?;
     let sh = shared.clone();
     world.set(
@@ -1160,4 +1218,20 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             made.is_some()
         }
     }
+}
+
+/// `{r, g, b, a?}` in 0..255 to 0..1; nil is opaque white.
+fn color_of(t: Option<&Table>) -> Result<[f32; 4]> {
+    let Some(t) = t else {
+        return Ok([1.0, 1.0, 1.0, 1.0]);
+    };
+    let c = |k: &str, d: f32| -> Result<f32> {
+        Ok(t.get::<Option<f32>>(k)?.unwrap_or(d).clamp(0.0, 255.0) / 255.0)
+    };
+    Ok([
+        c("r", 255.0)?,
+        c("g", 255.0)?,
+        c("b", 255.0)?,
+        c("a", 255.0)?,
+    ])
 }

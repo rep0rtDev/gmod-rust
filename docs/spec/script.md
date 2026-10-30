@@ -64,6 +64,21 @@ every frame, in parallel and read-only: `world-write` is never granted on the cl
 are dropped, `phys.trace` always misses (no world on the client yet). Test
 `client_realm_sees_the_assembled_world`.
 
+HUD: every frame the client dispatches `render.hud` with `{w, h}` (the screen in pixels);
+`hud.register(name, fn, priority?)` is `events.on("render.hud", ...)`. Handlers draw with
+`draw.rect(x, y, w, h, color?)` and `draw.text(x, y, text, color?)` (screen pixels from the top
+left; `color` is `{r, g, b, a?}` in 0..255 like the game's `Color`, opaque white when omitted);
+the calls are collected after the handlers returned (`Runtime::client_render`), actor order then
+call order, and drawn by the client over its own HUD with the same text renderer (one font size
+for now). Measured (`addon_hooks render_hud`): two handlers on an 800x600 screen give a red
+half-transparent bar at y 580, `tick 42` over it and a white 3x4 rect, in that order, every frame.
+
+The native client (`gm-client`) hosts both realms: `--addon <dir|file.gmr>` (repeatable) loads
+addons into its in-process server, whose client-realm packages travel over the loopback
+exactly as from a dedicated server and are verified, cached (`GMOD_RUST_CACHE`, default
+`cache/`) and loaded into the client realm (`Runtime::client()`), with `net`, `snapshot.received`,
+`tick.client`, `cvar.changed` and `render.hud`. `gm-bot --addon` stays the headless way.
+
 ## Manifest
 
 An addon is a directory with `manifest.toml` (`id`, `version`, `priority`, `realms`,
@@ -358,7 +373,7 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-client HUD/draw API, client-side world for traces, the rest of the API (tool ghosts and panels, spawn menu), WASM components,
+client-side world for traces, fonts/textures/3D2D in `draw`, the rest of the API (tool ghosts and panels, spawn menu), WASM components,
 `player.use` (nothing on the server reacts to +use yet), the sandbox gamemode in Luau on top of this API.
 
 ## Server events

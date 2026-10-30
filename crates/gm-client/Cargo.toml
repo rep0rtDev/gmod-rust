@@ -16,6 +16,7 @@ gm-net = { path = "../gm-net" }
 gm-render = { path = "../gm-render" }
 gm-audio = { path = "../gm-audio" }
 gm-dedicated = { path = "../gm-dedicated" }
+gm-script = { path = "../gm-script" }
 glam = { workspace = true }
 anyhow = { workspace = true }
 wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12"] }

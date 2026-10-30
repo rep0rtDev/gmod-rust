@@ -2430,3 +2430,55 @@ fn tool_before_vetoes_a_click_tool_after_sees_the_result_and_noclip_toggles_with
     );
     assert!(client.events.iter().any(|e| e == "Noclip denied"));
 }
+
+#[test]
+fn a_client_actor_draws_its_hud_through_render_hud() {
+    let mut crt = gm_script::Runtime::client();
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "hud".into(),
+        priority: 1,
+        source: "hud.register('bar', function(s)
+                draw.rect(0, s.h - 20, s.w, 20, { r = 255, g = 0, b = 0, a = 128 })
+                draw.text(8, s.h - 18, 'tick ' .. game.tick())
+            end)
+            hud.register('second', function(s) draw.rect(1, 2, 3, 4) end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let world = gm_net::ClientWorld {
+        tick: 42,
+        ..Default::default()
+    };
+    let draws = crt.client_render(&world, 800, 600);
+    assert_eq!(
+        draws,
+        vec![
+            gm_script::DrawCmd::Rect {
+                x: 0.0,
+                y: 580.0,
+                w: 800.0,
+                h: 20.0,
+                color: [1.0, 0.0, 0.0, 128.0 / 255.0],
+            },
+            gm_script::DrawCmd::Text {
+                x: 8.0,
+                y: 582.0,
+                text: "tick 42".into(),
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+            gm_script::DrawCmd::Rect {
+                x: 1.0,
+                y: 2.0,
+                w: 3.0,
+                h: 4.0,
+                color: [1.0, 1.0, 1.0, 1.0],
+            },
+        ]
+    );
+    assert!(
+        crt.client_render(&world, 800, 600).len() == 3,
+        "every frame anew"
+    );
+}

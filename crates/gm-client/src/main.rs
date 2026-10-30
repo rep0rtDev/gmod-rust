@@ -45,9 +45,59 @@ struct Sim {
     prev_origin: Vec3,
     origin: Vec3,
     ducked: bool,
+    /// Client realm of the addon runtime: the server's client-realm packages are downloaded
+    /// over the loopback like from a dedicated server, verified and loaded here.
+    script: gm_script::Runtime,
+    addons_seen: BTreeSet<[u8; 32]>,
+    cache: std::path::PathBuf,
+    last_snapshot_tick: u32,
+    /// `draw.*` of the client actors' last `render.hud`, drawn over the HUD.
+    hud_draws: Vec<gm_script::DrawCmd>,
 }
 
 impl Sim {
+    /// The server's client-realm addons: a cached package by sha loads at once, a missing one is
+    /// requested and loaded when the download verifies (the same path as `gm-bot --cache`).
+    fn sync_addons(&mut self) {
+        for a in self.client.server_addons.clone() {
+            if !self.addons_seen.insert(a.sha) {
+                continue;
+            }
+            let path = self
+                .cache
+                .join(format!("{}.gmr", gm_net::msg::sha_hex(&a.sha)));
+            let cached = std::fs::read(&path)
+                .ok()
+                .and_then(|b| gm_script::Package::read(&b).ok())
+                .is_some_and(|p| p.sha256 == a.sha);
+            if cached {
+                load_client_package(&mut self.script, &path, "cached");
+            } else {
+                self.client.want_addon(a.sha);
+            }
+        }
+        for (sha, bytes) in std::mem::take(&mut self.client.downloaded) {
+            if !gm_script::Package::read(&bytes).is_ok_and(|p| p.sha256 == sha) {
+                eprintln!(
+                    "addon download {} failed verification",
+                    gm_net::msg::sha_hex(&sha)
+                );
+                continue;
+            }
+            let path = self
+                .cache
+                .join(format!("{}.gmr", gm_net::msg::sha_hex(&sha)));
+            if std::fs::create_dir_all(&self.cache)
+                .and_then(|_| std::fs::write(&path, &bytes))
+                .is_err()
+            {
+                eprintln!("addon cache {}: cannot write", path.display());
+                continue;
+            }
+            load_client_package(&mut self.script, &path, "downloaded");
+        }
+    }
+
     fn tick(&mut self, cmd: NetCmd) {
         self.cmd_tick += 1;
         if let Some(p) = &mut self.pred {
@@ -60,6 +110,15 @@ impl Sim {
         self.net.tick(&mut self.server);
         self.net.send(&self.server, &mut self.s_ep);
         self.client.receive(&mut self.c_ep);
+        self.sync_addons();
+        let fresh = self.client.server_tick != self.last_snapshot_tick;
+        self.last_snapshot_tick = self.client.server_tick;
+        self.script.client_tick(&self.client.world, fresh);
+        let inbox = std::mem::take(&mut self.client.addon_msgs);
+        self.script.client_net(&self.client.world, inbox);
+        for (_, name, data) in self.script.drain_net() {
+            self.client.send_addon(&name, &data);
+        }
         let w = &self.client.world;
         if w.tick != seen {
             self.interp.push(w.tick, &w.entities);
@@ -1094,6 +1153,11 @@ impl App {
                 g.world.draw_models(&g.gpu, &vm_camera, &target, &vm_items);
             }
         }
+        {
+            let g = self.gfx.as_ref().unwrap();
+            let (w, h) = (g.config.width, g.config.height);
+            self.sim.hud_draws = self.sim.script.client_render(&self.sim.client.world, w, h);
+        }
         let ui_items = self.ui_items(o);
         let g = self.gfx.as_ref().unwrap();
         g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);
@@ -1199,6 +1263,24 @@ impl App {
                 text: hud,
                 color: white,
             });
+            // client addons' `render.hud`
+            for d in &self.sim.hud_draws {
+                items.push(match d {
+                    gm_script::DrawCmd::Rect { x, y, w, h, color } => UiItem::Rect {
+                        x: *x,
+                        y: *y,
+                        w: *w,
+                        h: *h,
+                        color: *color,
+                    },
+                    gm_script::DrawCmd::Text { x, y, text, color } => UiItem::Text {
+                        x: *x,
+                        y: *y,
+                        text: text.clone(),
+                        color: *color,
+                    },
+                });
+            }
             // sandbox HUD: health and suit boxes at the bottom left
             let me = self.sim.client.player_id;
             if let Some(p) = self
@@ -1695,6 +1777,22 @@ fn main() -> Result<()> {
     }));
     let mut net = ServerNet::new(&map, spawn);
     net.admins.extend(1..=16);
+    // `--addon <dir|file.gmr>` (repeatable): addons of the in-process server; their client realm
+    // reaches the client realm below over the loopback like from a dedicated server
+    let mut rt = gm_script::Runtime::new();
+    let argv: Vec<String> = std::env::args().collect();
+    for (i, a) in argv.iter().enumerate() {
+        if a == "--addon" {
+            if let Some(path) = argv.get(i + 1) {
+                match rt.load_addon(std::path::Path::new(path)) {
+                    Ok(m) => println!("addon {} {} loaded", m.id, m.version),
+                    Err(e) => eprintln!("addon {path}: {e}"),
+                }
+            }
+        }
+    }
+    println!("{} server actors", rt.actors().len());
+    gm_script::attach(rt, &mut server, &mut net.hooks);
     let lo = Loopback::new(0, 0.0, 1);
     let (s_ep, c_ep) = (lo.endpoint(0), lo.endpoint(1));
     let sim = Sim {
@@ -1712,6 +1810,13 @@ fn main() -> Result<()> {
         prev_origin: spawn,
         origin: spawn,
         ducked: false,
+        script: gm_script::Runtime::client(),
+        addons_seen: BTreeSet::new(),
+        cache: std::env::var_os("GMOD_RUST_CACHE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("cache")),
+        last_snapshot_tick: 0,
+        hud_draws: Vec::new(),
     };
     let mut app = App {
         mount,
@@ -1749,5 +1854,27 @@ fn main() -> Result<()> {
     match app.error {
         Some(e) => Err(e),
         None => Ok(()),
+    }
+}
+
+/// Loads a verified client-realm package; one of an addon already running is a hot reload.
+fn load_client_package(script: &mut gm_script::Runtime, path: &std::path::Path, how: &str) {
+    let known = gm_script::Package::open(path)
+        .ok()
+        .and_then(|p| p.load_realm("client").ok())
+        .is_some_and(|(m, _)| script.addon_paths.contains_key(&m.id));
+    let r = if known {
+        script.reload_addon(path)
+    } else {
+        script.load_addon(path)
+    };
+    match r {
+        Ok(m) => println!(
+            "{how} client addon {} {} {}",
+            m.id,
+            m.version,
+            if known { "reloaded" } else { "loaded" }
+        ),
+        Err(e) => eprintln!("{how} client addon {}: {e}", path.display()),
     }
 }

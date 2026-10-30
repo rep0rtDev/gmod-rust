@@ -18,6 +18,7 @@ pub mod snapshot;
 pub mod storage;
 
 pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite, Reply};
+pub use api::DrawCmd;
 pub use manifest::Manifest;
 pub use package::Package;
 pub use registry::Registry;
@@ -287,6 +288,25 @@ impl Runtime {
         for a in self.actors.iter_mut() {
             a.take_queue();
         }
+    }
+
+    /// Client realm, once per frame: `render.hud` with `{w, h}` (the screen in pixels) to every
+    /// actor in parallel; the `draw.*` calls they made come back in actor order, then call order,
+    /// for the client to draw over its own HUD. Writes queued here are dropped like in
+    /// `client_tick`.
+    pub fn client_render(&mut self, world: &gm_net::ClientWorld, w: u32, h: u32) -> Vec<DrawCmd> {
+        let snap = Arc::new(Snapshot::of_client(world));
+        let mut p = api::Payload::default();
+        p.ints.push(("w", w as i64));
+        p.ints.push(("h", h as i64));
+        self.parallel(&snap, "render.hud", &p);
+        self.release_snapshots();
+        let mut out = Vec::new();
+        for a in self.actors.iter_mut() {
+            a.take_queue();
+            out.extend(a.take_draws());
+        }
+        out
     }
 
     /// Client realm: addon messages from the server, one `net.message` dispatch each (`name`,
