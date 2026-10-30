@@ -555,6 +555,9 @@ pub enum VmAct {
     /// One shell going in (shotgun `reload2`) and the end of a shell reload (`reload3`).
     ReloadShell = 4,
     ReloadEnd = 5,
+    /// A primary shot, swing or launch left (other players' `range_*` gestures; the owner's
+    /// viewmodel plays its fire from the click).
+    Fire = 6,
 }
 
 fn vm_event(slot: &mut VmAct, serial: &mut u8, act: VmAct) {
@@ -809,6 +812,7 @@ impl Inventory {
                 clip[0] -= n;
                 self.next_primary = cycle;
                 self.need_pump = f.pump.is_some();
+                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Fire);
                 self.shots += 1;
                 return Some(Shot {
                     pellets,
@@ -863,6 +867,7 @@ impl Inventory {
         self.pistol_relaxed = false;
         self.launched = f.launch;
         self.swung = f.melee;
+        vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Fire);
         if f.pellets == 0 {
             return None;
         }
@@ -1271,18 +1276,12 @@ mod vm_event_tests {
         inv.give_loadout();
         inv.select(class);
         settle(&mut inv, class);
-        let serial = inv.vm_serial;
         assert!(
             step(&mut inv, class, IN_ATTACK).is_some(),
             "the shot leaves"
         );
-        let mut ticks = 1;
-        while inv.vm_serial == serial {
-            step(&mut inv, class, 0);
-            ticks += 1;
-            assert!(ticks < 100, "no pump event");
-        }
-        assert_eq!(inv.vm_act, VmAct::Pump);
+        assert_eq!(inv.vm_act, VmAct::Fire);
+        let ticks = 1 + events_until(&mut inv, class, 0, VmAct::Pump);
         // the cycle (0.3333 s) runs out, then the pump starts: 22-23 ticks
         assert!((22..=24).contains(&ticks), "pump after {ticks} ticks");
         assert_eq!(inv.clip(class)[0], 5);

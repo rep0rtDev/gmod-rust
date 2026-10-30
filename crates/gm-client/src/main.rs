@@ -390,6 +390,30 @@ fn player_sequence(p: &PlayerSnap) -> (String, Vec<(&'static str, f32)>) {
     (seq, params)
 }
 
+/// The m_anm gesture another player plays for a viewmodel event (`PlayerSnap::vm_act`), by hold
+/// type: `range_*` on a shot, `reload_*` where the animation model has one.
+fn gesture_for(act: u8, hold: &str) -> Option<&'static str> {
+    Some(match (act, hold) {
+        (6, "pistol") => "range_pistol",
+        (6, "smg1") => "range_smg1",
+        (6, "ar2") => "range_ar2",
+        (6, "shotgun") => "range_shotgun",
+        (6, "revolver") => "range_revolver",
+        (6, "crossbow") => "range_crossbow",
+        (6, "rpg") => "range_rpg",
+        (6, "grenade") => "range_grenade",
+        (6, "melee") => "range_melee",
+        (6, "physgun") => "range_gravgun",
+        (6, "fist") => "range_fists_r",
+        (1, "pistol") => "reload_pistol",
+        (1, "smg1") => "reload_smg1",
+        (1, "ar2") => "reload_ar2",
+        (1, "shotgun") => "reload_shotgun",
+        (1, "revolver") => "reload_revolver",
+        _ => return None,
+    })
+}
+
 fn viewmodel(weapon: u8) -> Option<&'static Viewmodel> {
     WEAPONS.get(weapon as usize)
 }
@@ -465,6 +489,8 @@ struct App {
     /// Per remote player: animation time advanced by the game's playback rate (speed over the
     /// sequence's ground speed, at most 2).
     anim_time: std::collections::HashMap<u32, f32>,
+    /// Other players' running gesture (m_anm sequence, start, the `vm_serial` that started it).
+    gestures: std::collections::HashMap<u32, (&'static str, Instant, u8)>,
     last_render: Instant,
     /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
     menu: Option<SpawnMenu>,
@@ -801,6 +827,7 @@ impl App {
         self.last_render = Instant::now();
         let air_since = &mut self.air_since;
         let anim_time = &mut self.anim_time;
+        let gestures = &mut self.gestures;
         type PlayerPose = (
             Vec3,
             f32,
@@ -853,7 +880,21 @@ impl App {
                             .elapsed()
                             .as_secs_f32()
                     };
-                    let world = m.bone_world(&seq, t, None, &params);
+                    // server-decided one-shots (shot, reload) as a gesture on top of the pose
+                    if let Some(g) = gesture_for(p.vm_act, hold_type(p.active)) {
+                        match gestures.get(&p.id) {
+                            Some((_, _, serial)) if *serial == p.vm_serial => {}
+                            _ => {
+                                gestures.insert(p.id, (g, Instant::now(), p.vm_serial));
+                            }
+                        }
+                    }
+                    let gesture = gestures.get(&p.id).and_then(|(g, since, _)| {
+                        let t = since.elapsed().as_secs_f32();
+                        let (len, _) = m.sequence_length(g)?;
+                        (t < len).then_some((*g, t))
+                    });
+                    let world = m.bone_world_gesture(&seq, t, None, &params, gesture);
                     let pose = world.as_ref().map(|w| m.skin_matrices(w));
                     // the weapon's world model rides the right hand (bone merge by name)
                     let held = world.as_ref().and_then(|w| {
@@ -1608,6 +1649,7 @@ fn main() -> Result<()> {
         weapon_synced: false,
         air_since: Default::default(),
         anim_time: Default::default(),
+        gestures: Default::default(),
         last_render: Instant::now(),
         menu: None,
         spawn_models: Vec::new(),

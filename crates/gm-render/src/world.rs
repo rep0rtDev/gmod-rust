@@ -286,6 +286,18 @@ struct AnimSource {
 
 type LocalPose = Vec<([f32; 3], [f32; 4])>;
 
+/// Adds a delta pose with weight `w`: positions scaled, the rotation slerped from identity and
+/// applied in the bone's own frame (Source's QuaternionMA).
+fn add_delta(local: &mut LocalPose, delta: &LocalPose, w: f32) {
+    for ((pos, quat), (dpos, dquat)) in local.iter_mut().zip(delta) {
+        for (p, d) in pos.iter_mut().zip(dpos) {
+            *p += w * d;
+        }
+        let dq = glam::Quat::IDENTITY.slerp(glam::Quat::from_array(*dquat).normalize(), w);
+        *quat = (glam::Quat::from_array(*quat).normalize() * dq).to_array();
+    }
+}
+
 impl AnimSource {
     fn new(
         mount: &Mount,
@@ -366,6 +378,40 @@ impl AnimSource {
 
     /// Pose of a sequence at `cycle`: its blend grid cells weighted bilinearly by the pose
     /// parameters.
+    /// The sequence's autolayers: delta animations added with the layer's weight at this cycle.
+    fn apply_layers(
+        &self,
+        seq: &gm_formats::mdl::Sequence,
+        cycle: f32,
+        params: &[(&str, f32)],
+        local: &mut LocalPose,
+    ) {
+        for layer in &seq.autolayers {
+            if layer.flags & 0x4000 != 0 {
+                continue;
+            }
+            let w = layer.weight(cycle);
+            let Some(lseq) = self.sequences.get(layer.sequence.max(0) as usize) else {
+                continue;
+            };
+            let Some(lanim) = self.anims.get(lseq.anim.max(0) as usize) else {
+                continue;
+            };
+            if w <= 0.0 || lanim.flags & 4 == 0 || lanim.frames <= 0 {
+                continue;
+            }
+            let lcycle = if layer.start != layer.end {
+                ((cycle - layer.start) / (layer.end - layer.start)).clamp(0.0, 1.0)
+            } else {
+                cycle
+            };
+            // the layer's own blend grid (aim layers: 3x3 over aim_yaw / aim_pitch)
+            if let Some(delta) = self.blended(lseq, lcycle, params, true) {
+                add_delta(local, &delta, w);
+            }
+        }
+    }
+
     fn blended(
         &self,
         seq: &gm_formats::mdl::Sequence,
@@ -557,6 +603,21 @@ impl DynModel {
         merge: Option<BoneMerge<'_>>,
         params: &[(&str, f32)],
     ) -> Option<Vec<Mat4>> {
+        self.bone_world_gesture(name, time, merge, params, None)
+    }
+
+    /// [`bone_world`](Self::bone_world) with a one-shot gesture `(sequence, seconds since its
+    /// start)` layered on top at full weight, the way GMod plays `range_*` / `reload_*` on a
+    /// player: the gesture is a delta sequence of the same animation source; it holds its last
+    /// frame once over (the caller drops it after [`sequence_length`](Self::sequence_length)).
+    pub fn bone_world_gesture(
+        &self,
+        name: &str,
+        time: f32,
+        merge: Option<BoneMerge<'_>>,
+        params: &[(&str, f32)],
+        gesture: Option<(&str, f32)>,
+    ) -> Option<Vec<Mat4>> {
         let sk = self.skeleton.as_ref()?;
         let (src, seq) = sk.seq(name)?;
         let anim = src.anims.get(seq.anim.max(0) as usize)?;
@@ -571,37 +632,20 @@ impl DynModel {
             (f / frames as f32).min(1.0)
         };
         let mut local = src.blended(seq, cycle, params, false)?;
-        // layers: delta animations added with the layer's weight at this cycle
-        for layer in &seq.autolayers {
-            if layer.flags & 0x4000 != 0 {
-                continue;
-            }
-            let w = layer.weight(cycle);
-            let Some(lseq) = src.sequences.get(layer.sequence.max(0) as usize) else {
-                continue;
-            };
-            let Some(lanim) = src.anims.get(lseq.anim.max(0) as usize) else {
-                continue;
-            };
-            if w <= 0.0 || lanim.flags & 4 == 0 || lanim.frames <= 0 {
-                continue;
-            }
-            let lcycle = if layer.start != layer.end {
-                ((cycle - layer.start) / (layer.end - layer.start)).clamp(0.0, 1.0)
-            } else {
-                cycle
-            };
-            // the layer's own blend grid (aim layers: 3x3 over aim_yaw / aim_pitch)
-            let Some(delta) = src.blended(lseq, lcycle, params, true) else {
-                continue;
-            };
-            for ((pos, quat), (dpos, dquat)) in local.iter_mut().zip(&delta) {
-                for (p, d) in pos.iter_mut().zip(dpos) {
-                    *p += w * d;
+        src.apply_layers(seq, cycle, params, &mut local);
+        // a one-shot gesture (reload, shot) on top: its delta and its own layers at full weight
+        if let Some((gname, gtime)) = gesture {
+            if let Some((gsrc, gseq)) = sk.seq(gname) {
+                if let Some(ganim) = gsrc.anims.get(gseq.anim.max(0) as usize) {
+                    if std::ptr::eq(gsrc, src) && ganim.frames > 0 && ganim.flags & 4 != 0 {
+                        let gcycle =
+                            (gtime.max(0.0) * ganim.fps / ganim.frames as f32).clamp(0.0, 1.0);
+                        if let Some(delta) = src.blended(gseq, gcycle, params, true) {
+                            add_delta(&mut local, &delta, 1.0);
+                        }
+                        src.apply_layers(gseq, gcycle, params, &mut local);
+                    }
                 }
-                let dq = glam::Quat::IDENTITY.slerp(glam::Quat::from_array(*dquat).normalize(), w);
-                // Source's QuaternionMA: the scaled delta applied in the bone's own frame
-                *quat = (glam::Quat::from_array(*quat).normalize() * dq).to_array();
             }
         }
         // onto the rendered skeleton by bone name; bones the animation lacks stay in bind pose
