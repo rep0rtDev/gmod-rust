@@ -47,6 +47,8 @@ pub struct ClientSlot {
     /// Proven identity (ed25519 public key) of this connection.
     pub identity: Option<[u8; 32]>,
     welcomed: bool,
+    eph: crate::crypto::Ephemeral,
+    crypto: Option<crate::crypto::Session>,
 }
 
 /// An addon package the server hands out to clients (its client-realm actors run there).
@@ -177,7 +179,6 @@ impl ServerNet {
                 }
                 continue;
             }
-            let body = &packet[..];
             if !self.clients.contains_key(&from) {
                 let player = self.next_player;
                 self.next_player += 1;
@@ -209,12 +210,25 @@ impl ServerNet {
                         nonce: [0; 32],
                         identity: None,
                         welcomed: false,
+                        eph: crate::crypto::Ephemeral::generate(),
+                        crypto: None,
                     },
                 );
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
             }
             let slot = self.clients.get_mut(&from).unwrap();
-            let Ok(msgs) = slot.channel.receive(body) else {
+            let body = match (packet.first(), &mut slot.crypto) {
+                (Some(&crate::crypto::SEALED), Some(c)) => match c.open(&packet) {
+                    Some(b) => b,
+                    None => continue,
+                },
+                // plaintext only until the client has shown it holds the key
+                (Some(&crate::crypto::PLAIN), c) if c.as_ref().is_none_or(|c| !c.peer_sealed) => {
+                    packet[1..].to_vec()
+                }
+                _ => continue,
+            };
+            let Ok(msgs) = slot.channel.receive(&body) else {
                 continue;
             };
             for m in msgs {
@@ -222,14 +236,30 @@ impl ServerNet {
                     continue;
                 };
                 match msg {
-                    ClientMsg::Hello { name, protocol } => {
+                    ClientMsg::Hello {
+                        name,
+                        protocol,
+                        pubkey,
+                    } => {
                         if protocol == PROTOCOL {
                             slot.name = name;
                             let mut nonce = [0u8; 32];
                             rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut nonce);
                             slot.nonce = nonce;
+                            if slot.crypto.is_none() {
+                                slot.crypto = Some(slot.eph.session(
+                                    &pubkey,
+                                    &pubkey,
+                                    &slot.eph.public,
+                                    false,
+                                ));
+                            }
                             let mut w = Writer::default();
-                            ServerMsg::Challenge { nonce }.write(&mut w);
+                            ServerMsg::Challenge {
+                                nonce,
+                                pubkey: slot.eph.public,
+                            }
+                            .write(&mut w);
                             slot.channel.send_reliable(w.buf);
                             if !self.require_auth {
                                 welcome(slot, &self.map, self.tick, &self.addons, server);
@@ -237,10 +267,13 @@ impl ServerNet {
                         }
                     }
                     ClientMsg::Auth { pubkey, sig } => {
+                        let binding = slot.crypto.as_ref().map(|c| c.binding);
                         let ok = slot.nonce != [0; 32]
-                            && ed25519_dalek::VerifyingKey::from_bytes(&pubkey).is_ok_and(|k| {
-                                ed25519_dalek::Signature::from_slice(&sig).is_ok_and(|s| {
-                                    k.verify_strict(&auth_message(&slot.nonce), &s).is_ok()
+                            && binding.is_some_and(|b| {
+                                ed25519_dalek::VerifyingKey::from_bytes(&pubkey).is_ok_and(|k| {
+                                    ed25519_dalek::Signature::from_slice(&sig).is_ok_and(|s| {
+                                        k.verify_strict(&auth_message(&slot.nonce, &b), &s).is_ok()
+                                    })
                                 })
                             });
                         if ok {
@@ -688,6 +721,10 @@ impl ServerNet {
             }
             if !unreliable.is_empty() || slot.channel.pending_reliable() > 0 {
                 for packet in slot.channel.build_burst(&unreliable) {
+                    let packet = match &mut slot.crypto {
+                        Some(c) if c.peer_sealed => c.seal(&packet),
+                        _ => crate::crypto::plain(packet),
+                    };
                     transport.send(endpoint, packet);
                 }
             }

@@ -42,7 +42,10 @@ fn seq_newer(a: u16, b: u16) -> bool {
 }
 
 /// The largest packet a channel builds (below the usual path MTU; `Udp` receives up to 1400).
+/// Wire limit of one UDP packet, including the encryption overhead.
 pub const MAX_PACKET: usize = 1200;
+/// What the channel may fill: the sealed packet adds `crypto::OVERHEAD`.
+pub const MAX_BODY: usize = MAX_PACKET - crate::crypto::OVERHEAD;
 /// Reliable messages longer than this go as fragments of this size, reassembled in order.
 pub const FRAGMENT: usize = 1024;
 /// Packets `build_burst` makes per call at most (the ack history covers 33 sequences).
@@ -163,8 +166,7 @@ impl Channel {
             let len = p.bytes.len() + 12;
             // the fresh unreliable payload (snapshot, usercmds) always goes; reliable messages
             // fill what is left, a burst's later packets carry the rest
-            if w.buf.len() + len + unreliable_len > MAX_PACKET && (!first || !unreliable.is_empty())
-            {
+            if w.buf.len() + len + unreliable_len > MAX_BODY && (!first || !unreliable.is_empty()) {
                 break;
             }
             first = false;

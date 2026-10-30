@@ -49,6 +49,9 @@ pub enum ClientMsg {
     Hello {
         name: String,
         protocol: u16,
+        /// Ephemeral X25519 public key: the packet encryption key is derived from it and the
+        /// server's one in `Challenge`.
+        pubkey: [u8; 32],
     },
     Cmds {
         cmds: Vec<NetCmd>,
@@ -226,6 +229,8 @@ pub enum ServerMsg {
     /// (`ClientMsg::Auth`). With `ServerNet::require_auth` the `Welcome` waits for it.
     Challenge {
         nonce: [u8; 32],
+        /// The server's ephemeral X25519 public key (see `ClientMsg::Hello`).
+        pubkey: [u8; 32],
     },
     Models {
         from: u32,
@@ -414,10 +419,15 @@ impl ClientMsg {
 
     pub fn write(&self, w: &mut Writer) {
         match self {
-            ClientMsg::Hello { name, protocol } => {
+            ClientMsg::Hello {
+                name,
+                protocol,
+                pubkey,
+            } => {
                 w.u8(1);
                 w.str(name);
                 w.u16(*protocol);
+                w.buf.extend_from_slice(pubkey);
             }
             ClientMsg::Cmds { cmds } => {
                 w.u8(2);
@@ -486,6 +496,7 @@ impl ClientMsg {
             1 => ClientMsg::Hello {
                 name: r.str()?,
                 protocol: r.u16()?,
+                pubkey: sha(r)?,
             },
             2 => {
                 let n = r.u8()? as usize;
@@ -668,9 +679,10 @@ impl ServerMsg {
                     w.str(&u.name);
                 }
             }
-            ServerMsg::Challenge { nonce } => {
+            ServerMsg::Challenge { nonce, pubkey } => {
                 w.u8(11);
                 w.buf.extend_from_slice(nonce);
+                w.buf.extend_from_slice(pubkey);
             }
             ServerMsg::Models { from, names } => {
                 w.u8(10);
@@ -815,7 +827,10 @@ impl ServerMsg {
                 }
                 ServerMsg::Models { from, names }
             }
-            11 => ServerMsg::Challenge { nonce: sha(r)? },
+            11 => ServerMsg::Challenge {
+                nonce: sha(r)?,
+                pubkey: sha(r)?,
+            },
             _ => return Err(Truncated),
         })
     }
@@ -826,11 +841,14 @@ impl ServerMsg {
 pub const VEL_SCALE: f32 = 8.0;
 pub const ANGVEL_SCALE: f32 = 4.0;
 
-/// Domain separator of the authentication signature: `AUTH_PREFIX ++ nonce`.
+/// Domain separator of the authentication signature: `AUTH_PREFIX ++ nonce ++ binding`, where
+/// `binding` is the hash of this connection's packet encryption key (`crypto::Session::binding`),
+/// so a signature only authenticates the connection it was made on.
 pub const AUTH_PREFIX: &[u8] = b"gmr-auth1";
 
-pub fn auth_message(nonce: &[u8; 32]) -> Vec<u8> {
+pub fn auth_message(nonce: &[u8; 32], binding: &[u8; 32]) -> Vec<u8> {
     let mut m = AUTH_PREFIX.to_vec();
     m.extend_from_slice(nonce);
+    m.extend_from_slice(binding);
     m
 }

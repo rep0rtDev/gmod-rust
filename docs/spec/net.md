@@ -186,9 +186,23 @@ Authentication (v1, own accounts, no Steam AppID): a client's identity is an ed2
 `ClientMsg::Auth { pubkey, sig }` (tag 7) with the signature over `"gmr-auth1" ++ nonce`. A valid
 answer sets the connection's identity (`Player::identity`, the stable id for bans, ownership and
 storage); `gm-dedicated --require-auth` holds the `Welcome` (and the addon list and cvars) until
-it arrives, so an anonymous client never enters. Not yet: binding the signature to the server
-address (a relaying server could replay the challenge), which comes with transport encryption; a
-registration/name service and Steam OpenID binding on top of the keys.
+it arrives, so an anonymous client never enters. The signed message also covers the hash of the
+connection's packet encryption key (channel binding), so a relaying server cannot reuse the answer
+on its own connection. Not yet: a registration/name service and Steam OpenID binding on top of
+the keys.
+
+Encryption: `Hello` carries the client's ephemeral X25519 public key and `Challenge` the
+server's; both derive `SHA-256("gmr-key1" ++ shared ++ client_pub ++ server_pub)` and seal every
+packet after that with ChaCha20-Poly1305 (outer byte 1, 8-byte counter as nonce with a direction
+word so one key serves both ways, 16-byte tag; the channel fills 1 175 bytes so the sealed
+packet stays within the 1 200 wire budget).
+Outer byte 0 is plaintext and only the handshake travels that way: each side keeps answering in
+plaintext until it has opened one sealed packet from the peer (a lost `Challenge` is re-sent
+readably) and refuses plaintext from then on; a packet that does not authenticate is dropped
+before the channel sees it. Master-server packets (magic `MG`) stay plaintext. Not yet: replay
+protection beyond the channel's sequence handling, key rotation, and the client checking a server
+identity (the master could publish server keys).
+
 
 Lag compensation: every usercmd carries `seen_tick`, the server tick the client was rendering
 when it made the command (`NetCmd::seen_tick`, delta-coded like the other fields; 0 = unknown).

@@ -11,6 +11,7 @@ pub mod server;
 pub mod transport;
 pub mod wire;
 
+pub mod crypto;
 pub use client::{ClientNet, ClientWorld, Interpolator, Prediction};
 pub use master::{MasterMsg, MasterNet, ServerEntry, ServerInfo};
 pub use msg::EntityState;
@@ -31,6 +32,7 @@ mod tests {
             ClientMsg::Hello {
                 name: "bot".into(),
                 protocol: PROTOCOL,
+                pubkey: [7; 32],
             },
             ClientMsg::Cmds {
                 cmds: vec![NetCmd {

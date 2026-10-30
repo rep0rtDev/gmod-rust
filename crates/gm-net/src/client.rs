@@ -196,6 +196,8 @@ impl<'w> Prediction<'w> {
 pub struct ClientNet {
     /// Identity key: answers the server's `Challenge` with `ClientMsg::Auth`.
     key: Option<ed25519_dalek::SigningKey>,
+    eph: crate::crypto::Ephemeral,
+    crypto: Option<crate::crypto::Session>,
     /// Identity the server was shown (the public key of `key`).
     pub identity: Option<[u8; 32]>,
     pub endpoint: usize,
@@ -249,11 +251,14 @@ impl ClientNet {
             dropped_snapshots: 0,
             key: None,
             identity: None,
+            eph: crate::crypto::Ephemeral::generate(),
+            crypto: None,
         };
         let mut w = Writer::default();
         ClientMsg::Hello {
             name: name.to_string(),
             protocol: PROTOCOL,
+            pubkey: c.eph.public,
         }
         .write(&mut w);
         c.channel.send_reliable(w.buf);
@@ -323,13 +328,27 @@ impl ClientNet {
             unreliable.push(w.buf);
         }
         let packet = self.channel.build(&unreliable);
+        let packet = match &mut self.crypto {
+            Some(c) => c.seal(&packet),
+            None => crate::crypto::plain(packet),
+        };
         transport.send(0, packet);
     }
 
     /// Applies everything that arrived.
     pub fn receive(&mut self, transport: &mut dyn Transport) {
         for (_, packet) in transport.recv() {
-            let Ok(msgs) = self.channel.receive(&packet) else {
+            let body = match (packet.first(), &mut self.crypto) {
+                (Some(&crate::crypto::SEALED), Some(c)) => match c.open(&packet) {
+                    Some(b) => b,
+                    None => continue,
+                },
+                (Some(&crate::crypto::PLAIN), c) if c.as_ref().is_none_or(|c| !c.peer_sealed) => {
+                    packet[1..].to_vec()
+                }
+                _ => continue,
+            };
+            let Ok(msgs) = self.channel.receive(&body) else {
                 continue;
             };
             for m in msgs {
@@ -412,9 +431,15 @@ impl ClientNet {
                         self.world.cvars.insert(name, value);
                     }
                     ServerMsg::Undos { entries, .. } => self.world.own.undos = entries,
-                    ServerMsg::Challenge { nonce } => {
+                    ServerMsg::Challenge { nonce, pubkey } => {
+                        if self.crypto.is_none() {
+                            self.crypto =
+                                Some(self.eph.session(&pubkey, &self.eph.public, &pubkey, true));
+                        }
+                        let binding = self.crypto.as_ref().map(|c| c.binding).unwrap_or([0; 32]);
                         if let Some(key) = &self.key {
-                            let sig = ed25519_dalek::Signer::sign(key, &auth_message(&nonce));
+                            let sig =
+                                ed25519_dalek::Signer::sign(key, &auth_message(&nonce, &binding));
                             let mut w = Writer::default();
                             ClientMsg::Auth {
                                 pubkey: key.verifying_key().to_bytes(),
