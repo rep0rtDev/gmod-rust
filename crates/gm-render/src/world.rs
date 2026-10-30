@@ -496,6 +496,36 @@ impl DynModel {
         Some(self.skin_matrices(&world))
     }
 
+    /// The ground speed of sequence `name` at the pose parameters `params` (the root movement
+    /// per second of its blended animations), `None` when the model has no such sequence.
+    pub fn ground_speed(&self, name: &str, params: &[(&str, f32)]) -> Option<f32> {
+        let (src, seq) = self.skeleton.as_ref()?.seq(name)?;
+        let (x, fx) = seq.grid_pos(0, src.param(seq.param[0], params));
+        let (y, fy) = seq.grid_pos(1, src.param(seq.param[1], params));
+        let cells = [
+            (x, y, (1.0 - fx) * (1.0 - fy)),
+            (x + 1, y, fx * (1.0 - fy)),
+            (x, y + 1, (1.0 - fx) * fy),
+            (x + 1, y + 1, fx * fy),
+        ];
+        let (mut speed, mut total) = (0.0, 0.0);
+        for (cx, cy, w) in cells {
+            let Some(anim) = seq
+                .blend(cx, cy)
+                .and_then(|a| src.anims.get(a.max(0) as usize))
+            else {
+                continue;
+            };
+            speed += w * anim.ground_speed();
+            total += w;
+        }
+        Some(if total > 0.0 {
+            speed / total
+        } else {
+            src.anims.get(seq.anim.max(0) as usize)?.ground_speed()
+        })
+    }
+
     /// Skinning matrices from bone transforms: bone world times pose-to-bone.
     pub fn skin_matrices(&self, world: &[Mat4]) -> Vec<Mat4> {
         let Some(sk) = self.skeleton.as_ref() else {

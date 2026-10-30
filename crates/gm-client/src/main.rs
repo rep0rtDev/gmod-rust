@@ -415,6 +415,10 @@ struct App {
     weapon_synced: bool,
     /// When each airborne player left the ground (their jump sequence runs from there).
     air_since: std::collections::HashMap<u32, Instant>,
+    /// Per remote player: animation time advanced by the game's playback rate (speed over the
+    /// sequence's ground speed, at most 2).
+    anim_time: std::collections::HashMap<u32, f32>,
+    last_render: Instant,
     /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
     menu: Option<SpawnMenu>,
     spawn_models: Vec<String>,
@@ -716,8 +720,10 @@ impl App {
             }
         }
         let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
-        let now = self.fps_at.elapsed().as_secs_f32();
+        let dt = self.last_render.elapsed().as_secs_f32().min(0.1);
+        self.last_render = Instant::now();
         let air_since = &mut self.air_since;
+        let anim_time = &mut self.anim_time;
         type PlayerPose = (
             Vec3,
             f32,
@@ -751,10 +757,18 @@ impl App {
             match player_model {
                 Some(m) => {
                     let (seq, params) = player_sequence(p);
-                    // a one-shot (jump) runs from the moment the player left the ground
+                    // a one-shot (jump) runs from the moment the player left the ground; on
+                    // the ground the cycle advances at speed / ground speed (at most 2x)
                     let t = if p.on_ground {
                         air_since.remove(&p.id);
-                        now
+                        let len = p.velocity.length();
+                        let rate = match m.ground_speed(&seq, &params) {
+                            Some(g) if len > 0.2 && g > 0.0 => (len / g).min(2.0),
+                            _ => 1.0,
+                        };
+                        let at = anim_time.entry(p.id).or_insert(0.0);
+                        *at += dt * rate;
+                        *at
                     } else {
                         air_since
                             .entry(p.id)
@@ -1444,6 +1458,8 @@ fn main() -> Result<()> {
         vm_anim: None,
         weapon_synced: false,
         air_since: Default::default(),
+        anim_time: Default::default(),
+        last_render: Instant::now(),
         menu: None,
         spawn_models: Vec::new(),
         cursor: (0.0, 0.0),

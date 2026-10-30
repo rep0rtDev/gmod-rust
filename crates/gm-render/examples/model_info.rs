@@ -70,6 +70,13 @@ fn main() {
                     }
                 }
                 println!("  {} seqs, {} anims", seqs.len(), anims.len());
+                if std::env::var_os("SPEEDS").is_some() {
+                    for a in &anims {
+                        if a.movement != [0.0; 3] {
+                            println!("  anim {} speed {:.1}", a.name, a.ground_speed());
+                        }
+                    }
+                }
             }
             Ok((mdl, vvd, vtx)) => {
                 let h = &mdl.header;

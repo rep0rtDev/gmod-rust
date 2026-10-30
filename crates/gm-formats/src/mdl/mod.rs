@@ -423,9 +423,24 @@ pub struct AnimDesc {
     /// (block, index) pair at `section_index`.
     pub section_index: i32,
     pub section_frames: i32,
+    /// Root displacement over the whole animation (the sum of its `mstudiomovement_t`
+    /// segments), model space; zero when the animation has no movement data.
+    pub movement: [f32; 3],
 }
 
 impl AnimDesc {
+    /// How fast the root moves over the ground while this animation plays (units per second):
+    /// the game's sequence ground speed.
+    pub fn ground_speed(&self) -> f32 {
+        let [x, y, z] = self.movement;
+        let len = (x * x + y * y + z * z).sqrt();
+        if self.frames > 1 && self.fps > 0.0 {
+            len * self.fps / (self.frames - 1) as f32
+        } else {
+            0.0
+        }
+    }
+
     /// Where frame `frame` of this animation lives: `(block, offset, frame)`. Block 0 is the
     /// `.mdl` itself with `offset` from the file start; another block is a range of the `.ani`
     /// (see [`anim_blocks`]) with `offset` from the block start. Sectioned animations go
@@ -558,7 +573,18 @@ pub fn anim_descs(data: &[u8], header: &Header) -> Vec<AnimDesc> {
             break;
         };
         let fps = f32::from_bits(i32_at(data, o + 8).unwrap_or(0) as u32);
+        // mstudiomovement_t (44 bytes): endframe, motionflags, v0, v1, angle, vector, position
+        let moves = i32_at(data, o + 20).unwrap_or(0).max(0) as usize;
+        let move_off = i32_at(data, o + 24).unwrap_or(0) as usize;
+        let mut movement = [0.0f32; 3];
+        for m in 0..moves {
+            let base = o + move_off + m * 44 + 32;
+            for (k, v) in movement.iter_mut().enumerate() {
+                *v += f32::from_bits(i32_at(data, base + k * 4).unwrap_or(0) as u32);
+            }
+        }
         out.push(AnimDesc {
+            movement,
             name,
             fps,
             flags: i32_at(data, o + 12).unwrap_or(0),
