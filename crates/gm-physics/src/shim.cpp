@@ -79,6 +79,12 @@ void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2)
 	return c;
 }
 
+// the game's rope is a velocity level constraint: over its length it pulls the attachments back
+// with a correction proportional to the excess (the hang harness: 0.14 to 0.21 u over, 20 percent
+// more tension than a hard limit), while Jolt's hard limit fixes the excess in position without
+// adding velocity; a stiff soft limit at 60 Hz, critically damped, reproduces the hang's swing
+static const JPH::SpringSettings ROPE_SPRING(JPH::ESpringMode::FrequencyAndDamping, 60.0f, 1.0f);
+
 struct Rope { JPH::DistanceConstraint *c; float min_d, max_d; };
 // slack ropes per physics system (the parity runner builds a world per scenario)
 static std::unordered_map<const void *, std::vector<Rope>> ropes_by_system;
@@ -99,6 +105,7 @@ void *gmp_add_distance_constraint(void *system, unsigned int id1, unsigned int i
 	s.mPoint2 = JPH::RVec3(x2, y2, z2);
 	s.mMinDistance = min_d;
 	s.mMaxDistance = max_d;
+	if (min_d < max_d) s.mLimitsSpringSettings = ROPE_SPRING;
 	JPH::Constraint *c = s.Create(*a, *b);
 	sys->AddConstraint(c);
 	if (min_d < max_d) ropes_by_system[system].push_back({ static_cast<JPH::DistanceConstraint *>(c), min_d, max_d });
@@ -122,6 +129,10 @@ void gmp_rope_predict(void *system, float dt) {
 		float rate = (b2->GetPointVelocity(p2) - b1->GetPointVelocity(p1)).Dot(dir);
 		bool taut = len + rate * dt > r.max_d;
 		r.c->SetDistance(taut ? r.max_d : r.min_d, r.max_d);
+		// the catch tick itself is a hard stop (171 deg/s on the hang against 120 through the spring)
+		JPH::SpringSettings ss = ROPE_SPRING;
+		if (taut && len < r.max_d) ss.mFrequency = 0.0f;
+		r.c->SetLimitsSpringSettings(ss);
 	}
 }
 
