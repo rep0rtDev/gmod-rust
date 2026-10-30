@@ -34,6 +34,8 @@ pub struct ClientSlot {
     cvar_seq: u32,
     /// published packages being streamed to this client: (index, next offset), in request order
     uploads: VecDeque<(usize, u64)>,
+    undo_seq: u32,
+    sent_undos: Vec<UndoEntry>,
 }
 
 /// An addon package the server hands out to clients (its client-realm actors run there).
@@ -43,6 +45,10 @@ pub struct PublishedAddon {
 }
 
 /// Bytes of a package queued per tick per client while the channel has room.
+pub const DEFAULT_INTEREST_RADIUS: f32 = 8192.0;
+pub const DEFAULT_SNAPSHOT_BUDGET: usize = 1000;
+/// Wire size of one `PlayerSnap`.
+pub const PLAYER_SNAP_SIZE: usize = 53;
 pub const ADDON_CHUNK: usize = 16 * 1024;
 /// Reliable fragments in flight above which a client's upload waits (other reliable traffic
 /// keeps flowing between chunks).
@@ -61,6 +67,12 @@ pub struct ServerNet {
     pub addons: Vec<PublishedAddon>,
     /// What the server browser is told (`players` and `addons` are filled on send).
     pub info: crate::master::ServerInfo,
+    /// Interest: a client gets entities and other players within this distance of its player
+    /// (Source units); what leaves the radius is removed on the client, what enters is sent whole.
+    pub interest_radius: f32,
+    /// Bytes of entity states per snapshot: the nearest changed entities go first, the rest wait
+    /// for the next snapshot (they stay different from the acked baseline until sent).
+    pub snapshot_budget: usize,
 }
 
 impl ServerNet {
@@ -75,6 +87,8 @@ impl ServerNet {
             hooks: None,
             admins: std::collections::BTreeSet::new(),
             addons: Vec::new(),
+            interest_radius: DEFAULT_INTEREST_RADIUS,
+            snapshot_budget: DEFAULT_SNAPSHOT_BUDGET,
             info: crate::master::ServerInfo {
                 map: map.to_string(),
                 max_players: 16,
@@ -161,6 +175,8 @@ impl ServerNet {
                         pending_cvars: Vec::new(),
                         cvar_seq: 0,
                         uploads: VecDeque::new(),
+                        undo_seq: 0,
+                        sent_undos: Vec::new(),
                     },
                 );
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
@@ -470,28 +486,81 @@ impl ServerNet {
                     Some((t, e)) => (t, e),
                     None => (0, BTreeMap::new()),
                 };
-                let entities: Vec<EntityState> = world
+                let eye = server.players.get(&slot.player).map(|p| p.state.origin);
+                let near = |pos: Vec3| match eye {
+                    Some(e) => e.distance(pos) <= self.interest_radius,
+                    None => true,
+                };
+                let mut changed: Vec<(f32, &EntityState)> = world
                     .values()
-                    .filter(|e| base.get(&e.id) != Some(*e))
+                    .filter(|e| near(e.pos) && base.get(&e.id) != Some(*e))
+                    .map(|e| (eye.map(|o| o.distance(e.pos)).unwrap_or(0.0), e))
+                    .collect();
+                changed.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
+                let mut near_players: Vec<(f32, &PlayerSnap)> = players
+                    .iter()
+                    .filter(|p| p.id != slot.player && near(p.origin))
+                    .map(|p| (eye.map(|o| o.distance(p.origin)).unwrap_or(0.0), p))
+                    .collect();
+                near_players.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
+                let mut used = 0usize;
+                let mut players: Vec<PlayerSnap> = players
+                    .iter()
+                    .filter(|p| p.id == slot.player)
                     .cloned()
                     .collect();
+                for (_, p) in near_players {
+                    if used + PLAYER_SNAP_SIZE > self.snapshot_budget {
+                        break;
+                    }
+                    used += PLAYER_SNAP_SIZE;
+                    players.push(p.clone());
+                }
+                let mut entities: Vec<EntityState> = Vec::new();
+                for (_, e) in changed {
+                    let size = 58 + e.model.len();
+                    if used + size > self.snapshot_budget && !entities.is_empty() {
+                        break;
+                    }
+                    used += size;
+                    entities.push(e.clone());
+                }
                 let removed: Vec<u32> = base
                     .keys()
-                    .filter(|id| !world.contains_key(id))
+                    .filter(|id| !world.get(id).is_some_and(|e| near(e.pos)))
                     .copied()
                     .collect();
+                let mut sent_world = base.clone();
+                for id in &removed {
+                    sent_world.remove(id);
+                }
+                for e in &entities {
+                    sent_world.insert(e.id, e.clone());
+                }
+                let undos: Vec<UndoEntry> = server
+                    .sandbox
+                    .undos(slot.player)
+                    .iter()
+                    .map(|u| UndoEntry {
+                        id: u.id,
+                        name: u.name.clone(),
+                    })
+                    .collect();
+                if undos != slot.sent_undos {
+                    slot.undo_seq += 1;
+                    let mut w = Writer::default();
+                    ServerMsg::Undos {
+                        seq: slot.undo_seq,
+                        entries: undos.clone(),
+                    }
+                    .write(&mut w);
+                    slot.channel.send_reliable(w.buf);
+                    slot.sent_undos = undos;
+                }
                 let own = OwnSandbox {
                     count: server.sandbox.count(slot.player) as u32,
                     constraints: server.sandbox.constraints().len() as u32,
-                    undos: server
-                        .sandbox
-                        .undos(slot.player)
-                        .iter()
-                        .map(|u| UndoEntry {
-                            id: u.id,
-                            name: u.name.clone(),
-                        })
-                        .collect(),
+                    undos: Vec::new(),
                     max_props: server.sandbox.limits.max_props,
                 };
                 let local = server
@@ -503,7 +572,7 @@ impl ServerNet {
                     tick: self.tick,
                     baseline: baseline_tick,
                     last_cmd_tick: slot.last_cmd_tick,
-                    players: players.clone(),
+                    players,
                     entities,
                     removed,
                     own,
@@ -511,7 +580,7 @@ impl ServerNet {
                 }
                 .write(&mut w);
                 unreliable.push(w.buf);
-                slot.sent.push_back((self.tick, world.clone()));
+                slot.sent.push_back((self.tick, sent_world));
                 if slot.sent.len() > 64 {
                     slot.sent.pop_front();
                 }

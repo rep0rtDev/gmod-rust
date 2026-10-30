@@ -201,6 +201,12 @@ pub enum ServerMsg {
         total: u64,
         data: Vec<u8>,
     },
+    /// Reliable: the player's undo list whenever it changes (it is not part of the snapshot, a
+    /// long list would not fit the packet budget).
+    Undos {
+        seq: u32,
+        entries: Vec<UndoEntry>,
+    },
 }
 
 /// A published addon package: identity is the sha256 of the `.gmr` bytes.
@@ -559,11 +565,6 @@ impl ServerMsg {
                 w.u32(own.count);
                 w.u32(own.constraints);
                 w.u32(own.max_props as u32);
-                w.varint(own.undos.len() as u64);
-                for u in &own.undos {
-                    w.u32(u.id);
-                    w.str(&u.name);
-                }
                 match local {
                     None => w.u8(0),
                     Some(l) => {
@@ -614,6 +615,15 @@ impl ServerMsg {
                 w.varint(*offset);
                 w.varint(*total);
                 w.bytes(data);
+            }
+            ServerMsg::Undos { seq, entries } => {
+                w.u8(9);
+                w.u32(*seq);
+                w.varint(entries.len() as u64);
+                for u in entries {
+                    w.u32(u.id);
+                    w.str(&u.name);
+                }
             }
         }
     }
@@ -672,14 +682,7 @@ impl ServerMsg {
                 let count = r.u32()?;
                 let constraints = r.u32()?;
                 let max_props = r.u32()? as i32;
-                let n = r.varint()? as usize;
-                let mut undos = Vec::with_capacity(n);
-                for _ in 0..n {
-                    undos.push(UndoEntry {
-                        id: r.u32()?,
-                        name: r.str()?,
-                    });
-                }
+                let undos = Vec::new();
                 let local = if r.u8()? != 0 {
                     Some(LocalPlayer { state: r_state(r)? })
                 } else {
@@ -735,6 +738,18 @@ impl ServerMsg {
                 total: r.varint()?,
                 data: r.bytes()?.to_vec(),
             },
+            9 => {
+                let seq = r.u32()?;
+                let n = r.varint()?.min(4096) as usize;
+                let mut entries = Vec::with_capacity(n);
+                for _ in 0..n {
+                    entries.push(UndoEntry {
+                        id: r.u32()?,
+                        name: r.str()?,
+                    });
+                }
+                ServerMsg::Undos { seq, entries }
+            }
             _ => return Err(Truncated),
         })
     }

@@ -23,6 +23,9 @@ when reliable messages are left that none of the tick's packets carried, so a la
 moves ~8 KiB per tick per client; the server sends bursts, the client one packet per tick.
 Measured with the gm-net unit test: a 50 000-byte message plus two small ones around it arrive
 whole and in order over 20 % loss, every packet under the budget.
+The fresh unreliable payload (snapshot, usercmds) always goes in the tick's first packet; reliable
+messages fill what is left and a burst's later packets carry the rest (found when a 1.4 KB
+reliable undo list rode along with a snapshot: 1 559 bytes).
 Ack of nothing: a header with `ack = 0, ack_bits = 0` means "nothing received yet", never "packet
 0 received" (that one is acked by the bits of a later packet; found with a loopback seed that lost
 the first server packet: the welcome was dropped as acked and the client never joined).
@@ -133,6 +136,23 @@ Hot reload: a server with `--watch` that reloads an addon with the `client` real
 `Addons` list (latest package per addon id; older ones stay downloadable so a transfer in flight
 finishes); the client downloads the new package and hot-reloads its actors, `state` kept
 (`a_hot_reloaded_client_addon_is_republished_and_the_client_reloads_it_keeping_state`).
+
+## Interest and the snapshot budget
+
+A client is sent the entities and other players within `ServerNet::interest_radius` (8 192 u by
+default) of its own player; what leaves the radius is listed in `removed` for that client and what
+enters is sent whole, so the client's table is exactly its interest. Each snapshot is budgeted
+(`snapshot_budget`, 1 000 bytes): the local player first, then the nearest other players
+(53 bytes each), then the nearest changed entities (58 bytes + model name each); what does not fit
+waits, and because the delta is taken against the baseline the client acked, an unsent change is
+simply still different next time. The server remembers per client what it actually sent, not the
+whole world. The player's undo list left the snapshot (60 entries were 1.4 KB in every one): it
+goes as `ServerMsg::Undos { seq, entries }` (tag 9, reliable) whenever it changes and the client
+keeps it across snapshots like cvars. Measured
+(`snapshots_carry_only_the_props_in_the_players_interest_within_the_byte_budget`): 60 crates in a
+line, radius 2 000, budget 400: the client converges on exactly the crates in range, follows a
+3 000 u teleport (far crates in, old ones out), every packet under 1 200 bytes. Interest by PVS
+(the BSP visibility lump is decoded in gm-formats) is the follow-up.
 
 ## Server browser: master and query
 

@@ -361,6 +361,8 @@ impl ClientNet {
                         if self.history.len() > 64 {
                             self.history.pop_front();
                         }
+                        let mut own = own;
+                        own.undos = std::mem::take(&mut self.world.own.undos);
                         self.world = ClientWorld {
                             tick,
                             players,
@@ -377,6 +379,7 @@ impl ClientNet {
                     ServerMsg::Cvar { name, value, .. } => {
                         self.world.cvars.insert(name, value);
                     }
+                    ServerMsg::Undos { entries, .. } => self.world.own.undos = entries,
                     ServerMsg::Addons { list } => self.server_addons = list,
                     ServerMsg::AddonChunk {
                         sha,

@@ -1043,3 +1043,121 @@ fn a_game_server_answers_browser_queries_and_heartbeats_to_the_master() {
     assert_eq!((hb.players, hb.name.as_str()), (1, "box"));
     assert_eq!(*seen, 1010);
 }
+
+#[test]
+fn snapshots_carry_only_the_props_in_the_players_interest_within_the_byte_budget() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
+    let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
+    sn.interest_radius = 2000.0;
+    sn.snapshot_budget = 400; // ~4 crates per snapshot
+    let net = gm_net::Loopback::new(1, 0.0, 11);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "p1");
+    // connect first, then line crates up along +x: 60 of them 100 u apart, frozen in the air
+    for _ in 0..3 {
+        client.tick(gm_net::NetCmd::default(), &mut c_ep);
+        net.tick();
+        sn.receive(&mut server, &mut s_ep);
+        sn.tick(&mut server);
+        sn.send(&server, &mut s_ep);
+        client.receive(&mut c_ep);
+    }
+    let me = client.player_id.expect("welcomed");
+    let crate_model = "models/props_junk/wood_crate001a.mdl";
+    let mut by_x: Vec<(u32, f32)> = Vec::new();
+    for i in 0..60u32 {
+        let ent = server.spawn_prop(me, crate_model).unwrap();
+        let x = spawn.x + 100.0 * i as f32;
+        assert!(server.teleport_prop(
+            ent,
+            glam::Vec3::new(x, spawn.y, spawn.z + 200.0),
+            glam::Vec3::ZERO
+        ));
+        server.sandbox.set_frozen(ent, true);
+        by_x.push((ent, x));
+    }
+    let origin = |server: &gm_server::Server<'_>| server.players[&me].state.origin;
+    let expected =
+        |server: &gm_server::Server<'_>, radius: f32| -> std::collections::BTreeSet<u32> {
+            let o = origin(server);
+            server
+                .sandbox
+                .props()
+                .iter()
+                .filter(|p| o.distance(p.pos) <= radius)
+                .map(|p| p.id)
+                .collect()
+        };
+    struct Measured<'a> {
+        inner: &'a mut gm_net::LoopbackEndpoint,
+        max_packet: usize,
+    }
+    impl gm_net::Transport for Measured<'_> {
+        fn send(&mut self, to: usize, packet: Vec<u8>) {
+            self.inner.send(to, packet);
+        }
+        fn recv(&mut self) -> Vec<(usize, Vec<u8>)> {
+            let got = self.inner.recv();
+            for (_, p) in &got {
+                self.max_packet = self.max_packet.max(p.len());
+            }
+            got
+        }
+    }
+    let mut c_ep = Measured {
+        inner: &mut c_ep,
+        max_packet: 0,
+    };
+    let mut run =
+        |ticks: u32, server: &mut gm_server::Server<'_>, client: &mut gm_net::ClientNet| {
+            for _ in 0..ticks {
+                client.tick(gm_net::NetCmd::default(), &mut c_ep);
+                net.tick();
+                sn.receive(server, &mut s_ep);
+                sn.tick(server);
+                sn.send(server, &mut s_ep);
+                client.receive(&mut c_ep);
+            }
+            c_ep.max_packet
+        };
+    let max_packet = run(120, &mut server, &mut client);
+    let want = expected(&server, 2000.0);
+    assert!(
+        want.len() >= 15 && want.len() <= 25,
+        "{} crates in range",
+        want.len()
+    );
+    let got: std::collections::BTreeSet<u32> = client.world.entities.keys().copied().collect();
+    assert_eq!(
+        got, want,
+        "the client holds exactly the crates within 2000 u"
+    );
+    assert!(
+        max_packet <= gm_net::channel::MAX_PACKET,
+        "{max_packet} B packet"
+    );
+
+    // walk 3000 u down the line: far crates come in, the ones left behind go
+    let o = origin(&server);
+    server.teleport_player(me, glam::Vec3::new(o.x + 3000.0, o.y, o.z));
+    let max_packet = run(120, &mut server, &mut client);
+    let want2 = expected(&server, 2000.0);
+    assert_ne!(want, want2);
+    let got2: std::collections::BTreeSet<u32> = client.world.entities.keys().copied().collect();
+    assert_eq!(got2, want2, "interest follows the player");
+    assert!(
+        max_packet <= gm_net::channel::MAX_PACKET,
+        "{max_packet} B packet"
+    );
+}

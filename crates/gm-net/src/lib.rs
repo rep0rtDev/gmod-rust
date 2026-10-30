@@ -91,10 +91,7 @@ mod tests {
             own: OwnSandbox {
                 count: 1,
                 constraints: 0,
-                undos: vec![UndoEntry {
-                    id: 1,
-                    name: "Prop".into(),
-                }],
+                undos: Vec::new(),
                 max_props: 200,
             },
             local: Some(LocalPlayer {
@@ -109,6 +106,16 @@ mod tests {
         let mut w = Writer::default();
         snap.write(&mut w);
         assert_eq!(ServerMsg::read(&mut Reader::new(&w.buf)).unwrap(), snap);
+        let undos = ServerMsg::Undos {
+            seq: 3,
+            entries: vec![UndoEntry {
+                id: 1,
+                name: "Prop".into(),
+            }],
+        };
+        let mut w = Writer::default();
+        undos.write(&mut w);
+        assert_eq!(ServerMsg::read(&mut Reader::new(&w.buf)).unwrap(), undos);
     }
 
     #[test]

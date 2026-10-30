@@ -161,7 +161,10 @@ impl Channel {
                 continue;
             }
             let len = p.bytes.len() + 12;
-            if !first && w.buf.len() + len + unreliable_len > MAX_PACKET {
+            // the fresh unreliable payload (snapshot, usercmds) always goes; reliable messages
+            // fill what is left, a burst's later packets carry the rest
+            if w.buf.len() + len + unreliable_len > MAX_PACKET && (!first || !unreliable.is_empty())
+            {
                 break;
             }
             first = false;
