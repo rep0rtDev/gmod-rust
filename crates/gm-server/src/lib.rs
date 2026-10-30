@@ -2520,13 +2520,20 @@ impl<'w> Server<'w> {
         if let Some(p) = self.players.get_mut(&player) {
             p.use_down = use_key;
         }
-        if use_pressed {
-            if self.players.get(&player).is_some_and(|p| p.carry.is_some()) {
+        // Measured (`lua_use_hold`): while +use is held over an entity the game asks
+        // `PlayerUse` every tick (41 calls for a 40-tick hold on a frozen crate, 5 for a
+        // 5-tick one, also while already carrying); the pickup itself happens on the press
+        // (picked the tick after), the next press drops.
+        let use_alive = use_key && self.players.get(&player).is_some_and(|p| p.alive);
+        if use_alive {
+            if use_pressed && self.players.get(&player).is_some_and(|p| p.carry.is_some()) {
                 self.drop_carry(player);
             } else if let Some(ent) = self.find_use_entity(player, eye, view) {
                 if self.ask(Request::PlayerUse { player, ent }) != Verdict::Cancel {
                     self.game_events.push(GameEvent::Use { player, ent });
-                    self.try_pickup(player, ent, view.y);
+                    if use_pressed {
+                        self.try_pickup(player, ent, view.y);
+                    }
                 }
             }
         }

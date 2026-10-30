@@ -2873,8 +2873,9 @@ fn player_use_is_asked_on_the_press_within_reach_and_player_used_follows() {
     step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0, 15);
     let asked: i64 = crt.actors()[0].eval("return state.d.asked").unwrap();
     assert_eq!(asked, 0, "the crate 128 u away is beyond PLAYER_USE_RADIUS");
-    // a second crate right under the eyes (60 degrees down: ~40 u); held 5 ticks = one press,
-    // the first answer vetoes
+    // a second crate right under the eyes (60 degrees down: ~40 u); held 5 ticks = one press
+    // and five asks (the game asks `PlayerUse` every tick the button is held), the first
+    // answer vetoes the press, so nothing is picked up
     client.command(gm_net::Command::Spawn {
         model: "models/props_junk/wood_crate001a.mdl".into(),
     });
@@ -2890,8 +2891,21 @@ fn player_use_is_asked_on_the_press_within_reach_and_player_used_follows() {
         gm_server::IN_USE,
         5,
     );
-    step(&mut sn, &mut client, &mut server, &mut crt, 60.0, 0, 5);
-    // the second press goes through
+    // (the probe logs every 10 ticks, so wait for the next log)
+    step(&mut sn, &mut client, &mut server, &mut crt, 60.0, 0, 15);
+    let (asked, used): (i64, i64) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.used")
+        .unwrap();
+    assert_eq!(
+        (asked, used),
+        (5, 4),
+        "one ask per held tick, the press itself vetoed"
+    );
+    assert!(
+        server.players.values().all(|p| p.carry.is_none()),
+        "a vetoed press picks nothing up, the held ticks after it do not either"
+    );
+    // the second press goes through and picks the crate up; the held ticks keep asking
     step(
         &mut sn,
         &mut client,
@@ -2905,8 +2919,17 @@ fn player_use_is_asked_on_the_press_within_reach_and_player_used_follows() {
     let (asked, used, last): (i64, i64, i64) = crt.actors()[0]
         .eval("return state.d.asked, state.d.used, state.d.last")
         .unwrap();
-    assert_eq!((asked, used), (2, 1), "asked once per press, one allowed");
+    assert_eq!((asked, used), (10, 9), "five more asks, all allowed");
     assert_eq!(last as u32, near, "the crate under the eyes");
+    assert_eq!(
+        server
+            .players
+            .values()
+            .filter(|p| p.carry.is_some())
+            .count(),
+        1,
+        "the press picked the crate up once, the held ticks did not drop or re-pick it"
+    );
 }
 
 #[test]
@@ -3434,7 +3457,7 @@ fn use_pickup_carries_a_light_prop_to_the_hold_point_and_the_second_press_drops_
     step(&mut sn, &mut client, &mut server, &mut crt, 35.0, 0, 40);
     let crate_id = server.sandbox.props()[0].id;
     let rest = server.prop_state(crate_id).unwrap().position;
-    // first press: used, pickup vetoed by the hook, the crate stays
+    // first press (held 3 ticks: three `player.used`): pickup vetoed by the hook, the crate stays
     step(
         &mut sn,
         &mut client,
@@ -3450,8 +3473,8 @@ fn use_pickup_carries_a_light_prop_to_the_hold_point_and_the_second_press_drops_
         .unwrap();
     assert_eq!(
         (asked, picked, used),
-        (1, 0, 1),
-        "vetoed pickup after an allowed use"
+        (1, 0, 3),
+        "vetoed pickup after an allowed use, one use per held tick"
     );
     assert!(server.prop_state(crate_id).unwrap().position.distance(rest) < 0.5);
     // second press: carried to eye + forward * (24 + 22.63 + extent) within a few ticks
