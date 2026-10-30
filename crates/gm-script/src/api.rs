@@ -94,7 +94,104 @@ function events.on(name: string, fn, priority: number?)
         return a.order < b.order
     end)
 end
+-- timers: delays in seconds, counted in ticks of game.interval(), run at the start of every
+-- tick.pre before the handlers; a callback that errors destroys its timer (the error is printed)
+timer = {}
+local timers = {}
+local anon = 0
+local function ticks_of(delay: number): number
+    local n = math.ceil(delay / game.interval() - 1e-6)
+    if n < 1 then n = 1 end
+    return n
+end
+local seq = 0
+function timer.Create(name: string, delay: number, reps: number, fn)
+    seq += 1
+    timers[name] = { fn = fn, every = ticks_of(delay), left = ticks_of(delay), reps = reps, paused = false, seq = seq }
+end
+function timer.Simple(delay: number, fn)
+    anon += 1
+    timer.Create("__simple" .. anon, delay, 1, fn)
+end
+function timer.Exists(name: string): boolean
+    return timers[name] ~= nil
+end
+function timer.Remove(name: string)
+    timers[name] = nil
+end
+timer.Destroy = timer.Remove
+function timer.Pause(name: string): boolean
+    local t = timers[name]
+    if t == nil or t.paused then return false end
+    t.paused = true
+    return true
+end
+function timer.UnPause(name: string): boolean
+    local t = timers[name]
+    if t == nil or not t.paused then return false end
+    t.paused = false
+    return true
+end
+function timer.Toggle(name: string): boolean
+    local t = timers[name]
+    if t == nil then return false end
+    t.paused = not t.paused
+    return t.paused
+end
+function timer.Start(name: string): boolean
+    local t = timers[name]
+    if t == nil then return false end
+    t.left = t.every
+    t.paused = false
+    return true
+end
+function timer.Adjust(name: string, delay: number, reps: number?, fn): boolean
+    local t = timers[name]
+    if t == nil then return false end
+    local every = ticks_of(delay)
+    t.left = math.max(1, t.left + every - t.every)
+    t.every = every
+    if reps ~= nil then t.reps = reps end
+    if fn ~= nil then t.fn = fn end
+    return true
+end
+function timer.TimeLeft(name: string): number?
+    local t = timers[name]
+    if t == nil then return nil end
+    return t.left * game.interval()
+end
+function timer.RepsLeft(name: string): number?
+    local t = timers[name]
+    if t == nil then return nil end
+    return t.reps
+end
+local function run_timers()
+    local due = {}
+    for name, t in pairs(timers) do
+        if not t.paused then
+            t.left -= 1
+            if t.left <= 0 then table.insert(due, name) end
+        end
+    end
+    table.sort(due, function(a, b) return timers[a].seq < timers[b].seq end)
+    for _, name in ipairs(due) do
+        local t = timers[name]
+        if t ~= nil then
+            t.left = t.every
+            if t.reps > 0 then
+                t.reps -= 1
+                if t.reps == 0 then timers[name] = nil end
+            end
+            local ok, err = pcall(t.fn)
+            if not ok then
+                timers[name] = nil
+                print("timer " .. name .. ": " .. tostring(err))
+            end
+        end
+    end
+end
 function __dispatch(name: string, payload)
+    if name == "tick.pre" then run_timers() end
     local list = handlers[name]
     if list == nil then return nil end
     for _, h in ipairs(list) do
@@ -240,6 +337,10 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
     )?;
     g.set("world", world)?;
     let game = lua.create_table()?;
+    game.set(
+        "interval",
+        lua.create_function(|_, ()| Ok(gm_core::tick::DEFAULT_TICK_INTERVAL as f64))?,
+    )?;
     let sh = shared.clone();
     game.set(
         "tick",

@@ -87,8 +87,26 @@ counting ticks; an actor calling `error` is restarted once with `state.count` ca
 priority 0 actor's `set_pos` is applied before a priority 10 actor's `freeze`; a priority 0 actor
 refusing cans stops the request before the priority 10 actor sees it.
 
+## Timers
+
+`timer` lives in the actor's VM (prelude), so a timer runs in the realm and budget of the actor
+that made it. Delays are seconds, counted in ticks of `game.interval()` (0.015 s): `ceil(delay /
+interval)`, never less than one tick, so `timer.Simple(0, f)` runs on the next `tick.pre`. All due
+timers run at the start of the actor's `tick.pre` dispatch, before its handlers, in creation order
+within a tick. `timer.Create(name, delay, reps, fn)` replaces a timer of the same name; `reps` 0
+repeats forever; `timer.Simple(delay, fn)` is a one shot with a hidden name. `Exists`, `Remove`
+(`Destroy`), `Pause`, `UnPause`, `Toggle`, `Start` (restart from a full delay), `Adjust(name, delay,
+reps?, fn?)` (keeps the elapsed part), `TimeLeft` and `RepsLeft` follow the sandbox names. A callback
+that errors destroys its timer and prints the error through the actor's `print` queue; the actor
+is not restarted and its other timers keep running.
+
+Measured (`cargo test -p gm-script`, `timers_count_ticks_and_a_failing_one_is_destroyed`): a 0.015 s
+timer with 3 repetitions fires on ticks 1, 2, 3 and is gone; a 0.03 s one shot fires on tick 2; a
+0.045 s forever timer fires on 3 and 6; an erroring timer fires once and is removed; a paused one
+never fires and still exists.
+
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API (entity write views, players,
-constraints, net, timers, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
+constraints, net, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
 file watching for reloads, the sandbox gamemode in Luau on top of this API.

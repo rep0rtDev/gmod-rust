@@ -223,3 +223,62 @@ fn client_realm_sees_the_assembled_world() {
         (1, 2, 40, 1, 3.5, false)
     );
 }
+
+fn tick(rt: &mut Runtime, t: u64) {
+    let mut snap = Snapshot::default();
+    snap.tick = t;
+    let snap = Arc::new(snap);
+    for a in rt.actors_mut() {
+        a.dispatch(&snap, "tick.pre", &Payload::default(), t)
+            .unwrap();
+    }
+}
+
+#[test]
+fn timers_count_ticks_and_a_failing_one_is_destroyed() {
+    let mut rt = Runtime::new();
+    rt.load(spec(
+        "t",
+        0,
+        r#"
+        state.fired = {}
+        local function mark(tag) return function() table.insert(state.fired, tag .. "@" .. game.tick()) end end
+        timer.Simple(0.03, mark("simple"))
+        timer.Create("rep", 0.015, 3, mark("rep"))
+        timer.Create("forever", 0.045, 0, mark("forever"))
+        timer.Create("bad", 0.015, 0, function() error("boom") end)
+        timer.Create("gone", 0.015, 1, mark("gone"))
+        timer.Remove("gone")
+        timer.Create("paused", 0.015, 1, mark("paused"))
+        timer.Pause("paused")
+        "#,
+    ))
+    .unwrap();
+    for t in 1..=7 {
+        tick(&mut rt, t);
+    }
+    let a = &rt.actors()[0];
+    let fired: Vec<String> = a.eval("return state.fired").unwrap();
+    assert_eq!(
+        fired,
+        vec![
+            "rep@1",
+            "simple@2",
+            "rep@2",
+            "rep@3",
+            "forever@3",
+            "forever@6"
+        ]
+    );
+    let exists: Vec<bool> = a
+        .eval("return {timer.Exists('rep'), timer.Exists('forever'), timer.Exists('bad'), timer.Exists('paused')}")
+        .unwrap();
+    assert_eq!(exists, vec![false, true, false, true]);
+    let prints = rt.actors_mut()[0].take_prints();
+    assert!(
+        prints
+            .iter()
+            .any(|p| p.contains("timer bad") && p.contains("boom")),
+        "{prints:?}"
+    );
+}
