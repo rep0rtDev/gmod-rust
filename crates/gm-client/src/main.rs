@@ -40,6 +40,8 @@ struct Sim {
     pred: Option<gm_net::Prediction<'static>>,
     cmd_tick: u32,
     interp: gm_net::Interpolator,
+    /// Other players, interpolated like props (origin, yaw as the angles).
+    player_interp: gm_net::Interpolator,
     prev_origin: Vec3,
     origin: Vec3,
     ducked: bool,
@@ -61,6 +63,27 @@ impl Sim {
         let w = &self.client.world;
         if w.tick != seen {
             self.interp.push(w.tick, &w.entities);
+            let players = w
+                .players
+                .iter()
+                .map(|p| {
+                    (
+                        p.id,
+                        gm_net::msg::EntityState {
+                            id: p.id,
+                            model: String::new(),
+                            model_id: 0,
+                            pos: p.origin,
+                            angles: Vec3::new(0.0, p.view_angles.y, 0.0),
+                            vel: p.velocity,
+                            angvel: Vec3::ZERO,
+                            frozen: false,
+                            owner: 0,
+                        },
+                    )
+                })
+                .collect();
+            self.player_interp.push(w.tick, &players);
         }
         if let Some(l) = &w.local {
             let p = self
@@ -593,7 +616,11 @@ impl App {
                 Some(m) => {
                     let (seq, params) = player_sequence(p);
                     let pose = m.pose_with(seq, now, &params);
-                    player_poses.push((p.origin, p.view_angles.y, pose));
+                    let (origin, yaw) = match self.sim.player_interp.sample(p.id, rt) {
+                        Some(s) => (s.pos, s.angles.y),
+                        None => (p.origin, p.view_angles.y),
+                    };
+                    player_poses.push((origin, yaw, pose));
                 }
                 None => {
                     let h = if p.ducked { 36.0 } else { 72.0 };
@@ -1069,6 +1096,7 @@ fn main() -> Result<()> {
         pred: None,
         cmd_tick: 0,
         interp: gm_net::Interpolator::new(4.0),
+        player_interp: gm_net::Interpolator::new(4.0),
         prev_origin: spawn,
         origin: spawn,
         ducked: false,
