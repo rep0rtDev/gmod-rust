@@ -591,6 +591,9 @@ public:
 				float vn = rel(pt.p).Dot(n);
 				if (vn >= -threshold) continue;
 				if (pt.d > 0.0f && pt.d > -vn * step_dt) continue;
+				// a later vertex enters the step only if it reaches the plane in the time left
+				// after the first touch (`phys_drop_edge_crate`: the far side needs 12 ms with 7 left)
+				if (t_impact >= 0.0f && pt.d > 0.0f && pt.d > -vn * (step_dt - t_impact)) continue;
 				float t = std::max(pt.d, 0.0f) / -vn;
 				// ties: the game took the +x corner of the crate and the +x rim vertex of the barrel
 				bool better = pick == nullptr || t < best_t - tie_eps * 0.01f ||
