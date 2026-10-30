@@ -56,6 +56,8 @@ pub struct Runtime {
     /// Poll the loaded addons' files every 33 ticks and hot reload the changed ones.
     pub watch: bool,
     addon_stamps: std::collections::BTreeMap<String, u64>,
+    /// Public keys addons must be signed by; empty means any addon loads (development).
+    pub trusted: Vec<[u8; 32]>,
     /// Version of every loaded addon by id (what `depends` is checked against).
     pub addon_versions: std::collections::BTreeMap<String, String>,
     pool: pool::Pool,
@@ -84,6 +86,7 @@ impl Runtime {
             watch: false,
             addon_stamps: Default::default(),
             addon_versions: Default::default(),
+            trusted: Vec::new(),
             pool: pool::Pool::new(
                 std::thread::available_parallelism()
                     .map(|n| n.get())
@@ -99,6 +102,10 @@ impl Runtime {
         path: &std::path::Path,
     ) -> Result<Manifest, Box<dyn std::error::Error>> {
         let (m, specs) = read_addon(path, &self.realm)?;
+        if self.addon_versions.contains_key(&m.id) {
+            return Err(depends::DependsError::AlreadyLoaded(m.id).into());
+        }
+        self.check_trust(&m.id, path)?;
         depends::check(&m.id, &m.depends, &self.addon_versions)?;
         for spec in specs {
             self.load(spec)?;
@@ -120,6 +127,10 @@ impl Runtime {
         let mut read = Vec::new();
         for p in paths {
             let (m, _) = read_addon(p, &self.realm)?;
+            self.check_trust(&m.id, p)?;
+            if self.addon_versions.contains_key(&m.id) || read.iter().any(|(id, _)| *id == m.id) {
+                return Err(depends::DependsError::AlreadyLoaded(m.id).into());
+            }
             read.push((m.id.clone(), m.depends.clone()));
         }
         let order = depends::order(&read)?;
@@ -134,6 +145,28 @@ impl Runtime {
             out.push(self.load_addon(&paths[i])?);
         }
         Ok(out)
+    }
+
+    /// With `trusted` keys set, an addon (directory or `.gmr`) must carry a valid signature by
+    /// one of them; a broken signature is refused even without a trust list.
+    fn check_trust(&self, id: &str, path: &std::path::Path) -> Result<(), package::SignatureError> {
+        let files = if path.is_dir() {
+            let mut f = std::collections::BTreeMap::new();
+            package::collect(path, path, &mut f).map_err(|e| {
+                package::SignatureError::Malformed(format!("{}: {e}", path.display()))
+            })?;
+            f
+        } else {
+            Package::open(path)
+                .map_err(|e| package::SignatureError::Malformed(e.to_string()))?
+                .files
+        };
+        let signers = package::signers(&files)?;
+        if self.trusted.is_empty() || signers.iter().any(|k| self.trusted.contains(k)) {
+            Ok(())
+        } else {
+            Err(package::SignatureError::Untrusted(id.to_string()))
+        }
     }
 
     /// On the server, an addon with the `client` realm is packed (a directory deterministically,
@@ -300,6 +333,7 @@ impl Runtime {
         path: &std::path::Path,
     ) -> Result<Manifest, Box<dyn std::error::Error>> {
         let (m, specs) = read_addon(path, &self.realm)?;
+        self.check_trust(&m.id, path)?;
         depends::check(&m.id, &m.depends, &self.addon_versions)?;
         let mut versions = self.addon_versions.clone();
         versions.insert(m.id.clone(), m.version.clone());

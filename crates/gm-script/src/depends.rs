@@ -109,6 +109,8 @@ pub enum DependsError {
     Mismatch(String, String, String, String),
     #[error("dependency cycle among {0:?}")]
     Cycle(Vec<String>),
+    #[error("addon {0} is already loaded")]
+    AlreadyLoaded(String),
 }
 
 /// Checks one addon's requirements against the loaded versions.

@@ -318,6 +318,19 @@ wrong version; actors of equal priority run in load order, so a dependency's act
 keep running) when the new manifest's own dependencies fail or a loaded dependent no longer
 accepts the new version. `gmr inspect` prints the dependencies.
 
+## Signing
+
+A `signature` entry (file in the directory, entry in the `.gmr`) holds lines
+`gmr-sig1 <ed25519 public key hex> <signature hex>`, each a signature of the content hash: SHA-256
+over every other entry as `len(name) name len(data) data` in name order, so the signature made on
+the directory holds for the package packed from it and the package sha256 (its download identity)
+changes with every signer while the content hash does not. `gmr keygen <key>` writes a secret key,
+`gmr sign <dir|.gmr> <key>` appends a signature (several signers are fine), `gmr verify` lists the
+signers. A runtime with `trusted` keys (`gm-dedicated --trust <public key hex>`, repeatable) loads
+only addons carrying a valid signature by one of them (`load_addons` refuses the whole set
+otherwise); without a trust list anything loads, but a signature that does not match the content
+is refused always. Clients trust the server they joined: what it publishes, they run.
+
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,

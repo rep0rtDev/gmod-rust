@@ -532,3 +532,68 @@ fn addons_load_in_dependency_order_and_bad_dependencies_refuse_the_whole_set() {
     assert_eq!(rt.reload_addon(&base).unwrap().version, "1.5.0");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_trusting_runtime_loads_only_addons_signed_by_a_trusted_key() {
+    use gm_script::package;
+    let dir = std::env::temp_dir().join(format!("gm-sign-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let plain = write_addon(&dir, "plain", "1.0.0", &[]);
+    let signed = write_addon(&dir, "signed", "1.0.0", &[]);
+    let (sk, pk) = package::keygen();
+    let (_, other) = package::keygen();
+    let mut files = std::collections::BTreeMap::new();
+    package_collect(&signed, &mut files);
+    std::fs::write(signed.join(package::SIGNATURE), package::sign(&files, &sk)).unwrap();
+    let gmr = dir.join("signed.gmr");
+    std::fs::write(&gmr, package::pack(&signed).unwrap()).unwrap();
+    assert_eq!(
+        gm_script::Package::open(&gmr).unwrap().signers().unwrap(),
+        vec![pk],
+        "the directory's signature holds for the package"
+    );
+
+    let mut open = gm_script::Runtime::new();
+    open.load_addons(&[plain.clone(), gmr.clone()]).unwrap();
+    assert_eq!(
+        open.actors().len(),
+        2,
+        "without a trust list everything loads"
+    );
+
+    let mut rt = gm_script::Runtime::new();
+    rt.trusted.push(other);
+    let e = rt.load_addon(&gmr).unwrap_err().to_string();
+    assert!(e.contains("signed is not signed by a trusted key"), "{e}");
+    rt.trusted.push(pk);
+    let e = rt
+        .load_addons(&[gmr.clone(), plain.clone()])
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("plain is not signed by a trusted key"), "{e}");
+    assert_eq!(
+        rt.actors().len(),
+        0,
+        "an unsigned addon refuses the whole set"
+    );
+    rt.load_addon(&gmr).unwrap();
+    let e = rt.load_addon(&signed).unwrap_err().to_string();
+    assert!(e.contains("signed is already loaded"), "{e}");
+    assert_eq!(rt.actors().len(), 1);
+
+    std::fs::write(signed.join("src/a.luau"), "state.x = 2").unwrap();
+    let e = gm_script::Runtime::new()
+        .load_addon(&signed)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("does not match the content"),
+        "{e}: a tampered signed addon is refused even without a trust list"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn package_collect(dir: &std::path::Path, out: &mut std::collections::BTreeMap<String, Vec<u8>>) {
+    let bytes = gm_script::package::pack(dir).unwrap();
+    *out = gm_script::Package::read(&bytes).unwrap().files;
+}

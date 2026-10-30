@@ -18,4 +18,6 @@ thiserror = { workspace = true }
 toml = { workspace = true }
 zip = { workspace = true }
 sha2 = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand_core = { workspace = true }
 serde = { workspace = true }

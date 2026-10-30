@@ -29,6 +29,9 @@ struct Args {
     /// Hot reload addons whose files change (checked every 33 ticks).
     #[arg(long)]
     watch: bool,
+    /// Public key (hex) addons must be signed by; repeatable, none means any addon loads
+    #[arg(long)]
+    trust: Vec<String>,
 }
 
 fn main() -> Result<()> {
@@ -50,6 +53,12 @@ fn main() -> Result<()> {
         let mut rt = gm_script::Runtime::new();
         rt.data_dir = Some(args.data.clone());
         rt.watch = args.watch;
+        for t in &args.trust {
+            let k: [u8; 32] = gm_script::package::unhex(t)
+                .and_then(|v| v.try_into().ok())
+                .with_context(|| format!("--trust {t}: a public key is 32 hex bytes"))?;
+            rt.trusted.push(k);
+        }
         let is_package =
             |p: &std::path::Path| p.is_dir() || p.extension().is_some_and(|e| e == "gmr");
         let packages: Vec<std::path::PathBuf> = args
