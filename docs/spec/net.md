@@ -301,3 +301,9 @@ Admin commands: `Command::Reload { addon }` (tag 6) hot-reloads an addon on the 
 Addon messages: `ServerMsg::Addon { seq, name, data }` and `ClientMsg::Addon { name, data }` (tag 5 both ways) are reliable and ordered like `Event`; `data` is the gm-script `netval` encoding of one Lua value (64 KiB cap). Server actors queue them through `ServerHooks::drain_net`, sent after a tick's events; client messages reach `ServerHooks::net_message` as the packet is read.
 
 Replicated cvars: `ServerMsg::Cvar { seq, name, value }` (tag 6, reliable) carries every replicated variable right after `Welcome`, then each creation and change after the tick's script hooks; `Command::Cvar` from a client sets any registered variable through `Server::set_cvar` (clamped to min/max, side effects on the sandbox limits).
+
+## World sounds
+
+`ServerMsg::Sounds` (tag 13) carries the server's world sounds of the ticks since the last
+snapshot (prop impacts, footsteps, scripted `sound.play`) with the snapshot, unreliable; on a
+tick without a snapshot the sounds stay pending instead of being dropped.

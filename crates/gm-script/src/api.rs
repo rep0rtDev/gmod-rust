@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, RwLock};
 #[derive(Clone, Debug, Default)]
 pub struct Payload {
     pub ints: Vec<(&'static str, i64)>,
+    pub floats: Vec<(&'static str, f64)>,
     pub strs: Vec<(&'static str, String)>,
     /// Tool click: (entity or 0 for the world, position, normal).
     pub hit: Option<(u32, Vec3, Vec3)>,
@@ -63,6 +64,12 @@ pub enum QueuedWrite {
     },
     Remove {
         ent: u32,
+    },
+    /// `sound.play`: a sound script at a world position, `volume` multiplies the script's.
+    Sound {
+        name: String,
+        pos: Vec3,
+        volume: f32,
     },
     SetVelocity {
         ent: u32,
@@ -498,6 +505,15 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     frozen: !matches!(arg, Value::Boolean(false)),
                 },
                 "remove" => QueuedWrite::Remove { ent },
+                "sound.play" => {
+                    let t = table_arg(&arg)?;
+                    let pos: Table = t.get("pos")?;
+                    QueuedWrite::Sound {
+                        name: t.get("name")?,
+                        pos: table_vec3(&pos)?,
+                        volume: t.get::<Option<f32>>("volume")?.unwrap_or(1.0),
+                    }
+                }
                 "set_velocity" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::SetVelocity {
@@ -819,6 +835,9 @@ pub fn payload_table(lua: &Lua, p: &Payload) -> Result<Table> {
     for (k, v) in &p.ints {
         t.set(*k, *v)?;
     }
+    for (k, v) in &p.floats {
+        t.set(*k, *v)?;
+    }
     for (k, v) in &p.strs {
         t.set(*k, v.as_str())?;
     }
@@ -1014,6 +1033,10 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         }
         QueuedWrite::Freeze { ent, frozen } => server.set_prop_frozen(*ent, *frozen),
         QueuedWrite::Remove { ent } => server.remove_prop(*ent),
+        QueuedWrite::Sound { name, pos, volume } => {
+            server.play_sound(name.clone(), *pos, *volume);
+            true
+        }
         QueuedWrite::SetVelocity {
             ent,
             velocity,

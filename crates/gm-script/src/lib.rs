@@ -682,6 +682,58 @@ impl Runtime {
         self.run_event(server, "player.disconnected", p)
     }
 
+    /// The server's game events of the tick, in order: `player.spawned {player}`,
+    /// `player.damaged {player, amount, type}` (health damage applied), `player.death {player,
+    /// type}` (type 0 for a scripted kill), `physgun.pickup` / `physgun.drop` / `physgun.freeze`
+    /// `{player, entity}`.
+    pub fn game_events(
+        &mut self,
+        server: &mut Server<'_>,
+        events: Vec<gm_server::GameEvent>,
+    ) -> Applied {
+        use gm_server::GameEvent as E;
+        let mut total = Applied::default();
+        for e in events {
+            let mut p = api::Payload::default();
+            let name = match e {
+                E::PlayerSpawned { player } => {
+                    p.ints.push(("player", player as i64));
+                    "player.spawned"
+                }
+                E::PlayerDamaged {
+                    player,
+                    amount,
+                    dmg_type,
+                } => {
+                    p.ints.push(("player", player as i64));
+                    p.floats.push(("amount", amount as f64));
+                    p.ints.push(("type", dmg_type as i64));
+                    "player.damaged"
+                }
+                E::PlayerDied { player, dmg_type } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("type", dmg_type as i64));
+                    "player.death"
+                }
+                E::PhysgunPickup { player, ent }
+                | E::PhysgunDrop { player, ent }
+                | E::PhysgunFreeze { player, ent } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("entity", ent as i64));
+                    match e {
+                        E::PhysgunPickup { .. } => "physgun.pickup",
+                        E::PhysgunDrop { .. } => "physgun.drop",
+                        _ => "physgun.freeze",
+                    }
+                }
+            };
+            let a = self.run_event(server, name, p);
+            total.writes += a.writes;
+            total.rejected += a.rejected;
+        }
+        total
+    }
+
     /// `entity.removed` (`EntityRemoved`): the entity is already gone from the table.
     pub fn entity_removed(&mut self, server: &mut Server<'_>, player: u32, ent: u32) -> Applied {
         let mut p = api::Payload::default();
@@ -752,6 +804,9 @@ impl gm_server::ServerHooks for Runtime {
     }
     fn player_disconnected(&mut self, server: &mut Server<'_>, player: u32) {
         Runtime::player_disconnected(self, server, player);
+    }
+    fn game_events(&mut self, server: &mut Server<'_>, events: Vec<gm_server::GameEvent>) {
+        Runtime::game_events(self, server, events);
     }
     fn after_commands(&mut self, server: &mut Server<'_>) {
         Runtime::after_commands(self, server);

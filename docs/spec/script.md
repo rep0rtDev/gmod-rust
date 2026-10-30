@@ -358,8 +358,31 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,
-the sandbox gamemode in Luau on top of this API.
+client HUD/draw API, client-side world for traces, the rest of the API (tool ghosts and panels, spawn menu), WASM components,
+cancelable `player.damage` / `physgun.pickup` / `player.chat`, `entity.collide`, the sandbox gamemode in Luau on top of this API.
+
+## Server events
+
+`gm_server::GameEvent`s of a tick reach the actors after the tick and before `tick.post`, in the
+order the server raised them: `player.spawned {player}` (a respawn; the first spawn happens
+before any addon sees the player), `player.damaged {player, amount, type}` (health damage
+actually applied, after the armour share, fall damage included; `type` is the damage type bits),
+`player.death {player, type}` (`type` 0 for a scripted `player.kill`), `physgun.pickup`,
+`physgun.drop`, `physgun.freeze` (`{player, entity}`; a freeze is not followed by a drop, the
+prop simply leaves the hand frozen). Writes queued in these handlers are applied in the same
+serial phase. Not cancelable yet: the design's `player.damage` and `physgun.pickup` vetoes need
+a synchronous hook inside the server tick.
+
+`world.queue("sound.play", 0, {name, pos = {x, y, z}, volume?})` plays a sound script at a
+world position for every client (the same channel as prop impacts and footsteps; `volume`
+multiplies the script's, default 1). Sounds ride with the snapshots: on a tick without one they
+stay pending, so none is lost.
+
+Measured (`cargo test -p gm-dedicated --test addon_hooks game_events`): a physgun pick-up, drop,
+pick-up and freeze of a crate log four events in that order; the freeze handler's
+`player.damage` 30 arrives as `player.damaged` 30 type 0, its `player.kill` as `player.death`
+type 0, the respawn 135 ticks later as `player.spawned`; the handler's `sound.play` reaches the
+client as a `Sounds` message with the position and volume given.
 
 ## Players: identity and leaving
 

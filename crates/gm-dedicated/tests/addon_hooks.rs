@@ -2082,3 +2082,125 @@ fn server_identity_is_signed_in_challenge_and_pinned_by_the_client() {
     );
     assert!(pinned2.player_id.is_none());
 }
+
+#[test]
+fn game_events_reach_actors_and_a_script_plays_a_sound() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "log".into(),
+        priority: 1,
+        source: "state.log = {}
+            local function put(s) table.insert(state.log, s) end
+            events.on('physgun.pickup', function(e) put('pickup ' .. e.player .. ' ' .. e.entity) end)
+            events.on('physgun.drop', function(e) put('drop ' .. e.player .. ' ' .. e.entity) end)
+            events.on('physgun.freeze', function(e)
+                put('freeze ' .. e.player .. ' ' .. e.entity)
+                world.queue('player.damage', e.player, { amount = 30, type = 0 })
+                world.queue('sound.play', 0, { name = 'Weapon_Pistol.Single', pos = { x = 823, y = -500, z = -100 }, volume = 0.5 })
+            end)
+            events.on('player.damaged', function(e)
+                put('damaged ' .. e.player .. ' ' .. e.amount .. ' ' .. e.type)
+                world.queue('player.kill', e.player, true)
+            end)
+            events.on('player.death', function(e) put('death ' .. e.player .. ' ' .. e.type) end)
+            events.on('player.spawned', function(e)
+                put('spawned ' .. e.player)
+                net.send('log', { log = state.log }, e.player)
+            end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    sn.hooks = Some(Box::new(rt));
+    let mut crt = gm_script::Runtime::client();
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "hud".into(),
+        priority: 1,
+        source: "net.receive('log', function(p) state.log = p.data.log end)".into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>,
+                    crt: &mut gm_script::Runtime,
+                    buttons: u32,
+                    n: usize| {
+        for _ in 0..n {
+            client.tick(
+                gm_net::NetCmd {
+                    view_angles: glam::Vec3::new(30.0, 0.0, 0.0),
+                    buttons,
+                    weapon: 1,
+                    ..Default::default()
+                },
+                &mut c_ep,
+            );
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+            crt.client_tick(&client.world, true);
+            let inbox = std::mem::take(&mut client.addon_msgs);
+            crt.client_net(&client.world, inbox);
+        }
+    };
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 30);
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 30);
+    let crate_id = server.sandbox.props()[0].id;
+    use gm_move::buttons::{ATTACK, ATTACK2};
+    step(&mut sn, &mut client, &mut server, &mut crt, ATTACK, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, ATTACK, 5);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        ATTACK | ATTACK2,
+        1,
+    );
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 200);
+    let log: Vec<String> = crt.actors()[0].eval("return state.log").unwrap();
+    assert_eq!(
+        log,
+        vec![
+            format!("pickup 1 {crate_id}"),
+            format!("drop 1 {crate_id}"),
+            format!("pickup 1 {crate_id}"),
+            format!("freeze 1 {crate_id}"),
+            "damaged 1 30 0".to_string(),
+            "death 1 0".to_string(),
+            "spawned 1".to_string(),
+        ]
+    );
+    assert!(server.sandbox.props()[0].frozen);
+    let shot = client
+        .sounds
+        .iter()
+        .find(|s| s.name == "Weapon_Pistol.Single")
+        .unwrap_or_else(|| panic!("the script's sound reached the client: {:?}", client.sounds));
+    assert_eq!(shot.pos, glam::Vec3::new(823.0, -500.0, -100.0));
+    assert_eq!(shot.volume, 0.5);
+}

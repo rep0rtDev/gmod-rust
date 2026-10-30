@@ -48,6 +48,39 @@ pub struct WorldSound {
     pub volume: f32,
 }
 
+/// Game events of this tick for the addon runtime (`ServerHooks::game_events`), drained by the
+/// network layer after the tick.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GameEvent {
+    /// `spawn_player`: the first spawn and every respawn.
+    PlayerSpawned {
+        player: u32,
+    },
+    /// Health damage applied (after the armour share, fall damage included), damage type bits.
+    PlayerDamaged {
+        player: u32,
+        amount: f32,
+        dmg_type: u32,
+    },
+    /// `dmg_type` 0 for `kill_player`.
+    PlayerDied {
+        player: u32,
+        dmg_type: u32,
+    },
+    PhysgunPickup {
+        player: u32,
+        ent: u32,
+    },
+    PhysgunDrop {
+        player: u32,
+        ent: u32,
+    },
+    PhysgunFreeze {
+        player: u32,
+        ent: u32,
+    },
+}
+
 /// `(speed / IMPACT_SOUND_FULL_SPEED)^2` capped at 1; `None` under the audible threshold.
 pub fn impact_volume(speed: f32) -> Option<f32> {
     (speed >= IMPACT_SOUND_MIN_SPEED).then(|| (speed / IMPACT_SOUND_FULL_SPEED).powi(2).min(1.0))
@@ -97,6 +130,8 @@ pub trait ServerHooks {
     }
     /// `player.disconnected` after the player left the table (its props stay).
     fn player_disconnected(&mut self, _server: &mut Server<'_>, _player: u32) {}
+    /// This tick's `GameEvent`s, after the tick and before `post_tick`.
+    fn game_events(&mut self, _server: &mut Server<'_>, _events: Vec<GameEvent>) {}
     /// An addon message from a client's actor (`net.send` on the client).
     fn net_message(&mut self, _server: &mut Server<'_>, _player: u32, _name: &str, _data: &[u8]) {}
     /// Addon messages queued by server actors: (player or 0 for everyone, name, payload).
@@ -357,6 +392,7 @@ pub struct Server<'w> {
     sounds: Vec<WorldSound>,
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
+    pub game_events: Vec<GameEvent>,
     pub physgun_params: PhysgunParams,
     pub projectiles: Vec<projectile::Projectile>,
     /// Loads a model the first time something spawns it (the dedicated server reads the MDL/PHY
@@ -458,6 +494,7 @@ impl<'w> Server<'w> {
             clipboards: BTreeMap::new(),
             hull_planes: BTreeMap::new(),
             events: Vec::new(),
+            game_events: Vec::new(),
             physgun_params: PhysgunParams::default(),
             projectiles: Vec::new(),
             model_loader: None,
@@ -555,6 +592,20 @@ impl<'w> Server<'w> {
                 p.death_tick = Some(tick);
                 p.respawn_ticks = respawn_ticks;
             }
+        }
+        let died = !p.alive;
+        if to_health > 0.0 {
+            self.game_events.push(GameEvent::PlayerDamaged {
+                player: id,
+                amount: to_health,
+                dmg_type,
+            });
+        }
+        if died {
+            self.game_events.push(GameEvent::PlayerDied {
+                player: id,
+                dmg_type,
+            });
         }
         to_health
     }
@@ -662,6 +713,11 @@ impl<'w> Server<'w> {
     /// `Player:Spawn`: full health, the loadout, a spawn point 1 u above its origin.
     pub fn spawn_player(&mut self, id: u32) {
         let spawn = self.pick_spawn();
+        if !self.players.contains_key(&id) {
+            return;
+        }
+        self.game_events
+            .push(GameEvent::PlayerSpawned { player: id });
         let Some(p) = self.players.get_mut(&id) else {
             return;
         };
@@ -1396,6 +1452,10 @@ impl<'w> Server<'w> {
         p.active_weapon.clear();
         p.held = None;
         p.state.velocity = Vec3::ZERO;
+        self.game_events.push(GameEvent::PlayerDied {
+            player: id,
+            dmg_type: 0,
+        });
     }
 
     pub fn register_model(&mut self, name: &str, info: ModelInfo) {
@@ -1842,6 +1902,7 @@ impl<'w> Server<'w> {
         let use_key = pc.cmd.buttons & IN_USE != 0;
         let attack2 = pc.cmd.buttons & IN_ATTACK2 != 0;
         let held = self.players.get(&player).and_then(|p| p.held);
+        let had = held.is_some();
         let held = match held {
             None if attack && pc.physgun => {
                 let bodies = self.trace_bodies();
@@ -1866,6 +1927,8 @@ impl<'w> Server<'w> {
                 if let Some(b) = self.bodies.get(&ent).copied() {
                     self.physics.release(b);
                 }
+                self.game_events
+                    .push(GameEvent::PhysgunDrop { player, ent });
                 None
             }
             Some((ent, _)) if attack2 => {
@@ -1873,10 +1936,18 @@ impl<'w> Server<'w> {
                     self.physics.freeze(b);
                 }
                 self.sandbox.set_frozen(ent, true);
+                self.game_events
+                    .push(GameEvent::PhysgunFreeze { player, ent });
                 None
             }
             other => other,
         };
+        if !had {
+            if let Some((ent, _)) = &held {
+                self.game_events
+                    .push(GameEvent::PhysgunPickup { player, ent: *ent });
+            }
+        }
         let held = match held {
             Some((ent, mut g)) => {
                 if let Some(b) = self.bodies.get(&ent).copied() {
@@ -2095,6 +2166,11 @@ impl<'w> Server<'w> {
 
     pub fn body_of(&self, prop: u32) -> Option<BodyHandle> {
         self.bodies.get(&prop).copied()
+    }
+
+    /// A script plays a sound script at a world position (`sound.play`).
+    pub fn play_sound(&mut self, name: String, pos: Vec3, volume: f32) {
+        self.sounds.push(WorldSound { name, pos, volume });
     }
 
     /// The world sounds of the last tick.

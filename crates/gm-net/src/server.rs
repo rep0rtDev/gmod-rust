@@ -651,6 +651,10 @@ impl ServerNet {
                 volume: s.volume,
             }));
         if let Some(h) = self.hooks.as_mut() {
+            let events = std::mem::take(&mut server.game_events);
+            if !events.is_empty() {
+                h.game_events(server, events);
+            }
             h.post_tick(server);
             for p in h.drain_published() {
                 let info = crate::msg::AddonInfo {
@@ -871,7 +875,12 @@ impl ServerNet {
                 vm_serial: p.inventory.vm_serial,
             })
             .collect();
-        let sounds = std::mem::take(&mut self.pending_sounds);
+        // sounds ride with the snapshots: on a tick without one they stay pending
+        let sounds = if snapshot_tick {
+            std::mem::take(&mut self.pending_sounds)
+        } else {
+            Vec::new()
+        };
         for (&endpoint, slot) in self.clients.iter_mut() {
             for text in std::mem::take(&mut slot.pending_events) {
                 slot.event_seq += 1;
