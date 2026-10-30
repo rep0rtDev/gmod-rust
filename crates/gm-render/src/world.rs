@@ -258,7 +258,16 @@ type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>);
 /// The bones of a `DynModel` and where its animations come from.
 struct Skeleton {
     bones: Vec<gm_formats::mdl::Bone>,
-    anim: AnimSource,
+    /// The model's own animations first, then those of its include models.
+    anims: Vec<AnimSource>,
+}
+
+impl Skeleton {
+    fn seq(&self, name: &str) -> Option<(&AnimSource, &gm_formats::mdl::Sequence)> {
+        self.anims
+            .iter()
+            .find_map(|a| a.sequences.iter().find(|s| s.name == name).map(|s| (a, s)))
+    }
 }
 
 /// Animations of a model: its own, or those of the first model it includes (player models
@@ -307,16 +316,17 @@ impl AnimSource {
         }
     }
 
-    /// The model's own animations, or its first include model's when it has one.
-    fn for_model(mount: &Mount, bytes: Vec<u8>, mdl: &gm_formats::mdl::Mdl) -> Self {
-        let include = gm_formats::mdl::include_models(&bytes, &mdl.header)
-            .into_iter()
-            .find_map(|inc| {
-                let b = mount.read(&inc).ok()?;
-                let m = gm_formats::mdl::Mdl::parse(&b).ok()?;
-                Some(AnimSource::new(mount, b, &m, &mdl.bones))
-            });
-        include.unwrap_or_else(|| AnimSource::new(mount, bytes, mdl, &mdl.bones))
+    /// The model's own animations followed by those of its include models (a player model
+    /// keeps `ragdoll` itself and borrows the rest from `m_anm`).
+    fn for_model(mount: &Mount, bytes: Vec<u8>, mdl: &gm_formats::mdl::Mdl) -> Vec<Self> {
+        let includes = gm_formats::mdl::include_models(&bytes, &mdl.header);
+        let mut out = vec![AnimSource::new(mount, bytes, mdl, &mdl.bones)];
+        out.extend(includes.into_iter().filter_map(|inc| {
+            let b = mount.read(&inc).ok()?;
+            let m = gm_formats::mdl::Mdl::parse(&b).ok()?;
+            Some(AnimSource::new(mount, b, &m, &mdl.bones))
+        }));
+        out
     }
 
     fn data(&self, block: i32) -> Option<(&[u8], usize)> {
@@ -437,13 +447,13 @@ impl DynModel {
     pub fn sequences(&self) -> impl Iterator<Item = &str> {
         self.skeleton
             .iter()
-            .flat_map(|s| s.anim.sequences.iter().map(|q| q.name.as_str()))
+            .flat_map(|s| s.anims.iter())
+            .flat_map(|a| a.sequences.iter().map(|q| q.name.as_str()))
     }
 
     /// Length in seconds of sequence `name` and whether it loops.
     pub fn sequence_length(&self, name: &str) -> Option<(f32, bool)> {
-        let src = &self.skeleton.as_ref()?.anim;
-        let seq = src.sequences.iter().find(|s| s.name == name)?;
+        let (src, seq) = self.skeleton.as_ref()?.seq(name)?;
         let anim = src.anims.get(seq.anim.max(0) as usize)?;
         if anim.fps <= 0.0 {
             return None;
@@ -517,8 +527,7 @@ impl DynModel {
         params: &[(&str, f32)],
     ) -> Option<Vec<Mat4>> {
         let sk = self.skeleton.as_ref()?;
-        let src = &sk.anim;
-        let seq = src.sequences.iter().find(|s| s.name == name)?;
+        let (src, seq) = sk.seq(name)?;
         let anim = src.anims.get(seq.anim.max(0) as usize)?;
         if anim.frames <= 0 {
             return None;
@@ -1404,7 +1413,7 @@ impl WorldRenderer {
         }
         let skeleton = mount.read(path).ok().map(|bytes| Skeleton {
             bones: mdl.bones.clone(),
-            anim: AnimSource::for_model(mount, bytes, &mdl),
+            anims: AnimSource::for_model(mount, bytes, &mdl),
         });
         (!parts.is_empty()).then_some(DynModel {
             parts,
