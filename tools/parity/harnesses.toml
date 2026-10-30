@@ -1547,6 +1547,56 @@ crates = ["gm-server"]
 
 
 [[harness]]
+name = "hit_rpg_dot50"
+scenario = "hit/rpg_dot50"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+
+[[harness]]
+name = "hit_rpg_dot100"
+scenario = "hit/rpg_dot100"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+
+[[harness]]
+name = "hit_rpg_dot150"
+scenario = "hit/rpg_dot150"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+
+[[harness]]
+name = "hit_rpg_dot200"
+scenario = "hit/rpg_dot200"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+
+[[harness]]
+name = "hit_rpg_dot300"
+scenario = "hit/rpg_dot300"
+compare = "hit"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+
+
+
+[[harness]]
 name = "hit_crossbow"
 scenario = "hit/crossbow"
 compare = "hit"
