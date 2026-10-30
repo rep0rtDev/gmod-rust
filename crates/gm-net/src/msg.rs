@@ -243,6 +243,9 @@ pub enum ServerMsg {
         nonce: [u8; 32],
         /// The server's ephemeral X25519 public key (see `ClientMsg::Hello`).
         pubkey: [u8; 32],
+        /// The server's long-lived ed25519 identity and its signature over
+        /// `server_message(nonce, pubkey)`; `None` when the server runs without a key.
+        identity: Option<([u8; 32], [u8; 64])>,
     },
     /// Reliable, last message of a connection: refused (`full`, `banned`), kicked or timed out.
     Disconnect {
@@ -715,10 +718,22 @@ impl ServerMsg {
                 w.u8(12);
                 w.str(reason);
             }
-            ServerMsg::Challenge { nonce, pubkey } => {
+            ServerMsg::Challenge {
+                nonce,
+                pubkey,
+                identity,
+            } => {
                 w.u8(11);
                 w.buf.extend_from_slice(nonce);
                 w.buf.extend_from_slice(pubkey);
+                match identity {
+                    Some((key, sig)) => {
+                        w.u8(1);
+                        w.buf.extend_from_slice(key);
+                        w.buf.extend_from_slice(sig);
+                    }
+                    None => w.u8(0),
+                }
             }
             ServerMsg::Models { from, names } => {
                 w.u8(10);
@@ -863,10 +878,25 @@ impl ServerMsg {
                 }
                 ServerMsg::Models { from, names }
             }
-            11 => ServerMsg::Challenge {
-                nonce: sha(r)?,
-                pubkey: sha(r)?,
-            },
+            11 => {
+                let nonce = sha(r)?;
+                let pubkey = sha(r)?;
+                let identity = if r.u8()? == 1 {
+                    let key = sha(r)?;
+                    let (a, b) = (sha(r)?, sha(r)?);
+                    let mut sig = [0u8; 64];
+                    sig[..32].copy_from_slice(&a);
+                    sig[32..].copy_from_slice(&b);
+                    Some((key, sig))
+                } else {
+                    None
+                };
+                ServerMsg::Challenge {
+                    nonce,
+                    pubkey,
+                    identity,
+                }
+            }
             12 => ServerMsg::Disconnect { reason: r.str()? },
             _ => return Err(Truncated),
         })
@@ -882,6 +912,15 @@ pub const ANGVEL_SCALE: f32 = 4.0;
 /// `binding` is the hash of this connection's packet encryption key (`crypto::Session::binding`),
 /// so a signature only authenticates the connection it was made on.
 pub const AUTH_PREFIX: &[u8] = b"gmr-auth1";
+
+/// What a server signs in `ServerMsg::Challenge` to prove its identity: the nonce it issued and
+/// its ephemeral key, so a relay cannot reuse the signature with its own key exchange.
+pub fn server_message(nonce: &[u8; 32], eph_pubkey: &[u8; 32]) -> Vec<u8> {
+    let mut m = b"gmr-srv1".to_vec();
+    m.extend_from_slice(nonce);
+    m.extend_from_slice(eph_pubkey);
+    m
+}
 
 pub fn auth_message(nonce: &[u8; 32], binding: &[u8; 32]) -> Vec<u8> {
     let mut m = AUTH_PREFIX.to_vec();

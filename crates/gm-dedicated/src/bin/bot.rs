@@ -17,6 +17,9 @@ struct Args {
     /// server's challenge, required by servers started with `--require-auth`.
     #[arg(long)]
     key: Option<std::path::PathBuf>,
+    /// Only connect to the server with this identity (public key hex, as the browser shows it).
+    #[arg(long)]
+    server_key: Option<String>,
     /// Admin console line to run on the server (needs `--key` of an `--admin` identity):
     /// connects, sends it, prints the reply lines and leaves.
     #[arg(long)]
@@ -66,6 +69,9 @@ fn main() -> Result<()> {
         };
         client = client.with_key(&secret);
         eprintln!("identity {}", hex_of(&client.identity.unwrap()));
+    }
+    if let Some(hex) = &args.server_key {
+        client = client.with_server_key(parse_secret(hex).context("--server-key")?);
     }
     let mut script = gm_script::Runtime::client();
     for a in &args.addon {
@@ -327,7 +333,7 @@ fn browse(master: &str) -> Result<()> {
         }
         match info {
             Some((i, ping)) => println!(
-                "{}  \"{}\"  {}  {}/{}  addons {:?}  ping {:.0} ms  (master: seen {} s ago)",
+                "{}  \"{}\"  {}  {}/{}  addons {:?}  ping {:.0} ms  key {}  (master: seen {} s ago)",
                 e.addr,
                 i.name,
                 i.map,
@@ -335,6 +341,7 @@ fn browse(master: &str) -> Result<()> {
                 i.max_players,
                 i.addons,
                 ping.as_secs_f32() * 1000.0,
+                i.key.as_ref().map(hex_of).unwrap_or_else(|| "-".into()),
                 e.age_s
             ),
             None => println!(

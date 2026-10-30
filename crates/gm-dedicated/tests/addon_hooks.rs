@@ -2015,3 +2015,70 @@ fn the_duplicator_copies_a_welded_pair_and_pastes_it_at_the_aim() {
     assert_eq!(server.sandbox.props().len(), before);
     assert_eq!(server.sandbox.constraints().len(), 1);
 }
+
+/// A server with `--server-key` signs its `Challenge`; a client learns the identity, a client
+/// pinning the right key is welcomed, one pinning another key ends the connection before `Hello`
+/// is answered, and a pinning client refuses a server without a key.
+#[test]
+fn server_identity_is_signed_in_challenge_and_pinned_by_the_client() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
+    let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
+    let (server_secret, _) = gm_script::package::keygen();
+    let server_public = sn.with_key(&server_secret);
+    assert_eq!(sn.info.key, Some(server_public));
+    let (_, other_public) = gm_script::package::keygen();
+    let net = gm_net::Loopback::new(1, 0.0, 12);
+    let mut s_ep = net.endpoint(0);
+    let mut eps: Vec<_> = (1..=3).map(|i| net.endpoint(i)).collect();
+    let mut plain = gm_net::ClientNet::new(1, "plain");
+    let mut pinned = gm_net::ClientNet::new(1, "pinned").with_server_key(server_public);
+    let mut wrong = gm_net::ClientNet::new(1, "wrong").with_server_key(other_public);
+    for _ in 0..20 {
+        for (c, e) in [(&mut plain, 0), (&mut pinned, 1), (&mut wrong, 2)] {
+            c.tick(gm_net::NetCmd::default(), &mut eps[e]);
+        }
+        net.tick();
+        sn.receive(&mut server, &mut s_ep);
+        sn.tick(&mut server);
+        sn.send(&server, &mut s_ep);
+        for (c, e) in [(&mut plain, 0), (&mut pinned, 1), (&mut wrong, 2)] {
+            c.receive(&mut eps[e]);
+        }
+    }
+    assert_eq!(plain.server_identity, Some(server_public));
+    assert!(plain.player_id.is_some());
+    assert_eq!(pinned.server_identity, Some(server_public));
+    assert!(pinned.player_id.is_some(), "pinning the right key connects");
+    assert_eq!(
+        wrong.disconnected.as_deref(),
+        Some("server identity mismatch")
+    );
+    assert!(wrong.player_id.is_none());
+    assert!(wrong.server_identity.is_none());
+
+    let mut unsigned = gm_net::ServerNet::new("gm_construct", spawn);
+    let net2 = gm_net::Loopback::new(1, 0.0, 13);
+    let mut s2 = net2.endpoint(0);
+    let mut e2 = net2.endpoint(1);
+    let mut pinned2 = gm_net::ClientNet::new(1, "pinned").with_server_key(server_public);
+    for _ in 0..20 {
+        pinned2.tick(gm_net::NetCmd::default(), &mut e2);
+        net2.tick();
+        unsigned.receive(&mut server, &mut s2);
+        unsigned.tick(&mut server);
+        unsigned.send(&server, &mut s2);
+        pinned2.receive(&mut e2);
+    }
+    assert_eq!(
+        pinned2.disconnected.as_deref(),
+        Some("server identity mismatch")
+    );
+    assert!(pinned2.player_id.is_none());
+}

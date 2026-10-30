@@ -241,9 +241,19 @@ the `REPLAY_WINDOW` (128) counters below it; a sealed packet whose counter was a
 lies further back than the window, is dropped after it authenticates and before the channel sees
 it, so a captured packet cannot be fed back to the server (or the client) even inside the
 session. Counters below the top but unseen pass (reordering on the wire), test
-`replayed_and_too_old_packets_are_dropped_reordered_ones_pass`. Not yet: key rotation inside a
-session (the 64-bit counter never wraps in practice) and the client checking a server identity
-(the master could publish server keys).
+`replayed_and_too_old_packets_are_dropped_reordered_ones_pass`.
+Server identity: `gm-dedicated --server-key <file>` (or `server_key` in the config; the ed25519
+secret is created when the file is missing) signs every `Challenge` with the server's long-lived
+key: `Challenge` carries `identity: Option<(public key, signature)>` over
+`"gmr-srv1" ++ nonce ++ server ephemeral X25519 key`, so a relay cannot reuse the signature with
+its own key exchange. The client exposes the proven key as `ClientNet::server_identity`; a client
+pinning a key (`ClientNet::with_server_key`, `gm-bot --server-key <hex>`) ends the connection
+with `server identity mismatch` on an unsigned, differently signed or badly signed `Challenge`
+before it sends anything past `Hello`. The public key goes to the browser in `ServerInfo::key`
+(`gm-bot --list` prints it as `key <hex>`); test
+`server_identity_is_signed_in_challenge_and_pinned_by_the_client`. Not yet: key rotation inside a
+session (the 64-bit counter never wraps in practice) and a trust path for first contact (the
+master publishes whatever key the server reports; pinning is by the player or a launcher).
 
 
 Lag compensation: every usercmd carries `seen_tick`, the server tick the client was rendering

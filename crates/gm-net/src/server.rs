@@ -3,8 +3,8 @@
 
 use crate::channel::Channel;
 use crate::msg::{
-    auth_message, ClientMsg, Command, EntityState, LocalPlayer, OwnSandbox, PlayerSnap, ServerMsg,
-    UndoEntry, PROTOCOL,
+    auth_message, server_message, ClientMsg, Command, EntityState, LocalPlayer, OwnSandbox,
+    PlayerSnap, ServerMsg, UndoEntry, PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -109,6 +109,9 @@ pub struct ServerNet {
     pub use_pvs: bool,
     /// Only authenticated connections (`ClientMsg::Auth` with a valid signature) are welcomed.
     pub require_auth: bool,
+    /// Long-lived identity: signs every `Challenge` so clients can pin the server
+    /// (`ClientNet::with_server_key`); its public key is published in `info.key`.
+    pub key: Option<ed25519_dalek::SigningKey>,
     /// Interest: a client gets entities and other players within this distance of its player
     /// (Source units); what leaves the radius is removed on the client, what enters is sent whole.
     pub interest_radius: f32,
@@ -118,6 +121,16 @@ pub struct ServerNet {
 }
 
 impl ServerNet {
+    /// Gives the server a long-lived identity (ed25519 secret); returns its public key, which is
+    /// also published to the browser through `info.key`.
+    pub fn with_key(&mut self, secret: &[u8; 32]) -> [u8; 32] {
+        let key = ed25519_dalek::SigningKey::from_bytes(secret);
+        let public = key.verifying_key().to_bytes();
+        self.info.key = Some(public);
+        self.key = Some(key);
+        public
+    }
+
     pub fn new(map: &str, spawn_origin: Vec3) -> Self {
         ServerNet {
             tick: 0,
@@ -139,6 +152,7 @@ impl ServerNet {
             model_ids: BTreeMap::new(),
             use_pvs: true,
             require_auth: false,
+            key: None,
             interest_radius: DEFAULT_INTEREST_RADIUS,
             snapshot_budget: DEFAULT_SNAPSHOT_BUDGET,
             info: crate::master::ServerInfo {
@@ -299,6 +313,13 @@ impl ServerNet {
                             ServerMsg::Challenge {
                                 nonce,
                                 pubkey: slot.eph.public,
+                                identity: self.key.as_ref().map(|k| {
+                                    let sig = ed25519_dalek::Signer::sign(
+                                        k,
+                                        &server_message(&nonce, &slot.eph.public),
+                                    );
+                                    (k.verifying_key().to_bytes(), sig.to_bytes())
+                                }),
                             }
                             .write(&mut w);
                             slot.channel.send_reliable(w.buf);

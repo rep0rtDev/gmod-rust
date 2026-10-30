@@ -58,6 +58,10 @@ struct Args {
     /// Master server to heartbeat to (every 10 s) so browsers list this server.
     #[arg(long)]
     master: Option<String>,
+    /// File with the server's identity (ed25519 secret, hex; created when missing): every
+    /// `Challenge` is signed with it, clients can pin the public key (`gm-bot --server-key`).
+    #[arg(long)]
+    server_key: Option<std::path::PathBuf>,
     /// Server name shown in the browser.
     #[arg(long, default_value = "gmod-rust server")]
     name: String,
@@ -103,6 +107,9 @@ fn main() -> Result<()> {
     if args.master.is_none() {
         args.master = config.master.clone();
     }
+    if args.server_key.is_none() {
+        args.server_key = config.server_key.clone();
+    }
     args.addon.extend(config.addon.iter().cloned());
     args.trust.extend(config.trust.iter().cloned());
     args.admin.extend(config.admin.iter().cloned());
@@ -141,6 +148,20 @@ fn main() -> Result<()> {
         );
     }
     net.require_auth = args.require_auth;
+    if let Some(path) = &args.server_key {
+        let secret = match std::fs::read_to_string(path) {
+            Ok(hex) => parse_key(hex.trim()).with_context(|| format!("{}", path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let (secret, _) = gm_script::package::keygen();
+                std::fs::write(path, hex_of(&secret))
+                    .with_context(|| format!("{}", path.display()))?;
+                secret
+            }
+            Err(e) => return Err(e).with_context(|| format!("{}", path.display())),
+        };
+        let public = net.with_key(&secret);
+        println!("server identity {}", hex_of(&public));
+    }
     net.max_players = args.max_players as usize;
     net.timeout_ticks = (args.timeout / gm_core::tick::DEFAULT_TICK_INTERVAL).round() as u32;
     for a in &args.admin {

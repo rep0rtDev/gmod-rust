@@ -182,6 +182,7 @@ mod tests {
             port: 27015,
             version: "0.1".into(),
             addons: vec!["hud".into()],
+            key: None,
         };
         s_ep.send(0, MasterMsg::Heartbeat(info.clone()).encode());
         net.tick();

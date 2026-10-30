@@ -25,6 +25,8 @@ pub struct ServerInfo {
     pub version: String,
     /// Ids of the addons clients get.
     pub addons: Vec<String>,
+    /// The server's identity (`ServerNet::with_key`), what a client pins with `--server-key`.
+    pub key: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,6 +73,13 @@ fn write_info(w: &mut Writer, i: &ServerInfo) {
     for a in &i.addons {
         w.str(a);
     }
+    match &i.key {
+        Some(k) => {
+            w.u8(1);
+            w.buf.extend_from_slice(k);
+        }
+        None => w.u8(0),
+    }
 }
 
 fn read_info(r: &mut Reader) -> Result<ServerInfo, Truncated> {
@@ -85,6 +94,15 @@ fn read_info(r: &mut Reader) -> Result<ServerInfo, Truncated> {
     for _ in 0..n {
         addons.push(r.str()?);
     }
+    let key = if r.u8()? == 1 {
+        let mut k = [0u8; 32];
+        for b in k.iter_mut() {
+            *b = r.u8()?;
+        }
+        Some(k)
+    } else {
+        None
+    };
     Ok(ServerInfo {
         name,
         map,
@@ -93,6 +111,7 @@ fn read_info(r: &mut Reader) -> Result<ServerInfo, Truncated> {
         port,
         version,
         addons,
+        key,
     })
 }
 

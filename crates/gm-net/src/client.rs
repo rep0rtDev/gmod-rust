@@ -3,8 +3,8 @@
 
 use crate::channel::Channel;
 use crate::msg::{
-    auth_message, ClientMsg, Command, EntityState, LocalPlayer, NetCmd, OwnSandbox, PlayerSnap,
-    ServerMsg, PROTOCOL,
+    auth_message, server_message, ClientMsg, Command, EntityState, LocalPlayer, NetCmd, OwnSandbox,
+    PlayerSnap, ServerMsg, PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -200,6 +200,11 @@ pub struct ClientNet {
     crypto: Option<crate::crypto::Session>,
     /// Identity the server was shown (the public key of `key`).
     pub identity: Option<[u8; 32]>,
+    /// Pinned server identity: a `Challenge` without a valid signature by this key ends the
+    /// connection (`disconnected` = `server identity mismatch`) before anything is sent.
+    expect_server: Option<[u8; 32]>,
+    /// The server's identity as proven in its `Challenge` (`None`: unsigned or not yet seen).
+    pub server_identity: Option<[u8; 32]>,
     pub endpoint: usize,
     channel: Channel,
     pub player_id: Option<u32>,
@@ -254,6 +259,8 @@ impl ClientNet {
             dropped_snapshots: 0,
             key: None,
             identity: None,
+            expect_server: None,
+            server_identity: None,
             eph: crate::crypto::Ephemeral::generate(),
             crypto: None,
         };
@@ -298,6 +305,12 @@ impl ClientNet {
     /// One client tick: records the usercmd and sends a packet with the last 8 plus acks.
     /// Use `secret` (ed25519 seed) as this client's identity; must be set before the server's
     /// `Challenge` arrives, i.e. right after `new`.
+    /// Only connect to the server with this identity (public key).
+    pub fn with_server_key(mut self, public: [u8; 32]) -> Self {
+        self.expect_server = Some(public);
+        self
+    }
+
     pub fn with_key(mut self, secret: &[u8; 32]) -> Self {
         let key = ed25519_dalek::SigningKey::from_bytes(secret);
         self.identity = Some(key.verifying_key().to_bytes());
@@ -350,6 +363,10 @@ impl ClientNet {
 
     /// Applies everything that arrived.
     pub fn receive(&mut self, transport: &mut dyn Transport) {
+        if self.disconnected.is_some() {
+            transport.recv();
+            return;
+        }
         for (_, packet) in transport.recv() {
             let body = match (packet.first(), &mut self.crypto) {
                 (Some(&crate::crypto::SEALED), Some(c)) => match c.open(&packet) {
@@ -448,7 +465,24 @@ impl ClientNet {
                         self.disconnected = Some(reason);
                         self.player_id = None;
                     }
-                    ServerMsg::Challenge { nonce, pubkey } => {
+                    ServerMsg::Challenge {
+                        nonce,
+                        pubkey,
+                        identity,
+                    } => {
+                        let proven = identity.and_then(|(key, sig)| {
+                            let vk = ed25519_dalek::VerifyingKey::from_bytes(&key).ok()?;
+                            let s = ed25519_dalek::Signature::from_bytes(&sig);
+                            vk.verify_strict(&server_message(&nonce, &pubkey), &s)
+                                .ok()
+                                .map(|_| key)
+                        });
+                        if self.expect_server.is_some_and(|e| proven != Some(e)) {
+                            self.disconnected = Some("server identity mismatch".to_string());
+                            self.player_id = None;
+                            return;
+                        }
+                        self.server_identity = proven;
                         if self.crypto.is_none() {
                             self.crypto =
                                 Some(self.eph.session(&pubkey, &self.eph.public, &pubkey, true));

@@ -107,6 +107,9 @@ pub struct ServerConfig {
     pub data: Option<std::path::PathBuf>,
     pub watch: Option<bool>,
     pub require_auth: Option<bool>,
+    /// File with the server's ed25519 secret (hex); created when missing. Clients pin its public
+    /// key with `gm-bot --server-key`, the browser shows it.
+    pub server_key: Option<std::path::PathBuf>,
     pub timeout: Option<f32>,
     pub registry: Option<String>,
     pub master: Option<String>,
