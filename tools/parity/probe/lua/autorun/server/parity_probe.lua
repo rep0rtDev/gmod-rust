@@ -106,6 +106,21 @@ SCENARIOS.move = function(scn, done)
 	local settle = 20
 	local tick = -settle
 	local ticks = {}
+	-- every sound the server emits for the bot (footsteps by surface, landing)
+	local sounds = {}
+	hook.Add("EntityEmitSound", "parity_move", function(d)
+		if tick < 0 then return end
+		sounds[#sounds + 1] = {
+			t = tick,
+			ent = IsValid(d.Entity) and d.Entity:GetClass() or "",
+			name = d.OriginalSoundName or d.SoundName,
+			wave = d.SoundName,
+			vol = d.Volume,
+			level = d.SoundLevel,
+			pitch = d.Pitch,
+			chan = d.Channel,
+		}
+	end)
 	local function segmentAt(t)
 		local acc = 0
 		for _, sg in ipairs(segs) do
@@ -170,10 +185,12 @@ SCENARIOS.move = function(scn, done)
 			hook.Remove("StartCommand", "parity_move")
 			hook.Remove("SetupMove", "parity_move")
 			hook.Remove("FinishMove", "parity_move")
+			hook.Remove("EntityEmitSound", "parity_move")
 			local p = ply:GetPos()
 			done({
 				start = { start.x, start.y, start.z },
 				ticks = ticks,
+				sounds = sounds,
 				final = { p.x, p.y, p.z },
 				hull = { mins = { ply:OBBMins().x, ply:OBBMins().y, ply:OBBMins().z }, maxs = { ply:OBBMaxs().x, ply:OBBMaxs().y, ply:OBBMaxs().z } },
 				speeds = { walk = ply:GetWalkSpeed(), run = ply:GetRunSpeed(), crouched = ply:GetCrouchedWalkSpeed(), jump = ply:GetJumpPower(), duck = ply:GetDuckSpeed(), unduck = ply:GetUnDuckSpeed(), step = ply:GetStepSize() },

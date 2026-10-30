@@ -474,7 +474,16 @@ impl<'a> Mover<'a> {
         // the jump finishes the current tick's gravity itself, on top of the air move's halves
         st.velocity.z -= self.cfg.gravity * self.cfg.tick_interval * 0.5;
         st.boost_pending = true;
-        st.boost_forward = cmd.forward_move;
+        // the move the boost sees is the command's, scaled down to max speed like the move
+        // itself (forward 10000 on a standing walker jumps with a 100 u/s boost, not 300)
+        let len = Vec3::new(cmd.forward_move, cmd.side_move, cmd.up_move).length();
+        let max_speed = self.max_speed(st, cmd);
+        let scale = if len > max_speed && len > 0.0 {
+            max_speed / len
+        } else {
+            1.0
+        };
+        st.boost_forward = cmd.forward_move * scale;
         st.boost_yaw = cmd.view_angles.y;
         st.jump_held = true;
     }
