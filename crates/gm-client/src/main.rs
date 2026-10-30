@@ -414,6 +414,37 @@ fn gesture_for(act: u8, hold: &str) -> Option<&'static str> {
     })
 }
 
+/// Soundscript entry for a server viewmodel event (`VmAct`) on a loadout weapon, as the
+/// game's weapons emit them: `.Single` on a shot (`.Launch` for the gravity gun), `.Reload`
+/// when a one-go reload starts, the shotgun's `.Reload` per shell and `.Special1` (cock) at
+/// its end and on the pump, `.Empty` on a dry fire. The shotgun's start stage is silent.
+fn weapon_sound(act: u8, active: u8) -> Option<String> {
+    let class = gm_server::LOADOUT.get(active as usize)?;
+    let prefix = match *class {
+        "weapon_357" => "Weapon_357",
+        "weapon_ar2" => "Weapon_AR2",
+        "weapon_crossbow" => "Weapon_Crossbow",
+        "weapon_crowbar" => "Weapon_Crowbar",
+        "weapon_physcannon" => "Weapon_PhysCannon",
+        "weapon_pistol" => "Weapon_Pistol",
+        "weapon_rpg" => "Weapon_RPG",
+        "weapon_shotgun" => "Weapon_Shotgun",
+        "weapon_smg1" => "Weapon_SMG1",
+        _ => return None,
+    };
+    let suffix = match (act, prefix) {
+        (6, "Weapon_PhysCannon") => "Launch",
+        (6, _) => "Single",
+        (1, "Weapon_Shotgun") => return None,
+        (1, _) => "Reload",
+        (4, _) => "Reload",
+        (2, _) | (5, _) => "Special1",
+        (3, _) => "Empty",
+        _ => return None,
+    };
+    Some(format!("{prefix}.{suffix}"))
+}
+
 fn viewmodel(weapon: u8) -> Option<&'static Viewmodel> {
     WEAPONS.get(weapon as usize)
 }
@@ -491,6 +522,8 @@ struct App {
     anim_time: std::collections::HashMap<u32, f32>,
     /// Other players' running gesture (m_anm sequence, start, the `vm_serial` that started it).
     gestures: std::collections::HashMap<u32, (&'static str, Instant, u8)>,
+    /// Weapon sounds from the scripts, mixed on the default output device.
+    sounds: gm_audio::Sounds,
     last_render: Instant,
     /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
     menu: Option<SpawnMenu>,
@@ -651,7 +684,9 @@ impl App {
     /// then the hold sequence while a prop is held, else idle.
     fn vm_sequence(&mut self, vm: &Viewmodel) -> (&'static str, f32) {
         // server-decided events: reload (manual, empty clip, automatic), pump, dry fire
-        if let Some((act, serial)) = self.local_snap().map(|p| (p.vm_act, p.vm_serial)) {
+        if let Some((act, serial, active)) =
+            self.local_snap().map(|p| (p.vm_act, p.vm_serial, p.active))
+        {
             if serial != self.vm_serial_seen {
                 self.vm_serial_seen = serial;
                 let seq = match act {
@@ -660,10 +695,14 @@ impl App {
                     3 => vm.dry,
                     4 => vm.reload_shell,
                     5 => vm.reload_end,
+                    6 => Some(vm.fire),
                     _ => None,
                 };
                 if let Some(seq) = seq {
                     self.vm_anim = Some((seq, Instant::now()));
+                }
+                if let Some(name) = weapon_sound(act, active) {
+                    self.sounds.emit(&self.mount, &name, None);
                 }
             }
         }
@@ -798,6 +837,11 @@ impl App {
             near: 3.0,
             far: 28000.0,
         };
+        let yaw = self.view.y.to_radians();
+        self.sounds.mixer.set_listener(gm_audio::Listener {
+            position: camera.position,
+            right: Vec3::new(yaw.sin(), -yaw.cos(), 0.0),
+        });
         let aspect = g.config.width as f32 / g.config.height as f32;
         g.world.draw(&g.gpu, &camera, &view, &g.depth, aspect);
         let ents = &self.sim.client.world.entities;
@@ -828,6 +872,8 @@ impl App {
         let air_since = &mut self.air_since;
         let anim_time = &mut self.anim_time;
         let gestures = &mut self.gestures;
+        let sounds = &mut self.sounds;
+        let mount = &self.mount;
         type PlayerPose = (
             Vec3,
             f32,
@@ -886,6 +932,10 @@ impl App {
                             Some((_, _, serial)) if *serial == p.vm_serial => {}
                             _ => {
                                 gestures.insert(p.id, (g, Instant::now(), p.vm_serial));
+                                if let Some(name) = weapon_sound(p.vm_act, p.active) {
+                                    let eye = if p.ducked { 28.0 } else { 64.0 };
+                                    sounds.emit(mount, &name, Some(p.origin + Vec3::Z * eye));
+                                }
                             }
                         }
                     }
@@ -1534,16 +1584,14 @@ impl ApplicationHandler for App {
                             });
                         }
                         if let Some(vm) = viewmodel(self.weapon) {
-                            // left: the attack unless the clip is empty (the server's dry fire
-                            // event plays then); right: the secondary fire where the weapon
-                            // has one (the physgun's right click only acts while holding)
-                            let empty = self.local_snap().is_some_and(|p| p.clip == 0);
-                            if b == 0 {
-                                if !empty {
-                                    self.vm_anim = Some((vm.fire, Instant::now()));
+                            // left: the shot comes back as the server's fire event (so held
+                            // automatic fire and dry fire play right); right: the secondary
+                            // fire where the weapon has one (the physgun's right click only
+                            // acts while holding)
+                            if b == 1 {
+                                if let Some(alt) = vm.alt {
+                                    self.vm_anim = Some((alt, Instant::now()));
                                 }
-                            } else if let Some(alt) = vm.alt {
-                                self.vm_anim = Some((alt, Instant::now()));
                             }
                         }
                     }
@@ -1590,6 +1638,12 @@ fn main() -> Result<()> {
     let inst =
         gm_content::find_install().ok_or_else(|| anyhow!("no GMod install (set GMOD_DIR)"))?;
     let mount = gm_content::Mount::for_install(&inst)?;
+    let sounds = gm_audio::Sounds::new(&mount);
+    eprintln!(
+        "audio: {} ({} script entries)",
+        sounds.mixer.device,
+        sounds.scripts.len()
+    );
     let bsp_data = mount.read(&format!("maps/{map}.bsp"))?;
     let (spawn, yaw) = {
         let bsp = gm_formats::bsp::Bsp::parse(&bsp_data)?;
@@ -1650,6 +1704,7 @@ fn main() -> Result<()> {
         air_since: Default::default(),
         anim_time: Default::default(),
         gestures: Default::default(),
+        sounds,
         last_render: Instant::now(),
         menu: None,
         spawn_models: Vec::new(),
