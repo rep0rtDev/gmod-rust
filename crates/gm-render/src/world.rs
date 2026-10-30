@@ -93,7 +93,132 @@ pub struct WorldRenderer {
     base_sampler: wgpu::Sampler,
     white_uv: [f32; 2],
     sun: Vec3,
+    sky2d: Option<SkyCube>,
 }
+
+/// The 2D sky: worldspawn `skyname` as six `materials/skybox/<name><side>` faces on a cube
+/// around the eye, drawn first so sky faces (skipped) and the 3D skybox show over it.
+struct SkyCube {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    faces: Vec<wgpu::BindGroup>,
+}
+
+/// Face suffix and its axes in the Quake/Source convention: position = sx * s + ty * t + n
+/// for s, t in -1..1 (texture u = (s + 1) / 2, v = (1 - t) / 2).
+/// (suffix, normal, s axis, t axis)
+type SkyFace = (&'static str, [f32; 3], [f32; 3], [f32; 3]);
+const SKY_FACES: [SkyFace; 6] = [
+    ("rt", [1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0]),
+    ("bk", [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+    ("lf", [0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+    ("ft", [0.0, -1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+    ("up", [0.0, 0.0, 1.0], [0.0, -1.0, 0.0], [-1.0, 0.0, 0.0]),
+    ("dn", [0.0, 0.0, -1.0], [0.0, -1.0, 0.0], [1.0, 0.0, 0.0]),
+];
+
+fn build_sky_cube(
+    gpu: &Gpu,
+    mount: &Mount,
+    bsp: &Bsp<'_>,
+    layout: &wgpu::BindGroupLayout,
+    white_uv: [f32; 2],
+) -> Option<SkyCube> {
+    let name = bsp
+        .entities
+        .iter()
+        .find(|e| e.classname() == "worldspawn")
+        .and_then(|e| e.get("skyname"))
+        .or_else(|| {
+            eprintln!("sky: no worldspawn skyname");
+            None
+        })?
+        .to_string();
+    let device = &gpu.device;
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("sky"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("sky params"),
+        contents: bytemuck::bytes_of(&MaterialParams {
+            alpha_test: 0,
+            pad: [0; 3],
+        }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let mut verts = Vec::new();
+    let mut idx = Vec::new();
+    let mut faces = Vec::new();
+    for (suffix, n, sx, ty) in SKY_FACES {
+        let mat_name = format!("skybox/{name}{suffix}");
+        let mat = material::load(mount, &mat_name)
+            .inspect_err(|e| eprintln!("sky: {mat_name}: {e}"))
+            .ok()?;
+        let tex = mat.base_texture.as_deref().unwrap_or(&mat_name);
+        let rgba = material::load_texture(mount, tex, 2048)
+            .inspect_err(|e| eprintln!("sky: {tex}: {e}"))
+            .ok()?;
+        let t = upload_rgba(
+            gpu,
+            &rgba.pixels,
+            rgba.width,
+            rgba.height,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            &mat_name,
+        );
+        faces.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&mat_name),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &t.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params.as_entire_binding(),
+                },
+            ],
+        }));
+        let base = verts.len() as u32;
+        let (n, sx, ty) = (Vec3::from(n), Vec3::from(sx), Vec3::from(ty));
+        for (s, t) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            verts.push(Vertex {
+                position: ((n + sx * s + ty * t) * SKY_CUBE_HALF).to_array(),
+                uv: [(s + 1.0) / 2.0, (1.0 - t) / 2.0],
+                lm_uv: white_uv,
+                color: [1.0; 3],
+            });
+        }
+        idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    Some(SkyCube {
+        vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sky vertices"),
+            contents: bytemuck::cast_slice(&verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        }),
+        index_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sky indices"),
+            contents: bytemuck::cast_slice(&idx),
+            usage: wgpu::BufferUsages::INDEX,
+        }),
+        faces,
+    })
+}
+
+const SKY_CUBE_HALF: f32 = 100.0;
 
 /// A model for props that move: meshes in model space with their material bind groups.
 /// One mesh of a `DynModel`: material, model-space (position, normal, uv), indices.
@@ -146,6 +271,31 @@ fn face_lm_uv(bsp: &Bsp<'_>, face: &Face, p: [f32; 3], pl: &Placement, atlas: f3
     [(pl.x as f32 + lu) / atlas, (pl.y as f32 + lv) / atlas]
 }
 
+/// Brush entities store their faces relative to the entity `origin` (the model's
+/// bounds are centred on zero); faces of model 0 and of entities without an
+/// origin are already in world space.
+fn brush_entity_offsets(bsp: &Bsp<'_>) -> HashMap<usize, [f32; 3]> {
+    let mut out = HashMap::new();
+    for e in &bsp.entities {
+        let (Some(model), Some(origin)) = (e.get("model"), e.origin()) else {
+            continue;
+        };
+        let Some(idx) = model
+            .strip_prefix('*')
+            .and_then(|n| n.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        let Some(m) = bsp.models.get(idx) else {
+            continue;
+        };
+        for fi in m.first_face..m.first_face + m.num_faces {
+            out.insert(fi as usize, origin);
+        }
+    }
+    out
+}
+
 fn skip_face(bsp: &Bsp<'_>, face: &Face) -> bool {
     if face.tex_info < 0 {
         return true;
@@ -194,6 +344,7 @@ impl WorldRenderer {
             });
         // Faces whose centre lies in the sky camera's area belong to the 3D skybox.
         // Displacement faces are not in leaf face lists, so classify by position.
+        let face_offset = brush_entity_offsets(bsp);
         let mut skybox_faces: HashSet<usize> = HashSet::new();
         if let Some(sky) = sky_camera {
             let area = bsp.leafs[bsp.leaf_at(sky.origin.into())].area();
@@ -202,7 +353,7 @@ impl WorldRenderer {
                 if verts.is_empty() {
                     continue;
                 }
-                let mut c = [0f32; 3];
+                let mut c = face_offset.get(&fi).copied().unwrap_or([0.0; 3]);
                 for v in &verts {
                     for k in 0..3 {
                         c[k] += v[k] / verts.len() as f32;
@@ -323,9 +474,10 @@ impl WorldRenderer {
                 continue;
             }
             let base = vertices.len() as u32;
+            let off = face_offset.get(&fi).copied().unwrap_or([0.0; 3]);
             for p in &poly {
                 vertices.push(Vertex {
-                    position: *p,
+                    position: [p[0] + off[0], p[1] + off[1], p[2] + off[2]],
                     uv: face_uv(bsp, face, *p, tw, th),
                     lm_uv: if lit {
                         face_lm_uv(bsp, face, *p, &placement, atlas_size as f32)
@@ -604,6 +756,7 @@ impl WorldRenderer {
             batches,
             sky_camera,
             stats,
+            sky2d: build_sky_cube(gpu, mount, bsp, &material_layout, white_uv),
             material_layout,
             base_sampler,
             white_uv,
@@ -625,6 +778,11 @@ impl WorldRenderer {
         depth: &wgpu::TextureView,
         aspect: f32,
     ) {
+        let mut clear = true;
+        if self.sky2d.is_some() {
+            self.sky_pass(gpu, camera, color, depth, aspect);
+            clear = false;
+        }
         let has_sky = self.sky_camera.is_some() && self.batches.iter().any(|b| b.sky);
         if let (true, Some(sky)) = (has_sky, self.sky_camera) {
             let sky_cam = Camera {
@@ -633,11 +791,72 @@ impl WorldRenderer {
                 far: camera.far / sky.scale * 4.0,
                 ..*camera
             };
-            self.pass(gpu, &sky_cam, color, depth, aspect, true, true);
+            self.pass(gpu, &sky_cam, color, depth, aspect, true, clear);
             self.pass(gpu, camera, color, depth, aspect, false, false);
         } else {
-            self.pass(gpu, camera, color, depth, aspect, false, true);
+            self.pass(gpu, camera, color, depth, aspect, false, clear);
         }
+    }
+
+    /// The 2D sky cube around an eye at the origin, clearing colour and depth.
+    fn sky_pass(
+        &self,
+        gpu: &Gpu,
+        camera: &Camera,
+        color: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        aspect: f32,
+    ) {
+        let Some(sky) = &self.sky2d else { return };
+        let cam = Camera {
+            position: Vec3::ZERO,
+            near: 1.0,
+            far: SKY_CUBE_HALF * 4.0,
+            ..*camera
+        };
+        gpu.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::bytes_of(&CameraUniform {
+                view_proj: cam.view_proj(aspect).to_cols_array_2d(),
+            }),
+        );
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("sky2d"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, sky.vertex_buffer.slice(..));
+            pass.set_index_buffer(sky.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            for (i, bg) in sky.faces.iter().enumerate() {
+                pass.set_bind_group(1, bg, &[]);
+                let first = i as u32 * 6;
+                pass.draw_indexed(first..first + 6, 0, 0..1);
+            }
+        }
+        gpu.queue.submit([enc.finish()]);
     }
 
     #[allow(clippy::too_many_arguments)]
