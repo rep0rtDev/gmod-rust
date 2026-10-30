@@ -1199,10 +1199,20 @@ impl App {
 
 impl App {
     fn tool_settings_list(&self) -> Vec<(String, String)> {
-        self.tool_settings
-            .get(&self.tool)
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default()
+        let schema = self.tool_schema(&self.tool);
+        let empty = BTreeMap::new();
+        let set = self.tool_settings.get(&self.tool).unwrap_or(&empty);
+        gm_net::tool_click_settings(schema, set)
+    }
+
+    fn tool_schema(&self, tool: &str) -> Option<&[gm_server::ToolSetting]> {
+        self.sim
+            .client
+            .world
+            .tool_schemas
+            .iter()
+            .find(|(t, _)| t == tool)
+            .map(|(_, s)| s.as_slice())
     }
 
     fn ui_items(&self, o: Vec3) -> Vec<UiItem> {
@@ -1548,10 +1558,34 @@ impl App {
                 Some(t) => {
                     // a stool of an addon: the server decides whether it exists
                     self.tool = t.to_string();
-                    self.console.log(format!(
-                        "tool {t} (scripted; built in: {})",
-                        TOOLS.join(" ")
-                    ));
+                    match self.tool_schema(t).map(<[_]>::to_vec) {
+                        Some(schema) => {
+                            self.console.log(format!("tool {t} (scripted), settings:"));
+                            for s in schema {
+                                let cur = self
+                                    .tool_settings
+                                    .get(*t)
+                                    .and_then(|m| m.get(&s.name))
+                                    .cloned()
+                                    .unwrap_or_else(|| s.default.clone());
+                                let range = match s.kind {
+                                    gm_server::ToolSettingKind::Number => {
+                                        format!(" number {}..{}", s.min, s.max)
+                                    }
+                                    gm_server::ToolSettingKind::Bool => " bool".into(),
+                                    gm_server::ToolSettingKind::Text => " text".into(),
+                                };
+                                self.console.log(format!(
+                                    "  {} = {cur}{range} (default {})",
+                                    s.name, s.default
+                                ));
+                            }
+                        }
+                        None => self.console.log(format!(
+                            "tool {t} (scripted; built in: {})",
+                            TOOLS.join(" ")
+                        )),
+                    }
                 }
                 None => self
                     .console

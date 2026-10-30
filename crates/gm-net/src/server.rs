@@ -43,6 +43,7 @@ pub struct ClientSlot {
     models_sent: usize,
     /// `Server::spawn_lists_version` last sent to this client (0: none yet).
     spawn_lists_sent: u32,
+    tool_schemas_sent: u32,
     /// Last snapshot tick each player / entity state went to this client (for the staleness
     /// weight in the budget order).
     last_sent_player: BTreeMap<u32, u32>,
@@ -253,6 +254,7 @@ impl ServerNet {
                         pending_cvars: Vec::new(),
                         cvar_seq: 0,
                         spawn_lists_sent: 0,
+                        tool_schemas_sent: 0,
                         uploads: VecDeque::new(),
                         undo_seq: 0,
                         sent_undos: Vec::new(),
@@ -975,6 +977,16 @@ impl ServerNet {
                 .write(&mut w);
                 slot.channel.send_reliable(w.buf);
                 slot.spawn_lists_sent = server.spawn_lists_version;
+            }
+            if slot.tool_schemas_sent != server.tool_schemas_version {
+                let mut w = Writer::default();
+                ServerMsg::ToolSchemas {
+                    version: server.tool_schemas_version,
+                    tools: server.tool_schemas.clone(),
+                }
+                .write(&mut w);
+                slot.channel.send_reliable(w.buf);
+                slot.tool_schemas_sent = server.tool_schemas_version;
             }
             let mut unreliable = Vec::new();
             if snapshot_tick {

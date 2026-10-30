@@ -332,3 +332,10 @@ stools ignore them.
 categories, the whole set, sent to a client whenever its last seen version differs from
 `Server::spawn_lists_version` (on join and after every `spawnmenu.add`). Up to 256 categories
 of up to 4096 models each are read.
+
+## Tool schemas
+
+`ServerMsg::ToolSchemas { version, tools }` (tag 15, reliable): the scripted stools' setting
+schemas (name, kind as u8: 0 number / 1 bool / 2 text, min, max as f32, default as a string),
+the whole set, sent to a client whenever its last seen version differs from
+`Server::tool_schemas_version`. Up to 1024 tools of up to 255 settings each.

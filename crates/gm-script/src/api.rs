@@ -79,6 +79,11 @@ pub enum QueuedWrite {
         category: String,
         models: Vec<String>,
     },
+    /// `tool.register` with `settings`: the stool's setting schema for every client.
+    ToolSchema {
+        tool: String,
+        settings: Vec<gm_server::ToolSetting>,
+    },
     SetVelocity {
         ent: u32,
         velocity: Vec3,
@@ -419,6 +424,9 @@ tool = {}
 local tools = {}
 function tool.register(name: string, def)
     tools[name] = def
+    if def.settings ~= nil then
+        world.queue("tool.schema", 0, { name = name, settings = def.settings })
+    end
 end
 function __has_tool(name: string)
     return tools[name] ~= nil
@@ -587,6 +595,38 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         models: models
                             .sequence_values::<String>()
                             .collect::<Result<Vec<_>>>()?,
+                    }
+                }
+                "tool.schema" => {
+                    let t = table_arg(&arg)?;
+                    let list: Table = t.get("settings")?;
+                    let mut settings = Vec::new();
+                    for s in list.sequence_values::<Table>() {
+                        let s = s?;
+                        let kind = match s.get::<Option<String>>("type")?.as_deref() {
+                            Some("bool") => gm_server::ToolSettingKind::Bool,
+                            Some("text") => gm_server::ToolSettingKind::Text,
+                            _ => gm_server::ToolSettingKind::Number,
+                        };
+                        let default = match s.get::<Value>("default")? {
+                            Value::Nil => String::new(),
+                            Value::Boolean(b) => (b as u8).to_string(),
+                            Value::Integer(i) => i.to_string(),
+                            Value::Number(n) => n.to_string(),
+                            Value::String(s) => s.to_str()?.to_string(),
+                            _ => String::new(),
+                        };
+                        settings.push(gm_server::ToolSetting {
+                            name: s.get("name")?,
+                            kind,
+                            min: s.get::<Option<f32>>("min")?.unwrap_or(f32::MIN),
+                            max: s.get::<Option<f32>>("max")?.unwrap_or(f32::MAX),
+                            default,
+                        });
+                    }
+                    QueuedWrite::ToolSchema {
+                        tool: t.get("name")?,
+                        settings,
                     }
                 }
                 "sound.play" => {
@@ -1133,6 +1173,10 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         }
         QueuedWrite::SpawnList { category, models } => {
             server.add_spawn_list(category, models);
+            true
+        }
+        QueuedWrite::ToolSchema { tool, settings } => {
+            server.set_tool_schema(tool, settings.clone());
             true
         }
         QueuedWrite::SetVelocity {

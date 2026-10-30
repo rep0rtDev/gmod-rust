@@ -23,6 +23,46 @@ pub struct ClientWorld {
     pub cvars: BTreeMap<String, String>,
     /// The addons' spawn menu categories (`spawnmenu.add`), latest version whole.
     pub spawn_lists: Vec<(String, Vec<String>)>,
+    /// The scripted stools' setting schemas, latest version whole.
+    pub tool_schemas: Vec<(String, Vec<gm_server::ToolSetting>)>,
+}
+
+/// The settings a click of `tool` carries: the schema's defaults overlaid with the player's
+/// values, numbers clamped to the schema's range (unparsable numbers fall back to the default);
+/// values for keys the schema does not know pass through, as does everything without a schema.
+pub fn tool_click_settings(
+    schema: Option<&[gm_server::ToolSetting]>,
+    set: &BTreeMap<String, String>,
+) -> Vec<(String, String)> {
+    let Some(schema) = schema else {
+        return set.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    for s in schema {
+        let v = match set.get(&s.name) {
+            None => s.default.clone(),
+            Some(v) => match s.kind {
+                gm_server::ToolSettingKind::Number => match v.trim().parse::<f32>() {
+                    Ok(n) => n.clamp(s.min, s.max).to_string(),
+                    Err(_) => s.default.clone(),
+                },
+                gm_server::ToolSettingKind::Bool => match v.trim() {
+                    "1" | "true" | "on" => "1".into(),
+                    "0" | "false" | "off" => "0".into(),
+                    _ => s.default.clone(),
+                },
+                gm_server::ToolSettingKind::Text => v.clone(),
+            },
+        };
+        out.push((s.name.clone(), v));
+    }
+    for (k, v) in set {
+        if !schema.iter().any(|s| &s.name == k) {
+            out.push((k.clone(), v.clone()));
+        }
+    }
+    out.truncate(255);
+    out
 }
 
 /// Interpolation of other players' and props' poses between the two snapshots around a render
@@ -458,6 +498,7 @@ impl ClientNet {
                             local,
                             cvars: std::mem::take(&mut self.world.cvars),
                             spawn_lists: std::mem::take(&mut self.world.spawn_lists),
+                            tool_schemas: std::mem::take(&mut self.world.tool_schemas),
                         };
                         self.server_tick = tick;
                     }
@@ -468,6 +509,7 @@ impl ClientNet {
                         self.world.cvars.insert(name, value);
                     }
                     ServerMsg::SpawnLists { lists, .. } => self.world.spawn_lists = lists,
+                    ServerMsg::ToolSchemas { tools, .. } => self.world.tool_schemas = tools,
                     ServerMsg::Undos { entries, .. } => self.world.own.undos = entries,
                     ServerMsg::Disconnect { reason } => {
                         self.disconnected = Some(reason);

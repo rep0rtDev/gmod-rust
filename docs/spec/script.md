@@ -446,6 +446,22 @@ queued from `player.damaged` shows as `player.death` type 0, the respawn 135 tic
 `player.spawned`; the freeze handler's `sound.play` reaches the client as a `Sounds` message
 with the position and volume given.
 
+## Tool setting schemas
+
+`tool.register(name, { settings = { { name, type, min, max, default }, ... }, left = ... })`
+declares the stool's settings: `type` is `number` (default), `bool` or `text`; `min`/`max`
+bound numbers (unbounded when absent); `default` is sent as a string (`false` → `0`, `10` →
+`10`). The schema is a write at registration (`Server::tool_schemas`, `tool_schemas_version`
+bumped when a tool's schema changes), sent whole and reliably as `ServerMsg::ToolSchemas` to
+every client whose version differs, kept in `ClientWorld::tool_schemas`. The native client
+builds the click's `ctx.settings` with `gm_net::tool_click_settings`: every schema key is
+present (the player's value or the default), numbers are clamped to `min..=max` and fall back
+to the default when unparsable, bools normalise `1/true/on` and `0/false/off`, keys the schema
+does not know pass through, and `tool <name>` in the console lists the schema with the current
+values. Measured (`addon_hooks setting_schema`): a three-setting schema reaches the client in
+one version step; `forcelimit=5000` becomes `1000`, `nocollide=true` becomes `1`, `lots`
+becomes the default `10`. Not yet: panels (sliders, checkboxes) drawn from the schema.
+
 ## +use
 
 A press of `IN_USE` (the edge: the button down this command and up in the last one, player

@@ -2857,3 +2857,103 @@ fn player_use_is_asked_on_the_press_within_reach_and_player_used_follows() {
     assert_eq!((asked, used), (2, 1), "asked once per press, one allowed");
     assert_eq!(last as u32, near, "the crate under the eyes");
 }
+
+#[test]
+fn a_stools_setting_schema_reaches_the_client_and_shapes_the_clicks_settings() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "schema".into(),
+        priority: 1,
+        source: "tool.register('weld_lua', {
+                settings = {
+                    { name = 'forcelimit', type = 'number', min = 0, max = 1000, default = 10 },
+                    { name = 'nocollide', type = 'bool', default = false },
+                    { name = 'label', type = 'text', default = 'weld' },
+                },
+                left = function(ctx) return {} end,
+            })"
+        .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    for _ in 0..8 {
+        client.tick(gm_net::NetCmd::default(), &mut c_ep);
+        net.tick();
+        sn.receive(&mut server, &mut s_ep);
+        sn.tick(&mut server);
+        sn.send(&server, &mut s_ep);
+        client.receive(&mut c_ep);
+    }
+    use gm_server::{ToolSetting, ToolSettingKind as K};
+    let expected = vec![
+        ToolSetting {
+            name: "forcelimit".into(),
+            kind: K::Number,
+            min: 0.0,
+            max: 1000.0,
+            default: "10".into(),
+        },
+        ToolSetting {
+            name: "nocollide".into(),
+            kind: K::Bool,
+            min: f32::MIN,
+            max: f32::MAX,
+            default: "0".into(),
+        },
+        ToolSetting {
+            name: "label".into(),
+            kind: K::Text,
+            min: f32::MIN,
+            max: f32::MAX,
+            default: "weld".into(),
+        },
+    ];
+    assert_eq!(server.tool_schemas_version, 1);
+    assert_eq!(
+        client.world.tool_schemas,
+        vec![("weld_lua".to_string(), expected.clone())]
+    );
+    let schema = client.world.tool_schemas[0].1.as_slice();
+    let mut set = std::collections::BTreeMap::new();
+    assert_eq!(
+        gm_net::tool_click_settings(Some(schema), &set),
+        vec![
+            ("forcelimit".to_string(), "10".to_string()),
+            ("nocollide".to_string(), "0".to_string()),
+            ("label".to_string(), "weld".to_string()),
+        ],
+        "defaults when the player set nothing"
+    );
+    set.insert("forcelimit".into(), "5000".into());
+    set.insert("nocollide".into(), "true".into());
+    set.insert("extra".into(), "x".into());
+    assert_eq!(
+        gm_net::tool_click_settings(Some(schema), &set),
+        vec![
+            ("forcelimit".to_string(), "1000".to_string()),
+            ("nocollide".to_string(), "1".to_string()),
+            ("label".to_string(), "weld".to_string()),
+            ("extra".to_string(), "x".to_string()),
+        ],
+        "clamped to the range, bool normalised, unknown keys pass through"
+    );
+    set.insert("forcelimit".into(), "lots".into());
+    assert_eq!(
+        gm_net::tool_click_settings(Some(schema), &set)[0].1,
+        "10",
+        "an unparsable number falls back to the default"
+    );
+}

@@ -12,7 +12,7 @@ pub mod transport;
 pub mod wire;
 
 pub mod crypto;
-pub use client::{ClientNet, ClientWorld, Interpolator, Prediction};
+pub use client::{tool_click_settings, ClientNet, ClientWorld, Interpolator, Prediction};
 pub use master::{MasterMsg, MasterNet, ServerEntry, ServerInfo};
 pub use msg::EntityState;
 pub use msg::{auth_message, AddonInfo, ClientMsg, Command, NetCmd, ServerMsg, AUTH_PREFIX};

@@ -119,6 +119,42 @@ pub enum Request {
 /// How far from the eyes +use reaches (the public SDK's `PLAYER_USE_RADIUS`).
 pub const PLAYER_USE_RADIUS: f32 = 80.0;
 
+/// One setting of a scripted stool as its `tool.register` declared it: the client shows it,
+/// fills `default` when unset and clamps numbers to `min..=max` before the click.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolSetting {
+    pub name: String,
+    pub kind: ToolSettingKind,
+    pub min: f32,
+    pub max: f32,
+    pub default: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolSettingKind {
+    Number,
+    Bool,
+    Text,
+}
+
+impl ToolSettingKind {
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Bool,
+            2 => Self::Text,
+            _ => Self::Number,
+        }
+    }
+
+    pub fn as_u8(self) -> u8 {
+        match self {
+            Self::Number => 0,
+            Self::Bool => 1,
+            Self::Text => 2,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Verdict {
     Allow,
@@ -507,6 +543,10 @@ pub struct Server<'w> {
     /// `spawn_lists_version` grows with every change so the net layer resends them.
     pub spawn_lists: Vec<(String, Vec<String>)>,
     pub spawn_lists_version: u32,
+    /// Setting schemas of scripted stools (`tool.register` with `settings`), by tool name;
+    /// `tool_schemas_version` grows with every change so the net layer resends them.
+    pub tool_schemas: Vec<(String, Vec<ToolSetting>)>,
+    pub tool_schemas_version: u32,
     /// Names created since the last `take_cvar_new` (replicated to connected clients).
     pub cvar_new: Vec<String>,
 }
@@ -605,6 +645,8 @@ impl<'w> Server<'w> {
             cvar_changes: Vec::new(),
             spawn_lists: Vec::new(),
             spawn_lists_version: 0,
+            tool_schemas: Vec::new(),
+            tool_schemas_version: 0,
             cvar_new: Vec::new(),
         }
     }
@@ -2369,6 +2411,16 @@ impl<'w> Server<'w> {
             self.spawn_lists_version += 1;
         }
         added
+    }
+
+    /// Sets (or replaces) the setting schema of a scripted stool; a no-op when unchanged.
+    pub fn set_tool_schema(&mut self, tool: &str, settings: Vec<ToolSetting>) {
+        match self.tool_schemas.iter_mut().find(|(t, _)| t == tool) {
+            Some((_, cur)) if *cur == settings => return,
+            Some((_, cur)) => *cur = settings,
+            None => self.tool_schemas.push((tool.to_owned(), settings)),
+        }
+        self.tool_schemas_version += 1;
     }
 
     pub fn play_sound(&mut self, name: String, pos: Vec3, volume: f32) {

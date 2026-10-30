@@ -293,6 +293,11 @@ pub enum ServerMsg {
         version: u32,
         lists: Vec<(String, Vec<String>)>,
     },
+    /// Reliable: the scripted stools' setting schemas, whole, whenever the version changes.
+    ToolSchemas {
+        version: u32,
+        tools: Vec<(String, Vec<gm_server::ToolSetting>)>,
+    },
 }
 
 /// A world sound: script name, where, and a volume factor on the script's own.
@@ -669,6 +674,7 @@ impl ServerMsg {
                 | ServerMsg::Addons { .. }
                 | ServerMsg::AddonChunk { .. }
                 | ServerMsg::SpawnLists { .. }
+                | ServerMsg::ToolSchemas { .. }
         )
     }
 
@@ -836,6 +842,22 @@ impl ServerMsg {
                     w.varint(models.len() as u64);
                     for m in models {
                         w.str(m);
+                    }
+                }
+            }
+            ServerMsg::ToolSchemas { version, tools } => {
+                w.u8(15);
+                w.u32(*version);
+                w.varint(tools.len() as u64);
+                for (tool, settings) in tools {
+                    w.str(tool);
+                    w.u8(settings.len().min(255) as u8);
+                    for s in settings.iter().take(255) {
+                        w.str(&s.name);
+                        w.u8(s.kind.as_u8());
+                        w.f32(s.min);
+                        w.f32(s.max);
+                        w.str(&s.default);
                     }
                 }
             }
@@ -1017,6 +1039,27 @@ impl ServerMsg {
                     lists.push((category, models));
                 }
                 ServerMsg::SpawnLists { version, lists }
+            }
+            15 => {
+                let version = r.u32()?;
+                let n = r.varint()?.min(1024) as usize;
+                let mut tools = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let tool = r.str()?;
+                    let k = r.u8()? as usize;
+                    let mut settings = Vec::with_capacity(k);
+                    for _ in 0..k {
+                        settings.push(gm_server::ToolSetting {
+                            name: r.str()?,
+                            kind: gm_server::ToolSettingKind::from_u8(r.u8()?),
+                            min: r.f32()?,
+                            max: r.f32()?,
+                            default: r.str()?,
+                        });
+                    }
+                    tools.push((tool, settings));
+                }
+                ServerMsg::ToolSchemas { version, tools }
             }
             11 => {
                 let nonce = sha(r)?;
