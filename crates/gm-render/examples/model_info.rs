@@ -53,6 +53,12 @@ fn main() {
                         s.anim,
                         a.map(|a| (a.name.as_str(), a.fps, a.frames, a.flags, a.block))
                     );
+                    for l in &s.autolayers {
+                        println!(
+                            "      layer seq {} flags {:#x} {}..{}..{}..{}",
+                            l.sequence, l.flags, l.start, l.peak, l.tail, l.end
+                        );
+                    }
                 }
                 println!("  {} seqs, {} anims", seqs.len(), anims.len());
                 if std::env::var_os("BONES").is_some() {

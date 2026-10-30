@@ -94,11 +94,29 @@ const VIEWMODEL_FOV: f32 = 54.0;
 /// Hands drawn on the `c_` viewmodels' arm bones (GMod's default player hands).
 const HANDS_MODEL: &str = "models/weapons/c_arms_citizen.mdl";
 
-/// Viewmodel of a weapon slot and its idle sequence.
-fn viewmodel(weapon: u8) -> Option<(&'static str, &'static str)> {
+/// Viewmodel of a weapon slot: model, idle sequence, sequence on attack, sequence while a
+/// prop is held.
+struct Viewmodel {
+    path: &'static str,
+    idle: &'static str,
+    fire: &'static str,
+    hold: Option<&'static str>,
+}
+
+fn viewmodel(weapon: u8) -> Option<Viewmodel> {
     match weapon {
-        1 => Some(("models/weapons/c_superphyscannon.mdl", "idle")),
-        2 => Some(("models/weapons/c_toolgun.mdl", "idle01")),
+        1 => Some(Viewmodel {
+            path: "models/weapons/c_superphyscannon.mdl",
+            idle: "idle",
+            fire: "fire",
+            hold: Some("hold_idle"),
+        }),
+        2 => Some(Viewmodel {
+            path: "models/weapons/c_toolgun.mdl",
+            idle: "idle01",
+            fire: "fire01",
+            hold: None,
+        }),
         _ => None,
     }
 }
@@ -162,6 +180,8 @@ struct App {
     mouse: BTreeSet<u8>,
     view: Vec3,
     weapon: u8,
+    /// One-shot viewmodel sequence playing (draw, fire) and when it started.
+    vm_anim: Option<(&'static str, Instant)>,
     grabbed: bool,
     last: Instant,
     acc: f32,
@@ -251,6 +271,46 @@ impl App {
         self.grabbed = on;
     }
 
+    fn select_weapon(&mut self, weapon: u8) {
+        if self.weapon != weapon {
+            self.weapon = weapon;
+            self.vm_anim = Some(("draw", Instant::now()));
+        }
+    }
+
+    /// Sequence and time for the viewmodel this frame: the one-shot sequence while it lasts,
+    /// then the hold sequence while a prop is held, else idle.
+    fn vm_sequence(&mut self, vm: &Viewmodel) -> (&'static str, f32) {
+        let model = self
+            .gfx
+            .as_ref()
+            .and_then(|g| g.models.get(vm.path))
+            .and_then(|m| m.as_ref());
+        if let Some((seq, at)) = self.vm_anim {
+            let t = at.elapsed().as_secs_f32();
+            match model.map(|m| m.sequence_length(seq)) {
+                // model not loaded yet: keep the request
+                None => return (seq, t),
+                Some(Some((len, false))) if t < len => return (seq, t),
+                // unknown sequence or finished: fall through to the loops
+                _ => self.vm_anim = None,
+            }
+        }
+        let me = self.sim.client.player_id;
+        let held = self
+            .sim
+            .client
+            .world
+            .players
+            .iter()
+            .any(|p| Some(p.id) == me && p.held.is_some());
+        let t = self.fps_at.elapsed().as_secs_f32();
+        match vm.hold {
+            Some(hold) if held => (hold, t),
+            _ => (vm.idle, t),
+        }
+    }
+
     fn cmd(&self) -> NetCmd {
         let k = |c: KeyCode| self.keys.contains(&c);
         let mut b = 0;
@@ -320,6 +380,8 @@ impl App {
 
     fn render(&mut self) {
         let alpha = self.acc / gm_core::tick::DEFAULT_TICK_INTERVAL;
+        let vm = viewmodel(self.weapon);
+        let vm_seq = vm.as_ref().map(|vm| self.vm_sequence(vm));
         let Some(g) = &mut self.gfx else { return };
         let frame = match g.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
@@ -451,7 +513,8 @@ impl App {
         };
         g.world.draw_models(&g.gpu, &camera, &target, &items);
         // viewmodel: own projection (narrower fov, near plane at 1 u) over a cleared depth buffer
-        if let Some((path, idle)) = viewmodel(self.weapon) {
+        if let (Some(vm), Some((seq, t))) = (vm, vm_seq) {
+            let path = vm.path;
             if !g.models.contains_key(path) {
                 let m = g.world.load_model(&g.gpu, &self.mount, path);
                 g.models.insert(path.to_string(), m);
@@ -461,7 +524,7 @@ impl App {
                 g.models.insert(HANDS_MODEL.to_string(), m);
             }
             if let Some(m) = g.models.get(path).and_then(|m| m.as_ref()) {
-                let world = m.bone_world(idle, self.fps_at.elapsed().as_secs_f32(), None);
+                let world = m.bone_world(seq, t, None);
                 let pose = world.as_ref().map(|w| m.skin_matrices(w));
                 let hands = g.models.get(HANDS_MODEL).and_then(|h| h.as_ref());
                 let hands_pose = match (hands, &world) {
@@ -728,9 +791,9 @@ impl ApplicationHandler for App {
                     match code {
                         KeyCode::Escape if self.grabbed => self.set_grab(false),
                         KeyCode::Escape => el.exit(),
-                        KeyCode::Digit1 => self.weapon = 0,
-                        KeyCode::Digit2 => self.weapon = 1,
-                        KeyCode::Digit3 => self.weapon = 2,
+                        KeyCode::Digit1 => self.select_weapon(0),
+                        KeyCode::Digit2 => self.select_weapon(1),
+                        KeyCode::Digit3 => self.select_weapon(2),
                         KeyCode::KeyQ => self.sim.client.command(Command::Spawn {
                             model: SPAWN_MODEL.to_string(),
                         }),
@@ -758,7 +821,14 @@ impl ApplicationHandler for App {
                     _ => return,
                 };
                 if state == ElementState::Pressed {
-                    self.mouse.insert(b);
+                    if self.mouse.insert(b) {
+                        if let Some(vm) = viewmodel(self.weapon) {
+                            // the physgun's right click only acts while holding
+                            if b == 0 || vm.hold.is_none() {
+                                self.vm_anim = Some((vm.fire, Instant::now()));
+                            }
+                        }
+                    }
                 } else {
                     self.mouse.remove(&b);
                 }
@@ -851,6 +921,7 @@ fn main() -> Result<()> {
         mouse: BTreeSet::new(),
         view: Vec3::new(arg_f(3).unwrap_or(0.0), arg_f(2).unwrap_or(yaw), 0.0),
         weapon: 1,
+        vm_anim: None,
         grabbed: false,
         last: Instant::now(),
         acc: 0.0,

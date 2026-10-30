@@ -298,6 +298,17 @@ impl DynModel {
             .flat_map(|s| s.sequences.iter().map(|q| q.name.as_str()))
     }
 
+    /// Length in seconds of sequence `name` and whether it loops.
+    pub fn sequence_length(&self, name: &str) -> Option<(f32, bool)> {
+        let sk = self.skeleton.as_ref()?;
+        let seq = sk.sequences.iter().find(|s| s.name == name)?;
+        let anim = sk.anims.get(seq.anim.max(0) as usize)?;
+        if anim.fps <= 0.0 {
+            return None;
+        }
+        Some((anim.frames.max(1) as f32 / anim.fps, anim.flags & 1 != 0))
+    }
+
     /// Skinning matrices (model space from bind pose) of sequence `name` at `time` seconds
     /// from its start: looping sequences wrap, others hold their last frame. `None` without a
     /// skeleton, an unknown sequence or tracks in an external `.ani` block.
@@ -363,14 +374,53 @@ impl DynModel {
             return None;
         }
         let frames = anim.frames as usize;
-        let f = (time.max(0.0) * anim.fps) as usize;
-        let frame = if anim.flags & 1 != 0 {
-            f % frames
+        let f = time.max(0.0) * anim.fps;
+        let cycle = if anim.flags & 1 != 0 {
+            (f / frames as f32).fract()
         } else {
-            f.min(frames - 1)
+            (f / frames as f32).min(1.0)
         };
+        let frame = ((cycle * frames as f32) as usize).min(frames - 1);
         let (start, frame) = anim.frame_data(&sk.mdl, frame)?;
-        let local = gm_formats::mdl::anim_pose(&sk.mdl, start, &sk.bones, frame)?;
+        let mut local = gm_formats::mdl::anim_pose(&sk.mdl, start, &sk.bones, frame, false)?;
+        // layers: delta animations added with the layer's weight at this cycle
+        for layer in &seq.autolayers {
+            if layer.flags & 0x4000 != 0 {
+                continue;
+            }
+            let w = layer.weight(cycle);
+            let Some(lseq) = sk.sequences.get(layer.sequence.max(0) as usize) else {
+                continue;
+            };
+            let Some(lanim) = sk.anims.get(lseq.anim.max(0) as usize) else {
+                continue;
+            };
+            if w <= 0.0 || lanim.flags & 4 == 0 || lanim.frames <= 0 {
+                continue;
+            }
+            let lcycle = if layer.start != layer.end {
+                ((cycle - layer.start) / (layer.end - layer.start)).clamp(0.0, 1.0)
+            } else {
+                cycle
+            };
+            let lframe = ((lcycle * (lanim.frames - 1) as f32).round() as usize)
+                .min(lanim.frames as usize - 1);
+            let Some((lstart, lframe)) = lanim.frame_data(&sk.mdl, lframe) else {
+                continue;
+            };
+            let Some(delta) = gm_formats::mdl::anim_pose(&sk.mdl, lstart, &sk.bones, lframe, true)
+            else {
+                continue;
+            };
+            for ((pos, quat), (dpos, dquat)) in local.iter_mut().zip(&delta) {
+                for (p, d) in pos.iter_mut().zip(dpos) {
+                    *p += w * d;
+                }
+                let dq = glam::Quat::IDENTITY.slerp(glam::Quat::from_array(*dquat).normalize(), w);
+                // Source's QuaternionMA: the scaled delta applied in the bone's own frame
+                *quat = (glam::Quat::from_array(*quat).normalize() * dq).to_array();
+            }
+        }
         let mut world: Vec<Mat4> = Vec::with_capacity(local.len());
         for (i, (pos, quat)) in local.iter().enumerate() {
             let bone = &sk.bones[i];

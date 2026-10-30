@@ -300,12 +300,45 @@ pub fn hitboxes(data: &[u8], header: &Header) -> Vec<HitBox> {
     out
 }
 
-/// A sequence of the model (`mstudioseqdesc_t`, 212 bytes): its label and the first animation
-/// of its blend grid.
+/// A sequence of the model (`mstudioseqdesc_t`, 212 bytes): its label, the first animation
+/// of its blend grid and the layers it adds on top.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sequence {
     pub name: String,
     pub anim: i16,
+    pub autolayers: Vec<AutoLayer>,
+}
+
+/// A layer a sequence blends in (`mstudioautolayer_t`, 24 bytes): another sequence (usually a
+/// delta animation) whose weight ramps 0 → 1 over `start..peak` of the cycle, holds 1 to
+/// `tail` and fades to 0 at `end`; `flags` 0x4000 marks a pose-parameter layer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutoLayer {
+    pub sequence: i16,
+    pub pose: i16,
+    pub flags: i32,
+    pub start: f32,
+    pub peak: f32,
+    pub tail: f32,
+    pub end: f32,
+}
+
+impl AutoLayer {
+    /// Blend weight at `cycle` (0..1 through the host sequence).
+    pub fn weight(&self, cycle: f32) -> f32 {
+        if self.start == self.end {
+            return 1.0;
+        }
+        if cycle < self.start || cycle > self.end {
+            0.0
+        } else if cycle < self.peak && self.peak > self.start {
+            (cycle - self.start) / (self.peak - self.start)
+        } else if cycle > self.tail && self.end > self.tail {
+            (self.end - cycle) / (self.end - self.tail)
+        } else {
+            1.0
+        }
+    }
 }
 
 /// An animation (`mstudioanimdesc_t`, 100 bytes).
@@ -389,7 +422,28 @@ pub fn sequences(data: &[u8], header: &Header) -> Vec<Sequence> {
         ) else {
             break;
         };
-        out.push(Sequence { name, anim });
+        let layers = i32_at(data, o + 148).unwrap_or(0).max(0) as usize;
+        let layer_off = i32_at(data, o + 152).unwrap_or(0);
+        let f = |p: usize| f32::from_bits(i32_at(data, p).unwrap_or(0) as u32);
+        let autolayers = (0..layers)
+            .filter_map(|l| {
+                let p = o.checked_add_signed(layer_off as isize)? + l * 24;
+                Some(AutoLayer {
+                    sequence: i16_at(data, p)?,
+                    pose: i16_at(data, p + 2)?,
+                    flags: i32_at(data, p + 4)?,
+                    start: f(p + 8),
+                    peak: f(p + 12),
+                    tail: f(p + 16),
+                    end: f(p + 20),
+                })
+            })
+            .collect();
+        out.push(Sequence {
+            name,
+            anim,
+            autolayers,
+        });
     }
     out
 }
@@ -548,18 +602,28 @@ pub fn quat_from_euler(e: [f32; 3]) -> [f32; 4] {
     ]
 }
 
-/// Local (position, quaternion) of every bone at `frame` of an animation: the bind pose for
-/// bones the animation does not touch, raw values (flags 0x01 / 0x02 / 0x20) or run-length
-/// encoded tracks (0x04 position, 0x08 rotation) scaled by the bone's `pos_scale` /
-/// `rot_scale` and added to the bind pose, or to zero for a delta animation (0x10).
-/// `data` / `start` as in [`static_pose`].
+/// Local (position, quaternion) of every bone at `frame` of an animation: raw values (flags
+/// 0x01 / 0x02 / 0x20) or run-length encoded tracks (0x04 position, 0x08 rotation) scaled by
+/// the bone's `pos_scale` / `rot_scale` and added to the bind pose. For a `delta` animation
+/// (`AnimDesc::flags` 0x04, layered onto another pose) the values are offsets: zero / identity
+/// for untouched bones and for the base of each track. `data` / `start` as in [`static_pose`].
 pub fn anim_pose(
     data: &[u8],
     start: usize,
     bones: &[Bone],
     frame: usize,
+    delta: bool,
 ) -> Option<Vec<([f32; 3], [f32; 4])>> {
-    let mut out: Vec<_> = bones.iter().map(|b| (b.pos, b.quat)).collect();
+    let mut out: Vec<_> = bones
+        .iter()
+        .map(|b| {
+            if delta {
+                ([0.0; 3], [0.0, 0.0, 0.0, 1.0])
+            } else {
+                (b.pos, b.quat)
+            }
+        })
+        .collect();
     let mut p = start;
     loop {
         let bone = *data.get(p)? as usize;
@@ -568,11 +632,10 @@ pub fn anim_pose(
         let Some(b) = bones.get(bone) else {
             break;
         };
-        let delta = flags & 0x10 != 0;
+        let delta = delta || flags & 0x10 != 0;
         let base = |v: [f32; 3]| if delta { [0.0; 3] } else { v };
         let mut q = p + 4;
-        let mut quat = b.quat;
-        let mut pos = b.pos;
+        let (mut pos, mut quat) = out[bone];
         if flags & 0x20 != 0 {
             quat = quat64(data.get(q..q + 8)?);
             q += 8;

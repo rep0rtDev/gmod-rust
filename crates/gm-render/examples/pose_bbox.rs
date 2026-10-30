@@ -20,7 +20,8 @@ fn posed(mount: &gm_content::Mount, path: &str, seq_name: &str, t: f32) -> Posed
     let anim = &anims[seq.anim as usize];
     let frame = ((t * anim.fps) as usize) % anim.frames as usize;
     let (start, f) = anim.frame_data(&bytes, frame).expect("block 0");
-    let local = gm_formats::mdl::anim_pose(&bytes, start, &mdl.bones, f).expect("pose");
+    let local = gm_formats::mdl::anim_pose(&bytes, start, &mdl.bones, f, anim.flags & 4 != 0)
+        .expect("pose");
     let mut world: Vec<Mat4> = Vec::new();
     for (i, (pos, quat)) in local.iter().enumerate() {
         let m = Mat4::from_rotation_translation(
