@@ -203,6 +203,8 @@ pub struct ClientNet {
     pub endpoint: usize,
     channel: Channel,
     pub player_id: Option<u32>,
+    /// The server closed the connection: `full`, `banned`, `kicked`, `timed out`.
+    pub disconnected: Option<String>,
     pub server_tick: u32,
     pub tick_interval: f32,
     pub map: String,
@@ -233,6 +235,7 @@ impl ClientNet {
             endpoint,
             channel: Channel::default(),
             player_id: None,
+            disconnected: None,
             server_tick: 0,
             tick_interval: gm_core::tick::DEFAULT_TICK_INTERVAL,
             map: String::new(),
@@ -302,7 +305,17 @@ impl ClientNet {
         self
     }
 
+    /// Tell the server we leave (reliable; send a few more ticks so it gets through).
+    pub fn disconnect(&mut self) {
+        let mut w = Writer::default();
+        ClientMsg::Disconnect.write(&mut w);
+        self.channel.send_reliable(w.buf);
+    }
+
     pub fn tick(&mut self, mut cmd: NetCmd, transport: &mut dyn Transport) {
+        if self.disconnected.is_some() && self.channel.pending_reliable() == 0 {
+            return;
+        }
         if cmd.seen_tick == 0 {
             cmd.seen_tick = self.world.tick;
         }
@@ -431,6 +444,10 @@ impl ClientNet {
                         self.world.cvars.insert(name, value);
                     }
                     ServerMsg::Undos { entries, .. } => self.world.own.undos = entries,
+                    ServerMsg::Disconnect { reason } => {
+                        self.disconnected = Some(reason);
+                        self.player_id = None;
+                    }
                     ServerMsg::Challenge { nonce, pubkey } => {
                         if self.crypto.is_none() {
                             self.crypto =

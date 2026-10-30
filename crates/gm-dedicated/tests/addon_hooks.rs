@@ -1531,3 +1531,180 @@ fn a_server_requiring_auth_welcomes_only_clients_that_prove_an_identity() {
     assert_eq!(server2.players[&a].identity, None);
     assert_eq!(server2.players[&k].identity, Some(public));
 }
+
+/// Connection lifecycle: a silent client times out (its props stay), an admin kicks and bans
+/// another one (its reconnect is refused), a full server refuses, a leaving client frees its slot.
+#[test]
+fn connections_time_out_get_kicked_banned_refused_when_full_and_leave() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
+    let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
+    sn.timeout_ticks = 30;
+    sn.max_players = 2;
+    let (admin_secret, admin_public) = gm_script::package::keygen();
+    let (victim_secret, victim_public) = gm_script::package::keygen();
+    sn.admin_keys.insert(admin_public);
+    let net = gm_net::Loopback::new(1, 0.0, 11);
+    let mut s_ep = net.endpoint(0);
+    let mut eps: Vec<_> = (1..=4).map(|i| net.endpoint(i)).collect();
+    let mut admin = gm_net::ClientNet::new(1, "admin").with_key(&admin_secret);
+    let mut victim = gm_net::ClientNet::new(1, "victim").with_key(&victim_secret);
+    let run = |n: u32,
+               server: &mut gm_server::Server<'_>,
+               sn: &mut gm_net::ServerNet,
+               s_ep: &mut gm_net::LoopbackEndpoint,
+               eps: &mut Vec<gm_net::LoopbackEndpoint>,
+               clients: &mut [(&mut gm_net::ClientNet, usize)]| {
+        for _ in 0..n {
+            for (c, e) in clients.iter_mut() {
+                c.tick(gm_net::NetCmd::default(), &mut eps[*e]);
+            }
+            net.tick();
+            sn.receive(server, s_ep);
+            sn.tick(server);
+            sn.send(server, s_ep);
+            for (c, e) in clients.iter_mut() {
+                c.receive(&mut eps[*e]);
+            }
+        }
+    };
+    run(
+        20,
+        &mut server,
+        &mut sn,
+        &mut s_ep,
+        &mut eps,
+        &mut [(&mut admin, 0), (&mut victim, 1)],
+    );
+    let admin_id = admin.player_id.expect("admin in");
+    let victim_id = victim.player_id.expect("victim in");
+    assert_eq!(server.players[&victim_id].identity, Some(victim_public));
+    let log = sn.take_log();
+    assert!(log.iter().any(|l| l.contains("admin joined")), "{log:?}");
+    // full: a third client is refused
+    let mut third = gm_net::ClientNet::new(1, "third");
+    run(
+        20,
+        &mut server,
+        &mut sn,
+        &mut s_ep,
+        &mut eps,
+        &mut [(&mut admin, 0), (&mut victim, 1), (&mut third, 2)],
+    );
+    assert_eq!(third.disconnected.as_deref(), Some("full"));
+    assert!(third.player_id.is_none());
+    run(
+        40,
+        &mut server,
+        &mut sn,
+        &mut s_ep,
+        &mut eps,
+        &mut [(&mut admin, 0), (&mut victim, 1)],
+    );
+    assert_eq!(
+        sn.clients.len(),
+        2,
+        "the refused slot is gone after its timeout"
+    );
+    // the victim spawns a crate, then the admin bans it: the crate stays, the player goes
+    victim.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    run(
+        10,
+        &mut server,
+        &mut sn,
+        &mut s_ep,
+        &mut eps,
+        &mut [(&mut admin, 0), (&mut victim, 1)],
+    );
+    assert_eq!(server.sandbox.props().len(), 1);
+    admin.command(gm_net::Command::Kick {
+        player: victim_id,
+        ban: true,
+    });
+    run(
+        20,
+        &mut server,
+        &mut sn,
+        &mut s_ep,
+        &mut eps,
+        &mut [(&mut admin, 0), (&mut victim, 1)],
+    );
+    assert_eq!(victim.disconnected.as_deref(), Some("banned"));
+    assert!(!server.players.contains_key(&victim_id));
+    assert_eq!(server.sandbox.props().len(), 1, "the leaver's crate stays");
+    assert!(sn.bans.contains(&victim_public));
+    // the banned identity reconnecting is refused
+    let mut again = gm_net::ClientNet::new(1, "victim2").with_key(&victim_secret);
+    run(
+        20,
+        &mut server,
+        &mut sn,
+        &mut s_ep,
+        &mut eps,
+        &mut [(&mut admin, 0), (&mut again, 3)],
+    );
+    assert_eq!(again.disconnected.as_deref(), Some("banned"));
+    // a non-admin kick is denied
+    let mut peer = gm_net::ClientNet::new(1, "peer");
+    run(
+        20,
+        &mut server,
+        &mut sn,
+        &mut s_ep,
+        &mut eps,
+        &mut [(&mut admin, 0), (&mut peer, 1)],
+    );
+    peer.command(gm_net::Command::Kick {
+        player: admin_id,
+        ban: false,
+    });
+    run(
+        10,
+        &mut server,
+        &mut sn,
+        &mut s_ep,
+        &mut eps,
+        &mut [(&mut admin, 0), (&mut peer, 1)],
+    );
+    assert!(server.players.contains_key(&admin_id));
+    // the peer leaves: its slot is freed at once; the admin goes silent and times out
+    peer.disconnect();
+    run(
+        5,
+        &mut server,
+        &mut sn,
+        &mut s_ep,
+        &mut eps,
+        &mut [(&mut admin, 0), (&mut peer, 1)],
+    );
+    let before = sn.clients.len();
+    run(
+        40,
+        &mut server,
+        &mut sn,
+        &mut s_ep,
+        &mut eps,
+        &mut [(&mut peer, 1)],
+    );
+    assert!(
+        sn.clients.len() < before,
+        "the admin timed out: {} -> {}",
+        before,
+        sn.clients.len()
+    );
+    assert!(!server.players.contains_key(&admin_id));
+    let log = sn.take_log();
+    assert!(log.iter().any(|l| l.contains("timed out")), "{log:?}");
+}

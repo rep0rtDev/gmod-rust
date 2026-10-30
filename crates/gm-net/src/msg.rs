@@ -42,6 +42,11 @@ pub enum Command {
     Reload {
         addon: String,
     },
+    /// Admin: drop a player; `ban` also remembers its identity (`ServerNet::bans`).
+    Kick {
+        player: u32,
+        ban: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -76,6 +81,8 @@ pub enum ClientMsg {
         pubkey: [u8; 32],
         sig: Vec<u8>,
     },
+    /// The client leaves; the server frees the slot at once instead of after the timeout.
+    Disconnect,
     AckSnapshot {
         tick: u32,
     },
@@ -231,6 +238,10 @@ pub enum ServerMsg {
         nonce: [u8; 32],
         /// The server's ephemeral X25519 public key (see `ClientMsg::Hello`).
         pubkey: [u8; 32],
+    },
+    /// Reliable, last message of a connection: refused (`full`, `banned`), kicked or timed out.
+    Disconnect {
+        reason: String,
     },
     Models {
         from: u32,
@@ -468,6 +479,11 @@ impl ClientMsg {
                         w.u8(6);
                         w.str(addon);
                     }
+                    Command::Kick { player, ban } => {
+                        w.u8(7);
+                        w.u32(*player);
+                        w.bool(*ban);
+                    }
                 }
             }
             ClientMsg::AckSnapshot { tick } => {
@@ -488,6 +504,7 @@ impl ClientMsg {
                 w.buf.extend_from_slice(pubkey);
                 w.bytes(sig);
             }
+            ClientMsg::Disconnect => w.u8(8),
         }
     }
 
@@ -526,6 +543,10 @@ impl ClientMsg {
                         value: r.str()?,
                     },
                     6 => Command::Reload { addon: r.str()? },
+                    7 => Command::Kick {
+                        player: r.u32()?,
+                        ban: r.bool()?,
+                    },
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }
@@ -540,6 +561,7 @@ impl ClientMsg {
                 pubkey: sha(r)?,
                 sig: r.bytes()?.to_vec(),
             },
+            8 => ClientMsg::Disconnect,
             _ => return Err(Truncated),
         })
     }
@@ -678,6 +700,10 @@ impl ServerMsg {
                     w.u32(u.id);
                     w.str(&u.name);
                 }
+            }
+            ServerMsg::Disconnect { reason } => {
+                w.u8(12);
+                w.str(reason);
             }
             ServerMsg::Challenge { nonce, pubkey } => {
                 w.u8(11);
@@ -831,6 +857,7 @@ impl ServerMsg {
                 nonce: sha(r)?,
                 pubkey: sha(r)?,
             },
+            12 => ServerMsg::Disconnect { reason: r.str()? },
             _ => return Err(Truncated),
         })
     }

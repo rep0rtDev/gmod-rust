@@ -70,6 +70,8 @@ pub trait ServerHooks {
     fn reload_addon(&mut self, _addon: &str) -> Result<String, String> {
         Err("no addon runtime".into())
     }
+    /// `player.disconnected` after the player left the table (its props stay).
+    fn player_disconnected(&mut self, _server: &mut Server<'_>, _player: u32) {}
     /// An addon message from a client's actor (`net.send` on the client).
     fn net_message(&mut self, _server: &mut Server<'_>, _player: u32, _name: &str, _data: &[u8]) {}
     /// Addon messages queued by server actors: (player or 0 for everyone, name, payload).
@@ -1350,6 +1352,12 @@ impl<'w> Server<'w> {
         self.hull_planes
             .insert(name.to_string(), info.hull_planes.clone());
         self.models.insert(name.to_string(), info);
+    }
+
+    /// The player leaves: whatever the physgun held is released, the entry goes; props,
+    /// constraints and their ownership stay (the game keeps a leaver's props).
+    pub fn remove_player(&mut self, id: u32) -> bool {
+        self.players.remove(&id).is_some()
     }
 
     pub fn add_player(&mut self, id: u32, origin: Vec3, view_angles: Vec3) {

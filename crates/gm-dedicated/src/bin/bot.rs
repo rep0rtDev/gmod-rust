@@ -104,6 +104,10 @@ fn main() -> Result<()> {
             spawned = true;
         }
         client.receive(&mut udp);
+        if let Some(reason) = &client.disconnected {
+            println!("disconnected by the server: {reason}");
+            return Ok(());
+        }
         for a in client.server_addons.clone() {
             if !addons_seen.insert(a.sha) {
                 continue;

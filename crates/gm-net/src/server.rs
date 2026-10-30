@@ -49,6 +49,10 @@ pub struct ClientSlot {
     welcomed: bool,
     eph: crate::crypto::Ephemeral,
     crypto: Option<crate::crypto::Session>,
+    /// Server tick of the last packet from this client.
+    last_heard: u32,
+    /// A `Disconnect` was sent; the slot goes once the channel has flushed or at the timeout.
+    closing: bool,
 }
 
 /// An addon package the server hands out to clients (its client-realm actors run there).
@@ -66,6 +70,8 @@ pub const PLAYER_SNAP_SIZE: usize = 44;
 /// Upper bound of the wire size of one `EntityState` (the model goes as a table index).
 pub const ENTITY_SNAP_SIZE: usize = 44;
 pub const ADDON_CHUNK: usize = 16 * 1024;
+/// 10 seconds at the default tick rate.
+pub const DEFAULT_TIMEOUT_TICKS: u32 = 667;
 /// Reliable fragments in flight above which a client's upload waits (other reliable traffic
 /// keeps flowing between chunks).
 pub const UPLOAD_WINDOW: usize = 24;
@@ -80,6 +86,16 @@ pub struct ServerNet {
     pub hooks: Option<Box<dyn gm_server::ServerHooks>>,
     /// Players allowed to run admin commands (`Command::Reload`).
     pub admins: std::collections::BTreeSet<u32>,
+    /// Identities that become admins when they authenticate.
+    pub admin_keys: std::collections::BTreeSet<[u8; 32]>,
+    /// Banned identities: refused at `Auth`; with `require_auth` that is before the `Welcome`.
+    pub bans: std::collections::BTreeSet<[u8; 32]>,
+    /// Connections beyond this are refused with `full`.
+    pub max_players: usize,
+    /// Ticks without a packet before a client is dropped (`timed out`).
+    pub timeout_ticks: u32,
+    /// Human-readable connection events (joins, leaves, kicks) since the last `take_log`.
+    pub log: Vec<String>,
     pub addons: Vec<PublishedAddon>,
     /// What the server browser is told (`players` and `addons` are filled on send).
     pub info: crate::master::ServerInfo,
@@ -110,6 +126,11 @@ impl ServerNet {
             spawn_origin,
             hooks: None,
             admins: std::collections::BTreeSet::new(),
+            admin_keys: std::collections::BTreeSet::new(),
+            bans: std::collections::BTreeSet::new(),
+            max_players: 64,
+            timeout_ticks: DEFAULT_TIMEOUT_TICKS,
+            log: Vec::new(),
             addons: Vec::new(),
             models: Vec::new(),
             model_ids: BTreeMap::new(),
@@ -180,6 +201,11 @@ impl ServerNet {
                 continue;
             }
             if !self.clients.contains_key(&from) {
+                // only a plaintext handshake opens a connection: sealed packets of a dropped
+                // client (or anything else) must not create a ghost slot and player
+                if packet.first() != Some(&crate::crypto::PLAIN) {
+                    continue;
+                }
                 let player = self.next_player;
                 self.next_player += 1;
                 self.clients.insert(
@@ -212,10 +238,13 @@ impl ServerNet {
                         welcomed: false,
                         eph: crate::crypto::Ephemeral::generate(),
                         crypto: None,
+                        last_heard: self.tick,
+                        closing: false,
                     },
                 );
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
             }
+            let open = self.clients.values().filter(|c| !c.closing).count();
             let slot = self.clients.get_mut(&from).unwrap();
             let body = match (packet.first(), &mut slot.crypto) {
                 (Some(&crate::crypto::SEALED), Some(c)) => match c.open(&packet) {
@@ -231,6 +260,10 @@ impl ServerNet {
             let Ok(msgs) = slot.channel.receive(&body) else {
                 continue;
             };
+            slot.last_heard = self.tick;
+            if slot.closing {
+                continue;
+            }
             for m in msgs {
                 let Ok(msg) = ClientMsg::read(&mut Reader::new(&m)) else {
                     continue;
@@ -243,6 +276,11 @@ impl ServerNet {
                     } => {
                         if protocol == PROTOCOL {
                             slot.name = name;
+                            if open > self.max_players && !slot.welcomed {
+                                refuse(slot, "full");
+                                self.log.push(format!("{} refused: full", slot.name));
+                                continue;
+                            }
                             let mut nonce = [0u8; 32];
                             rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut nonce);
                             slot.nonce = nonce;
@@ -262,7 +300,14 @@ impl ServerNet {
                             .write(&mut w);
                             slot.channel.send_reliable(w.buf);
                             if !self.require_auth {
-                                welcome(slot, &self.map, self.tick, &self.addons, server);
+                                welcome(
+                                    slot,
+                                    &self.map,
+                                    self.tick,
+                                    &self.addons,
+                                    server,
+                                    &mut self.log,
+                                );
                             }
                         }
                     }
@@ -276,15 +321,38 @@ impl ServerNet {
                                     })
                                 })
                             });
+                        if ok && self.bans.contains(&pubkey) {
+                            refuse(slot, "banned");
+                            self.log.push(format!(
+                                "{} refused: banned {}",
+                                slot.name,
+                                hex(&pubkey)
+                            ));
+                            continue;
+                        }
                         if ok {
                             slot.identity = Some(pubkey);
                             if let Some(p) = server.players.get_mut(&slot.player) {
                                 p.identity = Some(pubkey);
                             }
+                            if self.admin_keys.contains(&pubkey) {
+                                self.admins.insert(slot.player);
+                            }
                             if !slot.welcomed {
-                                welcome(slot, &self.map, self.tick, &self.addons, server);
+                                welcome(
+                                    slot,
+                                    &self.map,
+                                    self.tick,
+                                    &self.addons,
+                                    server,
+                                    &mut self.log,
+                                );
                             }
                         }
+                    }
+                    ClientMsg::Disconnect => {
+                        slot.closing = true;
+                        self.log.push(format!("{} left", slot.name));
                     }
                     ClientMsg::Cmds { cmds } => {
                         for c in cmds {
@@ -337,7 +405,58 @@ impl ServerNet {
 
     /// Runs one server tick: the newest due usercmd of every client (the last one again when
     /// none arrived, like the engine's command deficit), then the sandbox commands in order.
+    /// Drop a player now: a reliable `Disconnect { reason }`, its entry leaves the server table
+    /// (props stay), `ServerHooks::player_disconnected`; `ban` remembers the identity.
+    pub fn kick(&mut self, server: &mut Server<'_>, player: u32, reason: &str, ban: bool) -> bool {
+        let Some((_, slot)) = self.clients.iter_mut().find(|(_, s)| s.player == player) else {
+            return false;
+        };
+        if ban {
+            if let Some(id) = slot.identity {
+                self.bans.insert(id);
+            }
+        }
+        let name = slot.name.clone();
+        refuse(slot, reason);
+        self.log.push(format!("{name} (player {player}) {reason}"));
+        self.drop_player(server, player);
+        true
+    }
+
+    fn drop_player(&mut self, server: &mut Server<'_>, player: u32) {
+        if server.remove_player(player) {
+            if let Some(h) = self.hooks.as_mut() {
+                h.player_disconnected(server, player);
+            }
+        }
+        self.admins.remove(&player);
+    }
+
+    /// Connection events since the last call (joins, leaves, refusals, kicks, timeouts).
+    pub fn take_log(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.log)
+    }
+
     pub fn tick(&mut self, server: &mut Server<'_>) {
+        // timeouts and closed connections
+        let timeout = self.timeout_ticks;
+        let tick = self.tick;
+        let gone: Vec<(usize, u32, bool, String)> = self
+            .clients
+            .iter()
+            .filter(|(_, s)| {
+                tick.wrapping_sub(s.last_heard) > timeout
+                    || (s.closing && s.channel.pending_reliable() == 0)
+            })
+            .map(|(e, s)| (*e, s.player, s.closing, s.name.clone()))
+            .collect();
+        for (endpoint, player, closing, name) in gone {
+            self.clients.remove(&endpoint);
+            if !closing {
+                self.log.push(format!("{name} (player {player}) timed out"));
+            }
+            self.drop_player(server, player);
+        }
         self.tick += 1;
         let mut cmds = BTreeMap::new();
         for slot in self.clients.values_mut() {
@@ -395,6 +514,7 @@ impl ServerNet {
                 }
             }
         }
+        let mut kicks: Vec<(u32, bool)> = Vec::new();
         for slot in self.clients.values_mut() {
             while let Some(cmd) = slot.commands.remove(&slot.next_command) {
                 slot.next_command += 1;
@@ -433,6 +553,17 @@ impl ServerNet {
                     Command::Cvar { name, value } => {
                         server.set_cvar(&name, &value);
                     }
+                    Command::Kick { player, ban } => {
+                        let msg = if !self.admins.contains(&slot.player) {
+                            format!("Kick {player} denied")
+                        } else if player == slot.player {
+                            format!("Kick {player} denied self")
+                        } else {
+                            kicks.push((player, ban));
+                            format!("Kick {player} ok")
+                        };
+                        slot.pending_events.push(msg);
+                    }
                     Command::Reload { addon } => {
                         let msg = if !self.admins.contains(&slot.player) {
                             format!("Reload {addon} denied")
@@ -464,6 +595,9 @@ impl ServerNet {
                     }
                 }
             }
+        }
+        for (player, ban) in kicks {
+            self.kick(server, player, if ban { "banned" } else { "kicked" }, ban);
         }
         if let Some(h) = self.hooks.as_mut() {
             h.after_commands(server);
@@ -751,8 +885,10 @@ fn welcome(
     tick: u32,
     addons: &[PublishedAddon],
     server: &gm_server::Server<'_>,
+    log: &mut Vec<String>,
 ) {
     slot.welcomed = true;
+    log.push(format!("{} joined as player {}", slot.name, slot.player));
     let mut w = Writer::default();
     ServerMsg::Welcome {
         player_id: slot.player,
@@ -775,4 +911,19 @@ fn welcome(
             slot.pending_cvars.push((n.clone(), c.value.clone()));
         }
     }
+}
+
+/// A reliable `Disconnect` and the slot closes once it is acked (or at the timeout).
+fn refuse(slot: &mut ClientSlot, reason: &str) {
+    let mut w = Writer::default();
+    ServerMsg::Disconnect {
+        reason: reason.to_string(),
+    }
+    .write(&mut w);
+    slot.channel.send_reliable(w.buf);
+    slot.closing = true;
+}
+
+fn hex(b: &[u8; 32]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }

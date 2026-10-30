@@ -191,6 +191,18 @@ connection's packet encryption key (channel binding), so a relaying server canno
 on its own connection. Not yet: a registration/name service and Steam OpenID binding on top of
 the keys.
 
+Connection lifecycle: a client without a packet for `timeout_ticks` (10 s) is dropped; its
+entry leaves the server table, its props, constraints and their ownership stay (the game keeps a
+leaver's props), `ServerHooks::player_disconnected` fires. `ClientMsg::Disconnect` (tag 8) frees
+the slot at once. The server refuses with a reliable `ServerMsg::Disconnect { reason }` (tag 12):
+`full` (more than `max_players` open connections at `Hello`), `banned` (the identity in
+`ServerNet::bans` at `Auth`; with `--require-auth` that is before the `Welcome`), `kicked` /
+`banned` from an admin's `Command::Kick { player, ban }` (tag 7; admins are the identities of
+`--admin`, granted at `Auth`; kicking yourself is denied). `gm-dedicated` prints the join / leave /
+refusal log each tick and keeps `<data>/bans.txt` (one public key per line, loaded at start,
+rewritten on every ban); `gm-bot` exits with the reason. Measured in
+`connections_time_out_get_kicked_banned_refused_when_full_and_leave`.
+
 Encryption: `Hello` carries the client's ephemeral X25519 public key and `Challenge` the
 server's; both derive `SHA-256("gmr-key1" ++ shared ++ client_pub ++ server_pub)` and seal every
 packet after that with ChaCha20-Poly1305 (outer byte 1, 8-byte counter as nonce with a direction

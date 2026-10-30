@@ -35,6 +35,15 @@ struct Args {
     /// Only clients that prove an identity (ed25519 key, `gm-bot --key`) enter the server.
     #[arg(long)]
     require_auth: bool,
+    /// Identity (public key hex) that gets admin commands (`Kick`, `Reload`) once authenticated.
+    #[arg(long)]
+    admin: Vec<String>,
+    /// Banned identity (public key hex); `<data>/bans.txt` (one per line) is loaded and kept too.
+    #[arg(long)]
+    ban: Vec<String>,
+    /// Seconds without a packet before a client is dropped.
+    #[arg(long, default_value_t = 10.0)]
+    timeout: f32,
     /// Addon registry (directory or `http://` base url): `--addon id@requirement` (e.g.
     /// `wire@^1.2`, or a bare id) is resolved against its index with dependencies and installed
     /// into `<data>/registry`.
@@ -66,6 +75,24 @@ fn main() -> Result<()> {
     let spawn = glam::Vec3::new(args.spawn[0], args.spawn[1], args.spawn[2]);
     let mut net = gm_net::ServerNet::new(&args.map, spawn);
     net.require_auth = args.require_auth;
+    net.max_players = args.max_players as usize;
+    net.timeout_ticks = (args.timeout / gm_core::tick::DEFAULT_TICK_INTERVAL).round() as u32;
+    for a in &args.admin {
+        net.admin_keys
+            .insert(parse_key(a).with_context(|| format!("--admin {a}"))?);
+    }
+    let bans_path = args.data.join("bans.txt");
+    for b in &args.ban {
+        net.bans
+            .insert(parse_key(b).with_context(|| format!("--ban {b}"))?);
+    }
+    if let Ok(text) = std::fs::read_to_string(&bans_path) {
+        for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            net.bans
+                .insert(parse_key(line).with_context(|| format!("{}", bans_path.display()))?);
+        }
+    }
+    let mut bans_known = net.bans.len();
     if !args.addon.is_empty() {
         let mut rt = gm_script::Runtime::new();
         rt.data_dir = Some(args.data.clone());
@@ -161,6 +188,18 @@ fn main() -> Result<()> {
         net.receive(&mut server, &mut udp);
         net.tick(&mut server);
         net.send(&server, &mut udp);
+        for line in net.take_log() {
+            println!("{line}");
+        }
+        if net.bans.len() != bans_known {
+            bans_known = net.bans.len();
+            let text: String = net.bans.iter().map(|b| hex_of(b) + "\n").collect();
+            if let Err(e) =
+                std::fs::create_dir_all(&args.data).and_then(|_| std::fs::write(&bans_path, text))
+            {
+                eprintln!("bans.txt: {e}");
+            }
+        }
         if let Some(m) = master {
             if n.is_multiple_of(heartbeat_every) {
                 net.heartbeat(&mut udp, m);
@@ -194,4 +233,17 @@ fn main() -> Result<()> {
             next = now;
         }
     }
+}
+
+fn parse_key(hex: &str) -> Result<[u8; 32]> {
+    anyhow::ensure!(hex.len() == 64, "a public key is 32 hex bytes");
+    let mut out = [0u8; 32];
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)?;
+    }
+    Ok(out)
+}
+
+fn hex_of(b: &[u8; 32]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
