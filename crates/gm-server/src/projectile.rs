@@ -17,14 +17,21 @@ const ROCKET_LAUNCH: f32 = 300.0;
 const ROCKET_KICK: f32 = 119.0;
 const ROCKET_IGNITE_TICKS: u32 = 20;
 const ROCKET_SPEED: f32 = 1500.0;
-/// The ignited rocket steers to the laser dot (the owner's aim trace) as a damped second-order
-/// turn in angles: `turn = ROCKET_TURN_KEEP * turn + ROCKET_TURN_GAIN * error` (degrees per
-/// tick), fitted on four shots (rms 0.013 deg/tick). The first turn after ignition is a fixed
-/// kick down and to the left (measured 0.50-0.91 pitch, 0.16-0.19 yaw; not explained by the
-/// error to the dot, it shrinks as the error grows).
-const ROCKET_TURN_KEEP: f32 = 0.856;
-const ROCKET_TURN_GAIN: f32 = 0.00887;
+/// The ignited rocket's heading is a damped second-order system restoring to the aim it was
+/// launched along: `turn = ROCKET_TURN_KEEP * turn + ROCKET_TURN_GAIN * (aim - heading)`
+/// (degrees per tick). Fitted on all nine recordings (2422 samples, rms 0.0044 deg/tick); the
+/// laser dot's direction from the rocket gets a coefficient of -0.0002 in the same fit, so with a
+/// held aim the dot does not steer it (`fire_rpg_proj_up` wobbles the same way with no dot at
+/// all). The first turn after ignition is a fixed kick down and to the left (measured 0.37-0.97
+/// pitch, 0.0-0.19 yaw).
+const ROCKET_TURN_KEEP: f32 = 0.8758;
+const ROCKET_TURN_GAIN: f32 = 0.01091;
 const ROCKET_FIRST_TURN: glam::Vec2 = glam::Vec2::new(0.75, 0.17);
+/// The heading settles on the direction (from the eye) to a point this far above the aim point:
+/// 18 u when the aim lands on a floor, ramp or ceiling (measured 17.8, 18.1, 18.0, 19.1), 27.6 u
+/// on a wall (27.6, 27.6, 27.2).
+const ROCKET_HOME_LIFT_FLOOR: f32 = 18.0;
+const ROCKET_HOME_LIFT_WALL: f32 = 27.6;
 const BOLT_SPEED: f32 = 3500.0;
 const BOLT_GRAVITY: f32 = 0.05;
 const BOLT_REFLECT: f32 = 0.75;
@@ -84,6 +91,9 @@ pub struct Projectile {
     pub target: Vec3,
     /// The aim direction at launch: the rocket ignites along it.
     pub aim: Vec3,
+    /// Where the rocket's heading settles (pitch, yaw): the direction from the eye to a point
+    /// `ROCKET_HOME_LIFT_*` above the aim point, fixed at launch.
+    pub home: glam::Vec2,
     pub gravity: f32,
     /// Rocket heading (pitch, yaw in degrees) and its turn per tick once ignited.
     pub heading: glam::Vec2,
@@ -132,9 +142,14 @@ pub fn spawn(
     phys: Option<&mut Physics<'_>>,
 ) -> Option<Projectile> {
     let (forward, right, up) = basis(pitch, yaw);
-    let target = world
-        .trace_ray(eye, eye + forward * 56755.84, MASK_SOLID)
-        .end;
+    let aim_trace = world.trace_ray(eye, eye + forward * 56755.84, MASK_SOLID);
+    let target = aim_trace.end;
+    let lift = if aim_trace.normal.z.abs() > 0.5 {
+        ROCKET_HOME_LIFT_FLOOR
+    } else {
+        ROCKET_HOME_LIFT_WALL
+    };
+    let home = heading_of(target + Vec3::Z * lift - eye);
     let mut p = match kind {
         Launch::Rocket => Projectile {
             kind,
@@ -148,6 +163,7 @@ pub fn spawn(
             age: 0,
             target,
             aim: forward,
+            home,
             heading: glam::Vec2::new(pitch, yaw),
             turn: glam::Vec2::ZERO,
             body: None,
@@ -163,6 +179,7 @@ pub fn spawn(
             age: 0,
             target,
             aim: forward,
+            home,
             heading: glam::Vec2::new(pitch, yaw),
             turn: glam::Vec2::ZERO,
             body: None,
@@ -178,6 +195,7 @@ pub fn spawn(
             age: 0,
             target,
             aim: forward,
+            home,
             heading: glam::Vec2::new(pitch, yaw),
             turn: glam::Vec2::ZERO,
             body: None,
@@ -193,6 +211,7 @@ pub fn spawn(
             age: 0,
             target,
             aim: forward,
+            home,
             heading: glam::Vec2::new(pitch, yaw),
             turn: glam::Vec2::ZERO,
             body: None,
@@ -236,6 +255,7 @@ pub fn spawn(
                 age: 0,
                 target: origin,
                 aim: forward,
+                home,
                 heading: glam::Vec2::new(pitch, yaw),
                 turn: glam::Vec2::ZERO,
                 gravity: GRAVITY,
@@ -393,8 +413,7 @@ impl Projectile {
             self.turn = if self.age == ROCKET_IGNITE_TICKS + 1 {
                 ROCKET_FIRST_TURN
             } else {
-                let to = heading_of(self.target - self.origin);
-                let mut err = to - self.heading;
+                let mut err = self.home - self.heading;
                 err.y = (err.y + 180.0).rem_euclid(360.0) - 180.0;
                 self.turn * ROCKET_TURN_KEEP + err * ROCKET_TURN_GAIN
             };
