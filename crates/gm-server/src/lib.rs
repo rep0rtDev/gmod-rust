@@ -20,6 +20,8 @@ pub struct ModelInfo {
     pub hulls: Vec<Vec<Vec3>>,
     /// The same convexes as outward planes (normal, distance) for the sandbox traces.
     pub hull_planes: Vec<Vec<(Vec3, f32)>>,
+    /// PHY mass centre in the entity frame.
+    pub mass_center: Vec3,
     pub mass: f32,
     pub volume: f32,
     pub surface: Surface,
@@ -89,6 +91,16 @@ pub enum GameEvent {
         player: u32,
         ent: u32,
     },
+    /// The player picked a prop up with +use and carries it.
+    Pickup {
+        player: u32,
+        ent: u32,
+    },
+    /// The carried prop was let go (second +use, death, the prop removed or physgunned).
+    Drop {
+        player: u32,
+        ent: u32,
+    },
     /// The physgun's reload unfroze this many of the player's props (`PhysgunUnfreeze`).
     Unfroze {
         player: u32,
@@ -119,6 +131,9 @@ pub enum Request {
     /// A +use press (the edge, not the hold) whose trace from the eyes found a prop within
     /// `PLAYER_USE_RADIUS`.
     PlayerUse { player: u32, ent: u32 },
+    /// `AllowPlayerPickup`: the used prop is light enough (`gm_physics::pickup::MAX_MASS`,
+    /// `MAX_SIZE`) and would be carried.
+    PlayerPickup { player: u32, ent: u32 },
     /// `PlayerLoadout`: the player (re)spawned with an empty inventory; `Cancel` skips the
     /// default loadout (the hook gives its own with `player.give_weapon`).
     Loadout { player: u32 },
@@ -287,6 +302,9 @@ pub trait ServerHooks {
     }
 }
 
+/// A prop convex in the world for the use sweeps: outward planes and the AABB.
+type WorldConvex = (Vec<(Vec3, f32)>, (Vec3, Vec3));
+
 /// Loads a model by name on first use.
 pub type ModelLoader = Box<dyn FnMut(&str) -> Option<ModelInfo>>;
 
@@ -299,6 +317,8 @@ pub struct Player {
     pub view_angles: Vec3,
     /// The prop held by the physgun and how it was grabbed.
     pub held: Option<(u32, Grab)>,
+    /// The prop carried with +use (`gm_physics::pickup`).
+    pub carry: Option<(u32, gm_physics::pickup::Carry)>,
     /// `IN_USE` was down in the last command (a use fires on the press, not the hold).
     pub use_down: bool,
     /// `IN_RELOAD` was down in the last command (the physgun unfreezes on the press).
@@ -366,6 +386,7 @@ impl Player {
             },
             view_angles,
             held: None,
+            carry: None,
             use_down: false,
             reload_down: false,
             alive: true,
@@ -1694,6 +1715,181 @@ impl<'w> Server<'w> {
     }
 
     /// Props as the traces see them, at their current physics poses.
+    /// The player's hull origin and height for the +use reach and carry clamps.
+    fn player_hull(&self, player: u32) -> (Vec3, f32) {
+        self.players.get(&player).map_or((Vec3::ZERO, 0.0), |p| {
+            let h = if p.state.ducked {
+                gm_physics::pickup::DUCK_HULL_HEIGHT
+            } else {
+                gm_physics::pickup::HULL_HEIGHT
+            };
+            (p.state.origin, h)
+        })
+    }
+
+    /// `FindUseEntity`: the prop under the view line within reach, else the first one a 16 u
+    /// box finds in 72 u sweeps tilted down from the view (props at the feet).
+    fn find_use_entity(&self, player: u32, eye: Vec3, view: Vec3) -> Option<u32> {
+        use gm_physics::pickup::{
+            box_sweep_convex, sweep_dirs, view_vectors, within_use_reach, world_convex, SWEEP_HALF,
+            SWEEP_LEN,
+        };
+        let (forward, up) = view_vectors(view.x, view.y);
+        let (origin, hull) = self.player_hull(player);
+        let bodies = self.trace_bodies();
+        if let Some(h) = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward) {
+            if let Some(ent) = h.ent {
+                // the game's trace stops at the convex's skin, `REST_GAP` short of the hull
+                let hit = h.pos - forward * gm_physics::REST_GAP;
+                if within_use_reach(eye, hit, origin, hull) {
+                    return Some(ent);
+                }
+            }
+        }
+        let convexes: Vec<(u32, Vec<WorldConvex>)> = self
+            .sandbox
+            .props()
+            .iter()
+            .filter_map(|p| {
+                let b = *self.bodies.get(&p.id)?;
+                let info = self.models.get(&p.model)?;
+                let st = self.physics.state(b);
+                let cs = info
+                    .hull_planes
+                    .iter()
+                    .zip(&info.hulls)
+                    .map(|(pl, pts)| world_convex(pl, pts, st.rotation, st.position))
+                    .collect();
+                Some((p.id, cs))
+            })
+            .collect();
+        for dir in sweep_dirs(forward, up) {
+            let wall = self
+                .collision
+                .trace_ray(eye, eye + dir * SWEEP_LEN, gm_collision::MASK_SOLID)
+                .fraction
+                * SWEEP_LEN;
+            let mut best: Option<(f32, u32)> = None;
+            for (ent, cs) in &convexes {
+                for (planes, aabb) in cs {
+                    if let Some(t) =
+                        box_sweep_convex(eye, dir, SWEEP_LEN, SWEEP_HALF, planes, *aabb)
+                    {
+                        if t <= wall && best.is_none_or(|(bt, _)| t < bt) {
+                            best = Some((t, *ent));
+                        }
+                    }
+                }
+            }
+            if let Some((t, ent)) = best {
+                if within_use_reach(eye, eye + dir * t, origin, hull) {
+                    return Some(ent);
+                }
+            }
+        }
+        None
+    }
+
+    /// A used prop becomes the player's carry when it is light and small enough
+    /// (`CanPickupObject(35, 128)`), nobody physguns it and `Request::PlayerPickup` allows.
+    fn try_pickup(&mut self, player: u32, ent: u32, yaw: f32) {
+        let Some(model) = self
+            .sandbox
+            .props()
+            .iter()
+            .find(|p| p.id == ent)
+            .map(|p| p.model.clone())
+        else {
+            return;
+        };
+        let Some(info) = self.models.get(&model) else {
+            return;
+        };
+        let size = info.bounds.max - info.bounds.min;
+        if info.mass > gm_physics::pickup::MAX_MASS
+            || size.max_element() > gm_physics::pickup::MAX_SIZE
+        {
+            return;
+        }
+        if self.players.values().any(|p| {
+            p.held.is_some_and(|(e, _)| e == ent) || p.carry.is_some_and(|(e, _)| e == ent)
+        }) {
+            return;
+        }
+        let Some(b) = self.bodies.get(&ent).copied() else {
+            return;
+        };
+        if self.ask(Request::PlayerPickup { player, ent }) == Verdict::Cancel {
+            return;
+        }
+        let carry = gm_physics::pickup::Carry::new(self.physics.state(b).rotation, yaw);
+        if let Some(p) = self.players.get_mut(&player) {
+            p.carry = Some((ent, carry));
+        }
+        self.game_events.push(GameEvent::Pickup { player, ent });
+    }
+
+    /// Let the carried prop go where it is, at rest (the game drops it with no velocity).
+    fn drop_carry(&mut self, player: u32) {
+        let Some((ent, _)) = self.players.get_mut(&player).and_then(|p| p.carry.take()) else {
+            return;
+        };
+        if let Some(b) = self.bodies.get(&ent).copied() {
+            self.physics.release(b);
+            self.physics.set_velocity(b, Vec3::ZERO, Vec3::ZERO);
+        }
+        self.game_events.push(GameEvent::Drop { player, ent });
+    }
+
+    /// Drive the carried prop to its hold point this tick; the carry ends when the player dies,
+    /// the prop is gone or a physgun took it.
+    fn carry_tick(&mut self, player: u32, eye: Vec3, view: Vec3) {
+        let Some((ent, carry)) = self.players.get(&player).and_then(|p| p.carry) else {
+            return;
+        };
+        let alive = self.players.get(&player).is_some_and(|p| p.alive);
+        let physgunned = self
+            .players
+            .values()
+            .any(|p| p.held.is_some_and(|(e, _)| e == ent));
+        let model = self
+            .sandbox
+            .props()
+            .iter()
+            .find(|p| p.id == ent)
+            .map(|p| p.model.clone());
+        let body = self.bodies.get(&ent).copied();
+        let (Some(b), Some(info), true, false) = (
+            body,
+            model.and_then(|m| self.models.get(&m)),
+            alive,
+            physgunned,
+        ) else {
+            self.drop_carry(player);
+            return;
+        };
+        let (origin, hull) = self.player_hull(player);
+        let collision = self.collision;
+        let brush = |a: Vec3, b: Vec3| collision.trace_ray(a, b, gm_collision::MASK_SOLID).fraction;
+        let st = self.physics.state(b);
+        let (tp, tr) = carry.target(
+            eye,
+            view,
+            &info.hulls,
+            info.mass_center,
+            st.rotation,
+            origin,
+            hull,
+            &brush,
+        );
+        self.physics.hold(
+            b,
+            tp,
+            tr,
+            &gm_physics::pickup::params(gm_core::tick::DEFAULT_TICK_INTERVAL),
+        );
+    }
+
     pub fn trace_bodies(&self) -> Vec<PropBody> {
         self.sandbox
             .props()
@@ -2121,13 +2317,12 @@ impl<'w> Server<'w> {
             p.use_down = use_key;
         }
         if use_pressed {
-            let bodies = self.trace_bodies();
-            let hit = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward);
-            if let Some((ent, h)) = hit.and_then(|h| h.ent.map(|e| (e, h))) {
-                if h.pos.distance(eye) <= PLAYER_USE_RADIUS
-                    && self.ask(Request::PlayerUse { player, ent }) != Verdict::Cancel
-                {
+            if self.players.get(&player).is_some_and(|p| p.carry.is_some()) {
+                self.drop_carry(player);
+            } else if let Some(ent) = self.find_use_entity(player, eye, view) {
+                if self.ask(Request::PlayerUse { player, ent }) != Verdict::Cancel {
                     self.game_events.push(GameEvent::Use { player, ent });
+                    self.try_pickup(player, ent, view.y);
                 }
             }
         }
@@ -2231,6 +2426,7 @@ impl<'w> Server<'w> {
         if let Some(p) = self.players.get_mut(&player) {
             p.held = held;
         }
+        self.carry_tick(player, eye, view);
     }
 
     /// Moves one player by one usercmd outside the tick (catching up a usercmd backlog).

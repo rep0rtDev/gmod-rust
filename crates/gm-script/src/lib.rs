@@ -794,6 +794,15 @@ impl Runtime {
                     gm_server::Verdict::Cancel
                 }
             }
+            gm_server::Request::PlayerPickup { player, ent } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("entity", *ent as i64));
+                if self.ask(server, "player.pickup_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
             gm_server::Request::PhysgunPickup { player, ent } => {
                 p.ints.push(("player", *player as i64));
                 p.ints.push(("entity", *ent as i64));
@@ -1003,6 +1012,16 @@ impl Runtime {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("entity", ent as i64));
                     "player.used"
+                }
+                E::Pickup { player, ent } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("entity", ent as i64));
+                    "player.pickup"
+                }
+                E::Drop { player, ent } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("entity", ent as i64));
+                    "player.drop"
                 }
                 E::Unfroze { player, count } => {
                     p.ints.push(("player", player as i64));

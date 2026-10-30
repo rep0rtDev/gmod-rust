@@ -524,14 +524,21 @@ trace into the sky and a tool without `ghost` draw nothing.
 ## +use
 
 A press of `IN_USE` (the edge: the button down this command and up in the last one, player
-alive) traces from the eyes along the view with the tool gun's trace; a prop hit within
-`PLAYER_USE_RADIUS` (80 u, the public SDK's constant) asks `player.use {player, entity}`
-synchronously in the tick (`return false` cancels) and, when allowed, raises
-`player.used {player, entity}` after the tick. Holding the button does not repeat the use; the
-world and far props are not asked. Measured (`addon_hooks player_use`): a crate ~128 u away is
-never asked, a crate ~40 u under the eyes is asked once per press, the vetoed press raises no
-`player.used`, the next one does with the crate's id. The native client sends `IN_USE` on E.
-Not yet: use on players, +use pickup of small props, hold-to-use.
+alive) traces from the eyes along the view with the tool gun's trace. The reach is the public
+SDK's `FindUseEntity` test: `hit - eye` with the vertical part replaced by how far the hit is
+above or below the player's hull, shorter than `PLAYER_USE_RADIUS` (80 u). Measured on srcds
+(`use_crate_*`): a crate whose face is 79.6 u ahead is used, one at 89.6 u is not, whatever the
+view pitch. A prop in reach asks `player.use {player, entity}` synchronously in the tick
+(`return false` cancels) and, when allowed, raises `player.used {player, entity}` after the
+tick. Holding the button does not repeat the use; the world and far props are not asked.
+
+A used prop that is light and small enough (mass at most 35, every hull extent at most 128,
+`CanPickupObject(35, 128)`) then asks `player.pickup_request {player, entity}`
+(`GM:AllowPlayerPickup`); allowed, the player carries it (`player.pickup {player, entity}`
+after the tick) until the next +use press, death, the prop's removal or a physgun taking it
+(`player.drop {player, entity}`). The carry itself is in `docs/spec/sandbox.md`, "+use pickup".
+The native client sends `IN_USE` on E.
+Not yet: use on players, hold-to-use.
 
 ## Spawn menu
 

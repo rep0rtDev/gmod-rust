@@ -299,8 +299,9 @@ SCENARIOS.physgun = function(scn, done)
 	end
 	if not bot:Alive() then bot:Spawn() end
 	bot:StripWeapons()
-	bot:Give("weapon_physgun")
-	bot:SelectWeapon("weapon_physgun")
+	local weapon = scn.weapon or "weapon_physgun"
+	bot:Give(weapon)
+	bot:SelectWeapon(weapon)
 	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
 	local ang = Angle(scn.angles and scn.angles[1] or 0, scn.angles and scn.angles[2] or 0, 0)
 	bot:SetPos(start)
@@ -361,7 +362,7 @@ SCENARIOS.physgun = function(scn, done)
 		if tick < 0 then
 			mv:SetOrigin(start)
 			mv:SetVelocity(Vector(0, 0, 0))
-			if tick == -30 then bot:SelectWeapon("weapon_physgun") end
+			if tick == -30 then bot:SelectWeapon(scn.weapon or "weapon_physgun") end
 		end
 	end)
 	hook.Add("FinishMove", "parity_physgun", function(ply, mv)

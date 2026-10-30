@@ -508,6 +508,12 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
         .iter()
         .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
         .collect();
+    let hull_planes: Vec<Vec<(Vec3, f32)>> = solid
+        .convexes
+        .iter()
+        .zip(&hulls)
+        .map(|(c, pts)| gm_sandbox::hull_planes(pts, &c.triangles))
+        .collect();
     let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
         .into_iter()
         .map(|h| h.points)
@@ -583,6 +589,16 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
     }
     let params = PhysgunParams::default();
     let mut grab: Option<Grab> = None;
+    // +use carry (gm_physics::pickup): any weapon, the press toggles it
+    let mut carry: Option<gm_physics::pickup::Carry> = None;
+    let mut use_down = false;
+    let pickable = props.mass <= gm_physics::pickup::MAX_MASS && {
+        let (lo, hi) = hulls.iter().flatten().fold(
+            (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+            |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+        );
+        (hi - lo).max_element() <= gm_physics::pickup::MAX_SIZE
+    };
     let mut ticks = Vec::new();
     let mut t = 0u32;
     for sg in &scn.segments {
@@ -595,7 +611,7 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
                 "ang": [st.angles.0, st.angles.1, st.angles.2],
                 "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
                 "angvel": local_angvel(&st),
-                "held": grab.is_some(),
+                "held": grab.is_some() || carry.is_some(),
                 "frozen": world.is_frozen(body),
                 "eye": [eye.x, eye.y, eye.z],
                 "eye_ang": [sg.pitch, sg.yaw, 0.0],
@@ -607,18 +623,77 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
             let attack = sg.buttons & 1 != 0;
             let use_key = sg.buttons & 32 != 0;
             let attack2 = sg.buttons & 2048 != 0;
-            if attack && grab.is_none() && !world.is_frozen(body) {
+            let hull_ray = || {
                 let inv = st.rotation.inverse();
                 let (lo, ld) = (inv * (eye - st.position), inv * forward);
-                let hit = solid
+                solid
                     .convexes
                     .iter()
                     .filter_map(|c| {
                         let pts: Vec<Vec3> = c.points.iter().map(|&p| Vec3::from(p)).collect();
                         ray_convex(lo, ld, &pts, &c.triangles)
                     })
-                    .fold(None, |m: Option<f32>, d| Some(m.map_or(d, |x| x.min(d))));
-                if let Some(d) = hit {
+                    .fold(None, |m: Option<f32>, d| Some(m.map_or(d, |x| x.min(d))))
+            };
+            let hull_height = if player.ducked {
+                gm_physics::pickup::DUCK_HULL_HEIGHT
+            } else {
+                gm_physics::pickup::HULL_HEIGHT
+            };
+            if use_key && !use_down {
+                if carry.is_some() {
+                    carry = None;
+                    world.release(body);
+                    world.set_velocity(body, Vec3::ZERO, Vec3::ZERO);
+                } else if grab.is_none() && pickable {
+                    use gm_physics::pickup::{
+                        box_sweep_convex, sweep_dirs, view_vectors, within_use_reach, world_convex,
+                        SWEEP_HALF, SWEEP_LEN,
+                    };
+                    let (_, up) = view_vectors(sg.pitch, sg.yaw);
+                    let line = hull_ray().map(|d| eye + forward * (d - gm_physics::REST_GAP));
+                    let mut found = line
+                        .is_some_and(|hit| within_use_reach(eye, hit, player.origin, hull_height));
+                    if !found {
+                        let cs: Vec<_> = hull_planes
+                            .iter()
+                            .zip(&hulls)
+                            .map(|(pl, pts)| world_convex(pl, pts, st.rotation, st.position))
+                            .collect();
+                        for dir in sweep_dirs(forward, up) {
+                            let wall = collision
+                                .trace_ray(eye, eye + dir * SWEEP_LEN, gm_collision::MASK_SOLID)
+                                .fraction
+                                * SWEEP_LEN;
+                            let hit = cs
+                                .iter()
+                                .filter_map(|(pl, aabb)| {
+                                    box_sweep_convex(eye, dir, SWEEP_LEN, SWEEP_HALF, pl, *aabb)
+                                })
+                                .fold(None, |m: Option<f32>, t| Some(m.map_or(t, |x| x.min(t))));
+                            if let Some(t) = hit.filter(|&t| t <= wall) {
+                                found = within_use_reach(
+                                    eye,
+                                    eye + dir * t,
+                                    player.origin,
+                                    hull_height,
+                                );
+                                break;
+                            }
+                        }
+                    }
+                    if found {
+                        carry = Some(gm_physics::pickup::Carry::new(st.rotation, sg.yaw));
+                    }
+                }
+            }
+            use_down = use_key;
+            if attack && grab.is_none() && !world.is_frozen(body) {
+                if carry.is_some() {
+                    carry = None;
+                    world.release(body);
+                }
+                if let Some(d) = hull_ray() {
                     grab = Some(Grab::new(
                         eye,
                         forward,
@@ -642,6 +717,27 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
                 }
                 let (tp, tr): (Vec3, Quat) = g.target(eye, forward, sg.yaw, st.rotation);
                 world.hold(body, tp, tr, &params);
+            }
+            if let Some(c) = &carry {
+                let brush =
+                    |a: Vec3, b: Vec3| collision.trace_ray(a, b, gm_collision::MASK_SOLID).fraction;
+                let view = Vec3::new(sg.pitch, sg.yaw, 0.0);
+                let (tp, tr) = c.target(
+                    eye,
+                    view,
+                    &hulls,
+                    Vec3::from(solid.mass_center),
+                    st.rotation,
+                    player.origin,
+                    hull_height,
+                    &brush,
+                );
+                world.hold(
+                    body,
+                    tp,
+                    tr,
+                    &gm_physics::pickup::params(gm_core::tick::DEFAULT_TICK_INTERVAL),
+                );
             }
             world.step();
             let cmd = gm_move::UserCmd {
@@ -1243,6 +1339,7 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
             .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
             .collect(),
         hull_planes: model_hull_planes(mount, model)?,
+        mass_center: Vec3::from(solid.mass_center),
         mass: if props.mass > 0.0 { props.mass } else { 1.0 },
         volume: props.volume,
         surface: gm_physics::Surface {

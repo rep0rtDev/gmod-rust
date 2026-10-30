@@ -2351,3 +2351,267 @@ crates = ["gm-move", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
+
+[[harness]]
+name = "use_bluebarrel"
+scenario = "use/use_bluebarrel"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_car"
+scenario = "use/use_car"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_chair"
+scenario = "use/use_chair"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate"
+scenario = "use/use_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_110"
+scenario = "use/use_crate_110"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_120"
+scenario = "use/use_crate_120"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_130"
+scenario = "use/use_crate_130"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_140"
+scenario = "use/use_crate_140"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_150"
+scenario = "use/use_crate_150"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_200"
+scenario = "use/use_crate_200"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_250"
+scenario = "use/use_crate_250"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_300"
+scenario = "use/use_crate_300"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_big"
+scenario = "use/use_crate_big"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_far"
+scenario = "use/use_crate_far"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_hold"
+scenario = "use/use_crate_hold"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_crate_physgun"
+scenario = "use/use_crate_physgun"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_drum"
+scenario = "use/use_drum"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_dumpster"
+scenario = "use/use_dumpster"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_gascan"
+scenario = "use/use_gascan"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_locker"
+scenario = "use/use_locker"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_popcan"
+scenario = "use/use_popcan"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000
+
+[[harness]]
+name = "use_washer"
+scenario = "use/use_washer"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1000

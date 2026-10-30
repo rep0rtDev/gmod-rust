@@ -9,6 +9,7 @@
 
 pub mod brush;
 pub mod physgun;
+pub mod pickup;
 pub mod surface;
 
 extern "C" {
@@ -647,6 +648,9 @@ impl World {
             settings.Friction = desc.surface.friction * desc.surface.friction;
             settings.Restitution = 0.5 * (desc.surface.elasticity + self.world_elasticity);
             settings.ApplyGyroscopicForce = true;
+            // Jolt's default cap (0.25 pi rad per 1/60 s, 2700 deg/s) is below the shadow
+            // controllers' measured turn rates (carry 3600 deg/s, physgun 5000)
+            settings.MaxAngularVelocity = 200.0;
             settings.LinearDamping = desc.linear_damping;
             settings.AngularDamping = desc.angular_damping;
             settings.GravityFactor = self.gravity_factor();

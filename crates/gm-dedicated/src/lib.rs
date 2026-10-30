@@ -140,6 +140,7 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
         },
         hulls,
         hull_planes,
+        mass_center: Vec3::from(solid.mass_center),
         mass: if props.mass > 0.0 { props.mass } else { 1.0 },
         volume: props.volume,
         surface: Surface {

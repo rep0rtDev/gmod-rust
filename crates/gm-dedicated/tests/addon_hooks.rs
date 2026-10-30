@@ -3292,3 +3292,189 @@ fn sandbox_gamemode_package_applies_godmode_bare_loadout_and_prop_limit() {
     );
     assert_eq!(server.players[&1].active_weapon, "weapon_physgun");
 }
+
+#[test]
+fn use_pickup_carries_a_light_prop_to_the_hold_point_and_the_second_press_drops_it() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "pickup".into(),
+        priority: 1,
+        source: "state.asked, state.picked, state.dropped, state.used = 0, 0, 0, 0
+            events.on('player.pickup_request', function(e)
+                state.asked += 1
+                if state.asked == 1 then return false end
+            end)
+            events.on('player.used', function() state.used += 1 end)
+            events.on('player.pickup', function(e) state.picked += 1 state.ent = e.entity end)
+            events.on('player.drop', function(e) state.dropped += 1 end)
+            events.on('tick.post', function()
+                if game.tick() % 5 == 0 then
+                    for _, pl in ipairs(world.players()) do
+                        net.send('log', { asked = state.asked, picked = state.picked,
+                            dropped = state.dropped, used = state.used, ent = state.ent or 0 }, pl.id)
+                    end
+                end
+            end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -600.0, -143.6));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut crt = gm_script::Runtime::client();
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "probe".into(),
+        priority: 1,
+        source: "net.receive('log', function(p) state.d = p.data end)".into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>,
+                    crt: &mut gm_script::Runtime,
+                    pitch: f32,
+                    buttons: u32,
+                    n: usize| {
+        for _ in 0..n {
+            client.tick(
+                gm_net::NetCmd {
+                    view_angles: glam::Vec3::new(pitch, 0.0, 0.0),
+                    buttons,
+                    ..Default::default()
+                },
+                &mut c_ep,
+            );
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+            crt.client_tick(&client.world, true);
+            let inbox = std::mem::take(&mut client.addon_msgs);
+            crt.client_net(&client.world, inbox);
+        }
+    };
+    let eye = |server: &gm_server::Server<'_>| {
+        let p = &server.players[&1];
+        p.state.origin + glam::Vec3::new(0.0, 0.0, 64.0)
+    };
+    // a crate where the 35 degree look hits the floor: its face ~70 u ahead, in reach
+    step(&mut sn, &mut client, &mut server, &mut crt, 35.0, 0, 30);
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 35.0, 0, 40);
+    let crate_id = server.sandbox.props()[0].id;
+    let rest = server.prop_state(crate_id).unwrap().position;
+    // first press: used, pickup vetoed by the hook, the crate stays
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        gm_server::IN_USE,
+        3,
+    );
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0, 12);
+    let (asked, picked, used): (i64, i64, i64) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.picked, state.d.used")
+        .unwrap();
+    assert_eq!(
+        (asked, picked, used),
+        (1, 0, 1),
+        "vetoed pickup after an allowed use"
+    );
+    assert!(server.prop_state(crate_id).unwrap().position.distance(rest) < 0.5);
+    // second press: carried to eye + forward * (24 + 22.63 + extent) within a few ticks
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        gm_server::IN_USE,
+        3,
+    );
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0, 5);
+    let e = eye(&server);
+    let p = server.prop_state(crate_id).unwrap().position - e;
+    let (sp, cp) = (30f32.to_radians().sin(), 30f32.to_radians().cos());
+    let want = glam::Vec3::new(cp, 0.0, -sp) * (24.0 + 22.63 + 19.8 * (cp + sp));
+    assert!(p.distance(want) < 2.0, "carried {p:?} want {want:?}");
+    // looking level: 66.4 u straight ahead at eye height, still carried
+    step(&mut sn, &mut client, &mut server, &mut crt, 0.0, 0, 20);
+    let e = eye(&server);
+    let p = server.prop_state(crate_id).unwrap().position - e;
+    assert!(
+        p.distance(glam::Vec3::new(66.4, 0.0, 0.0)) < 2.0,
+        "level {p:?}"
+    );
+    let (picked, dropped, ent): (i64, i64, i64) = crt.actors()[0]
+        .eval("return state.d.picked, state.d.dropped, state.d.ent")
+        .unwrap();
+    assert_eq!((picked, dropped, ent as u32), (1, 0, crate_id));
+    // third press drops it: it falls to the floor under the hold point
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        0.0,
+        gm_server::IN_USE,
+        3,
+    );
+    step(&mut sn, &mut client, &mut server, &mut crt, 0.0, 0, 60);
+    let p = server.prop_state(crate_id).unwrap().position;
+    assert!(
+        (p.z - rest.z).abs() < 1.0 && (p.x - e.x - 66.4).abs() < 3.0,
+        "dropped {p:?}"
+    );
+    let dropped: i64 = crt.actors()[0].eval("return state.d.dropped").unwrap();
+    assert_eq!(dropped, 1);
+    // a 60 u crate is used but too heavy to carry
+    step(&mut sn, &mut client, &mut server, &mut crt, 20.0, 0, 5);
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate002a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 20.0, 0, 40);
+    let big = server.sandbox.props()[1].id;
+    let rest_big = server.prop_state(big).unwrap().position;
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        20.0,
+        gm_server::IN_USE,
+        3,
+    );
+    step(&mut sn, &mut client, &mut server, &mut crt, 20.0, 0, 12);
+    let (asked, used, picked): (i64, i64, i64) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.used, state.d.picked")
+        .unwrap();
+    assert_eq!(
+        (asked, picked),
+        (2, 1),
+        "the heavy crate is never asked for pickup"
+    );
+    assert!(used >= 2, "used {used}");
+    assert!(server.prop_state(big).unwrap().position.distance(rest_big) < 0.5);
+}
