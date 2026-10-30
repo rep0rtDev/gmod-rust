@@ -126,6 +126,25 @@ const SPAWN_DIRS: [&str; 7] = [
 ];
 const SPAWN_MENU_ROWS_MAX: usize = 600;
 
+/// World model held by another player, by `gm_server::LOADOUT` index (`PlayerSnap::active`);
+/// it shares `ValveBiped.Bip01_R_Hand` with the player skeleton and is bone-merged onto it.
+fn world_model(active: u8) -> Option<&'static str> {
+    Some(match gm_server::LOADOUT.get(active as usize)? {
+        &"gmod_tool" => "models/weapons/w_toolgun.mdl",
+        &"weapon_357" => "models/weapons/w_357.mdl",
+        &"weapon_ar2" => "models/weapons/w_irifle.mdl",
+        &"weapon_crossbow" => "models/weapons/w_crossbow.mdl",
+        &"weapon_crowbar" => "models/weapons/w_crowbar.mdl",
+        &"weapon_frag" => "models/weapons/w_grenade.mdl",
+        &"weapon_physcannon" | &"weapon_physgun" => "models/weapons/w_physics.mdl",
+        &"weapon_pistol" => "models/weapons/w_pistol.mdl",
+        &"weapon_rpg" => "models/weapons/w_rocket_launcher.mdl",
+        &"weapon_shotgun" => "models/weapons/w_shotgun.mdl",
+        &"weapon_smg1" => "models/weapons/w_smg1.mdl",
+        _ => return None,
+    })
+}
+
 /// Stools the server implements in Rust (`Sandbox::knows_tool`).
 const TOOLS: [&str; 5] = ["weld", "rope", "axis", "nocollide", "duplicator"];
 
@@ -652,10 +671,20 @@ impl App {
         g.world.draw(&g.gpu, &camera, &view, &g.depth, aspect);
         let ents = &self.sim.client.world.entities;
         let others = self.sim.client.world.players.len() > 1;
+        let me = self.sim.client.player_id;
+        let held_models = self
+            .sim
+            .client
+            .world
+            .players
+            .iter()
+            .filter(|p| Some(p.id) != me)
+            .filter_map(|p| world_model(p.active));
         for model in ents
             .values()
             .map(|e| e.model.as_str())
             .chain(others.then_some(gm_server::PLAYER_MODEL))
+            .chain(held_models)
         {
             if !g.models.contains_key(model) {
                 let m = g.world.load_model(&g.gpu, &self.mount, model);
@@ -665,7 +694,13 @@ impl App {
         let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
         let now = self.fps_at.elapsed().as_secs_f32();
         let air_since = &mut self.air_since;
-        let mut player_poses: Vec<(Vec3, f32, Option<Vec<glam::Mat4>>)> = Vec::new();
+        type PlayerPose = (
+            Vec3,
+            f32,
+            Option<Vec<glam::Mat4>>,
+            Option<(&'static str, Vec<glam::Mat4>)>,
+        );
+        let mut player_poses: Vec<PlayerPose> = Vec::new();
         let mut items: Vec<_> = ents
             .values()
             .filter_map(|e| {
@@ -680,7 +715,6 @@ impl App {
                 })
             })
             .collect();
-        let me = self.sim.client.player_id;
         let player_model = g
             .models
             .get(gm_server::PLAYER_MODEL)
@@ -704,12 +738,19 @@ impl App {
                             .elapsed()
                             .as_secs_f32()
                     };
-                    let pose = m.pose_with(seq, t, &params);
+                    let world = m.bone_world(seq, t, None, &params);
+                    let pose = world.as_ref().map(|w| m.skin_matrices(w));
+                    // the weapon's world model rides the right hand (bone merge by name)
+                    let held = world.as_ref().and_then(|w| {
+                        let path = world_model(p.active)?;
+                        let wm = g.models.get(path)?.as_ref()?;
+                        Some((path, wm.pose_merged("idle", 0.0, m, w)?))
+                    });
                     let (origin, yaw) = match self.sim.player_interp.sample(p.id, rt) {
                         Some(s) => (s.pos, s.angles.y),
                         None => (p.origin, p.view_angles.y),
                     };
-                    player_poses.push((origin, yaw, pose));
+                    player_poses.push((origin, yaw, pose, held));
                 }
                 None => {
                     let h = if p.ducked { 36.0 } else { 72.0 };
@@ -724,15 +765,23 @@ impl App {
             }
         }
         if let Some(m) = player_model {
-            for (origin, yaw, pose) in &player_poses {
+            for (origin, yaw, pose, held) in &player_poses {
+                let transform =
+                    gm_render::world::model_transform(*origin, Vec3::new(0.0, *yaw, 0.0));
                 items.push(DrawItem {
                     model: m,
-                    transform: gm_render::world::model_transform(
-                        *origin,
-                        Vec3::new(0.0, *yaw, 0.0),
-                    ),
+                    transform,
                     bones: pose.as_deref(),
                 });
+                if let Some((path, bones)) = held {
+                    if let Some(wm) = g.models.get(*path).and_then(|w| w.as_ref()) {
+                        items.push(DrawItem {
+                            model: wm,
+                            transform,
+                            bones: Some(bones),
+                        });
+                    }
+                }
             }
         }
         // physgun beam: from just below and right of the eye to the held prop, or along the aim
