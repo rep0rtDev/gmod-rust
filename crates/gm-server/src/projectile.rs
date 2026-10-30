@@ -27,6 +27,11 @@ const ROCKET_SPEED: f32 = 1500.0;
 const ROCKET_TURN_KEEP: f32 = 0.8758;
 const ROCKET_TURN_GAIN: f32 = 0.01091;
 const ROCKET_FIRST_TURN: glam::Vec2 = glam::Vec2::new(0.75, 0.17);
+/// The pitch of that kick over the nine recordings: `(1.008 - 0.183 * up_err) * cos(pitch)`
+/// degrees, where `up_err` is how far above the heading `home` lies at ignition (0.91 at 0.54
+/// deg, 0.74 at 1.45, 0.50 at 2.77, 0.37 at 3.48; 0.84 at pitch -30 with 0.14).
+const ROCKET_KICK_PITCH: f32 = 1.008;
+const ROCKET_KICK_PER_DEG: f32 = 0.183;
 /// The heading settles on the direction (from the eye) to a point this far above the aim point:
 /// 18 u when the aim lands on a floor, ramp or ceiling (measured 17.8, 18.1, 18.0, 19.1), 27.6 u
 /// on a wall (27.6, 27.6, 27.2).
@@ -411,7 +416,12 @@ impl Projectile {
             }
         } else {
             self.turn = if self.age == ROCKET_IGNITE_TICKS + 1 {
-                ROCKET_FIRST_TURN
+                let up_err = (self.heading.x - self.home.x).max(0.0);
+                glam::Vec2::new(
+                    (ROCKET_KICK_PITCH - ROCKET_KICK_PER_DEG * up_err)
+                        * self.heading.x.to_radians().cos(),
+                    ROCKET_FIRST_TURN.y,
+                )
             } else {
                 let mut err = self.home - self.heading;
                 err.y = (err.y + 180.0).rem_euclid(360.0) - 180.0;
