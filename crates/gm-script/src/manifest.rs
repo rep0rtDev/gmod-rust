@@ -56,8 +56,10 @@ impl Manifest {
     /// The spec of one actor of this manifest with its source text.
     pub fn actor_spec(&self, a: &ActorEntry, source: String) -> ActorSpec {
         let can_write = self.capabilities.iter().any(|c| c == "world-write");
+        let can_storage = self.capabilities.iter().any(|c| c == "storage");
         let mut config = ActorConfig {
             can_write,
+            can_storage,
             ..Default::default()
         };
         if let Some(ms) = a.cpu_ms {

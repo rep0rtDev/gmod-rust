@@ -23,6 +23,9 @@ struct Args {
     /// Luau actor sources to load (repeatable); the file name is the actor name.
     #[arg(long)]
     addon: Vec<std::path::PathBuf>,
+    /// Where addon storage files live (`<data>/server/<addon>.gms`).
+    #[arg(long, default_value = "data")]
+    data: std::path::PathBuf,
 }
 
 fn main() -> Result<()> {
@@ -42,6 +45,7 @@ fn main() -> Result<()> {
     let mut net = gm_net::ServerNet::new(&args.map, spawn);
     if !args.addon.is_empty() {
         let mut rt = gm_script::Runtime::new();
+        rt.data_dir = Some(args.data.clone());
         for (i, path) in args.addon.iter().enumerate() {
             if path.is_dir() {
                 let m = rt

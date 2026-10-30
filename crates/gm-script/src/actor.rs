@@ -19,6 +19,8 @@ pub struct ActorConfig {
     pub overruns_to_throttle: u32,
     pub memory_limit: usize,
     pub can_write: bool,
+    /// `storage` capability: the addon's persistent key/value store.
+    pub can_storage: bool,
 }
 
 impl Default for ActorConfig {
@@ -28,6 +30,7 @@ impl Default for ActorConfig {
             overruns_to_throttle: 5,
             memory_limit: 256 << 20,
             can_write: true,
+            can_storage: true,
         }
     }
 }
@@ -54,7 +57,11 @@ pub struct Actor {
 }
 
 impl Actor {
-    pub fn new(id: u32, spec: ActorSpec) -> mlua::Result<Self> {
+    pub fn new(
+        id: u32,
+        spec: ActorSpec,
+        store: Option<Arc<Mutex<crate::storage::Store>>>,
+    ) -> mlua::Result<Self> {
         let shared = Arc::new(Shared {
             snapshot: std::sync::RwLock::new(Arc::new(Snapshot::default())),
             queue: Mutex::new(Vec::new()),
@@ -62,6 +69,7 @@ impl Actor {
             prints: Mutex::new(Vec::new()),
             can_write: spec.config.can_write,
             net_out: Mutex::new(Vec::new()),
+            store,
         });
         let mut a = Actor {
             id,

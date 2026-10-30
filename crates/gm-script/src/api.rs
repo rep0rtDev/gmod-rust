@@ -127,6 +127,8 @@ pub struct Shared {
     pub can_write: bool,
     /// Outgoing addon messages: (player or 0 for everyone / the server, name, payload).
     pub net_out: Mutex<Vec<(u32, String, Vec<u8>)>>,
+    /// The addon's store when it has the `storage` capability.
+    pub store: Option<Arc<Mutex<crate::storage::Store>>>,
 }
 
 fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
@@ -634,6 +636,46 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     lua.globals().set("cvar", cvar)?;
+    let storage = lua.create_table()?;
+    let no_store = || mlua::Error::runtime("this addon has no storage capability");
+    let sh = shared.clone();
+    storage.set(
+        "get",
+        lua.create_function(move |lua, key: String| {
+            let st = sh.store.as_ref().ok_or_else(no_store)?.lock().unwrap();
+            match st.map.get(&key) {
+                Some(b) => crate::netval::decode(lua, b),
+                None => Ok(Value::Nil),
+            }
+        })?,
+    )?;
+    let sh = shared.clone();
+    storage.set(
+        "set",
+        lua.create_function(move |_, (key, value): (String, Value)| {
+            if key.is_empty() || key.len() > crate::storage::MAX_KEY {
+                return Err(mlua::Error::runtime("storage key must be 1..64 bytes"));
+            }
+            let bytes = match value {
+                Value::Nil => Vec::new(),
+                v => crate::netval::encode(&v)?,
+            };
+            let mut st = sh.store.as_ref().ok_or_else(no_store)?.lock().unwrap();
+            if !st.set(&key, bytes) {
+                return Err(mlua::Error::runtime("storage over 1 MiB for this addon"));
+            }
+            Ok(())
+        })?,
+    )?;
+    let sh = shared.clone();
+    storage.set(
+        "keys",
+        lua.create_function(move |_, ()| {
+            let st = sh.store.as_ref().ok_or_else(no_store)?.lock().unwrap();
+            Ok(st.map.keys().cloned().collect::<Vec<String>>())
+        })?,
+    )?;
+    lua.globals().set("storage", storage)?;
     let game = lua.create_table()?;
     game.set(
         "interval",

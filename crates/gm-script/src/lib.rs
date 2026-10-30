@@ -11,6 +11,7 @@ pub mod manifest;
 pub mod netval;
 pub mod package;
 pub mod snapshot;
+pub mod storage;
 
 pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite};
 pub use manifest::Manifest;
@@ -44,6 +45,9 @@ pub struct Runtime {
     cvar_seen: usize,
     /// Client realm: the replicated variables as last seen, for `cvar.changed`.
     cvars_last: std::collections::BTreeMap<String, String>,
+    /// Where addon stores are kept (`<data_dir>/<realm>/<addon>.gms`); None = memory only.
+    pub data_dir: Option<std::path::PathBuf>,
+    stores: std::collections::BTreeMap<String, Arc<std::sync::Mutex<storage::Store>>>,
 }
 
 /// What the serial phase did to the server this tick.
@@ -63,6 +67,8 @@ impl Runtime {
             log: Vec::new(),
             cvar_seen: 0,
             cvars_last: Default::default(),
+            data_dir: None,
+            stores: Default::default(),
         }
     }
 
@@ -189,9 +195,58 @@ impl Runtime {
 
     pub fn load(&mut self, spec: ActorSpec) -> Result<usize, mlua::Error> {
         let id = self.actors.len() as u32;
-        let actor = Actor::new(id, spec)?;
+        let store = spec.config.can_storage.then(|| self.store_of(&spec.addon));
+        let actor = Actor::new(id, spec, store)?;
         self.actors.push(actor);
         Ok(id as usize)
+    }
+
+    fn store_path(&self, addon: &str) -> Option<std::path::PathBuf> {
+        self.data_dir
+            .as_ref()
+            .map(|d| d.join(&self.realm).join(format!("{addon}.gms")))
+    }
+
+    /// The addon's store, loaded from disk the first time (a missing or corrupt file starts
+    /// empty; a corrupt one is reported in `log`).
+    fn store_of(&mut self, addon: &str) -> Arc<std::sync::Mutex<storage::Store>> {
+        if let Some(s) = self.stores.get(addon) {
+            return s.clone();
+        }
+        let store = match self.store_path(addon) {
+            Some(p) if p.exists() => match storage::Store::load(&p) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.log.push(format!("storage {}: {e}", p.display()));
+                    storage::Store::default()
+                }
+            },
+            _ => storage::Store::default(),
+        };
+        let store = Arc::new(std::sync::Mutex::new(store));
+        self.stores.insert(addon.to_string(), store.clone());
+        store
+    }
+
+    /// Writes every dirty store to `data_dir`; the number written (0 without a data dir).
+    pub fn flush_storage(&mut self) -> usize {
+        let mut n = 0;
+        let paths: Vec<_> = self
+            .stores
+            .keys()
+            .map(|a| (a.clone(), self.store_path(a)))
+            .collect();
+        for (addon, path) in paths {
+            let Some(path) = path else { continue };
+            let mut st = self.stores[&addon].lock().unwrap();
+            if st.dirty {
+                match st.save(&path) {
+                    Ok(()) => n += 1,
+                    Err(e) => self.log.push(format!("storage {}: {e}", path.display())),
+                }
+            }
+        }
+        n
     }
 
     pub fn actors(&self) -> &[Actor] {
@@ -244,6 +299,9 @@ impl Runtime {
         self.dispatch_cvar_changes(server);
         let applied = self.run_event(server, "tick.post", api::Payload::default());
         self.dispatch_cvar_changes(server);
+        if self.tick.is_multiple_of(67) {
+            self.flush_storage();
+        }
         applied
     }
 
@@ -434,6 +492,12 @@ fn read_addon(
         Manifest::load_realm(path, realm)
     } else {
         Package::open(path)?.load_realm(realm)
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        self.flush_storage();
     }
 }
 

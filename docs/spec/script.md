@@ -174,6 +174,24 @@ Measured (`cargo test -p gm-dedicated --test addon_hooks cvars_`): a server acto
 `myaddon_speed` "100", no `myaddon_secret`, `sbox_maxprops` 50, `sbox_playershurtplayers` true
 and its change list is the welcome set, the creation, `10>100`, `200>50`.
 
+## Storage
+
+An addon with the `storage` capability gets one persistent key/value store per realm, shared by
+its actors and kept across reloads and restarts (it lives in the runtime, not the VM):
+`storage.get(key)` (nil when missing), `storage.set(key, value)` (any `net`-sendable value, nil
+removes), `storage.keys()`. Keys are 1..64 bytes, values the `netval` form (64 KiB each), the
+whole store 1 MiB per addon; a write past the cap or without the capability is an error in the
+caller. The store is written to `<data_dir>/<realm>/<addon>.gms` (`GMS1`, count, key/value
+records; temp file + rename) when dirty every 67 ticks (~1 s), on `flush_storage` and when the
+runtime drops; `gm-dedicated --data` (default `data`) sets the directory, without one the store is
+memory only. A missing file starts empty, a corrupt one too (logged).
+
+Measured (`cargo test -p gm-script storage`): an actor bumping `count`, writing a nested table,
+setting and removing a key and then 20 writes of 60 000 bytes gets 17 of them before the cap
+errors; an actor without the capability gets `no storage capability`; after `flush_storage` a new
+runtime reads count 1 and bumps to 2, the nested table and the removed key as nil; the drop flush
+leaves count 2 on disk.
+
 ## Timers
 
 `timer` lives in the actor's VM (prelude), so a timer runs in the realm and budget of the actor
@@ -194,5 +212,5 @@ never fires and still exists.
 
 ## Not yet
 
-client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu, storage), WASM components,
+client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,
 file watching for reloads, the sandbox gamemode in Luau on top of this API.

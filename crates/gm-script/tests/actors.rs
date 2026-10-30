@@ -318,3 +318,60 @@ fn netval_round_trips_and_caps() {
         "truncated"
     );
 }
+
+#[test]
+fn storage_persists_per_addon_with_caps() {
+    let dir = std::env::temp_dir().join(format!("gm-script-storage-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = "events.on('tick.pre', function()
+        if state.done then return end
+        state.done = true
+        storage.set('count', (storage.get('count') or 0) + 1)
+        storage.set('cfg', { name = 'x', list = { 1, 2 } })
+        storage.set('gone', 1)
+        storage.set('gone', nil)
+        state.big_ok = pcall(function()
+            for i = 1, 20 do storage.set('big' .. i, string.rep('x', 60000)) end
+        end)
+        state.keys = storage.keys()
+    end)";
+    {
+        let mut rt = Runtime::new();
+        rt.data_dir = Some(dir.clone());
+        rt.load(spec("a", 0, src)).unwrap();
+        let mut other = spec("b", 0, "events.on('tick.pre', function() state.err = select(2, pcall(storage.get, 'count')) end)");
+        other.config.can_storage = false;
+        rt.load(other).unwrap();
+        tick(&mut rt, 1);
+        let (count, big_ok, nkeys): (i64, bool, usize) = rt.actors()[0]
+            .eval("return storage.get('count'), state.big_ok, #state.keys")
+            .unwrap();
+        assert_eq!(
+            (count, big_ok),
+            (1, false),
+            "the 1 MiB cap stops the big writes"
+        );
+        assert_eq!(nkeys, 2 + 17, "count, cfg and the big keys that fit");
+        let err: String = rt.actors()[1].eval("return tostring(state.err)").unwrap();
+        assert!(err.contains("no storage capability"), "{err}");
+        assert_eq!(rt.flush_storage(), 1);
+    }
+    assert!(dir.join("server").join("test.gms").is_file());
+    let mut rt = Runtime::new();
+    rt.data_dir = Some(dir.clone());
+    rt.load(spec("a", 0, src)).unwrap();
+    tick(&mut rt, 1);
+    let (count, name, two, gone): (i64, String, i64, Option<i64>) = rt.actors()[0]
+        .eval("return storage.get('count'), storage.get('cfg').name, storage.get('cfg').list[2], storage.get('gone')")
+        .unwrap();
+    assert_eq!((count, name.as_str(), two, gone), (2, "x", 2, None));
+    drop(rt);
+    let again = Runtime::new();
+    let _ = again;
+    let mut rt = Runtime::new();
+    rt.data_dir = Some(dir.clone());
+    rt.load(spec("a", 0, "")).unwrap();
+    let count: i64 = rt.actors()[0].eval("return storage.get('count')").unwrap();
+    assert_eq!(count, 2, "the drop flushed the second run");
+    let _ = std::fs::remove_dir_all(&dir);
+}
