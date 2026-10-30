@@ -57,11 +57,12 @@ pub struct PublishedAddon {
 
 /// Bytes of a package queued per tick per client while the channel has room.
 pub const DEFAULT_INTEREST_RADIUS: f32 = 8192.0;
-pub const DEFAULT_SNAPSHOT_BUDGET: usize = 1000;
-/// Wire size of one `PlayerSnap`.
-pub const PLAYER_SNAP_SIZE: usize = 53;
-/// Wire size of one `EntityState` (the model goes as a table index).
-pub const ENTITY_SNAP_SIZE: usize = 59;
+/// 750 bytes per snapshot at the default snapshot rate is the design's 25 KB/s per client.
+pub const DEFAULT_SNAPSHOT_BUDGET: usize = 750;
+/// Upper bound of the wire size of one `PlayerSnap` (quantized, positions as varints).
+pub const PLAYER_SNAP_SIZE: usize = 44;
+/// Upper bound of the wire size of one `EntityState` (the model goes as a table index).
+pub const ENTITY_SNAP_SIZE: usize = 44;
 pub const ADDON_CHUNK: usize = 16 * 1024;
 /// Reliable fragments in flight above which a client's upload waits (other reliable traffic
 /// keeps flowing between chunks).

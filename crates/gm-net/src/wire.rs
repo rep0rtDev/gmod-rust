@@ -42,6 +42,33 @@ impl Writer {
         self.varint(s.len() as u64);
         self.buf.extend_from_slice(s.as_bytes());
     }
+    /// Zigzag varint.
+    pub fn svarint(&mut self, v: i64) {
+        self.varint(((v << 1) ^ (v >> 63)) as u64);
+    }
+
+    /// Position quantized to 1/32 u (zigzag varints: 3 bytes per axis within +-4096 u).
+    pub fn qpos(&mut self, v: glam::Vec3) {
+        for a in 0..3 {
+            self.svarint((v[a] * 32.0).round() as i64);
+        }
+    }
+
+    /// Angles in degrees wrapped to [-180, 180) at 1/64 degree (i16 per axis).
+    pub fn qang(&mut self, v: glam::Vec3) {
+        for a in 0..3 {
+            let d = (v[a] + 180.0).rem_euclid(360.0) - 180.0;
+            self.i16((d * 64.0).round().clamp(-32768.0, 32767.0) as i16);
+        }
+    }
+
+    /// Velocity at `1/scale` units (i16 per axis, clamped).
+    pub fn qvel(&mut self, v: glam::Vec3, scale: f32) {
+        for a in 0..3 {
+            self.i16((v[a] * scale).round().clamp(-32768.0, 32767.0) as i16);
+        }
+    }
+
     pub fn vec3(&mut self, v: glam::Vec3) {
         self.f32(v.x);
         self.f32(v.y);
@@ -107,6 +134,35 @@ impl<'a> Reader<'a> {
         let b = self.take(n)?;
         String::from_utf8(b.to_vec()).map_err(|_| Truncated)
     }
+    pub fn svarint(&mut self) -> Result<i64, Truncated> {
+        let u = self.varint()?;
+        Ok(((u >> 1) as i64) ^ -((u & 1) as i64))
+    }
+
+    pub fn qpos(&mut self) -> Result<glam::Vec3, Truncated> {
+        let mut v = glam::Vec3::ZERO;
+        for a in 0..3 {
+            v[a] = self.svarint()? as f32 / 32.0;
+        }
+        Ok(v)
+    }
+
+    pub fn qang(&mut self) -> Result<glam::Vec3, Truncated> {
+        let mut v = glam::Vec3::ZERO;
+        for a in 0..3 {
+            v[a] = self.i16()? as f32 / 64.0;
+        }
+        Ok(v)
+    }
+
+    pub fn qvel(&mut self, scale: f32) -> Result<glam::Vec3, Truncated> {
+        let mut v = glam::Vec3::ZERO;
+        for a in 0..3 {
+            v[a] = self.i16()? as f32 / scale;
+        }
+        Ok(v)
+    }
+
     pub fn vec3(&mut self) -> Result<glam::Vec3, Truncated> {
         Ok(glam::Vec3::new(self.f32()?, self.f32()?, self.f32()?))
     }

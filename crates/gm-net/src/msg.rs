@@ -579,9 +579,9 @@ impl ServerMsg {
                 w.varint(players.len() as u64);
                 for p in players {
                     w.u32(p.id);
-                    w.vec3(p.origin);
-                    w.vec3(p.velocity);
-                    w.vec3(p.view_angles);
+                    w.qpos(p.origin);
+                    w.qvel(p.velocity, VEL_SCALE);
+                    w.qang(p.view_angles);
                     w.bool(p.ducked);
                     w.u32(p.held.unwrap_or(0));
                     w.bool(p.alive);
@@ -594,10 +594,10 @@ impl ServerMsg {
                 for e in entities {
                     w.u32(e.id);
                     w.varint(e.model_id as u64);
-                    w.vec3(e.pos);
-                    w.vec3(e.angles);
-                    w.vec3(e.vel);
-                    w.vec3(e.angvel);
+                    w.qpos(e.pos);
+                    w.qang(e.angles);
+                    w.qvel(e.vel, VEL_SCALE);
+                    w.qvel(e.angvel, ANGVEL_SCALE);
                     w.bool(e.frozen);
                     w.u32(e.owner);
                 }
@@ -700,9 +700,9 @@ impl ServerMsg {
                 for _ in 0..n {
                     players.push(PlayerSnap {
                         id: r.u32()?,
-                        origin: r.vec3()?,
-                        velocity: r.vec3()?,
-                        view_angles: r.vec3()?,
+                        origin: r.qpos()?,
+                        velocity: r.qvel(VEL_SCALE)?,
+                        view_angles: r.qang()?,
                         ducked: r.bool()?,
                         held: match r.u32()? {
                             0 => None,
@@ -722,10 +722,10 @@ impl ServerMsg {
                         id: r.u32()?,
                         model: String::new(),
                         model_id: r.varint()? as u32,
-                        pos: r.vec3()?,
-                        angles: r.vec3()?,
-                        vel: r.vec3()?,
-                        angvel: r.vec3()?,
+                        pos: r.qpos()?,
+                        angles: r.qang()?,
+                        vel: r.qvel(VEL_SCALE)?,
+                        angvel: r.qvel(ANGVEL_SCALE)?,
                         frozen: r.bool()?,
                         owner: r.u32()?,
                     });
@@ -820,6 +820,11 @@ impl ServerMsg {
         })
     }
 }
+
+/// Snapshot quantization: positions 1/32 u, angles 1/64 degree, velocities 1/8 u/s (+-4096),
+/// angular velocities 1/4 degree/s (+-8192). The local player's own state stays f32.
+pub const VEL_SCALE: f32 = 8.0;
+pub const ANGVEL_SCALE: f32 = 4.0;
 
 /// Domain separator of the authentication signature: `AUTH_PREFIX ++ nonce`.
 pub const AUTH_PREFIX: &[u8] = b"gmr-auth1";

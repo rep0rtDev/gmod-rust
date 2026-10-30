@@ -170,6 +170,16 @@ Measured after both (model table below, half-budget players, staleness order): 5
 per client (36 KB/s), every client knows 798-800 of the 2 000 crates after 200 ticks (~265 per
 second, 8x), `send` 7.0 ms per tick for 64 clients, no snapshot dropped.
 
+Quantization: snapshot positions go as zigzag varints of 1/32 u (3 bytes per axis within 4 096 u
+of the origin), angles as i16 of 1/64 degree wrapped to [-180, 180), velocities as i16 of 1/8 u/s
+(clamped at 4 096) and angular velocities as i16 of 1/4 degree/s; the local player's own state
+stays f32 for the prediction. An entity is at most 44 bytes (was 59), a player at most 44 (was
+53). The default snapshot budget is 750 bytes, which at the snapshot rate is the 25 KB/s per
+client of the design. Measured (stress, 64 clients x 2 000 crates): 385 bytes per tick per
+client (25.1 KB/s) and every client knows 897-900 crates after 200 ticks, against 554 bytes
+(36 KB/s) for 798-800 crates with the f32 fields and the 1 000 byte budget; `net_` parity 9/11
+as before.
+
 Authentication (v1, own accounts, no Steam AppID): a client's identity is an ed25519 public key
 (`gm-bot --key <file>`, the same key format as package signing). After `Hello` the server sends
 `ServerMsg::Challenge { nonce }` (32 random bytes, tag 11); a client with a key answers
