@@ -67,7 +67,18 @@ impl Sounds {
     /// Open the device and load the scripts; missing scripts are skipped.
     pub fn new(mount: &gm_content::Mount) -> Sounds {
         let mut scripts = Scripts::default();
-        for path in SCRIPTS {
+        // the game's manifest (GMod's lists its own `scripts/sounds/*.txt`, with the
+        // HL2 ones among them); the base HL2 names as the fallback for a bare install
+        let mut paths: Vec<String> = SCRIPTS.iter().map(|s| s.to_string()).collect();
+        if let Ok(bytes) = mount.read("scripts/game_sounds_manifest.txt") {
+            let text = String::from_utf8_lossy(&bytes);
+            paths.extend(
+                text.split('"')
+                    .filter(|t| t.starts_with("scripts/") && t.ends_with(".txt"))
+                    .map(|t| t.to_string()),
+            );
+        }
+        for path in &paths {
             if let Ok(bytes) = mount.read(path) {
                 if let Err(e) = scripts.load(&String::from_utf8_lossy(&bytes)) {
                     eprintln!("{path}: {e}");
@@ -170,6 +181,8 @@ mod content_tests {
             "Weapon_SMG1.Reload",
             "Weapon_AR2.Reload",
             "Weapon_Shotgun.Reload",
+            "Toolgun.Single",
+            "NPC_CScanner.TakePhoto",
         ] {
             let e = s
                 .scripts

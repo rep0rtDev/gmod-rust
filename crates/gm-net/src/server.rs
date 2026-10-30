@@ -708,11 +708,18 @@ impl ServerNet {
                     } => {
                         if reload {
                             server.sandbox.tool_reload(slot.player);
-                        } else if let gm_server::ToolClick::Unknown(hit) =
-                            server.tool_click_full(slot.player, &tool, right)
-                        {
-                            if let Some(h) = self.hooks.as_mut() {
-                                h.tool_click(server, slot.player, &tool, &hit, right);
+                        } else {
+                            let done = match server.tool_click_full(slot.player, &tool, right) {
+                                gm_server::ToolClick::Done(done) => done,
+                                gm_server::ToolClick::Miss => false,
+                                gm_server::ToolClick::Unknown(hit) => self
+                                    .hooks
+                                    .as_mut()
+                                    .map(|h| h.tool_click(server, slot.player, &tool, &hit, right))
+                                    .unwrap_or(false),
+                            };
+                            if done {
+                                server.tool_fired(slot.player);
                             }
                         }
                     }

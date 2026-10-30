@@ -565,6 +565,14 @@ fn vm_event(slot: &mut VmAct, serial: &mut u8, act: VmAct) {
     *serial = serial.wrapping_add(1);
 }
 
+impl Inventory {
+    /// The tool gun's accepted click (the stool took it): the game's `DoShootEffect` plays
+    /// the sound, the viewmodel's primary attack and the player's attack gesture only then.
+    pub fn tool_fired(&mut self) {
+        vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Fire);
+    }
+}
+
 /// Bullets fired by one trigger pull.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shot {

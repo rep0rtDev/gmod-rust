@@ -1586,6 +1586,13 @@ impl<'w> Server<'w> {
         )
     }
 
+    /// The tool gun's click was taken by a stool: the fire event for its sound and gestures.
+    pub fn tool_fired(&mut self, player: u32) {
+        if let Some(p) = self.players.get_mut(&player) {
+            p.inventory.tool_fired();
+        }
+    }
+
     /// Like `tool_click`, telling the caller when the stool is not a Rust one.
     pub fn tool_click_full(&mut self, player: u32, tool: &str, right: bool) -> ToolClick {
         let Some((eye, eye_angles)) = self.eye(player) else {

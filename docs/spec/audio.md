@@ -12,8 +12,13 @@ are documented approximations and marked so.
   stereo, 22050 or 44100 Hz. Stereo is folded to mono (every emitted sound is spatialized,
   so only the mix of a stereo source matters). Cue/loop chunks are ignored (no weapon sound
   loops). Other formats are rejected with an error and the sound is skipped.
-- Scripts: `scripts/game_sounds_weapons.txt`, `_physics`, `_player`, `_items`, `_world`
-  (KeyValues, loose files under `sourceengine/`). Per entry: `wave` (one) or `rndwave`
+- Scripts: every file named in `scripts/game_sounds_manifest.txt` (GMod's, in
+  `garrysmod_dir.vpk`, lists its `scripts/sounds/*.txt`: `lua.txt` with `Toolgun.Single`,
+  `phx.txt`, the HL2 / episodic / portal / CS / TF2 / L4D sets; files absent from the mount
+  are skipped) plus the base `scripts/game_sounds_weapons.txt`, `_physics`, `_player`,
+  `_items`, `_world` loose under `sourceengine/` (KeyValues). The first file to define a
+  name keeps it, as the SDK's sound emitter skips duplicates: GMod's manifest lists TF2's
+  `Weapon_Pistol.Single` (`weapons/pistol_shoot.wav`, not shipped) after HL2's. Per entry: `wave` (one) or `rndwave`
   (several, one picked at random per play), `volume` (`0.7` or `0.5,1.0`: uniform in the
   range), `pitch` (percent, same forms; 100 = recorded rate), `soundlevel` (`SNDLVL_NORM`
   75, `SNDLVL_GUNFIRE` 140, `SNDLVL_105dB`, a bare number; default 75). Leading sound
@@ -28,15 +33,16 @@ eye), so the sound and the shot are the same event on every client:
 
 | event (`VmAct`) | entry |
 |---|---|
-| `Fire` (6) | `Weapon_<X>.Single`; `Weapon_PhysCannon.Launch` for the gravity gun |
+| `Fire` (6) | `Weapon_<X>.Single`; `Weapon_PhysCannon.Launch` for the gravity gun; `Toolgun.Single` for the tool gun, whose `Fire` the server raises when a stool takes the click (the game's `DoShootEffect` path: sound, viewmodel attack and the player's attack gesture only on an accepted click) |
 | `Reload` (1) | `Weapon_<X>.Reload`; silent for the shotgun (its start stage has no sound) |
 | `ReloadShell` (4) | `Weapon_Shotgun.Reload` (per shell) |
 | `ReloadEnd` (5), `Pump` (2) | `Weapon_Shotgun.Special1` (cock) |
 | `Dry` (3) | `Weapon_<X>.Empty` |
 
 `<X>` is the loadout class: `Pistol`, `357`, `SMG1`, `AR2`, `Shotgun`, `Crossbow`, `RPG`,
-`Crowbar`, `PhysCannon`. The physgun, tool gun and camera have no entries yet (GMod's own
-sounds for them are not in the HL2 scripts; to be taken from GMod's content). The owner's
+`Crowbar`, `PhysCannon`. The physgun has no sound yet (its sounds live in the game's binary,
+to be measured through the server's sound hook); the camera's `NPC_CScanner.TakePhoto` is
+not wired (the server has no camera click yet). The owner's
 viewmodel `fire` sequence also plays on the `Fire` event now, not on the click, so held
 automatic fire and dry fire show and sound as the server resolved them. Open: the shotgun's
 secondary (double) also arrives as `Fire` and plays `.Single`, not `.Double`. The .357's

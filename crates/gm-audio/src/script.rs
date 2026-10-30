@@ -123,7 +123,11 @@ impl Scripts {
         let mut n = 0;
         for node in &doc.nodes {
             if let Some(e) = entry(node) {
-                self.entries.insert(node.key.to_ascii_lowercase(), e);
+                // the first script to define a name keeps it (GMod's manifest lists
+                // TF2's `Weapon_Pistol.Single` after HL2's and the pistol sounds like HL2)
+                self.entries
+                    .entry(node.key.to_ascii_lowercase())
+                    .or_insert(e);
                 n += 1;
             }
         }
@@ -199,5 +203,14 @@ mod tests {
         assert_eq!(parse_range("0.5, 1.0", 1.0), (0.5, 1.0));
         assert_eq!(parse_range("PITCH_NORM", 100.0), (100.0, 100.0));
         assert_eq!(parse_range("junk", 0.7), (0.7, 0.7));
+    }
+
+    #[test]
+    fn first_definition_wins() {
+        let mut s = Scripts::default();
+        s.load(r#""A.B" { "wave" "one.wav" }"#).unwrap();
+        s.load(r#""a.b" { "wave" "two.wav" }"#).unwrap();
+        assert_eq!(s.get("A.B").unwrap().waves, ["one.wav"]);
+        assert_eq!(s.len(), 1);
     }
 }

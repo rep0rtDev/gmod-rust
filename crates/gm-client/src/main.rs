@@ -430,10 +430,12 @@ fn weapon_sound(act: u8, active: u8) -> Option<String> {
         "weapon_rpg" => "Weapon_RPG",
         "weapon_shotgun" => "Weapon_Shotgun",
         "weapon_smg1" => "Weapon_SMG1",
+        "gmod_tool" => "Toolgun",
         _ => return None,
     };
     let suffix = match (act, prefix) {
         (6, "Weapon_PhysCannon") => "Launch",
+        (_, "Toolgun") if act != 6 => return None,
         (6, _) => "Single",
         (1, "Weapon_Shotgun") => return None,
         (1, _) => "Reload",
