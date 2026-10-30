@@ -384,8 +384,9 @@ waits for a real client; a published package is capped at 50 MiB.
 
 fonts/textures/3D2D in `draw`, tool setting panels (only the console sets tool settings),
 ghosts following the stool's own placement rules (the stool computes them in `ghost`), spawn
-menu icons, WASM components, +use on players and the +use pickup of small props, the
-sandbox gamemode in Luau on top of this API.
+menu icons, WASM components, +use on players and the +use pickup of small props, the rest of
+the sandbox gamemode in Luau (`PlayerSpawnedProp` ownership rules, `CanProperty`, player
+models, the spawn menu's own lists are done; the gamemode as one package is not).
 
 ## Server events
 
@@ -446,6 +447,30 @@ freeze of a crate log four events in that order; 30 damage dealt by the server a
 queued from `player.damaged` shows as `player.death` type 0, the respawn 135 ticks later as
 `player.spawned`; the freeze handler's `sound.play` reaches the client as a `Sounds` message
 with the position and volume given.
+
+## Sandbox gamemode hooks
+
+Four more of the sandbox gamemode's decisions are asked synchronously in the tick (`return
+false` cancels):
+
+- `player.loadout {player}` (`PlayerLoadout`): on join and on every (re)spawn the inventory is
+  emptied first, then the hook runs; `false` skips the default 13 weapons, and
+  `world.queue("player.give_weapon", player, class)` from the handler gives the hook's own (any
+  class the server knows is added to the player and selected; unknown classes are refused).
+- `player.undo_request {player, name}` (`CanUndo`): before `gmod_undo` pops the player's last
+  entry; `name` is the entry's (`prop_physics`, `#tool.weld.name`...). An empty stack asks nothing.
+- `player.unfreeze_request {player, entity}` (`CanPlayerUnfreeze`): the physgun's reload
+  (`IN_RELOAD` press, physgun out) now unfreezes every frozen prop the player owns, asking per
+  prop; `player.unfroze {player, count}` follows with how many went. Note: the game unfreezes
+  what the player froze; ours uses the owner, the freezer is not tracked.
+- `player.fall_damage {player, speed, amount}` (`GetFallDamage`): the landing speed and the
+  damage the server computed; a number replaces the amount, `false` cancels.
+
+Measured (`addon_hooks sandbox_gamemode_hooks`): the first spawn gets 13 weapons; the vetoed
+undo keeps the prop and the next removes it with `name == "prop_physics"`; the vetoed R press
+keeps the crate frozen, the next unfreezes it (`count` 1); a 700 u drop lands above 526 u/s,
+the first landing cancelled costs nothing, the second doubled costs `2 * amount`; after a
+kill the respawn's loadout is refused and the player holds only the hook's `weapon_pistol`.
 
 ## Tool setting schemas
 

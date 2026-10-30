@@ -3025,3 +3025,188 @@ fn a_stools_ghost_is_drawn_at_the_clients_trace_hit() {
         "a tool without a ghost draws nothing"
     );
 }
+
+#[test]
+fn sandbox_gamemode_hooks_loadout_undo_unfreeze_and_fall_damage_are_asked() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "gamemode".into(),
+        priority: 1,
+        source: "state.loadouts, state.undos, state.unfreezes, state.unfroze = 0, 0, 0, 0
+            state.falls = {}
+            events.on('player.loadout', function(e)
+                state.loadouts += 1
+                if state.loadouts == 2 then
+                    world.queue('player.give_weapon', e.player, 'weapon_pistol')
+                    return false
+                end
+            end)
+            events.on('player.undo_request', function(e)
+                state.undos += 1
+                state.undo_name = e.name
+                if state.undos == 1 then return false end
+            end)
+            events.on('player.unfreeze_request', function(e)
+                state.unfreezes += 1
+                if state.unfreezes == 1 then return false end
+            end)
+            events.on('player.unfroze', function(e) state.unfroze = e.count end)
+            events.on('player.fall_damage', function(e)
+                table.insert(state.falls, { speed = e.speed, amount = e.amount })
+                if #state.falls == 1 then return false end
+                return e.amount * 2
+            end)
+            events.on('tick.post', function()
+                if game.tick() % 10 == 0 then
+                    for _, pl in ipairs(world.players()) do
+                        net.send('log', { loadouts = state.loadouts, undos = state.undos, undo_name = state.undo_name,
+                            unfreezes = state.unfreezes, unfroze = state.unfroze, falls = state.falls }, pl.id)
+                    end
+                end
+            end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut crt = gm_script::Runtime::client();
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "probe".into(),
+        priority: 1,
+        source: "net.receive('log', function(p) state.d = p.data end)".into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>,
+                    crt: &mut gm_script::Runtime,
+                    buttons: u32,
+                    weapon: u8,
+                    n: usize| {
+        for _ in 0..n {
+            client.tick(
+                gm_net::NetCmd {
+                    view_angles: glam::Vec3::new(30.0, 0.0, 0.0),
+                    buttons,
+                    weapon,
+                    ..Default::default()
+                },
+                &mut c_ep,
+            );
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+            crt.client_tick(&client.world, true);
+            let inbox = std::mem::take(&mut client.addon_msgs);
+            crt.client_net(&client.world, inbox);
+        }
+    };
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 20);
+    // first spawn: the default loadout
+    assert_eq!(server.players[&1].weapons.len(), gm_server::LOADOUT.len());
+
+    // undo: the first request is vetoed, the second removes the prop
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 10);
+    assert_eq!(server.sandbox.props().len(), 1);
+    client.command(gm_net::Command::Undo);
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 10);
+    assert_eq!(
+        server.sandbox.props().len(),
+        1,
+        "vetoed undo keeps the prop"
+    );
+    client.command(gm_net::Command::Undo);
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 10);
+    assert_eq!(
+        server.sandbox.props().len(),
+        0,
+        "the allowed undo removes it"
+    );
+
+    // unfreeze: a frozen prop, physgun R; the first press is vetoed, the second unfreezes
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 10);
+    let ent = server.sandbox.props()[0].id;
+    assert!(server.set_prop_frozen(ent, true));
+    let r = gm_server::weapons::IN_RELOAD;
+    step(&mut sn, &mut client, &mut server, &mut crt, r, 1, 3);
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 1, 3);
+    assert!(
+        server.sandbox.props()[0].frozen,
+        "vetoed unfreeze keeps it frozen"
+    );
+    step(&mut sn, &mut client, &mut server, &mut crt, r, 1, 3);
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 1, 3);
+    assert!(
+        !server.sandbox.props()[0].frozen,
+        "the second press unfreezes"
+    );
+
+    // fall damage: the first landing is cancelled, the second doubled
+    let hp = server.players[&1].health;
+    for _ in 0..2 {
+        {
+            let p = server.players.get_mut(&1).unwrap();
+            p.state.origin.z += 700.0;
+            p.state.velocity = glam::Vec3::ZERO;
+        }
+        step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 120);
+    }
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 10);
+    let (loadouts, undos, unfreezes, unfroze): (i64, i64, i64, i64) = crt.actors()[0]
+        .eval("return state.d.loadouts, state.d.undos, state.d.unfreezes, state.d.unfroze")
+        .unwrap();
+    let undo_name: String = crt.actors()[0].eval("return state.d.undo_name").unwrap();
+    let speeds: Vec<f64> = crt.actors()[0]
+        .eval("local t = {} for _, f in ipairs(state.d.falls) do table.insert(t, f.speed) end return t")
+        .unwrap();
+    let amounts: Vec<f64> = crt.actors()[0]
+        .eval("local t = {} for _, f in ipairs(state.d.falls) do table.insert(t, f.amount) end return t")
+        .unwrap();
+    let falls: Vec<(f64, f64)> = speeds.into_iter().zip(amounts).collect();
+    assert_eq!((loadouts, undos, unfreezes, unfroze), (1, 2, 2, 1));
+    assert_eq!(undo_name, "prop_physics");
+    assert_eq!(falls.len(), 2, "{falls:?}");
+    assert!(falls[0].0 > 526.0 && falls[0].1 > 0.0, "{falls:?}");
+    let expected = hp - (falls[1].1 * 2.0).round() as i32;
+    assert_eq!(
+        server.players[&1].health, expected,
+        "first landing cancelled, second doubled: {falls:?}"
+    );
+
+    // respawn: the second loadout is refused and replaced by the hook's pistol
+    server.damage_player(1, 1000.0, 0);
+    step(&mut sn, &mut client, &mut server, &mut crt, 0, 0, 160);
+    assert!(server.players[&1].alive);
+    assert_eq!(
+        server.players[&1].weapons,
+        vec!["weapon_pistol".to_string()]
+    );
+    let loadouts: i64 = crt.actors()[0].eval("return state.d.loadouts").unwrap();
+    assert_eq!(loadouts, 2);
+}

@@ -89,6 +89,11 @@ pub enum GameEvent {
         player: u32,
         ent: u32,
     },
+    /// The physgun's reload unfroze this many of the player's props (`PhysgunUnfreeze`).
+    Unfroze {
+        player: u32,
+        count: u32,
+    },
     /// A recorded prop impact (the same capture that makes impact sounds, no speed cut): one
     /// per prop involved, `other` 0 for the world.
     Collide {
@@ -114,6 +119,19 @@ pub enum Request {
     /// A +use press (the edge, not the hold) whose trace from the eyes found a prop within
     /// `PLAYER_USE_RADIUS`.
     PlayerUse { player: u32, ent: u32 },
+    /// `PlayerLoadout`: the player (re)spawned with an empty inventory; `Cancel` skips the
+    /// default loadout (the hook gives its own with `player.give_weapon`).
+    Loadout { player: u32 },
+    /// `CanUndo`: the player asked to undo this entry.
+    Undo { player: u32, name: String },
+    /// `CanPlayerUnfreeze`: the physgun's reload is about to unfreeze this prop of the player.
+    Unfreeze { player: u32, ent: u32 },
+    /// `GetFallDamage`: landing at `speed` is about to deal `amount`; `Amount` replaces it.
+    FallDamage {
+        player: u32,
+        speed: f32,
+        amount: f32,
+    },
 }
 
 /// How far from the eyes +use reaches (the public SDK's `PLAYER_USE_RADIUS`).
@@ -283,6 +301,8 @@ pub struct Player {
     pub held: Option<(u32, Grab)>,
     /// `IN_USE` was down in the last command (a use fires on the press, not the hold).
     pub use_down: bool,
+    /// `IN_RELOAD` was down in the last command (the physgun unfreezes on the press).
+    pub reload_down: bool,
     pub alive: bool,
     pub health: i32,
     pub armor: i32,
@@ -347,6 +367,7 @@ impl Player {
             view_angles,
             held: None,
             use_down: false,
+            reload_down: false,
             alive: true,
             health: PLAYER_HEALTH,
             armor: 0,
@@ -880,13 +901,31 @@ impl<'w> Server<'w> {
         p.alive = true;
         p.health = p.max_health;
         p.armor = 0;
+        p.ragdoll = None;
+        p.death_tick = None;
+        p.held = None;
+        self.give_loadout(id);
+    }
+
+    /// `PlayerLoadout`: the inventory is emptied, `Request::Loadout` asked (a hook may give
+    /// its own weapons there and cancel), then the default 13 weapons with the crowbar out.
+    fn give_loadout(&mut self, id: u32) {
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
+        p.weapons.clear();
+        p.active_weapon.clear();
+        p.inventory.clear();
+        if self.ask(Request::Loadout { player: id }) == Verdict::Cancel {
+            return;
+        }
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
         p.weapons = LOADOUT.iter().map(|w| w.to_string()).collect();
         p.active_weapon = SPAWN_WEAPON.to_string();
         p.inventory.give_loadout();
         p.inventory.select(SPAWN_WEAPON);
-        p.ragdoll = None;
-        p.death_tick = None;
-        p.held = None;
     }
 
     /// `Player:Kill`: dead where they stood, ragdoll there, weapons gone next tick, respawn in
@@ -911,8 +950,11 @@ impl<'w> Server<'w> {
         let Some(p) = self.players.get_mut(&id) else {
             return false;
         };
-        if !p.alive || !p.weapons.iter().any(|w| w == class) {
+        if !p.alive || weapons::def(class).is_none() {
             return false;
+        }
+        if !p.weapons.iter().any(|w| w == class) {
+            p.weapons.push(class.to_string());
         }
         p.active_weapon = class.to_string();
         p.inventory.give(class);
@@ -1619,6 +1661,9 @@ impl<'w> Server<'w> {
 
     pub fn add_player(&mut self, id: u32, origin: Vec3, view_angles: Vec3) {
         self.players.insert(id, Player::new(origin, view_angles));
+        if self.request_hook.is_some() {
+            self.give_loadout(id);
+        }
     }
 
     /// Props already on the map (owner 0): registered models at given poses, optionally frozen.
@@ -1902,6 +1947,12 @@ impl<'w> Server<'w> {
     }
 
     pub fn undo(&mut self, player: u32) {
+        let Some(name) = self.sandbox.undos(player).last().map(|u| u.name.clone()) else {
+            return;
+        };
+        if self.ask(Request::Undo { player, name }) == Verdict::Cancel {
+            return;
+        }
         let mut events = Vec::new();
         self.sandbox.undo(player, &mut events);
         self.events.extend(events);
@@ -2078,6 +2129,36 @@ impl<'w> Server<'w> {
                 {
                     self.game_events.push(GameEvent::Use { player, ent });
                 }
+            }
+        }
+        let reload = pc.cmd.buttons & weapons::IN_RELOAD != 0;
+        let reload_pressed = reload
+            && self
+                .players
+                .get(&player)
+                .is_some_and(|p| !p.reload_down && p.alive);
+        if let Some(p) = self.players.get_mut(&player) {
+            p.reload_down = reload;
+        }
+        if reload_pressed && pc.physgun {
+            // `PhysgunUnfreeze`: every frozen prop of the player, each asked
+            let frozen: Vec<u32> = self
+                .sandbox
+                .props()
+                .iter()
+                .filter(|p| p.frozen && p.owner == player)
+                .map(|p| p.id)
+                .collect();
+            let mut count = 0;
+            for ent in frozen {
+                if self.ask(Request::Unfreeze { player, ent }) != Verdict::Cancel
+                    && self.set_prop_frozen(ent, false)
+                {
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                self.game_events.push(GameEvent::Unfroze { player, count });
             }
         }
         let held = self.players.get(&player).and_then(|p| p.held);
@@ -2300,6 +2381,15 @@ impl<'w> Server<'w> {
                 (speed - FALL_SAFE_SPEED) * FALL_DAMAGE_PER_SPEED
             } else {
                 FALL_DAMAGE_FLAT
+            };
+            let dmg = match self.ask(Request::FallDamage {
+                player: id,
+                speed,
+                amount: dmg,
+            }) {
+                Verdict::Cancel => continue,
+                Verdict::Amount(a) => a,
+                Verdict::Allow => dmg,
             };
             self.damage_player(id, dmg, DMG_FALL);
         }

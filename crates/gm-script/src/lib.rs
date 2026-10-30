@@ -749,6 +749,42 @@ impl Runtime {
                 p.ints.push(("type", *dmg_type as i64));
                 self.ask_amount(server, "player.damage", p)
             }
+            gm_server::Request::Loadout { player } => {
+                p.ints.push(("player", *player as i64));
+                if self.ask(server, "player.loadout", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
+            gm_server::Request::Undo { player, name } => {
+                p.ints.push(("player", *player as i64));
+                p.strs.push(("name", name.clone()));
+                if self.ask(server, "player.undo_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
+            gm_server::Request::Unfreeze { player, ent } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("entity", *ent as i64));
+                if self.ask(server, "player.unfreeze_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
+            gm_server::Request::FallDamage {
+                player,
+                speed,
+                amount,
+            } => {
+                p.ints.push(("player", *player as i64));
+                p.floats.push(("speed", *speed as f64));
+                p.floats.push(("amount", *amount as f64));
+                self.ask_amount(server, "player.fall_damage", p)
+            }
             gm_server::Request::PlayerUse { player, ent } => {
                 p.ints.push(("player", *player as i64));
                 p.ints.push(("entity", *ent as i64));
@@ -967,6 +1003,11 @@ impl Runtime {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("entity", ent as i64));
                     "player.used"
+                }
+                E::Unfroze { player, count } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("count", count as i64));
+                    "player.unfroze"
                 }
                 E::Collide {
                     ent,
