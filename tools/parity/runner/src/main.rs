@@ -4425,19 +4425,20 @@ fn compare_trajectory(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     .is_some_and(|w| w.iter().any(|x| x.as_str() == Some(wave)))
             };
             // decided by the first footstep (a sound with another foot's set) in the list
+            let two_footed = |i: usize| {
+                sb.get(i)
+                    .and_then(|s| s.get("alt_waves"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|w| !w.is_empty())
+            };
             let swap = (0..sa.len()).find_map(|i| {
                 let wave = sa[i]
                     .get("wave")
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_ascii_lowercase();
-                let two_footed = sb
-                    .get(i)
-                    .and_then(|s| s.get("alt_waves"))
-                    .and_then(Value::as_array)
-                    .is_some_and(|w| !w.is_empty());
                 let (own, alt) = (has(i, "waves", &wave), has(i, "alt_waves", &wave));
-                (two_footed && own != alt).then_some(alt)
+                (two_footed(i) && own != alt).then_some(alt)
             });
             let swap = swap.unwrap_or(false);
             let mut bad = 0;
@@ -4456,7 +4457,12 @@ fn compare_trajectory(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_ascii_lowercase();
-                let in_set = has(i, if swap { "alt_waves" } else { "waves" }, &wave);
+                let key = if swap && two_footed(i) {
+                    "alt_waves"
+                } else {
+                    "waves"
+                };
+                let in_set = has(i, key, &wave);
                 let vol_ok = match (va, vb) {
                     (Some(x), Some(y)) => (x - y).abs() <= 1e-3,
                     _ => false,
