@@ -332,10 +332,15 @@ impl App {
         let aspect = g.config.width as f32 / g.config.height as f32;
         g.world.draw(&g.gpu, &camera, &view, &g.depth, aspect);
         let ents = &self.sim.client.world.entities;
-        for e in ents.values() {
-            if !g.models.contains_key(&e.model) {
-                let m = g.world.load_model(&g.gpu, &self.mount, &e.model);
-                g.models.insert(e.model.clone(), m);
+        let others = self.sim.client.world.players.len() > 1;
+        for model in ents
+            .values()
+            .map(|e| e.model.as_str())
+            .chain(others.then_some(gm_server::PLAYER_MODEL))
+        {
+            if !g.models.contains_key(model) {
+                let m = g.world.load_model(&g.gpu, &self.mount, model);
+                g.models.insert(model.to_string(), m);
             }
         }
         let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
@@ -353,17 +358,33 @@ impl App {
             })
             .collect();
         let me = self.sim.client.player_id;
+        let player_model = g
+            .models
+            .get(gm_server::PLAYER_MODEL)
+            .and_then(|m| m.as_ref());
         for p in &self.sim.client.world.players {
             if Some(p.id) == me || !p.alive {
                 continue;
             }
-            let h = if p.ducked { 36.0 } else { 72.0 };
-            items.push((
-                &g.player_box,
-                glam::Mat4::from_translation(p.origin + Vec3::Z * (h / 2.0))
-                    * glam::Mat4::from_rotation_z(p.view_angles.y.to_radians())
-                    * glam::Mat4::from_scale(Vec3::new(32.0, 32.0, h)),
-            ));
+            // bind pose until animations: standing model, the hull box when the model is missing
+            match player_model {
+                Some(m) => items.push((
+                    m,
+                    gm_render::world::model_transform(
+                        p.origin,
+                        Vec3::new(0.0, p.view_angles.y, 0.0),
+                    ),
+                )),
+                None => {
+                    let h = if p.ducked { 36.0 } else { 72.0 };
+                    items.push((
+                        &g.player_box,
+                        glam::Mat4::from_translation(p.origin + Vec3::Z * (h / 2.0))
+                            * glam::Mat4::from_rotation_z(p.view_angles.y.to_radians())
+                            * glam::Mat4::from_scale(Vec3::new(32.0, 32.0, h)),
+                    ));
+                }
+            }
         }
         // physgun beam: from just below and right of the eye to the held prop, or along the aim
         if self.weapon == 1 && self.mouse.contains(&0) {
@@ -567,10 +588,21 @@ impl App {
                 model: rest.first().unwrap_or(&SPAWN_MODEL).to_string(),
             }),
             "undo" => self.sim.client.command(Command::Undo),
+            "bot" => {
+                let id = 1000 + self.sim.server.players.len() as u32;
+                let yaw = self.view.y.to_radians();
+                let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+                self.sim.server.add_player(
+                    id,
+                    self.sim.origin + fwd * 96.0,
+                    Vec3::new(0.0, self.view.y + 180.0, 0.0),
+                );
+                self.console.log(format!("bot {id} added"));
+            }
             "cleanup" => self.sim.client.command(Command::Cleanup),
             "help" => {
                 self.console
-                    .log("client: spawn [model] | undo | cleanup | clear | quit; server:");
+                    .log("client: spawn [model] | bot | undo | cleanup | clear | quit; server:");
                 self.sim.client.command(Command::Console {
                     line: line.to_string(),
                 });
