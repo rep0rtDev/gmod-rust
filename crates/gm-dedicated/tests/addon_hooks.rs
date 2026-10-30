@@ -1161,3 +1161,114 @@ fn snapshots_carry_only_the_props_in_the_players_interest_within_the_byte_budget
         "{max_packet} B packet"
     );
 }
+
+#[test]
+fn stress_64_clients_and_2000_props_over_the_loopback() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.set_cvar("sbox_maxprops", "-1");
+    let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
+    let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
+    // the full size in release (`cargo test --release -- stress --nocapture` prints the numbers),
+    // a quarter of it in debug so the workspace run stays quick
+    let (n_clients, n_props) = if cfg!(debug_assertions) {
+        (16usize, 500u32)
+    } else {
+        (64usize, 2000u32)
+    };
+    let net = gm_net::Loopback::new(1, 0.0, 3);
+    let mut s_ep = net.endpoint(0);
+    let mut clients: Vec<(gm_net::ClientNet, gm_net::LoopbackEndpoint)> = (1..=n_clients)
+        .map(|i| (gm_net::ClientNet::new(1, &format!("p{i}")), net.endpoint(i)))
+        .collect();
+    let mut step =
+        |server: &mut gm_server::Server<'_>,
+         clients: &mut Vec<(gm_net::ClientNet, gm_net::LoopbackEndpoint)>| {
+            for (c, ep) in clients.iter_mut() {
+                c.tick(gm_net::NetCmd::default(), ep);
+            }
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            let t0 = std::time::Instant::now();
+            sn.tick(server);
+            let tick = t0.elapsed();
+            let t0 = std::time::Instant::now();
+            sn.send(server, &mut s_ep);
+            let send = t0.elapsed();
+            for (c, ep) in clients.iter_mut() {
+                c.receive(ep);
+            }
+            (tick, send)
+        };
+    for _ in 0..5 {
+        step(&mut server, &mut clients);
+    }
+    assert!(
+        clients.iter().all(|(c, _)| c.player_id.is_some()),
+        "all welcomed"
+    );
+    // players in a 8 x 8 grid 300 u apart, crates in a 50 x 40 grid 60 u apart over the same area
+    for (i, (c, _)) in clients.iter().enumerate() {
+        let me = c.player_id.unwrap();
+        let p = spawn + glam::Vec3::new((i % 8) as f32 * 300.0, (i / 8) as f32 * 300.0, 0.0);
+        server.teleport_player(me, p);
+    }
+    let crate_model = "models/props_junk/wood_crate001a.mdl";
+    let t0 = std::time::Instant::now();
+    for i in 0..n_props {
+        let ent = server.spawn_prop(1, crate_model).expect("spawned");
+        let p = spawn
+            + glam::Vec3::new(
+                (i % 50) as f32 * 60.0 - 300.0,
+                (i / 50) as f32 * 60.0 - 300.0,
+                150.0,
+            );
+        server.teleport_prop(ent, p, glam::Vec3::ZERO);
+        server.sandbox.set_frozen(ent, true);
+    }
+    eprintln!(
+        "spawned {n_props} crates in {:.2} s",
+        t0.elapsed().as_secs_f32()
+    );
+    let mut tick_total = std::time::Duration::ZERO;
+    let mut send_total = std::time::Duration::ZERO;
+    let ticks = 200;
+    let rx0: u64 = clients.iter().map(|(c, _)| c.stats().bytes_received).sum();
+    for _ in 0..ticks {
+        let (t, s) = step(&mut server, &mut clients);
+        tick_total += t;
+        send_total += s;
+    }
+    let rx: u64 = clients
+        .iter()
+        .map(|(c, _)| c.stats().bytes_received)
+        .sum::<u64>()
+        - rx0;
+    let per_client_per_tick = rx as f64 / ticks as f64 / n_clients as f64;
+    let known: Vec<usize> = clients
+        .iter()
+        .map(|(c, _)| c.world.entities.len())
+        .collect();
+    let (min_known, max_known) = (*known.iter().min().unwrap(), *known.iter().max().unwrap());
+    eprintln!(
+        "STRESS {n_clients} clients x {n_props} props: tick {:.2} ms, send {:.2} ms (per tick), {per_client_per_tick:.0} B/tick/client ({:.1} KB/s), known entities {min_known}..{max_known}, dropped snapshots {}",
+        tick_total.as_secs_f64() * 1000.0 / ticks as f64,
+        send_total.as_secs_f64() * 1000.0 / ticks as f64,
+        per_client_per_tick * 66.67 / 1024.0,
+        clients.iter().map(|(c, _)| c.dropped_snapshots).sum::<u64>()
+    );
+    assert!(
+        per_client_per_tick < 1300.0,
+        "{per_client_per_tick} B/tick/client"
+    );
+    assert!(min_known > 0, "every client sees something");
+}

@@ -153,6 +153,12 @@ keeps it across snapshots like cvars. Measured
 line, radius 2 000, budget 400: the client converges on exactly the crates in range, follows a
 3 000 u teleport (far crates in, old ones out), every packet under 1 200 bytes. Interest by PVS
 (the BSP visibility lump is decoded in gm-formats) is the follow-up.
+Stress (`stress_64_clients_and_2000_props_over_the_loopback`, release, one thread): 64 clients in
+an 8 x 8 grid and 2 000 frozen crates over the same 3 000 x 2 400 u area, all within everyone's
+interest: server `tick` 1.3 ms, `send` 3.5 ms per tick (the per-client filter and delta over
+2 000 entities dominates), 607 bytes per tick per client (40 KB/s, 2.5 MB/s upload for the server),
+no snapshot dropped; a client learns ~33 entities per second at the 1 000-byte budget (the model
+name is 40 of an entity's 98 bytes: a per-connection model table is the next saving).
 
 ## Server browser: master and query
 
