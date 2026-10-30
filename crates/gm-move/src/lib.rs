@@ -631,6 +631,10 @@ pub struct Step {
 
 /// Footstep timing and volume, measured on srcds (`move_step_*`, movement.md "Footsteps").
 /// The step itself (wave by the surface under the feet) is the server's business.
+/// Fall speed from which a landing hurts (`move_fall_*`, 526.5 u/s); the landing step's
+/// volume thresholds are tied to it.
+pub const FALL_SAFE_SPEED: f32 = 526.5;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Footsteps {
     /// Milliseconds until the next step may play.
@@ -687,6 +691,24 @@ impl Footsteps {
             volume: 1.0,
             right: self.right,
         }
+    }
+
+    /// Landing step (`move_step_fall_*`): a fall of at least `FALL_SAFE_SPEED` (the one that
+    /// hurts) lands at 1.0, one of more than half that at 0.85 (342 and 486 u/s), a slower one
+    /// (243 u/s, a standing jump) makes no sound. The timer is left alone.
+    pub fn on_land(&mut self, fall_speed: f32) -> Option<Step> {
+        let volume = if fall_speed >= FALL_SAFE_SPEED {
+            1.0
+        } else if fall_speed > FALL_SAFE_SPEED / 2.0 {
+            0.85
+        } else {
+            return None;
+        };
+        self.right = !self.right;
+        Some(Step {
+            volume,
+            right: self.right,
+        })
     }
 }
 
@@ -753,6 +775,11 @@ mod tests {
         );
         assert_eq!(f.before_move(&walk(85.4, false), 200.0, 15.0), None);
         assert!(f.on_jump().right);
+        assert_eq!(f.on_land(243.0), None);
+        assert_eq!(f.on_land(342.0).map(|s| s.volume), Some(0.85));
+        assert_eq!(f.on_land(486.0).map(|s| s.volume), Some(0.85));
+        assert_eq!(f.on_land(594.0).map(|s| s.volume), Some(1.0));
+        assert_eq!(f.on_land(1035.0).map(|s| s.volume), Some(1.0));
         assert_eq!(
             f.before_move(&walk(130.0, false), 200.0, 15.0)
                 .map(|s| s.right),

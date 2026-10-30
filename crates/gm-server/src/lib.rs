@@ -176,7 +176,7 @@ pub const ARMOR_SHARE: f32 = 0.8;
 /// Measured (`damage_fall_*`): landing with the previous tick's downward speed above this
 /// hurts, 10 flat with `mp_falldamage 0`, `(v - threshold) * 25/99` with `mp_falldamage 1`
 /// (fits 540 to 1197 u/s to 0.01; 522 u/s is safe, 540 is not).
-pub const FALL_SAFE_SPEED: f32 = 526.5;
+pub const FALL_SAFE_SPEED: f32 = gm_move::FALL_SAFE_SPEED;
 pub const FALL_DAMAGE_PER_SPEED: f32 = 25.0 / 99.0;
 pub const FALL_DAMAGE_FLAT: f32 = 10.0;
 
@@ -2007,6 +2007,19 @@ impl<'w> Server<'w> {
                 let jumped = p.state.boost_pending && !was_airborne;
                 if let Some(step) = step.or_else(|| jumped.then(|| p.steps.on_jump())) {
                     steps.push((feet, step));
+                }
+                // a landing: the hurting ones also voice `Player.FallDamage` (`move_step_fall_*`)
+                if p.state.on_ground && was_airborne {
+                    if -prev_vz >= FALL_SAFE_SPEED {
+                        self.sounds.push(WorldSound {
+                            name: "Player.FallDamage".to_owned(),
+                            pos: p.state.origin,
+                            volume: 1.0,
+                        });
+                    }
+                    if let Some(step) = p.steps.on_land(-prev_vz) {
+                        steps.push((p.state.origin, step));
+                    }
                 }
             }
         }

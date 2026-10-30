@@ -371,11 +371,30 @@ fn run_move(scn: &Scenario) -> Result<Value> {
         };
         for _ in 0..seg.ticks {
             let feet = st.origin;
-            let was_on_ground = st.on_ground;
+            let (was_on_ground, prev_vz) = (st.on_ground, st.velocity.z);
             let step = steps.before_move(&st, mover.step_max_speed(&cmd), 15.0);
             mover.tick(&mut st, &cmd);
             let jumped = st.boost_pending && was_on_ground;
-            if let Some(step) = step.or_else(|| jumped.then(|| steps.on_jump())) {
+            let landed = st.on_ground && !was_on_ground;
+            let fall_speed = -prev_vz;
+            if landed && fall_speed >= gm_move::FALL_SAFE_SPEED {
+                let e = scripts.get("Player.FallDamage");
+                sounds.push(serde_json::json!({
+                    "t": t,
+                    "name": "Player.FallDamage",
+                    "waves": e.map(|e| e.waves.iter().map(|w| gm_audio::script::wave_path(w).to_ascii_lowercase()).collect::<Vec<_>>()).unwrap_or_default(),
+                    "alt_waves": [],
+                    "vol": e.map_or(1.0, |e| e.volume.0),
+                }));
+            }
+            let land_step = landed.then(|| steps.on_land(fall_speed)).flatten();
+            let land_feet = st.origin;
+            for (feet, step) in step
+                .or_else(|| jumped.then(|| steps.on_jump()))
+                .map(|s| (feet, s))
+                .into_iter()
+                .chain(land_step.map(|s| (land_feet, s)))
+            {
                 let material = world.ground_material(feet);
                 let set = gm_dedicated::step_sounds(&mount, &table, material);
                 let (name, other) = match set {
@@ -4405,13 +4424,22 @@ fn compare_trajectory(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     .and_then(Value::as_array)
                     .is_some_and(|w| w.iter().any(|x| x.as_str() == Some(wave)))
             };
-            let first_wave = sa
-                .first()
-                .and_then(|s| s.get("wave"))
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            let swap = !has(0, "waves", &first_wave) && has(0, "alt_waves", &first_wave);
+            // decided by the first footstep (a sound with another foot's set) in the list
+            let swap = (0..sa.len()).find_map(|i| {
+                let wave = sa[i]
+                    .get("wave")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let two_footed = sb
+                    .get(i)
+                    .and_then(|s| s.get("alt_waves"))
+                    .and_then(Value::as_array)
+                    .is_some_and(|w| !w.is_empty());
+                let (own, alt) = (has(i, "waves", &wave), has(i, "alt_waves", &wave));
+                (two_footed && own != alt).then_some(alt)
+            });
+            let swap = swap.unwrap_or(false);
             let mut bad = 0;
             for i in 0..sa.len().max(sb.len()) {
                 let (ta, tb) = (
