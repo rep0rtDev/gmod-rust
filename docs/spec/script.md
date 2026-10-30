@@ -452,7 +452,7 @@ WASM components for native modules; scripted entity classes (a SENT with its own
 use callbacks: today a script spawns a prop and listens to `entity.collide`, `player.use` and
 `tick.pre` for it); scripted weapons on the slot digits of the client, a `Think` analog and the
 game's `KEY_*` names / `input.IsKeyDown` polling (ours: `input.key` events with the client's key
-names); +use on players (recorded, see "+use"; not implemented: our use trace knows props and the world only). Done since this list was written: the sandbox
+names); the game's pitch-0 miss of +use on players (see "+use"). Done since this list was written: the sandbox
 gamemode as one package (`addons/gamemodes/sandbox`), prop properties, player models, the +use
 pickup, the spawn menu lists, prop spawn and state writes, scripted weapons, key events.
 
@@ -661,8 +661,13 @@ ahead; looking level (pitch 0, eye 64 u up, the hull top at 72 u) the engine's u
 it), locked or not, at 60 and 100 u; looking down 20 degrees onto its chest, E held 20 ticks
 gave `PlayerUse(ply, player)` 21 times (every tick plus the command lag, like a prop), nothing
 is picked up or moved, and `FindUseEntity`'s default argument was NULL in every one of its 42
-calls. Not implemented yet: our use trace sees props and the world only, so `player.use` never
-names a player.
+calls. Ours: when the use trace finds no prop, the use ray (80 u from the eyes) is tested
+against the other live players' hulls (16 x 16 x 72, 36 ducked) and the nearest hit raises
+`player.use_player {player, target}` every tick E is held (not cancelable: nothing happens to
+the target). Known difference: a hull test also hits at pitch 0, where the game found nothing;
+why the game misses there is not understood (its own eye trace passed through the hull too).
+Measured (`addon_hooks use_on_another_player`): five ticks of E at 20 degrees down onto a
+player 60 u ahead give five events and no `player.use`.
 
 ## Player models
 

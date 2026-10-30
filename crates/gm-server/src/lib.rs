@@ -173,6 +173,12 @@ pub enum GameEvent {
         ent: u32,
         name: String,
     },
+    /// `PlayerUse` on another player: E held with the use ray on that player's hull (nothing
+    /// is picked up or moved); every tick like on a prop.
+    UsePlayer {
+        player: u32,
+        target: u32,
+    },
     /// `KeyPress` / `KeyRelease`: a usercmd button bit changed (`key` an `IN_*` name); raised
     /// first in the tick, before what the press does (measured `lua_use_hold`: `KeyPress`
     /// precedes `PlayerUse` in the press tick).
@@ -2938,6 +2944,9 @@ impl<'w> Server<'w> {
                         self.try_pickup(player, ent, view.y);
                     }
                 }
+            } else if let Some(target) = self.find_use_player(player, eye, view) {
+                self.game_events
+                    .push(GameEvent::UsePlayer { player, target });
             }
         }
         let reload = pc.cmd.buttons & weapons::IN_RELOAD != 0;
@@ -3502,6 +3511,44 @@ impl<'w> Server<'w> {
             name: name.to_string(),
         });
         true
+    }
+
+    /// Another live player whose hull the use ray (80 u from the eyes, the SDK's reach) hits
+    /// first (measured `lua_use_player2`: `PlayerUse(ply, player)` every tick while E is held
+    /// looking down at a player's chest from 60 u; the game found nothing looking level at eye
+    /// height, which a hull test cannot reproduce, see the spec).
+    fn find_use_player(&self, player: u32, eye: Vec3, view: Vec3) -> Option<u32> {
+        let dir = gm_sandbox::forward(view.x, view.y);
+        let mut best: Option<(f32, u32)> = None;
+        for (id, p) in &self.players {
+            if *id == player || !p.alive {
+                continue;
+            }
+            let (mins, maxs) = (
+                p.state.origin + Vec3::new(-16.0, -16.0, 0.0),
+                p.state.origin + Vec3::new(16.0, 16.0, if p.state.ducked { 36.0 } else { 72.0 }),
+            );
+            let (mut t0, mut t1) = (0.0f32, 80.0f32);
+            for a in 0..3 {
+                let (o, d) = (eye[a], dir[a]);
+                if d.abs() < 1e-6 {
+                    if o < mins[a] || o > maxs[a] {
+                        t0 = f32::INFINITY;
+                    }
+                    continue;
+                }
+                let (mut ta, mut tb) = ((mins[a] - o) / d, (maxs[a] - o) / d);
+                if ta > tb {
+                    std::mem::swap(&mut ta, &mut tb);
+                }
+                t0 = t0.max(ta);
+                t1 = t1.min(tb);
+            }
+            if t0 <= t1 && best.is_none_or(|(b, _)| t0 < b) {
+                best = Some((t0, *id));
+            }
+        }
+        best.map(|(_, id)| id)
     }
 
     /// Gravity on or off for a prop (the `gravity` property / `PhysObj:EnableGravity`).

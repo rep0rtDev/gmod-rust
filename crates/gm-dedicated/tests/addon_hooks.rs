@@ -517,6 +517,74 @@ fn key_press_and_release_events_follow_the_usercmd_edges() {
 }
 
 #[test]
+fn use_on_another_player_is_reported_every_tick_held() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    // the lua_use_player2 stand: the other player 60 u ahead, the user looking 20 degrees down
+    server.add_player(
+        1,
+        glam::Vec3::new(700.0, -600.0, -143.6),
+        glam::Vec3::new(20.0, 90.0, 0.0),
+    );
+    server.add_player(
+        2,
+        glam::Vec3::new(700.0, -540.0, -143.6),
+        glam::Vec3::new(0.0, -90.0, 0.0),
+    );
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "use".into(),
+        priority: 0,
+        source: "state.n = 0
+            events.on('player.use_player', function(p) if p.player == 1 and p.target == 2 then state.n += 1 end end)
+            events.on('player.use', function(p) state.prop = true end)"
+            .into(),
+        config: gm_script::ActorConfig::default(),
+    })
+    .unwrap();
+    let cmd = |buttons: u32, pitch: f32| gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            buttons,
+            view_angles: glam::Vec3::new(pitch, 90.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = cmd(0, 0.0);
+    // settle, then E held five ticks looking down at the chest, then looking away (yaw stays,
+    // pitch up to the sky)
+    for _ in 0..5 {
+        server.tick(&BTreeMap::from([
+            (1u32, idle.clone()),
+            (2u32, idle.clone()),
+        ]));
+    }
+    server.game_events.clear();
+    for i in 0..10 {
+        let c = if i < 5 {
+            cmd(gm_server::IN_USE, 20.0)
+        } else {
+            cmd(gm_server::IN_USE, -60.0)
+        };
+        server.tick(&BTreeMap::from([(1u32, c), (2u32, idle.clone())]));
+        let events = std::mem::take(&mut server.game_events);
+        rt.game_events(&mut server, events);
+    }
+    let (n, prop): (i64, Option<bool>) = rt.actors()[0].eval("return state.n, state.prop").unwrap();
+    assert_eq!(
+        (n, prop),
+        (5, None),
+        "one event per tick held on the player, none for props"
+    );
+}
+
+#[test]
 fn script_reads_and_writes_players() {
     let Some(inst) = gm_content::find_install() else {
         eprintln!("skipped: no Garry's Mod install");

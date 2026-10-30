@@ -1090,6 +1090,11 @@ impl Runtime {
                     p.strs.push(("property", name));
                     "player.property"
                 }
+                E::UsePlayer { player, target } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("target", target as i64));
+                    "player.use_player"
+                }
                 E::Key { player, key, down } => {
                     p.ints.push(("player", player as i64));
                     p.strs.push(("key", key.to_string()));
