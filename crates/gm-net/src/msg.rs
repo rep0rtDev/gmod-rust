@@ -60,6 +60,10 @@ pub enum ClientMsg {
         name: String,
         data: Vec<u8>,
     },
+    /// Reliable: please stream the published addon package with this sha256.
+    WantAddon {
+        sha: [u8; 32],
+    },
     AckSnapshot {
         tick: u32,
     },
@@ -186,6 +190,38 @@ pub enum ServerMsg {
         name: String,
         value: String,
     },
+    /// Reliable, after `Welcome`: the addon packages the server publishes for the client realm.
+    Addons {
+        list: Vec<AddonInfo>,
+    },
+    /// Reliable: a piece of a published package a client asked for (`offset` grows in order).
+    AddonChunk {
+        sha: [u8; 32],
+        offset: u64,
+        total: u64,
+        data: Vec<u8>,
+    },
+}
+
+/// A published addon package: identity is the sha256 of the `.gmr` bytes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AddonInfo {
+    pub id: String,
+    pub version: String,
+    pub sha: [u8; 32],
+    pub size: u64,
+}
+
+pub fn sha_hex(sha: &[u8; 32]) -> String {
+    sha.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
+    let mut out = [0u8; 32];
+    for b in out.iter_mut() {
+        *b = r.u8()?;
+    }
+    Ok(out)
 }
 
 pub const PROTOCOL: u16 = 1;
@@ -329,7 +365,10 @@ impl ClientMsg {
     pub fn reliable(&self) -> bool {
         matches!(
             self,
-            ClientMsg::Hello { .. } | ClientMsg::Command { .. } | ClientMsg::Addon { .. }
+            ClientMsg::Hello { .. }
+                | ClientMsg::Command { .. }
+                | ClientMsg::Addon { .. }
+                | ClientMsg::WantAddon { .. }
         )
     }
 
@@ -390,6 +429,10 @@ impl ClientMsg {
                 w.str(name);
                 w.bytes(data);
             }
+            ClientMsg::WantAddon { sha } => {
+                w.u8(6);
+                w.buf.extend_from_slice(sha);
+            }
         }
     }
 
@@ -436,6 +479,7 @@ impl ClientMsg {
                 name: r.str()?,
                 data: r.bytes()?.to_vec(),
             },
+            6 => ClientMsg::WantAddon { sha: sha(r)? },
             _ => return Err(Truncated),
         })
     }
@@ -450,6 +494,8 @@ impl ServerMsg {
                 | ServerMsg::CommandAck { .. }
                 | ServerMsg::Addon { .. }
                 | ServerMsg::Cvar { .. }
+                | ServerMsg::Addons { .. }
+                | ServerMsg::AddonChunk { .. }
         )
     }
 
@@ -546,6 +592,28 @@ impl ServerMsg {
                 w.u32(*seq);
                 w.str(name);
                 w.str(value);
+            }
+            ServerMsg::Addons { list } => {
+                w.u8(7);
+                w.varint(list.len() as u64);
+                for a in list {
+                    w.str(&a.id);
+                    w.str(&a.version);
+                    w.buf.extend_from_slice(&a.sha);
+                    w.varint(a.size);
+                }
+            }
+            ServerMsg::AddonChunk {
+                sha,
+                offset,
+                total,
+                data,
+            } => {
+                w.u8(8);
+                w.buf.extend_from_slice(sha);
+                w.varint(*offset);
+                w.varint(*total);
+                w.bytes(data);
             }
         }
     }
@@ -647,6 +715,25 @@ impl ServerMsg {
                 seq: r.u32()?,
                 name: r.str()?,
                 value: r.str()?,
+            },
+            7 => {
+                let n = r.varint()? as usize;
+                let mut list = Vec::with_capacity(n.min(1024));
+                for _ in 0..n {
+                    list.push(AddonInfo {
+                        id: r.str()?,
+                        version: r.str()?,
+                        sha: sha(r)?,
+                        size: r.varint()?,
+                    });
+                }
+                ServerMsg::Addons { list }
+            }
+            8 => ServerMsg::AddonChunk {
+                sha: sha(r)?,
+                offset: r.varint()?,
+                total: r.varint()?,
+                data: r.bytes()?.to_vec(),
             },
             _ => return Err(Truncated),
         })

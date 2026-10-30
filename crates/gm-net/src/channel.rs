@@ -41,18 +41,43 @@ fn seq_newer(a: u16, b: u16) -> bool {
     ((a > b) && (a - b <= 32768)) || ((a < b) && (b - a > 32768))
 }
 
+/// The largest packet a channel builds (below the usual path MTU; `Udp` receives up to 1400).
+pub const MAX_PACKET: usize = 1200;
+/// Reliable messages longer than this go as fragments of this size, reassembled in order.
+pub const FRAGMENT: usize = 1024;
+/// Packets `build_burst` makes per call at most (the ack history covers 33 sequences).
+pub const MAX_BURST: usize = 8;
+
+/// Message flags on the wire.
+const RELIABLE: u8 = 1;
+/// A reliable fragment that the next reliable message continues.
+const MORE: u8 = 2;
+
+struct Pending {
+    flags: u8,
+    bytes: Vec<u8>,
+    /// packets that carried it
+    carried: Vec<u16>,
+}
+
 /// One direction of a connection: outgoing sequence numbers, the ack state for the other side and
-/// the reliable resend queue. Messages are opaque bytes with a reliability flag and an id.
+/// the reliable resend queue. Messages are opaque bytes with a reliability flag and an id; the
+/// reliable ones are delivered in id order (a message after a lost one waits), long ones travel
+/// as fragments and every packet stays under `MAX_PACKET` unless a single unreliable message is
+/// larger by itself.
 #[derive(Default)]
 pub struct Channel {
     pub local_seq: u16,
     pub remote_seq: Option<u16>,
     received: BTreeSet<u16>,
-    /// reliable messages in flight: id -> (bytes, packets that carried it)
-    pending: BTreeMap<u64, (Vec<u8>, Vec<u16>)>,
+    /// reliable messages in flight by id
+    pending: BTreeMap<u64, Pending>,
     next_reliable_id: u64,
-    /// reliable ids seen from the other side (dedupe)
-    seen_reliable: BTreeSet<u64>,
+    /// the reliable id delivered next; later ones wait here
+    next_recv_id: u64,
+    early: BTreeMap<u64, (u8, Vec<u8>)>,
+    /// fragments of the reliable message being reassembled
+    partial: Vec<u8>,
     pub stats: Stats,
 }
 
@@ -66,11 +91,27 @@ pub struct Stats {
 }
 
 impl Channel {
-    /// Queues a reliable message; it goes out with every packet until acked.
+    /// Queues a reliable message; it goes out with every packet (as far as the packet budget
+    /// allows, oldest first) until acked. Returns the id of its last fragment.
     pub fn send_reliable(&mut self, bytes: Vec<u8>) -> u64 {
-        let id = self.next_reliable_id;
-        self.next_reliable_id += 1;
-        self.pending.insert(id, (bytes, Vec::new()));
+        let mut chunks: Vec<&[u8]> = bytes.chunks(FRAGMENT).collect();
+        if chunks.is_empty() {
+            chunks.push(&[]);
+        }
+        let last = chunks.len() - 1;
+        let mut id = 0;
+        for (i, c) in chunks.iter().enumerate() {
+            id = self.next_reliable_id;
+            self.next_reliable_id += 1;
+            self.pending.insert(
+                id,
+                Pending {
+                    flags: if i == last { RELIABLE } else { RELIABLE | MORE },
+                    bytes: c.to_vec(),
+                    carried: Vec::new(),
+                },
+            );
+        }
         id
     }
 
@@ -88,22 +129,50 @@ impl Channel {
         (newest, bits)
     }
 
-    /// Builds a packet: header, reliable messages (pending), then the unreliable payloads.
+    /// Builds a packet: header, reliable messages (pending, oldest first, as many as fit next to
+    /// the unreliable payloads, at least one), then the unreliable payloads.
     /// Each message is `[flags u8][id varint if reliable][bytes]`.
     pub fn build(&mut self, unreliable: &[Vec<u8>]) -> Vec<u8> {
+        self.build_skipping(unreliable, &mut BTreeSet::new())
+    }
+
+    /// `build` and then, while reliable messages are left that no packet of this call carried,
+    /// more packets of only those (up to `MAX_BURST` packets): a large transfer moves several
+    /// fragments per tick instead of one.
+    pub fn build_burst(&mut self, unreliable: &[Vec<u8>]) -> Vec<Vec<u8>> {
+        let mut in_burst = BTreeSet::new();
+        let mut out = vec![self.build_skipping(unreliable, &mut in_burst)];
+        while out.len() < MAX_BURST && self.pending.keys().any(|id| !in_burst.contains(id)) {
+            out.push(self.build_skipping(&[], &mut in_burst));
+        }
+        out
+    }
+
+    fn build_skipping(&mut self, unreliable: &[Vec<u8>], skip: &mut BTreeSet<u64>) -> Vec<u8> {
         let seq = self.local_seq;
         self.local_seq = self.local_seq.wrapping_add(1);
         let (ack, ack_bits) = self.ack_fields();
         let mut w = Writer::default();
         Header { seq, ack, ack_bits }.write(&mut w);
-        for (id, (bytes, carried)) in self.pending.iter_mut() {
-            if !carried.is_empty() {
+        let unreliable_len: usize = unreliable.iter().map(|m| m.len() + 10).sum();
+        let mut first = true;
+        for (id, p) in self.pending.iter_mut() {
+            if skip.contains(id) {
+                continue;
+            }
+            let len = p.bytes.len() + 12;
+            if !first && w.buf.len() + len + unreliable_len > MAX_PACKET {
+                break;
+            }
+            first = false;
+            if !p.carried.is_empty() {
                 self.stats.reliable_resends += 1;
             }
-            carried.push(seq);
-            w.u8(1);
+            p.carried.push(seq);
+            skip.insert(*id);
+            w.u8(p.flags);
             w.varint(*id);
-            w.bytes(bytes);
+            w.bytes(&p.bytes);
         }
         for m in unreliable {
             w.u8(0);
@@ -143,15 +212,26 @@ impl Channel {
             }
         }
         self.pending
-            .retain(|_, (_, carried)| !carried.iter().any(|s| acked.contains(s)));
+            .retain(|_, p| !p.carried.iter().any(|s| acked.contains(s)));
         let mut out = Vec::new();
         while r.remaining() > 0 {
             let flags = r.u8()?;
-            if flags & 1 != 0 {
+            if flags & RELIABLE != 0 {
                 let id = r.varint()?;
                 let bytes = r.bytes()?;
-                if self.seen_reliable.insert(id) {
-                    out.push(bytes.to_vec());
+                if id >= self.next_recv_id && !self.early.contains_key(&id) {
+                    self.early.insert(id, (flags, bytes.to_vec()));
+                }
+                while let Some((flags, bytes)) = self.early.remove(&self.next_recv_id) {
+                    self.next_recv_id += 1;
+                    if flags & MORE != 0 {
+                        self.partial.extend_from_slice(&bytes);
+                    } else if self.partial.is_empty() {
+                        out.push(bytes);
+                    } else {
+                        self.partial.extend_from_slice(&bytes);
+                        out.push(std::mem::take(&mut self.partial));
+                    }
                 }
             } else {
                 out.push(r.bytes()?.to_vec());
@@ -160,6 +240,7 @@ impl Channel {
         Ok(out)
     }
 
+    /// Reliable messages (fragments) queued and not yet acked.
     pub fn pending_reliable(&self) -> usize {
         self.pending.len()
     }

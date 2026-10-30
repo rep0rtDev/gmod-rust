@@ -13,6 +13,17 @@ before it (Source's scheme). Reliable messages (hello, welcome, sandbox commands
 events) are repeated in every packet until a packet that carried them is acked; the receiver drops
 duplicates by the message id. Everything else (usercmds, snapshots) is unreliable.
 
+Packet budget and fragments: a packet stays under 1200 bytes (`Udp` receives up to 1400). The
+reliable queue goes out oldest first, as many messages as fit next to the unreliable payloads
+(always at least one); a reliable message longer than 1024 bytes is split into fragments of that
+size (flag bit 2 = "the next reliable message continues this one") and reassembled by the
+receiver. Reliable messages are delivered in id order: one after a lost one waits for the resend
+(duplicates are dropped by id, as before). `Channel::build_burst` makes up to 8 packets per tick
+when reliable messages are left that none of the tick's packets carried, so a large transfer
+moves ~8 KiB per tick per client; the server sends bursts, the client one packet per tick.
+Measured with the gm-net unit test: a 50 000-byte message plus two small ones around it arrive
+whole and in order over 20 % loss, every packet under the budget.
+
 ## Client -> server
 
 - `Cmds`: the last 8 usercmds (tick, buttons, view angles, moves, mouse, weapon), every tick at
@@ -98,6 +109,19 @@ simulated it; its `gm_spawn` landed a crate at rest in front of it (count 1, one
 the client saw it in the next snapshots; 155 packets received over 400 client ticks (33 Hz
 snapshots), 26 kB down and 19 kB up; the server's tick took 0.012 ms idle and 0.044 ms with one
 client and one prop (the physics world is already loaded).
+
+Addon distribution: the server publishes `.gmr` packages (`ServerNet::publish_addon`, the
+dedicated server does it for every `--addon` whose manifest lists the `client` realm, packing a
+directory on start) and announces them right after `Welcome` as `ServerMsg::Addons { list }`
+(tag 7: id, version, sha256, size). A client without the package in its cache asks with
+`ClientMsg::WantAddon { sha }` (tag 6) and the server streams it as `ServerMsg::AddonChunk { sha,
+offset, total, data }` (tag 8), 16 KiB per chunk, one chunk queued per tick while fewer than 24
+reliable fragments are in flight, so events and cvars keep flowing between chunks; unknown shas are
+ignored, a chunk out of order or a total above 64 MiB drops the download. `gm-bot --cache <dir>`
+keeps `<sha256>.gmr`, verifies the sha before loading, and runs the package's client actors.
+Measured (loopback, 1 tick delay, 10 % loss): a 100 KB package is downloaded, verified and running
+on the client in under 200 ticks with replicated cvars arriving alongside
+(`published_client_addon_is_downloaded_over_a_lossy_loopback_and_runs_on_the_client`).
 
 ## Not yet
 

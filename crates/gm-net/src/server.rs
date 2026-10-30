@@ -32,7 +32,21 @@ pub struct ClientSlot {
     addon_seq: u32,
     pending_cvars: Vec<(String, String)>,
     cvar_seq: u32,
+    /// published packages being streamed to this client: (index, next offset), in request order
+    uploads: VecDeque<(usize, u64)>,
 }
+
+/// An addon package the server hands out to clients (its client-realm actors run there).
+pub struct PublishedAddon {
+    pub info: crate::msg::AddonInfo,
+    pub bytes: std::sync::Arc<Vec<u8>>,
+}
+
+/// Bytes of a package queued per tick per client while the channel has room.
+pub const ADDON_CHUNK: usize = 16 * 1024;
+/// Reliable fragments in flight above which a client's upload waits (other reliable traffic
+/// keeps flowing between chunks).
+pub const UPLOAD_WINDOW: usize = 24;
 
 pub struct ServerNet {
     pub tick: u32,
@@ -44,6 +58,7 @@ pub struct ServerNet {
     pub hooks: Option<Box<dyn gm_server::ServerHooks>>,
     /// Players allowed to run admin commands (`Command::Reload`).
     pub admins: std::collections::BTreeSet<u32>,
+    pub addons: Vec<PublishedAddon>,
 }
 
 impl ServerNet {
@@ -57,7 +72,20 @@ impl ServerNet {
             spawn_origin,
             hooks: None,
             admins: std::collections::BTreeSet::new(),
+            addons: Vec::new(),
         }
+    }
+
+    /// Publishes a `.gmr` for clients to download (announced to clients connecting from now on;
+    /// a package with the same sha is published once).
+    pub fn publish_addon(&mut self, info: crate::msg::AddonInfo, bytes: Vec<u8>) {
+        if self.addons.iter().any(|a| a.info.sha == info.sha) {
+            return;
+        }
+        self.addons.push(PublishedAddon {
+            info,
+            bytes: std::sync::Arc::new(bytes),
+        });
     }
 
     /// Reads everything the transport has for the server (endpoint 0), connecting new clients.
@@ -86,6 +114,7 @@ impl ServerNet {
                         addon_seq: 0,
                         pending_cvars: Vec::new(),
                         cvar_seq: 0,
+                        uploads: VecDeque::new(),
                     },
                 );
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
@@ -111,6 +140,14 @@ impl ServerNet {
                             }
                             .write(&mut w);
                             slot.channel.send_reliable(w.buf);
+                            if !self.addons.is_empty() {
+                                let mut w = Writer::default();
+                                ServerMsg::Addons {
+                                    list: self.addons.iter().map(|a| a.info.clone()).collect(),
+                                }
+                                .write(&mut w);
+                                slot.channel.send_reliable(w.buf);
+                            }
                             for (n, c) in &server.cvars {
                                 if c.replicated {
                                     slot.pending_cvars.push((n.clone(), c.value.clone()));
@@ -147,6 +184,13 @@ impl ServerNet {
                     ClientMsg::Addon { name, data } => {
                         if let Some(h) = self.hooks.as_mut() {
                             h.net_message(server, slot.player, &name, &data);
+                        }
+                    }
+                    ClientMsg::WantAddon { sha } => {
+                        if let Some(i) = self.addons.iter().position(|a| a.info.sha == sha) {
+                            if !slot.uploads.iter().any(|(j, _)| *j == i) {
+                                slot.uploads.push_back((i, 0));
+                            }
                         }
                     }
                     ClientMsg::AckSnapshot { tick } => {
@@ -415,9 +459,30 @@ impl ServerNet {
                     slot.sent.pop_front();
                 }
             }
+            if let Some((i, offset)) = slot.uploads.front_mut() {
+                if slot.channel.pending_reliable() < UPLOAD_WINDOW {
+                    let a = &self.addons[*i];
+                    let total = a.bytes.len() as u64;
+                    let end = (*offset as usize + ADDON_CHUNK).min(a.bytes.len());
+                    let mut w = Writer::default();
+                    ServerMsg::AddonChunk {
+                        sha: a.info.sha,
+                        offset: *offset,
+                        total,
+                        data: a.bytes[*offset as usize..end].to_vec(),
+                    }
+                    .write(&mut w);
+                    slot.channel.send_reliable(w.buf);
+                    *offset = end as u64;
+                    if end == a.bytes.len() {
+                        slot.uploads.pop_front();
+                    }
+                }
+            }
             if !unreliable.is_empty() || slot.channel.pending_reliable() > 0 {
-                let packet = slot.channel.build(&unreliable);
-                transport.send(endpoint, packet);
+                for packet in slot.channel.build_burst(&unreliable) {
+                    transport.send(endpoint, packet);
+                }
             }
         }
     }

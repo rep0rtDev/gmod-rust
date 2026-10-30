@@ -737,3 +737,113 @@ fn remover_tool_in_luau_removes_the_hit_prop_and_fires_entity_removed() {
         gm_server::ToolClick::Unknown(_)
     ));
 }
+
+#[test]
+fn published_client_addon_is_downloaded_over_a_lossy_loopback_and_runs_on_the_client() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let dir = std::env::temp_dir().join(format!("gmr-dl-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("addon/src")).unwrap();
+    std::fs::create_dir_all(dir.join("addon/assets")).unwrap();
+    std::fs::write(
+        dir.join("addon/manifest.toml"),
+        "id = \"hud_dl\"\nversion = \"1.2.3\"\nrealms = [\"client\"]\n\
+         [[actors]]\nname = \"hud\"\nsource = \"src/hud.luau\"\nrealm = \"client\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("addon/src/hud.luau"),
+        "events.on('snapshot.received', function() state.snaps = (state.snaps or 0) + 1 end)",
+    )
+    .unwrap();
+    let mut rng = 0x9E37_79B9_7F4A_7C15u64;
+    let blob: Vec<u8> = (0..100_000u32)
+        .map(|_| {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            (rng >> 24) as u8
+        })
+        .collect();
+    std::fs::write(dir.join("addon/assets/blob.bin"), &blob).unwrap();
+    let bytes = gm_script::package::pack(&dir.join("addon")).unwrap();
+    assert!(
+        bytes.len() > 60_000,
+        "{} bytes: the blob must not shrink away",
+        bytes.len()
+    );
+    let pkg = gm_script::Package::read(&bytes).unwrap();
+    let (m, _) = pkg.load_realm("client").unwrap();
+    let info = gm_net::AddonInfo {
+        id: m.id.clone(),
+        version: m.version.clone(),
+        sha: pkg.sha256,
+        size: bytes.len() as u64,
+    };
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    sn.publish_addon(info.clone(), bytes.clone());
+    sn.publish_addon(info.clone(), bytes.clone());
+    assert_eq!(sn.addons.len(), 1, "the same sha is published once");
+    let net = gm_net::Loopback::new(1, 0.1, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut crt = gm_script::Runtime::client();
+    let mut asked = false;
+    let mut loaded_at = None;
+    let mut last_tick = 0;
+    for t in 0..600 {
+        client.tick(gm_net::NetCmd::default(), &mut c_ep);
+        net.tick();
+        sn.receive(&mut server, &mut s_ep);
+        sn.tick(&mut server);
+        sn.send(&server, &mut s_ep);
+        client.receive(&mut c_ep);
+        if !asked && !client.server_addons.is_empty() {
+            assert_eq!(client.server_addons, vec![info.clone()]);
+            client.want_addon(info.sha);
+            asked = true;
+        }
+        for (sha, got) in std::mem::take(&mut client.downloaded) {
+            assert_eq!(sha, info.sha);
+            assert_eq!(got, bytes, "the package arrived whole and in order");
+            let p = gm_script::Package::read(&got).unwrap();
+            assert_eq!(p.sha256, sha, "the sha verifies the download");
+            let path = dir.join(format!("{}.gmr", gm_net::msg::sha_hex(&sha)));
+            std::fs::write(&path, &got).unwrap();
+            let m = crt.load_addon(&path).unwrap();
+            assert_eq!((m.id.as_str(), m.version.as_str()), ("hud_dl", "1.2.3"));
+            assert_eq!(
+                crt.actors().len(),
+                1,
+                "the client actor of the package runs"
+            );
+            loaded_at = Some(t);
+        }
+        let fresh = client.server_tick != last_tick;
+        last_tick = client.server_tick;
+        crt.client_tick(&client.world, fresh);
+        if loaded_at.is_some_and(|l| t > l + 20) {
+            break;
+        }
+    }
+    let loaded_at = loaded_at.expect("the download finished");
+    assert!(loaded_at < 200, "download took {loaded_at} ticks");
+    assert!(
+        !client.world.cvars.is_empty(),
+        "replicated cvars flow next to the download"
+    );
+    assert!(
+        net.dropped() > 20,
+        "the loopback did lose packets: {}",
+        net.dropped()
+    );
+    let snaps: u64 = crt.actors()[0].eval("return state.snaps").unwrap();
+    assert!(snaps >= 5, "{snaps} snapshots");
+    let _ = std::fs::remove_dir_all(&dir);
+}

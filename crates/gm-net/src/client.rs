@@ -210,6 +210,12 @@ pub struct ClientNet {
     pub events: Vec<String>,
     /// Addon messages received since the last drain (name, payload).
     pub addon_msgs: Vec<(String, Vec<u8>)>,
+    /// The packages the server published (from `ServerMsg::Addons`).
+    pub server_addons: Vec<crate::msg::AddonInfo>,
+    /// Downloads in progress by sha: (total, bytes so far).
+    pub downloading: BTreeMap<[u8; 32], (u64, Vec<u8>)>,
+    /// Finished downloads, in order: (sha, the `.gmr` bytes); verify the sha before use.
+    pub downloaded: Vec<([u8; 32], Vec<u8>)>,
     pub dropped_snapshots: u64,
 }
 
@@ -230,6 +236,9 @@ impl ClientNet {
             history: VecDeque::new(),
             events: Vec::new(),
             addon_msgs: Vec::new(),
+            server_addons: Vec::new(),
+            downloading: BTreeMap::new(),
+            downloaded: Vec::new(),
             dropped_snapshots: 0,
         };
         let mut w = Writer::default();
@@ -259,6 +268,13 @@ impl ClientNet {
             data: data.to_vec(),
         }
         .write(&mut w);
+        self.channel.send_reliable(w.buf);
+    }
+
+    /// Asks the server to stream the published package with this sha (ignored for unknown ones).
+    pub fn want_addon(&mut self, sha: [u8; 32]) {
+        let mut w = Writer::default();
+        ClientMsg::WantAddon { sha }.write(&mut w);
         self.channel.send_reliable(w.buf);
     }
 
@@ -360,6 +376,31 @@ impl ClientNet {
                     ServerMsg::Addon { name, data, .. } => self.addon_msgs.push((name, data)),
                     ServerMsg::Cvar { name, value, .. } => {
                         self.world.cvars.insert(name, value);
+                    }
+                    ServerMsg::Addons { list } => self.server_addons = list,
+                    ServerMsg::AddonChunk {
+                        sha,
+                        offset,
+                        total,
+                        data,
+                    } => {
+                        const CAP: u64 = 64 << 20;
+                        if total > CAP {
+                            continue;
+                        }
+                        let (t, buf) = self
+                            .downloading
+                            .entry(sha)
+                            .or_insert_with(|| (total, Vec::with_capacity(total as usize)));
+                        if *t != total || buf.len() as u64 != offset {
+                            self.downloading.remove(&sha);
+                            continue;
+                        }
+                        buf.extend_from_slice(&data);
+                        if buf.len() as u64 >= total {
+                            let (_, bytes) = self.downloading.remove(&sha).unwrap();
+                            self.downloaded.push((sha, bytes));
+                        }
                     }
                     ServerMsg::CommandAck { seq } => {
                         self.acked_commands = self.acked_commands.max(seq + 1);

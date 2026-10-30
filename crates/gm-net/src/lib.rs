@@ -12,7 +12,7 @@ pub mod wire;
 
 pub use client::{ClientNet, ClientWorld, Interpolator, Prediction};
 pub use msg::EntityState;
-pub use msg::{ClientMsg, Command, NetCmd, ServerMsg};
+pub use msg::{AddonInfo, ClientMsg, Command, NetCmd, ServerMsg};
 pub use server::ServerNet;
 pub use transport::{Loopback, LoopbackEndpoint, Transport, Udp};
 
@@ -145,5 +145,42 @@ mod tests {
         // a duplicate (resent before the ack arrived) is dropped by id
         let got = b.receive(&p2).unwrap();
         assert_eq!(got, vec![b"u1".to_vec()]);
+    }
+
+    #[test]
+    fn long_reliable_messages_arrive_whole_and_in_order_over_loss_within_the_packet_budget() {
+        use crate::channel::{MAX_BURST, MAX_PACKET};
+        let (mut a, mut b) = (Channel::default(), Channel::default());
+        let big: Vec<u8> = (0..50_000u32).map(|i| (i * 7 % 251) as u8).collect();
+        a.send_reliable(b"first".to_vec());
+        a.send_reliable(big.clone());
+        a.send_reliable(b"last".to_vec());
+        let mut got = Vec::new();
+        let mut rng = 11u64;
+        let mut ticks = 0;
+        while got.len() < 3 {
+            ticks += 1;
+            assert!(ticks < 200, "transfer did not finish");
+            let burst = a.build_burst(&[b"snap".to_vec()]);
+            assert!(burst.len() <= MAX_BURST);
+            for p in burst {
+                assert!(p.len() <= MAX_PACKET, "{} bytes", p.len());
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                if rng.is_multiple_of(5) {
+                    continue; // lost
+                }
+                got.extend(b.receive(&p).unwrap().into_iter().filter(|m| m != b"snap"));
+            }
+            a.receive(&b.build(&[])).unwrap();
+        }
+        assert_eq!(got, vec![b"first".to_vec(), big, b"last".to_vec()]);
+        while a.pending_reliable() > 0 {
+            for p in a.build_burst(&[]) {
+                b.receive(&p).unwrap();
+            }
+            a.receive(&b.build(&[])).unwrap();
+        }
     }
 }

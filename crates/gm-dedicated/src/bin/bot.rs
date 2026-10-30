@@ -16,6 +16,10 @@ struct Args {
     /// Client-realm addons (directory or .gmr) to run against the assembled world.
     #[arg(long)]
     addon: Vec<std::path::PathBuf>,
+    /// Where downloaded server packages are kept (`<sha256>.gmr`); the client-realm actors of
+    /// every package the server publishes run from here.
+    #[arg(long, default_value = "cache")]
+    cache: std::path::PathBuf,
     /// Model to spawn at tick 100.
     #[arg(long, default_value = "models/props_junk/wood_crate001a.mdl")]
     spawn: String,
@@ -38,6 +42,8 @@ fn main() -> Result<()> {
         );
     }
     let mut last_snapshot_tick = 0u32;
+    let mut addons_seen = false;
+    let mut run_scripts = !args.addon.is_empty();
     let interval = Duration::from_secs_f32(gm_core::tick::DEFAULT_TICK_INTERVAL);
     let mut next = Instant::now();
     let mut welcomed_at = None;
@@ -63,7 +69,52 @@ fn main() -> Result<()> {
             spawned = true;
         }
         client.receive(&mut udp);
-        if !args.addon.is_empty() {
+        if !addons_seen && !client.server_addons.is_empty() {
+            addons_seen = true;
+            for a in client.server_addons.clone() {
+                let path = args
+                    .cache
+                    .join(format!("{}.gmr", gm_net::msg::sha_hex(&a.sha)));
+                let cached = std::fs::read(&path)
+                    .ok()
+                    .and_then(|b| gm_script::Package::read(&b).ok())
+                    .is_some_and(|p| p.sha256 == a.sha);
+                if cached {
+                    match script.load_addon(&path) {
+                        Ok(m) => println!("cached addon {} {} loaded", m.id, m.version),
+                        Err(e) => println!("cached addon {}: {e}", a.id),
+                    }
+                    run_scripts = true;
+                } else {
+                    println!(
+                        "downloading addon {} {} ({} bytes)",
+                        a.id, a.version, a.size
+                    );
+                    client.want_addon(a.sha);
+                }
+            }
+        }
+        for (sha, bytes) in std::mem::take(&mut client.downloaded) {
+            let ok = gm_script::Package::read(&bytes).is_ok_and(|p| p.sha256 == sha);
+            if !ok {
+                println!(
+                    "download {} failed verification",
+                    gm_net::msg::sha_hex(&sha)
+                );
+                continue;
+            }
+            std::fs::create_dir_all(&args.cache)?;
+            let path = args
+                .cache
+                .join(format!("{}.gmr", gm_net::msg::sha_hex(&sha)));
+            std::fs::write(&path, &bytes)?;
+            match script.load_addon(&path) {
+                Ok(m) => println!("downloaded addon {} {} loaded at tick {t}", m.id, m.version),
+                Err(e) => println!("downloaded addon {}: {e}", path.display()),
+            }
+            run_scripts = true;
+        }
+        if run_scripts {
             let fresh = client.server_tick != last_snapshot_tick;
             last_snapshot_tick = client.server_tick;
             script.client_tick(&client.world, fresh);
