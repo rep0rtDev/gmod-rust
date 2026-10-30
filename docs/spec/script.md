@@ -278,6 +278,14 @@ addon refuses the 4th and 5th (2 hits, last on tick 5), three props exist, and t
 refuses the same 4th spawn when asked directly. This is the first piece of the sandbox gamemode
 moving into Luau; undo and cleanup stay in Rust until `entity.removed` consumers need them.
 
+Undo from an actor: `world.queue("undo.push", player, { name = "Contraption", text = ?,
+entities = { ... } })` is the game's `undo.Create` / `AddEntity` / `Finish` for that player: the
+entities become one undo entry (text defaults to `#tool.<name>.name`), are added to the player's
+`props` cleanup list and count against the player's limits; rejected when the player is unknown,
+the list is empty or an entity is gone. `gmod_undo` then removes them and fires `entity.removed`
+for each (test `actor_owned_undo_entry_is_undone_by_the_player`: a weld plus one entry over both
+crates, two bad pushes rejected, the undo empties props and constraints).
+
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,

@@ -267,7 +267,7 @@ fn script_reads_and_writes_players() {
                 world.queue('player.give_weapon', 1, 'weapon_nope')
             end)"
         .into(),
-        config: Default::default(),
+        config: relaxed(),
     })
     .unwrap();
     let before: (i32, i32, bool, usize, String, bool) = {
@@ -321,7 +321,7 @@ fn addon_net_messages_round_trip_over_the_loopback() {
         name: name.into(),
         priority: 0,
         source: source.into(),
-        config: Default::default(),
+        config: relaxed(),
     };
     let mut rt = gm_script::Runtime::new();
     rt.load(spec(
@@ -398,7 +398,7 @@ fn cvars_create_set_clamp_replicate_and_change_events() {
         name: name.into(),
         priority: 0,
         source: source.into(),
-        config: Default::default(),
+        config: relaxed(),
     };
     let mut rt = gm_script::Runtime::new();
     rt.load(spec(
@@ -548,4 +548,66 @@ fn sandbox_rules_addon_refuses_at_the_sandbox_limit() {
     assert_eq!(tick, 5);
     // the Rust sandbox agrees: with the addon out of the way the 4th spawn is refused by it
     assert!(server.spawn_prop(1, crate_model).is_none());
+}
+
+#[test]
+fn actor_owned_undo_entry_is_undone_by_the_player() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.add_player(
+        1,
+        glam::Vec3::new(823.235, -500.0, -143.0),
+        glam::Vec3::new(30.0, 0.0, 0.0),
+    );
+    let crate_model = "models/props_junk/wood_crate001a.mdl";
+    let e1 = server.spawn_prop(1, crate_model).unwrap();
+    server.teleport_player(1, glam::Vec3::new(823.235, -400.0, -143.0));
+    let e2 = server.spawn_prop(1, crate_model).unwrap();
+    let undos_before = server.sandbox.undos(1).len();
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "builder".into(),
+        priority: 0,
+        source: format!(
+            "events.on('tick.pre', function()
+                if state.done then return end
+                state.done = true
+                world.queue('weld', {e1}, {{ ent2 = {e2} }})
+                world.queue('undo.push', 1, {{ name = 'Contraption', entities = {{ {e1}, {e2} }} }})
+                world.queue('undo.push', 7, {{ name = 'Nope', entities = {{ {e1} }} }})
+                world.queue('undo.push', 1, {{ name = 'Gone', entities = {{ 9999 }} }})
+            end)"
+        ),
+        config: relaxed(),
+    })
+    .unwrap();
+    let applied = rt.pre_tick(&mut server);
+    assert_eq!((applied.writes, applied.rejected), (2, 2), "{applied:?}");
+    assert_eq!(server.sandbox.undos(1).len(), undos_before + 1);
+    server.undo(1);
+    assert_eq!(
+        server.sandbox.props().len(),
+        0,
+        "the contraption entry removed both crates"
+    );
+    assert_eq!(server.sandbox.constraints().len(), 0);
+}
+
+/// The default 2 ms budget is for a game tick; under the parallel test load it can abort a
+/// handler on its first dispatch, which these tests would read as "no writes".
+fn relaxed() -> gm_script::ActorConfig {
+    gm_script::ActorConfig {
+        cpu_budget: std::time::Duration::from_millis(500),
+        ..Default::default()
+    }
 }

@@ -116,6 +116,15 @@ pub enum QueuedWrite {
         name: String,
         value: String,
     },
+    /// `undo.Create/AddEntity/Finish` for a player: the entities become undoable and cleanable by
+    /// that player and count against the player's limits (rejected when the player is unknown
+    /// or an entity is gone).
+    UndoPush {
+        player: u32,
+        name: String,
+        text: String,
+        entities: Vec<u32>,
+    },
 }
 
 /// Shared between the Rust side of an actor and the closures its VM calls.
@@ -504,6 +513,20 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     ent,
                     ent2: table_arg(&arg)?.get::<Option<u32>>("ent2")?.unwrap_or(0),
                 },
+                "undo.push" => {
+                    let t = table_arg(&arg)?;
+                    let name = t
+                        .get::<Option<String>>("name")?
+                        .unwrap_or_else(|| "Prop".into());
+                    QueuedWrite::UndoPush {
+                        player: ent,
+                        text: t
+                            .get::<Option<String>>("text")?
+                            .unwrap_or_else(|| format!("#tool.{}.name", name.to_lowercase())),
+                        name,
+                        entities: t.get::<Option<Vec<u32>>>("entities")?.unwrap_or_default(),
+                    }
+                }
                 "player.teleport" => QueuedWrite::PlayerTeleport {
                     player: ent,
                     pos: table_vec3(&table_arg(&arg)?)?,
@@ -1000,6 +1023,27 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         }
         QueuedWrite::PlayerGiveWeapon { player, class } => server.give_weapon(*player, class),
         QueuedWrite::PlayerSelectWeapon { player, class } => server.select_weapon(*player, class),
+        QueuedWrite::UndoPush {
+            player,
+            name,
+            text,
+            entities,
+        } => {
+            if !server.players.contains_key(player)
+                || entities.is_empty()
+                || entities.iter().any(|e| !exists(server, *e))
+            {
+                return false;
+            }
+            server
+                .sandbox
+                .push_undo(*player, name, text.clone(), None, entities.clone());
+            for e in entities {
+                server.sandbox.add_count(*player, "props", *e);
+                server.sandbox.add_cleanup(*player, "props", *e);
+            }
+            true
+        }
         QueuedWrite::CreateCvar { name, cvar } => server.create_cvar(name, cvar.clone()),
         QueuedWrite::SetCvar { name, value } => server.set_cvar(name, value),
         QueuedWrite::NoCollide { ent, ent2 } => {
