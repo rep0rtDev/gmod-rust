@@ -1,0 +1,9 @@
+id = "remover_lua"
+version = "0.1.0"
+priority = 0
+realms = ["server"]
+capabilities = ["world-read", "world-write"]
+
+[[actors]]
+name = "tools"
+source = "src/tools.luau"

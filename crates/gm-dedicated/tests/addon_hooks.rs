@@ -673,3 +673,67 @@ fn actor_constraints_with_an_owner_follow_the_player_limits_and_undo() {
         "undoing the weld keeps the crates"
     );
 }
+
+#[test]
+fn remover_tool_in_luau_removes_the_hit_prop_and_fires_entity_removed() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.add_player(
+        1,
+        glam::Vec3::new(823.235, -500.0, -143.0),
+        glam::Vec3::new(30.0, 0.0, 0.0),
+    );
+    let crate_model = "models/props_junk/wood_crate001a.mdl";
+    let ent = server.spawn_prop(1, crate_model).unwrap();
+    for _ in 0..10 {
+        server.tick(&BTreeMap::new());
+    }
+    let mut rt = gm_script::Runtime::new();
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../addons/examples/remover_lua");
+    rt.load_addon(&root).unwrap();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "watch".into(),
+        priority: 1,
+        source: "state.gone = {}
+            events.on('entity.removed', function(p) table.insert(state.gone, p.entity) end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let gm_server::ToolClick::Unknown(hit) = server.tool_click_full(1, "remover_lua", false) else {
+        panic!("the remover is not a Rust stool");
+    };
+    assert_eq!(hit.ent, Some(ent), "the crate is under the crosshair");
+    let n = server.events.len();
+    assert!(rt.tool_click(&mut server, 1, "remover_lua", &hit, false));
+    assert_eq!(server.sandbox.props().len(), 0);
+    let removed: Vec<u32> = server.events[n..]
+        .iter()
+        .filter_map(|e| match e {
+            gm_sandbox::Event::Removed { prop } => Some(*prop),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(removed, vec![ent]);
+    for e in removed {
+        rt.entity_removed(&mut server, 1, e);
+    }
+    let gone: Vec<u32> = rt.actors()[1].eval("return state.gone").unwrap();
+    assert_eq!(gone, vec![ent]);
+    // a click on the world does nothing
+    assert!(matches!(
+        server.tool_click_full(1, "remover_lua", false),
+        gm_server::ToolClick::Unknown(_)
+    ));
+}

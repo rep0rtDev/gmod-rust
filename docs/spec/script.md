@@ -293,6 +293,12 @@ and joins the player's `constraints` cleanup list, exactly what the tool does; `
 absent keeps the server-owned behaviour. Unknown owner: rejected. Test
 `actor_constraints_with_an_owner_follow_the_player_limits_and_undo`.
 
+Tool op `remove` (`{ op = "remove", ent = ? }`, 0 or absent = the hit entity): the remover
+stool in Luau (`addons/examples/remover_lua`): the prop leaves the table, `Event::Removed` is
+recorded so `entity.removed` reaches the actors, no undo entry (the game's remover makes none);
+the world or a gone entity is a no-op. Test
+`remover_tool_in_luau_removes_the_hit_prop_and_fires_entity_removed`.
+
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,

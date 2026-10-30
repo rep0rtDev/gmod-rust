@@ -40,6 +40,10 @@ pub enum ToolOp {
     Rope,
     /// `constraint.Axis` between the two stored tool objects (align, 0.2 u offset, hinge).
     Axis,
+    /// The remover stool: `ent` (0 = the hit entity) leaves the table, `EntityRemoved` fires.
+    Remove {
+        ent: u32,
+    },
 }
 
 /// A write an actor asked for; applied in the serial phase.
@@ -861,6 +865,9 @@ pub fn tool_ops(v: Value) -> Result<Vec<ToolOp>> {
             },
             "rope" => ToolOp::Rope,
             "axis" => ToolOp::Axis,
+            "remove" => ToolOp::Remove {
+                ent: t.get::<Option<u32>>("ent")?.unwrap_or(0),
+            },
             "nocollide" => ToolOp::NoCollide {
                 ent1: t.get::<Option<u32>>("ent1")?.unwrap_or(0),
                 ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
@@ -933,6 +940,17 @@ pub fn apply_tool_ops(
             ToolOp::Axis => {
                 did = true;
                 server.sandbox.finish_axis(player, &mut events);
+            }
+            ToolOp::Remove { ent } => {
+                let target = if *ent == 0 {
+                    hit.ent.unwrap_or(0)
+                } else {
+                    *ent
+                };
+                if target != 0 && server.remove_prop(target) {
+                    did = true;
+                    events.push(gm_sandbox::Event::Removed { prop: target });
+                }
             }
             ToolOp::NoCollide { ent1, ent2, undo } => {
                 did = true;
