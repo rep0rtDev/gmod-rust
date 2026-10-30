@@ -122,6 +122,8 @@ pub struct PlayerSnap {
     pub velocity: Vec3,
     pub view_angles: Vec3,
     pub ducked: bool,
+    /// Standing on something (false in the air: jump / fall animation).
+    pub on_ground: bool,
     pub held: Option<u32>,
     pub alive: bool,
     pub health: i16,
@@ -638,6 +640,7 @@ impl ServerMsg {
                     w.qvel(p.velocity, VEL_SCALE);
                     w.qang(p.view_angles);
                     w.bool(p.ducked);
+                    w.bool(p.on_ground);
                     w.u32(p.held.unwrap_or(0));
                     w.bool(p.alive);
                     w.i16(p.health);
@@ -776,6 +779,7 @@ impl ServerMsg {
                         velocity: r.qvel(VEL_SCALE)?,
                         view_angles: r.qang()?,
                         ducked: r.bool()?,
+                        on_ground: r.bool()?,
                         held: match r.u32()? {
                             0 => None,
                             h => Some(h),

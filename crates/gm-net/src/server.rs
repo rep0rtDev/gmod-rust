@@ -832,6 +832,7 @@ impl ServerNet {
                 velocity: p.state.velocity,
                 view_angles: p.view_angles,
                 ducked: p.state.ducked,
+                on_ground: p.state.on_ground,
                 held: p.held.map(|h| h.0),
                 alive: p.alive,
                 health: p.health.clamp(i16::MIN as i32, i16::MAX as i32) as i16,

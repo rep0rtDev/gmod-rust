@@ -255,6 +255,9 @@ const PLAYER_RUN_SPEED: f32 = 150.0;
 /// facing (Source's `move_x = cos`, `move_y = -sin` of the movement yaw), crouch variants.
 fn player_sequence(p: &PlayerSnap) -> (&'static str, Vec<(&'static str, f32)>) {
     let speed = p.velocity.truncate().length();
+    if !p.on_ground {
+        return ("jump_fist", Vec::new());
+    }
     if speed < 0.5 {
         return (
             if p.ducked { "cidle_all" } else { "idle_all_01" },
@@ -340,6 +343,8 @@ struct App {
     vm_anim: Option<(&'static str, Instant)>,
     /// The server was told our starting weapon once we were in the world.
     weapon_synced: bool,
+    /// When each airborne player left the ground (their jump sequence runs from there).
+    air_since: std::collections::HashMap<u32, Instant>,
     grabbed: bool,
     last: Instant,
     acc: f32,
@@ -587,6 +592,7 @@ impl App {
         }
         let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
         let now = self.fps_at.elapsed().as_secs_f32();
+        let air_since = &mut self.air_since;
         let mut player_poses: Vec<(Vec3, f32, Option<Vec<glam::Mat4>>)> = Vec::new();
         let mut items: Vec<_> = ents
             .values()
@@ -615,7 +621,18 @@ impl App {
             match player_model {
                 Some(m) => {
                     let (seq, params) = player_sequence(p);
-                    let pose = m.pose_with(seq, now, &params);
+                    // a one-shot (jump) runs from the moment the player left the ground
+                    let t = if p.on_ground {
+                        air_since.remove(&p.id);
+                        now
+                    } else {
+                        air_since
+                            .entry(p.id)
+                            .or_insert(Instant::now())
+                            .elapsed()
+                            .as_secs_f32()
+                    };
+                    let pose = m.pose_with(seq, t, &params);
                     let (origin, yaw) = match self.sim.player_interp.sample(p.id, rt) {
                         Some(s) => (s.pos, s.angles.y),
                         None => (p.origin, p.view_angles.y),
@@ -1112,6 +1129,7 @@ fn main() -> Result<()> {
         weapon: 0,
         vm_anim: None,
         weapon_synced: false,
+        air_since: Default::default(),
         grabbed: false,
         last: Instant::now(),
         acc: 0.0,
