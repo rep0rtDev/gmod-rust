@@ -320,8 +320,10 @@ fn hold_type(active: u8) -> &'static str {
 fn player_sequence(p: &PlayerSnap) -> (String, Vec<(&'static str, f32)>) {
     let speed = p.velocity.truncate().length();
     let hold = hold_type(p.active);
+    // the aim layers of every sequence follow the eye pitch; the body faces the eye yaw
+    let mut params = vec![("aim_pitch", p.view_angles.x), ("aim_yaw", 0.0)];
     if !p.on_ground {
-        return (format!("jump_{hold}"), Vec::new());
+        return (format!("jump_{hold}"), params);
     }
     if speed < 0.5 {
         let seq = match (p.ducked, hold) {
@@ -330,10 +332,10 @@ fn player_sequence(p: &PlayerSnap) -> (String, Vec<(&'static str, f32)>) {
             (false, "fist") => "idle_all_01".to_string(),
             (false, _) => format!("idle_{hold}"),
         };
-        return (seq, Vec::new());
+        return (seq, params);
     }
     let yaw = p.velocity.y.atan2(p.velocity.x) - p.view_angles.y.to_radians();
-    let params = vec![("move_x", yaw.cos()), ("move_y", -yaw.sin())];
+    params.extend([("move_x", yaw.cos()), ("move_y", -yaw.sin())]);
     let seq = match (p.ducked, speed > PLAYER_RUN_SPEED, hold) {
         (true, _, "fist") => "cwalk_all".to_string(),
         (true, _, _) => format!("cwalk_{hold}"),
@@ -1206,10 +1208,11 @@ impl App {
                 let id = 1000 + self.sim.server.players.len() as u32;
                 let yaw = self.view.y.to_radians();
                 let fwd = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+                let pitch = rest.first().and_then(|a| a.parse().ok()).unwrap_or(0.0);
                 self.sim.server.add_player(
                     id,
                     self.sim.origin + fwd * 96.0,
-                    Vec3::new(0.0, self.view.y + 180.0, 0.0),
+                    Vec3::new(pitch, self.view.y + 180.0, 0.0),
                 );
                 self.console.log(format!("bot {id} added"));
             }

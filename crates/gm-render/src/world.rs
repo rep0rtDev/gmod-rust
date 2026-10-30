@@ -371,6 +371,7 @@ impl AnimSource {
         seq: &gm_formats::mdl::Sequence,
         cycle: f32,
         params: &[(&str, f32)],
+        delta: bool,
     ) -> Option<LocalPose> {
         let (x, fx) = seq.grid_pos(0, self.param(seq.param[0], params));
         let (y, fy) = seq.grid_pos(1, self.param(seq.param[1], params));
@@ -392,7 +393,7 @@ impl AnimSource {
             else {
                 continue;
             };
-            let Some(pose) = self.frame_pose(anim, cycle, false) else {
+            let Some(pose) = self.frame_pose(anim, cycle, delta) else {
                 continue;
             };
             total += w;
@@ -569,7 +570,7 @@ impl DynModel {
         } else {
             (f / frames as f32).min(1.0)
         };
-        let mut local = src.blended(seq, cycle, params)?;
+        let mut local = src.blended(seq, cycle, params, false)?;
         // layers: delta animations added with the layer's weight at this cycle
         for layer in &seq.autolayers {
             if layer.flags & 0x4000 != 0 {
@@ -590,7 +591,8 @@ impl DynModel {
             } else {
                 cycle
             };
-            let Some(delta) = src.frame_pose(lanim, lcycle, true) else {
+            // the layer's own blend grid (aim layers: 3x3 over aim_yaw / aim_pitch)
+            let Some(delta) = src.blended(lseq, lcycle, params, true) else {
                 continue;
             };
             for ((pos, quat), (dpos, dquat)) in local.iter_mut().zip(&delta) {
