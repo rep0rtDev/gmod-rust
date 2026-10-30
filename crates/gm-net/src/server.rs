@@ -851,6 +851,8 @@ impl ServerNet {
                             .get(d.ammo2)
                             .map_or(0, |a| (*a).clamp(0, i16::MAX as i32) as i16)
                     }),
+                vm_act: p.inventory.vm_act as u8,
+                vm_serial: p.inventory.vm_serial,
             })
             .collect();
         for (&endpoint, slot) in self.clients.iter_mut() {

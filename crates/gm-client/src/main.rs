@@ -176,6 +176,10 @@ struct Viewmodel {
     reload: Option<&'static str>,
     /// Secondary fire sequence; `None` for weapons without one (the right click does nothing).
     alt: Option<&'static str>,
+    /// Pump after a shot (shotgun) and dry fire on an empty clip: played on the server's
+    /// viewmodel events (`PlayerSnap::vm_act`), not guessed from the buttons.
+    pump: Option<&'static str>,
+    dry: Option<&'static str>,
 }
 
 const fn vm(
@@ -196,6 +200,8 @@ const fn vm(
         hold: None,
         reload: None,
         alt: None,
+        pump: None,
+        dry: None,
     }
 }
 
@@ -230,6 +236,7 @@ const WEAPONS: [Viewmodel; 10] = [
     ),
     Viewmodel {
         reload: Some("reload"),
+        dry: Some("fireempty"),
         ..vm(
             "weapon_pistol",
             "pistol",
@@ -253,6 +260,7 @@ const WEAPONS: [Viewmodel; 10] = [
     Viewmodel {
         alt: Some("altfire"),
         reload: Some("reload"),
+        dry: Some("dryfire"),
         ..vm(
             "weapon_smg1",
             "smg",
@@ -276,6 +284,8 @@ const WEAPONS: [Viewmodel; 10] = [
     Viewmodel {
         alt: Some("altfire"),
         reload: Some("reload1"),
+        pump: Some("pump"),
+        dry: Some("dryfire"),
         ..vm(
             "weapon_shotgun",
             "shotgun",
@@ -438,6 +448,8 @@ struct App {
     tool: String,
     /// One-shot viewmodel sequence playing (draw, fire) and when it started.
     vm_anim: Option<(&'static str, Instant)>,
+    /// `PlayerSnap::vm_serial` of the last server viewmodel event played.
+    vm_serial_seen: u8,
     /// The server was told our starting weapon once we were in the world.
     weapon_synced: bool,
     /// When each airborne player left the ground (their jump sequence runs from there).
@@ -604,6 +616,21 @@ impl App {
     /// Sequence and time for the viewmodel this frame: the one-shot sequence while it lasts,
     /// then the hold sequence while a prop is held, else idle.
     fn vm_sequence(&mut self, vm: &Viewmodel) -> (&'static str, f32) {
+        // server-decided events: reload (manual, empty clip, automatic), pump, dry fire
+        if let Some((act, serial)) = self.local_snap().map(|p| (p.vm_act, p.vm_serial)) {
+            if serial != self.vm_serial_seen {
+                self.vm_serial_seen = serial;
+                let seq = match act {
+                    1 => vm.reload,
+                    2 => vm.pump,
+                    3 => vm.dry,
+                    _ => None,
+                };
+                if let Some(seq) = seq {
+                    self.vm_anim = Some((seq, Instant::now()));
+                }
+            }
+        }
         let model = self
             .gfx
             .as_ref()
@@ -1402,19 +1429,6 @@ impl ApplicationHandler for App {
                             })
                         }
                         // the reload animation when the clip can take rounds from the reserve
-                        KeyCode::KeyR => {
-                            if let Some((vm, seq)) =
-                                viewmodel(self.weapon).and_then(|vm| Some((vm, vm.reload?)))
-                            {
-                                let full =
-                                    gm_server::weapons::def(vm.class).map_or(-1, |d| d.clip1);
-                                if let Some(p) = self.local_snap() {
-                                    if p.clip >= 0 && (p.clip as i32) < full && p.reserve > 0 {
-                                        self.vm_anim = Some((seq, Instant::now()));
-                                    }
-                                }
-                            }
-                        }
                         _ => {}
                     }
                 }
@@ -1469,10 +1483,14 @@ impl ApplicationHandler for App {
                             });
                         }
                         if let Some(vm) = viewmodel(self.weapon) {
-                            // left: the attack; right: the secondary fire where the weapon
+                            // left: the attack unless the clip is empty (the server's dry fire
+                            // event plays then); right: the secondary fire where the weapon
                             // has one (the physgun's right click only acts while holding)
+                            let empty = self.local_snap().is_some_and(|p| p.clip == 0);
                             if b == 0 {
-                                self.vm_anim = Some((vm.fire, Instant::now()));
+                                if !empty {
+                                    self.vm_anim = Some((vm.fire, Instant::now()));
+                                }
                             } else if let Some(alt) = vm.alt {
                                 self.vm_anim = Some((alt, Instant::now()));
                             }
@@ -1576,6 +1594,7 @@ fn main() -> Result<()> {
         weapon: 0,
         tool: "weld".to_string(),
         vm_anim: None,
+        vm_serial_seen: 0,
         weapon_synced: false,
         air_since: Default::default(),
         anim_time: Default::default(),

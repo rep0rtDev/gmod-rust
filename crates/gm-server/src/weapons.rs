@@ -523,6 +523,27 @@ pub struct Inventory {
     pub swung: bool,
     /// A `rearm_after_reload` refill happened last tick.
     pub rearm: bool,
+    /// Last viewmodel event the client cannot predict from its own buttons, with a serial that
+    /// changes on every new one (the snapshot carries both).
+    pub vm_act: VmAct,
+    pub vm_serial: u8,
+}
+
+/// Viewmodel events the server decides: a reload starting (manual, empty clip with the button
+/// up, the crossbow's automatic one), the shotgun pump, a dry fire on an empty clip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum VmAct {
+    #[default]
+    None = 0,
+    Reload = 1,
+    Pump = 2,
+    Dry = 3,
+}
+
+fn vm_event(slot: &mut VmAct, serial: &mut u8, act: VmAct) {
+    *slot = act;
+    *serial = serial.wrapping_add(1);
 }
 
 /// Bullets fired by one trigger pull.
@@ -616,6 +637,7 @@ impl Inventory {
                 if *n >= after {
                     self.since_shot = None;
                     self.reloading = true;
+                    vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Reload);
                     self.busy = true;
                     self.next_primary = time;
                     self.next_secondary = time;
@@ -675,6 +697,7 @@ impl Inventory {
             }
             self.need_pump = false;
             self.next_primary = f.pump.unwrap_or(0.0);
+            vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Pump);
             return None;
         }
         if buttons & IN_RELOAD != 0
@@ -684,6 +707,7 @@ impl Inventory {
         {
             self.reloading = true;
             self.busy = true;
+            vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Reload);
             self.next_primary = f.reload.unwrap_or(0.0);
             self.next_secondary = self.next_primary;
             self.soonest_primary = self.next_primary;
@@ -696,6 +720,7 @@ impl Inventory {
             }
             if pressed {
                 if let Some((timer, gate)) = f.dry_fire {
+                    vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Dry);
                     self.next_primary = timer;
                     self.soonest_primary = gate;
                     self.pistol_relaxed = false;
@@ -703,6 +728,7 @@ impl Inventory {
             } else if f.reload.is_some() && self.ammo.get(w.ammo1).copied().unwrap_or(0) > 0 {
                 self.reloading = true;
                 self.busy = true;
+                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Reload);
                 self.next_primary = f.reload.unwrap_or(0.0);
                 self.next_secondary = self.next_primary;
                 self.soonest_primary = self.next_primary;
@@ -1149,4 +1175,101 @@ pub fn sequence_pose(
             })
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod vm_event_tests {
+    use super::*;
+
+    /// One server tick: the command, then the timers.
+    fn step(inv: &mut Inventory, class: &str, buttons: u32) -> Option<Shot> {
+        let shot = inv.command(class, buttons);
+        inv.tick(class);
+        shot
+    }
+
+    fn settle(inv: &mut Inventory, class: &str) {
+        for _ in 0..200 {
+            step(inv, class, 0);
+        }
+    }
+
+    #[test]
+    fn shotgun_pumps_once_the_cycle_expired() {
+        let class = "weapon_shotgun";
+        let mut inv = Inventory::default();
+        inv.give_loadout();
+        inv.select(class);
+        settle(&mut inv, class);
+        let serial = inv.vm_serial;
+        assert!(
+            step(&mut inv, class, IN_ATTACK).is_some(),
+            "the shot leaves"
+        );
+        let mut ticks = 1;
+        while inv.vm_serial == serial {
+            step(&mut inv, class, 0);
+            ticks += 1;
+            assert!(ticks < 100, "no pump event");
+        }
+        assert_eq!(inv.vm_act, VmAct::Pump);
+        // the cycle (0.3333 s) runs out, then the pump starts: 22-23 ticks
+        assert!((22..=24).contains(&ticks), "pump after {ticks} ticks");
+        assert_eq!(inv.clip(class)[0], 5);
+    }
+
+    #[test]
+    fn pistol_dry_fires_while_held_and_reloads_on_release() {
+        let class = "weapon_pistol";
+        let mut inv = Inventory::default();
+        inv.give_loadout();
+        inv.select(class);
+        settle(&mut inv, class);
+        for _ in 0..17 {
+            assert!(step(&mut inv, class, IN_ATTACK).is_some());
+            for _ in 0..10 {
+                step(&mut inv, class, 0);
+            }
+        }
+        // the last shot with the button kept down: the clip is empty, the cycle (0.5 s) runs
+        // out, then a dry fire, and another when its 0.4 s timer expires
+        assert!(step(&mut inv, class, IN_ATTACK).is_some());
+        assert_eq!(inv.clip(class)[0], 0);
+        let serial = inv.vm_serial;
+        let mut ticks = 1;
+        while inv.vm_serial == serial {
+            step(&mut inv, class, IN_ATTACK);
+            ticks += 1;
+            assert!(ticks < 100, "no dry fire event");
+        }
+        assert_eq!(inv.vm_act, VmAct::Dry);
+        assert!((33..=35).contains(&ticks), "dry fire after {ticks} ticks");
+        for _ in 0..30 {
+            step(&mut inv, class, IN_ATTACK);
+        }
+        assert_eq!(
+            (inv.vm_act, inv.vm_serial),
+            (VmAct::Dry, serial.wrapping_add(2))
+        );
+        // released: the empty clip reloads from the reserve once the dry fire timer expired
+        let mut ticks = 0;
+        while inv.vm_act != VmAct::Reload {
+            step(&mut inv, class, 0);
+            ticks += 1;
+            assert!(ticks < 100, "no reload event");
+        }
+        assert_eq!(inv.vm_serial, serial.wrapping_add(3));
+        assert_eq!(
+            inv.clip(class)[0],
+            0,
+            "the clip fills when the reload ends, not at its start"
+        );
+        settle(&mut inv, class);
+        assert_eq!(inv.clip(class)[0], 18);
+        assert_eq!(
+            inv.vm_serial,
+            serial.wrapping_add(3),
+            "the refill is not an event"
+        );
+    }
 }

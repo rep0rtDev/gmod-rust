@@ -138,6 +138,10 @@ pub struct PlayerSnap {
     pub reserve: i16,
     /// Secondary ammo (AR2 balls, SMG grenades), -1 for weapons without one.
     pub alt: i16,
+    /// Server-decided viewmodel event (`gm_server::weapons::VmAct` as u8) and its serial: the
+    /// client plays the sequence when the serial changes.
+    pub vm_act: u8,
+    pub vm_serial: u8,
 }
 
 /// Weapon class names to the registry bitmask and back.
@@ -655,6 +659,8 @@ impl ServerMsg {
                     w.i16(p.clip);
                     w.i16(p.reserve);
                     w.i16(p.alt);
+                    w.u8(p.vm_act);
+                    w.u8(p.vm_serial);
                 }
                 w.varint(entities.len() as u64);
                 for e in entities {
@@ -800,6 +806,8 @@ impl ServerMsg {
                         clip: r.i16()?,
                         reserve: r.i16()?,
                         alt: r.i16()?,
+                        vm_act: r.u8()?,
+                        vm_serial: r.u8()?,
                     });
                 }
                 let n = r.varint()? as usize;
