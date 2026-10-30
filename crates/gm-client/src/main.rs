@@ -814,6 +814,65 @@ impl App {
                 text: hud,
                 color: white,
             });
+            // sandbox HUD: health and suit boxes at the bottom left
+            let me = self.sim.client.player_id;
+            if let Some(p) = self
+                .sim
+                .client
+                .world
+                .players
+                .iter()
+                .find(|p| Some(p.id) == me)
+            {
+                let box_h = lh * 2.0 + 16.0;
+                let box_w = 150.0;
+                let y = h - box_h - 20.0;
+                let mut x = 20.0;
+                let boxes: [(&str, i16, bool); 2] =
+                    [("Health", p.health, true), ("Suit", p.armor, p.armor > 0)];
+                for (label, value, shown) in boxes {
+                    if !shown {
+                        continue;
+                    }
+                    items.push(UiItem::Rect {
+                        x,
+                        y,
+                        w: box_w,
+                        h: box_h,
+                        color: [0.0, 0.0, 0.0, 0.5],
+                    });
+                    items.push(UiItem::Text {
+                        x: x + 12.0,
+                        y: y + 6.0,
+                        text: label.to_string(),
+                        color: [0.85, 0.85, 0.85, 0.9],
+                    });
+                    let bar_w = box_w - 24.0;
+                    let frac = (value.max(0) as f32 / 100.0).min(1.0);
+                    items.push(UiItem::Rect {
+                        x: x + 12.0,
+                        y: y + lh + 10.0,
+                        w: bar_w,
+                        h: lh - 2.0,
+                        color: [1.0, 1.0, 1.0, 0.12],
+                    });
+                    items.push(UiItem::Rect {
+                        x: x + 12.0,
+                        y: y + lh + 10.0,
+                        w: bar_w * frac,
+                        h: lh - 2.0,
+                        color: [0.6, 0.6, 0.6, 0.6],
+                    });
+                    let text = value.to_string();
+                    items.push(UiItem::Text {
+                        x: x + box_w - 12.0 - g.ui.text_width(&text),
+                        y: y + 6.0,
+                        text,
+                        color: white,
+                    });
+                    x += box_w + 10.0;
+                }
+            }
             return items;
         }
         let panel = (h * 0.5).round();
