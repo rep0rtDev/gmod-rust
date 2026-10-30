@@ -222,6 +222,13 @@ fn menu_layout(w: f32, h: f32, lh: f32) -> (f32, f32, f32, f32, f32) {
     let (px, py) = (((w - pw) / 2.0).round(), ((h - ph) / 2.0).round());
     (px, py, pw, ph, py + lh * 2.0)
 }
+/// The tool settings panel inside the spawn menu: (x, y, width, first row y, row height).
+fn panel_layout(w: f32, h: f32, lh: f32) -> (f32, f32, f32, f32, f32) {
+    let (px, py, pw, _, rows_y) = menu_layout(w, h, lh);
+    let tw = (pw * 0.34).round();
+    (px + pw - tw, py, tw, rows_y, lh * 2.0)
+}
+
 /// GMod's default `viewmodel_fov`.
 const VIEWMODEL_FOV: f32 = 54.0;
 /// Hands drawn on the `c_` viewmodels' arm bones (GMod's default player hands).
@@ -737,11 +744,91 @@ impl App {
         if cx < px || cx > px + pw || cy < rows_y || cy > py + ph - 8.0 {
             return None;
         }
+        if self.panel_schema().is_some() && cx >= panel_layout(w, h, lh).0 {
+            return None;
+        }
         let row = ((cy - rows_y) / lh) as usize + menu.scroll;
         (row < self.spawn_models.len()).then_some(row)
     }
 
+    /// The selected stool's setting schema while the tool gun is out (the panel's content).
+    fn panel_schema(&self) -> Option<Vec<gm_server::ToolSetting>> {
+        if self.weapon != 1 {
+            return None;
+        }
+        Some(
+            self.tool_schema(&self.tool)
+                .map_or_else(Vec::new, <[_]>::to_vec),
+        )
+    }
+
+    /// The panel row under the cursor and the cursor's 0..1 position across its control.
+    fn panel_hit(&self) -> Option<(usize, f32)> {
+        let g = self.gfx.as_ref()?;
+        self.menu.as_ref()?;
+        let (w, h) = (g.config.width as f32, g.config.height as f32);
+        let lh = g.ui.line_height();
+        let (tx, _, tw, rows_y, rh) = panel_layout(w, h, lh);
+        let (cx, cy) = self.cursor;
+        if cx < tx + 8.0 || cx > tx + tw - 8.0 || cy < rows_y {
+            return None;
+        }
+        let row = ((cy - rows_y) / rh) as usize;
+        let t = ((cx - tx - 8.0) / (tw - 16.0)).clamp(0.0, 1.0);
+        Some((row, t))
+    }
+
+    /// A click on the panel: a slider takes the cursor's position, a checkbox flips, text is
+    /// left to the console (`tool <name> <key> <value>`).
+    fn panel_click(&mut self) -> bool {
+        let Some(schema) = self.panel_schema() else {
+            return false;
+        };
+        let Some((row, t)) = self.panel_hit() else {
+            return false;
+        };
+        let Some(s) = schema.get(row) else {
+            return true;
+        };
+        let cur = self
+            .tool_settings
+            .get(&self.tool)
+            .and_then(|m| m.get(&s.name))
+            .cloned()
+            .unwrap_or_else(|| s.default.clone());
+        let value = match s.kind {
+            gm_server::ToolSettingKind::Number => {
+                let (lo, hi) = (s.min.max(-1.0e6), s.max.min(1.0e6));
+                let v = lo + (hi - lo) * t;
+                let v = if (hi - lo) > 20.0 {
+                    v.round()
+                } else {
+                    (v * 100.0).round() / 100.0
+                };
+                v.to_string()
+            }
+            gm_server::ToolSettingKind::Bool => {
+                if matches!(cur.trim(), "1" | "true" | "on") {
+                    "0".into()
+                } else {
+                    "1".into()
+                }
+            }
+            gm_server::ToolSettingKind::Text => return true,
+        };
+        self.console
+            .log(format!("tool {}: {} = {value}", self.tool, s.name));
+        self.tool_settings
+            .entry(self.tool.clone())
+            .or_default()
+            .insert(s.name.clone(), value);
+        true
+    }
+
     fn menu_click(&mut self) {
+        if self.panel_click() {
+            return;
+        }
         if let Some(row) = self.menu_row() {
             let model = self.spawn_models[row].clone();
             if !model.ends_with(".mdl") {
@@ -901,7 +988,7 @@ impl App {
         let alpha = self.acc / gm_core::tick::DEFAULT_TICK_INTERVAL;
         let vm = viewmodel(self.weapon);
         let vm_seq = vm.as_ref().map(|vm| self.vm_sequence(vm));
-        let ghost_tool = (self.weapon == 2).then(|| (self.tool.clone(), self.tool_settings_list()));
+        let ghost_tool = (self.weapon == 1).then(|| (self.tool.clone(), self.tool_settings_list()));
         let Some(g) = &mut self.gfx else { return };
         let frame = match g.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
@@ -1315,6 +1402,108 @@ impl App {
                     text: model.trim_start_matches("models/").to_string(),
                     color: [0.85, 0.85, 0.85, 1.0],
                 });
+            }
+            if let Some(schema) = self.panel_schema() {
+                let (tx, _, tw, rows_y, rh) = panel_layout(w, h, lh);
+                items.push(UiItem::Rect {
+                    x: tx,
+                    y: py,
+                    w: tw,
+                    h: ph,
+                    color: [0.09, 0.09, 0.12, 0.97],
+                });
+                items.push(UiItem::Text {
+                    x: tx + 8.0,
+                    y: py + 6.0,
+                    text: format!("Tool: {}", self.tool),
+                    color: white,
+                });
+                if schema.is_empty() {
+                    items.push(UiItem::Text {
+                        x: tx + 8.0,
+                        y: rows_y,
+                        text: "(no settings; `tool <name>` in the console switches)".into(),
+                        color: [0.6, 0.6, 0.6, 1.0],
+                    });
+                }
+                let hit = self.panel_hit();
+                let set = self.tool_settings.get(&self.tool);
+                for (i, s) in schema.iter().enumerate() {
+                    let y = rows_y + i as f32 * rh;
+                    if y + rh > py + ph - 8.0 {
+                        break;
+                    }
+                    let cur = set
+                        .and_then(|m| m.get(&s.name))
+                        .cloned()
+                        .unwrap_or_else(|| s.default.clone());
+                    if hit.map(|(r, _)| r) == Some(i) {
+                        items.push(UiItem::Rect {
+                            x: tx + 4.0,
+                            y,
+                            w: tw - 8.0,
+                            h: rh,
+                            color: [1.0, 1.0, 1.0, 0.12],
+                        });
+                    }
+                    items.push(UiItem::Text {
+                        x: tx + 8.0,
+                        y,
+                        text: format!("{}: {cur}", s.name),
+                        color: [0.85, 0.85, 0.85, 1.0],
+                    });
+                    let (bx, by, bw) = (tx + 8.0, y + lh + 2.0, tw - 16.0);
+                    match s.kind {
+                        gm_server::ToolSettingKind::Number => {
+                            let (lo, hi) = (s.min.max(-1.0e6), s.max.min(1.0e6));
+                            let v = cur.trim().parse::<f32>().unwrap_or(lo);
+                            let t = if hi > lo {
+                                ((v - lo) / (hi - lo)).clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            };
+                            items.push(UiItem::Rect {
+                                x: bx,
+                                y: by + 5.0,
+                                w: bw,
+                                h: 4.0,
+                                color: [0.35, 0.35, 0.4, 1.0],
+                            });
+                            items.push(UiItem::Rect {
+                                x: bx + t * (bw - 6.0),
+                                y: by,
+                                w: 6.0,
+                                h: 14.0,
+                                color: [0.9, 0.9, 0.9, 1.0],
+                            });
+                        }
+                        gm_server::ToolSettingKind::Bool => {
+                            let on = matches!(cur.trim(), "1" | "true" | "on");
+                            items.push(UiItem::Rect {
+                                x: bx,
+                                y: by,
+                                w: 14.0,
+                                h: 14.0,
+                                color: [0.35, 0.35, 0.4, 1.0],
+                            });
+                            if on {
+                                items.push(UiItem::Rect {
+                                    x: bx + 3.0,
+                                    y: by + 3.0,
+                                    w: 8.0,
+                                    h: 8.0,
+                                    color: [0.9, 0.9, 0.9, 1.0],
+                                });
+                            }
+                        }
+                        gm_server::ToolSettingKind::Text => items.push(UiItem::Text {
+                            x: bx,
+                            y: by,
+                            text: "(console: tool <name> <key> <value>)".into(),
+                            color: [0.6, 0.6, 0.6, 1.0],
+                        }),
+                    }
+                }
             }
             return items;
         }

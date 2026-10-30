@@ -382,8 +382,8 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-fonts/textures/3D2D in `draw`, tool setting panels (only the console sets tool settings),
-ghosts following the stool's own placement rules (the stool computes them in `ghost`), spawn
+fonts/textures/3D2D in `draw`, text settings typed in the panel (console only), slider drag
+(click sets), ghosts following the stool's own placement rules (the stool computes them in `ghost`), spawn
 menu icons, WASM components, +use on players and the +use pickup of small props, the rest of
 the sandbox gamemode in Luau (`PlayerSpawnedProp` ownership rules, `CanProperty`, player
 models, the spawn menu's own lists are done; the gamemode as one package is not).
@@ -499,7 +499,13 @@ to the default when unparsable, bools normalise `1/true/on` and `0/false/off`, k
 does not know pass through, and `tool <name>` in the console lists the schema with the current
 values. Measured (`addon_hooks setting_schema`): a three-setting schema reaches the client in
 one version step; `forcelimit=5000` becomes `1000`, `nocollide=true` becomes `1`, `lots`
-becomes the default `10`. Not yet: panels (sliders, checkboxes) drawn from the schema.
+becomes the default `10`. The native client draws the panel from the schema: with the tool gun
+out, the right third of the held-Q menu lists the selected stool's settings (`Tool: <name>`), a
+number as a slider over `min..=max` (a click sets the value at the cursor, whole numbers when
+the range is wider than 20), a bool as a checkbox that flips on click, a text setting as a row
+pointing to the console; values go into the same per-tool map the clicks send, so the next
+click carries them. `addons/examples/weld_lua` declares `forcelimit` (0..10000) and
+`nocollide` and reads them in its weld op.
 
 ## Tool ghosts
 

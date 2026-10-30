@@ -3,14 +3,21 @@
 -- first click stores the object (stage 1), second click welds object 1 to the hit and clears;
 -- the world is never object 1 twice (constraint.Weld swaps it), reload clears.
 tool.register("weld_lua", {
+    -- the client shows these in the tool panel and sends them with every click (ctx.settings)
+    settings = {
+        { name = "forcelimit", type = "number", min = 0, max = 10000, default = 0 },
+        { name = "nocollide", type = "bool", default = false },
+    },
     left = function(ctx)
         if #ctx.objects == 0 then
             return { { op = "set_object" } }
         end
         local ent1 = ctx.objects[1].ent
         local ent2 = ctx.hit.ent
+        local forcelimit = tonumber(ctx.settings.forcelimit) or 0
+        local nocollide = ctx.settings.nocollide == "1"
         return {
-            { op = "weld", ent1 = ent1, ent2 = ent2, forcelimit = 0, nocollide = false, undo = "Weld" },
+            { op = "weld", ent1 = ent1, ent2 = ent2, forcelimit = forcelimit, nocollide = nocollide, undo = "Weld" },
             { op = "clear" },
         }
     end,
