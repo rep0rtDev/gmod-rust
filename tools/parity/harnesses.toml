@@ -827,6 +827,54 @@ ang = 5.0
 contact = 1
 
 [[harness]]
+name = "phys_drop_corner_lockers_5_0_5"
+scenario = "phys/drop_corner_lockers_5_0_5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_drop_corner_lockers_10_0_10"
+scenario = "phys/drop_corner_lockers_10_0_10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_drop_corner_filecab_5_0_5"
+scenario = "phys/drop_corner_filecab_5_0_5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_drop_corner_filecab_10_0_10"
+scenario = "phys/drop_corner_filecab_10_0_10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
 name = "phys_drop_edge_crate"
 scenario = "phys/drop_edge_crate"
 compare = "rigid"
