@@ -501,3 +501,51 @@ fn cvars_create_set_clamp_replicate_and_change_events() {
         "250 clamps to 100 in one change; set to the same value, an unknown name and a second create are rejected"
     );
 }
+
+#[test]
+fn sandbox_rules_addon_refuses_at_the_sandbox_limit() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.add_player(
+        1,
+        glam::Vec3::new(823.235, -500.0, -143.0),
+        glam::Vec3::new(30.0, 0.0, 0.0),
+    );
+    server.set_cvar("sbox_maxprops", "3");
+    let mut rt = gm_script::Runtime::new();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../addons/examples/sandbox_rules");
+    rt.load_addon(&root).unwrap();
+    let crate_model = "models/props_junk/wood_crate001a.mdl";
+    let mut spawned = 0;
+    let idle = BTreeMap::new();
+    for _ in 0..5 {
+        rt.pre_tick(&mut server);
+        if rt.prop_spawn_request(&mut server, 1, crate_model) {
+            if let Some(ent) = server.spawn_prop(1, crate_model) {
+                rt.entity_spawned(&mut server, 1, ent);
+                spawned += 1;
+            }
+        }
+        server.tick(&idle);
+        rt.post_tick(&mut server);
+    }
+    assert_eq!(spawned, 3);
+    assert_eq!(server.sandbox.props().len(), 3);
+    let (hits, tick): (i64, i64) = rt.actors()[0]
+        .eval("return state.hits, state.last_refused.tick")
+        .unwrap();
+    assert_eq!(hits, 2, "the Lua rule refused the 4th and 5th spawn");
+    assert_eq!(tick, 5);
+    // the Rust sandbox agrees: with the addon out of the way the 4th spawn is refused by it
+    assert!(server.spawn_prop(1, crate_model).is_none());
+}

@@ -1,0 +1,10 @@
+id = "sandbox_rules"
+version = "0.1.0"
+priority = 0
+realms = ["server"]
+capabilities = ["world-read", "world-write"]
+
+[[actors]]
+name = "limits"
+source = "src/limits.luau"
+cpu_ms = 2

@@ -267,6 +267,17 @@ is dispatched before and after `tick.post` (code and script sets) and once more 
 `ServerHooks::after_commands`, which the net layer calls after it applied the tick's player
 commands; the 66 events match the game's.
 
+## Sandbox rules in Luau
+
+`addons/examples/sandbox_rules` expresses the prop limit with the API alone: on
+`prop.spawn_request` it counts the player's live props (`world.find()` filtered by `owner`) and
+refuses once `count > sbox_maxprops - 1` (`cvar.get_number`, negative = unlimited), the game's
+`Player:CheckLimit("props")`. Measured (`cargo test -p gm-dedicated --test addon_hooks
+sandbox_rules`): with `sbox_maxprops` 3 and five spawn attempts through the real server the
+addon refuses the 4th and 5th (2 hits, last on tick 5), three props exist, and the Rust sandbox
+refuses the same 4th spawn when asked directly. This is the first piece of the sandbox gamemode
+moving into Luau; undo and cleanup stay in Rust until `entity.removed` consumers need them.
+
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,
