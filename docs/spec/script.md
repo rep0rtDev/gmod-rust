@@ -409,8 +409,7 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-text settings typed in the panel (console only), slider drag
-(click sets), ghosts following the stool's own placement rules (the stool computes them in `ghost`), spawn
+ghosts following the stool's own placement rules (the stool computes them in `ghost`), spawn
 menu icons, WASM components, +use on players and hold-to-use, the rest of the sandbox gamemode
 in Luau (`PlayerSpawnedProp` ownership rules; `CanProperty`, player models, the +use pickup and
 the spawn menu's own lists are done; the gamemode as one package is not).
@@ -528,10 +527,13 @@ values. Measured (`addon_hooks setting_schema`): a three-setting schema reaches 
 one version step; `forcelimit=5000` becomes `1000`, `nocollide=true` becomes `1`, `lots`
 becomes the default `10`. The native client draws the panel from the schema: with the tool gun
 out, the right third of the held-Q menu lists the selected stool's settings (`Tool: <name>`), a
-number as a slider over `min..=max` (a click sets the value at the cursor, whole numbers when
-the range is wider than 20), a bool as a checkbox that flips on click, a text setting as a row
-pointing to the console; values go into the same per-tool map the clicks send, so the next
-click carries them. `addons/examples/weld_lua` declares `forcelimit` (0..10000) and
+number as a slider over `min..=max` (a press sets the value at the cursor and the knob follows
+the cursor until the button is released, even outside the panel; whole numbers when the range
+is wider than 20, else two decimals), a bool as a checkbox that flips on click, a text setting
+as a field: a click gives it the keyboard, typed characters edit it (255 at most), Enter stores
+it, Escape or a click elsewhere drops the edit, closing the menu drops both the edit and a
+drag; values go into the same per-tool map the clicks send, so the next click carries them.
+The console's `tool <name> <key> <value>` still works for all of them. `addons/examples/weld_lua` declares `forcelimit` (0..10000) and
 `nocollide` and reads them in its weld op.
 
 ## Tool ghosts

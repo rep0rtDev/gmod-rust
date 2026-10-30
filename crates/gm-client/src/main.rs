@@ -223,6 +223,19 @@ fn menu_layout(w: f32, h: f32, lh: f32) -> (f32, f32, f32, f32, f32) {
     (px, py, pw, ph, py + lh * 2.0)
 }
 /// The tool settings panel inside the spawn menu: (x, y, width, first row y, row height).
+/// The value a slider at fraction `t` of its track shows: whole numbers when the range is wider
+/// than 20, else two decimals.
+fn slider_value(s: &gm_server::ToolSetting, t: f32) -> String {
+    let (lo, hi) = (s.min.max(-1.0e6), s.max.min(1.0e6));
+    let v = lo + (hi - lo) * t;
+    let v = if (hi - lo) > 20.0 {
+        v.round()
+    } else {
+        (v * 100.0).round() / 100.0
+    };
+    v.to_string()
+}
+
 fn panel_layout(w: f32, h: f32, lh: f32) -> (f32, f32, f32, f32, f32) {
     let (px, py, pw, _, rows_y) = menu_layout(w, h, lh);
     let tw = (pw * 0.34).round();
@@ -608,6 +621,10 @@ struct App {
     spawn_models: Vec<String>,
     spawn_lists_seen: usize,
     cursor: (f32, f32),
+    /// A slider row being dragged (left button held since a press on it).
+    panel_drag: Option<usize>,
+    /// A text row with the keyboard focus and the text typed so far.
+    panel_text: Option<(usize, String)>,
     grabbed: bool,
     last: Instant,
     acc: f32,
@@ -789,18 +806,22 @@ impl App {
         Some((row, t))
     }
 
-    /// A click on the panel: a slider takes the cursor's position, a checkbox flips, text is
-    /// left to the console (`tool <name> <key> <value>`).
+    /// A press on the panel: a slider takes the cursor's position and follows it until the
+    /// button is released, a checkbox flips, a text row takes the keyboard (typed chars edit
+    /// it, Enter or Escape leave it).
     fn panel_click(&mut self) -> bool {
         let Some(schema) = self.panel_schema() else {
             return false;
         };
         let Some((row, t)) = self.panel_hit() else {
+            self.panel_text = None;
             return false;
         };
         let Some(s) = schema.get(row) else {
+            self.panel_text = None;
             return true;
         };
+        self.panel_text = None;
         let cur = self
             .tool_settings
             .get(&self.tool)
@@ -809,14 +830,8 @@ impl App {
             .unwrap_or_else(|| s.default.clone());
         let value = match s.kind {
             gm_server::ToolSettingKind::Number => {
-                let (lo, hi) = (s.min.max(-1.0e6), s.max.min(1.0e6));
-                let v = lo + (hi - lo) * t;
-                let v = if (hi - lo) > 20.0 {
-                    v.round()
-                } else {
-                    (v * 100.0).round() / 100.0
-                };
-                v.to_string()
+                self.panel_drag = Some(row);
+                slider_value(s, t)
             }
             gm_server::ToolSettingKind::Bool => {
                 if matches!(cur.trim(), "1" | "true" | "on") {
@@ -825,14 +840,80 @@ impl App {
                     "1".into()
                 }
             }
-            gm_server::ToolSettingKind::Text => return true,
+            gm_server::ToolSettingKind::Text => {
+                self.panel_text = Some((row, cur));
+                return true;
+            }
         };
+        self.set_tool_setting(&s.name, value);
+        true
+    }
+
+    fn set_tool_setting(&mut self, key: &str, value: String) {
         self.console
-            .log(format!("tool {}: {} = {value}", self.tool, s.name));
+            .log(format!("tool {}: {key} = {value}", self.tool));
         self.tool_settings
             .entry(self.tool.clone())
             .or_default()
-            .insert(s.name.clone(), value);
+            .insert(key.to_string(), value);
+    }
+
+    /// The cursor moved with a slider held: the value follows it (clamped to the row's range,
+    /// the cursor may leave the panel).
+    fn panel_drag_move(&mut self) {
+        let Some(row) = self.panel_drag else { return };
+        if self.menu.is_none() {
+            self.panel_drag = None;
+            return;
+        }
+        let Some(schema) = self.panel_schema() else {
+            return;
+        };
+        let Some(s) = schema.get(row).cloned() else {
+            return;
+        };
+        let Some(g) = self.gfx.as_ref() else { return };
+        let (w, h) = (g.config.width as f32, g.config.height as f32);
+        let (tx, _, tw, _, _) = panel_layout(w, h, g.ui.line_height());
+        let t = ((self.cursor.0 - tx - 8.0) / (tw - 16.0)).clamp(0.0, 1.0);
+        let value = slider_value(&s, t);
+        let same = self
+            .tool_settings
+            .get(&self.tool)
+            .and_then(|m| m.get(&s.name))
+            .is_some_and(|v| *v == value);
+        if !same {
+            self.tool_settings
+                .entry(self.tool.clone())
+                .or_default()
+                .insert(s.name.clone(), value);
+        }
+    }
+
+    /// A key while a text row has the focus; true when the key was taken.
+    fn panel_key(&mut self, code: Option<KeyCode>, text: Option<&str>) -> bool {
+        let Some((row, mut value)) = self.panel_text.take() else {
+            return false;
+        };
+        match code {
+            Some(KeyCode::Enter | KeyCode::NumpadEnter) => {
+                if let Some(s) = self.panel_schema().and_then(|sc| sc.get(row).cloned()) {
+                    self.set_tool_setting(&s.name, value);
+                }
+            }
+            Some(KeyCode::Escape) => {}
+            Some(KeyCode::Backspace) => {
+                value.pop();
+                self.panel_text = Some((row, value));
+            }
+            _ => {
+                if let Some(t) = text {
+                    value.extend(t.chars().filter(|c| !c.is_control()));
+                    value.truncate(255);
+                }
+                self.panel_text = Some((row, value));
+            }
+        }
         true
     }
 
@@ -1556,13 +1637,32 @@ impl App {
                                 });
                             }
                         }
-                        gm_server::ToolSettingKind::Text => items.push(UiItem::Text {
-                            font: None,
-                            x: bx,
-                            y: by,
-                            text: "(console: tool <name> <key> <value>)".into(),
-                            color: [0.6, 0.6, 0.6, 1.0],
-                        }),
+                        gm_server::ToolSettingKind::Text => {
+                            let focused = self.panel_text.as_ref().filter(|(r, _)| *r == i);
+                            let shown = match focused {
+                                Some((_, v)) => format!("{v}_"),
+                                None if cur.is_empty() => "(click to type)".to_string(),
+                                None => cur.clone(),
+                            };
+                            items.push(UiItem::Rect {
+                                x: bx,
+                                y: by - 2.0,
+                                w: bw,
+                                h: 18.0,
+                                color: if focused.is_some() {
+                                    [0.25, 0.3, 0.4, 1.0]
+                                } else {
+                                    [0.2, 0.2, 0.25, 1.0]
+                                },
+                            });
+                            items.push(UiItem::Text {
+                                font: None,
+                                x: bx + 4.0,
+                                y: by - 1.0,
+                                text: shown,
+                                color: [0.9, 0.9, 0.9, 1.0],
+                            });
+                        }
                     }
                 }
             }
@@ -2029,6 +2129,13 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
+                // the held menu key keeps its meaning (and its repeats stay out of the field)
+                if self.menu.is_some() && self.panel_text.is_some() && code != Some(KeyCode::KeyQ) {
+                    if down {
+                        self.panel_key(code, event.text.as_deref());
+                    }
+                    return;
+                }
                 let Some(code) = code else { return };
                 if down && !event.repeat {
                     match code {
@@ -2068,12 +2175,15 @@ impl ApplicationHandler for App {
                     self.keys.remove(&code);
                     if code == KeyCode::KeyQ && self.menu.is_some() {
                         self.menu = None;
+                        self.panel_drag = None;
+                        self.panel_text = None;
                         self.set_grab(true);
                     }
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
+                self.panel_drag_move();
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if let Some(menu) = &mut self.menu {
@@ -2087,6 +2197,9 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state, button, .. } => {
                 if self.console.open {
                     return;
+                }
+                if button == MouseButton::Left && state == ElementState::Released {
+                    self.panel_drag = None;
                 }
                 if self.menu.is_some() {
                     if state == ElementState::Pressed && button == MouseButton::Left {
@@ -2320,6 +2433,8 @@ fn main() -> Result<()> {
         spawn_models: Vec::new(),
         spawn_lists_seen: usize::MAX,
         cursor: (0.0, 0.0),
+        panel_drag: None,
+        panel_text: None,
         grabbed: false,
         last: Instant::now(),
         acc: 0.0,
