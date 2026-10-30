@@ -25,6 +25,8 @@ pub struct SavedProp {
     /// Skin family; absent in files written before skins existed.
     #[serde(default)]
     pub skin: u8,
+    #[serde(default)]
+    pub body: String,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -180,6 +182,7 @@ impl Server<'_> {
                     angles: arr(p.angles),
                     frozen: p.frozen,
                     skin: p.skin,
+                    body: p.body.clone(),
                 })
                 .collect(),
             constraints: self
@@ -222,6 +225,7 @@ impl Server<'_> {
                 p.frozen,
             );
             self.sandbox.set_skin(id, p.skin);
+            self.sandbox.set_body(id, p.body.clone());
             ids.push(Some(id));
         }
         let mut constraints = 0;

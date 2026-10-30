@@ -34,6 +34,8 @@ pub struct Prop {
     pub health: i32,
     /// `Entity:GetSkin`: the skin family drawn (the `skin` property picks it).
     pub skin: u8,
+    /// `Entity:GetBodyGroups` digits, one per body part (empty: all 0).
+    pub body: String,
     /// The `entityflame` on the prop (`Ignite`), in server ticks.
     pub fire: Option<Fire>,
 }
@@ -499,6 +501,7 @@ impl Sandbox {
             upright: None,
             health: 0,
             skin: 0,
+            body: String::new(),
             fire: None,
         });
         id
@@ -640,6 +643,7 @@ impl Sandbox {
             upright: None,
             health: 0,
             skin: 0,
+            body: String::new(),
             fire: None,
         });
         events.push(Event::Spawned { prop: id });
@@ -670,6 +674,7 @@ impl Sandbox {
                 upright: None,
                 health: 0,
                 skin: 0,
+                body: String::new(),
                 fire: None,
             });
             self.next_id = self.next_id.max(b.id + 1);
@@ -713,6 +718,12 @@ impl Sandbox {
     pub fn set_skin(&mut self, id: u32, skin: u8) {
         if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
             p.skin = skin;
+        }
+    }
+
+    pub fn set_body(&mut self, id: u32, body: String) {
+        if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
+            p.body = body;
         }
     }
 

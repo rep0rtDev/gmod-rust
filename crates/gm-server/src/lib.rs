@@ -39,6 +39,8 @@ pub struct ModelInfo {
     pub break_sound: Option<String>,
     /// `Entity:SkinCount`: skin families in the MDL (1 when unknown).
     pub skins: u8,
+    /// `Entity:GetBodygroupCount` per body part (empty when unknown).
+    pub body_groups: Vec<u8>,
 }
 
 /// A model's `prop_data` (`$keyvalues`, through the `base` chain of `scripts/propdata.txt`):
@@ -2193,6 +2195,7 @@ impl<'w> Server<'w> {
                 angles: p.angles.to_array(),
                 frozen: p.frozen,
                 skin: p.skin,
+                body: p.body.clone(),
             })
             .collect();
         let constraints = cons
@@ -2260,6 +2263,7 @@ impl<'w> Server<'w> {
             let health = self.models.get(&p.model).map_or(0, |m| m.prop_data.health);
             self.sandbox.set_health(id, health);
             self.sandbox.set_skin(id, p.skin);
+            self.sandbox.set_body(id, p.body.clone());
             self.sandbox.add_count(player, "props", id);
             self.sandbox.add_cleanup(player, "props", id);
             ids.push(Some(id));
@@ -2899,6 +2903,20 @@ impl<'w> Server<'w> {
                 let skins = self.models.get(&prop.model).map_or(1, |m| m.skins);
                 skins > 1 && arg.parse::<u8>().is_ok_and(|n| n < skins)
             }
+            // the game's filter: some body part with more than one model; `<part> <model>`
+            "bodygroups" => {
+                let groups = self.models.get(&prop.model).map(|m| m.body_groups.clone());
+                let Some(groups) = groups.filter(|g| g.iter().any(|&n| n > 1)) else {
+                    return false;
+                };
+                let mut it = arg.split_whitespace();
+                let part = it.next().and_then(|p| p.parse::<usize>().ok());
+                let model = it.next().and_then(|m| m.parse::<u8>().ok());
+                match (part, model) {
+                    (Some(p), Some(m)) => groups.get(p).is_some_and(|&n| m < n),
+                    _ => false,
+                }
+            }
             _ => false,
         };
         if !offered
@@ -2937,6 +2955,17 @@ impl<'w> Server<'w> {
             }
             "skin" => {
                 self.sandbox.set_skin(ent, arg.parse().unwrap_or(0));
+            }
+            "bodygroups" => {
+                let mut it = arg.split_whitespace();
+                let part: usize = it.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+                let model = it.next().and_then(|m| m.chars().next()).unwrap_or('0');
+                let mut body: Vec<char> = prop.body.chars().collect();
+                while body.len() <= part {
+                    body.push('0');
+                }
+                body[part] = model;
+                self.sandbox.set_body(ent, body.into_iter().collect());
             }
             "extinguish" => {
                 self.extinguish(ent);

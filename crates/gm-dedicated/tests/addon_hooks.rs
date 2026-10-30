@@ -3783,6 +3783,74 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
         .eval("return state.d.asked, state.d.applied, state.d.last")
         .unwrap();
     assert_eq!((asked, applied, last.as_str()), (11, 10, "skin"));
+    // `bodygroups <part> <model>`: the crate's single body part has one model, so the game's
+    // filter (some part with more than one model) refuses it unasked; a model with choices
+    // takes a valid pick and refuses a model past the part's count
+    client.command(prop("bodygroups 0 1"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    assert_eq!(server.sandbox.props()[0].body, "");
+    let (asked, applied): (i64, i64) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.applied")
+        .unwrap();
+    assert_eq!((asked, applied), (11, 10), "not offered, not asked");
+    client.command(prop("remove"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    let m3 = gm_content::Mount::for_install(&inst).unwrap();
+    let choice = [
+        "models/props_c17/furniturecouch001a.mdl",
+        "models/props_vehicles/car001a_hatchback.mdl",
+        "models/props_c17/oildrum001.mdl",
+        "models/props_lab/monitor01a.mdl",
+        "models/props_combine/combine_barricade_short01a.mdl",
+        "models/props_junk/trashdumpster01a.mdl",
+        "models/props_wasteland/laundry_washer003.mdl",
+        "models/props_c17/doll01.mdl",
+        "models/props_junk/garbage_metalcan001a.mdl",
+        "models/props_vehicles/van001a_physics.mdl",
+    ]
+    .into_iter()
+    .find_map(|m| {
+        let info = gm_dedicated::model_info(&m3, m).ok()?;
+        let part = info.body_groups.iter().position(|&n| n > 1)?;
+        Some((m, part, info.body_groups[part]))
+    });
+    let Some((model, part, count)) = choice else {
+        eprintln!("skipped the body-group half: no candidate has a part with several models");
+        return;
+    };
+    client.command(gm_net::Command::Spawn {
+        model: model.into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 40);
+    assert_eq!(server.sandbox.props().len(), 1, "{model}");
+    client.command(prop(&format!("bodygroups {part} {count}")));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    assert_eq!(
+        server.sandbox.props()[0].body,
+        "",
+        "model {count} of part {part} does not exist"
+    );
+    client.command(prop(&format!("bodygroups {part} 1")));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    let want: String = (0..=part)
+        .map(|i| if i == part { '1' } else { '0' })
+        .collect();
+    assert_eq!(server.sandbox.props()[0].body, want, "{model}");
+    let snap_body = client
+        .world
+        .entities
+        .values()
+        .next()
+        .map(|e| e.body.clone());
+    assert_eq!(
+        snap_body,
+        Some(want),
+        "the snapshot carries the body groups"
+    );
+    let (asked, applied, last): (i64, i64, String) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.applied, state.d.last")
+        .unwrap();
+    assert_eq!((asked, applied, last.as_str()), (12, 11, "bodygroups"));
 }
 
 #[test]

@@ -155,6 +155,11 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
         prop_data: prop_data(mount, &mdl.key_values),
         break_sound: table.sound(&props.surfaceprop, "break"),
         skins: mdl.skins.len().clamp(1, 255) as u8,
+        body_groups: mdl
+            .body_parts
+            .iter()
+            .map(|bp| bp.models.len().min(255) as u8)
+            .collect(),
     })
 }
 

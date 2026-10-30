@@ -142,6 +142,8 @@ pub struct EntityState {
     pub frozen: bool,
     /// `Entity:GetSkin` of the prop.
     pub skin: u8,
+    /// `Entity:GetBodyGroups` digits of the prop.
+    pub body: String,
     pub owner: u32,
 }
 
@@ -783,6 +785,7 @@ impl ServerMsg {
                     w.qvel(e.angvel, ANGVEL_SCALE);
                     w.bool(e.frozen);
                     w.u8(e.skin);
+                    w.str(&e.body);
                     w.u32(e.owner);
                 }
                 w.varint(removed.len() as u64);
@@ -976,6 +979,7 @@ impl ServerMsg {
                         angvel: r.qvel(ANGVEL_SCALE)?,
                         frozen: r.bool()?,
                         skin: r.u8()?,
+                        body: r.str()?,
                         owner: r.u32()?,
                     });
                 }

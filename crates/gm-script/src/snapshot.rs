@@ -12,6 +12,7 @@ pub struct EntitySnap {
     pub angles: Vec3,
     pub frozen: bool,
     pub skin: u8,
+    pub body: String,
     pub owner: u32,
 }
 
@@ -106,6 +107,7 @@ impl Snapshot {
                             angles: e.angles,
                             frozen: e.frozen,
                             skin: e.skin,
+                            body: e.body.clone(),
                             owner: e.owner,
                         },
                     )
@@ -168,6 +170,7 @@ impl Snapshot {
                             angles: p.angles,
                             frozen: p.frozen,
                             skin: p.skin,
+                            body: p.body.clone(),
                             owner: p.owner,
                         },
                     )

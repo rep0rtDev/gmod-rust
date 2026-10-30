@@ -335,6 +335,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("angles", vec3_table(lua, e.angles)?)?;
     t.set("frozen", e.frozen)?;
     t.set("skin", e.skin)?;
+    t.set("body", e.body.as_str())?;
     t.set("owner", e.owner)?;
     Ok(t)
 }

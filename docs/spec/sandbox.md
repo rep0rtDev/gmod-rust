@@ -123,8 +123,16 @@ Implemented, by `Command::Property { name }` on the prop under the crosshair:
   `entity.skin`), through the duplicator clip and the save file (`SavedProp.skin`, 0 when the
   file predates it), and the native client draws the prop with that skin family
   (`load_model_variant`).
-- Not yet: `drive`, `bodygroups`, the menu itself in the native client (the console's
-  `property <name>` sends the command).
+- `bodygroups <part> <model>` (the game's `bodygroups` property: a submenu per body part;
+  its filter wants some part with more than one model, so the plain crate, one part with one
+  model, is not offered it - `lua_properties` records the filter as false for the crate):
+  offered when `ModelInfo::body_groups` (models per body part from the MDL) has a part above
+  one and the pick is a valid part and model index; sets digit `part` of `Prop.body`
+  (`SetBodyGroups` string, padded with zeros), which travels like the skin: entity snapshot
+  (Luau `entity.body`), duplicator clip, save file (`SavedProp.body`), and the native client's
+  `load_model_variant`.
+- Not yet: `drive`, the menu itself in the native client (the console's `property <name>`
+  sends the command).
 
 ## Player models
 

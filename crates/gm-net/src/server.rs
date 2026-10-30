@@ -906,6 +906,7 @@ impl ServerNet {
                     angvel: st.map(|s| s.angular_velocity).unwrap_or_default(),
                     frozen: p.frozen,
                     skin: p.skin,
+                    body: p.body.clone(),
                     owner: p.owner,
                 },
             );

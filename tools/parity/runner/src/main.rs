@@ -1354,6 +1354,7 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
         prop_data: gm_dedicated::prop_data(mount, &mdl.key_values),
         break_sound: table.sound(&props.surfaceprop, "break"),
         skins: 1,
+        body_groups: Vec::new(),
     })
 }
 

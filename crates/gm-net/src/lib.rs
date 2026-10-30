@@ -100,6 +100,7 @@ mod tests {
                 angvel: Vec3::ZERO,
                 frozen: false,
                 skin: 0,
+                body: String::new(),
                 owner: 1,
             }],
             removed: vec![1],

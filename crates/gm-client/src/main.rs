@@ -143,6 +143,7 @@ impl Sim {
                             angvel: Vec3::ZERO,
                             frozen: false,
                             skin: 0,
+                            body: String::new(),
                             owner: 0,
                         },
                     )
@@ -1184,16 +1185,16 @@ impl App {
                 g.models.insert(model.to_string(), m);
             }
         }
-        // props with a skin other than 0 load as a variant under `model#skin#`
+        // props with a skin or body groups set load as a variant under `model#skin#body`
         for e in self.sim.client.world.entities.values() {
-            if e.skin == 0 {
+            if e.skin == 0 && e.body.is_empty() {
                 continue;
             }
-            let key = format!("{}#{}#", e.model, e.skin);
+            let key = format!("{}#{}#{}", e.model, e.skin, e.body);
             if !g.models.contains_key(&key) {
                 let m = g
                     .world
-                    .load_model_variant(&g.gpu, &self.mount, &e.model, e.skin, "");
+                    .load_model_variant(&g.gpu, &self.mount, &e.model, e.skin, &e.body);
                 g.models.insert(key, m);
             }
         }
@@ -1236,11 +1237,11 @@ impl App {
                     None => (e.pos, e.angles),
                 };
                 Some(DrawItem {
-                    model: if e.skin == 0 {
+                    model: if e.skin == 0 && e.body.is_empty() {
                         g.models.get(&e.model)?.as_ref()?
                     } else {
                         g.models
-                            .get(&format!("{}#{}#", e.model, e.skin))?
+                            .get(&format!("{}#{}#{}", e.model, e.skin, e.body))?
                             .as_ref()?
                     },
                     transform: gm_render::world::model_transform(pos, ang),
