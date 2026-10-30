@@ -20,6 +20,10 @@ struct Args {
     /// every package the server publishes run from here.
     #[arg(long, default_value = "cache")]
     cache: std::path::PathBuf,
+    /// Browse instead of playing: ask this master for its list, query every server and print
+    /// name, map, players, addons and ping.
+    #[arg(long)]
+    list: Option<String>,
     /// Model to spawn at tick 100.
     #[arg(long, default_value = "models/props_junk/wood_crate001a.mdl")]
     spawn: String,
@@ -27,6 +31,9 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(master) = &args.list {
+        return browse(master);
+    }
     let mut udp = gm_net::Udp::client(args.server.parse().context("server address")?)?;
     let mut client = gm_net::ClientNet::new(1, &args.name);
     let mut script = gm_script::Runtime::client();
@@ -195,4 +202,77 @@ fn load_package(script: &mut gm_script::Runtime, path: &std::path::Path, how: &s
         ),
         Err(e) => println!("{how} addon {}: {e}", path.display()),
     }
+}
+
+fn browse(master: &str) -> Result<()> {
+    use gm_net::{MasterMsg, Transport};
+    let mut udp = gm_net::Udp::client(master.parse().context("master address")?)?;
+    let mut entries = Vec::new();
+    let mut offset = 0u32;
+    loop {
+        udp.send(0, MasterMsg::List { offset }.encode());
+        let t0 = Instant::now();
+        let mut page = None;
+        while t0.elapsed() < Duration::from_secs(2) && page.is_none() {
+            for (from, p) in udp.recv() {
+                if from == 0 {
+                    if let Ok(MasterMsg::Servers { total, entries, .. }) = MasterMsg::read(&p) {
+                        page = Some((total, entries));
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let Some((total, got)) = page else {
+            anyhow::bail!("no answer from the master {master}");
+        };
+        let n = got.len() as u32;
+        entries.extend(got);
+        offset += n;
+        if n == 0 || offset >= total {
+            break;
+        }
+    }
+    println!("{} servers", entries.len());
+    for e in &entries {
+        let Ok(addr) = e.addr.parse::<std::net::SocketAddr>() else {
+            println!("{}  (unparsable address)", e.addr);
+            continue;
+        };
+        let ep = udp.endpoint_for(addr);
+        let nonce = 0x5EED ^ e.info.port as u32;
+        let t0 = Instant::now();
+        udp.send(ep, MasterMsg::Query { nonce }.encode());
+        let mut info = None;
+        while t0.elapsed() < Duration::from_secs(1) && info.is_none() {
+            for (from, p) in udp.recv() {
+                if from == ep {
+                    if let Ok(MasterMsg::Info { nonce: n, info: i }) = MasterMsg::read(&p) {
+                        if n == nonce {
+                            info = Some((i, t0.elapsed()));
+                        }
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        match info {
+            Some((i, ping)) => println!(
+                "{}  \"{}\"  {}  {}/{}  addons {:?}  ping {:.0} ms  (master: seen {} s ago)",
+                e.addr,
+                i.name,
+                i.map,
+                i.players,
+                i.max_players,
+                i.addons,
+                ping.as_secs_f32() * 1000.0,
+                e.age_s
+            ),
+            None => println!(
+                "{}  \"{}\"  {}  {}/{}  no answer (master: seen {} s ago)",
+                e.addr, e.info.name, e.info.map, e.info.players, e.info.max_players, e.age_s
+            ),
+        }
+    }
+    Ok(())
 }

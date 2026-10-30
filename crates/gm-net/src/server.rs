@@ -59,6 +59,8 @@ pub struct ServerNet {
     /// Players allowed to run admin commands (`Command::Reload`).
     pub admins: std::collections::BTreeSet<u32>,
     pub addons: Vec<PublishedAddon>,
+    /// What the server browser is told (`players` and `addons` are filled on send).
+    pub info: crate::master::ServerInfo,
 }
 
 impl ServerNet {
@@ -73,6 +75,12 @@ impl ServerNet {
             hooks: None,
             admins: std::collections::BTreeSet::new(),
             addons: Vec::new(),
+            info: crate::master::ServerInfo {
+                map: map.to_string(),
+                max_players: 16,
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                ..Default::default()
+            },
         }
     }
 
@@ -94,6 +102,20 @@ impl ServerNet {
         }
     }
 
+    /// `info` with the live player count and published addon ids.
+    pub fn current_info(&self) -> crate::master::ServerInfo {
+        let mut info = self.info.clone();
+        info.players = self.clients.values().filter(|c| c.player != 0).count() as u16;
+        info.addons = self.addon_list().into_iter().map(|a| a.id).collect();
+        info
+    }
+
+    /// Sends a heartbeat to the master at this endpoint.
+    pub fn heartbeat(&self, transport: &mut dyn Transport, master: usize) {
+        let info = self.current_info();
+        transport.send(master, crate::master::MasterMsg::Heartbeat(info).encode());
+    }
+
     /// What clients are told to have: the latest publication of every addon id (older packages
     /// stay downloadable so a transfer in flight finishes).
     pub fn addon_list(&self) -> Vec<crate::msg::AddonInfo> {
@@ -103,6 +125,18 @@ impl ServerNet {
     /// Reads everything the transport has for the server (endpoint 0), connecting new clients.
     pub fn receive(&mut self, server: &mut Server<'_>, transport: &mut dyn Transport) {
         for (from, packet) in transport.recv() {
+            if crate::master::is_master_packet(&packet) {
+                if let Ok(crate::master::MasterMsg::Query { nonce }) =
+                    crate::master::MasterMsg::read(&packet)
+                {
+                    let info = self.current_info();
+                    transport.send(
+                        from,
+                        crate::master::MasterMsg::Info { nonce, info }.encode(),
+                    );
+                }
+                continue;
+            }
             let body = &packet[..];
             if !self.clients.contains_key(&from) {
                 let player = self.next_player;

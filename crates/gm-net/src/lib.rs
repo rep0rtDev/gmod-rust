@@ -5,12 +5,14 @@
 
 pub mod channel;
 pub mod client;
+pub mod master;
 pub mod msg;
 pub mod server;
 pub mod transport;
 pub mod wire;
 
 pub use client::{ClientNet, ClientWorld, Interpolator, Prediction};
+pub use master::{MasterMsg, MasterNet, ServerEntry, ServerInfo};
 pub use msg::EntityState;
 pub use msg::{AddonInfo, ClientMsg, Command, NetCmd, ServerMsg};
 pub use server::ServerNet;
@@ -145,6 +147,89 @@ mod tests {
         // a duplicate (resent before the ack arrived) is dropped by id
         let got = b.receive(&p2).unwrap();
         assert_eq!(got, vec![b"u1".to_vec()]);
+    }
+
+    #[test]
+    fn master_lists_heartbeating_servers_and_expires_silent_ones() {
+        use crate::master::*;
+        use crate::{Loopback, Transport};
+        let net = Loopback::new(0, 0.0, 1);
+        let (mut m_ep, mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1), net.endpoint(2));
+        let mut master = MasterNet::default();
+        let info = ServerInfo {
+            name: "box".into(),
+            map: "gm_construct".into(),
+            players: 3,
+            max_players: 16,
+            port: 27015,
+            version: "0.1".into(),
+            addons: vec!["hud".into()],
+        };
+        s_ep.send(0, MasterMsg::Heartbeat(info.clone()).encode());
+        net.tick();
+        master.receive(&mut m_ep, 100);
+        assert_eq!(master.servers.len(), 1);
+        c_ep.send(0, MasterMsg::List { offset: 0 }.encode());
+        net.tick();
+        master.receive(&mut m_ep, 105);
+        net.tick();
+        let reply = c_ep.recv();
+        assert_eq!(reply.len(), 1);
+        let MasterMsg::Servers {
+            total,
+            offset,
+            entries,
+        } = MasterMsg::read(&reply[0].1).unwrap()
+        else {
+            panic!("not a list");
+        };
+        assert_eq!((total, offset), (1, 0));
+        assert_eq!(
+            entries,
+            vec![ServerEntry {
+                addr: "loop1:27015".into(),
+                info: info.clone(),
+                age_s: 5
+            }]
+        );
+        // many servers: pages stay within the budget and cover everything
+        for i in 0..200u16 {
+            let mut inf = info.clone();
+            inf.port = 30000 + i;
+            inf.name = format!("server number {i} with a long name");
+            master
+                .servers
+                .insert(format!("10.0.0.{}:{}", i % 7, inf.port), (inf, 100));
+        }
+        let (mut seen, mut off) = (0usize, 0u32);
+        loop {
+            let page = master.page(off, 100);
+            let bytes = page.encode();
+            assert!(bytes.len() <= LIST_BUDGET, "{} bytes", bytes.len());
+            let MasterMsg::Servers { total, entries, .. } = page else {
+                unreachable!()
+            };
+            assert_eq!(total, 201);
+            assert!(!entries.is_empty());
+            seen += entries.len();
+            off += entries.len() as u32;
+            if seen as u32 >= total {
+                break;
+            }
+        }
+        assert_eq!(seen, 201);
+        master.servers.get_mut("loop1:27015").unwrap().1 = 150;
+        assert_eq!(
+            master.expire(100 + TTL_S).len(),
+            0,
+            "exactly TTL old still counts"
+        );
+        assert_eq!(
+            master.expire(101 + TTL_S).len(),
+            200,
+            "the silent entries go"
+        );
+        assert_eq!(master.servers.len(), 1, "the one heard at 150 stays");
     }
 
     #[test]

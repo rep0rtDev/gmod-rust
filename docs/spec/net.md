@@ -134,11 +134,24 @@ Hot reload: a server with `--watch` that reloads an addon with the `client` real
 finishes); the client downloads the new package and hot-reloads its actors, `state` kept
 (`a_hot_reloaded_client_addon_is_republished_and_the_client_reloads_it_keeping_state`).
 
+## Server browser: master and query
+
+Master packets carry their own magic (`0x4D47`), so a game server tells them from channel packets
+before any client slot is made. `gm-dedicated --master host:27010` heartbeats every 10 s
+(`MasterMsg::Heartbeat(ServerInfo)`: name, map, players, max players, game port, version, ids of
+the published addons); the master (`gm-master`) keys servers by the sender's host and the game port,
+drops one silent for 90 s, and answers `List { offset }` with `Servers { total, offset, entries }`
+pages under 1100 bytes (entry: `host:port`, info, seconds since the heartbeat). A browser then
+sends `Query { nonce }` straight to each server and gets `Info { nonce, info }` back with the live
+player count; the round trip is the ping. `gm-bot --list host:27010` does all of it and prints
+the table. Measured: 201 servers list in budget-sized pages; a server answers queries while a
+player is connected and counts it (`a_game_server_answers_browser_queries_and_heartbeats_to_the_master`).
+
 ## Not yet
 
 Bit packing of snapshots, interest management (PVS + radius), snapshot compression
 above 1 200 bytes, lag
-compensation, encryption and authentication, QUIC transport, voice, a server browser / master server.
+compensation, encryption and authentication, QUIC transport, voice, NAT traversal for the browser.
 
 Admin commands: `Command::Reload { addon }` (tag 6) hot-reloads an addon on the server for players in `ServerNet::admins`; the answer is an event string on the player's reliable channel.
 

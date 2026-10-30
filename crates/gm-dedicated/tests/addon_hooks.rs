@@ -965,3 +965,81 @@ fn a_hot_reloaded_client_addon_is_republished_and_the_client_reloads_it_keeping_
     assert!(snaps >= 40, "{snaps}: state survived the reload");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_game_server_answers_browser_queries_and_heartbeats_to_the_master() {
+    use gm_net::{MasterMsg, Transport};
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    sn.info.name = "box".into();
+    sn.info.port = 27015;
+    sn.publish_addon(
+        gm_net::AddonInfo {
+            id: "hud".into(),
+            version: "1.0.0".into(),
+            sha: [7; 32],
+            size: 3,
+        },
+        vec![1, 2, 3],
+    );
+    // endpoints: 0 the game server, 1 a player, 2 a browser, 3 the master
+    let net = gm_net::Loopback::new(1, 0.0, 5);
+    let (mut s_ep, mut p_ep, mut b_ep, mut m_ep) = (
+        net.endpoint(0),
+        net.endpoint(1),
+        net.endpoint(2),
+        net.endpoint(3),
+    );
+    let mut player = gm_net::ClientNet::new(1, "p1");
+    let mut master = gm_net::MasterNet::default();
+    let mut infos = Vec::new();
+    for t in 0..12 {
+        player.tick(gm_net::NetCmd::default(), &mut p_ep);
+        if t == 1 || t == 8 {
+            b_ep.send(0, MasterMsg::Query { nonce: 42 + t }.encode());
+        }
+        net.tick();
+        sn.receive(&mut server, &mut s_ep);
+        sn.tick(&mut server);
+        sn.send(&server, &mut s_ep);
+        if t == 9 {
+            sn.heartbeat(&mut s_ep, 3);
+        }
+        player.receive(&mut p_ep);
+        for (from, p) in b_ep.recv() {
+            assert_eq!(from, 0);
+            infos.push(MasterMsg::read(&p).unwrap());
+        }
+        master.receive(&mut m_ep, 1000 + t as u64);
+    }
+    assert_eq!(infos.len(), 2, "{infos:?}");
+    let MasterMsg::Info { nonce, info } = &infos[0] else {
+        panic!("{:?}", infos[0]);
+    };
+    assert_eq!(*nonce, 43);
+    assert_eq!(
+        (
+            info.name.as_str(),
+            info.map.as_str(),
+            info.max_players,
+            info.port
+        ),
+        ("box", "gm_construct", 16, 27015)
+    );
+    assert_eq!(info.addons, vec!["hud".to_string()]);
+    let MasterMsg::Info { info: later, .. } = &infos[1] else {
+        panic!("{:?}", infos[1]);
+    };
+    assert_eq!(later.players, 1, "the joined player is counted");
+    assert_eq!(sn.clients.len(), 1, "a browser query opens no client slot");
+    let (key, (hb, seen)) = master.servers.iter().next().expect("the heartbeat arrived");
+    assert_eq!(key, "loop0:27015");
+    assert_eq!((hb.players, hb.name.as_str()), (1, "box"));
+    assert_eq!(*seen, 1010);
+}

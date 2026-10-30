@@ -32,6 +32,14 @@ struct Args {
     /// Public key (hex) addons must be signed by; repeatable, none means any addon loads
     #[arg(long)]
     trust: Vec<String>,
+    /// Master server to heartbeat to (every 10 s) so browsers list this server.
+    #[arg(long)]
+    master: Option<String>,
+    /// Server name shown in the browser.
+    #[arg(long, default_value = "gmod-rust server")]
+    name: String,
+    #[arg(long, default_value_t = 16)]
+    max_players: u16,
 }
 
 fn main() -> Result<()> {
@@ -98,7 +106,15 @@ fn main() -> Result<()> {
         println!("gm-dedicated: {} actors loaded", rt.actors().len());
         net.hooks = Some(Box::new(rt));
     }
-    let mut udp = gm_net::Udp::server(args.bind.parse().context("bind address")?)?;
+    let bind: std::net::SocketAddr = args.bind.parse().context("bind address")?;
+    let mut udp = gm_net::Udp::server(bind)?;
+    net.info.name = args.name.clone();
+    net.info.max_players = args.max_players;
+    net.info.port = bind.port();
+    let master = match &args.master {
+        Some(m) => Some(udp.endpoint_for(m.parse().context("master address")?)),
+        None => None,
+    };
     println!(
         "gm-dedicated: {} loaded in {:.2} s, listening on {}, tick {:.3} s",
         args.map,
@@ -110,11 +126,18 @@ fn main() -> Result<()> {
     let mut next = Instant::now();
     let mut n = 0u64;
     let mut busy = Duration::ZERO;
+    let heartbeat_every =
+        (gm_net::master::HEARTBEAT_S as f32 / gm_core::tick::DEFAULT_TICK_INTERVAL) as u64;
     loop {
         let start = Instant::now();
         net.receive(&mut server, &mut udp);
         net.tick(&mut server);
         net.send(&server, &mut udp);
+        if let Some(m) = master {
+            if n.is_multiple_of(heartbeat_every) {
+                net.heartbeat(&mut udp, m);
+            }
+        }
         busy += start.elapsed();
         n += 1;
         if args.status_every > 0 && n.is_multiple_of(args.status_every) {

@@ -12,6 +12,10 @@ pub trait Transport {
     fn send(&mut self, to: usize, packet: Vec<u8>);
     /// Packets that arrived for this endpoint, with the sender's endpoint id, in order.
     fn recv(&mut self) -> Vec<(usize, Vec<u8>)>;
+    /// A printable address of an endpoint (`host:port` over UDP).
+    fn peer_name(&self, endpoint: usize) -> String {
+        format!("endpoint:{endpoint}")
+    }
 }
 
 struct Hub {
@@ -78,6 +82,10 @@ impl Loopback {
 }
 
 impl Transport for LoopbackEndpoint {
+    fn peer_name(&self, endpoint: usize) -> String {
+        format!("loop{endpoint}:0")
+    }
+
     fn send(&mut self, to: usize, packet: Vec<u8>) {
         let mut h = self.hub.borrow_mut();
         if h.loss > 0.0 && h.next_f32() < h.loss {
@@ -154,6 +162,12 @@ impl Udp {
         self.peers.get(id).copied()
     }
 
+    /// The endpoint id of an address, registering it as a peer when new (to talk to a master
+    /// or query a server from the same socket).
+    pub fn endpoint_for(&mut self, addr: SocketAddr) -> usize {
+        self.endpoint_of(addr)
+    }
+
     fn endpoint_of(&mut self, addr: SocketAddr) -> usize {
         if let Some(&id) = self.by_addr.get(&addr) {
             return id;
@@ -166,6 +180,13 @@ impl Udp {
 }
 
 impl Transport for Udp {
+    fn peer_name(&self, endpoint: usize) -> String {
+        self.peers
+            .get(endpoint)
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| format!("endpoint:{endpoint}"))
+    }
+
     fn send(&mut self, to: usize, packet: Vec<u8>) {
         if let Some(addr) = self.peers.get(to) {
             let _ = self.socket.send_to(&packet, addr);
