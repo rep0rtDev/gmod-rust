@@ -387,6 +387,24 @@ type WorldConvex = (Vec<(Vec3, f32)>, (Vec3, Vec3));
 /// Loads a model by name on first use.
 pub type ModelLoader = Box<dyn FnMut(&str) -> Option<ModelInfo>>;
 
+/// The `drive` property on a prop (`drive_sandbox`, measured `lua_drive`): the prop is frozen
+/// and steered by the player's commands as a kinematic body, the player's own body stays put.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Driving {
+    pub prop: u32,
+    /// Units per tick.
+    pub vel: Vec3,
+}
+
+/// Measured `lua_drive` (per-tick position deltas, rms 8e-5): with a move input the velocity
+/// goes `v = 0.99 v + 0.07425` units/tick along the wish direction (eye forward incl. pitch for
+/// forward/back, eye right for side, world up for jump; `IN_SPEED` tenfold), without input
+/// `v *= 0.9`; the prop's pitch and yaw follow the eye angles every tick, its roll is kept.
+pub const DRIVE_KEEP: f32 = 0.99;
+pub const DRIVE_ACCEL: f32 = 0.07425;
+pub const DRIVE_DRAG: f32 = 0.9;
+pub const DRIVE_SPRINT: f32 = 10.0;
+
 pub struct Player {
     pub state: gm_move::PlayerState,
     /// Authenticated identity (ed25519 public key) once the connection proved it.
@@ -398,6 +416,8 @@ pub struct Player {
     pub held: Option<(u32, Grab)>,
     /// The prop carried with +use (`gm_physics::pickup`).
     pub carry: Option<(u32, gm_physics::pickup::Carry)>,
+    /// The prop driven with the `drive` property.
+    pub driving: Option<Driving>,
     /// `IN_USE` was down in the last command (a use fires on the press, not the hold).
     pub use_down: bool,
     /// `IN_RELOAD` was down in the last command (the physgun unfreezes on the press).
@@ -474,6 +494,7 @@ impl Player {
             },
             view_angles,
             held: None,
+            driving: None,
             carry: None,
             use_down: false,
             reload_down: false,
@@ -864,6 +885,8 @@ impl<'w> Server<'w> {
             });
             p.active_weapon.clear();
             p.held = None;
+            p.driving = None;
+            p.driving = None;
             p.state.velocity = Vec3::ZERO;
             if dmg_type & DMG_FALL != 0 {
                 // measured: a bot killed by a fall keeps the negative health and does not
@@ -1018,6 +1041,7 @@ impl<'w> Server<'w> {
         p.ragdoll = None;
         p.death_tick = None;
         p.held = None;
+        p.driving = None;
         // `PlayerSetModel`: the choice through the game's table, a hook may replace it
         let model = player_models::translate(&p.wanted_model).to_string();
         let model = match self.ask(Request::SetModel {
@@ -1878,6 +1902,7 @@ impl<'w> Server<'w> {
         p.death_tick = Some(tick);
         p.active_weapon.clear();
         p.held = None;
+        p.driving = None;
         p.state.velocity = Vec3::ZERO;
         self.game_events.push(GameEvent::PlayerDied {
             player: id,
@@ -2555,7 +2580,15 @@ impl<'w> Server<'w> {
         // 5-tick one, also while already carrying); the pickup itself happens on the press
         // (picked the tick after), the next press drops.
         let use_alive = use_key && self.players.get(&player).is_some_and(|p| p.alive);
-        if use_alive {
+        if use_pressed
+            && self
+                .players
+                .get(&player)
+                .is_some_and(|p| p.driving.is_some())
+        {
+            // measured: a +use press ends the drive (3 ticks later in the game), nothing else
+            self.stop_driving(player);
+        } else if use_alive {
             if use_pressed && self.players.get(&player).is_some_and(|p| p.carry.is_some()) {
                 self.drop_carry(player);
             } else if let Some(ent) = self.find_use_entity(player, eye, view) {
@@ -2768,6 +2801,7 @@ impl<'w> Server<'w> {
         for (attacker, eye, forward) in swings {
             self.resolve_melee(attacker, eye, forward);
         }
+        self.drive_tick(cmds);
         let mut steps: Vec<(Vec3, gm_move::Step)> = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
@@ -2775,10 +2809,17 @@ impl<'w> Server<'w> {
             }
             if let Some(pc) = cmds.get(id) {
                 p.view_angles = pc.cmd.view_angles;
-                let cmd = gm_move::UserCmd {
+                let mut cmd = gm_move::UserCmd {
                     buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
                     ..pc.cmd
                 };
+                if p.driving.is_some() {
+                    // the driver's body stays where it is (measured: origin never moves)
+                    cmd.buttons = 0;
+                    cmd.forward_move = 0.0;
+                    cmd.side_move = 0.0;
+                    cmd.up_move = 0.0;
+                }
                 let (prev_vz, was_airborne) = (p.state.velocity.z, !p.state.on_ground);
                 // footsteps see the state entering the tick, at the feet (the origin)
                 let feet = p.state.origin;
@@ -2853,6 +2894,77 @@ impl<'w> Server<'w> {
     }
 
     /// `Entity:SetPos/SetAngles` from a script: the sandbox pose and the body move together.
+    /// `drive` is offered for a prop nobody drives, to a player who is not driving (measured
+    /// `lua_properties`: offered to any prop, order 1100).
+    fn drive_offered(&self, player: u32, ent: u32) -> bool {
+        self.players
+            .get(&player)
+            .is_some_and(|p| p.driving.is_none())
+            && !self
+                .players
+                .values()
+                .any(|p| p.driving.is_some_and(|d| d.prop == ent))
+    }
+
+    /// Ends the player's `drive`: the prop stays frozen where it is (measured: it hovers).
+    pub fn stop_driving(&mut self, player: u32) -> bool {
+        self.players
+            .get_mut(&player)
+            .and_then(|p| p.driving.take())
+            .is_some()
+    }
+
+    /// One tick of `drive` for every driving player with a command (law in [`DRIVE_ACCEL`]):
+    /// the prop is moved as a frozen body, the player's own body does not move.
+    fn drive_tick(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
+        let mut moves = Vec::new();
+        for (id, p) in self.players.iter_mut() {
+            let Some(d) = p.driving.as_mut() else {
+                continue;
+            };
+            let Some(pc) = cmds.get(id) else { continue };
+            let view = pc.cmd.view_angles;
+            let forward = gm_sandbox::forward(view.x, view.y);
+            let (sy, cy) = (view.y.to_radians().sin(), view.y.to_radians().cos());
+            let right = Vec3::new(sy, -cy, 0.0);
+            let b = pc.cmd.buttons;
+            let mut wish = Vec3::ZERO;
+            if pc.cmd.forward_move != 0.0 {
+                wish += forward * pc.cmd.forward_move.signum();
+            }
+            if pc.cmd.side_move != 0.0 {
+                wish += right * pc.cmd.side_move.signum();
+            }
+            if b & gm_move::buttons::JUMP != 0 {
+                wish += Vec3::Z;
+            }
+            if wish == Vec3::ZERO {
+                d.vel *= DRIVE_DRAG;
+            } else {
+                let accel = if b & gm_move::buttons::SPEED != 0 {
+                    DRIVE_ACCEL * DRIVE_SPRINT
+                } else {
+                    DRIVE_ACCEL
+                };
+                d.vel = d.vel * DRIVE_KEEP + wish.normalize() * accel;
+            }
+            moves.push((d.prop, d.vel, view));
+        }
+        for (prop, vel, view) in moves {
+            let Some(p) = self.sandbox.props().iter().find(|p| p.id == prop) else {
+                for pl in self.players.values_mut() {
+                    if pl.driving.is_some_and(|d| d.prop == prop) {
+                        pl.driving = None;
+                    }
+                }
+                continue;
+            };
+            let pos = p.pos + vel;
+            let angles = Vec3::new(view.x, view.y, p.angles.z);
+            self.teleport_prop(prop, pos, angles);
+        }
+    }
+
     pub fn teleport_prop(&mut self, id: u32, pos: Vec3, angles: Vec3) -> bool {
         if !self.sandbox.props().iter().any(|p| p.id == id) {
             return false;
@@ -2914,6 +3026,9 @@ impl<'w> Server<'w> {
         });
         out.push("remove".into());
         out.push("gravity".into());
+        if self.drive_offered(player, ent) {
+            out.push("drive".into());
+        }
         out.push(if prop.collide {
             "collision_off".into()
         } else {
@@ -2936,6 +3051,7 @@ impl<'w> Server<'w> {
         };
         let offered = match name {
             "remove" | "gravity" => true,
+            "drive" => self.drive_offered(player, ent),
             "collision_off" => prop.collide,
             "collision_on" => !prop.collide,
             "keepupright" => prop.upright.is_none(),
@@ -2975,6 +3091,16 @@ impl<'w> Server<'w> {
         match name {
             "remove" => {
                 self.remove_prop(ent);
+            }
+            "drive" => {
+                self.sandbox.set_frozen(ent, true);
+                self.sync_physics();
+                if let Some(p) = self.players.get_mut(&player) {
+                    p.driving = Some(Driving {
+                        prop: ent,
+                        vel: Vec3::ZERO,
+                    });
+                }
             }
             "gravity" => {
                 self.sandbox.set_gravity(ent, !prop.gravity);

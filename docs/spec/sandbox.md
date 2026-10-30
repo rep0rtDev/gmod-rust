@@ -138,7 +138,20 @@ Implemented, by `Command::Property { name }` on the prop under the crosshair:
   / collision by state) opens as a list at the cursor, and a left-click on a row sends
   `Command::Property` as the console's `property <name>` does. Entries are the command
   names, not the game's localized labels.
-- Not yet: `drive`, the game's labels and icons in the list.
+- `drive` (order 1100, offered for any prop nobody drives, to a player not driving; `CanProperty`
+  is asked, the game also asks `CanDrive`, which we fold into `player.property_request`).
+  Measured (`lua_drive`, `drive_sandbox` on a crate): the prop is frozen (motion disabled) for
+  the whole drive and left frozen where it stops, so it hovers; its pitch and yaw follow the
+  driver's eye angles every tick, the roll is kept; it moves as a kinematic body with a
+  velocity in units per tick: with a move input `v = 0.99 v + 0.07425 * wish` (wish: eye
+  forward with its pitch for forward/back, eye right for side, world up for jump, normalized;
+  `IN_SPEED` makes the accel tenfold; the steady speed is 7.425 u/tick = 495 u/s), without
+  input `v *= 0.9`; duck does nothing. The driver's own body never moves and the game puts
+  the camera in chase mode on the prop. A `+use` press ends the drive (the game: three ticks
+  after the press, ours: in the tick of the press). Walls are not measured (the game moves the
+  frozen prop by position, so it probably passes through them; so does ours).
+- Not yet: the game's labels and icons in the list, the chase camera's distance (not measured,
+  the client's is a guess).
 
 ## Player models
 

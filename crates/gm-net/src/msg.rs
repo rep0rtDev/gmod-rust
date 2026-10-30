@@ -165,6 +165,8 @@ pub struct PlayerSnap {
     pub skin: u8,
     pub body: String,
     pub held: Option<u32>,
+    /// The prop the player is driving (the `drive` property), if any.
+    pub driving: Option<u32>,
     pub alive: bool,
     pub health: i16,
     pub armor: i16,
@@ -775,6 +777,7 @@ impl ServerMsg {
                     w.u8(p.skin);
                     w.str(&p.body);
                     w.u32(p.held.unwrap_or(0));
+                    w.u32(p.driving.unwrap_or(0));
                     w.bool(p.alive);
                     w.i16(p.health);
                     w.i16(p.armor);
@@ -970,6 +973,10 @@ impl ServerMsg {
                         skin: r.u8()?,
                         body: r.str()?,
                         held: match r.u32()? {
+                            0 => None,
+                            h => Some(h),
+                        },
+                        driving: match r.u32()? {
                             0 => None,
                             h => Some(h),
                         },

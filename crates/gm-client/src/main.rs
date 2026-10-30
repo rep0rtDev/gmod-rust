@@ -1248,13 +1248,30 @@ impl App {
             .prev_origin
             .lerp(self.sim.origin, alpha.clamp(0.0, 1.0));
         let eye = if self.sim.ducked { 28.0 } else { 64.0 };
-        let camera = Camera {
+        let mut camera = Camera {
             position: o + Vec3::Z * eye,
             angles: self.view,
             fov_x: 90.0,
             near: 3.0,
             far: 28000.0,
         };
+        // driving a prop: a chase camera on it (the game's observer mode on the entity; the
+        // distance is not measured)
+        let me = self.sim.client.player_id;
+        if let Some(ent) = self
+            .sim
+            .client
+            .world
+            .players
+            .iter()
+            .find(|p| Some(p.id) == me)
+            .and_then(|p| p.driving)
+            .and_then(|id| self.sim.client.world.entities.get(&id))
+        {
+            let (p, y) = (self.view.x.to_radians(), self.view.y.to_radians());
+            let fwd = Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin());
+            camera.position = ent.pos - fwd * 160.0 + Vec3::Z * 24.0;
+        }
         let ghost_draws = match &ghost_tool {
             Some((tool, settings)) => {
                 let (p, y) = (self.view.x.to_radians(), self.view.y.to_radians());

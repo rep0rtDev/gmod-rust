@@ -77,6 +77,7 @@ mod tests {
                 on_ground: true,
                 model: 0,
                 held: Some(2),
+                driving: None,
                 alive: true,
                 health: 100,
                 armor: 0,

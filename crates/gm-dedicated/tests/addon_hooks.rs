@@ -3608,11 +3608,15 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
                     server: &mut gm_server::Server<'_>,
                     crt: &mut gm_script::Runtime,
                     pitch: f32,
+                    fwd: f32,
+                    buttons: u32,
                     n: usize| {
         for _ in 0..n {
             client.tick(
                 gm_net::NetCmd {
                     view_angles: glam::Vec3::new(pitch, 0.0, 0.0),
+                    forward_move: fwd,
+                    buttons,
                     ..Default::default()
                 },
                 &mut c_ep,
@@ -3629,16 +3633,43 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
     };
     let prop = |name: &str| gm_net::Command::Property { name: name.into() };
     // a crate where the 30 degree look hits the floor
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 30);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        30,
+    );
     client.command(gm_net::Command::Spawn {
         model: "models/props_junk/wood_crate001a.mdl".into(),
     });
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 40);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        40,
+    );
     let b = server.sandbox.props()[0].id;
     let rest = server.prop_state(b).unwrap().position;
     // CanProperty vetoes the first request: the crate keeps its gravity
     client.command(prop("gravity"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     let (asked, applied): (i64, i64) = crt.actors()[0]
         .eval("return state.d.asked, state.d.applied")
         .unwrap();
@@ -3646,7 +3677,7 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
     assert!(server.sandbox.props()[0].gravity);
     // gravity off: a 50 u/s push upward keeps going instead of falling back
     client.command(prop("gravity"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 5);
     assert!(
         !server.sandbox.props()[0].gravity,
         "gravity property applied"
@@ -3655,7 +3686,16 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
     server
         .physics
         .set_velocity(body, glam::Vec3::new(0.0, 0.0, 50.0), glam::Vec3::ZERO);
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 30);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        30,
+    );
     let st = server.prop_state(b).unwrap();
     assert!(
         st.position.z - rest.z > 18.0 && st.velocity.z > 40.0,
@@ -3664,28 +3704,46 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
         st.velocity.z
     );
     // the crate now floats ~25 u up: look at it there (pitch 10) to switch gravity back on
-    step(&mut sn, &mut client, &mut server, &mut crt, 10.0, 2);
+    step(&mut sn, &mut client, &mut server, &mut crt, 10.0, 0.0, 0, 2);
     client.command(prop("gravity"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 10.0, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, 10.0, 0.0, 0, 5);
     assert!(server.sandbox.props()[0].gravity, "gravity back on");
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 90);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        90,
+    );
     assert!(
         (server.prop_state(b).unwrap().position.z - rest.z).abs() < 1.0,
         "back on the floor"
     );
     // collision off: a second crate spawned onto it falls through to the floor
     client.command(prop("collision_off"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 5);
     assert!(!server.sandbox.props()[0].collide);
     // collision_off is not offered twice
     client.command(prop("collision_off"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 5);
     let applied: i64 = crt.actors()[0].eval("return state.d.applied").unwrap();
     assert_eq!(applied, 3);
     client.command(gm_net::Command::Spawn {
         model: "models/props_junk/wood_crate001a.mdl".into(),
     });
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 120);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        120,
+    );
     let a = server.sandbox.props()[1].id;
     let az = server.prop_state(a).unwrap().position.z;
     assert!(
@@ -3695,18 +3753,27 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
     );
     // the two crates now overlap; take the second away so the crosshair finds the first
     assert!(server.remove_prop(a));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 5);
     client.command(prop("collision_on"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 5);
     assert!(server.sandbox.props()[0].collide);
     // keep upright: a spin about X is undone within a few ticks
     client.command(prop("keepupright"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 5);
     assert!(server.sandbox.props()[0].upright.is_some());
     server
         .physics
         .set_velocity(body, glam::Vec3::ZERO, glam::Vec3::new(400.0, 0.0, 0.0));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     let ang = server.prop_state(b).unwrap().angles;
     assert!(
         ang.0.abs() < 3.0 && ang.2.abs() < 3.0,
@@ -3715,7 +3782,7 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
     // ignite: Ignite(360) on a 30 hp crate, the first point of damage 7 ticks after the
     // flame, then one every 13
     client.command(prop("ignite"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 3);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 3);
     let fire = server.sandbox.props()[0].fire.clone().expect("burning");
     assert_eq!(
         fire.until,
@@ -3724,34 +3791,79 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
     assert_eq!(server.sandbox.props()[0].health, 30);
     let mut waited = 0;
     while server.sandbox.props()[0].health == 30 && waited < 20 {
-        step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 1);
+        step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 1);
         waited += 1;
     }
     assert_eq!(server.sandbox.props()[0].health, 29);
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 12);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        12,
+    );
     assert_eq!(server.sandbox.props()[0].health, 29);
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 1);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 1);
     assert_eq!(server.sandbox.props()[0].health, 28);
     // extinguish: the flame is gone at once, the health stays
     client.command(prop("extinguish"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 5);
     assert!(server.sandbox.props()[0].fire.is_none());
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 30);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        30,
+    );
     assert_eq!(server.sandbox.props()[0].health, 28);
     // remove: the crate is gone
     client.command(prop("remove"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     assert!(server.sandbox.props().is_empty());
     // a crate left burning breaks at zero health: 30 points, gone, `entity.break`
     client.command(gm_net::Command::Spawn {
         model: "models/props_junk/wood_crate001a.mdl".into(),
     });
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     let c = server.sandbox.props()[0].id;
     client.command(prop("ignite"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 5);
     assert!(server.sandbox.props()[0].fire.is_some());
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 400);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        400,
+    );
     assert!(server.sandbox.props().is_empty(), "burnt down");
     let (asked, applied, last, broke): (i64, i64, String, i64) = crt.actors()[0]
         .eval("return state.d.asked, state.d.applied, state.d.last, state.d.broke")
@@ -3766,16 +3878,43 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
     client.command(gm_net::Command::Spawn {
         model: "models/props_junk/wood_crate001a.mdl".into(),
     });
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     client.command(prop("skin 2"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     assert_eq!(
         server.sandbox.props()[0].skin,
         0,
         "family 2 of 2 does not exist"
     );
     client.command(prop("skin 1"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     assert_eq!(server.sandbox.props()[0].skin, 1);
     let snap_skin = client.world.entities.values().next().map(|e| e.skin);
     assert_eq!(snap_skin, Some(1), "the snapshot carries the skin");
@@ -3787,7 +3926,16 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
     // filter (some part with more than one model) refuses it unasked; a model with choices
     // takes a valid pick and refuses a model past the part's count
     client.command(prop("bodygroups 0 1"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     assert_eq!(server.sandbox.props()[0].body, "");
     let (asked, applied): (i64, i64) = crt.actors()[0]
         .eval("return state.d.asked, state.d.applied")
@@ -3796,32 +3944,164 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
     // the context menu asks what is offered: the crate's two skins first, then the toggles by
     // state, in the game's order; a toggle's opposite appears once it is applied
     client.command(gm_net::Command::PropertyList);
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     let crate_id = server.sandbox.props()[0].id;
     let names = |c: &gm_net::ClientNet| c.properties.clone().map(|(e, n)| (e, n.join(",")));
     assert_eq!(
         names(&client),
         Some((
             crate_id,
-            "skin 0,skin 1,keepupright,ignite,remove,gravity,collision_off".to_string()
+            "skin 0,skin 1,keepupright,ignite,remove,gravity,drive,collision_off".to_string()
         ))
     );
     client.command(prop("collision_off"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     client.command(gm_net::Command::PropertyList);
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     assert_eq!(
         names(&client).map(|(_, n)| n),
-        Some("skin 0,skin 1,keepupright,ignite,remove,gravity,collision_on".to_string())
+        Some("skin 0,skin 1,keepupright,ignite,remove,gravity,drive,collision_on".to_string())
     );
     client.command(prop("collision_on"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     let (asked, applied): (i64, i64) = crt.actors()[0]
         .eval("return state.d.asked, state.d.applied")
         .unwrap();
     assert_eq!((asked, applied), (13, 12), "listing asks no hook");
+    // drive (measured law, docs/spec/sandbox.md): the crate is frozen and steered by the
+    // driver's forward move along the eye forward (pitch included), the driver's body stays;
+    // ten ticks of forward then sixty of coasting cover 3.96 + 6.43 units; +use ends it
+    let before = server.sandbox.props()[0].pos;
+    let body_before = client.world.players[0].origin;
+    client.command(prop("drive"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0.0, 0, 5);
+    assert_eq!(client.world.players[0].driving, Some(crate_id));
+    assert!(server.sandbox.props()[0].frozen, "driven prop is frozen");
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        10000.0,
+        0,
+        10,
+    );
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        60,
+    );
+    let moved = server.sandbox.props()[0].pos - before;
+    let fwd = glam::Vec3::new(30f32.to_radians().cos(), 0.0, -30f32.to_radians().sin());
+    let expect = fwd * (3.963 + 6.434 * (1.0 - 0.9f32.powi(60)));
+    assert!(
+        (moved - expect).length() < 0.05,
+        "drive moved {moved:?}, expected {expect:?}"
+    );
+    let pitch = server.sandbox.props()[0].angles.x;
+    assert!(
+        (pitch - 30.0).abs() < 1e-3,
+        "pitch follows the eye: {pitch}"
+    );
+    assert_eq!(
+        client.world.players[0].origin, body_before,
+        "driver stays put"
+    );
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        gm_server::IN_USE,
+        1,
+    );
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
+    assert_eq!(client.world.players[0].driving, None, "+use ends the drive");
+    let after = server.sandbox.props()[0].pos;
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        10000.0,
+        0,
+        10,
+    );
+    assert_eq!(
+        server.sandbox.props()[0].pos,
+        after,
+        "stopped: frozen where it was"
+    );
+    assert!(server.sandbox.props()[0].frozen);
+    let (asked, applied): (i64, i64) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.applied")
+        .unwrap();
+    assert_eq!((asked, applied), (14, 13), "drive asked CanProperty");
     client.command(prop("remove"));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     let m3 = gm_content::Mount::for_install(&inst).unwrap();
     let choice = [
         "models/props_c17/furniturecouch001a.mdl",
@@ -3848,17 +4128,44 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
     client.command(gm_net::Command::Spawn {
         model: model.into(),
     });
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 40);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        40,
+    );
     assert_eq!(server.sandbox.props().len(), 1, "{model}");
     client.command(prop(&format!("bodygroups {part} {count}")));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     assert_eq!(
         server.sandbox.props()[0].body,
         "",
         "model {count} of part {part} does not exist"
     );
     client.command(prop(&format!("bodygroups {part} 1")));
-    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        0.0,
+        0,
+        10,
+    );
     let want: String = (0..=part)
         .map(|i| if i == part { '1' } else { '0' })
         .collect();

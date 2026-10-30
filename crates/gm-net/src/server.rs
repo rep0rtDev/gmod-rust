@@ -935,6 +935,7 @@ impl ServerNet {
                 skin: p.skin,
                 body: p.body.clone(),
                 held: p.held.map(|h| h.0),
+                driving: p.driving.as_ref().map(|d| d.prop),
                 alive: p.alive,
                 health: p.health.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
                 armor: p.armor.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
