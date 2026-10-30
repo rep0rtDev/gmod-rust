@@ -2212,3 +2212,68 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
     assert_eq!(shot.pos, glam::Vec3::new(823.0, -500.0, -100.0));
     assert_eq!(shot.volume, 0.5);
 }
+
+#[test]
+fn player_chat_is_rewritten_or_dropped_by_an_actor_before_it_reaches_the_clients() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "filter".into(),
+        priority: 1,
+        source: "events.on('player.chat', function(e)
+                if e.text == 'bad' then return false end
+                if e.player == 1 then return string.upper(e.text) end
+            end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut e1, mut e2) = (net.endpoint(0), net.endpoint(1), net.endpoint(2));
+    let mut alice = gm_net::ClientNet::new(1, "alice");
+    let mut bob = gm_net::ClientNet::new(1, "bob");
+    let mut run = |n: u32,
+                   server: &mut gm_server::Server<'_>,
+                   alice: &mut gm_net::ClientNet,
+                   bob: &mut gm_net::ClientNet| {
+        for _ in 0..n {
+            alice.tick(gm_net::NetCmd::default(), &mut e1);
+            bob.tick(gm_net::NetCmd::default(), &mut e2);
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            alice.receive(&mut e1);
+            bob.receive(&mut e2);
+        }
+    };
+    run(10, &mut server, &mut alice, &mut bob);
+    alice.command(gm_net::Command::Chat {
+        text: "hello there".into(),
+    });
+    alice.command(gm_net::Command::Chat { text: "bad".into() });
+    bob.command(gm_net::Command::Chat {
+        text: "  hi  ".into(),
+    });
+    bob.command(gm_net::Command::Chat { text: "   ".into() });
+    run(10, &mut server, &mut alice, &mut bob);
+    let chat = |c: &gm_net::ClientNet| -> Vec<String> {
+        c.events
+            .iter()
+            .filter(|e| e.contains(": "))
+            .cloned()
+            .collect()
+    };
+    assert_eq!(chat(&alice), vec!["alice: HELLO THERE", "bob:   hi  "]);
+    assert_eq!(chat(&bob), chat(&alice));
+    assert!(sn.take_log().iter().any(|l| l == "chat alice: HELLO THERE"));
+}

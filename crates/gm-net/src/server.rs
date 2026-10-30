@@ -12,6 +12,9 @@ use glam::Vec3;
 use gm_server::{PlayerCmd, Server};
 use std::collections::{BTreeMap, VecDeque};
 
+/// Longest chat line kept (the game's `say` is cut at 127 characters).
+pub const MAX_CHAT_CHARS: usize = 127;
+
 pub struct ClientSlot {
     pub player: u32,
     pub name: String,
@@ -691,6 +694,7 @@ impl ServerNet {
         }
         let mut kicks: Vec<(u32, bool)> = Vec::new();
         let mut console: Vec<(u32, String)> = Vec::new();
+        let mut chats: Vec<(u32, String, String)> = Vec::new();
         for slot in self.clients.values_mut() {
             while let Some(cmd) = slot.commands.remove(&slot.next_command) {
                 slot.next_command += 1;
@@ -762,6 +766,12 @@ impl ServerNet {
                             slot.pending_events.push("Console denied".to_string());
                         }
                     }
+                    Command::Chat { text } => {
+                        let text: String = text.chars().take(MAX_CHAT_CHARS).collect();
+                        if !text.trim().is_empty() {
+                            chats.push((slot.player, slot.name.clone(), text));
+                        }
+                    }
                     Command::Reload { addon } => {
                         let msg = if !self.admins.contains(&slot.player) {
                             format!("Reload {addon} denied")
@@ -801,6 +811,21 @@ impl ServerNet {
             let replies = self.console(server, player, &line);
             if let Some(slot) = self.clients.values_mut().find(|s| s.player == player) {
                 slot.pending_events.extend(replies);
+            }
+        }
+        for (player, name, text) in chats {
+            let text = match self.hooks.as_mut() {
+                Some(h) => h.player_chat(server, player, &text),
+                None => Some(text),
+            };
+            if let Some(text) = text {
+                let line = format!("{name}: {text}");
+                self.log.push(format!("chat {line}"));
+                for c in self.clients.values_mut() {
+                    if c.welcomed && !c.closing {
+                        c.pending_events.push(line.clone());
+                    }
+                }
             }
         }
         if let Some(h) = self.hooks.as_mut() {

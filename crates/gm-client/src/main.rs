@@ -1451,9 +1451,12 @@ impl App {
                 self.console.log(format!("bot {id} added"));
             }
             "cleanup" => self.sim.client.command(Command::Cleanup),
+            "say" => self.sim.client.command(Command::Chat {
+                text: rest.join(" "),
+            }),
             "help" => {
                 self.console
-                    .log("client: spawn [model] | tool [name] | bot | undo | cleanup | clear | quit; server:");
+                    .log("client: spawn [model] | tool [name] | bot | say <text> | undo | cleanup | clear | quit; server:");
                 self.sim.client.command(Command::Console {
                     line: line.to_string(),
                 });

@@ -553,12 +553,50 @@ impl Runtime {
                     break;
                 }
                 Ok(Reply::Number(n)) => verdict = gm_server::Verdict::Amount(n as f32),
-                Ok(Reply::Pass) => {}
+                Ok(Reply::Pass | Reply::Text(_)) => {}
                 Err(e) => self.log.push(format!("[{}] {e}", a.label())),
             }
         }
         self.serial(server);
         verdict
+    }
+
+    /// `player.chat {player, text}` before the line goes out: `false` drops it, a string replaces
+    /// it (later actors see the replacement), anything else passes it on.
+    pub fn player_chat(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        text: &str,
+    ) -> Option<String> {
+        let mut p = api::Payload::default();
+        p.ints.push(("player", player as i64));
+        p.strs.push(("text", text.to_string()));
+        let snap = self.snapshot(server);
+        let mut order: Vec<usize> = (0..self.actors.len()).collect();
+        order.sort_by_key(|&i| (self.actors[i].priority(), i));
+        let mut out = Some(text.to_string());
+        for i in order {
+            let a = &mut self.actors[i];
+            if !a.may_run(self.tick) {
+                continue;
+            }
+            match a.dispatch_reply(&snap, "player.chat", &p, self.tick) {
+                Ok(Reply::Cancel) => {
+                    out = None;
+                    break;
+                }
+                Ok(Reply::Text(t)) => {
+                    p.strs.retain(|(k, _)| *k != "text");
+                    p.strs.push(("text", t.clone()));
+                    out = Some(t);
+                }
+                Ok(_) => {}
+                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+            }
+        }
+        self.serial(server);
+        out
     }
 
     /// A server `Request` inside the tick: `player.damage {player, amount, type}` (return
@@ -871,6 +909,9 @@ impl gm_server::ServerHooks for Runtime {
     fn game_events(&mut self, server: &mut Server<'_>, events: Vec<gm_server::GameEvent>) {
         Runtime::game_events(self, server, events);
     }
+    fn player_chat(&mut self, server: &mut Server<'_>, player: u32, text: &str) -> Option<String> {
+        Runtime::player_chat(self, server, player, text)
+    }
     fn after_commands(&mut self, server: &mut Server<'_>) {
         Runtime::after_commands(self, server);
     }
@@ -967,6 +1008,9 @@ impl gm_server::ServerHooks for SharedRuntime {
     }
     fn game_events(&mut self, server: &mut Server<'_>, events: Vec<gm_server::GameEvent>) {
         self.0.lock().unwrap().game_events(server, events);
+    }
+    fn player_chat(&mut self, server: &mut Server<'_>, player: u32, text: &str) -> Option<String> {
+        self.0.lock().unwrap().player_chat(server, player, text)
     }
     fn net_message(&mut self, server: &mut Server<'_>, player: u32, name: &str, data: &[u8]) {
         gm_server::ServerHooks::net_message(

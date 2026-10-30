@@ -364,6 +364,7 @@ function __dispatch(name: string, payload)
             -- a number answers a request (`player.damage`: the amount to deal); later handlers
             -- of the same actor see it in the payload
             if type(r) == "number" then result = r; payload.amount = r end
+            if type(r) == "string" then result = r; payload.text = r end
         end
     end
     -- timers run after the Think handlers and before the server tick, like the game's

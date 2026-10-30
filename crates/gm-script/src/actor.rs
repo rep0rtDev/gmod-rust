@@ -42,13 +42,15 @@ pub enum ActorStatus {
 }
 
 /// What a handler returned to a cancelable event.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Reply {
     Pass,
     /// `return false`
     Cancel,
     /// `return <number>`
     Number(f64),
+    /// `return <string>` (`player.chat`: the text to send instead)
+    Text(String),
 }
 
 pub struct Actor {
@@ -199,6 +201,7 @@ impl Actor {
             Ok(Value::Boolean(false)) => Ok(Reply::Cancel),
             Ok(Value::Number(n)) => Ok(Reply::Number(n)),
             Ok(Value::Integer(n)) => Ok(Reply::Number(n as f64)),
+            Ok(Value::String(s)) => Ok(Reply::Text(s.to_str()?.to_string())),
             Ok(_) => Ok(Reply::Pass),
             Err(e) => {
                 if !self.over_budget.load(Ordering::Relaxed) {

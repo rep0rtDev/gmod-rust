@@ -56,6 +56,11 @@ pub enum Command {
     Console {
         line: String,
     },
+    /// Chat line of any player: `player.chat` may cancel or rewrite it, then every welcomed
+    /// client gets `<name>: <text>` as an event.
+    Chat {
+        text: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -529,6 +534,10 @@ impl ClientMsg {
                         w.u8(8);
                         w.str(line);
                     }
+                    Command::Chat { text } => {
+                        w.u8(10);
+                        w.str(text);
+                    }
                 }
             }
             ClientMsg::AckSnapshot { tick } => {
@@ -594,6 +603,7 @@ impl ClientMsg {
                     },
                     8 => Command::Console { line: r.str()? },
                     9 => Command::SelectWeapon { class: r.str()? },
+                    10 => Command::Chat { text: r.str()? },
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }

@@ -158,6 +158,16 @@ pub trait ServerHooks {
     fn player_disconnected(&mut self, _server: &mut Server<'_>, _player: u32) {}
     /// This tick's `GameEvent`s, after the tick and before `post_tick`.
     fn game_events(&mut self, _server: &mut Server<'_>, _events: Vec<GameEvent>) {}
+    /// A player's chat line before it is sent: `None` drops it, `Some` is what every client
+    /// gets (possibly rewritten).
+    fn player_chat(
+        &mut self,
+        _server: &mut Server<'_>,
+        _player: u32,
+        text: &str,
+    ) -> Option<String> {
+        Some(text.to_owned())
+    }
     /// An addon message from a client's actor (`net.send` on the client).
     fn net_message(&mut self, _server: &mut Server<'_>, _player: u32, _name: &str, _data: &[u8]) {}
     /// Addon messages queued by server actors: (player or 0 for everyone, name, payload).

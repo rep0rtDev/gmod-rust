@@ -307,3 +307,9 @@ Replicated cvars: `ServerMsg::Cvar { seq, name, value }` (tag 6, reliable) carri
 `ServerMsg::Sounds` (tag 13) carries the server's world sounds of the ticks since the last
 snapshot (prop impacts, footsteps, scripted `sound.play`) with the snapshot, unreliable; on a
 tick without a snapshot the sounds stay pending instead of being dropped.
+
+## Chat
+
+`Command::Chat { text }` (tag 10) from any player; the server trims it to 127 characters, drops
+blank lines, lets the addon runtime veto or rewrite it (`player.chat`) and sends `<name>: <text>`
+to every welcomed client as an `Event`; the console client verb is `say <text>`.

@@ -359,7 +359,7 @@ waits for a real client; a published package is capped at 50 MiB.
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API (tool ghosts and panels, spawn menu), WASM components,
-`player.chat`, `entity.collide`, the sandbox gamemode in Luau on top of this API.
+`entity.collide`, the sandbox gamemode in Luau on top of this API.
 
 ## Server events
 
@@ -381,6 +381,13 @@ when the physgun's trace finds an unfrozen prop with attack held, `false` keeps 
 hand (asked again every tick the button stays down). A request raised by a write of a running
 handler (a `player.damage` queued from inside an event) is not asked again: handlers are never
 re-entered, the write applies as queued.
+
+`player.chat {player, text}` runs when a client's `Command::Chat` arrives (the line is cut at 127
+characters as the game's `say` is, blank lines are dropped before asking): `false` drops the
+line, a string replaces it (later actors see the replacement in `text`), anything else passes it
+on; every welcomed client then gets `<name>: <text>` as an event and the server log
+`chat <name>: <text>`. Measured (`addon_hooks player_chat`): an actor upper-casing player 1 and
+refusing "bad" gives both clients `alice: HELLO THERE` and `bob:   hi  ` only.
 
 `world.queue("sound.play", 0, {name, pos = {x, y, z}, volume?})` plays a sound script at a
 world position for every client (the same channel as prop impacts and footsteps; `volume`
