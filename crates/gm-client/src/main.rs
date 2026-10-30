@@ -16,6 +16,7 @@ use glam::Vec3;
 use gm_move::buttons;
 use gm_net::{ClientNet, Command, Loopback, LoopbackEndpoint, NetCmd, ServerNet};
 use gm_render::ui::{UiItem, UiRenderer};
+use gm_render::world::{DrawItem, ModelTarget};
 use gm_render::{Camera, Gpu, WorldRenderer};
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
@@ -88,6 +89,17 @@ struct Gfx {
 }
 
 const CONSOLE_LOG_LINES: usize = 500;
+/// GMod's default `viewmodel_fov`.
+const VIEWMODEL_FOV: f32 = 54.0;
+
+/// Viewmodel of a weapon slot and its idle sequence.
+fn viewmodel(weapon: u8) -> Option<(&'static str, &'static str)> {
+    match weapon {
+        1 => Some(("models/weapons/c_superphyscannon.mdl", "idle")),
+        2 => Some(("models/weapons/c_toolgun.mdl", "idle01")),
+        _ => None,
+    }
+}
 
 /// Drop-down console: the log of our lines and the server's replies, an input
 /// line with history, and a scroll offset in lines from the bottom.
@@ -351,10 +363,11 @@ impl App {
                     Some(p) => (p.pos, p.angles),
                     None => (e.pos, e.angles),
                 };
-                Some((
-                    g.models.get(&e.model)?.as_ref()?,
-                    gm_render::world::model_transform(pos, ang),
-                ))
+                Some(DrawItem {
+                    model: g.models.get(&e.model)?.as_ref()?,
+                    transform: gm_render::world::model_transform(pos, ang),
+                    bones: None,
+                })
             })
             .collect();
         let me = self.sim.client.player_id;
@@ -368,21 +381,23 @@ impl App {
             }
             // bind pose until animations: standing model, the hull box when the model is missing
             match player_model {
-                Some(m) => items.push((
-                    m,
-                    gm_render::world::model_transform(
+                Some(m) => items.push(DrawItem {
+                    model: m,
+                    transform: gm_render::world::model_transform(
                         p.origin,
                         Vec3::new(0.0, p.view_angles.y, 0.0),
                     ),
-                )),
+                    bones: None,
+                }),
                 None => {
                     let h = if p.ducked { 36.0 } else { 72.0 };
-                    items.push((
-                        &g.player_box,
-                        glam::Mat4::from_translation(p.origin + Vec3::Z * (h / 2.0))
+                    items.push(DrawItem {
+                        model: &g.player_box,
+                        transform: glam::Mat4::from_translation(p.origin + Vec3::Z * (h / 2.0))
                             * glam::Mat4::from_rotation_z(p.view_angles.y.to_radians())
                             * glam::Mat4::from_scale(Vec3::new(32.0, 32.0, h)),
-                    ));
+                        bones: None,
+                    });
                 }
             }
         }
@@ -415,18 +430,50 @@ impl App {
             let len = d.length();
             if len > 1.0 {
                 let rot = glam::Quat::from_rotation_arc(Vec3::X, d / len);
-                items.push((
-                    &g.beam,
-                    glam::Mat4::from_scale_rotation_translation(
+                items.push(DrawItem {
+                    model: &g.beam,
+                    transform: glam::Mat4::from_scale_rotation_translation(
                         Vec3::new(len, 1.0, 1.0),
                         rot,
                         start + d * 0.5,
                     ),
-                ));
+                    bones: None,
+                });
             }
         }
-        g.world
-            .draw_models(&g.gpu, &camera, &view, &g.depth, aspect, &items);
+        let target = ModelTarget {
+            color: &view,
+            depth: &g.depth,
+            aspect,
+            clear_depth: false,
+        };
+        g.world.draw_models(&g.gpu, &camera, &target, &items);
+        // viewmodel: own projection (narrower fov, near plane at 1 u) over a cleared depth buffer
+        if let Some((path, idle)) = viewmodel(self.weapon) {
+            if !g.models.contains_key(path) {
+                let m = g.world.load_model(&g.gpu, &self.mount, path);
+                g.models.insert(path.to_string(), m);
+            }
+            if let Some(m) = g.models.get(path).and_then(|m| m.as_ref()) {
+                let pose = m.pose(idle, self.fps_at.elapsed().as_secs_f32());
+                let vm_camera = Camera {
+                    fov_x: VIEWMODEL_FOV,
+                    near: 1.0,
+                    far: 512.0,
+                    ..camera
+                };
+                let item = DrawItem {
+                    model: m,
+                    transform: gm_render::world::model_transform(camera.position, self.view),
+                    bones: pose.as_deref(),
+                };
+                let target = ModelTarget {
+                    clear_depth: true,
+                    ..target
+                };
+                g.world.draw_models(&g.gpu, &vm_camera, &target, &[item]);
+            }
+        }
         let ui_items = self.ui_items(o);
         let g = self.gfx.as_ref().unwrap();
         g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);

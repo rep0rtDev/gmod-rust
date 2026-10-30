@@ -193,6 +193,9 @@ pub struct Bone {
     pub pos: [f32; 3],
     pub quat: [f32; 4],
     pub rot: [f32; 3],
+    /// Per-axis scale of run-length encoded position / rotation animation values.
+    pub pos_scale: [f32; 3],
+    pub rot_scale: [f32; 3],
     /// Row-major 3x4 pose-to-bone matrix.
     pub pose_to_bone: [[f32; 4]; 3],
     pub flags: i32,
@@ -315,6 +318,39 @@ pub struct AnimDesc {
     /// External animation block (0 = the data is in the `.mdl`).
     pub block: i32,
     pub index: i32,
+    /// Byte offset of this descriptor in the `.mdl`; `index` and the section table are
+    /// relative to it.
+    pub offset: usize,
+    /// Long animations are cut into sections of `section_frames` frames, each with its own
+    /// (block, index) pair at `section_index`.
+    pub section_index: i32,
+    pub section_frames: i32,
+}
+
+impl AnimDesc {
+    /// Where frame `frame` of this animation starts when its data is in the `.mdl` (block 0):
+    /// the byte offset of the bone list and the frame within it. `None` when the data lives
+    /// in an external block.
+    pub fn frame_start(&self, frame: usize) -> Option<(usize, usize)> {
+        if self.section_frames <= 0 {
+            return (self.block == 0).then_some((self.offset + self.index as usize, frame));
+        }
+        let section = frame / self.section_frames as usize;
+        Some((
+            self.offset + self.section_index as usize + section * 8,
+            frame % self.section_frames as usize,
+        ))
+    }
+
+    /// Resolves [`frame_start`](Self::frame_start) for a sectioned animation through the
+    /// section table in `data`.
+    pub fn frame_data(&self, data: &[u8], frame: usize) -> Option<(usize, usize)> {
+        let (p, f) = self.frame_start(frame)?;
+        if self.section_frames <= 0 {
+            return Some((p, f));
+        }
+        (i32_at(data, p)? == 0).then_some((self.offset + i32_at(data, p + 4)? as usize, f))
+    }
 }
 
 /// One bone of a static (single-frame) pose read from an animation.
@@ -377,6 +413,9 @@ pub fn anim_descs(data: &[u8], header: &Header) -> Vec<AnimDesc> {
             frames: i32_at(data, o + 16).unwrap_or(0),
             block: i32_at(data, o + 52).unwrap_or(0),
             index: i32_at(data, o + 56).unwrap_or(0),
+            offset: o,
+            section_index: i32_at(data, o + 80).unwrap_or(0),
+            section_frames: i32_at(data, o + 84).unwrap_or(0),
         });
     }
     out
@@ -478,6 +517,101 @@ pub fn static_pose(data: &[u8], start: usize) -> Option<Vec<BonePose>> {
     Some(out)
 }
 
+/// Value `frame` of a run-length encoded track (`mstudioanimvalue_t`): chunks of a
+/// `{valid, total}` header and `valid` shorts, the last short held for the rest of the chunk.
+fn rle_value(data: &[u8], mut p: usize, mut frame: usize) -> Option<i16> {
+    loop {
+        let valid = *data.get(p)? as usize;
+        let total = *data.get(p + 1)? as usize;
+        if total == 0 {
+            return None;
+        }
+        if frame < total {
+            let i = if frame < valid { frame + 1 } else { valid };
+            return i16_at(data, p + i * 2);
+        }
+        frame -= total;
+        p += (1 + valid) * 2;
+    }
+}
+
+/// Quaternion of Source radian Euler angles (x, y, z).
+pub fn quat_from_euler(e: [f32; 3]) -> [f32; 4] {
+    let (sx, cx) = (e[0] * 0.5).sin_cos();
+    let (sy, cy) = (e[1] * 0.5).sin_cos();
+    let (sz, cz) = (e[2] * 0.5).sin_cos();
+    [
+        sx * cy * cz - cx * sy * sz,
+        cx * sy * cz + sx * cy * sz,
+        cx * cy * sz - sx * sy * cz,
+        cx * cy * cz + sx * sy * sz,
+    ]
+}
+
+/// Local (position, quaternion) of every bone at `frame` of an animation: the bind pose for
+/// bones the animation does not touch, raw values (flags 0x01 / 0x02 / 0x20) or run-length
+/// encoded tracks (0x04 position, 0x08 rotation) scaled by the bone's `pos_scale` /
+/// `rot_scale` and added to the bind pose, or to zero for a delta animation (0x10).
+/// `data` / `start` as in [`static_pose`].
+pub fn anim_pose(
+    data: &[u8],
+    start: usize,
+    bones: &[Bone],
+    frame: usize,
+) -> Option<Vec<([f32; 3], [f32; 4])>> {
+    let mut out: Vec<_> = bones.iter().map(|b| (b.pos, b.quat)).collect();
+    let mut p = start;
+    loop {
+        let bone = *data.get(p)? as usize;
+        let flags = *data.get(p + 1)?;
+        let next = i16_at(data, p + 2)?;
+        let Some(b) = bones.get(bone) else {
+            break;
+        };
+        let delta = flags & 0x10 != 0;
+        let base = |v: [f32; 3]| if delta { [0.0; 3] } else { v };
+        let mut q = p + 4;
+        let mut quat = b.quat;
+        let mut pos = b.pos;
+        if flags & 0x20 != 0 {
+            quat = quat64(data.get(q..q + 8)?);
+            q += 8;
+        } else if flags & 0x02 != 0 {
+            quat = quat48(data.get(q..q + 6)?);
+            q += 6;
+        } else if flags & 0x08 != 0 {
+            let mut e = base(b.rot);
+            for (i, v) in e.iter_mut().enumerate() {
+                let off = i16_at(data, q + i * 2)?;
+                if off != 0 {
+                    *v += rle_value(data, q + off as usize, frame)? as f32 * b.rot_scale[i];
+                }
+            }
+            quat = quat_from_euler(e);
+            q += 6;
+        }
+        if flags & 0x01 != 0 {
+            let bytes = data.get(q..q + 6)?;
+            let h = |i: usize| f16_to_f32(u16::from_le_bytes(bytes[i..i + 2].try_into().unwrap()));
+            pos = [h(0), h(2), h(4)];
+        } else if flags & 0x04 != 0 {
+            pos = base(b.pos);
+            for (i, v) in pos.iter_mut().enumerate() {
+                let off = i16_at(data, q + i * 2)?;
+                if off != 0 {
+                    *v += rle_value(data, q + off as usize, frame)? as f32 * b.pos_scale[i];
+                }
+            }
+        }
+        out[bone] = (pos, quat);
+        if next == 0 {
+            break;
+        }
+        p += next as usize;
+    }
+    Some(out)
+}
+
 impl Mdl {
     pub fn parse(data: &[u8]) -> Result<Self> {
         let header = Header::parse(data)?;
@@ -491,7 +625,8 @@ impl Mdl {
             let pos = vec3(&mut r)?;
             let quat = [r.f32()?, r.f32()?, r.f32()?, r.f32()?];
             let rot = vec3(&mut r)?;
-            r.skip(24)?; // pos/rot scale
+            let pos_scale = vec3(&mut r)?;
+            let rot_scale = vec3(&mut r)?;
             let mut m = [[0f32; 4]; 3];
             for row in m.iter_mut() {
                 for v in row.iter_mut() {
@@ -510,6 +645,8 @@ impl Mdl {
                 pos,
                 quat,
                 rot,
+                pos_scale,
+                rot_scale,
                 pose_to_bone: m,
                 flags,
                 physics_bone,

@@ -228,17 +228,141 @@ fn build_sky_cube(
 const SKY_CUBE_HALF: f32 = 100.0;
 
 /// A model for props that move: meshes in model space with their material bind groups.
-/// One mesh of a `DynModel`: material, model-space (position, normal, uv), indices.
-type DynPart = (
-    wgpu::BindGroup,
-    Vec<([f32; 3], [f32; 3], [f32; 2])>,
-    Vec<u32>,
-);
+/// A model-space vertex of a `DynModel` with its skinning weights.
+#[derive(Clone, Copy, Debug)]
+pub struct DynVertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
+    pub bones: [u8; 3],
+    pub weights: [f32; 3],
+    pub num_bones: u8,
+}
+
+impl DynVertex {
+    fn rigid(position: [f32; 3], normal: [f32; 3], uv: [f32; 2]) -> Self {
+        DynVertex {
+            position,
+            normal,
+            uv,
+            bones: [0; 3],
+            weights: [0.0; 3],
+            num_bones: 0,
+        }
+    }
+}
+
+/// One mesh of a `DynModel`: material, vertices, indices.
+type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>);
+
+/// The bones and animations of a `DynModel`, kept with the `.mdl` bytes the tracks live in.
+struct Skeleton {
+    mdl: Vec<u8>,
+    bones: Vec<gm_formats::mdl::Bone>,
+    sequences: Vec<gm_formats::mdl::Sequence>,
+    anims: Vec<gm_formats::mdl::AnimDesc>,
+}
 
 pub struct DynModel {
     parts: Vec<DynPart>,
     /// Drawn at full brightness (beams, markers), not shaded by the sun.
     unlit: bool,
+    skeleton: Option<Skeleton>,
+}
+
+/// Where `draw_models` renders: the colour and depth views, the aspect ratio of the colour
+/// view and whether to clear the depth buffer first (viewmodels draw over the world).
+pub struct ModelTarget<'a> {
+    pub color: &'a wgpu::TextureView,
+    pub depth: &'a wgpu::TextureView,
+    pub aspect: f32,
+    pub clear_depth: bool,
+}
+
+/// A `DynModel` to draw: its placement and, for a skinned pose, one matrix per bone from
+/// [`DynModel::pose`].
+pub struct DrawItem<'a> {
+    pub model: &'a DynModel,
+    pub transform: Mat4,
+    pub bones: Option<&'a [Mat4]>,
+}
+
+impl DynModel {
+    /// Names of the model's sequences.
+    pub fn sequences(&self) -> impl Iterator<Item = &str> {
+        self.skeleton
+            .iter()
+            .flat_map(|s| s.sequences.iter().map(|q| q.name.as_str()))
+    }
+
+    /// Skinning matrices (model space from bind pose) of sequence `name` at `time` seconds
+    /// from its start: looping sequences wrap, others hold their last frame. `None` without a
+    /// skeleton, an unknown sequence or tracks in an external `.ani` block.
+    pub fn pose(&self, name: &str, time: f32) -> Option<Vec<Mat4>> {
+        let sk = self.skeleton.as_ref()?;
+        let seq = sk.sequences.iter().find(|s| s.name == name)?;
+        let anim = sk.anims.get(seq.anim.max(0) as usize)?;
+        if anim.frames <= 0 {
+            return None;
+        }
+        let frames = anim.frames as usize;
+        let f = (time.max(0.0) * anim.fps) as usize;
+        let frame = if anim.flags & 1 != 0 {
+            f % frames
+        } else {
+            f.min(frames - 1)
+        };
+        let (start, frame) = anim.frame_data(&sk.mdl, frame)?;
+        let local = gm_formats::mdl::anim_pose(&sk.mdl, start, &sk.bones, frame)?;
+        let mut world = Vec::with_capacity(local.len());
+        for (i, (pos, quat)) in local.iter().enumerate() {
+            let m = Mat4::from_rotation_translation(
+                glam::Quat::from_array(*quat).normalize(),
+                Vec3::from(*pos),
+            );
+            let parent = sk.bones[i].parent;
+            let m = if parent >= 0 && (parent as usize) < i {
+                world[parent as usize] * m
+            } else {
+                m
+            };
+            world.push(m);
+        }
+        Some(
+            world
+                .iter()
+                .zip(&sk.bones)
+                .map(|(w, b)| {
+                    let r = &b.pose_to_bone;
+                    let p2b = Mat4::from_cols_array_2d(&[
+                        [r[0][0], r[1][0], r[2][0], 0.0],
+                        [r[0][1], r[1][1], r[2][1], 0.0],
+                        [r[0][2], r[1][2], r[2][2], 0.0],
+                        [r[0][3], r[1][3], r[2][3], 1.0],
+                    ]);
+                    *w * p2b
+                })
+                .collect(),
+        )
+    }
+}
+
+fn skin(v: &DynVertex, bones: &[Mat4]) -> (Vec3, Vec3) {
+    let p = Vec3::from(v.position);
+    let n = Vec3::from(v.normal);
+    if v.num_bones == 0 {
+        return (p, n);
+    }
+    let mut sp = Vec3::ZERO;
+    let mut sn = Vec3::ZERO;
+    for i in 0..(v.num_bones as usize).min(3) {
+        let Some(m) = bones.get(v.bones[i] as usize) else {
+            continue;
+        };
+        sp += m.transform_point3(p) * v.weights[i];
+        sn += m.transform_vector3(n) * v.weights[i];
+    }
+    (sp, sn)
 }
 
 /// Placement of a `DynModel`: origin plus Source angles.
@@ -980,7 +1104,14 @@ impl WorldRenderer {
                         let Some(v) = vvd.vertices.get(vertex_base + i as usize) else {
                             continue;
                         };
-                        verts.push((v.position, v.normal, v.uv));
+                        verts.push(DynVertex {
+                            position: v.position,
+                            normal: v.normal,
+                            uv: v.uv,
+                            bones: v.bones,
+                            weights: v.weights,
+                            num_bones: v.num_bones,
+                        });
                     }
                     idx.push(li);
                 }
@@ -1025,9 +1156,16 @@ impl WorldRenderer {
                 parts.push((bg, verts, idx));
             }
         }
+        let skeleton = mount.read(path).ok().map(|bytes| Skeleton {
+            sequences: gm_formats::mdl::sequences(&bytes, &mdl.header),
+            anims: gm_formats::mdl::anim_descs(&bytes, &mdl.header),
+            bones: mdl.bones.clone(),
+            mdl: bytes,
+        });
         (!parts.is_empty()).then_some(DynModel {
             parts,
             unlit: false,
+            skeleton,
         })
     }
 
@@ -1085,7 +1223,7 @@ impl WorldRenderer {
                     p[axis] = 0.5 * sign;
                     p[u] = a;
                     p[v] = b;
-                    verts.push((p, n, [0.5, 0.5]));
+                    verts.push(DynVertex::rigid(p, n, [0.5, 0.5]));
                 }
                 if sign > 0.0 {
                     idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -1097,6 +1235,7 @@ impl WorldRenderer {
         DynModel {
             parts: vec![(bg, verts, idx)],
             unlit,
+            skeleton: None,
         }
     }
 
@@ -1106,27 +1245,36 @@ impl WorldRenderer {
         &self,
         gpu: &Gpu,
         camera: &Camera,
-        color: &wgpu::TextureView,
-        depth: &wgpu::TextureView,
-        aspect: f32,
-        items: &[(&DynModel, Mat4)],
+        target: &ModelTarget<'_>,
+        items: &[DrawItem<'_>],
     ) {
+        let ModelTarget {
+            color,
+            depth,
+            aspect,
+            clear_depth,
+        } = *target;
         let mut verts: Vec<Vertex> = Vec::new();
         let mut idx: Vec<u32> = Vec::new();
         let mut draws = Vec::new();
-        for (m, xf) in items {
+        for item in items {
+            let (m, xf) = (item.model, &item.transform);
             for (bg, pv, pi) in &m.parts {
                 let base = verts.len() as u32;
-                for (p, n, uv) in pv {
-                    let n = xf.transform_vector3(Vec3::from(*n)).normalize_or_zero();
+                for v in pv {
+                    let (p, n) = match item.bones {
+                        Some(b) => skin(v, b),
+                        None => (Vec3::from(v.position), Vec3::from(v.normal)),
+                    };
+                    let n = xf.transform_vector3(n).normalize_or_zero();
                     let shade = if m.unlit {
                         1.0
                     } else {
                         0.45 + 0.55 * n.dot(self.sun).max(0.0)
                     };
                     verts.push(Vertex {
-                        position: xf.transform_point3(Vec3::from(*p)).to_array(),
-                        uv: *uv,
+                        position: xf.transform_point3(p).to_array(),
+                        uv: v.uv,
                         lm_uv: self.white_uv,
                         color: [shade; 3],
                     });
@@ -1173,7 +1321,11 @@ impl WorldRenderer {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
+                        load: if clear_depth {
+                            wgpu::LoadOp::Clear(1.0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
