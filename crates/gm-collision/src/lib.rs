@@ -69,6 +69,10 @@ pub struct World {
     side_planes: Vec<u32>,
     /// Per brush side: its texture is the sky (`SURF_SKY`/`SURF_SKY2D`); empty when unknown.
     side_sky: Vec<bool>,
+    /// Per brush side: index into `materials`, `u32::MAX` when it has none; empty when unknown.
+    side_material: Vec<u32>,
+    /// Material names (`concrete/concretefloor001a`, lower case) the brush sides use.
+    materials: Vec<String>,
     head_node: i32,
     /// PVS: `vis[c]` is a bitset over clusters visible from cluster `c`; empty when the map has
     /// no visibility lump.
@@ -113,6 +117,7 @@ struct Sweep {
 
 impl World {
     pub fn from_bsp(bsp: &Bsp<'_>) -> Self {
+        let mut materials: Vec<String> = Vec::new();
         let (vis, num_clusters) = match gm_formats::bsp::extra::Visibility::parse(bsp) {
             Ok(v) if v.num_clusters > 0 => {
                 let words = v.num_clusters.div_ceil(64);
@@ -172,6 +177,34 @@ impl World {
                 })
                 .collect(),
             side_planes: bsp.brush_sides.iter().map(|s| s.plane_num as u32).collect(),
+            side_material: bsp
+                .brush_sides
+                .iter()
+                .map(|s| {
+                    let ti = usize::try_from(s.tex_info)
+                        .ok()
+                        .and_then(|i| bsp.tex_infos.get(i));
+                    let name = ti
+                        .and_then(|ti| bsp.tex_datas.get(usize::try_from(ti.tex_data).ok()?))
+                        .and_then(|td| {
+                            bsp.tex_names
+                                .get(usize::try_from(td.name_string_table_id).ok()?)
+                        });
+                    match name {
+                        Some(n) => {
+                            let n = n.replace('\\', "/").to_ascii_lowercase();
+                            if let Some(i) = materials.iter().position(|m| *m == n) {
+                                i as u32
+                            } else {
+                                materials.push(n);
+                                (materials.len() - 1) as u32
+                            }
+                        }
+                        None => u32::MAX,
+                    }
+                })
+                .collect(),
+            materials,
             side_sky: bsp
                 .brush_sides
                 .iter()
@@ -232,6 +265,8 @@ impl World {
             brushes,
             side_planes,
             side_sky: Vec::new(),
+            side_material: Vec::new(),
+            materials: Vec::new(),
             head_node: -1,
             vis: Vec::new(),
             num_clusters: 0,
@@ -307,6 +342,35 @@ impl World {
         if self.side_sky.is_empty() {
             return false;
         }
+        self.side_at(point, normal)
+            .is_some_and(|si| self.side_sky.get(si).copied().unwrap_or(false))
+    }
+
+    /// Material of the brush side at `point` facing `normal` (same contact rule as [`is_sky`]):
+    /// what a player standing there steps on.
+    pub fn surface_material(&self, point: Vec3, normal: Vec3) -> Option<&str> {
+        let si = self.side_at(point, normal)?;
+        let mi = *self.side_material.get(si)?;
+        self.materials.get(mi as usize).map(String::as_str)
+    }
+
+    /// Material under a standing player's feet (`origin` at the feet): a short ray down finds
+    /// the floor the player rests on, which can be up to a step below the origin (an idle player
+    /// on gm_construct's spawn stands 1 u above the floor brush).
+    pub fn ground_material(&self, origin: Vec3) -> Option<&str> {
+        let t = self.trace_ray(origin + Vec3::Z, origin - Vec3::Z * 4.0, MASK_PLAYERSOLID);
+        if t.fraction >= 1.0 || t.all_solid {
+            return None;
+        }
+        self.surface_material(t.end, t.normal)
+    }
+
+    /// Every material the brush sides use.
+    pub fn materials(&self) -> &[String] {
+        &self.materials
+    }
+
+    fn side_at(&self, point: Vec3, normal: Vec3) -> Option<usize> {
         const EPS: f32 = 0.1;
         'brush: for b in &self.brushes {
             if b.contents & contents::SOLID == 0 {
@@ -325,10 +389,10 @@ impl World {
                 }
             }
             if let Some(si) = on_side {
-                return self.side_sky.get(si).copied().unwrap_or(false);
+                return Some(si);
             }
         }
-        false
+        None
     }
 
     pub fn trace_ray(&self, start: Vec3, end: Vec3, mask: i32) -> Trace {
@@ -742,6 +806,8 @@ mod tests {
             }],
             side_planes: vec![0, 1, 2, 3, 4, 5],
             side_sky: Vec::new(),
+            side_material: Vec::new(),
+            materials: Vec::new(),
             head_node: 0,
             vis: Vec::new(),
             num_clusters: 0,

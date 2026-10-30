@@ -509,6 +509,16 @@ impl<'a> Mover<'a> {
         st.velocity += forward * addition;
     }
 
+    /// The player's max speed as the footstep timer sees it (`GetMaxSpeed`): run or walk
+    /// speed by the sprint button; crouching does not lower it (measured `move_step_duck`).
+    pub fn step_max_speed(&self, cmd: &UserCmd) -> f32 {
+        if cmd.buttons & buttons::SPEED != 0 {
+            self.cfg.run_speed
+        } else {
+            self.cfg.walk_speed
+        }
+    }
+
     fn max_speed(&self, st: &PlayerState, cmd: &UserCmd) -> f32 {
         if st.ducked_at_tick_start {
             self.cfg.walk_speed * self.cfg.crouched_walk_speed
@@ -612,8 +622,144 @@ impl<'a> Mover<'a> {
     }
 }
 
+/// One footstep to play: volume and which foot (`stepright` or `stepleft`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Step {
+    pub volume: f32,
+    pub right: bool,
+}
+
+/// Footstep timing and volume, measured on srcds (`move_step_*`, movement.md "Footsteps").
+/// The step itself (wave by the surface under the feet) is the server's business.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Footsteps {
+    /// Milliseconds until the next step may play.
+    pub time_ms: f32,
+    /// The foot the last step used; steps alternate, jumps included.
+    pub right: bool,
+}
+
+impl Footsteps {
+    /// Standing: a step needs 90 u/s, 220 and up is running. Ducked: 60 and 80.
+    const STAND: (f32, f32) = (90.0, 220.0);
+    const DUCKED: (f32, f32) = (60.0, 80.0);
+
+    /// Before the tick's move, with the state entering the tick (`UpdateStepSound`): counts the
+    /// timer down by the tick and, when it has run out on the ground at walking speed, steps.
+    /// `max_speed` is [`Mover::step_max_speed`].
+    pub fn before_move(&mut self, st: &PlayerState, max_speed: f32, tick_ms: f32) -> Option<Step> {
+        if self.time_ms > 0.0 {
+            self.time_ms = (self.time_ms - tick_ms).max(0.0);
+        }
+        if !st.on_ground || self.time_ms > 0.0 {
+            return None;
+        }
+        let speed = st.velocity.truncate().length();
+        let (walk, run) = if st.ducked { Self::DUCKED } else { Self::STAND };
+        if speed < walk {
+            return None;
+        }
+        let mut volume = if speed < run { 0.2 } else { 0.5 };
+        if st.ducked {
+            volume *= 0.65;
+        }
+        // GMod's PlayerStepSoundTime: by max speed, 50 ms more crouching
+        let interval = if max_speed <= 100.0 {
+            400.0
+        } else if max_speed <= 300.0 {
+            350.0
+        } else {
+            250.0
+        };
+        self.time_ms = interval + if st.ducked { 50.0 } else { 0.0 };
+        self.right = !self.right;
+        Some(Step {
+            volume,
+            right: self.right,
+        })
+    }
+
+    /// A jump plays a step at full volume on the jump tick and takes its turn in the alternation;
+    /// landing plays nothing by itself.
+    pub fn on_jump(&mut self) -> Step {
+        self.right = !self.right;
+        Step {
+            volume: 1.0,
+            right: self.right,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn footsteps_follow_the_measured_series() {
+        use super::{Footsteps, PlayerState};
+        use glam::Vec3;
+        let walk = |speed: f32, ducked: bool| PlayerState {
+            velocity: Vec3::new(0.0, speed, 0.0),
+            on_ground: true,
+            ducked,
+            ..Default::default()
+        };
+        // move_step_walk: speeds entering ticks 0..4 are 0, 30, 56, 80, 100; steps at 4, 28, 52
+        let mut f = Footsteps::default();
+        let mut steps = Vec::new();
+        for (t, speed) in [0.0, 30.0, 56.4, 79.6, 100.1]
+            .into_iter()
+            .chain(std::iter::repeat(200.0))
+            .take(60)
+            .enumerate()
+        {
+            if let Some(s) = f.before_move(&walk(speed, false), 200.0, 15.0) {
+                steps.push((t, s.volume, s.right));
+            }
+        }
+        assert_eq!(
+            steps,
+            vec![(4, 0.2, true), (28, 0.2, false), (52, 0.2, true)]
+        );
+        // move_step_run: 17 ticks apart at 0.5
+        let mut f = Footsteps::default();
+        let ticks: Vec<usize> = (0..40)
+            .filter(|_| f.before_move(&walk(400.0, false), 400.0, 15.0).is_some())
+            .collect();
+        assert_eq!(ticks, vec![0, 17, 34]);
+        assert_eq!(f.before_move(&walk(309.8, false), 400.0, 15.0), None);
+        // move_step_duck: 27 ticks apart; 176 ducked already runs, 60 walks
+        let mut f = Footsteps::default();
+        assert_eq!(
+            f.before_move(&walk(176.0, true), 200.0, 15.0)
+                .map(|s| s.volume),
+            Some(0.325)
+        );
+        let ticks: Vec<usize> = (1..60)
+            .filter(|_| f.before_move(&walk(60.0, true), 200.0, 15.0).is_some())
+            .collect();
+        assert_eq!(ticks, vec![27, 54]);
+        assert!((f.before_move(&walk(60.0, true), 200.0, 15.0).is_none()));
+        // airborne and below the walk speed: nothing; a jump is a full step on the other foot
+        let mut f = Footsteps::default();
+        assert_eq!(
+            f.before_move(
+                &PlayerState {
+                    velocity: Vec3::new(0.0, 200.0, 0.0),
+                    ..Default::default()
+                },
+                200.0,
+                15.0
+            ),
+            None
+        );
+        assert_eq!(f.before_move(&walk(85.4, false), 200.0, 15.0), None);
+        assert!(f.on_jump().right);
+        assert_eq!(
+            f.before_move(&walk(130.0, false), 200.0, 15.0)
+                .map(|s| s.right),
+            Some(false)
+        );
+    }
+
     use super::*;
 
     fn flat_world() -> World {

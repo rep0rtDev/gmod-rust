@@ -354,6 +354,12 @@ fn run_move(scn: &Scenario) -> Result<Value> {
         mover.tick(&mut st, &settle_cmd);
     }
     let mut ticks = Vec::new();
+    // footsteps as the server plays them: the rule in gm-move, the wave set by the brush
+    // material under the feet (surfaceprop -> stepleft/stepright -> soundscript)
+    let table = gm_dedicated::surface_table(&mount)?;
+    let scripts = gm_audio::load_scripts(&mount);
+    let mut steps = gm_move::Footsteps::default();
+    let mut sounds = Vec::new();
     let mut t = 0u32;
     for seg in &scn.segments {
         let cmd = UserCmd {
@@ -364,7 +370,40 @@ fn run_move(scn: &Scenario) -> Result<Value> {
             up_move: seg.up,
         };
         for _ in 0..seg.ticks {
+            let feet = st.origin;
+            let was_on_ground = st.on_ground;
+            let step = steps.before_move(&st, mover.step_max_speed(&cmd), 15.0);
             mover.tick(&mut st, &cmd);
+            let jumped = st.boost_pending && was_on_ground;
+            if let Some(step) = step.or_else(|| jumped.then(|| steps.on_jump())) {
+                let material = world.ground_material(feet);
+                let set = gm_dedicated::step_sounds(&mount, &table, material);
+                let (name, other) = match set {
+                    Some(s) if step.right => (Some(s.right), Some(s.left)),
+                    Some(s) => (Some(s.left), Some(s.right)),
+                    None => (None, None),
+                };
+                let waves_of = |name: Option<&str>| -> Vec<String> {
+                    name.and_then(|n| scripts.get(n))
+                        .map(|e| {
+                            e.waves
+                                .iter()
+                                .map(|w| gm_audio::script::wave_path(w).to_ascii_lowercase())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+                sounds.push(serde_json::json!({
+                    "t": t,
+                    "material": material,
+                    "name": name,
+                    "waves": waves_of(name.as_deref()),
+                    // the other foot's set: which foot a recording starts on is whatever the
+                    // bot's pre-roll left, so the compare may swap feet once for the whole list
+                    "alt_waves": waves_of(other.as_deref()),
+                    "vol": step.volume,
+                }));
+            }
             ticks.push(serde_json::json!({
                 "t": t,
                 "pos": [st.origin.x, st.origin.y, st.origin.z],
@@ -378,6 +417,7 @@ fn run_move(scn: &Scenario) -> Result<Value> {
     Ok(serde_json::json!({
         "start": [start.x, start.y, start.z],
         "ticks": ticks,
+        "sounds": sounds,
         "final": [st.origin.x, st.origin.y, st.origin.z],
     }))
 }
@@ -4350,7 +4390,69 @@ fn compare_trajectory(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             );
         }
     }
-    let ok = first_bad.is_none() && a.len() == b.len();
+    // footsteps: the game's list of (tick, wave, volume) against ours (tick, wave set, volume);
+    // only when the recording has the hook's list at all
+    let sounds_ok = match theirs.get("sounds").and_then(Value::as_array) {
+        None => true,
+        Some(sa) => {
+            let sb = ours
+                .get("sounds")
+                .and_then(Value::as_array)
+                .unwrap_or(&empty);
+            let has = |i: usize, key: &str, wave: &str| {
+                sb.get(i)
+                    .and_then(|s| s.get(key))
+                    .and_then(Value::as_array)
+                    .is_some_and(|w| w.iter().any(|x| x.as_str() == Some(wave)))
+            };
+            let first_wave = sa
+                .first()
+                .and_then(|s| s.get("wave"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let swap = !has(0, "waves", &first_wave) && has(0, "alt_waves", &first_wave);
+            let mut bad = 0;
+            for i in 0..sa.len().max(sb.len()) {
+                let (ta, tb) = (
+                    sa.get(i).and_then(|s| s.get("t")).and_then(Value::as_i64),
+                    sb.get(i).and_then(|s| s.get("t")).and_then(Value::as_i64),
+                );
+                let (va, vb) = (
+                    sa.get(i).and_then(|s| s.get("vol")).and_then(Value::as_f64),
+                    sb.get(i).and_then(|s| s.get("vol")).and_then(Value::as_f64),
+                );
+                let wave = sa
+                    .get(i)
+                    .and_then(|s| s.get("wave"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let in_set = has(i, if swap { "alt_waves" } else { "waves" }, &wave);
+                let vol_ok = match (va, vb) {
+                    (Some(x), Some(y)) => (x - y).abs() <= 1e-3,
+                    _ => false,
+                };
+                if ta != tb || !vol_ok || !in_set {
+                    bad += 1;
+                    if bad <= 3 {
+                        println!(
+                            "  sound {i}: theirs t {ta:?} {wave} vol {va:?}; ours t {tb:?} {:?} vol {vb:?}",
+                            sb.get(i).and_then(|s| s.get("name"))
+                        );
+                    }
+                }
+            }
+            println!(
+                "  sounds theirs {} ours {}, mismatches {bad}{}",
+                sa.len(),
+                sb.len(),
+                if swap { " (feet swapped)" } else { "" }
+            );
+            bad == 0
+        }
+    };
+    let ok = first_bad.is_none() && a.len() == b.len() && sounds_ok;
     println!(
         "  {n} ticks compared, max pos err {max_pos:.4} (tol {pos_tol}), max vel err {max_vel:.3} (tol {vel_tol}), ground mismatches {ground_mismatch}: {}",
         if ok { "equal" } else { "DIFF" }

@@ -96,3 +96,7 @@ gm_construct floor):
   classic one the scripts' levels were tuned around, not the engine's measured curve.
 - Pan: constant-power on the listener's horizontal right vector (`(sin yaw, -cos yaw, 0)`);
   sounds at the listener are centered. No occlusion, DSP, doppler or soundscapes.
+
+## World sounds: footsteps (measured)
+
+Measured in `move_step_*` (details and the timing/volume law in [movement.md](movement.md), "Footsteps"): the server emits the surface's `stepleft`/`stepright` wave (gm_construct's spawn floor is `Concrete.StepLeft` = concrete 1/3, `Concrete.StepRight` = concrete 2/4) at soundlevel 75, pitch 100, on the body channel, with volume 0.2 walking, 0.5 running, times 0.65 ducked and 1.0 on a jump. Here the server sends the script name with that volume as the factor, and the client picks the random wave as it does for prop impacts; the player's own steps come back from the server like everyone else's. Not measured: the client-side mix of one's own steps (the game plays them locally too).

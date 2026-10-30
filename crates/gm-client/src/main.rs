@@ -1674,6 +1674,13 @@ fn main() -> Result<()> {
             .map_err(|e| eprintln!("model {m}: {e}"))
             .ok()
     }));
+    let (steps_mount, table) = (
+        gm_content::Mount::for_install(&inst)?,
+        gm_dedicated::surface_table(&mount)?,
+    );
+    server.step_loader = Some(Box::new(move |m: Option<&str>| {
+        gm_dedicated::step_sounds(&steps_mount, &table, m)
+    }));
     let mut net = ServerNet::new(&map, spawn);
     net.admins.extend(1..=16);
     let lo = Loopback::new(0, 0.0, 1);

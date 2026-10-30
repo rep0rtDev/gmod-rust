@@ -125,6 +125,13 @@ fn main() -> Result<()> {
             .map_err(|e| eprintln!("model {model}: {e}"))
             .ok()
     }));
+    let (mount_for_steps, table) = (
+        gm_content::Mount::for_install(&inst)?,
+        gm_dedicated::surface_table(&mount)?,
+    );
+    server.step_loader = Some(Box::new(move |m: Option<&str>| {
+        gm_dedicated::step_sounds(&mount_for_steps, &table, m)
+    }));
     let spawn = glam::Vec3::new(args.spawn[0], args.spawn[1], args.spawn[2]);
     for (name, value) in config.cvar_strings() {
         if !server.set_cvar(&name, &value) {

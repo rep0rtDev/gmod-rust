@@ -152,7 +152,20 @@ pub struct Player {
     /// Vertical velocity before the last movement tick, for fall damage on landing.
     prev_vz: f32,
     prev_on_ground: bool,
+    /// Footstep timer and foot alternation (measured rule in `gm_move::Footsteps`).
+    steps: gm_move::Footsteps,
 }
+
+/// Step soundscripts of a surface (`stepleft`/`stepright` of its surfaceprop).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StepSounds {
+    pub left: String,
+    pub right: String,
+}
+
+/// Host hook: step sounds of a brush material (`concrete/concretefloor001a`), `None` material
+/// for ground with no brush side under it (displacements, props); the result is cached.
+pub type StepLoader = Box<dyn FnMut(Option<&str>) -> Option<StepSounds>>;
 
 /// Damage types (`DMG_*` bits) that matter to the rules here.
 pub const DMG_FALL: u32 = 32;
@@ -198,6 +211,7 @@ impl Player {
             damage_acc: 0.0,
             prev_vz: 0.0,
             prev_on_ground: true,
+            steps: gm_move::Footsteps::default(),
         }
     }
 }
@@ -348,6 +362,9 @@ pub struct Server<'w> {
     /// Loads a model the first time something spawns it (the dedicated server reads the MDL/PHY
     /// from the mounted content on demand).
     pub model_loader: Option<ModelLoader>,
+    pub step_loader: Option<StepLoader>,
+    /// Step sounds by material, `""` for no material; filled through `step_loader`.
+    step_sounds: BTreeMap<String, Option<StepSounds>>,
     /// `sbox_playershurtplayers`: with it off hits are still resolved and recorded but neither
     /// hurt nor push (`hit_pistol_nohurt`, `hit_rpg_nohurt`).
     pub players_hurt_players: bool,
@@ -444,6 +461,8 @@ impl<'w> Server<'w> {
             physgun_params: PhysgunParams::default(),
             projectiles: Vec::new(),
             model_loader: None,
+            step_loader: None,
+            step_sounds: BTreeMap::new(),
             players_hurt_players: true,
             prop_hits: Vec::new(),
             prop_health: BTreeMap::new(),
@@ -1963,6 +1982,7 @@ impl<'w> Server<'w> {
         for (attacker, eye, forward) in swings {
             self.resolve_melee(attacker, eye, forward);
         }
+        let mut steps: Vec<(Vec3, gm_move::Step)> = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -1974,10 +1994,24 @@ impl<'w> Server<'w> {
                     ..pc.cmd
                 };
                 let (prev_vz, was_airborne) = (p.state.velocity.z, !p.state.on_ground);
+                // footsteps see the state entering the tick, at the feet (the origin)
+                let feet = p.state.origin;
+                let step = p.steps.before_move(
+                    &p.state,
+                    self.mover.step_max_speed(&cmd),
+                    gm_core::tick::DEFAULT_TICK_INTERVAL * 1000.0,
+                );
                 self.mover.tick(&mut p.state, &cmd);
                 p.prev_vz = prev_vz;
                 p.prev_on_ground = !was_airborne;
+                let jumped = p.state.boost_pending && !was_airborne;
+                if let Some(step) = step.or_else(|| jumped.then(|| p.steps.on_jump())) {
+                    steps.push((feet, step));
+                }
             }
+        }
+        for (feet, step) in steps {
+            self.footstep(feet, step);
         }
         // entities after the players' moves: a projectile's hit or blast this tick pushes and
         // hurts a target that has already moved (its velocity shows the push raw)
@@ -2058,6 +2092,33 @@ impl<'w> Server<'w> {
     /// Prop impact sounds of this tick's physics step: the impacting prop's own `impacthard`
     /// script at the contact point, one per prop per tick (its first contact: the crate that
     /// lands at 116 u/s and takes a second 188 u/s contact in the same tick plays 116).
+    /// A footstep at `feet`: the wave set is the `stepleft`/`stepright` of the brush side under
+    /// the feet (measured `move_step_*`: the server emits the surface's step wave, level 75).
+    fn footstep(&mut self, feet: Vec3, step: gm_move::Step) {
+        let material = self.collision.ground_material(feet).map(str::to_owned);
+        let key = material.clone().unwrap_or_default();
+        if !self.step_sounds.contains_key(&key) {
+            let loaded = self
+                .step_loader
+                .as_mut()
+                .and_then(|f| f(material.as_deref()));
+            self.step_sounds.insert(key.clone(), loaded);
+        }
+        let Some(Some(sounds)) = self.step_sounds.get(&key) else {
+            return;
+        };
+        let name = if step.right {
+            &sounds.right
+        } else {
+            &sounds.left
+        };
+        self.sounds.push(WorldSound {
+            name: name.clone(),
+            pos: feet,
+            volume: step.volume,
+        });
+    }
+
     fn impact_sounds(&mut self) {
         let impacts = self.physics.take_impacts();
         if impacts.is_empty() {

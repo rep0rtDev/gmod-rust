@@ -46,6 +46,66 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
     })
 }
 
+/// `$surfaceprop` of a material (`concrete/concretefloor001a`), through a `patch` shader's
+/// include; `default` when the material or the key is missing, as the engine falls back.
+pub fn material_surfaceprop(mount: &gm_content::Mount, material: &str) -> String {
+    fn lookup(mount: &gm_content::Mount, material: &str, depth: u32) -> Option<String> {
+        if depth > 4 {
+            return None;
+        }
+        let path = format!("materials/{}.vmt", material.trim_end_matches(".vmt"));
+        let src = String::from_utf8_lossy(&mount.read(&path).ok()?).into_owned();
+        let doc = gm_formats::keyvalues::parse(&src).ok()?;
+        let root = doc.root()?;
+        if root.key.eq_ignore_ascii_case("patch") {
+            for block in ["replace", "insert"] {
+                if let Some(v) = root.get(block).and_then(|b| b.get_str("$surfaceprop")) {
+                    return Some(v.to_string());
+                }
+            }
+            let include = root.get_str("include")?;
+            let include = include
+                .replace('\\', "/")
+                .trim_start_matches("materials/")
+                .to_string();
+            return lookup(mount, &include, depth + 1);
+        }
+        root.get_str("$surfaceprop").map(str::to_string)
+    }
+    lookup(mount, material, 0)
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_else(|| "default".to_string())
+}
+
+/// Footstep scripts of a brush material for `Server::step_loader`: the material's `$surfaceprop`
+/// (or `default` without a material) and its `stepleft`/`stepright` through the base chain.
+pub fn step_sounds(
+    mount: &gm_content::Mount,
+    table: &gm_physics::surface::SurfaceTable,
+    material: Option<&str>,
+) -> Option<gm_server::StepSounds> {
+    let prop = match material {
+        Some(m) => material_surfaceprop(mount, m),
+        None => "default".to_string(),
+    };
+    let pick = |key: &str| {
+        table
+            .sound(&prop, key)
+            .or_else(|| table.sound("default", key))
+    };
+    Some(gm_server::StepSounds {
+        left: pick("stepleft")?,
+        right: pick("stepright")?,
+    })
+}
+
+/// The surface property table of the mounted game.
+pub fn surface_table(mount: &gm_content::Mount) -> Result<gm_physics::surface::SurfaceTable> {
+    Ok(gm_physics::surface::SurfaceTable::parse(&[
+        &String::from_utf8_lossy(&mount.read("scripts/surfaceproperties.txt")?),
+    ]))
+}
+
 /// MDL hull box, PHY convexes (points and outward planes) and physics properties of a model.
 pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::ModelInfo> {
     let mdl = gm_formats::mdl::Mdl::parse(&mount.read(model)?)?;
