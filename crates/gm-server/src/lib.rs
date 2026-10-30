@@ -27,6 +27,30 @@ pub struct ModelInfo {
     pub angular_damping: f32,
     pub drag_axis_areas: Vec3,
     pub inertia: Option<Vec3>,
+    /// The `impacthard` sound script of the model's surface property (`Wood_Crate.ImpactHard`).
+    pub impact_hard: Option<String>,
+}
+
+/// A prop impact is heard from this approach speed (units/s) up: the crate's drops at 62.9
+/// and 69.1 u/s are silent on the game server, 71.8 u/s plays (`phys_sound_drop_crate_*`).
+pub const IMPACT_SOUND_MIN_SPEED: f32 = 70.0;
+/// The impact volume is `(speed / 320)^2` capped at 1, times the script's own volume (the
+/// crate: 80.7 u/s 0.0636, 177 u/s 0.306, 292 u/s 0.834, 349 u/s and up 1.0, all exact).
+pub const IMPACT_SOUND_FULL_SPEED: f32 = 320.0;
+
+/// A sound the server tells every client to play in the world this tick.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorldSound {
+    /// Sound script name.
+    pub name: String,
+    pub pos: Vec3,
+    /// Multiplies the script's volume.
+    pub volume: f32,
+}
+
+/// `(speed / IMPACT_SOUND_FULL_SPEED)^2` capped at 1; `None` under the audible threshold.
+pub fn impact_volume(speed: f32) -> Option<f32> {
+    (speed >= IMPACT_SOUND_MIN_SPEED).then(|| (speed / IMPACT_SOUND_FULL_SPEED).powi(2).min(1.0))
 }
 
 /// Result of a tool gun click on the server.
@@ -315,6 +339,8 @@ pub struct Server<'w> {
     /// NoCollide pairs by sandbox constraint id.
     nocollides: BTreeMap<u32, (BodyHandle, BodyHandle)>,
     models: BTreeMap<String, ModelInfo>,
+    /// World sounds of this tick (prop impacts), drained by the network layer.
+    sounds: Vec<WorldSound>,
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
     pub physgun_params: PhysgunParams,
@@ -411,6 +437,7 @@ impl<'w> Server<'w> {
             constraints: BTreeMap::new(),
             nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
+            sounds: Vec::new(),
             clipboards: BTreeMap::new(),
             hull_planes: BTreeMap::new(),
             events: Vec::new(),
@@ -1958,6 +1985,7 @@ impl<'w> Server<'w> {
         // the physics step after bullets, moves and projectiles: a prop hit by any of them takes
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
         self.physics.step();
+        self.impact_sounds();
         let landed: Vec<(u32, f32)> = self
             .players
             .iter()
@@ -2020,5 +2048,77 @@ impl<'w> Server<'w> {
 
     pub fn body_of(&self, prop: u32) -> Option<BodyHandle> {
         self.bodies.get(&prop).copied()
+    }
+
+    /// The world sounds of the last tick.
+    pub fn take_sounds(&mut self) -> Vec<WorldSound> {
+        std::mem::take(&mut self.sounds)
+    }
+
+    /// Prop impact sounds of this tick's physics step: the impacting prop's own `impacthard`
+    /// script at the contact point, one per prop per tick (its first contact: the crate that
+    /// lands at 116 u/s and takes a second 188 u/s contact in the same tick plays 116).
+    fn impact_sounds(&mut self) {
+        let impacts = self.physics.take_impacts();
+        if impacts.is_empty() {
+            return;
+        }
+        let mut heard: Vec<u32> = Vec::new();
+        for imp in impacts {
+            let Some(volume) = impact_volume(imp.speed) else {
+                continue;
+            };
+            for body in imp.bodies {
+                let Some((&id, _)) = self.bodies.iter().find(|(_, b)| **b == body) else {
+                    continue;
+                };
+                if heard.contains(&id) {
+                    continue;
+                }
+                let Some(model) = self
+                    .sandbox
+                    .props()
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map(|p| p.model.clone())
+                else {
+                    continue;
+                };
+                let Some(name) = self.models.get(&model).and_then(|m| m.impact_hard.clone()) else {
+                    continue;
+                };
+                heard.push(id);
+                self.sounds.push(WorldSound {
+                    name,
+                    pos: imp.point,
+                    volume,
+                });
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod impact_sound_tests {
+    use super::impact_volume;
+
+    /// The game's crate drops (`phys_sound_drop_crate_*`, script volume 0.6).
+    #[test]
+    fn impact_volume_follows_the_measured_law() {
+        let heard = |speed: f32| impact_volume(speed).map(|v| v * 0.6);
+        assert_eq!(heard(62.85), None);
+        assert_eq!(heard(69.1), None);
+        for (speed, vol) in [
+            (71.79, 0.0302),
+            (80.7, 0.0381),
+            (107.32, 0.0674),
+            (177.03, 0.1835),
+            (292.29, 0.5003),
+            (422.78, 0.6),
+            (529.61, 0.6),
+        ] {
+            let got = heard(speed).unwrap();
+            assert!((got - vol).abs() < 0.0005, "{speed} u/s: {got} vs {vol}");
+        }
     }
 }

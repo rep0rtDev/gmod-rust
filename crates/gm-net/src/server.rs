@@ -4,7 +4,7 @@
 use crate::channel::Channel;
 use crate::msg::{
     auth_message, server_message, ClientMsg, Command, EntityState, LocalPlayer, OwnSandbox,
-    PlayerSnap, ServerMsg, UndoEntry, PROTOCOL,
+    PlayerSnap, ServerMsg, SoundEvent, UndoEntry, PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -94,6 +94,8 @@ pub struct ServerNet {
     pub max_players: usize,
     /// Ticks without a packet before a client is dropped (`timed out`).
     pub timeout_ticks: u32,
+    /// World sounds of the last tick, sent with the next snapshots.
+    pending_sounds: Vec<SoundEvent>,
     /// Human-readable connection events (joins, leaves, kicks) since the last `take_log`.
     pub log: Vec<String>,
     /// Where the console's `save` / `load` keep `<name>.rdup`.
@@ -145,6 +147,7 @@ impl ServerNet {
             bans: std::collections::BTreeSet::new(),
             max_players: 64,
             timeout_ticks: DEFAULT_TIMEOUT_TICKS,
+            pending_sounds: Vec::new(),
             log: Vec::new(),
             saves_dir: None,
             addons: Vec::new(),
@@ -641,6 +644,12 @@ impl ServerNet {
             h.pre_tick(server);
         }
         server.tick(&cmds);
+        self.pending_sounds
+            .extend(server.take_sounds().into_iter().map(|s| SoundEvent {
+                name: s.name,
+                pos: s.pos,
+                volume: s.volume,
+            }));
         if let Some(h) = self.hooks.as_mut() {
             h.post_tick(server);
             for p in h.drain_published() {
@@ -862,6 +871,7 @@ impl ServerNet {
                 vm_serial: p.inventory.vm_serial,
             })
             .collect();
+        let sounds = std::mem::take(&mut self.pending_sounds);
         for (&endpoint, slot) in self.clients.iter_mut() {
             for text in std::mem::take(&mut slot.pending_events) {
                 slot.event_seq += 1;
@@ -1037,6 +1047,15 @@ impl ServerNet {
                 slot.sent.push_back((self.tick, sent_world));
                 if slot.sent.len() > 64 {
                     slot.sent.pop_front();
+                }
+                if !sounds.is_empty() {
+                    let mut w = Writer::default();
+                    ServerMsg::Sounds {
+                        tick: self.tick,
+                        list: sounds.clone(),
+                    }
+                    .write(&mut w);
+                    unreliable.push(w.buf);
                 }
             }
             if let Some((i, offset)) = slot.uploads.front_mut() {

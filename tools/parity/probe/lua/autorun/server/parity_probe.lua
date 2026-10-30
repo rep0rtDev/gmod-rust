@@ -231,6 +231,20 @@ SCENARIOS.phys = function(scn, done)
 			hit = IsValid(d.HitEntity) and d.HitEntity:GetClass() or "world",
 		}
 	end)
+	-- every sound the server emits (impact sounds by surface property, scaled by speed)
+	local sounds = {}
+	hook.Add("EntityEmitSound", "parity_phys", function(d)
+		sounds[#sounds + 1] = {
+			t = tick,
+			ent = IsValid(d.Entity) and d.Entity:GetClass() or "",
+			name = d.OriginalSoundName or d.SoundName,
+			wave = d.SoundName,
+			vol = d.Volume,
+			level = d.SoundLevel,
+			pitch = d.Pitch,
+			chan = d.Channel,
+		}
+	end)
 	hook.Add("Tick", "parity_phys", function()
 		if not IsValid(ent) then return end
 		if scn.push_tick and tick == scn.push_tick then
@@ -250,8 +264,9 @@ SCENARIOS.phys = function(scn, done)
 		tick = tick + 1
 		if tick >= total then
 			hook.Remove("Tick", "parity_phys")
+			hook.Remove("EntityEmitSound", "parity_phys")
 			ent:Remove()
-			done({ start = { start.x, start.y, start.z }, model = scn.model, info = info, ticks = ticks, collisions = collisions })
+			done({ start = { start.x, start.y, start.z }, model = scn.model, info = info, ticks = ticks, collisions = collisions, sounds = sounds })
 		end
 	end)
 end

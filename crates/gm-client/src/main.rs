@@ -809,6 +809,10 @@ impl App {
                 println!("{e}");
                 self.console.log(e);
             }
+            for s in std::mem::take(&mut self.sim.client.sounds) {
+                self.sounds
+                    .emit_scaled(&self.mount, &s.name, Some(s.pos), s.volume);
+            }
         }
     }
 

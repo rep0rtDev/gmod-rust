@@ -270,6 +270,20 @@ pub enum ServerMsg {
         from: u32,
         names: Vec<String>,
     },
+    /// Unreliable, with the snapshot: sounds the server played in the world this tick (prop
+    /// impacts); `volume` multiplies the script's own.
+    Sounds {
+        tick: u32,
+        list: Vec<SoundEvent>,
+    },
+}
+
+/// A world sound: script name, where, and a volume factor on the script's own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SoundEvent {
+    pub name: String,
+    pub pos: Vec3,
+    pub volume: f32,
 }
 
 /// A published addon package: identity is the sha256 of the `.gmr` bytes.
@@ -769,6 +783,16 @@ impl ServerMsg {
                     w.str(n);
                 }
             }
+            ServerMsg::Sounds { tick, list } => {
+                w.u8(13);
+                w.u32(*tick);
+                w.varint(list.len() as u64);
+                for s in list {
+                    w.str(&s.name);
+                    w.vec3(s.pos);
+                    w.f32(s.volume);
+                }
+            }
         }
     }
 
@@ -909,6 +933,19 @@ impl ServerMsg {
                     names.push(r.str()?);
                 }
                 ServerMsg::Models { from, names }
+            }
+            13 => {
+                let tick = r.u32()?;
+                let n = r.varint()?.min(1024) as usize;
+                let mut list = Vec::with_capacity(n);
+                for _ in 0..n {
+                    list.push(SoundEvent {
+                        name: r.str()?,
+                        pos: r.vec3()?,
+                        volume: r.f32()?,
+                    });
+                }
+                ServerMsg::Sounds { tick, list }
             }
             11 => {
                 let nonce = sha(r)?;

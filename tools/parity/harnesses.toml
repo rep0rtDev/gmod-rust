@@ -2097,3 +2097,147 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1000
+
+[[harness]]
+name = "phys_sound_drop_crate_3"
+scenario = "phys/sound_drop_crate_3"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_crate_12"
+scenario = "phys/sound_drop_crate_12"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_crate_27"
+scenario = "phys/sound_drop_crate_27"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_crate_75"
+scenario = "phys/sound_drop_crate_75"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_crate_170"
+scenario = "phys/sound_drop_crate_170"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_crate_300"
+scenario = "phys/sound_drop_crate_300"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_crate_5"
+scenario = "phys/sound_drop_crate_5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_crate_7"
+scenario = "phys/sound_drop_crate_7"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_crate_9"
+scenario = "phys/sound_drop_crate_9"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_drum_75"
+scenario = "phys/sound_drop_drum_75"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_crate_3_5"
+scenario = "phys/sound_drop_crate_3_5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_sound_drop_crate_4"
+scenario = "phys/sound_drop_crate_4"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1

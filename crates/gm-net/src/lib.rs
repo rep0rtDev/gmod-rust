@@ -133,6 +133,17 @@ mod tests {
         let mut w = Writer::default();
         models.write(&mut w);
         assert_eq!(ServerMsg::read(&mut Reader::new(&w.buf)).unwrap(), models);
+        let sounds = ServerMsg::Sounds {
+            tick: 77,
+            list: vec![crate::msg::SoundEvent {
+                name: "Wood_Crate.ImpactHard".into(),
+                pos: Vec3::new(760.5, -491.25, -123.5),
+                volume: 0.0381,
+            }],
+        };
+        let mut w = Writer::default();
+        sounds.write(&mut w);
+        assert_eq!(ServerMsg::read(&mut Reader::new(&w.buf)).unwrap(), sounds);
     }
 
     #[test]

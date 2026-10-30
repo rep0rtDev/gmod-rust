@@ -57,6 +57,33 @@ secondary (double) also arrives as `Fire` and plays `.Single`, not `.Double`. Th
 game's revolver reload sounds come from its viewmodel animation events, `357_reload1/3/4`,
 not played yet), so its reload is silent.
 
+## World sounds: prop impacts (measured)
+
+The server plays a prop's impact sound itself and tells every client (`ServerMsg::Sounds`,
+unreliable, with the snapshot: script name, world point, volume factor); the client plays the
+script at that point (`Sounds::emit_scaled`). Measured on srcds with an `EntityEmitSound`
+hook in the physics probe (`phys_sound_drop_crate_3 / 3_5 / 4 / 5 / 7 / 9 / 12 / 27 / 75 /
+170 / 300`, `phys_sound_drop_drum_75`: a crate / drum dropped from 3-300 u onto the
+gm_construct floor):
+
+- Script: the `impacthard` entry of the model's surface property, through its `base` chain
+  (`Wood_Crate` → `Wood_Crate.ImpactHard`, `Metal_Barrel` → `Metal_Barrel.ImpactHard`;
+  `SurfaceTable::sound`). `impactsoft` was never heard in these drops.
+- Volume: `(speed / 320)^2`, capped at 1, times the script's own volume (0.6 for both):
+  80.7 u/s → 0.0381, 107.3 → 0.0674, 177.0 → 0.1835, 292.3 → 0.5003, 422.8 and 529.6 →
+  0.5996 (the script's 0.6 at the cap). `speed` is the collision's approach speed, which our
+  contact model reproduces exactly on every crate landing (`gm_parity run-ours` writes the
+  `impacts` of our trace next to the golden `collisions` / `sounds`).
+- Threshold: 62.9 and 69.1 u/s are silent, 71.8 plays (0.0302); we use 70 u/s
+  (`IMPACT_SOUND_MIN_SPEED`).
+- One sound per prop per tick, its first contact: the crate landing at 116.1 u/s with a
+  second 187.7 u/s contact in the same tick plays 116.1 (0.079).
+- Timing: the game's sound is recorded 0-3 ticks after the collision tick (15 for the
+  collision at 13, 37 for 34, 9 for 9); we play it at the collision tick. The second,
+  smaller bounces follow the physics divergence of the drop itself (the drum rolls
+  differently after 48 ticks and its second 0.3 impact is not reproduced).
+- Pitch 98-100 and `SNDLVL_75dB` come from the script; no server-side override was seen.
+
 ## Mixer (approximation)
 
 - Output: cpal default device, its rate and channel count; no device (headless) → sounds

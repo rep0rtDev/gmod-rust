@@ -116,6 +116,17 @@ impl Sounds {
     /// Play a script entry at `position` (`None`: at the listener). Returns whether the
     /// entry exists and has a decodable wave.
     pub fn emit(&mut self, mount: &gm_content::Mount, name: &str, position: Option<Vec3>) -> bool {
+        self.emit_scaled(mount, name, position, 1.0)
+    }
+
+    /// `emit` with a factor on the script's volume (a prop impact scales by its speed).
+    pub fn emit_scaled(
+        &mut self,
+        mount: &gm_content::Mount,
+        name: &str,
+        position: Option<Vec3>,
+        scale: f32,
+    ) -> bool {
         let Some(e) = self.scripts.get(name).cloned() else {
             return false;
         };
@@ -123,7 +134,7 @@ impl Sounds {
         let Some(pcm) = self.wave(mount, wave) else {
             return false;
         };
-        let volume = self.rng.range(e.volume);
+        let volume = self.rng.range(e.volume) * scale;
         let pitch = self.rng.range(e.pitch);
         self.mixer.play(Play {
             pcm,

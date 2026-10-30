@@ -215,10 +215,14 @@ void gmp_set_solver(void *system, float baumgarte, unsigned int velocity_steps, 
 namespace {
 
 struct GmpSurface { float friction; float elasticity; };
+// one record per resolved first contact of a pair in a step: the bodies, the contact point
+// (Jolt metres) and the approach speed along the normal (m/s) before the impact
+struct GmpImpactRec { unsigned id1, id2; float px, py, pz, speed; };
 
 class GmpImpactListener final : public JPH::ContactListener {
 public:
 	std::unordered_map<JPH::uint32, GmpSurface> surfaces;
+	std::vector<GmpImpactRec> impacts;
 	std::unordered_map<JPH::uint32, std::vector<JPH::Vec3>> hulls;
 	bool enabled = true;
 	// body pairs that never collide (constraint.NoCollide); key is (min id << 32 | max id)
@@ -500,11 +504,17 @@ public:
 			if (-dot >= c) return n;
 			return c * n - sn * (vh - n * dot);
 		};
+		bool logged = false;
 		auto resolve = [&](Pt &pt) {
 			JPH::Vec3 v = rel(pt.p);
 			float vn = v.Dot(n);
 			if (vn >= 0.0f) return false;
 			pt.vn0 = vn;
+			if (!logged) {
+				logged = true;
+				impacts.push_back(GmpImpactRec{b1.GetID().GetIndexAndSequenceNumber(), b2.GetID().GetIndexAndSequenceNumber(),
+				                               float(pt.p.GetX()), float(pt.p.GetY()), float(pt.p.GetZ()), -vn});
+			}
 			pt.dir = direction(v, n);
 			float mv1 = virt_mass(b1, pt.p, pt.dir, m2, static_mass_factor);
 			float mv2 = virt_mass(b2, pt.p, pt.dir, m1, static_mass_factor);
@@ -685,6 +695,12 @@ public:
 					}
 					t_impact = t_first;
 					rest[pair_key].landed_tick = tick;
+					if (!logged && !face.empty()) {
+						logged = true;
+						const JPH::RVec3 &fp = face[0]->p;
+						impacts.push_back(GmpImpactRec{b1.GetID().GetIndexAndSequenceNumber(), b2.GetID().GetIndexAndSequenceNumber(),
+						                               float(fp.GetX()), float(fp.GetY()), float(fp.GetZ()), fastest});
+					}
 					// the contact is fully solved here: Jolt's own constraint on this manifold would
 					// take the bounce back (vz 0 instead of +93 u/s), and the game leaves the body
 					// exactly at the contact position for this step (z -123.55 = rest height)
@@ -832,6 +848,15 @@ void gmp_install_impact_listener(void *system) {
 		l->sys = sys;
 		sys->SetContactListener(l);
 	}
+}
+
+unsigned int gmp_take_impacts(void *system, GmpImpactRec *out, unsigned int max) {
+	auto *l = listener_of(system);
+	if (!l) return 0;
+	unsigned int n = (unsigned int)std::min<size_t>(l->impacts.size(), max);
+	for (unsigned int i = 0; i < n; ++i) out[i] = l->impacts[i];
+	l->impacts.clear();
+	return n;
 }
 
 void gmp_set_surface(void *system, unsigned int body_id, float friction, float elasticity) {

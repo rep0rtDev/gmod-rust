@@ -1,0 +1,1 @@
+{"name": "phys_sound_drop_crate_12", "kind": "phys", "map": "gm_construct", "model": "models/props_junk/wood_crate001a.mdl", "start": [823.235, -500.0, -111.6], "angles": [0, 0, 0], "ticks": 200}

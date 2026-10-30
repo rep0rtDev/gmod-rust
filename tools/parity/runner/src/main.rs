@@ -853,6 +853,7 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
     } = phys_setup(scn)?;
     let total = scn.ticks.unwrap_or(200);
     let mut ticks = Vec::with_capacity(total as usize);
+    let mut impacts = Vec::new();
     for t in 0..total {
         if scn.push_tick == Some(t) {
             // the push on a resting body (`push_tick`): velocity set in the tick, recorded raw
@@ -872,12 +873,21 @@ fn run_phys(scn: &Scenario) -> Result<Value> {
             "asleep": !st.active,
         }));
         world.step();
+        for imp in world.take_impacts() {
+            impacts.push(serde_json::json!({
+                "t": t + 1,
+                "speed": imp.speed,
+                "volume": gm_server::impact_volume(imp.speed),
+                "point": [imp.point.x, imp.point.y, imp.point.z],
+            }));
+        }
     }
     Ok(serde_json::json!({
         "start": scn.start.unwrap_or([0.0; 3]),
         "model": model,
         "info": { "mass": mass, "material": material, "volume": volume, "mesh_convexes": convexes },
         "ticks": ticks,
+        "impacts": impacts,
     }))
 }
 
@@ -1184,6 +1194,7 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
         angular_damping: props.rotdamping,
         drag_axis_areas: Vec3::from(solid.drag_axis_areas),
         inertia: Some(Vec3::from(solid.rotation_inertia)),
+        impact_hard: table.sound(&props.surfaceprop, "impacthard"),
     })
 }
 

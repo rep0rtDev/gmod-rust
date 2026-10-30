@@ -4,7 +4,7 @@
 use crate::channel::Channel;
 use crate::msg::{
     auth_message, server_message, ClientMsg, Command, EntityState, LocalPlayer, NetCmd, OwnSandbox,
-    PlayerSnap, ServerMsg, PROTOCOL,
+    PlayerSnap, ServerMsg, SoundEvent, PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -223,6 +223,8 @@ pub struct ClientNet {
     pub events: Vec<String>,
     /// Addon messages received since the last drain (name, payload).
     pub addon_msgs: Vec<(String, Vec<u8>)>,
+    /// World sounds the server played (`ServerMsg::Sounds`), drained by the game.
+    pub sounds: Vec<SoundEvent>,
     /// The packages the server published (from `ServerMsg::Addons`).
     pub server_addons: Vec<crate::msg::AddonInfo>,
     /// Downloads in progress by sha: (total, bytes so far).
@@ -252,6 +254,7 @@ impl ClientNet {
             history: VecDeque::new(),
             events: Vec::new(),
             addon_msgs: Vec::new(),
+            sounds: Vec::new(),
             models: Vec::new(),
             server_addons: Vec::new(),
             downloading: BTreeMap::new(),
@@ -456,6 +459,7 @@ impl ClientNet {
                         self.server_tick = tick;
                     }
                     ServerMsg::Event { text, .. } => self.events.push(text),
+                    ServerMsg::Sounds { list, .. } => self.sounds.extend(list),
                     ServerMsg::Addon { name, data, .. } => self.addon_msgs.push((name, data)),
                     ServerMsg::Cvar { name, value, .. } => {
                         self.world.cvars.insert(name, value);
