@@ -448,10 +448,13 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-ghosts following the stool's own placement rules (the stool computes them in `ghost`), WASM
-components, +use on players, the rest of the sandbox gamemode
-in Luau (`PlayerSpawnedProp` ownership rules; `CanProperty`, player models, the +use pickup and
-the spawn menu's own lists are done; the gamemode as one package is not).
+WASM components for native modules; scripted entity classes (a SENT with its own think / touch /
+use callbacks: today a script spawns a prop and listens to `entity.collide`, `player.use` and
+`tick.pre` for it); scripted weapons on the slot digits of the client, a `Think` analog and the
+game's `KEY_*` names / `input.IsKeyDown` polling (ours: `input.key` events with the client's key
+names); +use on players (recorded, see "+use"; not implemented: our use trace knows props and the world only). Done since this list was written: the sandbox
+gamemode as one package (`addons/gamemodes/sandbox`), prop properties, player models, the +use
+pickup, the spawn menu lists, prop spawn and state writes, scripted weapons, key events.
 
 ## Server events
 
@@ -652,8 +655,14 @@ after the tick) until the next +use press (measured: the press at tick 210 drops
 loose at 211), death, the prop's removal or a physgun taking it (`player.drop {player, entity}`).
 A frozen crate is asked every tick and never picked up (measured, `EnableMotion(false)`). The carry itself is in `docs/spec/sandbox.md`, "+use pickup".
 The native client sends `IN_USE` on E.
-Not yet: use on players (the probe's locked second bot at 60 u gave an empty eye trace and no
-`PlayerUse`, so the game's behaviour there is not recorded).
+Use on players, recorded (`lua_use_player`, `lua_use_player2`, golden 261031): a second bot 60 u
+ahead; looking level (pitch 0, eye 64 u up, the hull top at 72 u) the engine's use found nothing
+(and `GetEyeTrace` passed through the player while an explicit `util.TraceLine` to its chest hit
+it), locked or not, at 60 and 100 u; looking down 20 degrees onto its chest, E held 20 ticks
+gave `PlayerUse(ply, player)` 21 times (every tick plus the command lag, like a prop), nothing
+is picked up or moved, and `FindUseEntity`'s default argument was NULL in every one of its 42
+calls. Not implemented yet: our use trace sees props and the world only, so `player.use` never
+names a player.
 
 ## Player models
 
