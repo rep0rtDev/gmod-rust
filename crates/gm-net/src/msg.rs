@@ -73,6 +73,9 @@ pub enum Command {
     Property {
         name: String,
     },
+    /// Asks which context-menu properties the prop under the cursor offers right now; the
+    /// server answers with [`ServerMsg::Properties`].
+    PropertyList,
     /// `cl_playermodel`: the model name (the game's table) to wear from the next spawn.
     /// `cl_playerskin` / `cl_playerbodygroups`: worn from the next spawn.
     PlayerSkin {
@@ -286,6 +289,12 @@ pub enum ServerMsg {
     Undos {
         seq: u32,
         entries: Vec<UndoEntry>,
+    },
+    /// Reply to [`Command::PropertyList`]: the entries offered for `ent` (0: nothing under
+    /// the cursor), as `property` command names in the game's menu order.
+    Properties {
+        ent: u32,
+        names: Vec<String>,
     },
     /// Reliable: new entries of the connection's model table, `names[i]` is model `from + i`
     /// (ids start at 1); sent before the first snapshot that uses them.
@@ -605,6 +614,7 @@ impl ClientMsg {
                         w.str(body);
                     }
                     Command::Kill => w.u8(15),
+                    Command::PropertyList => w.u8(16),
                 }
             }
             ClientMsg::AckSnapshot { tick } => {
@@ -688,6 +698,7 @@ impl ClientMsg {
                         body: r.str()?,
                     },
                     15 => Command::Kill,
+                    16 => Command::PropertyList,
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }
@@ -853,6 +864,14 @@ impl ServerMsg {
                 for u in entries {
                     w.u32(u.id);
                     w.str(&u.name);
+                }
+            }
+            ServerMsg::Properties { ent, names } => {
+                w.u8(16);
+                w.u32(*ent);
+                w.varint(names.len() as u64);
+                for n in names {
+                    w.str(n);
                 }
             }
             ServerMsg::Disconnect { reason } => {
@@ -1067,6 +1086,15 @@ impl ServerMsg {
                     names.push(r.str()?);
                 }
                 ServerMsg::Models { from, names }
+            }
+            16 => {
+                let ent = r.u32()?;
+                let n = r.varint()?.min(4096) as usize;
+                let mut names = Vec::with_capacity(n);
+                for _ in 0..n {
+                    names.push(r.str()?);
+                }
+                ServerMsg::Properties { ent, names }
             }
             13 => {
                 let tick = r.u32()?;

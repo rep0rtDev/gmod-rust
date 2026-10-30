@@ -722,6 +722,16 @@ impl ServerNet {
                     Command::Property { name } => {
                         server.apply_property(slot.player, &name);
                     }
+                    Command::PropertyList => {
+                        let ent = server
+                            .tool_hit(slot.player)
+                            .and_then(|h| h.ent)
+                            .unwrap_or(0);
+                        let names = server.offered_properties(slot.player);
+                        let mut w = Writer::default();
+                        ServerMsg::Properties { ent, names }.write(&mut w);
+                        slot.channel.send_reliable(w.buf);
+                    }
                     Command::PlayerModel { name } => server.set_wanted_model(slot.player, &name),
                     Command::PlayerSkin { skin, body } => {
                         server.set_wanted_skin_body(slot.player, skin, &body)

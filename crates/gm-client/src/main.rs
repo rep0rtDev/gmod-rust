@@ -220,6 +220,16 @@ struct SpawnMenu {
     scroll: usize,
 }
 
+/// The context menu of a prop (hold C, right-click it): the entries the server offered, drawn
+/// at the click.
+struct ContextMenu {
+    names: Vec<String>,
+    x: f32,
+    y: f32,
+}
+
+const CONTEXT_MENU_W: f32 = 180.0;
+
 /// Layout of the spawn menu panel for a window of `w` x `h`: (x, y, width, height, first row y).
 fn menu_layout(w: f32, h: f32, lh: f32) -> (f32, f32, f32, f32, f32) {
     let (pw, ph) = ((w * 0.7).round(), (h * 0.7).round());
@@ -631,6 +641,9 @@ struct App {
     last_render: Instant,
     /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
     menu: Option<SpawnMenu>,
+    /// C held: the cursor is free and a right-click asks a prop for its properties.
+    context_held: bool,
+    context: Option<ContextMenu>,
     /// Rows of the spawn menu: `-- category --` headers of the addons' lists, then their models,
     /// then the content's; a header row is not spawnable.
     spawn_models: Vec<String>,
@@ -782,6 +795,18 @@ impl App {
     }
 
     /// The row under the cursor of the open spawn menu, if any.
+    /// The context-menu entry under the cursor.
+    fn context_row(&self) -> Option<String> {
+        let (ctx, g) = (self.context.as_ref()?, self.gfx.as_ref()?);
+        let lh = g.ui.line_height();
+        let (cx, cy) = self.cursor;
+        if cx < ctx.x || cx > ctx.x + CONTEXT_MENU_W || cy < ctx.y {
+            return None;
+        }
+        let row = ((cy - ctx.y) / lh) as usize;
+        ctx.names.get(row).cloned()
+    }
+
     fn menu_row(&self) -> Option<usize> {
         let (menu, g) = (self.menu.as_ref()?, self.gfx.as_ref()?);
         let (w, h) = (g.config.width as f32, g.config.height as f32);
@@ -1193,6 +1218,17 @@ impl App {
                 skin: 0,
                 body: "",
             });
+        if self.context_held {
+            if let Some((ent, names)) = self.sim.client.properties.take() {
+                if ent != 0 && !names.is_empty() {
+                    self.context = Some(ContextMenu {
+                        names,
+                        x: self.cursor.0,
+                        y: self.cursor.1,
+                    });
+                }
+            }
+        }
         let Some(g) = &mut self.gfx else { return };
         if self.menu.is_some() {
             Self::render_spawn_icons(&self.spawn_models, self.menu.as_ref(), &self.mount, g);
@@ -1640,6 +1676,43 @@ impl App {
         let lh = g.ui.line_height();
         let mut items = Vec::new();
         let white = [0.92, 0.92, 0.92, 1.0];
+        if let Some(ctx) = &self.context {
+            let hover = self.context_row();
+            items.push(UiItem::Rect {
+                x: ctx.x,
+                y: ctx.y,
+                w: CONTEXT_MENU_W,
+                h: lh * ctx.names.len() as f32 + 4.0,
+                color: [0.05, 0.05, 0.07, 0.95],
+            });
+            for (i, name) in ctx.names.iter().enumerate() {
+                let y = ctx.y + 2.0 + i as f32 * lh;
+                if hover.as_deref() == Some(name.as_str()) {
+                    items.push(UiItem::Rect {
+                        x: ctx.x + 2.0,
+                        y,
+                        w: CONTEXT_MENU_W - 4.0,
+                        h: lh,
+                        color: [1.0, 1.0, 1.0, 0.15],
+                    });
+                }
+                items.push(UiItem::Text {
+                    font: None,
+                    x: ctx.x + 8.0,
+                    y,
+                    text: name.clone(),
+                    color: white,
+                });
+            }
+        } else if self.context_held {
+            items.push(UiItem::Text {
+                font: None,
+                x: self.cursor.0 + 12.0,
+                y: self.cursor.1 + 12.0,
+                text: "right-click a prop".into(),
+                color: [0.85, 0.85, 0.85, 1.0],
+            });
+        }
         if let Some(menu) = &self.menu {
             let (px, py, pw, ph, rows_y) = menu_layout(w, h, lh);
             items.push(UiItem::Rect {
@@ -2319,6 +2392,12 @@ impl ApplicationHandler for App {
                         KeyCode::Digit9 => self.select_weapon(8),
                         KeyCode::Digit0 => self.select_weapon(9),
                         KeyCode::KeyQ => self.open_menu(),
+                        KeyCode::KeyC => {
+                            if self.menu.is_none() && !self.context_held {
+                                self.context_held = true;
+                                self.set_grab(false);
+                            }
+                        }
                         KeyCode::KeyZ => self.sim.client.command(Command::Undo),
                         KeyCode::KeyV => {
                             self.noclip = !self.noclip;
@@ -2346,6 +2425,13 @@ impl ApplicationHandler for App {
                         self.panel_text = None;
                         self.set_grab(true);
                     }
+                    if code == KeyCode::KeyC && self.context_held {
+                        self.context_held = false;
+                        self.context = None;
+                        if self.menu.is_none() {
+                            self.set_grab(true);
+                        }
+                    }
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -2371,6 +2457,25 @@ impl ApplicationHandler for App {
                 if self.menu.is_some() {
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         self.menu_click();
+                    }
+                    return;
+                }
+                if self.context_held {
+                    if state == ElementState::Pressed {
+                        match button {
+                            MouseButton::Right => {
+                                self.context = None;
+                                self.sim.client.properties = None;
+                                self.sim.client.command(Command::PropertyList);
+                            }
+                            MouseButton::Left => {
+                                if let Some(name) = self.context_row() {
+                                    self.sim.client.command(Command::Property { name });
+                                    self.context = None;
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                     return;
                 }
@@ -2597,6 +2702,8 @@ fn main() -> Result<()> {
         sounds,
         last_render: Instant::now(),
         menu: None,
+        context_held: false,
+        context: None,
         spawn_models: Vec::new(),
         spawn_lists_seen: usize::MAX,
         cursor: (0.0, 0.0),

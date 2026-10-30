@@ -260,6 +260,8 @@ pub struct ClientNet {
     next_command: u32,
     pub acked_commands: u32,
     pub world: ClientWorld,
+    /// The last [`ServerMsg::Properties`] reply: the prop it is for and its menu entries.
+    pub properties: Option<(u32, Vec<String>)>,
     /// snapshots kept as possible baselines: tick -> entities
     history: VecDeque<(u32, BTreeMap<u32, EntityState>)>,
     pub events: Vec<String>,
@@ -293,6 +295,7 @@ impl ClientNet {
             next_command: 0,
             acked_commands: 0,
             world: ClientWorld::default(),
+            properties: None,
             history: VecDeque::new(),
             events: Vec::new(),
             addon_msgs: Vec::new(),
@@ -510,6 +513,9 @@ impl ClientNet {
                     }
                     ServerMsg::SpawnLists { lists, .. } => self.world.spawn_lists = lists,
                     ServerMsg::ToolSchemas { tools, .. } => self.world.tool_schemas = tools,
+                    ServerMsg::Properties { ent, names } => {
+                        self.properties = Some((ent, names));
+                    }
                     ServerMsg::Undos { entries, .. } => self.world.own.undos = entries,
                     ServerMsg::Disconnect { reason } => {
                         self.disconnected = Some(reason);

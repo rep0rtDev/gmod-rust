@@ -2879,6 +2879,49 @@ impl<'w> Server<'w> {
     /// `collision_off` / `collision_on`, `keepupright` / `keepupright_stop`. `CanProperty` is
     /// asked first; a property that does not apply (collision already off, ...) is not offered
     /// and does nothing. Returns whether it was applied.
+    /// The context-menu entries the game offers for the prop under `player`'s cursor, in the
+    /// game's order (`properties.Add` order values: skin 601, bodygroups 600, keepupright 700,
+    /// ignite 999, remove 1000, gravity 1001, collision 1500): `skin <n>` per family when the
+    /// model has more than one, `bodygroups <part> <model>` per choice, then the toggles by
+    /// state. Empty when nothing is under the cursor or it is not a prop.
+    pub fn offered_properties(&self, player: u32) -> Vec<String> {
+        let Some(ent) = self.tool_hit(player).and_then(|h| h.ent) else {
+            return Vec::new();
+        };
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(info) = self.models.get(&prop.model) {
+            for (part, &n) in info.body_groups.iter().enumerate() {
+                if n > 1 {
+                    out.extend((0..n).map(|m| format!("bodygroups {part} {m}")));
+                }
+            }
+            if info.skins > 1 {
+                out.extend((0..info.skins).map(|n| format!("skin {n}")));
+            }
+        }
+        out.push(if prop.upright.is_none() {
+            "keepupright".into()
+        } else {
+            "keepupright_stop".into()
+        });
+        out.push(if prop.fire.is_none() {
+            "ignite".into()
+        } else {
+            "extinguish".into()
+        });
+        out.push("remove".into());
+        out.push("gravity".into());
+        out.push(if prop.collide {
+            "collision_off".into()
+        } else {
+            "collision_on".into()
+        });
+        out
+    }
+
     pub fn apply_property(&mut self, player: u32, name: &str) -> bool {
         // `skin <n>`: the game's property opens a submenu of the model's skins
         let (name, arg) = match name.split_once(' ') {

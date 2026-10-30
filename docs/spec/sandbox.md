@@ -131,8 +131,14 @@ Implemented, by `Command::Property { name }` on the prop under the crosshair:
   (`SetBodyGroups` string, padded with zeros), which travels like the skin: entity snapshot
   (Luau `entity.body`), duplicator clip, save file (`SavedProp.body`), and the native client's
   `load_model_variant`.
-- Not yet: `drive`, the menu itself in the native client (the console's `property <name>`
-  sends the command).
+- The menu in the native client: holding C frees the cursor (the game's context menu key);
+  a right-click asks the server (`Command::PropertyList`) what the prop under the crosshair
+  offers right now, the reply (`ServerMsg::Properties`: the prop and the entries in the game's
+  menu order - body-group and skin picks first, then keep upright / ignite / remove / gravity
+  / collision by state) opens as a list at the cursor, and a left-click on a row sends
+  `Command::Property` as the console's `property <name>` does. Entries are the command
+  names, not the game's localized labels.
+- Not yet: `drive`, the game's labels and icons in the list.
 
 ## Player models
 

@@ -3793,6 +3793,33 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
         .eval("return state.d.asked, state.d.applied")
         .unwrap();
     assert_eq!((asked, applied), (11, 10), "not offered, not asked");
+    // the context menu asks what is offered: the crate's two skins first, then the toggles by
+    // state, in the game's order; a toggle's opposite appears once it is applied
+    client.command(gm_net::Command::PropertyList);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    let crate_id = server.sandbox.props()[0].id;
+    let names = |c: &gm_net::ClientNet| c.properties.clone().map(|(e, n)| (e, n.join(",")));
+    assert_eq!(
+        names(&client),
+        Some((
+            crate_id,
+            "skin 0,skin 1,keepupright,ignite,remove,gravity,collision_off".to_string()
+        ))
+    );
+    client.command(prop("collision_off"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    client.command(gm_net::Command::PropertyList);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    assert_eq!(
+        names(&client).map(|(_, n)| n),
+        Some("skin 0,skin 1,keepupright,ignite,remove,gravity,collision_on".to_string())
+    );
+    client.command(prop("collision_on"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    let (asked, applied): (i64, i64) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.applied")
+        .unwrap();
+    assert_eq!((asked, applied), (13, 12), "listing asks no hook");
     client.command(prop("remove"));
     step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
     let m3 = gm_content::Mount::for_install(&inst).unwrap();
