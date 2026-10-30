@@ -37,6 +37,20 @@ cargo test --workspace
 
 Integration tests that need the game set `GMOD_DIR` to your Garry's Mod install directory and are skipped otherwise.
 
+## Running
+
+```
+cargo run --release -p gm-client                       # gm_construct on the embedded server
+cargo run --release -p gm-client -- gm_flatgrass --addon addons/examples/hud_lua
+cargo run --release -p gm-dedicated -- --map gm_construct --bind 0.0.0.0:27015
+cargo run --release -p gm-client -- --connect 192.168.1.10:27015
+```
+
+The client finds the game through Steam (`GMOD_DIR` overrides). With `--connect` the server
+names the map in its Welcome (5 s to answer), the embedded server stays idle and every packet
+goes over UDP; `addons` given on the command line load into the embedded server only, a remote
+server's addons download as usual.
+
 ## License
 
 MIT. Garry's Mod, Half-Life 2, Source and Steam are trademarks of their respective owners. This is an unofficial fan project, not affiliated with Facepunch Studios or Valve Corporation.

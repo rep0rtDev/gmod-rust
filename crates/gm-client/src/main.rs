@@ -11,11 +11,11 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use glam::Vec3;
 use gm_move::buttons;
 use gm_net::msg::PlayerSnap;
-use gm_net::{ClientNet, Command, Loopback, LoopbackEndpoint, NetCmd, ServerNet};
+use gm_net::{ClientNet, Command, Loopback, LoopbackEndpoint, NetCmd, ServerNet, Transport};
 use gm_render::ui::{UiItem, UiRenderer};
 use gm_render::world::{DrawItem, ModelTarget};
 use gm_render::{Camera, Gpu, WorldRenderer};
@@ -32,7 +32,10 @@ struct Sim {
     net: ServerNet,
     lo: Loopback,
     s_ep: LoopbackEndpoint,
-    c_ep: LoopbackEndpoint,
+    /// The client's side: the loopback to the embedded server, or UDP to a `--connect` server.
+    c_ep: Box<dyn Transport>,
+    /// `--connect`: the embedded server stays idle, every packet goes to the remote one.
+    remote: bool,
     client: ClientNet,
     collision: &'static gm_collision::World,
     /// The local player runs every usercmd at once (`gm_net::Prediction`) and is reconciled
@@ -104,12 +107,14 @@ impl Sim {
             p.predict(self.cmd_tick, &cmd);
         }
         let seen = self.client.world.tick;
-        self.client.tick(cmd, &mut self.c_ep);
-        self.lo.tick();
-        self.net.receive(&mut self.server, &mut self.s_ep);
-        self.net.tick(&mut self.server);
-        self.net.send(&self.server, &mut self.s_ep);
-        self.client.receive(&mut self.c_ep);
+        self.client.tick(cmd, &mut *self.c_ep);
+        if !self.remote {
+            self.lo.tick();
+            self.net.receive(&mut self.server, &mut self.s_ep);
+            self.net.tick(&mut self.server);
+            self.net.send(&self.server, &mut self.s_ep);
+        }
+        self.client.receive(&mut *self.c_ep);
         self.sync_addons();
         let fresh = self.client.server_tick != self.last_snapshot_tick;
         self.last_snapshot_tick = self.client.server_tick;
@@ -1850,9 +1855,43 @@ impl ApplicationHandler for App {
 
 fn main() -> Result<()> {
     let arg_f = |i: usize| std::env::args().nth(i).and_then(|v| v.parse::<f32>().ok());
-    let map = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "gm_construct".into());
+    let argv: Vec<String> = std::env::args().collect();
+    let connect = argv
+        .iter()
+        .position(|a| a == "--connect")
+        .and_then(|i| argv.get(i + 1).cloned());
+    let positional = argv
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(i, a)| !a.starts_with("--") && !argv[i - 1].starts_with("--"))
+        .map(|(_, a)| a.clone());
+    // `--connect host:port`: the server names the map in its Welcome, so ask it first
+    let (remote_client, remote_ep, map) = match connect {
+        Some(addr) => {
+            let mut udp = gm_net::Udp::client(addr.parse().context("--connect address")?)?;
+            let mut client = ClientNet::new(1, "player");
+            let start = Instant::now();
+            while client.map.is_empty() {
+                if start.elapsed() > std::time::Duration::from_secs(5) {
+                    bail!("no answer from {addr} in 5 s");
+                }
+                client.tick(NetCmd::default(), &mut udp);
+                client.receive(&mut udp);
+                std::thread::sleep(std::time::Duration::from_secs_f32(
+                    gm_core::tick::DEFAULT_TICK_INTERVAL,
+                ));
+            }
+            let map = client.map.clone();
+            eprintln!("connected to {addr}: map {map}");
+            (Some(client), Some(Box::new(udp) as Box<dyn Transport>), map)
+        }
+        None => (
+            None,
+            None,
+            positional.unwrap_or_else(|| "gm_construct".into()),
+        ),
+    };
     let inst =
         gm_content::find_install().ok_or_else(|| anyhow!("no GMod install (set GMOD_DIR)"))?;
     let mount = gm_content::Mount::for_install(&inst)?;
@@ -1913,13 +1952,15 @@ fn main() -> Result<()> {
     gm_script::attach(rt, &mut server, &mut net.hooks);
     let lo = Loopback::new(0, 0.0, 1);
     let (s_ep, c_ep) = (lo.endpoint(0), lo.endpoint(1));
+    let remote = remote_ep.is_some();
     let sim = Sim {
         server,
         net,
         s_ep,
-        c_ep,
+        c_ep: remote_ep.unwrap_or_else(|| Box::new(c_ep)),
+        remote,
         lo,
-        client: ClientNet::new(1, "player"),
+        client: remote_client.unwrap_or_else(|| ClientNet::new(1, "player")),
         collision,
         pred: None,
         cmd_tick: 0,
