@@ -550,18 +550,39 @@ public:
 				// approach, the other end is merely stopped, and both keep their slip (the rolled
 				// crate's ends slide at 4.6 / 2.1 m/s after the tick); the vertex chain left both
 				// ends still descending at 1.7 / 2.5 m/s for Jolt to catch a tick later
+				// a ring of vertices (the drum's 16-gon bottom) does not land flat in the game: the
+				// yaw-spinning drum strikes the rim vertex on the hull's own +x axis first (628 u/s)
+				// and its antipode second (245), one diameter apart, and tumbles at -375 deg/s
+				bool ring = face.size() > 8;
+				if (ring) {
+					const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
+					JPH::Quat inv_rot = dyn.GetRotation().Conjugated();
+					JPH::RVec3 com = dyn.GetCenterOfMassPosition();
+					auto local_x = [&](const Pt *f) { return (inv_rot * JPH::Vec3(f->p - com)).GetX(); };
+					Pt *a = face[0];
+					for (Pt *f : face) if (local_x(f) > local_x(a)) a = f;
+					Pt *b = a;
+					for (Pt *f : face) if ((f->p - a->p).LengthSq() > (b->p - a->p).LengthSq()) b = f;
+					face.clear();
+					face.push_back(a);
+					face.push_back(b);
+				}
 				bool edge_pair = face.size() == 2 && (face[0]->p - face[1]->p).Length() > 0.2f;
 				if ((face.size() >= 3 || edge_pair) && fastest > 0.3f && d_face > 0.02f && face_slip < 3.0f) {
 					std::vector<float> acc(face.size(), 0.0f);
+					// the drum's ring is struck in sequence: the hull +x rim vertex as a free single
+					// vertex, then its antipode by the approach the first impact left it
+					for (size_t k0 = 0; k0 < 1u; ++k0) {
+					if (ring && k0 == 1) face[1]->vn0 = std::min(0.0f, rel(face[1]->p).Dot(n));
 					for (int it = 0; it < 60; ++it) {
 						float moved = 0.0f;
-						for (size_t k = 0; k < face.size(); ++k) {
+						for (size_t k = ring ? k0 : 0; k < (ring ? k0 + 1 : face.size()); ++k) {
 							Pt &pt = *face[k];
 							JPH::Vec3 v = rel(pt.p);
 							float vn = v.Dot(n);
 							float target = std::sqrt(e_eff) * (-pt.vn0);
 							if (edge_pair) {
-								if (pt.p.GetX() < face[1 - k]->p.GetX()) target = 0.0f;
+								if (!ring && pt.p.GetX() < face[1 - k]->p.GetX()) target = 0.0f;
 								pt.dir = direction(v, pt.dir);
 							}
 							float wanted = extra + target - vn;
@@ -580,6 +601,7 @@ public:
 							push(b2, pt.p, -pt.dir * j);
 						}
 						if (moved < 1e-4f) break;
+					}
 					}
 					// inside the friction cone the vertices stick: the tangential velocity of each
 					// is removed, bounded by f times its normal impulse (the game's flat crate
