@@ -375,3 +375,48 @@ fn storage_persists_per_addon_with_caps() {
     assert_eq!(count, 2, "the drop flushed the second run");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn file_watch_reloads_changed_addons_and_survives_a_broken_edit() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../addons/examples/freeze_crates");
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("watch_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::copy(src.join("manifest.toml"), dir.join("manifest.toml")).unwrap();
+    std::fs::copy(src.join("src/main.luau"), dir.join("src/main.luau")).unwrap();
+    let mut rt = Runtime::new();
+    rt.load_addon(&dir).unwrap();
+    assert!(rt.check_reloads().is_empty(), "nothing changed");
+    let main = dir.join("src/main.luau");
+    let original = std::fs::read_to_string(&main).unwrap();
+    std::fs::write(&main, format!("{original}\nstate.marker = 42\n")).unwrap();
+    let r = rt.check_reloads();
+    assert_eq!(r.len(), 1);
+    assert!(r[0].1.is_ok(), "{:?}", r[0].1);
+    let marker: i64 = rt.actors()[0].eval("return state.marker").unwrap();
+    assert_eq!(marker, 42);
+    std::fs::write(
+        &main,
+        format!("{original}\nstate.marker = 43\nthis is not luau(\n"),
+    )
+    .unwrap();
+    let r = rt.check_reloads();
+    assert_eq!(r.len(), 1);
+    assert!(r[0].1.is_err());
+    assert!(
+        rt.log
+            .iter()
+            .any(|l| l.contains("reload freeze_crates failed")),
+        "{:?}",
+        rt.log
+    );
+    let marker: i64 = rt.actors()[0].eval("return state.marker").unwrap();
+    assert_eq!(marker, 42, "the old VM keeps running after a broken edit");
+    assert!(
+        rt.check_reloads().is_empty(),
+        "a failed file is not retried until it changes"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

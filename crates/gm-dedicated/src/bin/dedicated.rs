@@ -26,6 +26,9 @@ struct Args {
     /// Where addon storage files live (`<data>/server/<addon>.gms`).
     #[arg(long, default_value = "data")]
     data: std::path::PathBuf,
+    /// Hot reload addons whose files change (checked every 33 ticks).
+    #[arg(long)]
+    watch: bool,
 }
 
 fn main() -> Result<()> {
@@ -46,6 +49,7 @@ fn main() -> Result<()> {
     if !args.addon.is_empty() {
         let mut rt = gm_script::Runtime::new();
         rt.data_dir = Some(args.data.clone());
+        rt.watch = args.watch;
         for (i, path) in args.addon.iter().enumerate() {
             if path.is_dir() {
                 let m = rt

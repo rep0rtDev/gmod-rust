@@ -48,6 +48,9 @@ pub struct Runtime {
     /// Where addon stores are kept (`<data_dir>/<realm>/<addon>.gms`); None = memory only.
     pub data_dir: Option<std::path::PathBuf>,
     stores: std::collections::BTreeMap<String, Arc<std::sync::Mutex<storage::Store>>>,
+    /// Poll the loaded addons' files every 33 ticks and hot reload the changed ones.
+    pub watch: bool,
+    addon_stamps: std::collections::BTreeMap<String, u64>,
 }
 
 /// What the serial phase did to the server this tick.
@@ -69,6 +72,8 @@ impl Runtime {
             cvars_last: Default::default(),
             data_dir: None,
             stores: Default::default(),
+            watch: false,
+            addon_stamps: Default::default(),
         }
     }
 
@@ -82,7 +87,52 @@ impl Runtime {
             self.load(spec)?;
         }
         self.addon_paths.insert(m.id.clone(), path.to_path_buf());
+        self.addon_stamps.insert(m.id.clone(), file_stamp(path));
         Ok(m)
+    }
+
+    /// Reloads every loaded addon whose files (directory tree or `.gmr`) changed since it was
+    /// loaded or last checked: (id, Ok(manifest) or the error text, which is also logged; the
+    /// actors keep running on their old sources after a failed reload).
+    pub fn check_reloads(&mut self) -> Vec<(String, Result<Manifest, String>)> {
+        let mut out = Vec::new();
+        let ids: Vec<(String, std::path::PathBuf)> = self
+            .addon_paths
+            .iter()
+            .map(|(id, p)| (id.clone(), p.clone()))
+            .collect();
+        for (id, path) in ids {
+            let stamp = file_stamp(&path);
+            if self.addon_stamps.get(&id) == Some(&stamp) {
+                continue;
+            }
+            self.addon_stamps.insert(id.clone(), stamp);
+            let r = self.reload_addon(&path).map_err(|e| e.to_string());
+            match &r {
+                Ok(m) => self.log.push(format!("reloaded {} {}", m.id, m.version)),
+                Err(e) => self.log.push(format!("reload {id} failed: {e}")),
+            }
+            out.push((id, r));
+        }
+        out
+    }
+
+    fn watch_tick(&mut self, server: Option<&mut Server<'_>>) {
+        if !self.watch || !self.tick.is_multiple_of(33) {
+            return;
+        }
+        let reloaded = self.check_reloads();
+        let Some(server) = server else { return };
+        for (id, r) in reloaded {
+            let mut p = api::Payload::default();
+            p.strs.push(("addon", id));
+            p.strs.push((
+                "version",
+                r.as_ref().map(|m| m.version.clone()).unwrap_or_default(),
+            ));
+            p.strs.push(("error", r.err().unwrap_or_default()));
+            self.run_event(server, "addon.reloaded", p);
+        }
     }
 
     /// A client-realm runtime.
@@ -99,6 +149,7 @@ impl Runtime {
         let snap = Arc::new(Snapshot::of_client(world));
         self.tick = snap.tick;
         if new_snapshot {
+            self.watch_tick(None);
             let mut p = api::Payload::default();
             p.ints.push(("tick", world.tick as i64));
             self.parallel(&snap, "snapshot.received", &p);
@@ -291,6 +342,7 @@ impl Runtime {
     /// Before the server tick: `tick.pre`.
     pub fn pre_tick(&mut self, server: &mut Server<'_>) -> Applied {
         self.tick += 1;
+        self.watch_tick(Some(server));
         self.run_event(server, "tick.pre", api::Payload::default())
     }
 
@@ -482,6 +534,32 @@ impl Runtime {
         p.ints.push(("entity", ent as i64));
         self.run_event(server, "entity.spawned", p)
     }
+}
+
+/// A fingerprint of an addon's files: lengths and modification times of every file under a
+/// directory (names included) or of the `.gmr` file.
+fn file_stamp(path: &std::path::Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    fn visit(p: &std::path::Path, h: &mut std::collections::hash_map::DefaultHasher) {
+        if p.is_dir() {
+            let mut entries: Vec<_> = std::fs::read_dir(p)
+                .map(|d| d.flatten().map(|e| e.path()).collect())
+                .unwrap_or_default();
+            entries.sort();
+            for e in entries {
+                visit(&e, h);
+            }
+        } else if let Ok(md) = std::fs::metadata(p) {
+            p.hash(h);
+            md.len().hash(h);
+            if let Ok(t) = md.modified() {
+                t.hash(h);
+            }
+        }
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    visit(path, &mut h);
+    h.finish()
 }
 
 fn read_addon(

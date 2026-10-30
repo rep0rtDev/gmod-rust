@@ -192,6 +192,22 @@ errors; an actor without the capability gets `no storage capability`; after `flu
 runtime reads count 1 and bumps to 2, the nested table and the removed key as nil; the drop flush
 leaves count 2 on disk.
 
+## File watching
+
+With `Runtime::watch` (`gm-dedicated --watch`) the runtime fingerprints every loaded addon
+(lengths and modification times of all files under its directory, or of the `.gmr`) every 33
+ticks (~0.5 s; on the client at every 33rd snapshot) and hot reloads the ones that changed, the
+same reload as the admin `Reload` command: actors keep their ids and `state`, new actors are
+added, removed ones dropped. A reload that fails (syntax error, bad manifest) is logged as
+`reload <id> failed: ...`, the actors keep running on their old sources and the file is not
+retried until it changes again. The server then fires `addon.reloaded` (`addon`, `version`,
+`error` = "" on success) as a serial event. No inotify dependency: polling a small tree is
+cheaper than a watcher thread and works the same on every platform and over network mounts.
+
+Measured (`cargo test -p gm-script file_watch`): an unchanged tree reloads nothing; appending
+`state.marker = 42` to the example addon's source reloads it once and the actor sees the marker;
+a broken edit reports an error, leaves marker 42 running and is not retried.
+
 ## Timers
 
 `timer` lives in the actor's VM (prelude), so a timer runs in the realm and budget of the actor
@@ -213,4 +229,4 @@ never fires and still exists.
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,
-file watching for reloads, the sandbox gamemode in Luau on top of this API.
+the sandbox gamemode in Luau on top of this API.
