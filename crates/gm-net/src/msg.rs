@@ -288,6 +288,11 @@ pub enum ServerMsg {
         tick: u32,
         list: Vec<SoundEvent>,
     },
+    /// Reliable: the addons' spawn menu categories, whole, whenever the server's version changes.
+    SpawnLists {
+        version: u32,
+        lists: Vec<(String, Vec<String>)>,
+    },
 }
 
 /// A world sound: script name, where, and a volume factor on the script's own.
@@ -663,6 +668,7 @@ impl ServerMsg {
                 | ServerMsg::Cvar { .. }
                 | ServerMsg::Addons { .. }
                 | ServerMsg::AddonChunk { .. }
+                | ServerMsg::SpawnLists { .. }
         )
     }
 
@@ -819,6 +825,18 @@ impl ServerMsg {
                 w.varint(names.len() as u64);
                 for n in names {
                     w.str(n);
+                }
+            }
+            ServerMsg::SpawnLists { version, lists } => {
+                w.u8(14);
+                w.u32(*version);
+                w.varint(lists.len() as u64);
+                for (category, models) in lists {
+                    w.str(category);
+                    w.varint(models.len() as u64);
+                    for m in models {
+                        w.str(m);
+                    }
                 }
             }
             ServerMsg::Sounds { tick, list } => {
@@ -984,6 +1002,21 @@ impl ServerMsg {
                     });
                 }
                 ServerMsg::Sounds { tick, list }
+            }
+            14 => {
+                let version = r.u32()?;
+                let n = r.varint()?.min(256) as usize;
+                let mut lists = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let category = r.str()?;
+                    let k = r.varint()?.min(4096) as usize;
+                    let mut models = Vec::with_capacity(k);
+                    for _ in 0..k {
+                        models.push(r.str()?);
+                    }
+                    lists.push((category, models));
+                }
+                ServerMsg::SpawnLists { version, lists }
             }
             11 => {
                 let nonce = sha(r)?;

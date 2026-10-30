@@ -325,3 +325,10 @@ drives the client's prediction as before.
 `Command::ToolClick` carries `settings: Vec<(String, String)>` (u8 count, at most 255 pairs): the
 client's values for the clicked tool, handed to a scripted stool as `ctx.settings`; the Rust
 stools ignore them.
+
+## Spawn lists
+
+`ServerMsg::SpawnLists { version, lists }` (tag 14, reliable): the addons' spawn menu
+categories, the whole set, sent to a client whenever its last seen version differs from
+`Server::spawn_lists_version` (on join and after every `spawnmenu.add`). Up to 256 categories
+of up to 4096 models each are read.

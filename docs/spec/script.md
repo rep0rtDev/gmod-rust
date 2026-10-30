@@ -382,7 +382,8 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-fonts/textures/3D2D in `draw`, the rest of the API (tool ghosts and panels, spawn menu), WASM components,
+fonts/textures/3D2D in `draw`, tool ghosts and setting panels (only the console sets tool
+settings), spawn menu icons, WASM components,
 `player.use` (nothing on the server reacts to +use yet), the sandbox gamemode in Luau on top of this API.
 
 ## Server events
@@ -444,6 +445,19 @@ freeze of a crate log four events in that order; 30 damage dealt by the server a
 queued from `player.damaged` shows as `player.death` type 0, the respawn 135 ticks later as
 `player.spawned`; the freeze handler's `sound.play` reaches the client as a `Sounds` message
 with the position and volume given.
+
+## Spawn menu
+
+`spawnmenu.add(category, models)` (server realm, a write) registers models under a spawn menu
+category for every client: a new category goes to the end, a repeated one gets the new models
+appended with duplicates dropped, an empty model name is ignored. `Server::spawn_lists` holds
+them with `spawn_lists_version`, which every change bumps; the net layer sends the whole set
+reliably (`ServerMsg::SpawnLists`) to each client whose version differs, on join and after a
+change, and the client keeps it in `ClientWorld::spawn_lists`. The native client's Q menu lists
+the addons' categories first (`-- category --` header rows, not spawnable, then the models) and
+the mounted content's props after them. Measured (`addon_hooks spawn_menu`): two categories
+registered at load reach the client in order, a later `add` to the first appends one new model
+and skips the repeated one, one version step per change.
 
 ## Players: identity and leaving
 

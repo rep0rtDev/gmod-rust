@@ -21,6 +21,8 @@ pub struct ClientWorld {
     pub local: Option<LocalPlayer>,
     /// Replicated console variables as the server sent them.
     pub cvars: BTreeMap<String, String>,
+    /// The addons' spawn menu categories (`spawnmenu.add`), latest version whole.
+    pub spawn_lists: Vec<(String, Vec<String>)>,
 }
 
 /// Interpolation of other players' and props' poses between the two snapshots around a render
@@ -455,6 +457,7 @@ impl ClientNet {
                             last_cmd_tick,
                             local,
                             cvars: std::mem::take(&mut self.world.cvars),
+                            spawn_lists: std::mem::take(&mut self.world.spawn_lists),
                         };
                         self.server_tick = tick;
                     }
@@ -464,6 +467,7 @@ impl ClientNet {
                     ServerMsg::Cvar { name, value, .. } => {
                         self.world.cvars.insert(name, value);
                     }
+                    ServerMsg::SpawnLists { lists, .. } => self.world.spawn_lists = lists,
                     ServerMsg::Undos { entries, .. } => self.world.own.undos = entries,
                     ServerMsg::Disconnect { reason } => {
                         self.disconnected = Some(reason);

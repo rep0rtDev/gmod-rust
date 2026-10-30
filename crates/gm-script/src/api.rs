@@ -74,6 +74,11 @@ pub enum QueuedWrite {
         pos: Vec3,
         volume: f32,
     },
+    /// `spawnmenu.add`: models under a spawn menu category for every client.
+    SpawnList {
+        category: String,
+        models: Vec<String>,
+    },
     SetVelocity {
         ent: u32,
         velocity: Vec3,
@@ -406,6 +411,10 @@ function net.receive(name: string, fn, priority: number?)
         if p.name == name then return fn(p) end
     end, priority)
 end
+spawnmenu = {}
+function spawnmenu.add(category: string, models: { string })
+    world.queue("spawnmenu.add", 0, { category = category, models = models })
+end
 tool = {}
 local tools = {}
 function tool.register(name: string, def)
@@ -570,6 +579,16 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     frozen: !matches!(arg, Value::Boolean(false)),
                 },
                 "remove" => QueuedWrite::Remove { ent },
+                "spawnmenu.add" => {
+                    let t = table_arg(&arg)?;
+                    let models: Table = t.get("models")?;
+                    QueuedWrite::SpawnList {
+                        category: t.get("category")?,
+                        models: models
+                            .sequence_values::<String>()
+                            .collect::<Result<Vec<_>>>()?,
+                    }
+                }
                 "sound.play" => {
                     let t = table_arg(&arg)?;
                     let pos: Table = t.get("pos")?;
@@ -1110,6 +1129,10 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::Remove { ent } => server.remove_prop(*ent),
         QueuedWrite::Sound { name, pos, volume } => {
             server.play_sound(name.clone(), *pos, *volume);
+            true
+        }
+        QueuedWrite::SpawnList { category, models } => {
+            server.add_spawn_list(category, models);
             true
         }
         QueuedWrite::SetVelocity {

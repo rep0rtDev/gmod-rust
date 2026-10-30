@@ -591,7 +591,10 @@ struct App {
     last_render: Instant,
     /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
     menu: Option<SpawnMenu>,
+    /// Rows of the spawn menu: `-- category --` headers of the addons' lists, then their models,
+    /// then the content's; a header row is not spawnable.
     spawn_models: Vec<String>,
+    spawn_lists_seen: usize,
     cursor: (f32, f32),
     grabbed: bool,
     last: Instant,
@@ -696,7 +699,15 @@ impl App {
         if self.menu.is_some() || self.console.open {
             return;
         }
-        if self.spawn_models.is_empty() {
+        let lists = &self.sim.client.world.spawn_lists;
+        let seen = lists.iter().map(|(_, m)| m.len() + 1).sum::<usize>();
+        if self.spawn_models.is_empty() || seen != self.spawn_lists_seen {
+            self.spawn_lists_seen = seen;
+            self.spawn_models.clear();
+            for (category, models) in lists {
+                self.spawn_models.push(format!("-- {category} --"));
+                self.spawn_models.extend(models.iter().cloned());
+            }
             for dir in SPAWN_DIRS {
                 self.spawn_models
                     .extend(self.mount.find(&format!("{dir}/*.mdl")));
@@ -728,6 +739,9 @@ impl App {
     fn menu_click(&mut self) {
         if let Some(row) = self.menu_row() {
             let model = self.spawn_models[row].clone();
+            if !model.ends_with(".mdl") {
+                return;
+            }
             self.console.log(format!("spawn {model}"));
             self.sim.client.command(Command::Spawn { model });
         }
@@ -1876,6 +1890,7 @@ fn main() -> Result<()> {
         last_render: Instant::now(),
         menu: None,
         spawn_models: Vec::new(),
+        spawn_lists_seen: usize::MAX,
         cursor: (0.0, 0.0),
         grabbed: false,
         last: Instant::now(),

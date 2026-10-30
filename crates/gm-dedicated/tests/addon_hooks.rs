@@ -2646,3 +2646,81 @@ fn a_scripted_stool_reads_the_clients_tool_settings_from_the_click() {
         "the stool's default without a setting"
     );
 }
+
+#[test]
+fn an_actors_spawn_menu_categories_reach_the_client_whole_and_merge() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "menu".into(),
+        priority: 1,
+        source: "spawnmenu.add('Crates', { 'models/props_junk/wood_crate001a.mdl', 'models/props_junk/wood_crate002a.mdl' })
+            spawnmenu.add('Barrels', { 'models/props_c17/oildrum001.mdl' })
+            events.on('tick.post', function()
+                if game.tick() == 20 then
+                    spawnmenu.add('Crates', { 'models/props_junk/wood_crate001a.mdl', 'models/props_junk/wood_crate001a_damaged.mdl' })
+                end
+            end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>,
+                    n: usize| {
+        for _ in 0..n {
+            client.tick(gm_net::NetCmd::default(), &mut c_ep);
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+        }
+    };
+    step(&mut sn, &mut client, &mut server, 8);
+    assert_eq!(
+        client.world.spawn_lists,
+        vec![
+            (
+                "Crates".to_string(),
+                vec![
+                    "models/props_junk/wood_crate001a.mdl".to_string(),
+                    "models/props_junk/wood_crate002a.mdl".to_string(),
+                ],
+            ),
+            (
+                "Barrels".to_string(),
+                vec!["models/props_c17/oildrum001.mdl".to_string()],
+            ),
+        ],
+        "the lists registered at load, in order"
+    );
+    assert_eq!(server.spawn_lists_version, 2);
+    step(&mut sn, &mut client, &mut server, 20);
+    assert_eq!(
+        server.spawn_lists_version, 3,
+        "the merge at tick 20 is one change"
+    );
+    assert_eq!(
+        client.world.spawn_lists[0].1,
+        vec![
+            "models/props_junk/wood_crate001a.mdl".to_string(),
+            "models/props_junk/wood_crate002a.mdl".to_string(),
+            "models/props_junk/wood_crate001a_damaged.mdl".to_string(),
+        ],
+        "a repeated model is dropped, the new one appended"
+    );
+}

@@ -489,6 +489,10 @@ pub struct Server<'w> {
     /// (name, old, new) since the last `take_cvar_changes` (the net layer takes them after the
     /// script hooks read them).
     pub cvar_changes: Vec<(String, String, String)>,
+    /// Spawn menu categories registered by addons (`spawnmenu.add`), in registration order;
+    /// `spawn_lists_version` grows with every change so the net layer resends them.
+    pub spawn_lists: Vec<(String, Vec<String>)>,
+    pub spawn_lists_version: u32,
     /// Names created since the last `take_cvar_new` (replicated to connected clients).
     pub cvar_new: Vec<String>,
 }
@@ -585,6 +589,8 @@ impl<'w> Server<'w> {
                 .map(|(n, d)| (n.to_string(), Cvar::replicated(d)))
                 .collect(),
             cvar_changes: Vec::new(),
+            spawn_lists: Vec::new(),
+            spawn_lists_version: 0,
             cvar_new: Vec::new(),
         }
     }
@@ -2308,6 +2314,30 @@ impl<'w> Server<'w> {
     }
 
     /// A script plays a sound script at a world position (`sound.play`).
+    /// Adds models to a spawn menu category (created at the end when new; duplicates within a
+    /// category are dropped). Returns how many models were added.
+    pub fn add_spawn_list(&mut self, category: &str, models: &[String]) -> usize {
+        let idx = match self.spawn_lists.iter().position(|(c, _)| c == category) {
+            Some(i) => i,
+            None => {
+                self.spawn_lists.push((category.to_owned(), Vec::new()));
+                self.spawn_lists.len() - 1
+            }
+        };
+        let list = &mut self.spawn_lists[idx].1;
+        let before = list.len();
+        for m in models {
+            if !m.is_empty() && !list.contains(m) {
+                list.push(m.clone());
+            }
+        }
+        let added = list.len() - before;
+        if added > 0 || before == 0 {
+            self.spawn_lists_version += 1;
+        }
+        added
+    }
+
     pub fn play_sound(&mut self, name: String, pos: Vec3, volume: f32) {
         self.sounds.push(WorldSound { name, pos, volume });
     }
