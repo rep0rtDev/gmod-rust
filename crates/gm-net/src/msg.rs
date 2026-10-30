@@ -140,6 +140,8 @@ pub struct EntityState {
     pub vel: Vec3,
     pub angvel: Vec3,
     pub frozen: bool,
+    /// `Entity:GetSkin` of the prop.
+    pub skin: u8,
     pub owner: u32,
 }
 
@@ -780,6 +782,7 @@ impl ServerMsg {
                     w.qvel(e.vel, VEL_SCALE);
                     w.qvel(e.angvel, ANGVEL_SCALE);
                     w.bool(e.frozen);
+                    w.u8(e.skin);
                     w.u32(e.owner);
                 }
                 w.varint(removed.len() as u64);
@@ -972,6 +975,7 @@ impl ServerMsg {
                         vel: r.qvel(VEL_SCALE)?,
                         angvel: r.qvel(ANGVEL_SCALE)?,
                         frozen: r.bool()?,
+                        skin: r.u8()?,
                         owner: r.u32()?,
                     });
                 }

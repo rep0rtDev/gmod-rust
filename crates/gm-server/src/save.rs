@@ -22,6 +22,9 @@ pub struct SavedProp {
     pub pos: [f32; 3],
     pub angles: [f32; 3],
     pub frozen: bool,
+    /// Skin family; absent in files written before skins existed.
+    #[serde(default)]
+    pub skin: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -176,6 +179,7 @@ impl Server<'_> {
                     pos: arr(p.pos),
                     angles: arr(p.angles),
                     frozen: p.frozen,
+                    skin: p.skin,
                 })
                 .collect(),
             constraints: self
@@ -210,13 +214,15 @@ impl Server<'_> {
                     }
                 }
             }
-            ids.push(Some(self.sandbox.restore_prop(
+            let id = self.sandbox.restore_prop(
                 owner,
                 &p.model,
                 Vec3::from(p.pos),
                 Vec3::from(p.angles),
                 p.frozen,
-            )));
+            );
+            self.sandbox.set_skin(id, p.skin);
+            ids.push(Some(id));
         }
         let mut constraints = 0;
         for c in &save.constraints {

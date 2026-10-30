@@ -3760,6 +3760,29 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
         (asked, applied, last.as_str(), broke),
         (10, 9, "ignite", c as i64)
     );
+    // `skin`: the crate has two skin families (the game offers the property to it, measured
+    // in `lua_properties`), so `skin 1` is asked and applied, an index past the count is not
+    // offered (not even asked), and the snapshot carries the family
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    client.command(prop("skin 2"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    assert_eq!(
+        server.sandbox.props()[0].skin,
+        0,
+        "family 2 of 2 does not exist"
+    );
+    client.command(prop("skin 1"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    assert_eq!(server.sandbox.props()[0].skin, 1);
+    let snap_skin = client.world.entities.values().next().map(|e| e.skin);
+    assert_eq!(snap_skin, Some(1), "the snapshot carries the skin");
+    let (asked, applied, last): (i64, i64, String) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.applied, state.d.last")
+        .unwrap();
+    assert_eq!((asked, applied, last.as_str()), (11, 10, "skin"));
 }
 
 #[test]

@@ -142,6 +142,7 @@ impl Sim {
                             vel: p.velocity,
                             angvel: Vec3::ZERO,
                             frozen: false,
+                            skin: 0,
                             owner: 0,
                         },
                     )
@@ -1183,6 +1184,19 @@ impl App {
                 g.models.insert(model.to_string(), m);
             }
         }
+        // props with a skin other than 0 load as a variant under `model#skin#`
+        for e in self.sim.client.world.entities.values() {
+            if e.skin == 0 {
+                continue;
+            }
+            let key = format!("{}#{}#", e.model, e.skin);
+            if !g.models.contains_key(&key) {
+                let m = g
+                    .world
+                    .load_model_variant(&g.gpu, &self.mount, &e.model, e.skin, "");
+                g.models.insert(key, m);
+            }
+        }
         // player models by model, skin and body groups (`cl_playerskin` / `cl_playerbodygroups`
         // of each player, worn from their spawn)
         for p in &self.sim.client.world.players {
@@ -1222,7 +1236,13 @@ impl App {
                     None => (e.pos, e.angles),
                 };
                 Some(DrawItem {
-                    model: g.models.get(&e.model)?.as_ref()?,
+                    model: if e.skin == 0 {
+                        g.models.get(&e.model)?.as_ref()?
+                    } else {
+                        g.models
+                            .get(&format!("{}#{}#", e.model, e.skin))?
+                            .as_ref()?
+                    },
                     transform: gm_render::world::model_transform(pos, ang),
                     bones: None,
                 })

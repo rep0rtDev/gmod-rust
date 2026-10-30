@@ -154,6 +154,7 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
         impact_hard: table.sound(&props.surfaceprop, "impacthard"),
         prop_data: prop_data(mount, &mdl.key_values),
         break_sound: table.sound(&props.surfaceprop, "break"),
+        skins: mdl.skins.len().clamp(1, 255) as u8,
     })
 }
 

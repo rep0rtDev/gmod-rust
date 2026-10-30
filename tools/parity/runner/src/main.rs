@@ -1353,6 +1353,7 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
         impact_hard: table.sound(&props.surfaceprop, "impacthard"),
         prop_data: gm_dedicated::prop_data(mount, &mdl.key_values),
         break_sound: table.sound(&props.surfaceprop, "break"),
+        skins: 1,
     })
 }
 

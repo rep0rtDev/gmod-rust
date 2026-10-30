@@ -99,6 +99,7 @@ mod tests {
                 vel: Vec3::new(0.0, 0.0, -9.0),
                 angvel: Vec3::ZERO,
                 frozen: false,
+                skin: 0,
                 owner: 1,
             }],
             removed: vec![1],

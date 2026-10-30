@@ -11,6 +11,7 @@ pub struct EntitySnap {
     pub pos: Vec3,
     pub angles: Vec3,
     pub frozen: bool,
+    pub skin: u8,
     pub owner: u32,
 }
 
@@ -104,6 +105,7 @@ impl Snapshot {
                             pos: e.pos,
                             angles: e.angles,
                             frozen: e.frozen,
+                            skin: e.skin,
                             owner: e.owner,
                         },
                     )
@@ -165,6 +167,7 @@ impl Snapshot {
                             pos: p.pos,
                             angles: p.angles,
                             frozen: p.frozen,
+                            skin: p.skin,
                             owner: p.owner,
                         },
                     )

@@ -116,8 +116,15 @@ Implemented, by `Command::Property { name }` on the prop under the crosshair:
   after `Ignite(360)`, 394 ticks from the ignition. Ours: `Server::ignite / extinguish /
   damage_prop`, `Prop.health / fire`, `entity.break {entity}` to Luau. Not measured: fire on
   players and on props without health, gibs (the game leaves wood chunks), fire spreading.
-- Not yet: `drive`, `skin`, `bodygroups`, the menu itself in
-  the native client (the console's `property <name>` sends the command).
+- `skin <n>` (the game's `skin` property opens a submenu of the model's skin families and
+  `SetSkin`s the pick): offered only when the model has more than one family
+  (`ModelInfo::skins`, the MDL's skin table; the plain crate has two, and the game does offer it
+  the property, measured in `lua_properties`) and the index is below the count; sets `Prop.skin`, which travels in the entity snapshot (Luau
+  `entity.skin`), through the duplicator clip and the save file (`SavedProp.skin`, 0 when the
+  file predates it), and the native client draws the prop with that skin family
+  (`load_model_variant`).
+- Not yet: `drive`, `bodygroups`, the menu itself in the native client (the console's
+  `property <name>` sends the command).
 
 ## Player models
 

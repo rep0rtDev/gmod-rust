@@ -37,6 +37,8 @@ pub struct ModelInfo {
     pub prop_data: PropData,
     /// The `break` sound script of the surface property (`Wood_Crate.Break`).
     pub break_sound: Option<String>,
+    /// `Entity:SkinCount`: skin families in the MDL (1 when unknown).
+    pub skins: u8,
 }
 
 /// A model's `prop_data` (`$keyvalues`, through the `base` chain of `scripts/propdata.txt`):
@@ -2190,6 +2192,7 @@ impl<'w> Server<'w> {
                 pos: (p.pos - anchor_pos).to_array(),
                 angles: p.angles.to_array(),
                 frozen: p.frozen,
+                skin: p.skin,
             })
             .collect();
         let constraints = cons
@@ -2256,6 +2259,7 @@ impl<'w> Server<'w> {
             );
             let health = self.models.get(&p.model).map_or(0, |m| m.prop_data.health);
             self.sandbox.set_health(id, health);
+            self.sandbox.set_skin(id, p.skin);
             self.sandbox.add_count(player, "props", id);
             self.sandbox.add_cleanup(player, "props", id);
             ids.push(Some(id));
@@ -2872,6 +2876,11 @@ impl<'w> Server<'w> {
     /// asked first; a property that does not apply (collision already off, ...) is not offered
     /// and does nothing. Returns whether it was applied.
     pub fn apply_property(&mut self, player: u32, name: &str) -> bool {
+        // `skin <n>`: the game's property opens a submenu of the model's skins
+        let (name, arg) = match name.split_once(' ') {
+            Some((n, a)) => (n, a.trim()),
+            None => (name, ""),
+        };
         let Some(ent) = self.tool_hit(player).and_then(|h| h.ent) else {
             return false;
         };
@@ -2886,6 +2895,10 @@ impl<'w> Server<'w> {
             "keepupright_stop" => prop.upright.is_some(),
             "ignite" => prop.fire.is_none(),
             "extinguish" => prop.fire.is_some(),
+            "skin" => {
+                let skins = self.models.get(&prop.model).map_or(1, |m| m.skins);
+                skins > 1 && arg.parse::<u8>().is_ok_and(|n| n < skins)
+            }
             _ => false,
         };
         if !offered
@@ -2921,6 +2934,9 @@ impl<'w> Server<'w> {
             }
             "ignite" => {
                 self.ignite(ent, PROPERTY_IGNITE_SECONDS);
+            }
+            "skin" => {
+                self.sandbox.set_skin(ent, arg.parse().unwrap_or(0));
             }
             "extinguish" => {
                 self.extinguish(ent);
