@@ -847,3 +847,121 @@ fn published_client_addon_is_downloaded_over_a_lossy_loopback_and_runs_on_the_cl
     assert!(snaps >= 5, "{snaps} snapshots");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_hot_reloaded_client_addon_is_republished_and_the_client_reloads_it_keeping_state() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let dir = std::env::temp_dir().join(format!("gmr-repub-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("addon/src")).unwrap();
+    std::fs::write(
+        dir.join("addon/manifest.toml"),
+        "id = \"hud_live\"\nversion = \"1.0.0\"\nrealms = [\"client\"]\n\
+         [[actors]]\nname = \"hud\"\nsource = \"src/hud.luau\"\nrealm = \"client\"\n",
+    )
+    .unwrap();
+    let hud = dir.join("addon/src/hud.luau");
+    std::fs::write(
+        &hud,
+        "state.gen = 1\nevents.on('snapshot.received', function() state.snaps = (state.snaps or 0) + 1 end)",
+    )
+    .unwrap();
+    let mut rt = gm_script::Runtime::new();
+    rt.watch = true;
+    rt.load_addon(&dir.join("addon")).unwrap();
+    assert_eq!(
+        rt.actors().len(),
+        0,
+        "a client-only addon has no server actors"
+    );
+    assert_eq!(
+        rt.published.len(),
+        1,
+        "but its package is queued for clients"
+    );
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    sn.hooks = Some(Box::new(rt));
+    let net = gm_net::Loopback::new(1, 0.05, 3);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut crt = gm_script::Runtime::client();
+    let mut seen: std::collections::BTreeSet<[u8; 32]> = Default::default();
+    let mut loads = Vec::new();
+    let mut last_tick = 0;
+    let mut edited_at = None;
+    for t in 0..900 {
+        client.tick(gm_net::NetCmd::default(), &mut c_ep);
+        net.tick();
+        sn.receive(&mut server, &mut s_ep);
+        sn.tick(&mut server);
+        sn.send(&server, &mut s_ep);
+        client.receive(&mut c_ep);
+        for a in client.server_addons.clone() {
+            if seen.insert(a.sha) {
+                client.want_addon(a.sha);
+            }
+        }
+        for (sha, bytes) in std::mem::take(&mut client.downloaded) {
+            let pkg = gm_script::Package::read(&bytes).unwrap();
+            assert_eq!(pkg.sha256, sha);
+            let path = dir.join(format!("{}.gmr", gm_net::msg::sha_hex(&sha)));
+            std::fs::write(&path, &bytes).unwrap();
+            let m = if crt.addon_paths.contains_key("hud_live") {
+                crt.reload_addon(&path).unwrap()
+            } else {
+                crt.load_addon(&path).unwrap()
+            };
+            loads.push((t, m.version.clone()));
+        }
+        let fresh = client.server_tick != last_tick;
+        last_tick = client.server_tick;
+        crt.client_tick(&client.world, fresh);
+        if loads.len() == 1 && edited_at.is_none() && t > loads[0].0 + 30 {
+            let snaps: u64 = crt.actors()[0].eval("return state.snaps").unwrap();
+            assert!(snaps >= 10, "{snaps} snapshots before the edit");
+            std::fs::write(
+                dir.join("addon/manifest.toml"),
+                "id = \"hud_live\"\nversion = \"1.1.0\"\nrealms = [\"client\"]\n\
+                 [[actors]]\nname = \"hud\"\nsource = \"src/hud.luau\"\nrealm = \"client\"\n",
+            )
+            .unwrap();
+            std::fs::write(
+                &hud,
+                "state.gen = 2\nevents.on('snapshot.received', function() state.snaps = (state.snaps or 0) + 1 end)",
+            )
+            .unwrap();
+            let f = std::fs::File::open(&hud).unwrap();
+            f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
+                .unwrap();
+            edited_at = Some(t);
+        }
+        if loads.len() == 2 && edited_at.is_some_and(|e| t > e + 60) {
+            break;
+        }
+    }
+    assert_eq!(loads.len(), 2, "{loads:?}");
+    assert_eq!(
+        (loads[0].1.as_str(), loads[1].1.as_str()),
+        ("1.0.0", "1.1.0")
+    );
+    assert_eq!(seen.len(), 2, "two distinct packages were announced");
+    assert_eq!(sn.addons.len(), 2, "both stay downloadable");
+    assert_eq!(sn.addon_list().len(), 1, "the list names the latest only");
+    assert_eq!(
+        crt.actors().len(),
+        1,
+        "the reload replaced the actor, not added one"
+    );
+    let (gen, snaps): (u64, u64) = crt.actors()[0]
+        .eval("return state.gen, state.snaps")
+        .unwrap();
+    assert_eq!(gen, 2, "the new source ran");
+    assert!(snaps >= 40, "{snaps}: state survived the reload");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -23,6 +23,9 @@ when reliable messages are left that none of the tick's packets carried, so a la
 moves ~8 KiB per tick per client; the server sends bursts, the client one packet per tick.
 Measured with the gm-net unit test: a 50 000-byte message plus two small ones around it arrive
 whole and in order over 20 % loss, every packet under the budget.
+Ack of nothing: a header with `ack = 0, ack_bits = 0` means "nothing received yet", never "packet
+0 received" (that one is acked by the bits of a later packet; found with a loopback seed that lost
+the first server packet: the welcome was dropped as acked and the client never joined).
 
 ## Client -> server
 
@@ -125,6 +128,11 @@ on the client in under 200 ticks with replicated cvars arriving alongside
 Over real UDP (two processes on one machine): a 300 571-byte package is downloaded, verified and
 its client actor running 74 ticks after welcome (~4 KB per tick); a second connect with the
 package in `--cache` loads it at once without asking.
+Hot reload: a server with `--watch` that reloads an addon with the `client` realm repacks it
+(`ServerHooks::drain_published`), publishes the new sha and sends every connected client a fresh
+`Addons` list (latest package per addon id; older ones stay downloadable so a transfer in flight
+finishes); the client downloads the new package and hot-reloads its actors, `state` kept
+(`a_hot_reloaded_client_addon_is_republished_and_the_client_reloads_it_keeping_state`).
 
 ## Not yet
 

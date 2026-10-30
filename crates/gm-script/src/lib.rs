@@ -39,6 +39,9 @@ pub struct Runtime {
     pub realm: String,
     /// Where every loaded addon came from (directory or `.gmr`), for reloads by id.
     pub addon_paths: std::collections::BTreeMap<String, std::path::PathBuf>,
+    /// Client-realm packages built by `load_addon`/`check_reloads` on the server, until the
+    /// network takes them (`ServerHooks::drain_published`).
+    pub published: Vec<gm_server::PublishedPackage>,
     actors: Vec<Actor>,
     pub tick: u64,
     pub log: Vec<String>,
@@ -67,6 +70,7 @@ impl Runtime {
         Runtime {
             realm: "server".into(),
             addon_paths: std::collections::BTreeMap::new(),
+            published: Vec::new(),
             actors: Vec::new(),
             tick: 0,
             log: Vec::new(),
@@ -96,7 +100,39 @@ impl Runtime {
         }
         self.addon_paths.insert(m.id.clone(), path.to_path_buf());
         self.addon_stamps.insert(m.id.clone(), file_stamp(path));
+        self.publish(&m, path);
         Ok(m)
+    }
+
+    /// On the server, an addon with the `client` realm is packed (a directory deterministically,
+    /// a `.gmr` as is) and queued for the network to hand to clients.
+    fn publish(&mut self, m: &Manifest, path: &std::path::Path) {
+        if self.realm != "server" || !m.realms.iter().any(|r| r == "client") {
+            return;
+        }
+        match Self::package_for_clients(m, path) {
+            Ok(p) => self.published.push(p),
+            Err(e) => self.log.push(format!("package {}: {e}", m.id)),
+        }
+    }
+
+    /// The bytes clients get for this addon and their sha256 (the package identity).
+    pub fn package_for_clients(
+        m: &Manifest,
+        path: &std::path::Path,
+    ) -> Result<gm_server::PublishedPackage, Box<dyn std::error::Error>> {
+        let bytes = if path.is_dir() {
+            package::pack(path)?
+        } else {
+            std::fs::read(path)?
+        };
+        let pkg = Package::read(&bytes)?;
+        Ok(gm_server::PublishedPackage {
+            id: m.id.clone(),
+            version: m.version.clone(),
+            sha: pkg.sha256,
+            bytes,
+        })
     }
 
     /// Reloads every loaded addon whose files (directory tree or `.gmr`) changed since it was
@@ -117,7 +153,10 @@ impl Runtime {
             self.addon_stamps.insert(id.clone(), stamp);
             let r = self.reload_addon(&path).map_err(|e| e.to_string());
             match &r {
-                Ok(m) => self.log.push(format!("reloaded {} {}", m.id, m.version)),
+                Ok(m) => {
+                    self.log.push(format!("reloaded {} {}", m.id, m.version));
+                    self.publish(m, &path);
+                }
                 Err(e) => self.log.push(format!("reload {id} failed: {e}")),
             }
             out.push((id, r));
@@ -617,6 +656,9 @@ impl gm_server::ServerHooks for Runtime {
     }
     fn drain_net(&mut self) -> Vec<(u32, String, Vec<u8>)> {
         Runtime::drain_net(self)
+    }
+    fn drain_published(&mut self) -> Vec<gm_server::PublishedPackage> {
+        std::mem::take(&mut self.published)
     }
     fn entity_removed(&mut self, server: &mut Server<'_>, player: u32, ent: u32) {
         Runtime::entity_removed(self, server, player, ent);

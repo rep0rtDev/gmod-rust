@@ -148,6 +148,24 @@ mod tests {
     }
 
     #[test]
+    fn a_reliable_message_in_the_lost_first_packet_is_resent() {
+        let (mut a, mut b) = (Channel::default(), Channel::default());
+        a.send_reliable(b"welcome".to_vec());
+        let _lost = a.build(&[]);
+        let empty = b.build(&[]);
+        a.receive(&empty).unwrap();
+        assert_eq!(
+            a.pending_reliable(),
+            1,
+            "an ack of nothing is not an ack of packet 0"
+        );
+        let again = a.build(&[]);
+        assert_eq!(b.receive(&again).unwrap(), vec![b"welcome".to_vec()]);
+        a.receive(&b.build(&[])).unwrap();
+        assert_eq!(a.pending_reliable(), 0);
+    }
+
+    #[test]
     fn long_reliable_messages_arrive_whole_and_in_order_over_loss_within_the_packet_budget() {
         use crate::channel::{MAX_BURST, MAX_PACKET};
         let (mut a, mut b) = (Channel::default(), Channel::default());

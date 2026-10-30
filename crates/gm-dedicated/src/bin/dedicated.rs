@@ -57,28 +57,6 @@ fn main() -> Result<()> {
                     .load_addon(path)
                     .map_err(|e| anyhow::anyhow!("addon {}: {e}", path.display()))?;
                 println!("addon {} {} (priority {})", m.id, m.version, m.priority);
-                if m.realms.iter().any(|r| r == "client") {
-                    let bytes = if is_gmr {
-                        std::fs::read(path)?
-                    } else {
-                        gm_script::package::pack(path)?
-                    };
-                    let pkg = gm_script::Package::read(&bytes)?;
-                    println!(
-                        "  published for clients: {} ({} bytes)",
-                        pkg.sha256_hex(),
-                        bytes.len()
-                    );
-                    net.publish_addon(
-                        gm_net::AddonInfo {
-                            id: m.id.clone(),
-                            version: m.version.clone(),
-                            sha: pkg.sha256,
-                            size: bytes.len() as u64,
-                        },
-                        bytes,
-                    );
-                }
                 continue;
             }
             let source =

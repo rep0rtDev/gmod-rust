@@ -302,7 +302,8 @@ the world or a gone entity is a no-op. Test
 Distribution to clients: a package whose manifest lists the `client` realm is published by the
 dedicated server and downloaded by clients by sha256 (see net.md, "Addon distribution"); the
 client loads it from its cache with `Runtime::client().load_addon(<sha>.gmr)`, so only the
-client-realm (and `shared`) actors run there.
+client-realm (and `shared`) actors run there; a hot reload on a `--watch` server republishes the
+package and the client reloads it with `Runtime::reload_addon` (actor `state` survives).
 
 ## Not yet
 

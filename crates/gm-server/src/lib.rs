@@ -39,6 +39,14 @@ pub enum ToolClick {
     Unknown(ToolHit),
 }
 
+/// A `.gmr` package with client-realm actors, ready to be handed to clients.
+pub struct PublishedPackage {
+    pub id: String,
+    pub version: String,
+    pub sha: [u8; 32],
+    pub bytes: Vec<u8>,
+}
+
 /// Game-logic hooks around server commands (the addon runtime implements them).
 pub trait ServerHooks {
     /// `prop.spawn_request`: false refuses the spawn.
@@ -74,6 +82,11 @@ pub trait ServerHooks {
     /// After the tick's player commands were applied (the game runs console commands at the end
     /// of the frame, after `Tick`): `cvar.changed` for what they changed.
     fn after_commands(&mut self, _server: &mut Server<'_>) {}
+    /// Packages (re)built since the last call: addons with client-realm actors as they were
+    /// loaded or hot-reloaded, for the network to publish to clients.
+    fn drain_published(&mut self) -> Vec<PublishedPackage> {
+        Vec::new()
+    }
 }
 
 /// Loads a model by name on first use.

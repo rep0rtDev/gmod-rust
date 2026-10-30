@@ -86,6 +86,18 @@ impl ServerNet {
             info,
             bytes: std::sync::Arc::new(bytes),
         });
+        let list = addon_list_of(&self.addons);
+        for slot in self.clients.values_mut().filter(|s| s.player != 0) {
+            let mut w = Writer::default();
+            ServerMsg::Addons { list: list.clone() }.write(&mut w);
+            slot.channel.send_reliable(w.buf);
+        }
+    }
+
+    /// What clients are told to have: the latest publication of every addon id (older packages
+    /// stay downloadable so a transfer in flight finishes).
+    pub fn addon_list(&self) -> Vec<crate::msg::AddonInfo> {
+        addon_list_of(&self.addons)
     }
 
     /// Reads everything the transport has for the server (endpoint 0), connecting new clients.
@@ -143,7 +155,7 @@ impl ServerNet {
                             if !self.addons.is_empty() {
                                 let mut w = Writer::default();
                                 ServerMsg::Addons {
-                                    list: self.addons.iter().map(|a| a.info.clone()).collect(),
+                                    list: addon_list_of(&self.addons),
                                 }
                                 .write(&mut w);
                                 slot.channel.send_reliable(w.buf);
@@ -230,6 +242,17 @@ impl ServerNet {
         server.tick(&cmds);
         if let Some(h) = self.hooks.as_mut() {
             h.post_tick(server);
+            for p in h.drain_published() {
+                let info = crate::msg::AddonInfo {
+                    id: p.id,
+                    version: p.version,
+                    sha: p.sha,
+                    size: p.bytes.len() as u64,
+                };
+                self.publish_addon(info, p.bytes);
+            }
+        }
+        if let Some(h) = self.hooks.as_mut() {
             for (player, name, data) in h.drain_net() {
                 for slot in self.clients.values_mut() {
                     if player == 0 || slot.player == player {
@@ -490,4 +513,12 @@ impl ServerNet {
     pub fn stats(&self, endpoint: usize) -> Option<&crate::channel::Stats> {
         self.clients.get(&endpoint).map(|c| &c.channel.stats)
     }
+}
+
+fn addon_list_of(addons: &[PublishedAddon]) -> Vec<crate::msg::AddonInfo> {
+    let mut latest: BTreeMap<&str, &crate::msg::AddonInfo> = BTreeMap::new();
+    for a in addons {
+        latest.insert(a.info.id.as_str(), &a.info);
+    }
+    latest.into_values().cloned().collect()
 }

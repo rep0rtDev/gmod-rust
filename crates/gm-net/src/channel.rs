@@ -201,9 +201,10 @@ impl Channel {
             self.received
                 .retain(|s| !seq_newer(newest.wrapping_sub(64), *s) || *s == newest);
         }
-        // what the other side has seen of ours
+        // what the other side has seen of ours; (0, 0) is "nothing yet", so our packet 0 is only
+        // acked by the bits of a later packet (one spare resend at most, duplicates drop by id)
         let mut acked: Vec<u16> = Vec::new();
-        if self.local_seq != 0 || h.ack != 0 || h.ack_bits != 0 {
+        if h.ack != 0 || h.ack_bits != 0 {
             acked.push(h.ack);
             for i in 0..32u16 {
                 if h.ack_bits & (1 << i) != 0 {
