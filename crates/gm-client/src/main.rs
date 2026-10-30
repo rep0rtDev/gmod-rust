@@ -126,6 +126,9 @@ const SPAWN_DIRS: [&str; 7] = [
 ];
 const SPAWN_MENU_ROWS_MAX: usize = 600;
 
+/// Stools the server implements in Rust (`Sandbox::knows_tool`).
+const TOOLS: [&str; 5] = ["weld", "rope", "axis", "nocollide", "duplicator"];
+
 struct SpawnMenu {
     scroll: usize,
 }
@@ -362,6 +365,7 @@ struct App {
     mouse: BTreeSet<u8>,
     view: Vec3,
     weapon: u8,
+    tool: String,
     /// One-shot viewmodel sequence playing (draw, fire) and when it started.
     vm_anim: Option<(&'static str, Instant)>,
     /// The server was told our starting weapon once we were in the world.
@@ -908,9 +912,14 @@ impl App {
         }
         if !self.console.open {
             let hud = format!(
-                "props {}  weapon {}  pos {:.0} {:.0} {:.0}",
+                "props {}  weapon {}{}  pos {:.0} {:.0} {:.0}",
                 self.sim.client.world.entities.len(),
                 viewmodel(self.weapon).map_or("none", |v| v.name),
+                if self.weapon == 1 {
+                    format!(" ({})", self.tool)
+                } else {
+                    String::new()
+                },
                 o.x,
                 o.y,
                 o.z
@@ -1094,6 +1103,18 @@ impl App {
                 model: rest.first().unwrap_or(&SPAWN_MODEL).to_string(),
             }),
             "undo" => self.sim.client.command(Command::Undo),
+            "tool" => match rest.first() {
+                Some(t) if TOOLS.contains(t) => {
+                    self.tool = t.to_string();
+                    self.console.log(format!("tool {t}"));
+                }
+                Some(t) => self
+                    .console
+                    .log(format!("unknown tool {t}; {}", TOOLS.join(" "))),
+                None => self
+                    .console
+                    .log(format!("tool {} ({})", self.tool, TOOLS.join(" "))),
+            },
             "bot" => {
                 let id = 1000 + self.sim.server.players.len() as u32;
                 let yaw = self.view.y.to_radians();
@@ -1108,7 +1129,7 @@ impl App {
             "cleanup" => self.sim.client.command(Command::Cleanup),
             "help" => {
                 self.console
-                    .log("client: spawn [model] | bot | undo | cleanup | clear | quit; server:");
+                    .log("client: spawn [model] | tool [name] | bot | undo | cleanup | clear | quit; server:");
                 self.sim.client.command(Command::Console {
                     line: line.to_string(),
                 });
@@ -1183,6 +1204,13 @@ impl ApplicationHandler for App {
                         KeyCode::Digit0 => self.select_weapon(9),
                         KeyCode::KeyQ => self.open_menu(),
                         KeyCode::KeyZ => self.sim.client.command(Command::Undo),
+                        KeyCode::KeyR if self.weapon == 1 => {
+                            self.sim.client.command(Command::ToolClick {
+                                tool: self.tool.clone(),
+                                right: false,
+                                reload: true,
+                            })
+                        }
                         _ => {}
                     }
                 }
@@ -1229,6 +1257,13 @@ impl ApplicationHandler for App {
                 };
                 if state == ElementState::Pressed {
                     if self.mouse.insert(b) {
+                        if self.weapon == 1 {
+                            self.sim.client.command(Command::ToolClick {
+                                tool: self.tool.clone(),
+                                right: b == 1,
+                                reload: false,
+                            });
+                        }
                         if let Some(vm) = viewmodel(self.weapon) {
                             // the physgun's right click only acts while holding
                             if b == 0 || vm.hold.is_none() {
@@ -1332,6 +1367,7 @@ fn main() -> Result<()> {
         mouse: BTreeSet::new(),
         view: Vec3::new(arg_f(3).unwrap_or(0.0), arg_f(2).unwrap_or(yaw), 0.0),
         weapon: 0,
+        tool: "weld".to_string(),
         vm_anim: None,
         weapon_synced: false,
         air_since: Default::default(),
