@@ -113,6 +113,29 @@ struct Gfx {
 }
 
 const CONSOLE_LOG_LINES: usize = 500;
+
+/// Prop folders the spawn menu lists (GMod's sandbox spawn lists cover these HL2 props).
+const SPAWN_DIRS: [&str; 7] = [
+    "models/props_c17",
+    "models/props_junk",
+    "models/props_borealis",
+    "models/props_lab",
+    "models/props_wasteland",
+    "models/props_interior",
+    "models/props_combine",
+];
+const SPAWN_MENU_ROWS_MAX: usize = 600;
+
+struct SpawnMenu {
+    scroll: usize,
+}
+
+/// Layout of the spawn menu panel for a window of `w` x `h`: (x, y, width, height, first row y).
+fn menu_layout(w: f32, h: f32, lh: f32) -> (f32, f32, f32, f32, f32) {
+    let (pw, ph) = ((w * 0.7).round(), (h * 0.7).round());
+    let (px, py) = (((w - pw) / 2.0).round(), ((h - ph) / 2.0).round());
+    (px, py, pw, ph, py + lh * 2.0)
+}
 /// GMod's default `viewmodel_fov`.
 const VIEWMODEL_FOV: f32 = 54.0;
 /// Hands drawn on the `c_` viewmodels' arm bones (GMod's default player hands).
@@ -345,6 +368,10 @@ struct App {
     weapon_synced: bool,
     /// When each airborne player left the ground (their jump sequence runs from there).
     air_since: std::collections::HashMap<u32, Instant>,
+    /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
+    menu: Option<SpawnMenu>,
+    spawn_models: Vec<String>,
+    cursor: (f32, f32),
     grabbed: bool,
     last: Instant,
     acc: f32,
@@ -432,6 +459,47 @@ impl App {
         }
         // without a grab (some X servers) input still works, only the pointer is not held
         self.grabbed = on;
+    }
+
+    fn open_menu(&mut self) {
+        if self.menu.is_some() || self.console.open {
+            return;
+        }
+        if self.spawn_models.is_empty() {
+            for dir in SPAWN_DIRS {
+                self.spawn_models
+                    .extend(self.mount.find(&format!("{dir}/*.mdl")));
+                if self.spawn_models.len() >= SPAWN_MENU_ROWS_MAX {
+                    break;
+                }
+            }
+            self.spawn_models.truncate(SPAWN_MENU_ROWS_MAX);
+        }
+        self.menu = Some(SpawnMenu { scroll: 0 });
+        self.mouse.clear();
+        self.set_grab(false);
+    }
+
+    /// The row under the cursor of the open spawn menu, if any.
+    fn menu_row(&self) -> Option<usize> {
+        let (menu, g) = (self.menu.as_ref()?, self.gfx.as_ref()?);
+        let (w, h) = (g.config.width as f32, g.config.height as f32);
+        let lh = g.ui.line_height();
+        let (px, py, pw, ph, rows_y) = menu_layout(w, h, lh);
+        let (cx, cy) = self.cursor;
+        if cx < px || cx > px + pw || cy < rows_y || cy > py + ph - 8.0 {
+            return None;
+        }
+        let row = ((cy - rows_y) / lh) as usize + menu.scroll;
+        (row < self.spawn_models.len()).then_some(row)
+    }
+
+    fn menu_click(&mut self) {
+        if let Some(row) = self.menu_row() {
+            let model = self.spawn_models[row].clone();
+            self.console.log(format!("spawn {model}"));
+            self.sim.client.command(Command::Spawn { model });
+        }
     }
 
     fn select_weapon(&mut self, weapon: u8) {
@@ -792,6 +860,52 @@ impl App {
         let lh = g.ui.line_height();
         let mut items = Vec::new();
         let white = [0.92, 0.92, 0.92, 1.0];
+        if let Some(menu) = &self.menu {
+            let (px, py, pw, ph, rows_y) = menu_layout(w, h, lh);
+            items.push(UiItem::Rect {
+                x: px,
+                y: py,
+                w: pw,
+                h: ph,
+                color: [0.05, 0.05, 0.07, 0.9],
+            });
+            items.push(UiItem::Text {
+                x: px + 12.0,
+                y: py + 6.0,
+                text: format!(
+                    "Spawn menu  ({} props, wheel scrolls, click spawns)",
+                    self.spawn_models.len()
+                ),
+                color: white,
+            });
+            let visible = ((py + ph - 8.0 - rows_y) / lh).max(0.0) as usize;
+            let hover = self.menu_row();
+            for (i, model) in self
+                .spawn_models
+                .iter()
+                .enumerate()
+                .skip(menu.scroll)
+                .take(visible)
+            {
+                let y = rows_y + (i - menu.scroll) as f32 * lh;
+                if hover == Some(i) {
+                    items.push(UiItem::Rect {
+                        x: px + 4.0,
+                        y,
+                        w: pw - 8.0,
+                        h: lh,
+                        color: [1.0, 1.0, 1.0, 0.15],
+                    });
+                }
+                items.push(UiItem::Text {
+                    x: px + 12.0,
+                    y,
+                    text: model.trim_start_matches("models/").to_string(),
+                    color: [0.85, 0.85, 0.85, 1.0],
+                });
+            }
+            return items;
+        }
         if !self.console.open {
             let hud = format!(
                 "props {}  weapon {}  pos {:.0} {:.0} {:.0}",
@@ -1027,7 +1141,16 @@ impl ApplicationHandler for App {
                     g.depth = depth_view(&g.gpu, g.config.width, g.config.height);
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } => {
+            WindowEvent::KeyboardInput {
+                event,
+                is_synthetic,
+                ..
+            } => {
+                // focus changes replay held keys as synthetic presses / releases; they must not
+                // close the spawn menu or type into the console
+                if is_synthetic {
+                    return;
+                }
                 let code = match event.physical_key {
                     PhysicalKey::Code(code) => Some(code),
                     _ => None,
@@ -1058,9 +1181,7 @@ impl ApplicationHandler for App {
                         KeyCode::Digit8 => self.select_weapon(7),
                         KeyCode::Digit9 => self.select_weapon(8),
                         KeyCode::Digit0 => self.select_weapon(9),
-                        KeyCode::KeyQ => self.sim.client.command(Command::Spawn {
-                            model: SPAWN_MODEL.to_string(),
-                        }),
+                        KeyCode::KeyQ => self.open_menu(),
                         KeyCode::KeyZ => self.sim.client.command(Command::Undo),
                         _ => {}
                     }
@@ -1069,10 +1190,32 @@ impl ApplicationHandler for App {
                     self.keys.insert(code);
                 } else {
                     self.keys.remove(&code);
+                    if code == KeyCode::KeyQ && self.menu.is_some() {
+                        self.menu = None;
+                        self.set_grab(true);
+                    }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = (position.x as f32, position.y as f32);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                if let Some(menu) = &mut self.menu {
+                    let lines = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 16.0,
+                    };
+                    menu.scroll = (menu.scroll as f32 - lines * 3.0).max(0.0) as usize;
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if self.console.open {
+                    return;
+                }
+                if self.menu.is_some() {
+                    if state == ElementState::Pressed && button == MouseButton::Left {
+                        self.menu_click();
+                    }
                     return;
                 }
                 if !self.grabbed && state == ElementState::Pressed {
@@ -1107,6 +1250,9 @@ impl ApplicationHandler for App {
     }
 
     fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+        if self.menu.is_some() {
+            return;
+        }
         if let DeviceEvent::MouseMotion { delta } = event {
             if self.grabbed {
                 // m_yaw / m_pitch 0.022 at sensitivity 3
@@ -1189,6 +1335,9 @@ fn main() -> Result<()> {
         vm_anim: None,
         weapon_synced: false,
         air_since: Default::default(),
+        menu: None,
+        spawn_models: Vec::new(),
+        cursor: (0.0, 0.0),
         grabbed: false,
         last: Instant::now(),
         acc: 0.0,
