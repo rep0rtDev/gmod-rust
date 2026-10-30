@@ -17,6 +17,10 @@ struct Args {
     /// server's challenge, required by servers started with `--require-auth`.
     #[arg(long)]
     key: Option<std::path::PathBuf>,
+    /// Admin console line to run on the server (needs `--key` of an `--admin` identity):
+    /// connects, sends it, prints the reply lines and leaves.
+    #[arg(long)]
+    rcon: Option<String>,
     /// Client-realm addons (directory or .gmr) to run against the assembled world.
     #[arg(long)]
     addon: Vec<std::path::PathBuf>,
@@ -83,6 +87,7 @@ fn main() -> Result<()> {
     let mut welcomed_at = None;
     let mut first_snapshot_at = None;
     let mut spawned = false;
+    let mut rcon_sent_at: Option<u32> = None;
     for t in 0..args.ticks {
         // walk forward along +y for ticks 20..120 looking down 20 degrees, then stand
         let walking = (20..120).contains(&t);
@@ -97,7 +102,27 @@ fn main() -> Result<()> {
             },
             &mut udp,
         );
-        if t == 100 && !spawned {
+        if let (Some(line), Some(_)) = (&args.rcon, client.player_id) {
+            if !spawned {
+                client.command(gm_net::Command::Console { line: line.clone() });
+                spawned = true;
+                rcon_sent_at = Some(t);
+            }
+        }
+        if let Some(sent) = rcon_sent_at {
+            if !client.events.is_empty() || t > sent + 200 {
+                for ev in client.events.drain(..) {
+                    println!("{ev}");
+                }
+                client.disconnect();
+                for _ in 0..5 {
+                    client.tick(gm_net::NetCmd::default(), &mut udp);
+                    std::thread::sleep(interval);
+                }
+                return Ok(());
+            }
+        }
+        if t == 100 && !spawned && args.rcon.is_none() {
             client.command(gm_net::Command::Spawn {
                 model: args.spawn.clone(),
             });

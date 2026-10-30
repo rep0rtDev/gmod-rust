@@ -47,6 +47,11 @@ pub enum Command {
         player: u32,
         ban: bool,
     },
+    /// Admin console line (`status`, `kick`, `ban`, `unban`, `cvar`, `reload`, `say`, `admins`,
+    /// `help`); the replies come back as `ServerMsg::Event` lines.
+    Console {
+        line: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -484,6 +489,10 @@ impl ClientMsg {
                         w.u32(*player);
                         w.bool(*ban);
                     }
+                    Command::Console { line } => {
+                        w.u8(8);
+                        w.str(line);
+                    }
                 }
             }
             ClientMsg::AckSnapshot { tick } => {
@@ -547,6 +556,7 @@ impl ClientMsg {
                         player: r.u32()?,
                         ban: r.bool()?,
                     },
+                    8 => Command::Console { line: r.str()? },
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }

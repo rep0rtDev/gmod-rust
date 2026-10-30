@@ -1745,3 +1745,73 @@ fn actors_see_the_players_identity_and_player_disconnected() {
     let gone: Vec<u32> = rt.actors()[0].eval("return state.gone").unwrap();
     assert_eq!(gone, vec![1]);
 }
+
+#[test]
+fn the_admin_console_answers_status_cvar_say_and_denies_others() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
+    let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
+    let (admin_secret, admin_public) = gm_script::package::keygen();
+    sn.admin_keys.insert(admin_public);
+    let net = gm_net::Loopback::new(1, 0.0, 13);
+    let (mut s_ep, mut e1, mut e2) = (net.endpoint(0), net.endpoint(1), net.endpoint(2));
+    let mut admin = gm_net::ClientNet::new(1, "admin").with_key(&admin_secret);
+    let mut peer = gm_net::ClientNet::new(1, "peer");
+    let mut run = |n: u32,
+                   server: &mut gm_server::Server<'_>,
+                   admin: &mut gm_net::ClientNet,
+                   peer: &mut gm_net::ClientNet| {
+        for _ in 0..n {
+            admin.tick(gm_net::NetCmd::default(), &mut e1);
+            peer.tick(gm_net::NetCmd::default(), &mut e2);
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            admin.receive(&mut e1);
+            peer.receive(&mut e2);
+        }
+    };
+    run(20, &mut server, &mut admin, &mut peer);
+    let peer_id = peer.player_id.unwrap();
+    admin.events.clear();
+    peer.events.clear();
+    for line in [
+        "status",
+        "cvar sbox_maxprops 25",
+        "cvar sbox_maxprops",
+        "say hello all",
+        "bogus",
+        "kick 999",
+    ] {
+        admin.command(gm_net::Command::Console { line: line.into() });
+    }
+    peer.command(gm_net::Command::Console {
+        line: "status".into(),
+    });
+    run(20, &mut server, &mut admin, &mut peer);
+    let a = admin.events.join("\n");
+    assert!(
+        a.contains("gm_construct tick") && a.contains("players 2/"),
+        "{a}"
+    );
+    assert!(a.contains(&format!("{peer_id} peer anonymous")), "{a}");
+    assert!(a.contains("admin\n") || a.contains(" admin"), "{a}");
+    assert!(a.matches("sbox_maxprops = 25").count() == 2, "{a}");
+    assert_eq!(server.sandbox.limits.max_props, 25);
+    assert!(a.contains("[server] hello all"), "{a}");
+    assert!(a.contains("bogus: unknown command"), "{a}");
+    assert!(a.contains("kick 999: no such player"), "{a}");
+    let p = peer.events.join("\n");
+    assert!(
+        p.contains("[server] hello all") && p.contains("Console denied"),
+        "{p}"
+    );
+    assert!(!p.contains("gm_construct tick"), "{p}");
+}

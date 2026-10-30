@@ -432,6 +432,109 @@ impl ServerNet {
         self.admins.remove(&player);
     }
 
+    /// An admin console line; the reply lines go back to the issuer as events.
+    pub fn console(&mut self, server: &mut Server<'_>, admin: u32, line: &str) -> Vec<String> {
+        let mut words = line.split_whitespace();
+        let verb = words.next().unwrap_or("");
+        let rest: Vec<&str> = words.collect();
+        let player_arg = |rest: &[&str]| rest.first().and_then(|w| w.parse::<u32>().ok());
+        match verb {
+            "help" => vec![
+                "status | kick <player> [reason] | ban <player> | unban <key> | cvar <name> [value] \
+                 | reload <addon> | say <text> | admins"
+                    .to_string(),
+            ],
+            "status" => {
+                let mut out = vec![format!(
+                    "{} tick {} players {}/{} props {} constraints {}",
+                    self.map,
+                    self.tick,
+                    self.clients.values().filter(|c| c.welcomed && !c.closing).count(),
+                    self.max_players,
+                    server.sandbox.props().len(),
+                    server.sandbox.constraints().len()
+                )];
+                for c in self.clients.values().filter(|c| c.welcomed && !c.closing) {
+                    out.push(format!(
+                        "  {} {} {}{}",
+                        c.player,
+                        c.name,
+                        c.identity.map(|k| hex(&k)).unwrap_or_else(|| "anonymous".into()),
+                        if self.admins.contains(&c.player) { " admin" } else { "" }
+                    ));
+                }
+                out
+            }
+            "kick" | "ban" => match player_arg(&rest) {
+                Some(p) if p == admin => vec![format!("{verb} {p}: not yourself")],
+                Some(p) => {
+                    let ban = verb == "ban";
+                    let reason = if ban {
+                        "banned".to_string()
+                    } else if rest.len() > 1 {
+                        rest[1..].join(" ")
+                    } else {
+                        "kicked".to_string()
+                    };
+                    if self.kick(server, p, &reason, ban) {
+                        vec![format!("{verb} {p}: ok")]
+                    } else {
+                        vec![format!("{verb} {p}: no such player")]
+                    }
+                }
+                None => vec![format!("{verb}: player id expected")],
+            },
+            "unban" => match rest.first().and_then(|w| parse_hex(w)) {
+                Some(k) if self.bans.remove(&k) => vec!["unban: ok".to_string()],
+                Some(_) => vec!["unban: not banned".to_string()],
+                None => vec!["unban: public key (32 hex bytes) expected".to_string()],
+            },
+            "cvar" => match (rest.first(), rest.get(1)) {
+                (Some(n), None) => vec![match server.cvar(n) {
+                    Some(v) => format!("{n} = {v}"),
+                    None => format!("{n}: unknown cvar"),
+                }],
+                (Some(n), Some(v)) => {
+                    if server.set_cvar(n, v) {
+                        vec![format!("{n} = {}", server.cvar(n).unwrap_or_default())]
+                    } else {
+                        vec![format!("{n}: unknown cvar or bad value")]
+                    }
+                }
+                _ => vec!["cvar: name expected".to_string()],
+            },
+            "reload" => match rest.first() {
+                Some(a) => vec![match self.hooks.as_mut() {
+                    Some(h) => match h.reload_addon(a) {
+                        Ok(info) => format!("reload {a}: ok {info}"),
+                        Err(e) => format!("reload {a}: failed {e}"),
+                    },
+                    None => format!("reload {a}: failed no addon runtime"),
+                }],
+                None => vec!["reload: addon id expected".to_string()],
+            },
+            "say" => {
+                let text = format!("[server] {}", rest.join(" "));
+                for c in self.clients.values_mut() {
+                    if c.welcomed && !c.closing {
+                        c.pending_events.push(text.clone());
+                    }
+                }
+                Vec::new()
+            }
+            "admins" => vec![format!(
+                "admins: {}",
+                self.admins
+                    .iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )],
+            "" => Vec::new(),
+            other => vec![format!("{other}: unknown command (help)")],
+        }
+    }
+
     /// Connection events since the last call (joins, leaves, refusals, kicks, timeouts).
     pub fn take_log(&mut self) -> Vec<String> {
         std::mem::take(&mut self.log)
@@ -515,6 +618,7 @@ impl ServerNet {
             }
         }
         let mut kicks: Vec<(u32, bool)> = Vec::new();
+        let mut console: Vec<(u32, String)> = Vec::new();
         for slot in self.clients.values_mut() {
             while let Some(cmd) = slot.commands.remove(&slot.next_command) {
                 slot.next_command += 1;
@@ -569,6 +673,13 @@ impl ServerNet {
                         };
                         slot.pending_events.push(msg);
                     }
+                    Command::Console { line } => {
+                        if self.admins.contains(&slot.player) {
+                            console.push((slot.player, line));
+                        } else {
+                            slot.pending_events.push("Console denied".to_string());
+                        }
+                    }
                     Command::Reload { addon } => {
                         let msg = if !self.admins.contains(&slot.player) {
                             format!("Reload {addon} denied")
@@ -603,6 +714,12 @@ impl ServerNet {
         }
         for (player, ban) in kicks {
             self.kick(server, player, if ban { "banned" } else { "kicked" }, ban);
+        }
+        for (player, line) in console {
+            let replies = self.console(server, player, &line);
+            if let Some(slot) = self.clients.values_mut().find(|s| s.player == player) {
+                slot.pending_events.extend(replies);
+            }
         }
         if let Some(h) = self.hooks.as_mut() {
             h.after_commands(server);
@@ -931,4 +1048,15 @@ fn refuse(slot: &mut ClientSlot, reason: &str) {
 
 fn hex(b: &[u8; 32]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn parse_hex(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()?;
+    }
+    Some(out)
 }
