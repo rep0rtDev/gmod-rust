@@ -157,8 +157,20 @@ Stress (`stress_64_clients_and_2000_props_over_the_loopback`, release, one threa
 an 8 x 8 grid and 2 000 frozen crates over the same 3 000 x 2 400 u area, all within everyone's
 interest: server `tick` 1.3 ms, `send` 3.5 ms per tick (the per-client filter and delta over
 2 000 entities dominates), 607 bytes per tick per client (40 KB/s, 2.5 MB/s upload for the server),
-no snapshot dropped; a client learns ~33 entities per second at the 1 000-byte budget (the model
-name is 40 of an entity's 98 bytes: a per-connection model table is the next saving).
+no snapshot dropped. First finding: with 63 other players nearest-first, players alone exceeded the
+budget and entities got one per snapshot (a client learned ~100 entities in 200 ticks); now other
+players take at most half the budget and both lists are ordered by distance / (1 + ticks since
+that player or entity was last sent to this client), so far and stale ones rotate in.
+Measured after both (model table below, half-budget players, staleness order): 554 bytes per tick
+per client (36 KB/s), every client knows 798-800 of the 2 000 crates after 200 ticks (~265 per
+second, 8x), `send` 7.0 ms per tick for 64 clients, no snapshot dropped.
+
+Model table: entity states carry a model index (varint, 0 = none) instead of the name; the server
+keeps one table for all connections and sends each client the new entries as `ServerMsg::Models {
+from, names }` (tag 10, reliable) right before the first snapshot that uses them. A snapshot that
+names an id the client does not have yet (the `Models` message was deferred or lost) is dropped
+like one against a lost baseline; the resend fixes it. An entity is 59 bytes on the wire
+(ENTITY_SNAP_SIZE) instead of 58 + the model name.
 
 ## Server browser: master and query
 

@@ -72,7 +72,11 @@ pub enum ClientMsg {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EntityState {
     pub id: u32,
+    /// Resolved from `model_id` through the connection's model table (`ServerMsg::Models`);
+    /// not on the wire.
     pub model: String,
+    /// Index into the model table (0 = none), what the snapshot carries.
+    pub model_id: u32,
     pub pos: Vec3,
     pub angles: Vec3,
     /// Source units per second and body-local degrees per second (for interpolation and the
@@ -206,6 +210,12 @@ pub enum ServerMsg {
     Undos {
         seq: u32,
         entries: Vec<UndoEntry>,
+    },
+    /// Reliable: new entries of the connection's model table, `names[i]` is model `from + i`
+    /// (ids start at 1); sent before the first snapshot that uses them.
+    Models {
+        from: u32,
+        names: Vec<String>,
     },
 }
 
@@ -550,7 +560,7 @@ impl ServerMsg {
                 w.varint(entities.len() as u64);
                 for e in entities {
                     w.u32(e.id);
-                    w.str(&e.model);
+                    w.varint(e.model_id as u64);
                     w.vec3(e.pos);
                     w.vec3(e.angles);
                     w.vec3(e.vel);
@@ -625,6 +635,14 @@ impl ServerMsg {
                     w.str(&u.name);
                 }
             }
+            ServerMsg::Models { from, names } => {
+                w.u8(10);
+                w.varint(*from as u64);
+                w.varint(names.len() as u64);
+                for n in names {
+                    w.str(n);
+                }
+            }
         }
     }
 
@@ -665,7 +683,8 @@ impl ServerMsg {
                 for _ in 0..n {
                     entities.push(EntityState {
                         id: r.u32()?,
-                        model: r.str()?,
+                        model: String::new(),
+                        model_id: r.varint()? as u32,
                         pos: r.vec3()?,
                         angles: r.vec3()?,
                         vel: r.vec3()?,
@@ -749,6 +768,15 @@ impl ServerMsg {
                     });
                 }
                 ServerMsg::Undos { seq, entries }
+            }
+            10 => {
+                let from = r.varint()? as u32;
+                let n = r.varint()?.min(65536) as usize;
+                let mut names = Vec::with_capacity(n);
+                for _ in 0..n {
+                    names.push(r.str()?);
+                }
+                ServerMsg::Models { from, names }
             }
             _ => return Err(Truncated),
         })

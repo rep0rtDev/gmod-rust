@@ -217,6 +217,8 @@ pub struct ClientNet {
     /// Finished downloads, in order: (sha, the `.gmr` bytes); verify the sha before use.
     pub downloaded: Vec<([u8; 32], Vec<u8>)>,
     pub dropped_snapshots: u64,
+    /// The connection's model table (`models[i]` is model id `i + 1`).
+    pub models: Vec<String>,
 }
 
 impl ClientNet {
@@ -236,6 +238,7 @@ impl ClientNet {
             history: VecDeque::new(),
             events: Vec::new(),
             addon_msgs: Vec::new(),
+            models: Vec::new(),
             server_addons: Vec::new(),
             downloading: BTreeMap::new(),
             downloaded: Vec::new(),
@@ -351,10 +354,21 @@ impl ClientNet {
                             self.dropped_snapshots += 1;
                             continue;
                         };
+                        if entities
+                            .iter()
+                            .any(|e| e.model_id as usize > self.models.len())
+                        {
+                            // a model table update is still in flight (reliable, it comes)
+                            self.dropped_snapshots += 1;
+                            continue;
+                        }
                         for id in removed {
                             world.remove(&id);
                         }
-                        for e in entities {
+                        for mut e in entities {
+                            if e.model_id > 0 {
+                                e.model = self.models[e.model_id as usize - 1].clone();
+                            }
                             world.insert(e.id, e);
                         }
                         self.history.push_back((tick, world.clone()));
@@ -380,6 +394,14 @@ impl ClientNet {
                         self.world.cvars.insert(name, value);
                     }
                     ServerMsg::Undos { entries, .. } => self.world.own.undos = entries,
+                    ServerMsg::Models { from, names } => {
+                        for (i, n) in names.into_iter().enumerate() {
+                            let id = from as usize + i;
+                            if id == self.models.len() + 1 {
+                                self.models.push(n);
+                            }
+                        }
+                    }
                     ServerMsg::Addons { list } => self.server_addons = list,
                     ServerMsg::AddonChunk {
                         sha,

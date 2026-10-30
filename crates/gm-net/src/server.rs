@@ -36,6 +36,12 @@ pub struct ClientSlot {
     uploads: VecDeque<(usize, u64)>,
     undo_seq: u32,
     sent_undos: Vec<UndoEntry>,
+    /// How many entries of `ServerNet::models` this client has been sent.
+    models_sent: usize,
+    /// Last snapshot tick each player / entity state went to this client (for the staleness
+    /// weight in the budget order).
+    last_sent_player: BTreeMap<u32, u32>,
+    last_sent_entity: BTreeMap<u32, u32>,
 }
 
 /// An addon package the server hands out to clients (its client-realm actors run there).
@@ -49,6 +55,8 @@ pub const DEFAULT_INTEREST_RADIUS: f32 = 8192.0;
 pub const DEFAULT_SNAPSHOT_BUDGET: usize = 1000;
 /// Wire size of one `PlayerSnap`.
 pub const PLAYER_SNAP_SIZE: usize = 53;
+/// Wire size of one `EntityState` (the model goes as a table index).
+pub const ENTITY_SNAP_SIZE: usize = 59;
 pub const ADDON_CHUNK: usize = 16 * 1024;
 /// Reliable fragments in flight above which a client's upload waits (other reliable traffic
 /// keeps flowing between chunks).
@@ -67,6 +75,9 @@ pub struct ServerNet {
     pub addons: Vec<PublishedAddon>,
     /// What the server browser is told (`players` and `addons` are filled on send).
     pub info: crate::master::ServerInfo,
+    /// The model table every connection shares: `models[i]` is model id `i + 1`.
+    pub models: Vec<String>,
+    model_ids: BTreeMap<String, u32>,
     /// Interest: a client gets entities and other players within this distance of its player
     /// (Source units); what leaves the radius is removed on the client, what enters is sent whole.
     pub interest_radius: f32,
@@ -87,6 +98,8 @@ impl ServerNet {
             hooks: None,
             admins: std::collections::BTreeSet::new(),
             addons: Vec::new(),
+            models: Vec::new(),
+            model_ids: BTreeMap::new(),
             interest_radius: DEFAULT_INTEREST_RADIUS,
             snapshot_budget: DEFAULT_SNAPSHOT_BUDGET,
             info: crate::master::ServerInfo {
@@ -177,6 +190,9 @@ impl ServerNet {
                         uploads: VecDeque::new(),
                         undo_seq: 0,
                         sent_undos: Vec::new(),
+                        models_sent: 0,
+                        last_sent_player: BTreeMap::new(),
+                        last_sent_entity: BTreeMap::new(),
                     },
                 );
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
@@ -403,27 +419,33 @@ impl ServerNet {
     /// Sends this tick's packets: a snapshot every `snapshot_every` ticks plus pending reliables.
     pub fn send(&mut self, server: &Server<'_>, transport: &mut dyn Transport) {
         let snapshot_tick = self.tick.is_multiple_of(self.snapshot_every);
-        let world: BTreeMap<u32, EntityState> = server
-            .sandbox
-            .props()
-            .iter()
-            .map(|p| {
-                let st = server.prop_state(p.id);
-                (
-                    p.id,
-                    EntityState {
-                        id: p.id,
-                        model: p.model.clone(),
-                        pos: p.pos,
-                        angles: p.angles,
-                        vel: st.map(|s| s.velocity).unwrap_or_default(),
-                        angvel: st.map(|s| s.angular_velocity).unwrap_or_default(),
-                        frozen: p.frozen,
-                        owner: p.owner,
-                    },
-                )
-            })
-            .collect();
+        let mut world: BTreeMap<u32, EntityState> = BTreeMap::new();
+        for p in server.sandbox.props() {
+            let st = server.prop_state(p.id);
+            let model_id = match self.model_ids.get(&p.model) {
+                Some(&id) => id,
+                None => {
+                    self.models.push(p.model.clone());
+                    let id = self.models.len() as u32;
+                    self.model_ids.insert(p.model.clone(), id);
+                    id
+                }
+            };
+            world.insert(
+                p.id,
+                EntityState {
+                    id: p.id,
+                    model: p.model.clone(),
+                    model_id,
+                    pos: p.pos,
+                    angles: p.angles,
+                    vel: st.map(|s| s.velocity).unwrap_or_default(),
+                    angvel: st.map(|s| s.angular_velocity).unwrap_or_default(),
+                    frozen: p.frozen,
+                    owner: p.owner,
+                },
+            );
+        }
         let players: Vec<PlayerSnap> = server
             .players
             .iter()
@@ -476,6 +498,16 @@ impl ServerNet {
             }
             let mut unreliable = Vec::new();
             if snapshot_tick {
+                if slot.models_sent < self.models.len() {
+                    let mut w = Writer::default();
+                    ServerMsg::Models {
+                        from: slot.models_sent as u32 + 1,
+                        names: self.models[slot.models_sent..].to_vec(),
+                    }
+                    .write(&mut w);
+                    slot.channel.send_reliable(w.buf);
+                    slot.models_sent = self.models.len();
+                }
                 slot.sent.retain(|(t, _)| *t >= slot.acked_snapshot);
                 let baseline = slot
                     .sent
@@ -491,16 +523,25 @@ impl ServerNet {
                     Some(e) => e.distance(pos) <= self.interest_radius,
                     None => true,
                 };
+                let tick = self.tick;
+                let age =
+                    |last: Option<&u32>| tick.saturating_sub(last.copied().unwrap_or(0)) as f32;
                 let mut changed: Vec<(f32, &EntityState)> = world
                     .values()
                     .filter(|e| near(e.pos) && base.get(&e.id) != Some(*e))
-                    .map(|e| (eye.map(|o| o.distance(e.pos)).unwrap_or(0.0), e))
+                    .map(|e| {
+                        let d = eye.map(|o| o.distance(e.pos)).unwrap_or(0.0);
+                        (d / (1.0 + age(slot.last_sent_entity.get(&e.id))), e)
+                    })
                     .collect();
                 changed.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
                 let mut near_players: Vec<(f32, &PlayerSnap)> = players
                     .iter()
                     .filter(|p| p.id != slot.player && near(p.origin))
-                    .map(|p| (eye.map(|o| o.distance(p.origin)).unwrap_or(0.0), p))
+                    .map(|p| {
+                        let d = eye.map(|o| o.distance(p.origin)).unwrap_or(0.0);
+                        (d / (1.0 + age(slot.last_sent_player.get(&p.id))), p)
+                    })
                     .collect();
                 near_players.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
                 let mut used = 0usize;
@@ -509,20 +550,23 @@ impl ServerNet {
                     .filter(|p| p.id == slot.player)
                     .cloned()
                     .collect();
+                // other players take at most half the budget so entities never starve
                 for (_, p) in near_players {
-                    if used + PLAYER_SNAP_SIZE > self.snapshot_budget {
+                    if used + PLAYER_SNAP_SIZE > self.snapshot_budget / 2 {
                         break;
                     }
                     used += PLAYER_SNAP_SIZE;
+                    slot.last_sent_player.insert(p.id, tick);
                     players.push(p.clone());
                 }
                 let mut entities: Vec<EntityState> = Vec::new();
                 for (_, e) in changed {
-                    let size = 58 + e.model.len();
+                    let size = ENTITY_SNAP_SIZE;
                     if used + size > self.snapshot_budget && !entities.is_empty() {
                         break;
                     }
                     used += size;
+                    slot.last_sent_entity.insert(e.id, tick);
                     entities.push(e.clone());
                 }
                 let removed: Vec<u32> = base

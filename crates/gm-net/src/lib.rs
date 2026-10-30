@@ -79,7 +79,8 @@ mod tests {
             }],
             entities: vec![EntityState {
                 id: 2,
-                model: "models/props_junk/wood_crate001a.mdl".into(),
+                model: String::new(),
+                model_id: 3,
                 pos: Vec3::new(900.0, -500.0, -123.7),
                 angles: Vec3::new(0.0, 180.0, 0.0),
                 vel: Vec3::new(0.0, 0.0, -9.0),
@@ -116,6 +117,13 @@ mod tests {
         let mut w = Writer::default();
         undos.write(&mut w);
         assert_eq!(ServerMsg::read(&mut Reader::new(&w.buf)).unwrap(), undos);
+        let models = ServerMsg::Models {
+            from: 1,
+            names: vec!["models/props_junk/wood_crate001a.mdl".into()],
+        };
+        let mut w = Writer::default();
+        models.write(&mut w);
+        assert_eq!(ServerMsg::read(&mut Reader::new(&w.buf)).unwrap(), models);
     }
 
     #[test]
