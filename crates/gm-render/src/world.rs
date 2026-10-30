@@ -96,12 +96,15 @@ pub struct WorldRenderer {
 }
 
 /// A model for props that move: meshes in model space with their material bind groups.
+/// One mesh of a `DynModel`: material, model-space (position, normal, uv), indices.
+type DynPart = (
+    wgpu::BindGroup,
+    Vec<([f32; 3], [f32; 3], [f32; 2])>,
+    Vec<u32>,
+);
+
 pub struct DynModel {
-    parts: Vec<(
-        wgpu::BindGroup,
-        Vec<([f32; 3], [f32; 3], [f32; 2])>,
-        Vec<u32>,
-    )>,
+    parts: Vec<DynPart>,
 }
 
 #[derive(Clone, Debug, Default)]
