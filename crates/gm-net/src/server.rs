@@ -839,6 +839,10 @@ impl ServerNet {
                 armor: p.armor.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
                 weapons: crate::msg::weapon_mask(&p.weapons),
                 active: crate::msg::weapon_index(&p.active_weapon),
+                clip: p.inventory.clip(&p.active_weapon)[0].clamp(-1, i16::MAX as i32) as i16,
+                reserve: gm_server::weapons::def(&p.active_weapon)
+                    .and_then(|d| p.inventory.ammo.get(d.ammo1))
+                    .map_or(0, |a| (*a).clamp(0, i16::MAX as i32) as i16),
             })
             .collect();
         for (&endpoint, slot) in self.clients.iter_mut() {

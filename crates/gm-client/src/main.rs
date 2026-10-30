@@ -173,6 +173,7 @@ struct Viewmodel {
     draw: &'static str,
     fire: &'static str,
     hold: Option<&'static str>,
+    reload: Option<&'static str>,
 }
 
 const fn vm(
@@ -191,6 +192,7 @@ const fn vm(
         draw,
         fire,
         hold: None,
+        reload: None,
     }
 }
 
@@ -223,30 +225,39 @@ const WEAPONS: [Viewmodel; 10] = [
         "draw",
         "misscenter1",
     ),
-    vm(
-        "weapon_pistol",
-        "pistol",
-        "models/weapons/c_pistol.mdl",
-        "idle01",
-        "draw",
-        "fire",
-    ),
-    vm(
-        "weapon_357",
-        ".357",
-        "models/weapons/c_357.mdl",
-        "idle01",
-        "draw",
-        "fire",
-    ),
-    vm(
-        "weapon_smg1",
-        "smg",
-        "models/weapons/c_smg1.mdl",
-        "idle01",
-        "draw",
-        "fire01",
-    ),
+    Viewmodel {
+        reload: Some("reload"),
+        ..vm(
+            "weapon_pistol",
+            "pistol",
+            "models/weapons/c_pistol.mdl",
+            "idle01",
+            "draw",
+            "fire",
+        )
+    },
+    Viewmodel {
+        reload: Some("reload"),
+        ..vm(
+            "weapon_357",
+            ".357",
+            "models/weapons/c_357.mdl",
+            "idle01",
+            "draw",
+            "fire",
+        )
+    },
+    Viewmodel {
+        reload: Some("reload"),
+        ..vm(
+            "weapon_smg1",
+            "smg",
+            "models/weapons/c_smg1.mdl",
+            "idle01",
+            "draw",
+            "fire01",
+        )
+    },
     vm(
         "weapon_ar2",
         "ar2",
@@ -255,30 +266,39 @@ const WEAPONS: [Viewmodel; 10] = [
         "IR_draw",
         "IR_fire",
     ),
-    vm(
-        "weapon_shotgun",
-        "shotgun",
-        "models/weapons/c_shotgun.mdl",
-        "idle01",
-        "draw",
-        "fire01",
-    ),
-    vm(
-        "weapon_crossbow",
-        "crossbow",
-        "models/weapons/c_crossbow.mdl",
-        "idle",
-        "draw",
-        "fire",
-    ),
-    vm(
-        "weapon_rpg",
-        "rpg",
-        "models/weapons/c_rpg.mdl",
-        "idle1",
-        "draw",
-        "fire",
-    ),
+    Viewmodel {
+        reload: Some("reload1"),
+        ..vm(
+            "weapon_shotgun",
+            "shotgun",
+            "models/weapons/c_shotgun.mdl",
+            "idle01",
+            "draw",
+            "fire01",
+        )
+    },
+    Viewmodel {
+        reload: Some("reload"),
+        ..vm(
+            "weapon_crossbow",
+            "crossbow",
+            "models/weapons/c_crossbow.mdl",
+            "idle",
+            "draw",
+            "fire",
+        )
+    },
+    Viewmodel {
+        reload: Some("reload"),
+        ..vm(
+            "weapon_rpg",
+            "rpg",
+            "models/weapons/c_rpg.mdl",
+            "idle1",
+            "draw",
+            "fire",
+        )
+    },
 ];
 
 /// `NetCmd::weapon`: 1 while the physgun is out (the server's physgun acts on attack), 2 for
@@ -300,20 +320,17 @@ const PLAYER_RUN_SPEED: f32 = 150.0;
 /// facing (Source's `move_x = cos`, `move_y = -sin` of the movement yaw), crouch variants.
 /// The hold type of the active weapon: the suffix of the m_anm sequences (`idle_pistol`,
 /// `run_smg1`, ...), as the game's weapon hold types; `fist` when nothing is held.
+/// The m_anm hold type of the active weapon: the game's holdtype from the weapon table (the
+/// toolgun uses the revolver hold), `fist` with nothing out; the SMG's sequences are `*_smg1`.
 fn hold_type(active: u8) -> &'static str {
-    match gm_server::LOADOUT.get(active as usize) {
-        Some(&"gmod_camera") => "camera",
-        Some(&"gmod_tool") | Some(&"weapon_357") => "revolver",
-        Some(&"weapon_ar2") => "ar2",
-        Some(&"weapon_crossbow") => "crossbow",
-        Some(&"weapon_crowbar") => "melee",
-        Some(&"weapon_frag") => "grenade",
-        Some(&"weapon_physcannon") | Some(&"weapon_physgun") => "physgun",
-        Some(&"weapon_pistol") => "pistol",
-        Some(&"weapon_rpg") => "rpg",
-        Some(&"weapon_shotgun") => "shotgun",
-        Some(&"weapon_smg1") => "smg1",
-        _ => "fist",
+    match gm_server::LOADOUT
+        .get(active as usize)
+        .and_then(|c| gm_server::weapons::def(c))
+        .map(|d| d.hold_type)
+    {
+        Some("smg") => "smg1",
+        Some(h) => h,
+        None => "fist",
     }
 }
 
@@ -514,6 +531,16 @@ impl App {
         self.grabbed = on;
     }
 
+    fn local_snap(&self) -> Option<&PlayerSnap> {
+        let me = self.sim.client.player_id;
+        self.sim
+            .client
+            .world
+            .players
+            .iter()
+            .find(|p| Some(p.id) == me)
+    }
+
     fn open_menu(&mut self) {
         if self.menu.is_some() || self.console.open {
             return;
@@ -633,6 +660,9 @@ impl App {
         }
         if k(KeyCode::KeyE) {
             b |= buttons::USE;
+        }
+        if k(KeyCode::KeyR) && self.weapon != 1 {
+            b |= buttons::RELOAD;
         }
         if self.mouse.contains(&0) {
             b |= buttons::ATTACK;
@@ -1084,6 +1114,44 @@ impl App {
                     });
                     x += box_w + 10.0;
                 }
+                // ammo box at the bottom right: clip (big) and reserve, as the sandbox HUD
+                if p.clip >= 0 || p.reserve > 0 {
+                    let aw = 170.0;
+                    let ax = w - aw - 20.0;
+                    items.push(UiItem::Rect {
+                        x: ax,
+                        y,
+                        w: aw,
+                        h: box_h,
+                        color: [0.0, 0.0, 0.0, 0.5],
+                    });
+                    items.push(UiItem::Text {
+                        x: ax + 12.0,
+                        y: y + 6.0,
+                        text: "Ammo".to_string(),
+                        color: [0.85, 0.85, 0.85, 0.9],
+                    });
+                    let clip = if p.clip >= 0 {
+                        p.clip.to_string()
+                    } else {
+                        p.reserve.to_string()
+                    };
+                    items.push(UiItem::Text {
+                        x: ax + 12.0,
+                        y: y + lh + 8.0,
+                        text: clip,
+                        color: white,
+                    });
+                    if p.clip >= 0 {
+                        let r = p.reserve.to_string();
+                        items.push(UiItem::Text {
+                            x: ax + aw - 12.0 - g.ui.text_width(&r),
+                            y: y + lh + 8.0,
+                            text: r,
+                            color: [0.85, 0.85, 0.85, 0.9],
+                        });
+                    }
+                }
             }
             return items;
         }
@@ -1300,6 +1368,20 @@ impl ApplicationHandler for App {
                                 right: false,
                                 reload: true,
                             })
+                        }
+                        // the reload animation when the clip can take rounds from the reserve
+                        KeyCode::KeyR => {
+                            if let Some((vm, seq)) =
+                                viewmodel(self.weapon).and_then(|vm| Some((vm, vm.reload?)))
+                            {
+                                let full =
+                                    gm_server::weapons::def(vm.class).map_or(-1, |d| d.clip1);
+                                if let Some(p) = self.local_snap() {
+                                    if p.clip >= 0 && (p.clip as i32) < full && p.reserve > 0 {
+                                        self.vm_anim = Some((seq, Instant::now()));
+                                    }
+                                }
+                            }
                         }
                         _ => {}
                     }

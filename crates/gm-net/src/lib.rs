@@ -80,6 +80,8 @@ mod tests {
                 armor: 0,
                 weapons: 0x1fff,
                 active: 5,
+                clip: 18,
+                reserve: 90,
             }],
             entities: vec![EntityState {
                 id: 2,
