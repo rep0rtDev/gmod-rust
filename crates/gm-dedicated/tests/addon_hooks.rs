@@ -306,3 +306,80 @@ fn script_reads_and_writes_players() {
     assert_eq!(after.3, before.3, "the loadout is complete after spawn");
     assert_eq!(after.0, health);
 }
+
+#[test]
+fn addon_net_messages_round_trip_over_the_loopback() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let spec = |name: &str, source: &str| gm_script::ActorSpec {
+        addon: "test".into(),
+        name: name.into(),
+        priority: 0,
+        source: source.into(),
+        config: Default::default(),
+    };
+    let mut rt = gm_script::Runtime::new();
+    rt.load(spec(
+        "echo",
+        "net.receive('ping', function(p)
+            state.pings = (state.pings or 0) + 1
+            state.from = p.player
+            net.send('pong', { echo = p.data.n, list = p.data.list, from = p.player, half = 0.5 }, p.player)
+            net.send('pong', { echo = -1 }, 99)
+        end)",
+    ))
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    sn.hooks = Some(Box::new(rt));
+    let mut crt = gm_script::Runtime::client();
+    crt.load(spec(
+        "hud",
+        "events.on('snapshot.received', function()
+            if state.sent then return end
+            state.sent = true
+            net.send('ping', { n = 7, list = { 'a', 'b', nil, 3 } })
+        end)
+        net.receive('pong', function(p)
+            state.pongs = (state.pongs or 0) + 1
+            state.echo = p.data.echo
+            state.from = p.data.from
+            state.half = p.data.half
+            state.b = p.data.list[2]
+            state.three = p.data.list[4]
+        end)",
+    ))
+    .unwrap();
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut last_tick = 0;
+    for _ in 0..40 {
+        client.tick(gm_net::NetCmd::default(), &mut c_ep);
+        net.tick();
+        sn.receive(&mut server, &mut s_ep);
+        sn.tick(&mut server);
+        sn.send(&server, &mut s_ep);
+        client.receive(&mut c_ep);
+        let fresh = client.server_tick != last_tick;
+        last_tick = client.server_tick;
+        crt.client_tick(&client.world, fresh);
+        let inbox = std::mem::take(&mut client.addon_msgs);
+        crt.client_net(&client.world, inbox);
+        for (_, name, data) in crt.drain_net() {
+            client.send_addon(&name, &data);
+        }
+    }
+    let (pongs, echo, from, half, b, three): (u64, i64, u32, f64, String, i64) = crt.actors()[0]
+        .eval("return state.pongs, state.echo, state.from, state.half, state.b, state.three")
+        .unwrap();
+    assert_eq!(pongs, 1, "the message to player 99 must not arrive");
+    assert_eq!((echo, from, half), (7, client.player_id.unwrap(), 0.5));
+    assert_eq!((b.as_str(), three), ("b", 3));
+    let srv = sn.hooks.as_mut().unwrap();
+    assert!(srv.drain_net().is_empty());
+}

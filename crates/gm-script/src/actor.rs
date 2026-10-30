@@ -61,6 +61,7 @@ impl Actor {
             queued: Mutex::new(0),
             prints: Mutex::new(Vec::new()),
             can_write: spec.config.can_write,
+            net_out: Mutex::new(Vec::new()),
         });
         let mut a = Actor {
             id,
@@ -259,6 +260,10 @@ impl Actor {
 
     pub fn take_queue(&mut self) -> Vec<(u64, QueuedWrite)> {
         std::mem::take(&mut *self.shared.queue.lock().unwrap())
+    }
+
+    pub fn take_net(&mut self) -> Vec<(u32, String, Vec<u8>)> {
+        std::mem::take(&mut self.shared.net_out.lock().unwrap())
     }
 
     pub fn take_prints(&mut self) -> Vec<String> {

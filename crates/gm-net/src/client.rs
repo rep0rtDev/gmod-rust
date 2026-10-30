@@ -206,6 +206,8 @@ pub struct ClientNet {
     /// snapshots kept as possible baselines: tick -> entities
     history: VecDeque<(u32, BTreeMap<u32, EntityState>)>,
     pub events: Vec<String>,
+    /// Addon messages received since the last drain (name, payload).
+    pub addon_msgs: Vec<(String, Vec<u8>)>,
     pub dropped_snapshots: u64,
 }
 
@@ -225,6 +227,7 @@ impl ClientNet {
             world: ClientWorld::default(),
             history: VecDeque::new(),
             events: Vec::new(),
+            addon_msgs: Vec::new(),
             dropped_snapshots: 0,
         };
         let mut w = Writer::default();
@@ -243,6 +246,17 @@ impl ClientNet {
         self.next_command += 1;
         let mut w = Writer::default();
         ClientMsg::Command { seq, cmd }.write(&mut w);
+        self.channel.send_reliable(w.buf);
+    }
+
+    /// Sends an addon message to the server's actors (reliable, in order).
+    pub fn send_addon(&mut self, name: &str, data: &[u8]) {
+        let mut w = Writer::default();
+        ClientMsg::Addon {
+            name: name.to_string(),
+            data: data.to_vec(),
+        }
+        .write(&mut w);
         self.channel.send_reliable(w.buf);
     }
 
@@ -340,6 +354,7 @@ impl ClientNet {
                         self.server_tick = tick;
                     }
                     ServerMsg::Event { text, .. } => self.events.push(text),
+                    ServerMsg::Addon { name, data, .. } => self.addon_msgs.push((name, data)),
                     ServerMsg::CommandAck { seq } => {
                         self.acked_commands = self.acked_commands.max(seq + 1);
                     }

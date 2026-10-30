@@ -55,6 +55,11 @@ pub enum ClientMsg {
         cmd: Command,
     },
     /// The newest snapshot tick the client holds (the delta baseline for the server).
+    /// Reliable: an addon message from a client actor to the server's actors.
+    Addon {
+        name: String,
+        data: Vec<u8>,
+    },
     AckSnapshot {
         tick: u32,
     },
@@ -168,6 +173,12 @@ pub enum ServerMsg {
     },
     CommandAck {
         seq: u32,
+    },
+    /// Reliable: an addon message from a server actor to the client's actors.
+    Addon {
+        seq: u32,
+        name: String,
+        data: Vec<u8>,
     },
 }
 
@@ -310,7 +321,10 @@ fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
 
 impl ClientMsg {
     pub fn reliable(&self) -> bool {
-        matches!(self, ClientMsg::Hello { .. } | ClientMsg::Command { .. })
+        matches!(
+            self,
+            ClientMsg::Hello { .. } | ClientMsg::Command { .. } | ClientMsg::Addon { .. }
+        )
     }
 
     pub fn write(&self, w: &mut Writer) {
@@ -365,6 +379,11 @@ impl ClientMsg {
                 w.u8(4);
                 w.u32(*tick);
             }
+            ClientMsg::Addon { name, data } => {
+                w.u8(5);
+                w.str(name);
+                w.bytes(data);
+            }
         }
     }
 
@@ -407,6 +426,10 @@ impl ClientMsg {
                 ClientMsg::Command { seq, cmd }
             }
             4 => ClientMsg::AckSnapshot { tick: r.u32()? },
+            5 => ClientMsg::Addon {
+                name: r.str()?,
+                data: r.bytes()?.to_vec(),
+            },
             _ => return Err(Truncated),
         })
     }
@@ -416,7 +439,10 @@ impl ServerMsg {
     pub fn reliable(&self) -> bool {
         matches!(
             self,
-            ServerMsg::Welcome { .. } | ServerMsg::Event { .. } | ServerMsg::CommandAck { .. }
+            ServerMsg::Welcome { .. }
+                | ServerMsg::Event { .. }
+                | ServerMsg::CommandAck { .. }
+                | ServerMsg::Addon { .. }
         )
     }
 
@@ -501,6 +527,12 @@ impl ServerMsg {
             ServerMsg::CommandAck { seq } => {
                 w.u8(4);
                 w.u32(*seq);
+            }
+            ServerMsg::Addon { seq, name, data } => {
+                w.u8(5);
+                w.u32(*seq);
+                w.str(name);
+                w.bytes(data);
             }
         }
     }
@@ -593,6 +625,11 @@ impl ServerMsg {
                 text: r.str()?,
             },
             4 => ServerMsg::CommandAck { seq: r.u32()? },
+            5 => ServerMsg::Addon {
+                seq: r.u32()?,
+                name: r.str()?,
+                data: r.bytes()?.to_vec(),
+            },
             _ => return Err(Truncated),
         })
     }

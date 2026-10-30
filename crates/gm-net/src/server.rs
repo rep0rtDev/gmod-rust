@@ -28,6 +28,8 @@ pub struct ClientSlot {
     sent: VecDeque<(u32, BTreeMap<u32, EntityState>)>,
     event_seq: u32,
     pending_events: Vec<String>,
+    pending_addon: Vec<(String, Vec<u8>)>,
+    addon_seq: u32,
 }
 
 pub struct ServerNet {
@@ -78,6 +80,8 @@ impl ServerNet {
                         sent: VecDeque::new(),
                         event_seq: 0,
                         pending_events: Vec::new(),
+                        pending_addon: Vec::new(),
+                        addon_seq: 0,
                     },
                 );
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
@@ -131,6 +135,11 @@ impl ServerNet {
                         ServerMsg::CommandAck { seq }.write(&mut w);
                         slot.channel.send_reliable(w.buf);
                     }
+                    ClientMsg::Addon { name, data } => {
+                        if let Some(h) = self.hooks.as_mut() {
+                            h.net_message(server, slot.player, &name, &data);
+                        }
+                    }
                     ClientMsg::AckSnapshot { tick } => {
                         if tick > slot.acked_snapshot {
                             slot.acked_snapshot = tick;
@@ -168,6 +177,13 @@ impl ServerNet {
         server.tick(&cmds);
         if let Some(h) = self.hooks.as_mut() {
             h.post_tick(server);
+            for (player, name, data) in h.drain_net() {
+                for slot in self.clients.values_mut() {
+                    if player == 0 || slot.player == player {
+                        slot.pending_addon.push((name.clone(), data.clone()));
+                    }
+                }
+            }
         }
         for slot in self.clients.values_mut() {
             while let Some(cmd) = slot.commands.remove(&slot.next_command) {
@@ -281,6 +297,17 @@ impl ServerNet {
                 ServerMsg::Event {
                     seq: slot.event_seq,
                     text,
+                }
+                .write(&mut w);
+                slot.channel.send_reliable(w.buf);
+            }
+            for (name, data) in std::mem::take(&mut slot.pending_addon) {
+                slot.addon_seq += 1;
+                let mut w = Writer::default();
+                ServerMsg::Addon {
+                    seq: slot.addon_seq,
+                    name,
+                    data,
                 }
                 .write(&mut w);
                 slot.channel.send_reliable(w.buf);

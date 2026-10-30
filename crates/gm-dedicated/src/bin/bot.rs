@@ -67,6 +67,11 @@ fn main() -> Result<()> {
             let fresh = client.server_tick != last_snapshot_tick;
             last_snapshot_tick = client.server_tick;
             script.client_tick(&client.world, fresh);
+            let inbox = std::mem::take(&mut client.addon_msgs);
+            script.client_net(&client.world, inbox);
+            for (_, name, data) in script.drain_net() {
+                client.send_addon(&name, &data);
+            }
             for line in script.log.drain(..) {
                 println!("{line}");
             }

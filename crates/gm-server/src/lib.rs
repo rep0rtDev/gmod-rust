@@ -60,6 +60,12 @@ pub trait ServerHooks {
     fn reload_addon(&mut self, _addon: &str) -> Result<String, String> {
         Err("no addon runtime".into())
     }
+    /// An addon message from a client's actor (`net.send` on the client).
+    fn net_message(&mut self, _server: &mut Server<'_>, _player: u32, _name: &str, _data: &[u8]) {}
+    /// Addon messages queued by server actors: (player or 0 for everyone, name, payload).
+    fn drain_net(&mut self) -> Vec<(u32, String, Vec<u8>)> {
+        Vec::new()
+    }
     /// Around every tick.
     fn pre_tick(&mut self, server: &mut Server<'_>);
     fn post_tick(&mut self, server: &mut Server<'_>);

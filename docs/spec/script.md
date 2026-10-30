@@ -125,6 +125,30 @@ set_health 42, set_armor 25, damage 10, give rpg, select 357, teleport, set_heal
 give of an unknown class gets `writes` 6, `rejected` 2; the next tick's read sees the damaged
 health, `weapon_357` out and the same 13 weapons.
 
+## Net
+
+Addon messages are our own reliable, ordered channel messages (`ServerMsg::Addon` /
+`ClientMsg::Addon`, tag 5, see net.md), not the sandbox's `net` bit stream: a message is a name
+(1..64 bytes) and one Lua value (nil, boolean, number, string, table with string or integer keys,
+nested up to 16 deep, at most 64 KiB on the wire; functions, userdata and other keys are an
+error in the sender). `net.send(name, value, player?)` queues from any actor: on the server
+`player` nil or 0 means every connected client, an unknown player id goes nowhere; on the client
+the message goes to the server. At most 256 messages per actor run. `net.receive(name, fn,
+priority?)` is `events.on("net.message", ...)` filtered by `name`; the payload has `name`, `data`
+and, on the server, `player`. Server actors see a client message as a serial event right when the
+packet is read (before that tick's `tick.pre`, writes applied at once in priority order); the
+server sends what the actors queued after `post_tick`, after the sandbox events, in actor order
+then send order. The client runtime gets them through `Runtime::client_net` after `client_tick`
+(the bot and the headless client do this every frame) and hands its own with `drain_net` to
+`ClientNet::send_addon`.
+
+Measured (`cargo test -p gm-dedicated --test addon_hooks addon_net`): a client actor sends
+`ping {n = 7, list = {'a', 'b', nil, 3}}` on its first snapshot, the server actor answers the
+sender with `pong {echo, list, from, half = 0.5}` and sends a second pong to player 99; within 40
+loopback frames the client has exactly one pong with echo 7, from = its id, half 0.5, list[2] 'b',
+list[4] 3; `netval_round_trips_and_caps` covers nested tables, integer keys, the 64 KiB cap, the
+depth cap, functions and truncated input.
+
 ## Timers
 
 `timer` lives in the actor's VM (prelude), so a timer runs in the realm and budget of the actor
@@ -145,5 +169,5 @@ never fires and still exists.
 
 ## Not yet
 
-client HUD/draw API, client-side world for traces, the rest of the API (net, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
+client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu, storage, cvars), WASM components,
 file watching for reloads, the sandbox gamemode in Luau on top of this API.

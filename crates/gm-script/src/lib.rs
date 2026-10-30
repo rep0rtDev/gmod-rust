@@ -8,6 +8,7 @@
 pub mod actor;
 pub mod api;
 pub mod manifest;
+pub mod netval;
 pub mod package;
 pub mod snapshot;
 
@@ -95,6 +96,36 @@ impl Runtime {
         for a in self.actors.iter_mut() {
             a.take_queue();
         }
+    }
+
+    /// Client realm: addon messages from the server, one `net.message` dispatch each (`name`,
+    /// `data`), in arrival order.
+    pub fn client_net(&mut self, world: &gm_net::ClientWorld, msgs: Vec<(String, Vec<u8>)>) {
+        if msgs.is_empty() {
+            return;
+        }
+        let snap = Arc::new(Snapshot::of_client(world));
+        for (name, data) in msgs {
+            let p = api::Payload {
+                net: Some((name, data)),
+                ..Default::default()
+            };
+            self.parallel(&snap, "net.message", &p);
+        }
+        self.release_snapshots();
+        for a in self.actors.iter_mut() {
+            a.take_queue();
+        }
+    }
+
+    /// Addon messages the actors queued with `net.send` since the last drain, in actor order
+    /// then send order: (player or 0, name, payload).
+    pub fn drain_net(&mut self) -> Vec<(u32, String, Vec<u8>)> {
+        let mut out = Vec::new();
+        for a in self.actors.iter_mut() {
+            out.extend(a.take_net());
+        }
+        out
     }
 
     /// Hot reload of a loaded addon by id, from where it was loaded.
@@ -368,6 +399,15 @@ fn read_addon(
 }
 
 impl gm_server::ServerHooks for Runtime {
+    fn net_message(&mut self, server: &mut Server<'_>, player: u32, name: &str, data: &[u8]) {
+        let mut p = api::Payload::default();
+        p.ints.push(("player", player as i64));
+        p.net = Some((name.to_string(), data.to_vec()));
+        self.run_event(server, "net.message", p);
+    }
+    fn drain_net(&mut self) -> Vec<(u32, String, Vec<u8>)> {
+        Runtime::drain_net(self)
+    }
     fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool {
         Runtime::prop_spawn_request(self, server, player, model)
     }

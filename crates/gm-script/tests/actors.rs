@@ -283,3 +283,38 @@ fn timers_count_ticks_and_a_failing_one_is_destroyed() {
         "{prints:?}"
     );
 }
+
+#[test]
+fn netval_round_trips_and_caps() {
+    let lua = mlua::Lua::new();
+    let v: mlua::Value = lua
+        .load(
+            "return { a = 1, b = 2.5, c = 'x', d = { true, false, { e = 'deep' } }, [10] = 'ten' }",
+        )
+        .eval()
+        .unwrap();
+    let bytes = gm_script::netval::encode(&v).unwrap();
+    let back = gm_script::netval::decode(&lua, &bytes).unwrap();
+    lua.globals().set("back", back).unwrap();
+    let ok: bool = lua
+        .load("return back.a == 1 and back.b == 2.5 and back.c == 'x' and back.d[1] == true and back.d[2] == false and back.d[3].e == 'deep' and back[10] == 'ten' and back.zz == nil")
+        .eval()
+        .unwrap();
+    assert!(ok);
+    let big: mlua::Value = lua.load("return string.rep('x', 70000)").eval().unwrap();
+    assert!(gm_script::netval::encode(&big).is_err(), "over the cap");
+    let f: mlua::Value = lua.load("return function() end").eval().unwrap();
+    assert!(
+        gm_script::netval::encode(&f).is_err(),
+        "functions never cross"
+    );
+    let deep: mlua::Value = lua
+        .load("local t = {} local c = t for i = 1, 20 do c.n = {} c = c.n end return t")
+        .eval()
+        .unwrap();
+    assert!(gm_script::netval::encode(&deep).is_err(), "depth cap");
+    assert!(
+        gm_script::netval::decode(&lua, &bytes[..bytes.len() - 1]).is_err(),
+        "truncated"
+    );
+}

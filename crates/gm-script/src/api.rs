@@ -15,6 +15,8 @@ pub struct Payload {
     /// Tool click: (entity or 0 for the world, position, normal).
     pub hit: Option<(u32, Vec3, Vec3)>,
     pub objects: Vec<(u32, Vec3, Vec3)>,
+    /// `net.message`: name and wire payload (`netval`), decoded into `name` / `data`.
+    pub net: Option<(String, Vec<u8>)>,
 }
 
 /// What a scripted stool asks the sandbox to do after a click (applied at once, in order).
@@ -113,6 +115,8 @@ pub struct Shared {
     pub queued: Mutex<u64>,
     pub prints: Mutex<Vec<String>>,
     pub can_write: bool,
+    /// Outgoing addon messages: (player or 0 for everyone / the server, name, payload).
+    pub net_out: Mutex<Vec<(u32, String, Vec<u8>)>>,
 }
 
 fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
@@ -298,6 +302,12 @@ function __dispatch(name: string, payload)
     return nil
 end
 state = state or {}
+net = net or {}
+function net.receive(name: string, fn, priority: number?)
+    events.on("net.message", function(p)
+        if p.name == name then return fn(p) end
+    end, priority)
+end
 tool = {}
 local tools = {}
 function tool.register(name: string, def)
@@ -491,6 +501,31 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     g.set("world", world)?;
+    let net: Table = match lua.globals().get::<Option<Table>>("net")? {
+        Some(t) => t,
+        None => lua.create_table()?,
+    };
+    let sh = shared.clone();
+    net.set(
+        "send",
+        lua.create_function(
+            move |_, (name, value, player): (String, Value, Option<u32>)| {
+                if name.is_empty() || name.len() > 64 {
+                    return Err(mlua::Error::runtime("net message name must be 1..64 bytes"));
+                }
+                let data = crate::netval::encode(&value)?;
+                let mut out = sh.net_out.lock().unwrap();
+                if out.len() >= 256 {
+                    return Err(mlua::Error::runtime(
+                        "net: over 256 messages queued in one run",
+                    ));
+                }
+                out.push((player.unwrap_or(0), name, data));
+                Ok(())
+            },
+        )?,
+    )?;
+    lua.globals().set("net", net)?;
     let game = lua.create_table()?;
     game.set(
         "interval",
@@ -540,6 +575,10 @@ fn table_arg(v: &Value) -> Result<Table> {
 /// Lua table for an event payload.
 pub fn payload_table(lua: &Lua, p: &Payload) -> Result<Table> {
     let t = lua.create_table()?;
+    if let Some((name, data)) = &p.net {
+        t.set("name", name.as_str())?;
+        t.set("data", crate::netval::decode(lua, data)?)?;
+    }
     for (k, v) in &p.ints {
         t.set(*k, *v)?;
     }
