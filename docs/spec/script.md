@@ -286,6 +286,13 @@ the list is empty or an entity is gone. `gmod_undo` then removes them and fires 
 for each (test `actor_owned_undo_entry_is_undone_by_the_player`: a weld plus one entry over both
 crates, two bad pushes rejected, the undo empties props and constraints).
 
+Player-owned constraints from an actor: `weld` and `nocollide` take `owner = <player>`; the
+constraint then goes through that player's `sbox_maxconstraints` (`LimitHit constraints` event
+and rejection when full), gets its own undo entry (`#tool.weld.name` / `#tool.nocollide.name`)
+and joins the player's `constraints` cleanup list, exactly what the tool does; `owner` 0 or
+absent keeps the server-owned behaviour. Unknown owner: rejected. Test
+`actor_constraints_with_an_owner_follow_the_player_limits_and_undo`.
+
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,

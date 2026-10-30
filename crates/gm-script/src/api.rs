@@ -71,11 +71,15 @@ pub enum QueuedWrite {
         ent2: u32,
         forcelimit: f32,
         nocollide: bool,
+        /// 0: owned by the server (no limits, undo or cleanup); a player id: made as that
+        /// player's (`sbox_maxconstraints`, an undo entry, the player's cleanup list).
+        owner: u32,
     },
     /// `constraint.NoCollide` owned by the server (`ent2` 0 = the world).
     NoCollide {
         ent: u32,
         ent2: u32,
+        owner: u32,
     },
     PlayerTeleport {
         player: u32,
@@ -507,12 +511,17 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
                         forcelimit: t.get::<Option<f32>>("forcelimit")?.unwrap_or(0.0),
                         nocollide: t.get::<Option<bool>>("nocollide")?.unwrap_or(false),
+                        owner: t.get::<Option<u32>>("owner")?.unwrap_or(0),
                     }
                 }
-                "nocollide" => QueuedWrite::NoCollide {
-                    ent,
-                    ent2: table_arg(&arg)?.get::<Option<u32>>("ent2")?.unwrap_or(0),
-                },
+                "nocollide" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NoCollide {
+                        ent,
+                        ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
+                        owner: t.get::<Option<u32>>("owner")?.unwrap_or(0),
+                    }
+                }
                 "undo.push" => {
                     let t = table_arg(&arg)?;
                     let name = t
@@ -754,6 +763,40 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
     Ok(())
 }
 
+/// A player-owned constraint from a script goes through the player's `sbox_maxconstraints`
+/// (owner 0 is the server: always allowed, nothing counted).
+fn owner_may_constrain(server: &mut Server<'_>, owner: u32) -> bool {
+    if owner == 0 {
+        return true;
+    }
+    if !server.players.contains_key(&owner) {
+        return false;
+    }
+    let mut events = Vec::new();
+    let ok = server
+        .sandbox
+        .check_limit(owner, "constraints", &mut events);
+    server.events.extend(events);
+    ok
+}
+
+/// The bookkeeping the tool does for a player's constraint: an undo entry, the count and the
+/// cleanup list.
+fn own_constraint(server: &mut Server<'_>, owner: u32, tool: &str, id: u32) {
+    if owner == 0 {
+        return;
+    }
+    server.sandbox.push_undo(
+        owner,
+        tool,
+        format!("#tool.{tool}.name"),
+        Some(format!("Undone #tool.{tool}.name")),
+        vec![id],
+    );
+    server.sandbox.add_count(owner, "constraints", id);
+    server.sandbox.add_cleanup(owner, "constraints", id);
+}
+
 fn table_arg(v: &Value) -> Result<Table> {
     match v {
         Value::Table(t) => Ok(t.clone()),
@@ -968,19 +1011,24 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             ent2,
             forcelimit,
             nocollide,
+            owner,
         } => {
             let world = |e: u32| if e == 0 { None } else { Some(e) };
             if !exists(server, *ent) || (*ent2 != 0 && !exists(server, *ent2)) {
                 return false;
             }
-            let made = server
-                .sandbox
-                .weld(0, world(*ent), world(*ent2), *forcelimit, *nocollide)
-                .is_some();
-            if made {
+            if !owner_may_constrain(server, *owner) {
+                return false;
+            }
+            let made =
+                server
+                    .sandbox
+                    .weld(*owner, world(*ent), world(*ent2), *forcelimit, *nocollide);
+            if let Some(id) = made {
+                own_constraint(server, *owner, "weld", id);
                 server.sync_after_script();
             }
-            made
+            made.is_some()
         }
         QueuedWrite::PlayerTeleport { player, pos } => {
             if !server.players.contains_key(player) {
@@ -1046,19 +1094,20 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         }
         QueuedWrite::CreateCvar { name, cvar } => server.create_cvar(name, cvar.clone()),
         QueuedWrite::SetCvar { name, value } => server.set_cvar(name, value),
-        QueuedWrite::NoCollide { ent, ent2 } => {
+        QueuedWrite::NoCollide { ent, ent2, owner } => {
             let world = |e: u32| if e == 0 { None } else { Some(e) };
             if !exists(server, *ent) || (*ent2 != 0 && !exists(server, *ent2)) {
                 return false;
             }
-            let made = server
-                .sandbox
-                .nocollide(0, world(*ent), world(*ent2))
-                .is_some();
-            if made {
+            if !owner_may_constrain(server, *owner) {
+                return false;
+            }
+            let made = server.sandbox.nocollide(*owner, world(*ent), world(*ent2));
+            if let Some(id) = made {
+                own_constraint(server, *owner, "nocollide", id);
                 server.sync_after_script();
             }
-            made
+            made.is_some()
         }
     }
 }
