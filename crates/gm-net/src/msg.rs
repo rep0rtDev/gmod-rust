@@ -16,6 +16,9 @@ pub struct NetCmd {
     pub mouse_y: f32,
     /// Active weapon: 0 none, 1 physgun, 2 tool gun.
     pub weapon: u8,
+    /// The server tick the client was rendering when it made this command (lag compensation
+    /// rewinds the other players to it when a shot of this command is resolved); 0 = unknown.
+    pub seen_tick: u32,
 }
 
 /// Sandbox commands (reliable): console commands of the real game.
@@ -252,6 +255,7 @@ const CMD_SIDE: u8 = 8;
 const CMD_UP: u8 = 16;
 const CMD_MOUSE: u8 = 32;
 const CMD_WEAPON: u8 = 64;
+const CMD_SEEN: u8 = 128;
 
 fn w_cmd(w: &mut Writer, c: &NetCmd, prev: &NetCmd) {
     let mut mask = 0u8;
@@ -276,6 +280,9 @@ fn w_cmd(w: &mut Writer, c: &NetCmd, prev: &NetCmd) {
     if c.weapon != prev.weapon {
         mask |= CMD_WEAPON;
     }
+    if c.seen_tick != prev.seen_tick {
+        mask |= CMD_SEEN;
+    }
     w.u8(mask);
     if mask & CMD_BUTTONS != 0 {
         w.varint(c.buttons as u64);
@@ -298,6 +305,9 @@ fn w_cmd(w: &mut Writer, c: &NetCmd, prev: &NetCmd) {
     }
     if mask & CMD_WEAPON != 0 {
         w.u8(c.weapon);
+    }
+    if mask & CMD_SEEN != 0 {
+        w.varint(c.seen_tick as u64);
     }
 }
 
@@ -326,6 +336,9 @@ fn r_cmd(r: &mut Reader, prev: &NetCmd, tick: u32) -> Result<NetCmd, Truncated> 
     }
     if mask & CMD_WEAPON != 0 {
         c.weapon = r.u8()?;
+    }
+    if mask & CMD_SEEN != 0 {
+        c.seen_tick = r.varint()? as u32;
     }
     Ok(c)
 }

@@ -43,6 +43,7 @@ mod tests {
                     mouse_x: 3.0,
                     mouse_y: -2.0,
                     weapon: 1,
+                    seen_tick: 0,
                 }],
             },
             ClientMsg::Command {

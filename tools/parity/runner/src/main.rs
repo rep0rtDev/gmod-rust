@@ -1254,6 +1254,7 @@ fn run_hit(scn: &Scenario) -> Result<Value> {
     }
     let mut cmds = std::collections::BTreeMap::new();
     let idle = |ang: Vec3| gm_server::PlayerCmd {
+        seen_tick: 0,
         cmd: gm_move::UserCmd {
             view_angles: ang,
             ..Default::default()
@@ -1367,6 +1368,7 @@ fn run_shoot_prop(scn: &Scenario) -> Result<Value> {
     let prop_id = server.sandbox.props().last().map(|p| p.id).unwrap_or(1);
     let mut cmds = std::collections::BTreeMap::new();
     let idle = |ang: Vec3| gm_server::PlayerCmd {
+        seen_tick: 0,
         cmd: gm_move::UserCmd {
             view_angles: ang,
             ..Default::default()
@@ -2658,6 +2660,7 @@ fn run_server_segments(
     let settle = std::collections::BTreeMap::from([(
         player,
         gm_server::PlayerCmd {
+            seen_tick: 0,
             cmd: gm_move::UserCmd {
                 view_angles: view0,
                 ..Default::default()
@@ -2693,6 +2696,7 @@ fn run_server_segments(
             let cmds = std::collections::BTreeMap::from([(
                 player,
                 gm_server::PlayerCmd {
+                    seen_tick: 0,
                     cmd: gm_move::UserCmd {
                         buttons: sg.buttons,
                         view_angles: Vec3::new(sg.pitch, sg.yaw, 0.0),

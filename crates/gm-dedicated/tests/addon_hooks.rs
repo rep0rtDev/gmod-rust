@@ -1356,3 +1356,118 @@ fn a_crate_out_of_the_players_pvs_is_not_sent_until_the_player_can_see_it() {
         "standing next to it, it is sent"
     );
 }
+
+/// Lag compensation: the target runs sideways at full speed; the shooter aims where the target
+/// stood 10 server ticks ago (the pose its client rendered) and stamps that tick on the command.
+/// Without the rewind the bullet passes behind the target (it moved > 20 u, hull half-width 16).
+#[test]
+fn lag_compensation_hits_the_target_where_the_shooter_saw_it() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
+    let (shooter, target) = (1u32, 2u32);
+    server.add_player(shooter, spawn, glam::Vec3::ZERO);
+    // 150 u ahead: open floor at the spawn (a wall stands ~220 u out along +x)
+    let target_start = spawn + glam::Vec3::new(150.0, 0.0, 0.0);
+    server.add_player(target, target_start, glam::Vec3::new(0.0, 90.0, 0.0));
+    assert!(server.give_weapon(shooter, "weapon_pistol"));
+    let idle = |view: glam::Vec3, seen: u32, buttons: u32, fwd: f32| gm_server::PlayerCmd {
+        seen_tick: seen,
+        cmd: gm_move::UserCmd {
+            buttons,
+            view_angles: view,
+            forward_move: fwd,
+            side_move: 0.0,
+            up_move: 0.0,
+        },
+        physgun: false,
+        mouse_x: 0.0,
+        mouse_y: 0.0,
+    };
+    // settle on the ground, then the target runs along +y (its left) at full speed
+    for _ in 0..30 {
+        let mut cmds = std::collections::BTreeMap::new();
+        cmds.insert(shooter, idle(glam::Vec3::ZERO, 0, 0, 0.0));
+        cmds.insert(target, idle(glam::Vec3::new(0.0, 90.0, 0.0), 0, 0, 0.0));
+        server.tick(&cmds);
+    }
+    let mut poses = Vec::new();
+    for _ in 0..60 {
+        poses.push((
+            server.tick_count() as u32,
+            server.players[&target].state.origin,
+        ));
+        let mut cmds = std::collections::BTreeMap::new();
+        cmds.insert(shooter, idle(glam::Vec3::ZERO, 0, 0, 0.0));
+        cmds.insert(target, idle(glam::Vec3::new(0.0, 90.0, 0.0), 0, 0, 10000.0));
+        server.tick(&cmds);
+    }
+    // the shooter aims at the chest of the pose it saw 10 ticks ago
+    let aim_at = |server: &gm_server::Server<'_>, seen_pos: glam::Vec3| {
+        let eye = server.players[&shooter].state.origin + glam::Vec3::new(0.0, 0.0, 64.0);
+        let d = seen_pos + glam::Vec3::new(0.0, 0.0, 48.0) - eye;
+        let yaw = d.y.atan2(d.x).to_degrees();
+        let pitch = -(d.z.atan2((d.x * d.x + d.y * d.y).sqrt())).to_degrees();
+        glam::Vec3::new(pitch, yaw, 0.0)
+    };
+    let run = |server: &mut gm_server::Server<'_>,
+               poses: &mut Vec<(u32, glam::Vec3)>,
+               view,
+               seen,
+               buttons| {
+        poses.push((
+            server.tick_count() as u32,
+            server.players[&target].state.origin,
+        ));
+        let mut cmds = std::collections::BTreeMap::new();
+        cmds.insert(shooter, idle(view, seen, buttons, 0.0));
+        cmds.insert(target, idle(glam::Vec3::new(0.0, 90.0, 0.0), 0, 0, 10000.0));
+        server.tick(&cmds);
+    };
+    // control: the same aim resolved against the current poses (seen_tick 0) misses
+    let (_, seen_pos) = poses[poses.len() - 10];
+    let now = server.players[&target].state.origin;
+    assert!(
+        (now - seen_pos).length() > 20.0,
+        "the target moved {} u in 10 ticks",
+        (now - seen_pos).length()
+    );
+    let health = server.players[&target].health;
+    // the shooter stands 150 u straight behind the seen pose, so the ray crosses the target's
+    // path at a right angle and the 30 u it has moved since is a clean miss (hull half-width 16)
+    server.teleport_player(shooter, seen_pos - glam::Vec3::new(150.0, 0.0, 0.0));
+    let view = aim_at(&server, seen_pos);
+    run(&mut server, &mut poses, view, 0, gm_server::IN_ATTACK);
+    assert_eq!(
+        server.players[&target].health, health,
+        "without the rewind the shot passes behind"
+    );
+    for _ in 0..20 {
+        run(&mut server, &mut poses, glam::Vec3::ZERO, 0, 0);
+    }
+    // with the rewind the same kind of shot lands
+    let (seen_tick, seen_pos) = poses[poses.len() - 10];
+    let health = server.players[&target].health;
+    // the shooter stands 150 u straight behind the seen pose, so the ray crosses the target's
+    // path at a right angle and the 30 u it has moved since is a clean miss (hull half-width 16)
+    server.teleport_player(shooter, seen_pos - glam::Vec3::new(150.0, 0.0, 0.0));
+    let view = aim_at(&server, seen_pos);
+    run(
+        &mut server,
+        &mut poses,
+        view,
+        seen_tick,
+        gm_server::IN_ATTACK,
+    );
+    assert!(
+        server.players[&target].health < health,
+        "rewound to tick {seen_tick}, the shot lands ({} -> {})",
+        health,
+        server.players[&target].health
+    );
+}

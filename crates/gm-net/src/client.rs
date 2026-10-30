@@ -283,6 +283,9 @@ impl ClientNet {
 
     /// One client tick: records the usercmd and sends a packet with the last 8 plus acks.
     pub fn tick(&mut self, mut cmd: NetCmd, transport: &mut dyn Transport) {
+        if cmd.seen_tick == 0 {
+            cmd.seen_tick = self.world.tick;
+        }
         self.cmd_tick += 1;
         cmd.tick = self.cmd_tick;
         self.recent.push_back(cmd);

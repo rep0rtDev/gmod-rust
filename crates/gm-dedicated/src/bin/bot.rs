@@ -69,6 +69,7 @@ fn main() -> Result<()> {
                 view_angles: glam::Vec3::new(20.0, 90.0, 0.0),
                 forward_move: if walking { 200.0 } else { 0.0 },
                 weapon: 2,
+                seen_tick: 0,
                 ..Default::default()
             },
             &mut udp,

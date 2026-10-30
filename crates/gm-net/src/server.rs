@@ -241,6 +241,7 @@ impl ServerNet {
                         for c in cmds {
                             if c.tick > slot.last_cmd_tick || slot.last_cmd_tick == 0 {
                                 slot.cmds.entry(c.tick).or_insert(PlayerCmd {
+                                    seen_tick: c.seen_tick,
                                     cmd: gm_move::UserCmd {
                                         buttons: c.buttons,
                                         view_angles: c.view_angles,

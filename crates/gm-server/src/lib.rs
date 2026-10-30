@@ -94,6 +94,8 @@ pub type ModelLoader = Box<dyn FnMut(&str) -> Option<ModelInfo>>;
 
 pub struct Player {
     pub state: gm_move::PlayerState,
+    /// (tick, origin, ducked) after each of the last 64 ticks, for lag compensation.
+    pub history: std::collections::VecDeque<(u32, Vec3, bool)>,
     pub view_angles: Vec3,
     /// The prop held by the physgun and how it was grabbed.
     pub held: Option<(u32, Grab)>,
@@ -139,6 +141,7 @@ pub const FALL_DAMAGE_FLAT: f32 = 10.0;
 impl Player {
     pub fn new(origin: Vec3, view_angles: Vec3) -> Self {
         Player {
+            history: Default::default(),
             state: gm_move::PlayerState {
                 origin,
                 ..Default::default()
@@ -224,6 +227,9 @@ pub const IN_ATTACK2: u32 = 2048;
 #[derive(Clone, Debug, Default)]
 pub struct PlayerCmd {
     pub cmd: gm_move::UserCmd,
+    /// Server tick the client rendered when it made the command (0 = unknown): shots of this
+    /// command are resolved against the other players as they stood then.
+    pub seen_tick: u32,
     /// The player holds `weapon_physgun`: attack grabs, attack2 freezes, use + mouse rotates.
     pub physgun: bool,
     pub mouse_x: f32,
@@ -655,6 +661,25 @@ impl<'w> Server<'w> {
         true
     }
 
+    /// Where a player stood (origin, ducked) at server tick `seen`, interpolated between the two
+    /// recorded ticks around it; the current pose when `seen` is 0 or outside the history.
+    fn pose_at(&self, p: &Player, seen: u32) -> (Vec3, bool) {
+        let now = (p.state.origin, p.state.ducked);
+        if seen == 0 {
+            return now;
+        }
+        let (Some(first), Some(last)) = (p.history.front(), p.history.back()) else {
+            return now;
+        };
+        if seen >= last.0 || seen < first.0 {
+            return now;
+        }
+        let i = p.history.partition_point(|h| h.0 <= seen);
+        let (a, b) = (&p.history[i - 1], &p.history[i]);
+        let f = (seen - a.0) as f32 / (b.0 - a.0).max(1) as f32;
+        (a.1.lerp(b.1, f), a.2)
+    }
+
     /// A trigger pull: the bullet (all pellets along the aim, no spread yet) against the other
     /// live players' hulls and the world; the hit group from the height on the target
     /// (`weapons::hitgroup_at`), the ammo's multiplayer damage scaled by it, applied as
@@ -666,6 +691,7 @@ impl<'w> Server<'w> {
         forward: Vec3,
         shot: weapons::Shot,
         class: &'static str,
+        seen_tick: u32,
     ) {
         let Some(base) = weapons::bullet_damage(shot.ammo) else {
             return;
@@ -683,8 +709,9 @@ impl<'w> Server<'w> {
             if *id == attacker || !p.alive {
                 continue;
             }
-            let (mins, maxs) = self.mover.hull(p.state.ducked);
-            let (lo, hi) = (p.state.origin + mins, p.state.origin + maxs);
+            let (origin, ducked) = self.pose_at(p, seen_tick);
+            let (mins, maxs) = self.mover.hull(ducked);
+            let (lo, hi) = (origin + mins, origin + maxs);
             let (mut t0, mut t1) = (0.0f32, 1.0f32);
             let mut inside = true;
             for a in 0..3 {
@@ -1669,6 +1696,13 @@ impl<'w> Server<'w> {
     /// One fixed tick: weapons fire with the pre-move eye, physics steps, players move, prop
     /// poses flow back into the sandbox.
     pub fn tick(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
+        let now = self.tick_count as u32;
+        for p in self.players.values_mut() {
+            p.history.push_back((now, p.state.origin, p.state.ducked));
+            if p.history.len() > 64 {
+                p.history.pop_front();
+            }
+        }
         self.tick_count += 1;
         let tick = self.tick_count;
         let mut respawn = Vec::new();
@@ -1713,7 +1747,7 @@ impl<'w> Server<'w> {
                         .iter()
                         .find(|w| w.class == p.active_weapon.as_str())
                         .map_or("player", |w| w.class);
-                    shots.push((*id, eye, forward, shot, class));
+                    shots.push((*id, eye, forward, shot, class, pc.seen_tick));
                 }
                 if p.inventory.swung {
                     let forward = gm_sandbox::forward(pc.cmd.view_angles.x, pc.cmd.view_angles.y);
@@ -1725,8 +1759,8 @@ impl<'w> Server<'w> {
                 p.inventory.tick(&p.active_weapon);
             }
         }
-        for (attacker, eye, forward, shot, class) in shots {
-            self.resolve_shot(attacker, eye, forward, shot, class);
+        for (attacker, eye, forward, shot, class, seen) in shots {
+            self.resolve_shot(attacker, eye, forward, shot, class, seen);
         }
         for (attacker, eye, forward) in swings {
             self.resolve_melee(attacker, eye, forward);

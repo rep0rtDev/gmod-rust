@@ -170,6 +170,16 @@ Measured after both (model table below, half-budget players, staleness order): 5
 per client (36 KB/s), every client knows 798-800 of the 2 000 crates after 200 ticks (~265 per
 second, 8x), `send` 7.0 ms per tick for 64 clients, no snapshot dropped.
 
+Lag compensation: every usercmd carries `seen_tick`, the server tick the client was rendering
+when it made the command (`NetCmd::seen_tick`, delta-coded like the other fields; 0 = unknown).
+The server keeps the last 64 ticks of (origin, ducked) per player and resolves a shot of that
+command against the other players as they stood at `seen_tick` (interpolated between the two
+recorded ticks), so a hit on what the shooter saw lands even though the target has moved since.
+`seen_tick` 0 or older than the history resolves against the current poses (the parity runner and
+the recordings `hit_*` are unchanged). Measured (`lag_compensation_hits_the_target_where_the_
+shooter_saw_it`): a target running at 300 u/s moved 27 u in 6 ticks, the shot at its old pose
+lands only with the rewind.
+
 Model table: entity states carry a model index (varint, 0 = none) instead of the name; the server
 keeps one table for all connections and sends each client the new entries as `ServerMsg::Models {
 from, names }` (tag 10, reliable) right before the first snapshot that uses them. A snapshot that
