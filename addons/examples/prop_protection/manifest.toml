@@ -1,0 +1,9 @@
+id = "prop_protection"
+version = "0.1.0"
+priority = 0
+realms = ["server"]
+capabilities = ["world-read"]
+
+[[actors]]
+name = "protect"
+source = "src/protect.luau"

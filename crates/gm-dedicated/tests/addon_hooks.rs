@@ -3868,3 +3868,231 @@ fn player_model_choice_is_worn_from_the_next_spawn_and_player_set_model_may_repl
     assert_eq!(last, "models/player/alyx.mdl");
     assert!(n >= 3, "asked on every spawn, {n}");
 }
+
+/// `addons/examples/prop_protection`: another player's prop refuses the physgun, the +use
+/// pickup and the context-menu properties; the owner's own touches go through. The game has no
+/// protection of its own, the example builds it on the snapshot's `owner`.
+#[test]
+fn prop_protection_example_keeps_other_players_off_a_prop() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let mut rt = gm_script::Runtime::new();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../addons/examples/prop_protection");
+    rt.load_addon(&root).unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(2, 0.0, 9);
+    let (mut s_ep, mut e1, mut e2) = (net.endpoint(0), net.endpoint(1), net.endpoint(2));
+    let mut owner = gm_net::ClientNet::new(1, "owner");
+    let mut other = gm_net::ClientNet::new(1, "other");
+    let mut crt = gm_script::Runtime::client();
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "probe".into(),
+        priority: 1,
+        source: "net.receive('prop_protection', function(p) state.d = p.data end)".into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    // both look 30 degrees down at the same spot in front of the spawn, the physgun out
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    server: &mut gm_server::Server<'_>,
+                    crt: &mut gm_script::Runtime,
+                    owner: &mut gm_net::ClientNet,
+                    other: &mut gm_net::ClientNet,
+                    owner_buttons: u32,
+                    other_buttons: u32,
+                    n: usize| {
+        for _ in 0..n {
+            let cmd = |buttons| gm_net::NetCmd {
+                view_angles: glam::Vec3::new(30.0, 0.0, 0.0),
+                buttons,
+                weapon: 1,
+                ..Default::default()
+            };
+            owner.tick(cmd(owner_buttons), &mut e1);
+            other.tick(cmd(other_buttons), &mut e2);
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            owner.receive(&mut e1);
+            other.receive(&mut e2);
+            crt.client_tick(&other.world, true);
+            let inbox = std::mem::take(&mut other.addon_msgs);
+            crt.client_net(&other.world, inbox);
+        }
+    };
+    use gm_move::buttons::ATTACK;
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        0,
+        30,
+    );
+    let (me, you) = (owner.player_id.unwrap(), other.player_id.unwrap());
+    assert_ne!(me, you);
+    // the second player stands where the first one does, so both views hit the same crate
+    let origin = server.players[&me].state.origin;
+    server.players.get_mut(&you).unwrap().state.origin = origin;
+    owner.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        0,
+        30,
+    );
+    let crate_id = server.sandbox.props()[0].id;
+    assert_eq!(server.sandbox.props()[0].owner, me);
+    // moved to 60 u ahead at hull height: in +use reach (the spawn point of the 30 degree look,
+    // ~128 u out, is beyond PLAYER_USE_RADIUS) and still under both views
+    assert!(server.teleport_prop(
+        crate_id,
+        origin + glam::Vec3::new(60.0, 0.0, 20.0),
+        glam::Vec3::ZERO
+    ));
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        0,
+        20,
+    );
+    // the other player's physgun: asked and refused, nothing held
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        ATTACK,
+        5,
+    );
+    assert!(
+        server.players[&you].held.is_none(),
+        "the other player's physgun refused on a foreign prop"
+    );
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        0,
+        5,
+    );
+    // the other player's +use on it: refused as well
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        gm_server::IN_USE,
+        2,
+    );
+    assert!(server.players[&you].carry.is_none());
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        0,
+        5,
+    );
+    // a property from the other player: the crate stays
+    other.command(gm_net::Command::Property {
+        name: "remove".into(),
+    });
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        0,
+        10,
+    );
+    assert_eq!(
+        server.sandbox.props().len(),
+        1,
+        "remove refused for the other player"
+    );
+    // the owner's physgun takes it
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        ATTACK,
+        0,
+        5,
+    );
+    assert!(
+        server.players[&me].held.is_some(),
+        "the owner's own physgun goes through"
+    );
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        0,
+        5,
+    );
+    // the counter reaches the other player on their next spawn
+    server.damage_player(you, 1000.0, 0);
+    step(
+        &mut sn,
+        &mut server,
+        &mut crt,
+        &mut owner,
+        &mut other,
+        0,
+        0,
+        200,
+    );
+    let (blocked, physgun, pickup, property): (i64, i64, i64, i64) = crt.actors()[0]
+        .eval("return state.d.blocked, state.d.physgun, state.d.use, state.d.property")
+        .unwrap();
+    // the physgun asks on every tick the button is held with nothing in the beam, the +use
+    // pickup once per press, the property once
+    assert_eq!(
+        (blocked, physgun, pickup, property),
+        (7, 5, 1, 1),
+        "five physgun ticks, one pickup, one property"
+    );
+    let _ = crate_id;
+}

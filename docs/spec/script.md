@@ -329,6 +329,18 @@ addon refuses the 4th and 5th (2 hits, last on tick 5), three props exist, and t
 refuses the same 4th spawn when asked directly. This is the first piece of the sandbox gamemode
 moving into Luau; undo and cleanup stay in Rust until `entity.removed` consumers need them.
 
+`addons/examples/prop_protection` is what the game does not have (in the vanilla sandbox anyone
+physguns, tools or edits anyone's prop; `GM:PlayerSpawnedProp` only records the owner for undo,
+cleanup and the limits): on `physgun.pickup_request`, `tool.before` (`e.hit.ent`),
+`player.property_request` and `player.pickup_request` it looks the entity up with
+`world.get(id)` and returns `false` when its `owner` is another player (0, the world or the
+server, is left alone), counting the blocks per player and sending them on `player.spawned`.
+Measured (`cargo test -p gm-dedicated --test addon_hooks prop_protection`): two players through
+the real server, the second one's physgun (held 5 ticks: 5 asks, the beam retries every tick
+while it holds nothing), +use (1: the pickup is asked on the press only) and `remove` (1) on the
+first one's crate are refused, 7 blocks, nothing held, the crate stays; the owner's own physgun
+takes it.
+
 Undo from an actor: `world.queue("undo.push", player, { name = "Contraption", text = ?,
 entities = { ... } })` is the game's `undo.Create` / `AddEntity` / `Finish` for that player: the
 entities become one undo entry (text defaults to `#tool.<name>.name`), are added to the player's
