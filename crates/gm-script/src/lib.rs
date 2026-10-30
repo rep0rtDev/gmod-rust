@@ -7,6 +7,7 @@
 
 pub mod actor;
 pub mod api;
+pub mod depends;
 pub mod manifest;
 pub mod netval;
 pub mod package;
@@ -55,6 +56,8 @@ pub struct Runtime {
     /// Poll the loaded addons' files every 33 ticks and hot reload the changed ones.
     pub watch: bool,
     addon_stamps: std::collections::BTreeMap<String, u64>,
+    /// Version of every loaded addon by id (what `depends` is checked against).
+    pub addon_versions: std::collections::BTreeMap<String, String>,
     pool: pool::Pool,
 }
 
@@ -80,6 +83,7 @@ impl Runtime {
             stores: Default::default(),
             watch: false,
             addon_stamps: Default::default(),
+            addon_versions: Default::default(),
             pool: pool::Pool::new(
                 std::thread::available_parallelism()
                     .map(|n| n.get())
@@ -95,13 +99,41 @@ impl Runtime {
         path: &std::path::Path,
     ) -> Result<Manifest, Box<dyn std::error::Error>> {
         let (m, specs) = read_addon(path, &self.realm)?;
+        depends::check(&m.id, &m.depends, &self.addon_versions)?;
         for spec in specs {
             self.load(spec)?;
         }
+        self.addon_versions.insert(m.id.clone(), m.version.clone());
         self.addon_paths.insert(m.id.clone(), path.to_path_buf());
         self.addon_stamps.insert(m.id.clone(), file_stamp(path));
         self.publish(&m, path);
         Ok(m)
+    }
+
+    /// Loads a set of addons in dependency order (a dependency before what needs it, the given
+    /// order otherwise); nothing is loaded when a dependency is missing, has the wrong version or
+    /// the set has a cycle. Returns the manifests in load order.
+    pub fn load_addons(
+        &mut self,
+        paths: &[std::path::PathBuf],
+    ) -> Result<Vec<Manifest>, Box<dyn std::error::Error>> {
+        let mut read = Vec::new();
+        for p in paths {
+            let (m, _) = read_addon(p, &self.realm)?;
+            read.push((m.id.clone(), m.depends.clone()));
+        }
+        let order = depends::order(&read)?;
+        let mut versions = self.addon_versions.clone();
+        for &i in &order {
+            let (m, _) = read_addon(&paths[i], &self.realm)?;
+            depends::check(&m.id, &m.depends, &versions)?;
+            versions.insert(m.id, m.version);
+        }
+        let mut out = Vec::new();
+        for i in order {
+            out.push(self.load_addon(&paths[i])?);
+        }
+        Ok(out)
     }
 
     /// On the server, an addon with the `client` realm is packed (a directory deterministically,
@@ -268,6 +300,17 @@ impl Runtime {
         path: &std::path::Path,
     ) -> Result<Manifest, Box<dyn std::error::Error>> {
         let (m, specs) = read_addon(path, &self.realm)?;
+        depends::check(&m.id, &m.depends, &self.addon_versions)?;
+        let mut versions = self.addon_versions.clone();
+        versions.insert(m.id.clone(), m.version.clone());
+        for (id, p) in &self.addon_paths {
+            if *id == m.id {
+                continue;
+            }
+            let (dm, _) = read_addon(p, &self.realm)?;
+            depends::check(&dm.id, &dm.depends, &versions)?;
+        }
+        self.addon_versions = versions;
         let mut keep: Vec<String> = Vec::new();
         for spec in specs {
             keep.push(spec.name.clone());

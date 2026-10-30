@@ -38,11 +38,12 @@ fn main() -> Result<()> {
                 gm_script::Package::open(&file).with_context(|| file.display().to_string())?;
             let (m, specs) = pkg.load()?;
             println!(
-                "{} {} priority {} caps {:?} sha256 {}",
+                "{} {} priority {} caps {:?} depends {:?} sha256 {}",
                 m.id,
                 m.version,
                 m.priority,
                 m.capabilities,
+                m.depends,
                 pkg.sha256_hex()
             );
             for s in &specs {

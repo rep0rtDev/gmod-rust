@@ -50,13 +50,25 @@ fn main() -> Result<()> {
         let mut rt = gm_script::Runtime::new();
         rt.data_dir = Some(args.data.clone());
         rt.watch = args.watch;
+        let is_package =
+            |p: &std::path::Path| p.is_dir() || p.extension().is_some_and(|e| e == "gmr");
+        let packages: Vec<std::path::PathBuf> = args
+            .addon
+            .iter()
+            .filter(|p| is_package(p))
+            .cloned()
+            .collect();
+        for m in rt
+            .load_addons(&packages)
+            .map_err(|e| anyhow::anyhow!("addons: {e}"))?
+        {
+            println!(
+                "addon {} {} (priority {}, depends {:?})",
+                m.id, m.version, m.priority, m.depends
+            );
+        }
         for (i, path) in args.addon.iter().enumerate() {
-            let is_gmr = path.extension().is_some_and(|e| e == "gmr");
-            if path.is_dir() || is_gmr {
-                let m = rt
-                    .load_addon(path)
-                    .map_err(|e| anyhow::anyhow!("addon {}: {e}", path.display()))?;
-                println!("addon {} {} (priority {})", m.id, m.version, m.priority);
+            if is_package(path) {
                 continue;
             }
             let source =

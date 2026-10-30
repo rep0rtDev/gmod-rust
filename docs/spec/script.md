@@ -305,6 +305,19 @@ client loads it from its cache with `Runtime::client().load_addon(<sha>.gmr)`, s
 client-realm (and `shared`) actors run there; a hot reload on a `--watch` server republishes the
 package and the client reloads it with `Runtime::reload_addon` (actor `state` survives).
 
+## Dependencies
+
+`depends = ["base", "wire >= 1.2, < 2", "props ^0.3"]` in the manifest: an id and comma-separated
+constraints on its `major.minor.patch` version (`=`, `>`, `>=`, `<`, `<=`, `^` same major and at
+least, `~` same major.minor and at least; a bare id takes any version; missing parts are 0).
+`Runtime::load_addons(paths)` (what `gm-dedicated --addon ...` uses for directories and `.gmr`)
+reads every manifest first, orders the set so a dependency loads before what needs it (the given
+order otherwise, a cycle is an error) and loads nothing when a dependency is missing or has the
+wrong version; actors of equal priority run in load order, so a dependency's actors run first.
+`load_addon` of a single addon checks against what is loaded; a hot reload is refused (old actors
+keep running) when the new manifest's own dependencies fail or a loaded dependent no longer
+accepts the new version. `gmr inspect` prints the dependencies.
+
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,

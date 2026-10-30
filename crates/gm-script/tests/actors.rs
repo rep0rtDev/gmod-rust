@@ -451,3 +451,84 @@ fn pool_runs_every_job_and_survives_a_panic() {
         .all(|(i, &v)| i == 7 || v == i as u32 + 1));
     pool.run(vec![Box::new(|| {}) as Box<dyn FnOnce() + Send + '_>]);
 }
+
+fn write_addon(
+    dir: &std::path::Path,
+    id: &str,
+    version: &str,
+    depends: &[&str],
+) -> std::path::PathBuf {
+    let d = dir.join(id);
+    std::fs::create_dir_all(d.join("src")).unwrap();
+    let deps: Vec<String> = depends.iter().map(|s| format!("{s:?}")).collect();
+    std::fs::write(
+        d.join("manifest.toml"),
+        format!(
+            "id = {id:?}\nversion = {version:?}\ndepends = [{}]\n[[actors]]\nname = \"a\"\nsource = \"src/a.luau\"\n",
+            deps.join(", ")
+        ),
+    )
+    .unwrap();
+    std::fs::write(d.join("src/a.luau"), "state.x = 1").unwrap();
+    d
+}
+
+#[test]
+fn addons_load_in_dependency_order_and_bad_dependencies_refuse_the_whole_set() {
+    let dir = std::env::temp_dir().join(format!("gm-deps-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let base = write_addon(&dir, "base", "1.4.0", &[]);
+    let wire = write_addon(&dir, "wire", "0.3.1", &["base ^1.2"]);
+    let hud = write_addon(&dir, "hud", "2.0.0", &["wire ~0.3", "base >= 1"]);
+    let mut rt = gm_script::Runtime::new();
+    let ms = rt
+        .load_addons(&[hud.clone(), wire.clone(), base.clone()])
+        .unwrap();
+    let ids: Vec<&str> = ms.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, ["base", "wire", "hud"]);
+    let order: Vec<&str> = rt.actors().iter().map(|a| a.spec.addon.as_str()).collect();
+    assert_eq!(
+        order,
+        ["base", "wire", "hud"],
+        "actors run in load order at equal priority"
+    );
+
+    let mut rt2 = gm_script::Runtime::new();
+    let old = write_addon(&dir, "old", "0.9.0", &["base < 1"]);
+    let e = rt2
+        .load_addons(&[base.clone(), old.clone()])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("old depends on `base < 1`, but base is 1.4.0"),
+        "{e}"
+    );
+    assert_eq!(rt2.actors().len(), 0, "nothing of a refused set is loaded");
+    let e = rt2
+        .load_addons(std::slice::from_ref(&wire))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("wire depends on base, which is not loaded"),
+        "{e}"
+    );
+    let x = write_addon(&dir, "x", "1.0.0", &["y"]);
+    let y = write_addon(&dir, "y", "1.0.0", &["x"]);
+    let e = rt2.load_addons(&[x, y]).unwrap_err().to_string();
+    assert!(e.contains("cycle"), "{e}");
+
+    // a reload may not break what depends on the addon: wire wants base ^1.2
+    write_addon(&dir, "base", "2.0.0", &[]);
+    let e = rt.reload_addon(&base).unwrap_err().to_string();
+    assert!(
+        e.contains("wire depends on `base ^1.2`, but base is 2.0.0"),
+        "{e}"
+    );
+    assert_eq!(
+        rt.addon_versions["base"], "1.4.0",
+        "the old version stays loaded"
+    );
+    write_addon(&dir, "base", "1.5.0", &[]);
+    assert_eq!(rt.reload_addon(&base).unwrap().version, "1.5.0");
+    let _ = std::fs::remove_dir_all(&dir);
+}
