@@ -50,6 +50,9 @@ impl Ephemeral {
             send_dir: if we_are_client { 1 } else { 2 },
             binding,
             peer_sealed: false,
+            recv_max: 0,
+            recv_seen: 0,
+            recv_any: false,
         }
     }
 }
@@ -63,7 +66,16 @@ pub struct Session {
     pub binding: [u8; 32],
     /// The peer has sent at least one packet we could open: plaintext from it is over.
     pub peer_sealed: bool,
+    /// Highest counter opened so far and a bitmap of the `REPLAY_WINDOW` counters below it,
+    /// bit i = `recv_max - i` seen; a counter already seen or below the window is a replay.
+    recv_max: u64,
+    recv_seen: u128,
+    recv_any: bool,
 }
+
+/// Counters this far below the highest opened one are still accepted when unseen
+/// (reordering on the wire); older ones are dropped as replays.
+pub const REPLAY_WINDOW: u64 = 128;
 
 impl Session {
     pub fn seal(&mut self, plain: &[u8]) -> Vec<u8> {
@@ -104,8 +116,42 @@ impl Session {
                 },
             )
             .ok()?;
+        if !self.accept_counter(ctr) {
+            return None;
+        }
         self.peer_sealed = true;
         Some(plain)
+    }
+
+    /// Records `ctr` as seen; false when it was already seen or is below the window.
+    fn accept_counter(&mut self, ctr: u64) -> bool {
+        if !self.recv_any {
+            self.recv_any = true;
+            self.recv_max = ctr;
+            self.recv_seen = 1;
+            return true;
+        }
+        if ctr > self.recv_max {
+            let shift = ctr - self.recv_max;
+            self.recv_seen = if shift >= REPLAY_WINDOW {
+                0
+            } else {
+                self.recv_seen << shift
+            };
+            self.recv_seen |= 1;
+            self.recv_max = ctr;
+            return true;
+        }
+        let back = self.recv_max - ctr;
+        if back >= REPLAY_WINDOW {
+            return false;
+        }
+        let bit = 1u128 << back;
+        if self.recv_seen & bit != 0 {
+            return false;
+        }
+        self.recv_seen |= bit;
+        true
     }
 }
 
@@ -148,5 +194,41 @@ mod tests {
         let o = Ephemeral::generate();
         let mut os = o.session(&c.public, &c.public, &o.public, false);
         assert!(os.open(&cs.seal(b"x")).is_none());
+    }
+
+    #[test]
+    fn replayed_and_too_old_packets_are_dropped_reordered_ones_pass() {
+        let c = Ephemeral::generate();
+        let s = Ephemeral::generate();
+        let mut cs = c.session(&s.public, &c.public, &s.public, true);
+        let mut ss = s.session(&c.public, &c.public, &s.public, false);
+        let p0 = cs.seal(b"0");
+        let p1 = cs.seal(b"1");
+        let p2 = cs.seal(b"2");
+        assert_eq!(ss.open(&p2).unwrap(), b"2");
+        // older but unseen counters inside the window arrive out of order and pass
+        assert_eq!(ss.open(&p0).unwrap(), b"0");
+        assert_eq!(ss.open(&p1).unwrap(), b"1");
+        // the same packets again are replays
+        assert!(ss.open(&p2).is_none());
+        assert!(ss.open(&p0).is_none());
+        // a counter further back than the window is dropped even when never seen
+        let mut late = Vec::new();
+        for i in 0..REPLAY_WINDOW + 2 {
+            let p = cs.seal(&[i as u8]);
+            if i == 3 || i == 4 {
+                late.push(p);
+            } else {
+                assert!(ss.open(&p).is_some());
+            }
+        }
+        // counter 3+3=6 is REPLAY_WINDOW+4 - 6 = 126 back: inside; 7 is 125 back: inside
+        assert!(ss.open(&late[0]).is_some());
+        assert!(ss.open(&late[1]).is_some());
+        let far = cs.seal(b"far");
+        for _ in 0..REPLAY_WINDOW {
+            assert!(ss.open(&cs.seal(b"n")).is_some());
+        }
+        assert!(ss.open(&far).is_none(), "below the window");
     }
 }

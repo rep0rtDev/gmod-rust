@@ -235,9 +235,15 @@ packet stays within the 1 200 wire budget).
 Outer byte 0 is plaintext and only the handshake travels that way: each side keeps answering in
 plaintext until it has opened one sealed packet from the peer (a lost `Challenge` is re-sent
 readably) and refuses plaintext from then on; a packet that does not authenticate is dropped
-before the channel sees it. Master-server packets (magic `MG`) stay plaintext. Not yet: replay
-protection beyond the channel's sequence handling, key rotation, and the client checking a server
-identity (the master could publish server keys).
+before the channel sees it. Master-server packets (magic `MG`) stay plaintext.
+Replay protection: each side keeps the highest counter it has opened from the peer and a bitmap of
+the `REPLAY_WINDOW` (128) counters below it; a sealed packet whose counter was already opened, or
+lies further back than the window, is dropped after it authenticates and before the channel sees
+it, so a captured packet cannot be fed back to the server (or the client) even inside the
+session. Counters below the top but unseen pass (reordering on the wire), test
+`replayed_and_too_old_packets_are_dropped_reordered_ones_pass`. Not yet: key rotation inside a
+session (the 64-bit counter never wraps in practice) and the client checking a server identity
+(the master could publish server keys).
 
 
 Lag compensation: every usercmd carries `seen_tick`, the server tick the client was rendering
