@@ -455,12 +455,33 @@ public:
 			float mv1 = virt_mass(b1, pt.p, pt.dir, m2, static_mass_factor);
 			float mv2 = virt_mass(b2, pt.p, pt.dir, m1, static_mass_factor);
 			pt.step = push_fraction * (-2.0f * vn * (mv1 * mv2 / (mv1 + mv2)));
+			// a point that arrives without slip (a prop falling straight onto a corner) sticks:
+			// a step's tangential impulse is capped at what stops the tangential velocity the
+			// normal part induces - the game's lockers (2000 kg) take 0.41 of the normal impulse
+			// tangentially where the full Coulomb tilt gives 0.78; a corner that slides in keeps
+			// the full tilt (the tilted crate's second corner)
+			bool stick = (v - n * vn).Length() < 0.05f;
 			for (int it = 0; it < 100 && vn < 0.0f; ++it) {
 				push(b1, pt.p, pt.dir * pt.step);
 				push(b2, pt.p, -pt.dir * pt.step);
 				v = rel(pt.p);
 				vn = v.Dot(n);
 				pt.dir = direction(v, pt.dir);
+				if (!stick) continue;
+				JPH::Vec3 vt = v - n * vn;
+				float vt_len = vt.Length();
+				float dn = pt.dir.Dot(n);
+				float jt_step = pt.step * std::sqrt(std::max(0.0f, 1.0f - dn * dn));
+				if (vt_len > 1e-6f && jt_step > 1e-9f) {
+					JPH::Vec3 th = vt / vt_len;
+					float mt1 = virt_mass(b1, pt.p, th, m2, static_mass_factor);
+					float mt2 = virt_mass(b2, pt.p, th, m1, static_mass_factor);
+					float jt_stick = vt_len * (mt1 * mt2 / (mt1 + mt2));
+					if (jt_stick < jt_step) {
+						float sphi = std::min(jt_stick / pt.step, 1.0f);
+						pt.dir = n * std::sqrt(1.0f - sphi * sphi) - th * sphi;
+					}
+				}
 			}
 			float wanted = extra + std::sqrt(e_eff) * (-pt.vn0) - vn;
 			if (wanted > 0.0f) {
