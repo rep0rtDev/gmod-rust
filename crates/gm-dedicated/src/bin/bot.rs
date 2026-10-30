@@ -109,6 +109,13 @@ fn main() -> Result<()> {
                 rcon_sent_at = Some(t);
             }
         }
+        if t == 100 && !spawned && args.rcon.is_none() {
+            client.command(gm_net::Command::Spawn {
+                model: args.spawn.clone(),
+            });
+            spawned = true;
+        }
+        client.receive(&mut udp);
         if let Some(sent) = rcon_sent_at {
             if !client.events.is_empty() || t > sent + 200 {
                 for ev in client.events.drain(..) {
@@ -122,13 +129,6 @@ fn main() -> Result<()> {
                 return Ok(());
             }
         }
-        if t == 100 && !spawned && args.rcon.is_none() {
-            client.command(gm_net::Command::Spawn {
-                model: args.spawn.clone(),
-            });
-            spawned = true;
-        }
-        client.receive(&mut udp);
         if let Some(reason) = &client.disconnected {
             println!("disconnected by the server: {reason}");
             return Ok(());
