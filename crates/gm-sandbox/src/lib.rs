@@ -826,7 +826,7 @@ impl Sandbox {
 
     /// Whether the Rust sandbox implements this stool (others may come from scripts).
     pub fn knows_tool(tool: &str) -> bool {
-        matches!(tool, "weld" | "rope" | "axis" | "nocollide")
+        matches!(tool, "weld" | "rope" | "axis" | "nocollide" | "duplicator")
     }
 
     /// The rope stool's second click on the two stored objects (the Rust rules; scripted stools

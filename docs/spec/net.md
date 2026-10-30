@@ -219,7 +219,12 @@ is not saved. Console `save <name>` writes `<data>/saves/<name>.rdup`, `load <na
 the running world as the admin's props (like a duplicator paste: no limits or undo entries,
 bodies and joints built by the physics sync); `gm-dedicated --load <name>` does the same at
 start as player 0. Measured in `a_saved_world_loads_into_a_fresh_server_...`: two crates, a weld
-and a rope round-trip with identical poses and the welded pair holds within 2 u over a second. Measured in
+and a rope round-trip with identical poses and the welded pair holds within 2 u over a second.
+The duplicator stool uses the same records: left click copies the hit prop and everything
+constrained to it (transitively, world constraints kept) into the player's clipboard with poses
+relative to the hit prop; right click pastes the group with the copied prop's origin on the hit
+point, every prop under the player's prop limit, one undo entry (`Duplicator`) that removes the
+pasted props and constraints (`the_duplicator_copies_a_welded_pair_and_pastes_it_at_the_aim`). Measured in
 `connections_time_out_get_kicked_banned_refused_when_full_and_leave`.
 
 Encryption: `Hello` carries the client's ephemeral X25519 public key and `Challenge` the

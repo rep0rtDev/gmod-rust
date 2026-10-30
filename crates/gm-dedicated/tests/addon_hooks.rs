@@ -1933,3 +1933,85 @@ fn a_saved_world_loads_into_a_fresh_server_with_the_same_poses_and_constraints()
         (pb - pa).distance(rel0)
     );
 }
+
+#[test]
+fn the_duplicator_copies_a_welded_pair_and_pastes_it_at_the_aim() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, spawn, glam::Vec3::new(20.0, 0.0, 0.0));
+    let crate_model = "models/props_junk/wood_crate001a.mdl";
+    let a = server.spawn_prop(1, crate_model).unwrap();
+    let b = server.spawn_prop(1, crate_model).unwrap();
+    let pa = server
+        .sandbox
+        .props()
+        .iter()
+        .find(|p| p.id == a)
+        .unwrap()
+        .pos;
+    server.teleport_prop(
+        b,
+        pa + glam::Vec3::new(0.0, 0.0, 40.0),
+        glam::Vec3::new(0.0, 30.0, 0.0),
+    );
+    server.sandbox.set_frozen(a, true);
+    server.sandbox.set_frozen(b, true);
+    assert!(server
+        .sandbox
+        .weld(1, Some(a), Some(b), 0.0, false)
+        .is_some());
+    server.sync_after_script();
+    // copy: aim at the lower crate
+    let gm_server::ToolClick::Done(ok) = server.tool_click_full(1, "duplicator", false) else {
+        panic!("duplicator is a Rust stool");
+    };
+    assert!(ok, "the crate under the crosshair was copied");
+    let clip = server.clipboards[&1].clone();
+    assert_eq!((clip.props.len(), clip.constraints.len()), (2, 1));
+    // paste: aim at the floor 300 u to the side
+    server.teleport_player(1, spawn + glam::Vec3::new(0.0, 300.0, 0.0));
+    let before = server.sandbox.props().len();
+    let gm_server::ToolClick::Done(ok) = server.tool_click_full(1, "duplicator", true) else {
+        panic!("duplicator is a Rust stool");
+    };
+    assert!(ok);
+    assert_eq!(server.sandbox.props().len(), before + 2);
+    assert_eq!(server.sandbox.constraints().len(), 2);
+    let new: Vec<_> = server.sandbox.props()[before..].to_vec();
+    let rel = new[1].pos - new[0].pos;
+    assert!(
+        (rel - glam::Vec3::new(0.0, 0.0, 40.0)).length() < 0.01,
+        "relative pose kept: {rel:?}"
+    );
+    assert!(
+        (new[1].angles.y - 30.0).abs() < 0.01 && new[0].frozen && new[1].frozen,
+        "angles {:?} frozen {} {}",
+        new[1].angles,
+        new[0].frozen,
+        new[1].frozen
+    );
+    assert!(
+        (new[0].pos.y - (spawn.y + 300.0)).abs() < 60.0,
+        "pasted near the aim: {:?}",
+        new[0].pos
+    );
+    assert!(server
+        .sandbox
+        .undos(1)
+        .iter()
+        .any(|u| u.name == "Duplicator"));
+    // undo removes the pasted pair and its weld
+    server.undo(1);
+    assert_eq!(server.sandbox.props().len(), before);
+    assert_eq!(server.sandbox.constraints().len(), 1);
+}

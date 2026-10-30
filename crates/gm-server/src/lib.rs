@@ -298,6 +298,8 @@ fn ray_box_entry(start: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
 }
 
 pub struct Server<'w> {
+    /// Duplicator clipboards: the copied group with poses relative to the copied prop.
+    pub clipboards: BTreeMap<u32, save::Save>,
     pub hits: Vec<Hit>,
     /// Hit boxes of the player model; without one, bullets use the hull and height bands.
     pub hit_model: Option<weapons::HitModel>,
@@ -409,6 +411,7 @@ impl<'w> Server<'w> {
             constraints: BTreeMap::new(),
             nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
+            clipboards: BTreeMap::new(),
             hull_planes: BTreeMap::new(),
             events: Vec::new(),
             physgun_params: PhysgunParams::default(),
@@ -1436,6 +1439,145 @@ impl<'w> Server<'w> {
         id
     }
 
+    /// Duplicator left click: the hit prop and everything constrained to it (transitively) go
+    /// to the player's clipboard with positions relative to the hit prop and world angles kept
+    /// (pasted as copied, the game's default).
+    pub fn duplicator_copy(&mut self, player: u32, hit: &ToolHit) -> bool {
+        let Some(root) = hit.ent else {
+            return false;
+        };
+        let props = self.sandbox.props();
+        let Some(anchor) = props.iter().find(|p| p.id == root) else {
+            return false;
+        };
+        let cons = self.sandbox.constraints();
+        let mut group = vec![root];
+        let mut i = 0;
+        while i < group.len() {
+            let e = group[i];
+            for c in cons {
+                for (x, y) in [(c.ent1, c.ent2), (c.ent2, c.ent1)] {
+                    if x == Some(e) {
+                        if let Some(o) = y {
+                            if !group.contains(&o) && props.iter().any(|p| p.id == o) {
+                                group.push(o);
+                            }
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+        let anchor_pos = anchor.pos;
+        let index = |e: Option<u32>| e.and_then(|id| group.iter().position(|g| *g == id));
+        let saved: Vec<save::SavedProp> = group
+            .iter()
+            .filter_map(|id| props.iter().find(|p| p.id == *id))
+            .map(|p| save::SavedProp {
+                model: p.model.clone(),
+                pos: (p.pos - anchor_pos).to_array(),
+                angles: p.angles.to_array(),
+                frozen: p.frozen,
+            })
+            .collect();
+        let constraints = cons
+            .iter()
+            .filter(|c| {
+                let in_group = |e: Option<u32>| match e {
+                    None => true,
+                    Some(id) => group.contains(&id),
+                };
+                in_group(c.ent1) && in_group(c.ent2) && (c.ent1.is_some() || c.ent2.is_some())
+            })
+            .map(|c| save::SavedConstraint {
+                a: index(c.ent1),
+                b: index(c.ent2),
+                kind: save::SavedKind::from(&c.kind),
+            })
+            .collect();
+        self.clipboards.insert(
+            player,
+            save::Save {
+                format: 1,
+                map: String::new(),
+                props: saved,
+                constraints,
+            },
+        );
+        true
+    }
+
+    /// Duplicator right click: the clipboard group at the hit point (the copied prop's origin on
+    /// the hit, orientations as copied), each prop under the player's prop limit, one undo entry.
+    pub fn duplicator_paste(
+        &mut self,
+        player: u32,
+        hit: &ToolHit,
+        events: &mut Vec<gm_sandbox::Event>,
+    ) -> bool {
+        let Some(clip) = self.clipboards.get(&player).cloned() else {
+            return false;
+        };
+        if clip.props.is_empty() {
+            return false;
+        }
+        let mut ids: Vec<Option<u32>> = Vec::new();
+        for p in &clip.props {
+            if !self.sandbox.check_limit(player, "props", events) {
+                break;
+            }
+            if !self.models.contains_key(&p.model) {
+                match self.model_loader.as_mut().and_then(|f| f(&p.model)) {
+                    Some(info) => self.register_model(&p.model, info),
+                    None => {
+                        ids.push(None);
+                        continue;
+                    }
+                }
+            }
+            let id = self.sandbox.restore_prop(
+                player,
+                &p.model,
+                hit.pos + Vec3::from(p.pos),
+                Vec3::from(p.angles),
+                p.frozen,
+            );
+            self.sandbox.add_count(player, "props", id);
+            self.sandbox.add_cleanup(player, "props", id);
+            ids.push(Some(id));
+        }
+        if ids.is_empty() {
+            return false;
+        }
+        let mut made: Vec<u32> = ids.iter().flatten().copied().collect();
+        for c in &clip.constraints {
+            let ent = |i: Option<usize>| match i {
+                None => Some(None),
+                Some(i) => ids.get(i).copied().flatten().map(Some),
+            };
+            let (Some(a), Some(b)) = (ent(c.a), ent(c.b)) else {
+                continue;
+            };
+            let id = self.sandbox.restore_constraint(
+                player,
+                a,
+                b,
+                gm_sandbox::ConstraintKind::from(&c.kind),
+            );
+            self.sandbox.add_count(player, "constraints", id);
+            self.sandbox.add_cleanup(player, "constraints", id);
+            made.push(id);
+        }
+        self.sandbox.push_undo(
+            player,
+            "Duplicator",
+            "#tool.duplicator.name".into(),
+            Some("Undone #tool.duplicator.name".into()),
+            made,
+        );
+        true
+    }
+
     /// A tool gun click of `player` with the current view.
     pub fn tool_click(&mut self, player: u32, tool: &str, right: bool) -> bool {
         matches!(
@@ -1459,6 +1601,16 @@ impl<'w> Server<'w> {
             return ToolClick::Unknown(hit);
         }
         let mut events = Vec::new();
+        if tool == "duplicator" {
+            let ret = if right {
+                self.duplicator_paste(player, &hit, &mut events)
+            } else {
+                self.duplicator_copy(player, &hit)
+            };
+            self.events.extend(events);
+            self.sync_physics();
+            return ToolClick::Done(ret);
+        }
         let ret = if right {
             self.sandbox
                 .tool_right_click(player, tool, &hit, &mut events)
