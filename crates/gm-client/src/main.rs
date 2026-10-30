@@ -14,6 +14,7 @@ use std::time::Instant;
 use anyhow::{anyhow, Result};
 use glam::Vec3;
 use gm_move::buttons;
+use gm_net::msg::PlayerSnap;
 use gm_net::{ClientNet, Command, Loopback, LoopbackEndpoint, NetCmd, ServerNet};
 use gm_render::ui::{UiItem, UiRenderer};
 use gm_render::world::{DrawItem, ModelTarget};
@@ -101,6 +102,33 @@ struct Viewmodel {
     idle: &'static str,
     fire: &'static str,
     hold: Option<&'static str>,
+}
+
+/// GMod's walk / run split for the player animation (`animations.lua`): below this ground
+/// speed the walk grid plays, above it the run grid.
+const PLAYER_RUN_SPEED: f32 = 150.0;
+
+/// Sequence of the shared player animation model and its pose parameters for a player's
+/// state: idle / walk / run grids with `move_x` / `move_y` from the velocity relative to the
+/// facing (Source's `move_x = cos`, `move_y = -sin` of the movement yaw), crouch variants.
+fn player_sequence(p: &PlayerSnap) -> (&'static str, Vec<(&'static str, f32)>) {
+    let speed = p.velocity.truncate().length();
+    if speed < 0.5 {
+        return (
+            if p.ducked { "cidle_all" } else { "idle_all_01" },
+            Vec::new(),
+        );
+    }
+    let yaw = p.velocity.y.atan2(p.velocity.x) - p.view_angles.y.to_radians();
+    let params = vec![("move_x", yaw.cos()), ("move_y", -yaw.sin())];
+    let seq = if p.ducked {
+        "cwalk_all"
+    } else if speed > PLAYER_RUN_SPEED {
+        "run_all_01"
+    } else {
+        "walk_all"
+    };
+    (seq, params)
 }
 
 fn viewmodel(weapon: u8) -> Option<Viewmodel> {
@@ -420,6 +448,8 @@ impl App {
             }
         }
         let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
+        let now = self.fps_at.elapsed().as_secs_f32();
+        let mut player_poses: Vec<(Vec3, f32, Option<Vec<glam::Mat4>>)> = Vec::new();
         let mut items: Vec<_> = ents
             .values()
             .filter_map(|e| {
@@ -443,16 +473,13 @@ impl App {
             if Some(p.id) == me || !p.alive {
                 continue;
             }
-            // bind pose until animations: standing model, the hull box when the model is missing
+            // the player model animated from the snapshot, the hull box when it is missing
             match player_model {
-                Some(m) => items.push(DrawItem {
-                    model: m,
-                    transform: gm_render::world::model_transform(
-                        p.origin,
-                        Vec3::new(0.0, p.view_angles.y, 0.0),
-                    ),
-                    bones: None,
-                }),
+                Some(m) => {
+                    let (seq, params) = player_sequence(p);
+                    let pose = m.pose_with(seq, now, &params);
+                    player_poses.push((p.origin, p.view_angles.y, pose));
+                }
                 None => {
                     let h = if p.ducked { 36.0 } else { 72.0 };
                     items.push(DrawItem {
@@ -463,6 +490,18 @@ impl App {
                         bones: None,
                     });
                 }
+            }
+        }
+        if let Some(m) = player_model {
+            for (origin, yaw, pose) in &player_poses {
+                items.push(DrawItem {
+                    model: m,
+                    transform: gm_render::world::model_transform(
+                        *origin,
+                        Vec3::new(0.0, *yaw, 0.0),
+                    ),
+                    bones: pose.as_deref(),
+                });
             }
         }
         // physgun beam: from just below and right of the eye to the held prop, or along the aim
@@ -524,7 +563,7 @@ impl App {
                 g.models.insert(HANDS_MODEL.to_string(), m);
             }
             if let Some(m) = g.models.get(path).and_then(|m| m.as_ref()) {
-                let world = m.bone_world(seq, t, None);
+                let world = m.bone_world(seq, t, None, &[]);
                 let pose = world.as_ref().map(|w| m.skin_matrices(w));
                 let hands = g.models.get(HANDS_MODEL).and_then(|h| h.as_ref());
                 let hands_pose = match (hands, &world) {

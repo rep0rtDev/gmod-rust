@@ -255,12 +255,154 @@ impl DynVertex {
 /// One mesh of a `DynModel`: material, vertices, indices.
 type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>);
 
-/// The bones and animations of a `DynModel`, kept with the `.mdl` bytes the tracks live in.
+/// The bones of a `DynModel` and where its animations come from.
 struct Skeleton {
-    mdl: Vec<u8>,
     bones: Vec<gm_formats::mdl::Bone>,
+    anim: AnimSource,
+}
+
+/// Animations of a model: its own, or those of the first model it includes (player models
+/// animate through a shared animation model), with the `.ani` the tracks may live in and the
+/// name map from animation bones to the rendered model's bones.
+struct AnimSource {
+    mdl: Vec<u8>,
+    ani: Vec<u8>,
+    blocks: Vec<(usize, usize)>,
+    bones: Vec<gm_formats::mdl::Bone>,
+    map: Vec<Option<usize>>,
     sequences: Vec<gm_formats::mdl::Sequence>,
     anims: Vec<gm_formats::mdl::AnimDesc>,
+    pose_params: Vec<gm_formats::mdl::PoseParam>,
+}
+
+type LocalPose = Vec<([f32; 3], [f32; 4])>;
+
+impl AnimSource {
+    fn new(
+        mount: &Mount,
+        bytes: Vec<u8>,
+        mdl: &gm_formats::mdl::Mdl,
+        render_bones: &[gm_formats::mdl::Bone],
+    ) -> Self {
+        let (ani_name, blocks) = gm_formats::mdl::anim_blocks(&bytes);
+        let ani = if blocks.len() > 1 {
+            mount.read(&ani_name).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let map = mdl
+            .bones
+            .iter()
+            .map(|b| render_bones.iter().position(|r| r.name == b.name))
+            .collect();
+        AnimSource {
+            sequences: gm_formats::mdl::sequences(&bytes, &mdl.header),
+            anims: gm_formats::mdl::anim_descs(&bytes, &mdl.header),
+            pose_params: gm_formats::mdl::pose_params(&bytes, &mdl.header),
+            bones: mdl.bones.clone(),
+            map,
+            ani,
+            blocks,
+            mdl: bytes,
+        }
+    }
+
+    /// The model's own animations, or its first include model's when it has one.
+    fn for_model(mount: &Mount, bytes: Vec<u8>, mdl: &gm_formats::mdl::Mdl) -> Self {
+        let include = gm_formats::mdl::include_models(&bytes, &mdl.header)
+            .into_iter()
+            .find_map(|inc| {
+                let b = mount.read(&inc).ok()?;
+                let m = gm_formats::mdl::Mdl::parse(&b).ok()?;
+                Some(AnimSource::new(mount, b, &m, &mdl.bones))
+            });
+        include.unwrap_or_else(|| AnimSource::new(mount, bytes, mdl, &mdl.bones))
+    }
+
+    fn data(&self, block: i32) -> Option<(&[u8], usize)> {
+        if block == 0 {
+            return Some((&self.mdl, 0));
+        }
+        let (start, _) = *self.blocks.get(usize::try_from(block).ok()?)?;
+        Some((&self.ani, start))
+    }
+
+    /// Local pose of the animation bones at `cycle` of `anim`.
+    fn frame_pose(
+        &self,
+        anim: &gm_formats::mdl::AnimDesc,
+        cycle: f32,
+        delta: bool,
+    ) -> Option<LocalPose> {
+        let frames = anim.frames.max(1) as usize;
+        let frame = ((cycle * (frames - 1) as f32).round() as usize).min(frames - 1);
+        let (block, off, frame) = anim.frame_block(&self.mdl, frame)?;
+        let (data, base) = self.data(block)?;
+        gm_formats::mdl::anim_pose(data, base + off, &self.bones, frame, delta)
+    }
+
+    fn param(&self, index: i32, params: &[(&str, f32)]) -> f32 {
+        let Some(p) = usize::try_from(index)
+            .ok()
+            .and_then(|i| self.pose_params.get(i))
+        else {
+            return 0.0;
+        };
+        params
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(&p.name))
+            .map_or(0.0, |(_, v)| *v)
+    }
+
+    /// Pose of a sequence at `cycle`: its blend grid cells weighted bilinearly by the pose
+    /// parameters.
+    fn blended(
+        &self,
+        seq: &gm_formats::mdl::Sequence,
+        cycle: f32,
+        params: &[(&str, f32)],
+    ) -> Option<LocalPose> {
+        let (x, fx) = seq.grid_pos(0, self.param(seq.param[0], params));
+        let (y, fy) = seq.grid_pos(1, self.param(seq.param[1], params));
+        let cells = [
+            (x, y, (1.0 - fx) * (1.0 - fy)),
+            (x + 1, y, fx * (1.0 - fy)),
+            (x, y + 1, (1.0 - fx) * fy),
+            (x + 1, y + 1, fx * fy),
+        ];
+        let mut out: Option<LocalPose> = None;
+        let mut total = 0.0;
+        for (cx, cy, w) in cells {
+            if w <= 0.0001 {
+                continue;
+            }
+            let Some(anim) = seq
+                .blend(cx, cy)
+                .and_then(|a| self.anims.get(a.max(0) as usize))
+            else {
+                continue;
+            };
+            let Some(pose) = self.frame_pose(anim, cycle, false) else {
+                continue;
+            };
+            total += w;
+            match &mut out {
+                None => out = Some(pose),
+                Some(acc) => {
+                    let t = w / total;
+                    for ((p, q), (p2, q2)) in acc.iter_mut().zip(&pose) {
+                        for (a, b) in p.iter_mut().zip(p2) {
+                            *a += (b - *a) * t;
+                        }
+                        let qa = glam::Quat::from_array(*q).normalize();
+                        let qb = glam::Quat::from_array(*q2).normalize();
+                        *q = qa.slerp(qb, t).to_array();
+                    }
+                }
+            }
+        }
+        out
+    }
 }
 
 pub struct DynModel {
@@ -295,14 +437,14 @@ impl DynModel {
     pub fn sequences(&self) -> impl Iterator<Item = &str> {
         self.skeleton
             .iter()
-            .flat_map(|s| s.sequences.iter().map(|q| q.name.as_str()))
+            .flat_map(|s| s.anim.sequences.iter().map(|q| q.name.as_str()))
     }
 
     /// Length in seconds of sequence `name` and whether it loops.
     pub fn sequence_length(&self, name: &str) -> Option<(f32, bool)> {
-        let sk = self.skeleton.as_ref()?;
-        let seq = sk.sequences.iter().find(|s| s.name == name)?;
-        let anim = sk.anims.get(seq.anim.max(0) as usize)?;
+        let src = &self.skeleton.as_ref()?.anim;
+        let seq = src.sequences.iter().find(|s| s.name == name)?;
+        let anim = src.anims.get(seq.anim.max(0) as usize)?;
         if anim.fps <= 0.0 {
             return None;
         }
@@ -313,7 +455,13 @@ impl DynModel {
     /// from its start: looping sequences wrap, others hold their last frame. `None` without a
     /// skeleton, an unknown sequence or tracks in an external `.ani` block.
     pub fn pose(&self, name: &str, time: f32) -> Option<Vec<Mat4>> {
-        let world = self.bone_world(name, time, None)?;
+        self.pose_with(name, time, &[])
+    }
+
+    /// [`pose`](Self::pose) with pose parameters (`move_x`, `move_y`, ...) driving the
+    /// sequence's blend grid.
+    pub fn pose_with(&self, name: &str, time: f32, params: &[(&str, f32)]) -> Option<Vec<Mat4>> {
+        let world = self.bone_world(name, time, None, params)?;
         Some(self.skin_matrices(&world))
     }
 
@@ -334,7 +482,7 @@ impl DynModel {
                 .position(|b| b.name == bone)
                 .and_then(|i| host_world.get(i).copied())
         };
-        let world = self.bone_world(name, time, Some(&lookup))?;
+        let world = self.bone_world(name, time, Some(&lookup), &[])?;
         Some(self.skin_matrices(&world))
     }
 
@@ -366,10 +514,12 @@ impl DynModel {
         name: &str,
         time: f32,
         merge: Option<BoneMerge<'_>>,
+        params: &[(&str, f32)],
     ) -> Option<Vec<Mat4>> {
         let sk = self.skeleton.as_ref()?;
-        let seq = sk.sequences.iter().find(|s| s.name == name)?;
-        let anim = sk.anims.get(seq.anim.max(0) as usize)?;
+        let src = &sk.anim;
+        let seq = src.sequences.iter().find(|s| s.name == name)?;
+        let anim = src.anims.get(seq.anim.max(0) as usize)?;
         if anim.frames <= 0 {
             return None;
         }
@@ -380,19 +530,17 @@ impl DynModel {
         } else {
             (f / frames as f32).min(1.0)
         };
-        let frame = ((cycle * frames as f32) as usize).min(frames - 1);
-        let (start, frame) = anim.frame_data(&sk.mdl, frame)?;
-        let mut local = gm_formats::mdl::anim_pose(&sk.mdl, start, &sk.bones, frame, false)?;
+        let mut local = src.blended(seq, cycle, params)?;
         // layers: delta animations added with the layer's weight at this cycle
         for layer in &seq.autolayers {
             if layer.flags & 0x4000 != 0 {
                 continue;
             }
             let w = layer.weight(cycle);
-            let Some(lseq) = sk.sequences.get(layer.sequence.max(0) as usize) else {
+            let Some(lseq) = src.sequences.get(layer.sequence.max(0) as usize) else {
                 continue;
             };
-            let Some(lanim) = sk.anims.get(lseq.anim.max(0) as usize) else {
+            let Some(lanim) = src.anims.get(lseq.anim.max(0) as usize) else {
                 continue;
             };
             if w <= 0.0 || lanim.flags & 4 == 0 || lanim.frames <= 0 {
@@ -403,13 +551,7 @@ impl DynModel {
             } else {
                 cycle
             };
-            let lframe = ((lcycle * (lanim.frames - 1) as f32).round() as usize)
-                .min(lanim.frames as usize - 1);
-            let Some((lstart, lframe)) = lanim.frame_data(&sk.mdl, lframe) else {
-                continue;
-            };
-            let Some(delta) = gm_formats::mdl::anim_pose(&sk.mdl, lstart, &sk.bones, lframe, true)
-            else {
+            let Some(delta) = src.frame_pose(lanim, lcycle, true) else {
                 continue;
             };
             for ((pos, quat), (dpos, dquat)) in local.iter_mut().zip(&delta) {
@@ -421,8 +563,15 @@ impl DynModel {
                 *quat = (glam::Quat::from_array(*quat).normalize() * dq).to_array();
             }
         }
-        let mut world: Vec<Mat4> = Vec::with_capacity(local.len());
-        for (i, (pos, quat)) in local.iter().enumerate() {
+        // onto the rendered skeleton by bone name; bones the animation lacks stay in bind pose
+        let mut rlocal: LocalPose = sk.bones.iter().map(|b| (b.pos, b.quat)).collect();
+        for (j, l) in local.iter().enumerate() {
+            if let Some(Some(i)) = src.map.get(j) {
+                rlocal[*i] = *l;
+            }
+        }
+        let mut world: Vec<Mat4> = Vec::with_capacity(rlocal.len());
+        for (i, (pos, quat)) in rlocal.iter().enumerate() {
             let bone = &sk.bones[i];
             if let Some(m) = merge.and_then(|f| f(&bone.name)) {
                 world.push(m);
@@ -1254,10 +1403,8 @@ impl WorldRenderer {
             }
         }
         let skeleton = mount.read(path).ok().map(|bytes| Skeleton {
-            sequences: gm_formats::mdl::sequences(&bytes, &mdl.header),
-            anims: gm_formats::mdl::anim_descs(&bytes, &mdl.header),
             bones: mdl.bones.clone(),
-            mdl: bytes,
+            anim: AnimSource::for_model(mount, bytes, &mdl),
         });
         (!parts.is_empty()).then_some(DynModel {
             parts,

@@ -8,7 +8,69 @@ fn main() {
             continue;
         };
         match gm_render::props::load_model(&mount, &path) {
-            Err(e) => println!("{path}: ERROR {e}"),
+            Err(e) => {
+                println!("{path}: no mesh ({e})");
+                let Ok(mdl) = gm_formats::mdl::Mdl::parse(&bytes) else {
+                    continue;
+                };
+                let h = &mdl.header;
+                let seqs = gm_formats::mdl::sequences(&bytes, h);
+                let anims = gm_formats::mdl::anim_descs(&bytes, h);
+                let (ani, blocks) = gm_formats::mdl::anim_blocks(&bytes);
+                println!(
+                    "  bones {} ani {ani:?} blocks {} includes {:?}",
+                    mdl.bones.len(),
+                    blocks.len(),
+                    gm_formats::mdl::include_models(&bytes, h)
+                );
+                println!(
+                    "  ani bytes {:?} first blocks {:?}",
+                    mount.read(&ani).map(|b| b.len()).ok(),
+                    &blocks[..blocks.len().min(3)]
+                );
+                println!(
+                    "  pose params {:?}",
+                    gm_formats::mdl::pose_params(&bytes, h)
+                        .iter()
+                        .map(|p| (p.name.as_str(), p.start, p.end, p.loop_range))
+                        .collect::<Vec<_>>()
+                );
+                for s in &seqs {
+                    let a = anims.get(s.anim.max(0) as usize);
+                    println!(
+                        "  seq {:?} anim {} -> {:?} layers {}",
+                        s.name,
+                        s.anim,
+                        a.map(|a| (a.name.as_str(), a.fps, a.frames, a.flags, a.block)),
+                        s.autolayers.len()
+                    );
+                    if s.group_size != [1, 1] && std::env::var_os("GRID").is_some() {
+                        println!(
+                            "      grid {:?} params {:?} {:?}..{:?} anims {:?}",
+                            s.group_size,
+                            s.param,
+                            s.param_start,
+                            s.param_end,
+                            s.blends
+                                .iter()
+                                .map(|&b| anims
+                                    .get(b as usize)
+                                    .map(|a| a.name.as_str())
+                                    .unwrap_or("?"))
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                    if std::env::var_os("LAYERS").is_some() {
+                        for l in &s.autolayers {
+                            println!(
+                                "      layer seq {} flags {:#x} {}..{}..{}..{}",
+                                l.sequence, l.flags, l.start, l.peak, l.tail, l.end
+                            );
+                        }
+                    }
+                }
+                println!("  {} seqs, {} anims", seqs.len(), anims.len());
+            }
             Ok((mdl, vvd, vtx)) => {
                 let h = &mdl.header;
                 let mut lo = [f32::MAX; 3];
@@ -45,7 +107,11 @@ fn main() {
                 let anims = gm_formats::mdl::anim_descs(&bytes, h);
                 let (ani, blocks) = gm_formats::mdl::anim_blocks(&bytes);
                 println!("  ani {ani:?} blocks {}", blocks.len());
-                for s in seqs.iter().take(12) {
+                println!(
+                    "  includes {:?}",
+                    gm_formats::mdl::include_models(&bytes, h)
+                );
+                for s in seqs.iter().take(400) {
                     let a = anims.get(s.anim.max(0) as usize);
                     println!(
                         "  seq {:?} anim {} -> {:?}",

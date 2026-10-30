@@ -42,6 +42,8 @@ pub struct Header {
     pub local_anim_offset: i32,
     pub local_seq_count: i32,
     pub local_seq_offset: i32,
+    pub local_pose_param_count: i32,
+    pub local_pose_param_offset: i32,
     pub texture_count: i32,
     pub texture_offset: i32,
     pub texture_dir_count: i32,
@@ -122,7 +124,8 @@ impl Header {
         r.skip(8)?; // flex rules
         r.skip(8)?; // ik chains
         r.skip(8)?; // mouths
-        r.skip(8)?; // local pose params
+        let local_pose_param_count = r.i32()?;
+        let local_pose_param_offset = r.i32()?;
         let surface_prop_offset = r.i32()?;
         let key_value_offset = r.i32()?;
         let key_value_count = r.i32()?;
@@ -158,6 +161,8 @@ impl Header {
             local_anim_offset,
             local_seq_count,
             local_seq_offset,
+            local_pose_param_count,
+            local_pose_param_offset,
             texture_count,
             texture_offset,
             texture_dir_count,
@@ -307,6 +312,66 @@ pub struct Sequence {
     pub name: String,
     pub anim: i16,
     pub autolayers: Vec<AutoLayer>,
+    /// Blend grid: `group_size[0]` columns by `group_size[1]` rows of animation indices, row
+    /// major in `blends`; `anim` is `blends[0]`.
+    pub group_size: [i32; 2],
+    pub blends: Vec<i16>,
+    /// Pose parameter driving each grid axis (-1 = none) and the parameter range it spans.
+    pub param: [i32; 2],
+    pub param_start: [f32; 2],
+    pub param_end: [f32; 2],
+}
+
+impl Sequence {
+    /// Animation index at grid cell (`x`, `y`).
+    pub fn blend(&self, x: usize, y: usize) -> Option<i16> {
+        self.blends
+            .get(y * self.group_size[0].max(1) as usize + x)
+            .copied()
+    }
+
+    /// Where pose value `value` of axis `axis` lands on the grid: the lower cell and the
+    /// fraction towards the next one.
+    pub fn grid_pos(&self, axis: usize, value: f32) -> (usize, f32) {
+        let n = self.group_size[axis].max(1) as usize;
+        if n < 2 || self.param_end[axis] == self.param_start[axis] {
+            return (0, 0.0);
+        }
+        let t = ((value - self.param_start[axis])
+            / (self.param_end[axis] - self.param_start[axis]))
+            .clamp(0.0, 1.0)
+            * (n - 1) as f32;
+        let i = (t.floor() as usize).min(n - 2);
+        (i, t - i as f32)
+    }
+}
+
+/// A pose parameter (`mstudioposeparamdesc_t`, 20 bytes): a named value in `start..end` the
+/// blend grids are driven by; `loop_range` > 0 wraps it (angles).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PoseParam {
+    pub name: String,
+    pub flags: i32,
+    pub start: f32,
+    pub end: f32,
+    pub loop_range: f32,
+}
+
+/// The pose parameters of a model.
+pub fn pose_params(data: &[u8], header: &Header) -> Vec<PoseParam> {
+    let f = |p: usize| f32::from_bits(i32_at(data, p).unwrap_or(0) as u32);
+    (0..header.local_pose_param_count.max(0) as usize)
+        .filter_map(|i| {
+            let o = header.local_pose_param_offset as usize + i * 20;
+            Some(PoseParam {
+                name: name_at(data, o.checked_add_signed(i32_at(data, o)? as isize)?)?,
+                flags: i32_at(data, o + 4)?,
+                start: f(o + 8),
+                end: f(o + 12),
+                loop_range: f(o + 16),
+            })
+        })
+        .collect()
 }
 
 /// A layer a sequence blends in (`mstudioautolayer_t`, 24 bytes): another sequence (usually a
@@ -361,28 +426,35 @@ pub struct AnimDesc {
 }
 
 impl AnimDesc {
-    /// Where frame `frame` of this animation starts when its data is in the `.mdl` (block 0):
-    /// the byte offset of the bone list and the frame within it. `None` when the data lives
-    /// in an external block.
-    pub fn frame_start(&self, frame: usize) -> Option<(usize, usize)> {
+    /// Where frame `frame` of this animation lives: `(block, offset, frame)`. Block 0 is the
+    /// `.mdl` itself with `offset` from the file start; another block is a range of the `.ani`
+    /// (see [`anim_blocks`]) with `offset` from the block start. Sectioned animations go
+    /// through their section table in `data` (the `.mdl`).
+    pub fn frame_block(&self, data: &[u8], frame: usize) -> Option<(i32, usize, usize)> {
         if self.section_frames <= 0 {
-            return (self.block == 0).then_some((self.offset + self.index as usize, frame));
+            let offset = if self.block == 0 {
+                self.offset.checked_add_signed(self.index as isize)?
+            } else {
+                usize::try_from(self.index).ok()?
+            };
+            return Some((self.block, offset, frame));
         }
         let section = frame / self.section_frames as usize;
-        Some((
-            self.offset + self.section_index as usize + section * 8,
-            frame % self.section_frames as usize,
-        ))
+        let p = self.offset + self.section_index as usize + section * 8;
+        let block = i32_at(data, p)?;
+        let index = i32_at(data, p + 4)?;
+        let offset = if block == 0 {
+            self.offset.checked_add_signed(index as isize)?
+        } else {
+            usize::try_from(index).ok()?
+        };
+        Some((block, offset, frame % self.section_frames as usize))
     }
 
-    /// Resolves [`frame_start`](Self::frame_start) for a sectioned animation through the
-    /// section table in `data`.
+    /// [`frame_block`](Self::frame_block) for data in the `.mdl` only: `(offset, frame)`.
     pub fn frame_data(&self, data: &[u8], frame: usize) -> Option<(usize, usize)> {
-        let (p, f) = self.frame_start(frame)?;
-        if self.section_frames <= 0 {
-            return Some((p, f));
-        }
-        (i32_at(data, p)? == 0).then_some((self.offset + i32_at(data, p + 4)? as usize, f))
+        let (block, offset, frame) = self.frame_block(data, frame)?;
+        (block == 0).then_some((offset, frame))
     }
 }
 
@@ -439,13 +511,39 @@ pub fn sequences(data: &[u8], header: &Header) -> Vec<Sequence> {
                 })
             })
             .collect();
+        let group_size = [
+            i32_at(data, o + 68).unwrap_or(1).max(1),
+            i32_at(data, o + 72).unwrap_or(1).max(1),
+        ];
+        let blends = (0..(group_size[0] * group_size[1]) as usize)
+            .filter_map(|i| i16_at(data, o + anim_idx as usize + i * 2))
+            .collect();
+        let f = |p: usize| f32::from_bits(i32_at(data, p).unwrap_or(0) as u32);
         out.push(Sequence {
             name,
             anim,
             autolayers,
+            group_size,
+            blends,
+            param: [
+                i32_at(data, o + 76).unwrap_or(-1),
+                i32_at(data, o + 80).unwrap_or(-1),
+            ],
+            param_start: [f(o + 84), f(o + 88)],
+            param_end: [f(o + 92), f(o + 96)],
         });
     }
     out
+}
+
+/// Models whose animations this one includes (`mstudiomodelgroup_t`: label, file name).
+pub fn include_models(data: &[u8], header: &Header) -> Vec<String> {
+    (0..header.include_model_count.max(0) as usize)
+        .filter_map(|i| {
+            let o = header.include_model_offset as usize + i * 8;
+            name_at(data, o + i32_at(data, o + 4)? as usize)
+        })
+        .collect()
 }
 
 /// The animations of a model.
