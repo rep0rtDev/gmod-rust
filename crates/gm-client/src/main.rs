@@ -79,6 +79,8 @@ struct Gfx {
     world: WorldRenderer,
     depth: wgpu::TextureView,
     models: std::collections::HashMap<String, Option<gm_render::world::DynModel>>,
+    player_box: gm_render::world::DynModel,
+    beam: gm_render::world::DynModel,
 }
 
 struct App {
@@ -141,6 +143,8 @@ impl App {
             t0.elapsed().as_secs_f32()
         );
         let depth = depth_view(&gpu, config.width, config.height);
+        let player_box = world.solid_box(&gpu, [200, 120, 60, 255], false);
+        let beam = world.solid_box(&gpu, [90, 200, 255, 255], true);
         self.gfx = Some(Gfx {
             window,
             surface,
@@ -149,6 +153,8 @@ impl App {
             world,
             depth,
             models: Default::default(),
+            player_box,
+            beam,
         });
         self.set_grab(true);
         Ok(())
@@ -165,7 +171,11 @@ impl App {
             g.window.set_cursor_grab(CursorGrabMode::None).is_ok()
         };
         g.window.set_cursor_visible(!on);
-        self.grabbed = on && ok;
+        if on && !ok {
+            eprintln!("cursor grab unavailable: mouse look needs the pointer inside the window");
+        }
+        // without a grab (some X servers) input still works, only the pointer is not held
+        self.grabbed = on;
     }
 
     fn cmd(&self) -> NetCmd {
@@ -269,16 +279,71 @@ impl App {
             }
         }
         let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
-        let items: Vec<_> = ents
+        let mut items: Vec<_> = ents
             .values()
             .filter_map(|e| {
                 let (pos, ang) = match self.sim.interp.sample(e.id, rt) {
                     Some(p) => (p.pos, p.angles),
                     None => (e.pos, e.angles),
                 };
-                Some((g.models.get(&e.model)?.as_ref()?, pos, ang))
+                Some((
+                    g.models.get(&e.model)?.as_ref()?,
+                    gm_render::world::model_transform(pos, ang),
+                ))
             })
             .collect();
+        let me = self.sim.client.player_id;
+        for p in &self.sim.client.world.players {
+            if Some(p.id) == me || !p.alive {
+                continue;
+            }
+            let h = if p.ducked { 36.0 } else { 72.0 };
+            items.push((
+                &g.player_box,
+                glam::Mat4::from_translation(p.origin + Vec3::Z * (h / 2.0))
+                    * glam::Mat4::from_rotation_z(p.view_angles.y.to_radians())
+                    * glam::Mat4::from_scale(Vec3::new(32.0, 32.0, h)),
+            ));
+        }
+        // physgun beam: from just below and right of the eye to the held prop, or along the aim
+        if self.weapon == 1 && self.mouse.contains(&0) {
+            let fwd = camera.forward();
+            let right = fwd.cross(Vec3::Z).normalize_or_zero();
+            let start = camera.position + right * 6.0 - Vec3::Z * 6.0 + fwd * 12.0;
+            let held = self
+                .sim
+                .client
+                .world
+                .players
+                .iter()
+                .find(|p| Some(p.id) == me)
+                .and_then(|p| p.held)
+                .and_then(|id| ents.get(&id))
+                .map(|e| e.pos);
+            let end = held.unwrap_or_else(|| {
+                self.sim
+                    .collision
+                    .trace_ray(
+                        camera.position,
+                        camera.position + fwd * 4096.0,
+                        gm_collision::MASK_SOLID,
+                    )
+                    .end
+            });
+            let d = end - start;
+            let len = d.length();
+            if len > 1.0 {
+                let rot = glam::Quat::from_rotation_arc(Vec3::X, d / len);
+                items.push((
+                    &g.beam,
+                    glam::Mat4::from_scale_rotation_translation(
+                        Vec3::new(len, 1.0, 1.0),
+                        rot,
+                        start + d * 0.5,
+                    ),
+                ));
+            }
+        }
         g.world
             .draw_models(&g.gpu, &camera, &view, &g.depth, aspect, &items);
         g.gpu.queue.present(frame);

@@ -105,6 +105,13 @@ type DynPart = (
 
 pub struct DynModel {
     parts: Vec<DynPart>,
+    /// Drawn at full brightness (beams, markers), not shaded by the sun.
+    unlit: bool,
+}
+
+/// Placement of a `DynModel`: origin plus Source angles.
+pub fn model_transform(pos: Vec3, angles: Vec3) -> Mat4 {
+    Mat4::from_translation(pos) * Mat4::from_mat3(crate::props::angle_matrix(angles.to_array()))
 }
 
 #[derive(Clone, Debug, Default)]
@@ -790,7 +797,78 @@ impl WorldRenderer {
                 parts.push((bg, verts, idx));
             }
         }
-        (!parts.is_empty()).then_some(DynModel { parts })
+        (!parts.is_empty()).then_some(DynModel {
+            parts,
+            unlit: false,
+        })
+    }
+
+    /// A unit cube (-0.5..0.5) of one colour, scaled by the item transform: player boxes,
+    /// the physgun beam.
+    pub fn solid_box(&self, gpu: &Gpu, rgba: [u8; 4], unlit: bool) -> DynModel {
+        let device = &gpu.device;
+        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("solid params"),
+            contents: bytemuck::bytes_of(&MaterialParams {
+                alpha_test: 0,
+                pad: [0; 3],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let t = upload_rgba(
+            gpu,
+            &rgba,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            "solid",
+        );
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("solid"),
+            layout: &self.material_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &t.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.base_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params.as_entire_binding(),
+                },
+            ],
+        });
+        let mut verts = Vec::new();
+        let mut idx = Vec::new();
+        for axis in 0..3 {
+            for sign in [-1.0f32, 1.0] {
+                let mut n = [0.0f32; 3];
+                n[axis] = sign;
+                let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+                let base = verts.len() as u32;
+                for (a, b) in [(-0.5f32, -0.5f32), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)] {
+                    let mut p = [0.0f32; 3];
+                    p[axis] = 0.5 * sign;
+                    p[u] = a;
+                    p[v] = b;
+                    verts.push((p, n, [0.5, 0.5]));
+                }
+                if sign > 0.0 {
+                    idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+                } else {
+                    idx.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
+                }
+            }
+        }
+        DynModel {
+            parts: vec![(bg, verts, idx)],
+            unlit,
+        }
     }
 
     /// Draws moving models over the frame `draw` left in `color`/`depth`: each item is a model
@@ -802,20 +880,23 @@ impl WorldRenderer {
         color: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         aspect: f32,
-        items: &[(&DynModel, Vec3, Vec3)],
+        items: &[(&DynModel, Mat4)],
     ) {
         let mut verts: Vec<Vertex> = Vec::new();
         let mut idx: Vec<u32> = Vec::new();
         let mut draws = Vec::new();
-        for (m, pos, ang) in items {
-            let rot = crate::props::angle_matrix(ang.to_array());
+        for (m, xf) in items {
             for (bg, pv, pi) in &m.parts {
                 let base = verts.len() as u32;
                 for (p, n, uv) in pv {
-                    let n = (rot * Vec3::from(*n)).normalize_or_zero();
-                    let shade = 0.45 + 0.55 * n.dot(self.sun).max(0.0);
+                    let n = xf.transform_vector3(Vec3::from(*n)).normalize_or_zero();
+                    let shade = if m.unlit {
+                        1.0
+                    } else {
+                        0.45 + 0.55 * n.dot(self.sun).max(0.0)
+                    };
                     verts.push(Vertex {
-                        position: (*pos + rot * Vec3::from(*p)).to_array(),
+                        position: xf.transform_point3(Vec3::from(*p)).to_array(),
                         uv: *uv,
                         lm_uv: self.white_uv,
                         color: [shade; 3],
