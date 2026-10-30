@@ -541,7 +541,11 @@ public:
 				// the floor - the shot drum - stays with the resting rules)
 				float d_face = 1e30f;
 				for (const Pt *f : face) d_face = std::min(d_face, f->d);
-				if (face.size() >= 3 && fastest > 0.3f && d_face > 0.02f) {
+				// a face sliding fast along the plane is not a face landing in the game (the drum
+				// at 285 u/s strikes rim vertices); a face arriving without slip is
+				float face_slip = 0.0f;
+				for (const Pt *f : face) { JPH::Vec3 vr = rel(f->p); face_slip = std::max(face_slip, (vr - n * vr.Dot(n)).Length()); }
+				if (face.size() >= 3 && fastest > 0.3f && d_face > 0.02f && face_slip < 3.0f) {
 					std::vector<float> acc(face.size(), 0.0f);
 					for (int it = 0; it < 60; ++it) {
 						float moved = 0.0f;
