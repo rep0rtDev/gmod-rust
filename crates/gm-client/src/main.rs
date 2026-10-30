@@ -174,6 +174,8 @@ struct Viewmodel {
     fire: &'static str,
     hold: Option<&'static str>,
     reload: Option<&'static str>,
+    /// Secondary fire sequence; `None` for weapons without one (the right click does nothing).
+    alt: Option<&'static str>,
 }
 
 const fn vm(
@@ -193,6 +195,7 @@ const fn vm(
         fire,
         hold: None,
         reload: None,
+        alt: None,
     }
 }
 
@@ -248,6 +251,7 @@ const WEAPONS: [Viewmodel; 10] = [
         )
     },
     Viewmodel {
+        alt: Some("altfire"),
         reload: Some("reload"),
         ..vm(
             "weapon_smg1",
@@ -258,15 +262,19 @@ const WEAPONS: [Viewmodel; 10] = [
             "fire01",
         )
     },
-    vm(
-        "weapon_ar2",
-        "ar2",
-        "models/weapons/c_irifle.mdl",
-        "IR_idle",
-        "IR_draw",
-        "IR_fire",
-    ),
     Viewmodel {
+        alt: Some("IR_fire2"),
+        ..vm(
+            "weapon_ar2",
+            "ar2",
+            "models/weapons/c_irifle.mdl",
+            "IR_idle",
+            "IR_draw",
+            "IR_fire",
+        )
+    },
+    Viewmodel {
+        alt: Some("altfire"),
         reload: Some("reload1"),
         ..vm(
             "weapon_shotgun",
@@ -1151,6 +1159,30 @@ impl App {
                             color: [0.85, 0.85, 0.85, 0.9],
                         });
                     }
+                    // secondary ammo (AR2 balls, SMG grenades) in its own box to the left
+                    if p.alt >= 0 {
+                        let bw = 70.0;
+                        let bx = ax - bw - 10.0;
+                        items.push(UiItem::Rect {
+                            x: bx,
+                            y,
+                            w: bw,
+                            h: box_h,
+                            color: [0.0, 0.0, 0.0, 0.5],
+                        });
+                        items.push(UiItem::Text {
+                            x: bx + 12.0,
+                            y: y + 6.0,
+                            text: "Alt".to_string(),
+                            color: [0.85, 0.85, 0.85, 0.9],
+                        });
+                        items.push(UiItem::Text {
+                            x: bx + 12.0,
+                            y: y + lh + 8.0,
+                            text: p.alt.to_string(),
+                            color: white,
+                        });
+                    }
                 }
             }
             return items;
@@ -1437,9 +1469,12 @@ impl ApplicationHandler for App {
                             });
                         }
                         if let Some(vm) = viewmodel(self.weapon) {
-                            // the physgun's right click only acts while holding
-                            if b == 0 || vm.hold.is_none() {
+                            // left: the attack; right: the secondary fire where the weapon
+                            // has one (the physgun's right click only acts while holding)
+                            if b == 0 {
                                 self.vm_anim = Some((vm.fire, Instant::now()));
+                            } else if let Some(alt) = vm.alt {
+                                self.vm_anim = Some((alt, Instant::now()));
                             }
                         }
                     }

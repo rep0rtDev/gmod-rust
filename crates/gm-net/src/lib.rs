@@ -82,6 +82,7 @@ mod tests {
                 active: 5,
                 clip: 18,
                 reserve: 90,
+                alt: -1,
             }],
             entities: vec![EntityState {
                 id: 2,

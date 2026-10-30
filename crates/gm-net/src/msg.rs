@@ -136,6 +136,8 @@ pub struct PlayerSnap {
     /// Rounds in the active weapon's clip, -1 without a clip; reserve of its primary ammo.
     pub clip: i16,
     pub reserve: i16,
+    /// Secondary ammo (AR2 balls, SMG grenades), -1 for weapons without one.
+    pub alt: i16,
 }
 
 /// Weapon class names to the registry bitmask and back.
@@ -652,6 +654,7 @@ impl ServerMsg {
                     w.u8(p.active);
                     w.i16(p.clip);
                     w.i16(p.reserve);
+                    w.i16(p.alt);
                 }
                 w.varint(entities.len() as u64);
                 for e in entities {
@@ -796,6 +799,7 @@ impl ServerMsg {
                         active: r.u8()?,
                         clip: r.i16()?,
                         reserve: r.i16()?,
+                        alt: r.i16()?,
                     });
                 }
                 let n = r.varint()? as usize;

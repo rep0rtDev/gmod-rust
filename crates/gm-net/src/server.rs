@@ -843,6 +843,14 @@ impl ServerNet {
                 reserve: gm_server::weapons::def(&p.active_weapon)
                     .and_then(|d| p.inventory.ammo.get(d.ammo1))
                     .map_or(0, |a| (*a).clamp(0, i16::MAX as i32) as i16),
+                alt: gm_server::weapons::def(&p.active_weapon)
+                    .filter(|d| !d.ammo2.is_empty())
+                    .map_or(-1, |d| {
+                        p.inventory
+                            .ammo
+                            .get(d.ammo2)
+                            .map_or(0, |a| (*a).clamp(0, i16::MAX as i32) as i16)
+                    }),
             })
             .collect();
         for (&endpoint, slot) in self.clients.iter_mut() {
