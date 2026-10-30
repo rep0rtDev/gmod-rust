@@ -1323,6 +1323,15 @@ impl App {
                 g.world.draw_models(&g.gpu, &vm_camera, &target, &vm_items);
             }
         }
+        // 3D2D planes of the previous frame's HUD handlers, on the world's depth
+        {
+            let g = self.gfx.as_ref().unwrap();
+            let planes = hud_planes(&self.sim.hud_draws, &self.mount, g);
+            if !planes.is_empty() {
+                let aspect = g.config.width as f32 / g.config.height as f32;
+                g.ui.draw_world(&g.gpu, &view, &g.depth, camera.view_proj(aspect), &planes);
+            }
+        }
         {
             let g = self.gfx.as_ref().unwrap();
             let (w, h) = (g.config.width, g.config.height);
@@ -1588,10 +1597,25 @@ impl App {
                 color: white,
             });
             // client addons' `render.hud`
+            // 3D2D blocks were drawn in the world before the HUD; the rest is screen space
+            let mut in_plane = false;
             for d in &self.sim.hud_draws {
+                match d {
+                    gm_script::DrawCmd::Begin3D2D { .. } => {
+                        in_plane = true;
+                        continue;
+                    }
+                    gm_script::DrawCmd::End3D2D => {
+                        in_plane = false;
+                        continue;
+                    }
+                    _ if in_plane => continue,
+                    _ => {}
+                }
                 items.push(match d {
                     // a world draw from a HUD handler: nothing on the 2D layer
                     gm_script::DrawCmd::Model { .. } => continue,
+                    gm_script::DrawCmd::Begin3D2D { .. } | gm_script::DrawCmd::End3D2D => continue,
                     // fonts and images were prepared before the frame
                     gm_script::DrawCmd::Font { .. } => continue,
                     gm_script::DrawCmd::Rect { x, y, w, h, color } => UiItem::Rect {
@@ -2333,4 +2357,81 @@ fn load_client_package(script: &mut gm_script::Runtime, path: &std::path::Path, 
         ),
         Err(e) => eprintln!("{how} client addon {}: {e}", path.display()),
     }
+}
+
+/// The 3D2D blocks of a frame's draws: (plane matrix, the 2D items between `start3d2d` and
+/// `end3d2d`); `Model` and `Font` commands inside a block are ignored, images were loaded with
+/// the frame's preparation.
+fn hud_planes(
+    draws: &[gm_script::DrawCmd],
+    _mount: &gm_content::Mount,
+    _g: &Gfx,
+) -> Vec<(glam::Mat4, Vec<UiItem>)> {
+    let mut planes = Vec::new();
+    let mut current: Option<(glam::Mat4, Vec<UiItem>)> = None;
+    for d in draws {
+        match d {
+            gm_script::DrawCmd::Begin3D2D { pos, angles, scale } => {
+                if let Some(p) = current.take() {
+                    planes.push(p);
+                }
+                current = Some((
+                    gm_render::ui::plane_transform(*pos, *angles, *scale),
+                    Vec::new(),
+                ));
+            }
+            gm_script::DrawCmd::End3D2D => {
+                if let Some(p) = current.take() {
+                    planes.push(p);
+                }
+            }
+            _ => {
+                let Some((_, items)) = current.as_mut() else {
+                    continue;
+                };
+                match d {
+                    gm_script::DrawCmd::Rect { x, y, w, h, color } => items.push(UiItem::Rect {
+                        x: *x,
+                        y: *y,
+                        w: *w,
+                        h: *h,
+                        color: *color,
+                    }),
+                    gm_script::DrawCmd::Text {
+                        x,
+                        y,
+                        text,
+                        color,
+                        font,
+                    } => items.push(UiItem::Text {
+                        x: *x,
+                        y: *y,
+                        text: text.clone(),
+                        color: *color,
+                        font: font.clone(),
+                    }),
+                    gm_script::DrawCmd::Image {
+                        x,
+                        y,
+                        w,
+                        h,
+                        material,
+                        color,
+                    } => items.push(UiItem::Image {
+                        x: *x,
+                        y: *y,
+                        w: *w,
+                        h: *h,
+                        material: material.clone(),
+                        color: *color,
+                    }),
+                    _ => {}
+                }
+            }
+        }
+    }
+    if let Some(p) = current.take() {
+        planes.push(p);
+    }
+    planes
 }

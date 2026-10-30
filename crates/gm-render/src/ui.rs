@@ -299,8 +299,14 @@ fn font_file(mount: &Mount, family: &str) -> Option<Vec<u8>> {
         .and_then(|p| mount.read(p).ok())
 }
 
+/// A run of vertices drawn with one texture.
+type Batch<'a> = (&'a wgpu::BindGroup, std::ops::Range<u32>);
+
 pub struct UiRenderer {
     pipeline: wgpu::RenderPipeline,
+    /// The same items on a plane in the world (3D2D): depth-tested against the scene.
+    world_pipeline: wgpu::RenderPipeline,
+    plane_layout: wgpu::BindGroupLayout,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     screen_buffer: wgpu::Buffer,
@@ -408,8 +414,67 @@ impl UiRenderer {
             multiview_mask: None,
             cache: None,
         });
+        let plane_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ui plane"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let world_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ui world"),
+            bind_group_layouts: &[Some(&layout), Some(&plane_layout)],
+            ..Default::default()
+        });
+        let world_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("ui world"),
+            layout: Some(&world_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_world"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         Ok(UiRenderer {
             pipeline,
+            world_pipeline,
+            plane_layout,
             layout,
             sampler,
             screen_buffer,
@@ -521,17 +586,14 @@ impl UiRenderer {
         present
     }
 
-    pub fn draw(
+    /// Vertices of `items` in order with one batch per run of the same texture.
+    fn build(
         &self,
-        gpu: &Gpu,
-        color: &wgpu::TextureView,
-        width: u32,
-        height: u32,
         items: &[UiItem],
-    ) {
+    ) -> (Vec<Vertex>, Vec<(&wgpu::BindGroup, std::ops::Range<u32>)>) {
         // vertices in item order, split into batches wherever the texture changes
         let mut vertices: Vec<Vertex> = Vec::new();
-        let mut batches: Vec<(&wgpu::BindGroup, std::ops::Range<u32>)> = Vec::new();
+        let mut batches: Vec<Batch<'_>> = Vec::new();
         let s = ATLAS_SIZE as f32;
         fn quad(
             vertices: &mut Vec<Vertex>,
@@ -561,7 +623,7 @@ impl UiRenderer {
             bg: &'a wgpu::BindGroup,
             from: u32,
             to: u32,
-            batches: &mut Vec<(&'a wgpu::BindGroup, std::ops::Range<u32>)>,
+            batches: &mut Vec<Batch<'a>>,
         ) {
             if from == to {
                 return;
@@ -635,6 +697,18 @@ impl UiRenderer {
             };
             push_batch(bg, from, vertices.len() as u32, &mut batches);
         }
+        (vertices, batches)
+    }
+
+    pub fn draw(
+        &self,
+        gpu: &Gpu,
+        color: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        items: &[UiItem],
+    ) {
+        let (vertices, batches) = self.build(items);
         if vertices.is_empty() {
             return;
         }
@@ -679,5 +753,132 @@ impl UiRenderer {
             }
         }
         gpu.queue.submit([enc.finish()]);
+    }
+
+    /// 3D2D: `planes` are (plane-to-world matrix, items) pairs; pixel coordinates on the plane
+    /// go through the matrix and the camera, depth-tested against the scene's depth without
+    /// writing it (a decal on the world, drawn in order, alpha-blended).
+    pub fn draw_world(
+        &self,
+        gpu: &Gpu,
+        color: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        view_proj: glam::Mat4,
+        planes: &[(glam::Mat4, Vec<UiItem>)],
+    ) {
+        let mut all: Vec<Vertex> = Vec::new();
+        let mut draws: Vec<(wgpu::BindGroup, Vec<Batch<'_>>)> = Vec::new();
+        for (plane, items) in planes {
+            let (vertices, batches) = self.build(items);
+            if vertices.is_empty() {
+                continue;
+            }
+            let base = all.len() as u32;
+            all.extend(vertices);
+            let m = (view_proj * *plane).to_cols_array_2d();
+            let buffer = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("ui plane"),
+                    contents: bytemuck::cast_slice(&m),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+            let bg = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ui plane"),
+                layout: &self.plane_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                }],
+            });
+            let shifted = batches
+                .into_iter()
+                .map(|(b, r)| (b, r.start + base..r.end + base))
+                .collect();
+            draws.push((bg, shifted));
+        }
+        if all.is_empty() {
+            return;
+        }
+        let vb = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("ui world vertices"),
+                contents: bytemuck::cast_slice(&all),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let mut enc = gpu.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("ui world"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.world_pipeline);
+            pass.set_vertex_buffer(0, vb.slice(..));
+            for (plane_bg, batches) in &draws {
+                pass.set_bind_group(1, plane_bg, &[]);
+                for (bg, range) in batches {
+                    pass.set_bind_group(0, *bg, &[]);
+                    pass.draw(range.clone(), 0..1);
+                }
+            }
+        }
+        gpu.queue.submit([enc.finish()]);
+    }
+}
+
+/// `cam.Start3D2D(pos, angles, scale)` as a plane-to-world matrix: pixel x runs along the
+/// angles' forward, pixel y along their right (down the plane when it stands up), `scale`
+/// world units per pixel; the plane's normal is the angles' up. The axes follow Source's
+/// `AngleMatrix` (forward, left, up); the game's own mapping is not recorded yet.
+pub fn plane_transform(pos: glam::Vec3, angles: glam::Vec3, scale: f32) -> glam::Mat4 {
+    let m = crate::props::angle_matrix(angles.to_array());
+    let forward = m.x_axis;
+    let left = m.y_axis;
+    glam::Mat4::from_cols(
+        (forward * scale).extend(0.0),
+        (-left * scale).extend(0.0),
+        m.z_axis.extend(0.0),
+        pos.extend(1.0),
+    )
+}
+
+#[cfg(test)]
+mod plane_tests {
+    use super::plane_transform;
+    use glam::{Vec3, Vec4};
+
+    #[test]
+    fn pixels_map_along_forward_and_right_at_scale() {
+        // yaw 90: forward +y, right +x; a pixel (10, 5) at scale 0.5 lands 5 u along +y and
+        // 2.5 u along +x from the origin
+        let m = plane_transform(Vec3::new(100.0, 0.0, 10.0), Vec3::new(0.0, 90.0, 0.0), 0.5);
+        let p = m * Vec4::new(10.0, 5.0, 0.0, 1.0);
+        assert!(
+            (p.truncate() - Vec3::new(102.5, 5.0, 10.0)).length() < 1e-4,
+            "{p}"
+        );
+        // the plane normal is up for flat angles
+        let n = m * Vec4::new(0.0, 0.0, 1.0, 0.0);
+        assert!((n.truncate() - Vec3::Z).length() < 1e-4, "{n}");
     }
 }

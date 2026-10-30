@@ -226,6 +226,15 @@ pub enum DrawCmd {
         family: String,
         size: f32,
     },
+    /// `draw.start3d2d(pos, angles, scale)`: the 2D calls up to `draw.end3d2d` go onto a plane
+    /// in the world (`cam.Start3D2D`): 2D x along the angles' forward, 2D y along their right,
+    /// `scale` world units per pixel.
+    Begin3D2D {
+        pos: Vec3,
+        angles: Vec3,
+        scale: f32,
+    },
+    End3D2D,
     /// `draw.model`: a model drawn in the world, translucent (alpha 0..1); tool ghosts.
     Model {
         model: String,
@@ -620,6 +629,34 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 Ok(())
             },
         )?,
+    )?;
+    // `draw.start3d2d(pos, angles, scale)` / `draw.end3d2d()`: `cam.Start3D2D` / `cam.End3D2D`
+    let sh = shared.clone();
+    draw.set(
+        "start3d2d",
+        lua.create_function(
+            move |_, (pos, angles, scale): (Table, Option<Table>, Option<f32>)| {
+                let pos = table_vec3(&pos)?;
+                let angles = angles
+                    .map(|t| table_vec3(&t))
+                    .transpose()?
+                    .unwrap_or(Vec3::ZERO);
+                sh.draws.lock().unwrap().push(DrawCmd::Begin3D2D {
+                    pos,
+                    angles,
+                    scale: scale.unwrap_or(1.0),
+                });
+                Ok(())
+            },
+        )?,
+    )?;
+    let sh = shared.clone();
+    draw.set(
+        "end3d2d",
+        lua.create_function(move |_, ()| {
+            sh.draws.lock().unwrap().push(DrawCmd::End3D2D);
+            Ok(())
+        })?,
     )?;
     // `draw.font(name, { family, size })`: `surface.CreateFont`; the client builds the
     // atlas when the command reaches it, so a font declared at load is ready for the first

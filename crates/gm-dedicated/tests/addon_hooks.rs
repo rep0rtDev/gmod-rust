@@ -2446,6 +2446,9 @@ fn a_client_actor_draws_its_hud_through_render_hud() {
                 local w, h = draw.text_size('tick', 'big')
                 draw.text(8, 8, 'w ' .. w .. ' h ' .. h, nil, 'big')
                 draw.texture(0, 0, 64, 64, 'vgui/hud/icon_locked')
+                draw.start3d2d({ x = 100, y = 0, z = 10 }, { x = 0, y = 90, z = 0 }, 0.5)
+                draw.text(0, 0, 'on the wall')
+                draw.end3d2d()
             end)
             hud.register('second', function(s) draw.rect(1, 2, 3, 4) end)"
             .into(),
@@ -2503,6 +2506,19 @@ fn a_client_actor_draws_its_hud_through_render_hud() {
                 material: "vgui/hud/icon_locked".into(),
                 color: [1.0, 1.0, 1.0, 1.0],
             },
+            gm_script::DrawCmd::Begin3D2D {
+                pos: glam::Vec3::new(100.0, 0.0, 10.0),
+                angles: glam::Vec3::new(0.0, 90.0, 0.0),
+                scale: 0.5,
+            },
+            gm_script::DrawCmd::Text {
+                x: 0.0,
+                y: 0.0,
+                text: "on the wall".into(),
+                color: [1.0, 1.0, 1.0, 1.0],
+                font: None,
+            },
+            gm_script::DrawCmd::End3D2D,
             gm_script::DrawCmd::Rect {
                 x: 1.0,
                 y: 2.0,
@@ -2514,7 +2530,7 @@ fn a_client_actor_draws_its_hud_through_render_hud() {
     );
     // the font declaration ran once at load; the frame's draws come anew
     assert!(
-        crt.client_render(&world, 800, 600).len() == 5,
+        crt.client_render(&world, 800, 600).len() == 8,
         "every frame anew"
     );
 }

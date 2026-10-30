@@ -98,8 +98,16 @@ texture path, decodes the VTF once on the client (at most 1024 px a side) and st
 the rectangle tinted by `color`; a missing one draws nothing. Measured (`addon_hooks
 render_hud`): a font declared at load plus two handlers on an 800x600 screen give, in order, the
 font command, a red half-transparent bar at y 580, `tick 42` over it, `w 40 h 24` in the font
-(from stand-in metrics of 10 px a glyph), the 64x64 icon and a white 3x4 rect; the next frame has
-the five draws again and no font command.
+(from stand-in metrics of 10 px a glyph), the 64x64 icon, a 3D2D block with `on the wall` and a
+white 3x4 rect; the next frame has the draws again and no font command.
+
+3D2D: `draw.start3d2d(pos, angles, scale)` ... `draw.end3d2d()` is `cam.Start3D2D`: the rect,
+text and texture calls between them are pixels on a plane in the world, x along the angles'
+forward, y along their right, `scale` world units per pixel, the plane's normal the angles' up
+(`gm_render::ui::plane_transform`, Source's `AngleMatrix` axes). The client draws the blocks
+after the world and before the HUD, depth-tested against the scene without writing depth, in
+call order, alpha-blended. Not measured: the game's exact axis mapping and whether its 3D2D
+writes depth; the ordering with the view model is ours (3D2D under it).
 
 The native client (`gm-client`) hosts both realms: `--addon <dir|file.gmr>` (repeatable) loads
 addons into its in-process server, whose client-realm packages travel over the loopback
@@ -401,7 +409,7 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-3D2D in `draw`, text settings typed in the panel (console only), slider drag
+text settings typed in the panel (console only), slider drag
 (click sets), ghosts following the stool's own placement rules (the stool computes them in `ghost`), spawn
 menu icons, WASM components, +use on players and hold-to-use, the rest of the sandbox gamemode
 in Luau (`PlayerSpawnedProp` ownership rules; `CanProperty`, player models, the +use pickup and

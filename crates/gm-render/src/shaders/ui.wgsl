@@ -6,6 +6,8 @@ struct Screen {
 @group(0) @binding(0) var<uniform> screen: Screen;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
 @group(0) @binding(2) var atlas_sampler: sampler;
+// 3D2D: pixel coordinates on a plane in the world, plane-to-clip matrix
+@group(1) @binding(0) var<uniform> plane: mat4x4<f32>;
 
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -24,6 +26,15 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     let ndc = vec2<f32>(in.position.x / screen.size.x * 2.0 - 1.0, 1.0 - in.position.y / screen.size.y * 2.0);
     out.clip = vec4<f32>(ndc, 0.0, 1.0);
+    out.uv = in.uv;
+    out.color = in.color;
+    return out;
+}
+
+@vertex
+fn vs_world(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    out.clip = plane * vec4<f32>(in.position.x, in.position.y, 0.0, 1.0);
     out.uv = in.uv;
     out.color = in.color;
     return out;
