@@ -1,0 +1,1 @@
+{"name":"phys_drop_edge_crate_x","kind":"phys","map":"gm_construct","model":"models/props_junk/wood_crate001a.mdl","start":[700.0,-500.0,-40.0],"angles":[10,0,0],"ticks":300}

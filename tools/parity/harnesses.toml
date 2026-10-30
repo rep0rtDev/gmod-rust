@@ -827,6 +827,42 @@ ang = 5.0
 contact = 1
 
 [[harness]]
+name = "phys_drop_edge_crate"
+scenario = "phys/drop_edge_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_drop_edge_crate_x"
+scenario = "phys/drop_edge_crate_x"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_drop_edge_ammocan"
+scenario = "phys/drop_edge_ammocan"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
 name = "phys_drop_tilted_lightbox"
 scenario = "phys/drop_tilted_lightbox"
 compare = "rigid"
