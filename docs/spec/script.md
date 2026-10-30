@@ -448,6 +448,19 @@ queued from `player.damaged` shows as `player.death` type 0, the respawn 135 tic
 `player.spawned`; the freeze handler's `sound.play` reaches the client as a `Sounds` message
 with the position and volume given.
 
+## Sandbox gamemode package
+
+`addons/gamemodes/sandbox` is the sandbox gamemode's Luau side as one package (`gm-dedicated
+--addon addons/gamemodes/sandbox`, `gm-client --addon ...` for the embedded game): `limits`
+(the `sbox_maxprops` rule of `examples/sandbox_rules`) and `rules` (`sbox_godmode` 1 cancels
+every `player.damage`, the game's `PlayerShouldTakeDamage`; `sbox_weapons` 0 answers
+`player.loadout` with `false` and gives `gmod_camera`, `gmod_tool`, `weapon_physgun`, physgun
+out, the game's `PlayerLoadout`). The server itself keeps `sbox_noclip`,
+`sbox_playershurtplayers`, `mp_falldamage` and the `sbox_max*` counts, so the package changes
+nothing with the default cvars. Measured (`addon_hooks sandbox_gamemode_package`): godmode on
+takes 30 damage to 0 and off deals it; `sbox_maxprops 1` refuses the second spawn; after a kill
+with `sbox_weapons 0` the respawn holds exactly the three weapons with the physgun active.
+
 ## Sandbox gamemode hooks
 
 Four more of the sandbox gamemode's decisions are asked synchronously in the tick (`return

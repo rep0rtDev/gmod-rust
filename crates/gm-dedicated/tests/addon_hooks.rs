@@ -3210,3 +3210,85 @@ fn sandbox_gamemode_hooks_loadout_undo_unfreeze_and_fall_damage_are_asked() {
     let loadouts: i64 = crt.actors()[0].eval("return state.d.loadouts").unwrap();
     assert_eq!(loadouts, 2);
 }
+
+#[test]
+fn sandbox_gamemode_package_applies_godmode_bare_loadout_and_prop_limit() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let mut rt = gm_script::Runtime::new();
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../addons/gamemodes/sandbox");
+    let m = rt.load_addon(&root).unwrap();
+    assert_eq!(m.id, "sandbox");
+    assert_eq!(rt.actors().len(), 2);
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>,
+                    n: usize| {
+        for _ in 0..n {
+            client.tick(
+                gm_net::NetCmd {
+                    view_angles: glam::Vec3::new(30.0, 0.0, 0.0),
+                    ..Default::default()
+                },
+                &mut c_ep,
+            );
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+        }
+    };
+    step(&mut sn, &mut client, &mut server, 20);
+    assert_eq!(server.players[&1].weapons.len(), gm_server::LOADOUT.len());
+
+    // godmode: no damage while on, damage again once off
+    assert!(server.set_cvar("sbox_godmode", "1"));
+    step(&mut sn, &mut client, &mut server, 2);
+    assert_eq!(server.damage_player(1, 30.0, 0), 0.0);
+    assert_eq!(server.players[&1].health, 100);
+    assert!(server.set_cvar("sbox_godmode", "0"));
+    step(&mut sn, &mut client, &mut server, 2);
+    assert_eq!(server.damage_player(1, 30.0, 0), 30.0);
+    assert_eq!(server.players[&1].health, 70);
+
+    // sbox_maxprops 1: the second spawn is refused by the package
+    assert!(server.set_cvar("sbox_maxprops", "1"));
+    for _ in 0..2 {
+        client.command(gm_net::Command::Spawn {
+            model: "models/props_junk/wood_crate001a.mdl".into(),
+        });
+        step(&mut sn, &mut client, &mut server, 5);
+    }
+    assert_eq!(server.sandbox.props().len(), 1);
+
+    // sbox_weapons 0: the respawn holds camera, tool gun and physgun, physgun out
+    assert!(server.set_cvar("sbox_weapons", "0"));
+    server.damage_player(1, 1000.0, 0);
+    step(&mut sn, &mut client, &mut server, 160);
+    assert!(server.players[&1].alive);
+    assert_eq!(
+        server.players[&1].weapons,
+        vec![
+            "gmod_camera".to_string(),
+            "gmod_tool".to_string(),
+            "weapon_physgun".to_string()
+        ]
+    );
+    assert_eq!(server.players[&1].active_weapon, "weapon_physgun");
+}

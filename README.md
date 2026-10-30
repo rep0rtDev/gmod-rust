@@ -42,7 +42,7 @@ Integration tests that need the game set `GMOD_DIR` to your Garry's Mod install 
 ```
 cargo run --release -p gm-client                       # gm_construct on the embedded server
 cargo run --release -p gm-client -- gm_flatgrass --addon addons/examples/hud_lua
-cargo run --release -p gm-dedicated -- --map gm_construct --bind 0.0.0.0:27015
+cargo run --release -p gm-dedicated -- --map gm_construct --bind 0.0.0.0:27015 --addon addons/gamemodes/sandbox
 cargo run --release -p gm-client -- --connect 192.168.1.10:27015
 ```
 
