@@ -49,6 +49,8 @@ extern "C" {
         max_d: f32,
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
+    fn gmp_rope_predict(system: *mut JPC_PhysicsSystem, dt: f32);
+    fn gmp_rope_clear(system: *mut JPC_PhysicsSystem);
     fn gmp_add_hinge_constraint(
         system: *mut JPC_PhysicsSystem,
         id1: u32,
@@ -966,6 +968,7 @@ impl World {
     pub fn step(&mut self) {
         self.apply_drag();
         unsafe {
+            gmp_rope_predict(self.system.as_raw(), self.tick_interval);
             self.system
                 .update(self.tick_interval, 1, self.temp, self.jobs);
             gmp_apply_impact_offsets(self.system.as_raw());
@@ -996,6 +999,7 @@ impl World {
 
 impl Drop for World {
     fn drop(&mut self) {
+        unsafe { gmp_rope_clear(self.system.as_raw()) };
         unsafe {
             JPC_JobSystemThreadPool_delete(self.jobs);
             JPC_TempAllocatorImpl_delete(self.temp);

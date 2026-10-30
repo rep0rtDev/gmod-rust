@@ -36,6 +36,7 @@ float gmp_get_penetration_slop(const void *system) {
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
+#include <vector>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -78,6 +79,12 @@ void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2)
 	return c;
 }
 
+struct Rope { JPH::DistanceConstraint *c; float min_d, max_d; };
+// slack ropes per physics system (the parity runner builds a world per scenario)
+static std::unordered_map<const void *, std::vector<Rope>> ropes_by_system;
+
+void gmp_rope_clear(void *system) { ropes_by_system.erase(system); }
+
 // rope: distance between two world space points kept within [min, max] (metres)
 void *gmp_add_distance_constraint(void *system, unsigned int id1, unsigned int id2,
 	float x1, float y1, float z1, float x2, float y2, float z2, float min_d, float max_d) {
@@ -94,7 +101,28 @@ void *gmp_add_distance_constraint(void *system, unsigned int id1, unsigned int i
 	s.mMaxDistance = max_d;
 	JPH::Constraint *c = s.Create(*a, *b);
 	sys->AddConstraint(c);
+	if (min_d < max_d) ropes_by_system[system].push_back({ static_cast<JPH::DistanceConstraint *>(c), min_d, max_d });
 	return c;
+}
+
+// the game's rope catches the tick before its attachments pass its length (the hang harness
+// shows it acting at 79.59 of 80 u): a slack rope whose attachments would be further apart
+// than its length by the end of the step is a rod for this step, see docs/spec/physics.md
+void gmp_rope_predict(void *system, float dt) {
+	auto it = ropes_by_system.find(system);
+	if (it == ropes_by_system.end()) return;
+	for (Rope &r : it->second) {
+		JPH::Body *b1 = r.c->GetBody1(), *b2 = r.c->GetBody2();
+		JPH::RVec3 p1 = b1->GetCenterOfMassTransform() * r.c->GetConstraintToBody1Matrix().GetTranslation();
+		JPH::RVec3 p2 = b2->GetCenterOfMassTransform() * r.c->GetConstraintToBody2Matrix().GetTranslation();
+		JPH::Vec3 d = JPH::Vec3(p2 - p1);
+		float len = d.Length();
+		if (len < 1e-6f) continue;
+		JPH::Vec3 dir = d / len;
+		float rate = (b2->GetPointVelocity(p2) - b1->GetPointVelocity(p1)).Dot(dir);
+		bool taut = len + rate * dt > r.max_d;
+		r.c->SetDistance(taut ? r.max_d : r.min_d, r.max_d);
+	}
 }
 
 // hinge (phys_hinge): world space point and axis in Jolt metres/axes
@@ -133,6 +161,10 @@ void gmp_remove_body(void *system, unsigned int id) {
 }
 
 void gmp_remove_constraint(void *system, void *constraint) {
+	auto it = ropes_by_system.find(system);
+	if (it != ropes_by_system.end())
+		for (size_t i = 0; i < it->second.size(); ++i)
+			if (it->second[i].c == constraint) { it->second.erase(it->second.begin() + (long)i); break; }
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
 	sys->RemoveConstraint(reinterpret_cast<JPH::Constraint *>(constraint));
 }
