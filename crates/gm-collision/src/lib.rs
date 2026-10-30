@@ -33,6 +33,8 @@ struct Leaf {
     contents: i32,
     first_brush: u32,
     num_brushes: u32,
+    /// Visibility cluster (-1 for solid leafs).
+    cluster: i16,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -68,6 +70,10 @@ pub struct World {
     /// Per brush side: its texture is the sky (`SURF_SKY`/`SURF_SKY2D`); empty when unknown.
     side_sky: Vec<bool>,
     head_node: i32,
+    /// PVS: `vis[c]` is a bitset over clusters visible from cluster `c`; empty when the map has
+    /// no visibility lump.
+    vis: Vec<Vec<u64>>,
+    num_clusters: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -107,6 +113,26 @@ struct Sweep {
 
 impl World {
     pub fn from_bsp(bsp: &Bsp<'_>) -> Self {
+        let (vis, num_clusters) = match gm_formats::bsp::extra::Visibility::parse(bsp) {
+            Ok(v) if v.num_clusters > 0 => {
+                let words = v.num_clusters.div_ceil(64);
+                let table: Vec<Vec<u64>> = (0..v.num_clusters)
+                    .map(|c| {
+                        let mut row = vec![0u64; words];
+                        if let Ok(bits) = v.pvs(bsp, c) {
+                            for (i, b) in bits.iter().enumerate() {
+                                if *b {
+                                    row[i / 64] |= 1 << (i % 64);
+                                }
+                            }
+                        }
+                        row
+                    })
+                    .collect();
+                (table, v.num_clusters)
+            }
+            _ => (Vec::new(), 0),
+        };
         World {
             disps: displacements(bsp),
             planes: bsp
@@ -132,6 +158,7 @@ impl World {
                     contents: l.contents,
                     first_brush: l.first_leaf_brush as u32,
                     num_brushes: l.num_leaf_brushes as u32,
+                    cluster: l.cluster,
                 })
                 .collect(),
             leaf_brushes: bsp.leaf_brushes.clone(),
@@ -161,6 +188,8 @@ impl World {
                 })
                 .collect(),
             head_node: bsp.models.first().map(|m| m.head_node).unwrap_or(0),
+            vis,
+            num_clusters,
         }
     }
 
@@ -197,12 +226,15 @@ impl World {
                 contents: 0,
                 first_brush: 0,
                 num_brushes: brushes.len() as u32,
+                cluster: 0,
             }],
             leaf_brushes,
             brushes,
             side_planes,
             side_sky: Vec::new(),
             head_node: -1,
+            vis: Vec::new(),
+            num_clusters: 0,
         }
     }
 
@@ -218,6 +250,31 @@ impl World {
             };
         }
         (-node - 1) as usize
+    }
+
+    /// Visibility cluster of the leaf at `point` (-1 in solid).
+    pub fn cluster_at(&self, point: Vec3) -> i32 {
+        self.leafs[self.leaf_index(point)].cluster as i32
+    }
+
+    /// Whether anything in cluster `to` can be seen from cluster `from` (PVS); true when the map
+    /// has no visibility data, false when either point is in solid.
+    pub fn visible(&self, from: i32, to: i32) -> bool {
+        if self.vis.is_empty() {
+            return true;
+        }
+        if from < 0
+            || to < 0
+            || from as usize >= self.num_clusters
+            || to as usize >= self.num_clusters
+        {
+            return false;
+        }
+        self.vis[from as usize][to as usize / 64] >> (to as usize % 64) & 1 == 1
+    }
+
+    pub fn num_clusters(&self) -> usize {
+        self.num_clusters
     }
 
     /// Contents of the brushes containing `point` (0 when in open space).
@@ -668,11 +725,13 @@ mod tests {
                     contents: 0,
                     first_brush: 0,
                     num_brushes: 0,
+                    cluster: 0,
                 },
                 Leaf {
                     contents: contents::SOLID,
                     first_brush: 0,
                     num_brushes: 1,
+                    cluster: 0,
                 },
             ],
             leaf_brushes: vec![0],
@@ -684,6 +743,8 @@ mod tests {
             side_planes: vec![0, 1, 2, 3, 4, 5],
             side_sky: Vec::new(),
             head_node: 0,
+            vis: Vec::new(),
+            num_clusters: 0,
         }
     }
 

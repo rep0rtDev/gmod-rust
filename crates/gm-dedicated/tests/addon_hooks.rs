@@ -1061,6 +1061,7 @@ fn snapshots_carry_only_the_props_in_the_players_interest_within_the_byte_budget
     let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
     sn.interest_radius = 2000.0;
     sn.snapshot_budget = 400; // ~4 crates per snapshot
+    sn.use_pvs = false; // this one measures the radius and the budget alone
     let net = gm_net::Loopback::new(1, 0.0, 11);
     let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
     let mut client = gm_net::ClientNet::new(1, "p1");
@@ -1178,6 +1179,8 @@ fn stress_64_clients_and_2000_props_over_the_loopback() {
     server.set_cvar("sbox_maxprops", "-1");
     let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
     let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
+    // players on a grid land inside buildings too, so the budget is measured without the PVS
+    sn.use_pvs = false;
     // the full size in release (`cargo test --release -- stress --nocapture` prints the numbers),
     // a quarter of it in debug so the workspace run stays quick
     let (n_clients, n_props) = if cfg!(debug_assertions) {
@@ -1271,4 +1274,85 @@ fn stress_64_clients_and_2000_props_over_the_loopback() {
         "{per_client_per_tick} B/tick/client"
     );
     assert!(min_known > 0, "every client sees something");
+}
+
+#[test]
+fn a_crate_out_of_the_players_pvs_is_not_sent_until_the_player_can_see_it() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    assert!(
+        world.collision.num_clusters() > 100,
+        "gm_construct has a PVS"
+    );
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let spawn = glam::Vec3::new(823.235, -500.0, -143.0);
+    let eye = spawn + glam::Vec3::new(0.0, 0.0, 64.0);
+    let my_cluster = world.collision.cluster_at(eye);
+    assert!(my_cluster >= 0);
+    // a point in open space within 2 500 u that the spawn cannot see
+    let mut hidden = None;
+    'search: for dx in (-2500..=2500).step_by(100) {
+        for dy in (-2500..=2500).step_by(100) {
+            for dz in [0.0f32, 200.0, -200.0] {
+                let p = spawn + glam::Vec3::new(dx as f32, dy as f32, 100.0 + dz);
+                let c = world.collision.cluster_at(p);
+                if c >= 0
+                    && world.collision.point_contents(p) == 0
+                    && !world.collision.visible(my_cluster, c)
+                    && world.collision.visible(c, c)
+                {
+                    hidden = Some(p);
+                    break 'search;
+                }
+            }
+        }
+    }
+    let hidden = hidden.expect("some open point within 2500 u is out of the spawn's PVS");
+    let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
+    let net = gm_net::Loopback::new(1, 0.0, 2);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "p1");
+    let mut run = |n: u32, server: &mut gm_server::Server<'_>, client: &mut gm_net::ClientNet| {
+        for _ in 0..n {
+            client.tick(gm_net::NetCmd::default(), &mut c_ep);
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+        }
+    };
+    run(3, &mut server, &mut client);
+    let me = client.player_id.unwrap();
+    let crate_model = "models/props_junk/wood_crate001a.mdl";
+    let seen = server.spawn_prop(me, crate_model).unwrap();
+    server.teleport_prop(
+        seen,
+        spawn + glam::Vec3::new(150.0, 0.0, 100.0),
+        glam::Vec3::ZERO,
+    );
+    server.sandbox.set_frozen(seen, true);
+    let unseen = server.spawn_prop(me, crate_model).unwrap();
+    server.teleport_prop(unseen, hidden, glam::Vec3::ZERO);
+    server.sandbox.set_frozen(unseen, true);
+    run(30, &mut server, &mut client);
+    assert!(client.world.entities.contains_key(&seen));
+    assert!(
+        !client.world.entities.contains_key(&unseen),
+        "the crate at {hidden:?} is within range but out of the PVS"
+    );
+    server.teleport_player(me, hidden - glam::Vec3::new(0.0, 0.0, 64.0));
+    run(30, &mut server, &mut client);
+    assert!(
+        client.world.entities.contains_key(&unseen),
+        "standing next to it, it is sent"
+    );
 }

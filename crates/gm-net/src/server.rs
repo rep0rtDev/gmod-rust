@@ -78,6 +78,9 @@ pub struct ServerNet {
     /// The model table every connection shares: `models[i]` is model id `i + 1`.
     pub models: Vec<String>,
     model_ids: BTreeMap<String, u32>,
+    /// Interest by PVS: besides the radius, an entity or player must be in a cluster visible
+    /// from the player's cluster (`gm_collision::World::visible`).
+    pub use_pvs: bool,
     /// Interest: a client gets entities and other players within this distance of its player
     /// (Source units); what leaves the radius is removed on the client, what enters is sent whole.
     pub interest_radius: f32,
@@ -100,6 +103,7 @@ impl ServerNet {
             addons: Vec::new(),
             models: Vec::new(),
             model_ids: BTreeMap::new(),
+            use_pvs: true,
             interest_radius: DEFAULT_INTEREST_RADIUS,
             snapshot_budget: DEFAULT_SNAPSHOT_BUDGET,
             info: crate::master::ServerInfo {
@@ -420,7 +424,12 @@ impl ServerNet {
     pub fn send(&mut self, server: &Server<'_>, transport: &mut dyn Transport) {
         let snapshot_tick = self.tick.is_multiple_of(self.snapshot_every);
         let mut world: BTreeMap<u32, EntityState> = BTreeMap::new();
+        // cluster of every prop once per send, not once per client
+        let mut clusters: BTreeMap<u32, i32> = BTreeMap::new();
         for p in server.sandbox.props() {
+            if self.use_pvs {
+                clusters.insert(p.id, server.collision.cluster_at(p.pos));
+            }
             let st = server.prop_state(p.id);
             let model_id = match self.model_ids.get(&p.model) {
                 Some(&id) => id,
@@ -519,16 +528,27 @@ impl ServerNet {
                     None => (0, BTreeMap::new()),
                 };
                 let eye = server.players.get(&slot.player).map(|p| p.state.origin);
-                let near = |pos: Vec3| match eye {
-                    Some(e) => e.distance(pos) <= self.interest_radius,
+                let eye_cluster =
+                    eye.map(|e| server.collision.cluster_at(e + Vec3::new(0.0, 0.0, 64.0)));
+                let near = |pos: Vec3, cluster: Option<i32>| match eye {
+                    Some(e) => {
+                        e.distance(pos) <= self.interest_radius
+                            && (!self.use_pvs
+                                || eye_cluster.is_none_or(|c| {
+                                    let to =
+                                        cluster.unwrap_or_else(|| server.collision.cluster_at(pos));
+                                    server.collision.visible(c, to)
+                                }))
+                    }
                     None => true,
                 };
+                let near_ent = |e: &EntityState| near(e.pos, clusters.get(&e.id).copied());
                 let tick = self.tick;
                 let age =
                     |last: Option<&u32>| tick.saturating_sub(last.copied().unwrap_or(0)) as f32;
                 let mut changed: Vec<(f32, &EntityState)> = world
                     .values()
-                    .filter(|e| near(e.pos) && base.get(&e.id) != Some(*e))
+                    .filter(|e| near_ent(e) && base.get(&e.id) != Some(*e))
                     .map(|e| {
                         let d = eye.map(|o| o.distance(e.pos)).unwrap_or(0.0);
                         (d / (1.0 + age(slot.last_sent_entity.get(&e.id))), e)
@@ -537,7 +557,7 @@ impl ServerNet {
                 changed.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
                 let mut near_players: Vec<(f32, &PlayerSnap)> = players
                     .iter()
-                    .filter(|p| p.id != slot.player && near(p.origin))
+                    .filter(|p| p.id != slot.player && near(p.origin, None))
                     .map(|p| {
                         let d = eye.map(|o| o.distance(p.origin)).unwrap_or(0.0);
                         (d / (1.0 + age(slot.last_sent_player.get(&p.id))), p)
@@ -571,7 +591,7 @@ impl ServerNet {
                 }
                 let removed: Vec<u32> = base
                     .keys()
-                    .filter(|id| !world.get(id).is_some_and(|e| near(e.pos)))
+                    .filter(|id| !world.get(id).is_some_and(near_ent))
                     .copied()
                     .collect();
                 let mut sent_world = base.clone();

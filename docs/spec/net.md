@@ -151,8 +151,13 @@ goes as `ServerMsg::Undos { seq, entries }` (tag 9, reliable) whenever it change
 keeps it across snapshots like cvars. Measured
 (`snapshots_carry_only_the_props_in_the_players_interest_within_the_byte_budget`): 60 crates in a
 line, radius 2 000, budget 400: the client converges on exactly the crates in range, follows a
-3 000 u teleport (far crates in, old ones out), every packet under 1 200 bytes. Interest by PVS
-(the BSP visibility lump is decoded in gm-formats) is the follow-up.
+3 000 u teleport (far crates in, old ones out), every packet under 1 200 bytes. Interest by PVS: `gm_collision::World` keeps the leaf clusters and the decompressed visibility
+lump as one bitset per cluster (`cluster_at`, `visible`); an entity or player also has to be in a
+cluster visible from the player's eye cluster (origin + 64 u), `ServerNet::use_pvs` turns it off.
+A point in solid (cluster -1) is never visible, a map without a visibility lump is all visible.
+Measured (`a_crate_out_of_the_players_pvs_is_not_sent_until_the_player_can_see_it`): on
+gm_construct a crate within 2 500 u of the spawn but outside its PVS is not sent until the player
+stands next to it.
 Stress (`stress_64_clients_and_2000_props_over_the_loopback`, release, one thread): 64 clients in
 an 8 x 8 grid and 2 000 frozen crates over the same 3 000 x 2 400 u area, all within everyone's
 interest: server `tick` 1.3 ms, `send` 3.5 ms per tick (the per-client filter and delta over
