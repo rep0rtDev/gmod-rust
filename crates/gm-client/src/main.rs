@@ -649,6 +649,8 @@ struct App {
     scripted_defs: Vec<gm_server::ScriptedWeapon>,
     scripted_vms: Vec<&'static Viewmodel>,
     scripted_world: Vec<&'static str>,
+    /// Key / mouse button edges since the last frame, for the client actors (`input.key`).
+    pending_input: Vec<(String, bool)>,
     /// Rows of the spawn menu: `-- category --` headers of the addons' lists, then their models,
     /// then the content's; a header row is not spawnable.
     spawn_models: Vec<String>,
@@ -1227,6 +1229,8 @@ impl App {
         while self.acc >= dt {
             let cmd = self.cmd();
             self.sim.tick(cmd);
+            let keys = std::mem::take(&mut self.pending_input);
+            self.sim.script.client_input(&self.sim.client.world, &keys);
             self.acc -= dt;
             if !self.weapon_synced && self.sim.client.world.local.is_some() {
                 self.weapon_synced = true;
@@ -2454,6 +2458,9 @@ impl ApplicationHandler for App {
                     return;
                 }
                 let Some(code) = code else { return };
+                if !event.repeat {
+                    self.pending_input.push((format!("{code:?}"), down));
+                }
                 if down && !event.repeat {
                     match code {
                         KeyCode::Escape if self.grabbed => self.set_grab(false),
@@ -2528,6 +2535,16 @@ impl ApplicationHandler for App {
                 if self.console.open {
                     return;
                 }
+                let name = match button {
+                    MouseButton::Left => "MouseLeft",
+                    MouseButton::Right => "MouseRight",
+                    MouseButton::Middle => "MouseMiddle",
+                    MouseButton::Back => "MouseBack",
+                    MouseButton::Forward => "MouseForward",
+                    MouseButton::Other(_) => "MouseOther",
+                };
+                self.pending_input
+                    .push((name.to_string(), state == ElementState::Pressed));
                 if button == MouseButton::Left && state == ElementState::Released {
                     self.panel_drag = None;
                 }
@@ -2784,6 +2801,7 @@ fn main() -> Result<()> {
         scripted_defs: Vec::new(),
         scripted_vms: Vec::new(),
         scripted_world: Vec::new(),
+        pending_input: Vec::new(),
         spawn_models: Vec::new(),
         spawn_lists_seen: usize::MAX,
         cursor: (0.0, 0.0),

@@ -228,6 +228,30 @@ fn client_realm_sees_the_assembled_world() {
     );
 }
 
+#[test]
+fn client_actors_hear_the_clients_key_edges() {
+    let mut rt = Runtime::client();
+    rt.load(spec(
+        "keys",
+        0,
+        "state.seen = {}
+         events.on('input.key', function(p) table.insert(state.seen, p.key .. (p.down and '+' or '-')) end)",
+    ))
+    .unwrap();
+    let world = gm_net::ClientWorld::default();
+    rt.client_input(&world, &[]);
+    rt.client_input(
+        &world,
+        &[
+            ("KeyE".to_string(), true),
+            ("MouseLeft".to_string(), true),
+            ("KeyE".to_string(), false),
+        ],
+    );
+    let seen: Vec<String> = rt.actors()[0].eval("return state.seen").unwrap();
+    assert_eq!(seen, ["KeyE+", "MouseLeft+", "KeyE-"].map(String::from));
+}
+
 fn tick(rt: &mut Runtime, t: u64) {
     let snap = Arc::new(Snapshot {
         tick: t,

@@ -450,6 +450,73 @@ fn scripted_weapons_follow_the_measured_weapon_base() {
 }
 
 #[test]
+fn key_press_and_release_events_follow_the_usercmd_edges() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.add_player(
+        1,
+        glam::Vec3::new(700.0, -600.0, -143.6),
+        glam::Vec3::new(0.0, 90.0, 0.0),
+    );
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "keys".into(),
+        priority: 0,
+        source: "state.keys = {}
+            events.on('player.key_press', function(p) table.insert(state.keys, 'down:' .. p.key .. ':' .. p.player) end)
+            events.on('player.key_release', function(p) table.insert(state.keys, 'up:' .. p.key .. ':' .. p.player) end)"
+            .into(),
+        config: gm_script::ActorConfig::default(),
+    })
+    .unwrap();
+    // E held for three ticks (a KeyPress once, the use request every tick, then a KeyRelease),
+    // then jump + sprint together in one command
+    let script = [
+        gm_server::IN_USE,
+        gm_server::IN_USE,
+        gm_server::IN_USE,
+        0,
+        gm_move::buttons::JUMP | gm_move::buttons::SPEED,
+        gm_move::buttons::JUMP | gm_move::buttons::SPEED,
+        0,
+    ];
+    for buttons in script {
+        let cmd = gm_server::PlayerCmd {
+            cmd: gm_move::UserCmd {
+                buttons,
+                view_angles: glam::Vec3::new(40.0, 90.0, 0.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        rt.pre_tick(&mut server);
+        server.tick(&BTreeMap::from([(1u32, cmd)]));
+        let events = std::mem::take(&mut server.game_events);
+        rt.game_events(&mut server, events);
+        rt.post_tick(&mut server);
+    }
+    let keys: Vec<String> = rt.actors()[0].eval("return state.keys").unwrap();
+    assert_eq!(
+        keys,
+        [
+            "down:IN_USE:1",
+            "up:IN_USE:1",
+            "down:IN_JUMP:1",
+            "down:IN_SPEED:1",
+            "up:IN_JUMP:1",
+            "up:IN_SPEED:1",
+        ]
+        .map(String::from)
+    );
+}
+
+#[test]
 fn script_reads_and_writes_players() {
     let Some(inst) = gm_content::find_install() else {
         eprintln!("skipped: no Garry's Mod install");

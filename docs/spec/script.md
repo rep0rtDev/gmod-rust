@@ -73,6 +73,12 @@ traces miss), the same `trace_line` as the server's. Tests `client_realm_sees_th
 `a_client_actor_traces_the_clients_world_and_the_props_it_knows` (the spawn floor at -143.969
 with `ent` 0, a crate's hull by its id, a trace ending in the air misses).
 
+Input: the native client hands its key and mouse button edges to the client actors as
+`input.key {key, down}` (`Runtime::client_input`, parallel and read-only like `tick.client`),
+`key` the physical key name (`KeyE`, `Digit1`, `Space`, `ShiftLeft`, `MouseLeft` / `MouseRight`
+/ `MouseMiddle`); key repeats, synthetic focus replays and keys typed into the console or a
+panel field are not events. This is the client's own naming, not the game's `KEY_*` enum.
+
 HUD: every frame the client dispatches `render.hud` with `{w, h}` (the screen in pixels);
 `hud.register(name, fn, priority?)` is `events.on("render.hud", ...)`. Handlers draw with
 `draw.rect(x, y, w, h, color?)`, `draw.text(x, y, text, color?, font?)` and
@@ -450,7 +456,10 @@ the spawn menu's own lists are done; the gamemode as one package is not).
 ## Server events
 
 `gm_server::GameEvent`s of a tick reach the actors after the tick and before `tick.post`, in the
-order the server raised them: `player.spawned {player}` (a respawn; the first spawn happens
+order the server raised them: `player.key_press {player, key}` / `player.key_release {player, key}` (`KeyPress` / `KeyRelease`:
+a usercmd button bit changed, `key` its `IN_*` name such as `IN_USE`, `IN_JUMP`, `IN_SPEED`;
+raised first in the tick, before what the press does: measured `lua_use_hold`, `KeyPress`
+precedes the tick's `PlayerUse`; a held key is one press and one release), `player.spawned {player}` (a respawn; the first spawn happens
 before any addon sees the player), `player.damaged {player, amount, type}` (health damage
 actually applied, after the armour share, fall damage included; `type` is the damage type bits),
 `player.death {player, type}` (`type` 0 for a scripted `player.kill`), `physgun.pickup`,

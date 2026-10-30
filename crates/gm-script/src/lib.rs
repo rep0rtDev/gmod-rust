@@ -333,6 +333,26 @@ impl Runtime {
         }
     }
 
+    /// Client realm: the client's own key and mouse button edges since the last frame, one
+    /// `input.key {key, down}` dispatch each (parallel, read-only like `tick.client`); `key` is
+    /// the client's physical key name (`KeyE`, `Digit1`, `Space`, `MouseLeft`...).
+    pub fn client_input(&mut self, world: &gm_net::ClientWorld, keys: &[(String, bool)]) {
+        if keys.is_empty() {
+            return;
+        }
+        let snap = self.client_snapshot(world);
+        for (key, down) in keys {
+            let mut p = api::Payload::default();
+            p.strs.push(("key", key.clone()));
+            p.bools.push(("down", *down));
+            self.parallel(&snap, "input.key", &p);
+        }
+        self.release_snapshots();
+        for a in self.actors.iter_mut() {
+            a.take_queue();
+        }
+    }
+
     /// Client realm, once per frame: `render.hud` with `{w, h}` (the screen in pixels) to every
     /// actor in parallel; the `draw.*` calls they made come back in actor order, then call order,
     /// for the client to draw over its own HUD. Writes queued here are dropped like in
@@ -1069,6 +1089,15 @@ impl Runtime {
                     p.ints.push(("entity", ent as i64));
                     p.strs.push(("property", name));
                     "player.property"
+                }
+                E::Key { player, key, down } => {
+                    p.ints.push(("player", player as i64));
+                    p.strs.push(("key", key.to_string()));
+                    if down {
+                        "player.key_press"
+                    } else {
+                        "player.key_release"
+                    }
                 }
                 E::Weapon {
                     player,

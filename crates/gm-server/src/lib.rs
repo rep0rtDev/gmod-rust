@@ -173,6 +173,14 @@ pub enum GameEvent {
         ent: u32,
         name: String,
     },
+    /// `KeyPress` / `KeyRelease`: a usercmd button bit changed (`key` an `IN_*` name); raised
+    /// first in the tick, before what the press does (measured `lua_use_hold`: `KeyPress`
+    /// precedes `PlayerUse` in the press tick).
+    Key {
+        player: u32,
+        key: &'static str,
+        down: bool,
+    },
     /// A scripted weapon's callbacks: `kind` is `primary`, `secondary`, `reload`, `deploy` or
     /// `holster`; `hit` is the eye trace for the attacks; `other` the class switched to on a
     /// holster.
@@ -482,6 +490,8 @@ pub struct Player {
     pub driving: Option<Driving>,
     /// Scripted weapons carried, by class.
     pub swep: BTreeMap<String, SwepState>,
+    /// Buttons of the last command, for the `KeyPress` / `KeyRelease` edges.
+    pub prev_buttons: u32,
     /// `IN_USE` was down in the last command (a use fires on the press, not the hold).
     pub use_down: bool,
     /// `IN_RELOAD` was down in the last command (the physgun unfreezes on the press).
@@ -560,6 +570,7 @@ impl Player {
             held: None,
             driving: None,
             swep: BTreeMap::new(),
+            prev_buttons: 0,
             carry: None,
             use_down: false,
             reload_down: false,
@@ -643,6 +654,37 @@ pub struct SpawnPoint {
 pub const IN_ATTACK: u32 = 1;
 pub const IN_USE: u32 = 32;
 pub const IN_ATTACK2: u32 = 2048;
+
+/// The usercmd button bits by their `IN_*` names (Source `in_buttons.h`), for the
+/// `KeyPress` / `KeyRelease` events.
+pub const IN_NAMES: [(u32, &str); 26] = [
+    (1 << 0, "IN_ATTACK"),
+    (1 << 1, "IN_JUMP"),
+    (1 << 2, "IN_DUCK"),
+    (1 << 3, "IN_FORWARD"),
+    (1 << 4, "IN_BACK"),
+    (1 << 5, "IN_USE"),
+    (1 << 6, "IN_CANCEL"),
+    (1 << 7, "IN_LEFT"),
+    (1 << 8, "IN_RIGHT"),
+    (1 << 9, "IN_MOVELEFT"),
+    (1 << 10, "IN_MOVERIGHT"),
+    (1 << 11, "IN_ATTACK2"),
+    (1 << 12, "IN_RUN"),
+    (1 << 13, "IN_RELOAD"),
+    (1 << 14, "IN_ALT1"),
+    (1 << 15, "IN_ALT2"),
+    (1 << 16, "IN_SCORE"),
+    (1 << 17, "IN_SPEED"),
+    (1 << 18, "IN_WALK"),
+    (1 << 19, "IN_ZOOM"),
+    (1 << 20, "IN_WEAPON1"),
+    (1 << 21, "IN_WEAPON2"),
+    (1 << 22, "IN_BULLRUSH"),
+    (1 << 23, "IN_GRENADE1"),
+    (1 << 24, "IN_GRENADE2"),
+    (1 << 25, "IN_ATTACK3"),
+];
 
 /// A player's input for one tick: movement plus what the held weapon needs.
 #[derive(Clone, Debug, Default)]
@@ -3056,6 +3098,25 @@ impl<'w> Server<'w> {
         }
         for id in respawn {
             self.spawn_player(id);
+        }
+        for (id, pc) in cmds.iter() {
+            let Some(p) = self.players.get_mut(id) else {
+                continue;
+            };
+            let changed = p.prev_buttons ^ pc.cmd.buttons;
+            p.prev_buttons = pc.cmd.buttons;
+            if changed == 0 {
+                continue;
+            }
+            for &(bit, name) in IN_NAMES.iter() {
+                if changed & bit != 0 {
+                    self.game_events.push(GameEvent::Key {
+                        player: *id,
+                        key: name,
+                        down: pc.cmd.buttons & bit != 0,
+                    });
+                }
+            }
         }
         for (id, pc) in cmds {
             if self.players.get(id).is_some_and(|p| p.alive) {

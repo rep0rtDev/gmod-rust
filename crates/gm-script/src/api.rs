@@ -22,6 +22,7 @@ pub struct Payload {
     pub objects: Vec<(u32, Vec3, Vec3)>,
     /// `net.message`: name and wire payload (`netval`), decoded into `name` / `data`.
     pub net: Option<(String, Vec<u8>)>,
+    pub bools: Vec<(&'static str, bool)>,
 }
 
 /// What a scripted stool asks the sandbox to do after a click (applied at once, in order).
@@ -1328,6 +1329,9 @@ pub fn payload_table(lua: &Lua, p: &Payload) -> Result<Table> {
             st.set(k.as_str(), v.as_str())?;
         }
         t.set("settings", st)?;
+    }
+    for (k, v) in &p.bools {
+        t.set(*k, *v)?;
     }
     for (k, v) in &p.strs {
         t.set(*k, v.as_str())?;
