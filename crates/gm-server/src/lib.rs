@@ -84,6 +84,11 @@ pub enum GameEvent {
         player: u32,
         on: bool,
     },
+    /// A +use press whose use trace found a prop and `Request::PlayerUse` allowed.
+    Use {
+        player: u32,
+        ent: u32,
+    },
     /// A recorded prop impact (the same capture that makes impact sounds, no speed cut): one
     /// per prop involved, `other` 0 for the world.
     Collide {
@@ -106,7 +111,13 @@ pub enum Request {
     },
     /// The physgun's trace found an unfrozen prop while attack is pressed.
     PhysgunPickup { player: u32, ent: u32 },
+    /// A +use press (the edge, not the hold) whose trace from the eyes found a prop within
+    /// `PLAYER_USE_RADIUS`.
+    PlayerUse { player: u32, ent: u32 },
 }
+
+/// How far from the eyes +use reaches (the public SDK's `PLAYER_USE_RADIUS`).
+pub const PLAYER_USE_RADIUS: f32 = 80.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Verdict {
@@ -234,6 +245,8 @@ pub struct Player {
     pub view_angles: Vec3,
     /// The prop held by the physgun and how it was grabbed.
     pub held: Option<(u32, Grab)>,
+    /// `IN_USE` was down in the last command (a use fires on the press, not the hold).
+    pub use_down: bool,
     pub alive: bool,
     pub health: i32,
     pub armor: i32,
@@ -297,6 +310,7 @@ impl Player {
             },
             view_angles,
             held: None,
+            use_down: false,
             alive: true,
             health: PLAYER_HEALTH,
             armor: 0,
@@ -2005,6 +2019,25 @@ impl<'w> Server<'w> {
         let attack = pc.cmd.buttons & IN_ATTACK != 0;
         let use_key = pc.cmd.buttons & IN_USE != 0;
         let attack2 = pc.cmd.buttons & IN_ATTACK2 != 0;
+        let use_pressed = use_key
+            && self
+                .players
+                .get(&player)
+                .is_some_and(|p| !p.use_down && p.alive);
+        if let Some(p) = self.players.get_mut(&player) {
+            p.use_down = use_key;
+        }
+        if use_pressed {
+            let bodies = self.trace_bodies();
+            let hit = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward);
+            if let Some((ent, h)) = hit.and_then(|h| h.ent.map(|e| (e, h))) {
+                if h.pos.distance(eye) <= PLAYER_USE_RADIUS
+                    && self.ask(Request::PlayerUse { player, ent }) != Verdict::Cancel
+                {
+                    self.game_events.push(GameEvent::Use { player, ent });
+                }
+            }
+        }
         let held = self.players.get(&player).and_then(|p| p.held);
         let had = held.is_some();
         let held = match held {

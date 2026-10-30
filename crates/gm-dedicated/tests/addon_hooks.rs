@@ -2724,3 +2724,136 @@ fn an_actors_spawn_menu_categories_reach_the_client_whole_and_merge() {
         "a repeated model is dropped, the new one appended"
     );
 }
+
+#[test]
+fn player_use_is_asked_on_the_press_within_reach_and_player_used_follows() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "use".into(),
+        priority: 1,
+        source: "state.asked, state.used, state.last = 0, 0, 0
+            events.on('player.use', function(e)
+                state.asked += 1
+                if state.asked == 1 then return false end
+            end)
+            events.on('player.used', function(e)
+                state.used += 1
+                state.last = e.entity
+            end)
+            events.on('tick.post', function()
+                if game.tick() % 10 == 0 then
+                    for _, pl in ipairs(world.players()) do
+                        net.send('log', { asked = state.asked, used = state.used, last = state.last }, pl.id)
+                    end
+                end
+            end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut crt = gm_script::Runtime::client();
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "probe".into(),
+        priority: 1,
+        source: "net.receive('log', function(p) state.d = p.data end)".into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>,
+                    crt: &mut gm_script::Runtime,
+                    pitch: f32,
+                    buttons: u32,
+                    n: usize| {
+        for _ in 0..n {
+            client.tick(
+                gm_net::NetCmd {
+                    view_angles: glam::Vec3::new(pitch, 0.0, 0.0),
+                    buttons,
+                    ..Default::default()
+                },
+                &mut c_ep,
+            );
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+            crt.client_tick(&client.world, true);
+            let inbox = std::mem::take(&mut client.addon_msgs);
+            crt.client_net(&client.world, inbox);
+        }
+    };
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0, 30);
+    // spawned where the 30 degree look hits the floor: ~128 u from the eyes, out of reach
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0, 30);
+    let far = server.sandbox.props()[0].id;
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        30.0,
+        gm_server::IN_USE,
+        5,
+    );
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 0, 15);
+    let asked: i64 = crt.actors()[0].eval("return state.d.asked").unwrap();
+    assert_eq!(asked, 0, "the crate 128 u away is beyond PLAYER_USE_RADIUS");
+    // a second crate right under the eyes (60 degrees down: ~40 u); held 5 ticks = one press,
+    // the first answer vetoes
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 60.0, 0, 30);
+    let near = server.sandbox.props()[1].id;
+    assert_ne!(near, far);
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        60.0,
+        gm_server::IN_USE,
+        5,
+    );
+    step(&mut sn, &mut client, &mut server, &mut crt, 60.0, 0, 5);
+    // the second press goes through
+    step(
+        &mut sn,
+        &mut client,
+        &mut server,
+        &mut crt,
+        60.0,
+        gm_server::IN_USE,
+        5,
+    );
+    step(&mut sn, &mut client, &mut server, &mut crt, 60.0, 0, 25);
+    let (asked, used, last): (i64, i64, i64) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.used, state.d.last")
+        .unwrap();
+    assert_eq!((asked, used), (2, 1), "asked once per press, one allowed");
+    assert_eq!(last as u32, near, "the crate under the eyes");
+}

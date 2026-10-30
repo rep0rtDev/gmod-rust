@@ -716,6 +716,15 @@ impl Runtime {
                 p.ints.push(("type", *dmg_type as i64));
                 self.ask_amount(server, "player.damage", p)
             }
+            gm_server::Request::PlayerUse { player, ent } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("entity", *ent as i64));
+                if self.ask(server, "player.use", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
             gm_server::Request::PhysgunPickup { player, ent } => {
                 p.ints.push(("player", *player as i64));
                 p.ints.push(("entity", *ent as i64));
@@ -920,6 +929,11 @@ impl Runtime {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("on", on as i64));
                     "player.noclip"
+                }
+                E::Use { player, ent } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("entity", ent as i64));
+                    "player.used"
                 }
                 E::Collide {
                     ent,
