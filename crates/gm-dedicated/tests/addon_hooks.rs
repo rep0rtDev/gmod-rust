@@ -2439,9 +2439,13 @@ fn a_client_actor_draws_its_hud_through_render_hud() {
         addon: "test".into(),
         name: "hud".into(),
         priority: 1,
-        source: "hud.register('bar', function(s)
+        source: "draw.font('big', { family = 'Roboto Bold', size = 24 })
+            hud.register('bar', function(s)
                 draw.rect(0, s.h - 20, s.w, 20, { r = 255, g = 0, b = 0, a = 128 })
                 draw.text(8, s.h - 18, 'tick ' .. game.tick())
+                local w, h = draw.text_size('tick', 'big')
+                draw.text(8, 8, 'w ' .. w .. ' h ' .. h, nil, 'big')
+                draw.texture(0, 0, 64, 64, 'vgui/hud/icon_locked')
             end)
             hud.register('second', function(s) draw.rect(1, 2, 3, 4) end)"
             .into(),
@@ -2452,10 +2456,24 @@ fn a_client_actor_draws_its_hud_through_render_hud() {
         tick: 42,
         ..Default::default()
     };
+    // the client reports what it rasterised; here a stand-in: 10 px per glyph, 24 px lines
+    gm_script::set_font_metrics(
+        "big",
+        gm_script::TextMetrics {
+            line_height: 24.0,
+            advances: [('t', 10.0), ('i', 10.0), ('c', 10.0), ('k', 10.0)].into(),
+            fallback: 7.0,
+        },
+    );
     let draws = crt.client_render(&world, 800, 600);
     assert_eq!(
         draws,
         vec![
+            gm_script::DrawCmd::Font {
+                name: "big".into(),
+                family: "Roboto Bold".into(),
+                size: 24.0,
+            },
             gm_script::DrawCmd::Rect {
                 x: 0.0,
                 y: 580.0,
@@ -2468,6 +2486,22 @@ fn a_client_actor_draws_its_hud_through_render_hud() {
                 y: 582.0,
                 text: "tick 42".into(),
                 color: [1.0, 1.0, 1.0, 1.0],
+                font: None,
+            },
+            gm_script::DrawCmd::Text {
+                x: 8.0,
+                y: 8.0,
+                text: "w 40 h 24".into(),
+                color: [1.0, 1.0, 1.0, 1.0],
+                font: Some("big".into()),
+            },
+            gm_script::DrawCmd::Image {
+                x: 0.0,
+                y: 0.0,
+                w: 64.0,
+                h: 64.0,
+                material: "vgui/hud/icon_locked".into(),
+                color: [1.0, 1.0, 1.0, 1.0],
             },
             gm_script::DrawCmd::Rect {
                 x: 1.0,
@@ -2478,8 +2512,9 @@ fn a_client_actor_draws_its_hud_through_render_hud() {
             },
         ]
     );
+    // the font declaration ran once at load; the frame's draws come anew
     assert!(
-        crt.client_render(&world, 800, 600).len() == 3,
+        crt.client_render(&world, 800, 600).len() == 5,
         "every frame anew"
     );
 }

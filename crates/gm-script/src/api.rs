@@ -5,6 +5,7 @@ use crate::snapshot::Snapshot;
 use glam::Vec3;
 use gm_server::Server;
 use mlua::{Lua, Result, Table, Value};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 /// Event payload: small typed fields (no Lua values cross actors).
@@ -155,6 +156,42 @@ pub enum QueuedWrite {
     },
 }
 
+/// A font's layout data as the client measured it (`UiRenderer::font_metrics`): line height
+/// and the advance of every glyph it rasterised.
+#[derive(Clone, Debug, Default)]
+pub struct TextMetrics {
+    pub line_height: f32,
+    pub advances: HashMap<char, f32>,
+    pub fallback: f32,
+}
+
+/// Fonts the client has rasterised, by name, `""` for the default font. One client per
+/// process, so the table is process-wide; a headless runtime has none and measures 0.
+static FONT_METRICS: std::sync::LazyLock<std::sync::RwLock<HashMap<String, TextMetrics>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The client reports a font's metrics (`""` for the default) for `draw.text_size`.
+pub fn set_font_metrics(name: &str, metrics: TextMetrics) {
+    FONT_METRICS
+        .write()
+        .unwrap()
+        .insert(name.to_string(), metrics);
+}
+
+/// `surface.GetTextSize`: the width of `text` in `font` (the default font for an unknown
+/// name) and the line height.
+pub fn text_size(text: &str, font: Option<&str>) -> (f32, f32) {
+    let table = FONT_METRICS.read().unwrap();
+    let Some(m) = font.and_then(|f| table.get(f)).or_else(|| table.get("")) else {
+        return (0.0, 0.0);
+    };
+    let w = text
+        .chars()
+        .map(|c| m.advances.get(&c).copied().unwrap_or(m.fallback))
+        .sum();
+    (w, m.line_height)
+}
+
 /// A 2D draw command of a client actor's `render.hud` handler, screen pixels, colors 0..1.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DrawCmd {
@@ -165,11 +202,29 @@ pub enum DrawCmd {
         h: f32,
         color: [f32; 4],
     },
+    /// `font` is a name given to `draw.font`, the client's default font when `None`.
     Text {
         x: f32,
         y: f32,
         text: String,
         color: [f32; 4],
+        font: Option<String>,
+    },
+    /// `draw.texture`: a VTF (a material's `$basetexture`) over the rectangle, tinted.
+    Image {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        material: String,
+        color: [f32; 4],
+    },
+    /// `draw.font(name, { family, size })`: the client rasterises the family at `size`
+    /// pixels under `name` (`surface.CreateFont`); emitted once per call, in order.
+    Font {
+        name: String,
+        family: String,
+        size: f32,
     },
     /// `draw.model`: a model drawn in the world, translucent (alpha 0..1); tool ghosts.
     Model {
@@ -534,15 +589,63 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
     draw.set(
         "text",
         lua.create_function(
-            move |_, (x, y, text, color): (f32, f32, String, Option<Table>)| {
+            move |_, (x, y, text, color, font): (f32, f32, String, Option<Table>, Option<String>)| {
                 let color = color_of(color.as_ref())?;
-                sh.draws
-                    .lock()
-                    .unwrap()
-                    .push(DrawCmd::Text { x, y, text, color });
+                sh.draws.lock().unwrap().push(DrawCmd::Text {
+                    x,
+                    y,
+                    text,
+                    color,
+                    font,
+                });
                 Ok(())
             },
         )?,
+    )?;
+    // `draw.texture(x, y, w, h, material, color?)`: a VTF stretched over the rectangle
+    let sh = shared.clone();
+    draw.set(
+        "texture",
+        lua.create_function(
+            move |_, (x, y, w, h, material, color): (f32, f32, f32, f32, String, Option<Table>)| {
+                let color = color_of(color.as_ref())?;
+                sh.draws.lock().unwrap().push(DrawCmd::Image {
+                    x,
+                    y,
+                    w,
+                    h,
+                    material,
+                    color,
+                });
+                Ok(())
+            },
+        )?,
+    )?;
+    // `draw.font(name, { family, size })`: `surface.CreateFont`; the client builds the
+    // atlas when the command reaches it, so a font declared at load is ready for the first
+    // frame
+    let sh = shared.clone();
+    draw.set(
+        "font",
+        lua.create_function(move |_, (name, spec): (String, Table)| {
+            let family: String = spec.get::<Option<String>>("family")?.unwrap_or_default();
+            let size: f32 = spec.get::<Option<f32>>("size")?.unwrap_or(16.0);
+            sh.draws.lock().unwrap().push(DrawCmd::Font {
+                name,
+                family,
+                size: size.clamp(4.0, 256.0),
+            });
+            Ok(())
+        })?,
+    )?;
+    // `draw.text_size(text, font?) -> w, h`: `surface.GetTextSize` from the metrics the
+    // client reported for the font (the default font's until it has)
+    draw.set(
+        "text_size",
+        lua.create_function(move |_, (text, font): (String, Option<String>)| {
+            let (w, h) = text_size(&text, font.as_deref());
+            Ok((w, h))
+        })?,
     )?;
     g.set("draw", draw)?;
     let world = lua.create_table()?;

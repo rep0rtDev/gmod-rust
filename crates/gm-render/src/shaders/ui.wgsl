@@ -31,6 +31,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let a = textureSample(atlas, atlas_sampler, in.uv).a;
-    return vec4<f32>(in.color.rgb, in.color.a * a);
+    // glyph atlases are white with coverage in alpha, images carry their own colour
+    let t = textureSample(atlas, atlas_sampler, in.uv);
+    return vec4<f32>(in.color.rgb * t.rgb, in.color.a * t.a);
 }

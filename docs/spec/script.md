@@ -75,12 +75,31 @@ with `ent` 0, a crate's hull by its id, a trace ending in the air misses).
 
 HUD: every frame the client dispatches `render.hud` with `{w, h}` (the screen in pixels);
 `hud.register(name, fn, priority?)` is `events.on("render.hud", ...)`. Handlers draw with
-`draw.rect(x, y, w, h, color?)` and `draw.text(x, y, text, color?)` (screen pixels from the top
-left; `color` is `{r, g, b, a?}` in 0..255 like the game's `Color`, opaque white when omitted);
-the calls are collected after the handlers returned (`Runtime::client_render`), actor order then
-call order, and drawn by the client over its own HUD with the same text renderer (one font size
-for now). Measured (`addon_hooks render_hud`): two handlers on an 800x600 screen give a red
-half-transparent bar at y 580, `tick 42` over it and a white 3x4 rect, in that order, every frame.
+`draw.rect(x, y, w, h, color?)`, `draw.text(x, y, text, color?, font?)` and
+`draw.texture(x, y, w, h, material, color?)` (screen pixels from the top left; `color` is
+`{r, g, b, a?}` in 0..255 like the game's `Color`, opaque white when omitted); the calls are
+collected after the handlers returned (`Runtime::client_render`), actor order then call order,
+and drawn by the client over its own HUD.
+
+Fonts: `draw.font(name, { family, size })` is `surface.CreateFont`: the client rasterises the
+TrueType `family` of the mounted content (`resource/fonts/Roboto-*.ttf` as `Roboto`, `Roboto
+Bold`, `Roboto Condensed`...; the HL2 icon fonts `resource/HALFLIFE2.ttf` as `HalfLife2`; spaces,
+hyphens and case do not matter) at `size` pixels into its own glyph atlas (Latin-1 and Cyrillic,
+sizes 4..256) under `name`; `draw.text` with that name draws with it, an unknown name or none is
+the client's default (Roboto 16). The client reports every rasterised font's metrics to the
+runtime, so `draw.text_size(text, font?) -> w, h` (`surface.GetTextSize`) answers inside the
+handler from the real advances; a headless runtime without a client answers 0, 0. Declare fonts
+at load, not per frame: the command reaches the client with the first frame and the atlas is
+built once (a name declared again is rebuilt). Not measured: the game's `size` is vgui's "tall"
+and ours is the TrueType pixel size; the two are close but no recording compares them yet.
+
+Textures: `draw.texture` takes a material (`vgui/hud/icon_locked`, its `$basetexture`) or a
+texture path, decodes the VTF once on the client (at most 1024 px a side) and stretches it over
+the rectangle tinted by `color`; a missing one draws nothing. Measured (`addon_hooks
+render_hud`): a font declared at load plus two handlers on an 800x600 screen give, in order, the
+font command, a red half-transparent bar at y 580, `tick 42` over it, `w 40 h 24` in the font
+(from stand-in metrics of 10 px a glyph), the 64x64 icon and a white 3x4 rect; the next frame has
+the five draws again and no font command.
 
 The native client (`gm-client`) hosts both realms: `--addon <dir|file.gmr>` (repeatable) loads
 addons into its in-process server, whose client-realm packages travel over the loopback
@@ -382,11 +401,11 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-fonts/textures/3D2D in `draw`, text settings typed in the panel (console only), slider drag
+3D2D in `draw`, text settings typed in the panel (console only), slider drag
 (click sets), ghosts following the stool's own placement rules (the stool computes them in `ghost`), spawn
-menu icons, WASM components, +use on players and the +use pickup of small props, the rest of
-the sandbox gamemode in Luau (`PlayerSpawnedProp` ownership rules, `CanProperty`, player
-models, the spawn menu's own lists are done; the gamemode as one package is not).
+menu icons, WASM components, +use on players and hold-to-use, the rest of the sandbox gamemode
+in Luau (`PlayerSpawnedProp` ownership rules; `CanProperty`, player models, the +use pickup and
+the spawn menu's own lists are done; the gamemode as one package is not).
 
 ## Server events
 

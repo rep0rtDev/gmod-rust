@@ -663,6 +663,17 @@ impl App {
         let player_box = world.solid_box(&gpu, [200, 120, 60, 255], false);
         let beam = world.solid_box(&gpu, [90, 200, 255, 255], true);
         let ui = UiRenderer::new(&gpu, &self.mount, format)?;
+        {
+            let m = ui.font_metrics(None);
+            gm_script::set_font_metrics(
+                "",
+                gm_script::TextMetrics {
+                    line_height: m.line_height,
+                    advances: m.advances,
+                    fallback: m.fallback,
+                },
+            );
+        }
         self.gfx = Some(Gfx {
             window,
             surface,
@@ -1316,6 +1327,34 @@ impl App {
             let g = self.gfx.as_ref().unwrap();
             let (w, h) = (g.config.width, g.config.height);
             self.sim.hud_draws = self.sim.script.client_render(&self.sim.client.world, w, h);
+            if let Some(gm) = self.gfx.as_mut() {
+                // `draw.font` builds its atlas now and reports the metrics to the runtime;
+                // `draw.texture` decodes its VTF once
+                for d in &self.sim.hud_draws {
+                    match d {
+                        gm_script::DrawCmd::Font { name, family, size } => {
+                            if gm
+                                .ui
+                                .register_font(&gm.gpu, &self.mount, name, family, *size)
+                            {
+                                let m = gm.ui.font_metrics(Some(name));
+                                gm_script::set_font_metrics(
+                                    name,
+                                    gm_script::TextMetrics {
+                                        line_height: m.line_height,
+                                        advances: m.advances,
+                                        fallback: m.fallback,
+                                    },
+                                );
+                            }
+                        }
+                        gm_script::DrawCmd::Image { material, .. } => {
+                            gm.ui.load_image(&gm.gpu, &self.mount, material);
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
         let ui_items = self.ui_items(o);
         let g = self.gfx.as_ref().unwrap();
@@ -1376,6 +1415,7 @@ impl App {
                 color: [0.05, 0.05, 0.07, 0.9],
             });
             items.push(UiItem::Text {
+                font: None,
                 x: px + 12.0,
                 y: py + 6.0,
                 text: format!(
@@ -1404,6 +1444,7 @@ impl App {
                     });
                 }
                 items.push(UiItem::Text {
+                    font: None,
                     x: px + 12.0,
                     y,
                     text: model.trim_start_matches("models/").to_string(),
@@ -1420,6 +1461,7 @@ impl App {
                     color: [0.09, 0.09, 0.12, 0.97],
                 });
                 items.push(UiItem::Text {
+                    font: None,
                     x: tx + 8.0,
                     y: py + 6.0,
                     text: format!("Tool: {}", self.tool),
@@ -1427,6 +1469,7 @@ impl App {
                 });
                 if schema.is_empty() {
                     items.push(UiItem::Text {
+                        font: None,
                         x: tx + 8.0,
                         y: rows_y,
                         text: "(no settings; `tool <name>` in the console switches)".into(),
@@ -1454,6 +1497,7 @@ impl App {
                         });
                     }
                     items.push(UiItem::Text {
+                        font: None,
                         x: tx + 8.0,
                         y,
                         text: format!("{}: {cur}", s.name),
@@ -1504,6 +1548,7 @@ impl App {
                             }
                         }
                         gm_server::ToolSettingKind::Text => items.push(UiItem::Text {
+                            font: None,
                             x: bx,
                             y: by,
                             text: "(console: tool <name> <key> <value>)".into(),
@@ -1536,6 +1581,7 @@ impl App {
                 color: [0.0, 0.0, 0.0, 0.45],
             });
             items.push(UiItem::Text {
+                font: None,
                 x: 10.0,
                 y: 7.0,
                 text: hud,
@@ -1546,6 +1592,8 @@ impl App {
                 items.push(match d {
                     // a world draw from a HUD handler: nothing on the 2D layer
                     gm_script::DrawCmd::Model { .. } => continue,
+                    // fonts and images were prepared before the frame
+                    gm_script::DrawCmd::Font { .. } => continue,
                     gm_script::DrawCmd::Rect { x, y, w, h, color } => UiItem::Rect {
                         x: *x,
                         y: *y,
@@ -1553,10 +1601,32 @@ impl App {
                         h: *h,
                         color: *color,
                     },
-                    gm_script::DrawCmd::Text { x, y, text, color } => UiItem::Text {
+                    gm_script::DrawCmd::Text {
+                        x,
+                        y,
+                        text,
+                        color,
+                        font,
+                    } => UiItem::Text {
                         x: *x,
                         y: *y,
                         text: text.clone(),
+                        color: *color,
+                        font: font.clone(),
+                    },
+                    gm_script::DrawCmd::Image {
+                        x,
+                        y,
+                        w,
+                        h,
+                        material,
+                        color,
+                    } => UiItem::Image {
+                        x: *x,
+                        y: *y,
+                        w: *w,
+                        h: *h,
+                        material: material.clone(),
                         color: *color,
                     },
                 });
@@ -1589,6 +1659,7 @@ impl App {
                         color: [0.0, 0.0, 0.0, 0.5],
                     });
                     items.push(UiItem::Text {
+                        font: None,
                         x: x + 12.0,
                         y: y + 6.0,
                         text: label.to_string(),
@@ -1612,6 +1683,7 @@ impl App {
                     });
                     let text = value.to_string();
                     items.push(UiItem::Text {
+                        font: None,
                         x: x + box_w - 12.0 - g.ui.text_width(&text),
                         y: y + 6.0,
                         text,
@@ -1631,6 +1703,7 @@ impl App {
                         color: [0.0, 0.0, 0.0, 0.5],
                     });
                     items.push(UiItem::Text {
+                        font: None,
                         x: ax + 12.0,
                         y: y + 6.0,
                         text: "Ammo".to_string(),
@@ -1642,6 +1715,7 @@ impl App {
                         p.reserve.to_string()
                     };
                     items.push(UiItem::Text {
+                        font: None,
                         x: ax + 12.0,
                         y: y + lh + 8.0,
                         text: clip,
@@ -1650,6 +1724,7 @@ impl App {
                     if p.clip >= 0 {
                         let r = p.reserve.to_string();
                         items.push(UiItem::Text {
+                            font: None,
                             x: ax + aw - 12.0 - g.ui.text_width(&r),
                             y: y + lh + 8.0,
                             text: r,
@@ -1668,12 +1743,14 @@ impl App {
                             color: [0.0, 0.0, 0.0, 0.5],
                         });
                         items.push(UiItem::Text {
+                            font: None,
                             x: bx + 12.0,
                             y: y + 6.0,
                             text: "Alt".to_string(),
                             color: [0.85, 0.85, 0.85, 0.9],
                         });
                         items.push(UiItem::Text {
+                            font: None,
                             x: bx + 12.0,
                             y: y + lh + 8.0,
                             text: p.alt.to_string(),
@@ -1713,6 +1790,7 @@ impl App {
                 white
             };
             items.push(UiItem::Text {
+                font: None,
                 x: 8.0,
                 y: top + i as f32 * lh,
                 text: line.chars().take(n).collect(),
@@ -1727,6 +1805,7 @@ impl App {
             full.chars().skip(skip).collect()
         };
         items.push(UiItem::Text {
+            font: None,
             x: 8.0,
             y: panel - lh - 4.0,
             text: format!("{shown}{}", if blink { "_" } else { "" }),

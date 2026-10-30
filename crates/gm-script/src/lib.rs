@@ -18,7 +18,7 @@ pub mod snapshot;
 pub mod storage;
 
 pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite, Reply};
-pub use api::DrawCmd;
+pub use api::{set_font_metrics, text_size, DrawCmd, TextMetrics};
 pub use manifest::Manifest;
 pub use package::Package;
 pub use registry::Registry;

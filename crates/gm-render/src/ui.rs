@@ -1,6 +1,7 @@
-//! Screen-space text and rectangles for the console and HUD: one glyph atlas
-//! rasterised from a TrueType font in the mounted content, one alpha-blended
-//! pipeline, vertices rebuilt per frame.
+//! Screen-space text, rectangles and textured quads for the console and HUD: a glyph atlas
+//! rasterised from a TrueType font in the mounted content per registered font (the default
+//! is Roboto 16 px), VTF textures as images, one alpha-blended pipeline, vertices rebuilt per
+//! frame and drawn in batches per texture.
 
 use std::collections::HashMap;
 
@@ -11,11 +12,16 @@ use gm_content::Mount;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::Gpu;
+use crate::material;
 use crate::world::upload_rgba;
 
 /// Roboto ships with the game under `resource/fonts`.
 pub const DEFAULT_FONT: &str = "resource/fonts/Roboto-Regular.ttf";
+pub const DEFAULT_FONT_PX: f32 = 16.0;
 const ATLAS_SIZE: u32 = 1024;
+/// Images are decoded down to this side at most (HUD textures are small; sprays and the like
+/// do not need full mips on screen).
+const IMAGE_MAX_SIDE: u32 = 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -51,37 +57,61 @@ pub enum UiItem {
         h: f32,
         color: [f32; 4],
     },
-    /// `y` is the top of the line; the text sits on the font's baseline below it.
+    /// `y` is the top of the line; the text sits on the font's baseline below it. `font` is a
+    /// name given to `register_font`, the default font when `None` or unknown.
     Text {
         x: f32,
         y: f32,
         text: String,
         color: [f32; 4],
+        font: Option<String>,
+    },
+    /// A VTF (a material's `$basetexture`, or a texture path) stretched over the rectangle and
+    /// tinted by `color`; a missing texture draws nothing.
+    Image {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        material: String,
+        color: [f32; 4],
     },
 }
 
-pub struct UiRenderer {
-    pipeline: wgpu::RenderPipeline,
-    screen_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+/// What a font's layout needs outside the renderer: the line height and the advance of
+/// every glyph in the atlas (`surface.GetTextSize`).
+#[derive(Clone, Debug, Default)]
+pub struct FontMetrics {
+    pub line_height: f32,
+    pub advances: HashMap<char, f32>,
+    pub fallback: f32,
+}
+
+impl FontMetrics {
+    pub fn text_width(&self, text: &str) -> f32 {
+        text.chars()
+            .map(|c| self.advances.get(&c).copied().unwrap_or(self.fallback))
+            .sum()
+    }
+}
+
+struct FontAtlas {
     glyphs: HashMap<char, Glyph>,
     fallback: Glyph,
     white_uv: [f32; 2],
     ascent: f32,
     line_height: f32,
+    bind_group: wgpu::BindGroup,
 }
 
-impl UiRenderer {
-    pub fn new(gpu: &Gpu, mount: &Mount, color_format: wgpu::TextureFormat) -> Result<Self> {
-        let bytes = mount.read(DEFAULT_FONT)?;
-        Self::with_font(gpu, &bytes, 16.0, color_format)
-    }
-
-    pub fn with_font(
+impl FontAtlas {
+    fn build(
         gpu: &Gpu,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        screen_buffer: &wgpu::Buffer,
         ttf: &[u8],
         px: f32,
-        color_format: wgpu::TextureFormat,
     ) -> Result<Self> {
         let font = FontArc::try_from_vec(ttf.to_vec()).map_err(|e| anyhow!("font: {e}"))?;
         let scaled = font.as_scaled(px);
@@ -161,7 +191,6 @@ impl UiRenderer {
             .copied()
             .ok_or_else(|| anyhow!("font has no '?' glyph"))?;
 
-        let device = &gpu.device;
         let texture = upload_rgba(
             gpu,
             &atlas,
@@ -171,6 +200,129 @@ impl UiRenderer {
             "ui atlas",
         );
         let view = texture.create_view(&Default::default());
+        let bind_group = texture_bind_group(gpu, layout, sampler, screen_buffer, &view, "ui font");
+        Ok(FontAtlas {
+            glyphs,
+            fallback,
+            white_uv,
+            ascent,
+            line_height,
+            bind_group,
+        })
+    }
+
+    fn glyph(&self, c: char) -> Glyph {
+        self.glyphs.get(&c).copied().unwrap_or(self.fallback)
+    }
+
+    fn text_width(&self, text: &str) -> f32 {
+        text.chars().map(|c| self.glyph(c).advance).sum()
+    }
+
+    fn metrics(&self) -> FontMetrics {
+        FontMetrics {
+            line_height: self.line_height,
+            advances: self.glyphs.iter().map(|(c, g)| (*c, g.advance)).collect(),
+            fallback: self.fallback.advance,
+        }
+    }
+}
+
+fn texture_bind_group(
+    gpu: &Gpu,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    screen_buffer: &wgpu::Buffer,
+    view: &wgpu::TextureView,
+    label: &str,
+) -> wgpu::BindGroup {
+    gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(label),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: screen_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
+}
+
+/// A TrueType family of the mounted content: `resource/fonts/<Family>.ttf` (Roboto and its
+/// weights, `Roboto-Bold`), `resource/<FAMILY>.ttf` (the HL2 icon fonts), looked up by the
+/// family name with spaces, hyphens and case ignored; `Roboto` is `Roboto-Regular`.
+fn font_file(mount: &Mount, family: &str) -> Option<Vec<u8>> {
+    let norm = |s: &str| {
+        s.chars()
+            .filter(|c| !matches!(c, ' ' | '-' | '_'))
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    if family.to_ascii_lowercase().ends_with(".ttf") {
+        return mount.read(family).ok();
+    }
+    let want = norm(family);
+    let direct = [
+        format!("resource/fonts/{family}.ttf"),
+        format!("resource/fonts/{family}-Regular.ttf"),
+        format!("resource/{family}.ttf"),
+    ];
+    for p in &direct {
+        if let Ok(b) = mount.read(p) {
+            return Some(b);
+        }
+    }
+    let mut files: Vec<String> = mount.find("resource/fonts/*.ttf").into_iter().collect();
+    files.extend(mount.find("resource/*.ttf"));
+    let stem = |p: &str| {
+        p.rsplit('/')
+            .next()
+            .unwrap_or(p)
+            .trim_end_matches(".ttf")
+            .trim_end_matches(".TTF")
+            .to_string()
+    };
+    files
+        .iter()
+        .find(|p| {
+            let s = norm(&stem(p));
+            s == want || s == format!("{want}regular")
+        })
+        .and_then(|p| mount.read(p).ok())
+}
+
+pub struct UiRenderer {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    screen_buffer: wgpu::Buffer,
+    default: FontAtlas,
+    fonts: HashMap<String, FontAtlas>,
+    /// Loaded images by name; `None` remembers a texture that is not in the content.
+    images: HashMap<String, Option<wgpu::BindGroup>>,
+}
+
+impl UiRenderer {
+    pub fn new(gpu: &Gpu, mount: &Mount, color_format: wgpu::TextureFormat) -> Result<Self> {
+        let bytes = mount.read(DEFAULT_FONT)?;
+        Self::with_font(gpu, &bytes, DEFAULT_FONT_PX, color_format)
+    }
+
+    pub fn with_font(
+        gpu: &Gpu,
+        ttf: &[u8],
+        px: f32,
+        color_format: wgpu::TextureFormat,
+    ) -> Result<Self> {
+        let device = &gpu.device;
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
@@ -213,24 +365,7 @@ impl UiRenderer {
                 },
             ],
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ui"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: screen_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let default = FontAtlas::build(gpu, &layout, &sampler, &screen_buffer, ttf, px)?;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ui"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/ui.wgsl").into()),
@@ -275,38 +410,115 @@ impl UiRenderer {
         });
         Ok(UiRenderer {
             pipeline,
+            layout,
+            sampler,
             screen_buffer,
-            bind_group,
-            glyphs,
-            fallback,
-            white_uv,
-            ascent,
-            line_height,
+            default,
+            fonts: HashMap::new(),
+            images: HashMap::new(),
         })
     }
 
     pub fn line_height(&self) -> f32 {
-        self.line_height
-    }
-
-    fn glyph(&self, c: char) -> Glyph {
-        self.glyphs.get(&c).copied().unwrap_or(self.fallback)
+        self.default.line_height
     }
 
     pub fn text_width(&self, text: &str) -> f32 {
-        text.chars().map(|c| self.glyph(c).advance).sum()
+        self.default.text_width(text)
     }
 
     /// Longest prefix of `text` that fits in `width` pixels, in chars.
     pub fn fit(&self, text: &str, width: f32) -> usize {
         let mut x = 0.0;
         for (i, c) in text.chars().enumerate() {
-            x += self.glyph(c).advance;
+            x += self.default.glyph(c).advance;
             if x > width {
                 return i;
             }
         }
         text.chars().count()
+    }
+
+    /// `surface.CreateFont`: `family` of the content at `px` pixels under `name` (a name
+    /// registered again is replaced). False when no such family is mounted or the font cannot
+    /// be rasterised; the name then draws with the default font.
+    pub fn register_font(
+        &mut self,
+        gpu: &Gpu,
+        mount: &Mount,
+        name: &str,
+        family: &str,
+        px: f32,
+    ) -> bool {
+        let Some(ttf) = font_file(mount, family) else {
+            return false;
+        };
+        let px = px.clamp(4.0, 256.0);
+        match FontAtlas::build(
+            gpu,
+            &self.layout,
+            &self.sampler,
+            &self.screen_buffer,
+            &ttf,
+            px,
+        ) {
+            Ok(atlas) => {
+                self.fonts.insert(name.to_string(), atlas);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub fn has_font(&self, name: &str) -> bool {
+        self.fonts.contains_key(name)
+    }
+
+    fn font(&self, name: Option<&str>) -> &FontAtlas {
+        name.and_then(|n| self.fonts.get(n))
+            .unwrap_or(&self.default)
+    }
+
+    /// Metrics of a registered font (the default font's for an unknown name).
+    pub fn font_metrics(&self, name: Option<&str>) -> FontMetrics {
+        self.font(name).metrics()
+    }
+
+    /// A VTF for `Image` items: a material's `$basetexture` when `name` is a material, else
+    /// the texture itself; decoded once, a missing one is remembered as missing. Returns
+    /// whether it is there.
+    pub fn load_image(&mut self, gpu: &Gpu, mount: &Mount, name: &str) -> bool {
+        if let Some(entry) = self.images.get(name) {
+            return entry.is_some();
+        }
+        let texture_name = material::load(mount, name)
+            .ok()
+            .and_then(|m| m.base_texture)
+            .unwrap_or_else(|| name.to_string());
+        let loaded = material::load_texture(mount, &texture_name, IMAGE_MAX_SIDE)
+            .ok()
+            .map(|img| {
+                let texture = upload_rgba(
+                    gpu,
+                    &img.pixels,
+                    img.width,
+                    img.height,
+                    wgpu::TextureFormat::Rgba8UnormSrgb,
+                    "ui image",
+                );
+                let view = texture.create_view(&Default::default());
+                texture_bind_group(
+                    gpu,
+                    &self.layout,
+                    &self.sampler,
+                    &self.screen_buffer,
+                    &view,
+                    "ui image",
+                )
+            });
+        let present = loaded.is_some();
+        self.images.insert(name.to_string(), loaded);
+        present
     }
 
     pub fn draw(
@@ -317,8 +529,19 @@ impl UiRenderer {
         height: u32,
         items: &[UiItem],
     ) {
+        // vertices in item order, split into batches wherever the texture changes
         let mut vertices: Vec<Vertex> = Vec::new();
-        let mut quad = |x0: f32, y0: f32, x1: f32, y1: f32, uv: [f32; 4], color: [f32; 4]| {
+        let mut batches: Vec<(&wgpu::BindGroup, std::ops::Range<u32>)> = Vec::new();
+        let s = ATLAS_SIZE as f32;
+        fn quad(
+            vertices: &mut Vec<Vertex>,
+            x0: f32,
+            y0: f32,
+            x1: f32,
+            y1: f32,
+            uv: [f32; 4],
+            color: [f32; 4],
+        ) {
             let v = |x, y, u, w| Vertex {
                 position: [x, y],
                 uv: [u, w],
@@ -333,23 +556,48 @@ impl UiRenderer {
                 v(x1, y1, u1, v1),
                 v(x0, y1, u0, v1),
             ]);
-        };
-        let s = ATLAS_SIZE as f32;
-        for item in items {
-            match item {
-                UiItem::Rect { x, y, w, h, color } => {
-                    let [u, v] = self.white_uv;
-                    quad(*x, *y, x + w, y + h, [u, v, u, v], *color);
+        }
+        fn push_batch<'a>(
+            bg: &'a wgpu::BindGroup,
+            from: u32,
+            to: u32,
+            batches: &mut Vec<(&'a wgpu::BindGroup, std::ops::Range<u32>)>,
+        ) {
+            if from == to {
+                return;
+            }
+            match batches.last_mut() {
+                Some((last, range)) if std::ptr::eq(*last, bg) && range.end == from => {
+                    range.end = to
                 }
-                UiItem::Text { x, y, text, color } => {
+                _ => batches.push((bg, from..to)),
+            }
+        }
+        for item in items {
+            let from = vertices.len() as u32;
+            let bg: &wgpu::BindGroup = match item {
+                UiItem::Rect { x, y, w, h, color } => {
+                    let [u, v] = self.default.white_uv;
+                    quad(&mut vertices, *x, *y, x + w, y + h, [u, v, u, v], *color);
+                    &self.default.bind_group
+                }
+                UiItem::Text {
+                    x,
+                    y,
+                    text,
+                    color,
+                    font,
+                } => {
+                    let f = self.font(font.as_deref());
                     let mut pen = x.round();
-                    let base = y.round() + self.ascent.round();
+                    let base = y.round() + f.ascent.round();
                     for c in text.chars() {
-                        let g = self.glyph(c);
+                        let g = f.glyph(c);
                         if g.size[0] > 0.0 {
                             let gx = pen + g.offset[0];
                             let gy = base + g.offset[1];
                             quad(
+                                &mut vertices,
                                 gx,
                                 gy,
                                 gx + g.size[0],
@@ -360,8 +608,32 @@ impl UiRenderer {
                         }
                         pen += g.advance;
                     }
+                    &f.bind_group
                 }
-            }
+                UiItem::Image {
+                    x,
+                    y,
+                    w,
+                    h,
+                    material,
+                    color,
+                } => {
+                    let Some(Some(bg)) = self.images.get(material) else {
+                        continue;
+                    };
+                    quad(
+                        &mut vertices,
+                        *x,
+                        *y,
+                        x + w,
+                        y + h,
+                        [0.0, 0.0, 1.0, 1.0],
+                        *color,
+                    );
+                    bg
+                }
+            };
+            push_batch(bg, from, vertices.len() as u32, &mut batches);
         }
         if vertices.is_empty() {
             return;
@@ -400,9 +672,11 @@ impl UiRenderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_vertex_buffer(0, vb.slice(..));
-            pass.draw(0..vertices.len() as u32, 0..1);
+            for (bg, range) in &batches {
+                pass.set_bind_group(0, *bg, &[]);
+                pass.draw(range.clone(), 0..1);
+            }
         }
         gpu.queue.submit([enc.finish()]);
     }
