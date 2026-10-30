@@ -46,6 +46,8 @@ pub enum Event {
     Undone { id: u32, removed: usize },
     /// `gmod_cleanup` without arguments: `hook.Run('OnCleanup','all')`.
     Cleanup { kind: String },
+    /// An entity left the table (`EntityRemoved`), one per entity, before the Undone/Cleanup.
+    Removed { prop: u32 },
 }
 
 /// `sbox_*` limits (measured defaults: props 200, constraints 2000, ropeconstraints 1000);
@@ -1054,7 +1056,13 @@ impl Sandbox {
             let Some(u) = self.undo.get_mut(&player).and_then(Vec::pop) else {
                 return;
             };
-            let removed = u.entities.iter().filter(|&&e| self.remove(e)).count();
+            let mut removed = 0;
+            for &e in &u.entities {
+                if self.remove(e) {
+                    removed += 1;
+                    events.push(Event::Removed { prop: e });
+                }
+            }
             events.push(Event::Undone { id: u.id, removed });
             if removed > 0 {
                 return;
@@ -1066,7 +1074,9 @@ impl Sandbox {
     pub fn cleanup(&mut self, player: u32, events: &mut Vec<Event>) {
         if let Some(lists) = self.cleanup.remove(&player) {
             for id in lists.into_values().flatten() {
-                self.remove(id);
+                if self.remove(id) {
+                    events.push(Event::Removed { prop: id });
+                }
             }
         }
         events.push(Event::Cleanup { kind: "all".into() });

@@ -243,7 +243,18 @@ existing name replaces it, `reps` 0 forever, `Exists`, `Remove` (`Destroy`), `Pa
 `Toggle`, `Start`, `Adjust`, `TimeLeft`, `RepsLeft`; a callback error prints through the actor's
 queue and destroys only that timer. `script_timers` matches the game's 99 events exactly.
 
-## Not yet
+## Hook order around a spawn
+
+Measured on srcds (`script_hooks`: a bot's `gm_spawn`, `gmod_undo`, `gm_spawn`, `gmod_cleanup`
+run from inside `Think` on ticks 5, 15, 25, 30, every hook logged with its tick): the whole spawn
+chain is synchronous inside that `Think`: `PlayerSpawnProp` (cancelable), `OnEntityCreated`,
+`PlayerSpawnedProp`, then the tick's `Tick`; `EntityRemoved` for the undone and the cleaned up
+prop also fires inside the same `Think` that ran the command (the removal is not deferred to the
+next frame for `Remove()` from Lua), and the table is empty at the end. Ours: a command executed
+in the Think phase runs `prop.spawn_request`, `entity.created`, `entity.spawned` serially in
+place, `entity.removed` (new, `ServerHooks::entity_removed`: the net layer reports every
+`Event::Removed` of an undo or cleanup) in the same phase; the 90 events match the game's.
+
 
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,
 the sandbox gamemode in Luau on top of this API.

@@ -1961,3 +1961,10 @@ scenario = "script/timers"
 compare = "timers"
 realm = "server"
 crates = ["gm-script"]
+
+[[harness]]
+name = "script_hooks"
+scenario = "script/hooks"
+compare = "timers"
+realm = "server"
+crates = ["gm-script", "gm-server", "gm-sandbox"]

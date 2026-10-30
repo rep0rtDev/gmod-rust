@@ -45,6 +45,8 @@ pub trait ServerHooks {
     fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool;
     /// `entity.spawned` after a prop was created.
     fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32);
+    /// `entity.removed` after an entity left the table through a player's command.
+    fn entity_removed(&mut self, _server: &mut Server<'_>, _player: u32, _ent: u32) {}
     /// A click of a stool the sandbox does not know: a scripted tool may handle it.
     fn tool_click(
         &mut self,

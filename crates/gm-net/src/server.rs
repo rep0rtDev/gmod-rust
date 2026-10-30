@@ -261,9 +261,19 @@ impl ServerNet {
                         slot.pending_events.push(msg);
                     }
                 }
+                let mut removed = Vec::new();
                 for e in &server.events[n..] {
-                    if let gm_sandbox::Event::LimitHit { limit } = e {
-                        slot.pending_events.push(format!("LimitHit {limit}"));
+                    match e {
+                        gm_sandbox::Event::LimitHit { limit } => {
+                            slot.pending_events.push(format!("LimitHit {limit}"));
+                        }
+                        gm_sandbox::Event::Removed { prop } => removed.push(*prop),
+                        _ => {}
+                    }
+                }
+                if let Some(h) = self.hooks.as_mut() {
+                    for ent in removed {
+                        h.entity_removed(server, slot.player, ent);
                     }
                 }
             }

@@ -1,0 +1,12 @@
+{
+ "name": "script_hooks",
+ "kind": "hooks",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "model": "models/props_junk/wood_crate001a.mdl",
+ "ticks": 40
+}

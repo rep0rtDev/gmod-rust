@@ -1410,6 +1410,55 @@ SCENARIOS.timers = function(scn, done)
 end
 ASYNC.timers = true
 
+-- { kind = "hooks", model = ..., ticks = N }: the sandbox hooks around gm_spawn / gmod_undo /
+-- gmod_cleanup run from inside Think, with the tick of every hook relative to Think and Tick.
+SCENARIOS.hooks = function(scn, done)
+	local bot = player.GetBots()[1]
+	if not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.hooks(scn, done) end)
+		return
+	end
+	if not bot:Alive() then bot:Spawn() end
+	bot:SetPos(Vector(scn.start[1], scn.start[2], scn.start[3]))
+	bot:SetEyeAngles(Angle(30, 0, 0))
+	for _, e in ipairs(ents.FindByClass("prop_physics")) do e:Remove() end
+	undo.GetTable()[bot:UniqueID()] = nil
+	local total = scn.ticks or 40
+	local model = scn.model or "models/props_junk/wood_crate001a.mdl"
+	local events, seq, t0, started = {}, 0, 0, false
+	local function ev(what)
+		seq = seq + 1
+		events[#events + 1] = { seq = seq, tick = engine.TickCount() - t0, what = what }
+	end
+	hook.Add("PlayerSpawnProp", "parity_hooks", function(ply, m) if ply == bot then ev("spawn_request") end end)
+	hook.Add("PlayerSpawnedProp", "parity_hooks", function(ply, m, ent) if ply == bot then ev("spawned") end end)
+	hook.Add("OnEntityCreated", "parity_hooks", function(ent) if started and ent:GetClass() == "prop_physics" then ev("created") end end)
+	hook.Add("EntityRemoved", "parity_hooks", function(ent) if started and ent:GetClass() == "prop_physics" then ev("removed") end end)
+	hook.Add("Think", "parity_hooks", function()
+		if not started then
+			started = true
+			t0 = engine.TickCount()
+		end
+		ev("think")
+		local t = engine.TickCount() - t0
+		if t == 5 or t == 25 then concommand.Run(bot, "gm_spawn", { model }, model) end
+		if t == 15 then concommand.Run(bot, "gmod_undo", {}, "") end
+		if t == 30 then concommand.Run(bot, "gmod_cleanup", {}, "") end
+	end)
+	hook.Add("Tick", "parity_hooks", function()
+		if not started then return end
+		ev("tick")
+		if engine.TickCount() - t0 >= total then
+			for _, h in ipairs({ "PlayerSpawnProp", "PlayerSpawnedProp", "OnEntityCreated", "EntityRemoved", "Think", "Tick" }) do
+				hook.Remove(h, "parity_hooks")
+			end
+			done({ events = events, props = #ents.FindByClass("prop_physics") })
+		end
+	end)
+end
+ASYNC.hooks = true
+
 local function runAll()
 	file.CreateDir(OUT_DIR)
 	local files = file.Find(SCN_DIR .. "/*.json", "DATA")

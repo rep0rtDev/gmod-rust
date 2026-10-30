@@ -309,6 +309,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "net" => run_net(scn)?,
         "toolgun" => run_toolgun(scn)?,
         "timers" => run_timers(scn)?,
+        "hooks" => run_hooks(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
     Ok(Trace {
@@ -1133,7 +1134,7 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
                 }
                 Event::Cleanup { kind } => messages
                     .push(json!({ "t": i, "lua": format!("hook.Run('OnCleanup','{kind}')") })),
-                Event::Undone { .. } => {}
+                Event::Undone { .. } | Event::Removed { .. } => {}
             }
         }
         let snap = snapshot(&sb);
@@ -3375,6 +3376,110 @@ end)
     }))
 }
 
+/// The sandbox hooks around a spawn, an undo and a cleanup run inside the Think phase, logged
+/// with their tick like the game's `hooks` probe scenario.
+fn run_hooks(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{Surface, World};
+    use gm_script::{ActorConfig, ActorSpec, Runtime};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let table = gm_physics::surface::SurfaceTable::parse(&[&String::from_utf8_lossy(
+        &mount.read("scripts/surfaceproperties.txt")?,
+    )]);
+    let world_sp = table.get("concrete");
+    let world_surface = Surface {
+        friction: world_sp.friction,
+        elasticity: world_sp.elasticity,
+    };
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    tune_solver(&mut physics);
+    let world_body = physics.add_static_hulls(&world_hulls, world_surface)?;
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    let start = Vec3::from(scn.start.unwrap_or([823.235, -500.0, -143.0]));
+    let player = 1;
+    server.add_player(player, start, Vec3::new(30.0, 0.0, 0.0));
+    let model = scn
+        .model
+        .clone()
+        .unwrap_or_else(|| "models/props_junk/wood_crate001a.mdl".into());
+    server.register_model(&model, model_info(&mount, &model)?);
+    let total = scn.ticks.unwrap_or(40) as u64;
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "parity".into(),
+        name: "hooks".into(),
+        priority: 0,
+        source: r#"
+state.lines = {}
+state.seq = 0
+local function ev(what)
+    state.seq += 1
+    table.insert(state.lines, string.format("%d %d %s", state.seq, game.tick() - state.t0, what))
+end
+events.on("tick.pre", function() if not state.t0 then state.t0 = game.tick() end ev("think") end)
+events.on("tick.post", function() ev("tick") end)
+events.on("prop.spawn_request", function() ev("spawn_request") end)
+events.on("entity.created", function() ev("created") end)
+events.on("entity.spawned", function() ev("spawned") end)
+events.on("entity.removed", function() ev("removed") end)
+"#
+        .into(),
+        config: ActorConfig::default(),
+    })
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let idle = std::collections::BTreeMap::from([(player, gm_server::PlayerCmd::default())]);
+    for t in 0..=total {
+        rt.pre_tick(&mut server);
+        let before: Vec<u32> = server.sandbox.props().iter().map(|p| p.id).collect();
+        if (t == 5 || t == 25) && rt.prop_spawn_request(&mut server, player, &model) {
+            if let Some(ent) = server.spawn_prop(player, &model) {
+                rt.entity_spawned(&mut server, player, ent);
+            }
+        }
+        if t == 15 {
+            server.undo(player);
+        }
+        if t == 30 {
+            server.cleanup(player);
+        }
+        if t == 15 || t == 30 {
+            let after: Vec<u32> = server.sandbox.props().iter().map(|p| p.id).collect();
+            for id in before.iter().filter(|id| !after.contains(id)) {
+                rt.entity_removed(&mut server, player, *id);
+            }
+        }
+        server.tick(&idle);
+        rt.post_tick(&mut server);
+    }
+    let lines: Vec<String> = rt.actors()[0]
+        .eval("return state.lines")
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let events: Vec<Value> = lines
+        .iter()
+        .filter_map(|l| {
+            let mut it = l.splitn(3, ' ');
+            let seq: i64 = it.next()?.parse().ok()?;
+            let tick: i64 = it.next()?.parse().ok()?;
+            let what = it.next()?;
+            Some(serde_json::json!({ "seq": seq, "tick": tick, "what": what }))
+        })
+        .filter(|e| e["tick"].as_i64().unwrap_or(0) <= total as i64)
+        .collect();
+    Ok(serde_json::json!({
+        "events": events,
+        "props": server.sandbox.props().len(),
+    }))
+}
+
 fn compare_timers(theirs: &Value, ours: &Value) -> bool {
     let empty = Vec::new();
     let list = |v: &Value| -> Vec<(i64, String)> {
@@ -3640,7 +3745,7 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 Event::LimitHit { limit } => messages.push(json!({ "t": i, "limit": limit })),
                 Event::Cleanup { kind } => messages
                     .push(json!({ "t": i, "lua": format!("hook.Run('OnCleanup','{kind}')") })),
-                Event::Spawned { .. } | Event::Undone { .. } => {}
+                Event::Spawned { .. } | Event::Undone { .. } | Event::Removed { .. } => {}
             }
         }
         let moved: Vec<usize> = sb

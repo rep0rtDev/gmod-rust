@@ -541,11 +541,22 @@ impl Runtime {
         false
     }
 
+    /// `entity.created` (the entity exists, like `OnEntityCreated`) then `entity.spawned` (the
+    /// sandbox finished with it, like `PlayerSpawnedProp`), both serial.
     pub fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32) -> Applied {
         let mut p = api::Payload::default();
         p.ints.push(("player", player as i64));
         p.ints.push(("entity", ent as i64));
+        self.run_event(server, "entity.created", p.clone());
         self.run_event(server, "entity.spawned", p)
+    }
+
+    /// `entity.removed` (`EntityRemoved`): the entity is already gone from the table.
+    pub fn entity_removed(&mut self, server: &mut Server<'_>, player: u32, ent: u32) -> Applied {
+        let mut p = api::Payload::default();
+        p.ints.push(("player", player as i64));
+        p.ints.push(("entity", ent as i64));
+        self.run_event(server, "entity.removed", p)
     }
 }
 
@@ -601,6 +612,9 @@ impl gm_server::ServerHooks for Runtime {
     }
     fn drain_net(&mut self) -> Vec<(u32, String, Vec<u8>)> {
         Runtime::drain_net(self)
+    }
+    fn entity_removed(&mut self, server: &mut Server<'_>, player: u32, ent: u32) {
+        Runtime::entity_removed(self, server, player, ent);
     }
     fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool {
         Runtime::prop_spawn_request(self, server, player, model)
