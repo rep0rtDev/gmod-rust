@@ -100,7 +100,20 @@ Implemented, by `Command::Property { name }` on the prop under the crosshair:
   a kept prop is undone as fast; `angularlimit` is an angular acceleration cap (60 gives
   ~0.9 degrees per tick per tick with ringing), the property uses the huge one. Ours drives
   the orientation with the physgun's angular law, no damping, one tick to arrive, 3700 deg/s.
-- Not yet: `ignite` / `extinguish` (no fire), `drive`, `skin`, `bodygroups`, the menu itself in
+- `ignite` is `Entity:Ignite(360)` (measured `lua_fire`, three crates): an `entityflame` on the
+  prop plays `General.BurningObject` (`ambient/fire/fire_small_loop2.wav`, a loop) and deals 1
+  point of `DMG_BURN | DMG_DIRECT` 7 ticks after the ignition, then every 13 ticks (0.2 s
+  thinks), to the prop's `prop_data` health: the crate is `Wooden.Medium` = 30 through
+  `scripts/propdata.txt` (the gas can says 20 in its own `prop_data`, metal has 0 and burns
+  unharmed). The think that finds the lifetime over (`Ignite(3)`: 200 ticks) plays
+  `General.StopBurning` and the flame lingers 0.5 s (33 ticks, still on fire) before it is gone,
+  so `Ignite(3)` is 15 points of damage. `extinguish` (offered while burning) removes the flame
+  at once and keeps the health. Health 0 breaks the prop: the surface's `break` sound
+  (`Wood_Crate.Break`, volume 0.8 and level 85 from the script), the prop is gone - 30 points
+  after `Ignite(360)`, 394 ticks from the ignition. Ours: `Server::ignite / extinguish /
+  damage_prop`, `Prop.health / fire`, `entity.break {entity}` to Luau. Not measured: fire on
+  players and on props without health, gibs (the game leaves wood chunks), fire spreading.
+- Not yet: `drive`, `skin`, `bodygroups`, the menu itself in
   the native client (the console's `property <name>` sends the command).
 
 ## Player models

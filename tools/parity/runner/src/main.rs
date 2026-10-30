@@ -1351,6 +1351,8 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
         drag_axis_areas: Vec3::from(solid.drag_axis_areas),
         inertia: Some(Vec3::from(solid.rotation_inertia)),
         impact_hard: table.sound(&props.surfaceprop, "impacthard"),
+        health: 0,
+        break_sound: None,
     })
 }
 

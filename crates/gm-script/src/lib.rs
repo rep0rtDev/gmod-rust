@@ -1070,6 +1070,10 @@ impl Runtime {
                     p.strs.push(("property", name));
                     "player.property"
                 }
+                E::PropBreak { ent } => {
+                    p.ints.push(("entity", ent as i64));
+                    "entity.break"
+                }
                 E::Unfroze { player, count } => {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("count", count as i64));

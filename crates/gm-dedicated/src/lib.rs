@@ -152,7 +152,38 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
         drag_axis_areas: Vec3::from(solid.drag_axis_areas),
         inertia: Some(Vec3::from(solid.rotation_inertia)),
         impact_hard: table.sound(&props.surfaceprop, "impacthard"),
+        health: prop_health(mount, &mdl.key_values),
+        break_sound: table.sound(&props.surfaceprop, "break"),
     })
+}
+
+/// The prop's health from its `prop_data` (`$keyvalues` of the model) through the `base`
+/// chain of `scripts/propdata.txt`: the crate is `Wooden.Medium`, 30 (measured, `lua_fire`),
+/// the gas can says 20 itself. No `prop_data`, or health 0 (metal), is unbreakable.
+pub fn prop_health(mount: &gm_content::Mount, key_values: &str) -> i32 {
+    let Ok(doc) = gm_formats::keyvalues::parse(key_values) else {
+        return 0;
+    };
+    let Some(pd) = doc.root().and_then(|r| r.get("prop_data")) else {
+        return 0;
+    };
+    let table = mount
+        .read("scripts/propdata.txt")
+        .ok()
+        .and_then(|b| gm_formats::keyvalues::parse(&String::from_utf8_lossy(&b)).ok());
+    let classes = table.as_ref().and_then(|d| d.root());
+    let mut node = Some(pd);
+    for _ in 0..8 {
+        let Some(n) = node else { break };
+        if let Some(h) = n
+            .get_str("health")
+            .and_then(|h| h.trim().parse::<i32>().ok())
+        {
+            return h;
+        }
+        node = n.get_str("base").and_then(|b| classes?.get(b));
+    }
+    0
 }
 
 /// `gm-dedicated --config server.toml`: the command line's fields as a file, plus `[cvars]`.

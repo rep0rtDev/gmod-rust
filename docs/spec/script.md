@@ -546,6 +546,11 @@ Not yet: use on players, hold-to-use.
 the player's choice translates to (`gm_server::player_models`, kleiner for an unknown name);
 `return "<path>"` makes the player wear that instead.
 
+## Props breaking
+
+`entity.break {entity}` follows a prop whose `prop_data` health reached zero (fire, so far); the
+prop is gone when it arrives.
+
 ## Properties
 
 `player.property_request {player, entity, property}` is `CanProperty`, asked synchronously

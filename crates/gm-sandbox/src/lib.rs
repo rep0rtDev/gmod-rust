@@ -30,6 +30,19 @@ pub struct Prop {
     pub collide: bool,
     /// The keep-upright property: the angles the prop is held at.
     pub upright: Option<Vec3>,
+    /// `prop_data` health (0: unbreakable); fire counts it down, zero breaks the prop.
+    pub health: i32,
+    /// The `entityflame` on the prop (`Ignite`), in server ticks.
+    pub fire: Option<Fire>,
+}
+
+/// A flame on a prop: damage thinks every 13 ticks until `until`, then the flame lingers
+/// 0.5 s (`out_at`) before it is gone (measured `lua_fire`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fire {
+    pub until: u64,
+    pub next_think: u64,
+    pub out_at: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -482,6 +495,8 @@ impl Sandbox {
             gravity: true,
             collide: true,
             upright: None,
+            health: 0,
+            fire: None,
         });
         id
     }
@@ -620,6 +635,8 @@ impl Sandbox {
             gravity: true,
             collide: true,
             upright: None,
+            health: 0,
+            fire: None,
         });
         events.push(Event::Spawned { prop: id });
         self.push_undo(
@@ -647,6 +664,8 @@ impl Sandbox {
                 gravity: true,
                 collide: true,
                 upright: None,
+                health: 0,
+                fire: None,
             });
             self.next_id = self.next_id.max(b.id + 1);
         }
@@ -677,6 +696,18 @@ impl Sandbox {
     pub fn set_upright(&mut self, id: u32, angles: Option<Vec3>) {
         if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
             p.upright = angles;
+        }
+    }
+
+    pub fn set_health(&mut self, id: u32, health: i32) {
+        if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
+            p.health = health;
+        }
+    }
+
+    pub fn set_fire(&mut self, id: u32, fire: Option<Fire>) {
+        if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
+            p.fire = fire;
         }
     }
 

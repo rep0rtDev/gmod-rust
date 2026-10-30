@@ -33,6 +33,11 @@ pub struct ModelInfo {
     pub inertia: Option<Vec3>,
     /// The `impacthard` sound script of the model's surface property (`Wood_Crate.ImpactHard`).
     pub impact_hard: Option<String>,
+    /// `prop_data` health through `scripts/propdata.txt` (the crate: `Wooden.Medium`, 30);
+    /// 0 is unbreakable.
+    pub health: i32,
+    /// The `break` sound script of the surface property (`Wood_Crate.Break`).
+    pub break_sound: Option<String>,
 }
 
 /// A prop impact is heard from this approach speed (units/s) up: the crate's drops at 62.9
@@ -41,6 +46,19 @@ pub const IMPACT_SOUND_MIN_SPEED: f32 = 70.0;
 /// The impact volume is `(speed / 320)^2` capped at 1, times the script's own volume (the
 /// crate: 80.7 u/s 0.0636, 177 u/s 0.306, 292 u/s 0.834, 349 u/s and up 1.0, all exact).
 pub const IMPACT_SOUND_FULL_SPEED: f32 = 320.0;
+
+/// `entityflame` on a prop (`Ignite`, measured `lua_fire`): the first point of damage lands
+/// 7 ticks after the ignition, then one every 13 ticks (0.2 s thinks), `DMG_BURN | DMG_DIRECT`,
+/// while the lifetime lasts; the think that finds the lifetime over stops the fire sound and
+/// the flame stays (the prop still "on fire") for 0.5 s before it is gone.
+pub const FIRE_FIRST_DAMAGE_TICKS: u64 = 7;
+pub const FIRE_DAMAGE_INTERVAL_TICKS: u64 = 13;
+pub const FIRE_LINGER_TICKS: u64 = 33;
+pub const FIRE_DAMAGE: i32 = 1;
+pub const DMG_BURN: u32 = 8;
+pub const DMG_DIRECT: u32 = 0x1000_0000;
+/// The `ignite` property is `Ignite(360)`.
+pub const PROPERTY_IGNITE_SECONDS: f32 = 360.0;
 
 /// A sound the server tells every client to play in the world this tick.
 #[derive(Clone, Debug, PartialEq)]
@@ -59,6 +77,10 @@ pub enum GameEvent {
     /// `spawn_player`: the first spawn and every respawn.
     PlayerSpawned {
         player: u32,
+    },
+    /// A prop's health reached zero (fire, so far): it is gone after this.
+    PropBreak {
+        ent: u32,
     },
     /// Health damage applied (after the armour share, fall damage included), damage type bits.
     PlayerDamaged {
@@ -957,6 +979,107 @@ impl<'w> Server<'w> {
             p.model = model;
         }
         self.give_loadout(id);
+    }
+
+    /// `Entity:Ignite(seconds)`: a flame on the prop; false when there is no such prop or it
+    /// already burns. The fire sound (`General.BurningObject`) plays at the prop.
+    pub fn ignite(&mut self, ent: u32, seconds: f32) -> bool {
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent).cloned() else {
+            return false;
+        };
+        if prop.fire.is_some() {
+            return false;
+        }
+        let now = self.tick_count;
+        let ticks = (seconds / gm_core::tick::DEFAULT_TICK_INTERVAL).round() as u64;
+        self.sandbox.set_fire(
+            ent,
+            Some(gm_sandbox::Fire {
+                until: now + ticks,
+                next_think: now + FIRE_FIRST_DAMAGE_TICKS,
+                out_at: None,
+            }),
+        );
+        let pos = self.prop_state(ent).map_or(prop.pos, |s| s.position);
+        self.sounds.push(WorldSound {
+            name: "General.BurningObject".to_string(),
+            pos,
+            volume: 1.0,
+        });
+        true
+    }
+
+    /// `Entity:Extinguish`: the flame is gone at once, the health stays.
+    pub fn extinguish(&mut self, ent: u32) -> bool {
+        let burning = self
+            .sandbox
+            .props()
+            .iter()
+            .any(|p| p.id == ent && p.fire.is_some());
+        if burning {
+            self.sandbox.set_fire(ent, None);
+        }
+        burning
+    }
+
+    /// Damage on a prop: the `prop_data` health counts down, zero breaks it (the surface's
+    /// `break` sound, `PropBreak`, gone); a prop without health (metal) takes none.
+    pub fn damage_prop(&mut self, ent: u32, amount: i32, _dmg_type: u32) {
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent).cloned() else {
+            return;
+        };
+        if prop.health <= 0 {
+            return;
+        }
+        let left = prop.health - amount;
+        if left > 0 {
+            self.sandbox.set_health(ent, left);
+            return;
+        }
+        self.sandbox.set_health(ent, 0);
+        let pos = self.prop_state(ent).map_or(prop.pos, |s| s.position);
+        if let Some(name) = self
+            .models
+            .get(&prop.model)
+            .and_then(|m| m.break_sound.clone())
+        {
+            self.sounds.push(WorldSound {
+                name,
+                pos,
+                volume: 1.0,
+            });
+        }
+        self.game_events.push(GameEvent::PropBreak { ent });
+        self.remove_prop(ent);
+    }
+
+    fn fire_tick(&mut self) {
+        let now = self.tick_count;
+        let burning: Vec<(u32, gm_sandbox::Fire)> = self
+            .sandbox
+            .props()
+            .iter()
+            .filter_map(|p| Some((p.id, p.fire.clone()?)))
+            .collect();
+        for (id, mut fire) in burning {
+            if let Some(out) = fire.out_at {
+                if now >= out {
+                    self.sandbox.set_fire(id, None);
+                }
+                continue;
+            }
+            if now < fire.next_think {
+                continue;
+            }
+            if now >= fire.until {
+                fire.out_at = Some(now + FIRE_LINGER_TICKS);
+                self.sandbox.set_fire(id, Some(fire));
+                continue;
+            }
+            fire.next_think = now + FIRE_DAMAGE_INTERVAL_TICKS;
+            self.sandbox.set_fire(id, Some(fire));
+            self.damage_prop(id, FIRE_DAMAGE, DMG_BURN | DMG_DIRECT);
+        }
     }
 
     /// `cl_playermodel`: remembered now, worn from the next spawn on (as in the game).
@@ -1967,6 +2090,9 @@ impl<'w> Server<'w> {
             &mut events,
         );
         self.events.extend(events);
+        if let Some(id) = id {
+            self.sandbox.set_health(id, info.health);
+        }
         self.sync_physics();
         id
     }
@@ -2489,6 +2615,7 @@ impl<'w> Server<'w> {
     /// poses flow back into the sandbox.
     pub fn tick(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
         let now = self.tick_count as u32;
+        self.fire_tick();
         let upright: Vec<(BodyHandle, Vec3)> = self
             .sandbox
             .props()
@@ -2694,6 +2821,8 @@ impl<'w> Server<'w> {
             "collision_on" => !prop.collide,
             "keepupright" => prop.upright.is_none(),
             "keepupright_stop" => prop.upright.is_some(),
+            "ignite" => prop.fire.is_none(),
+            "extinguish" => prop.fire.is_some(),
             _ => false,
         };
         if !offered
@@ -2726,6 +2855,12 @@ impl<'w> Server<'w> {
             "keepupright" => {
                 let angles = body.map_or(prop.angles, |b| self.physics.state(b).angles.into());
                 self.sandbox.set_upright(ent, Some(angles));
+            }
+            "ignite" => {
+                self.ignite(ent, PROPERTY_IGNITE_SECONDS);
+            }
+            "extinguish" => {
+                self.extinguish(ent);
             }
             _ => self.sandbox.set_upright(ent, None),
         }

@@ -3502,11 +3502,12 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
                 state.asked += 1
                 if state.asked == 1 then return false end
             end)
-            events.on('player.property', function(e) state.applied += 1 state.last = e.property end)
+                        events.on('player.property', function(e) state.applied += 1 state.last = e.property end)
+            events.on('entity.break', function(e) state.broke = e.entity end)
             events.on('tick.post', function()
                 if game.tick() % 5 == 0 then
                     for _, pl in ipairs(world.players()) do
-                        net.send('log', { asked = state.asked, applied = state.applied, last = state.last }, pl.id)
+                        net.send('log', { asked = state.asked, applied = state.applied, last = state.last, broke = state.broke or 0 }, pl.id)
                     end
                 end
             end)"
@@ -3637,14 +3638,54 @@ fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
         ang.0.abs() < 3.0 && ang.2.abs() < 3.0,
         "kept upright, angles {ang:?}"
     );
-    // remove: the crate is gone, the second one stays
+    // ignite: Ignite(360) on a 30 hp crate, the first point of damage 7 ticks after the
+    // flame, then one every 13
+    client.command(prop("ignite"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 3);
+    let fire = server.sandbox.props()[0].fire.clone().expect("burning");
+    assert_eq!(
+        fire.until,
+        fire.next_think - gm_server::FIRE_FIRST_DAMAGE_TICKS + 24000
+    );
+    assert_eq!(server.sandbox.props()[0].health, 30);
+    let mut waited = 0;
+    while server.sandbox.props()[0].health == 30 && waited < 20 {
+        step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 1);
+        waited += 1;
+    }
+    assert_eq!(server.sandbox.props()[0].health, 29);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 12);
+    assert_eq!(server.sandbox.props()[0].health, 29);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 1);
+    assert_eq!(server.sandbox.props()[0].health, 28);
+    // extinguish: the flame is gone at once, the health stays
+    client.command(prop("extinguish"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    assert!(server.sandbox.props()[0].fire.is_none());
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 30);
+    assert_eq!(server.sandbox.props()[0].health, 28);
+    // remove: the crate is gone
     client.command(prop("remove"));
     step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
     assert!(server.sandbox.props().is_empty());
-    let (asked, applied, last): (i64, i64, String) = crt.actors()[0]
-        .eval("return state.d.asked, state.d.applied, state.d.last")
+    // a crate left burning breaks at zero health: 30 points, gone, `entity.break`
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    let c = server.sandbox.props()[0].id;
+    client.command(prop("ignite"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    assert!(server.sandbox.props()[0].fire.is_some());
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 400);
+    assert!(server.sandbox.props().is_empty(), "burnt down");
+    let (asked, applied, last, broke): (i64, i64, String, i64) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.applied, state.d.last, state.d.broke")
         .unwrap();
-    assert_eq!((asked, applied, last.as_str()), (7, 6, "remove"));
+    assert_eq!(
+        (asked, applied, last.as_str(), broke),
+        (10, 9, "ignite", c as i64)
+    );
 }
 
 #[test]
