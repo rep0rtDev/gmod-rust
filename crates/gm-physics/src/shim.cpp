@@ -417,6 +417,7 @@ public:
 			float mass = 1.0f / dyn.GetMotionProperties()->GetInverseMass();
 			JPH::RVec3 c = dyn.GetCenterOfMassPosition();
 			float vn_in = std::max(-(point_velocity(dyn, c) - point_velocity(other, c)).Dot(nd) - g_dt, 0.0f);
+
 			// a pair that just went through vertex impacts (phase 3) is a landing, not a push from rest
 			bool pushed = rs.phase != 3 && rs.vt_prev < 0.02f && vt > 0.1f;
 			if (pushed && vn_in > 0.02f) {
