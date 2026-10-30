@@ -934,7 +934,10 @@ impl World {
         unsafe {
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
             for d in &self.drags {
-                if !JPC_BodyInterface_IsActive(bi, d.body) || self.held.contains(&d.body) {
+                if !JPC_BodyInterface_IsActive(bi, d.body)
+                    || self.held.contains(&d.body)
+                    || self.frozen.contains(&d.body)
+                {
                     continue;
                 }
                 let mut p = jv(Vec3::ZERO);
