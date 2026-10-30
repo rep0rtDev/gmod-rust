@@ -131,8 +131,12 @@ recorded verbatim. `Command::PlayerModel { name }` (console `playermodel <name>`
 player's `cl_playermodel`: remembered at once, worn from the next spawn, when
 `player.set_model {player, model}` (`PlayerSetModel`) may return another path. The snapshot
 carries the table index, so other clients draw and animate that model; a path outside the
-table draws as kleiner. Not yet: the hands on the view model, skins and bodygroups of the
-player model itself.
+table draws as kleiner. The native client's view model wears the hands of the local player's
+model from the same table (`gm_server::player_models::hands`: model path, skin family and
+`SetBodyGroups` digit string, loaded with `WorldRenderer::load_model_variant`; one digit per
+body part, a missing or out-of-range digit means model 0, a skin past the table means 0), e.g.
+`c_arms_refugee` skin 1 body `0100000` for the refugee set, citizen hands until the first
+snapshot names a model. Not yet: skins and bodygroups of the player model itself.
 
 ## Not yet measured
 

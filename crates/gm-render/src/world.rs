@@ -1408,10 +1408,37 @@ impl WorldRenderer {
     }
 }
 
+/// The model a body part shows for Source's `SetBodyGroups` string: digit `part` of `body`,
+/// when it is a digit below the part's model count `n`, else 0.
+pub fn body_group_choice(body: &str, part: usize, n: usize) -> usize {
+    body.as_bytes()
+        .get(part)
+        .filter(|b| b.is_ascii_digit())
+        .map(|b| (b - b'0') as usize)
+        .filter(|&i| i < n)
+        .unwrap_or(0)
+}
+
 impl WorldRenderer {
     /// Loads `path` (body group 0, skin 0) for `draw_models`; `None` if it has no drawable mesh.
     pub fn load_model(&self, gpu: &Gpu, mount: &Mount, path: &str) -> Option<DynModel> {
+        self.load_model_variant(gpu, mount, path, 0, "")
+    }
+
+    /// `load_model` with a skin family and body groups: `body` is Source's `SetBodyGroups`
+    /// string, one digit per body part choosing its model (missing digits and out-of-range
+    /// values fall back to 0); a skin past the table falls back to 0.
+    pub fn load_model_variant(
+        &self,
+        gpu: &Gpu,
+        mount: &Mount,
+        path: &str,
+        skin: u8,
+        body: &str,
+    ) -> Option<DynModel> {
         let (mdl, vvd, vtx) = crate::props::load_model(mount, path).ok()?;
+        let skin_table = mdl.skins.get(skin as usize).or_else(|| mdl.skins.first());
+        let body_choice = |bi: usize, n: usize| body_group_choice(body, bi, n);
         let mut materials: crate::props::MaterialMap = HashMap::new();
         let mut missing = Vec::new();
         let keys: Vec<Option<String>> = (0..mdl.textures.len())
@@ -1424,7 +1451,8 @@ impl WorldRenderer {
             let Some(mdl_bp) = mdl.body_parts.get(bi) else {
                 continue;
             };
-            let (Some(vm), Some(mm)) = (bp.models.first(), mdl_bp.models.first()) else {
+            let choice = body_choice(bi, mdl_bp.models.len().min(bp.models.len()));
+            let (Some(vm), Some(mm)) = (bp.models.get(choice), mdl_bp.models.get(choice)) else {
                 continue;
             };
             let vertex_base = (mm.vertex_index / 48).max(0) as usize;
@@ -1433,9 +1461,7 @@ impl WorldRenderer {
                 let Some(mdl_mesh) = mm.meshes.get(mi) else {
                     continue;
                 };
-                let tex = mdl
-                    .skins
-                    .first()
+                let tex = skin_table
                     .and_then(|s| s.get(mdl_mesh.material.max(0) as usize))
                     .map(|&t| t.max(0) as usize)
                     .unwrap_or(mdl_mesh.material.max(0) as usize);
@@ -1789,4 +1815,22 @@ pub fn offscreen_targets(gpu: &Gpu, width: u32, height: u32) -> (wgpu::Texture, 
         view_formats: &[],
     });
     (color, depth)
+}
+
+#[cfg(test)]
+mod body_group_tests {
+    use super::body_group_choice;
+
+    #[test]
+    fn digits_pick_models_and_everything_else_means_the_first() {
+        // the refugee hands' `0100000`: part 1 shows model 1, the rest model 0
+        assert_eq!(body_group_choice("0100000", 0, 2), 0);
+        assert_eq!(body_group_choice("0100000", 1, 2), 1);
+        assert_eq!(body_group_choice("0100000", 6, 3), 0);
+        // past the string, a non-digit, or a model the part does not have
+        assert_eq!(body_group_choice("01", 5, 4), 0);
+        assert_eq!(body_group_choice("0x", 1, 4), 0);
+        assert_eq!(body_group_choice("03", 1, 2), 0);
+        assert_eq!(body_group_choice("", 0, 1), 0);
+    }
 }

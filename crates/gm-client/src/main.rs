@@ -244,7 +244,8 @@ fn panel_layout(w: f32, h: f32, lh: f32) -> (f32, f32, f32, f32, f32) {
 
 /// GMod's default `viewmodel_fov`.
 const VIEWMODEL_FOV: f32 = 54.0;
-/// Hands drawn on the `c_` viewmodels' arm bones (GMod's default player hands).
+/// Hands drawn on the `c_` viewmodels' arm bones when the local player's model is not known
+/// yet (the game's default, kleiner's citizen hands).
 const HANDS_MODEL: &str = "models/weapons/c_arms_citizen.mdl";
 
 /// A weapon slot of the client: the server class, its `c_` viewmodel and the viewmodel's
@@ -1081,6 +1082,18 @@ impl App {
         let vm = viewmodel(self.weapon);
         let vm_seq = vm.as_ref().map(|vm| self.vm_sequence(vm));
         let ghost_tool = (self.weapon == 1).then(|| (self.tool.clone(), self.tool_settings_list()));
+        // the hands follow the player model (`player_manager`'s hands table: model, skin, body
+        // groups), kleiner's citizen hands until the snapshot names one
+        let hands_of = self
+            .local_snap()
+            .map(|p| gm_server::player_models::path_of_index(p.model))
+            .and_then(gm_server::player_models::name_of)
+            .map(gm_server::player_models::hands)
+            .unwrap_or(gm_server::player_models::Hands {
+                model: HANDS_MODEL,
+                skin: 0,
+                body: "",
+            });
         let Some(g) = &mut self.gfx else { return };
         let frame = match g.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
@@ -1361,14 +1374,21 @@ impl App {
                 let m = g.world.load_model(&g.gpu, &self.mount, path);
                 g.models.insert(path.to_string(), m);
             }
-            if !g.models.contains_key(HANDS_MODEL) {
-                let m = g.world.load_model(&g.gpu, &self.mount, HANDS_MODEL);
-                g.models.insert(HANDS_MODEL.to_string(), m);
+            let hands_key = format!("{}#{}#{}", hands_of.model, hands_of.skin, hands_of.body);
+            if !g.models.contains_key(&hands_key) {
+                let m = g.world.load_model_variant(
+                    &g.gpu,
+                    &self.mount,
+                    hands_of.model,
+                    hands_of.skin,
+                    hands_of.body,
+                );
+                g.models.insert(hands_key.clone(), m);
             }
             if let Some(m) = g.models.get(path).and_then(|m| m.as_ref()) {
                 let world = m.bone_world(seq, t, None, &[]);
                 let pose = world.as_ref().map(|w| m.skin_matrices(w));
-                let hands = g.models.get(HANDS_MODEL).and_then(|h| h.as_ref());
+                let hands = g.models.get(&hands_key).and_then(|h| h.as_ref());
                 let hands_pose = match (hands, &world) {
                     (Some(h), Some(w)) => h.pose_merged("idle", 0.0, m, w),
                     _ => None,
