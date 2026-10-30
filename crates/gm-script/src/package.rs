@@ -97,10 +97,14 @@ pub fn sign(files: &BTreeMap<String, Vec<u8>>, secret: &[u8; 32]) -> String {
     let key = ed25519_dalek::SigningKey::from_bytes(secret);
     let sig = key.sign(&content_sha256(files));
     // existing lines are kept only while they still verify (a re-sign after an edit drops the
-    // stale ones instead of leaving a package nobody can load)
+    // stale ones instead of leaving a package nobody can load); this key's own line is replaced
+    let own = format!("gmr-sig1 {} ", hex(key.verifying_key().as_bytes()));
     let mut text = String::new();
     if let Some(old) = files.get(SIGNATURE) {
         for line in String::from_utf8_lossy(old).lines() {
+            if line.trim_start().starts_with(&own) {
+                continue;
+            }
             let mut one = BTreeMap::new();
             one.insert(SIGNATURE.to_string(), line.as_bytes().to_vec());
             for (k, v) in files {
@@ -280,6 +284,12 @@ mod tests {
         let (sk, pk) = keygen();
         files.insert(SIGNATURE.to_string(), sign(&files, &sk).into_bytes());
         assert_eq!(signers(&files).unwrap(), vec![pk]);
+        files.insert(SIGNATURE.to_string(), sign(&files, &sk).into_bytes());
+        assert_eq!(
+            signers(&files).unwrap(),
+            vec![pk],
+            "signing twice is one signature"
+        );
         let packed = pack_files(&files).unwrap();
         let pkg = Package::read(&packed).unwrap();
         assert_eq!(
