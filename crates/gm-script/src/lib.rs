@@ -40,6 +40,10 @@ pub struct Runtime {
     actors: Vec<Actor>,
     pub tick: u64,
     pub log: Vec<String>,
+    /// How many of `server.cvar_changes` were already dispatched as `cvar.changed`.
+    cvar_seen: usize,
+    /// Client realm: the replicated variables as last seen, for `cvar.changed`.
+    cvars_last: std::collections::BTreeMap<String, String>,
 }
 
 /// What the serial phase did to the server this tick.
@@ -57,6 +61,8 @@ impl Runtime {
             actors: Vec::new(),
             tick: 0,
             log: Vec::new(),
+            cvar_seen: 0,
+            cvars_last: Default::default(),
         }
     }
 
@@ -90,6 +96,19 @@ impl Runtime {
             let mut p = api::Payload::default();
             p.ints.push(("tick", world.tick as i64));
             self.parallel(&snap, "snapshot.received", &p);
+        }
+        if world.cvars != self.cvars_last {
+            for (name, value) in &world.cvars {
+                let old = self.cvars_last.get(name).cloned().unwrap_or_default();
+                if old != *value {
+                    let mut p = api::Payload::default();
+                    p.strs.push(("name", name.clone()));
+                    p.strs.push(("old", old));
+                    p.strs.push(("value", value.clone()));
+                    self.parallel(&snap, "cvar.changed", &p);
+                }
+            }
+            self.cvars_last = world.cvars.clone();
         }
         self.parallel(&snap, "tick.client", &api::Payload::default());
         self.release_snapshots();
@@ -222,7 +241,27 @@ impl Runtime {
 
     /// After the server tick: `tick.post`.
     pub fn post_tick(&mut self, server: &mut Server<'_>) -> Applied {
-        self.run_event(server, "tick.post", api::Payload::default())
+        self.dispatch_cvar_changes(server);
+        let applied = self.run_event(server, "tick.post", api::Payload::default());
+        self.dispatch_cvar_changes(server);
+        applied
+    }
+
+    /// `cvar.changed` (name, old, value) for every change logged on the server since the last
+    /// call; the net layer takes the log after the hooks, which resets the cursor.
+    fn dispatch_cvar_changes(&mut self, server: &mut Server<'_>) {
+        if server.cvar_changes.len() < self.cvar_seen {
+            self.cvar_seen = 0;
+        }
+        while self.cvar_seen < server.cvar_changes.len() {
+            let (name, old, value) = server.cvar_changes[self.cvar_seen].clone();
+            self.cvar_seen += 1;
+            let mut p = api::Payload::default();
+            p.strs.push(("name", name));
+            p.strs.push(("old", old));
+            p.strs.push(("value", value));
+            self.run_event(server, "cvar.changed", p);
+        }
     }
 
     /// Cancelable event in the serial phase: actors in priority order, the first `false` cancels.

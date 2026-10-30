@@ -383,3 +383,121 @@ fn addon_net_messages_round_trip_over_the_loopback() {
     let srv = sn.hooks.as_mut().unwrap();
     assert!(srv.drain_net().is_empty());
 }
+
+#[test]
+fn cvars_create_set_clamp_replicate_and_change_events() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let spec = |name: &str, source: &str| gm_script::ActorSpec {
+        addon: "test".into(),
+        name: name.into(),
+        priority: 0,
+        source: source.into(),
+        config: Default::default(),
+    };
+    let mut rt = gm_script::Runtime::new();
+    rt.load(spec(
+        "cfg",
+        "cvar.create('myaddon_speed', 10, { replicated = true, min = 0, max = 100, help = 'speed' })
+        cvar.create('myaddon_secret', 'hidden')
+        state.changes = {}
+        events.on('cvar.changed', function(p) table.insert(state.changes, p.name .. '=' .. p.old .. '>' .. p.value) end)
+        events.on('tick.pre', function()
+            state.ticks = (state.ticks or 0) + 1
+            if state.ticks == 5 then
+                cvar.set('myaddon_speed', 250)
+                cvar.set('myaddon_speed', 100)
+                cvar.set('nope', 1)
+                cvar.create('myaddon_speed', 999)
+            end
+            state.speed = cvar.get_number('myaddon_speed')
+            state.maxprops = cvar.get_number('sbox_maxprops')
+            if state.ticks == 30 then
+                net.send('report', { speed = state.speed, maxprops = state.maxprops, changes = state.changes })
+            end
+        end)",
+    ))
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    sn.hooks = Some(Box::new(rt));
+    let mut crt = gm_script::Runtime::client();
+    crt.load(spec(
+        "hud",
+        "state.changes = {}
+        events.on('cvar.changed', function(p)
+            if p.name == 'sbox_maxprops' or p.name:sub(1, 7) == 'myaddon' then
+                table.insert(state.changes, p.name .. '=' .. p.old .. '>' .. p.value)
+            end
+        end)
+        net.receive('report', function(p) state.report = p.data end)
+        events.on('tick.client', function()
+            state.speed = cvar.get('myaddon_speed')
+            state.secret = cvar.get('myaddon_secret')
+            state.maxprops = cvar.get_number('sbox_maxprops')
+            state.hurt = cvar.get_bool('sbox_playershurtplayers')
+        end)",
+    ))
+    .unwrap();
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut last_tick = 0;
+    for i in 0..40 {
+        if i == 20 {
+            client.command(gm_net::Command::Cvar {
+                name: "sbox_maxprops".into(),
+                value: "50".into(),
+            });
+        }
+        client.tick(gm_net::NetCmd::default(), &mut c_ep);
+        net.tick();
+        sn.receive(&mut server, &mut s_ep);
+        sn.tick(&mut server);
+        sn.send(&server, &mut s_ep);
+        client.receive(&mut c_ep);
+        let fresh = client.server_tick != last_tick;
+        last_tick = client.server_tick;
+        crt.client_tick(&client.world, fresh);
+        let inbox = std::mem::take(&mut client.addon_msgs);
+        crt.client_net(&client.world, inbox);
+    }
+    assert_eq!(server.sandbox.limits.max_props, 50);
+    assert_eq!(server.cvar("myaddon_speed"), Some("100"));
+    assert_eq!(server.cvars["myaddon_speed"].help, "speed");
+    assert!(
+        server.cvar_changes.is_empty(),
+        "the net layer takes the log"
+    );
+    let (speed, secret, maxprops, hurt, changes): (String, Option<String>, f64, bool, Vec<String>) =
+        crt.actors()[0]
+            .eval("return state.speed, state.secret, state.maxprops, state.hurt, state.changes")
+            .unwrap();
+    assert_eq!(
+        (speed.as_str(), secret, maxprops, hurt),
+        ("100", None, 50.0, true)
+    );
+    assert_eq!(
+        changes,
+        vec![
+            "myaddon_speed=>10".to_string(),
+            "sbox_maxprops=>200".into(),
+            "myaddon_speed=10>100".into(),
+            "sbox_maxprops=200>50".into()
+        ],
+        "the client sees the welcome set and the creation as changes from nothing, then each change"
+    );
+    let (speed, maxprops, srv_changes): (f64, f64, Vec<String>) = crt.actors()[0]
+        .eval("return state.report.speed, state.report.maxprops, state.report.changes")
+        .unwrap();
+    assert_eq!((speed, maxprops), (100.0, 50.0));
+    assert_eq!(
+        srv_changes,
+        vec!["myaddon_speed=10>100".to_string(), "sbox_maxprops=200>50".into()],
+        "250 clamps to 100 in one change; set to the same value, an unknown name and a second create are rejected"
+    );
+}

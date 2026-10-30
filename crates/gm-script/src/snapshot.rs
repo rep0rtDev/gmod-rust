@@ -56,6 +56,8 @@ pub struct Snapshot {
     pub players: BTreeMap<u32, PlayerSnap>,
     pub prop_count: usize,
     pub constraint_count: usize,
+    /// Console variables (every one on the server, the replicated ones on the client).
+    pub cvars: BTreeMap<String, String>,
 }
 
 impl Snapshot {
@@ -126,6 +128,7 @@ impl Snapshot {
                 .collect(),
             prop_count: world.own.count as usize,
             constraint_count: 0,
+            cvars: world.cvars.clone(),
         }
     }
 
@@ -179,6 +182,11 @@ impl Snapshot {
                 .collect(),
             prop_count: server.sandbox.props().len(),
             constraint_count: server.sandbox.constraints().len(),
+            cvars: server
+                .cvars
+                .iter()
+                .map(|(n, c)| (n.clone(), c.value.clone()))
+                .collect(),
         }
     }
 }

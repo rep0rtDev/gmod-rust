@@ -106,6 +106,16 @@ pub enum QueuedWrite {
         player: u32,
         class: String,
     },
+    /// `CreateConVar` (rejected when the name exists; needs no capability).
+    CreateCvar {
+        name: String,
+        cvar: gm_server::Cvar,
+    },
+    /// `ConVar:SetString` on a known variable (rejected when unknown or unchanged).
+    SetCvar {
+        name: String,
+        value: String,
+    },
 }
 
 /// Shared between the Rust side of an actor and the closures its VM calls.
@@ -136,6 +146,19 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("frags", p.frags)?;
     t.set("deaths", p.deaths)?;
     Ok(t)
+}
+
+fn cvar_string(v: &Value) -> Result<String> {
+    match v {
+        Value::String(s) => Ok(s.to_str()?.to_string()),
+        Value::Integer(i) => Ok(i.to_string()),
+        Value::Number(n) => Ok(n.to_string()),
+        Value::Boolean(b) => Ok((*b as i32).to_string()),
+        other => Err(mlua::Error::runtime(format!(
+            "cvar value must be a string, number or boolean, got {}",
+            other.type_name()
+        ))),
+    }
 }
 
 fn int_arg(v: &Value) -> Result<i32> {
@@ -526,6 +549,91 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         )?,
     )?;
     lua.globals().set("net", net)?;
+    let cvar = lua.create_table()?;
+    let sh = shared.clone();
+    cvar.set(
+        "get",
+        lua.create_function(move |_, name: String| {
+            Ok(sh.snapshot.read().unwrap().cvars.get(&name).cloned())
+        })?,
+    )?;
+    let sh = shared.clone();
+    cvar.set(
+        "get_number",
+        lua.create_function(move |_, name: String| {
+            Ok(sh
+                .snapshot
+                .read()
+                .unwrap()
+                .cvars
+                .get(&name)
+                .map(|v| v.trim().parse::<f64>().unwrap_or(0.0)))
+        })?,
+    )?;
+    let sh = shared.clone();
+    cvar.set(
+        "get_bool",
+        lua.create_function(move |_, name: String| {
+            Ok(sh
+                .snapshot
+                .read()
+                .unwrap()
+                .cvars
+                .get(&name)
+                .map(|v| v.trim().parse::<f64>().unwrap_or(0.0) != 0.0))
+        })?,
+    )?;
+    let sh = shared.clone();
+    cvar.set(
+        "create",
+        lua.create_function(
+            move |_, (name, default, opts): (String, Value, Option<Table>)| {
+                if name.is_empty() || name.len() > 64 {
+                    return Err(mlua::Error::runtime("cvar name must be 1..64 bytes"));
+                }
+                let default = cvar_string(&default)?;
+                let mut c = gm_server::Cvar {
+                    value: default.clone(),
+                    default,
+                    ..Default::default()
+                };
+                if let Some(o) = opts {
+                    c.replicated = o.get::<Option<bool>>("replicated")?.unwrap_or(false);
+                    c.archive = o.get::<Option<bool>>("archive")?.unwrap_or(false);
+                    c.min = o.get::<Option<f32>>("min")?;
+                    c.max = o.get::<Option<f32>>("max")?;
+                    c.help = o.get::<Option<String>>("help")?.unwrap_or_default();
+                }
+                let mut n = sh.queued.lock().unwrap();
+                *n += 1;
+                sh.queue
+                    .lock()
+                    .unwrap()
+                    .push((*n, QueuedWrite::CreateCvar { name, cvar: c }));
+                Ok(())
+            },
+        )?,
+    )?;
+    let sh = shared.clone();
+    cvar.set(
+        "set",
+        lua.create_function(move |_, (name, value): (String, Value)| {
+            if !sh.can_write {
+                return Err(mlua::Error::runtime(
+                    "this actor has no world-write capability",
+                ));
+            }
+            let value = cvar_string(&value)?;
+            let mut n = sh.queued.lock().unwrap();
+            *n += 1;
+            sh.queue
+                .lock()
+                .unwrap()
+                .push((*n, QueuedWrite::SetCvar { name, value }));
+            Ok(())
+        })?,
+    )?;
+    lua.globals().set("cvar", cvar)?;
     let game = lua.create_table()?;
     game.set(
         "interval",
@@ -834,6 +942,8 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         }
         QueuedWrite::PlayerGiveWeapon { player, class } => server.give_weapon(*player, class),
         QueuedWrite::PlayerSelectWeapon { player, class } => server.select_weapon(*player, class),
+        QueuedWrite::CreateCvar { name, cvar } => server.create_cvar(name, cvar.clone()),
+        QueuedWrite::SetCvar { name, value } => server.set_cvar(name, value),
         QueuedWrite::NoCollide { ent, ent2 } => {
             let world = |e: u32| if e == 0 { None } else { Some(e) };
             if !exists(server, *ent) || (*ent2 != 0 && !exists(server, *ent2)) {

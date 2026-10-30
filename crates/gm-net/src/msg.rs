@@ -180,6 +180,12 @@ pub enum ServerMsg {
         name: String,
         data: Vec<u8>,
     },
+    /// Reliable: a replicated console variable (all of them on welcome, then every change).
+    Cvar {
+        seq: u32,
+        name: String,
+        value: String,
+    },
 }
 
 pub const PROTOCOL: u16 = 1;
@@ -443,6 +449,7 @@ impl ServerMsg {
                 | ServerMsg::Event { .. }
                 | ServerMsg::CommandAck { .. }
                 | ServerMsg::Addon { .. }
+                | ServerMsg::Cvar { .. }
         )
     }
 
@@ -533,6 +540,12 @@ impl ServerMsg {
                 w.u32(*seq);
                 w.str(name);
                 w.bytes(data);
+            }
+            ServerMsg::Cvar { seq, name, value } => {
+                w.u8(6);
+                w.u32(*seq);
+                w.str(name);
+                w.str(value);
             }
         }
     }
@@ -629,6 +642,11 @@ impl ServerMsg {
                 seq: r.u32()?,
                 name: r.str()?,
                 data: r.bytes()?.to_vec(),
+            },
+            6 => ServerMsg::Cvar {
+                seq: r.u32()?,
+                name: r.str()?,
+                value: r.str()?,
             },
             _ => return Err(Truncated),
         })

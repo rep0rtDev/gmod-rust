@@ -149,6 +149,31 @@ loopback frames the client has exactly one pong with echo 7, from = its id, half
 list[4] 3; `netval_round_trips_and_caps` covers nested tables, integer keys, the 64 KiB cap, the
 depth cap, functions and truncated input.
 
+## Cvars
+
+The server keeps every console variable in `Server::cvars` (`Cvar`: value, default, replicated,
+archive, min, max, help), seeded with the 24 `sbox_*` variables and their measured defaults
+(convars-defaults.md), all replicated. `cvar.create(name, default, {replicated?, archive?, min?,
+max?, help?})` queues a `CreateConVar` (any actor, no capability: a variable is not world state);
+an existing name is rejected and keeps its value and flags. `cvar.set(name, value)` needs
+`world-write`; numbers are clamped to min/max, an unknown name or an unchanged value is rejected
+and counted. `cvar.get(name)` (string or nil), `cvar.get_number` (0 for a non number),
+`cvar.get_bool` read the snapshot: on the server every variable, on the client the replicated
+ones. The server reads `sbox_maxprops`, `sbox_maxconstraints`, `sbox_maxropeconstraints` and
+`sbox_playershurtplayers` from the registry on every change; a client's `Command::Cvar` goes
+through the same `set_cvar`. Replication is `ServerMsg::Cvar` (tag 6): every replicated variable
+on welcome, a created one and every change after that tick's `post_tick`. `cvar.changed` (`name`,
+`old`, `value`) fires on the server for every logged change (before and after `tick.post`, old =
+the previous string) and on the client for every difference against the last replicated set, so a
+joining client sees the whole set as changes from `""`.
+
+Measured (`cargo test -p gm-dedicated --test addon_hooks cvars_`): a server actor creating
+`myaddon_speed` 10 (replicated, 0..100) and a hidden `myaddon_secret`, then on tick 5 setting
+250, 100, an unknown name and creating `myaddon_speed` again, logs exactly `10>100`; the client's
+`Command::Cvar sbox_maxprops 50` sets `limits.max_props` 50 and logs `200>50`; the client reads
+`myaddon_speed` "100", no `myaddon_secret`, `sbox_maxprops` 50, `sbox_playershurtplayers` true
+and its change list is the welcome set, the creation, `10>100`, `200>50`.
+
 ## Timers
 
 `timer` lives in the actor's VM (prelude), so a timer runs in the realm and budget of the actor
@@ -169,5 +194,5 @@ never fires and still exists.
 
 ## Not yet
 
-client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu, storage, cvars), WASM components,
+client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu, storage), WASM components,
 file watching for reloads, the sandbox gamemode in Luau on top of this API.

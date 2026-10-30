@@ -19,6 +19,8 @@ pub struct ClientWorld {
     pub own: OwnSandbox,
     pub last_cmd_tick: u32,
     pub local: Option<LocalPlayer>,
+    /// Replicated console variables as the server sent them.
+    pub cvars: BTreeMap<String, String>,
 }
 
 /// Interpolation of other players' and props' poses between the two snapshots around a render
@@ -350,11 +352,15 @@ impl ClientNet {
                             own,
                             last_cmd_tick,
                             local,
+                            cvars: std::mem::take(&mut self.world.cvars),
                         };
                         self.server_tick = tick;
                     }
                     ServerMsg::Event { text, .. } => self.events.push(text),
                     ServerMsg::Addon { name, data, .. } => self.addon_msgs.push((name, data)),
+                    ServerMsg::Cvar { name, value, .. } => {
+                        self.world.cvars.insert(name, value);
+                    }
                     ServerMsg::CommandAck { seq } => {
                         self.acked_commands = self.acked_commands.max(seq + 1);
                     }

@@ -301,7 +301,68 @@ pub struct Server<'w> {
     tick_count: u64,
     /// `mp_falldamage`: progressive fall damage instead of the flat 10.
     pub fall_damage_progressive: bool,
+    /// Console variables: the sandbox `sbox_*` set plus what addons create.
+    pub cvars: BTreeMap<String, Cvar>,
+    /// (name, old, new) since the last `take_cvar_changes` (the net layer takes them after the
+    /// script hooks read them).
+    pub cvar_changes: Vec<(String, String, String)>,
+    /// Names created since the last `take_cvar_new` (replicated to connected clients).
+    pub cvar_new: Vec<String>,
 }
+
+/// A console variable: a string value with the sandbox's flags that matter here.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Cvar {
+    pub value: String,
+    pub default: String,
+    /// Sent to every client and kept in step (`FCVAR_REPLICATED`).
+    pub replicated: bool,
+    /// Saved with the server config (`FCVAR_ARCHIVE`).
+    pub archive: bool,
+    pub min: Option<f32>,
+    pub max: Option<f32>,
+    pub help: String,
+}
+
+impl Cvar {
+    pub fn replicated(default: &str) -> Self {
+        Cvar {
+            value: default.to_string(),
+            default: default.to_string(),
+            replicated: true,
+            ..Default::default()
+        }
+    }
+}
+
+/// The sandbox `sbox_*` variables with their measured defaults (convars-defaults.md), all
+/// replicated like the game's.
+pub const SBOX_CVARS: [(&str, &str); 24] = [
+    ("sbox_maxprops", "200"),
+    ("sbox_maxragdolls", "10"),
+    ("sbox_maxnpcs", "10"),
+    ("sbox_maxvehicles", "4"),
+    ("sbox_maxballoons", "100"),
+    ("sbox_maxeffects", "200"),
+    ("sbox_maxdynamite", "10"),
+    ("sbox_maxlamps", "3"),
+    ("sbox_maxthrusters", "50"),
+    ("sbox_maxwheels", "50"),
+    ("sbox_maxhoverballs", "50"),
+    ("sbox_maxbuttons", "50"),
+    ("sbox_maxemitters", "20"),
+    ("sbox_maxlights", "5"),
+    ("sbox_maxcameras", "10"),
+    ("sbox_maxsents", "100"),
+    ("sbox_maxconstraints", "2000"),
+    ("sbox_maxropeconstraints", "1000"),
+    ("sbox_godmode", "0"),
+    ("sbox_noclip", "1"),
+    ("sbox_playershurtplayers", "1"),
+    ("sbox_weapons", "1"),
+    ("sbox_bonemanip_npc", "1"),
+    ("sbox_bonemanip_player", "0"),
+];
 
 impl<'w> Server<'w> {
     pub fn new(collision: &'w gm_collision::World, physics: World, world_body: BodyHandle) -> Self {
@@ -330,6 +391,12 @@ impl<'w> Server<'w> {
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
             fall_damage_progressive: false,
+            cvars: SBOX_CVARS
+                .iter()
+                .map(|(n, d)| (n.to_string(), Cvar::replicated(d)))
+                .collect(),
+            cvar_changes: Vec::new(),
+            cvar_new: Vec::new(),
         }
     }
 
@@ -411,6 +478,72 @@ impl<'w> Server<'w> {
             }
         }
         to_health
+    }
+
+    /// `CreateConVar`: a new variable gets its default; an existing one keeps its value and
+    /// flags (false).
+    pub fn create_cvar(&mut self, name: &str, cvar: Cvar) -> bool {
+        if name.is_empty() || self.cvars.contains_key(name) {
+            return false;
+        }
+        let mut c = cvar;
+        if c.value.is_empty() {
+            c.value = c.default.clone();
+        }
+        self.cvars.insert(name.to_string(), c);
+        self.cvar_new.push(name.to_string());
+        true
+    }
+
+    /// Sets a known variable (numbers clamped to min/max), applies what the server reads from it
+    /// and logs the change; false for an unknown name or an unchanged value.
+    pub fn set_cvar(&mut self, name: &str, value: &str) -> bool {
+        let Some(c) = self.cvars.get_mut(name) else {
+            return false;
+        };
+        let mut v = value.to_string();
+        if let Ok(n) = value.trim().parse::<f32>() {
+            let mut n2 = n;
+            if let Some(lo) = c.min {
+                n2 = n2.max(lo);
+            }
+            if let Some(hi) = c.max {
+                n2 = n2.min(hi);
+            }
+            if n2 != n {
+                v = if n2.fract() == 0.0 {
+                    format!("{}", n2 as i64)
+                } else {
+                    format!("{n2}")
+                };
+            }
+        }
+        if c.value == v {
+            return false;
+        }
+        let old = std::mem::replace(&mut c.value, v.clone());
+        let num = v.trim().parse::<f32>().unwrap_or(0.0);
+        match name {
+            "sbox_maxprops" => self.sandbox.limits.max_props = num as i32,
+            "sbox_maxconstraints" => self.sandbox.limits.max_constraints = num as i32,
+            "sbox_maxropeconstraints" => self.sandbox.limits.max_ropeconstraints = num as i32,
+            "sbox_playershurtplayers" => self.players_hurt_players = num != 0.0,
+            _ => {}
+        }
+        self.cvar_changes.push((name.to_string(), old, v));
+        true
+    }
+
+    pub fn cvar(&self, name: &str) -> Option<&str> {
+        self.cvars.get(name).map(|c| c.value.as_str())
+    }
+
+    pub fn take_cvar_new(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.cvar_new)
+    }
+
+    pub fn take_cvar_changes(&mut self) -> Vec<(String, String, String)> {
+        std::mem::take(&mut self.cvar_changes)
     }
 
     pub fn tick_count(&self) -> u64 {

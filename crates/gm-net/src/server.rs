@@ -30,6 +30,8 @@ pub struct ClientSlot {
     pending_events: Vec<String>,
     pending_addon: Vec<(String, Vec<u8>)>,
     addon_seq: u32,
+    pending_cvars: Vec<(String, String)>,
+    cvar_seq: u32,
 }
 
 pub struct ServerNet {
@@ -82,6 +84,8 @@ impl ServerNet {
                         pending_events: Vec::new(),
                         pending_addon: Vec::new(),
                         addon_seq: 0,
+                        pending_cvars: Vec::new(),
+                        cvar_seq: 0,
                     },
                 );
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
@@ -107,6 +111,11 @@ impl ServerNet {
                             }
                             .write(&mut w);
                             slot.channel.send_reliable(w.buf);
+                            for (n, c) in &server.cvars {
+                                if c.replicated {
+                                    slot.pending_cvars.push((n.clone(), c.value.clone()));
+                                }
+                            }
                         }
                     }
                     ClientMsg::Cmds { cmds } => {
@@ -185,6 +194,20 @@ impl ServerNet {
                 }
             }
         }
+        for name in server.take_cvar_new() {
+            if let Some(c) = server.cvars.get(&name).filter(|c| c.replicated) {
+                for slot in self.clients.values_mut() {
+                    slot.pending_cvars.push((name.clone(), c.value.clone()));
+                }
+            }
+        }
+        for (name, _, value) in server.take_cvar_changes() {
+            if server.cvars.get(&name).is_some_and(|c| c.replicated) {
+                for slot in self.clients.values_mut() {
+                    slot.pending_cvars.push((name.clone(), value.clone()));
+                }
+            }
+        }
         for slot in self.clients.values_mut() {
             while let Some(cmd) = slot.commands.remove(&slot.next_command) {
                 slot.next_command += 1;
@@ -221,9 +244,7 @@ impl ServerNet {
                         }
                     }
                     Command::Cvar { name, value } => {
-                        if name == "sbox_maxprops" {
-                            server.sandbox.limits.max_props = value.parse().unwrap_or(200);
-                        }
+                        server.set_cvar(&name, &value);
                     }
                     Command::Reload { addon } => {
                         let msg = if !self.admins.contains(&slot.player) {
@@ -297,6 +318,17 @@ impl ServerNet {
                 ServerMsg::Event {
                     seq: slot.event_seq,
                     text,
+                }
+                .write(&mut w);
+                slot.channel.send_reliable(w.buf);
+            }
+            for (name, value) in std::mem::take(&mut slot.pending_cvars) {
+                slot.cvar_seq += 1;
+                let mut w = Writer::default();
+                ServerMsg::Cvar {
+                    seq: slot.cvar_seq,
+                    name,
+                    value,
                 }
                 .write(&mut w);
                 slot.channel.send_reliable(w.buf);
