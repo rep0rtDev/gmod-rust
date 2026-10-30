@@ -3,13 +3,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 fn spec(name: &str, priority: i32, source: &str) -> ActorSpec {
+    spec_budget(name, priority, source, 5)
+}
+
+fn spec_budget(name: &str, priority: i32, source: &str, cpu_ms: u64) -> ActorSpec {
     ActorSpec {
         addon: "test".into(),
         name: name.into(),
         priority,
         source: source.into(),
         config: ActorConfig {
-            cpu_budget: Duration::from_millis(5),
+            cpu_budget: Duration::from_millis(cpu_ms),
             ..Default::default()
         },
     }
@@ -338,7 +342,7 @@ fn storage_persists_per_addon_with_caps() {
     {
         let mut rt = Runtime::new();
         rt.data_dir = Some(dir.clone());
-        rt.load(spec("a", 0, src)).unwrap();
+        rt.load(spec_budget("a", 0, src, 50)).unwrap();
         let mut other = spec("b", 0, "events.on('tick.pre', function() state.err = select(2, pcall(storage.get, 'count')) end)");
         other.config.can_storage = false;
         rt.load(other).unwrap();
@@ -359,7 +363,7 @@ fn storage_persists_per_addon_with_caps() {
     assert!(dir.join("server").join("test.gms").is_file());
     let mut rt = Runtime::new();
     rt.data_dir = Some(dir.clone());
-    rt.load(spec("a", 0, src)).unwrap();
+    rt.load(spec_budget("a", 0, src, 50)).unwrap();
     tick(&mut rt, 1);
     let (count, name, two, gone): (i64, String, i64, Option<i64>) = rt.actors()[0]
         .eval("return storage.get('count'), storage.get('cfg').name, storage.get('cfg').list[2], storage.get('gone')")
