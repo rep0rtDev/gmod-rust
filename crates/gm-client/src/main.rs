@@ -29,6 +29,12 @@ struct Sim {
     s_ep: LoopbackEndpoint,
     c_ep: LoopbackEndpoint,
     client: ClientNet,
+    collision: &'static gm_collision::World,
+    /// The local player runs every usercmd at once (`gm_net::Prediction`) and is reconciled
+    /// with the server's state when a snapshot acknowledges the usercmd.
+    pred: Option<gm_net::Prediction<'static>>,
+    cmd_tick: u32,
+    interp: gm_net::Interpolator,
     prev_origin: Vec3,
     origin: Vec3,
     ducked: bool,
@@ -36,16 +42,31 @@ struct Sim {
 
 impl Sim {
     fn tick(&mut self, cmd: NetCmd) {
+        self.cmd_tick += 1;
+        if let Some(p) = &mut self.pred {
+            p.predict(self.cmd_tick, &cmd);
+        }
+        let seen = self.client.world.tick;
         self.client.tick(cmd, &mut self.c_ep);
         self.lo.tick();
         self.net.receive(&mut self.server, &mut self.s_ep);
         self.net.tick(&mut self.server);
         self.net.send(&self.server, &mut self.s_ep);
         self.client.receive(&mut self.c_ep);
-        if let Some(l) = &self.client.world.local {
+        let w = &self.client.world;
+        if w.tick != seen {
+            self.interp.push(w.tick, &w.entities);
+        }
+        if let Some(l) = &w.local {
+            let p = self
+                .pred
+                .get_or_insert_with(|| gm_net::Prediction::new(self.collision, l.state));
+            p.reconcile(w.last_cmd_tick, &l.state);
+        }
+        if let Some(p) = &self.pred {
             self.prev_origin = self.origin;
-            self.origin = l.state.origin;
-            self.ducked = l.state.ducked;
+            self.origin = p.state.origin;
+            self.ducked = p.state.ducked;
         }
     }
 }
@@ -247,9 +268,16 @@ impl App {
                 g.models.insert(e.model.clone(), m);
             }
         }
+        let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
         let items: Vec<_> = ents
             .values()
-            .filter_map(|e| Some((g.models.get(&e.model)?.as_ref()?, e.pos, e.angles)))
+            .filter_map(|e| {
+                let (pos, ang) = match self.sim.interp.sample(e.id, rt) {
+                    Some(p) => (p.pos, p.angles),
+                    None => (e.pos, e.angles),
+                };
+                Some((g.models.get(&e.model)?.as_ref()?, pos, ang))
+            })
             .collect();
         g.world
             .draw_models(&g.gpu, &camera, &view, &g.depth, aspect, &items);
@@ -406,6 +434,10 @@ fn main() -> Result<()> {
         c_ep,
         lo,
         client: ClientNet::new(1, "player"),
+        collision,
+        pred: None,
+        cmd_tick: 0,
+        interp: gm_net::Interpolator::new(4.0),
         prev_origin: spawn,
         origin: spawn,
         ducked: false,
