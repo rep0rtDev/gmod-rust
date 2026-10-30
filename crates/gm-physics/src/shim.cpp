@@ -341,8 +341,17 @@ public:
 		// contact, not an impact: the game's drum pushed by a bullet keeps its whole horizontal
 		// velocity and loses the vertical (`shoot_prop_357_drum`), a rim vertex impact here
 		// would give it the sliding barrel's yaw spin and sideways kick
-		int touching = 0;
-		for (const Pt &pt : pts) if (pt.d <= 0.001f) ++touching;
+		// three touching points of one corner (Jolt's manifold spreads a penetrating corner over
+		// several points) are not a face: the lockers pivoting on a corner would be anchored and
+		// never tip over, where the game's roll it over in 40 ticks
+		std::vector<const Pt *> touch;
+		for (const Pt &pt : pts) {
+			if (pt.d > 0.001f) continue;
+			bool distinct = true;
+			for (const Pt *o : touch) if ((o->p - pt.p).Length() < 0.05f) { distinct = false; break; }
+			if (distinct) touch.push_back(&pt);
+		}
+		int touching = (int)touch.size();
 		if (touching >= 3) {
 			// resting contact anchors (`phys_push_drum_*`, `shoot_prop_*_drum`): a sliding resting
 			// face is held by its leading bottom edge - the impulse that stops that edge's
