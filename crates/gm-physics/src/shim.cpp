@@ -530,7 +530,7 @@ public:
 				}
 				// only vertices reaching the plane together (within 5 mm of the nearest) form the
 				// face: a corner region of a chamfered hull has several vertices inside one step
-				if (face.size() >= 3) {
+				if (face.size() >= 2) {
 					float d_min = 1e30f;
 					for (const Pt *f : face) d_min = std::min(d_min, f->d);
 					std::vector<Pt *> keep;
@@ -545,7 +545,13 @@ public:
 				// at 285 u/s strikes rim vertices); a face arriving without slip is
 				float face_slip = 0.0f;
 				for (const Pt *f : face) { JPH::Vec3 vr = rel(f->p); face_slip = std::max(face_slip, (vr - n * vr.Dot(n)).Length()); }
-				if (face.size() >= 3 && fastest > 0.3f && d_face > 0.02f && face_slip < 3.0f) {
+				// an edge arriving level (two vertices more than 20 cm apart reach the plane
+				// together) is one impact too: in the game the +x end leaves at sqrt(e) of its
+				// approach, the other end is merely stopped, and both keep their slip (the rolled
+				// crate's ends slide at 4.6 / 2.1 m/s after the tick); the vertex chain left both
+				// ends still descending at 1.7 / 2.5 m/s for Jolt to catch a tick later
+				bool edge_pair = face.size() == 2 && (face[0]->p - face[1]->p).Length() > 0.2f;
+				if ((face.size() >= 3 || edge_pair) && fastest > 0.3f && d_face > 0.02f && face_slip < 3.0f) {
 					std::vector<float> acc(face.size(), 0.0f);
 					for (int it = 0; it < 60; ++it) {
 						float moved = 0.0f;
@@ -553,7 +559,12 @@ public:
 							Pt &pt = *face[k];
 							JPH::Vec3 v = rel(pt.p);
 							float vn = v.Dot(n);
-							float wanted = extra + std::sqrt(e_eff) * (-pt.vn0) - vn;
+							float target = std::sqrt(e_eff) * (-pt.vn0);
+							if (edge_pair) {
+								if (pt.p.GetX() < face[1 - k]->p.GetX()) target = 0.0f;
+								pt.dir = direction(v, pt.dir);
+							}
+							float wanted = extra + target - vn;
 							push(b1, pt.p, pt.dir);
 							push(b2, pt.p, -pt.dir);
 							float dvn = rel(pt.p).Dot(n) - vn;
@@ -573,7 +584,7 @@ public:
 					// inside the friction cone the vertices stick: the tangential velocity of each
 					// is removed, bounded by f times its normal impulse (the game's flat crate
 					// lands with its 148 deg/s yaw spin gone)
-					for (int it = 0; it < 20; ++it) {
+					for (int it = 0; it < (edge_pair ? 0 : 20); ++it) {
 						float moved = 0.0f;
 						for (size_t k = 0; k < face.size(); ++k) {
 							Pt &pt = *face[k];
