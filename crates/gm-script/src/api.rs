@@ -75,6 +75,35 @@ pub enum QueuedWrite {
         ent: u32,
         ent2: u32,
     },
+    PlayerTeleport {
+        player: u32,
+        pos: Vec3,
+    },
+    PlayerSetHealth {
+        player: u32,
+        health: i32,
+    },
+    PlayerSetArmor {
+        player: u32,
+        armor: i32,
+    },
+    /// `Entity:TakeDamage` from the world (`type` = DMG_* bits).
+    PlayerDamage {
+        player: u32,
+        amount: f32,
+        dmg_type: u32,
+    },
+    PlayerKill {
+        player: u32,
+    },
+    PlayerGiveWeapon {
+        player: u32,
+        class: String,
+    },
+    PlayerSelectWeapon {
+        player: u32,
+        class: String,
+    },
 }
 
 /// Shared between the Rust side of an actor and the closures its VM calls.
@@ -84,6 +113,46 @@ pub struct Shared {
     pub queued: Mutex<u64>,
     pub prints: Mutex<Vec<String>>,
     pub can_write: bool,
+}
+
+fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
+    let t = lua.create_table()?;
+    t.set("id", p.id)?;
+    t.set("origin", vec3_table(lua, p.origin)?)?;
+    t.set("velocity", vec3_table(lua, p.velocity)?)?;
+    t.set("view_angles", vec3_table(lua, p.view_angles)?)?;
+    t.set("held", p.held)?;
+    t.set("alive", p.alive)?;
+    t.set("health", p.health)?;
+    t.set("armor", p.armor)?;
+    t.set("max_health", p.max_health)?;
+    t.set("model", p.model.as_str())?;
+    t.set("weapons", p.weapons.clone())?;
+    t.set("active_weapon", p.active_weapon.as_str())?;
+    t.set("frags", p.frags)?;
+    t.set("deaths", p.deaths)?;
+    Ok(t)
+}
+
+fn int_arg(v: &Value) -> Result<i32> {
+    match v {
+        Value::Integer(i) => Ok(*i as i32),
+        Value::Number(n) => Ok(*n as i32),
+        other => Err(mlua::Error::runtime(format!(
+            "expected a number, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn str_arg(v: &Value) -> Result<String> {
+    match v {
+        Value::String(s) => Ok(s.to_str()?.to_string()),
+        other => Err(mlua::Error::runtime(format!(
+            "expected a string, got {}",
+            other.type_name()
+        ))),
+    }
 }
 
 fn vec3_table(lua: &Lua, v: Vec3) -> Result<Table> {
@@ -313,15 +382,20 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             let snap = sh.snapshot.read().unwrap().clone();
             let out = lua.create_table()?;
             for p in snap.players.values() {
-                let t = lua.create_table()?;
-                t.set("id", p.id)?;
-                t.set("origin", vec3_table(lua, p.origin)?)?;
-                t.set("velocity", vec3_table(lua, p.velocity)?)?;
-                t.set("view_angles", vec3_table(lua, p.view_angles)?)?;
-                t.set("held", p.held)?;
-                out.push(t)?;
+                out.push(player_table(lua, p)?)?;
             }
             Ok(out)
+        })?,
+    )?;
+    let sh = shared.clone();
+    world.set(
+        "player",
+        lua.create_function(move |lua, id: u32| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            match snap.players.get(&id) {
+                Some(p) => Ok(Value::Table(player_table(lua, p)?)),
+                None => Ok(Value::Nil),
+            }
         })?,
     )?;
     let sh = shared.clone();
@@ -378,6 +452,35 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 "nocollide" => QueuedWrite::NoCollide {
                     ent,
                     ent2: table_arg(&arg)?.get::<Option<u32>>("ent2")?.unwrap_or(0),
+                },
+                "player.teleport" => QueuedWrite::PlayerTeleport {
+                    player: ent,
+                    pos: table_vec3(&table_arg(&arg)?)?,
+                },
+                "player.set_health" => QueuedWrite::PlayerSetHealth {
+                    player: ent,
+                    health: int_arg(&arg)?,
+                },
+                "player.set_armor" => QueuedWrite::PlayerSetArmor {
+                    player: ent,
+                    armor: int_arg(&arg)?,
+                },
+                "player.damage" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::PlayerDamage {
+                        player: ent,
+                        amount: t.get::<Option<f32>>("amount")?.unwrap_or(0.0),
+                        dmg_type: t.get::<Option<u32>>("type")?.unwrap_or(0),
+                    }
+                }
+                "player.kill" => QueuedWrite::PlayerKill { player: ent },
+                "player.give_weapon" => QueuedWrite::PlayerGiveWeapon {
+                    player: ent,
+                    class: str_arg(&arg)?,
+                },
+                "player.select_weapon" => QueuedWrite::PlayerSelectWeapon {
+                    player: ent,
+                    class: str_arg(&arg)?,
                 },
                 other => return Err(mlua::Error::runtime(format!("unknown write {other}"))),
             };
@@ -651,6 +754,47 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             }
             made
         }
+        QueuedWrite::PlayerTeleport { player, pos } => {
+            if !server.players.contains_key(player) {
+                return false;
+            }
+            server.teleport_player(*player, *pos);
+            true
+        }
+        QueuedWrite::PlayerSetHealth { player, health } => {
+            if !server.players.contains_key(player) {
+                return false;
+            }
+            server.set_player_health(*player, *health);
+            true
+        }
+        QueuedWrite::PlayerSetArmor { player, armor } => {
+            if !server.players.contains_key(player) {
+                return false;
+            }
+            server.set_player_armor(*player, *armor);
+            true
+        }
+        QueuedWrite::PlayerDamage {
+            player,
+            amount,
+            dmg_type,
+        } => {
+            if !server.players.contains_key(player) {
+                return false;
+            }
+            server.damage_player(*player, *amount, *dmg_type);
+            true
+        }
+        QueuedWrite::PlayerKill { player } => {
+            if !server.players.get(player).is_some_and(|p| p.alive) {
+                return false;
+            }
+            server.kill_player(*player);
+            true
+        }
+        QueuedWrite::PlayerGiveWeapon { player, class } => server.give_weapon(*player, class),
+        QueuedWrite::PlayerSelectWeapon { player, class } => server.select_weapon(*player, class),
         QueuedWrite::NoCollide { ent, ent2 } => {
             let world = |e: u32| if e == 0 { None } else { Some(e) };
             if !exists(server, *ent) || (*ent2 != 0 && !exists(server, *ent2)) {

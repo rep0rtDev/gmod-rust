@@ -232,3 +232,77 @@ fn script_writes_weld_nocollide_and_velocity() {
     server.tick(&BTreeMap::new());
     assert_eq!(server.sandbox.constraints().len(), 2);
 }
+
+#[test]
+fn script_reads_and_writes_players() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.add_player(
+        1,
+        glam::Vec3::new(823.235, -500.0, -143.0),
+        glam::Vec3::new(30.0, 0.0, 0.0),
+    );
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "medic".into(),
+        priority: 0,
+        source: "events.on('tick.pre', function()
+                local p = world.player(1)
+                state.seen = { p.health, p.armor, p.alive, #p.weapons, p.active_weapon, world.player(7) == nil }
+                if state.done then return end
+                state.done = true
+                world.queue('player.set_health', 1, 42)
+                world.queue('player.set_armor', 1, 25)
+                world.queue('player.damage', 1, { amount = 10, type = 0 })
+                world.queue('player.give_weapon', 1, 'weapon_rpg')
+                world.queue('player.select_weapon', 1, 'weapon_357')
+                world.queue('player.teleport', 1, { x = 823.235, y = -400, z = -143 })
+                world.queue('player.set_health', 7, 1)
+                world.queue('player.give_weapon', 1, 'weapon_nope')
+            end)"
+        .into(),
+        config: Default::default(),
+    })
+    .unwrap();
+    let before: (i32, i32, bool, usize, String, bool) = {
+        let applied = rt.pre_tick(&mut server);
+        assert_eq!((applied.writes, applied.rejected), (6, 2), "{applied:?}");
+        rt.actors()[0]
+            .eval("return table.unpack(state.seen)")
+            .unwrap()
+    };
+    assert!(before.2);
+    assert_eq!(before.0, 100);
+    assert!(before.5, "player 7 must be nil");
+    let (health, weapons, active, origin_y) = {
+        let p = &server.players[&1];
+        (
+            p.health,
+            p.weapons.clone(),
+            p.active_weapon.clone(),
+            p.state.origin.y,
+        )
+    };
+    assert!(
+        (32..42).contains(&health),
+        "damage 10 with armor 25: {health}"
+    );
+    assert!(weapons.iter().any(|w| w == "weapon_rpg"), "{weapons:?}");
+    assert_eq!(active, "weapon_357");
+    assert!((origin_y - -400.0).abs() < 1.0, "{origin_y}");
+    server.tick(&BTreeMap::new());
+    let applied = rt.pre_tick(&mut server);
+    assert_eq!(applied.writes, 0);
+    let after: (i32, i32, bool, usize, String, bool) = rt.actors()[0]
+        .eval("return table.unpack(state.seen)")
+        .unwrap();
+    assert_eq!(after.4, "weapon_357");
+    assert_eq!(after.3, before.3, "the loadout is complete after spawn");
+    assert_eq!(after.0, health);
+}

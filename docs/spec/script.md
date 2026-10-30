@@ -105,6 +105,26 @@ an actor queueing weld(e1, e2), nocollide(e2, world), set_velocity(e1, 120 u/s u
 a missing entity gets `writes` 3, `rejected` 1, two sandbox constraints and e1 moving up at 120
 u/s before the next server tick; the constraints survive the tick.
 
+## Players
+
+`world.players()` and `world.player(id)` (nil when gone) read the snapshot: `id`, `origin`,
+`velocity`, `view_angles`, `held` (prop id or nil), `alive`, `health`, `armor`, `max_health`,
+`model`, `weapons` (sorted class list), `active_weapon`, `frags`, `deaths`. On the client the
+same table is filled from the snapshot message (health and armor as sent, weapons decoded from
+the loadout mask, `max_health` 100, model/frags/deaths empty until the protocol carries them).
+
+Player writes go through `world.queue("player.<op>", id, arg)` and need `world-write`:
+`teleport` (`{x, y, z}`), `set_health` / `set_armor` (number), `damage` (`{amount, type}`, the
+world as attacker, armor absorbs as in the damage spec), `kill`, `give_weapon` / `select_weapon`
+(class string). Rejected and counted: any op on an unknown player, `kill` of a dead player,
+`give_weapon` of a class the player does not carry (the loadout is fixed until scripted weapons),
+`select_weapon` of a class not carried or already out.
+
+Measured (`cargo test -p gm-dedicated --test addon_hooks script_reads`): one `tick.pre` queueing
+set_health 42, set_armor 25, damage 10, give rpg, select 357, teleport, set_health of player 7 and
+give of an unknown class gets `writes` 6, `rejected` 2; the next tick's read sees the damaged
+health, `weapon_357` out and the same 13 weapons.
+
 ## Timers
 
 `timer` lives in the actor's VM (prelude), so a timer runs in the realm and budget of the actor
@@ -125,5 +145,5 @@ never fires and still exists.
 
 ## Not yet
 
-client HUD/draw API, client-side world for traces, the rest of the API (players, net, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
+client HUD/draw API, client-side world for traces, the rest of the API (net, tool ghosts and panels, spawn menu, storage, cvars), WASM components,
 file watching for reloads, the sandbox gamemode in Luau on top of this API.

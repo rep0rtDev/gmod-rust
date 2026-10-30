@@ -14,13 +14,22 @@ pub struct EntitySnap {
     pub owner: u32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlayerSnap {
     pub id: u32,
     pub origin: Vec3,
     pub velocity: Vec3,
     pub view_angles: Vec3,
     pub held: Option<u32>,
+    pub alive: bool,
+    pub health: i32,
+    pub armor: i32,
+    pub max_health: i32,
+    pub model: String,
+    pub weapons: Vec<String>,
+    pub active_weapon: String,
+    pub frags: u32,
+    pub deaths: u32,
 }
 
 /// The server's collision world for traces during a dispatch. The snapshot only lives while the
@@ -96,6 +105,21 @@ impl Snapshot {
                             velocity: p.velocity,
                             view_angles: p.view_angles,
                             held: p.held,
+                            alive: p.alive,
+                            health: p.health as i32,
+                            armor: p.armor as i32,
+                            max_health: 100,
+                            weapons: gm_server::LOADOUT
+                                .iter()
+                                .enumerate()
+                                .filter(|(i, _)| p.weapons & (1 << i) != 0)
+                                .map(|(_, w)| w.to_string())
+                                .collect(),
+                            active_weapon: gm_server::LOADOUT
+                                .get(p.active as usize)
+                                .map(|w| w.to_string())
+                                .unwrap_or_default(),
+                            ..Default::default()
                         },
                     )
                 })
@@ -140,6 +164,15 @@ impl Snapshot {
                             velocity: p.state.velocity,
                             view_angles: p.view_angles,
                             held: p.held.map(|h| h.0),
+                            alive: p.alive,
+                            health: p.health,
+                            armor: p.armor,
+                            max_health: p.max_health,
+                            model: p.model.clone(),
+                            weapons: p.weapons.clone(),
+                            active_weapon: p.active_weapon.clone(),
+                            frags: p.frags,
+                            deaths: p.deaths,
                         },
                     )
                 })
