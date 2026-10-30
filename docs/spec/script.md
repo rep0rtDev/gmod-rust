@@ -256,5 +256,18 @@ place, `entity.removed` (new, `ServerHooks::entity_removed`: the net layer repor
 `Event::Removed` of an undo or cleanup) in the same phase; the 90 events match the game's.
 
 
+## Cvar change callbacks
+
+Measured on srcds (`script_cvar_callbacks`, `cvars.AddChangeCallback` logged with the tick):
+a variable set by code (`ConVar:SetInt` in `Think`) fires its callback right there, before that
+tick's `Tick`; a console command (`RunConsoleCommand`, which is also the path of a client's
+`Command::Cvar`) is executed at the end of the frame, after `Tick`, and the callback fires then,
+still under the same tick count; setting the same value again fires nothing. Ours: `cvar.changed`
+is dispatched before and after `tick.post` (code and script sets) and once more from
+`ServerHooks::after_commands`, which the net layer calls after it applied the tick's player
+commands; the 66 events match the game's.
+
+## Not yet
+
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,
 the sandbox gamemode in Luau on top of this API.
