@@ -697,6 +697,9 @@ impl ServerNet {
                         }
                     }
                     Command::Undo => server.undo(slot.player),
+                    Command::SelectWeapon { class } => {
+                        server.select_weapon(slot.player, &class);
+                    }
                     Command::Cleanup => server.cleanup(slot.player),
                     Command::ToolClick {
                         tool,

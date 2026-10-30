@@ -95,13 +95,132 @@ const VIEWMODEL_FOV: f32 = 54.0;
 /// Hands drawn on the `c_` viewmodels' arm bones (GMod's default player hands).
 const HANDS_MODEL: &str = "models/weapons/c_arms_citizen.mdl";
 
-/// Viewmodel of a weapon slot: model, idle sequence, sequence on attack, sequence while a
-/// prop is held.
+/// A weapon slot of the client: the server class, its `c_` viewmodel and the viewmodel's
+/// idle / draw / attack sequences, plus the sequence while the physgun holds a prop.
 struct Viewmodel {
+    class: &'static str,
+    name: &'static str,
     path: &'static str,
     idle: &'static str,
+    draw: &'static str,
     fire: &'static str,
     hold: Option<&'static str>,
+}
+
+const fn vm(
+    class: &'static str,
+    name: &'static str,
+    model: &'static str,
+    idle: &'static str,
+    draw: &'static str,
+    fire: &'static str,
+) -> Viewmodel {
+    Viewmodel {
+        class,
+        name,
+        path: model,
+        idle,
+        draw,
+        fire,
+        hold: None,
+    }
+}
+
+/// Slots on the number keys 1..9, 0; the physgun is slot 0 (key 1).
+const WEAPONS: [Viewmodel; 10] = [
+    Viewmodel {
+        hold: Some("hold_idle"),
+        ..vm(
+            "weapon_physgun",
+            "physgun",
+            "models/weapons/c_superphyscannon.mdl",
+            "idle",
+            "draw",
+            "fire",
+        )
+    },
+    vm(
+        "gmod_tool",
+        "toolgun",
+        "models/weapons/c_toolgun.mdl",
+        "idle01",
+        "draw",
+        "fire01",
+    ),
+    vm(
+        "weapon_crowbar",
+        "crowbar",
+        "models/weapons/c_crowbar.mdl",
+        "idle01",
+        "draw",
+        "misscenter1",
+    ),
+    vm(
+        "weapon_pistol",
+        "pistol",
+        "models/weapons/c_pistol.mdl",
+        "idle01",
+        "draw",
+        "fire",
+    ),
+    vm(
+        "weapon_357",
+        ".357",
+        "models/weapons/c_357.mdl",
+        "idle01",
+        "draw",
+        "fire",
+    ),
+    vm(
+        "weapon_smg1",
+        "smg",
+        "models/weapons/c_smg1.mdl",
+        "idle01",
+        "draw",
+        "fire01",
+    ),
+    vm(
+        "weapon_ar2",
+        "ar2",
+        "models/weapons/c_irifle.mdl",
+        "IR_idle",
+        "IR_draw",
+        "IR_fire",
+    ),
+    vm(
+        "weapon_shotgun",
+        "shotgun",
+        "models/weapons/c_shotgun.mdl",
+        "idle01",
+        "draw",
+        "fire01",
+    ),
+    vm(
+        "weapon_crossbow",
+        "crossbow",
+        "models/weapons/c_crossbow.mdl",
+        "idle",
+        "draw",
+        "fire",
+    ),
+    vm(
+        "weapon_rpg",
+        "rpg",
+        "models/weapons/c_rpg.mdl",
+        "idle1",
+        "draw",
+        "fire",
+    ),
+];
+
+/// `NetCmd::weapon`: 1 while the physgun is out (the server's physgun acts on attack), 2 for
+/// the toolgun, 0 for everything else.
+fn net_weapon(weapon: u8) -> u8 {
+    match weapon {
+        0 => 1,
+        1 => 2,
+        _ => 0,
+    }
 }
 
 /// GMod's walk / run split for the player animation (`animations.lua`): below this ground
@@ -131,22 +250,8 @@ fn player_sequence(p: &PlayerSnap) -> (&'static str, Vec<(&'static str, f32)>) {
     (seq, params)
 }
 
-fn viewmodel(weapon: u8) -> Option<Viewmodel> {
-    match weapon {
-        1 => Some(Viewmodel {
-            path: "models/weapons/c_superphyscannon.mdl",
-            idle: "idle",
-            fire: "fire",
-            hold: Some("hold_idle"),
-        }),
-        2 => Some(Viewmodel {
-            path: "models/weapons/c_toolgun.mdl",
-            idle: "idle01",
-            fire: "fire01",
-            hold: None,
-        }),
-        _ => None,
-    }
+fn viewmodel(weapon: u8) -> Option<&'static Viewmodel> {
+    WEAPONS.get(weapon as usize)
 }
 
 /// Drop-down console: the log of our lines and the server's replies, an input
@@ -210,6 +315,8 @@ struct App {
     weapon: u8,
     /// One-shot viewmodel sequence playing (draw, fire) and when it started.
     vm_anim: Option<(&'static str, Instant)>,
+    /// The server was told our starting weapon once we were in the world.
+    weapon_synced: bool,
     grabbed: bool,
     last: Instant,
     acc: f32,
@@ -300,10 +407,14 @@ impl App {
     }
 
     fn select_weapon(&mut self, weapon: u8) {
+        let Some(vm) = viewmodel(weapon) else { return };
         if self.weapon != weapon {
             self.weapon = weapon;
-            self.vm_anim = Some(("draw", Instant::now()));
+            self.vm_anim = Some((vm.draw, Instant::now()));
         }
+        self.sim.client.command(Command::SelectWeapon {
+            class: vm.class.to_string(),
+        });
     }
 
     /// Sequence and time for the viewmodel this frame: the one-shot sequence while it lasts,
@@ -385,7 +496,7 @@ impl App {
             view_angles: self.view,
             forward_move: fwd,
             side_move: side,
-            weapon: self.weapon,
+            weapon: net_weapon(self.weapon),
             ..Default::default()
         }
     }
@@ -399,6 +510,10 @@ impl App {
             let cmd = self.cmd();
             self.sim.tick(cmd);
             self.acc -= dt;
+            if !self.weapon_synced && self.sim.client.world.local.is_some() {
+                self.weapon_synced = true;
+                self.select_weapon(self.weapon);
+            }
             for e in self.sim.client.events.drain(..) {
                 println!("{e}");
                 self.console.log(e);
@@ -505,7 +620,7 @@ impl App {
             }
         }
         // physgun beam: from just below and right of the eye to the held prop, or along the aim
-        if self.weapon == 1 && self.mouse.contains(&0) {
+        if self.weapon == 0 && self.mouse.contains(&0) {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
             let start = camera.position + right * 6.0 - Vec3::Z * 6.0 + fwd * 12.0;
@@ -616,7 +731,7 @@ impl App {
                 o.y,
                 o.z,
                 w.entities.len(),
-                ["none", "physgun", "toolgun"][self.weapon as usize % 3]
+                viewmodel(self.weapon).map_or("none", |v| v.name)
             ));
             self.frames = 0;
             self.fps_at = Instant::now();
@@ -637,7 +752,7 @@ impl App {
             let hud = format!(
                 "props {}  weapon {}  pos {:.0} {:.0} {:.0}",
                 self.sim.client.world.entities.len(),
-                ["none", "physgun", "toolgun"][self.weapon as usize % 3],
+                viewmodel(self.weapon).map_or("none", |v| v.name),
                 o.x,
                 o.y,
                 o.z
@@ -833,6 +948,13 @@ impl ApplicationHandler for App {
                         KeyCode::Digit1 => self.select_weapon(0),
                         KeyCode::Digit2 => self.select_weapon(1),
                         KeyCode::Digit3 => self.select_weapon(2),
+                        KeyCode::Digit4 => self.select_weapon(3),
+                        KeyCode::Digit5 => self.select_weapon(4),
+                        KeyCode::Digit6 => self.select_weapon(5),
+                        KeyCode::Digit7 => self.select_weapon(6),
+                        KeyCode::Digit8 => self.select_weapon(7),
+                        KeyCode::Digit9 => self.select_weapon(8),
+                        KeyCode::Digit0 => self.select_weapon(9),
                         KeyCode::KeyQ => self.sim.client.command(Command::Spawn {
                             model: SPAWN_MODEL.to_string(),
                         }),
@@ -959,8 +1081,9 @@ fn main() -> Result<()> {
         keys: BTreeSet::new(),
         mouse: BTreeSet::new(),
         view: Vec3::new(arg_f(3).unwrap_or(0.0), arg_f(2).unwrap_or(yaw), 0.0),
-        weapon: 1,
+        weapon: 0,
         vm_anim: None,
+        weapon_synced: false,
         grabbed: false,
         last: Instant::now(),
         acc: 0.0,

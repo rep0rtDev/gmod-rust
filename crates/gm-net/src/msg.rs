@@ -49,6 +49,10 @@ pub enum Command {
     },
     /// Admin console line (`status`, `kick`, `ban`, `unban`, `cvar`, `reload`, `say`, `admins`,
     /// `help`); the replies come back as `ServerMsg::Event` lines.
+    /// Make a carried weapon the active one (`weapon_pistol`, `gmod_tool`, ...).
+    SelectWeapon {
+        class: String,
+    },
     Console {
         line: String,
     },
@@ -492,6 +496,10 @@ impl ClientMsg {
                         w.u32(*player);
                         w.bool(*ban);
                     }
+                    Command::SelectWeapon { class } => {
+                        w.u8(9);
+                        w.str(class);
+                    }
                     Command::Console { line } => {
                         w.u8(8);
                         w.str(line);
@@ -560,6 +568,7 @@ impl ClientMsg {
                         ban: r.bool()?,
                     },
                     8 => Command::Console { line: r.str()? },
+                    9 => Command::SelectWeapon { class: r.str()? },
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }
