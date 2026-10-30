@@ -827,6 +827,54 @@ ang = 5.0
 contact = 1
 
 [[harness]]
+name = "phys_slide_barrel_v50"
+scenario = "phys/slide_barrel_v50"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_slide_barrel_v100"
+scenario = "phys/slide_barrel_v100"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_slide_barrel_v200"
+scenario = "phys/slide_barrel_v200"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_slide_barrel_v400"
+scenario = "phys/slide_barrel_v400"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
 name = "phys_slip_lockers_v50"
 scenario = "phys/slip_lockers_v50"
 compare = "rigid"

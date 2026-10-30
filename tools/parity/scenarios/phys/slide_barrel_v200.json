@@ -1,0 +1,1 @@
+{"name":"phys_slide_barrel_v200","kind":"phys","map":"gm_construct","model":"models/props_c17/oildrum001.mdl","start":[823.235,-300.0,-120.0],"angles":[0,0,0],"velocity":[0,200,-140.5],"push_tick":16,"ticks":300}
