@@ -359,7 +359,7 @@ waits for a real client; a published package is capped at 50 MiB.
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API (tool ghosts and panels, spawn menu), WASM components,
-`player.use` / `noclip`, `tool.before` / `after`, the sandbox gamemode in Luau on top of this API.
+`player.use` (nothing on the server reacts to +use yet), the sandbox gamemode in Luau on top of this API.
 
 ## Server events
 
@@ -389,6 +389,17 @@ world, `pos` the contact point and `speed` the approach speed in u/s. A prop set
 physgun onto the floor it already rests on records nothing; the measured series
 (`phys_sound_drop_*`) says which drops the game voices. Measured (`addon_hooks game_events`): a
 crate teleported 100 u up collides with the world at the floor height with a positive speed.
+
+`tool.before {player, tool, right, hit}` runs for a tool gun click whose trace hit something
+(`hit` as in scripted stools: `ent` or 0, `pos`, `normal`), before the stool: `false` cancels the
+click (no stage change, no constraint, no shot event); `tool.after {player, tool, right, done}`
+follows a click that ran, `done` the stool's return value (a Rust or a scripted stool). A click
+that hits nothing raises neither. `player.noclip {player, on}` fires when `Command::Noclip`
+(the client's V key or `noclip` verb) changed the move type; the server refuses it (`Noclip
+denied` event, no change) when `sbox_noclip` is 0 or the player is dead. Measured
+(`addon_hooks tool_before`): a weld right click on a crate (weld to the world) vetoed leaves no
+constraint and no `tool.after`, the left click goes through (`after weld 0 1`, stage 1), noclip
+on logs `noclip 1 1`, the same under `sbox_noclip 0` is denied.
 
 `player.chat {player, text}` runs when a client's `Command::Chat` arrives (the line is cut at 127
 characters as the game's `say` is, blank lines are dropped before asking): `false` drops the

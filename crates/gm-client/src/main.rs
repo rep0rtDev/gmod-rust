@@ -511,6 +511,7 @@ struct App {
     view: Vec3,
     weapon: u8,
     tool: String,
+    noclip: bool,
     /// One-shot viewmodel sequence playing (draw, fire) and when it started.
     vm_anim: Option<(&'static str, Instant)>,
     /// `PlayerSnap::vm_serial` of the last server viewmodel event played.
@@ -1454,9 +1455,13 @@ impl App {
             "say" => self.sim.client.command(Command::Chat {
                 text: rest.join(" "),
             }),
+            "noclip" => {
+                self.noclip = !self.noclip;
+                self.sim.client.command(Command::Noclip { on: self.noclip });
+            }
             "help" => {
                 self.console
-                    .log("client: spawn [model] | tool [name] | bot | say <text> | undo | cleanup | clear | quit; server:");
+                    .log("client: spawn [model] | tool [name] | bot | say <text> | noclip | undo | cleanup | clear | quit; server:");
                 self.sim.client.command(Command::Console {
                     line: line.to_string(),
                 });
@@ -1531,6 +1536,10 @@ impl ApplicationHandler for App {
                         KeyCode::Digit0 => self.select_weapon(9),
                         KeyCode::KeyQ => self.open_menu(),
                         KeyCode::KeyZ => self.sim.client.command(Command::Undo),
+                        KeyCode::KeyV => {
+                            self.noclip = !self.noclip;
+                            self.sim.client.command(Command::Noclip { on: self.noclip });
+                        }
                         KeyCode::KeyR if self.weapon == 1 => {
                             self.sim.client.command(Command::ToolClick {
                                 tool: self.tool.clone(),
@@ -1714,6 +1723,7 @@ fn main() -> Result<()> {
         view: Vec3::new(arg_f(3).unwrap_or(0.0), arg_f(2).unwrap_or(yaw), 0.0),
         weapon: 0,
         tool: "weld".to_string(),
+        noclip: false,
         vm_anim: None,
         vm_serial_seen: 0,
         weapon_synced: false,

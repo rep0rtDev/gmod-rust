@@ -79,6 +79,11 @@ pub enum GameEvent {
         player: u32,
         ent: u32,
     },
+    /// `set_noclip` toggled the player's move type.
+    Noclip {
+        player: u32,
+        on: bool,
+    },
     /// A recorded prop impact (the same capture that makes impact sounds, no speed cut): one
     /// per prop involved, `other` 0 for the world.
     Collide {
@@ -166,6 +171,27 @@ pub trait ServerHooks {
     fn player_disconnected(&mut self, _server: &mut Server<'_>, _player: u32) {}
     /// This tick's `GameEvent`s, after the tick and before `post_tick`.
     fn game_events(&mut self, _server: &mut Server<'_>, _events: Vec<GameEvent>) {}
+    /// A tool gun click that hit something, before the stool runs: `false` cancels it.
+    fn tool_before(
+        &mut self,
+        _server: &mut Server<'_>,
+        _player: u32,
+        _tool: &str,
+        _right: bool,
+        _hit: &ToolHit,
+    ) -> bool {
+        true
+    }
+    /// After a tool gun click that hit something: `done` is the stool's return value.
+    fn tool_after(
+        &mut self,
+        _server: &mut Server<'_>,
+        _player: u32,
+        _tool: &str,
+        _right: bool,
+        _done: bool,
+    ) {
+    }
     /// A player's chat line before it is sent: `None` drops it, `Some` is what every client
     /// gets (possibly rewritten).
     fn player_chat(
@@ -1759,15 +1785,28 @@ impl<'w> Server<'w> {
 
     /// Like `tool_click`, telling the caller when the stool is not a Rust one.
     pub fn tool_click_full(&mut self, player: u32, tool: &str, right: bool) -> ToolClick {
-        let Some((eye, eye_angles)) = self.eye(player) else {
-            return ToolClick::Miss;
-        };
+        match self.tool_hit(player) {
+            Some(hit) => self.tool_click_at(player, tool, right, hit),
+            None => ToolClick::Miss,
+        }
+    }
+
+    /// The tool gun's trace from the player's eye: what a click would hit.
+    pub fn tool_hit(&self, player: u32) -> Option<ToolHit> {
+        let (eye, eye_angles) = self.eye(player)?;
         let bodies = self.trace_bodies();
         let dir = gm_sandbox::forward(eye_angles.x, eye_angles.y);
-        let Some(hit): Option<ToolHit> = gm_sandbox::tool_trace(self.collision, &bodies, eye, dir)
-        else {
-            return ToolClick::Miss;
-        };
+        gm_sandbox::tool_trace(self.collision, &bodies, eye, dir)
+    }
+
+    /// `tool_click_full` with the trace already made (`tool_hit`).
+    pub fn tool_click_at(
+        &mut self,
+        player: u32,
+        tool: &str,
+        right: bool,
+        hit: ToolHit,
+    ) -> ToolClick {
         if !Sandbox::knows_tool(tool) {
             return ToolClick::Unknown(hit);
         }
@@ -2240,6 +2279,31 @@ impl<'w> Server<'w> {
             self.request_hook = Some(hook);
         }
         v
+    }
+
+    /// `noclip` toggled by the player (the game's `noclip` command under `sbox_noclip`): walk <->
+    /// fly through everything; refused (false) when the cvar is 0 or the player is dead.
+    pub fn set_noclip(&mut self, id: u32, on: bool) -> bool {
+        if self.cvar("sbox_noclip").is_some_and(|v| v.trim() == "0") {
+            return false;
+        }
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        if !p.alive {
+            return false;
+        }
+        let want = if on {
+            gm_move::MoveType::Noclip
+        } else {
+            gm_move::MoveType::Walk
+        };
+        if p.state.move_type == want {
+            return true;
+        }
+        p.state.move_type = want;
+        self.game_events.push(GameEvent::Noclip { player: id, on });
+        true
     }
 
     /// A script plays a sound script at a world position (`sound.play`).

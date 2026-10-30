@@ -61,6 +61,10 @@ pub enum Command {
     Chat {
         text: String,
     },
+    /// The game's `noclip` command: fly through everything while `sbox_noclip` allows it.
+    Noclip {
+        on: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -538,6 +542,10 @@ impl ClientMsg {
                         w.u8(10);
                         w.str(text);
                     }
+                    Command::Noclip { on } => {
+                        w.u8(11);
+                        w.bool(*on);
+                    }
                 }
             }
             ClientMsg::AckSnapshot { tick } => {
@@ -604,6 +612,7 @@ impl ClientMsg {
                     8 => Command::Console { line: r.str()? },
                     9 => Command::SelectWeapon { class: r.str()? },
                     10 => Command::Chat { text: r.str()? },
+                    11 => Command::Noclip { on: r.bool()? },
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }

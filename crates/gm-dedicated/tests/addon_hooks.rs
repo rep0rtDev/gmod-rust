@@ -2305,3 +2305,128 @@ fn player_chat_is_rewritten_or_dropped_by_an_actor_before_it_reaches_the_clients
     assert_eq!(chat(&bob), chat(&alice));
     assert!(sn.take_log().iter().any(|l| l == "chat alice: HELLO THERE"));
 }
+
+#[test]
+fn tool_before_vetoes_a_click_tool_after_sees_the_result_and_noclip_toggles_with_an_event() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "watch".into(),
+        priority: 1,
+        source: "state.log = {}
+            events.on('tool.before', function(e)
+                table.insert(state.log, 'before ' .. e.tool .. ' ' .. e.right .. ' ' .. e.hit.ent)
+                if e.tool == 'weld' and e.right == 1 then return false end
+            end)
+            events.on('tool.after', function(e)
+                table.insert(state.log, 'after ' .. e.tool .. ' ' .. e.right .. ' ' .. e.done)
+            end)
+            events.on('player.noclip', function(e)
+                table.insert(state.log, 'noclip ' .. e.player .. ' ' .. e.on)
+                net.send('log', { log = state.log }, e.player)
+            end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let mut crt = gm_script::Runtime::client();
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "hud".into(),
+        priority: 1,
+        source: "net.receive('log', function(p) state.log = p.data.log end)".into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>,
+                    crt: &mut gm_script::Runtime,
+                    n: usize| {
+        for _ in 0..n {
+            client.tick(
+                gm_net::NetCmd {
+                    view_angles: glam::Vec3::new(30.0, 0.0, 0.0),
+                    weapon: 2,
+                    ..Default::default()
+                },
+                &mut c_ep,
+            );
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+            crt.client_tick(&client.world, true);
+            let inbox = std::mem::take(&mut client.addon_msgs);
+            crt.client_net(&client.world, inbox);
+        }
+    };
+    step(&mut sn, &mut client, &mut server, &mut crt, 10);
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 20);
+    let crate_id = server.sandbox.props()[0].id;
+    // weld right click = weld to the world: vetoed by the script; the left click goes through
+    let click = |right: bool| gm_net::Command::ToolClick {
+        tool: "weld".into(),
+        right,
+        reload: false,
+    };
+    client.command(click(true));
+    step(&mut sn, &mut client, &mut server, &mut crt, 5);
+    client.command(click(false));
+    step(&mut sn, &mut client, &mut server, &mut crt, 5);
+    assert_eq!(
+        server.sandbox.constraints().len(),
+        0,
+        "the world weld was vetoed"
+    );
+    assert_eq!(
+        server.sandbox.tool(1).stage,
+        1,
+        "the left click selected the crate"
+    );
+    client.command(gm_net::Command::Noclip { on: true });
+    step(&mut sn, &mut client, &mut server, &mut crt, 5);
+    assert_eq!(
+        server.players[&1].state.move_type,
+        gm_move::MoveType::Noclip
+    );
+    let log: Vec<String> = crt.actors()[0].eval("return state.log").unwrap();
+    assert_eq!(
+        log,
+        vec![
+            format!("before weld 1 {crate_id}"),
+            format!("before weld 0 {crate_id}"),
+            "after weld 0 1".to_string(),
+            "noclip 1 1".to_string(),
+        ]
+    );
+    // the cvar refuses: the toggle is denied and nothing changes
+    assert!(server.set_cvar("sbox_noclip", "0"));
+    client.command(gm_net::Command::Noclip { on: false });
+    step(&mut sn, &mut client, &mut server, &mut crt, 5);
+    assert_eq!(
+        server.players[&1].state.move_type,
+        gm_move::MoveType::Noclip
+    );
+    assert!(client.events.iter().any(|e| e == "Noclip denied"));
+}

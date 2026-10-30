@@ -313,3 +313,9 @@ tick without a snapshot the sounds stay pending instead of being dropped.
 `Command::Chat { text }` (tag 10) from any player; the server trims it to 127 characters, drops
 blank lines, lets the addon runtime veto or rewrite it (`player.chat`) and sends `<name>: <text>`
 to every welcomed client as an `Event`; the console client verb is `say <text>`.
+
+## Noclip
+
+`Command::Noclip { on }` (tag 11): the game's `noclip` toggle; the server switches the player's
+move type under `sbox_noclip` (`Noclip denied` event otherwise) and the snapshot's move type
+drives the client's prediction as before.

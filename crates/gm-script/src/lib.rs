@@ -561,6 +561,40 @@ impl Runtime {
         verdict
     }
 
+    /// `tool.before {player, tool, right, hit}`: `false` cancels the tool gun click.
+    pub fn tool_before(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        right: bool,
+        hit: &gm_sandbox::ToolHit,
+    ) -> bool {
+        let mut p = api::Payload::default();
+        p.ints.push(("player", player as i64));
+        p.strs.push(("tool", tool.to_string()));
+        p.ints.push(("right", right as i64));
+        p.hit = Some((hit.ent.unwrap_or(0), hit.pos, hit.normal));
+        self.ask(server, "tool.before", p)
+    }
+
+    /// `tool.after {player, tool, right, done}` once the stool ran.
+    pub fn tool_after(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        right: bool,
+        done: bool,
+    ) -> Applied {
+        let mut p = api::Payload::default();
+        p.ints.push(("player", player as i64));
+        p.strs.push(("tool", tool.to_string()));
+        p.ints.push(("right", right as i64));
+        p.ints.push(("done", done as i64));
+        self.run_event(server, "tool.after", p)
+    }
+
     /// `player.chat {player, text}` before the line goes out: `false` drops it, a string replaces
     /// it (later actors see the replacement), anything else passes it on.
     pub fn player_chat(
@@ -817,6 +851,11 @@ impl Runtime {
                     p.ints.push(("type", dmg_type as i64));
                     "player.death"
                 }
+                E::Noclip { player, on } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("on", on as i64));
+                    "player.noclip"
+                }
                 E::Collide {
                     ent,
                     other,
@@ -925,6 +964,26 @@ impl gm_server::ServerHooks for Runtime {
     fn player_chat(&mut self, server: &mut Server<'_>, player: u32, text: &str) -> Option<String> {
         Runtime::player_chat(self, server, player, text)
     }
+    fn tool_before(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        right: bool,
+        hit: &gm_sandbox::ToolHit,
+    ) -> bool {
+        Runtime::tool_before(self, server, player, tool, right, hit)
+    }
+    fn tool_after(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        right: bool,
+        done: bool,
+    ) {
+        Runtime::tool_after(self, server, player, tool, right, done);
+    }
     fn after_commands(&mut self, server: &mut Server<'_>) {
         Runtime::after_commands(self, server);
     }
@@ -1024,6 +1083,32 @@ impl gm_server::ServerHooks for SharedRuntime {
     }
     fn player_chat(&mut self, server: &mut Server<'_>, player: u32, text: &str) -> Option<String> {
         self.0.lock().unwrap().player_chat(server, player, text)
+    }
+    fn tool_before(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        right: bool,
+        hit: &gm_sandbox::ToolHit,
+    ) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .tool_before(server, player, tool, right, hit)
+    }
+    fn tool_after(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        right: bool,
+        done: bool,
+    ) {
+        self.0
+            .lock()
+            .unwrap()
+            .tool_after(server, player, tool, right, done);
     }
     fn net_message(&mut self, server: &mut Server<'_>, player: u32, name: &str, data: &[u8]) {
         gm_server::ServerHooks::net_message(

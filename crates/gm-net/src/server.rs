@@ -725,18 +725,35 @@ impl ServerNet {
                     } => {
                         if reload {
                             server.sandbox.tool_reload(slot.player);
-                        } else {
-                            let done = match server.tool_click_full(slot.player, &tool, right) {
-                                gm_server::ToolClick::Done(done) => done,
-                                gm_server::ToolClick::Miss => false,
-                                gm_server::ToolClick::Unknown(hit) => self
-                                    .hooks
-                                    .as_mut()
-                                    .map(|h| h.tool_click(server, slot.player, &tool, &hit, right))
-                                    .unwrap_or(false),
-                            };
-                            if done {
-                                server.tool_fired(slot.player);
+                        } else if let Some(hit) = server.tool_hit(slot.player) {
+                            let allowed = self.hooks.as_mut().is_none_or(|h| {
+                                h.tool_before(server, slot.player, &tool, right, &hit)
+                            });
+                            if allowed {
+                                let done =
+                                    match server.tool_click_at(slot.player, &tool, right, hit) {
+                                        gm_server::ToolClick::Done(done) => done,
+                                        gm_server::ToolClick::Miss => false,
+                                        gm_server::ToolClick::Unknown(hit) => self
+                                            .hooks
+                                            .as_mut()
+                                            .map(|h| {
+                                                h.tool_click(
+                                                    server,
+                                                    slot.player,
+                                                    &tool,
+                                                    &hit,
+                                                    right,
+                                                )
+                                            })
+                                            .unwrap_or(false),
+                                    };
+                                if done {
+                                    server.tool_fired(slot.player);
+                                }
+                                if let Some(h) = self.hooks.as_mut() {
+                                    h.tool_after(server, slot.player, &tool, right, done);
+                                }
                             }
                         }
                     }
@@ -764,6 +781,11 @@ impl ServerNet {
                             console.push((slot.player, line));
                         } else {
                             slot.pending_events.push("Console denied".to_string());
+                        }
+                    }
+                    Command::Noclip { on } => {
+                        if !server.set_noclip(slot.player, on) {
+                            slot.pending_events.push("Noclip denied".to_string());
                         }
                     }
                     Command::Chat { text } => {
