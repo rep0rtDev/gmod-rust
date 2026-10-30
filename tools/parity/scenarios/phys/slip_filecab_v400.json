@@ -1,0 +1,1 @@
+{"name":"phys_slip_filecab_v400","kind":"phys","map":"gm_construct","model":"models/props_lab/filecabinet02.mdl","start":[700.0,-500.0,-40.0],"angles":[5,0,5],"velocity":[0,400,-252],"push_tick":28,"ticks":300}

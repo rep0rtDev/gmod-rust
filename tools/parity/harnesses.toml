@@ -827,6 +827,102 @@ ang = 5.0
 contact = 1
 
 [[harness]]
+name = "phys_slip_lockers_v50"
+scenario = "phys/slip_lockers_v50"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_slip_lockers_v100"
+scenario = "phys/slip_lockers_v100"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_slip_lockers_v200"
+scenario = "phys/slip_lockers_v200"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_slip_lockers_v400"
+scenario = "phys/slip_lockers_v400"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_slip_filecab_v50"
+scenario = "phys/slip_filecab_v50"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_slip_filecab_v100"
+scenario = "phys/slip_filecab_v100"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_slip_filecab_v200"
+scenario = "phys/slip_filecab_v200"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "phys_slip_filecab_v400"
+scenario = "phys/slip_filecab_v400"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
 name = "phys_drop_corner_lockers_5_0_5"
 scenario = "phys/drop_corner_lockers_5_0_5"
 compare = "rigid"

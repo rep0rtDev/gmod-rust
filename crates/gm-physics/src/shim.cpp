@@ -460,7 +460,7 @@ public:
 			// normal part induces - the game's lockers (2000 kg) take 0.41 of the normal impulse
 			// tangentially where the full Coulomb tilt gives 0.78; a corner that slides in keeps
 			// the full tilt (the tilted crate's second corner)
-			bool stick = (v - n * vn).Length() < 0.05f;
+			bool stick = true; // measured on the slip series: the lockers stick at every entry slip
 			for (int it = 0; it < 100 && vn < 0.0f; ++it) {
 				push(b1, pt.p, pt.dir * pt.step);
 				push(b2, pt.p, -pt.dir * pt.step);
