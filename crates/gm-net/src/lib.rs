@@ -54,6 +54,7 @@ mod tests {
                     tool: "weld".into(),
                     right: true,
                     reload: false,
+                    settings: vec![("height".into(), "64".into())],
                 },
             },
             ClientMsg::AckSnapshot { tick: 99 },

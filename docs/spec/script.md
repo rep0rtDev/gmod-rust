@@ -34,7 +34,12 @@ ops applied at once with the same bookkeeping as the Rust stools: `set_object`, 
 (`ent1`, `ent2`, `forcelimit`, `nocollide`, `undo`), `nocollide`, `rope` and `axis` (the two
 stored objects, the measured constraint rules in Rust: length between the stored points, axis
 alignment with the 0.2 u offset and the hinge); limits, undo entries, counts and cleanup lists
-follow. `addons/examples/weld_lua` holds `weld_lua`, `rope_lua` and `axis_lua` written this way; the
+follow. `ctx.settings` carries the clicking client's values for the tool (strings; the client's
+console `tool <name> <key> <value>` stores them per tool and sends them with every
+`Command::ToolClick` of that tool, at most 255 pairs), the stool applies its own defaults when a key
+is missing; measured (`addon_hooks tool_settings`): a weld-to-world stool reading `forcelimit`
+makes the constraint with 64 from the click's setting and with its default 10 without.
+`addons/examples/weld_lua` holds `weld_lua`, `rope_lua` and `axis_lua` written this way; the
 harnesses `script_weld_rope` and `script_axis` replay the tool gun recordings with the Rust stools
 replaced by the Luau ones through the server loop and are equal (20 ops within 0.12 u, 8 ops within
 0.02 u), the same results as the Rust stools.

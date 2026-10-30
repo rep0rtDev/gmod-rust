@@ -717,7 +717,7 @@ fn remover_tool_in_luau_removes_the_hit_prop_and_fires_entity_removed() {
     };
     assert_eq!(hit.ent, Some(ent), "the crate is under the crosshair");
     let n = server.events.len();
-    assert!(rt.tool_click(&mut server, 1, "remover_lua", &hit, false));
+    assert!(rt.tool_click(&mut server, 1, "remover_lua", &hit, false, &[]));
     assert_eq!(server.sandbox.props().len(), 0);
     let removed: Vec<u32> = server.events[n..]
         .iter()
@@ -2389,6 +2389,7 @@ fn tool_before_vetoes_a_click_tool_after_sees_the_result_and_noclip_toggles_with
         tool: "weld".into(),
         right,
         reload: false,
+        settings: Vec::new(),
     };
     client.command(click(true));
     step(&mut sn, &mut client, &mut server, &mut crt, 5);
@@ -2543,4 +2544,105 @@ fn a_client_actor_traces_the_clients_world_and_the_props_it_knows() {
     assert!(crate_z > -120.0 && crate_z < -90.0, "crate top {crate_z}");
     let air: bool = crt.actors()[0].eval("return state.air").unwrap();
     assert!(!air, "a trace ending above the floor misses");
+}
+
+#[test]
+fn a_scripted_stool_reads_the_clients_tool_settings_from_the_click() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "tools".into(),
+        priority: 1,
+        source: "tool.register('weldworld_lua', {
+                left = function(ctx)
+                    local f = tonumber(ctx.settings and ctx.settings.forcelimit) or 10
+                    if ctx.hit.ent == 0 then return {} end
+                    return { { op = 'weld', ent1 = ctx.hit.ent, ent2 = 0, forcelimit = f } }
+                end,
+            })"
+        .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>,
+                    n: usize| {
+        for _ in 0..n {
+            client.tick(
+                gm_net::NetCmd {
+                    view_angles: glam::Vec3::new(30.0, 0.0, 0.0),
+                    weapon: 2,
+                    ..Default::default()
+                },
+                &mut c_ep,
+            );
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+        }
+    };
+    step(&mut sn, &mut client, &mut server, 10);
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, 20);
+    let click = |settings: Vec<(String, String)>| gm_net::Command::ToolClick {
+        tool: "weldworld_lua".into(),
+        right: false,
+        reload: false,
+        settings,
+    };
+    client.command(click(vec![("forcelimit".into(), "64".into())]));
+    step(&mut sn, &mut client, &mut server, 2);
+    let limits = |server: &gm_server::Server<'_>| -> Vec<f32> {
+        server
+            .sandbox
+            .constraints()
+            .iter()
+            .map(|c| format!("{c:?}"))
+            .map(|d| {
+                d.split("forcelimit: ")
+                    .nth(1)
+                    .and_then(|r| {
+                        r.split(|ch: char| !(ch.is_ascii_digit() || ch == '.'))
+                            .next()
+                    })
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(-1.0)
+            })
+            .collect()
+    };
+    assert_eq!(
+        limits(&server),
+        vec![64.0],
+        "the client's setting reached the stool"
+    );
+    client.command(gm_net::Command::Undo);
+    step(&mut sn, &mut client, &mut server, 2);
+    client.command(click(Vec::new()));
+    step(&mut sn, &mut client, &mut server, 2);
+    assert_eq!(
+        limits(&server),
+        vec![10.0],
+        "the stool's default without a setting"
+    );
 }

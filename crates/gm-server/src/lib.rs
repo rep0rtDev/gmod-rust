@@ -160,6 +160,7 @@ pub trait ServerHooks {
         _tool: &str,
         _hit: &ToolHit,
         _right: bool,
+        _settings: &[(String, String)],
     ) -> bool {
         false
     }

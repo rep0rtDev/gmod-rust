@@ -7,7 +7,7 @@
 //! ` (grave) console: `help`, `spawn [model]`, `undo`, `cleanup`, `clear`, `quit`, server
 //! console lines (`status`, `cvar`, `save`, `load`, ...).
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -570,6 +570,8 @@ struct App {
     view: Vec3,
     weapon: u8,
     tool: String,
+    /// `tool <name> <key> <value>`: sent with every click of that tool (`ctx.settings`).
+    tool_settings: BTreeMap<String, BTreeMap<String, String>>,
     noclip: bool,
     /// One-shot viewmodel sequence playing (draw, fire) and when it started.
     vm_anim: Option<(&'static str, Instant)>,
@@ -1182,6 +1184,13 @@ impl App {
 }
 
 impl App {
+    fn tool_settings_list(&self) -> Vec<(String, String)> {
+        self.tool_settings
+            .get(&self.tool)
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default()
+    }
+
     fn ui_items(&self, o: Vec3) -> Vec<UiItem> {
         let Some(g) = &self.gfx else {
             return Vec::new();
@@ -1510,13 +1519,26 @@ impl App {
             }),
             "undo" => self.sim.client.command(Command::Undo),
             "tool" => match rest.first() {
+                Some(t) if rest.len() >= 3 => {
+                    let value = rest[2..].join(" ");
+                    self.tool_settings
+                        .entry(t.to_string())
+                        .or_default()
+                        .insert(rest[1].to_string(), value.clone());
+                    self.console.log(format!("tool {t}: {} = {value}", rest[1]));
+                }
                 Some(t) if TOOLS.contains(t) => {
                     self.tool = t.to_string();
                     self.console.log(format!("tool {t}"));
                 }
-                Some(t) => self
-                    .console
-                    .log(format!("unknown tool {t}; {}", TOOLS.join(" "))),
+                Some(t) => {
+                    // a stool of an addon: the server decides whether it exists
+                    self.tool = t.to_string();
+                    self.console.log(format!(
+                        "tool {t} (scripted; built in: {})",
+                        TOOLS.join(" ")
+                    ));
+                }
                 None => self
                     .console
                     .log(format!("tool {} ({})", self.tool, TOOLS.join(" "))),
@@ -1627,6 +1649,7 @@ impl ApplicationHandler for App {
                                 tool: self.tool.clone(),
                                 right: false,
                                 reload: true,
+                                settings: self.tool_settings_list(),
                             })
                         }
                         // the reload animation when the clip can take rounds from the reserve
@@ -1681,6 +1704,7 @@ impl ApplicationHandler for App {
                                 tool: self.tool.clone(),
                                 right: b == 1,
                                 reload: false,
+                                settings: self.tool_settings_list(),
                             });
                         }
                         if let Some(vm) = viewmodel(self.weapon) {
@@ -1840,6 +1864,7 @@ fn main() -> Result<()> {
         view: Vec3::new(arg_f(3).unwrap_or(0.0), arg_f(2).unwrap_or(yaw), 0.0),
         weapon: 0,
         tool: "weld".to_string(),
+        tool_settings: BTreeMap::new(),
         noclip: false,
         vm_anim: None,
         vm_serial_seen: 0,

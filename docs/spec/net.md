@@ -319,3 +319,9 @@ to every welcomed client as an `Event`; the console client verb is `say <text>`.
 `Command::Noclip { on }` (tag 11): the game's `noclip` toggle; the server switches the player's
 move type under `sbox_noclip` (`Noclip denied` event otherwise) and the snapshot's move type
 drives the client's prediction as before.
+
+## Tool settings
+
+`Command::ToolClick` carries `settings: Vec<(String, String)>` (u8 count, at most 255 pairs): the
+client's values for the clicked tool, handed to a scripted stool as `ctx.settings`; the Rust
+stools ignore them.

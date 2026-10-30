@@ -33,6 +33,9 @@ pub enum Command {
         tool: String,
         right: bool,
         reload: bool,
+        /// The client's values of the tool's settings (`tool <name> <key> <value>`), handed
+        /// to a scripted stool as `ctx.settings`; at most 255 pairs.
+        settings: Vec<(String, String)>,
     },
     Cvar {
         name: String,
@@ -510,11 +513,18 @@ impl ClientMsg {
                         tool,
                         right,
                         reload,
+                        settings,
                     } => {
                         w.u8(4);
                         w.str(tool);
                         w.bool(*right);
                         w.bool(*reload);
+                        let n = settings.len().min(255);
+                        w.u8(n as u8);
+                        for (k, v) in &settings[..n] {
+                            w.str(k);
+                            w.str(v);
+                        }
                     }
                     Command::Cvar { name, value } => {
                         w.u8(5);
@@ -595,11 +605,20 @@ impl ClientMsg {
                     1 => Command::Spawn { model: r.str()? },
                     2 => Command::Undo,
                     3 => Command::Cleanup,
-                    4 => Command::ToolClick {
-                        tool: r.str()?,
-                        right: r.bool()?,
-                        reload: r.bool()?,
-                    },
+                    4 => {
+                        let (tool, right, reload) = (r.str()?, r.bool()?, r.bool()?);
+                        let n = r.u8()?;
+                        let mut settings = Vec::with_capacity(n as usize);
+                        for _ in 0..n {
+                            settings.push((r.str()?, r.str()?));
+                        }
+                        Command::ToolClick {
+                            tool,
+                            right,
+                            reload,
+                            settings,
+                        }
+                    }
                     5 => Command::Cvar {
                         name: r.str()?,
                         value: r.str()?,

@@ -722,6 +722,7 @@ impl ServerNet {
                         tool,
                         right,
                         reload,
+                        settings,
                     } => {
                         if reload {
                             server.sandbox.tool_reload(slot.player);
@@ -744,6 +745,7 @@ impl ServerNet {
                                                     &tool,
                                                     &hit,
                                                     right,
+                                                    &settings,
                                                 )
                                             })
                                             .unwrap_or(false),

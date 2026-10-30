@@ -13,6 +13,8 @@ pub struct Payload {
     pub ints: Vec<(&'static str, i64)>,
     pub floats: Vec<(&'static str, f64)>,
     pub vecs: Vec<(&'static str, Vec3)>,
+    /// Tool click: the client's tool settings, `ctx.settings[key] = value` (strings).
+    pub settings: Vec<(String, String)>,
     pub strs: Vec<(&'static str, String)>,
     /// Tool click: (entity or 0 for the world, position, normal).
     pub hit: Option<(u32, Vec3, Vec3)>,
@@ -903,6 +905,13 @@ pub fn payload_table(lua: &Lua, p: &Payload) -> Result<Table> {
     }
     for (k, v) in &p.vecs {
         t.set(*k, vec3_table(lua, *v)?)?;
+    }
+    if !p.settings.is_empty() {
+        let st = lua.create_table()?;
+        for (k, v) in &p.settings {
+            st.set(k.as_str(), v.as_str())?;
+        }
+        t.set("settings", st)?;
     }
     for (k, v) in &p.strs {
         t.set(*k, v.as_str())?;

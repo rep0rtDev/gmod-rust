@@ -2663,9 +2663,14 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                         gm_server::ToolClick::Done(r) => r,
                         gm_server::ToolClick::Miss => false,
                         gm_server::ToolClick::Unknown(hit) => match script.as_mut() {
-                            Some(rt) => {
-                                rt.tool_click(&mut server, player, &tool, &hit, b == Some("right"))
-                            }
+                            Some(rt) => rt.tool_click(
+                                &mut server,
+                                player,
+                                &tool,
+                                &hit,
+                                b == Some("right"),
+                                &[],
+                            ),
                             None => false,
                         },
                     },
@@ -2930,6 +2935,7 @@ fn run_net(scn: &Scenario) -> Result<Value> {
                 tool: op.tool.clone().unwrap_or_default(),
                 right: op.button.as_deref() == Some("right"),
                 reload: op.button.as_deref() == Some("reload"),
+                settings: Vec::new(),
             }),
             "undo" => client.command(Command::Undo),
             "cleanup" => client.command(Command::Cleanup),

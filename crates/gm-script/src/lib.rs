@@ -824,6 +824,7 @@ impl Runtime {
         tool: &str,
         hit: &gm_sandbox::ToolHit,
         right: bool,
+        settings: &[(String, String)],
     ) -> bool {
         let snap = self.snapshot(server);
         let mut order: Vec<usize> = (0..self.actors.len()).collect();
@@ -833,6 +834,7 @@ impl Runtime {
         payload.ints.push(("player", player as i64));
         payload.ints.push(("stage", tg.stage as i64));
         payload.hit = Some((hit.ent.unwrap_or(0), hit.pos, hit.normal));
+        payload.settings = settings.to_vec();
         payload.objects = tg
             .objects
             .iter()
@@ -1063,8 +1065,9 @@ impl gm_server::ServerHooks for Runtime {
         tool: &str,
         hit: &gm_sandbox::ToolHit,
         right: bool,
+        settings: &[(String, String)],
     ) -> bool {
-        Runtime::tool_click(self, server, player, tool, hit, right)
+        Runtime::tool_click(self, server, player, tool, hit, right, settings)
     }
     fn reload_addon(&mut self, addon: &str) -> Result<String, String> {
         let before = self.actors.len();
@@ -1129,11 +1132,12 @@ impl gm_server::ServerHooks for SharedRuntime {
         tool: &str,
         hit: &gm_sandbox::ToolHit,
         right: bool,
+        settings: &[(String, String)],
     ) -> bool {
         self.0
             .lock()
             .unwrap()
-            .tool_click(server, player, tool, hit, right)
+            .tool_click(server, player, tool, hit, right, settings)
     }
     fn reload_addon(&mut self, addon: &str) -> Result<String, String> {
         gm_server::ServerHooks::reload_addon(&mut *self.0.lock().unwrap(), addon)
