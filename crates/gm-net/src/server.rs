@@ -551,7 +551,12 @@ impl ServerNet {
                         }
                     }
                     Command::Cvar { name, value } => {
-                        server.set_cvar(&name, &value);
+                        // server cvars change through an admin (the game's rcon / sv_cheats path)
+                        if !self.admins.contains(&slot.player) {
+                            slot.pending_events.push(format!("Cvar {name} denied"));
+                        } else if !server.set_cvar(&name, &value) {
+                            slot.pending_events.push(format!("Cvar {name} failed"));
+                        }
                     }
                     Command::Kick { player, ban } => {
                         let msg = if !self.admins.contains(&slot.player) {

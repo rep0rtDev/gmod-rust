@@ -424,6 +424,7 @@ fn cvars_create_set_clamp_replicate_and_change_events() {
     ))
     .unwrap();
     let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
+    sn.admins.insert(1); // the first connection sets the cvar below
     sn.hooks = Some(Box::new(rt));
     let mut crt = gm_script::Runtime::client();
     crt.load(spec(

@@ -2791,6 +2791,8 @@ fn run_net(scn: &Scenario) -> Result<Value> {
     let net = Loopback::new(2, 0.2, 0x5eed);
     let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
     let mut sn = ServerNet::new(map, start);
+    // the probe runs console commands as the server owner: every player is an admin here
+    sn.admins.extend(1..=16);
     let mut client = ClientNet::new(1, "bot");
     let mut view = Vec3::ZERO;
     let step = |sn: &mut ServerNet,
@@ -2948,6 +2950,8 @@ fn run_net_predict(
     let net = Loopback::new(2, loss, 0x5eed);
     let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
     let mut sn = ServerNet::new(scn.map.as_deref().unwrap_or("gm_construct"), start);
+    // the probe runs console commands as the server owner: every player is an admin here
+    sn.admins.extend(1..=16);
     let mut client = ClientNet::new(1, "bot");
     let ang = scn.angles.clone().unwrap_or_default();
     let view0 = Vec3::new(
@@ -3058,6 +3062,8 @@ fn run_net_lifecycle(
     let net = Loopback::new(2, 0.0, 0x5eed);
     let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
     let mut sn = ServerNet::new(scn.map.as_deref().unwrap_or("gm_construct"), start);
+    // the probe runs console commands as the server owner: every player is an admin here
+    sn.admins.extend(1..=16);
     let mut client = ClientNet::new(1, "bot");
     let idle = NetCmd::default();
     let mut step = |server: &mut gm_server::Server<'_>, client: &mut ClientNet| {
@@ -3203,6 +3209,8 @@ fn run_net_interp(
     let net = Loopback::new(2, 0.0, 0x5eed);
     let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
     let mut sn = ServerNet::new(scn.map.as_deref().unwrap_or("gm_construct"), player_start);
+    // the probe runs console commands as the server owner: every player is an admin here
+    sn.admins.extend(1..=16);
     if let Some(n) = scn.snapshot_every {
         sn.snapshot_every = n.max(1);
     }
