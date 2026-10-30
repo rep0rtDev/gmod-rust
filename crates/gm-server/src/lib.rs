@@ -81,6 +81,32 @@ pub enum GameEvent {
     },
 }
 
+/// Something about to happen that the addon runtime may veto or change (`request_hook`), asked
+/// synchronously inside the tick.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Request {
+    /// `hurt` before the armour share: the amount as dealt.
+    PlayerDamage {
+        player: u32,
+        amount: f32,
+        dmg_type: u32,
+    },
+    /// The physgun's trace found an unfrozen prop while attack is pressed.
+    PhysgunPickup { player: u32, ent: u32 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Verdict {
+    Allow,
+    Cancel,
+    /// `PlayerDamage` only: deal this amount instead.
+    Amount(f32),
+}
+
+/// Answers `Request`s; the server lets go of the hook while it runs, so the hook may use the
+/// server (its own writes are not asked again).
+pub type RequestHook = Box<dyn FnMut(&mut Server<'_>, &Request) -> Verdict>;
+
 /// `(speed / IMPACT_SOUND_FULL_SPEED)^2` capped at 1; `None` under the audible threshold.
 pub fn impact_volume(speed: f32) -> Option<f32> {
     (speed >= IMPACT_SOUND_MIN_SPEED).then(|| (speed / IMPACT_SOUND_FULL_SPEED).powi(2).min(1.0))
@@ -393,6 +419,7 @@ pub struct Server<'w> {
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
     pub game_events: Vec<GameEvent>,
+    pub request_hook: Option<RequestHook>,
     pub physgun_params: PhysgunParams,
     pub projectiles: Vec<projectile::Projectile>,
     /// Loads a model the first time something spawns it (the dedicated server reads the MDL/PHY
@@ -495,6 +522,7 @@ impl<'w> Server<'w> {
             hull_planes: BTreeMap::new(),
             events: Vec::new(),
             game_events: Vec::new(),
+            request_hook: None,
             physgun_params: PhysgunParams::default(),
             projectiles: Vec::new(),
             model_loader: None,
@@ -549,6 +577,18 @@ impl<'w> Server<'w> {
     /// `damage_player` with the respawn delay of the phase the death happens in.
     fn hurt(&mut self, id: u32, amount: f32, dmg_type: u32, respawn_ticks: u64) -> f32 {
         let tick = self.tick_count;
+        if !self.players.get(&id).is_some_and(|p| p.alive) || amount <= 0.0 {
+            return 0.0;
+        }
+        let amount = match self.ask(Request::PlayerDamage {
+            player: id,
+            amount,
+            dmg_type,
+        }) {
+            Verdict::Cancel => return 0.0,
+            Verdict::Amount(a) => a,
+            Verdict::Allow => amount,
+        };
         let Some(p) = self.players.get_mut(&id) else {
             return 0.0;
         };
@@ -1911,7 +1951,11 @@ impl<'w> Server<'w> {
                     Some((ent, h))
                         if !self.sandbox.props().iter().any(|p| p.id == ent && p.frozen) =>
                     {
-                        let body = self.bodies.get(&ent).copied();
+                        let allowed = !matches!(
+                            self.ask(Request::PhysgunPickup { player, ent }),
+                            Verdict::Cancel
+                        );
+                        let body = allowed.then(|| self.bodies.get(&ent).copied()).flatten();
                         body.map(|b| {
                             let st = self.physics.state(b);
                             (
@@ -2166,6 +2210,18 @@ impl<'w> Server<'w> {
 
     pub fn body_of(&self, prop: u32) -> Option<BodyHandle> {
         self.bodies.get(&prop).copied()
+    }
+
+    /// Asks the `request_hook`, if any; `Allow` without one.
+    fn ask(&mut self, req: Request) -> Verdict {
+        let Some(mut hook) = self.request_hook.take() else {
+            return Verdict::Allow;
+        };
+        let v = hook(self, &req);
+        if self.request_hook.is_none() {
+            self.request_hook = Some(hook);
+        }
+        v
     }
 
     /// A script plays a sound script at a world position (`sound.play`).

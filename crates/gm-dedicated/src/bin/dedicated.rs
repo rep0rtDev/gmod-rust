@@ -253,7 +253,7 @@ fn main() -> Result<()> {
             .with_context(|| format!("addon {}", path.display()))?;
         }
         println!("gm-dedicated: {} actors loaded", rt.actors().len());
-        net.hooks = Some(Box::new(rt));
+        gm_script::attach(rt, &mut server, &mut net.hooks);
     }
     let bind: std::net::SocketAddr = args.bind.parse().context("bind address")?;
     let mut udp = gm_net::Udp::server(bind)?;

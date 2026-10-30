@@ -359,7 +359,7 @@ waits for a real client; a published package is capped at 50 MiB.
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API (tool ghosts and panels, spawn menu), WASM components,
-cancelable `player.damage` / `physgun.pickup` / `player.chat`, `entity.collide`, the sandbox gamemode in Luau on top of this API.
+`player.chat`, `entity.collide`, the sandbox gamemode in Luau on top of this API.
 
 ## Server events
 
@@ -370,19 +370,30 @@ actually applied, after the armour share, fall damage included; `type` is the da
 `player.death {player, type}` (`type` 0 for a scripted `player.kill`), `physgun.pickup`,
 `physgun.drop`, `physgun.freeze` (`{player, entity}`; a freeze is not followed by a drop, the
 prop simply leaves the hand frozen). Writes queued in these handlers are applied in the same
-serial phase. Not cancelable yet: the design's `player.damage` and `physgun.pickup` vetoes need
-a synchronous hook inside the server tick.
+serial phase.
+
+Cancelable requests are asked synchronously inside the tick through the server's
+`request_hook` (`gm_script::attach` installs the runtime as both the network hooks and that
+hook): `player.damage {player, amount, type}` before the armour share, a handler returning
+`false` cancels the damage, a number is dealt instead (the last number in priority order wins;
+`player.damaged` then reports what was applied); `physgun.pickup_request {player, entity}`
+when the physgun's trace finds an unfrozen prop with attack held, `false` keeps it out of the
+hand (asked again every tick the button stays down). A request raised by a write of a running
+handler (a `player.damage` queued from inside an event) is not asked again: handlers are never
+re-entered, the write applies as queued.
 
 `world.queue("sound.play", 0, {name, pos = {x, y, z}, volume?})` plays a sound script at a
 world position for every client (the same channel as prop impacts and footsteps; `volume`
 multiplies the script's, default 1). Sounds ride with the snapshots: on a tick without one they
 stay pending, so none is lost.
 
-Measured (`cargo test -p gm-dedicated --test addon_hooks game_events`): a physgun pick-up, drop,
-pick-up and freeze of a crate log four events in that order; the freeze handler's
-`player.damage` 30 arrives as `player.damaged` 30 type 0, its `player.kill` as `player.death`
-type 0, the respawn 135 ticks later as `player.spawned`; the handler's `sound.play` reaches the
-client as a `Sounds` message with the position and volume given.
+Measured (`cargo test -p gm-dedicated --test addon_hooks game_events`): the first pick-up is
+refused by `physgun.pickup_request`, the next tick's goes through; pick-up, drop, pick-up and
+freeze of a crate log four events in that order; 30 damage dealt by the server arrives at the
+`player.damage` handler, which halves it, and `player.damaged` reports 15; the `player.kill`
+queued from `player.damaged` shows as `player.death` type 0, the respawn 135 ticks later as
+`player.spawned`; the freeze handler's `sound.play` reaches the client as a `Sounds` message
+with the position and volume given.
 
 ## Players: identity and leaving
 

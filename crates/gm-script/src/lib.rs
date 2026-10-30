@@ -17,7 +17,7 @@ pub mod registry;
 pub mod snapshot;
 pub mod storage;
 
-pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite};
+pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite, Reply};
 pub use manifest::Manifest;
 pub use package::Package;
 pub use registry::Registry;
@@ -530,6 +530,69 @@ impl Runtime {
         allowed
     }
 
+    /// `ask` that also takes a number: `player.damage` handlers return the amount to deal (the
+    /// last number wins), `false` cancels and stops the chain.
+    pub fn ask_amount(
+        &mut self,
+        server: &mut Server<'_>,
+        event: &str,
+        payload: api::Payload,
+    ) -> gm_server::Verdict {
+        let snap = self.snapshot(server);
+        let mut order: Vec<usize> = (0..self.actors.len()).collect();
+        order.sort_by_key(|&i| (self.actors[i].priority(), i));
+        let mut verdict = gm_server::Verdict::Allow;
+        for i in order {
+            let a = &mut self.actors[i];
+            if !a.may_run(self.tick) {
+                continue;
+            }
+            match a.dispatch_reply(&snap, event, &payload, self.tick) {
+                Ok(Reply::Cancel) => {
+                    verdict = gm_server::Verdict::Cancel;
+                    break;
+                }
+                Ok(Reply::Number(n)) => verdict = gm_server::Verdict::Amount(n as f32),
+                Ok(Reply::Pass) => {}
+                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+            }
+        }
+        self.serial(server);
+        verdict
+    }
+
+    /// A server `Request` inside the tick: `player.damage {player, amount, type}` (return
+    /// `false` to cancel, a number to deal that much instead), `physgun.pickup_request {player,
+    /// entity}` (return `false` to keep the prop out of the hand).
+    pub fn request(
+        &mut self,
+        server: &mut Server<'_>,
+        req: &gm_server::Request,
+    ) -> gm_server::Verdict {
+        let mut p = api::Payload::default();
+        match req {
+            gm_server::Request::PlayerDamage {
+                player,
+                amount,
+                dmg_type,
+            } => {
+                p.ints.push(("player", *player as i64));
+                p.floats.push(("amount", *amount as f64));
+                p.ints.push(("type", *dmg_type as i64));
+                self.ask_amount(server, "player.damage", p)
+            }
+            gm_server::Request::PhysgunPickup { player, ent } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("entity", *ent as i64));
+                if self.ask(server, "physgun.pickup_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
+        }
+    }
+
     fn parallel(&mut self, snap: &Arc<Snapshot>, event: &str, payload: &api::Payload) {
         let tick = self.tick;
         let mut results: Vec<Result<Option<bool>, mlua::Error>> = (0..self.actors.len())
@@ -843,5 +906,90 @@ impl gm_server::ServerHooks for Runtime {
     }
     fn post_tick(&mut self, server: &mut Server<'_>) {
         Runtime::post_tick(self, server);
+    }
+}
+
+/// A runtime shared between the network layer's hooks and the server's `request_hook`.
+#[derive(Clone)]
+pub struct SharedRuntime(pub Arc<std::sync::Mutex<Runtime>>);
+
+/// Installs `rt` as the server hooks (`hooks`) and as the server's request hook (cancelable
+/// `player.damage` / `physgun.pickup_request`). A request raised by a write of a running
+/// handler (the runtime is busy) is allowed without asking: handlers are not re-entered.
+pub fn attach(
+    rt: Runtime,
+    server: &mut Server<'_>,
+    hooks: &mut Option<Box<dyn gm_server::ServerHooks>>,
+) -> SharedRuntime {
+    let shared = SharedRuntime(Arc::new(std::sync::Mutex::new(rt)));
+    let for_requests = shared.clone();
+    server.request_hook = Some(Box::new(move |server, req| {
+        match for_requests.0.try_lock() {
+            Ok(mut rt) => rt.request(server, req),
+            Err(_) => gm_server::Verdict::Allow,
+        }
+    }));
+    *hooks = Some(Box::new(shared.clone()));
+    shared
+}
+
+impl gm_server::ServerHooks for SharedRuntime {
+    fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .prop_spawn_request(server, player, model)
+    }
+    fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32) {
+        self.0.lock().unwrap().entity_spawned(server, player, ent);
+    }
+    fn entity_removed(&mut self, server: &mut Server<'_>, player: u32, ent: u32) {
+        self.0.lock().unwrap().entity_removed(server, player, ent);
+    }
+    fn tool_click(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        hit: &gm_sandbox::ToolHit,
+        right: bool,
+    ) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .tool_click(server, player, tool, hit, right)
+    }
+    fn reload_addon(&mut self, addon: &str) -> Result<String, String> {
+        gm_server::ServerHooks::reload_addon(&mut *self.0.lock().unwrap(), addon)
+    }
+    fn player_disconnected(&mut self, server: &mut Server<'_>, player: u32) {
+        self.0.lock().unwrap().player_disconnected(server, player);
+    }
+    fn game_events(&mut self, server: &mut Server<'_>, events: Vec<gm_server::GameEvent>) {
+        self.0.lock().unwrap().game_events(server, events);
+    }
+    fn net_message(&mut self, server: &mut Server<'_>, player: u32, name: &str, data: &[u8]) {
+        gm_server::ServerHooks::net_message(
+            &mut *self.0.lock().unwrap(),
+            server,
+            player,
+            name,
+            data,
+        );
+    }
+    fn drain_net(&mut self) -> Vec<(u32, String, Vec<u8>)> {
+        gm_server::ServerHooks::drain_net(&mut *self.0.lock().unwrap())
+    }
+    fn pre_tick(&mut self, server: &mut Server<'_>) {
+        self.0.lock().unwrap().pre_tick(server);
+    }
+    fn post_tick(&mut self, server: &mut Server<'_>) {
+        self.0.lock().unwrap().post_tick(server);
+    }
+    fn after_commands(&mut self, server: &mut Server<'_>) {
+        self.0.lock().unwrap().after_commands(server);
+    }
+    fn drain_published(&mut self) -> Vec<gm_server::PublishedPackage> {
+        gm_server::ServerHooks::drain_published(&mut *self.0.lock().unwrap())
     }
 }

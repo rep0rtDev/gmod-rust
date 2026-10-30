@@ -361,6 +361,9 @@ function __dispatch(name: string, payload)
         for _, h in ipairs(list) do
             local r = h.fn(payload)
             if r == false then result = false; break end
+            -- a number answers a request (`player.damage`: the amount to deal); later handlers
+            -- of the same actor see it in the payload
+            if type(r) == "number" then result = r; payload.amount = r end
         end
     end
     -- timers run after the Think handlers and before the server tick, like the game's

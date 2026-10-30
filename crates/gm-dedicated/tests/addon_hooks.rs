@@ -2102,12 +2102,16 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
         name: "log".into(),
         priority: 1,
         source: "state.log = {}
+            state.vetoed = 0
             local function put(s) table.insert(state.log, s) end
+            events.on('physgun.pickup_request', function(e)
+                if state.vetoed == 0 then state.vetoed = 1 return false end
+            end)
+            events.on('player.damage', function(e) return e.amount * 0.5 end)
             events.on('physgun.pickup', function(e) put('pickup ' .. e.player .. ' ' .. e.entity) end)
             events.on('physgun.drop', function(e) put('drop ' .. e.player .. ' ' .. e.entity) end)
             events.on('physgun.freeze', function(e)
                 put('freeze ' .. e.player .. ' ' .. e.entity)
-                world.queue('player.damage', e.player, { amount = 30, type = 0 })
                 world.queue('sound.play', 0, { name = 'Weapon_Pistol.Single', pos = { x = 823, y = -500, z = -100 }, volume = 0.5 })
             end)
             events.on('player.damaged', function(e)
@@ -2117,20 +2121,20 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
             events.on('player.death', function(e) put('death ' .. e.player .. ' ' .. e.type) end)
             events.on('player.spawned', function(e)
                 put('spawned ' .. e.player)
-                net.send('log', { log = state.log }, e.player)
+                net.send('log', { log = state.log, vetoed = state.vetoed }, e.player)
             end)"
             .into(),
         config: relaxed(),
     })
     .unwrap();
     let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -500.0, -143.0));
-    sn.hooks = Some(Box::new(rt));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
     let mut crt = gm_script::Runtime::client();
     crt.load(gm_script::ActorSpec {
         addon: "test".into(),
         name: "hud".into(),
         priority: 1,
-        source: "net.receive('log', function(p) state.log = p.data.log end)".into(),
+        source: "net.receive('log', function(p) state.log = p.data.log state.vetoed = p.data.vetoed end)".into(),
         config: relaxed(),
     })
     .unwrap();
@@ -2181,6 +2185,8 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
         ATTACK | ATTACK2,
         1,
     );
+    // damage from the server side, as a bullet or a fall deals it: the handler halves it
+    assert_eq!(server.damage_player(1, 30.0, 0), 15.0);
     step(&mut sn, &mut client, &mut server, &mut crt, 0, 200);
     let log: Vec<String> = crt.actors()[0].eval("return state.log").unwrap();
     assert_eq!(
@@ -2190,11 +2196,13 @@ fn game_events_reach_actors_and_a_script_plays_a_sound() {
             format!("drop 1 {crate_id}"),
             format!("pickup 1 {crate_id}"),
             format!("freeze 1 {crate_id}"),
-            "damaged 1 30 0".to_string(),
+            "damaged 1 15 0".to_string(),
             "death 1 0".to_string(),
             "spawned 1".to_string(),
         ]
     );
+    let vetoed: u32 = crt.actors()[0].eval("return state.vetoed").unwrap();
+    assert_eq!(vetoed, 1, "the first pick-up was refused by the script");
     assert!(server.sandbox.props()[0].frozen);
     let shot = client
         .sounds

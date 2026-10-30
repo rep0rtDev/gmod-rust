@@ -41,6 +41,16 @@ pub enum ActorStatus {
     Throttled,
 }
 
+/// What a handler returned to a cancelable event.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Reply {
+    Pass,
+    /// `return false`
+    Cancel,
+    /// `return <number>`
+    Number(f64),
+}
+
 pub struct Actor {
     id: u32,
     pub spec: ActorSpec,
@@ -144,8 +154,23 @@ impl Actor {
         snap: &Arc<Snapshot>,
         event: &str,
         payload: &Payload,
-        _tick: u64,
+        tick: u64,
     ) -> mlua::Result<Option<bool>> {
+        self.dispatch_reply(snap, event, payload, tick)
+            .map(|r| match r {
+                Reply::Cancel => Some(false),
+                _ => None,
+            })
+    }
+
+    /// `dispatch` keeping a numeric answer (`player.damage` handlers return the new amount).
+    pub fn dispatch_reply(
+        &mut self,
+        snap: &Arc<Snapshot>,
+        event: &str,
+        payload: &Payload,
+        _tick: u64,
+    ) -> mlua::Result<Reply> {
         *self.shared.snapshot.write().unwrap() = snap.clone();
         let start = Instant::now();
         *self.deadline.lock().unwrap() = Some(start + self.spec.config.cpu_budget);
@@ -171,8 +196,10 @@ impl Actor {
             }
         }
         match result {
-            Ok(Value::Boolean(false)) => Ok(Some(false)),
-            Ok(_) => Ok(None),
+            Ok(Value::Boolean(false)) => Ok(Reply::Cancel),
+            Ok(Value::Number(n)) => Ok(Reply::Number(n)),
+            Ok(Value::Integer(n)) => Ok(Reply::Number(n as f64)),
+            Ok(_) => Ok(Reply::Pass),
             Err(e) => {
                 if !self.over_budget.load(Ordering::Relaxed) {
                     self.restart();
