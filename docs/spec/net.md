@@ -200,7 +200,9 @@ the slot at once. The server refuses with a reliable `ServerMsg::Disconnect { re
 `banned` from an admin's `Command::Kick { player, ban }` (tag 7; admins are the identities of
 `--admin`, granted at `Auth`; kicking yourself is denied). `gm-dedicated` prints the join / leave /
 refusal log each tick and keeps `<data>/bans.txt` (one public key per line, loaded at start,
-rewritten on every ban); `gm-bot` exits with the reason. Measured in
+rewritten on every ban); `gm-bot` exits with the reason. `gm-dedicated --config server.toml`
+holds the same settings as the flags plus a `[cvars]` table applied after the map loads (an
+unknown key or cvar is an error); an explicit flag wins over the file, lists are merged. Measured in
 `connections_time_out_get_kicked_banned_refused_when_full_and_leave`.
 
 Encryption: `Hello` carries the client's ephemeral X25519 public key and `Challenge` the

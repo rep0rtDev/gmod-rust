@@ -1708,3 +1708,39 @@ fn connections_time_out_get_kicked_banned_refused_when_full_and_leave() {
     let log = sn.take_log();
     assert!(log.iter().any(|l| l.contains("timed out")), "{log:?}");
 }
+
+#[test]
+fn actors_see_the_players_identity_and_player_disconnected() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.add_player(
+        1,
+        glam::Vec3::new(823.235, -500.0, -143.0),
+        glam::Vec3::new(30.0, 0.0, 0.0),
+    );
+    server.players.get_mut(&1).unwrap().identity = Some([0xab; 32]);
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "watch".into(),
+        priority: 1,
+        source: "state.gone = {}
+            events.on('tick.pre', function() state.identity = world.player(1).identity end)
+            events.on('player.disconnected', function(p) table.insert(state.gone, p.player) end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    rt.pre_tick(&mut server);
+    let identity: String = rt.actors()[0].eval("return state.identity").unwrap();
+    assert_eq!(identity, "ab".repeat(32));
+    assert!(server.remove_player(1));
+    rt.player_disconnected(&mut server, 1);
+    let gone: Vec<u32> = rt.actors()[0].eval("return state.gone").unwrap();
+    assert_eq!(gone, vec![1]);
+}

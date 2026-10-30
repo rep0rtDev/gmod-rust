@@ -7,6 +7,9 @@ use std::time::{Duration, Instant};
 
 #[derive(Parser)]
 struct Args {
+    /// Server file (TOML, the same fields as these flags plus `[cvars]`); explicit flags win.
+    #[arg(long)]
+    config: Option<std::path::PathBuf>,
     #[arg(long, default_value = "gm_construct")]
     map: String,
     #[arg(long, default_value = "0.0.0.0:27015")]
@@ -60,7 +63,47 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let matches = <Args as clap::CommandFactory>::command().get_matches();
+    let mut args = <Args as clap::FromArgMatches>::from_arg_matches(&matches)?;
+    let config = match &args.config {
+        Some(p) => gm_dedicated::ServerConfig::load(p)?,
+        None => gm_dedicated::ServerConfig::default(),
+    };
+    // the file fills in what the command line left at its default
+    let defaulted =
+        |id: &str| matches.value_source(id) != Some(clap::parser::ValueSource::CommandLine);
+    macro_rules! take {
+        ($field:ident) => {
+            if defaulted(stringify!($field)) {
+                if let Some(v) = config.$field.clone() {
+                    args.$field = v.into();
+                }
+            }
+        };
+    }
+    take!(map);
+    take!(bind);
+    take!(name);
+    take!(max_players);
+    take!(data);
+    take!(watch);
+    take!(require_auth);
+    take!(timeout);
+    if defaulted("spawn") {
+        if let Some(sp) = config.spawn {
+            args.spawn = sp.to_vec();
+        }
+    }
+    if args.registry.is_none() {
+        args.registry = config.registry.clone();
+    }
+    if args.master.is_none() {
+        args.master = config.master.clone();
+    }
+    args.addon.extend(config.addon.iter().cloned());
+    args.trust.extend(config.trust.iter().cloned());
+    args.admin.extend(config.admin.iter().cloned());
+    args.ban.extend(config.ban.iter().cloned());
     let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
     let mount = gm_content::Mount::for_install(&inst)?;
     let t0 = Instant::now();
@@ -73,6 +116,11 @@ fn main() -> Result<()> {
             .ok()
     }));
     let spawn = glam::Vec3::new(args.spawn[0], args.spawn[1], args.spawn[2]);
+    for (name, value) in config.cvar_strings() {
+        if !server.set_cvar(&name, &value) {
+            anyhow::bail!("[cvars] {name} = {value}: unknown cvar or bad value");
+        }
+    }
     let mut net = gm_net::ServerNet::new(&args.map, spawn);
     net.require_auth = args.require_auth;
     net.max_players = args.max_players as usize;

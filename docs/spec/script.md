@@ -360,3 +360,10 @@ waits for a real client; a published package is capped at 50 MiB.
 
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,
 the sandbox gamemode in Luau on top of this API.
+
+## Players: identity and leaving
+
+`world.player(id).identity` is the hex of the authenticated ed25519 public key or `nil` for an
+anonymous connection (the stable id for bans, ownership and storage keys). `player.disconnected`
+(`{ player }`) fires after the player left the server table through a timeout, a `Disconnect`, a
+kick or a ban; the player's props and constraints stay and keep their owner id.

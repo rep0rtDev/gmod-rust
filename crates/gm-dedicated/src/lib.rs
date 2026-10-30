@@ -92,3 +92,98 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
         inertia: Some(Vec3::from(solid.rotation_inertia)),
     })
 }
+
+/// `gm-dedicated --config server.toml`: the command line's fields as a file, plus `[cvars]`.
+/// An explicit command-line flag wins over the file, the file over the built-in default; the
+/// lists (`addon`, `trust`, `admin`, `ban`) are merged.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ServerConfig {
+    pub map: Option<String>,
+    pub bind: Option<String>,
+    pub name: Option<String>,
+    pub max_players: Option<u16>,
+    pub spawn: Option<[f32; 3]>,
+    pub data: Option<std::path::PathBuf>,
+    pub watch: Option<bool>,
+    pub require_auth: Option<bool>,
+    pub timeout: Option<f32>,
+    pub registry: Option<String>,
+    pub master: Option<String>,
+    pub addon: Vec<std::path::PathBuf>,
+    pub trust: Vec<String>,
+    pub admin: Vec<String>,
+    pub ban: Vec<String>,
+    /// Console variables applied after the map loads (`sbox_maxprops = "150"`, numbers allowed).
+    pub cvars: std::collections::BTreeMap<String, toml::Value>,
+}
+
+impl ServerConfig {
+    pub fn parse(text: &str) -> Result<Self> {
+        Ok(toml::from_str(text)?)
+    }
+
+    pub fn load(path: &std::path::Path) -> Result<Self> {
+        let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
+        Self::parse(&text).with_context(|| path.display().to_string())
+    }
+
+    /// `[cvars]` as strings the server's `set_cvar` takes.
+    pub fn cvar_strings(&self) -> Vec<(String, String)> {
+        self.cvars
+            .iter()
+            .map(|(k, v)| {
+                let s = match v {
+                    toml::Value::String(s) => s.clone(),
+                    toml::Value::Integer(i) => i.to_string(),
+                    toml::Value::Float(f) => f.to_string(),
+                    toml::Value::Boolean(b) => (*b as u8).to_string(),
+                    other => other.to_string(),
+                };
+                (k.clone(), s)
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::ServerConfig;
+
+    #[test]
+    fn a_server_file_parses_and_rejects_unknown_keys() {
+        let c = ServerConfig::parse(
+            r#"
+map = "gm_flatgrass"
+name = "Box"
+max_players = 24
+require_auth = true
+admin = ["00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"]
+addon = ["addons/wire"]
+[cvars]
+sbox_maxprops = 150
+sbox_noclip = false
+sbox_godmode = "1"
+"#,
+        )
+        .unwrap();
+        assert_eq!(c.map.as_deref(), Some("gm_flatgrass"));
+        assert_eq!(c.max_players, Some(24));
+        assert_eq!(c.require_auth, Some(true));
+        assert_eq!(c.admin.len(), 1);
+        assert_eq!(c.bind, None);
+        let cv = c.cvar_strings();
+        assert_eq!(
+            cv,
+            vec![
+                ("sbox_godmode".to_string(), "1".to_string()),
+                ("sbox_maxprops".to_string(), "150".to_string()),
+                ("sbox_noclip".to_string(), "0".to_string()),
+            ]
+        );
+        assert!(
+            ServerConfig::parse("mpa = \"x\"").is_err(),
+            "typos are errors"
+        );
+    }
+}

@@ -675,6 +675,13 @@ impl Runtime {
         self.run_event(server, "entity.spawned", p)
     }
 
+    /// `player.disconnected`: the player is already gone from the table, its props stay.
+    pub fn player_disconnected(&mut self, server: &mut Server<'_>, player: u32) -> Applied {
+        let mut p = api::Payload::default();
+        p.ints.push(("player", player as i64));
+        self.run_event(server, "player.disconnected", p)
+    }
+
     /// `entity.removed` (`EntityRemoved`): the entity is already gone from the table.
     pub fn entity_removed(&mut self, server: &mut Server<'_>, player: u32, ent: u32) -> Applied {
         let mut p = api::Payload::default();
@@ -742,6 +749,9 @@ impl gm_server::ServerHooks for Runtime {
     }
     fn entity_removed(&mut self, server: &mut Server<'_>, player: u32, ent: u32) {
         Runtime::entity_removed(self, server, player, ent);
+    }
+    fn player_disconnected(&mut self, server: &mut Server<'_>, player: u32) {
+        Runtime::player_disconnected(self, server, player);
     }
     fn after_commands(&mut self, server: &mut Server<'_>) {
         Runtime::after_commands(self, server);

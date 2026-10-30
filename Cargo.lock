@@ -677,6 +677,8 @@ dependencies = [
  "gm-sandbox",
  "gm-script",
  "gm-server",
+ "serde",
+ "toml",
 ]
 
 [[package]]

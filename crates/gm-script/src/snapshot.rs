@@ -25,6 +25,8 @@ pub struct PlayerSnap {
     pub health: i32,
     pub armor: i32,
     pub max_health: i32,
+    /// Authenticated identity (ed25519 public key, hex) or `None`.
+    pub identity: Option<String>,
     pub model: String,
     pub weapons: Vec<String>,
     pub active_weapon: String,
@@ -111,6 +113,7 @@ impl Snapshot {
                             health: p.health as i32,
                             armor: p.armor as i32,
                             max_health: 100,
+                            identity: None,
                             weapons: gm_server::LOADOUT
                                 .iter()
                                 .enumerate()
@@ -171,6 +174,9 @@ impl Snapshot {
                             health: p.health,
                             armor: p.armor,
                             max_health: p.max_health,
+                            identity: p
+                                .identity
+                                .map(|k| k.iter().map(|x| format!("{x:02x}")).collect()),
                             model: p.model.clone(),
                             weapons: p.weapons.clone(),
                             active_weapon: p.active_weapon.clone(),
