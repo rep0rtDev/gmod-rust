@@ -89,6 +89,19 @@ pub struct WorldRenderer {
     batches: Vec<Batch>,
     pub sky_camera: Option<SkyCamera>,
     pub stats: Stats,
+    material_layout: wgpu::BindGroupLayout,
+    base_sampler: wgpu::Sampler,
+    white_uv: [f32; 2],
+    sun: Vec3,
+}
+
+/// A model for props that move: meshes in model space with their material bind groups.
+pub struct DynModel {
+    parts: Vec<(
+        wgpu::BindGroup,
+        Vec<([f32; 3], [f32; 3], [f32; 2])>,
+        Vec<u32>,
+    )>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -581,6 +594,10 @@ impl WorldRenderer {
             batches,
             sky_camera,
             stats,
+            material_layout,
+            base_sampler,
+            white_uv,
+            sun,
         })
     }
 
@@ -658,7 +675,7 @@ impl WorldRenderer {
                     view: depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
@@ -673,6 +690,192 @@ impl WorldRenderer {
             for b in self.batches.iter().filter(|b| b.sky == sky) {
                 pass.set_bind_group(1, &b.bind_group, &[]);
                 pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
+            }
+        }
+        gpu.queue.submit([enc.finish()]);
+    }
+}
+
+impl WorldRenderer {
+    /// Loads `path` (body group 0, skin 0) for `draw_models`; `None` if it has no drawable mesh.
+    pub fn load_model(&self, gpu: &Gpu, mount: &Mount, path: &str) -> Option<DynModel> {
+        let (mdl, vvd, vtx) = crate::props::load_model(mount, path).ok()?;
+        let mut materials: crate::props::MaterialMap = HashMap::new();
+        let mut missing = Vec::new();
+        let keys: Vec<Option<String>> = (0..mdl.textures.len())
+            .map(|t| {
+                crate::props::resolve_model_texture(mount, &mdl, t, &mut materials, &mut missing)
+            })
+            .collect();
+        let mut parts = Vec::new();
+        for (bi, bp) in vtx.body_parts.iter().enumerate() {
+            let Some(mdl_bp) = mdl.body_parts.get(bi) else {
+                continue;
+            };
+            let (Some(vm), Some(mm)) = (bp.models.first(), mdl_bp.models.first()) else {
+                continue;
+            };
+            let vertex_base = (mm.vertex_index / 48).max(0) as usize;
+            let Some(lod) = vm.lods.first() else { continue };
+            for (mi, mesh) in lod.meshes.iter().enumerate() {
+                let Some(mdl_mesh) = mm.meshes.get(mi) else {
+                    continue;
+                };
+                let tex = mdl
+                    .skins
+                    .first()
+                    .and_then(|s| s.get(mdl_mesh.material.max(0) as usize))
+                    .map(|&t| t.max(0) as usize)
+                    .unwrap_or(mdl_mesh.material.max(0) as usize);
+                let Some(Some(key)) = keys.get(tex) else {
+                    continue;
+                };
+                let Some(Some((mat, rgba))) = materials.get(key) else {
+                    continue;
+                };
+                let mut remap: HashMap<u32, u32> = HashMap::new();
+                let mut verts = Vec::new();
+                let mut idx = Vec::with_capacity(mesh.indices.len());
+                for &i in &mesh.indices {
+                    let next = remap.len() as u32;
+                    let li = *remap.entry(i).or_insert(next);
+                    if li == next {
+                        let Some(v) = vvd.vertices.get(vertex_base + i as usize) else {
+                            continue;
+                        };
+                        verts.push((v.position, v.normal, v.uv));
+                    }
+                    idx.push(li);
+                }
+                let device = &gpu.device;
+                let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("model material params"),
+                    contents: bytemuck::bytes_of(&MaterialParams {
+                        alpha_test: mat.translucent as u32,
+                        pad: [0; 3],
+                    }),
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+                let t = upload_rgba(
+                    gpu,
+                    &rgba.pixels,
+                    rgba.width,
+                    rgba.height,
+                    wgpu::TextureFormat::Rgba8UnormSrgb,
+                    key,
+                );
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(key),
+                    layout: &self.material_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(
+                                &t.create_view(&Default::default()),
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.base_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: params.as_entire_binding(),
+                        },
+                    ],
+                });
+                parts.push((bg, verts, idx));
+            }
+        }
+        (!parts.is_empty()).then_some(DynModel { parts })
+    }
+
+    /// Draws moving models over the frame `draw` left in `color`/`depth`: each item is a model
+    /// with its origin and Source angles, transformed on the CPU into one buffer per frame.
+    pub fn draw_models(
+        &self,
+        gpu: &Gpu,
+        camera: &Camera,
+        color: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        aspect: f32,
+        items: &[(&DynModel, Vec3, Vec3)],
+    ) {
+        let mut verts: Vec<Vertex> = Vec::new();
+        let mut idx: Vec<u32> = Vec::new();
+        let mut draws = Vec::new();
+        for (m, pos, ang) in items {
+            let rot = crate::props::angle_matrix(ang.to_array());
+            for (bg, pv, pi) in &m.parts {
+                let base = verts.len() as u32;
+                for (p, n, uv) in pv {
+                    let n = (rot * Vec3::from(*n)).normalize_or_zero();
+                    let shade = 0.45 + 0.55 * n.dot(self.sun).max(0.0);
+                    verts.push(Vertex {
+                        position: (*pos + rot * Vec3::from(*p)).to_array(),
+                        uv: *uv,
+                        lm_uv: self.white_uv,
+                        color: [shade; 3],
+                    });
+                }
+                let first = idx.len() as u32;
+                idx.extend(pi.iter().map(|i| i + base));
+                draws.push((bg, first, pi.len() as u32));
+            }
+        }
+        if draws.is_empty() {
+            return;
+        }
+        let device = &gpu.device;
+        let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("model vertices"),
+            contents: bytemuck::cast_slice(&verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("model indices"),
+            contents: bytemuck::cast_slice(&idx),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        gpu.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::bytes_of(&CameraUniform {
+                view_proj: camera.view_proj(aspect).to_cols_array_2d(),
+            }),
+        );
+        let mut enc = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("models"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            for (bg, first, count) in draws {
+                pass.set_bind_group(1, bg, &[]);
+                pass.draw_indexed(first..first + count, 0, 0..1);
             }
         }
         gpu.queue.submit([enc.finish()]);

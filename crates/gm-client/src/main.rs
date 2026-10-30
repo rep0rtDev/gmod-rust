@@ -1,7 +1,7 @@
 //! Playable client: a window with the live world render, keyboard and mouse input, and an
 //! in-process server reached through the loopback transport (the same protocol as over UDP).
 //!
-//! `GMOD_DIR=... cargo run --release -p gm-client -- [map]`
+//! `GMOD_DIR=... cargo run --release -p gm-client -- [map] [yaw] [pitch]`
 //! WASD move, mouse look, space jump, ctrl duck, shift run, LMB/RMB fire, 1/2/3 weapon
 //! (none, physgun, tool gun), Q spawn a prop, Z undo, Esc release the mouse / quit.
 
@@ -57,6 +57,7 @@ struct Gfx {
     gpu: Gpu,
     world: WorldRenderer,
     depth: wgpu::TextureView,
+    models: std::collections::HashMap<String, Option<gm_render::world::DynModel>>,
 }
 
 struct App {
@@ -126,6 +127,7 @@ impl App {
             gpu,
             world,
             depth,
+            models: Default::default(),
         });
         self.set_grab(true);
         Ok(())
@@ -238,6 +240,19 @@ impl App {
         };
         let aspect = g.config.width as f32 / g.config.height as f32;
         g.world.draw(&g.gpu, &camera, &view, &g.depth, aspect);
+        let ents = &self.sim.client.world.entities;
+        for e in ents.values() {
+            if !g.models.contains_key(&e.model) {
+                let m = g.world.load_model(&g.gpu, &self.mount, &e.model);
+                g.models.insert(e.model.clone(), m);
+            }
+        }
+        let items: Vec<_> = ents
+            .values()
+            .filter_map(|e| Some((g.models.get(&e.model)?.as_ref()?, e.pos, e.angles)))
+            .collect();
+        g.world
+            .draw_models(&g.gpu, &camera, &view, &g.depth, aspect, &items);
         g.gpu.queue.present(frame);
         self.frames += 1;
         let el = self.fps_at.elapsed().as_secs_f32();
@@ -349,6 +364,7 @@ impl ApplicationHandler for App {
 }
 
 fn main() -> Result<()> {
+    let arg_f = |i: usize| std::env::args().nth(i).and_then(|v| v.parse::<f32>().ok());
     let map = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "gm_construct".into());
@@ -401,7 +417,7 @@ fn main() -> Result<()> {
         gfx: None,
         keys: BTreeSet::new(),
         mouse: BTreeSet::new(),
-        view: Vec3::new(0.0, yaw, 0.0),
+        view: Vec3::new(arg_f(3).unwrap_or(0.0), arg_f(2).unwrap_or(yaw), 0.0),
         weapon: 1,
         grabbed: false,
         last: Instant::now(),

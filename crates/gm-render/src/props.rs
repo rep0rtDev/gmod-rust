@@ -63,9 +63,9 @@ pub fn load_model(mount: &Mount, path: &str) -> Result<(Mdl, Vvd, Vtx)> {
     Ok((mdl, vvd, vtx))
 }
 
-type MaterialMap = HashMap<String, Option<(Material, Rgba)>>;
+pub(crate) type MaterialMap = HashMap<String, Option<(Material, Rgba)>>;
 
-fn resolve_model_texture(
+pub(crate) fn resolve_model_texture(
     mount: &Mount,
     mdl: &Mdl,
     texture: usize,
