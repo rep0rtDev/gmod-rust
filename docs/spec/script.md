@@ -343,8 +343,10 @@ on it (two requirements with no common version are an error), return the set in 
 and install the blobs into `<data>/registry/<sha>.gmr` after checking the sha256 and the
 signatures; the server then loads them like any package (`--trust` still applies). A client with
 `gm-bot --registry <dir>` takes a package the server announces from the registry by sha256 before
-asking the server for the bytes. HTTP registries are the same layout fetched over the network
-(not yet).
+asking the server for the bytes. `--registry http://host/path` is the same layout fetched over
+plain HTTP/1.1 with the standard library (`Content-Length` or chunked, 64 MiB cap, no redirects):
+integrity comes from the sha256 and the signatures, so TLS adds privacy, not correctness, and
+waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 

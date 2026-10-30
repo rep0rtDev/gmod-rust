@@ -26,7 +26,8 @@ enum Cmd {
     Publish { addon: PathBuf, registry: PathBuf },
     /// Resolve `id@requirement`s against a registry and print what would be installed, in order
     Resolve {
-        registry: PathBuf,
+        /// Registry directory or `http://` base url
+        registry: String,
         #[arg(required = true)]
         wanted: Vec<String>,
     },
@@ -111,7 +112,7 @@ fn main() -> Result<()> {
             );
         }
         Cmd::Resolve { registry, wanted } => {
-            let reg = gm_script::Registry::open(&registry)?;
+            let reg = gm_script::Registry::open_any(&registry)?;
             let wanted: Vec<String> = wanted.iter().map(|w| w.replace('@', " ")).collect();
             for e in reg.resolve(&wanted)? {
                 println!(

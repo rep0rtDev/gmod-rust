@@ -20,10 +20,10 @@ struct Args {
     /// every package the server publishes run from here.
     #[arg(long, default_value = "cache")]
     cache: std::path::PathBuf,
-    /// Addon registry directory: a package the server announces is taken from here by sha256
-    /// before asking the server for the bytes.
+    /// Addon registry (directory or `http://` base url): a package the server announces is
+    /// taken from here by sha256 before asking the server for the bytes.
     #[arg(long)]
-    registry: Option<std::path::PathBuf>,
+    registry: Option<String>,
     /// Browse instead of playing: ask this master for its list, query every server and print
     /// name, map, players, addons and ping.
     #[arg(long)]
@@ -93,7 +93,7 @@ fn main() -> Result<()> {
                 .is_some_and(|p| p.sha256 == a.sha);
             let from_registry = !cached
                 && args.registry.as_ref().is_some_and(|r| {
-                    gm_script::Registry::open(r).is_ok_and(|reg| {
+                    gm_script::Registry::open_any(r).is_ok_and(|reg| {
                         reg.fetch_by_sha(&gm_net::msg::sha_hex(&a.sha), &args.cache)
                             .is_some()
                     })

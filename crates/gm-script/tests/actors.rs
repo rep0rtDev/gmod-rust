@@ -692,11 +692,34 @@ fn registry_publishes_signed_packages_and_resolves_the_highest_fitting_versions(
     assert!(reg.fetch_by_sha(&plan[0].sha, &cache).is_some());
     assert!(reg.fetch_by_sha("00ff", &cache).is_none());
 
+    // the same registry over plain http: read only, same plan, blobs fetched and checked
+    let base = gm_script::http::serve_dir_for_tests(reg_dir.clone(), true);
+    let mut http = gm_script::Registry::open_any(&base).unwrap();
+    assert_eq!(http.index, reg.index);
+    assert!(matches!(
+        http.publish(&base14),
+        Err(gm_script::registry::RegistryError::ReadOnly(_))
+    ));
+    let http_cache = dir.join("http-cache");
+    let got: Vec<_> = http
+        .resolve(&["hud".into()])
+        .unwrap()
+        .iter()
+        .map(|e| http.install(e, &http_cache).unwrap())
+        .collect();
+    assert_eq!(got.len(), 3);
+    assert!(gm_script::Runtime::new().load_addons(&got).is_ok());
+
     std::fs::write(reg.blob_path(&plan[0].sha), b"garbage").unwrap();
     let _ = std::fs::remove_dir_all(&cache);
     assert!(
         reg.install(&plan[0], &cache).is_err(),
         "a damaged blob does not install"
+    );
+    let _ = std::fs::remove_dir_all(&http_cache);
+    assert!(
+        http.install(&plan[0], &http_cache).is_err(),
+        "nor over http"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

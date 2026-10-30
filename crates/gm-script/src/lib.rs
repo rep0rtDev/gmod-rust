@@ -8,6 +8,7 @@
 pub mod actor;
 pub mod api;
 pub mod depends;
+pub mod http;
 pub mod manifest;
 pub mod netval;
 pub mod package;

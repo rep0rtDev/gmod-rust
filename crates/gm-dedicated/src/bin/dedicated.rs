@@ -32,10 +32,11 @@ struct Args {
     /// Public key (hex) addons must be signed by; repeatable, none means any addon loads
     #[arg(long)]
     trust: Vec<String>,
-    /// Addon registry directory: `--addon id@requirement` (e.g. `wire@^1.2`, or a bare id) is
-    /// resolved against its index with dependencies and installed into `<data>/registry`.
+    /// Addon registry (directory or `http://` base url): `--addon id@requirement` (e.g.
+    /// `wire@^1.2`, or a bare id) is resolved against its index with dependencies and installed
+    /// into `<data>/registry`.
     #[arg(long)]
-    registry: Option<std::path::PathBuf>,
+    registry: Option<String>,
     /// Master server to heartbeat to (every 10 s) so browsers list this server.
     #[arg(long)]
     master: Option<String>,
@@ -90,7 +91,7 @@ fn main() -> Result<()> {
                 .registry
                 .as_ref()
                 .with_context(|| format!("--registry is needed to install {wanted:?}"))?;
-            let reg = gm_script::Registry::open(reg_dir)?;
+            let reg = gm_script::Registry::open_any(reg_dir)?;
             let cache = args.data.join("registry");
             for e in reg.resolve(&wanted)? {
                 let path = reg.install(&e, &cache)?;

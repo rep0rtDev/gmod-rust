@@ -56,12 +56,28 @@ pub enum RegistryError {
     Incompatible(String, String, String),
     #[error("blob {0}: sha256 mismatch")]
     Corrupt(String),
+    #[error("{0}")]
+    Http(#[from] crate::http::HttpError),
+    #[error("registry {0} is read only (publish into a directory)")]
+    ReadOnly(String),
+    #[error("addon {0} is {1} bytes, over the {max} byte cap", max = MAX_PACKAGE)]
+    TooLarge(String, u64),
+}
+
+/// Where a registry lives: a directory (publishable) or a plain-http base url (read only).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    Dir(PathBuf),
+    Http(String),
 }
 
 pub struct Registry {
-    pub dir: PathBuf,
+    pub source: Source,
     pub index: Index,
 }
+
+/// Published packages larger than this are refused (the design's cap).
+pub const MAX_PACKAGE: u64 = 50 << 20;
 
 impl Registry {
     /// Opens (or starts) the registry at `dir`.
@@ -73,27 +89,69 @@ impl Registry {
             Index::default()
         };
         Ok(Registry {
-            dir: dir.to_path_buf(),
+            source: Source::Dir(dir.to_path_buf()),
             index,
         })
     }
 
+    /// A directory path or an `http://` url.
+    pub fn open_any(where_: &str) -> Result<Registry, RegistryError> {
+        if where_.starts_with("http://") {
+            Registry::open_http(where_)
+        } else {
+            Registry::open(Path::new(where_))
+        }
+    }
+
+    /// Reads the index of a registry served over plain http (`<base>/index.toml`).
+    pub fn open_http(base: &str) -> Result<Registry, RegistryError> {
+        let base = base.trim_end_matches('/').to_string();
+        let bytes = crate::http::get(&format!("{base}/index.toml"))?;
+        let index = toml::from_str(&String::from_utf8_lossy(&bytes))?;
+        Ok(Registry {
+            source: Source::Http(base),
+            index,
+        })
+    }
+
+    fn dir(&self) -> Result<&Path, RegistryError> {
+        match &self.source {
+            Source::Dir(d) => Ok(d),
+            Source::Http(u) => Err(RegistryError::ReadOnly(u.clone())),
+        }
+    }
+
     fn save(&self) -> Result<(), RegistryError> {
-        std::fs::create_dir_all(self.dir.join("blobs"))?;
+        let dir = self.dir()?;
+        std::fs::create_dir_all(dir.join("blobs"))?;
         let text = toml::to_string(&self.index)?;
-        std::fs::write(self.dir.join("index.toml"), text)?;
+        std::fs::write(dir.join("index.toml"), text)?;
         Ok(())
     }
 
     pub fn blob_path(&self, sha_hex: &str) -> PathBuf {
-        self.dir.join("blobs").join(format!("{sha_hex}.gmr"))
+        match &self.source {
+            Source::Dir(d) => d.join("blobs").join(format!("{sha_hex}.gmr")),
+            Source::Http(u) => PathBuf::from(format!("{u}/blobs/{sha_hex}.gmr")),
+        }
+    }
+
+    fn read_blob(&self, sha_hex: &str) -> Result<Vec<u8>, RegistryError> {
+        Ok(match &self.source {
+            Source::Dir(d) => std::fs::read(d.join("blobs").join(format!("{sha_hex}.gmr")))?,
+            Source::Http(u) => crate::http::get(&format!("{u}/blobs/{sha_hex}.gmr"))?,
+        })
     }
 
     /// Publishes a signed package (`.gmr` bytes): a version is immutable, publishing the same
     /// id and version again is fine only with the same bytes.
     pub fn publish(&mut self, bytes: &[u8]) -> Result<Entry, RegistryError> {
+        self.dir()?;
         let pkg = Package::read(bytes)?;
         let (m, _) = pkg.load_realm("server")?;
+        if bytes.len() as u64 > MAX_PACKAGE {
+            return Err(RegistryError::TooLarge(m.id, bytes.len() as u64));
+        }
         let signers = pkg.signers()?;
         if signers.is_empty() {
             return Err(RegistryError::Unsigned(m.id));
@@ -124,7 +182,7 @@ impl Registry {
             realms: m.realms.clone(),
             signers: signers.iter().map(|k| package::hex(k)).collect(),
         };
-        std::fs::create_dir_all(self.dir.join("blobs"))?;
+        std::fs::create_dir_all(self.dir()?.join("blobs"))?;
         std::fs::write(self.blob_path(&sha), bytes)?;
         self.index.packages.push(entry.clone());
         self.index.packages.sort_by(|a, b| {
@@ -199,7 +257,7 @@ impl Registry {
                 return Ok(out);
             }
         }
-        let bytes = std::fs::read(self.blob_path(&e.sha))?;
+        let bytes = self.read_blob(&e.sha)?;
         let pkg = Package::read(&bytes)?;
         if pkg.sha256_hex() != e.sha {
             return Err(RegistryError::Corrupt(e.sha.clone()));
