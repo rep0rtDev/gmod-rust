@@ -122,6 +122,9 @@ keeps `<sha256>.gmr`, verifies the sha before loading, and runs the package's cl
 Measured (loopback, 1 tick delay, 10 % loss): a 100 KB package is downloaded, verified and running
 on the client in under 200 ticks with replicated cvars arriving alongside
 (`published_client_addon_is_downloaded_over_a_lossy_loopback_and_runs_on_the_client`).
+Over real UDP (two processes on one machine): a 300 571-byte package is downloaded, verified and
+its client actor running 74 ticks after welcome (~4 KB per tick); a second connect with the
+package in `--cache` loads it at once without asking.
 
 ## Not yet
 
