@@ -136,6 +136,17 @@ pub enum QueuedWrite {
         ent: u32,
         health: i32,
     },
+    /// `weapon.register`: a scripted weapon class for the server and every client.
+    WeaponRegister {
+        def: gm_server::ScriptedWeapon,
+    },
+    /// `fire_bullet` from a scripted weapon's `primary`: hitscan bullets from the player's eyes.
+    FireBullet {
+        player: u32,
+        damage: f32,
+        pellets: u8,
+        spread: f32,
+    },
     /// `constraint.Weld` owned by the server (owner 0: no player limits, no undo entry).
     Weld {
         ent: u32,
@@ -541,6 +552,25 @@ spawnmenu = {}
 function spawnmenu.add(category: string, models: { string })
     world.queue("spawnmenu.add", 0, { category = category, models = models })
 end
+weapon = {}
+local sweps = {}
+-- a scripted weapon: `def` carries the ScriptedWeapon fields plus the callbacks `primary`,
+-- `secondary`, `reload`, `deploy`, `holster` (each gets the event payload)
+function weapon.register(class: string, def)
+    sweps[class] = def
+    local d = { class = class }
+    for _, k in ipairs({ "print_name", "slot", "slot_pos", "hold_type", "view_model", "world_model",
+        "clip_size", "default_clip", "ammo", "automatic", "primary_delay", "secondary_delay", "reload_time" }) do
+        d[k] = def[k]
+    end
+    world.queue("weapon.register", 0, d)
+end
+for _, kind in ipairs({ "primary", "secondary", "reload", "deploy", "holster" }) do
+    events.on("weapon." .. kind, function(p)
+        local d = sweps[p.weapon]
+        if d ~= nil and d[kind] ~= nil then return d[kind](p) end
+    end)
+end
 tool = {}
 local tools = {}
 function tool.register(name: string, def)
@@ -875,6 +905,53 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                             Some(a) => table_vec3(&a)?,
                             None => Vec3::ZERO,
                         },
+                    }
+                }
+                "weapon.register" => {
+                    let t = table_arg(&arg)?;
+                    let class: String = t.get("class")?;
+                    if class.is_empty() || class.len() > 64 {
+                        return Err(mlua::Error::runtime("weapon.register: bad class"));
+                    }
+                    let num = |k: &str, d: f32| -> Result<f32> {
+                        Ok(t.get::<Option<f32>>(k)?.unwrap_or(d))
+                    };
+                    QueuedWrite::WeaponRegister {
+                        def: gm_server::ScriptedWeapon {
+                            print_name: t
+                                .get::<Option<String>>("print_name")?
+                                .unwrap_or_else(|| class.clone()),
+                            slot: t.get::<Option<u8>>("slot")?.unwrap_or(1),
+                            slot_pos: t.get::<Option<u8>>("slot_pos")?.unwrap_or(0),
+                            hold_type: t
+                                .get::<Option<String>>("hold_type")?
+                                .unwrap_or_else(|| "pistol".into()),
+                            view_model: t
+                                .get::<Option<String>>("view_model")?
+                                .unwrap_or_else(|| "models/weapons/c_pistol.mdl".into()),
+                            world_model: t
+                                .get::<Option<String>>("world_model")?
+                                .unwrap_or_else(|| "models/weapons/w_pistol.mdl".into()),
+                            clip_size: t.get::<Option<i32>>("clip_size")?.unwrap_or(-1),
+                            default_clip: t.get::<Option<i32>>("default_clip")?.unwrap_or(-1),
+                            ammo: t
+                                .get::<Option<String>>("ammo")?
+                                .unwrap_or_else(|| "Pistol".into()),
+                            automatic: t.get::<Option<bool>>("automatic")?.unwrap_or(false),
+                            primary_delay: num("primary_delay", 0.2)?,
+                            secondary_delay: num("secondary_delay", 0.5)?,
+                            reload_time: num("reload_time", gm_server::SWEP_DEFAULT_RELOAD)?,
+                            class,
+                        },
+                    }
+                }
+                "fire_bullet" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::FireBullet {
+                        player: ent,
+                        damage: t.get::<Option<f32>>("damage")?.unwrap_or(0.0),
+                        pellets: t.get::<Option<u8>>("pellets")?.unwrap_or(1),
+                        spread: t.get::<Option<f32>>("spread")?.unwrap_or(0.0),
                     }
                 }
                 "spawn" => {
@@ -1490,6 +1567,16 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             }
             None => false,
         },
+        QueuedWrite::WeaponRegister { def } => {
+            server.register_weapon(def.clone());
+            true
+        }
+        QueuedWrite::FireBullet {
+            player,
+            damage,
+            pellets,
+            spread,
+        } => server.script_bullets(*player, *damage, *pellets, *spread),
         QueuedWrite::SetSkin { ent, skin } => server.set_prop_skin(*ent, *skin),
         QueuedWrite::SetBody { ent, part, model } => server.set_prop_body_part(*ent, *part, *model),
         QueuedWrite::SetGravity { ent, on } => server.set_prop_gravity(*ent, *on),

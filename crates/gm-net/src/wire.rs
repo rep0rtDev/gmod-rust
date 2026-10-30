@@ -21,6 +21,12 @@ impl Writer {
     pub fn u32(&mut self, v: u32) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
+    pub fn i32(&mut self, v: i32) {
+        self.u32(v as u32);
+    }
+    pub fn u64(&mut self, v: u64) {
+        self.buf.extend_from_slice(&v.to_le_bytes());
+    }
     pub fn f32(&mut self, v: f32) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
@@ -111,6 +117,12 @@ impl<'a> Reader<'a> {
     }
     pub fn u32(&mut self) -> Result<u32, Truncated> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+    pub fn i32(&mut self) -> Result<i32, Truncated> {
+        Ok(self.u32()? as i32)
+    }
+    pub fn u64(&mut self) -> Result<u64, Truncated> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
     }
     pub fn f32(&mut self) -> Result<f32, Truncated> {
         Ok(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))

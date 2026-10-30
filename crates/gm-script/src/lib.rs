@@ -1070,6 +1070,33 @@ impl Runtime {
                     p.strs.push(("property", name));
                     "player.property"
                 }
+                E::Weapon {
+                    player,
+                    class,
+                    kind,
+                    clip,
+                    reserve,
+                    eye,
+                    forward,
+                    hit,
+                    other,
+                } => {
+                    p.ints.push(("player", player as i64));
+                    p.strs.push(("weapon", class));
+                    p.ints.push(("clip", clip as i64));
+                    p.ints.push(("reserve", reserve as i64));
+                    p.vecs.push(("eye", eye));
+                    p.vecs.push(("forward", forward));
+                    p.hit = hit;
+                    p.strs.push(("other", other));
+                    match kind {
+                        "primary" => "weapon.primary",
+                        "secondary" => "weapon.secondary",
+                        "reload" => "weapon.reload",
+                        "deploy" => "weapon.deploy",
+                        _ => "weapon.holster",
+                    }
+                }
                 E::ScriptSpawned { owner, ent, tag } => {
                     p.ints.push(("player", owner as i64));
                     p.ints.push(("entity", ent as i64));

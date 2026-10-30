@@ -3268,6 +3268,7 @@ fn run_net_lifecycle(
         }
         step(&mut server, &mut client);
         let seen = client.world.players.iter().find(|p| p.id == 1);
+        let classes = gm_net::msg::weapon_classes(&client.world.weapon_defs);
         let sp = &server.players[&1];
         ticks.push(json!({
             "t": t,
@@ -3275,8 +3276,8 @@ fn run_net_lifecycle(
             "alive": seen.map(|p| p.alive),
             "health": seen.map(|p| p.health),
             "armor": seen.map(|p| p.armor),
-            "weapons": seen.map(|p| gm_net::msg::weapon_names(p.weapons).join(",")),
-            "active": seen.map(|p| gm_net::msg::weapon_names(1u16.checked_shl(p.active as u32).unwrap_or(0)).join("")),
+            "weapons": seen.map(|p| gm_net::msg::weapon_names(p.weapons, &classes).join(",")),
+            "active": seen.map(|p| classes.get(p.active as usize).cloned().unwrap_or_default()),
             "server": { "alive": sp.alive, "health": sp.health, "armor": sp.armor },
         }));
     }

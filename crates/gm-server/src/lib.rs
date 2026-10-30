@@ -173,6 +173,20 @@ pub enum GameEvent {
         ent: u32,
         name: String,
     },
+    /// A scripted weapon's callbacks: `kind` is `primary`, `secondary`, `reload`, `deploy` or
+    /// `holster`; `hit` is the eye trace for the attacks; `other` the class switched to on a
+    /// holster.
+    Weapon {
+        player: u32,
+        class: String,
+        kind: &'static str,
+        clip: i32,
+        reserve: i32,
+        eye: Vec3,
+        forward: Vec3,
+        hit: Option<(u32, Vec3, Vec3)>,
+        other: String,
+    },
     /// A script spawned a prop (`world.queue("spawn", ...)`); `tag` is the script's own.
     ScriptSpawned {
         owner: u32,
@@ -393,6 +407,48 @@ type WorldConvex = (Vec<(Vec3, f32)>, (Vec3, Vec3));
 /// Loads a model by name on first use.
 pub type ModelLoader = Box<dyn FnMut(&str) -> Option<ModelInfo>>;
 
+/// A weapon class an addon registered (`weapon.register`, the game's `weapons.Register` of a
+/// SWEP): what the server needs to run it and the clients to draw it. Behaviour measured on
+/// `weapon_base` (`lua_swep`): deploy blocks fire for 0.2 s, a semi-automatic primary fires on
+/// a press edge only (a press while blocked is lost), an automatic one every `primary_delay`
+/// while held, the secondary once per press, a reload takes `reload_time` and refills the clip
+/// from the reserve at its end, an empty clip plus a press starts the reload.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScriptedWeapon {
+    pub class: String,
+    pub print_name: String,
+    pub slot: u8,
+    pub slot_pos: u8,
+    pub hold_type: String,
+    pub view_model: String,
+    pub world_model: String,
+    /// -1: no clip (every shot takes from the reserve directly).
+    pub clip_size: i32,
+    pub default_clip: i32,
+    pub ammo: String,
+    pub automatic: bool,
+    pub primary_delay: f32,
+    pub secondary_delay: f32,
+    pub reload_time: f32,
+}
+
+/// Measured: `Deploy` sets the next primary fire 0.2 s out.
+pub const SWEP_DEPLOY_DELAY: f32 = 0.2;
+/// Measured: `DefaultReload(ACT_VM_RELOAD)` on `c_pistol` blocks for 1.4333 s.
+pub const SWEP_DEFAULT_RELOAD: f32 = 1.4333;
+
+/// Per-player state of a scripted weapon (timers count down in seconds like `Inventory`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SwepState {
+    pub next_primary: f32,
+    pub next_secondary: f32,
+    /// Seconds left of a reload; the clip refills when it reaches zero.
+    pub reloading: Option<f32>,
+    pub prev_attack: bool,
+    pub prev_attack2: bool,
+    pub prev_reload: bool,
+}
+
 /// The `drive` property on a prop (`drive_sandbox`, measured `lua_drive`): the prop is frozen
 /// and steered by the player's commands as a kinematic body, the player's own body stays put.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -424,6 +480,8 @@ pub struct Player {
     pub carry: Option<(u32, gm_physics::pickup::Carry)>,
     /// The prop driven with the `drive` property.
     pub driving: Option<Driving>,
+    /// Scripted weapons carried, by class.
+    pub swep: BTreeMap<String, SwepState>,
     /// `IN_USE` was down in the last command (a use fires on the press, not the hold).
     pub use_down: bool,
     /// `IN_RELOAD` was down in the last command (the physgun unfreezes on the press).
@@ -501,6 +559,7 @@ impl Player {
             view_angles,
             held: None,
             driving: None,
+            swep: BTreeMap::new(),
             carry: None,
             use_down: false,
             reload_down: false,
@@ -708,6 +767,10 @@ pub struct Server<'w> {
     /// `tool_schemas_version` grows with every change so the net layer resends them.
     pub tool_schemas: Vec<(String, Vec<ToolSetting>)>,
     pub tool_schemas_version: u32,
+    /// Weapon classes addons registered, in registration order (indices after `LOADOUT` on
+    /// the wire); `scripted_weapons_version` grows with every change.
+    pub scripted_weapons: Vec<ScriptedWeapon>,
+    pub scripted_weapons_version: u32,
     /// Names created since the last `take_cvar_new` (replicated to connected clients).
     pub cvar_new: Vec<String>,
 }
@@ -808,6 +871,8 @@ impl<'w> Server<'w> {
             spawn_lists_version: 0,
             tool_schemas: Vec::new(),
             tool_schemas_version: 0,
+            scripted_weapons: Vec::new(),
+            scripted_weapons_version: 0,
             cvar_new: Vec::new(),
         }
     }
@@ -1221,6 +1286,11 @@ impl<'w> Server<'w> {
         if !p.alive || !p.weapons.iter().any(|w| w == class) || p.active_weapon == class {
             return false;
         }
+        if p.swep.contains_key(class) || p.swep.contains_key(&p.active_weapon) {
+            let prev = std::mem::replace(&mut p.active_weapon, class.to_string());
+            self.swep_switch(id, &prev, class);
+            return true;
+        }
         p.active_weapon = class.to_string();
         p.inventory.select(class);
         true
@@ -1232,15 +1302,223 @@ impl<'w> Server<'w> {
         let Some(p) = self.players.get_mut(&id) else {
             return false;
         };
-        if !p.alive || weapons::def(class).is_none() {
+        if !p.alive {
             return false;
         }
+        let scripted = self
+            .scripted_weapons
+            .iter()
+            .find(|w| w.class == class)
+            .cloned();
+        if weapons::def(class).is_none() && scripted.is_none() {
+            return false;
+        }
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
         if !p.weapons.iter().any(|w| w == class) {
             p.weapons.push(class.to_string());
         }
-        p.active_weapon = class.to_string();
-        p.inventory.give(class);
+        if let Some(sw) = scripted {
+            // measured: `Give` with `DefaultClip` fills the clip and adds no reserve
+            p.inventory
+                .clips
+                .insert(class.to_string(), [sw.default_clip.max(-1), -1]);
+            p.swep.entry(class.to_string()).or_default();
+        } else {
+            p.inventory.give(class);
+        }
+        let prev = std::mem::replace(&mut p.active_weapon, class.to_string());
+        if prev != class {
+            self.swep_switch(id, &prev, class);
+        }
         true
+    }
+
+    /// Holster / deploy callbacks of scripted weapons on a switch (measured: the holster, with
+    /// the class switched to, comes before the deploy in the same tick; the deploy blocks the
+    /// primary for 0.2 s).
+    fn swep_switch(&mut self, id: u32, from: &str, to: &str) {
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
+        let mut events = Vec::new();
+        if p.swep.contains_key(from) {
+            events.push((from.to_string(), "holster", to.to_string()));
+        }
+        if let Some(st) = p.swep.get_mut(to) {
+            st.next_primary = SWEP_DEPLOY_DELAY;
+            st.reloading = None;
+            events.push((to.to_string(), "deploy", String::new()));
+        }
+        for (class, kind, other) in events {
+            self.swep_event(id, &class, kind, other, None);
+        }
+    }
+
+    fn swep_event(
+        &mut self,
+        player: u32,
+        class: &str,
+        kind: &'static str,
+        other: String,
+        trace: Option<(Vec3, Vec3, Option<ToolHit>)>,
+    ) {
+        let Some(p) = self.players.get(&player) else {
+            return;
+        };
+        let clip = p.inventory.clip(class)[0];
+        let reserve = self
+            .scripted_weapons
+            .iter()
+            .find(|w| w.class == class)
+            .and_then(|w| p.inventory.ammo.get(&w.ammo))
+            .copied()
+            .unwrap_or(0);
+        let (eye, forward, hit) = trace
+            .map(|(e, f, h)| (e, f, h.map(|h| (h.ent.unwrap_or(0), h.pos, h.normal))))
+            .unwrap_or_default();
+        self.game_events.push(GameEvent::Weapon {
+            player,
+            class: class.to_string(),
+            kind,
+            clip,
+            reserve,
+            eye,
+            forward,
+            hit,
+            other,
+        });
+    }
+
+    /// `weapons.Register`: a new class or a changed definition of a known one.
+    pub fn register_weapon(&mut self, def: ScriptedWeapon) {
+        match self
+            .scripted_weapons
+            .iter_mut()
+            .find(|w| w.class == def.class)
+        {
+            Some(cur) if *cur == def => return,
+            Some(cur) => *cur = def,
+            None => self.scripted_weapons.push(def),
+        }
+        self.scripted_weapons_version += 1;
+    }
+
+    /// Every weapon class the wire can name: `LOADOUT`, then the scripted ones in order.
+    pub fn weapon_classes(&self) -> Vec<String> {
+        LOADOUT
+            .iter()
+            .map(|w| w.to_string())
+            .chain(self.scripted_weapons.iter().map(|w| w.class.clone()))
+            .collect()
+    }
+
+    /// Bullets a scripted weapon's `primary` asks for (`fire_bullet`): `damage` per bullet on a
+    /// player, the same hit path as the stock weapons (hit groups, prop damage, impulse).
+    pub fn script_bullets(&mut self, player: u32, damage: f32, pellets: u8, spread: f32) -> bool {
+        let Some((eye, angles)) = self.eye(player) else {
+            return false;
+        };
+        if !self.players.get(&player).is_some_and(|p| p.alive) {
+            return false;
+        }
+        let forward = gm_sandbox::forward(angles.x, angles.y);
+        let shot = weapons::Shot {
+            pellets: pellets.max(1),
+            spread,
+            ammo: "Pistol",
+        };
+        self.resolve_shot_with(player, eye, forward, shot, "player", 0, Some(damage));
+        true
+    }
+
+    /// One tick of the active scripted weapon of a player with a command (law in
+    /// [`ScriptedWeapon`]).
+    fn swep_tick(&mut self, player: u32, buttons: u32) {
+        let Some(p) = self.players.get(&player) else {
+            return;
+        };
+        let class = p.active_weapon.clone();
+        let Some(def) = self
+            .scripted_weapons
+            .iter()
+            .find(|w| w.class == class)
+            .cloned()
+        else {
+            return;
+        };
+        let Some(p) = self.players.get_mut(&player) else {
+            return;
+        };
+        let st = p.swep.entry(class.clone()).or_default();
+        let attack = buttons & IN_ATTACK != 0;
+        let attack2 = buttons & IN_ATTACK2 != 0;
+        let reload = buttons & weapons::IN_RELOAD != 0;
+        let (edge, edge2, edge_r) = (
+            attack && !st.prev_attack,
+            attack2 && !st.prev_attack2,
+            reload && !st.prev_reload,
+        );
+        st.prev_attack = attack;
+        st.prev_attack2 = attack2;
+        st.prev_reload = reload;
+        st.next_primary -= weapons::TICK_DT;
+        st.next_secondary -= weapons::TICK_DT;
+        let clip = p.inventory.clips.entry(class.clone()).or_insert([-1, -1]);
+        let reserve = p.inventory.ammo.entry(def.ammo.clone()).or_insert(0);
+        if let Some(left) = st.reloading.as_mut() {
+            *left -= weapons::TICK_DT;
+            if *left <= 0.0 {
+                st.reloading = None;
+                if def.clip_size > 0 {
+                    let take = (def.clip_size - clip[0]).clamp(0, *reserve);
+                    clip[0] += take;
+                    *reserve -= take;
+                }
+            }
+        }
+        let mut events: Vec<(&'static str, bool)> = Vec::new();
+        let busy = st.reloading.is_some();
+        let wants_fire = edge || (def.automatic && attack);
+        if !busy && wants_fire && st.next_primary <= 0.0 {
+            if def.clip_size > 0 && clip[0] == 0 {
+                // measured: an empty clip plus a press starts the reload instead
+                if *reserve > 0 {
+                    st.reloading = Some(def.reload_time);
+                    st.next_primary = def.reload_time;
+                    events.push(("reload", false));
+                }
+            } else {
+                if def.clip_size > 0 {
+                    clip[0] -= 1;
+                } else if def.clip_size < 0 && *reserve > 0 {
+                    *reserve -= 1;
+                }
+                st.next_primary = def.primary_delay;
+                events.push(("primary", true));
+            }
+        }
+        if !busy && edge2 && st.next_secondary <= 0.0 {
+            st.next_secondary = def.secondary_delay;
+            events.push(("secondary", true));
+        }
+        if !busy && edge_r && def.clip_size > 0 && clip[0] < def.clip_size && *reserve > 0 {
+            st.reloading = Some(def.reload_time);
+            st.next_primary = def.reload_time;
+            events.push(("reload", false));
+        }
+        for (kind, traced) in events {
+            let trace = traced.then(|| {
+                let (eye, angles) = self.eye(player).unwrap_or_default();
+                (
+                    eye,
+                    gm_sandbox::forward(angles.x, angles.y),
+                    self.tool_hit(player),
+                )
+            });
+            self.swep_event(player, &class, kind, String::new(), trace);
+        }
     }
 
     /// Where a player stood (origin, ducked) at server tick `seen`, interpolated between the two
@@ -1275,7 +1553,21 @@ impl<'w> Server<'w> {
         class: &'static str,
         seen_tick: u32,
     ) {
-        let Some(base) = weapons::bullet_damage(shot.ammo) else {
+        self.resolve_shot_with(attacker, eye, forward, shot, class, seen_tick, None);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_shot_with(
+        &mut self,
+        attacker: u32,
+        eye: Vec3,
+        forward: Vec3,
+        shot: weapons::Shot,
+        class: &'static str,
+        seen_tick: u32,
+        damage: Option<f32>,
+    ) {
+        let Some(base) = damage.or_else(|| weapons::bullet_damage(shot.ammo)) else {
             return;
         };
         const MAX_TRACE: f32 = 56755.84;
@@ -2776,11 +3068,16 @@ impl<'w> Server<'w> {
         let mut shots = Vec::new();
         let mut swings = Vec::new();
         let mut launches = Vec::new();
+        let mut sweps = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
             }
             if let Some(pc) = cmds.get(id) {
+                if p.swep.contains_key(&p.active_weapon) {
+                    sweps.push((*id, pc.cmd.buttons));
+                    continue;
+                }
                 let shot = p.inventory.command(&p.active_weapon, pc.cmd.buttons);
                 let eye = p.state.origin + Vec3::new(0.0, 0.0, self.mover.eye_height(&p.state));
                 if let Some(shot) = shot {
@@ -2803,6 +3100,9 @@ impl<'w> Server<'w> {
         }
         for (attacker, eye, forward, shot, class, seen) in shots {
             self.resolve_shot(attacker, eye, forward, shot, class, seen);
+        }
+        for (id, buttons) in sweps {
+            self.swep_tick(id, buttons);
         }
         for (attacker, eye, forward) in swings {
             self.resolve_melee(attacker, eye, forward);

@@ -319,6 +319,137 @@ fn script_spawns_props_and_sets_their_state() {
 }
 
 #[test]
+fn scripted_weapons_follow_the_measured_weapon_base() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.add_player(
+        1,
+        glam::Vec3::new(700.0, -600.0, -143.6),
+        glam::Vec3::new(0.0, 90.0, 0.0),
+    );
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "swep".into(),
+        priority: 0,
+        source: "state.calls = {}
+            local function rec(kind) return function(p)
+                table.insert(state.calls, kind .. ':' .. p.weapon .. ':' .. tostring(p.clip) .. ':' .. (p.other or ''))
+                if kind == 'primary' then
+                    state.hit = p.hit ~= nil and p.hit.pos ~= nil
+                    world.queue('fire_bullet', p.player, { damage = 12 })
+                end
+            end end
+            weapon.register('parity_semi', { clip_size = 6, default_clip = 6, automatic = false, primary_delay = 0.2,
+                print_name = 'Semi', primary = rec('primary'), secondary = rec('secondary'), reload = rec('reload'),
+                deploy = rec('deploy'), holster = rec('holster') })
+            weapon.register('parity_auto', { clip_size = 5, default_clip = 5, automatic = true, primary_delay = 0.2,
+                primary = rec('primary'), reload = rec('reload'), deploy = rec('deploy'), holster = rec('holster') })"
+            .into(),
+        config: gm_script::ActorConfig {
+            can_write: true,
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    rt.pre_tick(&mut server);
+    assert_eq!(server.weapon_classes().len(), gm_server::LOADOUT.len() + 2);
+    assert_eq!(server.scripted_weapons[0].print_name, "Semi");
+    assert_eq!(
+        server.scripted_weapons[1].reload_time,
+        gm_server::SWEP_DEFAULT_RELOAD
+    );
+    // the measured lua_swep script: buttons by tick
+    let held = |t: u32| -> u32 {
+        if (10..70).contains(&t) || [80, 90, 100, 120, 122].contains(&t) {
+            gm_server::IN_ATTACK
+        } else if (140..150).contains(&t) {
+            gm_server::IN_ATTACK2
+        } else if t == 160 {
+            gm_server::weapons::IN_RELOAD
+        } else if (220..280).contains(&t) || (290..310).contains(&t) {
+            gm_server::IN_ATTACK
+        } else {
+            0
+        }
+    };
+    let mut clips = Vec::new();
+    for t in 0..331u32 {
+        if t == 0 {
+            assert!(server.give_weapon(1, "parity_semi"));
+        }
+        if t == 200 {
+            assert!(server.give_weapon(1, "parity_auto"));
+        }
+        let cmd = gm_server::PlayerCmd {
+            cmd: gm_move::UserCmd {
+                buttons: held(t),
+                view_angles: glam::Vec3::new(0.0, 90.0, 0.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        rt.pre_tick(&mut server);
+        server.tick(&BTreeMap::from([(1u32, cmd)]));
+        let events = std::mem::take(&mut server.game_events);
+        rt.game_events(&mut server, events);
+        rt.post_tick(&mut server);
+        let p = &server.players[&1];
+        clips.push((
+            t,
+            p.active_weapon.clone(),
+            p.inventory.clip(&p.active_weapon)[0],
+        ));
+    }
+    let calls: Vec<String> = rt.actors()[0].eval("return state.calls").unwrap();
+    assert_eq!(
+        calls,
+        [
+            "deploy:parity_semi:6:",
+            // the hold right after the deploy is lost (semi-auto, blocked at the press)
+            "primary:parity_semi:5:", // tap at 80
+            "primary:parity_semi:4:", // 90 skipped, 100 fires
+            "primary:parity_semi:3:", // 120 fires, 122 skipped
+            "secondary:parity_semi:3:",
+            "reload:parity_semi:3:",
+            "holster:parity_semi:3:parity_auto",
+            "deploy:parity_auto:5:",
+            "primary:parity_auto:4:", // 220, then every 14 ticks
+            "primary:parity_auto:3:",
+            "primary:parity_auto:2:",
+            "primary:parity_auto:1:",
+            "primary:parity_auto:0:",
+            "reload:parity_auto:0:", // empty clip + a press at 290
+        ]
+        .map(String::from)
+    );
+    let hit: bool = rt.actors()[0].eval("return state.hit").unwrap();
+    assert!(hit, "the primary payload carries the eye trace");
+    let clip_at = |t: u32| clips[t as usize].2;
+    assert_eq!((clip_at(79), clip_at(81), clip_at(199)), (6, 5, 3));
+    // the reload switched away from never refilled the semi; the auto fires on 220 + 14 k
+    assert_eq!(
+        (clip_at(219), clip_at(221), clip_at(233), clip_at(234)),
+        (5, 4, 4, 3)
+    );
+    assert_eq!(
+        (clip_at(275), clip_at(276), clip_at(289), clip_at(330)),
+        (1, 0, 0, 0)
+    );
+    let ammo = server.players[&1].inventory.ammo.get("Pistol").copied();
+    assert_eq!(
+        ammo,
+        Some(256),
+        "the loadout's pistol reserve, untouched by the gives"
+    );
+}
+
+#[test]
 fn script_reads_and_writes_players() {
     let Some(inst) = gm_content::find_install() else {
         eprintln!("skipped: no Garry's Mod install");

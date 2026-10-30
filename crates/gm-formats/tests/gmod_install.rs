@@ -172,10 +172,16 @@ fn hl2_props_mdl_vvd_vtx_parse() {
     };
     let ar = gm_formats::vpk::Archive::open(dir.join("sourceengine/hl2_misc_dir.vpk")).unwrap();
     let mut checked = 0;
-    for (k, e) in ar.directory.iter_prefix("models") {
-        if !k.ends_with(".mdl") || checked >= 60 {
-            continue;
-        }
+    let mut no_surface = 0;
+    // a fixed order: the directory iterates as a hash map, and which 60 models come first
+    // decided what the test saw (combine_dropship has no $surfaceprop)
+    let mut models: Vec<_> = ar
+        .directory
+        .iter_prefix("models")
+        .filter(|(k, _)| k.ends_with(".mdl"))
+        .collect();
+    models.sort_by(|a, b| a.0.cmp(b.0));
+    for (k, e) in models.into_iter().take(60) {
         let stem = k.trim_end_matches(".mdl");
         let (Some(vvd_e), Some(vtx_e)) = (
             ar.directory.get(&format!("{stem}.vvd")),
@@ -189,7 +195,9 @@ fn hl2_props_mdl_vvd_vtx_parse() {
         assert!(!mdl.bones.is_empty(), "{k}: no bones");
         assert!(!mdl.body_parts.is_empty(), "{k}: no body parts");
         assert!(!mdl.textures.is_empty(), "{k}: no textures");
-        assert!(!mdl.surface_prop.is_empty(), "{k}: no surfaceprop");
+        if mdl.surface_prop.is_empty() {
+            no_surface += 1;
+        }
         let vvd = gm_formats::mdl::Vvd::parse(&ar.read_entry(vvd_e).unwrap(), 0)
             .unwrap_or_else(|err| panic!("{k}: {err}"));
         assert_eq!(vvd.checksum, mdl.header.checksum, "{k}: vvd checksum");
@@ -231,6 +239,11 @@ fn hl2_props_mdl_vvd_vtx_parse() {
         checked += 1;
     }
     assert!(checked >= 20, "checked {checked}");
+    eprintln!("{no_surface} of {checked} models without $surfaceprop");
+    assert!(
+        no_surface * 4 <= checked,
+        "{no_surface} of {checked} without $surfaceprop"
+    );
 }
 
 #[test]

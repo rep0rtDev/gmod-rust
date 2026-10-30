@@ -170,10 +170,10 @@ pub struct PlayerSnap {
     pub alive: bool,
     pub health: i16,
     pub armor: i16,
-    /// Weapons carried as a bit per entry of `gm_server::LOADOUT` (the weapon registry for
-    /// now; a string table comes with scripted weapons).
-    pub weapons: u16,
-    /// Index into `gm_server::LOADOUT` of the weapon out, 255 for none.
+    /// Weapons carried as a bit per entry of `Server::weapon_classes` (`LOADOUT`, then the
+    /// scripted weapons of `ServerMsg::WeaponDefs` in order).
+    pub weapons: u64,
+    /// Index into `Server::weapon_classes` of the weapon out, 255 for none.
     pub active: u8,
     /// Rounds in the active weapon's clip, -1 without a clip; reserve of its primary ammo.
     pub clip: i16,
@@ -187,9 +187,9 @@ pub struct PlayerSnap {
 }
 
 /// Weapon class names to the registry bitmask and back.
-pub fn weapon_mask(names: &[String]) -> u16 {
-    let mut m = 0u16;
-    for (i, w) in gm_server::LOADOUT.iter().enumerate() {
+pub fn weapon_mask(names: &[String], classes: &[String]) -> u64 {
+    let mut m = 0u64;
+    for (i, w) in classes.iter().enumerate().take(64) {
         if names.iter().any(|n| n == w) {
             m |= 1 << i;
         }
@@ -197,21 +197,32 @@ pub fn weapon_mask(names: &[String]) -> u16 {
     m
 }
 
-pub fn weapon_names(mask: u16) -> Vec<String> {
-    gm_server::LOADOUT
+pub fn weapon_names(mask: u64, classes: &[String]) -> Vec<String> {
+    classes
         .iter()
         .enumerate()
+        .take(64)
         .filter(|(i, _)| mask & (1 << i) != 0)
-        .map(|(_, w)| w.to_string())
+        .map(|(_, w)| w.clone())
         .collect()
 }
 
-pub fn weapon_index(name: &str) -> u8 {
-    gm_server::LOADOUT
+pub fn weapon_index(name: &str, classes: &[String]) -> u8 {
+    classes
         .iter()
-        .position(|w| *w == name)
+        .position(|w| w == name)
+        .filter(|&i| i < 255)
         .map(|i| i as u8)
         .unwrap_or(255)
+}
+
+/// `LOADOUT` followed by the scripted weapon classes a client knows (`WeaponDefs`).
+pub fn weapon_classes(defs: &[gm_server::ScriptedWeapon]) -> Vec<String> {
+    gm_server::LOADOUT
+        .iter()
+        .map(|w| w.to_string())
+        .chain(defs.iter().map(|d| d.class.clone()))
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -333,6 +344,12 @@ pub enum ServerMsg {
     ToolSchemas {
         version: u32,
         tools: Vec<(String, Vec<gm_server::ToolSetting>)>,
+    },
+    /// Reliable: the scripted weapon classes, whole, whenever the version changes; their
+    /// wire indices follow `LOADOUT` in this order.
+    WeaponDefs {
+        version: u32,
+        defs: Vec<gm_server::ScriptedWeapon>,
     },
 }
 
@@ -734,6 +751,7 @@ impl ServerMsg {
                 | ServerMsg::AddonChunk { .. }
                 | ServerMsg::SpawnLists { .. }
                 | ServerMsg::ToolSchemas { .. }
+                | ServerMsg::WeaponDefs { .. }
         )
     }
 
@@ -781,7 +799,7 @@ impl ServerMsg {
                     w.bool(p.alive);
                     w.i16(p.health);
                     w.i16(p.armor);
-                    w.u16(p.weapons);
+                    w.u64(p.weapons);
                     w.u8(p.active);
                     w.i16(p.clip);
                     w.i16(p.reserve);
@@ -918,6 +936,27 @@ impl ServerMsg {
                     }
                 }
             }
+            ServerMsg::WeaponDefs { version, defs } => {
+                w.u8(17);
+                w.u32(*version);
+                w.varint(defs.len() as u64);
+                for d in defs {
+                    w.str(&d.class);
+                    w.str(&d.print_name);
+                    w.u8(d.slot);
+                    w.u8(d.slot_pos);
+                    w.str(&d.hold_type);
+                    w.str(&d.view_model);
+                    w.str(&d.world_model);
+                    w.i32(d.clip_size);
+                    w.i32(d.default_clip);
+                    w.str(&d.ammo);
+                    w.bool(d.automatic);
+                    w.f32(d.primary_delay);
+                    w.f32(d.secondary_delay);
+                    w.f32(d.reload_time);
+                }
+            }
             ServerMsg::ToolSchemas { version, tools } => {
                 w.u8(15);
                 w.u32(*version);
@@ -983,7 +1022,7 @@ impl ServerMsg {
                         alive: r.bool()?,
                         health: r.i16()?,
                         armor: r.i16()?,
-                        weapons: r.u16()?,
+                        weapons: r.u64()?,
                         active: r.u8()?,
                         clip: r.i16()?,
                         reserve: r.i16()?,
@@ -1130,6 +1169,30 @@ impl ServerMsg {
                     lists.push((category, models));
                 }
                 ServerMsg::SpawnLists { version, lists }
+            }
+            17 => {
+                let version = r.u32()?;
+                let n = r.varint()?.min(64) as usize;
+                let mut defs = Vec::with_capacity(n);
+                for _ in 0..n {
+                    defs.push(gm_server::ScriptedWeapon {
+                        class: r.str()?,
+                        print_name: r.str()?,
+                        slot: r.u8()?,
+                        slot_pos: r.u8()?,
+                        hold_type: r.str()?,
+                        view_model: r.str()?,
+                        world_model: r.str()?,
+                        clip_size: r.i32()?,
+                        default_clip: r.i32()?,
+                        ammo: r.str()?,
+                        automatic: r.bool()?,
+                        primary_delay: r.f32()?,
+                        secondary_delay: r.f32()?,
+                        reload_time: r.f32()?,
+                    });
+                }
+                ServerMsg::WeaponDefs { version, defs }
             }
             15 => {
                 let version = r.u32()?;

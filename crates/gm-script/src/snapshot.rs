@@ -90,6 +90,7 @@ impl Snapshot {
         world_ref: WorldRef,
         props: Vec<gm_sandbox::PropBody>,
     ) -> Self {
+        let classes = gm_net::msg::weapon_classes(&world.weapon_defs);
         Snapshot {
             tick: world.tick as u64,
             world: world_ref,
@@ -130,15 +131,10 @@ impl Snapshot {
                             armor: p.armor as i32,
                             max_health: 100,
                             identity: None,
-                            weapons: gm_server::LOADOUT
-                                .iter()
-                                .enumerate()
-                                .filter(|(i, _)| p.weapons & (1 << i) != 0)
-                                .map(|(_, w)| w.to_string())
-                                .collect(),
-                            active_weapon: gm_server::LOADOUT
+                            weapons: gm_net::msg::weapon_names(p.weapons, &classes),
+                            active_weapon: classes
                                 .get(p.active as usize)
-                                .map(|w| w.to_string())
+                                .cloned()
                                 .unwrap_or_default(),
                             ..Default::default()
                         },

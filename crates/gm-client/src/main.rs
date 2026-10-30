@@ -644,6 +644,11 @@ struct App {
     /// C held: the cursor is free and a right-click asks a prop for its properties.
     context_held: bool,
     context: Option<ContextMenu>,
+    /// Scripted weapons as last seen (`ClientWorld::weapon_defs`) and their viewmodel / world
+    /// model entries after the stock table (leaked once per change: the table is `'static`).
+    scripted_defs: Vec<gm_server::ScriptedWeapon>,
+    scripted_vms: Vec<&'static Viewmodel>,
+    scripted_world: Vec<&'static str>,
     /// Rows of the spawn menu: `-- category --` headers of the addons' lists, then their models,
     /// then the content's; a header row is not spawnable.
     spawn_models: Vec<String>,
@@ -1056,8 +1061,45 @@ impl App {
         }
     }
 
+    /// Stock viewmodel table, then the scripted weapons' entries (indices after `LOADOUT`).
+    fn vm_of(&self, weapon: u8) -> Option<&'static Viewmodel> {
+        viewmodel(weapon).or_else(|| {
+            self.scripted_vms
+                .get((weapon as usize).checked_sub(gm_server::LOADOUT.len())?)
+                .copied()
+        })
+    }
+
+    /// Rebuilds the scripted weapon entries when the server's definitions changed.
+    fn sync_scripted_weapons(&mut self) {
+        let defs = &self.sim.client.world.weapon_defs;
+        if *defs == self.scripted_defs {
+            return;
+        }
+        self.scripted_defs = defs.clone();
+        let leak = |s: &str| -> &'static str { Box::leak(s.to_owned().into_boxed_str()) };
+        self.scripted_vms = defs
+            .iter()
+            .map(|d| {
+                let vm = Viewmodel {
+                    reload: Some("reload"),
+                    ..vm(
+                        leak(&d.class),
+                        leak(&d.print_name),
+                        leak(&d.view_model),
+                        "idle01",
+                        "draw",
+                        "fire",
+                    )
+                };
+                &*Box::leak(Box::new(vm))
+            })
+            .collect();
+        self.scripted_world = defs.iter().map(|d| leak(&d.world_model)).collect();
+    }
+
     fn select_weapon(&mut self, weapon: u8) {
-        let Some(vm) = viewmodel(weapon) else { return };
+        let Some(vm) = self.vm_of(weapon) else { return };
         if self.weapon != weapon {
             self.weapon = weapon;
             self.vm_anim = Some((vm.draw, Instant::now()));
@@ -1202,8 +1244,9 @@ impl App {
     }
 
     fn render(&mut self) {
+        self.sync_scripted_weapons();
         let alpha = self.acc / gm_core::tick::DEFAULT_TICK_INTERVAL;
-        let vm = viewmodel(self.weapon);
+        let vm = self.vm_of(self.weapon);
         let vm_seq = vm.as_ref().map(|vm| self.vm_sequence(vm));
         let ghost_tool = (self.weapon == 1).then(|| (self.tool.clone(), self.tool_settings_list()));
         // the hands follow the player model (`player_manager`'s hands table: model, skin, body
@@ -1229,6 +1272,14 @@ impl App {
                 }
             }
         }
+        let scripted_world = self.scripted_world.clone();
+        let world_model_of = |active: u8| -> Option<&'static str> {
+            world_model(active).or_else(|| {
+                scripted_world
+                    .get((active as usize).checked_sub(gm_server::LOADOUT.len())?)
+                    .copied()
+            })
+        };
         let Some(g) = &mut self.gfx else { return };
         if self.menu.is_some() {
             Self::render_spawn_icons(&self.spawn_models, self.menu.as_ref(), &self.mount, g);
@@ -1306,7 +1357,7 @@ impl App {
             .players
             .iter()
             .filter(|p| Some(p.id) != me)
-            .filter_map(|p| world_model(p.active));
+            .filter_map(|p| world_model_of(p.active));
         for model in ents
             .values()
             .map(|e| e.model.as_str())
@@ -1432,7 +1483,7 @@ impl App {
                     let pose = world.as_ref().map(|w| m.skin_matrices(w));
                     // the weapon's world model rides the right hand (bone merge by name)
                     let held = world.as_ref().and_then(|w| {
-                        let path = world_model(p.active)?;
+                        let path = world_model_of(p.active)?;
                         let wm = g.models.get(path)?.as_ref()?;
                         Some((path, wm.pose_merged("idle", 0.0, m, w)?))
                     });
@@ -1659,7 +1710,7 @@ impl App {
                 o.y,
                 o.z,
                 w.entities.len(),
-                viewmodel(self.weapon).map_or("none", |v| v.name)
+                self.vm_of(self.weapon).map_or("none", |v| v.name)
             ));
             self.frames = 0;
             self.fps_at = Instant::now();
@@ -1918,7 +1969,7 @@ impl App {
             let hud = format!(
                 "props {}  weapon {}{}  pos {:.0} {:.0} {:.0}",
                 self.sim.client.world.entities.len(),
-                viewmodel(self.weapon).map_or("none", |v| v.name),
+                self.vm_of(self.weapon).map_or("none", |v| v.name),
                 if self.weapon == 1 {
                     format!(" ({})", self.tool)
                 } else {
@@ -2319,6 +2370,15 @@ impl App {
                 self.send_player_skin();
             }
             "kill" => self.sim.client.command(Command::Kill),
+            // a weapon by class, scripted ones included (their index follows the stock table)
+            "weapon" if !rest.is_empty() => {
+                let class = rest.join(" ");
+                let classes = gm_net::msg::weapon_classes(&self.sim.client.world.weapon_defs);
+                match classes.iter().position(|c| *c == class) {
+                    Some(i) if i < 255 => self.select_weapon(i as u8),
+                    _ => self.console.log(format!("unknown weapon {class}")),
+                }
+            }
             "say" => self.sim.client.command(Command::Chat {
                 text: rest.join(" "),
             }),
@@ -2515,7 +2575,7 @@ impl ApplicationHandler for App {
                                 settings: self.tool_settings_list(),
                             });
                         }
-                        if let Some(vm) = viewmodel(self.weapon) {
+                        if let Some(vm) = self.vm_of(self.weapon) {
                             // left: the shot comes back as the server's fire event (so held
                             // automatic fire and dry fire play right); right: the secondary
                             // fire where the weapon has one (the physgun's right click only
@@ -2721,6 +2781,9 @@ fn main() -> Result<()> {
         menu: None,
         context_held: false,
         context: None,
+        scripted_defs: Vec::new(),
+        scripted_vms: Vec::new(),
+        scripted_world: Vec::new(),
         spawn_models: Vec::new(),
         spawn_lists_seen: usize::MAX,
         cursor: (0.0, 0.0),

@@ -507,6 +507,43 @@ queued from `player.damaged` shows as `player.death` type 0, the respawn 135 tic
 `player.spawned`; the freeze handler's `sound.play` reaches the client as a `Sounds` message
 with the position and volume given.
 
+## Scripted weapons
+
+`weapon.register(class, def)` is `weapons.Register` of a SWEP: `def` carries `print_name`,
+`slot`, `slot_pos`, `hold_type`, `view_model`, `world_model`, `clip_size` (-1 none),
+`default_clip`, `ammo`, `automatic`, `primary_delay`, `secondary_delay`, `reload_time` (defaults
+pistol-like: slot 1, `c_pistol`/`w_pistol`, no clip, `Pistol`, 0.2 / 0.5 / 1.4333 s) and the
+callbacks `primary`, `secondary`, `reload`, `deploy`, `holster`, each given the event payload
+`{player, weapon, clip, reserve, eye, forward, hit, other}` (`hit` the eye trace on the attacks,
+`other` the class switched to on a holster). The registration is a write (`world-write`), sent
+to every client whole as `ServerMsg::WeaponDefs` whenever the set changes; the wire indexes
+weapons as `LOADOUT` then the scripted classes in registration order (`PlayerSnap.weapons` is a
+64-bit mask), so `world.player(id).weapons` names them like the stock ones. `player.give_weapon`
+of a scripted class fills the clip with `default_clip` and adds no reserve (measured). From
+`primary`, `world.queue("fire_bullet", player, {damage, pellets?, spread?})` fires hitscan
+bullets from the player's eyes through the stock hit path (hit groups, prop damage, impulse);
+sounds and effects are the script's (`sound.play`).
+
+Measured on `weapon_base` with a bot (`lua_swep`, golden 261031) and implemented the same:
+`Give` deploys at once (`Deploy` before any other call), a deploy blocks the primary for 0.2 s;
+a semi-automatic primary fires on a press edge only and a press while blocked is lost for the
+whole hold (a 60-tick hold right after the deploy fired nothing); taps 10 ticks apart with a
+0.2 s delay fire on the 1st and 3rd; an automatic primary fires on the press and then every 14
+ticks (0.2 s from the firing tick, 13.33 ticks rounded up); the secondary fires once per press;
+`IN_RELOAD` starts a reload that blocks the primary for `reload_time` (`DefaultReload` on
+`c_pistol`: 1.4333 s) and moves rounds from the reserve into the clip only at its end
+(switching away before leaves the clip as it was); an empty clip plus an attack press starts the
+reload instead of firing. Differences: the game also calls `PrimaryAttack` (with
+`CanPrimaryAttack` false) and `Reload` twice in that empty-clip tick, we call `reload` once; the
+game's `Think` is not once per tick (147 calls in 200 ticks) and we have none, `tick.pre` is
+the per-tick hook. The callbacks run with the tick's game events, so a `fire_bullet` lands one
+tick after the trigger pull.
+
+Measured (`cargo test -p gm-dedicated --test addon_hooks scripted_weapons`): the `lua_swep`
+button script against a semi and an automatic weapon gives the recorded call sequence (deploy;
+three primaries at 80/100/120; one secondary; a reload; holster + deploy on the switch; five
+automatic primaries 14 ticks apart; a reload on the empty press) with the recorded clips.
+
 ## Sandbox gamemode package
 
 `addons/gamemodes/sandbox` is the sandbox gamemode's Luau side as one package (`gm-dedicated
