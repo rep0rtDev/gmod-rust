@@ -298,25 +298,49 @@ const PLAYER_RUN_SPEED: f32 = 150.0;
 /// Sequence of the shared player animation model and its pose parameters for a player's
 /// state: idle / walk / run grids with `move_x` / `move_y` from the velocity relative to the
 /// facing (Source's `move_x = cos`, `move_y = -sin` of the movement yaw), crouch variants.
-fn player_sequence(p: &PlayerSnap) -> (&'static str, Vec<(&'static str, f32)>) {
+/// The hold type of the active weapon: the suffix of the m_anm sequences (`idle_pistol`,
+/// `run_smg1`, ...), as the game's weapon hold types; `fist` when nothing is held.
+fn hold_type(active: u8) -> &'static str {
+    match gm_server::LOADOUT.get(active as usize) {
+        Some(&"gmod_camera") => "camera",
+        Some(&"gmod_tool") | Some(&"weapon_357") => "revolver",
+        Some(&"weapon_ar2") => "ar2",
+        Some(&"weapon_crossbow") => "crossbow",
+        Some(&"weapon_crowbar") => "melee",
+        Some(&"weapon_frag") => "grenade",
+        Some(&"weapon_physcannon") | Some(&"weapon_physgun") => "physgun",
+        Some(&"weapon_pistol") => "pistol",
+        Some(&"weapon_rpg") => "rpg",
+        Some(&"weapon_shotgun") => "shotgun",
+        Some(&"weapon_smg1") => "smg1",
+        _ => "fist",
+    }
+}
+
+fn player_sequence(p: &PlayerSnap) -> (String, Vec<(&'static str, f32)>) {
     let speed = p.velocity.truncate().length();
+    let hold = hold_type(p.active);
     if !p.on_ground {
-        return ("jump_fist", Vec::new());
+        return (format!("jump_{hold}"), Vec::new());
     }
     if speed < 0.5 {
-        return (
-            if p.ducked { "cidle_all" } else { "idle_all_01" },
-            Vec::new(),
-        );
+        let seq = match (p.ducked, hold) {
+            (true, "fist") => "cidle_all".to_string(),
+            (true, _) => format!("cidle_{hold}"),
+            (false, "fist") => "idle_all_01".to_string(),
+            (false, _) => format!("idle_{hold}"),
+        };
+        return (seq, Vec::new());
     }
     let yaw = p.velocity.y.atan2(p.velocity.x) - p.view_angles.y.to_radians();
     let params = vec![("move_x", yaw.cos()), ("move_y", -yaw.sin())];
-    let seq = if p.ducked {
-        "cwalk_all"
-    } else if speed > PLAYER_RUN_SPEED {
-        "run_all_01"
-    } else {
-        "walk_all"
+    let seq = match (p.ducked, speed > PLAYER_RUN_SPEED, hold) {
+        (true, _, "fist") => "cwalk_all".to_string(),
+        (true, _, _) => format!("cwalk_{hold}"),
+        (false, true, "fist") => "run_all_01".to_string(),
+        (false, true, _) => format!("run_{hold}"),
+        (false, false, "fist") => "walk_all".to_string(),
+        (false, false, _) => format!("walk_{hold}"),
     };
     (seq, params)
 }
@@ -738,7 +762,7 @@ impl App {
                             .elapsed()
                             .as_secs_f32()
                     };
-                    let world = m.bone_world(seq, t, None, &params);
+                    let world = m.bone_world(&seq, t, None, &params);
                     let pose = world.as_ref().map(|w| m.skin_matrices(w));
                     // the weapon's world model rides the right hand (bone merge by name)
                     let held = world.as_ref().and_then(|w| {
