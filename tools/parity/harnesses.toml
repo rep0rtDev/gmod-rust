@@ -1954,3 +1954,10 @@ crates = ["gm-physics", "gm-formats"]
 pos = 2.0
 rest = 2.0
 ang = 5.0
+
+[[harness]]
+name = "script_timers"
+scenario = "script/timers"
+compare = "timers"
+realm = "server"
+crates = ["gm-script"]

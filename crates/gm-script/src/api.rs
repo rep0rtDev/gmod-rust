@@ -220,24 +220,30 @@ function events.on(name: string, fn, priority: number?)
         return a.order < b.order
     end)
 end
--- timers: delays in seconds, counted in ticks of game.interval(), run at the start of every
--- tick.pre before the handlers; a callback that errors destroys its timer (the error is printed)
+-- timers: the game's schedule measured on srcds (script_timers): a timer made in a tick's
+-- handlers is due `delay` after that tick, due times accumulate (next due = last due + delay,
+-- so a 0.02 s repeater at 0.015 s ticks fires on ticks 2, 3, 4), timers run after the tick.pre
+-- handlers and before the server tick, one shot (Simple) timers first in creation order then
+-- the named ones in name order; a callback that errors destroys its timer (the error is printed)
 timer = {}
 local timers = {}
 local anon = 0
+local seq = 0
+local run_id = 0
 local function ticks_of(delay: number): number
-    local n = math.ceil(delay / game.interval() - 1e-6)
-    if n < 1 then n = 1 end
+    local n = delay / game.interval()
+    if n < 0 then n = 0 end
     return n
 end
-local seq = 0
 function timer.Create(name: string, delay: number, reps: number, fn)
     seq += 1
-    timers[name] = { fn = fn, every = ticks_of(delay), left = ticks_of(delay), reps = reps, paused = false, seq = seq }
+    local d = ticks_of(delay)
+    timers[name] = { fn = fn, delay = d, at = 0, due = d, reps = reps, paused = false, seq = seq, simple = false, born = run_id }
 end
 function timer.Simple(delay: number, fn)
     anon += 1
     timer.Create("__simple" .. anon, delay, 1, fn)
+    timers["__simple" .. anon].simple = true
 end
 function timer.Exists(name: string): boolean
     return timers[name] ~= nil
@@ -267,16 +273,16 @@ end
 function timer.Start(name: string): boolean
     local t = timers[name]
     if t == nil then return false end
-    t.left = t.every
+    t.due = t.at + t.delay
     t.paused = false
     return true
 end
 function timer.Adjust(name: string, delay: number, reps: number?, fn): boolean
     local t = timers[name]
     if t == nil then return false end
-    local every = ticks_of(delay)
-    t.left = math.max(1, t.left + every - t.every)
-    t.every = every
+    local d = ticks_of(delay)
+    t.due = t.due - t.delay + d
+    t.delay = d
     if reps ~= nil then t.reps = reps end
     if fn ~= nil then t.fn = fn end
     return true
@@ -284,7 +290,7 @@ end
 function timer.TimeLeft(name: string): number?
     local t = timers[name]
     if t == nil then return nil end
-    return t.left * game.interval()
+    return (t.due - t.at) * game.interval()
 end
 function timer.RepsLeft(name: string): number?
     local t = timers[name]
@@ -295,15 +301,21 @@ local function run_timers()
     local due = {}
     for name, t in pairs(timers) do
         if not t.paused then
-            t.left -= 1
-            if t.left <= 0 then table.insert(due, name) end
+            -- a timer made during this tick's handlers counts its first tick from now
+            if t.born ~= run_id then t.at += 1 end
+            if t.at + 1e-6 >= t.due then table.insert(due, name) end
         end
     end
-    table.sort(due, function(a, b) return timers[a].seq < timers[b].seq end)
+    table.sort(due, function(a, b)
+        local ta, tb = timers[a], timers[b]
+        if ta.simple ~= tb.simple then return ta.simple end
+        if ta.simple then return ta.seq < tb.seq end
+        return a < b
+    end)
     for _, name in ipairs(due) do
         local t = timers[name]
         if t ~= nil then
-            t.left = t.every
+            t.due += t.delay
             if t.reps > 0 then
                 t.reps -= 1
                 if t.reps == 0 then timers[name] = nil end
@@ -317,14 +329,18 @@ local function run_timers()
     end
 end
 function __dispatch(name: string, payload)
-    if name == "tick.pre" then run_timers() end
+    if name == "tick.pre" then run_id += 1 end
     local list = handlers[name]
-    if list == nil then return nil end
-    for _, h in ipairs(list) do
-        local r = h.fn(payload)
-        if r == false then return false end
+    local result = nil
+    if list ~= nil then
+        for _, h in ipairs(list) do
+            local r = h.fn(payload)
+            if r == false then result = false; break end
+        end
     end
-    return nil
+    -- timers run after the Think handlers and before the server tick, like the game's
+    if name == "tick.pre" then run_timers() end
+    return result
 end
 state = state or {}
 net = net or {}

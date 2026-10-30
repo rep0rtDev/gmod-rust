@@ -1,0 +1,6 @@
+{
+ "name": "script_timers",
+ "kind": "timers",
+ "map": "gm_construct",
+ "ticks": 40
+}

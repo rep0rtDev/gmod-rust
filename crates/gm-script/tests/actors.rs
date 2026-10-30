@@ -266,8 +266,8 @@ fn timers_count_ticks_and_a_failing_one_is_destroyed() {
             "rep@1",
             "simple@2",
             "rep@2",
-            "rep@3",
             "forever@3",
+            "rep@3",
             "forever@6"
         ]
     );

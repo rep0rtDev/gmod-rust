@@ -308,6 +308,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "server" => run_server(scn)?,
         "net" => run_net(scn)?,
         "toolgun" => run_toolgun(scn)?,
+        "timers" => run_timers(scn)?,
         other => bail!("scenario kind {other} has no gmod-rust side yet"),
     };
     Ok(Trace {
@@ -3291,6 +3292,127 @@ fn run_net_interp(
 
 /// Per op: the sandbox state (count, undo stack) and every prop's pose under physics after the
 /// op's wait, against the recording.
+/// The timer library against the game's: the same sequence of hook/timer events per tick.
+fn run_timers(scn: &Scenario) -> Result<Value> {
+    use gm_script::{api::Payload, ActorConfig, ActorSpec, Runtime, Snapshot};
+    let total = scn.ticks.unwrap_or(40) as u64;
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "parity".into(),
+        name: "timers".into(),
+        priority: 0,
+        source: r#"
+state.lines = {}
+state.seq = 0
+local function ev(what)
+    state.seq += 1
+    table.insert(state.lines, string.format("%d %d %s", state.seq, game.tick() - state.t0, what))
+end
+local function fire(name) return function() ev("timer:" .. name) end end
+events.on("tick.pre", function()
+    if not state.t0 then
+        state.t0 = game.tick()
+        ev("think")
+        timer.Simple(0, fire("s0"))
+        timer.Simple(0.02, fire("s20"))
+        timer.Simple(0.05, fire("s50"))
+        timer.Simple(0.1, fire("s100"))
+        timer.Create("rep20", 0.022, 3, fire("rep20"))
+        timer.Create("rep50", 0.052, 0, fire("rep50"))
+        timer.Create("rep0", 0, 2, fire("rep0"))
+        timer.Create("bad", 0.02, 0, function() ev("timer:bad"); error("boom") end)
+        timer.Create("gone", 0.02, 1, fire("gone"))
+        timer.Remove("gone")
+        timer.Create("paused", 0.02, 1, fire("paused"))
+        timer.Pause("paused")
+        timer.Create("adj", 0.02, 1, fire("adj"))
+        timer.Adjust("adj", 0.07, 1)
+        return
+    end
+    ev("think")
+end)
+events.on("tick.post", function()
+    ev("tick")
+    local t = game.tick() - state.t0
+    if t == 10 then timer.UnPause("paused") end
+    if t == 20 then timer.Remove("rep50") end
+end)
+"#
+        .into(),
+        config: ActorConfig::default(),
+    })
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    for t in 1..=total + 1 {
+        let snap = std::sync::Arc::new(Snapshot {
+            tick: t,
+            ..Default::default()
+        });
+        let a = &mut rt.actors_mut()[0];
+        a.dispatch(&snap, "tick.pre", &Payload::default(), t)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        a.dispatch(&snap, "tick.post", &Payload::default(), t)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    let (lines, bad, rep50): (Vec<String>, bool, bool) = rt.actors()[0]
+        .eval("return state.lines, timer.Exists('bad'), timer.Exists('rep50')")
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let events: Vec<Value> = lines
+        .iter()
+        .filter_map(|l| {
+            let mut it = l.splitn(3, ' ');
+            let seq: i64 = it.next()?.parse().ok()?;
+            let tick: i64 = it.next()?.parse().ok()?;
+            let what = it.next()?;
+            Some(serde_json::json!({ "seq": seq, "tick": tick, "what": what }))
+        })
+        .filter(|e| e["tick"].as_i64().unwrap_or(0) <= total as i64)
+        .collect();
+    Ok(serde_json::json!({
+        "events": events,
+        "interval": gm_core::tick::DEFAULT_TICK_INTERVAL,
+        "bad_exists": bad,
+        "rep50_exists": rep50,
+    }))
+}
+
+fn compare_timers(theirs: &Value, ours: &Value) -> bool {
+    let empty = Vec::new();
+    let list = |v: &Value| -> Vec<(i64, String)> {
+        v["events"]
+            .as_array()
+            .unwrap_or(&empty)
+            .iter()
+            .map(|e| {
+                (
+                    e["tick"].as_i64().unwrap_or(-1),
+                    e["what"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
+    };
+    let (t, o) = (list(theirs), list(ours));
+    let mut ok = true;
+    for key in ["bad_exists", "rep50_exists"] {
+        if theirs[key] != ours[key] {
+            println!("  {key}: {} vs {}", theirs[key], ours[key]);
+            ok = false;
+        }
+    }
+    let n = t.len().max(o.len());
+    let mut shown = 0;
+    for i in 0..n {
+        if t.get(i) != o.get(i) {
+            ok = false;
+            if shown < 12 {
+                println!("  event {i}: game {:?} vs ours {:?}", t.get(i), o.get(i));
+                shown += 1;
+            }
+        }
+    }
+    println!("  {} events vs {}", t.len(), o.len());
+    ok
+}
+
 fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(2.0) as f32;
     let empty = Vec::new();
@@ -4174,6 +4296,7 @@ fn main() -> Result<()> {
                     "net_player" => compare_net_player(&t.result, &o.result, &h.tolerance),
                     "server" => compare_server(&t.result, &o.result, &h.tolerance),
                     "toolgun" => compare_toolgun(&t.result, &o.result, &h.tolerance),
+                    "timers" => compare_timers(&t.result, &o.result),
                     other => {
                         println!("  unknown compare mode {other}");
                         false

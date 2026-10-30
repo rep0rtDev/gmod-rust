@@ -219,21 +219,29 @@ a broken edit reports an error, leaves marker 42 running and is not retried.
 
 ## Timers
 
-`timer` lives in the actor's VM (prelude), so a timer runs in the realm and budget of the actor
-that made it. Delays are seconds, counted in ticks of `game.interval()` (0.015 s): `ceil(delay /
-interval)`, never less than one tick, so `timer.Simple(0, f)` runs on the next `tick.pre`. All due
-timers run at the start of the actor's `tick.pre` dispatch, before its handlers, in creation order
-within a tick. `timer.Create(name, delay, reps, fn)` replaces a timer of the same name; `reps` 0
-repeats forever; `timer.Simple(delay, fn)` is a one shot with a hidden name. `Exists`, `Remove`
-(`Destroy`), `Pause`, `UnPause`, `Toggle`, `Start` (restart from a full delay), `Adjust(name, delay,
-reps?, fn?)` (keeps the elapsed part), `TimeLeft` and `RepsLeft` follow the sandbox names. A callback
-that errors destroys its timer and prints the error through the actor's `print` queue; the actor
-is not restarted and its other timers keep running.
+Measured on srcds (`script_timers`: the Think and Tick hooks and every timer fire logged with
+the tick, 40 ticks, golden `script_timers.json`): the game runs its timers after the `Think`
+hook and before the `Tick` hook of the same tick; a timer created in `Think` with delay 0 fires in
+that same tick, a repeating one with delay 0 fires once every tick; due times accumulate (next due
+= last due + delay, not now + delay), so a 0.022 s repeater at 66.67 Hz fires on ticks 2, 3, 5
+and a 0.052 s one on 4, 7, 11, 14, 18; `Adjust(name, 0.07)` right after `Create` fires at tick 5
+(the new delay from the creation); `Pause` keeps the remaining time (paused at 0.02, unpaused in
+tick 10's `Tick`, fires at 12); `Remove` in `Tick` stops the next fire; a callback that errors
+prints `Timer Failed! [name]` and the timer is gone (`timer.Exists` false, no further fires).
+Within a tick the one shot (`Simple`) timers fire first, in creation order, then the named ones
+(observed in name order: `bad`, `rep0`, `rep20`; `adj`, `rep50`). Delays that are exact
+multiples of the tick are a coin toss in the game: the due time is a double sum of delays while
+`CurTime` is a float32 product of the tick count, so 0.015, 0.03 and 0.06 fired on time in one
+run while 0.045 and 3 x 0.05 fired a tick late; our rule fires them on time and the harness
+avoids such delays.
 
-Measured (`cargo test -p gm-script`, `timers_count_ticks_and_a_failing_one_is_destroyed`): a 0.015 s
-timer with 3 repetitions fires on ticks 1, 2, 3 and is gone; a 0.03 s one shot fires on tick 2; a
-0.045 s forever timer fires on 3 and 6; an erroring timer fires once and is removed; a paused one
-never fires and still exists.
+Ours (prelude `timer`, `cargo test -p gm-script timers`): due times in fractional ticks
+(`delay / game.interval()`), a per-timer tick counter that starts counting the tick after the
+one the timer was created in (so a 0 delay fires the same tick and 0.015 the next), the run after
+the `tick.pre` handlers and before the server tick, Simple-first-then-name order, `Create` of an
+existing name replaces it, `reps` 0 forever, `Exists`, `Remove` (`Destroy`), `Pause`, `UnPause`,
+`Toggle`, `Start`, `Adjust`, `TimeLeft`, `RepsLeft`; a callback error prints through the actor's
+queue and destroys only that timer. `script_timers` matches the game's 99 events exactly.
 
 ## Not yet
 

@@ -1361,6 +1361,55 @@ SCENARIOS.ragdoll = function(scn, done)
 end
 ASYNC.ragdoll = true
 
+-- { kind = "timers", ticks = N }: when the timer library fires relative to the Think and Tick
+-- hooks, repetitions, zero delays, Remove/Pause/UnPause/Adjust and a callback that errors.
+SCENARIOS.timers = function(scn, done)
+	local total = scn.ticks or 40
+	local events, seq, t0, started = {}, 0, 0, false
+	local function ev(what)
+		seq = seq + 1
+		events[#events + 1] = { seq = seq, tick = engine.TickCount() - t0, what = what }
+	end
+	local function fire(name) return function() ev("timer:" .. name) end end
+	hook.Add("Think", "parity_timers", function()
+		if not started then
+			started = true
+			t0 = engine.TickCount()
+			ev("think")
+			timer.Simple(0, fire("s0"))
+			timer.Simple(0.02, fire("s20"))
+			timer.Simple(0.05, fire("s50"))
+			timer.Simple(0.1, fire("s100"))
+			timer.Create("rep20", 0.022, 3, fire("rep20"))
+			timer.Create("rep50", 0.052, 0, fire("rep50"))
+			timer.Create("rep0", 0, 2, fire("rep0"))
+			timer.Create("bad", 0.02, 0, function() ev("timer:bad"); error("boom") end)
+			timer.Create("gone", 0.02, 1, fire("gone"))
+			timer.Remove("gone")
+			timer.Create("paused", 0.02, 1, fire("paused"))
+			timer.Pause("paused")
+			timer.Create("adj", 0.02, 1, fire("adj"))
+			timer.Adjust("adj", 0.07, 1)
+			return
+		end
+		ev("think")
+	end)
+	hook.Add("Tick", "parity_timers", function()
+		if not started then return end
+		ev("tick")
+		local t = engine.TickCount() - t0
+		if t == 10 then timer.UnPause("paused") end
+		if t == 20 then timer.Remove("rep50") end
+		if t >= total then
+			hook.Remove("Think", "parity_timers")
+			hook.Remove("Tick", "parity_timers")
+			done({ events = events, interval = engine.TickInterval(), bad_exists = timer.Exists("bad"),
+				rep50_exists = timer.Exists("rep50"), s100_left = nil })
+		end
+	end)
+end
+ASYNC.timers = true
+
 local function runAll()
 	file.CreateDir(OUT_DIR)
 	local files = file.Find(SCN_DIR .. "/*.json", "DATA")
