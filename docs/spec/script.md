@@ -331,6 +331,21 @@ only addons carrying a valid signature by one of them (`load_addons` refuses the
 otherwise); without a trust list anything loads, but a signature that does not match the content
 is refused always. Clients trust the server they joined: what it publishes, they run.
 
+## Registry
+
+A registry is a directory any static host can serve: `index.toml` with one `[[packages]]` entry
+per published version (id, version, sha256 of the `.gmr`, size, depends, realms, signers) and the
+packages in `blobs/<sha256>.gmr`. `gmr publish <addon> <registry>` takes signed packages only and
+a version is immutable (the same id and version again must be the same bytes). `gmr resolve
+<registry> wire@^1.2 hud` and `gm-dedicated --registry <dir> --addon wire@^1.2` pick, for every
+id wanted directly or through `depends`, the highest version satisfying every requirement placed
+on it (two requirements with no common version are an error), return the set in dependency order
+and install the blobs into `<data>/registry/<sha>.gmr` after checking the sha256 and the
+signatures; the server then loads them like any package (`--trust` still applies). A client with
+`gm-bot --registry <dir>` takes a package the server announces from the registry by sha256 before
+asking the server for the bytes. HTTP registries are the same layout fetched over the network
+(not yet).
+
 ## Not yet
 
 client HUD/draw API, client-side world for traces, the rest of the API ( tool ghosts and panels, spawn menu), WASM components,

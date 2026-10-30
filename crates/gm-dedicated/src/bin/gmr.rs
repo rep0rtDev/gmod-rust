@@ -22,6 +22,14 @@ enum Cmd {
     Sign { addon: PathBuf, key: PathBuf },
     /// Verify the signatures of an addon directory or .gmr (exit 1 when none verifies)
     Verify { addon: PathBuf },
+    /// Publish a signed addon (directory or .gmr) into a registry directory (index.toml + blobs/)
+    Publish { addon: PathBuf, registry: PathBuf },
+    /// Resolve `id@requirement`s against a registry and print what would be installed, in order
+    Resolve {
+        registry: PathBuf,
+        #[arg(required = true)]
+        wanted: Vec<String>,
+    },
 }
 
 fn files_of(addon: &std::path::Path) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
@@ -82,6 +90,34 @@ fn main() -> Result<()> {
             }
             if signers.is_empty() {
                 anyhow::bail!("{}: not signed", addon.display());
+            }
+        }
+        Cmd::Publish { addon, registry } => {
+            let bytes = if addon.is_dir() {
+                gm_script::package::pack(&addon)?
+            } else {
+                std::fs::read(&addon)?
+            };
+            let mut reg = gm_script::Registry::open(&registry)?;
+            let e = reg.publish(&bytes)?;
+            println!(
+                "published {} {} ({} bytes) sha256 {} signers {:?} into {}",
+                e.id,
+                e.version,
+                e.size,
+                e.sha,
+                e.signers,
+                registry.display()
+            );
+        }
+        Cmd::Resolve { registry, wanted } => {
+            let reg = gm_script::Registry::open(&registry)?;
+            let wanted: Vec<String> = wanted.iter().map(|w| w.replace('@', " ")).collect();
+            for e in reg.resolve(&wanted)? {
+                println!(
+                    "{} {} sha256 {} depends {:?}",
+                    e.id, e.version, e.sha, e.depends
+                );
             }
         }
         Cmd::Inspect { file } => {

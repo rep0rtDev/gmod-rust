@@ -32,6 +32,10 @@ struct Args {
     /// Public key (hex) addons must be signed by; repeatable, none means any addon loads
     #[arg(long)]
     trust: Vec<String>,
+    /// Addon registry directory: `--addon id@requirement` (e.g. `wire@^1.2`, or a bare id) is
+    /// resolved against its index with dependencies and installed into `<data>/registry`.
+    #[arg(long)]
+    registry: Option<std::path::PathBuf>,
     /// Master server to heartbeat to (every 10 s) so browsers list this server.
     #[arg(long)]
     master: Option<String>,
@@ -69,12 +73,31 @@ fn main() -> Result<()> {
         }
         let is_package =
             |p: &std::path::Path| p.is_dir() || p.extension().is_some_and(|e| e == "gmr");
-        let packages: Vec<std::path::PathBuf> = args
+        let mut packages: Vec<std::path::PathBuf> = args
             .addon
             .iter()
             .filter(|p| is_package(p))
             .cloned()
             .collect();
+        let wanted: Vec<String> = args
+            .addon
+            .iter()
+            .filter(|p| !p.exists())
+            .map(|p| p.to_string_lossy().replace('@', " "))
+            .collect();
+        if !wanted.is_empty() {
+            let reg_dir = args
+                .registry
+                .as_ref()
+                .with_context(|| format!("--registry is needed to install {wanted:?}"))?;
+            let reg = gm_script::Registry::open(reg_dir)?;
+            let cache = args.data.join("registry");
+            for e in reg.resolve(&wanted)? {
+                let path = reg.install(&e, &cache)?;
+                println!("registry: {} {} -> {}", e.id, e.version, path.display());
+                packages.push(path);
+            }
+        }
         for m in rt
             .load_addons(&packages)
             .map_err(|e| anyhow::anyhow!("addons: {e}"))?
@@ -85,7 +108,7 @@ fn main() -> Result<()> {
             );
         }
         for (i, path) in args.addon.iter().enumerate() {
-            if is_package(path) {
+            if is_package(path) || !path.exists() {
                 continue;
             }
             let source =

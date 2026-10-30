@@ -96,12 +96,23 @@ pub fn sign(files: &BTreeMap<String, Vec<u8>>, secret: &[u8; 32]) -> String {
     use ed25519_dalek::Signer;
     let key = ed25519_dalek::SigningKey::from_bytes(secret);
     let sig = key.sign(&content_sha256(files));
-    let mut text = files
-        .get(SIGNATURE)
-        .map(|b| String::from_utf8_lossy(b).into_owned())
-        .unwrap_or_default();
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
+    // existing lines are kept only while they still verify (a re-sign after an edit drops the
+    // stale ones instead of leaving a package nobody can load)
+    let mut text = String::new();
+    if let Some(old) = files.get(SIGNATURE) {
+        for line in String::from_utf8_lossy(old).lines() {
+            let mut one = BTreeMap::new();
+            one.insert(SIGNATURE.to_string(), line.as_bytes().to_vec());
+            for (k, v) in files {
+                if k != SIGNATURE {
+                    one.insert(k.clone(), v.clone());
+                }
+            }
+            if signers(&one).is_ok_and(|s| !s.is_empty()) {
+                text.push_str(line);
+                text.push('\n');
+            }
+        }
     }
     text.push_str(&format!(
         "gmr-sig1 {} {}\n",
@@ -285,6 +296,12 @@ mod tests {
         );
         files.insert("src/a.luau".to_string(), b"state.x = 2".to_vec());
         assert!(matches!(signers(&files), Err(SignatureError::Invalid(_))));
+        files.insert(SIGNATURE.to_string(), sign(&files, &sk2).into_bytes());
+        assert_eq!(
+            signers(&files).unwrap(),
+            vec![pk2],
+            "re-signing after an edit drops the stale lines"
+        );
         files.insert(SIGNATURE.to_string(), b"gmr-sig1 zz".to_vec());
         assert!(matches!(signers(&files), Err(SignatureError::Malformed(_))));
     }

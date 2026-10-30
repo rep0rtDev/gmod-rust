@@ -12,12 +12,14 @@ pub mod manifest;
 pub mod netval;
 pub mod package;
 pub mod pool;
+pub mod registry;
 pub mod snapshot;
 pub mod storage;
 
 pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite};
 pub use manifest::Manifest;
 pub use package::Package;
+pub use registry::Registry;
 pub use snapshot::{EntitySnap, PlayerSnap, Snapshot};
 
 use gm_server::Server;

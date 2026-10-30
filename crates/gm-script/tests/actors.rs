@@ -597,3 +597,106 @@ fn package_collect(dir: &std::path::Path, out: &mut std::collections::BTreeMap<S
     let bytes = gm_script::package::pack(dir).unwrap();
     *out = gm_script::Package::read(&bytes).unwrap().files;
 }
+
+#[test]
+fn registry_publishes_signed_packages_and_resolves_the_highest_fitting_versions() {
+    use gm_script::package;
+    let dir = std::env::temp_dir().join(format!("gm-reg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (sk, pk) = package::keygen();
+    let signed = |id: &str, version: &str, depends: &[&str]| {
+        let d = write_addon(&dir, &format!("{id}-{version}"), version, depends);
+        let mut m = std::fs::read_to_string(d.join("manifest.toml")).unwrap();
+        m = m.replacen(
+            &format!("id = {:?}", format!("{id}-{version}")),
+            &format!("id = {id:?}"),
+            1,
+        );
+        std::fs::write(d.join("manifest.toml"), m).unwrap();
+        let mut files = std::collections::BTreeMap::new();
+        package_collect(&d, &mut files);
+        std::fs::write(d.join(package::SIGNATURE), package::sign(&files, &sk)).unwrap();
+        package::pack(&d).unwrap()
+    };
+    let reg_dir = dir.join("registry");
+    let mut reg = gm_script::Registry::open(&reg_dir).unwrap();
+    let unsigned = package::pack(&write_addon(&dir, "nosig", "1.0.0", &[])).unwrap();
+    assert!(matches!(
+        reg.publish(&unsigned),
+        Err(gm_script::registry::RegistryError::Unsigned(_))
+    ));
+    let base14 = signed("base", "1.4.0", &[]);
+    let base15 = signed("base", "1.5.0", &[]);
+    let base20 = signed("base", "2.0.0", &[]);
+    let wire = signed("wire", "0.3.0", &["base ^1.4"]);
+    let hud = signed("hud", "1.0.0", &["wire", "base >= 1.5"]);
+    let strict = signed("strict", "1.0.0", &["base < 1.5"]);
+    for b in [&base14, &base15, &base20, &wire, &hud, &strict] {
+        let e = reg.publish(b).unwrap();
+        assert_eq!(e.signers, vec![package::hex(&pk)]);
+    }
+    assert_eq!(reg.index.packages.len(), 6);
+    assert!(
+        reg.publish(&base14).is_ok(),
+        "the same bytes again are fine"
+    );
+    let other = signed("base", "1.4.0", &["wire"]);
+    assert!(matches!(
+        reg.publish(&other),
+        Err(gm_script::registry::RegistryError::Conflict(..))
+    ));
+
+    let reg = gm_script::Registry::open(&reg_dir).unwrap();
+    let names = |es: &[gm_script::registry::Entry]| -> Vec<String> {
+        es.iter()
+            .map(|e| format!("{} {}", e.id, e.version))
+            .collect()
+    };
+    assert_eq!(
+        names(&reg.resolve(&["base".into()]).unwrap()),
+        ["base 2.0.0"]
+    );
+    assert_eq!(
+        names(&reg.resolve(&["wire".into()]).unwrap()),
+        ["base 1.5.0", "wire 0.3.0"],
+        "the dependency comes first, the highest fitting version of it"
+    );
+    assert_eq!(
+        names(&reg.resolve(&["hud".into()]).unwrap()),
+        ["base 1.5.0", "wire 0.3.0", "hud 1.0.0"]
+    );
+    assert_eq!(
+        names(&reg.resolve(&["strict".into(), "base".into()]).unwrap()),
+        ["base 1.4.0", "strict 1.0.0"],
+        "a later requirement narrows an earlier pick"
+    );
+    let e = reg
+        .resolve(&["strict".into(), "hud".into()])
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("base is wanted as"), "{e}");
+    let e = reg.resolve(&["base > 3".into()]).unwrap_err().to_string();
+    assert!(e.contains("no package satisfies"), "{e}");
+
+    let cache = dir.join("cache");
+    let plan = reg.resolve(&["hud".into()]).unwrap();
+    let mut rt = gm_script::Runtime::new();
+    rt.trusted.push(pk);
+    let paths: Vec<_> = plan
+        .iter()
+        .map(|e| reg.install(e, &cache).unwrap())
+        .collect();
+    let loaded = rt.load_addons(&paths).unwrap();
+    assert_eq!(loaded.len(), 3);
+    assert_eq!(rt.addon_versions["base"], "1.5.0");
+    assert!(reg.fetch_by_sha(&plan[0].sha, &cache).is_some());
+    assert!(reg.fetch_by_sha("00ff", &cache).is_none());
+
+    std::fs::write(reg.blob_path(&plan[0].sha), b"garbage").unwrap();
+    let _ = std::fs::remove_dir_all(&cache);
+    assert!(
+        reg.install(&plan[0], &cache).is_err(),
+        "a damaged blob does not install"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
