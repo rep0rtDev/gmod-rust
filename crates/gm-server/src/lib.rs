@@ -33,11 +33,49 @@ pub struct ModelInfo {
     pub inertia: Option<Vec3>,
     /// The `impacthard` sound script of the model's surface property (`Wood_Crate.ImpactHard`).
     pub impact_hard: Option<String>,
-    /// `prop_data` health through `scripts/propdata.txt` (the crate: `Wooden.Medium`, 30);
-    /// 0 is unbreakable.
-    pub health: i32,
+    /// The model's `prop_data` through `scripts/propdata.txt`.
+    pub prop_data: PropData,
     /// The `break` sound script of the surface property (`Wood_Crate.Break`).
     pub break_sound: Option<String>,
+}
+
+/// A model's `prop_data` (`$keyvalues`, through the `base` chain of `scripts/propdata.txt`):
+/// the health (0: unbreakable; the crate is `Wooden.Medium`, 30) and the damage modifiers by
+/// type (`Wooden.Base`: bullets 0.75, club 2.0, explosive 1.5), applied before the whole-number
+/// truncation (`shoot_prop_*`: a pistol's 5 takes 3 from the crate, the crowbar's 10 takes 20,
+/// the .357's 40 breaks it).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PropData {
+    pub health: i32,
+    pub dmg_bullets: f32,
+    pub dmg_club: f32,
+    pub dmg_explosive: f32,
+}
+
+impl Default for PropData {
+    fn default() -> Self {
+        PropData {
+            health: 0,
+            dmg_bullets: 1.0,
+            dmg_club: 1.0,
+            dmg_explosive: 1.0,
+        }
+    }
+}
+
+impl PropData {
+    /// The modifier a damage type gets (`CBreakableProp::OnTakeDamage`).
+    pub fn modifier(&self, dmg_type: u32) -> f32 {
+        if dmg_type & weapons::DMG_CLUB != 0 {
+            self.dmg_club
+        } else if dmg_type & weapons::DMG_BLAST != 0 {
+            self.dmg_explosive
+        } else if dmg_type & weapons::DMG_BULLET != 0 {
+            self.dmg_bullets
+        } else {
+            1.0
+        }
+    }
 }
 
 /// A prop impact is heard from this approach speed (units/s) up: the crate's drops at 62.9
@@ -609,8 +647,7 @@ pub struct Server<'w> {
     /// hurt nor push (`hit_pistol_nohurt`, `hit_rpg_nohurt`).
     pub players_hurt_players: bool,
     pub prop_hits: Vec<PropHit>,
-    /// Remaining health of breakable props (`weapons::prop_health`).
-    pub prop_health: BTreeMap<u32, i32>,
+
     pub spawn_points: Vec<SpawnPoint>,
     spawn_rng: u64,
     tick_count: u64,
@@ -715,7 +752,7 @@ impl<'w> Server<'w> {
             step_sounds: BTreeMap::new(),
             players_hurt_players: true,
             prop_hits: Vec::new(),
-            prop_health: BTreeMap::new(),
+
             spawn_points: Vec::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
@@ -1022,19 +1059,25 @@ impl<'w> Server<'w> {
         burning
     }
 
-    /// Damage on a prop: the `prop_data` health counts down, zero breaks it (the surface's
-    /// `break` sound, `PropBreak`, gone); a prop without health (metal) takes none.
-    pub fn damage_prop(&mut self, ent: u32, amount: i32, _dmg_type: u32) {
+    /// Damage on a prop (`CBreakableProp::OnTakeDamage`): the amount times the `prop_data`
+    /// modifier of its type, truncated to whole points, off the health; zero breaks the prop
+    /// (the surface's `break` sound, `PropBreak`, gone). A prop without health (metal) takes
+    /// none. Returns whether it broke.
+    pub fn damage_prop(&mut self, ent: u32, amount: f32, dmg_type: u32) -> bool {
         let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent).cloned() else {
-            return;
+            return false;
         };
         if prop.health <= 0 {
-            return;
+            return false;
         }
-        let left = prop.health - amount;
+        let data = self
+            .models
+            .get(&prop.model)
+            .map_or(PropData::default(), |m| m.prop_data);
+        let left = prop.health - (amount * data.modifier(dmg_type)) as i32;
         if left > 0 {
             self.sandbox.set_health(ent, left);
-            return;
+            return false;
         }
         self.sandbox.set_health(ent, 0);
         let pos = self.prop_state(ent).map_or(prop.pos, |s| s.position);
@@ -1051,6 +1094,7 @@ impl<'w> Server<'w> {
         }
         self.game_events.push(GameEvent::PropBreak { ent });
         self.remove_prop(ent);
+        true
     }
 
     fn fire_tick(&mut self) {
@@ -1078,7 +1122,7 @@ impl<'w> Server<'w> {
             }
             fire.next_think = now + FIRE_DAMAGE_INTERVAL_TICKS;
             self.sandbox.set_fire(id, Some(fire));
-            self.damage_prop(id, FIRE_DAMAGE, DMG_BURN | DMG_DIRECT);
+            self.damage_prop(id, FIRE_DAMAGE as f32, DMG_BURN | DMG_DIRECT);
         }
     }
 
@@ -1317,19 +1361,7 @@ impl<'w> Server<'w> {
         force: Vec3,
         inflictor: &'static str,
     ) {
-        let max = self
-            .sandbox
-            .props()
-            .iter()
-            .find(|p| p.id == prop)
-            .map(|p| weapons::prop_health(&p.model))
-            .unwrap_or(0);
-        let mut broke = false;
-        if max > 0 {
-            let hp = self.prop_health.entry(prop).or_insert(max);
-            *hp -= damage as i32;
-            broke = *hp <= 0;
-        }
+        let broke = self.damage_prop(prop, damage, dmg_type);
         self.prop_hits.push(PropHit {
             tick: self.tick_count,
             attacker,
@@ -1341,12 +1373,10 @@ impl<'w> Server<'w> {
             inflictor,
             broke,
         });
-        if broke {
-            self.prop_health.remove(&prop);
-            self.sandbox.remove_entity(prop);
-            self.sync_physics();
-        } else if let Some(&body) = self.bodies.get(&prop) {
-            self.physics.add_impulse_at(body, pos, force);
+        if !broke {
+            if let Some(&body) = self.bodies.get(&prop) {
+                self.physics.add_impulse_at(body, pos, force);
+            }
         }
     }
 
@@ -1862,8 +1892,10 @@ impl<'w> Server<'w> {
             .collect();
         let models: Vec<String> = props.iter().map(|p| p.0.clone()).collect();
         self.sandbox.place_existing(0, &bodies, &models);
-        for (i, (_, _, _, frozen)) in props.iter().enumerate() {
+        for (i, (model, _, _, frozen)) in props.iter().enumerate() {
             self.sandbox.set_frozen(i as u32 + 1, *frozen);
+            let health = self.models.get(model).map_or(0, |m| m.prop_data.health);
+            self.sandbox.set_health(i as u32 + 1, health);
         }
         self.sync_physics();
     }
@@ -2091,7 +2123,7 @@ impl<'w> Server<'w> {
         );
         self.events.extend(events);
         if let Some(id) = id {
-            self.sandbox.set_health(id, info.health);
+            self.sandbox.set_health(id, info.prop_data.health);
         }
         self.sync_physics();
         id
@@ -2200,6 +2232,8 @@ impl<'w> Server<'w> {
                 Vec3::from(p.angles),
                 p.frozen,
             );
+            let health = self.models.get(&p.model).map_or(0, |m| m.prop_data.health);
+            self.sandbox.set_health(id, health);
             self.sandbox.add_count(player, "props", id);
             self.sandbox.add_cleanup(player, "props", id);
             ids.push(Some(id));

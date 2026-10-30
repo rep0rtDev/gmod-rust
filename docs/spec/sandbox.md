@@ -108,7 +108,10 @@ Implemented, by `Command::Property { name }` on the prop under the crosshair:
   unharmed). The think that finds the lifetime over (`Ignite(3)`: 200 ticks) plays
   `General.StopBurning` and the flame lingers 0.5 s (33 ticks, still on fire) before it is gone,
   so `Ignite(3)` is 15 points of damage. `extinguish` (offered while burning) removes the flame
-  at once and keeps the health. Health 0 breaks the prop: the surface's `break` sound
+  at once and keeps the health. Any damage on a prop goes through its `prop_data` modifier by type first (`Wooden.Base`: bullets
+  0.75, club 2.0, explosive 1.5, fire 1) and is truncated to whole points: a pistol's 5 takes 3
+  off the crate, the crowbar's 10 takes 20, the .357's 40 breaks it (`shoot_prop_*`). Health 0
+  breaks the prop: the surface's `break` sound
   (`Wood_Crate.Break`, volume 0.8 and level 85 from the script), the prop is gone - 30 points
   after `Ignite(360)`, 394 ticks from the ignition. Ours: `Server::ignite / extinguish /
   damage_prop`, `Prop.health / fire`, `entity.break {entity}` to Luau. Not measured: fire on

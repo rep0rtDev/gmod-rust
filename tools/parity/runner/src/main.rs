@@ -1351,8 +1351,8 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
         drag_axis_areas: Vec3::from(solid.drag_axis_areas),
         inertia: Some(Vec3::from(solid.rotation_inertia)),
         impact_hard: table.sound(&props.surfaceprop, "impacthard"),
-        health: 0,
-        break_sound: None,
+        prop_data: gm_dedicated::prop_data(mount, &mdl.key_values),
+        break_sound: table.sound(&props.surfaceprop, "break"),
     })
 }
 
@@ -1617,7 +1617,12 @@ fn run_shoot_prop(scn: &Scenario) -> Result<Value> {
                     ]);
                     row["asleep"] = json!(!st.active);
                 }
-                row["health"] = json!(server.prop_health.get(&prop_id).copied().unwrap_or(0));
+                row["health"] = json!(server
+                    .sandbox
+                    .props()
+                    .iter()
+                    .find(|p| p.id == prop_id)
+                    .map_or(0, |p| p.health));
             }
             let projs: Vec<Value> = server
                 .projectiles

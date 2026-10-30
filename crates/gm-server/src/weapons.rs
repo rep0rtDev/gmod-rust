@@ -1086,13 +1086,7 @@ pub const BLAST_FORCE_MAX: f32 = 30000.0;
 pub const BALL_PROP_DAMAGE: f32 = 1000.0;
 pub const BALL_PROP_FORCE: f32 = 31765.0;
 pub const BOLT_PROP_FORCE: f32 = 21000.0;
-/// `prop_data` health by model (`scripts/propdata.txt` of the game, read per model later).
-pub fn prop_health(model: &str) -> i32 {
-    match model {
-        m if m.contains("wood_crate") => 30,
-        _ => 0,
-    }
-}
+
 /// Timers set by an SMG1 grenade launch.
 pub const SMG1_GRENADE_PRIMARY: f32 = 0.5;
 pub const SMG1_GRENADE_SECONDARY: f32 = 1.0;
