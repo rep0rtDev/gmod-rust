@@ -1039,6 +1039,7 @@ dependencies = [
  "gm-move",
  "gm-net",
  "gm-render",
+ "gm-script",
  "gm-server",
  "wgpu",
  "winit",
