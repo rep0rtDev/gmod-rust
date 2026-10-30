@@ -331,6 +331,14 @@ only addons carrying a valid signature by one of them (`load_addons` refuses the
 otherwise); without a trust list anything loads, but a signature that does not match the content
 is refused always. Clients trust the server they joined: what it publishes, they run.
 
+## SDK: `gmr`
+
+`gmr new addon <dir>` writes a manifest with a server and a client actor (an `entity.spawned`
+counter answering a `net.message` from the client's first snapshot), `gmr new tool <dir>` a
+scripted stool (weld two props, right click clears); the directory name is the id. Then `gmr
+pack / inspect / keygen / sign / verify / publish / resolve` as below, and `gm-dedicated --addon
+<dir> --watch` is the dev loop (`gmr_new_pack_sign_publish_resolve` runs the whole chain).
+
 ## Registry
 
 A registry is a directory any static host can serve: `index.toml` with one `[[packages]]` entry

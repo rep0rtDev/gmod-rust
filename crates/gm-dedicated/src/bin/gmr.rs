@@ -22,6 +22,13 @@ enum Cmd {
     Sign { addon: PathBuf, key: PathBuf },
     /// Verify the signatures of an addon directory or .gmr (exit 1 when none verifies)
     Verify { addon: PathBuf },
+    /// Start an addon directory from a template: `addon` (server + client actors) or `tool` (a
+    /// scripted stool); the directory name is the addon id
+    New {
+        #[arg(value_parser = ["addon", "tool"])]
+        kind: String,
+        dir: PathBuf,
+    },
     /// Publish a signed addon (directory or .gmr) into a registry directory (index.toml + blobs/)
     Publish { addon: PathBuf, registry: PathBuf },
     /// Resolve `id@requirement`s against a registry and print what would be installed, in order
@@ -93,6 +100,64 @@ fn main() -> Result<()> {
                 anyhow::bail!("{}: not signed", addon.display());
             }
         }
+        Cmd::New { kind, dir } => {
+            let id = dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .filter(|n| {
+                    !n.is_empty()
+                        && n.chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                })
+                .context("the directory name is the addon id: letters, digits, _ or -")?
+                .to_string();
+            anyhow::ensure!(!dir.exists(), "{} exists", dir.display());
+            std::fs::create_dir_all(dir.join("src"))?;
+            let (manifest, files): (String, Vec<(&str, String)>) = match kind.as_str() {
+                "tool" => (
+                    format!(
+                        "id = {id:?}\nversion = \"0.1.0\"\npriority = 0\nrealms = [\"server\"]\n\
+                         capabilities = [\"world-read\", \"world-write\"]\ndepends = []\n\n\
+                         [[actors]]\nname = \"tools\"\nsource = \"src/tools.luau\"\n"
+                    ),
+                    vec![("src/tools.luau", TOOL_TEMPLATE.replace("{id}", &id))],
+                ),
+                _ => (
+                    format!(
+                        "id = {id:?}\nversion = \"0.1.0\"\npriority = 0\n\
+                         realms = [\"server\", \"client\"]\n\
+                         capabilities = [\"world-read\", \"world-write\", \"storage\"]\ndepends = []\n\n\
+                         [[actors]]\nname = \"main\"\nsource = \"src/main.luau\"\n\n\
+                         [[actors]]\nname = \"hud\"\nsource = \"src/hud.luau\"\nrealm = \"client\"\n"
+                    ),
+                    vec![
+                        ("src/main.luau", SERVER_TEMPLATE.replace("{id}", &id)),
+                        ("src/hud.luau", CLIENT_TEMPLATE.replace("{id}", &id)),
+                    ],
+                ),
+            };
+            std::fs::write(dir.join("manifest.toml"), manifest)?;
+            for (name, text) in &files {
+                std::fs::write(dir.join(name), text)?;
+            }
+            std::fs::write(
+                dir.join("README.md"),
+                format!(
+                    "# {id}\n\nRun against a local server with hot reload:\n\n    gm-dedicated --addon {} --watch\n\n\
+                     Pack, sign and publish:\n\n    gmr keygen me.key\n    gmr sign {} me.key\n    gmr publish {} <registry>\n",
+                    dir.display(),
+                    dir.display(),
+                    dir.display()
+                ),
+            )?;
+            gm_script::Manifest::load(&dir)?;
+            println!(
+                "{} {}: manifest.toml, {}, README.md",
+                kind,
+                dir.display(),
+                files.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")
+            );
+        }
         Cmd::Publish { addon, registry } => {
             let bytes = if addon.is_dir() {
                 gm_script::package::pack(&addon)?
@@ -144,3 +209,61 @@ fn main() -> Result<()> {
     }
     Ok(())
 }
+
+const SERVER_TEMPLATE: &str = r#"--!strict
+-- {id}: server actor. Runs in parallel with the other actors against an immutable snapshot of
+-- the world; writes go through world.queue and are applied in a deterministic order after the
+-- tick. `state` survives hot reloads.
+state.spawns = state.spawns or 0
+
+events.on("entity.spawned", function(ev)
+    state.spawns += 1
+    print(`{id}: prop {ev.ent} spawned by player {ev.player} ({state.spawns} so far)`)
+end)
+
+events.on("net.message", function(ev)
+    if ev.name == "{id}.hello" then
+        net.send("{id}.hello", { tick = game.tick(), spawns = state.spawns }, ev.player)
+    end
+end)
+"#;
+
+const CLIENT_TEMPLATE: &str = r#"--!strict
+-- {id}: client actor. Sees the client's assembled world (snapshot.received on every server tick,
+-- tick.client every frame); writes are not available in this realm.
+events.on("snapshot.received", function()
+    state.snaps = (state.snaps or 0) + 1
+    if state.snaps == 1 then
+        net.send("{id}.hello", {})
+    end
+end)
+
+events.on("net.message", function(ev)
+    if ev.name == "{id}.hello" then
+        print(`{id}: server tick {ev.data.tick}, {ev.data.spawns} props spawned`)
+    end
+end)
+"#;
+
+const TOOL_TEMPLATE: &str = r##"--!strict
+-- {id}: a scripted stool. Left click on two props welds them (first click picks the first prop),
+-- right click clears the selection. Return a list of ops; the server applies them with the
+-- player's limits, undo entry and cleanup list.
+tool.register("{id}", {
+    left = function(ctx)
+        if ctx.hit.ent == 0 then
+            return nil
+        end
+        if #ctx.objects == 0 then
+            return { { op = "set_object" } }
+        end
+        return {
+            { op = "weld", ent1 = ctx.objects[1].ent, ent2 = ctx.hit.ent, forcelimit = 0, nocollide = false, undo = "#tool.{id}.name" },
+            { op = "clear" },
+        }
+    end,
+    right = function(ctx)
+        return { { op = "clear" } }
+    end,
+})
+"##;
