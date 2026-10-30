@@ -205,6 +205,7 @@ void gmp_set_solver(void *system, float baumgarte, unsigned int velocity_steps, 
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Body/Body.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <algorithm>
 #include <cmath>
