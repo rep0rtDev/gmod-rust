@@ -1844,6 +1844,9 @@ impl App {
                 self.console.log(format!("bot {id} added"));
             }
             "cleanup" => self.sim.client.command(Command::Cleanup),
+            "property" if !rest.is_empty() => self.sim.client.command(Command::Property {
+                name: rest.join(" "),
+            }),
             "say" => self.sim.client.command(Command::Chat {
                 text: rest.join(" "),
             }),

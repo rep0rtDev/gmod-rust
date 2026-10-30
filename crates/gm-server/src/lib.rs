@@ -101,6 +101,12 @@ pub enum GameEvent {
         player: u32,
         ent: u32,
     },
+    /// A context-menu property was applied.
+    Property {
+        player: u32,
+        ent: u32,
+        name: String,
+    },
     /// The physgun's reload unfroze this many of the player's props (`PhysgunUnfreeze`).
     Unfroze {
         player: u32,
@@ -134,6 +140,8 @@ pub enum Request {
     /// `AllowPlayerPickup`: the used prop is light enough (`gm_physics::pickup::MAX_MASS`,
     /// `MAX_SIZE`) and would be carried.
     PlayerPickup { player: u32, ent: u32 },
+    /// `CanProperty`: the player asked for a context-menu property on a prop.
+    Property { player: u32, ent: u32, name: String },
     /// `PlayerLoadout`: the player (re)spawned with an empty inventory; `Cancel` skips the
     /// default loadout (the hook gives its own with `player.give_weapon`).
     Loadout { player: u32 },
@@ -2215,6 +2223,12 @@ impl<'w> Server<'w> {
                     if p.frozen {
                         self.physics.freeze(body);
                     }
+                    if !p.gravity {
+                        self.physics.set_gravity(body, false);
+                    }
+                    if !p.collide {
+                        self.physics.set_world_only(body, true);
+                    }
                     self.bodies.insert(p.id, body);
                 }
                 Some(&body) => {
@@ -2445,6 +2459,19 @@ impl<'w> Server<'w> {
     /// poses flow back into the sandbox.
     pub fn tick(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
         let now = self.tick_count as u32;
+        let upright: Vec<(BodyHandle, Vec3)> = self
+            .sandbox
+            .props()
+            .iter()
+            .filter_map(|p| Some((*self.bodies.get(&p.id)?, p.upright?)))
+            .collect();
+        for (b, angles) in upright {
+            self.physics.keep_upright(
+                b,
+                gm_sandbox::rotation(angles),
+                gm_core::tick::DEFAULT_TICK_INTERVAL,
+            );
+        }
         for p in self.players.values_mut() {
             p.history.push_back((now, p.state.origin, p.state.ducked));
             if p.history.len() > 64 {
@@ -2615,6 +2642,67 @@ impl<'w> Server<'w> {
         }
         self.sandbox.set_frozen(id, frozen);
         self.sync_physics();
+        true
+    }
+
+    /// The context menu's properties on the prop under the player's crosshair, as the game
+    /// offers them for a prop (measured, docs/spec/sandbox.md): `remove`, `gravity` (toggle),
+    /// `collision_off` / `collision_on`, `keepupright` / `keepupright_stop`. `CanProperty` is
+    /// asked first; a property that does not apply (collision already off, ...) is not offered
+    /// and does nothing. Returns whether it was applied.
+    pub fn apply_property(&mut self, player: u32, name: &str) -> bool {
+        let Some(ent) = self.tool_hit(player).and_then(|h| h.ent) else {
+            return false;
+        };
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent).cloned() else {
+            return false;
+        };
+        let offered = match name {
+            "remove" | "gravity" => true,
+            "collision_off" => prop.collide,
+            "collision_on" => !prop.collide,
+            "keepupright" => prop.upright.is_none(),
+            "keepupright_stop" => prop.upright.is_some(),
+            _ => false,
+        };
+        if !offered
+            || self.ask(Request::Property {
+                player,
+                ent,
+                name: name.to_string(),
+            }) == Verdict::Cancel
+        {
+            return false;
+        }
+        let body = self.bodies.get(&ent).copied();
+        match name {
+            "remove" => {
+                self.remove_prop(ent);
+            }
+            "gravity" => {
+                self.sandbox.set_gravity(ent, !prop.gravity);
+                if let Some(b) = body {
+                    self.physics.set_gravity(b, !prop.gravity);
+                }
+            }
+            "collision_off" | "collision_on" => {
+                let on = name == "collision_on";
+                self.sandbox.set_collide(ent, on);
+                if let Some(b) = body {
+                    self.physics.set_world_only(b, !on);
+                }
+            }
+            "keepupright" => {
+                let angles = body.map_or(prop.angles, |b| self.physics.state(b).angles.into());
+                self.sandbox.set_upright(ent, Some(angles));
+            }
+            _ => self.sandbox.set_upright(ent, None),
+        }
+        self.game_events.push(GameEvent::Property {
+            player,
+            ent,
+            name: name.to_string(),
+        });
         true
     }
 

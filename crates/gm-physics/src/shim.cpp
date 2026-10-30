@@ -230,10 +230,14 @@ public:
 	static unsigned long long pair_key(JPH::uint32 a, JPH::uint32 b) {
 		return ((unsigned long long)std::min(a, b) << 32) | std::max(a, b);
 	}
+	// COLLISION_GROUP_WORLD bodies (the collision_off property): they touch static geometry only
+	std::unordered_set<JPH::uint32> world_only;
 	JPH::ValidateResult OnContactValidate(const JPH::Body &b1, const JPH::Body &b2, JPH::RVec3Arg,
 	                                      const JPH::CollideShapeResult &) override {
-		if (!nocollide.empty() && nocollide.count(pair_key(b1.GetID().GetIndexAndSequenceNumber(),
-		                                                   b2.GetID().GetIndexAndSequenceNumber())))
+		JPH::uint32 id1 = b1.GetID().GetIndexAndSequenceNumber(), id2 = b2.GetID().GetIndexAndSequenceNumber();
+		if (!nocollide.empty() && nocollide.count(pair_key(id1, id2)))
+			return JPH::ValidateResult::RejectAllContactsForThisBodyPair;
+		if (!world_only.empty() && ((world_only.count(id1) && !b2.IsStatic()) || (world_only.count(id2) && !b1.IsStatic())))
 			return JPH::ValidateResult::RejectAllContactsForThisBodyPair;
 		return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
 	}
@@ -913,6 +917,13 @@ void gmp_set_pair_collision(void *system, unsigned int id1, unsigned int id2, in
 	if (!l) return;
 	auto key = GmpImpactListener::pair_key(id1, id2);
 	if (enabled) l->nocollide.erase(key); else l->nocollide.insert(key);
+}
+
+// the collision_off property: the body collides with the world only
+void gmp_set_world_only(void *system, unsigned int id, int on) {
+	auto *l = listener_of(system);
+	if (!l) return;
+	if (on) l->world_only.insert(id); else l->world_only.erase(id);
 }
 
 void gmp_set_impact_enabled(void *system, int enabled) {

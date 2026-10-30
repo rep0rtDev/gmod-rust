@@ -540,6 +540,13 @@ after the tick) until the next +use press, death, the prop's removal or a physgu
 The native client sends `IN_USE` on E.
 Not yet: use on players, hold-to-use.
 
+## Properties
+
+`player.property_request {player, entity, property}` is `CanProperty`, asked synchronously
+when a player sends a context-menu property for the prop under the crosshair (`return false`
+refuses); `player.property {player, entity, property}` follows after the tick when it was
+applied. The properties and what they do are in `docs/spec/sandbox.md`, "Properties".
+
 ## Spawn menu
 
 `spawnmenu.add(category, models)` (server realm, a write) registers models under a spawn menu

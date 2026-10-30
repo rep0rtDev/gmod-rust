@@ -74,6 +74,35 @@ turn, E again). This is the public SDK's player pickup (`CPlayerPickupController
   (`wood_crate_impact_soft`, 0.6) and the lag of the prop behind a walking player (not
   measured).
 
+## Properties (context menu)
+
+Measured on srcds (`tools/parity/scenarios/lua/lua_properties`): for a `prop_physics` crate the
+game's context menu offers, in menu order, `skin` (601, only with more than one skin),
+`keepupright` (900), `ignite` (999), `remove` (1000), `gravity` (1001, a toggle), `drive`
+(1100) and `collision_off` (1500); `collision_on`, `keepupright_stop` and `extinguish` take
+their place once the prop is in that state, and the rest of the list (persist, bone
+manipulation, bodygroups, statue, NPC scale, motion control, edit entity) does not apply to a
+plain prop. Nothing applies to players or the world. Every filter asks
+`GM:CanProperty(ply, name, ent)` (sandbox: always true), our `player.property_request`.
+
+Implemented, by `Command::Property { name }` on the prop under the crosshair:
+
+- `remove`: the prop and its constraints go (no undo entry).
+- `gravity`: `PhysObj:EnableGravity` toggled. Measured (`lua_property_effects`): a weightless
+  crate pushed up at 50 u/s keeps rising, only the air drag slows it (46.4 u/s after 120
+  ticks); a physgun release keeps it weightless.
+- `collision_off` / `collision_on`: `COLLISION_GROUP_WORLD`. Measured: other props fall
+  straight through such a prop and it falls through them, only the world holds it; a prop
+  already resting on it stays until something wakes it.
+- `keepupright` / `keepupright_stop`: `constraint.Keepupright(ent, ent:GetAngles(), 0,
+  999999)`. Measured (`lua_property_effects3`): the orientation is driven to the reference
+  angles within two ticks (pitch 30 -> 1.1 -> 0, roll 60 -> 4.2 -> 0) and a 40 degree kick on
+  a kept prop is undone as fast; `angularlimit` is an angular acceleration cap (60 gives
+  ~0.9 degrees per tick per tick with ringing), the property uses the huge one. Ours drives
+  the orientation with the physgun's angular law, no damping, one tick to arrive, 3700 deg/s.
+- Not yet: `ignite` / `extinguish` (no fire), `drive`, `skin`, `bodygroups`, the menu itself in
+  the native client (the console's `property <name>` sends the command).
+
 ## Not yet measured
 
 Spawning onto other props (the spawn ray only hits the world in our trace), ragdolls and effects, `gmod_undonum`, `gmod_admin_cleanup`, cleanup of one type, `sbox_maxragdolls` and the other limits, prop spawn effects and sounds.

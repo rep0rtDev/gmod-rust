@@ -1,0 +1,6 @@
+{
+ "name": "lua_models_full",
+ "kind": "lua",
+ "needs_bot": true,
+ "code": "\nlocal out = { models = {} }\nfor name, path in pairs(player_manager.AllValidModels()) do\n  local h = player_manager.TranslatePlayerHands(name)\n  out.models[name] = { path = path, hands = h and h.model or \"\", hands_skin = h and h.skin or 0, hands_body = h and h.body or \"\" }\nend\nout.fallback = player_manager.TranslatePlayerModel(\"nonsense_name\")\nout.fallback_hands = player_manager.TranslatePlayerHands(\"nonsense_name\")\nreturn out\n"
+}

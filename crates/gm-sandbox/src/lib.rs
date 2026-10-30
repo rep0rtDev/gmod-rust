@@ -24,6 +24,12 @@ pub struct Prop {
     pub angles: Vec3,
     /// `PhysObj:EnableMotion(false)`.
     pub frozen: bool,
+    /// The gravity property (`PhysObj:EnableGravity`); on by default.
+    pub gravity: bool,
+    /// The collision property: off puts the prop in `COLLISION_GROUP_WORLD`.
+    pub collide: bool,
+    /// The keep-upright property: the angles the prop is held at.
+    pub upright: Option<Vec3>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -473,6 +479,9 @@ impl Sandbox {
             pos,
             angles,
             frozen,
+            gravity: true,
+            collide: true,
+            upright: None,
         });
         id
     }
@@ -608,6 +617,9 @@ impl Sandbox {
             pos: placement.pos,
             angles: placement.angles,
             frozen: false,
+            gravity: true,
+            collide: true,
+            upright: None,
         });
         events.push(Event::Spawned { prop: id });
         self.push_undo(
@@ -632,6 +644,9 @@ impl Sandbox {
                 pos: b.pos,
                 angles: b.angles,
                 frozen: false,
+                gravity: true,
+                collide: true,
+                upright: None,
             });
             self.next_id = self.next_id.max(b.id + 1);
         }
@@ -647,6 +662,24 @@ impl Sandbox {
     }
 
     /// `PhysObj:EnableMotion(!frozen)`.
+    pub fn set_gravity(&mut self, id: u32, on: bool) {
+        if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
+            p.gravity = on;
+        }
+    }
+
+    pub fn set_collide(&mut self, id: u32, on: bool) {
+        if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
+            p.collide = on;
+        }
+    }
+
+    pub fn set_upright(&mut self, id: u32, angles: Option<Vec3>) {
+        if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
+            p.upright = angles;
+        }
+    }
+
     pub fn set_frozen(&mut self, id: u32, frozen: bool) {
         if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
             p.frozen = frozen;

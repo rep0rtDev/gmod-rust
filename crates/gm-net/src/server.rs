@@ -719,6 +719,9 @@ impl ServerNet {
                         }
                     }
                     Command::Undo => server.undo(slot.player),
+                    Command::Property { name } => {
+                        server.apply_property(slot.player, &name);
+                    }
                     Command::SelectWeapon { class } => {
                         server.select_weapon(slot.player, &class);
                     }

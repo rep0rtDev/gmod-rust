@@ -1,0 +1,6 @@
+{
+ "name": "lua_playermodels",
+ "kind": "lua",
+ "code": "\nlocal bot = player.GetBots()[1]\nlocal out = { valid = {}, hands = {} }\nfor name, path in pairs(player_manager.AllValidModels()) do out.valid[name] = path end\nfor _, n in ipairs({\"kleiner\",\"alyx\",\"male01\",\"female01\",\"combine\",\"zombie\",\"police\"}) do\n  out[n] = player_manager.TranslatePlayerModel(n)\n  local h = player_manager.TranslatePlayerHands(n) out.hands[n] = h\nend\nout.default_cvar = player_manager.TranslatePlayerModel(\"\")\nif IsValid(bot) then\n  out.bot_model = bot:GetModel()\n  out.bot_info = bot:GetInfo(\"cl_playermodel\")\n  out.bot_skin = bot:GetSkin()\n  out.bot_hands = IsValid(bot:GetHands()) and bot:GetHands():GetModel() or \"none\"\nend\nout.count = table.Count(out.valid)\nreturn out\n",
+ "needs_bot": true
+}

@@ -55,6 +55,23 @@ SCENARIOS.file_find = function(scn)
 	return result
 end
 
+-- { kind = "lua", code = "return ..." }  runs the chunk on the server (measurement only) and
+-- records what it returns
+SCENARIOS.lua = function(scn, done)
+	if scn.needs_bot and not IsValid(player.GetBots()[1]) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.lua(scn, done) end)
+		return
+	end
+	local fn = CompileString(scn.code, "parity_lua_" .. (scn.name or "scn"), false)
+	if type(fn) ~= "function" then done({ error = tostring(fn) }) return end
+	-- the chunk gets (scn, done); returning "async" means it calls done itself later
+	local ok, res = pcall(fn, scn, done)
+	if ok and res == "async" then return end
+	done(ok and res or { error = tostring(res) })
+end
+ASYNC.lua = true
+
 -- { kind = "convars", names = { "sv_gravity", ... } }  (empty names = a default list)
 SCENARIOS.convars = function(scn)
 	local out = {}

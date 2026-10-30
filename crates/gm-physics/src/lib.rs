@@ -102,6 +102,7 @@ extern "C" {
     fn gmp_set_impact_enabled(system: *mut JPC_PhysicsSystem, enabled: i32);
     fn gmp_take_impacts(system: *mut JPC_PhysicsSystem, out: *mut RawImpact, max: u32) -> u32;
     fn gmp_set_pair_collision(system: *mut JPC_PhysicsSystem, id1: u32, id2: u32, enabled: i32);
+    fn gmp_set_world_only(system: *mut JPC_PhysicsSystem, id: u32, on: i32);
     fn gmp_set_solver(
         system: *mut JPC_PhysicsSystem,
         baumgarte: f32,
@@ -370,6 +371,8 @@ pub struct World {
     system: rolt::PhysicsSystem,
     drags: Vec<Drag>,
     held: std::collections::HashSet<u32>,
+    /// Bodies with gravity switched off (`set_gravity`), kept weightless after a release.
+    no_gravity: std::collections::HashSet<u32>,
     frozen: std::collections::HashSet<u32>,
     world_elasticity: f32,
     temp: *mut JPC_TempAllocatorImpl,
@@ -415,6 +418,7 @@ impl World {
             shapes: Vec::new(),
             drags: Vec::new(),
             held: std::collections::HashSet::new(),
+            no_gravity: std::collections::HashSet::new(),
             frozen: std::collections::HashSet::new(),
             world_elasticity: 0.2,
             gravity,
@@ -743,7 +747,7 @@ impl World {
     /// Let a held body go: gravity is back from this tick on, the velocity is kept.
     pub fn release(&mut self, body: BodyHandle) {
         unsafe { gmp_set_impact_skip(self.system.as_raw(), body.0, 0) };
-        if self.held.remove(&body.0) {
+        if self.held.remove(&body.0) && !self.no_gravity.contains(&body.0) {
             unsafe {
                 let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
                 JPC_BodyInterface_SetGravityFactor(bi, body.0, self.gravity_factor());
@@ -937,6 +941,61 @@ impl World {
     /// `constraint.NoCollide`: whether two bodies collide with each other (default yes).
     pub fn set_pair_collision(&mut self, a: BodyHandle, b: BodyHandle, enabled: bool) {
         unsafe { gmp_set_pair_collision(self.system.as_raw(), a.0, b.0, enabled as i32) }
+    }
+
+    /// `COLLISION_GROUP_WORLD` (the collision_off property): the body only touches the world;
+    /// other props fall through it and it through them (measured, docs/spec/sandbox.md).
+    pub fn set_world_only(&mut self, body: BodyHandle, on: bool) {
+        unsafe {
+            gmp_set_world_only(self.system.as_raw(), body.0, on as i32);
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_ActivateBody(bi, body.0);
+        }
+    }
+
+    /// `PhysObj:EnableGravity`: off, the body keeps its velocity and only the air drag acts
+    /// (measured: 50 u/s up decays to 46.4 over 120 ticks). A held body stays weightless.
+    pub fn set_gravity(&mut self, body: BodyHandle, on: bool) {
+        self.no_gravity.remove(&body.0);
+        if !on {
+            self.no_gravity.insert(body.0);
+        }
+        if self.held.contains(&body.0) {
+            return;
+        }
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_SetGravityFactor(
+                bi,
+                body.0,
+                if on { self.gravity_factor() } else { 0.0 },
+            );
+            JPC_BodyInterface_ActivateBody(bi, body.0);
+        }
+    }
+
+    /// `phys_keepupright` with a huge `angularlimit`: the orientation is driven to `target` within
+    /// a couple of ticks (pitch 30 -> 1.1 -> 0, roll 60 -> 4.2 -> 0 on srcds), the linear motion
+    /// is left alone.
+    pub fn keep_upright(&mut self, body: BodyHandle, target: Quat, tick: f32) {
+        let st = self.state(body);
+        let p = physgun::PhysgunParams {
+            max_speed: f32::MAX,
+            max_angular: 3700.0,
+            damping: 1.0,
+            time_to_arrive: tick,
+        };
+        let w = physgun::angular_controller(st.angular_velocity, st.rotation, target, &p);
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_SetLinearAndAngularVelocity(
+                bi,
+                body.0,
+                jv(to_jolt(st.velocity)),
+                jv(dir_to_jolt(w) * DEG),
+            );
+            JPC_BodyInterface_ActivateBody(bi, body.0);
+        }
     }
 
     pub fn set_impact_enabled(&mut self, enabled: bool) {

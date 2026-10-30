@@ -68,6 +68,11 @@ pub enum Command {
     Noclip {
         on: bool,
     },
+    /// A context-menu property (`remove`, `gravity`, `collision_off`, ...) on the prop under
+    /// the crosshair.
+    Property {
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -566,6 +571,10 @@ impl ClientMsg {
                         w.u8(11);
                         w.bool(*on);
                     }
+                    Command::Property { name } => {
+                        w.u8(12);
+                        w.str(name);
+                    }
                 }
             }
             ClientMsg::AckSnapshot { tick } => {
@@ -642,6 +651,7 @@ impl ClientMsg {
                     9 => Command::SelectWeapon { class: r.str()? },
                     10 => Command::Chat { text: r.str()? },
                     11 => Command::Noclip { on: r.bool()? },
+                    12 => Command::Property { name: r.str()? },
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }

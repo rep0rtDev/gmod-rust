@@ -3478,3 +3478,171 @@ fn use_pickup_carries_a_light_prop_to_the_hold_point_and_the_second_press_drops_
     assert!(used >= 2, "used {used}");
     assert!(server.prop_state(big).unwrap().position.distance(rest_big) < 0.5);
 }
+
+#[test]
+fn properties_apply_to_the_prop_under_the_crosshair_after_can_property() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "props".into(),
+        priority: 1,
+        source: "state.asked, state.applied, state.last = 0, 0, ''
+            events.on('player.property_request', function(e)
+                state.asked += 1
+                if state.asked == 1 then return false end
+            end)
+            events.on('player.property', function(e) state.applied += 1 state.last = e.property end)
+            events.on('tick.post', function()
+                if game.tick() % 5 == 0 then
+                    for _, pl in ipairs(world.players()) do
+                        net.send('log', { asked = state.asked, applied = state.applied, last = state.last }, pl.id)
+                    end
+                end
+            end)"
+            .into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut sn = gm_net::ServerNet::new("gm_construct", glam::Vec3::new(823.235, -600.0, -143.6));
+    gm_script::attach(rt, &mut server, &mut sn.hooks);
+    let net = gm_net::Loopback::new(1, 0.0, 7);
+    let (mut s_ep, mut c_ep) = (net.endpoint(0), net.endpoint(1));
+    let mut client = gm_net::ClientNet::new(1, "bot");
+    let mut crt = gm_script::Runtime::client();
+    crt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "probe".into(),
+        priority: 1,
+        source: "net.receive('log', function(p) state.d = p.data end)".into(),
+        config: relaxed(),
+    })
+    .unwrap();
+    let mut step = |sn: &mut gm_net::ServerNet,
+                    client: &mut gm_net::ClientNet,
+                    server: &mut gm_server::Server<'_>,
+                    crt: &mut gm_script::Runtime,
+                    pitch: f32,
+                    n: usize| {
+        for _ in 0..n {
+            client.tick(
+                gm_net::NetCmd {
+                    view_angles: glam::Vec3::new(pitch, 0.0, 0.0),
+                    ..Default::default()
+                },
+                &mut c_ep,
+            );
+            net.tick();
+            sn.receive(server, &mut s_ep);
+            sn.tick(server);
+            sn.send(server, &mut s_ep);
+            client.receive(&mut c_ep);
+            crt.client_tick(&client.world, true);
+            let inbox = std::mem::take(&mut client.addon_msgs);
+            crt.client_net(&client.world, inbox);
+        }
+    };
+    let prop = |name: &str| gm_net::Command::Property { name: name.into() };
+    // a crate where the 30 degree look hits the floor
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 30);
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 40);
+    let b = server.sandbox.props()[0].id;
+    let rest = server.prop_state(b).unwrap().position;
+    // CanProperty vetoes the first request: the crate keeps its gravity
+    client.command(prop("gravity"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    let (asked, applied): (i64, i64) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.applied")
+        .unwrap();
+    assert_eq!((asked, applied), (1, 0));
+    assert!(server.sandbox.props()[0].gravity);
+    // gravity off: a 50 u/s push upward keeps going instead of falling back
+    client.command(prop("gravity"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    assert!(
+        !server.sandbox.props()[0].gravity,
+        "gravity property applied"
+    );
+    let body = server.body_of(b).unwrap();
+    server
+        .physics
+        .set_velocity(body, glam::Vec3::new(0.0, 0.0, 50.0), glam::Vec3::ZERO);
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 30);
+    let st = server.prop_state(b).unwrap();
+    assert!(
+        st.position.z - rest.z > 18.0 && st.velocity.z > 40.0,
+        "weightless crate rose {} at {} u/s",
+        st.position.z - rest.z,
+        st.velocity.z
+    );
+    // the crate now floats ~25 u up: look at it there (pitch 10) to switch gravity back on
+    step(&mut sn, &mut client, &mut server, &mut crt, 10.0, 2);
+    client.command(prop("gravity"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 10.0, 5);
+    assert!(server.sandbox.props()[0].gravity, "gravity back on");
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 90);
+    assert!(
+        (server.prop_state(b).unwrap().position.z - rest.z).abs() < 1.0,
+        "back on the floor"
+    );
+    // collision off: a second crate spawned onto it falls through to the floor
+    client.command(prop("collision_off"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    assert!(!server.sandbox.props()[0].collide);
+    // collision_off is not offered twice
+    client.command(prop("collision_off"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    let applied: i64 = crt.actors()[0].eval("return state.d.applied").unwrap();
+    assert_eq!(applied, 3);
+    client.command(gm_net::Command::Spawn {
+        model: "models/props_junk/wood_crate001a.mdl".into(),
+    });
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 120);
+    let a = server.sandbox.props()[1].id;
+    let az = server.prop_state(a).unwrap().position.z;
+    assert!(
+        (az - rest.z).abs() < 1.5,
+        "the crate fell through to {az} (floor rest {})",
+        rest.z
+    );
+    // the two crates now overlap; take the second away so the crosshair finds the first
+    assert!(server.remove_prop(a));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    client.command(prop("collision_on"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    assert!(server.sandbox.props()[0].collide);
+    // keep upright: a spin about X is undone within a few ticks
+    client.command(prop("keepupright"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 5);
+    assert!(server.sandbox.props()[0].upright.is_some());
+    server
+        .physics
+        .set_velocity(body, glam::Vec3::ZERO, glam::Vec3::new(400.0, 0.0, 0.0));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    let ang = server.prop_state(b).unwrap().angles;
+    assert!(
+        ang.0.abs() < 3.0 && ang.2.abs() < 3.0,
+        "kept upright, angles {ang:?}"
+    );
+    // remove: the crate is gone, the second one stays
+    client.command(prop("remove"));
+    step(&mut sn, &mut client, &mut server, &mut crt, 30.0, 10);
+    assert!(server.sandbox.props().is_empty());
+    let (asked, applied, last): (i64, i64, String) = crt.actors()[0]
+        .eval("return state.d.asked, state.d.applied, state.d.last")
+        .unwrap();
+    assert_eq!((asked, applied, last.as_str()), (7, 6, "remove"));
+}
