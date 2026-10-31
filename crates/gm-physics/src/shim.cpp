@@ -117,8 +117,11 @@ void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2)
 		s.mPosition1 = s.mPosition2 = anchor == 0 ? pa : anchor == 1 ? pb : anchor == 2 ? (pa + pb) * 0.5f : horiz;
 	}
 	using A = JPH::SixDOFConstraintSettings::EAxis;
-	const float mh = 1.0f / std::min(a->GetMotionProperties()->GetInverseMass(), b->GetMotionProperties()->GetInverseMass());
-	const float force = weld_env("GMP_WELD_FORCE", 80.0f) * mh;
+	// the correction force is capped per kg of the heavier body; a weld to the world is uncapped
+	const float ima = a->IsStatic() ? 0.0f : a->GetMotionProperties()->GetInverseMass();
+	const float imb = b->IsStatic() ? 0.0f : b->GetMotionProperties()->GetInverseMass();
+	const float im = std::min(ima, imb);
+	const float force = im > 0.0f ? weld_env("GMP_WELD_FORCE", 80.0f) / im : FLT_MAX;
 	for (int i = A::TranslationX; i <= A::TranslationZ; i++) {
 		if (force > 0.0f) {
 			s.MakeFreeAxis((A)i);
@@ -193,7 +196,9 @@ void gmp_rope_predict(void *system, float dt) {
 		if (len < 1e-6f) continue;
 		JPH::Vec3 dir = d / len;
 		float rate = (b2->GetPointVelocity(p2) - b1->GetPointVelocity(p1)).Dot(dir);
-		bool taut = len + rate * dt > r.max_d;
+		// the game catches a tick before the length is reached (balloon on a crate: taut at
+		// 62.0 u + 112 u/s on a 64 u rope), so look two steps ahead
+		bool taut = len + rate * dt * 2.0f > r.max_d;
 		r.c->SetDistance(taut ? r.max_d : r.min_d, r.max_d);
 		// the catch tick itself is a hard stop (171 deg/s on the hang against 120 through the spring)
 		JPH::SpringSettings ss = ROPE_SPRING;
