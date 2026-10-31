@@ -525,6 +525,7 @@ SCENARIOS.constraint = function(scn, done)
 		if IsValid(ph) then
 			ph:Wake()
 			if pr.frozen then ph:EnableMotion(false) end
+			if pr.nodrag then ph:EnableDrag(false) end
 		end
 		ents_[i] = ent
 	end

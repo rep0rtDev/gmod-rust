@@ -886,6 +886,11 @@ impl World {
         self.frozen.contains(&body.0)
     }
 
+    /// Stop applying air drag to a body (the game's `PhysObj:EnableDrag(false)`).
+    pub fn disable_drag(&mut self, body: BodyHandle) {
+        self.drags.retain(|d| d.body != body.0);
+    }
+
     /// Weld: the two bodies keep their current relative pose.
     pub fn weld(&mut self, a: BodyHandle, b: BodyHandle) -> Option<ConstraintHandle> {
         let c = unsafe { gmp_add_fixed_constraint(self.system.as_raw(), a.0, b.0) };

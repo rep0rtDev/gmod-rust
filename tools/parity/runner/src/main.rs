@@ -189,6 +189,8 @@ struct PropSpec {
     angles: Option<[f32; 3]>,
     #[serde(default)]
     frozen: bool,
+    #[serde(default)]
+    nodrag: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1470,6 +1472,9 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
         })?;
         if pr.frozen {
             world.freeze(body);
+        }
+        if pr.nodrag {
+            world.disable_drag(body);
         }
         bodies.push(body);
         hull_points.push(hulls.iter().flatten().copied().collect());
