@@ -63,6 +63,8 @@ pub struct Quality {
     pub trilinear: bool,
     /// `mat_forceaniso` 1..16.
     pub aniso: u32,
+    /// `r_rootlod`: the lowest model LOD drawn (Model Detail High 0 / Medium 1 / Low 2).
+    pub root_lod: u32,
     /// `mat_antialias` MSAA samples (1 / 2 / 4 / 8, already clamped to what the adapter does).
     pub msaa: u32,
 }
@@ -74,6 +76,7 @@ impl Default for Quality {
             picmip: 0,
             trilinear: false,
             aniso: 1,
+            root_lod: 0,
             msaa: 1,
         }
     }
@@ -1115,6 +1118,7 @@ impl WorldRenderer {
             &mut per_material,
             &mut per_material_sky,
             &skybox_faces_bounds(bsp, &skybox_faces),
+            quality.root_lod as usize,
         )?;
         stats.props = prop_stats.0;
         stats.prop_models = prop_stats.1;
@@ -1634,7 +1638,8 @@ impl WorldRenderer {
         skin: u8,
         body: &str,
     ) -> Option<DynModel> {
-        let (mdl, vvd, vtx) = crate::props::load_model(mount, path).ok()?;
+        let (mdl, vvd, vtx, lod_index) =
+            crate::props::load_model(mount, path, self.quality.root_lod as usize).ok()?;
         let skin_table = mdl.skins.get(skin as usize).or_else(|| mdl.skins.first());
         let body_choice = |bi: usize, n: usize| body_group_choice(body, bi, n);
         let mut materials: crate::props::MaterialMap = HashMap::new();
@@ -1654,7 +1659,9 @@ impl WorldRenderer {
                 continue;
             };
             let vertex_base = (mm.vertex_index / 48).max(0) as usize;
-            let Some(lod) = vm.lods.first() else { continue };
+            let Some(lod) = vm.lods.get(lod_index).or(vm.lods.last()) else {
+                continue;
+            };
             for (mi, mesh) in lod.meshes.iter().enumerate() {
                 let Some(mdl_mesh) = mm.meshes.get(mi) else {
                     continue;

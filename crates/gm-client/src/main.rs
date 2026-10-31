@@ -831,6 +831,7 @@ impl App {
             picmip: self.settings.mat_picmip,
             trilinear: self.settings.mat_trilinear,
             aniso: self.settings.mat_forceaniso,
+            root_lod: self.settings.r_rootlod.max(0) as u32,
             msaa: pick_msaa(&gpu.adapter, format, self.settings.mat_antialias),
         };
         let world = WorldRenderer::new(&gpu, &self.mount, &bsp, format, quality)?;

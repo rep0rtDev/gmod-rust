@@ -7,7 +7,7 @@ fn main() {
             println!("{path}: missing");
             continue;
         };
-        match gm_render::props::load_model(&mount, &path) {
+        match gm_render::props::load_model(&mount, &path, 0) {
             Err(e) => {
                 println!("{path}: no mesh ({e})");
                 let Ok(mdl) = gm_formats::mdl::Mdl::parse(&bytes) else {
@@ -78,7 +78,7 @@ fn main() {
                     }
                 }
             }
-            Ok((mdl, vvd, vtx)) => {
+            Ok((mdl, vvd, vtx, _)) => {
                 let h = &mdl.header;
                 let mut lo = [f32::MAX; 3];
                 let mut hi = [f32::MIN; 3];

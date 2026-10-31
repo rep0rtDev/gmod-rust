@@ -76,3 +76,8 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   a multisampled depth and resolve into the frame (or the bloom scene texture) at the end of
   each pass (`resolve` on `draw` / `ModelTarget` / `draw_world`); spawn-menu icons draw into
   64 px MSAA targets and resolve into the icon texture. Screen-space UI stays single-sample.
+- `r_rootlod` is Model Detail: `Quality.root_lod` (High 0 / Medium 1 / Low 2) is the lowest
+  VTX LOD drawn for static props and dynamic models (`props::load_model` takes it, clamps it
+  to the LODs the model has and to the MDL's own root LOD, parses the VVD fixups for that
+  level and every mesh builder uses that LOD). Distance-based LOD switching
+  (`switch_point`) is not done: like the engine with `r_lod` forced, one LOD per model.

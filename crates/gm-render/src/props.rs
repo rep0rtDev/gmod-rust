@@ -17,6 +17,8 @@ pub struct LoadedModel {
     pub mdl: Mdl,
     pub vvd: Vvd,
     pub vtx: Vtx,
+    /// VTX LOD the VVD was fixed up for (`r_rootlod` clamped to the model).
+    pub lod: usize,
     /// Per texture index: material key in the shared material map, or None if missing.
     pub texture_keys: Vec<Option<String>>,
 }
@@ -48,19 +50,27 @@ pub fn angle_matrix(angles: [f32; 3]) -> Mat3 {
     Mat3::from_quat(q)
 }
 
-pub fn load_model(mount: &Mount, path: &str) -> Result<(Mdl, Vvd, Vtx)> {
+/// Load a model's MDL / VVD / VTX. `root_lod` (`r_rootlod`) is the lowest LOD drawn: the
+/// VTX LOD used for every mesh and the VVD fixup level, clamped to what the model has;
+/// returned as the fourth element.
+pub fn load_model(mount: &Mount, path: &str, root_lod: usize) -> Result<(Mdl, Vvd, Vtx, usize)> {
     let stem = path.trim_end_matches(".mdl");
     let mdl = Mdl::parse(&mount.read(path)?)?;
-    let vvd = Vvd::parse(
-        &mount.read(&format!("{stem}.vvd"))?,
-        mdl.header.root_lod as usize,
-    )?;
     let vtx_bytes = mount
         .read(&format!("{stem}.dx90.vtx"))
         .or_else(|_| mount.read(&format!("{stem}.dx80.vtx")))
         .or_else(|_| mount.read(&format!("{stem}.sw.vtx")))?;
     let vtx = Vtx::parse(&vtx_bytes, &mdl)?;
-    Ok((mdl, vvd, vtx))
+    let max_lod = vtx
+        .body_parts
+        .iter()
+        .flat_map(|bp| bp.models.iter())
+        .map(|m| m.lods.len().saturating_sub(1))
+        .min()
+        .unwrap_or(0);
+    let lod = root_lod.max(mdl.header.root_lod as usize).min(max_lod);
+    let vvd = Vvd::parse(&mount.read(&format!("{stem}.vvd"))?, lod)?;
+    Ok((mdl, vvd, vtx, lod))
 }
 
 pub type MaterialMap = HashMap<String, Option<(Material, Rgba)>>;
@@ -117,6 +127,7 @@ pub fn collect_static_props(
     per_material: &mut HashMap<String, Vec<u32>>,
     per_material_sky: &mut HashMap<String, Vec<u32>>,
     skybox_bounds: &Option<([f32; 3], [f32; 3])>,
+    root_lod: usize,
 ) -> Result<(usize, usize, usize, Vec<String>)> {
     let props = StaticProps::parse(bsp)?;
     let mut models: HashMap<u16, Option<LoadedModel>> = HashMap::new();
@@ -134,7 +145,7 @@ pub fn collect_static_props(
         };
         let entry = models.entry(prop.model).or_insert_with(|| {
             let path = props.models.get(prop.model as usize)?;
-            let (mdl, vvd, vtx) = match load_model(mount, path) {
+            let (mdl, vvd, vtx, lod_index) = match load_model(mount, path, root_lod) {
                 Ok(m) => m,
                 Err(e) => {
                     missing.push(format!("{path}: {e}"));
@@ -147,6 +158,7 @@ pub fn collect_static_props(
             Some(LoadedModel {
                 mdl,
                 vvd,
+                lod: lod_index,
                 vtx,
                 texture_keys,
             })
@@ -183,7 +195,7 @@ pub fn collect_static_props(
                 continue;
             };
             let vertex_base = (mdl_model.vertex_index / 48).max(0) as usize;
-            let Some(lod) = vtx_model.lods.first() else {
+            let Some(lod) = vtx_model.lods.get(model.lod).or(vtx_model.lods.last()) else {
                 continue;
             };
             for (mi, mesh) in lod.meshes.iter().enumerate() {

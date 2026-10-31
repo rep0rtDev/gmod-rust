@@ -13,7 +13,7 @@ struct Posed {
 
 fn posed(mount: &gm_content::Mount, path: &str, seq_name: &str, t: f32) -> Posed {
     let bytes = mount.read(path).unwrap();
-    let (mdl, vvd, _vtx) = gm_render::props::load_model(mount, path).unwrap();
+    let (mdl, vvd, _vtx, _) = gm_render::props::load_model(mount, path, 0).unwrap();
     let seqs = gm_formats::mdl::sequences(&bytes, &mdl.header);
     let anims = gm_formats::mdl::anim_descs(&bytes, &mdl.header);
     let seq = seqs.iter().find(|s| s.name == seq_name).expect("sequence");
