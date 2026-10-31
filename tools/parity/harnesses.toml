@@ -3286,3 +3286,15 @@ crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
 
+
+[[harness]]
+name = "constraint_weld_pair_nocollide"
+scenario = "constraint/weld_pair_nocollide"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
