@@ -1,0 +1,48 @@
+{
+ "name": "constraint_ballsocket_hang",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "ticks": 400,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -40.0
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  },
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -440.0,
+    -80.0
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": false
+  }
+ ],
+ "constraints": [
+  {
+   "kind": "ballsocket",
+   "a": 1,
+   "b": 2,
+   "local_b": [
+    0,
+    30,
+    19.3
+   ]
+  }
+ ]
+}

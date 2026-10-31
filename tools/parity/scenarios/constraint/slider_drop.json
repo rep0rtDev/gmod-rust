@@ -1,0 +1,53 @@
+{
+ "name": "constraint_slider_drop",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "ticks": 300,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -40.0
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  },
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -100.0
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": false
+  }
+ ],
+ "constraints": [
+  {
+   "kind": "slider",
+   "a": 1,
+   "b": 2,
+   "local_a": [
+    0,
+    0,
+    -19.3
+   ],
+   "local_b": [
+    0,
+    0,
+    19.3
+   ]
+  }
+ ]
+}

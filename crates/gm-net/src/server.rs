@@ -754,7 +754,8 @@ impl ServerNet {
                         settings,
                     } => {
                         if reload {
-                            server.sandbox.tool_reload(slot.player);
+                            let hit = server.tool_hit(slot.player);
+                            server.sandbox.tool_reload(slot.player, &tool, hit.as_ref());
                         } else if let Some(hit) = server.tool_hit(slot.player) {
                             let allowed = self.hooks.as_mut().is_none_or(|h| {
                                 h.tool_before(server, slot.player, &tool, right, &hit)

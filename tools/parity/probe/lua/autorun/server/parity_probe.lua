@@ -527,6 +527,12 @@ SCENARIOS.constraint = function(scn, done)
 			ok = constraint.Axis(a, b, 0, 0, la, lb, c.force or 0, c.torque or 0, c.friction or 0, c.nocollide and 1 or 0, c.axis and Vector(c.axis[1], c.axis[2], c.axis[3]) or nil)
 		elseif c.kind == "nocollide" then
 			ok = constraint.NoCollide(a, b, 0, 0)
+		elseif c.kind == "ballsocket" then
+			ok = constraint.Ballsocket(a, b, 0, 0, lb, c.force or 0, c.torque or 0, c.nocollide and 1 or 0)
+		elseif c.kind == "slider" then
+			ok = constraint.Slider(a, b, 0, 0, la, lb, c.width or 1.5, "cable/cable")
+		elseif c.kind == "elastic" then
+			ok = constraint.Elastic(a, b, 0, 0, la, lb, c.constant or 500, c.damping or 3, c.rdamping or 0.01, "cable/cable", c.width or 2, c.stretchonly == nil and 1 or (c.stretchonly and 1 or 0))
 		end
 		made[#made + 1] = { kind = c.kind, ok = IsValid(ok) and ok:GetClass() or tostring(ok) }
 	end
@@ -659,6 +665,8 @@ ASYNC.sandbox = true
 -- { kind = "toolgun", start = {x,y,z}, props = { {model=..., pos={...}, angles={...}, frozen=false} },
 --   ops = { {op="click", tool="weld", pitch=30, yaw=0, button="left"}, {op="undo"}, {op="wait", ticks=10}, {op="cvar", name=..., value=...} } }
 SCENARIOS.toolgun = function(scn, done)
+	-- the sandbox bot wanders on its own AI between clicks (15 u per op in long recordings): freeze it
+	RunConsoleCommand("bot_zombie", "1")
 	local bot = player.GetBots()[1]
 	if not IsValid(bot) then
 		RunConsoleCommand("bot")
@@ -716,13 +724,13 @@ SCENARIOS.toolgun = function(scn, done)
 				out.props[i] = { index = -1 }
 			end
 		end
-		for _, cls in ipairs({ "phys_constraint", "phys_lengthconstraint", "phys_ballsocket", "phys_hinge", "phys_slideconstraint", "logic_collision_pair" }) do
+		for _, cls in ipairs({ "phys_constraint", "phys_lengthconstraint", "phys_ballsocket", "phys_hinge", "phys_slideconstraint", "phys_spring", "logic_collision_pair" }) do
 			for _, c in ipairs(ents.FindByClass(cls)) do
 				local t = c:GetTable()
 				out.constraints[#out.constraints + 1] = { index = c:EntIndex(), class = cls, type = t.Type,
 					ent1 = entref(t.Ent1), ent2 = entref(t.Ent2), bone1 = t.Bone1, bone2 = t.Bone2,
 					lpos1 = vec(t.LPos1), lpos2 = vec(t.LPos2), length = t.length, addlength = t.addlength,
-					forcelimit = t.forcelimit, nocollide = t.nocollide, rigid = t.rigid, width = t.width, material = t.material, torquelimit = t.torquelimit, friction = t.friction,
+					forcelimit = t.forcelimit, nocollide = t.nocollide, rigid = t.rigid, width = t.width, material = t.material, torquelimit = t.torquelimit, friction = t.friction, lpos = vec(t.LPos), constant = t.constant, damping = t.damping, rdamping = t.rdamping, stretchonly = t.stretchonly,
 					pos = vec(c:GetPos()) }
 			end
 		end
@@ -781,7 +789,14 @@ SCENARIOS.toolgun = function(scn, done)
 			local tool = IsValid(wep) and wep:GetToolObject(op.tool) or nil
 			if tool and tr.Hit then
 				local fn = (op.button == "right") and tool.RightClick or (op.button == "reload") and tool.Reload or tool.LeftClick
+				-- a bot has no client cvars: the scenario's settings stand in for GetClientNumber / GetClientInfo
+				local settings = op.settings or {}
+				local oldNum, oldInfo = tool.GetClientNumber, tool.GetClientInfo
+				tool.GetClientNumber = function(self, name, default) local v = settings[name]; if v ~= nil then return tonumber(v) or 0 end return oldNum(self, name, default) end
+				tool.GetClientInfo = function(self, name, default) local v = settings[name]; if v ~= nil then return tostring(v) end return oldInfo(self, name, default) end
+				rec.settings = settings
 				local ok, ret = pcall(fn, tool, tr)
+				tool.GetClientNumber, tool.GetClientInfo = oldNum, oldInfo
 				rec.ok, rec.ret = ok, ok and ret or tostring(ret)
 			else
 				rec.ok, rec.ret = false, tool and "miss" or "no tool"

@@ -34,10 +34,28 @@ Two left clicks on props (the world is refused as the first object): `CheckLimit
 
 Two left clicks (`toolgun_axis`, frozen crates so nothing drifts): the first must hit a prop (the world is refused, stage stays 0); on the second the first prop is turned like the weld's right click (`AlignAngles` of the hit normals) and moved so that its hit point sits 0.2 u in front of the second hit along the second normal (`TargetPos = WPos2 + (centre - grabbed) + Norm2 * 0.2`); the hinge axis is `LPos1 = Phys1:WorldToLocal(WPos2 + Norm2)` in the moved prop, `LPos2` the stored local hit of the second object (world position for the world). Measured: crate grabbed on its -x face (hit 879.942, -500, -111.74) onto the second crate's -x face at 879.942, -455.696, -105.192 ends at 859.683, -455.696, -117.152 facing yaw 180 with `LPos1` -19.258, 0, 11.96 and `LPos2` -20.058, -15.696, 18.508; onto the floor at 855.719, -518.755 it ends at 836.042, -513.528, -123.857 with angles 0, -90, -90 and `LPos1` 5.227, 19.112, 19.677. Ours equal within 0.001 u and 0.04 degrees. `phys_hinge`, undo `Axis` (`Undone #tool.axis.name`), `AddCount("constraints")`, cleanup `constraints`; forcelimit, torquelimit, hingefriction, nocollide from the client convars (a bot: 0).
 
+## Ballsocket
+
+Two left clicks (`toolgun_ballsocket`, 7 ops); the world may be either object (clicking the same entity twice makes nothing but still returns true). `constraint.Ballsocket(Ent1, Ent2, 0, 0, LPos2, forcelimit, torquelimit, nocollide)`: a `phys_ballsocket` at the second hit point in the second object's frame (world position for the world; with the world as the first object the point is still in the prop's frame: `-20.058, 0, 11.96` for the crate hit on its -x face), `forcelimit` and `nocollide` (spawnflag 1) from the client convars. Undo `BallSocket` (`#tool.ballsocket.name`, one entity), `AddCount("constraints")`, cleanup `constraints`. Reload on an entity removes every ballsocket touching it (`constraint.RemoveConstraints(ent, "Ballsocket")`, true; false on the world). Ours: `ConstraintKind::Ballsocket`, a Jolt `PointConstraint` at the world point, `set_pair_collision` off when nocollide; forcelimit and torquelimit are stored, not simulated (no breaking). Equal on all 7 ops.
+
+Physics (`constraint_ballsocket_*`): a crate hanging from a frozen crate by a ballsocket at its own top point stays put (`_nocollide`, 0.02 u); a crate hung 30 u off to the side swings as a pendulum (`_hang`): the first swing matches (within 2 u to tick 105) but the game's pendulum loses energy faster than ours (7 u apart by tick 115, 13 degrees at rest), open.
+
+## Slider
+
+Two left clicks (`toolgun_slider`, 7 ops): `constraint.Slider(Ent1, Ent2, 0, 0, LPos1, LPos2, width, material)`: a `phys_slideconstraint` between the two local hit points (each in its own object's frame) plus a `keyframe_rope` of `width` between them when `width > 0` (the rope is the undo's second entity; a bot's convars read 0 and "", so a click without settings makes no rope and the undo has one entity). With the world as the first object the game spawns a `gmod_anchor` at the hit point and attaches to it (`LPos1 = 0, 0, 0`); ours keeps the world and reports the anchor in its place. Undo `Slider`, `AddCount("ropeconstraints")`, cleanup `ropeconstraints`, reload removes the sliders touching the hit entity. Ours: `ConstraintKind::Slider`, a Jolt `SliderConstraint` along the axis from the first point to the second (orientation locked, no friction). Equal on all 7 ops.
+
+Physics (`constraint_slider_*`): a crate on a vertical slider under a frozen crate falls at g and lands (0.25 u over 300 ticks); on an axis tilted 43 degrees it slides down at `g * cos` (17.94, -19.20 u/s per 4 ticks along 20, -21.4) and stops on the floor (0.54 u). Both within tolerance.
+
+## Elastic
+
+Two left clicks (`toolgun_elastic`, 8 ops): `constraint.Elastic(Ent1, Ent2, 0, 0, LPos1, LPos2, constant, damping, rdamping, material, width, stretchonly)`: a `phys_spring` between the two hit points with `length` = their distance at creation (the world's point in world space), a `keyframe_rope` of `width` when `width > 0`; `constant`, `damping`, `rdamping`, `width`, `material`, `stretch_only` from the client convars. Undo `Elastic` (two entities with the rope), `AddCount("ropeconstraints")`, reload removes the elastics touching the hit entity. Ours: `ConstraintKind::Elastic`, integrated by `gm-physics` as an explicit per tick impulse `F = -constant * (len - length) - damping * rate` along the line (a Jolt soft constraint at one solver step per tick damps about three times more than the game); `rdamping` is stored only. Equal on all 8 ops.
+
+Physics (`constraint_elastic_*`): a crate under a frozen crate on a 3000 / 10 spring (`_stiff`, stretchonly 0) oscillates about 6 u of stretch with a 41.9 tick period and loses 7% of its amplitude per half period; ours within 0.03 u over 500 ticks. A 500 / 3 spring (`_hang`) is too weak for a 30 kg crate: it reaches the floor at tick 13 like ours, but the game's crate then slides 4.5 u sideways and yaws 5.4 degrees while ours stays put (rest 4.5 u, open).
+
 ## Undo and cleanup
 
 `gmod_undo` removes the last constraint and its count drops; removing a prop removes the constraints attached to it. `gmod_cleanup` removes constraints with everything else and leaves the undo entries behind (dead entries are skipped by the next undo).
 
 ## Not yet measured
 
-The other stools (ballsocket, slider, ...), the hull-trace fallback, ragdoll bones, ropes with a width (keyframe_rope), the limits when hit.
+The other stools (hydraulic, winch, pulley, muscle, thruster, hoverball, balloon, wheel, button, dynamite, lamp, trails, ...), the hull-trace fallback, ragdoll bones, the keyframe_rope's own simulation, force / torque limits breaking a constraint.

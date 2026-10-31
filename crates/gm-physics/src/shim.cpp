@@ -38,6 +38,8 @@ float gmp_get_penetration_slop(const void *system) {
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <vector>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 
@@ -155,6 +157,39 @@ void *gmp_add_hinge_constraint(void *system, unsigned int id1, unsigned int id2,
 	return c;
 }
 
+// ball socket (phys_ballsocket): the two bodies share a world space point
+void *gmp_add_point_constraint(void *system, unsigned int id1, unsigned int id2, float px, float py, float pz) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyID ids[2] = { JPH::BodyID(id1), JPH::BodyID(id2) };
+	JPH::BodyLockMultiWrite lock(sys->GetBodyLockInterface(), ids, 2);
+	JPH::Body *a = lock.GetBody(0), *b = lock.GetBody(1);
+	if (!a || !b) return nullptr;
+	JPH::PointConstraintSettings s;
+	s.mSpace = JPH::EConstraintSpace::WorldSpace;
+	s.mPoint1 = s.mPoint2 = JPH::RVec3(px, py, pz);
+	JPH::Constraint *c = s.Create(*a, *b);
+	sys->AddConstraint(c);
+	return c;
+}
+// slider (phys_slideconstraint): body 2 slides without friction along the world axis from its
+// point on body 1 to its point on body 2, keeping its orientation (measured: g * cos on a tilted axis)
+void *gmp_add_slider_constraint(void *system, unsigned int id1, unsigned int id2, float x1, float y1, float z1,
+                                float x2, float y2, float z2) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyID ids[2] = { JPH::BodyID(id1), JPH::BodyID(id2) };
+	JPH::BodyLockMultiWrite lock(sys->GetBodyLockInterface(), ids, 2);
+	JPH::Body *a = lock.GetBody(0), *b = lock.GetBody(1);
+	if (!a || !b) return nullptr;
+	JPH::SliderConstraintSettings s;
+	s.mSpace = JPH::EConstraintSpace::WorldSpace;
+	s.mAutoDetectPoint = true;
+	JPH::Vec3 axis = JPH::Vec3(x2 - x1, y2 - y1, z2 - z1);
+	if (axis.LengthSq() < 1e-10f) axis = JPH::Vec3::sAxisY();
+	s.SetSliderAxis(axis.Normalized());
+	JPH::Constraint *c = s.Create(*a, *b);
+	sys->AddConstraint(c);
+	return c;
+}
 // teleport (PhysObj:SetPos/SetAngles): Jolt metres, quaternion xyzw
 void gmp_set_pose(void *system, unsigned int id, float px, float py, float pz, float qx, float qy, float qz,
                   float qw) {

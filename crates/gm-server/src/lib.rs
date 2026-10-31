@@ -3121,6 +3121,34 @@ impl<'w> Server<'w> {
                     let axis = if axis == Vec3::ZERO { Vec3::Z } else { axis };
                     self.physics.hinge(a, b, point, axis)
                 }
+                ConstraintKind::Ballsocket {
+                    lpos, nocollide, ..
+                } => {
+                    if *nocollide {
+                        self.physics.set_pair_collision(a, b, false);
+                    }
+                    self.physics.ballsocket(a, b, world_of(c.ent2, *lpos))
+                }
+                ConstraintKind::Slider { lpos1, lpos2, .. } => {
+                    self.physics
+                        .slider(a, b, world_of(c.ent1, *lpos1), world_of(c.ent2, *lpos2))
+                }
+                ConstraintKind::Elastic {
+                    lpos1,
+                    lpos2,
+                    constant,
+                    damping,
+                    stretchonly,
+                    ..
+                } => self.physics.spring(
+                    a,
+                    b,
+                    world_of(c.ent1, *lpos1),
+                    world_of(c.ent2, *lpos2),
+                    *constant,
+                    *damping,
+                    *stretchonly,
+                ),
                 ConstraintKind::NoCollide => {
                     self.physics.set_pair_collision(a, b, false);
                     self.nocollides.insert(c.id, (a, b));

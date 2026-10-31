@@ -139,6 +139,35 @@ pub enum ConstraintKind {
         friction: f32,
         nocollide: bool,
     },
+    /// `constraint.Ballsocket`: `phys_ballsocket` at `lpos` of the second object (its frame, world
+    /// space for the world); `forcelimit` / `torquelimit` are stored, not simulated.
+    Ballsocket {
+        lpos: Vec3,
+        forcelimit: f32,
+        torquelimit: f32,
+        nocollide: bool,
+    },
+    /// `constraint.Slider`: `phys_slideconstraint` along the axis from `lpos1` to `lpos2`, with a
+    /// keyframe rope of `width` drawn between them.
+    Slider {
+        lpos1: Vec3,
+        lpos2: Vec3,
+        width: f32,
+        material: String,
+    },
+    /// `constraint.Elastic`: `phys_spring` between `lpos1` and `lpos2` with `F = -constant * x -
+    /// damping * v` about `length` (their distance when made); `stretchonly` is slack when shorter.
+    Elastic {
+        lpos1: Vec3,
+        lpos2: Vec3,
+        constant: f32,
+        damping: f32,
+        rdamping: f32,
+        width: f32,
+        material: String,
+        length: f32,
+        stretchonly: bool,
+    },
     /// `constraint.Rope`: `phys_lengthconstraint`; local attachment points are in the entity
     /// frame (world position for the world).
     Rope {
@@ -192,6 +221,16 @@ pub struct ToolSettings {
     pub rope_width: f32,
     pub rope_material: String,
     pub rope_rigid: bool,
+    pub ballsocket_forcelimit: f32,
+    pub ballsocket_nocollide: bool,
+    pub slider_width: f32,
+    pub slider_material: String,
+    pub elastic_constant: f32,
+    pub elastic_damping: f32,
+    pub elastic_rdamping: f32,
+    pub elastic_width: f32,
+    pub elastic_material: String,
+    pub elastic_stretchonly: bool,
 }
 
 impl Default for ToolSettings {
@@ -209,6 +248,16 @@ impl Default for ToolSettings {
             rope_width: 0.0,
             rope_material: String::new(),
             rope_rigid: false,
+            ballsocket_forcelimit: 0.0,
+            ballsocket_nocollide: false,
+            slider_width: 1.5,
+            slider_material: "cable/cable".into(),
+            elastic_constant: 500.0,
+            elastic_damping: 3.0,
+            elastic_rdamping: 0.01,
+            elastic_width: 2.0,
+            elastic_material: "cable/cable".into(),
+            elastic_stretchonly: true,
         }
     }
 }
@@ -898,9 +947,27 @@ impl Sandbox {
     }
 
     /// `TOOL:Reload` of the constraint tools: forget the selected objects.
-    pub fn tool_reload(&mut self, player: u32) -> bool {
+    /// `TOOL:Reload`: the constraint stools remove every constraint of their type touching the
+    /// hit entity (`constraint.RemoveConstraints`), true when any went; the world has none.
+    pub fn tool_reload(&mut self, player: u32, tool: &str, hit: Option<&ToolHit>) -> bool {
         self.clear_objects(player);
-        false
+        let Some(ent) = hit.and_then(|h| h.ent) else {
+            return false;
+        };
+        let is_type = |k: &ConstraintKind| match tool {
+            "ballsocket" => matches!(k, ConstraintKind::Ballsocket { .. }),
+            "slider" => matches!(k, ConstraintKind::Slider { .. }),
+            "elastic" => matches!(k, ConstraintKind::Elastic { .. }),
+            "axis" => matches!(k, ConstraintKind::Axis { .. }),
+            "weld" => matches!(k, ConstraintKind::Weld { .. }),
+            "rope" => matches!(k, ConstraintKind::Rope { .. }),
+            "nocollide" => matches!(k, ConstraintKind::NoCollide),
+            _ => false,
+        };
+        let before = self.constraints.len();
+        self.constraints
+            .retain(|c| !(is_type(&c.kind) && (c.ent1 == Some(ent) || c.ent2 == Some(ent))));
+        self.constraints.len() != before
     }
 
     /// Left click of `weld` or `rope` on what the tool trace hit. Returns what `TOOL:LeftClick`
@@ -912,7 +979,17 @@ impl Sandbox {
 
     /// Whether the Rust sandbox implements this stool (others may come from scripts).
     pub fn knows_tool(tool: &str) -> bool {
-        matches!(tool, "weld" | "rope" | "axis" | "nocollide" | "duplicator")
+        matches!(
+            tool,
+            "weld"
+                | "rope"
+                | "axis"
+                | "nocollide"
+                | "duplicator"
+                | "ballsocket"
+                | "slider"
+                | "elastic"
+        )
     }
 
     /// The rope stool's second click on the two stored objects (the Rust rules; scripted stools
@@ -949,6 +1026,96 @@ impl Sandbox {
 
     /// The axis stool's second click on the two stored objects (the Rust rules; scripted stools
     /// call it through the `axis` tool op).
+    /// Second click of the ballsocket, slider and elastic stools (measured, `toolgun_ballsocket`
+    /// / `_slider` / `_elastic`): the same entity twice makes nothing but still returns true; the
+    /// ballsocket counts as a constraint, the other two as rope constraints with their rope.
+    pub fn finish_two_point(&mut self, player: u32, tool: &str, events: &mut Vec<Event>) -> bool {
+        let objs = self.tool(player).objects;
+        if objs.len() < 2 {
+            return false;
+        }
+        let (o1, o2) = (objs[0].clone(), objs[1].clone());
+        let count = if tool == "ballsocket" {
+            "constraints"
+        } else {
+            "ropeconstraints"
+        };
+        if !self.check_limit(player, count, events) {
+            self.clear_objects(player);
+            return false;
+        }
+        if o1.ent != o2.ent {
+            let s = self.tool_settings.clone();
+            let (wpos1, wpos2) = (self.object_world_pos(&o1), self.object_world_pos(&o2));
+            let (kind, name, text, rope) = match tool {
+                "ballsocket" => (
+                    ConstraintKind::Ballsocket {
+                        lpos: o2.pos,
+                        forcelimit: s.ballsocket_forcelimit,
+                        torquelimit: 0.0,
+                        nocollide: s.ballsocket_nocollide,
+                    },
+                    "BallSocket",
+                    "ballsocket",
+                    false,
+                ),
+                "slider" => (
+                    ConstraintKind::Slider {
+                        lpos1: o1.pos,
+                        lpos2: o2.pos,
+                        width: s.slider_width,
+                        material: s.slider_material.clone(),
+                    },
+                    "Slider",
+                    "slider",
+                    s.slider_width > 0.0,
+                ),
+                _ => (
+                    ConstraintKind::Elastic {
+                        lpos1: o1.pos,
+                        lpos2: o2.pos,
+                        constant: s.elastic_constant,
+                        damping: s.elastic_damping,
+                        rdamping: s.elastic_rdamping,
+                        width: s.elastic_width,
+                        material: s.elastic_material.clone(),
+                        length: wpos1.distance(wpos2),
+                        stretchonly: s.elastic_stretchonly,
+                    },
+                    "Elastic",
+                    "elastic",
+                    s.elastic_width > 0.0,
+                ),
+            };
+            let id = self.next_id;
+            self.next_id += 1;
+            self.constraints.push(Constraint {
+                id,
+                owner: player,
+                ent1: o1.ent,
+                ent2: o2.ent,
+                kind,
+            });
+            // the keyframe rope is its own entity in the undo; none for width <= 0
+            let mut undo_ents = vec![id];
+            if rope {
+                undo_ents.push(self.next_id);
+                self.next_id += 1;
+            }
+            self.push_undo(
+                player,
+                name,
+                format!("#tool.{text}.name"),
+                Some(format!("Undone #tool.{text}.name")),
+                undo_ents,
+            );
+            self.add_count(player, count, id);
+            self.add_cleanup(player, count, id);
+        }
+        self.clear_objects(player);
+        true
+    }
+
     pub fn finish_axis(&mut self, player: u32, events: &mut Vec<Event>) -> bool {
         let objs = self.tool(player).objects;
         if objs.len() < 2 {
@@ -1060,6 +1227,7 @@ impl Sandbox {
             }
             "rope" => self.finish_rope(player, events),
             "axis" => self.finish_axis(player, events),
+            "ballsocket" | "slider" | "elastic" => self.finish_two_point(player, tool, events),
             "nocollide" => {
                 if !self.check_limit(player, "constraints", events) {
                     self.clear_objects(player);

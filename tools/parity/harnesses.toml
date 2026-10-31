@@ -2825,3 +2825,103 @@ crates = ["gm-move", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
+
+[[harness]]
+name = "constraint_ballsocket_hang"
+scenario = "constraint/ballsocket_hang"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_ballsocket_nocollide"
+scenario = "constraint/ballsocket_nocollide"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_slider_drop"
+scenario = "constraint/slider_drop"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_slider_diag"
+scenario = "constraint/slider_diag"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_elastic_hang"
+scenario = "constraint/elastic_hang"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_elastic_stiff"
+scenario = "constraint/elastic_stiff"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "toolgun_ballsocket"
+scenario = "toolgun/ballsocket"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_slider"
+scenario = "toolgun/slider"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_elastic"
+scenario = "toolgun/elastic"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+

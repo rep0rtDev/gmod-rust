@@ -208,6 +208,55 @@ struct OpSpec {
     wait: Option<u32>,
     #[serde(default)]
     ticks: Option<u32>,
+    /// The stool's client settings for this click (the probe overrides `GetClientNumber` /
+    /// `GetClientInfo` with them; a bot has no cvars, so anything missing reads 0 / "").
+    #[serde(default)]
+    settings: Option<serde_json::Map<String, Value>>,
+}
+
+/// Puts a click's `settings` into the sandbox's tool settings the way the probe's bot sees them
+/// (only the stools whose recordings carry per-click settings; missing numbers are 0, strings "").
+fn apply_click_settings(
+    sb: &mut gm_sandbox::Sandbox,
+    tool: &str,
+    settings: Option<&serde_json::Map<String, Value>>,
+) {
+    if !matches!(tool, "ballsocket" | "slider" | "elastic") {
+        return;
+    }
+    let num = |k: &str| {
+        settings
+            .and_then(|m| m.get(k))
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0) as f32
+    };
+    let flag = |k: &str| num(k) != 0.0;
+    let text = |k: &str| {
+        settings
+            .and_then(|m| m.get(k))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let ts = &mut sb.tool_settings;
+    match tool {
+        "ballsocket" => {
+            ts.ballsocket_forcelimit = num("forcelimit");
+            ts.ballsocket_nocollide = flag("nocollide");
+        }
+        "slider" => {
+            ts.slider_width = num("width");
+            ts.slider_material = text("material");
+        }
+        _ => {
+            ts.elastic_constant = num("constant");
+            ts.elastic_damping = num("damping");
+            ts.elastic_rdamping = num("rdamping");
+            ts.elastic_width = num("width");
+            ts.elastic_material = text("material");
+            ts.elastic_stretchonly = flag("stretch_only");
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -223,6 +272,12 @@ struct ConstraintSpec {
     length: f32,
     #[serde(default)]
     rigid: bool,
+    #[serde(default)]
+    constant: Option<f32>,
+    #[serde(default)]
+    damping: Option<f32>,
+    #[serde(default)]
+    stretchonly: Option<bool>,
 }
 
 /// A prop the move probe spawns: frozen, or a frozen one teleported by `vel * dt` per tick
@@ -936,6 +991,30 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
                 let pa = sa.position + sa.rotation * Vec3::from(c.local_a.unwrap_or([0.0; 3]));
                 let pb = sb.position + sb.rotation * Vec3::from(c.local_b.unwrap_or([0.0; 3]));
                 world.rope(a, b, pa, pb, c.length, c.rigid).is_some()
+            }
+            "ballsocket" => {
+                let pb = sb.position + sb.rotation * Vec3::from(c.local_b.unwrap_or([0.0; 3]));
+                world.ballsocket(a, b, pb).is_some()
+            }
+            "slider" => {
+                let pa = sa.position + sa.rotation * Vec3::from(c.local_a.unwrap_or([0.0; 3]));
+                let pb = sb.position + sb.rotation * Vec3::from(c.local_b.unwrap_or([0.0; 3]));
+                world.slider(a, b, pa, pb).is_some()
+            }
+            "elastic" => {
+                let pa = sa.position + sa.rotation * Vec3::from(c.local_a.unwrap_or([0.0; 3]));
+                let pb = sb.position + sb.rotation * Vec3::from(c.local_b.unwrap_or([0.0; 3]));
+                world
+                    .spring(
+                        a,
+                        b,
+                        pa,
+                        pb,
+                        c.constant.unwrap_or(500.0),
+                        c.damping.unwrap_or(3.0),
+                        c.stretchonly.unwrap_or(true),
+                    )
+                    .is_some()
             }
             _ => false,
         };
@@ -2857,8 +2936,12 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }
             "click" => {
                 let tool = op.tool.clone().unwrap_or_default();
+                apply_click_settings(&mut server.sandbox, &tool, op.settings.as_ref());
                 let ret = match op.button.as_deref() {
-                    Some("reload") => server.sandbox.tool_reload(player),
+                    Some("reload") => {
+                        let hit = server.tool_hit(player);
+                        server.sandbox.tool_reload(player, &tool, hit.as_ref())
+                    }
                     b => match server.tool_click_full(player, &tool, b == Some("right")) {
                         gm_server::ToolClick::Done(r) => r,
                         gm_server::ToolClick::Miss => false,
@@ -4040,6 +4123,23 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                     "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos2": [lpos2.x, lpos2.y, lpos2.z],
                     "length": length, "addlength": addlength, "width": width, "material": material, "rigid": rigid,
                 }),
+                ConstraintKind::Ballsocket { lpos, forcelimit, torquelimit, nocollide } => json!({
+                    "class": "phys_ballsocket", "type": "Ballsocket", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
+                    "lpos": [lpos.x, lpos.y, lpos.z], "forcelimit": forcelimit, "torquelimit": torquelimit, "nocollide": nocollide,
+                }),
+                // the game sliders to the world through a `gmod_anchor` entity in the world's place
+                ConstraintKind::Slider { lpos1, lpos2, width, material } => json!({
+                    "class": "phys_slideconstraint", "type": "Slider",
+                    "ent1": if c.ent1.is_none() { json!({ "index": -2, "class": "gmod_anchor", "prop": 0 }) } else { entref(c.ent1) },
+                    "ent2": entref(c.ent2),
+                    "lpos1": if c.ent1.is_none() { [0.0, 0.0, 0.0] } else { [lpos1.x, lpos1.y, lpos1.z] },
+                    "lpos2": [lpos2.x, lpos2.y, lpos2.z], "width": width, "material": material,
+                }),
+                ConstraintKind::Elastic { lpos1, lpos2, constant, damping, rdamping, width, material, length, stretchonly } => json!({
+                    "class": "phys_spring", "type": "Elastic", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
+                    "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos2": [lpos2.x, lpos2.y, lpos2.z],
+                    "constant": constant, "damping": damping, "rdamping": rdamping, "width": width, "material": material, "length": length, "stretchonly": stretchonly,
+                }),
             })
             .collect();
         json!({
@@ -4089,13 +4189,14 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 let dir = gm_sandbox::forward(op.pitch, op.yaw);
                 let hit = gm_sandbox::tool_trace(&world, &bodies, eye, dir);
                 let tool = op.tool.clone().unwrap_or_default();
+                apply_click_settings(&mut sb, &tool, op.settings.as_ref());
                 rec["tool"] = json!(tool);
                 rec["button"] = json!(op.button.clone().unwrap_or_else(|| "left".into()));
                 match hit {
                     Some(h) => {
                         rec["trace"] = json!({ "hit": true, "pos": [h.pos.x, h.pos.y, h.pos.z], "normal": [h.normal.x, h.normal.y, h.normal.z], "ent": entref(h.ent), "eye": [eye.x, eye.y, eye.z], "fraction": h.fraction });
                         let ret = match op.button.as_deref() {
-                            Some("reload") => sb.tool_reload(player),
+                            Some("reload") => sb.tool_reload(player, &tool, Some(&h)),
                             Some("right") => sb.tool_right_click(player, &tool, &h, &mut events),
                             _ => sb.tool_left_click(player, &tool, &h, &mut events),
                         };
@@ -4306,6 +4407,54 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                 max_lpos = max_lpos
                     .max((v3(&a["lpos1"]) - v3(&b["lpos1"])).length())
                     .max((v3(&a["lpos2"]) - v3(&b["lpos2"])).length());
+            }
+            if a["type"] == json!("Ballsocket") {
+                max_lpos = max_lpos.max((v3(&a["lpos"]) - v3(&b["lpos"])).length());
+                let num = |v: &Value| v.as_f64().unwrap_or(0.0);
+                let flag = |v: &Value| v.as_bool().unwrap_or(false) || num(v) != 0.0;
+                if num(&a["forcelimit"]) != num(&b["forcelimit"])
+                    || flag(&a["nocollide"]) != flag(&b["nocollide"])
+                {
+                    println!(
+                        "  op {i}: ballsocket settings {} {} vs {} {}",
+                        a["forcelimit"], a["nocollide"], b["forcelimit"], b["nocollide"]
+                    );
+                    ok = false;
+                }
+            }
+            if a["type"] == json!("Slider") || a["type"] == json!("Elastic") {
+                max_lpos = max_lpos
+                    .max((v3(&a["lpos1"]) - v3(&b["lpos1"])).length())
+                    .max((v3(&a["lpos2"]) - v3(&b["lpos2"])).length());
+                let num = |v: &Value| v.as_f64().unwrap_or(0.0);
+                if num(&a["width"]) != num(&b["width"])
+                    || (a["material"].is_string() && a["material"] != b["material"])
+                {
+                    println!(
+                        "  op {i}: rope visual {} {} vs {} {}",
+                        a["width"], a["material"], b["width"], b["material"]
+                    );
+                    ok = false;
+                }
+                if a["type"] == json!("Elastic") {
+                    max_len = max_len.max((num(&a["length"]) - num(&b["length"])).abs() as f32);
+                    let flag = |v: &Value| v.as_bool().unwrap_or(false) || num(v) != 0.0;
+                    if num(&a["constant"]) != num(&b["constant"])
+                        || num(&a["damping"]) != num(&b["damping"])
+                        || flag(&a["stretchonly"]) != flag(&b["stretchonly"])
+                    {
+                        println!(
+                            "  op {i}: elastic settings {} {} {} vs {} {} {}",
+                            a["constant"],
+                            a["damping"],
+                            a["stretchonly"],
+                            b["constant"],
+                            b["damping"],
+                            b["stretchonly"]
+                        );
+                        ok = false;
+                    }
+                }
             }
             if a["type"] == json!("Rope") {
                 max_lpos = max_lpos

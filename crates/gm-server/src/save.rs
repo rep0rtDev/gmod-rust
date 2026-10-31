@@ -61,6 +61,29 @@ pub enum SavedKind {
         material: String,
         rigid: bool,
     },
+    Ballsocket {
+        lpos: [f32; 3],
+        forcelimit: f32,
+        torquelimit: f32,
+        nocollide: bool,
+    },
+    Slider {
+        lpos1: [f32; 3],
+        lpos2: [f32; 3],
+        width: f32,
+        material: String,
+    },
+    Elastic {
+        lpos1: [f32; 3],
+        lpos2: [f32; 3],
+        constant: f32,
+        damping: f32,
+        rdamping: f32,
+        width: f32,
+        material: String,
+        length: f32,
+        stretchonly: bool,
+    },
 }
 
 fn arr(v: Vec3) -> [f32; 3] {
@@ -112,6 +135,49 @@ impl From<&ConstraintKind> for SavedKind {
                 material: material.clone(),
                 rigid: *rigid,
             },
+            ConstraintKind::Ballsocket {
+                lpos,
+                forcelimit,
+                torquelimit,
+                nocollide,
+            } => SavedKind::Ballsocket {
+                lpos: arr(*lpos),
+                forcelimit: *forcelimit,
+                torquelimit: *torquelimit,
+                nocollide: *nocollide,
+            },
+            ConstraintKind::Slider {
+                lpos1,
+                lpos2,
+                width,
+                material,
+            } => SavedKind::Slider {
+                lpos1: arr(*lpos1),
+                lpos2: arr(*lpos2),
+                width: *width,
+                material: material.clone(),
+            },
+            ConstraintKind::Elastic {
+                lpos1,
+                lpos2,
+                constant,
+                damping,
+                rdamping,
+                width,
+                material,
+                length,
+                stretchonly,
+            } => SavedKind::Elastic {
+                lpos1: arr(*lpos1),
+                lpos2: arr(*lpos2),
+                constant: *constant,
+                damping: *damping,
+                rdamping: *rdamping,
+                width: *width,
+                material: material.clone(),
+                length: *length,
+                stretchonly: *stretchonly,
+            },
         }
     }
 }
@@ -160,6 +226,49 @@ impl From<&SavedKind> for ConstraintKind {
                 width: *width,
                 material: material.clone(),
                 rigid: *rigid,
+            },
+            SavedKind::Ballsocket {
+                lpos,
+                forcelimit,
+                torquelimit,
+                nocollide,
+            } => ConstraintKind::Ballsocket {
+                lpos: Vec3::from(*lpos),
+                forcelimit: *forcelimit,
+                torquelimit: *torquelimit,
+                nocollide: *nocollide,
+            },
+            SavedKind::Slider {
+                lpos1,
+                lpos2,
+                width,
+                material,
+            } => ConstraintKind::Slider {
+                lpos1: Vec3::from(*lpos1),
+                lpos2: Vec3::from(*lpos2),
+                width: *width,
+                material: material.clone(),
+            },
+            SavedKind::Elastic {
+                lpos1,
+                lpos2,
+                constant,
+                damping,
+                rdamping,
+                width,
+                material,
+                length,
+                stretchonly,
+            } => ConstraintKind::Elastic {
+                lpos1: Vec3::from(*lpos1),
+                lpos2: Vec3::from(*lpos2),
+                constant: *constant,
+                damping: *damping,
+                rdamping: *rdamping,
+                width: *width,
+                material: material.clone(),
+                length: *length,
+                stretchonly: *stretchonly,
             },
         }
     }

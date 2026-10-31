@@ -50,6 +50,25 @@ extern "C" {
         max_d: f32,
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
+    fn gmp_add_point_constraint(
+        system: *mut JPC_PhysicsSystem,
+        id1: u32,
+        id2: u32,
+        px: f32,
+        py: f32,
+        pz: f32,
+    ) -> *mut std::ffi::c_void;
+    fn gmp_add_slider_constraint(
+        system: *mut JPC_PhysicsSystem,
+        id1: u32,
+        id2: u32,
+        x1: f32,
+        y1: f32,
+        z1: f32,
+        x2: f32,
+        y2: f32,
+        z2: f32,
+    ) -> *mut std::ffi::c_void;
     fn gmp_rope_predict(system: *mut JPC_PhysicsSystem, dt: f32);
     fn gmp_rope_clear(system: *mut JPC_PhysicsSystem);
     fn gmp_add_hinge_constraint(
@@ -393,8 +412,23 @@ struct Drag {
     ang: Vec3,
 }
 
+/// An explicit `phys_spring`: integrated as an impulse per tick like the game's (a Jolt soft
+/// constraint at one solver step per tick damps several times more than measured).
+struct Spring {
+    handle: *mut std::ffi::c_void,
+    a: BodyHandle,
+    b: BodyHandle,
+    local_a: Vec3,
+    local_b: Vec3,
+    rest: f32,
+    constant: f32,
+    damping: f32,
+    stretch_only: bool,
+}
+
 pub struct World {
     system: rolt::PhysicsSystem,
+    springs: Vec<Spring>,
     drags: Vec<Drag>,
     held: std::collections::HashSet<u32>,
     /// Bodies with gravity switched off (`set_gravity`), kept weightless after a release.
@@ -442,6 +476,7 @@ impl World {
             temp,
             jobs,
             shapes: Vec::new(),
+            springs: Vec::new(),
             drags: Vec::new(),
             held: std::collections::HashSet::new(),
             no_gravity: std::collections::HashSet::new(),
@@ -858,6 +893,140 @@ impl World {
         (!c.is_null()).then_some(ConstraintHandle(c))
     }
 
+    /// Ball socket (`phys_ballsocket`) at a world space point (Source units).
+    pub fn ballsocket(
+        &mut self,
+        a: BodyHandle,
+        b: BodyHandle,
+        point: Vec3,
+    ) -> Option<ConstraintHandle> {
+        let p = to_jolt(point);
+        let c = unsafe { gmp_add_point_constraint(self.system.as_raw(), a.0, b.0, p.x, p.y, p.z) };
+        (!c.is_null()).then_some(ConstraintHandle(c))
+    }
+
+    /// Slider (`phys_slideconstraint`): `b` slides along the world axis from `pa` to `pb` (Source
+    /// units), frictionless, orientation locked.
+    pub fn slider(
+        &mut self,
+        a: BodyHandle,
+        b: BodyHandle,
+        pa: Vec3,
+        pb: Vec3,
+    ) -> Option<ConstraintHandle> {
+        let (ja, jb) = (to_jolt(pa), to_jolt(pb));
+        let c = unsafe {
+            gmp_add_slider_constraint(
+                self.system.as_raw(),
+                a.0,
+                b.0,
+                ja.x,
+                ja.y,
+                ja.z,
+                jb.x,
+                jb.y,
+                jb.z,
+            )
+        };
+        (!c.is_null()).then_some(ConstraintHandle(c))
+    }
+
+    /// Elastic (`phys_spring`): `F = -constant * stretch - damping * rate` along the line between
+    /// two world space points about their current distance; `stretch_only` is slack when
+    /// shorter. Applied as an impulse per tick; the handle is a slack Jolt distance constraint
+    /// so it removes like the others.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spring(
+        &mut self,
+        a: BodyHandle,
+        b: BodyHandle,
+        pa: Vec3,
+        pb: Vec3,
+        constant: f32,
+        damping: f32,
+        stretch_only: bool,
+    ) -> Option<ConstraintHandle> {
+        let (ja, jb) = (to_jolt(pa), to_jolt(pb));
+        let c = unsafe {
+            gmp_add_distance_constraint(
+                self.system.as_raw(),
+                a.0,
+                b.0,
+                ja.x,
+                ja.y,
+                ja.z,
+                jb.x,
+                jb.y,
+                jb.z,
+                0.0,
+                1.0e6,
+            )
+        };
+        if c.is_null() {
+            return None;
+        }
+        let (sa, sb) = (self.state(a), self.state(b));
+        self.springs.push(Spring {
+            handle: c,
+            a,
+            b,
+            local_a: sa.rotation.inverse() * (pa - sa.position),
+            local_b: sb.rotation.inverse() * (pb - sb.position),
+            rest: pa.distance(pb),
+            constant,
+            damping,
+            stretch_only,
+        });
+        Some(ConstraintHandle(c))
+    }
+
+    fn apply_springs(&mut self) {
+        let springs: Vec<_> = self
+            .springs
+            .iter()
+            .map(|s| {
+                (
+                    s.a,
+                    s.b,
+                    s.local_a,
+                    s.local_b,
+                    s.rest,
+                    s.constant,
+                    s.damping,
+                    s.stretch_only,
+                )
+            })
+            .collect();
+        for (a, b, la, lb, rest, k, c, stretch_only) in springs {
+            let (sa, sb) = (self.state(a), self.state(b));
+            let (pa, pb) = (
+                sa.position + sa.rotation * la,
+                sb.position + sb.rotation * lb,
+            );
+            let d = pb - pa;
+            let len = d.length();
+            if len < 1e-4 {
+                continue;
+            }
+            let dir = d / len;
+            let stretch = len - rest;
+            if stretch_only && stretch <= 0.0 {
+                continue;
+            }
+            let vel_at = |st: &BodyState, p: Vec3| {
+                st.velocity + (st.angular_velocity * DEG).cross(p - st.position)
+            };
+            let rate = (vel_at(&sb, pb) - vel_at(&sa, pa)).dot(dir);
+            let force = -(k * stretch + c * rate);
+            let impulse = dir * (force * self.tick_interval);
+            if impulse.length_squared() < 1e-8 {
+                continue;
+            }
+            self.add_impulse_at(b, pb, impulse);
+            self.add_impulse_at(a, pa, -impulse);
+        }
+    }
+
     /// Hinge (`phys_hinge`) through a world space point along a world axis (Source units).
     pub fn hinge(
         &mut self,
@@ -940,6 +1109,7 @@ impl World {
     }
 
     pub fn remove_constraint(&mut self, c: ConstraintHandle) {
+        self.springs.retain(|s| s.handle != c.0);
         unsafe { gmp_remove_constraint(self.system.as_raw(), c.0) }
     }
 
@@ -1119,6 +1289,7 @@ impl World {
     /// Advance one server tick.
     pub fn step(&mut self) {
         self.apply_drag();
+        self.apply_springs();
         unsafe {
             gmp_rope_predict(self.system.as_raw(), self.tick_interval);
             self.system
