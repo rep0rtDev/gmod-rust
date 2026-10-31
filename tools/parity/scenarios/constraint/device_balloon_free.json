@@ -1,0 +1,25 @@
+{
+ "name": "device_balloon_free",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "bot": true,
+ "start": [
+  600.0,
+  -500.0,
+  -143.0
+ ],
+ "ticks": 200,
+ "props": [],
+ "constraints": [],
+ "devices": [
+  {
+   "kind": "balloon",
+   "pos": [
+    823.235,
+    -500.0,
+    -100.0
+   ],
+   "force": 500
+  }
+ ]
+}

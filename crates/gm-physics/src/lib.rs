@@ -50,6 +50,8 @@ extern "C" {
         max_d: f32,
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
+    fn gmp_set_mass(system: *mut JPC_PhysicsSystem, id: u32, mass: f32);
+    fn gmp_add_impulse(system: *mut JPC_PhysicsSystem, id: u32, ix: f32, iy: f32, iz: f32);
     fn gmp_point_inverse_mass(
         system: *mut JPC_PhysicsSystem,
         id: u32,
@@ -1004,6 +1006,45 @@ impl World {
             stretch_only,
         });
         Some(ConstraintHandle(c))
+    }
+
+    /// `PhysObj:SetMass` (kg): inertia scales with it, and the air drag of the same shape slows a
+    /// heavier body less (a 100 kg balloon decelerates by `2.05e-5 v^2`, measured).
+    pub fn set_mass(&mut self, body: BodyHandle, mass: f32) {
+        let mass = mass.max(1e-3);
+        let old = self.mass(body);
+        if old > 0.0 {
+            let k = old / mass;
+            for d in self.drags.iter_mut().filter(|d| d.body == body.0) {
+                d.areas *= k;
+                d.ang *= k;
+            }
+        }
+        unsafe { gmp_set_mass(self.system.as_raw(), body.0, mass) }
+    }
+
+    /// Mass of a body (kg); 0 for a static or frozen one.
+    pub fn mass(&self, body: BodyHandle) -> f32 {
+        let st = self.state(body);
+        let k = self.point_inverse_mass(body, st.position, Vec3::Z);
+        if k > 1e-12 {
+            1.0 / k
+        } else {
+            0.0
+        }
+    }
+
+    /// Impulse through the mass centre (kg * Source units / s), waking the body.
+    pub fn add_impulse(&mut self, body: BodyHandle, impulse: Vec3) {
+        if self.frozen.contains(&body.0) {
+            return;
+        }
+        let i = dir_to_jolt(impulse) * UNITS_TO_METERS;
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_ActivateBody(bi, body.0);
+            gmp_add_impulse(self.system.as_raw(), body.0, i.x, i.y, i.z);
+        }
     }
 
     /// `SetSpringLength`: the rest length a spring pulls towards (Source units).

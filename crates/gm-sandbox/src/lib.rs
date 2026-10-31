@@ -80,6 +80,9 @@ pub struct Limits {
     pub max_props: i32,
     pub max_constraints: i32,
     pub max_ropeconstraints: i32,
+    pub max_thrusters: i32,
+    pub max_hoverballs: i32,
+    pub max_balloons: i32,
 }
 
 impl Default for Limits {
@@ -88,6 +91,9 @@ impl Default for Limits {
             max_props: 200,
             max_constraints: 2000,
             max_ropeconstraints: 1000,
+            max_thrusters: 30,
+            max_hoverballs: 50,
+            max_balloons: 50,
         }
     }
 }
@@ -98,6 +104,9 @@ impl Limits {
             "props" => self.max_props,
             "constraints" => self.max_constraints,
             "ropeconstraints" => self.max_ropeconstraints,
+            "thrusters" => self.max_thrusters,
+            "hoverballs" => self.max_hoverballs,
+            "balloons" => self.max_balloons,
             _ => -1,
         }
     }
@@ -494,6 +503,22 @@ pub struct ToolSettings {
     pub pulley_forcelimit: f32,
     pub pulley_rigid: bool,
     pub pulley_material: String,
+    pub thruster_force: f32,
+    pub thruster_model: String,
+    pub thruster_key: i32,
+    pub thruster_key_back: i32,
+    pub thruster_toggle: bool,
+    pub thruster_collision: bool,
+    pub hoverball_key_up: i32,
+    pub hoverball_key_down: i32,
+    pub hoverball_key_on: i32,
+    pub hoverball_speed: f32,
+    pub hoverball_resistance: f32,
+    pub hoverball_strength: f32,
+    pub hoverball_model: String,
+    pub balloon_ropelength: f32,
+    pub balloon_force: f32,
+    pub balloon_model: String,
 }
 
 impl Default for ToolSettings {
@@ -546,6 +571,22 @@ impl Default for ToolSettings {
             pulley_forcelimit: 0.0,
             pulley_rigid: false,
             pulley_material: "cable/cable".into(),
+            thruster_force: 1500.0,
+            thruster_model: "models/props_phx2/garbage_metalcan001a.mdl".into(),
+            thruster_key: 45,
+            thruster_key_back: 42,
+            thruster_toggle: false,
+            thruster_collision: false,
+            hoverball_key_up: 46,
+            hoverball_key_down: 43,
+            hoverball_key_on: 40,
+            hoverball_speed: 5.0,
+            hoverball_resistance: 5.0,
+            hoverball_strength: 10.0,
+            hoverball_model: "models/dav0r/hoverball.mdl".into(),
+            balloon_ropelength: 64.0,
+            balloon_force: 500.0,
+            balloon_model: "models/maxofs2d/balloon_classic.mdl".into(),
         }
     }
 }
@@ -687,6 +728,104 @@ pub struct Sandbox {
     numpad: BTreeMap<(u32, i32), Vec<NumpadBind>>,
     /// Keys currently held per player (`numpad.Activate` ignores a repeat while held).
     numpad_held: BTreeMap<u32, Vec<i32>>,
+    /// Powered stool entities by prop id.
+    devices: BTreeMap<u32, Device>,
+    /// Shapes of the device models the stools may spawn (the physics owner registers them).
+    shapes: BTreeMap<String, ModelShape>,
+}
+
+/// A powered stool entity riding on an ordinary prop: `gmod_thruster`, `gmod_hoverball`,
+/// `gmod_balloon` (the game's SENTs with a motion controller).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Device {
+    /// `gmod_thruster`: while `on`, the acceleration `force * mul * 50 * top_z / mass` along the
+    /// body's -z at its top (`OBBMaxs.z`), i.e. the force `force * mul * 50 * top_z`.
+    Thruster {
+        force: f32,
+        /// `Multiply`: +1 forward, -1 back, their sum while both keys are held; a toggle flips.
+        mul: f32,
+        toggle: bool,
+        on: bool,
+        top_z: f32,
+        bottom_z: f32,
+        key: i32,
+        key_back: i32,
+    },
+    /// `gmod_hoverball`: holds `target_z` with a damped quadratic acceleration, mass
+    /// `150 * strength` while enabled (15 when off); gravity stays on at creation (the game
+    /// enables it before `SetEnabled(true)`), the toggle then turns it off while enabled.
+    Hoverball {
+        target_z: f32,
+        /// `ZVelocity`: `+-75` while a key is held (`FrameTime() * 5000`).
+        zvel: f32,
+        speed: f32,
+        resistance: f32,
+        strength: f32,
+        enabled: bool,
+        key_up: i32,
+        key_down: i32,
+        key_toggle: i32,
+    },
+    /// `gmod_balloon`: constant upward force `force * 5000 * dt` on a 100 kg body without gravity.
+    Balloon { force: f32 },
+}
+
+impl Device {
+    /// The body mass the device sets (`PhysObj:SetMass`), `None` to keep the model's.
+    pub fn mass(&self) -> Option<f32> {
+        match self {
+            Device::Hoverball {
+                strength, enabled, ..
+            } => Some(if *enabled { 150.0 * strength } else { 15.0 }),
+            Device::Balloon { .. } => Some(100.0),
+            Device::Thruster { .. } => None,
+        }
+    }
+
+    /// `PhysObj:EnableGravity` as the device leaves it.
+    pub fn gravity(&self) -> bool {
+        match self {
+            Device::Balloon { .. } => false,
+            Device::Hoverball { .. } => true,
+            Device::Thruster { .. } => true,
+        }
+    }
+}
+
+/// The hoverball's `PhysicsSimulate`: global acceleration (u/s^2) for a body at `pos` with
+/// `vel` (as before the step), from its target height; `None` when it holds nothing. The game's
+/// controller runs after the step's gravity, so it sees `vel.z - gravity * dt` (measured: a free
+/// hoverball's acceleration is `4.5 D^2 - 54 vz - 114.0` with gravity on, 114 = 600 - 54 * 9).
+pub fn hoverball_acceleration(
+    target_z: f32,
+    resistance: f32,
+    pos: Vec3,
+    vel: Vec3,
+    gravity: f32,
+    dt: f32,
+) -> Option<Vec3> {
+    let distance = target_z - pos.z;
+    if distance == 0.0 {
+        return None;
+    }
+    let mut exponent = distance * distance * if distance < 0.0 { -1.0 } else { 1.0 };
+    exponent *= dt * 300.0;
+    exponent -= (vel.z - gravity * dt) * dt * 600.0 * (resistance + 1.0);
+    let exponent = exponent.clamp(-5000.0, 5000.0);
+    let mut a = Vec3::new(0.0, 0.0, exponent);
+    if resistance > 0.0 {
+        a.x = -vel.x * resistance;
+        a.y = -vel.y * resistance;
+    }
+    Some(a)
+}
+
+/// A device model's shape for placement: its OBB and collision hull points (model frame).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ModelShape {
+    pub min: Vec3,
+    pub max: Vec3,
+    pub points: Vec<Vec3>,
 }
 
 /// What a numpad key does to one constraint's controller (`numpad.OnDown` / `OnUp`).
@@ -695,6 +834,11 @@ pub enum NumpadBind {
     HydraulicToggle(u32),
     /// Down sets +1, up sets -1 (a non-toggle hydraulic).
     HydraulicDir(u32),
+    /// `Thruster_On` / `Thruster_Off`: down adds `mul`, up takes it back (a toggle flips).
+    Thruster(u32, f32),
+    /// `Hoverball_Up` / `Hoverball_Down`: `ZVelocity` +-75 while held.
+    HoverballMove(u32, f32),
+    HoverballToggle(u32),
     /// Down sets the direction, up stops (a non-toggle winch).
     WinchDir(u32, i8),
     WinchToggle(u32, i8),
@@ -706,6 +850,9 @@ impl NumpadBind {
         match self {
             NumpadBind::HydraulicToggle(c)
             | NumpadBind::HydraulicDir(c)
+            | NumpadBind::Thruster(c, _)
+            | NumpadBind::HoverballMove(c, _)
+            | NumpadBind::HoverballToggle(c)
             | NumpadBind::WinchDir(c, _)
             | NumpadBind::WinchToggle(c, _)
             | NumpadBind::MuscleToggle(c) => c,
@@ -1146,6 +1293,9 @@ impl Sandbox {
         hit: &ToolHit,
         events: &mut Vec<Event>,
     ) -> bool {
+        if tool == "balloon" {
+            return self.place_device(player, tool, hit, false, events);
+        }
         if tool != "weld" {
             return false;
         }
@@ -1315,6 +1465,9 @@ impl Sandbox {
                 | "winch"
                 | "muscle"
                 | "pulley"
+                | "thruster"
+                | "hoverball"
+                | "balloon"
                 | "elastic"
         )
     }
@@ -1441,6 +1594,158 @@ impl Sandbox {
             self.add_cleanup(player, count, id);
         }
         self.clear_objects(player);
+        true
+    }
+
+    /// One click of `thruster`, `hoverball` or `balloon`: a prop of the stool's model placed on
+    /// the hit, welded (thruster, hoverball) or roped (balloon, `attach`) to a hit entity, with
+    /// its device state and numpad bindings. The thruster sits with its bottom on the surface
+    /// (`HitPos - normal * OBBMins.z`), the others with their nearest hull point on it.
+    fn place_device(
+        &mut self,
+        player: u32,
+        tool: &str,
+        hit: &ToolHit,
+        attach: bool,
+        events: &mut Vec<Event>,
+    ) -> bool {
+        let s = self.tool_settings.clone();
+        let (count, model) = match tool {
+            "thruster" => ("thrusters", s.thruster_model.clone()),
+            "hoverball" => ("hoverballs", s.hoverball_model.clone()),
+            _ => ("balloons", s.balloon_model.clone()),
+        };
+        let Some(shape) = self.shapes.get(&model).cloned() else {
+            return false;
+        };
+        if !self.check_limit(player, count, events) {
+            return false;
+        }
+        let n = hit.normal;
+        // `HitNormal:Angle()` with the pitch turned 90 degrees up: the model's z along the normal
+        let angles = if tool == "balloon" {
+            Vec3::ZERO
+        } else {
+            let a = angle_of(n);
+            Vec3::new(a.x + 90.0, a.y, a.z)
+        };
+        let rot = rotation(angles);
+        let pos = if tool == "thruster" {
+            hit.pos - n * shape.min.z
+        } else {
+            // `NearestPoint(pos - normal * 512)`: the hull point furthest along -normal
+            let depth = shape
+                .points
+                .iter()
+                .map(|p| (rot * *p).dot(-n))
+                .fold(0.0f32, f32::max);
+            hit.pos + n * depth
+        };
+        let id = self.next_id;
+        self.next_id += 1;
+        self.props.push(Prop {
+            id,
+            owner: player,
+            model: model.clone(),
+            pos,
+            angles,
+            frozen: false,
+            gravity: tool != "balloon",
+            collide: true,
+            upright: None,
+            health: 0,
+            skin: u8::from(tool == "balloon"),
+            body: String::new(),
+            fire: None,
+        });
+        let mut undo_ents = vec![id];
+        let mut binds: Vec<(i32, NumpadBind)> = Vec::new();
+        let device = match tool {
+            "thruster" => {
+                binds.push((s.thruster_key, NumpadBind::Thruster(id, 1.0)));
+                binds.push((s.thruster_key_back, NumpadBind::Thruster(id, -1.0)));
+                Device::Thruster {
+                    force: s.thruster_force.clamp(0.0, 1e10),
+                    mul: 0.0,
+                    toggle: s.thruster_toggle,
+                    on: false,
+                    top_z: shape.max.z,
+                    bottom_z: shape.min.z,
+                    key: s.thruster_key,
+                    key_back: s.thruster_key_back,
+                }
+            }
+            "hoverball" => {
+                binds.push((s.hoverball_key_up, NumpadBind::HoverballMove(id, 1.0)));
+                binds.push((s.hoverball_key_down, NumpadBind::HoverballMove(id, -1.0)));
+                binds.push((s.hoverball_key_on, NumpadBind::HoverballToggle(id)));
+                Device::Hoverball {
+                    // the target is the hit point: `SetTargetZ(GetPos().z)` before the offset
+                    target_z: hit.pos.z,
+                    zvel: 0.0,
+                    speed: s.hoverball_speed,
+                    resistance: s.hoverball_resistance.clamp(0.0, 20.0),
+                    strength: s.hoverball_strength.clamp(0.1, 20.0),
+                    enabled: true,
+                    key_up: s.hoverball_key_up,
+                    key_down: s.hoverball_key_down,
+                    key_toggle: s.hoverball_key_on,
+                }
+            }
+            _ => Device::Balloon {
+                force: s.balloon_force.clamp(-1e34, 1e34),
+            },
+        };
+        self.devices.insert(id, device);
+        for (key, bind) in binds {
+            self.numpad.entry((player, key)).or_default().push(bind);
+        }
+        if let Some(target) = hit.ent {
+            if tool == "balloon" {
+                if attach {
+                    let (tpos, trot) = self.prop_pose(target).unwrap_or_default();
+                    let lpos2 = trot.inverse() * (hit.pos - tpos);
+                    let rope = self.next_id;
+                    self.next_id += 1;
+                    self.constraints.push(Constraint {
+                        id: rope,
+                        owner: player,
+                        ent1: Some(id),
+                        ent2: Some(target),
+                        kind: ConstraintKind::Rope {
+                            lpos1: Vec3::ZERO,
+                            lpos2,
+                            length: 0.0,
+                            addlength: s.balloon_ropelength,
+                            width: 0.5,
+                            material: "cable/rope".into(),
+                            rigid: false,
+                        },
+                    });
+                    undo_ents.push(rope);
+                    self.add_cleanup(player, count, rope);
+                    // the keyframe_rope entity
+                    undo_ents.push(self.next_id);
+                    self.next_id += 1;
+                }
+            } else {
+                let nocollide = tool == "thruster" && !s.thruster_collision;
+                if let Some(weld) = self.weld(player, Some(id), Some(target), 0.0, nocollide) {
+                    undo_ents.push(weld);
+                    self.add_cleanup(player, count, weld);
+                }
+            }
+        }
+        self.push_undo(
+            player,
+            &format!("gmod_{tool}"),
+            format!("#tool.{tool}.name"),
+            Some(format!("Undone #tool.{tool}.name")),
+            undo_ents,
+        );
+        self.add_count(player, count, id);
+        self.add_cleanup(player, count, id);
+        events.push(Event::Spawned { prop: id });
         true
     }
 
@@ -1769,6 +2074,9 @@ impl Sandbox {
         {
             return false;
         }
+        if matches!(tool, "thruster" | "hoverball" | "balloon") {
+            return self.place_device(player, tool, hit, tool == "balloon", events);
+        }
         // a pulley's first and last click must be entities; the two pulley points are anywhere
         if tool == "pulley"
             && hit.ent.is_none()
@@ -1928,6 +2236,8 @@ impl Sandbox {
         if self.props.len() != props_before {
             self.constraints
                 .retain(|c| c.ent1 != Some(id) && c.ent2 != Some(id));
+            self.devices.remove(&id);
+            self.drop_parts();
             return true;
         }
         let before = self.constraints.len();
@@ -1971,10 +2281,51 @@ impl Sandbox {
         let Some(binds) = self.numpad.get_mut(&(player, key)) else {
             return;
         };
-        let live: Vec<u32> = self.constraints.iter().map(|c| c.id).collect();
+        let live: Vec<u32> = self
+            .constraints
+            .iter()
+            .map(|c| c.id)
+            .chain(self.devices.keys().copied())
+            .collect();
         binds.retain(|b| live.contains(&b.constraint()));
         let binds = binds.clone();
         for b in binds {
+            if let Some(dev) = self.devices.get_mut(&b.constraint()) {
+                match (b, dev) {
+                    (
+                        NumpadBind::Thruster(_, m),
+                        Device::Thruster {
+                            mul, toggle, on, ..
+                        },
+                    ) => {
+                        if *toggle {
+                            if !down {
+                                continue;
+                            }
+                            *mul = if *mul == m { 0.0 } else { m };
+                        } else {
+                            *mul += if down { m } else { -m };
+                        }
+                        *on = *mul != 0.0;
+                    }
+                    (NumpadBind::HoverballMove(_, d), Device::Hoverball { zvel, .. }) => {
+                        *zvel = if down { d * 75.0 } else { 0.0 };
+                    }
+                    (
+                        NumpadBind::HoverballToggle(_),
+                        Device::Hoverball {
+                            enabled, target_z, ..
+                        },
+                    ) if down => {
+                        *enabled = !*enabled;
+                        if *enabled {
+                            *target_z = f32::NAN;
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             let Some(c) = self.constraints.iter_mut().find(|c| c.id == b.constraint()) else {
                 continue;
             };
@@ -1988,6 +2339,63 @@ impl Sandbox {
                 NumpadBind::WinchToggle(_, d) if down => ctrl.winch_toggle(d),
                 NumpadBind::MuscleToggle(_) if down => ctrl.muscle_toggle(),
                 _ => {}
+            }
+        }
+    }
+
+    /// A device model's shape, needed before its stool can place it.
+    pub fn set_model_shape(&mut self, model: &str, shape: ModelShape) {
+        self.shapes.insert(model.to_string(), shape);
+    }
+
+    pub fn has_model_shape(&self, model: &str) -> bool {
+        self.shapes.contains_key(model)
+    }
+
+    pub fn devices(&self) -> &BTreeMap<u32, Device> {
+        &self.devices
+    }
+
+    pub fn device_mut(&mut self, prop: u32) -> Option<&mut Device> {
+        self.devices.get_mut(&prop)
+    }
+
+    /// A device straight from a save, on an existing prop.
+    pub fn restore_device(&mut self, prop: u32, device: Device, binds: &[(i32, NumpadBind)]) {
+        self.devices.insert(prop, device);
+        for (key, bind) in binds {
+            self.numpad.entry((prop, *key)).or_default().push(*bind);
+        }
+    }
+
+    /// Numpad bindings of a player's key (for saves).
+    pub fn numpad_binds(&self, player: u32) -> Vec<(i32, NumpadBind)> {
+        self.numpad
+            .iter()
+            .filter(|((p, _), _)| *p == player)
+            .flat_map(|((_, k), v)| v.iter().map(move |b| (*k, *b)))
+            .collect()
+    }
+
+    /// The hoverballs' `Think`: a held key moves the target height by `zvel * speed * dt`; a
+    /// re-enabled one targets where it is (`NaN` marks that).
+    pub fn tick_devices(&mut self, dt: f32) {
+        let poses: Vec<(u32, f32)> = self.props.iter().map(|p| (p.id, p.pos.z)).collect();
+        for (id, d) in &mut self.devices {
+            if let Device::Hoverball {
+                target_z,
+                zvel,
+                speed,
+                enabled,
+                ..
+            } = d
+            {
+                if target_z.is_nan() {
+                    *target_z = poses.iter().find(|(p, _)| p == id).map_or(0.0, |(_, z)| *z);
+                }
+                if *enabled && *zvel != 0.0 {
+                    *target_z += *zvel * dt * *speed;
+                }
             }
         }
     }

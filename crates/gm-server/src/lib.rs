@@ -2824,6 +2824,7 @@ impl<'w> Server<'w> {
                 map: String::new(),
                 props: saved,
                 constraints,
+                devices: Vec::new(),
             },
         );
         true
@@ -2957,6 +2958,30 @@ impl<'w> Server<'w> {
             self.sync_physics();
             return ToolClick::Done(ret);
         }
+        if matches!(tool, "thruster" | "hoverball" | "balloon") {
+            let model = match tool {
+                "thruster" => self.sandbox.tool_settings.thruster_model.clone(),
+                "hoverball" => self.sandbox.tool_settings.hoverball_model.clone(),
+                _ => self.sandbox.tool_settings.balloon_model.clone(),
+            };
+            if !self.sandbox.has_model_shape(&model) {
+                if !self.models.contains_key(&model) {
+                    if let Some(loaded) = self.model_loader.as_mut().and_then(|f| f(&model)) {
+                        self.register_model(&model, loaded);
+                    }
+                }
+                if let Some(info) = self.models.get(&model) {
+                    self.sandbox.set_model_shape(
+                        &model,
+                        gm_sandbox::ModelShape {
+                            min: info.bounds.min,
+                            max: info.bounds.max,
+                            points: info.hulls.iter().flatten().copied().collect(),
+                        },
+                    );
+                }
+            }
+        }
         let ret = if right {
             self.sandbox
                 .tool_right_click(player, tool, &hit, &mut events)
@@ -2967,6 +2992,73 @@ impl<'w> Server<'w> {
         self.events.extend(events);
         self.sync_physics();
         ToolClick::Done(ret)
+    }
+
+    /// The powered stool entities' `PhysicsSimulate` for this tick: thruster impulse at its top
+    /// along its -z, hoverball hover acceleration and mass / gravity state, balloon lift.
+    fn tick_devices(&mut self) {
+        let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        self.sandbox.tick_devices(dt);
+        let devices: Vec<(u32, gm_sandbox::Device)> = self
+            .sandbox
+            .devices()
+            .iter()
+            .map(|(id, d)| (*id, d.clone()))
+            .collect();
+        for (id, d) in devices {
+            let Some(&body) = self.bodies.get(&id) else {
+                continue;
+            };
+            let st = self.physics.state(body);
+            match d {
+                gm_sandbox::Device::Thruster {
+                    force,
+                    mul,
+                    on,
+                    top_z,
+                    ..
+                } => {
+                    if !on || mul == 0.0 {
+                        continue;
+                    }
+                    let top = st.position + st.rotation * Vec3::new(0.0, 0.0, top_z);
+                    let dir = st.rotation * Vec3::new(0.0, 0.0, -top_z);
+                    self.physics
+                        .add_impulse_at(body, top, dir * (force * mul * 50.0 * dt));
+                }
+                gm_sandbox::Device::Hoverball {
+                    target_z,
+                    resistance,
+                    enabled,
+                    ..
+                } => {
+                    let mass = self.physics.mass(body);
+                    if let Some(m) = d.mass() {
+                        if (mass - m).abs() > 1e-3 && mass > 0.0 {
+                            self.physics.set_mass(body, m);
+                        }
+                    }
+                    if !enabled || target_z.is_nan() {
+                        continue;
+                    }
+                    if let Some(a) = gm_sandbox::hoverball_acceleration(
+                        target_z,
+                        resistance,
+                        st.position,
+                        st.velocity,
+                        600.0,
+                        dt,
+                    ) {
+                        let m = d.mass().unwrap_or(mass);
+                        self.physics.add_impulse(body, a * (m * dt));
+                    }
+                }
+                gm_sandbox::Device::Balloon { force } => {
+                    self.physics
+                        .add_impulse(body, Vec3::new(0.0, 0.0, force * 5000.0 * dt * dt));
+                }
+            }
+        }
     }
 
     /// After a scripted tool changed the sandbox (constraints, poses): mirror into physics.
@@ -3054,6 +3146,11 @@ impl<'w> Server<'w> {
                         self.physics.set_world_only(body, true);
                     }
                     self.sandbox.set_mass(p.id, info.mass);
+                    if let Some(d) = self.sandbox.devices().get(&p.id) {
+                        if let Some(m) = d.mass() {
+                            self.physics.set_mass(body, m);
+                        }
+                    }
                     self.bodies.insert(p.id, body);
                 }
                 Some(&body) => {
@@ -3659,6 +3756,7 @@ impl<'w> Server<'w> {
         // entities after the players' moves: a projectile's hit or blast this tick pushes and
         // hurts a target that has already moved (its velocity shows the push raw)
         self.tick_projectiles(launches);
+        self.tick_devices();
         // winch controllers think before the physics step, like any entity's Think
         for (id, len) in self
             .sandbox

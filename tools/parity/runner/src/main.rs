@@ -171,6 +171,8 @@ struct Scenario {
     #[serde(default)]
     keys: Vec<KeySpec>,
     #[serde(default)]
+    devices: Vec<DeviceSpec>,
+    #[serde(default)]
     ops: Vec<OpSpec>,
     #[serde(default)]
     snapshot_every: Option<u32>,
@@ -354,6 +356,239 @@ struct KeySpec {
     t: u32,
     key: i32,
     down: bool,
+}
+
+/// A powered stool entity the probe makes with `MakeThruster` / `MakeHoverBall` / `MakeBalloon`
+/// (its body follows the props in the trace).
+#[derive(Debug, Deserialize)]
+struct DeviceSpec {
+    kind: String,
+    pos: [f32; 3],
+    #[serde(default)]
+    angles: Option<[f32; 3]>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    force: Option<f32>,
+    #[serde(default)]
+    toggle: bool,
+    #[serde(default)]
+    key: Option<i32>,
+    #[serde(default)]
+    key_bk: Option<i32>,
+    #[serde(default)]
+    key_up: Option<i32>,
+    #[serde(default)]
+    key_dn: Option<i32>,
+    #[serde(default)]
+    key_on: Option<i32>,
+    #[serde(default)]
+    speed: Option<f32>,
+    #[serde(default)]
+    resistance: Option<f32>,
+    #[serde(default)]
+    strength: Option<f32>,
+    /// A balloon's rope to prop `rope_to` (1-based) at that prop's local `rope_local`, total
+    /// length `rope_length` (the stool's `constraint.Rope(..., 0, ropelength, ...)`).
+    #[serde(default)]
+    rope_to: Option<usize>,
+    #[serde(default)]
+    rope_local: Option<[f32; 3]>,
+    #[serde(default)]
+    rope_length: Option<f32>,
+}
+
+impl DeviceSpec {
+    fn model(&self) -> String {
+        self.model.clone().unwrap_or_else(|| {
+            match self.kind.as_str() {
+                "thruster" => "models/props_phx2/garbage_metalcan001a.mdl",
+                "hoverball" => "models/dav0r/hoverball.mdl",
+                _ => "models/maxofs2d/balloon_classic.mdl",
+            }
+            .to_string()
+        })
+    }
+
+    /// The device as the stool would make it, with its keys.
+    fn device(&self, top_z: f32, bottom_z: f32) -> gm_sandbox::Device {
+        match self.kind.as_str() {
+            "thruster" => gm_sandbox::Device::Thruster {
+                force: self.force.unwrap_or(1500.0),
+                mul: 0.0,
+                toggle: self.toggle,
+                on: false,
+                top_z,
+                bottom_z,
+                key: self.key.unwrap_or(45),
+                key_back: self.key_bk.unwrap_or(42),
+            },
+            "hoverball" => gm_sandbox::Device::Hoverball {
+                target_z: self.pos[2],
+                zvel: 0.0,
+                speed: self.speed.unwrap_or(5.0),
+                resistance: self.resistance.unwrap_or(5.0),
+                strength: self.strength.unwrap_or(10.0),
+                enabled: true,
+                key_up: self.key_up.unwrap_or(46),
+                key_down: self.key_dn.unwrap_or(43),
+                key_toggle: self.key_on.unwrap_or(40),
+            },
+            _ => gm_sandbox::Device::Balloon {
+                force: self.force.unwrap_or(500.0),
+            },
+        }
+    }
+}
+
+/// `numpad.Activate` / `Deactivate` of `key` on a device (the SENT's numpad hooks).
+fn device_key(d: &mut gm_sandbox::Device, key: i32, down: bool, pos_z: f32) {
+    use gm_sandbox::Device;
+    match d {
+        Device::Thruster {
+            mul,
+            toggle,
+            on,
+            key: fwd,
+            key_back,
+            ..
+        } => {
+            let m = if key == *fwd {
+                1.0
+            } else if key == *key_back {
+                -1.0
+            } else {
+                return;
+            };
+            if *toggle {
+                if down {
+                    *mul = if *mul == m { 0.0 } else { m };
+                }
+            } else {
+                *mul += if down { m } else { -m };
+            }
+            *on = *mul != 0.0;
+        }
+        Device::Hoverball {
+            target_z,
+            zvel,
+            enabled,
+            key_up,
+            key_down,
+            key_toggle,
+            ..
+        } => {
+            if key == *key_up || key == *key_down {
+                let dir = if key == *key_up { 1.0 } else { -1.0 };
+                *zvel = if down { dir * 75.0 } else { 0.0 };
+            } else if key == *key_toggle && down {
+                *enabled = !*enabled;
+                if *enabled {
+                    *target_z = pos_z;
+                }
+            }
+        }
+        Device::Balloon { .. } => {}
+    }
+}
+
+/// The device's `PhysicsSimulate` for one tick, as impulses on its body.
+fn device_simulate(
+    world: &mut gm_physics::World,
+    body: gm_physics::BodyHandle,
+    d: &gm_sandbox::Device,
+    dt: f32,
+) {
+    use glam::Vec3;
+    use gm_sandbox::Device;
+    let st = world.state(body);
+    match d {
+        Device::Thruster {
+            force,
+            mul,
+            on,
+            top_z,
+            ..
+        } => {
+            if *on && *mul != 0.0 {
+                let top = st.position + st.rotation * Vec3::new(0.0, 0.0, *top_z);
+                let dir = st.rotation * Vec3::new(0.0, 0.0, -*top_z);
+                world.add_impulse_at(body, top, dir * (force * mul * 50.0 * dt));
+            }
+        }
+        Device::Hoverball {
+            target_z,
+            resistance,
+            enabled,
+            ..
+        } => {
+            if let Some(m) = d.mass() {
+                let cur = world.mass(body);
+                if cur > 0.0 && (cur - m).abs() > 1e-3 {
+                    world.set_mass(body, m);
+                }
+            }
+            if !*enabled {
+                return;
+            }
+            if let Some(a) = gm_sandbox::hoverball_acceleration(
+                *target_z,
+                *resistance,
+                st.position,
+                st.velocity,
+                600.0,
+                dt,
+            ) {
+                let m = d.mass().unwrap_or(1.0);
+                world.add_impulse(body, a * (m * dt));
+            }
+        }
+        Device::Balloon { force } => {
+            world.add_impulse(body, Vec3::new(0.0, 0.0, force * 5000.0 * dt * dt));
+        }
+    }
+}
+
+/// A device's row in the trace (`dev`), the fields the probe records.
+fn device_row(d: &gm_sandbox::Device, mass: f32) -> Value {
+    use gm_sandbox::Device;
+    match d {
+        Device::Thruster { mul, on, .. } => {
+            json!({ "class": "gmod_thruster", "mass": mass, "mul": mul, "on": on, "gravity": true })
+        }
+        Device::Hoverball {
+            target_z,
+            zvel,
+            enabled,
+            ..
+        } => {
+            json!({ "class": "gmod_hoverball", "mass": mass, "target_z": target_z, "zvel": zvel, "enabled": enabled, "gravity": true })
+        }
+        Device::Balloon { force } => {
+            json!({ "class": "gmod_balloon", "mass": mass, "force": force })
+        }
+    }
+}
+
+/// A device model's placement shape: OBB from the MDL header, hull points from the PHY.
+fn model_shape(mount: &gm_content::Mount, model: &str) -> Result<gm_sandbox::ModelShape> {
+    use glam::Vec3;
+    let mdl = gm_formats::mdl::Mdl::parse(&mount.read(model)?)?;
+    let phy_path = model
+        .strip_suffix(".mdl")
+        .map(|m| format!("{m}.phy"))
+        .unwrap_or_else(|| model.to_string());
+    let phy = gm_formats::phy::Phy::parse(&mount.read(&phy_path)?)?;
+    let solid = phy.solids.first().context("PHY has no solids")?;
+    Ok(gm_sandbox::ModelShape {
+        min: Vec3::from(mdl.header.hull_min),
+        max: Vec3::from(mdl.header.hull_max),
+        points: solid
+            .convexes
+            .iter()
+            .flat_map(|c| c.points.iter().map(|&p| Vec3::from(p)))
+            .collect(),
+    })
 }
 
 /// A prop the move probe spawns: frozen, or a frozen one teleported by `vel * dt` per tick
@@ -1057,6 +1292,63 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
         bodies.push(body);
         infos.push(serde_json::json!({ "mass": props.mass, "material": props.surfaceprop }));
     }
+    // the probe's devices follow the props in the trace: their bodies, then their state
+    let mut devices: Vec<(gm_physics::BodyHandle, gm_sandbox::Device)> = Vec::new();
+    for ds in &scn.devices {
+        let model = ds.model();
+        let shape = model_shape(&mount, &model)?;
+        let phy_path = model
+            .strip_suffix(".mdl")
+            .map(|m| format!("{m}.phy"))
+            .unwrap_or_else(|| model.clone());
+        let phy = gm_formats::phy::Phy::parse(&mount.read(&phy_path)?)?;
+        let solid = phy.solids.first().context("PHY has no solids")?;
+        let props = phy.props.first().cloned().unwrap_or_default();
+        let hulls: Vec<Vec<Vec3>> = solid
+            .convexes
+            .iter()
+            .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
+            .collect();
+        let sp = table.get(&props.surfaceprop);
+        let a = ds.angles.unwrap_or([0.0; 3]);
+        let d = ds.device(shape.max.z, shape.min.z);
+        let mass = d
+            .mass()
+            .unwrap_or(if props.mass > 0.0 { props.mass } else { 1.0 });
+        let body = world.add_prop(&PropDesc {
+            hulls: &hulls,
+            mass: if props.mass > 0.0 { props.mass } else { 1.0 },
+            volume: props.volume,
+            position: Vec3::from(ds.pos),
+            angles: (a[0], a[1], a[2]),
+            velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            surface: Surface {
+                friction: sp.friction,
+                elasticity: sp.elasticity,
+            },
+            linear_damping: props.damping,
+            angular_damping: props.rotdamping,
+            drag_axis_areas: Vec3::from(solid.drag_axis_areas),
+            inertia: Some(Vec3::from(solid.rotation_inertia)),
+        })?;
+        if d.mass().is_some() {
+            world.set_mass(body, mass);
+        }
+        world.set_gravity(body, d.gravity());
+        bodies.push(body);
+        infos.push(serde_json::json!({ "mass": mass, "material": props.surfaceprop }));
+        devices.push((body, d));
+        if let Some(to) = ds.rope_to {
+            let other = bodies[to - 1];
+            let so = world.state(other);
+            let pb = so.position + so.rotation * Vec3::from(ds.rope_local.unwrap_or([0.0; 3]));
+            let pa = Vec3::from(ds.pos);
+            world
+                .rope(body, other, pa, pb, ds.rope_length.unwrap_or(64.0), false)
+                .context("balloon rope")?;
+        }
+    }
     let masses: Vec<f32> = infos
         .iter()
         .map(|i| i["mass"].as_f64().unwrap_or(1.0) as f32)
@@ -1228,6 +1520,10 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
         // the key edges of this tick land before the record, the controllers' think after it
         // (the game's row shows the new direction and the old length)
         for k in scn.keys.iter().filter(|k| k.t == t) {
+            for (body, d) in devices.iter_mut() {
+                let z = world.state(*body).position.z;
+                device_key(d, k.key, k.down, z);
+            }
             for d in controllers.iter_mut() {
                 let ctrl = &mut d.ctrl;
                 for &(key, dir) in d.keys.iter() {
@@ -1269,11 +1565,33 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
         if !ctrl_rows.is_empty() {
             row["ctrl"] = json!(ctrl_rows);
         }
+        if !devices.is_empty() {
+            row["dev"] = json!(devices
+                .iter()
+                .map(|(b, d)| device_row(d, world.mass(*b)))
+                .collect::<Vec<_>>());
+        }
         ticks.push(row);
         for d in controllers.iter_mut() {
             if let Some(len) = d.ctrl.tick(dt) {
                 world.set_spring_rest(d.handle, len);
             }
+        }
+        // the hoverball's Think moves its target, then every device's PhysicsSimulate
+        for (body, d) in devices.iter_mut() {
+            if let gm_sandbox::Device::Hoverball {
+                target_z,
+                zvel,
+                speed,
+                enabled,
+                ..
+            } = d
+            {
+                if *enabled && *zvel != 0.0 {
+                    *target_z += *zvel * dt * *speed;
+                }
+            }
+            device_simulate(&mut world, *body, d, dt);
         }
         world.step();
     }
@@ -4332,13 +4650,40 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
     for (i, pr) in scn.props.iter().enumerate() {
         sb.set_frozen(i as u32 + 1, pr.frozen);
     }
+    for model in [
+        "models/props_phx2/garbage_metalcan001a.mdl",
+        "models/dav0r/hoverball.mdl",
+        "models/maxofs2d/balloon_classic.mdl",
+    ] {
+        if let Ok(shape) = model_shape(&mount, model) {
+            sb.set_model_shape(model, shape);
+        }
+    }
     let entref = |e: Option<u32>| -> Value {
         match e {
             None => json!({ "index": 0, "class": "worldspawn" }),
             Some(id) => json!({ "prop": id, "class": "prop_physics" }),
         }
     };
+    // the game's snapshot numbers only prop_physics; a device entity shows as prop 0 of its class
     let snapshot = |sb: &Sandbox| -> Value {
+        let entref = |e: Option<u32>| -> Value {
+            match e {
+                None => json!({ "index": 0, "class": "worldspawn" }),
+                Some(id) => match sb.devices().get(&id) {
+                    Some(gm_sandbox::Device::Thruster { .. }) => {
+                        json!({ "index": -1, "class": "gmod_thruster", "prop": 0 })
+                    }
+                    Some(gm_sandbox::Device::Hoverball { .. }) => {
+                        json!({ "index": -1, "class": "gmod_hoverball", "prop": 0 })
+                    }
+                    Some(gm_sandbox::Device::Balloon { .. }) => {
+                        json!({ "index": -1, "class": "gmod_balloon", "prop": 0 })
+                    }
+                    None => json!({ "prop": id, "class": "prop_physics" }),
+                },
+            }
+        };
         let constraints: Vec<Value> = sb
             .constraints()
             .iter()
@@ -4412,13 +4757,37 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 Some(json!({ "constraint": c.id, "type": u8::from(k.muscle), "length": k.length, "min": k.min, "max": k.max, "dir": k.direction }))
             })
             .collect();
+        let ents: Vec<Value> = sb
+            .props()
+            .iter()
+            .filter_map(|p| {
+                let d = sb.devices().get(&p.id)?;
+                let mut e = json!({ "prop": p.id, "model": p.model, "skin": p.skin, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z] });
+                let extra = match d {
+                    gm_sandbox::Device::Thruster { force, mul, toggle, on, top_z, key, key_back, .. } => json!({
+                        "class": "gmod_thruster", "force": force, "mul": mul, "toggle": u8::from(*toggle), "on": on, "offset": [0.0, 0.0, top_z], "key": key, "key_bck": key_back, "gravity": true,
+                    }),
+                    gm_sandbox::Device::Hoverball { target_z, zvel, speed, resistance, strength, enabled, key_up, key_down, key_toggle } => json!({
+                        "class": "gmod_hoverball", "mass": d.mass(), "target_z": target_z, "zvel": zvel, "speed": speed, "resistance": resistance, "strength": strength,
+                        "enabled": enabled, "key_u": key_up, "key_d": key_down, "key_o": key_toggle, "gravity": true,
+                    }),
+                    gm_sandbox::Device::Balloon { force } => json!({ "class": "gmod_balloon", "mass": 100.0, "force": force, "r": 255, "g": 255, "b": 0 }),
+                };
+                for (k, v) in extra.as_object().into_iter().flatten() {
+                    e[k] = v.clone();
+                }
+                Some(e)
+            })
+            .collect();
         json!({
             "constraints": constraints,
             "controllers": controllers,
+            "ents": ents,
             "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "text": u.text, "custom": u.custom, "n": u.entities.len() })).collect::<Vec<_>>(),
-            "counts": { "constraints": sb.count_of(player, "constraints"), "ropeconstraints": sb.count_of(player, "ropeconstraints"), "props": sb.count(player) },
+            "counts": { "constraints": sb.count_of(player, "constraints"), "ropeconstraints": sb.count_of(player, "ropeconstraints"), "props": sb.count(player),
+                "thrusters": sb.count_of(player, "thrusters"), "hoverballs": sb.count_of(player, "hoverballs"), "balloons": sb.count_of(player, "balloons") },
             "stage": sb.tool(player).stage,
-            "props": sb.props().iter().map(|p| json!({ "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen })).collect::<Vec<_>>(),
+            "props": sb.props().iter().filter(|p| !sb.devices().contains_key(&p.id)).map(|p| json!({ "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen })).collect::<Vec<_>>(),
         })
     };
     let golden = golden_trace(&scn.name);
@@ -4613,7 +4982,85 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             println!("  op {i} {op}: stage {} vs {}", ta["stage"], oa["stage"]);
             ok = false;
         }
-        for k in ["constraints", "ropeconstraints"] {
+        // devices: the game's `immediate` snapshot (before the wait), ours never moves
+        let (te, oe) = (
+            o["immediate"]["ents"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default(),
+            oa["ents"].as_array().cloned().unwrap_or_default(),
+        );
+        let (te, oe) = (
+            &t["after"]["ents"].as_array().map_or(te.clone(), |_| te),
+            oe,
+        );
+        if te.len() != oe.len() {
+            println!(
+                "  op {i} {op}: {} device entities in the game, {} ours",
+                te.len(),
+                oe.len()
+            );
+            ok = false;
+        } else {
+            for (g, m) in te.iter().zip(oe.iter()) {
+                let dp = (v3(&g["pos"]) - v3(&m["pos"])).length();
+                let da = gm_sandbox::rotation(v3(&g["ang"]))
+                    .angle_between(gm_sandbox::rotation(v3(&m["ang"])))
+                    .to_degrees();
+                let mut bad = Vec::new();
+                for k in [
+                    "class", "model", "skin", "toggle", "on", "key", "key_bck", "key_u", "key_d",
+                    "key_o", "enabled", "r", "g", "b",
+                ] {
+                    if g.get(k).is_some() && g[k] != m[k] {
+                        bad.push(format!("{k} {} vs {}", g[k], m[k]));
+                    }
+                }
+                for k in [
+                    "mass",
+                    "force",
+                    "mul",
+                    "target_z",
+                    "zvel",
+                    "speed",
+                    "resistance",
+                    "strength",
+                ] {
+                    if let (Some(a), Some(b)) = (g[k].as_f64(), m[k].as_f64()) {
+                        if (a - b).abs() > 1e-3 * a.abs().max(1.0) {
+                            bad.push(format!("{k} {a} vs {b}"));
+                        }
+                    }
+                }
+                if g.get("offset").is_some()
+                    && (v3(&g["offset"]) - v3(&m["offset"])).length() > 1e-3
+                {
+                    bad.push(format!("offset {} vs {}", g["offset"], m["offset"]));
+                }
+                println!(
+                    "  op {i}: {} pos err {dp:.3}, angle err {da:.2}{}",
+                    g["class"],
+                    if bad.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", {}", bad.join(", "))
+                    }
+                );
+                if dp > pos_tol || da > 0.5 || !bad.is_empty() {
+                    ok = false;
+                }
+            }
+        }
+        for k in [
+            "constraints",
+            "ropeconstraints",
+            "thrusters",
+            "hoverballs",
+            "balloons",
+        ] {
+            if ta["counts"].get(k).is_none() {
+                continue;
+            }
             if ta["counts"][k] != oa["counts"][k] {
                 println!(
                     "  op {i} {op}: count {k} {} vs {}",
@@ -4741,7 +5188,8 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                         .abs() as f32,
                 );
                 let num = |v: &Value| v.as_f64().unwrap_or(0.0);
-                if a["rigid"] != b["rigid"] || num(&a["addlength"]) != num(&b["addlength"]) {
+                let rigid = |v: &Value| v["rigid"].as_bool().unwrap_or(false);
+                if rigid(a) != rigid(b) || num(&a["addlength"]) != num(&b["addlength"]) {
                     println!(
                         "  op {i}: rope settings {} {} vs {} {}",
                         a["rigid"], a["addlength"], b["rigid"], b["addlength"]

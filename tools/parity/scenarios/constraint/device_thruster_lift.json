@@ -1,0 +1,45 @@
+{
+ "name": "device_thruster_lift",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "bot": true,
+ "start": [
+  600.0,
+  -500.0,
+  -143.0
+ ],
+ "ticks": 300,
+ "props": [],
+ "constraints": [],
+ "devices": [
+  {
+   "kind": "thruster",
+   "pos": [
+    823.235,
+    -500.0,
+    -140.355
+   ],
+   "angles": [
+    0,
+    0,
+    180
+   ],
+   "force": 20,
+   "key": 45,
+   "key_bk": 42,
+   "toggle": false
+  }
+ ],
+ "keys": [
+  {
+   "t": 20,
+   "key": 45,
+   "down": true
+  },
+  {
+   "t": 40,
+   "key": 45,
+   "down": false
+  }
+ ]
+}

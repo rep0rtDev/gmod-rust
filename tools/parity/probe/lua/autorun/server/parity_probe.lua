@@ -524,6 +524,28 @@ SCENARIOS.constraint = function(scn, done)
 		end
 		ents_[i] = ent
 	end
+	-- powered entities of the stools (gmod_thruster / gmod_hoverball / gmod_balloon), appended after the props
+	local devices = {}
+	for _, d in ipairs(scn.devices or {}) do
+		local pos = Vector(d.pos[1], d.pos[2], d.pos[3])
+		local ang = Angle(d.angles and d.angles[1] or 0, d.angles and d.angles[2] or 0, d.angles and d.angles[3] or 0)
+		local e
+		if d.kind == "thruster" then
+			e = MakeThruster(bot, d.model or "models/props_phx2/garbage_metalcan001a.mdl", ang, pos, d.key or 45, d.key_bk or 42, d.force or 1500, d.toggle and 1 or 0, "fire", 0, "", false)
+		elseif d.kind == "hoverball" then
+			e = MakeHoverBall(bot, pos, d.key_dn or 43, d.key_up or 46, d.speed or 5, d.resistance or 5, d.strength or 10, d.model or "models/dav0r/hoverball.mdl", nil, d.key_on or 40)
+		elseif d.kind == "balloon" then
+			e = MakeBalloon(bot, 255, 255, 0, d.force or 500, { Pos = pos, Model = d.model or "models/maxofs2d/balloon_classic.mdl", Skin = 1 })
+			if IsValid(e) and d.rope_to then
+				local lb = d.rope_local and Vector(d.rope_local[1], d.rope_local[2], d.rope_local[3]) or Vector(0, 0, 0)
+				constraint.Rope(e, ents_[d.rope_to], 0, 0, Vector(0, 0, 0), lb, 0, d.rope_length or 64, 0, 0.5, "cable/rope")
+			end
+		end
+		if IsValid(e) then
+			ents_[#ents_ + 1] = e
+			devices[#devices + 1] = e
+		end
+	end
 	local made = {}
 	for _, c in ipairs(scn.constraints or {}) do
 		local a, b = ents_[c.a], ents_[c.b]
@@ -582,6 +604,21 @@ SCENARIOS.constraint = function(scn, done)
 			if ph and IsValid(ph) then
 				local p, a, v, av = ph:GetPos(), ph:GetAngles(), ph:GetVelocity(), ph:GetAngleVelocity()
 				row.props[i] = { pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r }, vel = { v.x, v.y, v.z }, angvel = { av.x, av.y, av.z }, asleep = ph:IsAsleep() }
+			end
+		end
+		if #devices > 0 then
+			row.dev = {}
+			for i, e in ipairs(devices) do
+				if IsValid(e) then
+					local ph = e:GetPhysicsObject()
+					local d = { class = e:GetClass(), mass = IsValid(ph) and ph:GetMass() or nil, gravity = IsValid(ph) and ph:IsGravityEnabled() or nil }
+					if e:GetClass() == "gmod_thruster" then d.on = e:GetOn() d.mul = e.Multiply
+					elseif e:GetClass() == "gmod_hoverball" then d.target_z = e:GetTargetZ() d.zvel = e.ZVelocity d.enabled = e:GetEnabled()
+					elseif e:GetClass() == "gmod_balloon" then d.force = e:GetForce() end
+					row.dev[i] = d
+				else
+					row.dev[i] = {}
+				end
 			end
 		end
 		if #controllers > 0 then
@@ -723,7 +760,7 @@ SCENARIOS.toolgun = function(scn, done)
 	bot:Give("gmod_tool")
 	bot:SelectWeapon("gmod_tool")
 	-- a clean table: leftovers of earlier scenarios would collide with the props placed here
-	for _, cls in ipairs({ "prop_physics", "phys_constraint", "phys_lengthconstraint", "keyframe_rope" }) do
+	for _, cls in ipairs({ "prop_physics", "phys_constraint", "phys_lengthconstraint", "keyframe_rope", "gmod_thruster", "gmod_hoverball", "gmod_balloon" }) do
 		for _, e in ipairs(ents.FindByClass(cls)) do e:Remove() end
 	end
 	undo.GetTable()[bot:UniqueID()] = nil
@@ -788,12 +825,28 @@ SCENARIOS.toolgun = function(scn, done)
 		for _, r in ipairs(ents.FindByClass("keyframe_rope")) do
 			out.ropes[#out.ropes + 1] = { index = r:EntIndex(), pos = vec(r:GetPos()), length = r:GetKeyValues().Length, width = r:GetKeyValues().Width }
 		end
+		out.ents = {}
+		for _, cls in ipairs({ "gmod_thruster", "gmod_hoverball", "gmod_balloon" }) do
+			for _, e in ipairs(ents.FindByClass(cls)) do
+				local t, ph = e:GetTable(), e:GetPhysicsObject()
+				local p, a = e:GetPos(), e:GetAngles()
+				local d = { index = e:EntIndex(), class = cls, model = e:GetModel(), pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r },
+					mass = IsValid(ph) and ph:GetMass() or nil, gravity = IsValid(ph) and ph:IsGravityEnabled() or nil, skin = e:GetSkin(),
+					key = t.key, key_bck = t.key_bck, force = t.force, toggle = t.toggle, key_d = t.key_d, key_u = t.key_u, key_o = t.key_o,
+					speed = t.speed, strength = t.strength, resistance = t.resistance, r = t.r, g = t.g, b = t.b }
+				if cls == "gmod_thruster" then d.on = e:GetOn() d.mul = e.Multiply d.offset = vec(e:GetOffset())
+				elseif cls == "gmod_hoverball" then d.target_z = e:GetTargetZ() d.enabled = e:GetEnabled() d.zvel = e.ZVelocity end
+				out.ents[#out.ents + 1] = d
+			end
+		end
+		table.sort(out.ents, function(a, b) return a.index < b.index end)
 		local undos = undo.GetTable()[bot:UniqueID()] or {}
 		local ulist = {}
 		for k, u in pairs(undos) do ulist[#ulist + 1] = { id = k, name = u.Name, text = u.NiceText, custom = u.CustomUndoText, n = #u.Entities } end
 		table.sort(ulist, function(a, b) return a.id < b.id end)
 		out.undos = ulist
-		out.counts = { constraints = bot:GetCount("constraints"), ropeconstraints = bot:GetCount("ropeconstraints"), props = bot:GetCount("props") }
+		out.counts = { constraints = bot:GetCount("constraints"), ropeconstraints = bot:GetCount("ropeconstraints"), props = bot:GetCount("props"),
+			thrusters = bot:GetCount("thrusters"), hoverballs = bot:GetCount("hoverballs"), balloons = bot:GetCount("balloons") }
 		local wep = bot:GetWeapon("gmod_tool")
 		out.stage = IsValid(wep) and wep:GetNWInt("Stage", 0) or -1
 		return out

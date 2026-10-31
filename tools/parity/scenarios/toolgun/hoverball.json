@@ -1,0 +1,114 @@
+{
+ "name": "toolgun_hoverball",
+ "kind": "toolgun",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  },
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -440.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  }
+ ],
+ "ops": [
+  {
+   "op": "click",
+   "tool": "hoverball",
+   "pitch": 30.0,
+   "yaw": 0.0,
+   "settings": {
+    "keyup": 46,
+    "keydn": 43,
+    "keyon": 40,
+    "speed": 5,
+    "resistance": 5,
+    "strength": 10,
+    "model": "models/dav0r/hoverball.mdl"
+   },
+   "wait": 10
+  },
+  {
+   "op": "numpad",
+   "key": 46,
+   "down": true,
+   "wait": 30
+  },
+  {
+   "op": "numpad",
+   "key": 46,
+   "down": false,
+   "wait": 10
+  },
+  {
+   "op": "numpad",
+   "key": 43,
+   "down": true,
+   "wait": 30
+  },
+  {
+   "op": "numpad",
+   "key": 43,
+   "down": false,
+   "wait": 10
+  },
+  {
+   "op": "numpad",
+   "key": 40,
+   "down": true,
+   "wait": 2
+  },
+  {
+   "op": "numpad",
+   "key": 40,
+   "down": false,
+   "wait": 30
+  },
+  {
+   "op": "click",
+   "tool": "hoverball",
+   "pitch": 60.0,
+   "yaw": 0.0,
+   "settings": {
+    "keyup": 46,
+    "keydn": 43,
+    "keyon": 40,
+    "speed": 5,
+    "resistance": 5,
+    "strength": 10,
+    "model": "models/dav0r/hoverball.mdl"
+   },
+   "wait": 10
+  },
+  {
+   "op": "cleanup"
+  }
+ ]
+}

@@ -3033,3 +3033,102 @@ realm = "server"
 crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
+
+[[harness]]
+name = "constraint_device_thruster_lift"
+scenario = "constraint/device_thruster_lift"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_device_thruster_crate"
+scenario = "constraint/device_thruster_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_device_hoverball"
+scenario = "constraint/device_hoverball"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_device_hoverball_crate"
+scenario = "constraint/device_hoverball_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_device_balloon_free"
+scenario = "constraint/device_balloon_free"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_device_balloon_crate"
+scenario = "constraint/device_balloon_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "toolgun_thruster"
+scenario = "toolgun/thruster"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_hoverball"
+scenario = "toolgun/hoverball"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_balloon"
+scenario = "toolgun/balloon"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1

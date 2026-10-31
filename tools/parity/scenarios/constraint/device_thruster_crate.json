@@ -1,0 +1,66 @@
+{
+ "name": "device_thruster_crate",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "bot": true,
+ "start": [
+  600.0,
+  -500.0,
+  -143.0
+ ],
+ "ticks": 300,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": false
+  }
+ ],
+ "constraints": [
+  {
+   "kind": "weld",
+   "a": 2,
+   "b": 1
+  }
+ ],
+ "devices": [
+  {
+   "kind": "thruster",
+   "pos": [
+    823.235,
+    -500.0,
+    -95.0
+   ],
+   "angles": [
+    0,
+    0,
+    180
+   ],
+   "force": 500,
+   "key": 45,
+   "key_bk": 42,
+   "toggle": false
+  }
+ ],
+ "keys": [
+  {
+   "t": 20,
+   "key": 45,
+   "down": true
+  },
+  {
+   "t": 50,
+   "key": 45,
+   "down": false
+  }
+ ]
+}

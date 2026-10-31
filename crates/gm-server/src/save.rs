@@ -4,7 +4,7 @@
 
 use crate::Server;
 use glam::Vec3;
-use gm_sandbox::{ConstraintKind, LengthController};
+use gm_sandbox::{ConstraintKind, Device, LengthController, NumpadBind};
 
 pub const EXTENSION: &str = "rdup";
 
@@ -14,6 +14,147 @@ pub struct Save {
     pub map: String,
     pub props: Vec<SavedProp>,
     pub constraints: Vec<SavedConstraint>,
+    /// Powered stool entities on props (by prop index); absent in older files.
+    #[serde(default)]
+    pub devices: Vec<SavedDevice>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedDevice {
+    pub prop: usize,
+    pub kind: SavedDeviceKind,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SavedDeviceKind {
+    Thruster {
+        force: f32,
+        mul: f32,
+        toggle: bool,
+        top_z: f32,
+        bottom_z: f32,
+        key: i32,
+        key_back: i32,
+    },
+    Hoverball {
+        target_z: f32,
+        speed: f32,
+        resistance: f32,
+        strength: f32,
+        enabled: bool,
+        key_up: i32,
+        key_down: i32,
+        key_toggle: i32,
+    },
+    Balloon {
+        force: f32,
+    },
+}
+
+impl From<&Device> for SavedDeviceKind {
+    fn from(d: &Device) -> Self {
+        match d.clone() {
+            Device::Thruster {
+                force,
+                mul,
+                toggle,
+                top_z,
+                bottom_z,
+                key,
+                key_back,
+                ..
+            } => SavedDeviceKind::Thruster {
+                force,
+                mul,
+                toggle,
+                top_z,
+                bottom_z,
+                key,
+                key_back,
+            },
+            Device::Hoverball {
+                target_z,
+                speed,
+                resistance,
+                strength,
+                enabled,
+                key_up,
+                key_down,
+                key_toggle,
+                ..
+            } => SavedDeviceKind::Hoverball {
+                target_z,
+                speed,
+                resistance,
+                strength,
+                enabled,
+                key_up,
+                key_down,
+                key_toggle,
+            },
+            Device::Balloon { force } => SavedDeviceKind::Balloon { force },
+        }
+    }
+}
+
+impl SavedDeviceKind {
+    /// The device and the numpad bindings it needs on prop `id`.
+    pub fn restore(&self, id: u32) -> (Device, Vec<(i32, NumpadBind)>) {
+        match self.clone() {
+            SavedDeviceKind::Thruster {
+                force,
+                mul,
+                toggle,
+                top_z,
+                bottom_z,
+                key,
+                key_back,
+            } => (
+                Device::Thruster {
+                    force,
+                    mul,
+                    toggle,
+                    on: mul != 0.0,
+                    top_z,
+                    bottom_z,
+                    key,
+                    key_back,
+                },
+                vec![
+                    (key, NumpadBind::Thruster(id, 1.0)),
+                    (key_back, NumpadBind::Thruster(id, -1.0)),
+                ],
+            ),
+            SavedDeviceKind::Hoverball {
+                target_z,
+                speed,
+                resistance,
+                strength,
+                enabled,
+                key_up,
+                key_down,
+                key_toggle,
+            } => (
+                Device::Hoverball {
+                    target_z,
+                    zvel: 0.0,
+                    speed,
+                    resistance,
+                    strength,
+                    enabled,
+                    key_up,
+                    key_down,
+                    key_toggle,
+                },
+                vec![
+                    (key_up, NumpadBind::HoverballMove(id, 1.0)),
+                    (key_down, NumpadBind::HoverballMove(id, -1.0)),
+                    (key_toggle, NumpadBind::HoverballToggle(id)),
+                ],
+            ),
+            SavedDeviceKind::Balloon { force } => (Device::Balloon { force }, Vec::new()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -639,6 +780,17 @@ impl Server<'_> {
                     kind: SavedKind::from(&c.kind),
                 })
                 .collect(),
+            devices: self
+                .sandbox
+                .devices()
+                .iter()
+                .filter_map(|(id, d)| {
+                    Some(SavedDevice {
+                        prop: index(Some(*id))?,
+                        kind: SavedDeviceKind::from(d),
+                    })
+                })
+                .collect(),
         }
     }
 
@@ -680,6 +832,14 @@ impl Server<'_> {
             self.sandbox
                 .restore_constraint(owner, a, b, ConstraintKind::from(&c.kind));
             constraints += 1;
+        }
+        for d in &save.devices {
+            let Some(Some(id)) = ids.get(d.prop).copied() else {
+                continue;
+            };
+            let (device, binds) = d.kind.restore(id);
+            self.sandbox.set_gravity(id, device.gravity());
+            self.sandbox.restore_device(id, device, &binds);
         }
         self.sync_after_script();
         (ids.iter().filter(|i| i.is_some()).count(), constraints)

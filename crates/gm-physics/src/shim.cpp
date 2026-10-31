@@ -215,6 +215,27 @@ void gmp_remove_constraint(void *system, void *constraint) {
 	sys->RemoveConstraint(reinterpret_cast<JPH::Constraint *>(constraint));
 }
 
+// `PhysObj:SetMass`: rescales mass and inertia together (IVP keeps the inertia per unit mass)
+void gmp_set_mass(void *system, unsigned int id, float mass) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), JPH::BodyID(id));
+	if (!lock.Succeeded()) return;
+	JPH::Body &b = lock.GetBody();
+	if (!b.IsDynamic()) return;
+	JPH::MotionProperties *mp = b.GetMotionProperties();
+	float inv = mp->GetInverseMass();
+	if (inv <= 0.0f || mass <= 0.0f) return;
+	float factor = mass * inv;
+	mp->SetInverseMass(inv / factor);
+	mp->SetInverseInertia(mp->GetInverseInertiaDiagonal() / factor, mp->GetInertiaRotation());
+}
+
+// impulse through the mass centre (no torque)
+void gmp_add_impulse(void *system, unsigned int id, float ix, float iy, float iz) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	sys->GetBodyInterface().AddImpulse(JPH::BodyID(id), JPH::Vec3(ix, iy, iz));
+}
+
 // 1 / effective mass of a body for an impulse at world point `p` along `dir` (kg^-1; the
 // rotational term uses the body's inverse inertia). 0 for a static or frozen body.
 float gmp_point_inverse_mass(void *system, unsigned int id, float px, float py, float pz, float dx, float dy, float dz) {

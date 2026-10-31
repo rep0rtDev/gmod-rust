@@ -1,0 +1,73 @@
+{
+ "name": "device_hoverball_crate",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "bot": true,
+ "start": [
+  600.0,
+  -500.0,
+  -143.0
+ ],
+ "ticks": 300,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": false
+  }
+ ],
+ "constraints": [
+  {
+   "kind": "weld",
+   "a": 2,
+   "b": 1
+  }
+ ],
+ "devices": [
+  {
+   "kind": "hoverball",
+   "pos": [
+    823.235,
+    -500.0,
+    -98.0
+   ],
+   "speed": 5,
+   "resistance": 5,
+   "strength": 10,
+   "key_up": 46,
+   "key_dn": 43,
+   "key_on": 40
+  }
+ ],
+ "keys": [
+  {
+   "t": 20,
+   "key": 46,
+   "down": true
+  },
+  {
+   "t": 100,
+   "key": 46,
+   "down": false
+  },
+  {
+   "t": 160,
+   "key": 43,
+   "down": true
+  },
+  {
+   "t": 200,
+   "key": 43,
+   "down": false
+  }
+ ]
+}

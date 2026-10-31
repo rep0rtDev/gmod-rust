@@ -1,0 +1,62 @@
+{
+ "name": "device_hoverball",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "bot": true,
+ "start": [
+  600.0,
+  -500.0,
+  -143.0
+ ],
+ "ticks": 300,
+ "props": [],
+ "constraints": [],
+ "devices": [
+  {
+   "kind": "hoverball",
+   "pos": [
+    823.235,
+    -500.0,
+    -120.0
+   ],
+   "speed": 5,
+   "resistance": 5,
+   "strength": 10,
+   "key_up": 46,
+   "key_dn": 43,
+   "key_on": 40
+  }
+ ],
+ "keys": [
+  {
+   "t": 20,
+   "key": 46,
+   "down": true
+  },
+  {
+   "t": 80,
+   "key": 46,
+   "down": false
+  },
+  {
+   "t": 120,
+   "key": 43,
+   "down": true
+  },
+  {
+   "t": 160,
+   "key": 43,
+   "down": false
+  },
+  {
+   "t": 220,
+   "key": 40,
+   "down": true
+  },
+  {
+   "t": 221,
+   "key": 40,
+   "down": false
+  }
+ ]
+}
