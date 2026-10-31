@@ -55,7 +55,7 @@ fn main() -> Result<()> {
         &mount,
         &bsp,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-        false,
+        gm_render::world::Quality::default(),
     )?;
     eprintln!(
         "world: {} faces ({} in 3D skybox), {} displacements, {} props ({} models), {} triangles, {} materials, {} missing, {} lightmap overflow, built in {:.1}s",

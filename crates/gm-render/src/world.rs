@@ -52,6 +52,30 @@ struct CameraUniform {
     exposure: f32,
 }
 
+/// Renderer quality from the client's Advanced Video settings.
+#[derive(Clone, Copy, Debug)]
+pub struct Quality {
+    /// Use the HDR lighting lumps when the map has them (`mat_hdr_level` >= 1).
+    pub hdr: bool,
+    /// `mat_picmip`: top mips skipped on world textures (<= 0 skips none).
+    pub picmip: i32,
+    /// `mat_trilinear`.
+    pub trilinear: bool,
+    /// `mat_forceaniso` 1..16.
+    pub aniso: u32,
+}
+
+impl Default for Quality {
+    fn default() -> Self {
+        Self {
+            hdr: false,
+            picmip: 0,
+            trilinear: false,
+            aniso: 1,
+        }
+    }
+}
+
 /// Source camera: position in units, angles in degrees (pitch, yaw, roll), horizontal FOV.
 #[derive(Clone, Copy, Debug)]
 pub struct Camera {
@@ -103,6 +127,7 @@ pub struct WorldRenderer {
     pub exposure: f32,
     /// Whether the HDR lumps were used.
     pub hdr: bool,
+    pub quality: Quality,
     /// Auto-exposure bounds and rate of the map's env_tonemap_controller.
     pub tm_min: f32,
     pub tm_max: f32,
@@ -853,8 +878,9 @@ impl WorldRenderer {
         mount: &Mount,
         bsp: &Bsp<'_>,
         color_format: wgpu::TextureFormat,
-        hdr: bool,
+        quality: Quality,
     ) -> Result<Self> {
+        let hdr = quality.hdr;
         let device = &gpu.device;
         let atlas_size = 4096u32;
         // the float atlas holds linear light as is (lm_scale stays for the uniform layout)
@@ -958,6 +984,7 @@ impl WorldRenderer {
                             width: 1,
                             height: 1,
                             pixels: vec![60, 90, 110, 255],
+                            mips: Vec::new(),
                         },
                     ));
                 }
@@ -968,10 +995,11 @@ impl WorldRenderer {
                             width: 1,
                             height: 1,
                             pixels: vec![128, 128, 128, 255],
+                            mips: Vec::new(),
                         },
                     ));
                 };
-                match material::load_texture(mount, &tex, 1024) {
+                match material::load_texture_lod(mount, &tex, 1024, quality.picmip.max(0) as u32) {
                     Ok(rgba) => Some((m, rgba)),
                     Err(_) => {
                         stats.missing_materials.push(format!("{canon} -> {tex}"));
@@ -1197,12 +1225,21 @@ impl WorldRenderer {
                 },
             ],
         });
+        // mat_trilinear / mat_forceaniso (anisotropic filtering implies trilinear)
+        let aniso = quality.aniso.clamp(1, 16) as u16;
+        let mip_filter = if quality.trilinear || aniso > 1 {
+            wgpu::MipmapFilterMode::Linear
+        } else {
+            wgpu::MipmapFilterMode::Nearest
+        };
         let base_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("base"),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: mip_filter,
+            anisotropy_clamp: aniso,
             ..Default::default()
         });
 
@@ -1229,14 +1266,7 @@ impl WorldRenderer {
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
-            let tex = upload_rgba(
-                gpu,
-                &rgba.pixels,
-                rgba.width,
-                rgba.height,
-                wgpu::TextureFormat::Rgba8UnormSrgb,
-                name,
-            );
+            let tex = upload_rgba_mips(gpu, rgba, wgpu::TextureFormat::Rgba8UnormSrgb, name);
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(name),
                 layout: &material_layout,
@@ -1350,6 +1380,7 @@ impl WorldRenderer {
             exposure,
 
             hdr,
+            quality,
             tm_min,
             tm_max,
             tm_rate,
@@ -1658,14 +1689,7 @@ impl WorldRenderer {
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
-                let t = upload_rgba(
-                    gpu,
-                    &rgba.pixels,
-                    rgba.width,
-                    rgba.height,
-                    wgpu::TextureFormat::Rgba8UnormSrgb,
-                    key,
-                );
+                let t = upload_rgba_mips(gpu, rgba, wgpu::TextureFormat::Rgba8UnormSrgb, key);
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some(key),
                     layout: &self.material_layout,
@@ -1728,14 +1752,7 @@ impl WorldRenderer {
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let t = upload_rgba(
-            gpu,
-            &rgba.pixels,
-            rgba.width,
-            rgba.height,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            name,
-        );
+        let t = upload_rgba_mips(gpu, &rgba, wgpu::TextureFormat::Rgba8UnormSrgb, name);
         Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(name),
             layout: &self.material_layout,
@@ -2131,6 +2148,59 @@ fn skybox_faces_bounds(bsp: &Bsp<'_>, faces: &HashSet<usize>) -> Option<([f32; 3
         }
     }
     any.then_some((mins, maxs))
+}
+
+/// Upload a decoded texture with its mip chain.
+pub fn upload_rgba_mips(
+    gpu: &Gpu,
+    rgba: &material::Rgba,
+    format: wgpu::TextureFormat,
+    label: &str,
+) -> wgpu::Texture {
+    let size = wgpu::Extent3d {
+        width: rgba.width,
+        height: rgba.height,
+        depth_or_array_layers: 1,
+    };
+    let levels = (1 + rgba.mips.len() as u32).min(size.max_mips(wgpu::TextureDimension::D2));
+    let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size,
+        mip_level_count: levels,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let bpp = format.block_copy_size(None).unwrap_or(4);
+    for (level, px) in std::iter::once(&rgba.pixels)
+        .chain(rgba.mips.iter())
+        .take(levels as usize)
+        .enumerate()
+    {
+        let (w, h) = ((rgba.width >> level).max(1), (rgba.height >> level).max(1));
+        gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            px,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * bpp),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    tex
 }
 
 pub fn upload_rgba(

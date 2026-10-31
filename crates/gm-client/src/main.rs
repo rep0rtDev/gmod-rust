@@ -789,7 +789,13 @@ impl App {
         let t0 = Instant::now();
         // mat_hdr_level >= 1 takes the HDR lumps when the map has them (applied on map load)
         let hdr = self.settings.mat_hdr_level >= 1 && bsp.has_hdr();
-        let world = WorldRenderer::new(&gpu, &self.mount, &bsp, format, hdr)?;
+        let quality = gm_render::world::Quality {
+            hdr,
+            picmip: self.settings.mat_picmip,
+            trilinear: self.settings.mat_trilinear,
+            aniso: self.settings.mat_forceaniso,
+        };
+        let world = WorldRenderer::new(&gpu, &self.mount, &bsp, format, quality)?;
         if hdr {
             println!("hdr lighting: exposure {:.2}", world.exposure);
         }

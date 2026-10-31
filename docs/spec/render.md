@@ -58,3 +58,14 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   composite adds it times the controller's `SetBloomScale` (0.3 on gm_construct). The
   threshold / kernel are ours - the engine's downsample and blur shaders were not consulted;
   the strength follows the map's controller like the exposure bounds do.
+
+## Texture mips and filtering
+
+- World, model and sprite textures upload the whole VTF mip chain below the chosen top
+  (`material::load_texture_lod`, `upload_rgba_mips`); before this only the top mip existed,
+  so distant surfaces sparkled and the Advanced Video texture settings had nothing to act on.
+- `gm_render::world::Quality` carries the Advanced Video values into the renderer:
+  `mat_picmip` skips that many top mips on world textures (Texture Detail Low 2 / Medium 1 /
+  High 0 / Very High -1 = none), `mat_trilinear` picks a linear mip filter (nearest otherwise),
+  `mat_forceaniso` 1..16 sets the base sampler's anisotropy (which forces trilinear, as wgpu
+  requires). Applied on map load like the HDR choice.

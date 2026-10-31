@@ -127,6 +127,8 @@ pub struct Rgba {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>,
+    /// Lower mip levels, each half the previous (empty when the source carries none).
+    pub mips: Vec<Vec<u8>>,
 }
 
 /// Decode a PNG (any colour type) to RGBA8.
@@ -160,11 +162,18 @@ pub fn load_png(bytes: &[u8]) -> Result<Rgba> {
         width: info.width,
         height: info.height,
         pixels,
+        mips: Vec::new(),
     })
 }
 
 /// Decode a VTF, picking the largest mip whose longer side is at most `max_side`.
 pub fn load_texture(mount: &Mount, name: &str, max_side: u32) -> Result<Rgba> {
+    load_texture_lod(mount, name, max_side, 0)
+}
+
+/// [`load_texture`] skipping `skip` more top mips (`mat_picmip`) and returning the mip
+/// chain below the chosen level.
+pub fn load_texture_lod(mount: &Mount, name: &str, max_side: u32, skip: u32) -> Result<Rgba> {
     // an absolute path (a save's preview under the user's home) is read from disk
     if std::path::Path::new(name).is_absolute() {
         return load_png(&std::fs::read(name)?);
@@ -201,13 +210,26 @@ pub fn load_texture(mount: &Mount, name: &str, max_side: u32) -> Result<Rgba> {
         }
         mip += 1;
     }
+    let mip = (mip + skip).min((h.mipmap_count as u32).saturating_sub(1));
     let (w, hh, _) = vtf::decode::mip_dims(&h, mip);
     let slice = vtf::decode::mip_slice(&h, &bytes, mip, 0, 0, 0)?;
     let pixels = vtf::decode::decode_rgba8(h.high_res_format, w, hh, slice)?;
+    let mut mips = Vec::new();
+    for m in mip + 1..h.mipmap_count as u32 {
+        let (mw, mh, _) = vtf::decode::mip_dims(&h, m);
+        let Ok(slice) = vtf::decode::mip_slice(&h, &bytes, m, 0, 0, 0) else {
+            break;
+        };
+        let Ok(px) = vtf::decode::decode_rgba8(h.high_res_format, mw, mh, slice) else {
+            break;
+        };
+        mips.push(px);
+    }
     Ok(Rgba {
         width: w,
         height: hh,
         pixels,
+        mips,
     })
 }
 
