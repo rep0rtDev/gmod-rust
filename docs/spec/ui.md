@@ -303,3 +303,11 @@ in the 640x480 proportional space of the sheet page.
   odd #F1F6FF, hover #B7DDFD, text #444; columns name (flex, 13 px bold at >= 1280) with
   favourite star / flag / password icon, map 90 (130 at >= 1280), players 48 ("a / b"),
   ping 32, rank 64 (`img/rank1..5.png`); double click joins (`servers_join_server`).
+- Ours (`servers.rs`): Internet asks the master in `~/.gmod-rust/cfg/master.txt`
+  (`MasterMsg::List` pages, then a `Query` per server for the ping), Local Network broadcasts
+  a `Query` to port 27015, Favorites / History are `cfg/servers_{favorites,history}.txt`;
+  "Find servers at given address" is a direct `Query` → `Info` (name, map, players, max,
+  RTT). Gamemode tiles group the current list (all our servers are `sandbox`); a server row
+  clicked twice or Join Server relaunches the client with `--connect host:port` and puts
+  the server at the top of History. No sort / filter column controls, no flags / rank /
+  password icons yet (our `ServerInfo` has none of those).

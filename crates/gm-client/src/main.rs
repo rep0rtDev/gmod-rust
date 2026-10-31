@@ -10,6 +10,7 @@
 mod derma;
 mod newgame;
 mod options;
+mod servers;
 mod settings;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -714,6 +715,8 @@ struct App {
     options: Option<options::OptionsState>,
     /// The main menu's New Game page while open (`#/newgame/`).
     newgame: Option<newgame::NewGameState>,
+    /// The Servers page while open (`#/servers/`).
+    servers: Option<servers::ServersState>,
     /// The map this client runs.
     map_name: String,
     /// Slider being dragged in the Options dialog.
@@ -847,6 +850,8 @@ impl App {
                 (newgame::F14, "Roboto-Regular", 14.0),
                 (newgame::F20, "Roboto-Regular", 20.0),
                 (newgame::F32, "Roboto-Regular", 32.0),
+                (servers::F20B, "Roboto-Bold", 20.0),
+                (servers::F13B, "Roboto-Bold", 13.0),
             ] {
                 ui.register_font(&gpu, &self.mount, name, font, size);
             }
@@ -1216,7 +1221,7 @@ impl App {
             &mut layout,
             &ctx,
             true,
-            self.newgame.is_none(),
+            self.newgame.is_none() && self.servers.is_none(),
             &self.lang,
             &opt,
             opt_font,
@@ -1247,7 +1252,146 @@ impl App {
             let max = newgame::page(&mut layout, &ctx, ng, &self.lang, &fonts);
             self.menu_cache.borrow_mut().ng_max_scroll = max;
         }
+        if let Some(sv) = &self.servers {
+            let f = |n: &str| g.ui.font_metrics(Some(n));
+            let (f11, f12, f13, f13b, f20b, f32) = (
+                f(newgame::F11),
+                f(newgame::F12),
+                f(newgame::F13),
+                f(servers::F13B),
+                f(servers::F20B),
+                f(newgame::F32),
+            );
+            let fonts = servers::Fonts {
+                f11: &f11,
+                f12: &f12,
+                f13: &f13,
+                f13b: &f13b,
+                f20b: &f20b,
+                f32: &f32,
+                opt: &opt,
+                opt_font,
+            };
+            servers::page(&mut layout, &ctx, sv, &self.lang, &fonts);
+        }
         layout
+    }
+
+    /// Relaunches this client with the arguments rebuilt: the positional map replaced (or
+    /// dropped) and `--connect` replaced.
+    fn relaunch(&self, map: Option<&str>, connect: Option<&str>) {
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        let mut args: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < argv.len() {
+            let a = &argv[i];
+            if a == "--connect" {
+                i += 2;
+                continue;
+            }
+            if a.starts_with("--") {
+                args.push(a.clone());
+                if let Some(v) = argv.get(i + 1).filter(|v| !v.starts_with("--")) {
+                    args.push(v.clone());
+                    i += 1;
+                }
+            }
+            // positional (the old map) dropped
+            i += 1;
+        }
+        if let Some(c) = connect {
+            args.push("--connect".to_string());
+            args.push(c.to_string());
+        } else if let Some(m) = map {
+            args.insert(0, m.to_string());
+        }
+        match std::process::Command::new(exe).args(&args).spawn() {
+            Ok(_) => std::process::exit(0),
+            Err(e) => eprintln!("relaunch: {e}"),
+        }
+    }
+
+    fn servers_click(&mut self) {
+        let Some(g) = self.gfx.as_ref() else { return };
+        let action = self.main_menu_layout(g).hit(self.cursor).cloned();
+        let Some(sv) = self.servers.as_mut() else {
+            return;
+        };
+        sv.focus = false;
+        match action {
+            Some(derma::Action::Menu("back")) => self.servers = None,
+            Some(derma::Action::Menu("quit" | "disconnect")) => std::process::exit(0),
+            Some(derma::Action::Menu("resume_game")) => {
+                self.main_menu = false;
+                self.servers = None;
+                self.set_grab(true);
+            }
+            Some(derma::Action::Servers(a)) => {
+                use servers::SvAction as A;
+                match a {
+                    A::Type(k) => {
+                        sv.kind = k;
+                        sv.gamemode = None;
+                        sv.selected = None;
+                        sv.status.clear();
+                        if sv.servers().is_empty() {
+                            sv.refresh();
+                        }
+                    }
+                    A::Refresh => {
+                        if sv.refreshing.is_some() {
+                            sv.stop_refresh();
+                        } else {
+                            sv.refresh();
+                        }
+                    }
+                    A::Gamemode(gm) => sv.gamemode = gm,
+                    A::FindText => sv.focus = true,
+                    A::Find => sv.find(),
+                    A::Select(addr) => {
+                        if sv.selected.as_deref() == Some(addr.as_str()) {
+                            // second click joins, like the double click
+                            sv.record_join(&addr);
+                            self.relaunch(None, Some(&addr));
+                        } else {
+                            sv.selected = Some(addr);
+                        }
+                    }
+                    A::Join(addr) => {
+                        sv.record_join(&addr);
+                        self.relaunch(None, Some(&addr));
+                    }
+                    A::Fav(addr) => sv.toggle_favorite(&addr),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn servers_key(&mut self, code: Option<KeyCode>, text: Option<&str>) {
+        let Some(sv) = self.servers.as_mut() else {
+            return;
+        };
+        match code {
+            Some(KeyCode::Enter | KeyCode::NumpadEnter) => {
+                sv.focus = false;
+                sv.find();
+            }
+            Some(KeyCode::Escape | KeyCode::Tab) => sv.focus = false,
+            Some(KeyCode::Backspace) => {
+                sv.find_text.pop();
+            }
+            _ => {
+                if let Some(t) = text {
+                    sv.find_text
+                        .extend(t.chars().filter(|c| !c.is_control() && !c.is_whitespace()));
+                    sv.find_text.truncate(64);
+                }
+            }
+        }
     }
 
     fn open_newgame(&mut self) {
@@ -1277,36 +1421,7 @@ impl App {
         if let Err(e) = std::fs::write(&cfg, ng.server_cfg()) {
             eprintln!("server.cfg: {e}");
         }
-        let Ok(exe) = std::env::current_exe() else {
-            return;
-        };
-        let argv: Vec<String> = std::env::args().skip(1).collect();
-        let mut args: Vec<String> = Vec::new();
-        let mut skip = false;
-        for (i, a) in argv.iter().enumerate() {
-            if skip {
-                skip = false;
-                args.push(a.clone());
-                continue;
-            }
-            if a.starts_with("--") {
-                skip = a == "--addon" || a == "--connect";
-                if a == "--connect" {
-                    skip = true;
-                    continue;
-                }
-                args.push(a.clone());
-            } else if i == 0 || !argv[i - 1].starts_with("--") {
-                // the old positional map
-            } else {
-                args.push(a.clone());
-            }
-        }
-        args.insert(0, map);
-        match std::process::Command::new(exe).args(&args).spawn() {
-            Ok(_) => std::process::exit(0),
-            Err(e) => eprintln!("relaunch: {e}"),
-        }
+        self.relaunch(Some(&map), None);
     }
 
     fn newgame_click(&mut self) {
@@ -1556,6 +1671,10 @@ impl App {
             self.newgame_click();
             return;
         }
+        if self.servers.is_some() {
+            self.servers_click();
+            return;
+        }
         let Some(g) = self.gfx.as_ref() else { return };
         let action = self.main_menu_layout(g).hit(self.cursor).cloned();
         match action {
@@ -1566,6 +1685,11 @@ impl App {
             Some(derma::Action::Menu("quit" | "disconnect")) => std::process::exit(0),
             Some(derma::Action::Menu("options")) => self.open_options(),
             Some(derma::Action::Menu("newgame")) => self.open_newgame(),
+            Some(derma::Action::Menu("servers")) => {
+                let mut sv = servers::ServersState::new();
+                sv.refresh();
+                self.servers = Some(sv);
+            }
             _ => {}
         }
     }
@@ -1614,6 +1738,7 @@ impl App {
                 | derma::Action::Menu(_)
                 | derma::Action::Opt(_)
                 | derma::Action::NewGame(_)
+                | derma::Action::Servers(_)
                 | derma::Action::Nothing,
             )
             | None => {}
@@ -3491,6 +3616,12 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
+                if self.main_menu && self.servers.as_ref().is_some_and(|s| s.focus) {
+                    if down {
+                        self.servers_key(code, event.text.as_deref());
+                    }
+                    return;
+                }
                 let Some(code) = code else { return };
                 if !event.repeat {
                     self.pending_input.push((format!("{code:?}"), down));
@@ -3508,6 +3639,7 @@ impl ApplicationHandler for App {
                         }
                         KeyCode::Escape if self.options.is_some() => self.options = None,
                         KeyCode::Escape if self.newgame.is_some() => self.newgame = None,
+                        KeyCode::Escape if self.servers.is_some() => self.servers = None,
                         KeyCode::Escape if self.main_menu => {
                             self.main_menu = false;
                             self.set_grab(true);
@@ -3723,6 +3855,9 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
         self.step();
+        if let Some(sv) = &mut self.servers {
+            sv.poll();
+        }
         if self.settings.fps_max > 0.0 {
             let min = std::time::Duration::from_secs_f32(1.0 / self.settings.fps_max);
             let since = self.last_frame.elapsed();
@@ -3949,6 +4084,7 @@ fn main() -> Result<()> {
         settings,
         options: None,
         newgame: None,
+        servers: None,
         map_name: map.clone(),
         opt_drag: None,
         opt_modes: Vec::new(),
