@@ -70,8 +70,9 @@ Everything here is read from the installed client (`garrysmod/lua`, `sourceengin
 
 - `SpawnMenu` panel fills the screen; `DHorizontalDivider` with margin
   `clamp((ScrW-1024)*spawnmenu_border, 25, 256)` x `clamp((ScrH-768)*0.1, 25, 256)`
-  (`spawnmenu_border` 0.1; below 1024x768 the margin is 0), divider width 6, left = ToolMenu,
-  right = CreationMenu, right min 460 when ScrW >= 1024; ToolToggle 16x16 image button.
+  (`spawnmenu_border` 0.1; the clamp keeps 25 px even below 1024x768), DHorizontalDivider
+  (default divider 8) with the CreationMenu left and the ToolMenu right, right min 460 when
+  ScrW >= 1024; ToolToggle 16x16 image button.
   Opens on +menu (Q held, `hang open` on a quick tap), closes on release; MakePopup, keyboard
   input off until a text entry asks for it.
 - Both halves are `DPropertySheet`: padding 8, tab bar docked top with 3 px side margins, tab

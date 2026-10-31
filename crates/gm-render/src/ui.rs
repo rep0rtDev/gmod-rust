@@ -568,13 +568,21 @@ impl UiRenderer {
         if let Some(entry) = self.images.get(name) {
             return entry.is_some();
         }
-        let texture_name = material::load(mount, name)
-            .ok()
+        let mat = material::load(mount, name).ok();
+        let additive = mat.as_ref().is_some_and(|m| m.additive);
+        let texture_name = mat
             .and_then(|m| m.base_texture)
             .unwrap_or_else(|| name.to_string());
         let loaded = material::load_texture(mount, &texture_name, IMAGE_MAX_SIDE)
             .ok()
-            .map(|img| {
+            .map(|mut img| {
+                if additive {
+                    // one alpha-blended pipeline: an additive sprite keeps its colour and
+                    // fades in by brightness, which is src + dst up to the clamp
+                    for px in img.pixels.as_chunks_mut::<4>().0 {
+                        px[3] = px[0].max(px[1]).max(px[2]);
+                    }
+                }
                 let texture = upload_rgba(
                     gpu,
                     &img.pixels,

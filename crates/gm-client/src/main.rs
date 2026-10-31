@@ -7,6 +7,8 @@
 //! ` (grave) console: `help`, `spawn [model]`, `undo`, `cleanup`, `clear`, `quit`, server
 //! console lines (`status`, `cvar`, `save`, `load`, ...).
 
+mod derma;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
@@ -192,18 +194,6 @@ struct Gfx {
 
 const CONSOLE_LOG_LINES: usize = 500;
 
-/// Prop folders the spawn menu lists (GMod's sandbox spawn lists cover these HL2 props).
-const SPAWN_DIRS: [&str; 7] = [
-    "models/props_c17",
-    "models/props_junk",
-    "models/props_borealis",
-    "models/props_lab",
-    "models/props_wasteland",
-    "models/props_interior",
-    "models/props_combine",
-];
-const SPAWN_MENU_ROWS_MAX: usize = 600;
-
 /// World model held by another player, by `gm_server::LOADOUT` index (`PlayerSnap::active`);
 /// it shares `ValveBiped.Bip01_R_Hand` with the player skeleton and is bone-merged onto it.
 fn world_model(active: u8) -> Option<&'static str> {
@@ -226,8 +216,11 @@ fn world_model(active: u8) -> Option<&'static str> {
 /// Stools the server implements in Rust (`Sandbox::knows_tool`).
 const TOOLS: [&str; 5] = ["weld", "rope", "axis", "nocollide", "duplicator"];
 
+/// Visible spawn icons, the ControlPanel rect and the max content scroll of the last menu frame.
+type MenuCache = (Vec<String>, (f32, f32, f32, f32), f32);
+
 struct SpawnMenu {
-    scroll: usize,
+    st: derma::MenuState,
 }
 
 /// The context menu of a prop (hold C, right-click it): the entries the server offered, drawn
@@ -240,12 +233,6 @@ struct ContextMenu {
 
 const CONTEXT_MENU_W: f32 = 180.0;
 
-/// Layout of the spawn menu panel for a window of `w` x `h`: (x, y, width, height, first row y).
-fn menu_layout(w: f32, h: f32, lh: f32) -> (f32, f32, f32, f32, f32) {
-    let (pw, ph) = ((w * 0.7).round(), (h * 0.7).round());
-    let (px, py) = (((w - pw) / 2.0).round(), ((h - ph) / 2.0).round());
-    (px, py, pw, ph, py + lh * 2.0)
-}
 /// The tool settings panel inside the spawn menu: (x, y, width, first row y, row height).
 /// The value a slider at fraction `t` of its track shows: whole numbers when the range is wider
 /// than 20, else two decimals.
@@ -268,12 +255,6 @@ fn player_model_key(p: &PlayerSnap) -> String {
         p.skin,
         p.body
     )
-}
-
-fn panel_layout(w: f32, h: f32, lh: f32) -> (f32, f32, f32, f32, f32) {
-    let (px, py, pw, _, rows_y) = menu_layout(w, h, lh);
-    let tw = (pw * 0.34).round();
-    (px + pw - tw, py, tw, rows_y, lh * 2.0)
 }
 
 /// GMod's default `viewmodel_fov`.
@@ -690,6 +671,9 @@ struct App {
     last_render: Instant,
     /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
     menu: Option<SpawnMenu>,
+    spawnlists: Vec<derma::SpawnList>,
+    /// From the last laid-out menu frame: visible spawn icons, the ControlPanel rect, max scroll.
+    menu_cache: std::cell::RefCell<MenuCache>,
     /// C held: the cursor is free and a right-click asks a prop for its properties.
     context_held: bool,
     context: Option<ContextMenu>,
@@ -700,9 +684,6 @@ struct App {
     scripted_world: Vec<&'static str>,
     /// Key / mouse button edges since the last frame, for the client actors (`input.key`).
     pending_input: Vec<(String, bool)>,
-    /// Rows of the spawn menu: `-- category --` headers of the addons' lists, then their models,
-    /// then the content's; a header row is not spawnable.
-    spawn_models: Vec<String>,
     spawn_lists_seen: usize,
     cursor: (f32, f32),
     /// `cl_playerskin` / `cl_playerbodygroups` as typed, sent together.
@@ -804,6 +785,19 @@ impl App {
             }
             ui.load_image(&gpu, &self.mount, "weapons/swep");
             ui.load_image(&gpu, &self.mount, "gui/speech_lid");
+            // Derma: DermaDefault = Tahoma 13 (500 / 800); Roboto when the system font is missing
+            if !ui.register_font(&gpu, &self.mount, derma::FONT, "Tahoma", 13.0) {
+                ui.register_font(&gpu, &self.mount, derma::FONT, "Roboto-Medium", 13.0);
+            }
+            if !ui.register_font(&gpu, &self.mount, derma::FONT_BOLD, "Tahoma-Bold", 13.0) {
+                ui.register_font(&gpu, &self.mount, derma::FONT_BOLD, "Roboto-Bold", 13.0);
+            }
+            ui.load_image(&gpu, &self.mount, derma::ATLAS);
+            ui.load_image(&gpu, &self.mount, derma::HOVER_MAT);
+            ui.load_image(&gpu, &self.mount, derma::GENERATING_MAT);
+            for name in derma::IMAGES {
+                ui.load_image(&gpu, &self.mount, name);
+            }
             for (name, tall) in [
                 ("TargetID", 12.0),
                 ("TargetIDSmall", 11.0),
@@ -880,25 +874,32 @@ impl App {
         // cl_spawnmenu.lua OnSpawnMenuOpen
         self.add_hint("OpeningContext", 20);
         self.add_hint("EditingSpawnlists", 5);
+        if self.spawnlists.is_empty() {
+            self.spawnlists = derma::load_spawnlists(&self.mount);
+        }
+        // the server's addon spawnlists follow the client's defaults
         let lists = &self.sim.client.world.spawn_lists;
         let seen = lists.iter().map(|(_, m)| m.len() + 1).sum::<usize>();
-        if self.spawn_models.is_empty() || seen != self.spawn_lists_seen {
+        if seen != self.spawn_lists_seen {
             self.spawn_lists_seen = seen;
-            self.spawn_models.clear();
+            self.spawnlists.retain(|l| !l.addon);
             for (category, models) in lists {
-                self.spawn_models.push(format!("-- {category} --"));
-                self.spawn_models.extend(models.iter().cloned());
+                self.spawnlists.push(derma::SpawnList {
+                    name: category.clone(),
+                    icon: "icon16/folder_database.png".to_string(),
+                    models: models.clone(),
+                    addon: true,
+                });
             }
-            for dir in SPAWN_DIRS {
-                self.spawn_models
-                    .extend(self.mount.find(&format!("{dir}/*.mdl")));
-                if self.spawn_models.len() >= SPAWN_MENU_ROWS_MAX {
-                    break;
-                }
-            }
-            self.spawn_models.truncate(SPAWN_MENU_ROWS_MAX);
         }
-        self.menu = Some(SpawnMenu { scroll: 0 });
+        if let Some(g) = &mut self.gfx {
+            for l in &self.spawnlists {
+                g.ui.load_image(&g.gpu, &self.mount, &l.icon);
+            }
+        }
+        self.menu = Some(SpawnMenu {
+            st: derma::MenuState::default(),
+        });
         self.mouse.clear();
         self.set_grab(false);
     }
@@ -916,22 +917,6 @@ impl App {
         ctx.names.get(row).cloned()
     }
 
-    fn menu_row(&self) -> Option<usize> {
-        let (menu, g) = (self.menu.as_ref()?, self.gfx.as_ref()?);
-        let (w, h) = (g.config.width as f32, g.config.height as f32);
-        let lh = g.ui.line_height();
-        let (px, py, pw, ph, rows_y) = menu_layout(w, h, lh);
-        let (cx, cy) = self.cursor;
-        if cx < px || cx > px + pw || cy < rows_y || cy > py + ph - 8.0 {
-            return None;
-        }
-        if self.panel_schema().is_some() && cx >= panel_layout(w, h, lh).0 {
-            return None;
-        }
-        let row = ((cy - rows_y) / lh) as usize + menu.scroll;
-        (row < self.spawn_models.len()).then_some(row)
-    }
-
     /// The selected stool's setting schema while the tool gun is out (the panel's content).
     fn panel_schema(&self) -> Option<Vec<gm_server::ToolSetting>> {
         if self.weapon != 1 {
@@ -944,12 +929,17 @@ impl App {
     }
 
     /// The panel row under the cursor and the cursor's 0..1 position across its control.
+    /// The tool's ControlPanel from the last laid-out menu frame: (x, y, width, first row y, row height).
+    fn panel_layout(&self, lh: f32) -> (f32, f32, f32, f32, f32) {
+        let (x, y, w, _) = self.menu_cache.borrow().1;
+        (x, y, w, y + 24.0, lh * 2.0)
+    }
+
     fn panel_hit(&self) -> Option<(usize, f32)> {
         let g = self.gfx.as_ref()?;
         self.menu.as_ref()?;
-        let (w, h) = (g.config.width as f32, g.config.height as f32);
         let lh = g.ui.line_height();
-        let (tx, _, tw, rows_y, rh) = panel_layout(w, h, lh);
+        let (tx, _, tw, rows_y, rh) = self.panel_layout(lh);
         let (cx, cy) = self.cursor;
         if cx < tx + 8.0 || cx > tx + tw - 8.0 || cy < rows_y {
             return None;
@@ -1005,19 +995,9 @@ impl App {
     /// Spawn-menu icons: with the menu open, up to two visible rows without an icon get their
     /// model rendered once into a 64 px square (the game's spawnicon pose: from the front-right,
     /// a little above, framed on the model's bounds) and registered as a UI image.
-    fn render_spawn_icons(
-        spawn_models: &[String],
-        menu: Option<&SpawnMenu>,
-        mount: &gm_content::Mount,
-        g: &mut Gfx,
-    ) {
-        let Some(menu) = menu else { return };
-        let (w, h) = (g.config.width as f32, g.config.height as f32);
-        let lh = g.ui.line_height();
-        let (_, py, _, ph, rows_y) = menu_layout(w, h, lh);
-        let visible = ((py + ph - 8.0 - rows_y) / lh).max(0.0) as usize;
+    fn render_spawn_icons(spawn_models: &[String], mount: &gm_content::Mount, g: &mut Gfx) {
         let mut budget = 2;
-        for model in spawn_models.iter().skip(menu.scroll).take(visible) {
+        for model in spawn_models {
             if budget == 0 {
                 break;
             }
@@ -1107,8 +1087,7 @@ impl App {
             return;
         };
         let Some(g) = self.gfx.as_ref() else { return };
-        let (w, h) = (g.config.width as f32, g.config.height as f32);
-        let (tx, _, tw, _, _) = panel_layout(w, h, g.ui.line_height());
+        let (tx, _, tw, _, _) = self.panel_layout(g.ui.line_height());
         let t = ((self.cursor.0 - tx - 8.0) / (tw - 16.0)).clamp(0.0, 1.0);
         let value = slider_value(&s, t);
         let same = self
@@ -1155,13 +1134,42 @@ impl App {
         if self.panel_click() {
             return;
         }
-        if let Some(row) = self.menu_row() {
-            let model = self.spawn_models[row].clone();
-            if !model.ends_with(".mdl") {
-                return;
+        let Some((menu, g)) = self.menu.as_mut().zip(self.gfx.as_ref()) else {
+            return;
+        };
+        let (w, h) = (g.config.width as f32, g.config.height as f32);
+        let font = g.ui.font_metrics(Some(derma::FONT));
+        let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+        let has_image = |name: &str| g.ui.has_image(name);
+        let ctx = derma::Ctx {
+            w,
+            h,
+            cursor: self.cursor,
+            font: &font,
+            bold: &bold,
+            lists: &self.spawnlists,
+            tool: &self.tool,
+            has_image: &has_image,
+        };
+        let action = derma::build(&ctx, &menu.st).hit(self.cursor).cloned();
+        match action {
+            Some(derma::Action::Spawn(model)) => {
+                self.console.log(format!("spawn {model}"));
+                self.sim.client.command(Command::Spawn { model });
             }
-            self.console.log(format!("spawn {model}"));
-            self.sim.client.command(Command::Spawn { model });
+            Some(derma::Action::CreationTab(i)) => menu.st.creation_tab = i,
+            Some(derma::Action::ToolTab(i)) => menu.st.tool_tab = i,
+            Some(derma::Action::Node(i)) => {
+                menu.st.node = i;
+                menu.st.scroll = 0.0;
+            }
+            Some(derma::Action::Browse) => menu.st.browse_open = !menu.st.browse_open,
+            Some(derma::Action::Category(i)) => menu.st.collapsed[i] = !menu.st.collapsed[i],
+            Some(derma::Action::Tool(t)) => {
+                self.tool = t.to_string();
+                self.console.log(format!("tool {t}"));
+            }
+            Some(derma::Action::Nothing) | None => {}
         }
     }
 
@@ -1704,7 +1712,8 @@ impl App {
         };
         let Some(g) = &mut self.gfx else { return };
         if self.menu.is_some() {
-            Self::render_spawn_icons(&self.spawn_models, self.menu.as_ref(), &self.mount, g);
+            let visible = self.menu_cache.borrow().0.clone();
+            Self::render_spawn_icons(&visible, &self.mount, g);
         }
         let frame = match g.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f)
@@ -2261,79 +2270,26 @@ impl App {
             });
         }
         if let Some(menu) = &self.menu {
-            let (px, py, pw, ph, rows_y) = menu_layout(w, h, lh);
-            items.push(UiItem::Rect {
-                x: px,
-                y: py,
-                w: pw,
-                h: ph,
-                color: [0.05, 0.05, 0.07, 0.9],
-            });
-            items.push(UiItem::Text {
-                font: None,
-                x: px + 12.0,
-                y: py + 6.0,
-                text: format!(
-                    "Spawn menu  ({} props, wheel scrolls, click spawns)",
-                    self.spawn_models.len()
-                ),
-                color: white,
-            });
-            let visible = ((py + ph - 8.0 - rows_y) / lh).max(0.0) as usize;
-            let hover = self.menu_row();
-            for (i, model) in self
-                .spawn_models
-                .iter()
-                .enumerate()
-                .skip(menu.scroll)
-                .take(visible)
-            {
-                let y = rows_y + (i - menu.scroll) as f32 * lh;
-                if hover == Some(i) {
-                    items.push(UiItem::Rect {
-                        x: px + 4.0,
-                        y,
-                        w: pw - 8.0,
-                        h: lh,
-                        color: [1.0, 1.0, 1.0, 0.15],
-                    });
-                }
-                let icon = format!("icon:{model}");
-                if g.ui.has_image(&icon) {
-                    items.push(UiItem::Image {
-                        x: px + 8.0,
-                        y: y + 1.0,
-                        w: lh - 2.0,
-                        h: lh - 2.0,
-                        material: icon,
-                        color: white,
-                        rot: 0,
-                    });
-                }
-                items.push(UiItem::Text {
-                    font: None,
-                    x: px + 12.0 + lh,
-                    y,
-                    text: model.trim_start_matches("models/").to_string(),
-                    color: [0.85, 0.85, 0.85, 1.0],
-                });
-            }
+            let font = g.ui.font_metrics(Some(derma::FONT));
+            let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+            let has_image = |name: &str| g.ui.has_image(name);
+            let ctx = derma::Ctx {
+                w,
+                h,
+                cursor: self.cursor,
+                font: &font,
+                bold: &bold,
+                lists: &self.spawnlists,
+                tool: &self.tool,
+                has_image: &has_image,
+            };
+            let layout = derma::build(&ctx, &menu.st);
+            *self.menu_cache.borrow_mut() =
+                (layout.visible.clone(), layout.control, layout.max_scroll);
+            items.extend(layout.items);
             if let Some(schema) = self.panel_schema() {
-                let (tx, _, tw, rows_y, rh) = panel_layout(w, h, lh);
-                items.push(UiItem::Rect {
-                    x: tx,
-                    y: py,
-                    w: tw,
-                    h: ph,
-                    color: [0.09, 0.09, 0.12, 0.97],
-                });
-                items.push(UiItem::Text {
-                    font: None,
-                    x: tx + 8.0,
-                    y: py + 6.0,
-                    text: format!("Tool: {}", self.tool),
-                    color: white,
-                });
+                let (tx, ty, tw, th) = layout.control;
+                let (rows_y, rh) = (ty + 24.0, lh * 2.0);
                 if schema.is_empty() {
                     items.push(UiItem::Text {
                         font: None,
@@ -2347,7 +2303,7 @@ impl App {
                 let set = self.tool_settings.get(&self.tool);
                 for (i, s) in schema.iter().enumerate() {
                     let y = rows_y + i as f32 * rh;
-                    if y + rh > py + ph - 8.0 {
+                    if y + rh > ty + th - 8.0 {
                         break;
                     }
                     let cur = set
@@ -3100,7 +3056,8 @@ impl ApplicationHandler for App {
                     winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 16.0,
                 };
                 if let Some(menu) = &mut self.menu {
-                    menu.scroll = (menu.scroll as f32 - lines * 3.0).max(0.0) as usize;
+                    let max = self.menu_cache.borrow().2;
+                    menu.st.scroll = (menu.st.scroll - lines * 64.0).clamp(0.0, max);
                 } else if !self.console.open && !self.context_held && self.grabbed {
                     // invprev / invnext walk the buckets in order
                     if lines > 0.0 {
@@ -3404,13 +3361,14 @@ fn main() -> Result<()> {
         sounds,
         last_render: Instant::now(),
         menu: None,
+        spawnlists: Vec::new(),
+        menu_cache: Default::default(),
         context_held: false,
         context: None,
         scripted_defs: Vec::new(),
         scripted_vms: Vec::new(),
         scripted_world: Vec::new(),
         pending_input: Vec::new(),
-        spawn_models: Vec::new(),
         spawn_lists_seen: usize::MAX,
         cursor: (0.0, 0.0),
         panel_drag: None,
