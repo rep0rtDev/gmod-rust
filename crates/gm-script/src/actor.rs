@@ -145,13 +145,20 @@ impl Actor {
     /// A WASM actor's dispatch: the payload as JSON to `gm_event`, then the writes the guest
     /// queued go through the Lua `world.queue` (same parsing and capability checks).
     fn dispatch_wasm(&mut self, event: &str, payload: &Payload) -> mlua::Result<Value> {
-        let json = api::payload_json(payload);
+        let mut map = api::payload_json_map(payload);
+        if let Some((_, data)) = &payload.net {
+            let v = crate::netval::decode(&self.lua, data)?;
+            let j: serde_json::Value = mlua::LuaSerdeExt::from_value(&self.lua, v)?;
+            map.insert("data".into(), j);
+        }
+        let json = serde_json::Value::Object(map).to_string();
         let guest = self.wasm.as_mut().expect("wasm actor");
         let cancel = guest
             .event(event, &json)
             .map_err(|e| mlua::Error::runtime(format!("wasm: {e}")))?;
         let over = guest.over_budget;
         let queued = guest.take_queue();
+        let sent = guest.take_net();
         for line in guest.take_log() {
             self.shared.prints.lock().unwrap().push(line);
         }
@@ -165,6 +172,17 @@ impl Actor {
                 .map_err(|e| mlua::Error::runtime(format!("wasm queue {op}: {e}")))?;
             let arg = mlua::LuaSerdeExt::to_value(&self.lua, &v)?;
             queue.call::<()>((op, ent, arg))?;
+        }
+        if !sent.is_empty() {
+            let net: mlua::Table = self.lua.globals().get("net")?;
+            let send: mlua::Function = net.get("send")?;
+            for (player, name, json) in sent {
+                let v: serde_json::Value = serde_json::from_str(&json)
+                    .map_err(|e| mlua::Error::runtime(format!("wasm net_send {name}: {e}")))?;
+                let value = mlua::LuaSerdeExt::to_value(&self.lua, &v)?;
+                let player = (player != 0).then_some(player);
+                send.call::<()>((name, value, player))?;
+            }
         }
         Ok(if cancel {
             Value::Boolean(false)

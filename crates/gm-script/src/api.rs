@@ -1372,6 +1372,12 @@ fn table_arg(v: &Value) -> Result<Table> {
 /// The payload as a JSON object (WASM guests): numbers, vectors as `{x, y, z}`, `hit` as
 /// `{ent, pos, normal}`, `settings` as an object, `net` as `{name}` (the data stays binary).
 pub fn payload_json(p: &Payload) -> String {
+    serde_json::Value::Object(payload_json_map(p)).to_string()
+}
+
+/// `payload_json` as the object, for callers that add fields (a WASM actor adds the decoded
+/// net `data`).
+pub fn payload_json_map(p: &Payload) -> serde_json::Map<String, serde_json::Value> {
     use serde_json::{json, Map, Value as J};
     let v3 = |v: Vec3| json!({ "x": v.x, "y": v.y, "z": v.z });
     let mut m = Map::new();
@@ -1407,7 +1413,7 @@ pub fn payload_json(p: &Payload) -> String {
     if let Some((name, _)) = &p.net {
         m.insert("name".into(), json!(name));
     }
-    J::Object(m).to_string()
+    m
 }
 
 pub fn payload_table(lua: &Lua, p: &Payload) -> Result<Table> {

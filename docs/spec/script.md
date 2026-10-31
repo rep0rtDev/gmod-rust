@@ -451,7 +451,7 @@ waits for a real client; a published package is capped at 50 MiB.
 Scripted entities' touches with players and while both bodies sleep; the weapon selection
 menu (attack to confirm, `hud_fastswitch`, `invnext`) and the game's `KEY_*` names / `input.IsKeyDown`
 polling (ours: `input.key` events with the client's key names); the game's pitch-0 miss of +use
-on players (see "+use"); net message data for WASM guests. Done since this list was written: the
+on players (see "+use"). Done since this list was written: the
 sandbox gamemode as one package (`addons/gamemodes/sandbox`), prop properties, player models,
 the +use pickup, the spawn menu lists, prop spawn and state writes, scripted weapons, key
 events, +use on players, WASM components, scripted entity classes, weapon slot digits, the
@@ -637,10 +637,12 @@ Luau handler gives with `return false`), and imports `gm.queue(op_ptr, op_len, e
 json_len)` and `gm.log(ptr, len)`. Every event the Luau actors get (`tick.pre`, requests, game
 events, net messages) reaches `gm_event` with the payload as a JSON object (numbers, booleans,
 strings, vectors as `{x, y, z}`, `hit` as `{ent, pos, normal}`, `settings` as an object, a net
-message's `name`; its binary data is not passed yet). `gm.queue` is `world.queue(op, ent, arg)`
+message's `name` and its decoded `data` as JSON). `gm.queue` is `world.queue(op, ent, arg)`
 with `arg` as JSON: the writes go through the actor's own Lua `world.queue`, so the parsing, the
 `world-write` capability and the per-run cap are the same, and they land in the serial phase
-with everyone else's. `gm.log` is `print`.
+with everyone else's. `gm.net_send(name, player, json)` is `net.send(name, value, player)` (0 =
+everyone), the JSON becoming the net value through the same Lua `net.send` and its limits.
+`gm.log` is `print`.
 
 Limits like a Luau actor's: the store's memory limit is the actor's (256 MiB default), the CPU
 budget becomes wasmtime fuel per dispatch (`cpu_ms * 2,000,000`); running out traps, counts an

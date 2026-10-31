@@ -1,7 +1,8 @@
 //! A WASM component as an actor backend: the guest exports `gm_alloc(len) -> ptr` and
 //! `gm_event(name_ptr, name_len, json_ptr, json_len) -> i32` (0 pass, 1 cancel) and imports
-//! `gm.queue(op_ptr, op_len, ent, json_ptr, json_len)` and `gm.log(ptr, len)`. Payloads and
-//! write arguments travel as JSON. CPU is metered with fuel per dispatch, memory by the store
+//! `gm.queue(op_ptr, op_len, ent, json_ptr, json_len)`, `gm.log(ptr, len)` and
+//! `gm.net_send(name_ptr, name_len, player, json_ptr, json_len)`. Payloads, write arguments and
+//! net values travel as JSON. CPU is metered with fuel per dispatch, memory by the store
 //! limits; a trap or an exhausted budget ends the dispatch like a Luau error does.
 
 use std::sync::{Arc, Mutex};
@@ -17,6 +18,8 @@ pub struct Host {
     /// Writes the guest asked for: (op, ent, json), drained by the actor into its Lua `world.queue`.
     pub queue: Arc<Mutex<Vec<(String, u32, String)>>>,
     pub log: Arc<Mutex<Vec<String>>>,
+    /// Net messages the guest sent: (player, name, json value), encoded by the actor.
+    pub net: Arc<Mutex<Vec<(u32, String, String)>>>,
 }
 
 pub struct WasmGuest {
@@ -45,6 +48,7 @@ impl WasmGuest {
                 .build(),
             queue: Arc::new(Mutex::new(Vec::new())),
             log: Arc::new(Mutex::new(Vec::new())),
+            net: Arc::new(Mutex::new(Vec::new())),
         };
         let mut store = Store::new(&engine, host);
         store.limiter(|h| &mut h.limits);
@@ -66,6 +70,25 @@ impl WasmGuest {
                     .lock()
                     .unwrap()
                     .push((op, ent as u32, arg));
+            },
+        )?;
+        linker.func_wrap(
+            "gm",
+            "net_send",
+            |mut caller: Caller<'_, Host>, np: i32, nl: i32, player: i32, p: i32, l: i32| {
+                let Some(mem) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                    return;
+                };
+                let data = mem.data(&caller);
+                let (Some(name), Some(json)) = (read(data, np, nl), read(data, p, l)) else {
+                    return;
+                };
+                caller
+                    .data()
+                    .net
+                    .lock()
+                    .unwrap()
+                    .push((player as u32, name, json));
             },
         )?;
         linker.func_wrap(
@@ -125,6 +148,10 @@ impl WasmGuest {
 
     pub fn take_queue(&mut self) -> Vec<(String, u32, String)> {
         std::mem::take(&mut *self.store.data().queue.lock().unwrap())
+    }
+
+    pub fn take_net(&mut self) -> Vec<(u32, String, String)> {
+        std::mem::take(&mut *self.store.data().net.lock().unwrap())
     }
 
     pub fn take_log(&mut self) -> Vec<String> {

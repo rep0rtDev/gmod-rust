@@ -257,6 +257,7 @@ fn client_actors_hear_the_clients_key_edges() {
 const WAT_GUEST: &str = r#"(module
   (import "gm" "queue" (func $queue (param i32 i32 i32 i32 i32)))
   (import "gm" "log" (func $log (param i32 i32)))
+  (import "gm" "net_send" (func $net_send (param i32 i32 i32 i32 i32)))
   (memory (export "memory") 1)
   (global $ticks (mut i32) (i32.const 0))
   (global $heap (mut i32) (i32.const 1024))
@@ -265,6 +266,9 @@ const WAT_GUEST: &str = r#"(module
   (data (i32.const 32) "hello from wasm")
   (data (i32.const 64) "tick.pre")
   (data (i32.const 80) "prop.spawn_request")
+  (data (i32.const 112) "net.message")
+  (data (i32.const 128) "echo")
+  (data (i32.const 144) "{\"a\":1}")
   (func (export "gm_alloc") (param $len i32) (result i32)
     (local $p i32)
     (local.set $p (global.get $heap))
@@ -291,6 +295,8 @@ const WAT_GUEST: &str = r#"(module
             (call $log (i32.const 32) (i32.const 15))))))
     (if (call $streq (local.get $np) (local.get $nl) (i32.const 80) (i32.const 18))
       (then (return (i32.const 1))))
+    (if (call $streq (local.get $np) (local.get $nl) (i32.const 112) (i32.const 11))
+      (then (call $net_send (i32.const 128) (i32.const 4) (i32.const 0) (i32.const 144) (i32.const 7))))
     (i32.const 0))
 )"#;
 
@@ -334,6 +340,20 @@ fn a_wasm_component_counts_ticks_queues_a_write_and_cancels_a_request() {
         )
         .unwrap();
     assert_eq!(cancel, Some(false), "the guest cancels spawn requests");
+    // a net message in: the guest answers with net_send("echo", {a = 1}) to everyone
+    let data = gm_script::netval::encode(&mlua::Value::Integer(7)).unwrap();
+    let p = gm_script::api::Payload {
+        net: Some(("ping".into(), data)),
+        ..Default::default()
+    };
+    a.dispatch(&snap, "net.message", &p, 1).unwrap();
+    let out = a.take_net();
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert_eq!((out[0].0, out[0].1.as_str()), (0, "echo"));
+    let lua = mlua::Lua::new();
+    let v = gm_script::netval::decode(&lua, &out[0].2).unwrap();
+    let t = v.as_table().expect("a table");
+    assert_eq!(t.get::<i64>("a").unwrap(), 1);
 }
 
 fn tick(rt: &mut Runtime, t: u64) {
