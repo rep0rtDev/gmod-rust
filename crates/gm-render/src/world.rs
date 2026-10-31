@@ -63,6 +63,8 @@ pub struct Quality {
     pub trilinear: bool,
     /// `mat_forceaniso` 1..16.
     pub aniso: u32,
+    /// `mat_antialias` MSAA samples (1 / 2 / 4 / 8, already clamped to what the adapter does).
+    pub msaa: u32,
 }
 
 impl Default for Quality {
@@ -72,6 +74,7 @@ impl Default for Quality {
             picmip: 0,
             trilinear: false,
             aniso: 1,
+            msaa: 1,
         }
     }
 }
@@ -553,6 +556,8 @@ pub struct DynModel {
 /// view and whether to clear the depth buffer first (viewmodels draw over the world).
 pub struct ModelTarget<'a> {
     pub color: &'a wgpu::TextureView,
+    /// Single-sample view `color` resolves into when it is multisampled.
+    pub resolve: Option<&'a wgpu::TextureView>,
     pub depth: &'a wgpu::TextureView,
     pub aspect: f32,
     pub clear_depth: bool,
@@ -1340,7 +1345,10 @@ impl WorldRenderer {
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: Default::default(),
+            multisample: wgpu::MultisampleState {
+                count: quality.msaa,
+                ..Default::default()
+            },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
@@ -1415,12 +1423,13 @@ impl WorldRenderer {
         gpu: &Gpu,
         camera: &Camera,
         color: &wgpu::TextureView,
+        resolve: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
         aspect: f32,
     ) {
         let mut clear = true;
         if self.sky2d.is_some() {
-            self.sky_pass(gpu, camera, color, depth, aspect);
+            self.sky_pass(gpu, camera, color, resolve, depth, aspect);
             clear = false;
         }
         let has_sky = self.sky_camera.is_some() && self.batches.iter().any(|b| b.sky);
@@ -1431,10 +1440,10 @@ impl WorldRenderer {
                 far: camera.far / sky.scale * 4.0,
                 ..*camera
             };
-            self.pass(gpu, &sky_cam, color, depth, aspect, true, clear);
-            self.pass(gpu, camera, color, depth, aspect, false, false);
+            self.pass(gpu, &sky_cam, color, resolve, depth, aspect, true, clear);
+            self.pass(gpu, camera, color, resolve, depth, aspect, false, false);
         } else {
-            self.pass(gpu, camera, color, depth, aspect, false, clear);
+            self.pass(gpu, camera, color, resolve, depth, aspect, false, clear);
         }
     }
 
@@ -1444,6 +1453,7 @@ impl WorldRenderer {
         gpu: &Gpu,
         camera: &Camera,
         color: &wgpu::TextureView,
+        resolve: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
         aspect: f32,
     ) {
@@ -1474,7 +1484,7 @@ impl WorldRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: color,
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target: resolve,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
@@ -1511,6 +1521,7 @@ impl WorldRenderer {
         gpu: &Gpu,
         camera: &Camera,
         color: &wgpu::TextureView,
+        resolve: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
         aspect: f32,
         sky: bool,
@@ -1537,7 +1548,7 @@ impl WorldRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: color,
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target: resolve,
                     ops: wgpu::Operations {
                         load: if clear_color {
                             wgpu::LoadOp::Clear(wgpu::Color {
@@ -1895,7 +1906,7 @@ impl WorldRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target.color,
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target: target.resolve,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -2009,6 +2020,7 @@ impl WorldRenderer {
             aspect,
             clear_depth,
             alpha,
+            ..
         } = *target;
         let mut verts: Vec<Vertex> = Vec::new();
         let mut idx: Vec<u32> = Vec::new();
@@ -2094,7 +2106,7 @@ impl WorldRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: color,
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target: target.resolve,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -2280,7 +2292,13 @@ pub fn icon_targets(
 }
 
 /// Create an offscreen color + depth target pair.
-pub fn offscreen_targets(gpu: &Gpu, width: u32, height: u32) -> (wgpu::Texture, wgpu::Texture) {
+pub fn offscreen_targets(
+    gpu: &Gpu,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    msaa: u32,
+) -> (wgpu::Texture, wgpu::Texture) {
     let size = wgpu::Extent3d {
         width,
         height,
@@ -2290,9 +2308,9 @@ pub fn offscreen_targets(gpu: &Gpu, width: u32, height: u32) -> (wgpu::Texture, 
         label: Some("color"),
         size,
         mip_level_count: 1,
-        sample_count: 1,
+        sample_count: msaa,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
@@ -2300,7 +2318,7 @@ pub fn offscreen_targets(gpu: &Gpu, width: u32, height: u32) -> (wgpu::Texture, 
         label: Some("depth"),
         size,
         mip_level_count: 1,
-        sample_count: 1,
+        sample_count: msaa,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,

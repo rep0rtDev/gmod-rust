@@ -329,9 +329,14 @@ pub struct UiRenderer {
 }
 
 impl UiRenderer {
-    pub fn new(gpu: &Gpu, mount: &Mount, color_format: wgpu::TextureFormat) -> Result<Self> {
+    pub fn new(
+        gpu: &Gpu,
+        mount: &Mount,
+        color_format: wgpu::TextureFormat,
+        msaa: u32,
+    ) -> Result<Self> {
         let bytes = mount.read(DEFAULT_FONT)?;
-        Self::with_font(gpu, &bytes, DEFAULT_FONT_PX, color_format)
+        Self::with_font(gpu, &bytes, DEFAULT_FONT_PX, color_format, msaa)
     }
 
     pub fn with_font(
@@ -339,6 +344,7 @@ impl UiRenderer {
         ttf: &[u8],
         px: f32,
         color_format: wgpu::TextureFormat,
+        msaa: u32,
     ) -> Result<Self> {
         let device = &gpu.device;
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -469,7 +475,10 @@ impl UiRenderer {
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: Default::default(),
+            multisample: wgpu::MultisampleState {
+                count: msaa,
+                ..Default::default()
+            },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
@@ -840,6 +849,7 @@ impl UiRenderer {
         &self,
         gpu: &Gpu,
         color: &wgpu::TextureView,
+        resolve: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
         view_proj: glam::Mat4,
         planes: &[(glam::Mat4, Vec<UiItem>)],
@@ -892,7 +902,7 @@ impl UiRenderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: color,
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target: resolve,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,

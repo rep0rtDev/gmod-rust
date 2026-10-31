@@ -186,6 +186,8 @@ struct Gfx {
     gpu: Gpu,
     world: WorldRenderer,
     depth: wgpu::TextureView,
+    /// Multisampled scene colour (`mat_antialias` > 1), resolved into the frame / scene.
+    msaa_color: Option<wgpu::TextureView>,
     /// Bloom post-process (scene target + passes) when the map renders in HDR.
     post: gm_render::post::Post,
     models: std::collections::HashMap<String, Option<gm_render::world::DynModel>>,
@@ -750,9 +752,44 @@ struct App {
     console: Console,
 }
 
-fn depth_view(gpu: &Gpu, w: u32, h: u32) -> wgpu::TextureView {
-    let (_, depth) = gm_render::world::offscreen_targets(gpu, w, h);
+fn depth_view(
+    gpu: &Gpu,
+    w: u32,
+    h: u32,
+    format: wgpu::TextureFormat,
+    msaa: u32,
+) -> wgpu::TextureView {
+    let (_, depth) = gm_render::world::offscreen_targets(gpu, w, h, format, msaa);
     depth.create_view(&Default::default())
+}
+
+/// The multisampled colour target the scene draws into with `mat_antialias` > 1.
+fn msaa_view(
+    gpu: &Gpu,
+    w: u32,
+    h: u32,
+    format: wgpu::TextureFormat,
+    msaa: u32,
+) -> Option<wgpu::TextureView> {
+    (msaa > 1).then(|| {
+        gm_render::world::offscreen_targets(gpu, w, h, format, msaa)
+            .0
+            .create_view(&Default::default())
+    })
+}
+
+/// `mat_antialias` clamped to a sample count the adapter supports for the colour and depth
+/// formats (8 -> 4 -> 2 -> 1).
+fn pick_msaa(adapter: &wgpu::Adapter, format: wgpu::TextureFormat, want: u32) -> u32 {
+    let color = adapter.get_texture_format_features(format).flags;
+    let depth = adapter
+        .get_texture_format_features(wgpu::TextureFormat::Depth32Float)
+        .flags;
+    let mut n = want.clamp(1, 8).next_power_of_two();
+    while n > 1 && !(color.sample_count_supported(n) && depth.sample_count_supported(n)) {
+        n /= 2;
+    }
+    n
 }
 
 impl App {
@@ -794,6 +831,7 @@ impl App {
             picmip: self.settings.mat_picmip,
             trilinear: self.settings.mat_trilinear,
             aniso: self.settings.mat_forceaniso,
+            msaa: pick_msaa(&gpu.adapter, format, self.settings.mat_antialias),
         };
         let world = WorldRenderer::new(&gpu, &self.mount, &bsp, format, quality)?;
         if hdr {
@@ -805,14 +843,15 @@ impl App {
             world.stats.props,
             t0.elapsed().as_secs_f32()
         );
-        let depth = depth_view(&gpu, config.width, config.height);
+        let depth = depth_view(&gpu, config.width, config.height, format, quality.msaa);
+        let msaa_color = msaa_view(&gpu, config.width, config.height, format, quality.msaa);
         let post = gm_render::post::Post::new(&gpu, format, config.width, config.height);
         let player_box = world.solid_box(&gpu, [200, 120, 60, 255], false);
         let beam_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeam");
         let beam_active_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeama");
         let glow1 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow1");
         let glow2 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow2");
-        let ui = UiRenderer::new(&gpu, &self.mount, format)?;
+        let ui = UiRenderer::new(&gpu, &self.mount, format, quality.msaa)?;
         let mut ui = ui;
         {
             // the HL2 HUD fonts of resource/ClientScheme.res, scaled from the 480-line layout
@@ -922,6 +961,7 @@ impl App {
             gpu,
             world,
             depth,
+            msaa_color,
             post,
             models: Default::default(),
             player_box,
@@ -1124,9 +1164,20 @@ impl App {
             };
             let (color, depth) = gm_render::world::icon_targets(&g.gpu, 64, g.config.format);
             let color_view = color.create_view(&Default::default());
-            let depth_view = depth.create_view(&Default::default());
+            let msaa = g.world.quality.msaa;
+            // the pipelines are multisampled: draw into MSAA targets and resolve into the icon
+            let ms = (msaa > 1).then(|| {
+                gm_render::world::offscreen_targets(&g.gpu, 64, 64, g.config.format, msaa)
+            });
+            let ms_color = ms.as_ref().map(|(c, _)| c.create_view(&Default::default()));
+            let depth_view = ms
+                .as_ref()
+                .map(|(_, d)| d)
+                .unwrap_or(&depth)
+                .create_view(&Default::default());
             let target = gm_render::world::ModelTarget {
-                color: &color_view,
+                color: ms_color.as_ref().unwrap_or(&color_view),
+                resolve: ms_color.as_ref().map(|_| &color_view),
                 depth: &depth_view,
                 aspect: 1.0,
                 clear_depth: true,
@@ -2674,6 +2725,9 @@ impl App {
         } else {
             view.clone()
         };
+        // with MSAA the passes draw into the multisampled target and resolve into `scene`
+        let attach = g.msaa_color.clone().unwrap_or_else(|| scene.clone());
+        let resolve = g.msaa_color.as_ref().map(|_| &scene);
         let o = self
             .sim
             .prev_origin
@@ -2733,7 +2787,8 @@ impl App {
             right: Vec3::new(yaw.sin(), -yaw.cos(), 0.0),
         });
         let aspect = g.config.width as f32 / g.config.height as f32;
-        g.world.draw(&g.gpu, &camera, &scene, &g.depth, aspect);
+        g.world
+            .draw(&g.gpu, &camera, &attach, resolve, &g.depth, aspect);
         let ents = &self.sim.client.world.entities;
         let me = self.sim.client.player_id;
         let held_models = self
@@ -3001,7 +3056,8 @@ impl App {
             }
         }
         let target = ModelTarget {
-            color: &scene,
+            color: &attach,
+            resolve,
             depth: &g.depth,
             aspect,
             clear_depth: false,
@@ -3097,7 +3153,14 @@ impl App {
             let planes = hud_planes(&self.sim.hud_draws, &self.mount, g);
             if !planes.is_empty() {
                 let aspect = g.config.width as f32 / g.config.height as f32;
-                g.ui.draw_world(&g.gpu, &scene, &g.depth, camera.view_proj(aspect), &planes);
+                g.ui.draw_world(
+                    &g.gpu,
+                    &attach,
+                    resolve,
+                    &g.depth,
+                    camera.view_proj(aspect),
+                    &planes,
+                );
             }
         }
         {
@@ -3878,7 +3941,14 @@ impl ApplicationHandler for App {
                     g.config.width = s.width.max(1);
                     g.config.height = s.height.max(1);
                     g.surface.configure(&g.gpu.device, &g.config);
-                    g.depth = depth_view(&g.gpu, g.config.width, g.config.height);
+                    let (w, h, f, n) = (
+                        g.config.width,
+                        g.config.height,
+                        g.config.format,
+                        g.world.quality.msaa,
+                    );
+                    g.depth = depth_view(&g.gpu, w, h, f, n);
+                    g.msaa_color = msaa_view(&g.gpu, w, h, f, n);
                     g.post.resize(&g.gpu, g.config.width, g.config.height);
                 }
             }

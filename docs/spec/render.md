@@ -69,3 +69,10 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   High 0 / Very High -1 = none), `mat_trilinear` picks a linear mip filter (nearest otherwise),
   `mat_forceaniso` 1..16 sets the base sampler's anisotropy (which forces trilinear, as wgpu
   requires). Applied on map load like the HDR choice.
+- `mat_antialias` is MSAA: `Quality.msaa` (1 / 2 / 4 / 8, `pick_msaa` steps down to a sample
+  count the adapter supports for the colour and Depth32Float formats). The world, model,
+  additive and world-UI pipelines are built with that sample count; the scene passes draw
+  into a multisampled colour target (`Gfx::msaa_color`, `offscreen_targets(.., msaa)`) with
+  a multisampled depth and resolve into the frame (or the bloom scene texture) at the end of
+  each pass (`resolve` on `draw` / `ModelTarget` / `draw_world`); spawn-menu icons draw into
+  64 px MSAA targets and resolve into the icon texture. Screen-space UI stays single-sample.

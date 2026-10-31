@@ -394,8 +394,9 @@ in the 640x480 proportional space of the sheet page.
   gamma, `Camera::gamma`); the gamma test image is three text lines at 3 / 6 / 10 % grey
   (the game's image is not in the mounted content). Also applied (see render.md): Texture Detail (`mat_picmip` top mips skipped), Filtering
   (`mat_trilinear` / `mat_forceaniso` on the base sampler), HDR (`mat_hdr_level` picks the HDR
-  lumps + auto-exposure) and Bloom (`mat_bloomscale` post pass). Stored only: model / water /
-  shadow detail, colour correction, AA, motion blur, multicore.
+  lumps + auto-exposure) and Bloom (`mat_bloomscale` post pass). Antialiasing is MSAA (`mat_antialias`,
+  see render.md). Stored only: model / water / shadow detail, colour correction, motion blur,
+  multicore.
 - Keyboard - Advanced (`optionssubkeyboardadvanceddlg.res`): "Fast weapon switch"
   (`hud_fastswitch`) check 20,38 240x24, "Enable developer console" (`con_enable`) 20,66
   244x24, OK 95,100, Cancel 182,100; title `GameUI_KeyboardAdvanced_Title`. Multiplayer

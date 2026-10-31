@@ -81,12 +81,14 @@ fn main() -> Result<()> {
     if std::env::var_os("GM_RENDER_LOG").is_some() {
         debug_center_ray(&bsp, &camera);
     }
-    let (color, depth) = offscreen_targets(&gpu, width, height);
+    let (color, depth) =
+        offscreen_targets(&gpu, width, height, wgpu::TextureFormat::Rgba8UnormSrgb, 1);
     let t1 = std::time::Instant::now();
     world.draw(
         &gpu,
         &camera,
         &color.create_view(&Default::default()),
+        None,
         &depth.create_view(&Default::default()),
         width as f32 / height as f32,
     );
