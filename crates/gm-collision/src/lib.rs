@@ -69,6 +69,109 @@ struct Disp {
     material2: u32,
 }
 
+/// A solid convex in the world that is not part of the map (a prop's PHY hull at its pose):
+/// outward planes `n . x <= d` and its AABB, tagged with the entity it belongs to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Convex {
+    pub entity: u32,
+    pub planes: Vec<(Vec3, f32)>,
+    pub mins: Vec3,
+    pub maxs: Vec3,
+}
+
+/// Sweeps the box `mins..maxs` from `start` to `end` against `convexes` the way the brush
+/// traces do (planes pushed out by the box extents, `DIST_EPSILON` skin): the nearest hit, or
+/// a trace with fraction 1 at `end`. `entity` of the hit is returned alongside.
+pub fn sweep_convexes(
+    start: Vec3,
+    end: Vec3,
+    mins: Vec3,
+    maxs: Vec3,
+    convexes: &[Convex],
+) -> (Trace, Option<u32>) {
+    let center = (mins + maxs) * 0.5;
+    let extents = (maxs - mins) * 0.5;
+    let (cs, ce) = (start + center, end + center);
+    let mut tr = Trace {
+        fraction: 1.0,
+        end,
+        normal: Vec3::ZERO,
+        plane_dist: 0.0,
+        start_solid: false,
+        all_solid: false,
+        contents: 0,
+        surface: None,
+    };
+    let mut hit = None;
+    let lo = cs.min(ce) - extents;
+    let hi = cs.max(ce) + extents;
+    for c in convexes {
+        if c.mins.cmpgt(hi).any() || c.maxs.cmplt(lo).any() {
+            continue;
+        }
+        let mut enter_frac = -1.0f32;
+        let mut leave_frac = 1.0f32;
+        let mut clip: Option<(Vec3, f32)> = None;
+        let mut get_out = false;
+        let mut starts_out = false;
+        let mut miss = false;
+        for &(n, d) in &c.planes {
+            let dist = d + n.abs().dot(extents);
+            let d1 = n.dot(cs) - dist;
+            let d2 = n.dot(ce) - dist;
+            if d2 > 0.0 {
+                get_out = true;
+            }
+            if d1 > 0.0 {
+                starts_out = true;
+            }
+            if d1 > 0.0 && d2 >= d1 {
+                miss = true;
+                break;
+            }
+            if d1 <= 0.0 && d2 <= 0.0 {
+                continue;
+            }
+            if d1 > d2 {
+                let f = (d1 - DIST_EPSILON) / (d1 - d2);
+                if f > enter_frac {
+                    enter_frac = f;
+                    clip = Some((n, dist));
+                }
+            } else {
+                let f = (d1 + DIST_EPSILON) / (d1 - d2);
+                if f < leave_frac {
+                    leave_frac = f;
+                }
+            }
+        }
+        if miss {
+            continue;
+        }
+        if !starts_out {
+            tr.start_solid = true;
+            tr.contents |= contents::SOLID;
+            if !get_out {
+                tr.all_solid = true;
+                tr.fraction = 0.0;
+                tr.end = start;
+                hit = Some(c.entity);
+            }
+            continue;
+        }
+        if enter_frac < leave_frac && enter_frac > -1.0 && enter_frac < tr.fraction {
+            let (normal, dist) = clip.expect("entering plane");
+            tr.fraction = enter_frac.max(0.0);
+            tr.normal = normal;
+            tr.plane_dist = dist;
+            tr.contents = contents::SOLID;
+            tr.end = start + (end - start) * tr.fraction;
+            hit = Some(c.entity);
+        }
+    }
+    (tr, hit)
+}
+
 /// A `func_useableladder`: the line the player climbs, bottom to top (mount points).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ladder {

@@ -113,6 +113,8 @@ struct Scenario {
     segments: Vec<Segment>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    platform: Option<Platform>,
     /// player scenarios: ticks at which the bot is killed
     #[serde(default)]
     kill_at: Vec<u32>,
@@ -223,7 +225,28 @@ struct ConstraintSpec {
     rigid: bool,
 }
 
-#[derive(Debug, Deserialize, Default)]
+/// A prop the move probe spawns: frozen, or a frozen one teleported by `vel * dt` per tick
+/// (`mode = "setpos"`) over `moves`.
+#[derive(Debug, Deserialize)]
+struct Platform {
+    model: String,
+    pos: [f32; 3],
+    #[serde(default)]
+    angles: Option<[f32; 3]>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    moves: Vec<PlatformMove>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PlatformMove {
+    from: u32,
+    to: u32,
+    vel: [f32; 3],
+}
+
+#[derive(Debug, Deserialize)]
 struct Segment {
     ticks: u32,
     #[serde(default)]
@@ -331,7 +354,40 @@ fn run_move(scn: &Scenario) -> Result<Value> {
     let data = mount.read(&format!("maps/{map}.bsp"))?;
     let bsp = gm_formats::bsp::Bsp::parse(&data)?;
     let world = gm_collision::World::from_bsp(&bsp);
-    let mover = Mover::new(gm_move::MoveConfig::default(), &world);
+    let mut mover = Mover::new(gm_move::MoveConfig::default(), &world);
+    let platform = match &scn.platform {
+        Some(p) => {
+            let info = gm_dedicated::model_info(&mount, &p.model)?;
+            let a = p.angles.unwrap_or([0.0; 3]);
+            Some((
+                p,
+                info,
+                gm_physics::quat_from_angles(a[0], a[1], a[2]),
+                Vec3::from(p.pos),
+            ))
+        }
+        None => None,
+    };
+    let platform_convexes = |pos: Vec3| -> Vec<gm_collision::Convex> {
+        let Some((_, info, rot, _)) = &platform else {
+            return Vec::new();
+        };
+        info.hull_planes
+            .iter()
+            .zip(&info.hulls)
+            .map(|(pl, pts)| {
+                let (planes, (mins, maxs)) = gm_physics::pickup::world_convex(pl, pts, *rot, pos);
+                gm_collision::Convex {
+                    entity: 1,
+                    planes,
+                    mins,
+                    maxs,
+                }
+            })
+            .collect()
+    };
+    let mut plat_pos = platform.as_ref().map(|p| p.3).unwrap_or_default();
+    mover.set_props(platform_convexes(plat_pos));
     let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
     let ang = scn.angles.clone().unwrap_or_default();
     let view = [
@@ -376,6 +432,17 @@ fn run_move(scn: &Scenario) -> Result<Value> {
             let (prev_move, prev_vz_l) = (st.move_type, st.velocity.z);
             let step = steps.before_move(&st, mover.step_max_speed(&cmd), 15.0);
             mover.tick(&mut st, &cmd);
+            // the probe's Tick hook teleports the platform after the player has moved
+            if let Some((p, ..)) = &platform {
+                if p.mode.as_deref() == Some("setpos") {
+                    for m in &p.moves {
+                        if t >= m.from && t < m.to {
+                            plat_pos += Vec3::from(m.vel) * 0.015;
+                        }
+                    }
+                    mover.set_props(platform_convexes(plat_pos));
+                }
+            }
             let ladder_step = steps.ladder_step(prev_move, prev_vz_l, &st, 15.0);
             if let Some(name) = steps.water_sound(prev_level, &st, &cmd) {
                 let e = scripts.get(name);
@@ -445,6 +512,7 @@ fn run_move(scn: &Scenario) -> Result<Value> {
                 "ground": st.on_ground,
                 "ducked": st.ducked,
                 "water": st.water_level,
+                "groundent": if st.ground_ent != 0 { "prop_physics" } else if st.on_ground { "worldspawn" } else { "" },
             }));
             t += 1;
         }

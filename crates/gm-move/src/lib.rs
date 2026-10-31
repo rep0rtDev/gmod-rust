@@ -133,6 +133,8 @@ pub struct PlayerState {
     pub water_level: u8,
     /// Index into the world's ladders while mounting or climbing one.
     pub ladder: u16,
+    /// The prop (the collider's entity tag) under the feet when grounded, 0 for the map.
+    pub ground_ent: u32,
 }
 
 impl Default for PlayerState {
@@ -157,6 +159,7 @@ impl Default for PlayerState {
             move_type: MoveType::Walk,
             water_level: 0,
             ladder: 0,
+            ground_ent: 0,
         }
     }
 }
@@ -190,6 +193,8 @@ pub struct WaterCache(pub [Option<(Vec3, i32)>; 3]);
 pub struct Mover<'a> {
     pub cfg: MoveConfig,
     pub world: &'a World,
+    /// Props the player collides with this tick (`set_props`), in world space.
+    props: Vec<gm_collision::Convex>,
 }
 
 fn angle_vectors(angles: Vec3) -> (Vec3, Vec3) {
@@ -216,7 +221,11 @@ pub fn clip_velocity(v: Vec3, normal: Vec3, overbounce: f32) -> Vec3 {
 
 impl<'a> Mover<'a> {
     pub fn new(cfg: MoveConfig, world: &'a World) -> Self {
-        Mover { cfg, world }
+        Mover {
+            cfg,
+            world,
+            props: Vec::new(),
+        }
     }
 
     pub fn hull(&self, ducked: bool) -> (Vec3, Vec3) {
@@ -239,10 +248,36 @@ impl<'a> Mover<'a> {
         }
     }
 
+    /// The props (PHY convexes at their poses) the player collides with from now on; the
+    /// server refreshes them every tick. Measured (`move_prop_block/step/setpos`): a frozen
+    /// prop blocks and carries like a brush, but a teleported one does not drag the player.
+    pub fn set_props(&mut self, props: Vec<gm_collision::Convex>) {
+        self.props = props;
+    }
+
     fn trace(&self, st: &PlayerState, start: Vec3, end: Vec3) -> Trace {
+        self.trace_ent(st, start, end).0
+    }
+
+    /// The trace plus the prop it ended on (`None` for the map or nothing).
+    fn trace_ent(&self, st: &PlayerState, start: Vec3, end: Vec3) -> (Trace, Option<u32>) {
         let (mins, maxs) = self.hull(st.ducked);
-        self.world
-            .trace_box(start, end, mins, maxs, MASK_PLAYERSOLID)
+        let world = self
+            .world
+            .trace_box(start, end, mins, maxs, MASK_PLAYERSOLID);
+        if self.props.is_empty() {
+            return (world, None);
+        }
+        let (prop, ent) = gm_collision::sweep_convexes(start, end, mins, maxs, &self.props);
+        if prop.fraction < world.fraction || (prop.all_solid && !world.all_solid) {
+            let mut t = prop;
+            t.start_solid |= world.start_solid;
+            (t, ent)
+        } else {
+            let mut t = world;
+            t.start_solid |= prop.start_solid;
+            (t, None)
+        }
     }
 
     /// Advance one tick.
@@ -314,6 +349,13 @@ impl<'a> Mover<'a> {
             st.velocity += Vec3::new(st.impulse.x, st.impulse.y, 0.0);
             st.impulse = Vec3::ZERO;
             self.walk_move(st, cmd, dt);
+            // the game's FullWalkMove ends with the second gravity half when the move left the
+            // ground (measured `move_prop_setpos` tick 82: the plate slides out from under a
+            // standing player, -4.5 on that tick)
+            self.categorize(st);
+            if !st.on_ground {
+                self.finish_gravity(st, dt);
+            }
         } else {
             self.start_gravity(st, dt);
             st.velocity += st.impulse;
@@ -526,12 +568,14 @@ impl<'a> Mover<'a> {
             return;
         }
         st.ground_push = false;
-        let t = self.trace(st, st.origin, st.origin - Vec3::Z * self.cfg.ground_probe);
+        let (t, ent) = self.trace_ent(st, st.origin, st.origin - Vec3::Z * self.cfg.ground_probe);
         if !t.hit() || t.normal.z < self.cfg.ground_normal_z {
             st.on_ground = false;
+            st.ground_ent = 0;
         } else {
             st.on_ground = true;
             st.ground_normal = t.normal;
+            st.ground_ent = ent.unwrap_or(0);
         }
     }
 
@@ -1340,6 +1384,82 @@ mod tests {
         assert!(f
             .ladder_step(MoveType::Ladder, -200.0, &climb, 15.0)
             .is_some());
+    }
+
+    fn crate_convex(center: Vec3, half: Vec3) -> gm_collision::Convex {
+        gm_collision::Convex {
+            entity: 7,
+            planes: vec![
+                (Vec3::X, center.x + half.x),
+                (Vec3::NEG_X, -(center.x - half.x)),
+                (Vec3::Y, center.y + half.y),
+                (Vec3::NEG_Y, -(center.y - half.y)),
+                (Vec3::Z, center.z + half.z),
+                (Vec3::NEG_Z, -(center.z - half.z)),
+            ],
+            mins: center - half,
+            maxs: center + half,
+        }
+    }
+
+    #[test]
+    fn frozen_prop_blocks_and_is_stepped_onto() {
+        let world = World::from_boxes(&[(
+            Vec3::new(-512.0, -512.0, -64.0),
+            Vec3::new(512.0, 512.0, 0.0),
+        )]);
+        let mut m = Mover::new(MoveConfig::default(), &world);
+        let cmd = UserCmd {
+            forward_move: 450.0,
+            view_angles: Vec3::new(0.0, 90.0, 0.0),
+            ..UserCmd::default()
+        };
+        // measured (`move_prop_block`): a crate 60 u ahead stops the walk 1/32 u short of it
+        m.set_props(vec![crate_convex(
+            Vec3::new(0.0, 80.0, 20.0),
+            Vec3::splat(20.0),
+        )]);
+        // dropped from 1 u up: a start exactly on the floor plane is a start-solid probe
+        let settle = |m: &Mover<'_>| {
+            let mut st = PlayerState {
+                origin: Vec3::new(0.0, 0.0, 1.0),
+                ..PlayerState::default()
+            };
+            for _ in 0..10 {
+                m.tick(&mut st, &UserCmd::default());
+            }
+            assert!(st.on_ground);
+            st
+        };
+        let mut st = settle(&m);
+        for _ in 0..60 {
+            m.tick(&mut st, &cmd);
+        }
+        assert!(
+            (st.origin.y - (60.0 - 16.0 - gm_collision::DIST_EPSILON)).abs() < 0.01,
+            "{}",
+            st.origin.y
+        );
+        assert_eq!(st.velocity.y, 0.0);
+        assert_eq!(st.ground_ent, 0);
+        // measured (`move_prop_step`): a 4 u plate is stepped onto and the prop is the ground
+        m.set_props(vec![crate_convex(
+            Vec3::new(0.0, 80.0, 2.0),
+            Vec3::new(48.0, 48.0, 2.0),
+        )]);
+        let mut st = settle(&m);
+        for _ in 0..30 {
+            m.tick(&mut st, &cmd);
+        }
+        assert!((st.origin.z - 4.0).abs() < 0.05, "{}", st.origin.z);
+        let floor = st.origin.z - 4.0;
+        assert!(st.on_ground);
+        assert_eq!(st.ground_ent, 7);
+        for _ in 0..60 {
+            m.tick(&mut st, &cmd);
+        }
+        assert!((st.origin.z - floor).abs() < 0.05, "{}", st.origin.z);
+        assert_eq!(st.ground_ent, 0);
     }
 
     #[test]

@@ -505,6 +505,7 @@ fn w_state(w: &mut Writer, s: &gm_move::PlayerState) {
     });
     w.u8(s.water_level);
     w.u16(s.ladder);
+    w.u32(s.ground_ent);
 }
 
 fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
@@ -533,6 +534,7 @@ fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
         },
         water_level: r.u8()?,
         ladder: r.u16()?,
+        ground_ent: r.u32()?,
     })
 }
 

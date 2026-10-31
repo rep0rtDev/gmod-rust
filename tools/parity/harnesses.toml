@@ -2712,3 +2712,36 @@ crates = ["gm-move", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
+
+[[harness]]
+name = "move_prop_block"
+scenario = "move/prop_block"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_prop_step"
+scenario = "move/prop_step"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_prop_setpos"
+scenario = "move/prop_setpos"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5

@@ -1,0 +1,52 @@
+{
+  "name": "move_prop_block",
+  "kind": "move",
+  "map": "gm_construct",
+  "angles": [
+    0,
+    90
+  ],
+  "start": [
+    823.235,
+    -657.0,
+    -143.0
+  ],
+  "platform": {
+    "model": "models/props_junk/wood_crate001a.mdl",
+    "pos": [
+      823.235,
+      -580.0,
+      -142.0
+    ],
+    "mode": "frozen"
+  },
+  "segments": [
+    {
+      "ticks": 20,
+      "buttons": 0,
+      "forward": 0,
+      "side": 0,
+      "up": 0,
+      "pitch": 0,
+      "yaw": 90
+    },
+    {
+      "ticks": 80,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": 0,
+      "yaw": 90
+    },
+    {
+      "ticks": 20,
+      "buttons": 0,
+      "forward": 0,
+      "side": 0,
+      "up": 0,
+      "pitch": 0,
+      "yaw": 90
+    }
+  ]
+}

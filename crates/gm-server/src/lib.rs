@@ -3344,6 +3344,34 @@ impl<'w> Server<'w> {
         self.tick_count += 1;
         let tick = self.tick_count;
         let mut respawn = Vec::new();
+        // the props as solids for the player hull this tick (`move_prop_block/step`)
+        let prop_convexes: Vec<gm_collision::Convex> = self
+            .sandbox
+            .props()
+            .iter()
+            .filter_map(|p| {
+                let b = *self.bodies.get(&p.id)?;
+                let info = self.models.get(&p.model)?;
+                let st = self.physics.state(b);
+                Some(
+                    info.hull_planes
+                        .iter()
+                        .zip(&info.hulls)
+                        .map(move |(pl, pts)| {
+                            let (planes, (mins, maxs)) =
+                                gm_physics::pickup::world_convex(pl, pts, st.rotation, st.position);
+                            gm_collision::Convex {
+                                entity: p.id,
+                                planes,
+                                mins,
+                                maxs,
+                            }
+                        }),
+                )
+            })
+            .flatten()
+            .collect();
+        self.mover.set_props(prop_convexes);
         for (id, p) in self.players.iter_mut() {
             if p.alive {
                 continue;
@@ -4157,9 +4185,12 @@ impl<'w> Server<'w> {
             if !self.players.get(&pid).is_some_and(|p| p.alive) {
                 continue;
             }
+            // the hull stops a `DIST_EPSILON` skin short of a prop it walks into: resting
+            // against the face is a touch
+            let skin = Vec3::splat(2.0 * gm_collision::DIST_EPSILON);
             let (lo, hi) = (
-                origin + Vec3::new(-16.0, -16.0, 0.0),
-                origin + Vec3::new(16.0, 16.0, h),
+                origin + Vec3::new(-16.0, -16.0, 0.0) - skin,
+                origin + Vec3::new(16.0, 16.0, h) + skin,
             );
             for (ent, aabbs) in &boxes {
                 let hit = aabbs.iter().any(|(a, b)| {

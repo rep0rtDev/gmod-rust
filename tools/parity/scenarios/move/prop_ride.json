@@ -1,0 +1,54 @@
+{
+  "name": "move_prop_ride",
+  "kind": "move",
+  "map": "gm_construct",
+  "angles": [
+    0,
+    90
+  ],
+  "start": [
+    823.235,
+    -657.0,
+    -117.0
+  ],
+  "platform": {
+    "model": "models/hunter/plates/plate2x2.mdl",
+    "pos": [
+      823.235,
+      -657.0,
+      -120.0
+    ],
+    "mode": "float",
+    "moves": [
+      {
+        "from": 40,
+        "to": 140,
+        "vel": [
+          100,
+          0,
+          0
+        ]
+      },
+      {
+        "from": 200,
+        "to": 260,
+        "vel": [
+          0,
+          0,
+          60
+        ]
+      }
+    ]
+  },
+  "segments": [
+    {
+      "ticks": 320,
+      "buttons": 0,
+      "forward": 0,
+      "side": 0,
+      "up": 0,
+      "pitch": 0,
+      "yaw": 90
+    }
+  ]
+}

@@ -78,9 +78,17 @@ Measured on gm_construct's `func_useableladder` (the line x -2920, y -1076 from 
 - **Sounds.** `ladder{1..4}.wav` (the `ladder` surface property) at volume 1 on the mount tick, then on the tick after a climbing tick whenever 450 ms have passed since the last climbing step, idle time included (`move_ladder_thresh`: 20, 30, 60, 90).
 - **Open.** Landing after the jump, tick 108: the game is still falling 1.13 u above the floor (ground false, velocity -256.5), we ground there with the 2 u probe. The game's own hull trace at that spot (y -1074.03, the hull a float off the wall) reports start-solid even with MASK_SOLID while every point around is empty; something near the top of the wall (solid above z -70 at y -1060 in a slab test) that our world does not have or that the game's sweep ignores. Also unmeasured: the top dismount (`info_ladder_dismount`), `sv_ladder_useonly`, mounting from above.
 
+## Props as ground (measured, `move_prop_*`)
+
+A frozen prop is a solid for the player hull exactly like a brush: the PHY convexes at the prop's pose, planes pushed out by the hull extents, the 1/32 u skin (`move_prop_block`: walking into a frozen crate stops 0.03 u short of its face, the forward speed clipped to 0, bit-exact; `move_prop_step`: a PHX plate on the floor is stepped onto (4 u up) and off, the ground entity is the prop, bit-exact). Footsteps on a prop use the prop's surface property (the plastic plate plays `tile*.wav`); ours still take the map material under the feet. The bump into the frozen crate also makes the crate's impact sound (a physics event, not reproduced).
+
+A frozen prop teleported with `SetPos` every tick does not carry the player: he stays put and loses the ground once the plate has slid out from under him (`move_prop_setpos`). The tick that loses the ground ends with the second gravity half (-4.5) although it started grounded: `FullWalkMove` finishes with gravity when the move left the ground; we do that too. Open: the game drops him one tick earlier than our sweep does (its ground probe misses the plate while 0.6 u of the hull is still over it, tick 82), and he lands at -143.26 instead of the floor's -143.97.
+
+An unfrozen floating prop (gravity off, velocity set every tick) with the player standing on it is a vphysics shadow interaction: the plate sinks and tilts under him, he is carried at about half its speed and slides off (`move_prop_ride`, recorded, not modelled, no harness).
+
 ## Not implemented yet
 
-Moving platforms and props as ground, fall damage, view roll, surface friction modifiers, `sv_maxspeed` style limits set by Lua, prediction error correction, `Player.Wade`.
+Moving platforms that carry the player (brush entities, the velocity of a physics ground) and props as ground, fall damage, view roll, surface friction modifiers, `sv_maxspeed` style limits set by Lua, prediction error correction, `Player.Wade`.
 
 ## Probe
 
@@ -90,7 +98,7 @@ Measured since: `move_fall_200` (the 140 u/s rule holds when landing from 200 u)
 
 `move_air_left`, `move_air_right`, `move_air_alt` (alternating strafes through a whole jump) and `move_airstrafe` pin the air friction rule; `move_stairs_down` recorded.
 
-Open: slopes, moving ground.
+Open: slopes, carrying ground.
 
 ## Displacements
 

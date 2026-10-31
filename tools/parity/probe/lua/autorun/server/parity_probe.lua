@@ -123,6 +123,46 @@ SCENARIOS.move = function(scn, done)
 	local settle = 20
 	local tick = -settle
 	local ticks = {}
+	-- optional platform prop: { model, pos = {x,y,z}, angles = {p,y,r}, mode = "frozen"|"float"|"setpos",
+	--   moves = { {from = tick, to = tick, vel = {x,y,z}} } }; "float" is an unfrozen prop with gravity off
+	-- and its velocity set every tick, "setpos" teleports a frozen prop by vel * dt every tick
+	local plat = nil
+	if scn.platform then
+		for _, e in ipairs(ents.FindByClass("prop_physics")) do e:Remove() end
+		plat = ents.Create("prop_physics")
+		plat:SetModel(scn.platform.model)
+		plat:SetPos(Vector(scn.platform.pos[1], scn.platform.pos[2], scn.platform.pos[3]))
+		local pa = scn.platform.angles or { 0, 0, 0 }
+		plat:SetAngles(Angle(pa[1], pa[2], pa[3]))
+		plat:Spawn()
+		local ph = plat:GetPhysicsObject()
+		if IsValid(ph) then
+			ph:Wake()
+			if scn.platform.mode == "float" then
+				ph:EnableGravity(false)
+				ph:EnableDrag(false)
+				ph:SetVelocity(Vector(0, 0, 0))
+			else
+				ph:EnableMotion(false)
+			end
+		end
+	end
+	local function platVel(t)
+		for _, m in ipairs(scn.platform and scn.platform.moves or {}) do
+			if t >= m.from and t < m.to then return Vector(m.vel[1], m.vel[2], m.vel[3]) end
+		end
+		return Vector(0, 0, 0)
+	end
+	hook.Add("Tick", "parity_plat", function()
+		if not IsValid(plat) or tick < 0 then return end
+		local v = platVel(tick)
+		local ph = plat:GetPhysicsObject()
+		if scn.platform.mode == "float" then
+			if IsValid(ph) then ph:SetVelocity(v) end
+		elseif scn.platform.mode == "setpos" then
+			plat:SetPos(plat:GetPos() + v * engine.TickInterval())
+		end
+	end)
 	-- every sound the server emits for the bot (footsteps by surface, landing)
 	local sounds = {}
 	hook.Add("EntityEmitSound", "parity_move", function(d)
@@ -214,6 +254,8 @@ SCENARIOS.move = function(scn, done)
 				water = ply:WaterLevel(),
 				speed = ply:GetMaxSpeed(),
 				movetype = ply:GetMoveType(),
+				plat = IsValid(plat) and { plat:GetPos().x, plat:GetPos().y, plat:GetPos().z } or nil,
+				groundent = IsValid(ply:GetGroundEntity()) and ply:GetGroundEntity():GetClass() or (ply:GetGroundEntity() == game.GetWorld() and "worldspawn" or ""),
 			}
 		end
 		tick = tick + 1
@@ -222,6 +264,7 @@ SCENARIOS.move = function(scn, done)
 			hook.Remove("SetupMove", "parity_move")
 			hook.Remove("FinishMove", "parity_move")
 			hook.Remove("EntityEmitSound", "parity_move")
+			hook.Remove("Tick", "parity_plat")
 			local p = ply:GetPos()
 			done({
 				start = { start.x, start.y, start.z },
