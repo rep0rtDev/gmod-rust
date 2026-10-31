@@ -143,6 +143,11 @@ pub enum QueuedWrite {
     EntityRegister {
         def: gm_server::ScriptedEntity,
     },
+    /// `ENT:NextThink(CurTime() + seconds)` of a scripted entity instance.
+    NextThink {
+        ent: u32,
+        seconds: f32,
+    },
     WeaponRegister {
         def: gm_server::ScriptedWeapon,
     },
@@ -573,7 +578,13 @@ for _, kind in ipairs({"init", "think", "start_touch", "touch", "end_touch", "us
     events.on("entity." .. kind, function(p)
         local d = sents[p.class]
         if d ~= nil and d[kind] ~= nil then
-            return d[kind](p)
+            local r = d[kind](p)
+            -- `think` returning seconds is `self:NextThink(CurTime() + r) return true`
+            if kind == "think" and type(r) == "number" then
+                world.queue("next_think", p.entity, r)
+                return nil
+            end
+            return r
         end
     end)
 end
@@ -933,6 +944,10 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         },
                     }
                 }
+                "next_think" => QueuedWrite::NextThink {
+                    ent,
+                    seconds: f32::from_lua(arg, lua)?,
+                },
                 "entity.register" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::EntityRegister {
@@ -1666,6 +1681,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             server.register_entity(def.clone());
             true
         }
+        QueuedWrite::NextThink { ent, seconds } => server.set_next_think(*ent, *seconds),
         QueuedWrite::WeaponRegister { def } => {
             server.register_weapon(def.clone());
             true

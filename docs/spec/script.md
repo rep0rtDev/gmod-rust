@@ -568,8 +568,11 @@ class, each with `{entity, class, player, other, amount}`:
 - `think` first 7 ticks after the spawn, then every `round(think_interval / tick)` ticks
   (`think_interval = 0.1` is every 7, `0.5` every 33) or every 13 ticks (about 0.2 s) when it is
   not given, the engine's
-  default cadence when the think does not reschedule itself. The game's `return true` after
-  `NextThink` is not modelled: the cadence is the class's constant;
+  default cadence when the think does not reschedule itself. A `think` that returns a number
+  of seconds is `self:NextThink(CurTime() + seconds) return true`: the next think moves to that
+  time (rounded to ticks, at least the next tick), as does `world.queue("next_think", entity,
+  seconds)` from anywhere; the time is counted from the think's own tick when the write comes
+  from its callback (the game's `CurTime()` there), from the current tick otherwise;
 - `use` with `player` and `amount = 1` (`USE_ON`): `use_type = "continuous"` (default,
   `CONTINUOUS_USE`) every tick E is held on it, exactly one per tick and no lag tick; `"simple"`
   (`SIMPLE_USE`) once per press; `"onoff"` (`ONOFF_USE`) on the press and `use_off` (`USE_OFF`,
@@ -595,7 +598,8 @@ separates (two ticks later on the bounce), `PhysicsCollide` twice per impact wit
 (ours is `entity.collide`, once).
 
 Test (`addon_hooks scripted_entities_follow_the_measured_sent_cadences`): two classes spawned
-in tick 2, `init` at 2, thinks at 9 then every 13 (default) and every 7 (`think_interval = 0.1`), five
+in the first tick, `init` in it, thinks 7 ticks later then every 13 (default), every 7
+(`think_interval = 0.1`) and every 20 (a think returning 0.3), five
 `use` for five held ticks, `damage` 5 and `remove` in their ticks; a crate dropped on the
 second starts with `start_touch`, touches every tick and never ends a touch it did not start.
 

@@ -469,6 +469,8 @@ pub const SENT_DEFAULT_THINK_TICKS: u64 = 13;
 pub struct SentState {
     pub class: String,
     pub next_think: u64,
+    /// The tick of the last `think` (the `CurTime()` a `NextThink` in its callback is relative to).
+    pub last_think: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1525,6 +1527,7 @@ impl<'w> Server<'w> {
             SentState {
                 class: def.class.clone(),
                 next_think: self.tick_count + SENT_FIRST_THINK_TICKS,
+                last_think: None,
             },
         );
         self.sent_event(ent, "init", 0, 0, 0.0);
@@ -1541,6 +1544,26 @@ impl<'w> Server<'w> {
                 other,
                 amount,
             });
+        }
+    }
+
+    /// `ENT:NextThink(CurTime() + seconds)` for an instance: its next think moves to that time
+    /// (at least the next tick); false when `ent` is not a scripted entity.
+    pub fn set_next_think(&mut self, ent: u32, seconds: f32) -> bool {
+        let ticks = ((seconds / gm_core::tick::DEFAULT_TICK_INTERVAL).round() as u64).max(1);
+        let now = self.tick_count;
+        match self.sents.get_mut(&ent) {
+            Some(s) => {
+                // from the think's own callback (the events of the tick just run) the time is
+                // that tick's, as the game's CurTime() is there
+                let base = match s.last_think {
+                    Some(t) if t + 1 == now => t,
+                    _ => now,
+                };
+                s.next_think = (base + ticks).max(now + 1);
+                true
+            }
+            None => false,
         }
     }
 
@@ -1566,7 +1589,9 @@ impl<'w> Server<'w> {
         for ent in due {
             let class = self.sents[&ent].class.clone();
             let next = now + self.sent_think_ticks(&class);
-            self.sents.get_mut(&ent).unwrap().next_think = next;
+            let s = self.sents.get_mut(&ent).unwrap();
+            s.next_think = next;
+            s.last_think = Some(now);
             self.sent_event(ent, "think", 0, 0, 0.0);
         }
     }

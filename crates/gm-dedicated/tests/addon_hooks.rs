@@ -551,12 +551,16 @@ fn scripted_entities_follow_the_measured_sent_cadences() {
             entity.register("parity_b", { model = "models/props_junk/wood_crate001a.mdl", think_interval = 0.1,
                 use_type = "onoff", think = log("think"), use = log("use"), use_off = log("use_off"),
                 start_touch = log("start_touch"), touch = log("touch"), end_touch = log("end_touch") })
+            -- the think reschedules itself: `self:NextThink(CurTime() + 0.3) return true`
+            entity.register("parity_c", { model = "models/props_junk/wood_crate001a.mdl",
+                think = function(p) log("think")(p) return 0.3 end })
             events.on("tick.pre", function()
                 state.t += 1
                 if state.done then return end
                 state.done = true
                 world.queue("spawn", 0, { class = "parity_a", pos = {x = 700, y = -550, z = -123.6}, frozen = true, tag = "a" })
                 world.queue("spawn", 0, { class = "parity_b", pos = {x = 400, y = -200, z = -123.6}, frozen = true, tag = "b" })
+                world.queue("spawn", 0, { class = "parity_c", pos = {x = 500, y = -200, z = -123.6}, frozen = true, tag = "c" })
                 -- a crate dropped onto B for its touches (the lua_sent stand)
                 world.queue("spawn", 0, { model = "models/props_junk/wood_crate001a.mdl", pos = {x = 400, y = -200, z = -60}, tag = "crate" })
             end)
@@ -678,6 +682,16 @@ fn scripted_entities_follow_the_measured_sent_cadences() {
         })
         .collect();
     assert_eq!(thinks_b[0], init_tick + 7);
+    let thinks_c: Vec<u64> = log
+        .iter()
+        .filter(|l| l.starts_with("think:parity_c:"))
+        .map(|l| l.split(':').nth(2).unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(thinks_c[0], init_tick + 7);
+    assert!(
+        thinks_c.len() >= 3 && thinks_c.windows(2).all(|w| w[1] - w[0] == 20),
+        "a think returning 0.3 comes back every 20 ticks: {thinks_c:?}"
+    );
     let crate_id: u32 = rt.actors()[0].eval("return state.crate").unwrap();
     let touches: Vec<&str> = log
         .iter()
