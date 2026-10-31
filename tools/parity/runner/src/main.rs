@@ -505,6 +505,7 @@ impl DeviceSpec {
                 key_r: self.bck.unwrap_or(42),
                 axis: 0,
                 local_axis: glam::Vec3::ZERO,
+                applied: 0.0,
             },
             "button" => gm_sandbox::Device::Button {
                 key: self.key.unwrap_or(37),
@@ -626,9 +627,10 @@ fn device_key(d: &mut gm_sandbox::Device, key: i32, down: bool, pos_z: f32) {
 fn device_simulate(
     world: &mut gm_physics::World,
     body: gm_physics::BodyHandle,
-    d: &gm_sandbox::Device,
+    d: &mut gm_sandbox::Device,
     dt: f32,
 ) {
+    let device_mass = d.mass();
     use glam::Vec3;
     use gm_sandbox::Device;
     let st = world.state(body);
@@ -643,7 +645,7 @@ fn device_simulate(
             if *on && *mul != 0.0 {
                 let top = st.position + st.rotation * Vec3::new(0.0, 0.0, *top_z);
                 let dir = st.rotation * Vec3::new(0.0, 0.0, -*top_z);
-                world.add_impulse_at(body, top, dir * (force * mul * 50.0 * dt));
+                world.add_impulse_at(body, top, dir * (*force * *mul * 50.0 * dt));
             }
         }
         Device::Hoverball {
@@ -652,7 +654,7 @@ fn device_simulate(
             enabled,
             ..
         } => {
-            if let Some(m) = d.mass() {
+            if let Some(m) = device_mass {
                 let cur = world.mass(body);
                 if cur > 0.0 && (cur - m).abs() > 1e-3 {
                     world.set_mass(body, m);
@@ -674,18 +676,20 @@ fn device_simulate(
             }
         }
         Device::Balloon { force } => {
-            world.add_impulse(body, Vec3::new(0.0, 0.0, force * 5000.0 * dt * dt));
+            world.add_impulse(body, Vec3::new(0.0, 0.0, *force * 5000.0 * dt * dt));
         }
         Device::Wheel {
             torque,
             friction,
             scale,
             local_axis,
+            applied,
             ..
         } => {
             let axis = (st.rotation * *local_axis).normalize_or_zero();
             let along = st.angular_velocity.dot(axis);
-            let spin = gm_sandbox::wheel_spin_step(along, *torque, *scale, *friction, dt);
+            let spin = gm_sandbox::wheel_spin_step(along, *torque, *applied, *friction, dt);
+            *applied = *scale;
             world.set_velocity(
                 body,
                 st.velocity,

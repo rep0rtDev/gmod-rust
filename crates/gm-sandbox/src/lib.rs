@@ -881,6 +881,9 @@ pub enum Device {
         axis: u32,
         /// The axis in the wheel's frame (`WPos2 - WPos1`, the hit side).
         local_axis: Vec3,
+        /// The scale the motor drove with last tick: `phys_torque` picks a new `Scale` up on
+        /// the step after the key (the game's wheel shows 0 deg/s on the key tick).
+        applied: f32,
     },
     /// `gmod_button` (`ONOFF_USE`): `numpad.Activate(owner, key, true)` while on. A toggle flips
     /// on each press; otherwise it is on while `user` holds +use.
@@ -1930,6 +1933,7 @@ impl Sandbox {
                     key_r: s.wheel_bck,
                     axis: 0,
                     local_axis: rot.inverse() * (hit.pos - pos),
+                    applied: 0.0,
                 }
             }
             "button" => Device::Button {
@@ -2779,6 +2783,15 @@ impl Sandbox {
 
     /// The hoverballs' `Think`: a held key moves the target height by `zvel * speed * dt`; a
     /// re-enabled one targets where it is (`NaN` marks that); queued dynamite counts down.
+    /// After the motors drove this tick: `phys_torque` picks a changed `Scale` up next step.
+    pub fn settle_wheel_scales(&mut self) {
+        for d in self.devices.values_mut() {
+            if let Device::Wheel { scale, applied, .. } = d {
+                *applied = *scale;
+            }
+        }
+    }
+
     pub fn tick_devices(&mut self, dt: f32) {
         // queued dynamite: the blast from where the stick is now, then `remove` takes it away
         let mut due = Vec::new();

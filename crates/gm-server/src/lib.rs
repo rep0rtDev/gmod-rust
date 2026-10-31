@@ -3370,19 +3370,20 @@ impl<'w> Server<'w> {
                 gm_sandbox::Device::Wheel {
                     torque,
                     friction,
-                    scale,
+                    applied,
                     local_axis,
                     ..
                 } => {
                     let axis = (st.rotation * local_axis).normalize_or_zero();
                     let along = st.angular_velocity.dot(axis);
-                    let spin = gm_sandbox::wheel_spin_step(along, torque, scale, friction, dt);
+                    let spin = gm_sandbox::wheel_spin_step(along, torque, applied, friction, dt);
                     let w = st.angular_velocity + axis * (spin - along);
                     self.physics.set_velocity(body, st.velocity, w);
                 }
                 gm_sandbox::Device::Button { .. } | gm_sandbox::Device::Dynamite { .. } => {}
             }
         }
+        self.sandbox.settle_wheel_scales();
         for (origin, damage, attacker) in self.sandbox.take_blasts() {
             self.blast(origin, damage, attacker);
         }

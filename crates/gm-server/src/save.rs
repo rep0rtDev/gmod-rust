@@ -227,6 +227,7 @@ impl SavedDeviceKind {
                     key_r,
                     axis: 0,
                     local_axis: Vec3::from(local_axis),
+                    applied: 0.0,
                 },
                 vec![
                     (key_f, NumpadBind::Wheel(id, 1.0)),
