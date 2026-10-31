@@ -466,8 +466,12 @@ in the 640x480 proportional space of the sheet page.
 - Ours: `derma::menu_entries` groups the server's `skin N` / `bodygroups P M` property names
   into those trees (checked from the entity's snapshot `skin` / `body`); `menu_hover` opens /
   closes levels as the cursor moves, `menu_leaf` picks the property to run; arrow and check
-  pieces from the gwenskin atlas (464,112 / 448,112). Not done: body group and model names
-  (the client does not read them from the MDL yet, parts show as "Body Group P" / "Model M").
+  pieces from the gwenskin atlas (464,112 / 448,112). Body group names come from the
+  entity's MDL (`DynModel::bodygroups`: body part name, submodel names) and are shaped as
+  `properties/bodygroups.lua` does: a two-state part is one checkable option (checked at
+  state 1, a click sends the other state), a larger one a submenu of its submodels named by
+  the submodel file name without extension (`string.NiceName`: `_` to space, split before a
+  capital, first letter upper), `Model #i` when unnamed.
 
 ## World tips
 

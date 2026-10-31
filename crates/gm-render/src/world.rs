@@ -553,6 +553,8 @@ pub struct DynModel {
     /// Drawn at full brightness (beams, markers), not shaded by the sun.
     unlit: bool,
     skeleton: Option<Skeleton>,
+    /// `Entity:GetBodyGroups`: each MDL body part's name and its submodels' names.
+    bodygroups: Vec<(String, Vec<String>)>,
 }
 
 /// Where `draw_models` renders: the colour and depth views, the aspect ratio of the colour
@@ -580,6 +582,11 @@ pub struct DrawItem<'a> {
 }
 
 impl DynModel {
+    /// The MDL body parts (name, submodel names) for the bodygroups context menu.
+    pub fn bodygroups(&self) -> &[(String, Vec<String>)] {
+        &self.bodygroups
+    }
+
     /// Model-space transform of a named attachment given the bones' world (model-space)
     /// matrices from `bone_world`.
     pub fn attachment(&self, name: &str, bones: &[Mat4]) -> Option<Mat4> {
@@ -1744,11 +1751,22 @@ impl WorldRenderer {
                 bounds.1 = bounds.1.max(p);
             }
         }
+        let bodygroups = mdl
+            .body_parts
+            .iter()
+            .map(|bp| {
+                (
+                    bp.name.clone(),
+                    bp.models.iter().map(|m| m.name.clone()).collect(),
+                )
+            })
+            .collect();
         (!parts.is_empty()).then_some(DynModel {
             bounds,
             parts,
             unlit: false,
             skeleton,
+            bodygroups,
         })
     }
 
@@ -2009,6 +2027,7 @@ impl WorldRenderer {
             parts: vec![(bg, verts, idx, false)],
             unlit,
             skeleton: None,
+            bodygroups: Vec::new(),
         }
     }
 

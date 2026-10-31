@@ -96,6 +96,16 @@ fn main() {
                     h.hull_min, h.hull_max, h.eye_position,
                     h.include_model_count, mdl.body_parts.len(), vtx.body_parts.len()
                 );
+                for bp in &mdl.body_parts {
+                    println!(
+                        "  bodypart {:?}: {:?}",
+                        bp.name,
+                        bp.models
+                            .iter()
+                            .map(|m| m.name.as_str())
+                            .collect::<Vec<_>>()
+                    );
+                }
                 let mut materials: gm_render::props::MaterialMap = Default::default();
                 let mut missing = Vec::new();
                 let keys: Vec<Option<String>> = (0..mdl.textures.len())

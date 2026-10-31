@@ -1478,14 +1478,57 @@ pub struct MenuEntry {
     pub children: Vec<MenuEntry>,
 }
 
+/// `string.NiceName`: underscores to spaces, a word split before each capital that does not
+/// continue an all-caps run, first letter upper-cased.
+pub fn nice_name(name: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for word in name.replace('_', " ").split(' ') {
+        let chars: Vec<char> = word.chars().collect();
+        let mut start = 0;
+        for i in 1..chars.len() {
+            if chars[i].is_uppercase() {
+                let chunk: String = chars[start..i].iter().collect();
+                if chunk.to_uppercase() == chunk {
+                    continue;
+                }
+                parts.push(chunk);
+                start = i;
+            }
+        }
+        parts.push(chars[start..].iter().collect());
+    }
+    let joined = parts.join(" ");
+    let mut c = joined.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
+}
+
+/// The bodygroup option labels of `properties/bodygroups.lua`: the submodel's file name
+/// without extension (trimmed of `.`, `/`, `\`), else `Model #i` (1-based).
+fn submodel_label(name: &str, i: usize) -> String {
+    let n = name.trim_matches(|c| matches!(c, '.' | '/' | '\\'));
+    let n = n.rsplit(['/', '\\']).next().unwrap_or(n);
+    let n = n.rsplit_once('.').map_or(n, |(stem, _)| stem);
+    if n.is_empty() {
+        format!("Model #{}", i + 1)
+    } else {
+        nice_name(n)
+    }
+}
+
 /// The entries of `ServerMsg::Properties` as the game's menu: `skin N` grouped under Skin
-/// (`skinX` options checked at the entity's skin), `bodygroups P M` under Body Groups with a
-/// submenu per part, the rest flat.
+/// (`skinX` options checked at the entity's skin), `bodygroups P M` under Body Groups as in
+/// `properties/bodygroups.lua` (a two-state part is one checkable option that toggles, a
+/// larger one a submenu of its submodels, names from the MDL via `groups[part]`), the rest
+/// flat.
 pub fn menu_entries(
     lang: &BTreeMap<String, String>,
     names: &[String],
     skin: u8,
     body: &str,
+    groups: &[(String, Vec<String>)],
 ) -> Vec<MenuEntry> {
     let icon_of = |n: &str| PROPERTIES.iter().find(|p| p.0 == n).map_or("", |p| p.2);
     let skin_fmt = lang
@@ -1519,14 +1562,19 @@ pub fn menu_entries(
                 .ok()
                 .and_then(|p| body.chars().nth(p))
                 .map_or(0, |c| c.to_digit(10).unwrap_or(0));
-            let child = MenuEntry {
-                name: n.clone(),
-                label: format!("Model {model}"),
-                icon: "",
-                checked: Some(model.parse::<u32>().is_ok_and(|m| m == current)),
-                children: Vec::new(),
-            };
-            let group_name = format!("bodygroups {part}");
+            let part_idx = part.parse::<usize>().unwrap_or(usize::MAX);
+            let model_idx = model.parse::<usize>().unwrap_or(0);
+            let group = groups.get(part_idx);
+            let part_label =
+                group.map_or_else(|| format!("Body Group {part}"), |(name, _)| nice_name(name));
+            let states = names
+                .iter()
+                .filter(|m| {
+                    m.strip_prefix("bodygroups ")
+                        .and_then(|r| r.split_once(' '))
+                        .is_some_and(|(p, _)| p == part)
+                })
+                .count();
             if !out.iter().any(|e| e.name == "bodygroups") {
                 out.push(MenuEntry {
                     name: "bodygroups".into(),
@@ -1537,11 +1585,35 @@ pub fn menu_entries(
                 });
             }
             let root = out.iter_mut().find(|e| e.name == "bodygroups").unwrap();
+            if states == 2 {
+                // one checkable option: checked at state 1, a click sets the other state
+                if model_idx == 0 {
+                    root.children.push(MenuEntry {
+                        name: format!("bodygroups {part} {}", if current == 1 { 0 } else { 1 }),
+                        label: part_label,
+                        icon: "",
+                        checked: Some(current == 1),
+                        children: Vec::new(),
+                    });
+                }
+                continue;
+            }
+            let child = MenuEntry {
+                name: n.clone(),
+                label: group.map_or_else(
+                    || format!("Model #{}", model_idx + 1),
+                    |(_, subs)| submodel_label(subs.get(model_idx).map_or("", |s| s), model_idx),
+                ),
+                icon: "",
+                checked: Some(model_idx as u32 == current),
+                children: Vec::new(),
+            };
+            let group_name = format!("bodygroups {part}");
             match root.children.iter_mut().find(|g| g.name == group_name) {
                 Some(g) => g.children.push(child),
                 None => root.children.push(MenuEntry {
                     name: group_name,
-                    label: format!("Body Group {part}"),
+                    label: part_label,
                     icon: "",
                     checked: None,
                     children: vec![child],
@@ -2064,5 +2136,55 @@ pub fn main_menu(
             "html/img/disconnect.png",
             "disconnect",
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nice_name_splits_words_like_the_game() {
+        assert_eq!(nice_name("wheel_hub"), "Wheel hub");
+        assert_eq!(nice_name("lowerBody"), "Lower Body");
+        assert_eq!(nice_name("HDTV_screen"), "HDTV screen");
+        assert_eq!(nice_name("studio"), "Studio");
+    }
+
+    #[test]
+    fn bodygroups_are_a_toggle_at_two_states_and_a_submenu_above() {
+        let lang = BTreeMap::new();
+        let names: Vec<String> = [
+            "bodygroups 0 0",
+            "bodygroups 0 1",
+            "bodygroups 1 0",
+            "bodygroups 1 1",
+            "bodygroups 1 2",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let groups = vec![
+            ("hat".to_string(), vec!["cap.smd".into(), "blank".into()]),
+            (
+                "arms".to_string(),
+                vec!["arms_normal.smd".into(), "".into(), "arms_long".into()],
+            ),
+        ];
+        let out = menu_entries(&lang, &names, 0, "01", &groups);
+        let root = out.iter().find(|e| e.name == "bodygroups").unwrap();
+        assert_eq!(root.children.len(), 2);
+        // two states: one checkable option sending the other state (current 0 -> 1)
+        assert_eq!(root.children[0].label, "Hat");
+        assert_eq!(root.children[0].name, "bodygroups 0 1");
+        assert_eq!(root.children[0].checked, Some(false));
+        assert!(root.children[0].children.is_empty());
+        // three states: a submenu of submodel file names, "Model #2" for the unnamed one
+        let arms = &root.children[1];
+        assert_eq!(arms.label, "Arms");
+        let labels: Vec<&str> = arms.children.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, ["Arms normal", "Model #2", "Arms long"]);
+        assert_eq!(arms.children[1].checked, Some(true));
+        assert_eq!(arms.children[2].name, "bodygroups 1 2");
     }
 }

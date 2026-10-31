@@ -1213,7 +1213,12 @@ impl App {
         let ent = self.sim.client.world.entities.get(&ctx.ent);
         let skin = ent.map_or(0, |e| e.skin);
         let body = ent.map_or("", |e| e.body.as_str());
-        derma::menu_entries(&self.lang, &ctx.names, skin, body)
+        // `Entity:GetBodyGroups`: part and submodel names from the entity's MDL
+        let groups: Vec<(String, Vec<String>)> = ent
+            .and_then(|e| self.gfx.as_ref()?.models.get(&e.model)?.as_ref())
+            .map(|m| m.bodygroups().to_vec())
+            .unwrap_or_default();
+        derma::menu_entries(&self.lang, &ctx.names, skin, body, &groups)
     }
 
     /// Hovering the context menu opens / closes submenus.
