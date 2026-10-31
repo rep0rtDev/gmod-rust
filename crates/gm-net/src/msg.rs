@@ -76,6 +76,11 @@ pub enum Command {
     /// Asks which context-menu properties the prop under the cursor offers right now; the
     /// server answers with [`ServerMsg::Properties`].
     PropertyList,
+    /// A numpad key edge (`numpad.Activate` / `Deactivate`): drives the stools bound to it.
+    Numpad {
+        key: u8,
+        down: bool,
+    },
     /// `cl_playermodel`: the model name (the game's table) to wear from the next spawn.
     /// `cl_playerskin` / `cl_playerbodygroups`: worn from the next spawn.
     PlayerSkin {
@@ -653,6 +658,11 @@ impl ClientMsg {
                     }
                     Command::Kill => w.u8(15),
                     Command::PropertyList => w.u8(16),
+                    Command::Numpad { key, down } => {
+                        w.u8(17);
+                        w.u8(*key);
+                        w.bool(*down);
+                    }
                 }
             }
             ClientMsg::AckSnapshot { tick } => {
@@ -737,6 +747,10 @@ impl ClientMsg {
                     },
                     15 => Command::Kill,
                     16 => Command::PropertyList,
+                    17 => Command::Numpad {
+                        key: r.u8()?,
+                        down: r.bool()?,
+                    },
                     _ => return Err(Truncated),
                 };
                 ClientMsg::Command { seq, cmd }

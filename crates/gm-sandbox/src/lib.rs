@@ -154,6 +154,75 @@ pub enum ConstraintKind {
         lpos2: Vec3,
         width: f32,
         material: String,
+        /// The hydraulic or muscle this slider belongs to (`fixed`): it has no type of its own
+        /// and goes when its owner goes (`DeleteOnRemove`).
+        part_of: Option<u32>,
+    },
+    /// `constraint.Hydraulic`: an Elastic whose rest length a `gmod_winch_controller` drives
+    /// between `length1` and `length2` at `speed` u/s off numpad `key`; `fixed` adds a slider
+    /// between the same points. Spring constants from the lighter end's mass (`CalcElasticConsts`).
+    Hydraulic {
+        lpos1: Vec3,
+        lpos2: Vec3,
+        length1: f32,
+        length2: f32,
+        width: f32,
+        material: String,
+        key: i32,
+        fixed: bool,
+        speed: f32,
+        toggle: bool,
+        constant: f32,
+        damping: f32,
+        controller: LengthController,
+    },
+    /// `constraint.Winch`: a stretch-only Elastic with no upper length and a floor of 1 u, wound
+    /// in and out by two numpad keys at their own speeds.
+    Winch {
+        lpos1: Vec3,
+        lpos2: Vec3,
+        width: f32,
+        material: String,
+        fwd_key: i32,
+        bwd_key: i32,
+        fwd_speed: f32,
+        bwd_speed: f32,
+        toggle: bool,
+        constant: f32,
+        damping: f32,
+        controller: LengthController,
+    },
+    /// `constraint.Muscle`: an Elastic whose rest length swings sinusoidally between `length1`
+    /// and `length1 + 2 * amplitude` with `period`, switched by numpad `key`.
+    Muscle {
+        lpos1: Vec3,
+        lpos2: Vec3,
+        length1: f32,
+        length2: f32,
+        width: f32,
+        material: String,
+        key: i32,
+        fixed: bool,
+        period: f32,
+        amplitude: f32,
+        starton: bool,
+        constant: f32,
+        damping: f32,
+        controller: LengthController,
+    },
+    /// `constraint.Pulley`: `phys_pulleyconstraint` from `lpos1` on the first entity over the
+    /// world points `wpos2` and `wpos3` to `lpos4` on the second (`ent2`); three visual ropes.
+    Pulley {
+        lpos1: Vec3,
+        lpos4: Vec3,
+        wpos2: Vec3,
+        wpos3: Vec3,
+        forcelimit: f32,
+        rigid: bool,
+        width: f32,
+        material: String,
+        /// Slack beyond the distance at creation (`WPos3 - WPos4`), as the game stores it.
+        addlength: f32,
     },
     /// `constraint.Elastic`: `phys_spring` between `lpos1` and `lpos2` with `F = -constant * x -
     /// damping * v` about `length` (their distance when made); `stretchonly` is slack when shorter.
@@ -182,6 +251,175 @@ pub enum ConstraintKind {
 }
 
 /// A constraint entity; `None` stands for the world.
+impl ConstraintKind {
+    /// The length controller of a hydraulic, winch or muscle.
+    pub fn controller(&self) -> Option<&LengthController> {
+        match self {
+            ConstraintKind::Hydraulic { controller, .. }
+            | ConstraintKind::Winch { controller, .. }
+            | ConstraintKind::Muscle { controller, .. } => Some(controller),
+            _ => None,
+        }
+    }
+
+    pub fn controller_mut(&mut self) -> Option<&mut LengthController> {
+        match self {
+            ConstraintKind::Hydraulic { controller, .. }
+            | ConstraintKind::Winch { controller, .. }
+            | ConstraintKind::Muscle { controller, .. } => Some(controller),
+            _ => None,
+        }
+    }
+}
+
+/// `gmod_winch_controller`: drives the rest length of a hydraulic, winch or muscle spring. Each
+/// tick (`Think` every 0.01 s, so every server tick) a running controller moves `length` by
+/// `speed * dt` in `direction` (normal) or along a sine (muscle), clamps it to `[min, max]`,
+/// and a toggle controller stops at the limit it reached.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LengthController {
+    pub muscle: bool,
+    pub length: f32,
+    pub min: f32,
+    pub max: Option<f32>,
+    pub fwd_speed: f32,
+    pub bwd_speed: f32,
+    pub toggle: bool,
+    /// 1 lengthens, -1 shortens, 0 holds (`DIR_FORWARD` / `DIR_BACKWARD` / `DIR_NONE`).
+    pub direction: i8,
+    pub expanded: bool,
+    pub ctime: f32,
+    pub period: f32,
+    pub amplitude: f32,
+}
+
+impl LengthController {
+    pub fn new(
+        length: f32,
+        min: f32,
+        max: Option<f32>,
+        fwd_speed: f32,
+        bwd_speed: f32,
+        toggle: bool,
+    ) -> Self {
+        LengthController {
+            muscle: false,
+            length,
+            min,
+            max,
+            fwd_speed,
+            bwd_speed,
+            toggle,
+            direction: 0,
+            expanded: max.is_some_and(|m| length >= m),
+            ctime: 0.0,
+            period: 0.0,
+            amplitude: 0.0,
+        }
+    }
+
+    /// A muscle controller starts its clock where the sine gives the current length.
+    pub fn muscle(
+        length: f32,
+        min: f32,
+        max: f32,
+        period: f32,
+        amplitude: f32,
+        starton: bool,
+    ) -> Self {
+        let spos = ((length - min) / (amplitude * 2.0) - 1.0).clamp(-1.0, 1.0);
+        LengthController {
+            muscle: true,
+            length,
+            min,
+            max: Some(max),
+            fwd_speed: 0.0,
+            bwd_speed: 0.0,
+            toggle: true,
+            direction: i8::from(starton),
+            expanded: length >= max,
+            ctime: spos.asin() / (period * std::f32::consts::PI),
+            period,
+            amplitude,
+        }
+    }
+
+    /// One `Think`; returns the rest length to set, `None` while the controller holds.
+    pub fn tick(&mut self, dt: f32) -> Option<f32> {
+        if self.direction == 0 {
+            return None;
+        }
+        if self.muscle {
+            let spos = ((self.ctime * std::f32::consts::PI * self.period).sin() + 1.0)
+                * (self.amplitude / 2.0);
+            self.length = self.min + spos.clamp(0.0, self.amplitude);
+            self.ctime += dt;
+        } else {
+            let speed = if self.direction > 0 {
+                self.fwd_speed
+            } else {
+                -self.bwd_speed
+            };
+            self.length += speed * dt;
+            if self.length < self.min {
+                self.length = self.min;
+                if self.toggle {
+                    self.direction = 0;
+                }
+            }
+            if let Some(max) = self.max {
+                if self.length > max {
+                    self.length = max;
+                    self.expanded = true;
+                    if self.toggle {
+                        self.direction = 0;
+                    }
+                }
+            }
+        }
+        Some(self.length)
+    }
+
+    /// `HydraulicToggle`: a held one reverses, a stopped one leaves the end it is at.
+    pub fn hydraulic_toggle(&mut self) {
+        self.direction = match self.direction {
+            0 if self.expanded => -1,
+            0 => 1,
+            d => -d,
+        };
+    }
+
+    /// `WinchOn` / `WinchOff` / `HydraulicDir`.
+    pub fn set_direction(&mut self, d: i8) {
+        self.direction = d;
+    }
+
+    /// `WinchToggle`: the same key again stops, the other reverses.
+    pub fn winch_toggle(&mut self, d: i8) {
+        self.direction = if self.direction == d { 0 } else { d };
+    }
+
+    /// `MuscleToggle`: running stops, stopped runs.
+    pub fn muscle_toggle(&mut self) {
+        self.direction = if self.direction == 0 { 1 } else { 0 };
+    }
+}
+
+/// `CalcElasticConsts`: spring constant and damping off the lighter end's mass (the world does
+/// not count); a fixed (slider-guided) hydraulic/muscle is stiffer and better damped.
+pub fn elastic_consts(mass1: Option<f32>, mass2: Option<f32>, fixed: bool) -> (f32, f32) {
+    let min_mass = match (mass1, mass2) {
+        (None, Some(m)) | (Some(m), None) => m,
+        (Some(a), Some(b)) => a.min(b),
+        (None, None) => 0.0,
+    };
+    if fixed {
+        (min_mass * 100.0, min_mass * 100.0 * 0.2)
+    } else {
+        (min_mass * 50.0, min_mass * 50.0 * 0.1)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Constraint {
     pub id: u32,
@@ -231,6 +469,31 @@ pub struct ToolSettings {
     pub elastic_width: f32,
     pub elastic_material: String,
     pub elastic_stretchonly: bool,
+    pub hydraulic_width: f32,
+    pub hydraulic_addlength: f32,
+    pub hydraulic_fixed: bool,
+    pub hydraulic_speed: f32,
+    pub hydraulic_toggle: bool,
+    pub hydraulic_material: String,
+    pub hydraulic_key: i32,
+    pub winch_width: f32,
+    pub winch_fwd_speed: f32,
+    pub winch_bwd_speed: f32,
+    pub winch_fwd_key: i32,
+    pub winch_bwd_key: i32,
+    pub winch_material: String,
+    pub winch_toggle: bool,
+    pub muscle_width: f32,
+    pub muscle_addlength: f32,
+    pub muscle_fixed: bool,
+    pub muscle_period: f32,
+    pub muscle_starton: bool,
+    pub muscle_material: String,
+    pub muscle_key: i32,
+    pub pulley_width: f32,
+    pub pulley_forcelimit: f32,
+    pub pulley_rigid: bool,
+    pub pulley_material: String,
 }
 
 impl Default for ToolSettings {
@@ -258,6 +521,31 @@ impl Default for ToolSettings {
             elastic_width: 2.0,
             elastic_material: "cable/cable".into(),
             elastic_stretchonly: true,
+            hydraulic_width: 3.0,
+            hydraulic_addlength: 100.0,
+            hydraulic_fixed: true,
+            hydraulic_speed: 64.0,
+            hydraulic_toggle: true,
+            hydraulic_material: "cable/rope".into(),
+            hydraulic_key: 37,
+            winch_width: 3.0,
+            winch_fwd_speed: 64.0,
+            winch_bwd_speed: 64.0,
+            winch_fwd_key: 44,
+            winch_bwd_key: 41,
+            winch_material: "cable/rope".into(),
+            winch_toggle: false,
+            muscle_width: 2.0,
+            muscle_addlength: 100.0,
+            muscle_fixed: true,
+            muscle_period: 1.0,
+            muscle_starton: false,
+            muscle_material: "cable/rope".into(),
+            muscle_key: 37,
+            pulley_width: 3.0,
+            pulley_forcelimit: 0.0,
+            pulley_rigid: false,
+            pulley_material: "cable/cable".into(),
         }
     }
 }
@@ -393,6 +681,36 @@ pub struct Sandbox {
     undo: BTreeMap<u32, Vec<Undo>>,
     cleanup: BTreeMap<u32, BTreeMap<String, Vec<u32>>>,
     counts: BTreeMap<u32, BTreeMap<String, Vec<u32>>>,
+    /// Prop masses (kg) the owner of the physics tells us; `CalcElasticConsts` needs them.
+    masses: BTreeMap<u32, f32>,
+    /// Numpad bindings per (player, key): which controllers a press and a release drive.
+    numpad: BTreeMap<(u32, i32), Vec<NumpadBind>>,
+    /// Keys currently held per player (`numpad.Activate` ignores a repeat while held).
+    numpad_held: BTreeMap<u32, Vec<i32>>,
+}
+
+/// What a numpad key does to one constraint's controller (`numpad.OnDown` / `OnUp`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NumpadBind {
+    HydraulicToggle(u32),
+    /// Down sets +1, up sets -1 (a non-toggle hydraulic).
+    HydraulicDir(u32),
+    /// Down sets the direction, up stops (a non-toggle winch).
+    WinchDir(u32, i8),
+    WinchToggle(u32, i8),
+    MuscleToggle(u32),
+}
+
+impl NumpadBind {
+    fn constraint(self) -> u32 {
+        match self {
+            NumpadBind::HydraulicToggle(c)
+            | NumpadBind::HydraulicDir(c)
+            | NumpadBind::WinchDir(c, _)
+            | NumpadBind::WinchToggle(c, _)
+            | NumpadBind::MuscleToggle(c) => c,
+        }
+    }
 }
 
 /// Source `AngleVectors` forward for pitch/yaw in degrees.
@@ -958,6 +1276,10 @@ impl Sandbox {
             "ballsocket" => matches!(k, ConstraintKind::Ballsocket { .. }),
             "slider" => matches!(k, ConstraintKind::Slider { .. }),
             "elastic" => matches!(k, ConstraintKind::Elastic { .. }),
+            "hydraulic" => matches!(k, ConstraintKind::Hydraulic { .. }),
+            "winch" => matches!(k, ConstraintKind::Winch { .. }),
+            "muscle" => matches!(k, ConstraintKind::Muscle { .. }),
+            "pulley" => matches!(k, ConstraintKind::Pulley { .. }),
             "axis" => matches!(k, ConstraintKind::Axis { .. }),
             "weld" => matches!(k, ConstraintKind::Weld { .. }),
             "rope" => matches!(k, ConstraintKind::Rope { .. }),
@@ -967,6 +1289,7 @@ impl Sandbox {
         let before = self.constraints.len();
         self.constraints
             .retain(|c| !(is_type(&c.kind) && (c.ent1 == Some(ent) || c.ent2 == Some(ent))));
+        self.drop_parts();
         self.constraints.len() != before
     }
 
@@ -988,6 +1311,10 @@ impl Sandbox {
                 | "duplicator"
                 | "ballsocket"
                 | "slider"
+                | "hydraulic"
+                | "winch"
+                | "muscle"
+                | "pulley"
                 | "elastic"
         )
     }
@@ -1065,6 +1392,7 @@ impl Sandbox {
                         lpos2: o2.pos,
                         width: s.slider_width,
                         material: s.slider_material.clone(),
+                        part_of: None,
                     },
                     "Slider",
                     "slider",
@@ -1111,6 +1439,252 @@ impl Sandbox {
             );
             self.add_count(player, count, id);
             self.add_cleanup(player, count, id);
+        }
+        self.clear_objects(player);
+        true
+    }
+
+    /// Second click of `hydraulic`, `winch` or `muscle`: the spring with its controller (and
+    /// the slider of a fixed one) between the two selected points. The undo lists the
+    /// constraint, the rope when drawn, the controller and the slider, as the game's does.
+    pub fn finish_powered(&mut self, player: u32, tool: &str, events: &mut Vec<Event>) -> bool {
+        let objs = self.tool(player).objects;
+        if objs.len() < 2 {
+            return false;
+        }
+        let (o1, o2) = (objs[0].clone(), objs[1].clone());
+        if !self.check_limit(player, "ropeconstraints", events) {
+            self.clear_objects(player);
+            return false;
+        }
+        if o1.ent != o2.ent {
+            let s = self.tool_settings.clone();
+            let (wpos1, wpos2) = (self.object_world_pos(&o1), self.object_world_pos(&o2));
+            let length = wpos1.distance(wpos2);
+            let (m1, m2) = (self.mass_of(o1.ent), self.mass_of(o2.ent));
+            let id = self.next_id;
+            self.next_id += 1;
+            let mut binds: Vec<(i32, NumpadBind)> = Vec::new();
+            let (kind, name, text, width, fixed) = match tool {
+                "hydraulic" => {
+                    let (constant, damping) = elastic_consts(m1, m2, s.hydraulic_fixed);
+                    let length2 = length + s.hydraulic_addlength;
+                    if s.hydraulic_toggle {
+                        binds.push((s.hydraulic_key, NumpadBind::HydraulicToggle(id)));
+                    } else {
+                        binds.push((s.hydraulic_key, NumpadBind::HydraulicDir(id)));
+                    }
+                    (
+                        ConstraintKind::Hydraulic {
+                            lpos1: o1.pos,
+                            lpos2: o2.pos,
+                            length1: length,
+                            length2,
+                            width: s.hydraulic_width,
+                            material: s.hydraulic_material.clone(),
+                            key: s.hydraulic_key,
+                            fixed: s.hydraulic_fixed,
+                            speed: s.hydraulic_speed,
+                            toggle: s.hydraulic_toggle,
+                            constant,
+                            damping,
+                            controller: LengthController::new(
+                                length,
+                                length,
+                                Some(length2),
+                                s.hydraulic_speed,
+                                s.hydraulic_speed,
+                                s.hydraulic_toggle,
+                            ),
+                        },
+                        "Hydraulic",
+                        "hydraulic",
+                        s.hydraulic_width,
+                        s.hydraulic_fixed,
+                    )
+                }
+                "winch" => {
+                    let (constant, damping) = elastic_consts(m1, m2, false);
+                    if s.winch_toggle {
+                        binds.push((s.winch_fwd_key, NumpadBind::WinchToggle(id, 1)));
+                        binds.push((s.winch_bwd_key, NumpadBind::WinchToggle(id, -1)));
+                    } else {
+                        binds.push((s.winch_fwd_key, NumpadBind::WinchDir(id, 1)));
+                        binds.push((s.winch_bwd_key, NumpadBind::WinchDir(id, -1)));
+                    }
+                    (
+                        ConstraintKind::Winch {
+                            lpos1: o1.pos,
+                            lpos2: o2.pos,
+                            width: s.winch_width,
+                            material: s.winch_material.clone(),
+                            fwd_key: s.winch_fwd_key,
+                            bwd_key: s.winch_bwd_key,
+                            fwd_speed: s.winch_fwd_speed,
+                            bwd_speed: s.winch_bwd_speed,
+                            toggle: s.winch_toggle,
+                            constant,
+                            damping,
+                            controller: LengthController::new(
+                                length,
+                                1.0,
+                                None,
+                                s.winch_fwd_speed,
+                                s.winch_bwd_speed,
+                                s.winch_toggle,
+                            ),
+                        },
+                        "Winch",
+                        "winch",
+                        s.winch_width,
+                        false,
+                    )
+                }
+                _ => {
+                    let (constant, damping) = elastic_consts(m1, m2, s.muscle_fixed);
+                    // the stool hands the whole added length to the controller as amplitude
+                    let amplitude = s.muscle_addlength;
+                    let length2 = length + s.muscle_addlength;
+                    binds.push((s.muscle_key, NumpadBind::MuscleToggle(id)));
+                    (
+                        ConstraintKind::Muscle {
+                            lpos1: o1.pos,
+                            lpos2: o2.pos,
+                            length1: length,
+                            length2,
+                            width: s.muscle_width,
+                            material: s.muscle_material.clone(),
+                            key: s.muscle_key,
+                            fixed: s.muscle_fixed,
+                            period: s.muscle_period,
+                            amplitude,
+                            starton: s.muscle_starton,
+                            constant,
+                            damping,
+                            controller: LengthController::muscle(
+                                length,
+                                length,
+                                length2,
+                                s.muscle_period,
+                                amplitude,
+                                s.muscle_starton,
+                            ),
+                        },
+                        "Muscle",
+                        "muscle",
+                        s.muscle_width,
+                        s.muscle_fixed,
+                    )
+                }
+            };
+            self.constraints.push(Constraint {
+                id,
+                owner: player,
+                ent1: o1.ent,
+                ent2: o2.ent,
+                kind,
+            });
+            for (key, bind) in binds {
+                self.numpad.entry((player, key)).or_default().push(bind);
+            }
+            let mut undo_ents = vec![id];
+            if width > 0.0 {
+                undo_ents.push(self.next_id);
+                self.next_id += 1;
+            }
+            // the controller is an entity of its own in the undo
+            undo_ents.push(self.next_id);
+            self.next_id += 1;
+            if fixed {
+                let slider = self.next_id;
+                self.next_id += 1;
+                self.constraints.push(Constraint {
+                    id: slider,
+                    owner: player,
+                    ent1: o1.ent,
+                    ent2: o2.ent,
+                    kind: ConstraintKind::Slider {
+                        lpos1: o1.pos,
+                        lpos2: o2.pos,
+                        width: 0.0,
+                        material: String::new(),
+                        part_of: Some(id),
+                    },
+                });
+                undo_ents.push(slider);
+            }
+            self.push_undo(
+                player,
+                name,
+                format!("#tool.{text}.name"),
+                Some(format!("Undone #tool.{text}.name")),
+                undo_ents,
+            );
+            self.add_count(player, "ropeconstraints", id);
+            self.add_cleanup(player, "ropeconstraints", id);
+        }
+        self.clear_objects(player);
+        true
+    }
+
+    /// Fourth click of `pulley`: entity, two world points, entity.
+    pub fn finish_pulley(&mut self, player: u32, events: &mut Vec<Event>) -> bool {
+        let objs = self.tool(player).objects;
+        if objs.len() < 4 {
+            return false;
+        }
+        let (o1, o2, o3, o4) = (
+            objs[0].clone(),
+            objs[1].clone(),
+            objs[2].clone(),
+            objs[3].clone(),
+        );
+        if !self.check_limit(player, "ropeconstraints", events) {
+            self.clear_objects(player);
+            return false;
+        }
+        if o1.ent != o4.ent {
+            let s = self.tool_settings.clone();
+            let (wpos2, wpos3, wpos4) = (
+                self.object_world_pos(&o2),
+                self.object_world_pos(&o3),
+                self.object_world_pos(&o4),
+            );
+            let id = self.next_id;
+            self.next_id += 1;
+            self.constraints.push(Constraint {
+                id,
+                owner: player,
+                ent1: o1.ent,
+                ent2: o4.ent,
+                kind: ConstraintKind::Pulley {
+                    lpos1: o1.pos,
+                    lpos4: o4.pos,
+                    wpos2,
+                    wpos3,
+                    forcelimit: s.pulley_forcelimit,
+                    rigid: s.pulley_rigid,
+                    width: s.pulley_width,
+                    material: s.pulley_material.clone(),
+                    addlength: wpos3.distance(wpos4),
+                },
+            });
+            let mut undo_ents = vec![id];
+            if s.pulley_width > 0.0 {
+                for _ in 0..3 {
+                    undo_ents.push(self.next_id);
+                    self.next_id += 1;
+                }
+            }
+            self.push_undo(
+                player,
+                "Pulley",
+                "#tool.pulley.name".into(),
+                Some("Undone #tool.pulley.name".into()),
+                undo_ents,
+            );
+            self.add_count(player, "ropeconstraints", id);
+            self.add_cleanup(player, "ropeconstraints", id);
         }
         self.clear_objects(player);
         true
@@ -1195,10 +1769,24 @@ impl Sandbox {
         {
             return false;
         }
+        // a pulley's first and last click must be entities; the two pulley points are anywhere
+        if tool == "pulley"
+            && hit.ent.is_none()
+            && !matches!(self.tool(player).objects.len(), 1 | 2)
+        {
+            return false;
+        }
         let n = self.set_object(player, hit);
         if n == 1 {
             self.tools.entry(player).or_default().stage = 1;
             return true;
+        }
+        if tool == "pulley" {
+            if n < 4 {
+                self.tools.entry(player).or_default().stage = n as u32;
+                return true;
+            }
+            return self.finish_pulley(player, events);
         }
         let objs = self.tool(player).objects;
         let (o1, o2) = (&objs[0], &objs[1]);
@@ -1228,6 +1816,7 @@ impl Sandbox {
             "rope" => self.finish_rope(player, events),
             "axis" => self.finish_axis(player, events),
             "ballsocket" | "slider" | "elastic" => self.finish_two_point(player, tool, events),
+            "hydraulic" | "winch" | "muscle" => self.finish_powered(player, tool, events),
             "nocollide" => {
                 if !self.check_limit(player, "constraints", events) {
                     self.clear_objects(player);
@@ -1343,7 +1932,83 @@ impl Sandbox {
         }
         let before = self.constraints.len();
         self.constraints.retain(|c| c.id != id);
+        self.drop_parts();
         self.constraints.len() != before
+    }
+
+    /// `DeleteOnRemove`: a fixed hydraulic's or muscle's slider goes with its owner.
+    fn drop_parts(&mut self) {
+        let ids: Vec<u32> = self.constraints.iter().map(|c| c.id).collect();
+        self.constraints.retain(|c| match &c.kind {
+            ConstraintKind::Slider {
+                part_of: Some(p), ..
+            } => ids.contains(p),
+            _ => true,
+        });
+    }
+
+    /// Mass of a prop (kg) for the elastic constants; the physics owner reports it.
+    pub fn set_mass(&mut self, ent: u32, mass: f32) {
+        self.masses.insert(ent, mass);
+    }
+
+    fn mass_of(&self, ent: Option<u32>) -> Option<f32> {
+        ent.map(|e| self.masses.get(&e).copied().unwrap_or(1.0))
+    }
+
+    /// `numpad.Activate` / `Deactivate`: a key edge of a player drives every controller bound
+    /// to it; a repeat while held does nothing, bindings of gone constraints are dropped.
+    pub fn numpad(&mut self, player: u32, key: i32, down: bool) {
+        let held = self.numpad_held.entry(player).or_default();
+        if held.contains(&key) == down {
+            return;
+        }
+        if down {
+            held.push(key);
+        } else {
+            held.retain(|k| *k != key);
+        }
+        let Some(binds) = self.numpad.get_mut(&(player, key)) else {
+            return;
+        };
+        let live: Vec<u32> = self.constraints.iter().map(|c| c.id).collect();
+        binds.retain(|b| live.contains(&b.constraint()));
+        let binds = binds.clone();
+        for b in binds {
+            let Some(c) = self.constraints.iter_mut().find(|c| c.id == b.constraint()) else {
+                continue;
+            };
+            let Some(ctrl) = c.kind.controller_mut() else {
+                continue;
+            };
+            match b {
+                NumpadBind::HydraulicToggle(_) if down => ctrl.hydraulic_toggle(),
+                NumpadBind::HydraulicDir(_) => ctrl.set_direction(if down { 1 } else { -1 }),
+                NumpadBind::WinchDir(_, d) => ctrl.set_direction(if down { d } else { 0 }),
+                NumpadBind::WinchToggle(_, d) if down => ctrl.winch_toggle(d),
+                NumpadBind::MuscleToggle(_) if down => ctrl.muscle_toggle(),
+                _ => {}
+            }
+        }
+    }
+
+    /// Keys a player holds (`numpad` state), for snapshots.
+    pub fn numpad_held(&self, player: u32) -> &[i32] {
+        self.numpad_held.get(&player).map_or(&[], Vec::as_slice)
+    }
+
+    /// One tick of every length controller; returns the constraints whose spring rest length
+    /// changed and the new length.
+    pub fn tick_controllers(&mut self, dt: f32) -> Vec<(u32, f32)> {
+        let mut out = Vec::new();
+        for c in &mut self.constraints {
+            if let Some(ctrl) = c.kind.controller_mut() {
+                if let Some(len) = ctrl.tick(dt) {
+                    out.push((c.id, len));
+                }
+            }
+        }
+        out
     }
 
     /// `gmod_undo`: pops the player's last undo; entries whose entities are already gone are
@@ -1536,5 +2201,98 @@ mod tests {
         sb.undo(1, &mut ev);
         sb.undo(1, &mut ev);
         assert_eq!(sb.count_of(1, "constraints"), 0);
+    }
+
+    /// `gmod_winch_controller` as measured: 64 u/s from the tick after the key, a toggle stops at
+    /// its limit and the next press returns; a winch floors at 1 u; a muscle rides a sine from
+    /// its start length with the stool's whole added length as amplitude.
+    #[test]
+    fn length_controllers() {
+        let dt = 0.015;
+        let mut h = LengthController::new(21.4, 21.4, Some(41.4), 64.0, 64.0, true);
+        assert_eq!(h.tick(dt), None);
+        h.hydraulic_toggle();
+        assert_eq!(h.direction, 1);
+        assert!((h.tick(dt).unwrap() - 22.36).abs() < 1e-3);
+        for _ in 0..40 {
+            h.tick(dt);
+        }
+        assert_eq!((h.length, h.direction, h.expanded), (41.4, 0, true));
+        h.hydraulic_toggle();
+        assert_eq!(h.direction, -1);
+        for _ in 0..40 {
+            h.tick(dt);
+        }
+        assert_eq!((h.length, h.direction), (21.4, 0));
+
+        let mut w = LengthController::new(21.4, 1.0, None, 64.0, 64.0, false);
+        w.set_direction(-1);
+        for _ in 0..40 {
+            w.tick(dt);
+        }
+        assert_eq!((w.length, w.direction), (1.0, -1));
+
+        let mut m = LengthController::muscle(44.785, 44.785, 144.785, 1.0, 100.0, false);
+        assert!((m.ctime + 0.5).abs() < 1e-4);
+        m.muscle_toggle();
+        let mut last = 0.0;
+        for _ in 0..60 {
+            last = m.tick(dt).unwrap();
+        }
+        assert!((last - 141.5575).abs() < 1e-2, "{last}");
+        m.muscle_toggle();
+        assert_eq!(m.tick(dt), None);
+    }
+
+    /// Hydraulic stool: spring + slider + controller + rope in one undo, the key drives it,
+    /// reload on an end removes the slider with it.
+    #[test]
+    fn hydraulic_stool() {
+        let mut sb = Sandbox::new(Limits::default());
+        let mut ev = Vec::new();
+        let crate_ = "models/props_junk/wood_crate001a.mdl";
+        let a = sb.restore_prop(1, crate_, Vec3::ZERO, Vec3::ZERO, false);
+        let b = sb.restore_prop(1, crate_, Vec3::new(0.0, 0.0, 60.0), Vec3::ZERO, true);
+        sb.set_mass(a, 30.0);
+        sb.set_mass(b, 30.0);
+        let hit = |ent, z| ToolHit {
+            ent: Some(ent),
+            pos: Vec3::new(0.0, 0.0, z),
+            normal: Vec3::Z,
+            fraction: 0.5,
+        };
+        assert!(sb.tool_left_click(1, "hydraulic", &hit(a, 19.0), &mut ev));
+        assert_eq!(sb.tool(1).stage, 1);
+        assert!(sb.tool_left_click(1, "hydraulic", &hit(b, 41.0), &mut ev));
+        assert_eq!(sb.constraints().len(), 2);
+        assert_eq!(sb.undos(1)[0].entities.len(), 4);
+        assert_eq!(sb.count_of(1, "ropeconstraints"), 1);
+        let (k, c) = match &sb.constraints()[0].kind {
+            ConstraintKind::Hydraulic {
+                constant,
+                damping,
+                length1,
+                length2,
+                ..
+            } => {
+                assert_eq!((*length1, *length2), (22.0, 122.0));
+                (*constant, *damping)
+            }
+            k => panic!("{k:?}"),
+        };
+        assert_eq!((k, c), (3000.0, 600.0));
+        sb.numpad(1, 37, true);
+        sb.numpad(1, 37, true);
+        assert_eq!(
+            sb.tick_controllers(0.015),
+            vec![(sb.constraints()[0].id, 22.96)]
+        );
+        sb.numpad(1, 37, false);
+        sb.numpad(1, 37, true);
+        assert_eq!(sb.constraints()[0].kind.controller().unwrap().direction, -1);
+        assert!(sb.tool_reload(1, "hydraulic", Some(&hit(b, 41.0))));
+        assert!(sb.constraints().is_empty());
+        sb.numpad(1, 37, false);
+        assert!(sb.tick_controllers(0.015).is_empty());
     }
 }

@@ -747,6 +747,9 @@ impl ServerNet {
                         server.select_weapon(slot.player, &class);
                     }
                     Command::Cleanup => server.cleanup(slot.player),
+                    Command::Numpad { key, down } => {
+                        server.sandbox.numpad(slot.player, i32::from(key), down)
+                    }
                     Command::ToolClick {
                         tool,
                         right,

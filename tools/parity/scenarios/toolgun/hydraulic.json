@@ -1,0 +1,122 @@
+{
+ "name": "toolgun_hydraulic",
+ "kind": "toolgun",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  },
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -440.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  }
+ ],
+ "ops": [
+  {
+   "op": "click",
+   "tool": "hydraulic",
+   "pitch": 30.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "click",
+   "tool": "hydraulic",
+   "pitch": 20.0,
+   "yaw": 38.0,
+   "settings": {
+    "width": 3,
+    "group": 37,
+    "addlength": 100,
+    "fixed": 1,
+    "speed": 64,
+    "toggle": 1,
+    "material": "cable/rope"
+   },
+   "wait": 10
+  },
+  {
+   "op": "numpad",
+   "key": 37,
+   "down": true,
+   "wait": 40
+  },
+  {
+   "op": "numpad",
+   "key": 37,
+   "down": false,
+   "wait": 80
+  },
+  {
+   "op": "click",
+   "tool": "hydraulic",
+   "pitch": 20.0,
+   "yaw": 38.0,
+   "button": "reload",
+   "wait": 10
+  },
+  {
+   "op": "click",
+   "tool": "hydraulic",
+   "pitch": 30.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "click",
+   "tool": "hydraulic",
+   "pitch": 20.0,
+   "yaw": 38.0,
+   "settings": {
+    "width": 3,
+    "group": 37,
+    "addlength": 100,
+    "fixed": 0,
+    "speed": 64,
+    "toggle": 0,
+    "material": "cable/rope"
+   },
+   "wait": 10
+  },
+  {
+   "op": "numpad",
+   "key": 37,
+   "down": true,
+   "wait": 30
+  },
+  {
+   "op": "numpad",
+   "key": 37,
+   "down": false,
+   "wait": 30
+  },
+  {
+   "op": "cleanup"
+  }
+ ]
+}

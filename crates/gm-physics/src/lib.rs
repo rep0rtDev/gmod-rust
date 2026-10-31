@@ -50,6 +50,16 @@ extern "C" {
         max_d: f32,
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
+    fn gmp_point_inverse_mass(
+        system: *mut JPC_PhysicsSystem,
+        id: u32,
+        px: f32,
+        py: f32,
+        pz: f32,
+        dx: f32,
+        dy: f32,
+        dz: f32,
+    ) -> f32;
     fn gmp_add_point_constraint(
         system: *mut JPC_PhysicsSystem,
         id1: u32,
@@ -414,6 +424,20 @@ struct Drag {
 
 /// An explicit `phys_spring`: integrated as an impulse per tick like the game's (a Jolt soft
 /// constraint at one solver step per tick damps several times more than measured).
+/// `phys_pulleyconstraint`: one rope from `a`'s attachment over the world point `w2`, across to
+/// `w3` and down to `b`'s attachment, total length `total`; a rope only pulls unless `rigid`.
+struct Pulley {
+    handle: *mut std::ffi::c_void,
+    a: BodyHandle,
+    b: BodyHandle,
+    local_a: Vec3,
+    local_b: Vec3,
+    w2: Vec3,
+    w3: Vec3,
+    total: f32,
+    rigid: bool,
+}
+
 struct Spring {
     handle: *mut std::ffi::c_void,
     a: BodyHandle,
@@ -429,6 +453,7 @@ struct Spring {
 pub struct World {
     system: rolt::PhysicsSystem,
     springs: Vec<Spring>,
+    pulleys: Vec<Pulley>,
     drags: Vec<Drag>,
     held: std::collections::HashSet<u32>,
     /// Bodies with gravity switched off (`set_gravity`), kept weightless after a release.
@@ -477,6 +502,7 @@ impl World {
             jobs,
             shapes: Vec::new(),
             springs: Vec::new(),
+            pulleys: Vec::new(),
             drags: Vec::new(),
             held: std::collections::HashSet::new(),
             no_gravity: std::collections::HashSet::new(),
@@ -980,6 +1006,122 @@ impl World {
         Some(ConstraintHandle(c))
     }
 
+    /// `SetSpringLength`: the rest length a spring pulls towards (Source units).
+    pub fn set_spring_rest(&mut self, c: ConstraintHandle, rest: f32) {
+        if let Some(s) = self.springs.iter_mut().find(|s| s.handle == c.0) {
+            s.rest = rest;
+        }
+    }
+
+    /// Pulley between world attachment points `pa` on `a` and `pb` on `b` over the fixed world
+    /// points `w2` (above `a`) and `w3` (above `b`), rope length `total` (Source units). Solved
+    /// as a velocity constraint before the step (Jolt has no pulley); the slack Jolt distance
+    /// constraint only serves as its handle.
+    #[allow(clippy::too_many_arguments)]
+    pub fn pulley(
+        &mut self,
+        a: BodyHandle,
+        b: BodyHandle,
+        pa: Vec3,
+        pb: Vec3,
+        w2: Vec3,
+        w3: Vec3,
+        total: f32,
+        rigid: bool,
+    ) -> Option<ConstraintHandle> {
+        let (ja, jb) = (to_jolt(pa), to_jolt(pb));
+        let c = unsafe {
+            gmp_add_distance_constraint(
+                self.system.as_raw(),
+                a.0,
+                b.0,
+                ja.x,
+                ja.y,
+                ja.z,
+                jb.x,
+                jb.y,
+                jb.z,
+                0.0,
+                1.0e6,
+            )
+        };
+        if c.is_null() {
+            return None;
+        }
+        let (sa, sb) = (self.state(a), self.state(b));
+        self.pulleys.push(Pulley {
+            handle: c,
+            a,
+            b,
+            local_a: sa.rotation.inverse() * (pa - sa.position),
+            local_b: sb.rotation.inverse() * (pb - sb.position),
+            w2,
+            w3,
+            total,
+            rigid,
+        });
+        Some(ConstraintHandle(c))
+    }
+
+    /// 1 / effective mass (kg^-1) of a body for an impulse at `point` along `dir`; 0 when it
+    /// cannot move.
+    fn point_inverse_mass(&self, body: BodyHandle, point: Vec3, dir: Vec3) -> f32 {
+        if self.frozen.contains(&body.0) {
+            return 0.0;
+        }
+        let (p, d) = (to_jolt(point), dir_to_jolt(dir));
+        unsafe {
+            gmp_point_inverse_mass(self.system.as_raw(), body.0, p.x, p.y, p.z, d.x, d.y, d.z)
+        }
+    }
+
+    /// One velocity-level solve per pulley: the rope's rate of lengthening is driven to remove
+    /// the current excess over a tick (Baumgarte 1); a non-rigid pulley never pushes.
+    fn apply_pulleys(&mut self) {
+        let pulleys: Vec<_> = self
+            .pulleys
+            .iter()
+            .map(|p| (p.a, p.b, p.local_a, p.local_b, p.w2, p.w3, p.total, p.rigid))
+            .collect();
+        for (a, b, la, lb, w2, w3, total, rigid) in pulleys {
+            let (sa, sb) = (self.state(a), self.state(b));
+            let (pa, pb) = (
+                sa.position + sa.rotation * la,
+                sb.position + sb.rotation * lb,
+            );
+            let (d1, d2) = (w2 - pa, w3 - pb);
+            let (l1, l2) = (d1.length(), d2.length());
+            if l1 < 1e-4 || l2 < 1e-4 {
+                continue;
+            }
+            let (n1, n2) = (d1 / l1, d2 / l2);
+            let excess = l1 + l2 - total;
+            if !rigid && excess <= 0.0 {
+                continue;
+            }
+            let vel_at = |st: &BodyState, p: Vec3| {
+                st.velocity + (st.angular_velocity * DEG).cross(p - st.position)
+            };
+            // the rope lengthens as the attachments move away from their pulley points
+            let rate = -(vel_at(&sa, pa).dot(n1) + vel_at(&sb, pb).dot(n2));
+            let target = -excess / self.tick_interval;
+            let k = self.point_inverse_mass(a, pa, n1) + self.point_inverse_mass(b, pb, n2);
+            if k < 1e-12 {
+                continue;
+            }
+            // impulse along the ropes towards the pulley points shortens it
+            let mut lambda = (rate - target) / k;
+            if !rigid && lambda < 0.0 {
+                lambda = 0.0;
+            }
+            if lambda.abs() < 1e-8 {
+                continue;
+            }
+            self.add_impulse_at(a, pa, n1 * lambda);
+            self.add_impulse_at(b, pb, n2 * lambda);
+        }
+    }
+
     fn apply_springs(&mut self) {
         let springs: Vec<_> = self
             .springs
@@ -1110,6 +1252,7 @@ impl World {
 
     pub fn remove_constraint(&mut self, c: ConstraintHandle) {
         self.springs.retain(|s| s.handle != c.0);
+        self.pulleys.retain(|p| p.handle != c.0);
         unsafe { gmp_remove_constraint(self.system.as_raw(), c.0) }
     }
 
@@ -1290,6 +1433,7 @@ impl World {
     pub fn step(&mut self) {
         self.apply_drag();
         self.apply_springs();
+        self.apply_pulleys();
         unsafe {
             gmp_rope_predict(self.system.as_raw(), self.tick_interval);
             self.system

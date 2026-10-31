@@ -169,6 +169,8 @@ struct Scenario {
     #[serde(default)]
     constraints: Vec<ConstraintSpec>,
     #[serde(default)]
+    keys: Vec<KeySpec>,
+    #[serde(default)]
     ops: Vec<OpSpec>,
     #[serde(default)]
     snapshot_every: Option<u32>,
@@ -208,6 +210,10 @@ struct OpSpec {
     wait: Option<u32>,
     #[serde(default)]
     ticks: Option<u32>,
+    #[serde(default)]
+    key: Option<i32>,
+    #[serde(default)]
+    down: Option<bool>,
     /// The stool's client settings for this click (the probe overrides `GetClientNumber` /
     /// `GetClientInfo` with them; a bot has no cvars, so anything missing reads 0 / "").
     #[serde(default)]
@@ -221,7 +227,10 @@ fn apply_click_settings(
     tool: &str,
     settings: Option<&serde_json::Map<String, Value>>,
 ) {
-    if !matches!(tool, "ballsocket" | "slider" | "elastic") {
+    if !matches!(
+        tool,
+        "ballsocket" | "slider" | "elastic" | "hydraulic" | "winch" | "muscle" | "pulley"
+    ) {
         return;
     }
     let num = |k: &str| {
@@ -247,6 +256,39 @@ fn apply_click_settings(
         "slider" => {
             ts.slider_width = num("width");
             ts.slider_material = text("material");
+        }
+        "hydraulic" => {
+            ts.hydraulic_width = num("width");
+            ts.hydraulic_addlength = num("addlength");
+            ts.hydraulic_fixed = flag("fixed");
+            ts.hydraulic_speed = num("speed");
+            ts.hydraulic_toggle = flag("toggle");
+            ts.hydraulic_material = text("material");
+            ts.hydraulic_key = num("group") as i32;
+        }
+        "winch" => {
+            ts.winch_width = num("rope_width");
+            ts.winch_fwd_speed = num("fwd_speed");
+            ts.winch_bwd_speed = num("bwd_speed");
+            ts.winch_fwd_key = num("fwd_group") as i32;
+            ts.winch_bwd_key = num("bwd_group") as i32;
+            ts.winch_material = text("rope_material");
+            ts.winch_toggle = flag("toggle");
+        }
+        "muscle" => {
+            ts.muscle_width = num("width");
+            ts.muscle_addlength = num("addlength");
+            ts.muscle_fixed = flag("fixed");
+            ts.muscle_period = num("period");
+            ts.muscle_starton = flag("starton");
+            ts.muscle_material = text("material");
+            ts.muscle_key = num("group") as i32;
+        }
+        "pulley" => {
+            ts.pulley_width = num("width");
+            ts.pulley_forcelimit = num("forcelimit");
+            ts.pulley_rigid = flag("rigid");
+            ts.pulley_material = text("material");
         }
         _ => {
             ts.elastic_constant = num("constant");
@@ -278,6 +320,40 @@ struct ConstraintSpec {
     damping: Option<f32>,
     #[serde(default)]
     stretchonly: Option<bool>,
+    #[serde(default)]
+    addlength: Option<f32>,
+    #[serde(default)]
+    fixed: Option<bool>,
+    #[serde(default)]
+    speed: Option<f32>,
+    #[serde(default)]
+    toggle: Option<bool>,
+    #[serde(default)]
+    key: Option<i32>,
+    #[serde(default)]
+    fwd_key: Option<i32>,
+    #[serde(default)]
+    bwd_key: Option<i32>,
+    #[serde(default)]
+    fwd_speed: Option<f32>,
+    #[serde(default)]
+    bwd_speed: Option<f32>,
+    #[serde(default)]
+    period: Option<f32>,
+    #[serde(default)]
+    starton: Option<bool>,
+    #[serde(default)]
+    wpos2: Option<[f32; 3]>,
+    #[serde(default)]
+    wpos3: Option<[f32; 3]>,
+}
+
+/// A numpad key edge of the bot at tick `t` (`numpad.Activate` / `Deactivate`).
+#[derive(Debug, Deserialize)]
+struct KeySpec {
+    t: u32,
+    key: i32,
+    down: bool,
 }
 
 /// A prop the move probe spawns: frozen, or a frozen one teleported by `vel * dt` per tick
@@ -981,11 +1057,131 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
         bodies.push(body);
         infos.push(serde_json::json!({ "mass": props.mass, "material": props.surfaceprop }));
     }
+    let masses: Vec<f32> = infos
+        .iter()
+        .map(|i| i["mass"].as_f64().unwrap_or(1.0) as f32)
+        .collect();
     let mut made = Vec::new();
+    /// A driven spring of the scenario: its controller, the spring, the stool kind, the keys
+    /// that drive it with their direction, and whether the keys toggle.
+    struct Driven {
+        ctrl: gm_sandbox::LengthController,
+        handle: gm_physics::ConstraintHandle,
+        kind: &'static str,
+        keys: Vec<(i32, i8)>,
+        toggle: bool,
+    }
+    let mut controllers: Vec<Driven> = Vec::new();
     for c in &scn.constraints {
         let (a, b) = (bodies[c.a - 1], bodies[c.b - 1]);
         let (sa, sb) = (world.state(a), world.state(b));
+        let pa = sa.position + sa.rotation * Vec3::from(c.local_a.unwrap_or([0.0; 3]));
+        let pb = sb.position + sb.rotation * Vec3::from(c.local_b.unwrap_or([0.0; 3]));
+        let (ma, mb) = (Some(masses[c.a - 1]), Some(masses[c.b - 1]));
+        let mut meta = serde_json::Map::new();
         let ok = match c.kind.as_str() {
+            "hydraulic" | "muscle" | "winch" => {
+                let kind: &'static str = match c.kind.as_str() {
+                    "hydraulic" => "hydraulic",
+                    "winch" => "winch",
+                    _ => "muscle",
+                };
+                let fixed = c.fixed.unwrap_or(true);
+                let (k, d) = gm_sandbox::elastic_consts(ma, mb, kind != "winch" && fixed);
+                let length = pa.distance(pb);
+                let addlength = c.addlength.unwrap_or(0.0);
+                let h = world.spring(a, b, pa, pb, k, d, kind == "winch");
+                if let Some(h) = h {
+                    let (ctrl, keys, toggle) = match kind {
+                        "hydraulic" => {
+                            let toggle = c.toggle.unwrap_or(true);
+                            let speed = c.speed.unwrap_or(64.0);
+                            meta.insert("length1".into(), json!(length));
+                            meta.insert("length2".into(), json!(length + addlength));
+                            meta.insert("fixed".into(), json!(fixed));
+                            meta.insert("fwd_speed".into(), json!(speed));
+                            meta.insert("toggle".into(), json!(toggle));
+                            (
+                                gm_sandbox::LengthController::new(
+                                    length,
+                                    length,
+                                    Some(length + addlength),
+                                    speed,
+                                    speed,
+                                    toggle,
+                                ),
+                                vec![(c.key.unwrap_or(37), 1)],
+                                toggle,
+                            )
+                        }
+                        "winch" => {
+                            let toggle = c.toggle.unwrap_or(false);
+                            let (fs, bs) =
+                                (c.fwd_speed.unwrap_or(64.0), c.bwd_speed.unwrap_or(64.0));
+                            meta.insert("fwd_speed".into(), json!(fs));
+                            meta.insert("bwd_speed".into(), json!(bs));
+                            meta.insert("toggle".into(), json!(toggle));
+                            (
+                                gm_sandbox::LengthController::new(
+                                    length, 1.0, None, fs, bs, toggle,
+                                ),
+                                vec![(c.fwd_key.unwrap_or(44), 1), (c.bwd_key.unwrap_or(41), -1)],
+                                toggle,
+                            )
+                        }
+                        _ => {
+                            let period = c.period.unwrap_or(1.0);
+                            let amplitude = addlength / 2.0;
+                            let starton = c.starton.unwrap_or(false);
+                            meta.insert("length1".into(), json!(length));
+                            meta.insert("length2".into(), json!(length + addlength));
+                            meta.insert("fixed".into(), json!(fixed));
+                            meta.insert("period".into(), json!(period));
+                            meta.insert("amplitude".into(), json!(amplitude));
+                            meta.insert("starton".into(), json!(starton));
+                            (
+                                gm_sandbox::LengthController::muscle(
+                                    length,
+                                    length,
+                                    length + addlength,
+                                    period,
+                                    amplitude,
+                                    starton,
+                                ),
+                                vec![(c.key.unwrap_or(37), 1)],
+                                true,
+                            )
+                        }
+                    };
+                    if kind != "winch" && fixed {
+                        world.slider(a, b, pa, pb);
+                    }
+                    controllers.push(Driven {
+                        ctrl,
+                        handle: h,
+                        kind,
+                        keys,
+                        toggle,
+                    });
+                }
+                h.is_some()
+            }
+            "pulley" => {
+                let w2 = Vec3::from(c.wpos2.unwrap_or([0.0; 3]));
+                let w3 = Vec3::from(c.wpos3.unwrap_or([0.0; 3]));
+                world
+                    .pulley(
+                        a,
+                        b,
+                        pa,
+                        pb,
+                        w2,
+                        w3,
+                        pa.distance(w2) + w3.distance(pb),
+                        c.rigid,
+                    )
+                    .is_some()
+            }
             "weld" => world.weld(a, b).is_some(),
             "rope" => {
                 let pa = sa.position + sa.rotation * Vec3::from(c.local_a.unwrap_or([0.0; 3]));
@@ -1018,12 +1214,44 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
             }
             _ => false,
         };
-        made.push(serde_json::json!({ "kind": c.kind, "ok": ok }));
+        let mut row = serde_json::json!({ "kind": c.kind, "ok": ok });
+        for (k, v) in meta {
+            row[k] = v;
+        }
+        made.push(row);
     }
     world.optimize();
     let total = scn.ticks.unwrap_or(200);
     let mut ticks = Vec::with_capacity(total as usize);
+    let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
     for t in 0..total {
+        // the key edges of this tick land before the record, the controllers' think after it
+        // (the game's row shows the new direction and the old length)
+        for k in scn.keys.iter().filter(|k| k.t == t) {
+            for d in controllers.iter_mut() {
+                let ctrl = &mut d.ctrl;
+                for &(key, dir) in d.keys.iter() {
+                    if key != k.key {
+                        continue;
+                    }
+                    match (d.kind, d.toggle, k.down) {
+                        ("hydraulic", true, true) => ctrl.hydraulic_toggle(),
+                        ("hydraulic", false, down) => ctrl.set_direction(if down { 1 } else { -1 }),
+                        ("winch", true, true) => ctrl.winch_toggle(dir),
+                        ("winch", false, down) => ctrl.set_direction(if down { dir } else { 0 }),
+                        ("muscle", _, true) => ctrl.muscle_toggle(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let ctrl_rows: Vec<Value> = controllers
+            .iter()
+            .map(|d| {
+                let c = &d.ctrl;
+                json!({ "length": c.length, "dir": c.direction, "expanded": c.expanded, "ctime": c.ctime })
+            })
+            .collect();
         let props: Vec<Value> = bodies
             .iter()
             .map(|&b| {
@@ -1037,7 +1265,16 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
                 })
             })
             .collect();
-        ticks.push(serde_json::json!({ "t": t, "props": props }));
+        let mut row = serde_json::json!({ "t": t, "props": props });
+        if !ctrl_rows.is_empty() {
+            row["ctrl"] = json!(ctrl_rows);
+        }
+        ticks.push(row);
+        for d in controllers.iter_mut() {
+            if let Some(len) = d.ctrl.tick(dt) {
+                world.set_spring_rest(d.handle, len);
+            }
+        }
         world.step();
     }
     Ok(serde_json::json!({ "constraints": made, "info": infos, "ticks": ticks }))
@@ -4128,8 +4365,8 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                     "lpos": [lpos.x, lpos.y, lpos.z], "forcelimit": forcelimit, "torquelimit": torquelimit, "nocollide": nocollide,
                 }),
                 // the game sliders to the world through a `gmod_anchor` entity in the world's place
-                ConstraintKind::Slider { lpos1, lpos2, width, material } => json!({
-                    "class": "phys_slideconstraint", "type": "Slider",
+                ConstraintKind::Slider { lpos1, lpos2, width, material, part_of } => json!({
+                    "class": "phys_slideconstraint", "type": part_of.is_none().then_some("Slider"),
                     "ent1": if c.ent1.is_none() { json!({ "index": -2, "class": "gmod_anchor", "prop": 0 }) } else { entref(c.ent1) },
                     "ent2": entref(c.ent2),
                     "lpos1": if c.ent1.is_none() { [0.0, 0.0, 0.0] } else { [lpos1.x, lpos1.y, lpos1.z] },
@@ -4140,10 +4377,44 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                     "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos2": [lpos2.x, lpos2.y, lpos2.z],
                     "constant": constant, "damping": damping, "rdamping": rdamping, "width": width, "material": material, "length": length, "stretchonly": stretchonly,
                 }),
+                ConstraintKind::Hydraulic { lpos1, lpos2, length1, length2, width, material, key, fixed, speed, toggle, constant, damping, .. } => json!({
+                    "class": "phys_spring", "type": "Hydraulic", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
+                    "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos2": [lpos2.x, lpos2.y, lpos2.z],
+                    "length1": length1, "length2": length2, "width": width, "material": material, "key": key, "fixed": fixed,
+                    "fwd_speed": speed, "bwd_speed": speed, "toggle": toggle, "constant": constant, "damping": damping,
+                }),
+                ConstraintKind::Winch { lpos1, lpos2, width, material, fwd_key, bwd_key, fwd_speed, bwd_speed, toggle, constant, damping, .. } => json!({
+                    "class": "phys_spring", "type": "Winch", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
+                    "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos2": [lpos2.x, lpos2.y, lpos2.z],
+                    "width": width, "material": material, "fwd_bind": fwd_key, "bwd_bind": bwd_key,
+                    "fwd_speed": fwd_speed, "bwd_speed": bwd_speed, "toggle": toggle, "constant": constant, "damping": damping,
+                }),
+                ConstraintKind::Muscle { lpos1, lpos2, length1, length2, width, material, key, fixed, period, amplitude, starton, constant, damping, .. } => json!({
+                    "class": "phys_spring", "type": "Muscle", "ent1": entref(c.ent1), "ent2": entref(c.ent2),
+                    "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos2": [lpos2.x, lpos2.y, lpos2.z],
+                    "length1": length1, "length2": length2, "width": width, "material": material, "key": key, "fixed": fixed,
+                    "period": period, "amplitude": amplitude, "starton": starton, "toggle": true, "constant": constant, "damping": damping,
+                }),
+                // the game keeps the far end as `Ent4`
+                ConstraintKind::Pulley { lpos1, lpos4, wpos2, wpos3, forcelimit, rigid, width, material, addlength } => json!({
+                    "class": "phys_pulleyconstraint", "type": "Pulley", "ent1": entref(c.ent1), "ent2": Value::Null, "ent4": entref(c.ent2),
+                    "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos4": [lpos4.x, lpos4.y, lpos4.z],
+                    "wpos2": [wpos2.x, wpos2.y, wpos2.z], "wpos3": [wpos3.x, wpos3.y, wpos3.z],
+                    "forcelimit": forcelimit, "rigid": rigid, "width": width, "material": material, "addlength": addlength,
+                }),
+            })
+            .collect();
+        let controllers: Vec<Value> = sb
+            .constraints()
+            .iter()
+            .filter_map(|c| {
+                let k = c.kind.controller()?;
+                Some(json!({ "constraint": c.id, "type": u8::from(k.muscle), "length": k.length, "min": k.min, "max": k.max, "dir": k.direction }))
             })
             .collect();
         json!({
             "constraints": constraints,
+            "controllers": controllers,
             "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "text": u.text, "custom": u.custom, "n": u.entities.len() })).collect::<Vec<_>>(),
             "counts": { "constraints": sb.count_of(player, "constraints"), "ropeconstraints": sb.count_of(player, "ropeconstraints"), "props": sb.count(player) },
             "stage": sb.tool(player).stage,
@@ -4212,6 +4483,7 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
             }
             "undo" => sb.undo(player, &mut events),
             "cleanup" => sb.cleanup(player, &mut events),
+            "numpad" => sb.numpad(player, op.key.unwrap_or(0), op.down.unwrap_or(true)),
             "cvar" => match op.name.as_deref() {
                 Some("sbox_maxconstraints") => {
                     sb.limits.max_constraints =
@@ -4250,9 +4522,13 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
             .map(|(k, _)| k)
             .collect();
         rec["moved"] = json!(moved);
-        let snap = snapshot(&sb);
-        rec["immediate"] = snap.clone();
-        rec["after"] = snap;
+        rec["immediate"] = snapshot(&sb);
+        // the probe waits `wait` ticks (3 by default) before the `after` snapshot: the winch
+        // controllers think meanwhile (nothing else moves here)
+        for _ in 0..op.wait.unwrap_or(3) {
+            sb.tick_controllers(gm_core::tick::DEFAULT_TICK_INTERVAL);
+        }
+        rec["after"] = snapshot(&sb);
         results.push(rec);
     }
     Ok(json!({ "results": results, "messages": messages, "eye": [eye.x, eye.y, eye.z] }))
@@ -4472,6 +4748,94 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     );
                     ok = false;
                 }
+            }
+            let num = |v: &Value| v.as_f64().unwrap_or(0.0);
+            let flag = |v: &Value| v.as_bool().unwrap_or(false) || num(v) != 0.0;
+            let driven = ["Hydraulic", "Winch", "Muscle"];
+            if driven.iter().any(|d| a["type"] == json!(d)) {
+                max_lpos = max_lpos
+                    .max((v3(&a["lpos1"]) - v3(&b["lpos1"])).length())
+                    .max((v3(&a["lpos2"]) - v3(&b["lpos2"])).length());
+                for k in ["length1", "length2"] {
+                    if a[k].is_number() {
+                        max_len = max_len.max((num(&a[k]) - num(&b[k])).abs() as f32);
+                    }
+                }
+                let same_num = |k: &str| !a[k].is_number() || num(&a[k]) == num(&b[k]);
+                let same_flag = |k: &str| a[k].is_null() || flag(&a[k]) == flag(&b[k]);
+                if !same_num("width")
+                    || (a["material"].is_string() && a["material"] != b["material"])
+                    || !same_num("fwd_speed")
+                    || !same_num("bwd_speed")
+                    || !same_num("key")
+                    || !same_num("fwd_bind")
+                    || !same_num("bwd_bind")
+                    || !same_num("period")
+                    || !same_num("amplitude")
+                    || !same_flag("fixed")
+                    || !same_flag("toggle")
+                    || !same_flag("starton")
+                {
+                    println!(
+                        "  op {i}: {} settings {} vs {}",
+                        a["type"],
+                        serde_json::to_string(a).unwrap_or_default(),
+                        serde_json::to_string(b).unwrap_or_default()
+                    );
+                    ok = false;
+                }
+            }
+            if a["type"] == json!("Pulley") {
+                max_lpos = max_lpos
+                    .max((v3(&a["lpos1"]) - v3(&b["lpos1"])).length())
+                    .max((v3(&a["lpos4"]) - v3(&b["lpos4"])).length())
+                    .max((v3(&a["wpos2"]) - v3(&b["wpos2"])).length())
+                    .max((v3(&a["wpos3"]) - v3(&b["wpos3"])).length());
+                if ent_key(&a["ent4"]) != ent_key(&b["ent4"])
+                    || flag(&a["rigid"]) != flag(&b["rigid"])
+                    || num(&a["width"]) != num(&b["width"])
+                    || (a["material"].is_string() && a["material"] != b["material"])
+                {
+                    println!(
+                        "  op {i}: pulley {} {} {} {} vs {} {} {} {}",
+                        ent_key(&a["ent4"]),
+                        a["rigid"],
+                        a["width"],
+                        a["material"],
+                        ent_key(&b["ent4"]),
+                        b["rigid"],
+                        b["width"],
+                        b["material"]
+                    );
+                    ok = false;
+                }
+            }
+        }
+        // the winch controllers: one per driven constraint, same type, direction and length
+        let (tc, oc) = (
+            ta["controllers"].as_array().cloned().unwrap_or_default(),
+            oa["controllers"].as_array().cloned().unwrap_or_default(),
+        );
+        if tc.len() != oc.len() {
+            println!("  op {i} {op}: {} controllers vs {}", tc.len(), oc.len());
+            ok = false;
+        }
+        for (a, b) in tc.iter().zip(&oc) {
+            let num = |v: &Value| v.as_f64().unwrap_or(0.0);
+            let len_err = (num(&a["length"]) - num(&b["length"])).abs() as f32;
+            max_len = max_len.max(len_err);
+            if a["type"] != b["type"]
+                || a["dir"] != b["dir"]
+                || (num(&a["min"]) - num(&b["min"])).abs() > 1e-3
+                || a["max"].is_number() != b["max"].is_number()
+                || (a["max"].is_number() && (num(&a["max"]) - num(&b["max"])).abs() > 1e-3)
+            {
+                println!(
+                    "  op {i} {op}: controller {} vs {}",
+                    serde_json::to_string(a).unwrap_or_default(),
+                    serde_json::to_string(b).unwrap_or_default()
+                );
+                ok = false;
             }
         }
     }

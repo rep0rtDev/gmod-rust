@@ -2925,3 +2925,111 @@ crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
 
+
+[[harness]]
+name = "constraint_hydraulic_toggle"
+scenario = "constraint/hydraulic_toggle"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_hydraulic_free"
+scenario = "constraint/hydraulic_free"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_winch_pull"
+scenario = "constraint/winch_pull"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_muscle_on"
+scenario = "constraint/muscle_on"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_pulley_hang"
+scenario = "constraint/pulley_hang"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_pulley_rigid"
+scenario = "constraint/pulley_rigid"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "toolgun_hydraulic"
+scenario = "toolgun/hydraulic"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_winch"
+scenario = "toolgun/winch"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_muscle"
+scenario = "toolgun/muscle"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_pulley"
+scenario = "toolgun/pulley"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1

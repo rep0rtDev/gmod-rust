@@ -215,6 +215,20 @@ void gmp_remove_constraint(void *system, void *constraint) {
 	sys->RemoveConstraint(reinterpret_cast<JPH::Constraint *>(constraint));
 }
 
+// 1 / effective mass of a body for an impulse at world point `p` along `dir` (kg^-1; the
+// rotational term uses the body's inverse inertia). 0 for a static or frozen body.
+float gmp_point_inverse_mass(void *system, unsigned int id, float px, float py, float pz, float dx, float dy, float dz) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyLockRead lock(sys->GetBodyLockInterface(), JPH::BodyID(id));
+	if (!lock.Succeeded()) return 0.0f;
+	const JPH::Body &b = lock.GetBody();
+	if (!b.IsDynamic()) return 0.0f;
+	JPH::Vec3 r = JPH::Vec3(JPH::RVec3(px, py, pz) - b.GetCenterOfMassPosition());
+	JPH::Vec3 d(dx, dy, dz);
+	JPH::Vec3 rxd = r.Cross(d);
+	return b.GetMotionProperties()->GetInverseMass() + rxd.Dot(b.GetInverseInertia().Multiply3x3(rxd));
+}
+
 }
 
 extern "C" {

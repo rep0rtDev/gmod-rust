@@ -1,0 +1,86 @@
+{
+ "name": "constraint_winch_pull",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "bot": true,
+ "start": [
+  600.0,
+  -500.0,
+  -143.0
+ ],
+ "ticks": 300,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -40.0
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  },
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -100.0
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": false
+  }
+ ],
+ "constraints": [
+  {
+   "kind": "winch",
+   "a": 1,
+   "b": 2,
+   "local_a": [
+    0,
+    0,
+    -19.3
+   ],
+   "local_b": [
+    0,
+    0,
+    19.3
+   ],
+   "fwd_speed": 64,
+   "bwd_speed": 64,
+   "fwd_key": 44,
+   "bwd_key": 41,
+   "toggle": false
+  }
+ ],
+ "keys": [
+  {
+   "t": 20,
+   "key": 44,
+   "down": true
+  },
+  {
+   "t": 60,
+   "key": 44,
+   "down": false
+  },
+  {
+   "t": 100,
+   "key": 41,
+   "down": true
+  },
+  {
+   "t": 200,
+   "key": 41,
+   "down": false
+  }
+ ]
+}

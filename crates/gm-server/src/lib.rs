@@ -3053,6 +3053,7 @@ impl<'w> Server<'w> {
                     if !p.collide {
                         self.physics.set_world_only(body, true);
                     }
+                    self.sandbox.set_mass(p.id, info.mass);
                     self.bodies.insert(p.id, body);
                 }
                 Some(&body) => {
@@ -3149,6 +3150,81 @@ impl<'w> Server<'w> {
                     *damping,
                     *stretchonly,
                 ),
+                // a driven spring: rest length from its controller (a restored one may be
+                // mid-stroke), the winch only ever pulls
+                ConstraintKind::Hydraulic {
+                    lpos1,
+                    lpos2,
+                    constant,
+                    damping,
+                    controller,
+                    ..
+                }
+                | ConstraintKind::Muscle {
+                    lpos1,
+                    lpos2,
+                    constant,
+                    damping,
+                    controller,
+                    ..
+                } => {
+                    let h = self.physics.spring(
+                        a,
+                        b,
+                        world_of(c.ent1, *lpos1),
+                        world_of(c.ent2, *lpos2),
+                        *constant,
+                        *damping,
+                        false,
+                    );
+                    if let Some(h) = h {
+                        self.physics.set_spring_rest(h, controller.length);
+                    }
+                    h
+                }
+                ConstraintKind::Winch {
+                    lpos1,
+                    lpos2,
+                    constant,
+                    damping,
+                    controller,
+                    ..
+                } => {
+                    let h = self.physics.spring(
+                        a,
+                        b,
+                        world_of(c.ent1, *lpos1),
+                        world_of(c.ent2, *lpos2),
+                        *constant,
+                        *damping,
+                        true,
+                    );
+                    if let Some(h) = h {
+                        self.physics.set_spring_rest(h, controller.length);
+                    }
+                    h
+                }
+                ConstraintKind::Pulley {
+                    lpos1,
+                    lpos4,
+                    wpos2,
+                    wpos3,
+                    rigid,
+                    addlength,
+                    ..
+                } => {
+                    let p1 = world_of(c.ent1, *lpos1);
+                    self.physics.pulley(
+                        a,
+                        b,
+                        p1,
+                        world_of(c.ent2, *lpos4),
+                        *wpos2,
+                        *wpos3,
+                        p1.distance(*wpos2) + *addlength,
+                        *rigid,
+                    )
+                }
                 ConstraintKind::NoCollide => {
                     self.physics.set_pair_collision(a, b, false);
                     self.nocollides.insert(c.id, (a, b));
@@ -3583,6 +3659,15 @@ impl<'w> Server<'w> {
         // entities after the players' moves: a projectile's hit or blast this tick pushes and
         // hurts a target that has already moved (its velocity shows the push raw)
         self.tick_projectiles(launches);
+        // winch controllers think before the physics step, like any entity's Think
+        for (id, len) in self
+            .sandbox
+            .tick_controllers(gm_core::tick::DEFAULT_TICK_INTERVAL)
+        {
+            if let Some(h) = self.constraints.get(&id) {
+                self.physics.set_spring_rest(*h, len);
+            }
+        }
         // the physics step after bullets, moves and projectiles: a prop hit by any of them takes
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
         self.physics.step();

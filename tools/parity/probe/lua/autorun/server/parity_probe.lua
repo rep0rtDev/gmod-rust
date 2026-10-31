@@ -498,7 +498,18 @@ end
 
 -- constraint: several props, constraint.* calls between them, every prop recorded per tick
 SCENARIOS.constraint = function(scn, done)
-	local ents_ = {}
+	local bot = player.GetBots()[1]
+	if scn.bot and not IsValid(bot) then
+		RunConsoleCommand("bot")
+		timer.Simple(1, function() SCENARIOS.constraint(scn, done) end)
+		return
+	end
+	if IsValid(bot) then
+		RunConsoleCommand("bot_zombie", "1")
+		bot:SetPos(Vector(scn.start and scn.start[1] or 600, scn.start and scn.start[2] or -500, scn.start and scn.start[3] or -143))
+		bot:SetLocalVelocity(Vector(0, 0, 0))
+	end
+	local ents_, controllers = {}, {}
 	for i, pr in ipairs(scn.props) do
 		local ent = ents.Create("prop_physics")
 		ent:SetModel(pr.model)
@@ -533,18 +544,50 @@ SCENARIOS.constraint = function(scn, done)
 			ok = constraint.Slider(a, b, 0, 0, la, lb, c.width or 1.5, "cable/cable")
 		elseif c.kind == "elastic" then
 			ok = constraint.Elastic(a, b, 0, 0, la, lb, c.constant or 500, c.damping or 3, c.rdamping or 0.01, "cable/cable", c.width or 2, c.stretchonly == nil and 1 or (c.stretchonly and 1 or 0))
+		elseif c.kind == "hydraulic" then
+			local wa, wb = a:GetPhysicsObject():LocalToWorld(la), b:GetPhysicsObject():LocalToWorld(lb)
+			local lmin = (wa - wb):Length()
+			local ctrl
+			ok, _, ctrl = constraint.Hydraulic(bot, a, b, 0, 0, la, lb, lmin, lmin + (c.addlength or 0), c.width or 3, c.key or 37, c.fixed == nil and 1 or (c.fixed and 1 or 0), c.speed or 64, "cable/rope", c.toggle == nil and true or c.toggle)
+			if IsValid(ctrl) then controllers[#controllers + 1] = ctrl end
+		elseif c.kind == "winch" then
+			local ctrl
+			ok, _, ctrl = constraint.Winch(bot, a, b, 0, 0, la, lb, c.width or 3, c.fwd_key or 44, c.bwd_key or 41, c.fwd_speed or 64, c.bwd_speed or 64, "cable/rope", c.toggle or false)
+			if IsValid(ctrl) then controllers[#controllers + 1] = ctrl end
+		elseif c.kind == "muscle" then
+			local wa, wb = a:GetPhysicsObject():LocalToWorld(la), b:GetPhysicsObject():LocalToWorld(lb)
+			local l1 = (wa - wb):Length()
+			local ctrl
+			ok, _, ctrl = constraint.Muscle(bot, a, b, 0, 0, la, lb, l1, l1 + (c.addlength or 0), c.width or 2, c.key or 37, c.fixed == nil and 1 or (c.fixed and 1 or 0), c.period or 1, (c.addlength or 0) / 2, c.starton or false, "cable/rope")
+			if IsValid(ctrl) then controllers[#controllers + 1] = ctrl end
+		elseif c.kind == "pulley" then
+			ok = constraint.Pulley(a, b, 0, 0, la, lb, Vector(c.wpos2[1], c.wpos2[2], c.wpos2[3]), Vector(c.wpos3[1], c.wpos3[2], c.wpos3[3]), c.force or 0, c.rigid or false, c.width or 3, "cable/cable")
 		end
-		made[#made + 1] = { kind = c.kind, ok = IsValid(ok) and ok:GetClass() or tostring(ok) }
+		local t = IsValid(ok) and ok:GetTable() or {}
+		made[#made + 1] = { kind = c.kind, ok = IsValid(ok) and ok:GetClass() or tostring(ok), type = t.Type, constant = t.constant, damping = t.damping, length = t.length, length1 = t.Length1, length2 = t.Length2, addlength = t.addlength, fwd_speed = t.fwd_speed, bwd_speed = t.bwd_speed, toggle = t.toggle, period = t.period, amplitude = t.amplitude, starton = t.starton, fixed = t.fixed }
 	end
+	-- numpad keys of the bot at given ticks: { t = 20, key = 37, down = true }
+	local keys = scn.keys or {}
 	local total = scn.ticks or 200
 	local tick, ticks = 0, {}
 	hook.Add("Tick", "parity_constraint", function()
+		for _, k in ipairs(keys) do
+			if k.t == tick then
+				if k.down then numpad.Activate(bot, k.key, false) else numpad.Deactivate(bot, k.key, false) end
+			end
+		end
 		local row = { t = tick, props = {} }
 		for i, ent in ipairs(ents_) do
 			local ph = IsValid(ent) and ent:GetPhysicsObject()
 			if ph and IsValid(ph) then
 				local p, a, v, av = ph:GetPos(), ph:GetAngles(), ph:GetVelocity(), ph:GetAngleVelocity()
 				row.props[i] = { pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r }, vel = { v.x, v.y, v.z }, angvel = { av.x, av.y, av.z }, asleep = ph:IsAsleep() }
+			end
+		end
+		if #controllers > 0 then
+			row.ctrl = {}
+			for i, c in ipairs(controllers) do
+				row.ctrl[i] = IsValid(c) and { length = c.current_length, dir = c.direction, expanded = c.isexpanded, ctime = c.ctime } or {}
 			end
 		end
 		ticks[#ticks + 1] = row
@@ -724,16 +767,23 @@ SCENARIOS.toolgun = function(scn, done)
 				out.props[i] = { index = -1 }
 			end
 		end
-		for _, cls in ipairs({ "phys_constraint", "phys_lengthconstraint", "phys_ballsocket", "phys_hinge", "phys_slideconstraint", "phys_spring", "logic_collision_pair" }) do
+		for _, cls in ipairs({ "phys_constraint", "phys_lengthconstraint", "phys_ballsocket", "phys_hinge", "phys_slideconstraint", "phys_spring", "phys_pulleyconstraint", "logic_collision_pair" }) do
 			for _, c in ipairs(ents.FindByClass(cls)) do
 				local t = c:GetTable()
 				out.constraints[#out.constraints + 1] = { index = c:EntIndex(), class = cls, type = t.Type,
 					ent1 = entref(t.Ent1), ent2 = entref(t.Ent2), bone1 = t.Bone1, bone2 = t.Bone2,
 					lpos1 = vec(t.LPos1), lpos2 = vec(t.LPos2), length = t.length, addlength = t.addlength,
 					forcelimit = t.forcelimit, nocollide = t.nocollide, rigid = t.rigid, width = t.width, material = t.material, torquelimit = t.torquelimit, friction = t.friction, lpos = vec(t.LPos), constant = t.constant, damping = t.damping, rdamping = t.rdamping, stretchonly = t.stretchonly,
+					length1 = t.Length1, length2 = t.Length2, key = t.key, fixed = t.fixed, fwd_speed = t.fwd_speed, bwd_speed = t.bwd_speed, toggle = t.toggle, fwd_bind = t.fwd_bind, bwd_bind = t.bwd_bind,
+					period = t.period, amplitude = t.amplitude, starton = t.starton, ent4 = entref(t.Ent4), lpos4 = vec(t.LPos4), wpos2 = vec(t.WPos2), wpos3 = vec(t.WPos3),
 					pos = vec(c:GetPos()) }
 			end
 		end
+		out.controllers = {}
+		for _, c in ipairs(ents.FindByClass("gmod_winch_controller")) do
+			out.controllers[#out.controllers + 1] = { index = c:EntIndex(), min = c.min_length, max = c.max_length, length = c.current_length, dir = c.direction, type = c.type, constraint = c.constraint and IsValid(c.constraint) and c.constraint:EntIndex() or -1 }
+		end
+		table.sort(out.controllers, function(a, b) return a.index < b.index end)
 		table.sort(out.constraints, function(a, b) return a.index < b.index end)
 		for _, r in ipairs(ents.FindByClass("keyframe_rope")) do
 			out.ropes[#out.ropes + 1] = { index = r:EntIndex(), pos = vec(r:GetPos()), length = r:GetKeyValues().Length, width = r:GetKeyValues().Width }
@@ -807,6 +857,8 @@ SCENARIOS.toolgun = function(scn, done)
 			concommand.Run(bot, "gmod_cleanup", {}, "")
 		elseif op.op == "cvar" then
 			RunConsoleCommand(op.name, op.value)
+		elseif op.op == "numpad" then
+			if op.down == false then numpad.Deactivate(bot, op.key, false) else numpad.Activate(bot, op.key, false) end
 		elseif op.op == "wait" then
 			wait = op.ticks or 10
 		end
