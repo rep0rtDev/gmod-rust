@@ -1,0 +1,79 @@
+{
+ "name": "move_water_swim",
+ "kind": "move",
+ "map": "gm_construct",
+ "start": [
+  0.0,
+  2600.0,
+  -250.0
+ ],
+ "angles": [
+  0,
+  90
+ ],
+ "segments": [
+  {
+   "ticks": 60,
+   "buttons": 0,
+   "forward": 0,
+   "side": 0,
+   "up": 0,
+   "pitch": 0,
+   "yaw": 90
+  },
+  {
+   "ticks": 100,
+   "buttons": 0,
+   "forward": 450,
+   "side": 0,
+   "up": 0,
+   "pitch": 0,
+   "yaw": 90
+  },
+  {
+   "ticks": 100,
+   "buttons": 2,
+   "forward": 450,
+   "side": 0,
+   "up": 0,
+   "pitch": 0,
+   "yaw": 90
+  },
+  {
+   "ticks": 100,
+   "buttons": 2,
+   "forward": 0,
+   "side": 0,
+   "up": 0,
+   "pitch": 0,
+   "yaw": 90
+  },
+  {
+   "ticks": 100,
+   "buttons": 0,
+   "forward": 450,
+   "side": 0,
+   "up": 0,
+   "pitch": -60,
+   "yaw": 90
+  },
+  {
+   "ticks": 100,
+   "buttons": 0,
+   "forward": 450,
+   "side": 0,
+   "up": 0,
+   "pitch": 60,
+   "yaw": 90
+  },
+  {
+   "ticks": 100,
+   "buttons": 0,
+   "forward": 0,
+   "side": 0,
+   "up": 0,
+   "pitch": 0,
+   "yaw": 90
+  }
+ ]
+}

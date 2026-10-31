@@ -1,0 +1,34 @@
+{
+ "name": "move_water_walk",
+ "kind": "move",
+ "map": "gm_construct",
+ "start": [
+  0.0,
+  1850.0,
+  -120.0
+ ],
+ "angles": [
+  0,
+  90
+ ],
+ "segments": [
+  {
+   "ticks": 40,
+   "buttons": 0,
+   "forward": 0,
+   "side": 0,
+   "up": 0,
+   "pitch": 0,
+   "yaw": 90
+  },
+  {
+   "ticks": 400,
+   "buttons": 0,
+   "forward": 450,
+   "side": 0,
+   "up": 0,
+   "pitch": 0,
+   "yaw": 90
+  }
+ ]
+}
