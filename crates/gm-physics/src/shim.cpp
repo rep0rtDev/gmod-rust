@@ -501,6 +501,24 @@ public:
 			if (distinct) touch.push_back(&pt);
 		}
 		int touching = (int)touch.size();
+		// touching points along one line are an edge (or the rim arc of a tilted drum: three
+		// neighbouring hull vertices 7 cm apart sag 0.5 cm), not a face: anchoring them held
+		// the drum rocking back after its rim landing at a 15 deg tilt, where the game's falls
+		// back flat (`device_dynamite_push`: z -143.6 at tick 79, ours -140.4)
+		if (touching >= 3) {
+			float best = 0.0f; const Pt *a = touch[0], *b = touch[0];
+			for (const Pt *u : touch) for (const Pt *v : touch) {
+				float l = (u->p - v->p).Length();
+				if (l > best) { best = l; a = u; b = v; }
+			}
+			JPH::Vec3 dir = (b->p - a->p) / best;
+			float off = 0.0f;
+			for (const Pt *u : touch) {
+				JPH::Vec3 r = u->p - a->p;
+				off = std::max(off, (r - dir * r.Dot(dir)).Length());
+			}
+			if (off < 0.03f) touching = 2;
+		}
 		// a landing still in progress (vertex impacts last step) whose touching points keep
 		// arriving fast is the next impact, not a rest: the upright drum's -x rim a tick after
 		// its +x rim (`device_dynamite_push`: +24.6 / +54.5 u/s and +107 deg/s in the game)
