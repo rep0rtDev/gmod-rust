@@ -1060,9 +1060,16 @@ impl Runtime {
                     p.ints.push(("type", dmg_type as i64));
                     "player.damaged"
                 }
-                E::PlayerDied { player, dmg_type } => {
+                E::PlayerDied {
+                    player,
+                    dmg_type,
+                    attacker,
+                    inflictor,
+                } => {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("type", dmg_type as i64));
+                    p.ints.push(("attacker", attacker as i64));
+                    p.strs.push(("inflictor", inflictor));
                     "player.death"
                 }
                 E::Noclip { player, on } => {

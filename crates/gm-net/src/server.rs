@@ -660,8 +660,24 @@ impl ServerNet {
                 pos: s.pos,
                 volume: s.volume,
             }));
+        let events = std::mem::take(&mut server.game_events);
+        for e in &events {
+            if let gm_server::GameEvent::PlayerDied {
+                player,
+                attacker,
+                inflictor,
+                ..
+            } = e
+            {
+                let text = format!("Death {player} {attacker} {inflictor}");
+                for c in self.clients.values_mut() {
+                    if c.welcomed && !c.closing {
+                        c.pending_events.push(text.clone());
+                    }
+                }
+            }
+        }
         if let Some(h) = self.hooks.as_mut() {
-            let events = std::mem::take(&mut server.game_events);
             if !events.is_empty() {
                 h.game_events(server, events);
             }

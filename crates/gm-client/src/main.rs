@@ -646,6 +646,8 @@ impl Console {
 }
 
 struct App {
+    /// Kill feed (`cl_deathnotice.lua`): attacker, victim, inflictor class, when.
+    deaths: Vec<DeathNotice>,
     mount: gm_content::Mount,
     bsp_data: Vec<u8>,
     sim: Sim,
@@ -766,7 +768,12 @@ impl App {
                 ui.register_font(&gpu, &self.mount, "HudDefault", "Roboto-Bold", 9.0 * fs);
             }
             // TargetID / TargetIDSmall: Verdana 12 / 11 bold (the 480-599 line variants)
-            for (name, tall) in [("TargetID", 12.0), ("TargetIDSmall", 11.0)] {
+            ui.register_font(&gpu, &self.mount, "HL2MPTypeDeath", "csd", 64.0 * fs);
+            for (name, tall) in [
+                ("TargetID", 12.0),
+                ("TargetIDSmall", 11.0),
+                ("ChatFont", 12.0),
+            ] {
                 if !ui.register_font(&gpu, &self.mount, name, "Verdana", tall * fs) {
                     ui.register_font(&gpu, &self.mount, name, "Roboto-Bold", tall * fs);
                 }
@@ -1330,6 +1337,9 @@ impl App {
                 self.select_weapon(self.weapon);
             }
             for e in self.sim.client.events.drain(..) {
+                if let Some(d) = DeathNotice::parse(&e, &self.sim.client.world.players) {
+                    self.deaths.push(d);
+                }
                 println!("{e}");
                 self.console.log(e);
             }
@@ -2260,6 +2270,52 @@ impl App {
                         color: fg,
                     });
                 }
+                // DrawDeathNotice(0.85, 0.04): kill icon glyph (HL2MPTypeDeath, 255 80 0),
+                // attacker right-aligned 16 px left of it, victim 16 px right, ChatFont,
+                // fading out over the last second of hud_deathnotice_time 6
+                {
+                    let icon_m = g.ui.font_metrics(Some("HL2MPTypeDeath"));
+                    let chat_m = g.ui.font_metrics(Some("ChatFont"));
+                    let x = (0.85 * w).floor();
+                    let mut y = (0.04 * h).floor();
+                    let fh = icon_m.line_height * 0.75;
+                    for d in &self.deaths {
+                        let left = 6.0 - d.at.elapsed().as_secs_f32();
+                        if left <= 0.0 {
+                            continue;
+                        }
+                        let a = (left * 255.0).clamp(0.0, 255.0) / 255.0;
+                        let (glyph, height_scale) = kill_icon(&d.inflictor);
+                        let gw = icon_m.text_width(glyph);
+                        let gh = icon_m.line_height * height_scale;
+                        let (iw, ih) = (gw * (fh / gh), fh);
+                        items.push(UiItem::Text {
+                            font: Some("HL2MPTypeDeath".to_string()),
+                            x: x - iw / 2.0,
+                            y: y - ih * 0.1,
+                            text: glyph.to_string(),
+                            color: [1.0, 80.0 / 255.0, 0.0, a],
+                        });
+                        let ty = y + ih / 2.0 - chat_m.line_height / 2.0;
+                        if let Some(l) = &d.left {
+                            items.push(UiItem::Text {
+                                font: Some("ChatFont".to_string()),
+                                x: x - iw / 2.0 - 16.0 - chat_m.text_width(l),
+                                y: ty,
+                                text: l.clone(),
+                                color: [1.0, 1.0, 100.0 / 255.0, a],
+                            });
+                        }
+                        items.push(UiItem::Text {
+                            font: Some("ChatFont".to_string()),
+                            x: x + iw / 2.0 + 16.0,
+                            y: ty,
+                            text: d.right.clone(),
+                            color: [1.0, 1.0, 100.0 / 255.0, a],
+                        });
+                        y = (y + ih * 0.75).ceil();
+                    }
+                }
                 // HUDDrawTargetID: the aimed player's name and health under the crosshair
                 // (TargetID at centre + 30, two shadows, the team colour 255 255 100)
                 {
@@ -2950,6 +3006,7 @@ fn main() -> Result<()> {
         hud_draws: Vec::new(),
     };
     let mut app = App {
+        deaths: Vec::new(),
         mount,
         bsp_data,
         sim,
@@ -3097,4 +3154,61 @@ fn hud_planes(
         planes.push(p);
     }
     planes
+}
+
+/// One line of the kill feed (`Deaths[]` of cl_deathnotice.lua).
+struct DeathNotice {
+    /// Attacker's name; none when the world killed.
+    left: Option<String>,
+    right: String,
+    inflictor: String,
+    at: Instant,
+}
+
+impl DeathNotice {
+    /// `Death <victim> <attacker> <inflictor>` from the server.
+    fn parse(text: &str, players: &[gm_net::msg::PlayerSnap]) -> Option<Self> {
+        let mut it = text.split(' ');
+        if it.next()? != "Death" {
+            return None;
+        }
+        let victim: u32 = it.next()?.parse().ok()?;
+        let attacker: u32 = it.next()?.parse().ok()?;
+        let inflictor = it.next()?.to_string();
+        let name = |id: u32| {
+            players
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| format!("Player {id}"))
+        };
+        Some(Self {
+            left: (attacker != 0 && attacker != victim).then(|| name(attacker)),
+            right: name(victim),
+            inflictor,
+            at: Instant::now(),
+        })
+    }
+}
+
+/// `killicon.AddFont` glyphs of the base gamemode (HL2MPTypeDeath) with their height scales.
+fn kill_icon(class: &str) -> (&'static str, f32) {
+    match class {
+        "prop_physics" | "prop_ragdoll" | "func_physbox" => ("9", 0.52),
+        "weapon_smg1" => ("/", 0.55),
+        "weapon_357" => (".", 0.55),
+        "weapon_ar2" => ("2", 0.6),
+        "crossbow_bolt" | "weapon_crossbow" => ("1", 0.5),
+        "weapon_shotgun" => ("0", 0.45),
+        "rpg_missile" | "weapon_rpg" => ("3", 0.35),
+        "npc_grenade_frag" | "weapon_frag" | "gmod_dynamite" => ("4", 0.56),
+        "weapon_pistol" => ("-", 0.52),
+        "prop_combine_ball" => ("8", 0.5),
+        "grenade_ar2" => ("7", 0.35),
+        "weapon_stunstick" => ("!", 0.6),
+        "npc_satchel" | "weapon_slam" => ("*", 0.53),
+        "weapon_crowbar" => ("6", 0.45),
+        "weapon_physcannon" | "weapon_physgun" => (",", 0.55),
+        _ => ("9", 0.52),
+    }
 }

@@ -136,6 +136,10 @@ pub enum GameEvent {
     PlayerDied {
         player: u32,
         dmg_type: u32,
+        /// The player whose weapon did the last damage (0 for the world) and the inflictor
+        /// class (`weapon_pistol`, `prop_physics`, `worldspawn`) for the kill icon.
+        attacker: u32,
+        inflictor: String,
     },
     PhysgunPickup {
         player: u32,
@@ -534,6 +538,8 @@ pub const DRIVE_SPRINT: f32 = 10.0;
 
 pub struct Player {
     pub state: gm_move::PlayerState,
+    /// (attacker, inflictor class) of the last damage taken, read when the player dies.
+    pub last_damage: (u32, &'static str),
     /// Authenticated identity (ed25519 public key) once the connection proved it.
     pub identity: Option<[u8; 32]>,
     /// (tick, origin, ducked) after each of the last 64 ticks, for lag compensation.
@@ -657,6 +663,7 @@ impl Player {
             death_tick: None,
             respawn_ticks: RESPAWN_TICKS,
             damage_acc: 0.0,
+            last_damage: (0, "worldspawn"),
             prev_vz: 0.0,
             prev_on_ground: true,
             steps: gm_move::Footsteps::default(),
@@ -1143,9 +1150,12 @@ impl<'w> Server<'w> {
             });
         }
         if died {
+            let (attacker, inflictor) = p.last_damage;
             self.game_events.push(GameEvent::PlayerDied {
                 player: id,
                 dmg_type,
+                attacker,
+                inflictor: inflictor.to_string(),
             });
         }
         to_health
@@ -1955,6 +1965,7 @@ impl<'w> Server<'w> {
             * (weapons::KNOCKBACK_PER_DAMAGE * damage);
         if let Some(t) = self.players.get_mut(&target) {
             t.state.impulse += push;
+            t.last_damage = (attacker, class);
         }
         self.damage_player(target, damage, dmg_type);
     }
@@ -2071,6 +2082,7 @@ impl<'w> Server<'w> {
             * (weapons::MELEE_PUSH_PER_DAMAGE * damage);
         if let Some(t) = self.players.get_mut(&target) {
             t.state.impulse += push;
+            t.last_damage = (attacker, "weapon_crowbar");
         }
         self.damage_player(target, damage, weapons::DMG_CLUB);
     }
@@ -2486,6 +2498,8 @@ impl<'w> Server<'w> {
         self.game_events.push(GameEvent::PlayerDied {
             player: id,
             dmg_type: 0,
+            attacker: 0,
+            inflictor: "worldspawn".to_string(),
         });
     }
 
@@ -3140,6 +3154,9 @@ impl<'w> Server<'w> {
             .collect();
         for (pid, d) in players {
             let dmg = damage * (1.0 - d / radius);
+            if let Some(t) = self.players.get_mut(&pid) {
+                t.last_damage = (0, "gmod_dynamite");
+            }
             self.damage_player(pid, dmg, weapons::DMG_BLAST);
         }
     }
@@ -3886,6 +3903,9 @@ impl<'w> Server<'w> {
                 Verdict::Allow => dmg,
                 Verdict::Text(_) => dmg,
             };
+            if let Some(t) = self.players.get_mut(&id) {
+                t.last_damage = (0, "worldspawn");
+            }
             self.damage_player(id, dmg, DMG_FALL);
         }
         for (id, body) in &self.bodies {
