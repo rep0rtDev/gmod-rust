@@ -131,6 +131,7 @@ extern "C" {
     );
     fn gmp_set_impact_step(system: *mut JPC_PhysicsSystem, dt: f32);
     fn gmp_apply_impact_offsets(system: *mut JPC_PhysicsSystem);
+    fn gmp_offset_com_shape(shape: *mut JPC_Shape, cx: f32, cy: f32, cz: f32) -> *mut JPC_Shape;
     fn gmp_carry_pivot_velocity(system: *mut JPC_PhysicsSystem, id1: u32, id2: u32, dt: f32);
     fn gmp_set_impact_skip(system: *mut JPC_PhysicsSystem, body_id: u32, on: i32);
     fn gmp_set_impact_enabled(system: *mut JPC_PhysicsSystem, enabled: i32);
@@ -355,6 +356,8 @@ pub struct PropDesc<'a> {
     /// `rotation_inertia`; the game's `GetInertia` is this times the mass). `None` lets Jolt
     /// derive it from the hull (about 1.4 times larger for the crate).
     pub inertia: Option<Vec3>,
+    /// The model's centre of mass in the body frame (Source units), `None` for the hulls' own.
+    pub mass_center: Option<Vec3>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -730,7 +733,11 @@ impl World {
         if parts.is_empty() {
             return Err(Error::EmptyShape);
         }
-        let shape = self.compound(&parts)?;
+        let mut shape = self.compound(&parts)?;
+        if let Some(c) = desc.mass_center {
+            let cj = to_jolt(c) - to_jolt(Vec3::ZERO);
+            shape = unsafe { gmp_offset_com_shape(shape, cj.x, cj.y, cj.z) };
+        }
         let rot = quat_from_angles(desc.angles.0, desc.angles.1, desc.angles.2);
         unsafe {
             let mut settings: JPC_BodyCreationSettings = std::mem::zeroed();
@@ -1629,6 +1636,7 @@ mod tests {
             angular_damping: 0.0,
             drag_axis_areas: Vec3::ONE,
             inertia: None,
+            mass_center: None,
         };
         let lower = w.add_prop(&desc(-124.0)).unwrap();
         w.freeze(lower);
@@ -1671,6 +1679,7 @@ mod tests {
                 angular_damping: 0.0,
                 drag_axis_areas: Vec3::ONE,
                 inertia: None,
+                mass_center: None,
             })
             .unwrap();
         w.optimize();

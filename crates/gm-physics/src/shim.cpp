@@ -3,6 +3,7 @@
 #include <mutex>
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 
 extern "C" {
 
@@ -137,7 +138,9 @@ void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2)
 		for (int i = A::TranslationX; i <= A::TranslationZ; i++) c->SetMotorState((A)i, JPH::EMotorState::Position);
 		c->SetTargetPositionCS(JPH::Vec3::sZero());
 	}
-	c->SetTargetOrientationBS(JPH::Quat::sIdentity());
+	// identity in constraint space keeps the pose the bodies were welded in; the body-space
+	// variant would turn body 2 to body 1's rotation (a thruster can rolled 180 flew off)
+	c->SetTargetOrientationCS(JPH::Quat::sIdentity());
 	sys->AddConstraint(c);
 	return c;
 }
@@ -1192,6 +1195,20 @@ void gmp_carry_pivot_velocity(void *system, unsigned int id1, unsigned int id2, 
 	if (wl < 1.0e-6f) return;
 	JPH::Quat q = JPH::Quat::sRotation(w / wl, wl * dt);
 	bd->GetMotionProperties()->SetLinearVelocityClamped(q * bd->GetLinearVelocity());
+}
+
+// Put the shape's centre of mass where the model's collision data says it is (body frame,
+// metres): Jolt derives it from the hull volumes, the game reads it from the .phy.
+void *gmp_offset_com_shape(void *shape, float cx, float cy, float cz) {
+	auto *sh = reinterpret_cast<JPH::Shape *>(shape);
+	JPH::Vec3 off = JPH::Vec3(cx, cy, cz) - sh->GetCenterOfMass();
+	if (off.Length() < 1.0e-5f) return shape;
+	JPH::OffsetCenterOfMassShapeSettings s(off, sh);
+	JPH::Shape::ShapeResult r = s.Create();
+	if (r.HasError()) return shape;
+	JPH::Shape *out = r.Get().GetPtr();
+	out->AddRef();
+	return out;
 }
 
 void gmp_apply_impact_offsets(void *system) {

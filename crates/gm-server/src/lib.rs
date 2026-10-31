@@ -3557,6 +3557,7 @@ impl<'w> Server<'w> {
                         angular_damping: info.angular_damping,
                         drag_axis_areas: info.drag_axis_areas,
                         inertia: info.inertia,
+                        mass_center: Some(info.mass_center),
                     }) else {
                         continue;
                     };

@@ -1201,6 +1201,7 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
         angular_damping: props.rotdamping,
         drag_axis_areas: Vec3::from(solid.drag_axis_areas),
         inertia: Some(Vec3::from(solid.rotation_inertia)),
+        mass_center: Some(Vec3::from(solid.mass_center)),
     })?;
     world.optimize();
     // the probe lets the prop settle for 60 ticks before the first segment
@@ -1471,6 +1472,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
             angular_damping: props.rotdamping,
             drag_axis_areas: Vec3::from(solid.drag_axis_areas),
             inertia: Some(Vec3::from(solid.rotation_inertia)),
+            mass_center: Some(Vec3::from(solid.mass_center)),
         })?;
         if pr.frozen {
             world.freeze(body);
@@ -1556,6 +1558,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
             angular_damping: props.rotdamping,
             drag_axis_areas: Vec3::from(solid.drag_axis_areas),
             inertia: Some(Vec3::from(solid.rotation_inertia)),
+            mass_center: Some(Vec3::from(solid.mass_center)),
         })?;
         if d.mass().is_some() {
             world.set_mass(body, mass);
@@ -2076,6 +2079,7 @@ fn phys_setup(scn: &Scenario) -> Result<PhysSetup> {
         angular_damping: props.rotdamping,
         drag_axis_areas: Vec3::from(solid.drag_axis_areas),
         inertia: Some(Vec3::from(solid.rotation_inertia)),
+        mass_center: Some(Vec3::from(solid.mass_center)),
     })?;
     world.optimize();
     Ok(PhysSetup {
