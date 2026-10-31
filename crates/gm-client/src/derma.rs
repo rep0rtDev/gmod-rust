@@ -349,6 +349,14 @@ pub const TOOL_CATEGORIES: [(&str, &[(&str, &str)]); 4] = [
     ),
 ];
 
+/// `search.GetResults` of the typed query: models (64 px SpawnIcons) and Weapons / Entities
+/// content (128 px ContentIcons, tab 0 / 1).
+#[derive(Clone, Debug, Default)]
+pub struct SearchResults {
+    pub models: Vec<String>,
+    pub content: Vec<(usize, String, String)>,
+}
+
 /// A category of the Weapons / Entities tabs (`PopulateFromList`): display names by class.
 #[derive(Clone, Debug, Default)]
 pub struct ContentList {
@@ -361,6 +369,9 @@ pub struct ContentList {
 #[derive(Default)]
 pub struct MenuState {
     pub creation_tab: usize,
+    /// The ContentSearch box: its text and whether it takes the keyboard.
+    pub search: String,
+    pub search_focus: bool,
     /// Selected category of the Weapons / Entities tabs.
     pub content_node: [usize; 2],
     pub tool_tab: usize,
@@ -381,6 +392,8 @@ pub enum Action {
     Spawn(String),
     /// A category of the Weapons / Entities tab.
     ContentNode(usize),
+    /// The search box clicked: it takes the keyboard until Esc / a click elsewhere.
+    SearchFocus,
     /// `gm_giveswep` / `gm_spawnsent` from a ContentIcon.
     GiveWeapon(String),
     SpawnSent(String),
@@ -442,6 +455,8 @@ pub struct Ctx<'a> {
     pub lists: &'a [SpawnList],
     /// Weapons and Entities tab categories.
     pub content: [&'a [ContentList]; 2],
+    /// Results of the current search (`MenuState::search`), shown instead of the node.
+    pub results: &'a SearchResults,
     pub tool: &'a str,
     pub has_image: &'a dyn Fn(&str) -> bool,
 }
@@ -594,17 +609,7 @@ fn spawnlists(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f3
     const DIV: f32 = 6.0;
     const NODE_H: f32 = 17.0;
     const ICON: f32 = 64.0;
-    nine(&mut out.items, &TEXTBOX, x, y, TREE_W, 20.0, WHITE);
-    text(
-        &mut out.items,
-        FONT,
-        ctx.font,
-        x + 4.0,
-        y,
-        20.0,
-        "Search...",
-        PLACEHOLDER,
-    );
+    search_box(out, ctx, st, x, y, TREE_W);
     let (ty, th) = (y + 24.0, h - 24.0);
     nine(&mut out.items, &TREE, x, ty, TREE_W, th, WHITE);
     let mut rows: Vec<NodeRow> = ctx
@@ -695,6 +700,10 @@ fn spawnlists(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f3
     }
 
     let (cx, cw) = (x + TREE_W + DIV, w - TREE_W - DIV);
+    if !st.search.is_empty() {
+        search_results(out, ctx, st, cx, y, cw, h);
+        return;
+    }
     let Some(list) = ctx.lists.get(st.node) else {
         return;
     };
@@ -768,17 +777,7 @@ fn content(
     const NODE_H: f32 = 17.0;
     const ICON: f32 = 128.0;
     let lists = ctx.content[tab.min(1)];
-    nine(&mut out.items, &TEXTBOX, x, y, TREE_W, 20.0, WHITE);
-    text(
-        &mut out.items,
-        FONT,
-        ctx.font,
-        x + 4.0,
-        y,
-        20.0,
-        "Search...",
-        PLACEHOLDER,
-    );
+    search_box(out, ctx, st, x, y, TREE_W);
     let (ty, th) = (y + 24.0, h - 24.0);
     nine(&mut out.items, &TREE, x, ty, TREE_W, th, WHITE);
     let node = st.content_node[tab.min(1)];
@@ -831,6 +830,10 @@ fn content(
     }
 
     let (cx, cw) = (x + TREE_W + DIV, w - TREE_W - DIV);
+    if !st.search.is_empty() {
+        search_results(out, ctx, st, cx, y, cw, h);
+        return;
+    }
     let Some(list) = lists.get(node) else {
         return;
     };
@@ -906,6 +909,146 @@ fn content(
     }
     if out.max_scroll > 0.0 {
         let sx = cx + cw - 15.0;
+        nine(&mut out.items, &SCROLL_TRACK_V, sx, y, 15.0, h, WHITE);
+        let bar_h = (h * h / content_h).max(10.0).round();
+        let bar_y = y + ((h - bar_h) * (scroll / out.max_scroll)).round();
+        nine(&mut out.items, &SCROLL_BAR_V, sx, bar_y, 15.0, bar_h, WHITE);
+    }
+}
+
+/// `ContentSearch`: a DTextEntry with the `#spawnmenu.search` placeholder; typed text with a
+/// caret while focused.
+fn search_box(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f32) {
+    nine(&mut out.items, &TEXTBOX, x, y, w, 20.0, WHITE);
+    if st.search.is_empty() && !st.search_focus {
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            x + 4.0,
+            y,
+            20.0,
+            "Search...",
+            PLACEHOLDER,
+        );
+    } else {
+        let shown = if st.search_focus {
+            format!("{}|", st.search)
+        } else {
+            st.search.clone()
+        };
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            x + 4.0,
+            y,
+            20.0,
+            &shown,
+            TREE_TEXT,
+        );
+    }
+    out.hits.push(Hit {
+        x,
+        y,
+        w,
+        h: 20.0,
+        action: Action::SearchFocus,
+    });
+}
+
+/// The search PropPanel: model results as 64 px SpawnIcons, then Weapons / Entities results as
+/// 128 px ContentIcons (a DIconLayout flow, row by row).
+fn search_results(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f32, h: f32) {
+    const SMALL: f32 = 64.0;
+    const BIG: f32 = 128.0;
+    let res = ctx.results;
+    let cols = ((w - 15.0 - 4.0) / SMALL).floor().max(1.0) as usize;
+    let big_cols = ((w - 15.0 - 4.0) / BIG).floor().max(1.0) as usize;
+    let small_h = res.models.len().div_ceil(cols) as f32 * SMALL;
+    let content_h = small_h + res.content.len().div_ceil(big_cols) as f32 * BIG + 4.0;
+    out.max_scroll = ((content_h - h) / SMALL).ceil().max(0.0) * SMALL;
+    let scroll = st.scroll.min(out.max_scroll);
+    for (i, model) in res.models.iter().enumerate() {
+        let (r, c) = (i / cols, i % cols);
+        let ix = x + 2.0 + c as f32 * SMALL;
+        let iy = y + 2.0 + r as f32 * SMALL - scroll;
+        if iy + SMALL < y || iy > y + h {
+            continue;
+        }
+        let key = format!("icon:{model}");
+        if (ctx.has_image)(&key) {
+            image(&mut out.items, &key, ix, iy, SMALL, SMALL);
+        } else if (ctx.has_image)(GENERATING_MAT) {
+            image(&mut out.items, GENERATING_MAT, ix, iy, SMALL, SMALL);
+        }
+        out.visible.push(model.clone());
+        if inside(ctx.cursor, ix, iy, SMALL, SMALL) && (ctx.has_image)(HOVER_MAT) {
+            image(&mut out.items, HOVER_MAT, ix, iy, SMALL, SMALL);
+        }
+        out.hits.push(Hit {
+            x: ix,
+            y: iy,
+            w: SMALL,
+            h: SMALL,
+            action: Action::Spawn(model.clone()),
+        });
+    }
+    let line_h = ctx.font.line_height;
+    for (i, (tab, class, name)) in res.content.iter().enumerate() {
+        let (r, c) = (i / big_cols, i % big_cols);
+        let ix = x + 2.0 + c as f32 * BIG;
+        let iy = y + 2.0 + small_h + r as f32 * BIG - scroll;
+        if iy + BIG < y || iy > y + h {
+            continue;
+        }
+        let hovered = inside(ctx.cursor, ix, iy, BIG, BIG);
+        let img = format!("entities/{class}.png");
+        if (ctx.has_image)(&img) {
+            image(
+                &mut out.items,
+                &img,
+                ix + 3.0,
+                iy + 3.0,
+                BIG - 8.0,
+                BIG - 8.0,
+            );
+        }
+        let overlay = if hovered {
+            "gui/ContentIcon-hovered.png"
+        } else {
+            "gui/ContentIcon-normal.png"
+        };
+        if (ctx.has_image)(overlay) {
+            image(&mut out.items, overlay, ix, iy, BIG, BIG);
+        }
+        let tw = ctx.font.text_width(name);
+        let (tx, tyy) = (ix + (BIG - tw) * 0.5, iy + BIG - line_h - 9.0);
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            tx + 1.0,
+            tyy + 1.0,
+            line_h,
+            name,
+            [0.0, 0.0, 0.0, 200.0 / 255.0],
+        );
+        text(&mut out.items, FONT, ctx.font, tx, tyy, line_h, name, WHITE);
+        out.hits.push(Hit {
+            x: ix,
+            y: iy,
+            w: BIG,
+            h: BIG,
+            action: if *tab == 0 {
+                Action::GiveWeapon(class.clone())
+            } else {
+                Action::SpawnSent(class.clone())
+            },
+        });
+    }
+    if out.max_scroll > 0.0 {
+        let sx = x + w - 15.0;
         nine(&mut out.items, &SCROLL_TRACK_V, sx, y, 15.0, h, WHITE);
         let bar_h = (h * h / content_h).max(10.0).round();
         let bar_y = y + ((h - bar_h) * (scroll / out.max_scroll)).round();

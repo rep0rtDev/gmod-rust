@@ -436,3 +436,19 @@ in the 640x480 proportional space of the sheet page.
   `Command::SpawnSent`, which the server runs as `give_weapon_cmd` / `spawn_sent`. Not done:
   HL2 `SpawnableEntities` (ammo / health items; no item entities on the server), middle-click
   `gm_spawnswep` (no world weapon entities), the right-click copy / Creator tool menu, search.
+
+## Spawn menu: search
+
+- Game (`contentsearch.lua`, `cl_search_models.lua`): the sidebar DTextEntry (placeholder
+  `#spawnmenu.search`) refreshes on Enter; `search.GetResults(str, type,
+  sbox_search_maxresults = 1024)` runs the providers: models = every `models/**/*.mdl` on the
+  GAME path matched case-insensitively as a substring of the path without `models/` / `.mdl`
+  (unless the query ends in `.mdl`), up to max / 2, shown as 64 px model icons; entities =
+  the Weapon / SpawnableEntities / NPC / Vehicles lists matched by localised name or class, up
+  to max / 4, shown as ContentIcons. Results replace the content panel in a DIconLayout flow.
+- Ours: `MenuState::search` / `search_focus`; the box takes the keyboard (not the key bound to
+  `+menu`, which keeps holding the menu; no key repeats), Enter runs `refresh_search`
+  (`Mount::find("models/**/*.mdl")` listed once, 512 models max; Weapons / Entities content by
+  name or class, 256 max), Esc clears. Results draw as the 64 px icon grid (icons generated
+  like the spawnlists') followed by 128 px ContentIcons. Not done: refresh while typing, the
+  right-click menu on results, NPC / vehicle providers.

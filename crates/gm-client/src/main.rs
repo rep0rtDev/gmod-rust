@@ -711,6 +711,9 @@ struct App {
     content: [Vec<derma::ContentList>; 2],
     content_seen: usize,
     content_lang: Option<std::collections::BTreeMap<String, String>>,
+    /// Spawn menu search: every mounted model (lazily listed) and the current results.
+    search_models: Option<Vec<String>>,
+    search_results: derma::SearchResults,
     cursor: (f32, f32),
     /// `cl_playerskin` / `cl_playerbodygroups` as typed, sent together.
     player_skin: u8,
@@ -1143,6 +1146,54 @@ impl App {
         ];
     }
 
+    /// `search.GetResults` on Enter: models by substring of the path without `models/` /
+    /// `.mdl` (up to `sbox_search_maxresults` / 2 = 512), Weapons / Entities content by
+    /// localised name or class (up to 256).
+    fn refresh_search(&mut self) {
+        let Some(menu) = &self.menu else { return };
+        let query = menu.st.search.trim().to_ascii_lowercase();
+        self.search_results = derma::SearchResults::default();
+        if query.is_empty() {
+            return;
+        }
+        let models = self.search_models.get_or_insert_with(|| {
+            self.mount
+                .find("models/**/*.mdl")
+                .into_iter()
+                .map(|m| m.to_ascii_lowercase())
+                .collect()
+        });
+        let strip = !query.ends_with(".mdl");
+        for m in models.iter() {
+            let hay = if strip {
+                m.strip_prefix("models/")
+                    .unwrap_or(m)
+                    .strip_suffix(".mdl")
+                    .unwrap_or(m)
+            } else {
+                m.as_str()
+            };
+            if hay.contains(&query) {
+                self.search_results.models.push(m.clone());
+                if self.search_results.models.len() >= 512 {
+                    break;
+                }
+            }
+        }
+        'content: for (tab, lists) in self.content.iter().enumerate() {
+            for (class, name) in lists.iter().flat_map(|l| l.items.iter()) {
+                if name.to_ascii_lowercase().contains(&query) || class.contains(&query) {
+                    self.search_results
+                        .content
+                        .push((tab, class.clone(), name.clone()));
+                    if self.search_results.content.len() >= 256 {
+                        break 'content;
+                    }
+                }
+            }
+        }
+    }
+
     /// The row under the cursor of the open spawn menu, if any.
     /// The context-menu entry under the cursor.
     fn context_row(&self) -> Option<String> {
@@ -1398,6 +1449,7 @@ impl App {
             bold: &bold,
             lists: &self.spawnlists,
             content: [&self.content[0], &self.content[1]],
+            results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
         };
@@ -1894,6 +1946,7 @@ impl App {
             bold: &bold,
             lists: &self.spawnlists,
             content: [&self.content[0], &self.content[1]],
+            results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
         };
@@ -2146,10 +2199,14 @@ impl App {
             bold: &bold,
             lists: &self.spawnlists,
             content: [&self.content[0], &self.content[1]],
+            results: &self.search_results,
             tool: &self.tool,
             has_image: &has_image,
         };
         let action = derma::build(&ctx, &menu.st).hit(self.cursor).cloned();
+        if !matches!(action, Some(derma::Action::SearchFocus)) {
+            menu.st.search_focus = false;
+        }
         match action {
             Some(derma::Action::Spawn(model)) => {
                 self.console.log(format!("spawn {model}"));
@@ -2159,6 +2216,7 @@ impl App {
                 menu.st.creation_tab = i;
                 menu.st.scroll = 0.0;
             }
+            Some(derma::Action::SearchFocus) => menu.st.search_focus = true,
             Some(derma::Action::ContentNode(i)) => {
                 menu.st.content_node[menu.st.creation_tab.saturating_sub(1).min(1)] = i;
                 menu.st.scroll = 0.0;
@@ -3401,6 +3459,7 @@ impl App {
                 bold: &bold,
                 lists: &self.spawnlists,
                 content: [&self.content[0], &self.content[1]],
+                results: &self.search_results,
                 tool: &self.tool,
                 has_image: &has_image,
             };
@@ -3470,6 +3529,7 @@ impl App {
                 bold: &bold,
                 lists: &self.spawnlists,
                 content: [&self.content[0], &self.content[1]],
+                results: &self.search_results,
                 tool: &self.tool,
                 has_image: &has_image,
             };
@@ -4125,6 +4185,42 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
+                // the key holding the menu open (+menu) keeps going to the binds
+                let holds_menu = code
+                    .and_then(settings::key_name)
+                    .and_then(|n| self.settings.binds.get(n))
+                    .is_some_and(|c| c == "+menu");
+                if self.menu.as_ref().is_some_and(|m| m.st.search_focus) && !holds_menu {
+                    if down && !event.repeat {
+                        let mut refresh = false;
+                        if let Some(m) = self.menu.as_mut() {
+                            match code {
+                                Some(KeyCode::Enter | KeyCode::NumpadEnter) => refresh = true,
+                                Some(KeyCode::Escape) => {
+                                    m.st.search_focus = false;
+                                    m.st.search.clear();
+                                    refresh = true;
+                                }
+                                Some(KeyCode::Backspace) => {
+                                    m.st.search.pop();
+                                }
+                                _ => {
+                                    if let Some(t) = event.text.as_deref() {
+                                        m.st.search.extend(t.chars().filter(|c| !c.is_control()));
+                                        m.st.search.truncate(64);
+                                    }
+                                }
+                            }
+                        }
+                        if refresh {
+                            self.refresh_search();
+                            if let Some(m) = self.menu.as_mut() {
+                                m.st.scroll = 0.0;
+                            }
+                        }
+                    }
+                    return;
+                }
                 if self
                     .options
                     .as_ref()
@@ -4638,6 +4734,8 @@ fn main() -> Result<()> {
         content: [Vec::new(), Vec::new()],
         content_seen: usize::MAX,
         content_lang: None,
+        search_models: None,
+        search_results: derma::SearchResults::default(),
         cursor: (0.0, 0.0),
         panel_drag: None,
         player_skin: 0,
