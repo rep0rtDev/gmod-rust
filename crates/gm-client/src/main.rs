@@ -756,6 +756,16 @@ impl App {
         let glow1 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow1");
         let glow2 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow2");
         let ui = UiRenderer::new(&gpu, &self.mount, format)?;
+        let mut ui = ui;
+        {
+            // the HL2 HUD fonts of resource/ClientScheme.res, scaled from the 480-line layout
+            let fs = config.height as f32 / 480.0;
+            ui.register_font(&gpu, &self.mount, "HudNumbers", "HalfLife2", 32.0 * fs);
+            ui.register_font(&gpu, &self.mount, "HudNumbersSmall", "HalfLife2", 16.0 * fs);
+            if !ui.register_font(&gpu, &self.mount, "HudDefault", "Verdana", 9.0 * fs) {
+                ui.register_font(&gpu, &self.mount, "HudDefault", "Roboto-Bold", 9.0 * fs);
+            }
+        }
         {
             let m = ui.font_metrics(None);
             gm_script::set_font_metrics(
@@ -2200,120 +2210,80 @@ impl App {
                 .iter()
                 .find(|p| Some(p.id) == me)
             {
-                let box_h = lh * 2.0 + 16.0;
-                let box_w = 150.0;
-                let y = h - box_h - 20.0;
-                let mut x = 20.0;
-                let boxes: [(&str, i16, bool); 2] =
-                    [("Health", p.health, true), ("Suit", p.armor, p.armor > 0)];
-                for (label, value, shown) in boxes {
-                    if !shown {
-                        continue;
-                    }
+                // the game's HL2 HUD: scripts/hudlayout.res positions on a 640x480 layout
+                // scaled by the screen height, ClientScheme.res fonts and colours
+                let s = h / 480.0;
+                let fg = [1.0, 235.0 / 255.0, 20.0 / 255.0, 1.0];
+                let bg = [0.0, 0.0, 0.0, 76.0 / 255.0];
+                let numbers = Some("HudNumbers".to_string());
+                let small = Some("HudNumbersSmall".to_string());
+                let label_font = Some("HudDefault".to_string());
+                let y = 432.0 * s;
+                let tall = 36.0 * s;
+                let panel = |items: &mut Vec<UiItem>, x: f32, wide: f32, label: &str| {
                     items.push(UiItem::Rect {
                         x,
                         y,
-                        w: box_w,
-                        h: box_h,
-                        color: [0.0, 0.0, 0.0, 0.5],
+                        w: wide,
+                        h: tall,
+                        color: bg,
                     });
                     items.push(UiItem::Text {
-                        font: None,
-                        x: x + 12.0,
-                        y: y + 6.0,
+                        font: label_font.clone(),
+                        x: x + 8.0 * s,
+                        y: y + 20.0 * s,
                         text: label.to_string(),
-                        color: [0.85, 0.85, 0.85, 0.9],
+                        color: fg,
                     });
-                    let bar_w = box_w - 24.0;
-                    let frac = (value.max(0) as f32 / 100.0).min(1.0);
-                    items.push(UiItem::Rect {
-                        x: x + 12.0,
-                        y: y + lh + 10.0,
-                        w: bar_w,
-                        h: lh - 2.0,
-                        color: [1.0, 1.0, 1.0, 0.12],
-                    });
-                    items.push(UiItem::Rect {
-                        x: x + 12.0,
-                        y: y + lh + 10.0,
-                        w: bar_w * frac,
-                        h: lh - 2.0,
-                        color: [0.6, 0.6, 0.6, 0.6],
-                    });
-                    let text = value.to_string();
+                };
+                panel(&mut items, 16.0 * s, 102.0 * s, "HEALTH");
+                items.push(UiItem::Text {
+                    font: numbers.clone(),
+                    x: 16.0 * s + 50.0 * s,
+                    y: y + 2.0 * s,
+                    text: p.health.max(0).to_string(),
+                    color: fg,
+                });
+                if p.armor > 0 {
+                    panel(&mut items, 140.0 * s, 102.0 * s, "SUIT");
                     items.push(UiItem::Text {
-                        font: None,
-                        x: x + box_w - 12.0 - g.ui.text_width(&text),
-                        y: y + 6.0,
-                        text,
-                        color: white,
+                        font: numbers.clone(),
+                        x: 140.0 * s + 50.0 * s,
+                        y: y + 2.0 * s,
+                        text: p.armor.to_string(),
+                        color: fg,
                     });
-                    x += box_w + 10.0;
                 }
-                // ammo box at the bottom right: clip (big) and reserve, as the sandbox HUD
                 if p.clip >= 0 || p.reserve > 0 {
-                    let aw = 170.0;
-                    let ax = w - aw - 20.0;
-                    items.push(UiItem::Rect {
-                        x: ax,
-                        y,
-                        w: aw,
-                        h: box_h,
-                        color: [0.0, 0.0, 0.0, 0.5],
-                    });
+                    let ax = w - 150.0 * s;
+                    panel(&mut items, ax, 136.0 * s, "AMMO");
+                    let clip = if p.clip >= 0 { p.clip } else { p.reserve };
                     items.push(UiItem::Text {
-                        font: None,
-                        x: ax + 12.0,
-                        y: y + 6.0,
-                        text: "Ammo".to_string(),
-                        color: [0.85, 0.85, 0.85, 0.9],
-                    });
-                    let clip = if p.clip >= 0 {
-                        p.clip.to_string()
-                    } else {
-                        p.reserve.to_string()
-                    };
-                    items.push(UiItem::Text {
-                        font: None,
-                        x: ax + 12.0,
-                        y: y + lh + 8.0,
-                        text: clip,
-                        color: white,
+                        font: numbers.clone(),
+                        x: ax + 40.0 * s,
+                        y: y + 2.0 * s,
+                        text: clip.to_string(),
+                        color: fg,
                     });
                     if p.clip >= 0 {
-                        let r = p.reserve.to_string();
                         items.push(UiItem::Text {
-                            font: None,
-                            x: ax + aw - 12.0 - g.ui.text_width(&r),
-                            y: y + lh + 8.0,
-                            text: r,
-                            color: [0.85, 0.85, 0.85, 0.9],
+                            font: small.clone(),
+                            x: ax + 102.0 * s,
+                            y: y + 16.0 * s,
+                            text: p.reserve.to_string(),
+                            color: fg,
                         });
                     }
-                    // secondary ammo (AR2 balls, SMG grenades) in its own box to the left
+                    // HudSecondaryAmmo: r150 wide 60 to the left of the ammo panel
                     if p.alt >= 0 {
-                        let bw = 70.0;
-                        let bx = ax - bw - 10.0;
-                        items.push(UiItem::Rect {
-                            x: bx,
-                            y,
-                            w: bw,
-                            h: box_h,
-                            color: [0.0, 0.0, 0.0, 0.5],
-                        });
+                        let bx = ax - 60.0 * s - 6.0 * s;
+                        panel(&mut items, bx, 60.0 * s, "ALT");
                         items.push(UiItem::Text {
-                            font: None,
-                            x: bx + 12.0,
-                            y: y + 6.0,
-                            text: "Alt".to_string(),
-                            color: [0.85, 0.85, 0.85, 0.9],
-                        });
-                        items.push(UiItem::Text {
-                            font: None,
-                            x: bx + 12.0,
-                            y: y + lh + 8.0,
+                            font: numbers.clone(),
+                            x: bx + 8.0 * s,
+                            y: y + 2.0 * s,
                             text: p.alt.to_string(),
-                            color: white,
+                            color: fg,
                         });
                     }
                 }
