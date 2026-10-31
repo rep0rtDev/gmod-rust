@@ -720,6 +720,17 @@ public:
 				// yaw-spinning drum strikes the rim vertex on the hull's own +x axis first (628 u/s)
 				// and its antipode second (245), one diameter apart, and tumbles at -375 deg/s
 				bool ring = face.size() > 8;
+				// a ring arriving without spin is a single rim vertex impact in the game (the
+				// upright drum of `device_dynamite_push` lands on its +x rim: -63 u/s of slip
+				// stuck, -175 deg/s, the centre nearly stopped, the antipode a tick later); the
+				// two-vertex rule below is the yaw-spinning drum's
+				if (ring) {
+					const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
+					if (dyn.GetAngularVelocity().Length() < 0.5f) {
+						face.clear();
+						ring = false;
+					}
+				}
 				if (ring) {
 					const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
 					JPH::Quat inv_rot = dyn.GetRotation().Conjugated();
