@@ -733,6 +733,65 @@ fn scripted_entities_follow_the_measured_sent_cadences() {
 }
 
 #[test]
+fn scripted_weapon_think_runs_every_tick_after_the_deploy() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.add_player(
+        1,
+        glam::Vec3::new(700.0, -600.0, -143.6),
+        glam::Vec3::new(0.0, 90.0, 0.0),
+    );
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "think".into(),
+        priority: 0,
+        source: "state.t = 0
+            state.thinks = {}
+            events.on('tick.pre', function() state.t += 1 end)
+            weapon.register('parity_think', { automatic = true, primary_delay = 0.2,
+                think = function(p) table.insert(state.thinks, state.t) end })"
+            .into(),
+        config: gm_script::ActorConfig::default(),
+    })
+    .unwrap();
+    rt.pre_tick(&mut server);
+    // the lua_swep_think stand: Give at tick 0, 50 ticks, attack held from tick 30
+    for t in 0..50u32 {
+        if t == 0 {
+            assert!(server.give_weapon(1, "parity_think"));
+        }
+        let cmd = gm_server::PlayerCmd {
+            cmd: gm_move::UserCmd {
+                buttons: if t >= 30 { gm_server::IN_ATTACK } else { 0 },
+                view_angles: glam::Vec3::new(0.0, 90.0, 0.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        rt.pre_tick(&mut server);
+        server.tick(&BTreeMap::from([(1u32, cmd)]));
+        let events = std::mem::take(&mut server.game_events);
+        rt.game_events(&mut server, events);
+        rt.post_tick(&mut server);
+    }
+    let thinks: Vec<i64> = rt.actors()[0].eval("return state.thinks").unwrap();
+    let give_tick = thinks[0] - 14;
+    assert!(
+        give_tick >= 1,
+        "the first Think 14 ticks after the deploy, measured: {thinks:?}"
+    );
+    let expect: Vec<i64> = (thinks[0]..=*thinks.last().unwrap()).collect();
+    assert_eq!(thinks, expect, "then every tick, attacking or not");
+    assert!(thinks.len() >= 30, "{}", thinks.len());
+}
+
+#[test]
 fn use_on_another_player_is_reported_every_tick_held() {
     let Some(inst) = gm_content::find_install() else {
         eprintln!("skipped: no Garry's Mod install");

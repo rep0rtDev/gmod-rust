@@ -1154,6 +1154,7 @@ impl Runtime {
                         "secondary" => "weapon.secondary",
                         "reload" => "weapon.reload",
                         "deploy" => "weapon.deploy",
+                        "think" => "weapon.think",
                         _ => "weapon.holster",
                     }
                 }

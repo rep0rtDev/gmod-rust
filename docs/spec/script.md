@@ -449,12 +449,13 @@ waits for a real client; a published package is capped at 50 MiB.
 ## Not yet
 
 Scripted entities' touches with players and while both bodies sleep; the weapon selection
-menu (attack to confirm, `hud_fastswitch`, `invnext`), a `Think` analog for weapons and the game's `KEY_*` names / `input.IsKeyDown`
+menu (attack to confirm, `hud_fastswitch`, `invnext`) and the game's `KEY_*` names / `input.IsKeyDown`
 polling (ours: `input.key` events with the client's key names); the game's pitch-0 miss of +use
 on players (see "+use"); net message data for WASM guests. Done since this list was written: the
 sandbox gamemode as one package (`addons/gamemodes/sandbox`), prop properties, player models,
 the +use pickup, the spawn menu lists, prop spawn and state writes, scripted weapons, key
-events, +use on players, WASM components, scripted entity classes, weapon slot digits.
+events, +use on players, WASM components, scripted entity classes, weapon slot digits, the
+weapon `think`.
 
 ## Server events
 
@@ -525,7 +526,7 @@ with the position and volume given.
 `slot`, `slot_pos`, `hold_type`, `view_model`, `world_model`, `clip_size` (-1 none),
 `default_clip`, `ammo`, `automatic`, `primary_delay`, `secondary_delay`, `reload_time` (defaults
 pistol-like: slot 1, `c_pistol`/`w_pistol`, no clip, `Pistol`, 0.2 / 0.5 / 1.4333 s) and the
-callbacks `primary`, `secondary`, `reload`, `deploy`, `holster`, each given the event payload
+callbacks `primary`, `secondary`, `reload`, `deploy`, `holster`, `think`, each given the event payload
 `{player, weapon, clip, reserve, eye, forward, hit, other}` (`hit` the eye trace on the attacks,
 `other` the class switched to on a holster). The registration is a write (`world-write`), sent
 to every client whole as `ServerMsg::WeaponDefs` whenever the set changes; the wire indexes
@@ -546,10 +547,16 @@ ticks (0.2 s from the firing tick, 13.33 ticks rounded up); the secondary fires 
 `c_pistol`: 1.4333 s) and moves rounds from the reserve into the clip only at its end
 (switching away before leaves the clip as it was); an empty clip plus an attack press starts the
 reload instead of firing. Differences: the game also calls `PrimaryAttack` (with
-`CanPrimaryAttack` false) and `Reload` twice in that empty-clip tick, we call `reload` once; the
-game's `Think` is not once per tick (147 calls in 200 ticks) and we have none, `tick.pre` is
-the per-tick hook. The callbacks run with the tick's game events, so a `fire_bullet` lands one
-tick after the trigger pull.
+`CanPrimaryAttack` false) and `Reload` twice in that empty-clip tick, we call `reload` once. The
+callbacks run with the tick's game events, so a `fire_bullet` lands one tick after the trigger
+pull.
+
+`think` (`WEAPON:Think`), measured (`lua_swep_think`, golden 261031, every call logged with the
+engine tick): once per tick while the weapon is active, in the tick itself, unchanged while the
+attack is held; not during the deploy block: `Give` + select at tick 0, the first `Think` at tick
+14 (the 0.2 s deploy delay), then every tick. The 147 calls in 200 ticks of the older recording
+were the deploy gaps of its weapon switches, not a cadence. Ours: the same (`deploy_left` on the
+weapon state; test `scripted_weapon_think_runs_every_tick_after_the_deploy`).
 
 Measured (`cargo test -p gm-dedicated --test addon_hooks scripted_weapons`): the `lua_swep`
 button script against a semi and an automatic weapon gives the recorded call sequence (deploy;

@@ -602,7 +602,7 @@ function weapon.register(class: string, def)
     end
     world.queue("weapon.register", 0, d)
 end
-for _, kind in ipairs({ "primary", "secondary", "reload", "deploy", "holster" }) do
+for _, kind in ipairs({"primary", "secondary", "reload", "deploy", "holster", "think"}) do
     events.on("weapon." .. kind, function(p)
         local d = sweps[p.weapon]
         if d ~= nil and d[kind] ~= nil then return d[kind](p) end

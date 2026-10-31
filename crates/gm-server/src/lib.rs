@@ -500,6 +500,9 @@ pub const SWEP_DEFAULT_RELOAD: f32 = 1.4333;
 /// Per-player state of a scripted weapon (timers count down in seconds like `Inventory`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SwepState {
+    /// Deploy block left; `Think` runs every tick once it has elapsed (measured: Give at
+    /// tick 0, first Think at tick 14, then every tick, also while attacking).
+    pub deploy_left: f32,
     pub next_primary: f32,
     pub next_secondary: f32,
     /// Seconds left of a reload; the clip refills when it reaches zero.
@@ -1506,6 +1509,7 @@ impl<'w> Server<'w> {
         }
         if let Some(st) = p.swep.get_mut(to) {
             st.next_primary = SWEP_DEPLOY_DELAY;
+            st.deploy_left = SWEP_DEPLOY_DELAY;
             st.reloading = None;
             events.push((to.to_string(), "deploy", String::new()));
         }
@@ -1732,6 +1736,8 @@ impl<'w> Server<'w> {
         st.prev_reload = reload;
         st.next_primary -= weapons::TICK_DT;
         st.next_secondary -= weapons::TICK_DT;
+        st.deploy_left -= weapons::TICK_DT;
+        let think = st.deploy_left < 0.0;
         let clip = p.inventory.clips.entry(class.clone()).or_insert([-1, -1]);
         let reserve = p.inventory.ammo.entry(def.ammo.clone()).or_insert(0);
         if let Some(left) = st.reloading.as_mut() {
@@ -1785,6 +1791,9 @@ impl<'w> Server<'w> {
                 )
             });
             self.swep_event(player, &class, kind, String::new(), trace);
+        }
+        if think {
+            self.swep_event(player, &class, "think", String::new(), None);
         }
     }
 
