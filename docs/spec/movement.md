@@ -57,9 +57,20 @@ Harness group: `move_*`: 7 harnesses recorded on a dedicated server bot (version
 
 Sandbox allows noclip by default: velocity = normalized (forward * fmove + right * smove + up * umove) scaled to 400 u/s, 1000 with the sprint button, no collision, never on ground.
 
+## Water
+
+Measured on gm_construct's pond (x -3040..1824, y 2016..4000, surface at z -162, floor at -400 to -176; `move_water_walk`, `move_water_swim`, `lua_drown` in `tools/parity/golden/261031/`, the two movement traces bit-exact: 440 and 660 ticks within 0.0002 u).
+
+- **Levels.** Three point probes of the BSP water contents: feet at origin + 1 (level 1), waist at half the hull height (level 2: 36 standing, 18 ducked), eyes at the view height (level 3). Measured: level 1 at origin z -161.6, level 2 wading the shallow floor at -198.25. Within one tick a probe is looked up again only once it has moved more than 1 u from where it was last looked up; the start-of-tick lookup is reused by the post-move check when the tick moved less (this is what decides the gravity below: ticks 249/381/422 of `move_water_swim` moved over a unit and got no second gravity half, 432/442 moved 0.88 and 0.95 u and did).
+- **Level 1.** Ordinary walking, the floor's friction and acceleration; footsteps use the `wade` surface property (`slosh*.wav`) at the normal volume.
+- **Level 2 and 3.** No gravity. Wish = forward * fmove + right * smove, plus: jump held adds max speed upward; no input at all adds -60 (sinking); otherwise `up_move` plus `clamp(fmove * forward.z * 2, 0, max speed)` (pitching down 60 degrees and pushing forward sinks at up to -139 u/s, pitching up holds the surface). Wish speed is capped at max speed then scaled by 0.8: 160 u/s forward from the 200 walk speed, -48 u/s sinking. Friction is the ground friction applied to the whole velocity (`speed - dt * speed * friction * surface friction`, the horizontal speed decays by itself), acceleration the ground rule against the scaled wish: 24, 45.1, 63.7, 80.1, 94.5, 107.1 ... 160 u/s. Jump held while swimming sets vertical velocity to 100 u/s and leaves the ground; at the surface the player bobs between level 1 and 2. Falling into the water (air move ending at level 2 or more with a move over 1 u) skips the second gravity half of that tick. On the bottom (ground under the hull) vertical velocity is zeroed after the move. No footsteps at level 2 or more, even walking the bottom.
+- **Sounds.** `Player.Swim` (volume 0.5) on going from dry to any level in a tick, and on each tick that starts at level 2 or more with jump held while a 1000 ms timer has run out (it restarts the timer: `move_water_swim` ticks 160, 250, 328; the held jump around 227 came bobbing with the waist out). Not reproduced: `Player.Wade` (volume 0.25) one tick after wading in from dry ground (walk tick 118) and one tick after surfacing from level 3 to 2 (swim tick 209), but not after going from 1 to 2 on the bottom or 2 to 1 in the air; its rule is unknown.
+- **Drowning.** None: 60 s at level 3 (`lua_drown`, 4000 ticks) gave no `EntityTakeDamage`, no `PlayerHurt`, hp stayed 100. Not implemented, on purpose.
+- Not measured: `sv_waterdist`, water jump out onto a ledge, currents, slime/lava damage.
+
 ## Not implemented yet
 
-Ladders, water (levels, swim, `sv_waterdist`), moving platforms and props as ground, fall damage, view roll, surface friction modifiers, `sv_maxspeed` style limits set by Lua, prediction error correction.
+Ladders, moving platforms and props as ground, fall damage, view roll, surface friction modifiers, `sv_maxspeed` style limits set by Lua, prediction error correction, `Player.Wade`.
 
 ## Probe
 
@@ -69,11 +80,15 @@ Measured since: `move_fall_200` (the 140 u/s rule holds when landing from 200 u)
 
 `move_air_left`, `move_air_right`, `move_air_alt` (alternating strafes through a whole jump) and `move_airstrafe` pin the air friction rule; `move_stairs_down` recorded.
 
-Open: slopes, ladders, water, moving ground.
+Open: slopes, ladders, moving ground.
 
 ## Displacements
 
 The trace stops on displacement surfaces, not on the brush under them (the brush below gm_construct's ground at 600, -500 tops out at -152 and carries contents 0x100; the displacement holds the player at -147.969). `gm_collision` sweeps the player box against displacement triangles after the brush pass, one-sided, with the same 1/32 epsilon. Measured: `move_walk_disp` (walk +x from 600, -500 over the displacement and up the 4 u step onto the brush at 823) is bit-exact against the server, 160 ticks.
+
+Each triangle is swept as a thin bevelled convex: its face plane, a back plane 4 u behind it (so the space under a displacement stays open while a hull that has slipped a unit behind the extended face plane of a neighbour, resting on an edge bevel, still finds the floor: `move_water_walk` tick 61), the axis planes of its bounds and the edge-by-axis bevels. A point ray skips the bevels (they are the face plane again to float precision on flat ground); a box keeps even the nearly parallel ones: on the pond shore a 1 degree bevel keeps the hull off the extended plane of the next triangle, a 0.93 u step the game does not take (`move_water_walk` tick 48).
+
+The surface under the feet for footsteps is the triangle the hull's ground sweep clipped against, not the one under the origin (ticks 68 and 116: the hull rests on a higher edge). A blend material's triangle whose three vertex alphas sum past 382.5 is the second material (`$surfaceprop2`; `grass-sand` gives `grass3, grass2, sand3, sand4` like the game).
 
 ## Open: standing on a displacement edge (`move_settle_edge`)
 

@@ -3,7 +3,7 @@
 //! `docs/spec/convars-defaults.md`; the names are ours.
 
 use glam::Vec3;
-use gm_collision::{Trace, World, MASK_PLAYERSOLID};
+use gm_collision::{Trace, World, MASK_PLAYERSOLID, MASK_WATER};
 
 pub mod buttons {
     pub const ATTACK: u32 = 1 << 0;
@@ -126,6 +126,8 @@ pub struct PlayerState {
     /// Surface friction multiplier; 1 on the ground, 0.25 after leaving it upwards.
     pub surface_friction: f32,
     pub move_type: MoveType,
+    /// 0 dry, 1 feet, 2 waist, 3 eyes (the game's WaterLevel), from `check_water`.
+    pub water_level: u8,
 }
 
 impl Default for PlayerState {
@@ -148,9 +150,48 @@ impl Default for PlayerState {
             ducked_at_tick_start: false,
             surface_friction: 1.0,
             move_type: MoveType::Walk,
+            water_level: 0,
         }
     }
 }
+
+/// Swimming: the ground max speed scaled by this, so forward is 160 and the idle sink 48.
+pub const WATER_SPEED_SCALE: f32 = 0.8;
+/// Idle in water the wish points down this fast (before the scale).
+pub const WATER_SINK_SPEED: f32 = 60.0;
+/// Holding jump while swimming sets the vertical speed to this every tick.
+pub const WATER_JUMP_SPEED: f32 = 100.0;
+
+impl Footsteps {
+    /// The water sound a tick voices (after `before_move`), from the water level entering the
+    /// tick and the state after the move: `Player.Swim` (volume 0.5) on wading in from dry
+    /// ground (`move_water_walk` tick 117) and on a jump held while the tick starts swimming,
+    /// once a second (`move_water_swim` ticks 160, 250, 328: the held jump at 227 came while
+    /// bobbing at the surface with the waist out, 250 is the next tick that starts at the waist).
+    pub fn water_sound(
+        &mut self,
+        prev_level: u8,
+        st: &PlayerState,
+        cmd: &UserCmd,
+    ) -> Option<&'static str> {
+        if prev_level == 0 && st.water_level > 0 {
+            return Some("Player.Swim");
+        }
+        if prev_level >= 2 && cmd.buttons & buttons::JUMP != 0 && self.swim_ms <= 0.0 {
+            self.swim_ms = 1000.0;
+            return Some("Player.Swim");
+        }
+        None
+    }
+}
+
+/// Footsteps in water up to the feet use this surface property instead of the floor's
+/// (measured: `slosh*.wav` at the normal step volume), as the `surfaceprop:` pseudo material.
+pub const WADE_MATERIAL: &str = "surfaceprop:wade";
+
+/// One tick's point-contents lookups of the three water probes: (point, contents) per probe.
+#[derive(Default, Clone, Copy, Debug)]
+pub struct WaterCache(pub [Option<(Vec3, i32)>; 3]);
 
 pub struct Mover<'a> {
     pub cfg: MoveConfig,
@@ -220,6 +261,27 @@ impl<'a> Mover<'a> {
         st.ducked_at_tick_start = st.ducked;
         self.duck(st, cmd, dt);
         self.categorize(st);
+        let mut water = WaterCache::default();
+        self.check_water(st, &mut water);
+        if st.water_level >= 2 {
+            // measured (`move_water_swim`): no gravity at all, jump held pins the rise speed
+            if cmd.buttons & buttons::JUMP != 0 {
+                st.on_ground = false;
+                st.velocity.z = WATER_JUMP_SPEED;
+            }
+            st.jump_held = cmd.buttons & buttons::JUMP != 0;
+            st.velocity += st.impulse;
+            st.impulse = Vec3::ZERO;
+            self.water_move(st, cmd, dt);
+            st.surface_friction = if st.velocity.z > 0.0 { 0.25 } else { 1.0 };
+            self.categorize(st);
+            self.check_water(st, &mut water);
+            if st.on_ground {
+                st.velocity.z = 0.0;
+            }
+            self.clamp_velocity(st);
+            return;
+        }
         if st.boost_pending {
             st.boost_pending = false;
             self.jump_boost(st, cmd);
@@ -241,13 +303,98 @@ impl<'a> Mover<'a> {
             self.air_move(st, cmd, dt);
             // measured: the air friction multiplier follows the vertical speed before the second half of gravity
             st.surface_friction = if st.velocity.z > 0.0 { 0.25 } else { 1.0 };
-            self.finish_gravity(st, dt);
+            // falling into the water keeps only the first half of the tick's gravity
+            self.check_water(st, &mut water);
+            if st.water_level < 2 {
+                self.finish_gravity(st, dt);
+            }
         }
         self.categorize(st);
+        self.check_water(st, &mut water);
         if st.on_ground {
             st.velocity.z = 0.0;
         }
         self.clamp_velocity(st);
+    }
+
+    /// The game's water level: water at the feet (origin + 1), the waist (half the hull) or
+    /// the eyes. Within one tick each probe is looked up again only once it has moved more
+    /// than 1 u from where it was last looked up (measured, `move_water_swim` ticks 249/381/422
+    /// get the second half of the tick's gravity skipped, 432/442 with a sub-unit move do not).
+    pub fn check_water(&self, st: &mut PlayerState, cache: &mut WaterCache) {
+        let (_, maxs) = self.hull(st.ducked);
+        let probes = [1.0, maxs.z * 0.5, self.eye_height(st)];
+        let mut level = 0u8;
+        for (i, h) in probes.iter().enumerate() {
+            let p = st.origin + Vec3::Z * *h;
+            let contents = match cache.0[i] {
+                Some((at, c)) if at.distance_squared(p) <= 1.0 => c,
+                _ => {
+                    let c = self.world.point_contents(p);
+                    cache.0[i] = Some((p, c));
+                    c
+                }
+            };
+            if contents & MASK_WATER != 0 {
+                level = i as u8 + 1;
+            } else {
+                break;
+            }
+        }
+        st.water_level = level;
+    }
+
+    /// Swimming (water level 2+), fitted tick for tick to `move_water_swim`: the wish follows
+    /// the full view direction (jump adds the max speed upwards, no input sinks at 60), speed
+    /// scaled by 0.8; friction on the whole vector, acceleration limited by the speed left.
+    fn water_move(&self, st: &mut PlayerState, cmd: &UserCmd, dt: f32) {
+        let (forward, right) = angle_vectors(cmd.view_angles);
+        let max_speed = self.max_speed(st, cmd);
+        let fmove = cmd.forward_move.clamp(-max_speed, max_speed);
+        let smove = cmd.side_move.clamp(-max_speed, max_speed);
+        let mut wish = forward * fmove + right * smove;
+        if cmd.buttons & buttons::JUMP != 0 {
+            wish.z += max_speed;
+        } else if fmove == 0.0 && smove == 0.0 && cmd.up_move == 0.0 {
+            wish.z -= WATER_SINK_SPEED;
+        } else {
+            // measured (`move_water_swim` tick 382): looking up while swimming forward adds
+            // twice the forward climb, capped at the max speed; looking down adds nothing
+            let climb = (fmove * forward.z * 2.0).clamp(0.0, max_speed);
+            wish.z += cmd.up_move + climb;
+        }
+        let mut wish_speed = wish.length();
+        if wish_speed > max_speed {
+            wish_speed = max_speed;
+        }
+        wish_speed *= WATER_SPEED_SCALE;
+        let speed = st.velocity.length();
+        let mut new_speed = 0.0;
+        if speed > 0.0 {
+            new_speed = speed - dt * speed * self.cfg.friction * st.surface_friction;
+            if new_speed < 0.1 {
+                new_speed = 0.0;
+            }
+            st.velocity *= new_speed / speed;
+        }
+        if wish_speed >= 0.1 {
+            let add = wish_speed - new_speed;
+            if add > 0.0 {
+                let accel = (self.cfg.accelerate * wish_speed * dt * st.surface_friction).min(add);
+                st.velocity += wish.normalize_or_zero() * accel;
+            }
+        }
+        let dest = st.origin + st.velocity * dt;
+        let t = self.trace(st, st.origin, dest);
+        if t.fraction >= 1.0 {
+            st.origin = dest;
+            return;
+        }
+        if st.on_ground {
+            self.step_move(st, dt);
+        } else {
+            self.slide_move(st, dt);
+        }
     }
 
     fn clamp_velocity(&self, st: &mut PlayerState) {
@@ -641,6 +788,8 @@ pub struct Footsteps {
     pub time_ms: f32,
     /// The foot the last step used; steps alternate, jumps included.
     pub right: bool,
+    /// Milliseconds until a held jump in the water voices `Player.Swim` again.
+    pub swim_ms: f32,
 }
 
 impl Footsteps {
@@ -655,7 +804,11 @@ impl Footsteps {
         if self.time_ms > 0.0 {
             self.time_ms = (self.time_ms - tick_ms).max(0.0);
         }
-        if !st.on_ground || self.time_ms > 0.0 {
+        if self.swim_ms > 0.0 {
+            self.swim_ms = (self.swim_ms - tick_ms).max(0.0);
+        }
+        // measured (`move_water_walk`): no steps once the water reaches the waist, even on the bottom
+        if !st.on_ground || st.water_level >= 2 || self.time_ms > 0.0 {
             return None;
         }
         let speed = st.velocity.truncate().length();
@@ -801,6 +954,147 @@ mod tests {
             // low ceiling at 50 units over x in 600..700
             (Vec3::new(600.0, -64.0, 50.0), Vec3::new(700.0, 64.0, 100.0)),
         ])
+    }
+
+    /// Flat ground at 0 with a pool (surface at 0) over a floor at -200 in x 1000..3000.
+    fn pool_world() -> World {
+        const SOLID: i32 = 0x1;
+        const WATER: i32 = 0x20;
+        World::from_boxes_contents(&[
+            (
+                Vec3::new(-4096.0, -4096.0, -64.0),
+                Vec3::new(1000.0, 4096.0, 0.0),
+                SOLID,
+            ),
+            (
+                Vec3::new(1000.0, -4096.0, -264.0),
+                Vec3::new(3000.0, 4096.0, -200.0),
+                SOLID,
+            ),
+            (
+                Vec3::new(1000.0, -4096.0, -200.0),
+                Vec3::new(3000.0, 4096.0, 0.0),
+                WATER,
+            ),
+        ])
+    }
+
+    fn swim(cmd: UserCmd, ticks: usize) -> (PlayerState, Vec<Vec3>) {
+        let world = pool_world();
+        let m = Mover::new(MoveConfig::default(), &world);
+        let mut st = PlayerState {
+            origin: Vec3::new(2000.0, 0.0, -100.0),
+            ..PlayerState::default()
+        };
+        let mut vels = Vec::new();
+        for _ in 0..ticks {
+            m.tick(&mut st, &cmd);
+            vels.push(st.velocity);
+        }
+        (st, vels)
+    }
+
+    #[test]
+    fn water_levels_feet_waist_eyes() {
+        let world = pool_world();
+        let m = Mover::new(MoveConfig::default(), &world);
+        let mut st = PlayerState::default();
+        let mut cache = WaterCache::default();
+        // probes at origin + 1, + 36 (half the hull), + 64 (the eyes) against a surface at 0
+        for (z, level) in [
+            (-0.5, 0),
+            (-1.5, 1),
+            (-30.0, 1),
+            (-37.0, 2),
+            (-60.0, 2),
+            (-65.0, 3),
+        ] {
+            st.origin = Vec3::new(2000.0, 0.0, z);
+            cache = WaterCache::default();
+            m.check_water(&mut st, &mut cache);
+            assert_eq!(st.water_level, level, "z {z}");
+        }
+        // within a tick a probe that moved less than 1 u keeps its last lookup
+        st.origin = Vec3::new(2000.0, 0.0, -30.0);
+        m.check_water(&mut st, &mut cache);
+        assert_eq!(st.water_level, 1);
+        st.origin.z = -30.9;
+        m.check_water(&mut st, &mut cache);
+        assert_eq!(st.water_level, 1);
+        st.origin.z = -37.0;
+        m.check_water(&mut st, &mut cache);
+        assert_eq!(st.water_level, 2);
+    }
+
+    #[test]
+    fn swim_forward_measured_ramp_and_cap() {
+        let cmd = UserCmd {
+            forward_move: 450.0,
+            view_angles: Vec3::ZERO,
+            ..UserCmd::default()
+        };
+        let (_, v) = swim(cmd, 200);
+        // measured on srcds (`move_water_swim`): 24, 45.1, 63.7, 80.1 ... up to 160
+        for (i, want) in [24.0, 45.1, 63.7, 80.1, 94.5].into_iter().enumerate() {
+            assert!(
+                (v[i].x - want).abs() < 0.2,
+                "tick {i}: {} vs {want}",
+                v[i].x
+            );
+        }
+        assert!((v[199].x - 160.0).abs() < 0.5, "cap {}", v[199].x);
+    }
+
+    #[test]
+    fn swim_idle_sinks_jump_rises() {
+        // 60 ticks: the -48 u/s sink is reached in 7 and the floor (100 u down) is not
+        let (_, v) = swim(UserCmd::default(), 60);
+        assert!((v[59].z + 48.0).abs() < 0.5, "sink {}", v[59].z);
+        let cmd = UserCmd {
+            buttons: buttons::JUMP,
+            ..UserCmd::default()
+        };
+        // the held jump sets 100 u/s up every tick, the water acceleration adds a few on top
+        // (with forward input as well the game settles at 100.7, `move_water_swim` 206..209)
+        let (st, v) = swim(cmd, 10);
+        assert!(v[0].z > 100.0, "rise {}", v[0].z);
+        assert!(v[9].z > 100.0 && v[9].z < 110.0, "settled {}", v[9].z);
+        assert!(!st.on_ground);
+    }
+
+    #[test]
+    fn water_sounds_swim_rule() {
+        let mut f = Footsteps::default();
+        let dry = PlayerState::default();
+        let wet = PlayerState {
+            water_level: 1,
+            ..PlayerState::default()
+        };
+        let jump = UserCmd {
+            buttons: buttons::JUMP,
+            ..UserCmd::default()
+        };
+        assert_eq!(
+            f.water_sound(0, &wet, &UserCmd::default()),
+            Some("Player.Swim")
+        );
+        assert_eq!(f.water_sound(1, &wet, &UserCmd::default()), None);
+        assert_eq!(f.water_sound(2, &wet, &jump), Some("Player.Swim"));
+        // held: once a second (1000 ms, 15 ms ticks)
+        for _ in 0..66 {
+            f.before_move(&dry, 200.0, 15.0);
+            assert_eq!(f.water_sound(2, &wet, &jump), None);
+        }
+        f.before_move(&dry, 200.0, 15.0);
+        assert_eq!(f.water_sound(2, &wet, &jump), Some("Player.Swim"));
+        // no footsteps with the water at the waist, even on the bottom
+        let bottom = PlayerState {
+            water_level: 2,
+            on_ground: true,
+            velocity: Vec3::new(160.0, 0.0, 0.0),
+            ..PlayerState::default()
+        };
+        assert_eq!(f.before_move(&bottom, 200.0, 15.0), None);
     }
 
     fn standing(world: &World) -> (Mover<'_>, PlayerState) {

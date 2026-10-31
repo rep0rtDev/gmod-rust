@@ -48,8 +48,9 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
 
 /// `$surfaceprop` of a material (`concrete/concretefloor001a`), through a `patch` shader's
 /// include; `default` when the material or the key is missing, as the engine falls back.
+/// `name#2` (a displacement blend's second material) reads `$surfaceprop2`, then `$surfaceprop`.
 pub fn material_surfaceprop(mount: &gm_content::Mount, material: &str) -> String {
-    fn lookup(mount: &gm_content::Mount, material: &str, depth: u32) -> Option<String> {
+    fn lookup(mount: &gm_content::Mount, material: &str, key: &str, depth: u32) -> Option<String> {
         if depth > 4 {
             return None;
         }
@@ -59,7 +60,7 @@ pub fn material_surfaceprop(mount: &gm_content::Mount, material: &str) -> String
         let root = doc.root()?;
         if root.key.eq_ignore_ascii_case("patch") {
             for block in ["replace", "insert"] {
-                if let Some(v) = root.get(block).and_then(|b| b.get_str("$surfaceprop")) {
+                if let Some(v) = root.get(block).and_then(|b| b.get_str(key)) {
                     return Some(v.to_string());
                 }
             }
@@ -68,13 +69,18 @@ pub fn material_surfaceprop(mount: &gm_content::Mount, material: &str) -> String
                 .replace('\\', "/")
                 .trim_start_matches("materials/")
                 .to_string();
-            return lookup(mount, &include, depth + 1);
+            return lookup(mount, &include, key, depth + 1);
         }
-        root.get_str("$surfaceprop").map(str::to_string)
+        root.get_str(key).map(str::to_string)
     }
-    lookup(mount, material, 0)
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_else(|| "default".to_string())
+    match material.strip_suffix("#2") {
+        Some(m) => {
+            lookup(mount, m, "$surfaceprop2", 0).or_else(|| lookup(mount, m, "$surfaceprop", 0))
+        }
+        None => lookup(mount, material, "$surfaceprop", 0),
+    }
+    .map(|s| s.to_ascii_lowercase())
+    .unwrap_or_else(|| "default".to_string())
 }
 
 /// Footstep scripts of a brush material for `Server::step_loader`: the material's `$surfaceprop`
@@ -85,7 +91,10 @@ pub fn step_sounds(
     material: Option<&str>,
 ) -> Option<gm_server::StepSounds> {
     let prop = match material {
-        Some(m) => material_surfaceprop(mount, m),
+        Some(m) => match m.strip_prefix("surfaceprop:") {
+            Some(p) => p.to_string(),
+            None => material_surfaceprop(mount, m),
+        },
         None => "default".to_string(),
     };
     let pick = |key: &str| {

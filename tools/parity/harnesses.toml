@@ -2615,3 +2615,23 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1000
+
+[[harness]]
+name = "move_water_walk"
+scenario = "move/water_walk"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_water_swim"
+scenario = "move/water_swim"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+[harness.tolerance]
+pos = 0.05
+vel = 0.5

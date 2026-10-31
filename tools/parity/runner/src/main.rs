@@ -372,8 +372,19 @@ fn run_move(scn: &Scenario) -> Result<Value> {
         for _ in 0..seg.ticks {
             let feet = st.origin;
             let (was_on_ground, prev_vz) = (st.on_ground, st.velocity.z);
+            let prev_level = st.water_level;
             let step = steps.before_move(&st, mover.step_max_speed(&cmd), 15.0);
             mover.tick(&mut st, &cmd);
+            if let Some(name) = steps.water_sound(prev_level, &st, &cmd) {
+                let e = scripts.get(name);
+                sounds.push(serde_json::json!({
+                    "t": t,
+                    "name": name,
+                    "waves": e.map(|e| e.waves.iter().map(|w| gm_audio::script::wave_path(w).to_ascii_lowercase()).collect::<Vec<_>>()).unwrap_or_default(),
+                    "alt_waves": [],
+                    "vol": 0.5,
+                }));
+            }
             let jumped = st.boost_pending && was_on_ground;
             let landed = st.on_ground && !was_on_ground;
             let fall_speed = -prev_vz;
@@ -389,13 +400,17 @@ fn run_move(scn: &Scenario) -> Result<Value> {
             }
             let land_step = landed.then(|| steps.on_land(fall_speed)).flatten();
             let land_feet = st.origin;
-            for (feet, step) in step
+            for (feet, step, wade) in step
                 .or_else(|| jumped.then(|| steps.on_jump()))
-                .map(|s| (feet, s))
+                .map(|s| (feet, s, prev_level == 1))
                 .into_iter()
-                .chain(land_step.map(|s| (land_feet, s)))
+                .chain(land_step.map(|s| (land_feet, s, st.water_level == 1)))
             {
-                let material = world.ground_material(feet);
+                let material = if wade {
+                    Some(gm_move::WADE_MATERIAL)
+                } else {
+                    world.ground_material(feet)
+                };
                 let set = gm_dedicated::step_sounds(&mount, &table, material);
                 let (name, other) = match set {
                     Some(s) if step.right => (Some(s.right), Some(s.left)),
@@ -429,6 +444,7 @@ fn run_move(scn: &Scenario) -> Result<Value> {
                 "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
                 "ground": st.on_ground,
                 "ducked": st.ducked,
+                "water": st.water_level,
             }));
             t += 1;
         }

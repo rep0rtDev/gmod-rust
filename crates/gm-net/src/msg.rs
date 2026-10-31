@@ -501,6 +501,7 @@ fn w_state(w: &mut Writer, s: &gm_move::PlayerState) {
         gm_move::MoveType::Walk => 0,
         gm_move::MoveType::Noclip => 1,
     });
+    w.u8(s.water_level);
 }
 
 fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
@@ -526,6 +527,7 @@ fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
         } else {
             gm_move::MoveType::Noclip
         },
+        water_level: r.u8()?,
     })
 }
 

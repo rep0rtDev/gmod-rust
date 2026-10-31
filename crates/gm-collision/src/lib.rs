@@ -44,10 +44,16 @@ struct Brush {
     contents: i32,
 }
 
+/// Displacement triangles are a thin shell this thick (units) below their face.
+const DISP_THICKNESS: f32 = 4.0;
+
 struct DispTri {
     v: [Vec3; 3],
     normal: Vec3,
     dist: f32,
+    /// The triangle is the blend's second material (`$surfaceprop2`): the alpha of its three
+    /// vertices sums past 382.5 (the SDK's builddisp rule, used as the reference).
+    second: bool,
 }
 
 /// One displacement surface: its triangles and bounds. The engine traces displacements as
@@ -57,6 +63,10 @@ struct Disp {
     mins: Vec3,
     maxs: Vec3,
     tris: Vec<DispTri>,
+    /// Index into `World::materials` of the displaced face's material, `u32::MAX` for none,
+    /// and of the same name with `#2` for the triangles of the blend's second material.
+    material: u32,
+    material2: u32,
 }
 
 pub struct World {
@@ -92,6 +102,8 @@ pub struct Trace {
     /// The whole sweep was inside a solid.
     pub all_solid: bool,
     pub contents: i32,
+    /// Index into `World::materials` of the displacement triangle hit, when one was.
+    pub surface: Option<u32>,
 }
 
 impl Trace {
@@ -112,6 +124,7 @@ struct Sweep {
     start_solid: bool,
     all_solid: bool,
     contents: i32,
+    surface: Option<u32>,
     checked: Vec<u32>,
 }
 
@@ -139,7 +152,7 @@ impl World {
             _ => (Vec::new(), 0),
         };
         World {
-            disps: displacements(bsp),
+            disps: displacements(bsp, &mut materials),
             planes: bsp
                 .planes
                 .iter()
@@ -228,10 +241,19 @@ impl World {
 
     /// A world made of axis-aligned solid boxes with no tree (one leaf), for tests and tools.
     pub fn from_boxes(boxes: &[(Vec3, Vec3)]) -> Self {
+        let boxes: Vec<_> = boxes
+            .iter()
+            .map(|(mins, maxs)| (*mins, *maxs, contents::SOLID))
+            .collect();
+        Self::from_boxes_contents(&boxes)
+    }
+
+    /// `from_boxes` with each box's contents (`contents::WATER` for a pool).
+    pub fn from_boxes_contents(boxes: &[(Vec3, Vec3, i32)]) -> Self {
         let mut planes = Vec::new();
         let mut side_planes = Vec::new();
         let mut brushes = Vec::new();
-        for (mins, maxs) in boxes {
+        for (mins, maxs, contents) in boxes {
             let first = side_planes.len() as u32;
             for (n, d) in [
                 (Vec3::X, maxs.x),
@@ -247,7 +269,7 @@ impl World {
             brushes.push(Brush {
                 first_side: first,
                 num_sides: 6,
-                contents: contents::SOLID,
+                contents: *contents,
             });
         }
         let leaf_brushes: Vec<u16> = (0..brushes.len() as u16).collect();
@@ -349,20 +371,66 @@ impl World {
     /// Material of the brush side at `point` facing `normal` (same contact rule as [`is_sky`]):
     /// what a player standing there steps on.
     pub fn surface_material(&self, point: Vec3, normal: Vec3) -> Option<&str> {
-        let si = self.side_at(point, normal)?;
-        let mi = *self.side_material.get(si)?;
+        let mi = match self.side_at(point, normal) {
+            Some(si) => *self.side_material.get(si)?,
+            None => self.disp_at(point, normal)?,
+        };
         self.materials.get(mi as usize).map(String::as_str)
+    }
+
+    /// Material of the displacement triangle `point` rests on: the one facing `normal` whose
+    /// bounds hold the point and whose plane is nearest (a hull on an edge bevel sits up to a
+    /// unit above the plane).
+    fn disp_at(&self, point: Vec3, normal: Vec3) -> Option<u32> {
+        const EPS: f32 = 0.5;
+        let mut best: Option<(f32, u32)> = None;
+        for d in &self.disps {
+            if d.material == u32::MAX
+                || point.cmplt(d.mins - EPS).any()
+                || point.cmpgt(d.maxs + EPS).any()
+            {
+                continue;
+            }
+            for t in &d.tris {
+                let off = (t.normal.dot(point) - t.dist).abs();
+                if t.normal.dot(normal) < 0.99 || off > DISP_THICKNESS {
+                    continue;
+                }
+                let lo = t.v[0].min(t.v[1]).min(t.v[2]) - EPS;
+                let hi = t.v[0].max(t.v[1]).max(t.v[2]) + EPS;
+                if point.cmpge(lo).all()
+                    && point.cmple(hi).all()
+                    && best.is_none_or(|(b, _)| off < b)
+                {
+                    best = Some((off, if t.second { d.material2 } else { d.material }));
+                }
+            }
+        }
+        best.map(|(_, m)| m)
     }
 
     /// Material under a standing player's feet (`origin` at the feet): a short ray down finds
     /// the floor the player rests on, which can be up to a step below the origin (an idle player
     /// on gm_construct's spawn stands 1 u above the floor brush).
     pub fn ground_material(&self, origin: Vec3) -> Option<&str> {
-        let t = self.trace_ray(origin + Vec3::Z, origin - Vec3::Z * 4.0, MASK_PLAYERSOLID);
+        // the player hull's footprint, as the game's ground trace: on a displacement the hull
+        // rests on the triangle its sweep clipped against, not the one under the origin
+        // (`move_water_walk` ticks 68 and 116 on the shore of gm_construct's pond)
+        let (mins, maxs) = (Vec3::new(-16.0, -16.0, 0.0), Vec3::new(16.0, 16.0, 36.0));
+        let t = self.trace_box(
+            origin + Vec3::Z,
+            origin - Vec3::Z * 4.0,
+            mins,
+            maxs,
+            MASK_PLAYERSOLID,
+        );
         if t.fraction >= 1.0 || t.all_solid {
             return None;
         }
-        self.surface_material(t.end, t.normal)
+        match t.surface {
+            Some(m) => self.materials.get(m as usize).map(String::as_str),
+            None => self.surface_material(t.end, t.normal),
+        }
     }
 
     /// Every material the brush sides use.
@@ -414,6 +482,7 @@ impl World {
             start_solid: false,
             all_solid: false,
             contents: 0,
+            surface: None,
             checked: Vec::new(),
         };
         // The engine traces the box centre with symmetric extents; shift for asymmetric boxes.
@@ -441,6 +510,7 @@ impl World {
             start_solid: sw.start_solid,
             all_solid: sw.all_solid,
             contents: sw.contents,
+            surface: sw.surface,
         }
     }
 
@@ -460,14 +530,14 @@ impl World {
                 if tlo.cmpgt(hi).any() || thi.cmplt(lo).any() {
                     continue;
                 }
-                self.trace_tri(sw, t);
+                self.trace_tri(sw, t, if t.second { d.material2 } else { d.material });
             }
         }
     }
 
     /// Sweep against one triangle as a one-sided bevelled convex: its plane, the axis planes of
     /// its bounds and the edge-by-axis bevels, each pushed out by the box extents.
-    fn trace_tri(&self, sw: &mut Sweep, t: &DispTri) {
+    fn trace_tri(&self, sw: &mut Sweep, t: &DispTri, material: u32) {
         let expand = |n: Vec3| {
             if sw.is_point {
                 0.0
@@ -475,19 +545,22 @@ impl World {
                 n.abs().dot(sw.extents)
             }
         };
-        let dist = t.dist + expand(t.normal);
-        let d1 = t.normal.dot(sw.start) - dist;
-        let d2 = t.normal.dot(sw.end) - dist;
-        if d1 <= 0.0 || d2 >= d1 {
-            return;
-        }
-        let mut enter_frac = (d1 - DIST_EPSILON) / (d1 - d2);
+        // the face is one clip plane among the others, not a gate: a hull resting on an edge
+        // bevel sits behind the extended face plane of that triangle (the pond shore of
+        // gm_construct, `move_water_walk` tick 61) and its ground trace must still find it.
+        // A back plane makes the triangle a thin shell so the space below a displacement
+        // stays open
+        let mut enter_frac = -1.0f32;
         let mut leave_frac = 1.0f32;
-        let mut clip_plane = (t.normal, dist);
+        let mut clip_plane = (t.normal, t.dist + expand(t.normal));
+        let mut start_out = false;
         let mut clip = |normal: Vec3, plane_dist: f32| -> bool {
             let dist = plane_dist + expand(normal);
             let d1 = normal.dot(sw.start) - dist;
             let d2 = normal.dot(sw.end) - dist;
+            if d1 > 0.0 {
+                start_out = true;
+            }
             if d1 > 0.0 && d2 >= d1 {
                 return false;
             }
@@ -508,6 +581,9 @@ impl World {
             }
             true
         };
+        if !clip(t.normal, t.dist) || !clip(-t.normal, DISP_THICKNESS - t.dist) {
+            return;
+        }
         for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
             // the bound slab along the face normal of an axis-aligned triangle has no
             // thickness: as a leave plane it meets the enter fraction to float precision and
@@ -538,8 +614,12 @@ impl World {
                 // an edge bevel parallel to the face normal is the face plane again (an edge in
                 // the xy plane crossed with X or Y gives +-Z); as a leave plane it meets the
                 // enter fraction to float precision and rejected point rays through flat
-                // ground on gm_construct (`move_settle_edge`)
-                if m.dot(t.normal).abs() > 0.999 {
+                // ground on gm_construct (`move_settle_edge`). A point needs no edge-by-axis
+                // bevels at all; a box needs even the nearly parallel ones: on the shore of
+                // gm_construct's pond (`move_water_walk` tick 48) a 1 degree bevel is what
+                // keeps the player hull off the extended plane of the next triangle, a
+                // 0.93 u step the game does not take
+                if sw.is_point || m.dot(t.normal).abs() > 0.999_99 {
                     continue;
                 }
                 if m.dot(c - a) > 0.0 {
@@ -550,11 +630,15 @@ impl World {
                 }
             }
         }
-        if enter_frac < leave_frac && enter_frac < sw.fraction {
+        if !start_out {
+            return;
+        }
+        if enter_frac > -1.0 && enter_frac < leave_frac && enter_frac < sw.fraction {
             sw.fraction = enter_frac.max(0.0);
             sw.normal = clip_plane.0;
             sw.plane_dist = clip_plane.1;
             sw.contents = contents::SOLID;
+            sw.surface = (material != u32::MAX).then_some(material);
         }
     }
 
@@ -690,11 +774,12 @@ impl World {
             sw.normal = normal;
             sw.plane_dist = dist;
             sw.contents = b.contents;
+            sw.surface = None;
         }
     }
 }
 
-fn displacements(bsp: &Bsp<'_>) -> Vec<Disp> {
+fn displacements(bsp: &Bsp<'_>, materials: &mut Vec<String>) -> Vec<Disp> {
     use gm_formats::bsp::extra::{build_disp_mesh, disp_infos, disp_verts};
     let (Ok(infos), Ok(verts)) = (disp_infos(bsp), disp_verts(bsp)) else {
         return Vec::new();
@@ -709,6 +794,26 @@ fn displacements(bsp: &Bsp<'_>) -> Vec<Disp> {
         };
         let Some(plane) = bsp.planes.get(face.plane_num as usize) else {
             continue;
+        };
+        let material = usize::try_from(face.tex_info)
+            .ok()
+            .and_then(|i| bsp.tex_infos.get(i))
+            .and_then(|ti| bsp.tex_datas.get(usize::try_from(ti.tex_data).ok()?))
+            .and_then(|td| {
+                bsp.tex_names
+                    .get(usize::try_from(td.name_string_table_id).ok()?)
+            })
+            .map(|n| n.replace('\\', "/").to_ascii_lowercase());
+        let mut intern = |n: String| match materials.iter().position(|m| *m == n) {
+            Some(i) => i as u32,
+            None => {
+                materials.push(n);
+                (materials.len() - 1) as u32
+            }
+        };
+        let (material, material2) = match material {
+            Some(n) => (intern(n.clone()), intern(format!("{n}#2"))),
+            None => (u32::MAX, u32::MAX),
         };
         let mut up = Vec3::from(plane.normal);
         if face.side != 0 {
@@ -731,14 +836,22 @@ fn displacements(bsp: &Bsp<'_>) -> Vec<Disp> {
                 mins = mins.min(p);
                 maxs = maxs.max(p);
             }
+            let alpha: f32 = t.iter().map(|i| mesh.alphas[*i as usize]).sum();
             tris.push(DispTri {
                 v,
                 normal,
                 dist: normal.dot(v[0]),
+                second: alpha > 382.5,
             });
         }
         if !tris.is_empty() {
-            out.push(Disp { mins, maxs, tris });
+            out.push(Disp {
+                mins,
+                maxs,
+                tris,
+                material,
+                material2,
+            });
         }
     }
     out
