@@ -12,6 +12,7 @@ mod newgame;
 mod options;
 mod servers;
 mod settings;
+mod ugc;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -232,6 +233,7 @@ struct MenuCache {
     opt_bars: options::SliderBars,
     /// New Game icon grid max scroll of the last frame.
     ng_max_scroll: f32,
+    ugc_per_page: usize,
 }
 
 struct SpawnMenu {
@@ -717,6 +719,8 @@ struct App {
     newgame: Option<newgame::NewGameState>,
     /// The Servers page while open (`#/servers/`).
     servers: Option<servers::ServersState>,
+    /// The Saves / Dupes / Demos page while open.
+    ugc: Option<ugc::UgcState>,
     /// The map this client runs.
     map_name: String,
     /// Slider being dragged in the Options dialog.
@@ -852,6 +856,8 @@ impl App {
                 (newgame::F32, "Roboto-Regular", 32.0),
                 (servers::F20B, "Roboto-Bold", 20.0),
                 (servers::F13B, "Roboto-Bold", 13.0),
+                (ugc::F14B, "Roboto-Bold", 14.0),
+                (ugc::F48B, "Roboto-Bold", 48.0),
             ] {
                 ui.register_font(&gpu, &self.mount, name, font, size);
             }
@@ -1221,7 +1227,7 @@ impl App {
             &mut layout,
             &ctx,
             true,
-            self.newgame.is_none() && self.servers.is_none(),
+            self.newgame.is_none() && self.servers.is_none() && self.ugc.is_none(),
             &self.lang,
             &opt,
             opt_font,
@@ -1274,7 +1280,97 @@ impl App {
             };
             servers::page(&mut layout, &ctx, sv, &self.lang, &fonts);
         }
+        if let Some(u) = &self.ugc {
+            let f = |n: &str| g.ui.font_metrics(Some(n));
+            let (f11, f13, f14b, f32, f48b) = (
+                f(newgame::F11),
+                f(newgame::F13),
+                f(ugc::F14B),
+                f(newgame::F32),
+                f(ugc::F48B),
+            );
+            let fonts = ugc::Fonts {
+                f11: &f11,
+                f13: &f13,
+                f14b: &f14b,
+                f32: &f32,
+                f48b: &f48b,
+                opt: &opt,
+                opt_font,
+            };
+            let per_page = ugc::page(&mut layout, &ctx, u, &self.lang, &fonts);
+            self.menu_cache.borrow_mut().ugc_per_page = per_page;
+        }
         layout
+    }
+
+    fn open_ugc(&mut self, kind: &'static str) {
+        let mut st = ugc::UgcState::new(kind, &self.lang);
+        st.per_page = self.menu_cache.borrow().ugc_per_page.max(1);
+        if let Some(g) = self.gfx.as_mut() {
+            for p in st.files.iter().filter_map(|f| f.preview.as_deref()) {
+                g.ui.load_image(&g.gpu, &self.mount, p);
+            }
+        }
+        self.ugc = Some(st);
+    }
+
+    fn ugc_click(&mut self) {
+        let Some(g) = self.gfx.as_ref() else { return };
+        let action = self.main_menu_layout(g).hit(self.cursor).cloned();
+        let per_page = self.menu_cache.borrow().ugc_per_page.max(1);
+        let Some(u) = self.ugc.as_mut() else { return };
+        u.per_page = per_page;
+        match action {
+            Some(derma::Action::Menu("back")) => self.ugc = None,
+            Some(derma::Action::Menu("quit" | "disconnect")) => std::process::exit(0),
+            Some(derma::Action::Menu("resume_game")) => {
+                self.main_menu = false;
+                self.ugc = None;
+                self.set_grab(true);
+            }
+            Some(derma::Action::Ugc(a)) => {
+                use ugc::UgcAction as A;
+                match a {
+                    A::Category(c) => {
+                        u.category = c;
+                        u.offset = 0;
+                    }
+                    A::OpenFolder => {
+                        let dir = u.folder();
+                        let _ = std::fs::create_dir_all(&dir);
+                        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+                    }
+                    A::Page(dir) => {
+                        let total = u.total();
+                        let next = u.offset as i64 + dir as i64 * per_page as i64;
+                        if next >= 0 && (next as usize) < total.max(1) {
+                            u.offset = next as usize;
+                        }
+                    }
+                    A::GoToPage(p) => {
+                        let off = (p.max(1) - 1) * per_page;
+                        if off < u.total().max(1) {
+                            u.offset = off;
+                        }
+                    }
+                    A::Primary(name) => match u.kind {
+                        // `gm_load`: the in-process server's console `load <name>`
+                        "saves" | "dupes" => {
+                            self.sim.client.command(Command::Console {
+                                line: format!("load {name}"),
+                            });
+                            self.main_menu = false;
+                            self.ugc = None;
+                            self.set_grab(true);
+                        }
+                        _ => {}
+                    },
+                    A::Delete(name) => u.delete(&name, &self.lang),
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Relaunches this client with the arguments rebuilt: the positional map replaced (or
@@ -1675,6 +1771,10 @@ impl App {
             self.servers_click();
             return;
         }
+        if self.ugc.is_some() {
+            self.ugc_click();
+            return;
+        }
         let Some(g) = self.gfx.as_ref() else { return };
         let action = self.main_menu_layout(g).hit(self.cursor).cloned();
         match action {
@@ -1685,6 +1785,7 @@ impl App {
             Some(derma::Action::Menu("quit" | "disconnect")) => std::process::exit(0),
             Some(derma::Action::Menu("options")) => self.open_options(),
             Some(derma::Action::Menu("newgame")) => self.open_newgame(),
+            Some(derma::Action::Menu(k @ ("saves" | "dupes" | "demos"))) => self.open_ugc(k),
             Some(derma::Action::Menu("servers")) => {
                 let mut sv = servers::ServersState::new();
                 sv.refresh();
@@ -1739,6 +1840,7 @@ impl App {
                 | derma::Action::Opt(_)
                 | derma::Action::NewGame(_)
                 | derma::Action::Servers(_)
+                | derma::Action::Ugc(_)
                 | derma::Action::Nothing,
             )
             | None => {}
@@ -3019,6 +3121,7 @@ impl App {
                 rows,
                 opt_bars: Vec::new(),
                 ng_max_scroll: 0.0,
+                ugc_per_page: 0,
             };
             items.extend(layout.items);
             return items;
@@ -3640,6 +3743,7 @@ impl ApplicationHandler for App {
                         KeyCode::Escape if self.options.is_some() => self.options = None,
                         KeyCode::Escape if self.newgame.is_some() => self.newgame = None,
                         KeyCode::Escape if self.servers.is_some() => self.servers = None,
+                        KeyCode::Escape if self.ugc.is_some() => self.ugc = None,
                         KeyCode::Escape if self.main_menu => {
                             self.main_menu = false;
                             self.set_grab(true);
@@ -3962,6 +4066,7 @@ fn main() -> Result<()> {
     }));
     let mut net = ServerNet::new(&map, spawn);
     net.admins.extend(1..=16);
+    net.saves_dir = Some(settings::home_dir().join("saves"));
     // `--addon <dir|file.gmr>` (repeatable): addons of the in-process server; their client realm
     // reaches the client realm below over the loopback like from a dedicated server
     let mut rt = gm_script::Runtime::new();
@@ -4085,6 +4190,7 @@ fn main() -> Result<()> {
         options: None,
         newgame: None,
         servers: None,
+        ugc: None,
         map_name: map.clone(),
         opt_drag: None,
         opt_modes: Vec::new(),

@@ -380,6 +380,8 @@ pub enum Action {
     NewGame(crate::newgame::NgAction),
     /// A Servers page control.
     Servers(crate::servers::SvAction),
+    /// A Saves / Dupes / Demos page control.
+    Ugc(crate::ugc::UgcAction),
     Nothing,
 }
 
@@ -1279,8 +1281,11 @@ pub const MENU_FONT_23: &str = "MenuOptions23";
 pub const MENU_FONT_16: &str = "MenuOptions16";
 pub const NAV_FONT: &str = "MenuNav";
 /// `html/img` and gamemode images the menu draws (raw PNG paths).
-pub const MENU_IMAGES: [&str; 15] = [
+pub const MENU_IMAGES: [&str; 18] = [
     "html/img/gradient.png",
+    "html/img/arrow_left.png",
+    "html/img/arrow_right.png",
+    "html/img/pagination_page.png",
     "html/img/notfavourite.png",
     "html/img/bg_arrow_left.png",
     "html/img/back_to_main_menu.png",

@@ -311,3 +311,35 @@ in the 640x480 proportional space of the sheet page.
   clicked twice or Join Server relaunches the client with `--connect host:port` and puts
   the server at the top of History. No sort / filter column controls, no flags / rank /
   password icons yet (our `ServerInfo` has none of those).
+
+## Saves / Dupes / Demos pages (`template/{saves,dupes,demos}.html`, `css/Workshop.css`, `js/menu/WorkshopFiles.js`, `lua/menu/menu_{save,dupe,demo}.lua`)
+
+- Options column: `h2` Saves / Dupes / Demos, then `MyCategories` (local = "My Saves",
+  subscribed_ugc), `Categories` (trending, popular, latest), `CategoriesSecondary`
+  (followed, favorite, friends, mine), each group followed by a blank line, then "Open
+  ... Folder"; labels `saves.<cat>`, subtitles `saves.<cat>.subtitle`.
+- `div.ugc_content`: left 320 (200 at <= 1024), top / bottom / right 16, padding 16 (top 0);
+  `H1.menuheader` + small; `workshopcontainer` at top 64: white, radius 3, padding 8.
+- Grid (`RefreshDimensions`): w = max(180, container width), h = max(180, height - 48),
+  iconswide = floor(w / 180) <= 6, iconstall = floor(h / 180) <= 4, PerPage = wide * tall,
+  IconWidth = floor(w / wide) - 26, IconHeight = floor(h / tall) - 26, IconMax = max + 1 (the
+  preview is an IconMax square centred in the icon, overflow hidden); `workshopicon` margin
+  10, bg #666, 1 px shadow; `name` bar white .99 14 px bold letter-spacing -1 (label padding
+  2 0 4 2, ellipsis); `author` / `votes` 11 px bold bottom corners (slide out on hover);
+  `description` overlay rgba(70,180,250,.95) 11 px white padding 32 8 on hover; `controls`
+  slide up on hover (bottom -32 -> 0, 100 ms): `control` #F5FF80 11 px padding 2 4 radius 2
+  height 15 shadow 1 1 2 black, hover white, disabled #bfbfbf; local files: publish / delete
+  left, load (saves) / spawn (dupes) / play (demos) right.
+- `workshopmessage` 48 px bolder #999 centred margin 64 (`saves.none` "No saves found!",
+  `saves.loading`); `pagination` bottom 4 white radius 4 padding 4 max 500 wide, back / next
+  48x36 #2387ed (hover #4f9ded) with `img/arrow_left.png` / `arrow_right.png`, page dots
+  `img/pagination_page.png` (opacity .5, active 1), `pagenum` 14 px.
+- `menu_save.lua`: `saves/*.gms` newest first, preview `saves/<name>.jpg`, description
+  `saves.local_description`; load = `gm_load <file>` (dupes: `dupes/*.dupe`, demos:
+  `demos/*.dem`, `playdemo`).
+- Ours (`ugc.rs`): files under `~/.gmod-rust/{saves,dupes}/*.rdup` (our JSON save format) and
+  `demos/*.dem` (nothing writes demos yet), preview `<name>.png` beside the file (absolute
+  paths load through `material::load_texture`); load sends the in-process server's console
+  `load <name>` (the local player is an admin there, `saves_dir` = `~/.gmod-rust/saves`);
+  delete removes the file and its preview; Workshop categories show a message; no saving
+  from the menu yet (the game saves from the spawnmenu Saves tab).

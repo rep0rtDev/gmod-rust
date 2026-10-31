@@ -165,6 +165,10 @@ pub fn load_png(bytes: &[u8]) -> Result<Rgba> {
 
 /// Decode a VTF, picking the largest mip whose longer side is at most `max_side`.
 pub fn load_texture(mount: &Mount, name: &str, max_side: u32) -> Result<Rgba> {
+    // an absolute path (a save's preview under the user's home) is read from disk
+    if std::path::Path::new(name).is_absolute() {
+        return load_png(&std::fs::read(name)?);
+    }
     let base = name.trim_start_matches('/');
     let path = format!("materials/{base}.vtf");
     let bytes = match mount.read(&path) {
