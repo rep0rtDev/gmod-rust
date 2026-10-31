@@ -238,8 +238,6 @@ struct ContextMenu {
     y: f32,
 }
 
-const CONTEXT_MENU_W: f32 = 180.0;
-
 /// The tool settings panel inside the spawn menu: (x, y, width, first row y, row height).
 /// The value a slider at fraction `t` of its track shows: whole numbers when the range is wider
 /// than 20, else two decimals.
@@ -817,6 +815,11 @@ impl App {
                 }
             }
         }
+        for (_, _, icon, _) in derma::PROPERTIES {
+            if !icon.is_empty() {
+                ui.load_image(&gpu, &self.mount, icon);
+            }
+        }
         {
             let m = ui.font_metrics(None);
             gm_script::set_font_metrics(
@@ -887,6 +890,10 @@ impl App {
             self.spawnlists = derma::load_spawnlists(&self.mount);
             self.lang =
                 derma::load_properties(&self.mount, "resource/localization/en/tool.properties");
+            self.lang.extend(derma::load_properties(
+                &self.mount,
+                "resource/localization/en/context.properties",
+            ));
         }
         // the server's addon spawnlists follow the client's defaults
         let lists = &self.sim.client.world.spawn_lists;
@@ -919,12 +926,13 @@ impl App {
     /// The context-menu entry under the cursor.
     fn context_row(&self) -> Option<String> {
         let (ctx, g) = (self.context.as_ref()?, self.gfx.as_ref()?);
-        let lh = g.ui.line_height();
-        let (cx, cy) = self.cursor;
-        if cx < ctx.x || cx > ctx.x + CONTEXT_MENU_W || cy < ctx.y {
-            return None;
-        }
-        let row = ((cy - ctx.y) / lh) as usize;
+        let font = g.ui.font_metrics(Some(derma::FONT));
+        let labels: Vec<String> = ctx
+            .names
+            .iter()
+            .map(|n| derma::property_label(&self.lang, n))
+            .collect();
+        let row = derma::dmenu_row(&font, ctx.x, ctx.y, &labels, self.cursor)?;
         ctx.names.get(row).cloned()
     }
 
@@ -940,7 +948,9 @@ impl App {
 
     /// The panel row under the cursor and the cursor's 0..1 position across its control.
     fn panel_hit(&self) -> Option<(usize, f32)> {
-        self.menu.as_ref()?;
+        if self.menu.is_none() && !self.context_held {
+            return None;
+        }
         let cache = self.menu_cache.borrow();
         let row = cache.rows.iter().position(|r| r.contains(self.cursor))?;
         Some((row, cache.rows[row].fraction(self.cursor)))
@@ -1073,7 +1083,7 @@ impl App {
     /// the cursor may leave the panel).
     fn panel_drag_move(&mut self) {
         let Some(row) = self.panel_drag else { return };
-        if self.menu.is_none() {
+        if self.menu.is_none() && !self.context_held {
             self.panel_drag = None;
             return;
         }
@@ -1172,7 +1182,7 @@ impl App {
                 self.tool = t.to_string();
                 self.console.log(format!("tool {t}"));
             }
-            Some(derma::Action::Nothing) | None => {}
+            Some(derma::Action::Property(_) | derma::Action::Nothing) | None => {}
         }
     }
 
@@ -1697,6 +1707,8 @@ impl App {
         if self.context_held {
             if let Some((ent, names)) = self.sim.client.properties.take() {
                 if ent != 0 && !names.is_empty() {
+                    let mut names = names;
+                    derma::sort_properties(&mut names);
                     self.context = Some(ContextMenu {
                         names,
                         x: self.cursor.0,
@@ -2235,42 +2247,74 @@ impl App {
         let lh = g.ui.line_height();
         let mut items = Vec::new();
         let white = [0.92, 0.92, 0.92, 1.0];
-        if let Some(ctx) = &self.context {
-            let hover = self.context_row();
-            items.push(UiItem::Rect {
-                x: ctx.x,
-                y: ctx.y,
-                w: CONTEXT_MENU_W,
-                h: lh * ctx.names.len() as f32 + 4.0,
-                color: [0.05, 0.05, 0.07, 0.95],
-            });
-            for (i, name) in ctx.names.iter().enumerate() {
-                let y = ctx.y + 2.0 + i as f32 * lh;
-                if hover.as_deref() == Some(name.as_str()) {
-                    items.push(UiItem::Rect {
-                        x: ctx.x + 2.0,
-                        y,
-                        w: CONTEXT_MENU_W - 4.0,
-                        h: lh,
-                        color: [1.0, 1.0, 1.0, 0.15],
-                    });
-                }
-                items.push(UiItem::Text {
-                    font: None,
-                    x: ctx.x + 8.0,
-                    y,
-                    text: name.clone(),
-                    color: white,
-                });
+        if self.context_held || self.context.is_some() {
+            // contextmenu.lua: the tool's ControlPanel moves into a 320 wide canvas bottom-right
+            let font = g.ui.font_metrics(Some(derma::FONT));
+            let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+            let has_image = |name: &str| g.ui.has_image(name);
+            let dctx = derma::Ctx {
+                w,
+                h,
+                cursor: self.cursor,
+                font: &font,
+                bold: &bold,
+                lists: &self.spawnlists,
+                tool: &self.tool,
+                has_image: &has_image,
+            };
+            let mut layout = derma::Layout::default();
+            if let (Some(schema), true) = (self.panel_schema(), self.menu.is_none()) {
+                let rect = derma::context_canvas(&mut layout, &dctx, &schema);
+                let set = self.tool_settings.get(&self.tool);
+                let value_of = |name: &str| {
+                    set.and_then(|m| m.get(name)).cloned().unwrap_or_else(|| {
+                        schema
+                            .iter()
+                            .find(|s| s.name == name)
+                            .map(|s| s.default.clone())
+                            .unwrap_or_default()
+                    })
+                };
+                let label_of = |name: &str| derma::setting_label(&self.lang, &self.tool, name);
+                let focused = self.panel_text.as_ref().map(|(r, v)| (*r, v.as_str()));
+                let rows = derma::controls(
+                    &mut layout,
+                    &dctx,
+                    rect,
+                    &schema,
+                    &value_of,
+                    focused,
+                    &label_of,
+                );
+                self.menu_cache.borrow_mut().rows = rows;
             }
-        } else if self.context_held {
-            items.push(UiItem::Text {
-                font: None,
-                x: self.cursor.0 + 12.0,
-                y: self.cursor.1 + 12.0,
-                text: "right-click a prop".into(),
-                color: [0.85, 0.85, 0.85, 1.0],
-            });
+            if let Some(ctx) = &self.context {
+                let labels: Vec<String> = ctx
+                    .names
+                    .iter()
+                    .map(|n| derma::property_label(&self.lang, n))
+                    .collect();
+                let icons: Vec<&str> = ctx
+                    .names
+                    .iter()
+                    .map(|n| {
+                        derma::PROPERTIES
+                            .iter()
+                            .find(|p| p.0 == n)
+                            .map_or("", |p| p.2)
+                    })
+                    .collect();
+                derma::dmenu(
+                    &mut layout,
+                    &dctx,
+                    ctx.x,
+                    ctx.y,
+                    &ctx.names,
+                    &labels,
+                    &icons,
+                );
+            }
+            items.extend(layout.items);
         }
         if let Some(menu) = &self.menu {
             let font = g.ui.font_metrics(Some(derma::FONT));
@@ -3020,6 +3064,9 @@ impl ApplicationHandler for App {
                                 self.sim.client.command(Command::PropertyList);
                             }
                             MouseButton::Left => {
+                                if self.panel_click() {
+                                    return;
+                                }
                                 if let Some(name) = self.context_row() {
                                     self.sim.client.command(Command::Property { name });
                                     self.context = None;

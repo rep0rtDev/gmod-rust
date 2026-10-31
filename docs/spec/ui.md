@@ -127,3 +127,17 @@ Everything here is read from the installed client (`garrysmod/lua`, `sourceengin
 - Wire: the client sends its current values with every `ToolClick` (`tool <name> <key> <value>`
   pairs); the server applies them to the sandbox's one `ToolSettings` table before the stool runs
   (not per player yet; the measured harnesses send none and keep the sandbox defaults).
+
+## Context menu (`contextmenu.lua`, `properties.lua`, `dmenu.lua`)
+
+- Holding C shows the cursor; the active tool's ControlPanel moves into a 320 wide
+  DCategoryList at `(ScrW - 320 - 50, ScrH - 50 - tall)`, `tall = min(panel + 10, ScrH * 0.8)`
+  (CategoryList.Outer, the DForm header kept). Opening the spawn menu closes it.
+- Right click on an entity: `properties.OpenEntityMenu` builds a DMenu of the `properties.Add`
+  entries that `Filter` accepts, ordered by `Order` (persist 400, edit bones 500, bodygroups 600,
+  skin 601, keep upright 900, ignite/extinguish 999, remove 1000, gravity 1001, drive 1100,
+  collisions 1500, statue 1501, biggify 1799 / smallify 1800, motion sensor 2500, edit
+  properties 90001); labels `#<MenuLabel>` from `resource/localization/en/context.properties`,
+  icons icon16 (`MenuIcon`). DMenu: `MenuBG`, min width 100, options 22 tall with text inset 32
+  (icon at 4), width = widest `32 + text + 30`, hover `MenuBG_Hover`, text Button.Normal 82 /
+  hover 46 114 178. Not yet: skins as a `Skin` submenu (we list `skin N` flat), submenu arrows.

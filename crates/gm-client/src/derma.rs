@@ -88,6 +88,8 @@ pub const SCROLL_BAR_V: Piece = border(400, 208, 15, 127, 4);
 pub const CHECKBOX_CHECKED: Piece = normal(448, 32, 15, 15);
 pub const SLIDER_KNOB: Piece = normal(416, 32, 15, 15);
 pub const TEXTBOX_FOCUS: Piece = border(0, 172, 127, 21, 4);
+pub const MENU_BG: Piece = border(128, 192, 127, 63, 8);
+pub const MENU_BG_HOVER: Piece = border(128, 256, 127, 31, 8);
 
 pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> [f32; 4] {
     [
@@ -121,6 +123,9 @@ const LABEL_DARK: [f32; 4] = rgba(10, 10, 10, 255);
 const TEXT_ENTRY: [f32; 4] = rgba(20, 20, 20, 255);
 /// `SKIN.colNumSliderNotch`.
 const NOTCH: [f32; 4] = rgba(0, 0, 0, 100);
+/// `Colours.Button.Normal` / `Hover` (DButton and DMenuOption text).
+const BUTTON_TEXT: [f32; 4] = rgba(82, 82, 82, 255);
+const BUTTON_TEXT_HOVER: [f32; 4] = rgba(46, 114, 178, 255);
 /// SpawnIcon under construction (`vgui/spawnmenu/generating`).
 pub const GENERATING_MAT: &str = "vgui/spawnmenu/generating";
 
@@ -365,6 +370,8 @@ pub enum Action {
     Spawn(String),
     Category(usize),
     Tool(&'static str),
+    /// A `properties.Add` entry of the right-click menu, by its name.
+    Property(String),
     Nothing,
 }
 
@@ -1040,4 +1047,221 @@ pub fn setting_label(lang: &BTreeMap<String, String>, tool: &str, name: &str) ->
     .iter()
     .find_map(|k| lang.get(k).cloned())
     .unwrap_or_else(|| title_case(&key.replace('_', " ")))
+}
+
+/// `lua/autorun/properties/*.lua`: (name, MenuLabel key in context.properties, MenuIcon, Order).
+pub const PROPERTIES: [(&str, &str, &str, u32); 20] = [
+    ("persist", "makepersistent", "icon16/link.png", 400),
+    (
+        "persist_end",
+        "stoppersisting",
+        "icon16/link_break.png",
+        400,
+    ),
+    ("bone_manipulate", "edit_bones", "icon16/vector.png", 500),
+    (
+        "bone_manipulate_end",
+        "stop_editing_bones",
+        "icon16/vector_delete.png",
+        500,
+    ),
+    ("bodygroups", "bodygroups", "icon16/link_edit.png", 600),
+    ("skin", "skin", "icon16/picture_edit.png", 601),
+    ("keepupright", "keepupright", "icon16/arrow_up.png", 900),
+    (
+        "keepupright_stop",
+        "keepupright_stop",
+        "icon16/arrow_rotate_clockwise.png",
+        900,
+    ),
+    ("ignite", "ignite", "icon16/fire.png", 999),
+    ("extinguish", "extinguish", "icon16/water.png", 999),
+    ("remove", "remove", "icon16/delete.png", 1000),
+    ("gravity", "gravity", "", 1001),
+    ("drive", "drive", "icon16/joystick.png", 1100),
+    (
+        "collision_off",
+        "collision_off",
+        "icon16/collision_off.png",
+        1500,
+    ),
+    (
+        "collision_on",
+        "collision_on",
+        "icon16/collision_on.png",
+        1500,
+    ),
+    ("statue", "makestatue", "icon16/lock.png", 1501),
+    ("statue_stop", "unstatue", "icon16/lock_open.png", 1501),
+    (
+        "npc_bigger",
+        "biggify",
+        "icon16/magnifier_zoom_in.png",
+        1799,
+    ),
+    (
+        "npc_smaller",
+        "smallify",
+        "icon16/magifier_zoom_out.png",
+        1800,
+    ),
+    ("editentity", "entedit", "icon16/pencil.png", 90001),
+];
+
+fn property(name: &str) -> Option<&'static (&'static str, &'static str, &'static str, u32)> {
+    PROPERTIES.iter().find(|p| p.0 == name)
+}
+
+/// The right-click menu's entries in the game's `Order`, unknown names last as they came.
+pub fn sort_properties(names: &mut [String]) {
+    names.sort_by_key(|n| property(n).map_or(u32::MAX, |p| p.3));
+}
+
+pub fn property_label(lang: &BTreeMap<String, String>, name: &str) -> String {
+    let key = property(name).map_or(name, |p| p.1);
+    lang.get(key)
+        .cloned()
+        .unwrap_or_else(|| title_case(&name.replace('_', " ")))
+}
+
+const MENU_OPTION_H: f32 = 22.0;
+
+/// `DMenu` width for these labels: at least the minimum 100, options are `32 + text + 30`.
+pub fn dmenu_width(font: &FontMetrics, labels: &[String]) -> f32 {
+    labels
+        .iter()
+        .map(|l| (32.0 + font.text_width(l) + 30.0).ceil())
+        .fold(100.0_f32, f32::max)
+}
+
+/// The option under the cursor of a DMenu at (x, y).
+pub fn dmenu_row(
+    font: &FontMetrics,
+    x: f32,
+    y: f32,
+    labels: &[String],
+    c: (f32, f32),
+) -> Option<usize> {
+    let w = dmenu_width(font, labels);
+    if !inside(c, x, y, w, MENU_OPTION_H * labels.len() as f32) {
+        return None;
+    }
+    Some(((c.1 - y) / MENU_OPTION_H) as usize)
+}
+
+/// A `DMenu` of `DMenuOption`s (22 tall, icon at 4, text inset 32): MenuBG, MenuBG_Hover,
+/// text in the Button colours.
+pub fn dmenu(
+    out: &mut Layout,
+    ctx: &Ctx,
+    x: f32,
+    y: f32,
+    names: &[String],
+    labels: &[String],
+    icons: &[&str],
+) {
+    let w = dmenu_width(ctx.font, labels);
+    nine(
+        &mut out.items,
+        &MENU_BG,
+        x,
+        y,
+        w,
+        MENU_OPTION_H * names.len() as f32,
+        WHITE,
+    );
+    for (i, ((name, label), icon)) in names.iter().zip(labels).zip(icons).enumerate() {
+        let oy = y + i as f32 * MENU_OPTION_H;
+        let hovered = inside(ctx.cursor, x, oy, w, MENU_OPTION_H);
+        if hovered {
+            nine(
+                &mut out.items,
+                &MENU_BG_HOVER,
+                x,
+                oy,
+                w,
+                MENU_OPTION_H,
+                WHITE,
+            );
+        }
+        if !icon.is_empty() && (ctx.has_image)(icon) {
+            image(&mut out.items, icon, x + 4.0, oy + 3.0, 16.0, 16.0);
+        }
+        let color = if hovered {
+            BUTTON_TEXT_HOVER
+        } else {
+            BUTTON_TEXT
+        };
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            x + 32.0,
+            oy,
+            MENU_OPTION_H,
+            label,
+            color,
+        );
+        out.hits.push(Hit {
+            x,
+            y: oy,
+            w,
+            h: MENU_OPTION_H,
+            action: Action::Property(name.clone()),
+        });
+    }
+}
+
+/// The DForm's height for a schema: header 20 + each item's 10 px top padding and height.
+pub fn controls_height(schema: &[gm_server::ToolSetting]) -> f32 {
+    20.0 + schema
+        .iter()
+        .map(|s| {
+            10.0 + match s.kind {
+                gm_server::ToolSettingKind::Number => 32.0,
+                gm_server::ToolSettingKind::Bool => 16.0,
+                gm_server::ToolSettingKind::Text => 20.0,
+            }
+        })
+        .sum::<f32>()
+}
+
+/// `ContextMenu:PerformLayout`: the active ControlPanel in a 320 wide DCategoryList at
+/// `(ScrW - 320 - 50, ScrH - 50 - tall)`, `tall = min(panel + 10, ScrH * 0.8)`; returns the
+/// panel rect inside it.
+pub fn context_canvas(
+    out: &mut Layout,
+    ctx: &Ctx,
+    schema: &[gm_server::ToolSetting],
+) -> (f32, f32, f32, f32) {
+    let tall = (controls_height(schema) + 10.0).min(ctx.h * 0.8).round();
+    let (x, y) = (ctx.w - 320.0 - 50.0, ctx.h - 50.0 - tall);
+    nine(&mut out.items, &CATEGORY_OUTER, x, y, 320.0, tall, WHITE);
+    // the ControlPanel (a DForm) keeps its header with the tool's name
+    let label = TOOL_CATEGORIES
+        .iter()
+        .flat_map(|(_, l)| l.iter())
+        .find(|(n, _)| *n == ctx.tool)
+        .map_or(ctx.tool, |(_, l)| l);
+    nine(&mut out.items, &CATEGORY_INNER_H, x, y, 320.0, 20.0, WHITE);
+    nine(
+        &mut out.items,
+        &CATEGORY_INNER,
+        x,
+        y + 20.0,
+        320.0,
+        tall - 30.0,
+        WHITE,
+    );
+    text(
+        &mut out.items,
+        FONT_BOLD,
+        ctx.bold,
+        x + 4.0,
+        y,
+        20.0,
+        label,
+        CATEGORY_HEADER_TEXT,
+    );
+    (x, y, 320.0, tall - 10.0)
 }
