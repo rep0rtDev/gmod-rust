@@ -253,3 +253,30 @@ in the 640x480 proportional space of the sheet page.
   fps_max (frame limiter), resolution / display mode (window), hud_fastswitch is stored.
   Not done: editable TextEntry values, gamma / advanced video / crosshair / spray dialogs,
   voice meters, sound quality / speakers / captions have no effect, Verdana is Roboto 13.
+
+## New Game page (`template/newgame.html`, `css/menu/NewGame.css`, `lua/menu/getmaps.lua`)
+
+- `.maplist`: white, left 16 / top 16 / right 256 / bottom 16, padding 10. `.controls` 190
+  wide: category rows 26 tall, bg #ddd (hover #ccc, active #9cf), 11 px bold #555 (#333
+  active) at 6,6, count badge white / #aaa 10 px (padding 2 5, margin 5), gap 5; search input
+  32 tall at the bottom. `.scrollable` at left 200: header `LI:first-child` padding 5, 32 px
+  #444 + `small` 14 px #999 "N maps"; map cells 128 px thumbnails (`asset://mapimage/<map>`
+  = `maps/thumb/<map>.png`, `noicon.png` fallback), li 128 wide + padding 6 + margin 2, name
+  10 px centred, selected bg #97c5ff, favourite toggle 16 px at top 8 / right 8 on hover
+  (`img/favourite*.png`).
+- `gamesettings`: white, right 16 / top 16 / width 226 / bottom 16. Max players dropdown at
+  margin 10: 28 tall green (#5C5 to #22bd22), bold white, caret; list 1/2/4/8/16/32/64/128
+  (`maxplayers_N`), items padding 4 15 at 13 px, hover #acf. `.scrollable` top 32 bottom 80
+  margin 10: labels 11 px #666; MaxPlayers > 1 shows Server Name (text), Local Server,
+  Peer-To-Peer (+ friends only); then the gamemode `settings` of `sandbox.txt` (Text /
+  Numeric 44 px right-floated input / CheckBox; `singleplayer 1` ones always). Start Game:
+  `.btn-primary` #08C to #05C, 20 px white, padding 10, margin 10, left/right 8.
+- `getmaps.lua`: `maps/*.bsp` of all mounts, `background*` / `devtest` / `sdk_` / `test_` /
+  `vst_` and a few names ignored, category by full name or `prefix_` (`gm_` = Sandbox, `cs_`
+  ... = Counter-Strike, `d1_`.. = Half-Life 2, ...), else Other; order Favourites, Sandbox,
+  then by name. `StartGame`: `disconnect`, `maxplayers N`, the settings as console
+  commands, `map <name>`.
+- Ours: the page lives in `newgame.rs`; favourites in `~/.gmod-rust/cfg/favmaps.txt`; Start
+  Game writes `~/.gmod-rust/cfg/server.cfg` (the commands the game would run) and relaunches
+  the client on the map; the client's own server applies `server.cfg` through
+  `Server::set_cvar` at start. maxplayers / hostname / sv_lan / p2p are stored only.

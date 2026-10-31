@@ -8,6 +8,7 @@
 //! console lines (`status`, `cvar`, `save`, `load`, ...).
 
 mod derma;
+mod newgame;
 mod options;
 mod settings;
 
@@ -228,6 +229,8 @@ struct MenuCache {
     rows: Vec<derma::ControlRow>,
     /// Options dialog slider bars `(cvar, x0, x1)` of the last frame.
     opt_bars: options::SliderBars,
+    /// New Game icon grid max scroll of the last frame.
+    ng_max_scroll: f32,
 }
 
 struct SpawnMenu {
@@ -709,6 +712,10 @@ struct App {
     settings: settings::Settings,
     /// The Options dialog while open.
     options: Option<options::OptionsState>,
+    /// The main menu's New Game page while open (`#/newgame/`).
+    newgame: Option<newgame::NewGameState>,
+    /// The map this client runs.
+    map_name: String,
     /// Slider being dragged in the Options dialog.
     opt_drag: Option<&'static str>,
     /// Monitor modes for the Video page.
@@ -831,6 +838,18 @@ impl App {
             ui.register_font(&gpu, &self.mount, options::FONT_BOLD, "Roboto-Bold", 13.0);
             ui.register_font(&gpu, &self.mount, options::FONT_LARGE, "Roboto-Bold", 15.0);
             ui.load_image(&gpu, &self.mount, "vgui/logos/garrysmod.png");
+            // newgame.html: body 12, labels 11 / 11 bold, category header 32 + 14, button 20
+            for (name, font, size) in [
+                (newgame::F10, "Roboto-Regular", 10.0),
+                (newgame::F11, "Roboto-Regular", 11.0),
+                (newgame::F11B, "Roboto-Bold", 11.0),
+                (newgame::F13, "Roboto-Regular", 13.0),
+                (newgame::F14, "Roboto-Regular", 14.0),
+                (newgame::F20, "Roboto-Regular", 20.0),
+                (newgame::F32, "Roboto-Regular", 32.0),
+            ] {
+                ui.register_font(&gpu, &self.mount, name, font, size);
+            }
             for name in derma::MENU_IMAGES {
                 ui.load_image(&gpu, &self.mount, name);
             }
@@ -920,12 +939,6 @@ impl App {
         self.add_hint("EditingSpawnlists", 5);
         if self.spawnlists.is_empty() {
             self.spawnlists = derma::load_spawnlists(&self.mount);
-            self.lang =
-                derma::load_properties(&self.mount, "resource/localization/en/tool.properties");
-            self.lang.extend(derma::load_properties(
-                &self.mount,
-                "resource/localization/en/context.properties",
-            ));
         }
         // the server's addon spawnlists follow the client's defaults
         let lists = &self.sim.client.world.spawn_lists;
@@ -1199,8 +1212,171 @@ impl App {
             has_image: &has_image,
         };
         let mut layout = derma::Layout::default();
-        derma::main_menu(&mut layout, &ctx, true, &self.lang, &opt, opt_font, &nav);
+        derma::main_menu(
+            &mut layout,
+            &ctx,
+            true,
+            self.newgame.is_none(),
+            &self.lang,
+            &opt,
+            opt_font,
+            &nav,
+        );
+        if let Some(ng) = &self.newgame {
+            let f = |n: &str| g.ui.font_metrics(Some(n));
+            let (f10, f11, f11b, f12, f13, f14, f20, f32) = (
+                f(newgame::F10),
+                f(newgame::F11),
+                f(newgame::F11B),
+                f(newgame::F12),
+                f(newgame::F13),
+                f(newgame::F14),
+                f(newgame::F20),
+                f(newgame::F32),
+            );
+            let fonts = newgame::Fonts {
+                f10: &f10,
+                f11: &f11,
+                f11b: &f11b,
+                f12: &f12,
+                f13: &f13,
+                f14: &f14,
+                f20: &f20,
+                f32: &f32,
+            };
+            let max = newgame::page(&mut layout, &ctx, ng, &self.lang, &fonts);
+            self.menu_cache.borrow_mut().ng_max_scroll = max;
+        }
         layout
+    }
+
+    fn open_newgame(&mut self) {
+        let hostname = "Garry's Mod".to_string();
+        let st = newgame::NewGameState::new(&self.mount, &self.map_name, &hostname);
+        if let Some(g) = &mut self.gfx {
+            for (_, maps) in &st.categories {
+                for m in maps {
+                    g.ui.load_image(&g.gpu, &self.mount, &format!("maps/thumb/{m}.png"));
+                }
+            }
+        }
+        self.newgame = Some(st);
+    }
+
+    /// `StartGame`: the settings go to `cfg/server.cfg` for the client's own server, then
+    /// the client relaunches on the map (the game disconnects and loads it the same way).
+    fn start_game(&mut self) {
+        let Some(ng) = &self.newgame else { return };
+        let Some(map) = ng.selected.clone() else {
+            return;
+        };
+        let cfg = settings::home_dir().join("cfg").join("server.cfg");
+        if let Some(dir) = cfg.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(&cfg, ng.server_cfg()) {
+            eprintln!("server.cfg: {e}");
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        let mut args: Vec<String> = Vec::new();
+        let mut skip = false;
+        for (i, a) in argv.iter().enumerate() {
+            if skip {
+                skip = false;
+                args.push(a.clone());
+                continue;
+            }
+            if a.starts_with("--") {
+                skip = a == "--addon" || a == "--connect";
+                if a == "--connect" {
+                    skip = true;
+                    continue;
+                }
+                args.push(a.clone());
+            } else if i == 0 || !argv[i - 1].starts_with("--") {
+                // the old positional map
+            } else {
+                args.push(a.clone());
+            }
+        }
+        args.insert(0, map);
+        match std::process::Command::new(exe).args(&args).spawn() {
+            Ok(_) => std::process::exit(0),
+            Err(e) => eprintln!("relaunch: {e}"),
+        }
+    }
+
+    fn newgame_click(&mut self) {
+        let Some(g) = self.gfx.as_ref() else { return };
+        let action = self.main_menu_layout(g).hit(self.cursor).cloned();
+        let Some(ng) = self.newgame.as_mut() else {
+            return;
+        };
+        let was_open = std::mem::take(&mut ng.players_open);
+        ng.focus = None;
+        match action {
+            Some(derma::Action::Menu("back")) => self.newgame = None,
+            Some(derma::Action::Menu("quit" | "disconnect")) => std::process::exit(0),
+            Some(derma::Action::Menu("resume_game")) => {
+                self.main_menu = false;
+                self.newgame = None;
+                self.set_grab(true);
+            }
+            Some(derma::Action::NewGame(a)) => {
+                use newgame::NgAction as A;
+                match a {
+                    A::Category(c) => {
+                        ng.current = c;
+                        ng.scroll = 0.0;
+                    }
+                    A::Map(m) => ng.selected = Some(m),
+                    A::Fav(m) => ng.toggle_favourite(&self.mount, &m),
+                    A::Search => ng.focus = Some("search".to_string()),
+                    A::Players => ng.players_open = !was_open,
+                    A::PlayersPick(i) => ng.maxplayers = i,
+                    A::Check(name) => match name.as_str() {
+                        "sv_lan" => ng.sv_lan = !ng.sv_lan,
+                        "p2p_enabled" => ng.p2p_enabled = !ng.p2p_enabled,
+                        "p2p_friendsonly" => ng.p2p_friendsonly = !ng.p2p_friendsonly,
+                        n => {
+                            if let Some(s) = ng.settings.iter_mut().find(|s| s.name == n) {
+                                let on = !s.value.is_empty() && s.value != "0";
+                                s.value = if on { "0" } else { "1" }.to_string();
+                            }
+                        }
+                    },
+                    A::Text(name) => ng.focus = Some(name),
+                    A::Start => self.start_game(),
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Typing into a New Game text field.
+    fn newgame_key(&mut self, code: Option<KeyCode>, text: Option<&str>) {
+        let Some(ng) = self.newgame.as_mut() else {
+            return;
+        };
+        match code {
+            Some(KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape | KeyCode::Tab) => {
+                ng.focus = None;
+            }
+            Some(KeyCode::Backspace) => {
+                if let Some(v) = ng.text_mut() {
+                    v.pop();
+                }
+            }
+            _ => {
+                if let (Some(t), Some(v)) = (text, ng.text_mut()) {
+                    v.extend(t.chars().filter(|c| !c.is_control()));
+                    v.truncate(255);
+                }
+            }
+        }
     }
 
     /// The Options dialog laid out for this frame (caches the slider bars for dragging).
@@ -1376,6 +1552,10 @@ impl App {
             self.options_click();
             return;
         }
+        if self.newgame.is_some() {
+            self.newgame_click();
+            return;
+        }
         let Some(g) = self.gfx.as_ref() else { return };
         let action = self.main_menu_layout(g).hit(self.cursor).cloned();
         match action {
@@ -1385,6 +1565,7 @@ impl App {
             }
             Some(derma::Action::Menu("quit" | "disconnect")) => std::process::exit(0),
             Some(derma::Action::Menu("options")) => self.open_options(),
+            Some(derma::Action::Menu("newgame")) => self.open_newgame(),
             _ => {}
         }
     }
@@ -1432,6 +1613,7 @@ impl App {
                 derma::Action::Property(_)
                 | derma::Action::Menu(_)
                 | derma::Action::Opt(_)
+                | derma::Action::NewGame(_)
                 | derma::Action::Nothing,
             )
             | None => {}
@@ -2697,6 +2879,7 @@ impl App {
                 max_scroll: layout.max_scroll,
                 rows,
                 opt_bars: Vec::new(),
+                ng_max_scroll: 0.0,
             };
             items.extend(layout.items);
             return items;
@@ -3288,6 +3471,12 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
+                if self.main_menu && self.newgame.as_ref().is_some_and(|n| n.focus.is_some()) {
+                    if down {
+                        self.newgame_key(code, event.text.as_deref());
+                    }
+                    return;
+                }
                 let Some(code) = code else { return };
                 if !event.repeat {
                     self.pending_input.push((format!("{code:?}"), down));
@@ -3304,6 +3493,7 @@ impl ApplicationHandler for App {
                             }
                         }
                         KeyCode::Escape if self.options.is_some() => self.options = None,
+                        KeyCode::Escape if self.newgame.is_some() => self.newgame = None,
                         KeyCode::Escape if self.main_menu => {
                             self.main_menu = false;
                             self.set_grab(true);
@@ -3339,7 +3529,17 @@ impl ApplicationHandler for App {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => y,
                     winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 16.0,
                 };
-                if let Some(o) = &mut self.options {
+                let ng_max = self.menu_cache.borrow().ng_max_scroll;
+                let screen_w = self.gfx.as_ref().map_or(1280.0, |g| g.config.width as f32);
+                let in_menu = self.main_menu;
+                let cursor_x = self.cursor.0;
+                if let Some(ng) = self.newgame.as_mut().filter(|_| in_menu) {
+                    if cursor_x > screen_w - 16.0 - 226.0 {
+                        ng.settings_scroll = (ng.settings_scroll - lines * 40.0).max(0.0);
+                    } else {
+                        ng.scroll = (ng.scroll - lines * 64.0).clamp(0.0, ng_max);
+                    }
+                } else if let Some(o) = &mut self.options {
                     if o.waiting_key {
                         let key = if lines > 0.0 {
                             "MWHEELUP"
@@ -3589,6 +3789,15 @@ fn main() -> Result<()> {
     } = gm_dedicated::load_world(&mount, &map)?;
     let collision: &'static gm_collision::World = Box::leak(Box::new(collision));
     let mut server = gm_server::Server::new(collision, physics, world_body);
+    // cfg/server.cfg: what the New Game page's Start Game set (gamemode settings, maxplayers)
+    if let Ok(text) = std::fs::read_to_string(settings::home_dir().join("cfg").join("server.cfg")) {
+        for line in text.lines() {
+            let mut parts = line.splitn(2, ' ');
+            if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+                server.set_cvar(k, v.trim().trim_matches('"'));
+            }
+        }
+    }
     let models = gm_content::Mount::for_install(&inst)?;
     server.model_loader = Some(Box::new(move |m: &str| {
         gm_dedicated::model_info(&models, m)
@@ -3660,6 +3869,10 @@ fn main() -> Result<()> {
         hud_draws: Vec::new(),
     };
     let settings = settings::Settings::load(&mount);
+    let mut lang = BTreeMap::new();
+    for f in mount.find("resource/localization/en/*.properties") {
+        lang.extend(derma::load_properties(&mount, &f));
+    }
     let kb_rows = settings::load_kb_act(&mount);
     let mut gameui = BTreeMap::new();
     for f in ["valve", "gameui", "garrysmod"] {
@@ -3703,7 +3916,7 @@ fn main() -> Result<()> {
         last_render: Instant::now(),
         menu: None,
         spawnlists: Vec::new(),
-        lang: BTreeMap::new(),
+        lang,
         menu_cache: Default::default(),
         context_held: false,
         context: None,
@@ -3721,6 +3934,8 @@ fn main() -> Result<()> {
         main_menu: false,
         settings,
         options: None,
+        newgame: None,
+        map_name: map.clone(),
         opt_drag: None,
         opt_modes: Vec::new(),
         kb_rows,

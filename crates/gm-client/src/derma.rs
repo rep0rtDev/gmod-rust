@@ -376,6 +376,8 @@ pub enum Action {
     Menu(&'static str),
     /// An Options dialog control.
     Opt(crate::options::OptAction),
+    /// A New Game page control.
+    NewGame(crate::newgame::NgAction),
     Nothing,
 }
 
@@ -1275,8 +1277,13 @@ pub const MENU_FONT_23: &str = "MenuOptions23";
 pub const MENU_FONT_16: &str = "MenuOptions16";
 pub const NAV_FONT: &str = "MenuNav";
 /// `html/img` and gamemode images the menu draws (raw PNG paths).
-pub const MENU_IMAGES: [&str; 8] = [
+pub const MENU_IMAGES: [&str; 13] = [
     "html/img/gradient.png",
+    "html/img/back_to_main_menu.png",
+    "html/img/favourite.png",
+    "html/img/favourite_add.png",
+    "html/img/favourite_remove.png",
+    "maps/thumb/noicon.png",
     "gamemodes/sandbox/logo.png",
     "gamemodes/sandbox/icon24.png",
     "html/img/disconnect.png",
@@ -1324,6 +1331,7 @@ pub fn main_menu(
     out: &mut Layout,
     ctx: &Ctx,
     in_game: bool,
+    main_page: bool,
     lang: &BTreeMap<String, String>,
     opt: &FontMetrics,
     opt_font: &str,
@@ -1360,7 +1368,9 @@ pub fn main_menu(
         entries.push(Some(("disconnect", say("disconnect", "Disconnect"))));
     }
     entries.push(Some(("quit", say("quit", "Quit"))));
-    if (ctx.has_image)("gamemodes/sandbox/logo.png") {
+    if !main_page {
+        entries.clear();
+    } else if (ctx.has_image)("gamemodes/sandbox/logo.png") {
         image(
             &mut out.items,
             "gamemodes/sandbox/logo.png",
@@ -1454,6 +1464,18 @@ pub fn main_menu(
         });
         bx - 3.0
     };
+    if !main_page {
+        // #BackToMenu: left group, padding-left 5
+        let label = say("back_to_main_menu", "Back to Main Menu");
+        let bw = 35.0 + nav.text_width(&label) + 10.0 + 5.0;
+        let _ = button(
+            out,
+            5.0 + bw,
+            Some(&label),
+            "html/img/back_to_main_menu.png",
+            "back",
+        );
+    }
     let mut right = w - 3.0;
     right = button(
         out,
