@@ -35,6 +35,8 @@ float gmp_get_penetration_slop(const void *system) {
 #include <Jolt/Physics/Body/BodyLockMulti.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
+#include <Jolt/Physics/Constraints/SixDOFConstraint.h>
+#include <cstdlib>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <vector>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
@@ -67,16 +69,43 @@ unsigned int gmp_add_static_mesh(void *system, const float *xyz, unsigned int nv
 	return b->GetID().GetIndexAndSequenceNumber();
 }
 
-// weld: both bodies keep their current relative pose
+// weld: both bodies keep their current relative pose, softly: the game's weld gives at an
+// impact (`constraint_weld_pair`: two welded crates landing at 260 u/s compress their 20 u
+// offset to 10.65 u over four ticks and roll apart by 10 deg, then are pulled back over ~25
+// ticks), so the six axes are springs: translation through the limit springs of a six DOF
+// constraint, rotation through its position motors
+static float weld_env(const char *name, float def) {
+	const char *v = std::getenv(name);
+	return v ? (float)std::atof(v) : def;
+}
 void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
 	JPH::BodyID ids[2] = { JPH::BodyID(id1), JPH::BodyID(id2) };
 	JPH::BodyLockMultiWrite lock(sys->GetBodyLockInterface(), ids, 2);
 	JPH::Body *a = lock.GetBody(0), *b = lock.GetBody(1);
 	if (!a || !b) return nullptr;
-	JPH::FixedConstraintSettings s;
-	s.mAutoDetectPoint = true;
-	JPH::Constraint *c = s.Create(*a, *b);
+	// 60 Hz critically damped on all six axes: the landing pair rests within 1.0 / 1.2 u
+	// (rigid: 2.8 / 3.0) and a hoverball welded to a crate still lifts it like the game
+	// (`device_hoverball_crate` equal; 20 Hz tilts it 6 deg); the game's residual 1.8 u
+	// deformation at rest and the lower crate's re-push at the landing tick (4.6 u peak,
+	// our contact model, not the weld) remain open
+	const float tf = weld_env("GMP_WELD_FREQ", 60.0f), td = weld_env("GMP_WELD_DAMP", 1.0f);
+	const float rf = weld_env("GMP_WELD_ROT_FREQ", 60.0f), rd = weld_env("GMP_WELD_ROT_DAMP", 1.0f);
+	JPH::SixDOFConstraintSettings s;
+	s.mSpace = JPH::EConstraintSpace::WorldSpace;
+	s.mPosition1 = s.mPosition2 = a->GetCenterOfMassPosition();
+	using A = JPH::SixDOFConstraintSettings::EAxis;
+	for (int i = A::TranslationX; i <= A::TranslationZ; i++) {
+		s.SetLimitedAxis((A)i, -1e-4f, 1e-4f);
+		s.mLimitsSpringSettings[i] = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, tf, td);
+	}
+	for (int i = A::RotationX; i <= A::RotationZ; i++) {
+		s.MakeFreeAxis((A)i);
+		s.mMotorSettings[i] = JPH::MotorSettings(rf, rd);
+	}
+	auto *c = static_cast<JPH::SixDOFConstraint *>(s.Create(*a, *b));
+	for (int i = A::RotationX; i <= A::RotationZ; i++) c->SetMotorState((A)i, JPH::EMotorState::Position);
+	c->SetTargetOrientationBS(JPH::Quat::sIdentity());
 	sys->AddConstraint(c);
 	return c;
 }
