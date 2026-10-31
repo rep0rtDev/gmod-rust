@@ -2745,3 +2745,23 @@ crates = ["gm-move", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
+[[harness]]
+name = "move_friction_glass"
+scenario = "move/friction_glass"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+[[harness]]
+name = "move_friction_plastic"
+scenario = "move/friction_plastic"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5

@@ -1,0 +1,16 @@
+{
+  "name": "move_friction_plastic",
+  "kind": "move",
+  "map": "gm_construct",
+  "start": [823.235, -737.0, -117.0],
+  "platform": {
+    "model": "models/hunter/plates/plate4x4.mdl",
+    "pos": [823.235, -657.0, -120.0],
+    "mode": "frozen"
+  },
+  "segments": [
+    {"ticks": 20, "buttons": 0, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90},
+    {"ticks": 15, "buttons": 8, "forward": 450, "side": 0, "up": 0, "pitch": 0, "yaw": 90},
+    {"ticks": 65, "buttons": 0, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90}
+  ]
+}

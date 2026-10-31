@@ -379,6 +379,7 @@ fn run_move(scn: &Scenario) -> Result<Value> {
                 let (planes, (mins, maxs)) = gm_physics::pickup::world_convex(pl, pts, *rot, pos);
                 gm_collision::Convex {
                     entity: 1,
+                    friction: (info.surface.friction * 1.25).min(1.0),
                     planes,
                     mins,
                     maxs,
@@ -470,9 +471,17 @@ fn run_move(scn: &Scenario) -> Result<Value> {
             let land_step = landed.then(|| steps.on_land(fall_speed)).flatten();
             let land_feet = st.origin;
             let wade = |level: u8| (level == 1).then_some(gm_move::WADE_MATERIAL);
+            // steps on a prop take the prop's surface property (`move_friction_glass`)
+            let prop_mat = (st.ground_ent != 0)
+                .then(|| {
+                    platform
+                        .as_ref()
+                        .map(|p| format!("surfaceprop:{}", p.1.surfaceprop))
+                })
+                .flatten();
             for (feet, step, override_material) in step
                 .or_else(|| jumped.then(|| steps.on_jump()))
-                .map(|s| (feet, s, wade(prev_level)))
+                .map(|s| (feet, s, wade(prev_level).or(prop_mat.as_deref())))
                 .into_iter()
                 .chain(land_step.map(|s| (land_feet, s, wade(st.water_level))))
                 .chain(ladder_step.map(|s| (st.origin, s, Some(gm_move::LADDER_MATERIAL))))
@@ -1426,6 +1435,7 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
         mass_center: Vec3::from(solid.mass_center),
         mass: if props.mass > 0.0 { props.mass } else { 1.0 },
         volume: props.volume,
+        surfaceprop: String::new(),
         surface: gm_physics::Surface {
             friction: sp.friction,
             elasticity: sp.elasticity,

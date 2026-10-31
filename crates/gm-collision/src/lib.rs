@@ -74,6 +74,9 @@ struct Disp {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Convex {
     pub entity: u32,
+    /// Ground friction factor of its surface for the player (`min(1, friction * 1.25)` of the
+    /// surface property: glass 0.625, plastic/concrete 1).
+    pub friction: f32,
     pub planes: Vec<(Vec3, f32)>,
     pub mins: Vec3,
     pub maxs: Vec3,

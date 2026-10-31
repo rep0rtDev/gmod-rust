@@ -1,0 +1,16 @@
+{
+  "name": "move_friction_glass",
+  "kind": "move",
+  "map": "gm_construct",
+  "start": [823.235, -737.0, -139.0],
+  "platform": {
+    "model": "models/props_phx/construct/glass/glass_plate4x4.mdl",
+    "pos": [870.735, -733.0, -143.9],
+    "mode": "frozen"
+  },
+  "segments": [
+    {"ticks": 20, "buttons": 0, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90},
+    {"ticks": 10, "buttons": 8, "forward": 450, "side": 0, "up": 0, "pitch": 0, "yaw": 90},
+    {"ticks": 90, "buttons": 0, "forward": 0, "side": 0, "up": 0, "pitch": 0, "yaw": 90}
+  ]
+}

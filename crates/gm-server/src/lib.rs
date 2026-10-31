@@ -27,6 +27,8 @@ pub struct ModelInfo {
     pub mass: f32,
     pub volume: f32,
     pub surface: Surface,
+    /// The PHY `surfaceprop` name (footsteps on the prop, `glass`, `tile`...).
+    pub surfaceprop: String,
     pub linear_damping: f32,
     pub angular_damping: f32,
     pub drag_axis_areas: Vec3,
@@ -3362,6 +3364,7 @@ impl<'w> Server<'w> {
                                 gm_physics::pickup::world_convex(pl, pts, st.rotation, st.position);
                             gm_collision::Convex {
                                 entity: p.id,
+                                friction: (info.surface.friction * 1.25).min(1.0),
                                 planes,
                                 mins,
                                 maxs,
@@ -3459,7 +3462,7 @@ impl<'w> Server<'w> {
             self.resolve_melee(attacker, eye, forward);
         }
         self.drive_tick(cmds);
-        let mut steps: Vec<(Vec3, gm_move::Step, Option<&str>)> = Vec::new();
+        let mut steps: Vec<(Vec3, gm_move::Step, Option<String>)> = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -3499,10 +3502,20 @@ impl<'w> Server<'w> {
                 }
                 let jumped = p.state.boost_pending && !was_airborne;
                 if let Some(step) = step.or_else(|| jumped.then(|| p.steps.on_jump())) {
+                    // steps on a prop take the prop's surface property (`move_friction_glass`)
+                    let prop_mat = self
+                        .sandbox
+                        .props()
+                        .iter()
+                        .find(|pr| p.state.ground_ent != 0 && pr.id == p.state.ground_ent)
+                        .and_then(|pr| self.models.get(&pr.model))
+                        .map(|i| format!("surfaceprop:{}", i.surfaceprop));
                     steps.push((
                         feet,
                         step,
-                        (prev_level == 1).then_some(gm_move::WADE_MATERIAL),
+                        (prev_level == 1)
+                            .then(|| gm_move::WADE_MATERIAL.to_owned())
+                            .or(prop_mat),
                     ));
                 }
                 if let Some(step) = p.steps.ladder_step(
@@ -3511,7 +3524,11 @@ impl<'w> Server<'w> {
                     &p.state,
                     gm_core::tick::DEFAULT_TICK_INTERVAL * 1000.0,
                 ) {
-                    steps.push((p.state.origin, step, Some(gm_move::LADDER_MATERIAL)));
+                    steps.push((
+                        p.state.origin,
+                        step,
+                        Some(gm_move::LADDER_MATERIAL.to_owned()),
+                    ));
                 }
                 // a landing: the hurting ones also voice `Player.FallDamage` (`move_step_fall_*`)
                 if p.state.on_ground && was_airborne {
@@ -3526,14 +3543,14 @@ impl<'w> Server<'w> {
                         steps.push((
                             p.state.origin,
                             step,
-                            (p.state.water_level == 1).then_some(gm_move::WADE_MATERIAL),
+                            (p.state.water_level == 1).then(|| gm_move::WADE_MATERIAL.to_owned()),
                         ));
                     }
                 }
             }
         }
         for (feet, step, material) in steps {
-            self.footstep(feet, step, material);
+            self.footstep(feet, step, material.as_deref());
         }
         // entities after the players' moves: a projectile's hit or blast this tick pushes and
         // hurts a target that has already moved (its velocity shows the push raw)

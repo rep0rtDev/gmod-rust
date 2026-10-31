@@ -274,6 +274,11 @@ SCENARIOS.move = function(scn, done)
 				hull = { mins = { ply:OBBMins().x, ply:OBBMins().y, ply:OBBMins().z }, maxs = { ply:OBBMaxs().x, ply:OBBMaxs().y, ply:OBBMaxs().z } },
 				speeds = { walk = ply:GetWalkSpeed(), run = ply:GetRunSpeed(), crouched = ply:GetCrouchedWalkSpeed(), jump = ply:GetJumpPower(), duck = ply:GetDuckSpeed(), unduck = ply:GetUnDuckSpeed(), step = ply:GetStepSize() },
 				ladders = ladderInfo(),
+				platform = IsValid(plat) and {
+					mins = { plat:OBBMins().x, plat:OBBMins().y, plat:OBBMins().z },
+					maxs = { plat:OBBMaxs().x, plat:OBBMaxs().y, plat:OBBMaxs().z },
+					material = IsValid(plat:GetPhysicsObject()) and plat:GetPhysicsObject():GetMaterial() or "",
+				} or nil,
 			})
 		end
 	end)

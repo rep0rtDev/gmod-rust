@@ -80,15 +80,19 @@ Measured on gm_construct's `func_useableladder` (the line x -2920, y -1076 from 
 
 ## Props as ground (measured, `move_prop_*`)
 
-A frozen prop is a solid for the player hull exactly like a brush: the PHY convexes at the prop's pose, planes pushed out by the hull extents, the 1/32 u skin (`move_prop_block`: walking into a frozen crate stops 0.03 u short of its face, the forward speed clipped to 0, bit-exact; `move_prop_step`: a PHX plate on the floor is stepped onto (4 u up) and off, the ground entity is the prop, bit-exact). Footsteps on a prop use the prop's surface property (the plastic plate plays `tile*.wav`); ours still take the map material under the feet. The bump into the frozen crate also makes the crate's impact sound (a physics event, not reproduced).
+A frozen prop is a solid for the player hull exactly like a brush: the PHY convexes at the prop's pose, planes pushed out by the hull extents, the 1/32 u skin (`move_prop_block`: walking into a frozen crate stops 0.03 u short of its face, the forward speed clipped to 0, bit-exact; `move_prop_step`: a PHX plate on the floor is stepped onto (4 u up) and off, the ground entity is the prop, bit-exact). Footsteps on a prop use the prop's surface property (the plastic plate plays `tile*.wav`). The bump into the frozen crate also makes the crate's impact sound (a physics event, not reproduced).
 
 A frozen prop teleported with `SetPos` every tick does not carry the player: he stays put and loses the ground once the plate has slid out from under him (`move_prop_setpos`). The tick that loses the ground ends with the second gravity half (-4.5) although it started grounded: `FullWalkMove` finishes with gravity when the move left the ground; we do that too. Open: the game drops him one tick earlier than our sweep does (its ground probe misses the plate while 0.6 u of the hull is still over it, tick 82), and he lands at -143.26 instead of the floor's -143.97.
 
 An unfrozen floating prop (gravity off, velocity set every tick) with the player standing on it is a vphysics shadow interaction: the plate sinks and tilts under him, he is carried at about half its speed and slides off (`move_prop_ride`, recorded, not modelled, no harness).
 
+## Surface friction (measured, `move_friction_*`)
+
+The ground's surface property scales the walk: factor `min(1, friction * 1.25)` of the `surfaceproperties` entry (glass 0.5 gives 0.625; plastic/tile, concrete and everything at 0.8 give 1). It multiplies both the friction drop and the ground acceleration: on a glass plate the first tick of W gives 18.75 instead of 30 and a released player decays by 0.925 per tick instead of 0.88, down to the stop speed (10) where the drop becomes 0.75 per tick (`move_friction_glass`: bit-exact from the first input tick to the stop, 1.5e-5 u/s over 100 ticks); the plastic plate is identical to the concrete floor (`move_friction_plastic`, bit-exact). Open: the 19 idle ticks before the input differ in height - the player is dropped from 1 u above the plate; the game falls one more tick and lands 0.53 u above the surface it then walks on (-140.08 vs -140.613), while our 2 u ground probe catches the plate at once and we stand 1.0 u above it. Same shape as the `move_prop_setpos` drop tick: the game does not count a prop as ground while the hull is about 1 u above it. Not understood (vphysics convex margin?), harness left red. Footsteps on a prop use the prop's surface property (glass: `physics/glass/glass_sheet_step*.wav`, plastic: `tile*.wav`). gm_construct has no brush with a friction other than 0.8, so for the map the factor is 1 and only props carry it (`gm_collision::Convex::friction`, `PlayerState::ground_friction`).
+
 ## Not implemented yet
 
-Moving platforms that carry the player (brush entities, the velocity of a physics ground) and props as ground, fall damage, view roll, surface friction modifiers, `sv_maxspeed` style limits set by Lua, prediction error correction, `Player.Wade`.
+Moving platforms that carry the player (brush entities, the velocity of a physics ground) and props as ground, fall damage, view roll, surface friction of brushes (none to measure on gm_construct), `sv_maxspeed` style limits set by Lua, prediction error correction, `Player.Wade`.
 
 ## Probe
 

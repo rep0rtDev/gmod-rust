@@ -135,6 +135,9 @@ pub struct PlayerState {
     pub ladder: u16,
     /// The prop (the collider's entity tag) under the feet when grounded, 0 for the map.
     pub ground_ent: u32,
+    /// Friction factor of the ground surface (measured `move_friction_glass`: 0.625 on glass
+    /// scales both the friction drop and the acceleration; the map is 1).
+    pub ground_friction: f32,
 }
 
 impl Default for PlayerState {
@@ -160,6 +163,7 @@ impl Default for PlayerState {
             water_level: 0,
             ladder: 0,
             ground_ent: 0,
+            ground_friction: 1.0,
         }
     }
 }
@@ -341,7 +345,7 @@ impl<'a> Mover<'a> {
         }
         self.check_jump(st, cmd);
         if st.on_ground {
-            st.surface_friction = 1.0;
+            st.surface_friction = st.ground_friction;
             st.velocity.z = 0.0;
             self.friction(st, dt);
             // measured (`hit_rpg_floor*`, `hit_crossbow`): a blast's vertical push shows in the
@@ -572,10 +576,14 @@ impl<'a> Mover<'a> {
         if !t.hit() || t.normal.z < self.cfg.ground_normal_z {
             st.on_ground = false;
             st.ground_ent = 0;
+            st.ground_friction = 1.0;
         } else {
             st.on_ground = true;
             st.ground_normal = t.normal;
             st.ground_ent = ent.unwrap_or(0);
+            st.ground_friction = ent
+                .and_then(|e| self.props.iter().find(|c| c.entity == e))
+                .map_or(1.0, |c| c.friction);
         }
     }
 
@@ -585,7 +593,7 @@ impl<'a> Mover<'a> {
             return;
         }
         let control = speed.max(self.cfg.stop_speed);
-        let drop = control * self.cfg.friction * dt;
+        let drop = control * self.cfg.friction * st.surface_friction * dt;
         let new_speed = (speed - drop).max(0.0) / speed;
         st.velocity *= new_speed;
     }
@@ -627,7 +635,9 @@ impl<'a> Mover<'a> {
 
     fn walk_move(&self, st: &mut PlayerState, cmd: &UserCmd, dt: f32) {
         let (wish_dir, wish_speed) = self.wish(st, cmd);
-        self.accelerate(st, wish_dir, wish_speed, self.cfg.accelerate, dt);
+        // the ground's surface friction scales the acceleration too (`move_friction_glass`)
+        let accel = self.cfg.accelerate * st.surface_friction;
+        self.accelerate(st, wish_dir, wish_speed, accel, dt);
         st.velocity.z = 0.0;
         if st.velocity.length_squared() < 1.0 {
             st.velocity = Vec3::ZERO;
@@ -1389,6 +1399,7 @@ mod tests {
     fn crate_convex(center: Vec3, half: Vec3) -> gm_collision::Convex {
         gm_collision::Convex {
             entity: 7,
+            friction: 1.0,
             planes: vec![
                 (Vec3::X, center.x + half.x),
                 (Vec3::NEG_X, -(center.x - half.x)),
@@ -1460,6 +1471,45 @@ mod tests {
         }
         assert!((st.origin.z - floor).abs() < 0.05, "{}", st.origin.z);
         assert_eq!(st.ground_ent, 0);
+    }
+
+    #[test]
+    fn glass_scales_acceleration_and_friction() {
+        // measured (`move_friction_glass`): first accel tick 18.75 instead of 30, and the
+        // released speed decays by 0.925 per tick instead of 0.88
+        let world = World::from_boxes(&[(
+            Vec3::new(-512.0, -512.0, -64.0),
+            Vec3::new(512.0, 512.0, 0.0),
+        )]);
+        let mut m = Mover::new(MoveConfig::default(), &world);
+        let mut glass = crate_convex(Vec3::new(0.0, 0.0, 2.0), Vec3::new(200.0, 200.0, 2.0));
+        glass.friction = 0.625;
+        m.set_props(vec![glass]);
+        let mut st = PlayerState {
+            origin: Vec3::new(0.0, 0.0, 5.0),
+            ..PlayerState::default()
+        };
+        for _ in 0..10 {
+            m.tick(&mut st, &UserCmd::default());
+        }
+        assert!(st.on_ground && st.ground_ent == 7);
+        let cmd = UserCmd {
+            forward_move: 450.0,
+            view_angles: Vec3::new(0.0, 90.0, 0.0),
+            ..UserCmd::default()
+        };
+        m.tick(&mut st, &cmd);
+        assert!((st.velocity.y - 18.75).abs() < 1e-3, "{}", st.velocity.y);
+        for _ in 0..9 {
+            m.tick(&mut st, &cmd);
+        }
+        let v = st.velocity.y;
+        m.tick(&mut st, &UserCmd::default());
+        assert!(
+            (st.velocity.y / v - 0.925).abs() < 1e-4,
+            "{}",
+            st.velocity.y / v
+        );
     }
 
     #[test]
