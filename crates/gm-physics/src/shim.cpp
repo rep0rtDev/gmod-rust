@@ -225,6 +225,17 @@ void *gmp_add_point_constraint(void *system, unsigned int id1, unsigned int id2,
 	JPH::BodyLockMultiWrite lock(sys->GetBodyLockInterface(), ids, 2);
 	JPH::Body *a = lock.GetBody(0), *b = lock.GetBody(1);
 	if (!a || !b) return nullptr;
+	// Measured: a crate hanging on a ball socket loses energy at a constant 0.197/s whatever the
+	// lever (24.5 / 35.7 / 63 u), speed (45..190 u/s) or amplitude, with air drag disabled;
+	// a free crate or one on a rope does not. Modelled as 0.16/s linear + angular damping on
+	// the jointed bodies (Jolt's own solver loss supplies the rest).
+	const float bsd = weld_env("GMP_BS_DAMP", 0.16f);
+	for (JPH::Body *bd : { a, b }) {
+		if (bd->IsStatic()) continue;
+		JPH::MotionProperties *mp = bd->GetMotionProperties();
+		mp->SetLinearDamping(std::max(mp->GetLinearDamping(), bsd));
+		mp->SetAngularDamping(std::max(mp->GetAngularDamping(), bsd));
+	}
 	JPH::PointConstraintSettings s;
 	s.mSpace = JPH::EConstraintSpace::WorldSpace;
 	s.mPoint1 = s.mPoint2 = JPH::RVec3(px, py, pz);
