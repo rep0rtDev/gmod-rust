@@ -101,6 +101,7 @@ extern "C" {
     fn gmp_set_impact_skip(system: *mut JPC_PhysicsSystem, body_id: u32, on: i32);
     fn gmp_set_impact_enabled(system: *mut JPC_PhysicsSystem, enabled: i32);
     fn gmp_take_impacts(system: *mut JPC_PhysicsSystem, out: *mut RawImpact, max: u32) -> u32;
+    fn gmp_take_contacts(system: *mut JPC_PhysicsSystem, out: *mut RawContact, max: u32) -> u32;
     fn gmp_set_pair_collision(system: *mut JPC_PhysicsSystem, id1: u32, id2: u32, enabled: i32);
     fn gmp_set_world_only(system: *mut JPC_PhysicsSystem, id: u32, on: i32);
     fn gmp_set_solver(
@@ -349,6 +350,31 @@ struct RawImpact {
 }
 
 /// A resolved first contact of a body pair in one step.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct RawContact {
+    id1: u32,
+    id2: u32,
+    kind: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContactKind {
+    /// The pair started touching this step.
+    Added,
+    /// Still touching (Jolt reports it every step while either body is awake).
+    Persisted,
+    /// The pair separated.
+    Removed,
+}
+
+/// A contact pair event of the last step.
+#[derive(Clone, Copy, Debug)]
+pub struct Contact {
+    pub bodies: [BodyHandle; 2],
+    pub kind: ContactKind,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Impact {
     pub bodies: [BodyHandle; 2],
@@ -1066,6 +1092,28 @@ impl World {
                 speed: r.speed * METERS_TO_UNITS,
             })
             .collect()
+    }
+
+    /// The contact pair events (added / persisted / removed) since the last call.
+    pub fn take_contacts(&mut self) -> Vec<Contact> {
+        let mut out = Vec::new();
+        loop {
+            let mut raw = [RawContact::default(); 512];
+            let n = unsafe {
+                gmp_take_contacts(self.system.as_raw(), raw.as_mut_ptr(), raw.len() as u32)
+            };
+            out.extend(raw[..n as usize].iter().map(|r| Contact {
+                bodies: [BodyHandle(r.id1), BodyHandle(r.id2)],
+                kind: match r.kind {
+                    0 => ContactKind::Added,
+                    1 => ContactKind::Persisted,
+                    _ => ContactKind::Removed,
+                },
+            }));
+            if (n as usize) < raw.len() {
+                return out;
+            }
+        }
     }
 
     /// Advance one server tick.

@@ -448,8 +448,7 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-Scripted entities' touch callbacks (`StartTouch` / `Touch` / `EndTouch` continuity, recorded in
-`lua_sent`; today a script listens to `entity.collide`); scripted weapons on the slot digits of
+Scripted entities' touches with players and while both bodies sleep; scripted weapons on the slot digits of
 the client, a `Think` analog for weapons and the game's `KEY_*` names / `input.IsKeyDown`
 polling (ours: `input.key` events with the client's key names); the game's pitch-0 miss of +use
 on players (see "+use"); net message data for WASM guests. Done since this list was written: the
@@ -559,8 +558,8 @@ automatic primaries 14 ticks apart; a reload on the empty press) with the record
 
 ## Scripted entity classes
 
-`entity.register(class, { model, think_interval?, use_type?, init, think, touch, use, use_off,
-remove, damage })` is `scripted_ents.Register` of a `base_anim` with physics: an instance is a sandbox
+`entity.register(class, { model, think_interval?, use_type?, init, think, start_touch, touch,
+end_touch, use, use_off, remove, damage })` is `scripted_ents.Register` of a `base_anim` with physics: an instance is a sandbox
 prop with the class's model (`world.queue("spawn", owner, { class = ..., pos, angles?, frozen?,
 tag? })`, same limits and `entity.spawned` as a prop spawn) whose callbacks reach the script by
 class, each with `{entity, class, player, other, amount}`:
@@ -576,6 +575,12 @@ class, each with `{entity, class, player, other, amount}`:
   (`SIMPLE_USE`) once per press; `"onoff"` (`ONOFF_USE`) on the press and `use_off` (`USE_OFF`,
   `amount = 0`) on the release. `player.use` / `player.used` still run first (`PlayerUse`), a
   scripted entity is never picked up by E;
+- `start_touch` / `touch` / `end_touch` with `other` (a prop id, 0 the world) from the physics
+  step's contact pairs: a new pair is a `start_touch` and a `touch`, a pair still in contact a
+  `touch` every tick, a separated pair an `end_touch`. Differences from the game: its three
+  `Touch` in the impact tick are one here, and Jolt reports a resting pair only while one of the
+  bodies is awake (a crate asleep on a frozen scripted entity stops touching it; the game keeps
+  calling `Touch`); players do not touch yet (only props and the world have bodies here);
 - `damage` with `amount` on every damage the prop takes (`OnTakeDamage`), before health is applied;
 - `remove` in the tick the prop goes (`OnRemove`), whatever removes it (property, undo, cleanup,
   break, script).
@@ -584,14 +589,15 @@ Measured (`lua_sent`, golden 261031): four `parity_sent` entities on srcds; `pre
 Initialize, post-Spawn, post-Activate` in one tick, Think ticks `-23, -10, 3, 16` (every 13)
 for the default, every 7 with `NextThink(CurTime() + 0.1)`, every 33 with `+ 0.5`; `Use` 5 times
 for 5 held ticks (continuous), once (simple), `USE_ON` then `USE_OFF` on the release (onoff);
-`OnRemove` in the `Remove` tick, `OnTakeDamage(5)` at once. Also recorded, not implemented:
-`StartTouch` on the first contact, `Touch` three times in the impact tick then every touching
-tick, `EndTouch` when the pair separates, `PhysicsCollide` twice per impact with two speeds. Our
-`touch` callback is not raised yet (use `entity.collide` meanwhile).
+`OnRemove` in the `Remove` tick, `OnTakeDamage(5)` at once; `StartTouch` on the first contact,
+`Touch` three times in the impact tick then every touching tick, `EndTouch` when the pair
+separates (two ticks later on the bounce), `PhysicsCollide` twice per impact with two speeds
+(ours is `entity.collide`, once).
 
 Test (`addon_hooks scripted_entities_follow_the_measured_sent_cadences`): two classes spawned
 in tick 2, `init` at 2, thinks at 9 then every 13 (default) and every 7 (`think_interval = 0.1`), five
-`use` for five held ticks, `damage` 5 and `remove` in their ticks.
+`use` for five held ticks, `damage` 5 and `remove` in their ticks; a crate dropped on the
+second starts with `start_touch`, touches every tick and never ends a touch it did not start.
 
 ## WASM components
 

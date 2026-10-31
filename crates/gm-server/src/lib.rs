@@ -174,7 +174,8 @@ pub enum GameEvent {
         name: String,
     },
     /// A scripted entity class callback (`ENT:Initialize/Think/Touch/Use/OnRemove/OnTakeDamage`):
-    /// `kind` is `init`, `think`, `touch`, `use`, `use_off`, `remove` or `damage`.
+    /// `kind` is `init`, `think`, `start_touch`, `touch`, `end_touch`, `use`, `use_off`,
+    /// `remove` or `damage`.
     Sent {
         ent: u32,
         class: String,
@@ -3396,6 +3397,7 @@ impl<'w> Server<'w> {
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
         self.physics.step();
         self.impact_sounds();
+        self.sent_touches();
         let landed: Vec<(u32, f32)> = self
             .players
             .iter()
@@ -3952,6 +3954,48 @@ impl<'w> Server<'w> {
             pos: feet,
             volume: step.volume,
         });
+    }
+
+    /// `StartTouch` / `Touch` / `EndTouch` of the scripted entities from the step's contact
+    /// pairs: a new pair is a start_touch and a touch, a persisted one a touch, a removed one
+    /// an end_touch (the game's three `Touch` in the impact tick are one here).
+    fn sent_touches(&mut self) {
+        let contacts = self.physics.take_contacts();
+        if self.sents.is_empty() || contacts.is_empty() {
+            return;
+        }
+        for c in contacts {
+            let prop_of = |body: BodyHandle| -> Option<u32> {
+                if body == self.world_body {
+                    return Some(0);
+                }
+                self.bodies
+                    .iter()
+                    .find(|(_, b)| **b == body)
+                    .map(|(id, _)| *id)
+            };
+            let ids = [prop_of(c.bodies[0]), prop_of(c.bodies[1])];
+            for (me, other) in [(ids[0], ids[1]), (ids[1], ids[0])] {
+                let (Some(ent), Some(other)) = (me, other) else {
+                    continue;
+                };
+                if !self.sents.contains_key(&ent) {
+                    continue;
+                }
+                match c.kind {
+                    gm_physics::ContactKind::Added => {
+                        self.sent_event(ent, "start_touch", 0, other, 0.0);
+                        self.sent_event(ent, "touch", 0, other, 0.0);
+                    }
+                    gm_physics::ContactKind::Persisted => {
+                        self.sent_event(ent, "touch", 0, other, 0.0)
+                    }
+                    gm_physics::ContactKind::Removed => {
+                        self.sent_event(ent, "end_touch", 0, other, 0.0)
+                    }
+                }
+            }
+        }
     }
 
     fn impact_sounds(&mut self) {

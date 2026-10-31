@@ -1107,7 +1107,9 @@ impl Runtime {
                     match kind {
                         "init" => "entity.init",
                         "think" => "entity.think",
+                        "start_touch" => "entity.start_touch",
                         "touch" => "entity.touch",
+                        "end_touch" => "entity.end_touch",
                         "use" => "entity.use",
                         "use_off" => "entity.use_off",
                         "remove" => "entity.remove",

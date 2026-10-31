@@ -561,15 +561,15 @@ end
 entity = {}
 local sents = {}
 -- a scripted entity class: `def` carries model, think_interval (seconds, optional), use_type
--- ("continuous" default, "simple", "onoff") and the callbacks `init`, `think`, `touch`,
--- `use`, `use_off`, `remove`, `damage` (each gets the event payload)
+-- ("continuous" default, "simple", "onoff") and the callbacks `init`, `think`, `start_touch`,
+-- `touch`, `end_touch`, `use`, `use_off`, `remove`, `damage` (each gets the event payload)
 function entity.register(class: string, def)
     sents[class] = def
     world.queue("entity.register", 0, {
         class = class, model = def.model, think = def.think_interval, use_type = def.use_type,
     })
 end
-for _, kind in ipairs({"init", "think", "touch", "use", "use_off", "remove", "damage"}) do
+for _, kind in ipairs({"init", "think", "start_touch", "touch", "end_touch", "use", "use_off", "remove", "damage"}) do
     events.on("entity." .. kind, function(p)
         local d = sents[p.class]
         if d ~= nil and d[kind] ~= nil then

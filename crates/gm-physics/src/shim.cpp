@@ -218,11 +218,19 @@ struct GmpSurface { float friction; float elasticity; };
 // one record per resolved first contact of a pair in a step: the bodies, the contact point
 // (Jolt metres) and the approach speed along the normal (m/s) before the impact
 struct GmpImpactRec { unsigned id1, id2; float px, py, pz, speed; };
+// a contact pair event of the step: kind 0 added, 1 persisted, 2 removed
+struct GmpContactRec { unsigned id1, id2, kind; };
 
 class GmpImpactListener final : public JPH::ContactListener {
 public:
 	std::unordered_map<JPH::uint32, GmpSurface> surfaces;
 	std::vector<GmpImpactRec> impacts;
+	std::vector<GmpContactRec> contacts;
+	std::mutex contacts_mutex;
+	void contact(JPH::uint32 id1, JPH::uint32 id2, unsigned kind) {
+		std::lock_guard<std::mutex> g(contacts_mutex);
+		contacts.push_back(GmpContactRec{id1, id2, kind});
+	}
 	std::unordered_map<JPH::uint32, std::vector<JPH::Vec3>> hulls;
 	bool enabled = true;
 	// body pairs that never collide (constraint.NoCollide); key is (min id << 32 | max id)
@@ -296,11 +304,13 @@ public:
 	}
 
 	void OnContactRemoved(const JPH::SubShapeIDPair &pair) override {
+		contact(pair.GetBody1ID().GetIndexAndSequenceNumber(), pair.GetBody2ID().GetIndexAndSequenceNumber(), 2);
 		contact_points.erase((JPH::uint64(pair.GetBody1ID().GetIndexAndSequenceNumber()) << 32) | pair.GetBody2ID().GetIndexAndSequenceNumber());
 		rest.erase((JPH::uint64(pair.GetBody1ID().GetIndexAndSequenceNumber()) << 32) | pair.GetBody2ID().GetIndexAndSequenceNumber());
 	}
 
 	void OnContactPersisted(const JPH::Body &b1, const JPH::Body &b2, const JPH::ContactManifold &m, JPH::ContactSettings &s) override {
+		contact(b1.GetID().GetIndexAndSequenceNumber(), b2.GetID().GetIndexAndSequenceNumber(), 1);
 		impact(b1, b2, m, s, persisted_threshold);
 		if (debug) {
 			const JPH::Body &d = b1.IsDynamic() ? b1 : b2;
@@ -310,6 +320,7 @@ public:
 	}
 
 	void OnContactAdded(const JPH::Body &b1, const JPH::Body &b2, const JPH::ContactManifold &m, JPH::ContactSettings &s) override {
+		contact(b1.GetID().GetIndexAndSequenceNumber(), b2.GetID().GetIndexAndSequenceNumber(), 0);
 		impact(b1, b2, m, s, 1e-4f);
 		if (debug) {
 			const JPH::Body &d = b1.IsDynamic() ? b1 : b2;
@@ -860,6 +871,16 @@ unsigned int gmp_take_impacts(void *system, GmpImpactRec *out, unsigned int max)
 	unsigned int n = (unsigned int)std::min<size_t>(l->impacts.size(), max);
 	for (unsigned int i = 0; i < n; ++i) out[i] = l->impacts[i];
 	l->impacts.clear();
+	return n;
+}
+
+unsigned int gmp_take_contacts(void *system, GmpContactRec *out, unsigned int max) {
+	auto *l = listener_of(system);
+	if (!l) return 0;
+	std::lock_guard<std::mutex> g(l->contacts_mutex);
+	unsigned int n = (unsigned int)std::min<size_t>(l->contacts.size(), max);
+	for (unsigned int i = 0; i < n; ++i) out[i] = l->contacts[i];
+	l->contacts.clear();
 	return n;
 }
 

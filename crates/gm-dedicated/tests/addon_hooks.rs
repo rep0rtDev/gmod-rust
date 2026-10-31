@@ -543,19 +543,22 @@ fn scripted_entities_follow_the_measured_sent_cadences() {
             state.log = {}
             state.t = 0
             local function log(kind) return function(p)
-                table.insert(state.log, kind .. ":" .. p.class .. ":" .. state.t .. ":" .. p.player .. ":" .. p.amount)
+                table.insert(state.log, kind .. ":" .. p.class .. ":" .. state.t .. ":" .. p.player .. ":" .. p.amount .. ":" .. p.other)
             end end
             entity.register("parity_a", { model = "models/props_junk/wood_crate001a.mdl",
                 use_type = "continuous", init = log("init"), think = log("think"), use = log("use"),
                 remove = log("remove"), damage = log("damage") })
             entity.register("parity_b", { model = "models/props_junk/wood_crate001a.mdl", think_interval = 0.1,
-                use_type = "onoff", think = log("think"), use = log("use"), use_off = log("use_off") })
+                use_type = "onoff", think = log("think"), use = log("use"), use_off = log("use_off"),
+                start_touch = log("start_touch"), touch = log("touch"), end_touch = log("end_touch") })
             events.on("tick.pre", function()
                 state.t += 1
                 if state.done then return end
                 state.done = true
                 world.queue("spawn", 0, { class = "parity_a", pos = {x = 700, y = -550, z = -123.6}, frozen = true, tag = "a" })
                 world.queue("spawn", 0, { class = "parity_b", pos = {x = 400, y = -200, z = -123.6}, frozen = true, tag = "b" })
+                -- a crate dropped onto B for its touches (the lua_sent stand)
+                world.queue("spawn", 0, { model = "models/props_junk/wood_crate001a.mdl", pos = {x = 400, y = -200, z = -60}, tag = "crate" })
             end)
             events.on("entity.spawned", function(p) state[p.tag] = p.entity end)
         "#
@@ -651,14 +654,14 @@ fn scripted_entities_follow_the_measured_sent_cadences() {
         "CONTINUOUS_USE: one Use per held tick: {uses:?}"
     );
     assert!(
-        uses[0].starts_with("use:parity_a:") && uses[0].ends_with(":1:1"),
+        uses[0].starts_with("use:parity_a:") && uses[0].ends_with(":1:1:0"),
         "{uses:?}"
     );
     assert!(
         a_log[a_log.len() - 2].starts_with("damage:parity_a:"),
         "{a_log:?}"
     );
-    assert!(a_log[a_log.len() - 2].ends_with(":0:5"), "{a_log:?}");
+    assert!(a_log[a_log.len() - 2].ends_with(":0:5:0"), "{a_log:?}");
     assert!(
         a_log[a_log.len() - 1].starts_with("remove:parity_a:"),
         "{a_log:?}"
@@ -675,6 +678,40 @@ fn scripted_entities_follow_the_measured_sent_cadences() {
         })
         .collect();
     assert_eq!(thinks_b[0], init_tick + 7);
+    let crate_id: u32 = rt.actors()[0].eval("return state.crate").unwrap();
+    let touches: Vec<&str> = log
+        .iter()
+        .filter(|l| l.contains("touch:parity_b:"))
+        .map(|s| s.as_str())
+        .collect();
+    let with_crate: Vec<&&str> = touches
+        .iter()
+        .filter(|l| l.ends_with(&format!(":0:0:{crate_id}")))
+        .collect();
+    assert!(
+        with_crate
+            .first()
+            .is_some_and(|l| l.starts_with("start_touch:")),
+        "the crate's landing starts its touch: {with_crate:?}; all {touches:?}"
+    );
+    let n_touch = with_crate
+        .iter()
+        .filter(|l| l.starts_with("touch:"))
+        .count();
+    assert!(n_touch >= 3, "touch every touching tick: {with_crate:?}");
+    for w in with_crate.windows(2) {
+        if w[1].starts_with("end_touch:") {
+            assert!(
+                !w[0].starts_with("end_touch:"),
+                "end_touch after a touch: {with_crate:?}"
+            );
+        }
+    }
+    // a frozen entity is static: Jolt never pairs it with the static world
+    assert!(
+        !touches.iter().any(|l| l.ends_with(":0:0:0")),
+        "{touches:?}"
+    );
     assert!(
         thinks_b.windows(2).all(|w| w[1] - w[0] == 7),
         "NextThink 0.1 every 7 ticks: {thinks_b:?}"
