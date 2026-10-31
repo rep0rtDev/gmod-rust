@@ -416,3 +416,23 @@ in the 640x480 proportional space of the sheet page.
   crosshair cvars or dialog `.res` in the mounted content), "Import spray" (a file dialog that
   converts an image to `materials/vgui/logos/<name>.vtf`; we draw no sprays) and the Voice
   page's "Test microphone" (needs capture; gm-audio has playback only) stay inert buttons.
+
+## Spawn menu: Weapons / Entities tabs
+
+- Game: `spawnmenu.AddCreationTab` Weapons (`PopulateFromList("Weapon")`) and Entities
+  (`"SpawnableEntities"`): a sidebar tree with one node per `Category` (icons from
+  `ContentCategoryIcons`: Half-Life 2 `games/16/hl2.png`), 128 px `ContentIcon`s (image
+  `entities/<class>.png` inset 3, `gui/ContentIcon-normal` / `-hovered` overlay, DermaDefault
+  name with a (0,0,0,200) shadow 9 px above the bottom). Left click runs `gm_giveswep <class>`
+  (alive, `Spawnable` or admin; `Give` if not carried, then `SelectWeapon`) or
+  `gm_spawnsent <class>` (`SpawnFunction` of the scripted entity or `HitPos + HitNormal * 16`,
+  `sbox_maxsents`, undo `SENT` "Undone <PrintName>", cleanup `sents`). The HL2 weapon list is
+  `ADD_WEAPON` in `lua/autorun/game_hl2.lua`, names `#weapon_x` from `entities.properties`.
+- Ours: `ServerMsg::ContentLists` (reliable, versioned like SpawnLists) carries
+  `gm_server::ContentEntry` lists: the HL2 spawnable weapons the server implements (10 of the
+  game's 13: no stunstick / bugbait / slam), scripted weapons (`print_name`, category Other),
+  scripted entities (`print_name` / `category` from `entity.register`). The client groups by
+  localised category, draws the ContentIcons and sends `Command::GiveWeapon` /
+  `Command::SpawnSent`, which the server runs as `give_weapon_cmd` / `spawn_sent`. Not done:
+  HL2 `SpawnableEntities` (ammo / health items; no item entities on the server), middle-click
+  `gm_spawnswep` (no world weapon entities), the right-click copy / Creator tool menu, search.

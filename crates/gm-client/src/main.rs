@@ -707,6 +707,10 @@ struct App {
     /// Key / mouse button edges since the last frame, for the client actors (`input.key`).
     pending_input: Vec<(String, bool)>,
     spawn_lists_seen: usize,
+    /// Weapons / Entities tab categories built from the server's content lists.
+    content: [Vec<derma::ContentList>; 2],
+    content_seen: usize,
+    content_lang: Option<std::collections::BTreeMap<String, String>>,
     cursor: (f32, f32),
     /// `cl_playerskin` / `cl_playerbodygroups` as typed, sent together.
     player_skin: u8,
@@ -1054,9 +1058,23 @@ impl App {
                 });
             }
         }
+        self.sync_content_lists();
         if let Some(g) = &mut self.gfx {
             for l in &self.spawnlists {
                 g.ui.load_image(&g.gpu, &self.mount, &l.icon);
+            }
+            for name in [
+                "gui/ContentIcon-normal.png",
+                "gui/ContentIcon-hovered.png",
+                "gui/noicon.png",
+            ] {
+                g.ui.load_image(&g.gpu, &self.mount, name);
+            }
+            for l in self.content.iter().flatten() {
+                g.ui.load_image(&g.gpu, &self.mount, &l.icon);
+                for (class, _) in &l.items {
+                    g.ui.load_image(&g.gpu, &self.mount, &format!("entities/{class}.png"));
+                }
             }
         }
         self.menu = Some(SpawnMenu {
@@ -1064,6 +1082,65 @@ impl App {
         });
         self.mouse.clear();
         self.set_grab(false);
+    }
+
+    /// The Weapons / Entities tabs from the server's content lists: grouped by category in
+    /// order of appearance, names localised through `entities.properties` /
+    /// `spawnmenu.properties`, `ContentCategoryIcons` for the game categories.
+    fn sync_content_lists(&mut self) {
+        let world = &self.sim.client.world;
+        let seen = world.content_weapons.len() * 4096 + world.content_entities.len() + 1;
+        if seen == self.content_seen {
+            return;
+        }
+        self.content_seen = seen;
+        let lang = self.content_lang.get_or_insert_with(|| {
+            let mut m =
+                derma::load_properties(&self.mount, "resource/localization/en/entities.properties");
+            m.extend(derma::load_properties(
+                &self.mount,
+                "resource/localization/en/spawnmenu.properties",
+            ));
+            m
+        });
+        let localize = |s: &str| -> String {
+            match s.strip_prefix('#') {
+                Some(key) => lang.get(key).cloned().unwrap_or_else(|| key.to_string()),
+                None => s.to_string(),
+            }
+        };
+        let category_icon = |category: &str, default: &str| -> String {
+            match category {
+                "Half-Life 2" => "games/16/hl2.png".into(),
+                "Half-Life: Source" => "games/16/hl1.png".into(),
+                "Portal" => "games/16/portal.png".into(),
+                _ => default.into(),
+            }
+        };
+        let build = |entries: &[gm_server::ContentEntry], default_icon: &str| {
+            let mut lists: Vec<derma::ContentList> = Vec::new();
+            for e in entries {
+                let category = localize(&e.category);
+                let item = (e.class.clone(), localize(&e.name));
+                match lists.iter_mut().find(|l| l.category == category) {
+                    Some(l) => l.items.push(item),
+                    None => lists.push(derma::ContentList {
+                        icon: category_icon(&e.category, default_icon),
+                        category,
+                        items: vec![item],
+                    }),
+                }
+            }
+            for l in &mut lists {
+                l.items.sort_by(|a, b| a.1.cmp(&b.1));
+            }
+            lists.sort_by(|a, b| a.category.cmp(&b.category));
+            lists
+        };
+        self.content = [
+            build(&world.content_weapons, "icon16/gun.png"),
+            build(&world.content_entities, "icon16/bricks.png"),
+        ];
     }
 
     /// The row under the cursor of the open spawn menu, if any.
@@ -1320,6 +1397,7 @@ impl App {
             font: &font,
             bold: &bold,
             lists: &self.spawnlists,
+            content: [&self.content[0], &self.content[1]],
             tool: &self.tool,
             has_image: &has_image,
         };
@@ -1815,6 +1893,7 @@ impl App {
             font: &font,
             bold: &bold,
             lists: &self.spawnlists,
+            content: [&self.content[0], &self.content[1]],
             tool: &self.tool,
             has_image: &has_image,
         };
@@ -2066,6 +2145,7 @@ impl App {
             font: &font,
             bold: &bold,
             lists: &self.spawnlists,
+            content: [&self.content[0], &self.content[1]],
             tool: &self.tool,
             has_image: &has_image,
         };
@@ -2075,7 +2155,22 @@ impl App {
                 self.console.log(format!("spawn {model}"));
                 self.sim.client.command(Command::Spawn { model });
             }
-            Some(derma::Action::CreationTab(i)) => menu.st.creation_tab = i,
+            Some(derma::Action::CreationTab(i)) => {
+                menu.st.creation_tab = i;
+                menu.st.scroll = 0.0;
+            }
+            Some(derma::Action::ContentNode(i)) => {
+                menu.st.content_node[menu.st.creation_tab.saturating_sub(1).min(1)] = i;
+                menu.st.scroll = 0.0;
+            }
+            Some(derma::Action::GiveWeapon(class)) => {
+                self.console.log(format!("gm_giveswep {class}"));
+                self.sim.client.command(Command::GiveWeapon { class });
+            }
+            Some(derma::Action::SpawnSent(class)) => {
+                self.console.log(format!("gm_spawnsent {class}"));
+                self.sim.client.command(Command::SpawnSent { class });
+            }
             Some(derma::Action::ToolTab(i)) => menu.st.tool_tab = i,
             Some(derma::Action::Node(i)) => {
                 menu.st.node = i;
@@ -3305,6 +3400,7 @@ impl App {
                 font: &font,
                 bold: &bold,
                 lists: &self.spawnlists,
+                content: [&self.content[0], &self.content[1]],
                 tool: &self.tool,
                 has_image: &has_image,
             };
@@ -3373,6 +3469,7 @@ impl App {
                 font: &font,
                 bold: &bold,
                 lists: &self.spawnlists,
+                content: [&self.content[0], &self.content[1]],
                 tool: &self.tool,
                 has_image: &has_image,
             };
@@ -4538,6 +4635,9 @@ fn main() -> Result<()> {
         scripted_world: Vec::new(),
         pending_input: Vec::new(),
         spawn_lists_seen: usize::MAX,
+        content: [Vec::new(), Vec::new()],
+        content_seen: usize::MAX,
+        content_lang: None,
         cursor: (0.0, 0.0),
         panel_drag: None,
         player_skin: 0,

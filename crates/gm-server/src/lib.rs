@@ -605,12 +605,41 @@ pub enum UseType {
     OnOff,
 }
 
+/// One spawn menu content icon (Weapons / Entities tabs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContentEntry {
+    pub class: String,
+    /// Display name; `#key` is looked up in the client's `entities.properties`.
+    pub name: String,
+    pub category: String,
+}
+
+/// `ADD_WEAPON` of `lua/autorun/game_hl2.lua`: the HL2 weapons the game's Weapons tab offers.
+pub const HL2_SPAWNABLE_WEAPONS: [&str; 13] = [
+    "weapon_physcannon",
+    "weapon_stunstick",
+    "weapon_frag",
+    "weapon_crossbow",
+    "weapon_bugbait",
+    "weapon_rpg",
+    "weapon_crowbar",
+    "weapon_shotgun",
+    "weapon_pistol",
+    "weapon_slam",
+    "weapon_smg1",
+    "weapon_ar2",
+    "weapon_357",
+];
+
 /// A scripted entity class (`scripted_ents.Register` of a `base_anim` with physics): the
 /// instances are sandbox props with this model whose callbacks go to the script.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScriptedEntity {
     pub class: String,
     pub model: String,
+    /// Spawn menu name (`PrintName`) and category; the class / "Other" when absent.
+    pub print_name: Option<String>,
+    pub category: Option<String>,
     /// `NextThink(CurTime() + think)` in the think; `None` is the engine's default cadence.
     pub think: Option<f32>,
     pub use_type: UseType,
@@ -1077,6 +1106,8 @@ pub struct Server<'w> {
     /// `spawn_lists_version` grows with every change so the net layer resends them.
     pub spawn_lists: Vec<(String, Vec<String>)>,
     pub spawn_lists_version: u32,
+    /// Bumped whenever the Weapons / Entities content lists change (`content_lists`).
+    pub content_version: u32,
     /// Setting schemas of scripted stools (`tool.register` with `settings`), by tool name;
     /// `tool_schemas_version` grows with every change so the net layer resends them.
     pub tool_schemas: Vec<(String, Vec<ToolSetting>)>,
@@ -1188,6 +1219,7 @@ impl<'w> Server<'w> {
             cvar_changes: Vec::new(),
             spawn_lists: Vec::new(),
             spawn_lists_version: 0,
+            content_version: 0,
             tool_schemas: Vec::new(),
             tool_schemas_version: 0,
             scripted_weapons: Vec::new(),
@@ -1728,6 +1760,7 @@ impl<'w> Server<'w> {
             Some(cur) => *cur = def,
             None => self.scripted_entities.push(def),
         }
+        self.content_version += 1;
     }
 
     /// Spawns an instance of a scripted entity class: a prop with the class's model plus the
@@ -1839,6 +1872,7 @@ impl<'w> Server<'w> {
             None => self.scripted_weapons.push(def),
         }
         self.scripted_weapons_version += 1;
+        self.content_version += 1;
     }
 
     /// Every weapon class the wire can name: `LOADOUT`, then the scripted ones in order.
@@ -2894,6 +2928,84 @@ impl<'w> Server<'w> {
     }
 
     /// `gm_spawn <model>` by a player.
+    /// The spawn menu's Weapons and Entities tabs (`list.Get("Weapon")` /
+    /// `list.Get("SpawnableEntities")`): the HL2 weapons `lua/autorun/game_hl2.lua` makes
+    /// spawnable that this server implements, the scripted weapons, and the scripted entities.
+    /// Names starting with `#` are localisation keys (`entities.properties`).
+    pub fn content_lists(&self) -> (Vec<ContentEntry>, Vec<ContentEntry>) {
+        let mut weapons: Vec<ContentEntry> = HL2_SPAWNABLE_WEAPONS
+            .iter()
+            .filter(|c| weapons::def(c).is_some())
+            .map(|c| ContentEntry {
+                class: c.to_string(),
+                name: format!("#{c}"),
+                category: "Half-Life 2".into(),
+            })
+            .collect();
+        weapons.extend(self.scripted_weapons.iter().map(|w| ContentEntry {
+            class: w.class.clone(),
+            name: w.print_name.clone(),
+            category: "#spawnmenu.category.other".into(),
+        }));
+        let entities = self
+            .scripted_entities
+            .iter()
+            .map(|e| ContentEntry {
+                class: e.class.clone(),
+                name: e.print_name.clone().unwrap_or_else(|| e.class.clone()),
+                category: e
+                    .category
+                    .clone()
+                    .unwrap_or_else(|| "#spawnmenu.category.other".into()),
+            })
+            .collect();
+        (weapons, entities)
+    }
+
+    /// `gm_giveswep`: a live player gets a spawnable weapon (given if not carried) and
+    /// switches to it.
+    pub fn give_weapon_cmd(&mut self, player: u32, class: &str) -> bool {
+        if !self.players.get(&player).is_some_and(|p| p.alive) {
+            return false;
+        }
+        if !self.content_lists().0.iter().any(|w| w.class == class) {
+            return false;
+        }
+        self.give_weapon(player, class)
+    }
+
+    /// `gm_spawnsent` for a scripted entity: 16 units off the surface the player looks at,
+    /// counted and cleaned up as `sents` (`sbox_maxsents`), undoable as `SENT`.
+    pub fn spawn_sent(&mut self, player: u32, class: &str) -> Option<u32> {
+        if !self.players.get(&player).is_some_and(|p| p.alive) {
+            return None;
+        }
+        let def = self
+            .scripted_entities
+            .iter()
+            .find(|e| e.class == class)?
+            .clone();
+        let hit = self.tool_hit(player)?;
+        let mut events = Vec::new();
+        if !self.sandbox.check_limit(player, "sents", &mut events) {
+            self.events.extend(events);
+            return None;
+        }
+        let pos = hit.pos + hit.normal * 16.0;
+        let id = self.script_spawn_entity(player, class, pos, Vec3::ZERO, false)?;
+        self.sandbox.add_count(player, "sents", id);
+        self.sandbox.add_cleanup(player, "sents", id);
+        let name = def.print_name.clone().unwrap_or_else(|| class.to_string());
+        self.sandbox.push_undo(
+            player,
+            "SENT",
+            format!("Scripted Entity ({class})"),
+            Some(format!("Undone {name}")),
+            vec![id],
+        );
+        Some(id)
+    }
+
     pub fn spawn_prop(&mut self, player: u32, model: &str) -> Option<u32> {
         let (eye, eye_angles) = self.eye(player)?;
         if !self.models.contains_key(model) {

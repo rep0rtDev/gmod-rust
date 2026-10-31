@@ -349,10 +349,20 @@ pub const TOOL_CATEGORIES: [(&str, &[(&str, &str)]); 4] = [
     ),
 ];
 
+/// A category of the Weapons / Entities tabs (`PopulateFromList`): display names by class.
+#[derive(Clone, Debug, Default)]
+pub struct ContentList {
+    pub category: String,
+    pub icon: String,
+    pub items: Vec<(String, String)>,
+}
+
 /// What the player has clicked around in the menu.
 #[derive(Default)]
 pub struct MenuState {
     pub creation_tab: usize,
+    /// Selected category of the Weapons / Entities tabs.
+    pub content_node: [usize; 2],
     pub tool_tab: usize,
     /// Selected tree node: an index into the spawnlists.
     pub node: usize,
@@ -369,6 +379,11 @@ pub enum Action {
     Node(usize),
     Browse,
     Spawn(String),
+    /// A category of the Weapons / Entities tab.
+    ContentNode(usize),
+    /// `gm_giveswep` / `gm_spawnsent` from a ContentIcon.
+    GiveWeapon(String),
+    SpawnSent(String),
     Category(usize),
     Tool(&'static str),
     /// A `properties.Add` entry of the right-click menu, by its name.
@@ -425,6 +440,8 @@ pub struct Ctx<'a> {
     pub font: &'a FontMetrics,
     pub bold: &'a FontMetrics,
     pub lists: &'a [SpawnList],
+    /// Weapons and Entities tab categories.
+    pub content: [&'a [ContentList]; 2],
     pub tool: &'a str,
     pub has_image: &'a dyn Fn(&str) -> bool,
 }
@@ -456,6 +473,8 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
     );
     if st.creation_tab == 0 {
         spawnlists(&mut out, ctx, st, cx, cy, cw, ch);
+    } else if st.creation_tab == 1 || st.creation_tab == 2 {
+        content(&mut out, ctx, st, st.creation_tab - 1, cx, cy, cw, ch);
     }
     let (tx, ty, tw, th) = sheet(
         &mut out,
@@ -719,6 +738,170 @@ fn spawnlists(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f3
             w: ICON,
             h: ICON,
             action: Action::Spawn(model.clone()),
+        });
+    }
+    if out.max_scroll > 0.0 {
+        let sx = cx + cw - 15.0;
+        nine(&mut out.items, &SCROLL_TRACK_V, sx, y, 15.0, h, WHITE);
+        let bar_h = (h * h / content_h).max(10.0).round();
+        let bar_y = y + ((h - bar_h) * (scroll / out.max_scroll)).round();
+        nine(&mut out.items, &SCROLL_BAR_V, sx, bar_y, 15.0, bar_h, WHITE);
+    }
+}
+
+/// The Weapons / Entities tab (`SpawnmenuContentPanel` + `PopulateFromList`): a sidebar tree
+/// with one node per category and 128 px `ContentIcon`s (image inset 3, `gui/ContentIcon-normal`
+/// / `-hovered` overlay, DermaDefault name with a shadow 9 px above the bottom).
+#[allow(clippy::too_many_arguments)]
+fn content(
+    out: &mut Layout,
+    ctx: &Ctx,
+    st: &MenuState,
+    tab: usize,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) {
+    const TREE_W: f32 = 192.0;
+    const DIV: f32 = 6.0;
+    const NODE_H: f32 = 17.0;
+    const ICON: f32 = 128.0;
+    let lists = ctx.content[tab.min(1)];
+    nine(&mut out.items, &TEXTBOX, x, y, TREE_W, 20.0, WHITE);
+    text(
+        &mut out.items,
+        FONT,
+        ctx.font,
+        x + 4.0,
+        y,
+        20.0,
+        "Search...",
+        PLACEHOLDER,
+    );
+    let (ty, th) = (y + 24.0, h - 24.0);
+    nine(&mut out.items, &TREE, x, ty, TREE_W, th, WHITE);
+    let node = st.content_node[tab.min(1)];
+    let mut ny = ty + 1.0;
+    for (i, l) in lists.iter().enumerate() {
+        if ny + NODE_H > ty + th {
+            break;
+        }
+        let hovered = inside(ctx.cursor, x, ny, TREE_W, NODE_H);
+        let x0 = x + 2.0;
+        let color = if node == i {
+            let tw = ctx.font.text_width(&l.category);
+            nine(
+                &mut out.items,
+                &SELECTION,
+                x0 + 36.0,
+                ny,
+                tw + 6.0,
+                NODE_H,
+                WHITE,
+            );
+            WHITE
+        } else if hovered {
+            TREE_TEXT_HOVER
+        } else {
+            TREE_TEXT
+        };
+        let ix = x0 + NODE_H;
+        if (ctx.has_image)(&l.icon) {
+            image(&mut out.items, &l.icon, ix, ny, 16.0, 16.0);
+        }
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            ix + 20.0,
+            ny,
+            NODE_H,
+            &l.category,
+            color,
+        );
+        out.hits.push(Hit {
+            x,
+            y: ny,
+            w: TREE_W,
+            h: NODE_H,
+            action: Action::ContentNode(i),
+        });
+        ny += NODE_H;
+    }
+
+    let (cx, cw) = (x + TREE_W + DIV, w - TREE_W - DIV);
+    let Some(list) = lists.get(node) else {
+        return;
+    };
+    let cols = ((cw - 15.0 - 4.0) / ICON).floor().max(1.0) as usize;
+    let content_h = list.items.len().div_ceil(cols) as f32 * ICON + 4.0;
+    out.max_scroll = ((content_h - h) / ICON).ceil().max(0.0) * ICON;
+    let scroll = st.scroll.min(out.max_scroll);
+    let line_h = ctx.font.line_height;
+    for (i, (class, name)) in list.items.iter().enumerate() {
+        let (r, c) = (i / cols, i % cols);
+        let ix = cx + 2.0 + c as f32 * ICON;
+        let iy = y + 2.0 + r as f32 * ICON - scroll;
+        if iy < y {
+            continue;
+        }
+        if iy + ICON > y + h {
+            break;
+        }
+        let hovered = inside(ctx.cursor, ix, iy, ICON, ICON);
+        let img = format!("entities/{class}.png");
+        if (ctx.has_image)(&img) {
+            image(
+                &mut out.items,
+                &img,
+                ix + 3.0,
+                iy + 3.0,
+                ICON - 8.0,
+                ICON - 8.0,
+            );
+        } else if (ctx.has_image)("gui/noicon.png") {
+            image(
+                &mut out.items,
+                "gui/noicon.png",
+                ix + 3.0,
+                iy + 3.0,
+                ICON - 8.0,
+                ICON - 8.0,
+            );
+        }
+        let overlay = if hovered {
+            "gui/ContentIcon-hovered.png"
+        } else {
+            "gui/ContentIcon-normal.png"
+        };
+        if (ctx.has_image)(overlay) {
+            image(&mut out.items, overlay, ix, iy, ICON, ICON);
+        }
+        let tw = ctx.font.text_width(name);
+        let tx = ix + (ICON - tw) * 0.5;
+        let tyy = iy + ICON - line_h - 9.0;
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            tx + 1.0,
+            tyy + 1.0,
+            line_h,
+            name,
+            [0.0, 0.0, 0.0, 200.0 / 255.0],
+        );
+        text(&mut out.items, FONT, ctx.font, tx, tyy, line_h, name, WHITE);
+        out.hits.push(Hit {
+            x: ix,
+            y: iy,
+            w: ICON,
+            h: ICON,
+            action: if tab == 0 {
+                Action::GiveWeapon(class.clone())
+            } else {
+                Action::SpawnSent(class.clone())
+            },
         });
     }
     if out.max_scroll > 0.0 {

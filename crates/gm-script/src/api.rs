@@ -954,6 +954,8 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         def: gm_server::ScriptedEntity {
                             class: t.get("class")?,
                             model: t.get("model")?,
+                            print_name: t.get::<Option<String>>("print_name")?,
+                            category: t.get::<Option<String>>("category")?,
                             think: t.get::<Option<f32>>("think")?,
                             use_type: match t.get::<Option<String>>("use_type")?.as_deref() {
                                 None | Some("continuous") => gm_server::UseType::Continuous,

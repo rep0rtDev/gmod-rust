@@ -56,6 +56,14 @@ pub enum Command {
     SelectWeapon {
         class: String,
     },
+    /// `gm_giveswep`: get (and switch to) a spawnable weapon from the Weapons tab.
+    GiveWeapon {
+        class: String,
+    },
+    /// `gm_spawnsent`: spawn a scripted entity from the Entities tab where the player looks.
+    SpawnSent {
+        class: String,
+    },
     Console {
         line: String,
     },
@@ -358,6 +366,13 @@ pub enum ServerMsg {
         version: u32,
         defs: Vec<gm_server::ScriptedWeapon>,
     },
+    /// Reliable: the spawn menu's Weapons / Entities content, whole, whenever the server's
+    /// version changes.
+    ContentLists {
+        version: u32,
+        weapons: Vec<gm_server::ContentEntry>,
+        entities: Vec<gm_server::ContentEntry>,
+    },
 }
 
 /// A world sound: script name, where, and a volume factor on the script's own.
@@ -633,6 +648,14 @@ impl ClientMsg {
                         w.u8(9);
                         w.str(class);
                     }
+                    Command::GiveWeapon { class } => {
+                        w.u8(18);
+                        w.str(class);
+                    }
+                    Command::SpawnSent { class } => {
+                        w.u8(19);
+                        w.str(class);
+                    }
                     Command::Console { line } => {
                         w.u8(8);
                         w.str(line);
@@ -739,6 +762,8 @@ impl ClientMsg {
                     },
                     8 => Command::Console { line: r.str()? },
                     9 => Command::SelectWeapon { class: r.str()? },
+                    18 => Command::GiveWeapon { class: r.str()? },
+                    19 => Command::SpawnSent { class: r.str()? },
                     10 => Command::Chat { text: r.str()? },
                     11 => Command::Noclip { on: r.bool()? },
                     12 => Command::Property { name: r.str()? },
@@ -787,6 +812,7 @@ impl ServerMsg {
                 | ServerMsg::SpawnLists { .. }
                 | ServerMsg::ToolSchemas { .. }
                 | ServerMsg::WeaponDefs { .. }
+                | ServerMsg::ContentLists { .. }
         )
     }
 
@@ -969,6 +995,22 @@ impl ServerMsg {
                     w.varint(models.len() as u64);
                     for m in models {
                         w.str(m);
+                    }
+                }
+            }
+            ServerMsg::ContentLists {
+                version,
+                weapons,
+                entities,
+            } => {
+                w.u8(18);
+                w.u32(*version);
+                for list in [weapons, entities] {
+                    w.varint(list.len() as u64);
+                    for e in list {
+                        w.str(&e.class);
+                        w.str(&e.name);
+                        w.str(&e.category);
                     }
                 }
             }
@@ -1206,6 +1248,26 @@ impl ServerMsg {
                     lists.push((category, models));
                 }
                 ServerMsg::SpawnLists { version, lists }
+            }
+            18 => {
+                let version = r.u32()?;
+                let mut lists: [Vec<gm_server::ContentEntry>; 2] = [Vec::new(), Vec::new()];
+                for list in &mut lists {
+                    let n = r.varint()?.min(4096) as usize;
+                    for _ in 0..n {
+                        list.push(gm_server::ContentEntry {
+                            class: r.str()?,
+                            name: r.str()?,
+                            category: r.str()?,
+                        });
+                    }
+                }
+                let [weapons, entities] = lists;
+                ServerMsg::ContentLists {
+                    version,
+                    weapons,
+                    entities,
+                }
             }
             17 => {
                 let version = r.u32()?;

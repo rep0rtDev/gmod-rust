@@ -43,6 +43,7 @@ pub struct ClientSlot {
     models_sent: usize,
     /// `Server::spawn_lists_version` last sent to this client (0: none yet).
     spawn_lists_sent: u32,
+    content_lists_sent: u32,
     tool_schemas_sent: u32,
     weapon_defs_sent: u32,
     /// Last snapshot tick each player / entity state went to this client (for the staleness
@@ -255,6 +256,7 @@ impl ServerNet {
                         pending_cvars: Vec::new(),
                         cvar_seq: 0,
                         spawn_lists_sent: 0,
+                        content_lists_sent: u32::MAX,
                         tool_schemas_sent: 0,
                         weapon_defs_sent: 0,
                         uploads: VecDeque::new(),
@@ -762,6 +764,12 @@ impl ServerNet {
                     Command::SelectWeapon { class } => {
                         server.select_weapon(slot.player, &class);
                     }
+                    Command::GiveWeapon { class } => {
+                        server.give_weapon_cmd(slot.player, &class);
+                    }
+                    Command::SpawnSent { class } => {
+                        server.spawn_sent(slot.player, &class);
+                    }
                     Command::Cleanup => server.cleanup(slot.player),
                     Command::Numpad { key, down } => {
                         server.sandbox.numpad(slot.player, i32::from(key), down)
@@ -1045,6 +1053,18 @@ impl ServerNet {
                 .write(&mut w);
                 slot.channel.send_reliable(w.buf);
                 slot.spawn_lists_sent = server.spawn_lists_version;
+            }
+            if slot.content_lists_sent != server.content_version {
+                let (weapons, entities) = server.content_lists();
+                let mut w = Writer::default();
+                ServerMsg::ContentLists {
+                    version: server.content_version,
+                    weapons,
+                    entities,
+                }
+                .write(&mut w);
+                slot.channel.send_reliable(w.buf);
+                slot.content_lists_sent = server.content_version;
             }
             if slot.weapon_defs_sent != server.scripted_weapons_version {
                 let mut w = Writer::default();

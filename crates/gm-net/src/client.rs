@@ -27,6 +27,9 @@ pub struct ClientWorld {
     pub tool_schemas: Vec<(String, Vec<gm_server::ToolSetting>)>,
     /// The scripted weapon classes, latest version whole (wire indices after `LOADOUT`).
     pub weapon_defs: Vec<gm_server::ScriptedWeapon>,
+    /// The spawn menu's Weapons / Entities content, latest version whole.
+    pub content_weapons: Vec<gm_server::ContentEntry>,
+    pub content_entities: Vec<gm_server::ContentEntry>,
 }
 
 /// The settings a click of `tool` carries: the schema's defaults overlaid with the player's
@@ -505,6 +508,8 @@ impl ClientNet {
                             spawn_lists: std::mem::take(&mut self.world.spawn_lists),
                             tool_schemas: std::mem::take(&mut self.world.tool_schemas),
                             weapon_defs: std::mem::take(&mut self.world.weapon_defs),
+                            content_weapons: std::mem::take(&mut self.world.content_weapons),
+                            content_entities: std::mem::take(&mut self.world.content_entities),
                         };
                         self.server_tick = tick;
                     }
@@ -517,6 +522,12 @@ impl ClientNet {
                     ServerMsg::SpawnLists { lists, .. } => self.world.spawn_lists = lists,
                     ServerMsg::ToolSchemas { tools, .. } => self.world.tool_schemas = tools,
                     ServerMsg::WeaponDefs { defs, .. } => self.world.weapon_defs = defs,
+                    ServerMsg::ContentLists {
+                        weapons, entities, ..
+                    } => {
+                        self.world.content_weapons = weapons;
+                        self.world.content_entities = entities;
+                    }
                     ServerMsg::Properties { ent, names } => {
                         self.properties = Some((ent, names));
                     }
