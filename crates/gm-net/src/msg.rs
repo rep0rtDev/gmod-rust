@@ -169,6 +169,8 @@ pub struct PlayerSnap {
     /// Skin family and `SetBodyGroups` digits of the player model, as set (unclamped).
     pub skin: u8,
     pub body: String,
+    /// The player's name as given at connect (`Player:Nick`).
+    pub name: String,
     pub held: Option<u32>,
     /// The prop the player is driving (the `drive` property), if any.
     pub driving: Option<u32>,
@@ -827,6 +829,7 @@ impl ServerMsg {
                     w.u8(p.model);
                     w.u8(p.skin);
                     w.str(&p.body);
+                    w.str(&p.name);
                     w.u32(p.held.unwrap_or(0));
                     w.u32(p.driving.unwrap_or(0));
                     w.bool(p.alive);
@@ -1044,6 +1047,7 @@ impl ServerMsg {
                         model: r.u8()?,
                         skin: r.u8()?,
                         body: r.str()?,
+                        name: r.str()?,
                         held: match r.u32()? {
                             0 => None,
                             h => Some(h),

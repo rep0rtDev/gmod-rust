@@ -941,6 +941,12 @@ impl ServerNet {
                 model: gm_server::player_models::index_of(&p.model),
                 skin: p.skin,
                 body: p.body.clone(),
+                name: self
+                    .clients
+                    .values()
+                    .find(|c| c.player == *id)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default(),
                 held: p.held.map(|h| h.0),
                 driving: p.driving.as_ref().map(|d| d.prop),
                 alive: p.alive,

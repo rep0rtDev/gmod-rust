@@ -90,6 +90,7 @@ mod tests {
                 vm_serial: 0,
                 skin: 0,
                 body: String::new(),
+                name: "bot".to_string(),
             }],
             entities: vec![EntityState {
                 id: 2,

@@ -765,6 +765,12 @@ impl App {
             if !ui.register_font(&gpu, &self.mount, "HudDefault", "Verdana", 9.0 * fs) {
                 ui.register_font(&gpu, &self.mount, "HudDefault", "Roboto-Bold", 9.0 * fs);
             }
+            // TargetID / TargetIDSmall: Verdana 12 / 11 bold (the 480-599 line variants)
+            for (name, tall) in [("TargetID", 12.0), ("TargetIDSmall", 11.0)] {
+                if !ui.register_font(&gpu, &self.mount, name, "Verdana", tall * fs) {
+                    ui.register_font(&gpu, &self.mount, name, "Roboto-Bold", tall * fs);
+                }
+            }
         }
         {
             let m = ui.font_metrics(None);
@@ -2253,6 +2259,74 @@ impl App {
                         text: p.armor.to_string(),
                         color: fg,
                     });
+                }
+                // HUDDrawTargetID: the aimed player's name and health under the crosshair
+                // (TargetID at centre + 30, two shadows, the team colour 255 255 100)
+                {
+                    let (pt, yw) = (self.view.x.to_radians(), self.view.y.to_radians());
+                    let fwd = Vec3::new(pt.cos() * yw.cos(), pt.cos() * yw.sin(), -pt.sin());
+                    let world_d = (self
+                        .sim
+                        .collision
+                        .trace_ray(o, o + fwd * 8192.0, gm_collision::MASK_SOLID)
+                        .end
+                        - o)
+                        .length();
+                    let mut best: Option<(f32, &gm_net::msg::PlayerSnap)> = None;
+                    for q in &self.sim.client.world.players {
+                        if q.id == p.id || !q.alive {
+                            continue;
+                        }
+                        let top = if q.ducked { 36.0 } else { 72.0 };
+                        let (mins, maxs) = (
+                            q.origin + Vec3::new(-16.0, -16.0, 0.0),
+                            q.origin + Vec3::new(16.0, 16.0, top),
+                        );
+                        let (mut t0, mut t1) = (0.0f32, world_d);
+                        for i in 0..3 {
+                            let (d, s0) = (fwd[i], o[i]);
+                            if d.abs() < 1e-6 {
+                                if s0 < mins[i] || s0 > maxs[i] {
+                                    t0 = f32::INFINITY;
+                                }
+                                continue;
+                            }
+                            let (ta, tb) = ((mins[i] - s0) / d, (maxs[i] - s0) / d);
+                            t0 = t0.max(ta.min(tb));
+                            t1 = t1.min(ta.max(tb));
+                        }
+                        if t0 <= t1 && best.is_none_or(|(bt, _)| t0 < bt) {
+                            best = Some((t0, q));
+                        }
+                    }
+                    if let Some((_, q)) = best {
+                        let team = [1.0, 1.0, 100.0 / 255.0, 1.0];
+                        let mut yy = h / 2.0 + 30.0;
+                        for (font, text) in [
+                            ("TargetID", q.name.clone()),
+                            ("TargetIDSmall", format!("{}%", q.health.max(0))),
+                        ] {
+                            let m = g.ui.font_metrics(Some(font));
+                            let x = w / 2.0 - m.text_width(&text) / 2.0;
+                            for (dx, a) in [(1.0, 120.0 / 255.0), (2.0, 50.0 / 255.0)] {
+                                items.push(UiItem::Text {
+                                    font: Some(font.to_string()),
+                                    x: x + dx,
+                                    y: yy + dx,
+                                    text: text.clone(),
+                                    color: [0.0, 0.0, 0.0, a],
+                                });
+                            }
+                            items.push(UiItem::Text {
+                                font: Some(font.to_string()),
+                                x,
+                                y: yy,
+                                text,
+                                color: team,
+                            });
+                            yy += m.line_height + 5.0;
+                        }
+                    }
                 }
                 if p.clip >= 0 || p.reserve > 0 {
                     let ax = w - 150.0 * s;
