@@ -553,6 +553,50 @@ pub struct ToolSettings {
     pub dynamite_remove: bool,
 }
 
+impl ToolSettings {
+    /// `tool <name> <key> <value>` from a client's ControlPanel: the stools' ClientConVars by
+    /// field name; false for an unknown key or an unparsable number.
+    pub fn set(&mut self, key: &str, value: &str) -> bool {
+        macro_rules! fields {
+            ($($f32s:ident),* ; $($bools:ident),* ; $($strs:ident),* ; $($ints:ident),*) => {
+                match key {
+                    $(stringify!($f32s) => match value.trim().parse::<f32>() {
+                        Ok(v) => { self.$f32s = v; true }
+                        Err(_) => false,
+                    })*
+                    $(stringify!($bools) => { self.$bools = matches!(value.trim(), "1" | "true" | "on"); true })*
+                    $(stringify!($strs) => { self.$strs = value.to_string(); true })*
+                    $(stringify!($ints) => match value.trim().parse::<f32>() {
+                        Ok(v) => { self.$ints = v as i32; true }
+                        Err(_) => false,
+                    })*
+                    _ => false,
+                }
+            };
+        }
+        fields!(
+            axis_forcelimit, axis_torquelimit, axis_friction, weld_forcelimit, rope_forcelimit,
+            rope_addlength, rope_width, ballsocket_forcelimit, slider_width, elastic_constant,
+            elastic_damping, elastic_rdamping, elastic_width, hydraulic_width, hydraulic_addlength,
+            hydraulic_speed, winch_width, winch_fwd_speed, winch_bwd_speed, muscle_width,
+            muscle_addlength, muscle_period, pulley_width, pulley_forcelimit, thruster_force,
+            hoverball_speed, hoverball_resistance, hoverball_strength, balloon_ropelength,
+            balloon_force, wheel_torque, wheel_friction, wheel_forcelimit, wheel_rx, wheel_ry,
+            wheel_rz, dynamite_damage, dynamite_delay;
+            axis_nocollide, weld_nocollide, rope_rigid, ballsocket_nocollide, elastic_stretchonly,
+            hydraulic_fixed, hydraulic_toggle, winch_toggle, muscle_fixed, muscle_starton,
+            pulley_rigid, thruster_toggle, thruster_collision, wheel_nocollide, wheel_toggle,
+            button_toggle, dynamite_remove;
+            rope_material, slider_material, elastic_material, hydraulic_material, winch_material,
+            muscle_material, pulley_material, thruster_model, hoverball_model, balloon_model,
+            wheel_model, button_model, dynamite_model;
+            hydraulic_key, winch_fwd_key, winch_bwd_key, muscle_key, thruster_key,
+            thruster_key_back, hoverball_key_up, hoverball_key_down, hoverball_key_on, wheel_fwd,
+            wheel_bck, button_keygroup, dynamite_group
+        )
+    }
+}
+
 impl Default for ToolSettings {
     /// A player without the convars (a bot) reads 0 and "" everywhere.
     fn default() -> Self {

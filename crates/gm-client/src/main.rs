@@ -216,8 +216,15 @@ fn world_model(active: u8) -> Option<&'static str> {
 /// Stools the server implements in Rust (`Sandbox::knows_tool`).
 const TOOLS: [&str; 5] = ["weld", "rope", "axis", "nocollide", "duplicator"];
 
-/// Visible spawn icons, the ControlPanel rect and the max content scroll of the last menu frame.
-type MenuCache = (Vec<String>, (f32, f32, f32, f32), f32);
+/// What the last laid-out menu frame left for input and icon rendering.
+#[derive(Default)]
+struct MenuCache {
+    /// Models whose spawn icons are on screen.
+    visible: Vec<String>,
+    max_scroll: f32,
+    /// The tool's setting rows as laid out.
+    rows: Vec<derma::ControlRow>,
+}
 
 struct SpawnMenu {
     st: derma::MenuState,
@@ -672,6 +679,8 @@ struct App {
     /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
     menu: Option<SpawnMenu>,
     spawnlists: Vec<derma::SpawnList>,
+    /// `tool.properties`: tool and setting labels.
+    lang: BTreeMap<String, String>,
     /// From the last laid-out menu frame: visible spawn icons, the ControlPanel rect, max scroll.
     menu_cache: std::cell::RefCell<MenuCache>,
     /// C held: the cursor is free and a right-click asks a prop for its properties.
@@ -876,6 +885,8 @@ impl App {
         self.add_hint("EditingSpawnlists", 5);
         if self.spawnlists.is_empty() {
             self.spawnlists = derma::load_spawnlists(&self.mount);
+            self.lang =
+                derma::load_properties(&self.mount, "resource/localization/en/tool.properties");
         }
         // the server's addon spawnlists follow the client's defaults
         let lists = &self.sim.client.world.spawn_lists;
@@ -918,35 +929,21 @@ impl App {
     }
 
     /// The selected stool's setting schema while the tool gun is out (the panel's content).
+    /// The tool's ControlPanel: a scripted stool's schema from the server, else the built-in
+    /// stool's `BuildCPanel` controls.
     fn panel_schema(&self) -> Option<Vec<gm_server::ToolSetting>> {
-        if self.weapon != 1 {
-            return None;
-        }
         Some(
             self.tool_schema(&self.tool)
-                .map_or_else(Vec::new, <[_]>::to_vec),
+                .map_or_else(|| gm_server::builtin_tool_schema(&self.tool), <[_]>::to_vec),
         )
     }
 
     /// The panel row under the cursor and the cursor's 0..1 position across its control.
-    /// The tool's ControlPanel from the last laid-out menu frame: (x, y, width, first row y, row height).
-    fn panel_layout(&self, lh: f32) -> (f32, f32, f32, f32, f32) {
-        let (x, y, w, _) = self.menu_cache.borrow().1;
-        (x, y, w, y + 24.0, lh * 2.0)
-    }
-
     fn panel_hit(&self) -> Option<(usize, f32)> {
-        let g = self.gfx.as_ref()?;
         self.menu.as_ref()?;
-        let lh = g.ui.line_height();
-        let (tx, _, tw, rows_y, rh) = self.panel_layout(lh);
-        let (cx, cy) = self.cursor;
-        if cx < tx + 8.0 || cx > tx + tw - 8.0 || cy < rows_y {
-            return None;
-        }
-        let row = ((cy - rows_y) / rh) as usize;
-        let t = ((cx - tx - 8.0) / (tw - 16.0)).clamp(0.0, 1.0);
-        Some((row, t))
+        let cache = self.menu_cache.borrow();
+        let row = cache.rows.iter().position(|r| r.contains(self.cursor))?;
+        Some((row, cache.rows[row].fraction(self.cursor)))
     }
 
     /// A press on the panel: a slider takes the cursor's position and follows it until the
@@ -1086,9 +1083,15 @@ impl App {
         let Some(s) = schema.get(row).cloned() else {
             return;
         };
-        let Some(g) = self.gfx.as_ref() else { return };
-        let (tx, _, tw, _, _) = self.panel_layout(g.ui.line_height());
-        let t = ((self.cursor.0 - tx - 8.0) / (tw - 16.0)).clamp(0.0, 1.0);
+        let Some(t) = self
+            .menu_cache
+            .borrow()
+            .rows
+            .get(row)
+            .map(|r| r.fraction(self.cursor))
+        else {
+            return;
+        };
         let value = slider_value(&s, t);
         let same = self
             .tool_settings
@@ -1712,7 +1715,7 @@ impl App {
         };
         let Some(g) = &mut self.gfx else { return };
         if self.menu.is_some() {
-            let visible = self.menu_cache.borrow().0.clone();
+            let visible = self.menu_cache.borrow().visible.clone();
             Self::render_spawn_icons(&visible, &self.mount, g);
         }
         let frame = match g.surface.get_current_texture() {
@@ -2283,122 +2286,40 @@ impl App {
                 tool: &self.tool,
                 has_image: &has_image,
             };
-            let layout = derma::build(&ctx, &menu.st);
-            *self.menu_cache.borrow_mut() =
-                (layout.visible.clone(), layout.control, layout.max_scroll);
+            let mut layout = derma::build(&ctx, &menu.st);
+            let rows = match self.panel_schema() {
+                Some(schema) => {
+                    let set = self.tool_settings.get(&self.tool);
+                    let value_of = |name: &str| {
+                        set.and_then(|m| m.get(name)).cloned().unwrap_or_else(|| {
+                            schema
+                                .iter()
+                                .find(|s| s.name == name)
+                                .map(|s| s.default.clone())
+                                .unwrap_or_default()
+                        })
+                    };
+                    let label_of = |name: &str| derma::setting_label(&self.lang, &self.tool, name);
+                    let focused = self.panel_text.as_ref().map(|(r, v)| (*r, v.as_str()));
+                    let control = layout.control;
+                    derma::controls(
+                        &mut layout,
+                        &ctx,
+                        control,
+                        &schema,
+                        &value_of,
+                        focused,
+                        &label_of,
+                    )
+                }
+                None => Vec::new(),
+            };
+            *self.menu_cache.borrow_mut() = MenuCache {
+                visible: layout.visible.clone(),
+                max_scroll: layout.max_scroll,
+                rows,
+            };
             items.extend(layout.items);
-            if let Some(schema) = self.panel_schema() {
-                let (tx, ty, tw, th) = layout.control;
-                let (rows_y, rh) = (ty + 24.0, lh * 2.0);
-                if schema.is_empty() {
-                    items.push(UiItem::Text {
-                        font: None,
-                        x: tx + 8.0,
-                        y: rows_y,
-                        text: "(no settings; `tool <name>` in the console switches)".into(),
-                        color: [0.6, 0.6, 0.6, 1.0],
-                    });
-                }
-                let hit = self.panel_hit();
-                let set = self.tool_settings.get(&self.tool);
-                for (i, s) in schema.iter().enumerate() {
-                    let y = rows_y + i as f32 * rh;
-                    if y + rh > ty + th - 8.0 {
-                        break;
-                    }
-                    let cur = set
-                        .and_then(|m| m.get(&s.name))
-                        .cloned()
-                        .unwrap_or_else(|| s.default.clone());
-                    if hit.map(|(r, _)| r) == Some(i) {
-                        items.push(UiItem::Rect {
-                            x: tx + 4.0,
-                            y,
-                            w: tw - 8.0,
-                            h: rh,
-                            color: [1.0, 1.0, 1.0, 0.12],
-                        });
-                    }
-                    items.push(UiItem::Text {
-                        font: None,
-                        x: tx + 8.0,
-                        y,
-                        text: format!("{}: {cur}", s.name),
-                        color: [0.85, 0.85, 0.85, 1.0],
-                    });
-                    let (bx, by, bw) = (tx + 8.0, y + lh + 2.0, tw - 16.0);
-                    match s.kind {
-                        gm_server::ToolSettingKind::Number => {
-                            let (lo, hi) = (s.min.max(-1.0e6), s.max.min(1.0e6));
-                            let v = cur.trim().parse::<f32>().unwrap_or(lo);
-                            let t = if hi > lo {
-                                ((v - lo) / (hi - lo)).clamp(0.0, 1.0)
-                            } else {
-                                0.0
-                            };
-                            items.push(UiItem::Rect {
-                                x: bx,
-                                y: by + 5.0,
-                                w: bw,
-                                h: 4.0,
-                                color: [0.35, 0.35, 0.4, 1.0],
-                            });
-                            items.push(UiItem::Rect {
-                                x: bx + t * (bw - 6.0),
-                                y: by,
-                                w: 6.0,
-                                h: 14.0,
-                                color: [0.9, 0.9, 0.9, 1.0],
-                            });
-                        }
-                        gm_server::ToolSettingKind::Bool => {
-                            let on = matches!(cur.trim(), "1" | "true" | "on");
-                            items.push(UiItem::Rect {
-                                x: bx,
-                                y: by,
-                                w: 14.0,
-                                h: 14.0,
-                                color: [0.35, 0.35, 0.4, 1.0],
-                            });
-                            if on {
-                                items.push(UiItem::Rect {
-                                    x: bx + 3.0,
-                                    y: by + 3.0,
-                                    w: 8.0,
-                                    h: 8.0,
-                                    color: [0.9, 0.9, 0.9, 1.0],
-                                });
-                            }
-                        }
-                        gm_server::ToolSettingKind::Text => {
-                            let focused = self.panel_text.as_ref().filter(|(r, _)| *r == i);
-                            let shown = match focused {
-                                Some((_, v)) => format!("{v}_"),
-                                None if cur.is_empty() => "(click to type)".to_string(),
-                                None => cur.clone(),
-                            };
-                            items.push(UiItem::Rect {
-                                x: bx,
-                                y: by - 2.0,
-                                w: bw,
-                                h: 18.0,
-                                color: if focused.is_some() {
-                                    [0.25, 0.3, 0.4, 1.0]
-                                } else {
-                                    [0.2, 0.2, 0.25, 1.0]
-                                },
-                            });
-                            items.push(UiItem::Text {
-                                font: None,
-                                x: bx + 4.0,
-                                y: by - 1.0,
-                                text: shown,
-                                color: [0.9, 0.9, 0.9, 1.0],
-                            });
-                        }
-                    }
-                }
-            }
             return items;
         }
         if !self.console.open {
@@ -3056,7 +2977,7 @@ impl ApplicationHandler for App {
                     winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 16.0,
                 };
                 if let Some(menu) = &mut self.menu {
-                    let max = self.menu_cache.borrow().2;
+                    let max = self.menu_cache.borrow().max_scroll;
                     menu.st.scroll = (menu.st.scroll - lines * 64.0).clamp(0.0, max);
                 } else if !self.console.open && !self.context_held && self.grabbed {
                     // invprev / invnext walk the buckets in order
@@ -3362,6 +3283,7 @@ fn main() -> Result<()> {
         last_render: Instant::now(),
         menu: None,
         spawnlists: Vec::new(),
+        lang: BTreeMap::new(),
         menu_cache: Default::default(),
         context_held: false,
         context: None,

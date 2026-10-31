@@ -298,6 +298,156 @@ pub enum ToolSettingKind {
     Text,
 }
 
+/// The built-in stools' ControlPanels as the game builds them (`TOOL.BuildCPanel`: NumSlider
+/// ranges, CheckBoxes, the numpad KeyBinders as KEY_PAD_0..9 = 37..46, rope materials and
+/// models as text), defaults from [`gm_sandbox::ToolSettings`].
+pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
+    fn fmt_num(v: f32) -> String {
+        if v.fract() == 0.0 {
+            format!("{v:.0}")
+        } else {
+            v.to_string()
+        }
+    }
+    let num = |name: &str, v: f32, min: f32, max: f32| ToolSetting {
+        name: name.into(),
+        kind: ToolSettingKind::Number,
+        min,
+        max,
+        default: fmt_num(v),
+    };
+    let key = |name: &str, v: i32| num(name, v as f32, 37.0, 46.0);
+    let flag = |name: &str, v: bool| ToolSetting {
+        name: name.into(),
+        kind: ToolSettingKind::Bool,
+        min: 0.0,
+        max: 1.0,
+        default: if v { "1" } else { "0" }.into(),
+    };
+    let text = |name: &str, v: &str| ToolSetting {
+        name: name.into(),
+        kind: ToolSettingKind::Text,
+        min: 0.0,
+        max: 0.0,
+        default: v.into(),
+    };
+    match tool {
+        "weld" => vec![
+            num("weld_forcelimit", 0.0, 0.0, 1000.0),
+            flag("weld_nocollide", false),
+        ],
+        "rope" => vec![
+            num("rope_forcelimit", 0.0, 0.0, 1000.0),
+            num("rope_addlength", 0.0, -500.0, 500.0),
+            flag("rope_rigid", false),
+            num("rope_width", 2.0, 0.0, 10.0),
+            text("rope_material", "cable/rope"),
+        ],
+        "axis" => vec![
+            num("axis_forcelimit", 0.0, 0.0, 50000.0),
+            num("axis_torquelimit", 0.0, 0.0, 50000.0),
+            num("axis_friction", 0.0, 0.0, 200.0),
+            flag("axis_nocollide", false),
+        ],
+        "ballsocket" => vec![
+            num("ballsocket_forcelimit", 0.0, 0.0, 50000.0),
+            flag("ballsocket_nocollide", false),
+        ],
+        "slider" => vec![
+            num("slider_width", 1.5, 0.0, 10.0),
+            text("slider_material", "cable/cable"),
+        ],
+        "elastic" => vec![
+            num("elastic_constant", 500.0, 0.0, 4000.0),
+            num("elastic_damping", 3.0, 0.0, 50.0),
+            num("elastic_rdamping", 0.01, 0.0, 1.0),
+            flag("elastic_stretchonly", true),
+            num("elastic_width", 2.0, 0.0, 20.0),
+            text("elastic_material", "cable/cable"),
+        ],
+        "hydraulic" => vec![
+            key("hydraulic_key", 37),
+            num("hydraulic_addlength", 100.0, -1000.0, 1000.0),
+            num("hydraulic_speed", 64.0, 0.0, 128.0),
+            flag("hydraulic_fixed", true),
+            flag("hydraulic_toggle", true),
+            num("hydraulic_width", 3.0, 0.0, 5.0),
+            text("hydraulic_material", "cable/rope"),
+        ],
+        "winch" => vec![
+            key("winch_fwd_key", 44),
+            key("winch_bwd_key", 41),
+            num("winch_fwd_speed", 64.0, 0.0, 1000.0),
+            num("winch_bwd_speed", 64.0, 0.0, 1000.0),
+            num("winch_width", 3.0, 0.0, 10.0),
+            text("winch_material", "cable/rope"),
+        ],
+        "muscle" => vec![
+            key("muscle_key", 37),
+            num("muscle_addlength", 100.0, -1000.0, 1000.0),
+            num("muscle_period", 1.0, 0.0, 10.0),
+            flag("muscle_fixed", true),
+            flag("muscle_starton", false),
+            num("muscle_width", 2.0, 0.0, 5.0),
+            text("muscle_material", "cable/rope"),
+        ],
+        "pulley" => vec![
+            num("pulley_forcelimit", 0.0, 0.0, 1000.0),
+            flag("pulley_rigid", false),
+            num("pulley_width", 3.0, 0.0, 10.0),
+            text("pulley_material", "cable/cable"),
+        ],
+        "thruster" => vec![
+            key("thruster_key", 45),
+            key("thruster_key_back", 42),
+            num("thruster_force", 1500.0, 1.0, 10000.0),
+            flag("thruster_toggle", false),
+            flag("thruster_collision", false),
+            text(
+                "thruster_model",
+                "models/props_phx2/garbage_metalcan001a.mdl",
+            ),
+        ],
+        "hoverball" => vec![
+            key("hoverball_key_up", 46),
+            key("hoverball_key_down", 43),
+            key("hoverball_key_on", 40),
+            num("hoverball_speed", 5.0, 0.0, 20.0),
+            num("hoverball_resistance", 5.0, 0.0, 10.0),
+            num("hoverball_strength", 10.0, 0.1, 10.0),
+            text("hoverball_model", "models/dav0r/hoverball.mdl"),
+        ],
+        "balloon" => vec![
+            num("balloon_ropelength", 64.0, 5.0, 1000.0),
+            num("balloon_force", 500.0, -1000.0, 2000.0),
+            text("balloon_model", "normal_skin1"),
+        ],
+        "wheel" => vec![
+            key("wheel_fwd", 45),
+            key("wheel_bck", 42),
+            num("wheel_torque", 3000.0, 10.0, 10000.0),
+            num("wheel_forcelimit", 0.0, 0.0, 50000.0),
+            num("wheel_friction", 1.0, 0.0, 100.0),
+            flag("wheel_nocollide", true),
+            flag("wheel_toggle", false),
+            text("wheel_model", "models/props_vehicles/carparts_wheel01a.mdl"),
+        ],
+        "button" => vec![
+            key("button_keygroup", 37),
+            flag("button_toggle", true),
+            text("button_model", "models/maxofs2d/button_05.mdl"),
+        ],
+        "dynamite" => vec![
+            key("dynamite_group", 37),
+            num("dynamite_damage", 200.0, 0.0, 500.0),
+            num("dynamite_delay", 0.0, 0.0, 10.0),
+            flag("dynamite_remove", true),
+            text("dynamite_model", "models/dav0r/tnt/tnt.mdl"),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 impl ToolSettingKind {
     pub fn from_u8(v: u8) -> Self {
         match v {

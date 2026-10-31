@@ -772,6 +772,11 @@ impl ServerNet {
                         reload,
                         settings,
                     } => {
+                        // the stool's ClientConVars travel with the click (one table for the
+                        // server, not per player yet)
+                        for (k, v) in &settings {
+                            server.sandbox.tool_settings.set(k, v);
+                        }
                         if reload {
                             let hit = server.tool_hit(slot.player);
                             server.sandbox.tool_reload(slot.player, &tool, hit.as_ref());

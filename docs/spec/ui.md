@@ -99,3 +99,31 @@ Everything here is read from the installed client (`garrysmod/lua`, `sourceengin
   finger, inflator), Render (camera, colour, material, paint, trails); names from
   `resource/localization/en/tool.properties` (`tool.<name>.name`), categories from
   `spawnmenu.properties` (`spawnmenu.tools.*`).
+
+## ControlPanel (`controlpanel.lua`, `dform.lua`, stools' `BuildCPanel`)
+
+- ControlPanel is a DForm (DCollapsibleCategory: InnerH header 20 with the tool's name, Inner
+  body): items docked top with `DockPadding( 10, 10, 10, 0 )`, spacing 4. `NumSlider` 32 tall:
+  label `w / 2.4` (Label.Dark 10 10 10), slider with the notch line (`colNumSliderNotch`
+  0 0 0 100) from 8 to w - 15, 15 px knob `Input.Slider.H.Normal`, 45 px value text
+  (`colTextEntryText` 20 20 20); `CheckBox` = DCheckBoxLabel 16 tall, 15 px Checkbox piece, label
+  9 px after it; `TextEntry` = 100x20 label + DTextEntry at 110 (TextBox / TextBox_Focus).
+- Built-in stools' panels (`gm_server::builtin_tool_schema`) follow each `BuildCPanel`: NumSlider
+  ranges (weld forcelimit 0..1000; rope forcelimit 0..1000, addlength -500..500, width 0..10;
+  axis/ballsocket force/torque 0..50000, hinge friction 0..200; elastic constant 0..4000, damping
+  0..50, rdamping 0..1, width 0..20; hydraulic addlength -1000..1000, speed 0..128, width 0..5;
+  winch speeds 0..1000, width 0..10; muscle length -1000..1000, period 0..10, width 0..5; pulley
+  forcelimit 0..1000, width 0..10; thruster force 1..10000; hoverball speed 0..20, resistance
+  0..10, strength 0.1..10; balloon rope 5..1000, force -1000..2000; wheel torque 10..10000,
+  forcelimit 0..50000, friction 0..100; dynamite damage 0..500, delay 0..10), KeyBinders as
+  numbers KEY_PAD_0..9 = 37..46, RopeSelect/PropSelect/ColorPicker as text or omitted. Defaults
+  = the stools' `TOOL.ClientConVar` tables (rope width 2 cable/rope, elastic 500/3/0.01
+  stretch-only, hydraulic 100/64 fixed toggle, winch 64/64 keys 44/41, muscle 100/1 fixed,
+  thruster 1500 keys 45/42, hoverball 5/5/10 keys 46/43/40, balloon 64/500, wheel 3000/1
+  nocollide keys 45/42, button key 37 toggle, dynamite 200/0 remove).
+- Labels: `tool.<tool>.<key>`, else the shared `tool.forcelimit` / `torquelimit` / `nocollide` /
+  `toggle` / `hingefriction`; our field names map to the game's where they differ
+  (`derma::setting_label`).
+- Wire: the client sends its current values with every `ToolClick` (`tool <name> <key> <value>`
+  pairs); the server applies them to the sandbox's one `ToolSettings` table before the stool runs
+  (not per player yet; the measured harnesses send none and keep the sandbox defaults).

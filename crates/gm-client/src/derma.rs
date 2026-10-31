@@ -7,6 +7,8 @@
 //! frame and returns the draw list together with the clickable regions, so hit testing and
 //! drawing share one geometry.
 
+use std::collections::BTreeMap;
+
 use gm_content::Mount;
 use gm_formats::keyvalues;
 use gm_render::ui::{FontMetrics, UiItem};
@@ -83,6 +85,9 @@ pub const CATEGORY_INNER: Piece = border4(320, 405, 63, 42, 8, 0, 8, 8);
 pub const CATEGORY_HEADER: Piece = border(320, 352, 63, 31, 8);
 pub const SCROLL_TRACK_V: Piece = border(384, 208, 15, 127, 4);
 pub const SCROLL_BAR_V: Piece = border(400, 208, 15, 127, 4);
+pub const CHECKBOX_CHECKED: Piece = normal(448, 32, 15, 15);
+pub const SLIDER_KNOB: Piece = normal(416, 32, 15, 15);
+pub const TEXTBOX_FOCUS: Piece = border(0, 172, 127, 21, 4);
 
 pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> [f32; 4] {
     [
@@ -111,6 +116,11 @@ const TREE_TEXT_HOVER: [f32; 4] = rgba(51, 148, 240, 255);
 /// `SKIN.Colours.TextEntry.Placeholder` 128.
 pub const PLACEHOLDER: [f32; 4] = rgba(128, 128, 128, 255);
 const HOVER: [f32; 4] = rgba(255, 255, 255, 30);
+/// `Colours.Label.Dark` (DLabel default) and `SKIN.colTextEntryText`.
+const LABEL_DARK: [f32; 4] = rgba(10, 10, 10, 255);
+const TEXT_ENTRY: [f32; 4] = rgba(20, 20, 20, 255);
+/// `SKIN.colNumSliderNotch`.
+const NOTCH: [f32; 4] = rgba(0, 0, 0, 100);
 /// SpawnIcon under construction (`vgui/spawnmenu/generating`).
 pub const GENERATING_MAT: &str = "vgui/spawnmenu/generating";
 
@@ -843,4 +853,191 @@ fn tools(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f32, h:
         CATEGORY_HEADER_TEXT,
     );
     out.control = (rx, y, rw, h);
+}
+
+/// `resource/localization/<lang>/*.properties`: `key=value` lines (`\:` escapes a colon).
+pub fn load_properties(mount: &Mount, path: &str) -> BTreeMap<String, String> {
+    let Ok(text) = mount.read_string(path) else {
+        return BTreeMap::new();
+    };
+    text.lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().replace("\\:", ":")))
+        .collect()
+}
+
+/// A laid-out tool setting: its row and the 0..1 span of its control (a slider's track).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ControlRow {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub bar: (f32, f32),
+}
+
+impl ControlRow {
+    pub fn contains(&self, c: (f32, f32)) -> bool {
+        inside(c, self.x, self.y, self.w, self.h)
+    }
+    pub fn fraction(&self, c: (f32, f32)) -> f32 {
+        ((c.0 - self.bar.0) / self.bar.1.max(1.0)).clamp(0.0, 1.0)
+    }
+}
+
+/// The tool's settings as a `DForm` under the ControlPanel header: items docked top with
+/// `DockPadding( 10, 10, 10, 0 )`, `DNumSlider` 32 tall (label `w / 2.4`, 45 px value box,
+/// notch line 8..w-15, 15 px knob), `DCheckBoxLabel` 16 tall (15 px box, label 9 px after),
+/// `TextEntry` = 100x20 label + DTextEntry at 110. Labels from `tool.<tool>.<setting>`.
+#[allow(clippy::too_many_arguments)]
+pub fn controls(
+    out: &mut Layout,
+    ctx: &Ctx,
+    (rx, ry, rw, rh): (f32, f32, f32, f32),
+    schema: &[gm_server::ToolSetting],
+    value_of: &dyn Fn(&str) -> String,
+    focused: Option<(usize, &str)>,
+    label_of: &dyn Fn(&str) -> String,
+) -> Vec<ControlRow> {
+    const PAD: f32 = 10.0;
+    let mut rows = Vec::with_capacity(schema.len());
+    let (x, w) = (rx + PAD, rw - 2.0 * PAD);
+    let mut y = ry + 20.0;
+    for (i, s) in schema.iter().enumerate() {
+        y += PAD;
+        let label = label_of(&s.name);
+        let cur = value_of(&s.name);
+        let (h, bar) = match s.kind {
+            gm_server::ToolSettingKind::Number => {
+                let h = 32.0;
+                let lw = (w / 2.4).round();
+                text(&mut out.items, FONT, ctx.font, x, y, h, &label, LABEL_DARK);
+                let (sx, sw) = (x + lw, w - lw - 45.0);
+                let (lo, hi) = (s.min.max(-1.0e6), s.max.min(1.0e6));
+                let v = cur.trim().parse::<f32>().unwrap_or(lo);
+                let t = if hi > lo {
+                    ((v - lo) / (hi - lo)).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                if y + h <= ry + rh {
+                    out.items.push(UiItem::Rect {
+                        x: sx + 8.0,
+                        y: (y + h / 2.0 - 1.0).round(),
+                        w: sw - 23.0,
+                        h: 1.0,
+                        color: NOTCH,
+                    });
+                    nine(
+                        &mut out.items,
+                        &SLIDER_KNOB,
+                        (sx + t * (sw - 15.0)).round(),
+                        (y + (h - 15.0) / 2.0).round(),
+                        15.0,
+                        15.0,
+                        WHITE,
+                    );
+                    text(
+                        &mut out.items,
+                        FONT,
+                        ctx.font,
+                        sx + sw + 4.0,
+                        y,
+                        h,
+                        &cur,
+                        TEXT_ENTRY,
+                    );
+                }
+                (h, (sx, sw - 15.0))
+            }
+            gm_server::ToolSettingKind::Bool => {
+                let h = 16.0;
+                if y + h <= ry + rh {
+                    let on = matches!(cur.trim(), "1" | "true" | "on");
+                    let p = if on { CHECKBOX_CHECKED } else { CHECKBOX };
+                    nine(&mut out.items, &p, x, y, 15.0, 15.0, WHITE);
+                    text(
+                        &mut out.items,
+                        FONT,
+                        ctx.font,
+                        x + 24.0,
+                        y,
+                        h,
+                        &label,
+                        LABEL_DARK,
+                    );
+                }
+                (h, (x, w))
+            }
+            gm_server::ToolSettingKind::Text => {
+                let h = 20.0;
+                if y + h <= ry + rh {
+                    text(&mut out.items, FONT, ctx.font, x, y, h, &label, LABEL_DARK);
+                    let (ex, ew) = (x + 110.0, w - 110.0);
+                    let focus = focused.filter(|(r, _)| *r == i);
+                    let p = if focus.is_some() {
+                        TEXTBOX_FOCUS
+                    } else {
+                        TEXTBOX
+                    };
+                    nine(&mut out.items, &p, ex, y, ew, h, WHITE);
+                    let shown = match focus {
+                        Some((_, v)) => format!("{v}_"),
+                        None => cur.clone(),
+                    };
+                    text(
+                        &mut out.items,
+                        FONT,
+                        ctx.font,
+                        ex + 4.0,
+                        y,
+                        h,
+                        &shown,
+                        TEXT_ENTRY,
+                    );
+                }
+                (h, (x, w))
+            }
+        };
+        rows.push(ControlRow { x, y, w, h, bar });
+        y += h;
+    }
+    rows
+}
+
+/// The label of a stool setting as its `BuildCPanel` names it: `tool.<tool>.<key>`, the shared
+/// `tool.<key>` (`forcelimit`, `torquelimit`, `nocollide`, `toggle`), with the game's names
+/// where our field differs from the convar; else the key itself.
+pub fn setting_label(lang: &BTreeMap<String, String>, tool: &str, name: &str) -> String {
+    let key = name
+        .strip_prefix(tool)
+        .and_then(|r| r.strip_prefix('_'))
+        .unwrap_or(name);
+    let alias = match (tool, key) {
+        (_, "friction") => "hingefriction",
+        ("hydraulic", "key") => "controls",
+        ("muscle", "key") => "numpad",
+        ("winch", "fwd_key") | ("thruster", "key") | ("wheel", "fwd") => "forward",
+        ("winch", "bwd_key") => "backward",
+        ("thruster", "key_back") => "back",
+        ("wheel", "bck") => "reverse",
+        ("hoverball", "key_up") => "up",
+        ("hoverball", "key_down") => "down",
+        ("hoverball", "key_on") | ("button", "keygroup") => "key",
+        ("dynamite", "group") => "explode",
+        ("winch", "fwd_speed") => "fspeed",
+        ("winch", "bwd_speed") => "bspeed",
+        ("muscle", "addlength") => "length",
+        (_, k) => k,
+    };
+    [
+        format!("tool.{tool}.{alias}"),
+        format!("tool.{alias}"),
+        format!("tool.{tool}.{key}"),
+        format!("tool.{key}"),
+    ]
+    .iter()
+    .find_map(|k| lang.get(k).cloned())
+    .unwrap_or_else(|| title_case(&key.replace('_', " ")))
 }
