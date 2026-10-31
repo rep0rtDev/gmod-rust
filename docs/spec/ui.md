@@ -433,7 +433,9 @@ in the 640x480 proportional space of the sheet page.
   game's 13: no stunstick / bugbait / slam), scripted weapons (`print_name`, category Other),
   scripted entities (`print_name` / `category` from `entity.register`). The client groups by
   localised category, draws the ContentIcons and sends `Command::GiveWeapon` /
-  `Command::SpawnSent`, which the server runs as `give_weapon_cmd` / `spawn_sent`. Not done:
+  `Command::SpawnSent`, which the server runs as `give_weapon_cmd` / `spawn_sent`; the SENT's
+  body is counted / cleaned up as a sent only (`sbox_maxsents`), and `GetCount("props")`
+  excludes bodies counted under another kind, as the game never counts a SENT as a prop. Not done:
   HL2 `SpawnableEntities` (ammo / health items; no item entities on the server), middle-click
   `gm_spawnswep` (no world weapon entities), the right-click copy / Creator tool menu, search.
 

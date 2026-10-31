@@ -1783,7 +1783,7 @@ impl<'w> Server<'w> {
             .iter()
             .find(|e| e.class == class)?
             .clone();
-        let ent = self.script_spawn_prop(owner, &def.model, pos, angles, frozen)?;
+        let ent = self.spawn_counted(owner, &def.model, pos, angles, frozen, "sents")?;
         self.sents.insert(
             ent,
             SentState {
@@ -3016,15 +3016,9 @@ impl<'w> Server<'w> {
             .find(|e| e.class == class)?
             .clone();
         let hit = self.tool_hit(player)?;
-        let mut events = Vec::new();
-        if !self.sandbox.check_limit(player, "sents", &mut events) {
-            self.events.extend(events);
-            return None;
-        }
         let pos = hit.pos + hit.normal * 16.0;
+        // counted / cleaned up as a sent only (`sbox_maxsents`), never as a prop
         let id = self.script_spawn_entity(player, class, pos, Vec3::ZERO, false)?;
-        self.sandbox.add_count(player, "sents", id);
-        self.sandbox.add_cleanup(player, "sents", id);
         let name = def.print_name.clone().unwrap_or_else(|| class.to_string());
         self.sandbox.push_undo(
             player,
@@ -4574,6 +4568,21 @@ impl<'w> Server<'w> {
         angles: Vec3,
         frozen: bool,
     ) -> Option<u32> {
+        self.spawn_counted(owner, model, pos, angles, frozen, "props")
+    }
+
+    /// A prop body for `owner` under the `kind` limit / count / cleanup list ("props" for a
+    /// prop, "sents" for a scripted entity: the game counts a SENT only as a sent, never as a
+    /// prop); owner 0 is the server's, uncounted.
+    fn spawn_counted(
+        &mut self,
+        owner: u32,
+        model: &str,
+        pos: Vec3,
+        angles: Vec3,
+        frozen: bool,
+        kind: &str,
+    ) -> Option<u32> {
         if !self.models.contains_key(model) {
             let loaded = self.model_loader.as_mut().and_then(|f| f(model))?;
             self.register_model(model, loaded);
@@ -4584,7 +4593,7 @@ impl<'w> Server<'w> {
             if !self.players.contains_key(&owner) {
                 return None;
             }
-            if !self.sandbox.check_limit(owner, "props", &mut events) {
+            if !self.sandbox.check_limit(owner, kind, &mut events) {
                 self.events.extend(events);
                 return None;
             }
@@ -4592,8 +4601,8 @@ impl<'w> Server<'w> {
         let id = self.sandbox.restore_prop(owner, model, pos, angles, frozen);
         self.sandbox.set_health(id, health);
         if owner != 0 {
-            self.sandbox.add_count(owner, "props", id);
-            self.sandbox.add_cleanup(owner, "props", id);
+            self.sandbox.add_count(owner, kind, id);
+            self.sandbox.add_cleanup(owner, kind, id);
         }
         self.events.extend(events);
         self.sync_physics();

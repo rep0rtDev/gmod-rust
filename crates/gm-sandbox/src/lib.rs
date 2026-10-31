@@ -1240,9 +1240,23 @@ impl Sandbox {
         &self.props
     }
 
-    /// `Player:GetCount("props")`: live props owned by the player.
+    /// `Player:GetCount("props")`: live props owned by the player, minus the bodies counted
+    /// under another kind (a scripted entity is a sent, not a prop).
     pub fn count(&self, player: u32) -> usize {
-        self.props.iter().filter(|p| p.owner == player).count()
+        let other: Vec<u32> = self
+            .counts
+            .get(&player)
+            .map(|m| {
+                m.iter()
+                    .filter(|(k, _)| k.as_str() != "props")
+                    .flat_map(|(_, v)| v.iter().copied())
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.props
+            .iter()
+            .filter(|p| p.owner == player && !other.contains(&p.id))
+            .count()
     }
 
     /// `Player:GetCount(kind)` for the counted kinds (`props`, `constraints`, `ropeconstraints`):

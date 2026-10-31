@@ -5318,4 +5318,12 @@ fn sent_overlay_text_is_replicated_and_cleared_on_remove() {
     assert!(server.remove_prop(a));
     assert!(server.overlays().is_empty());
     assert_ne!(server.overlay_version, v2);
+    // gm_spawnsent by the player: counted and cleaned up as a sent only, never as a prop
+    let b = server
+        .spawn_sent(1, "tip_a")
+        .expect("spawned under the aim");
+    step(&mut server, &mut rt);
+    assert_eq!(server.sandbox.count_of(1, "sents"), 1);
+    assert_eq!(server.sandbox.count_of(1, "props"), 0);
+    assert_eq!(server.overlays(), vec![(b, "Tip A".to_string())]);
 }
