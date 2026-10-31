@@ -7,6 +7,7 @@
 //! ` (grave) console: `help`, `spawn [model]`, `undo`, `cleanup`, `clear`, `quit`, server
 //! console lines (`status`, `cvar`, `save`, `load`, ...).
 
+mod addons;
 mod derma;
 mod newgame;
 mod options;
@@ -721,6 +722,8 @@ struct App {
     servers: Option<servers::ServersState>,
     /// The Saves / Dupes / Demos page while open.
     ugc: Option<ugc::UgcState>,
+    /// The Addons page while open.
+    addons: Option<addons::AddonsState>,
     /// The map this client runs.
     map_name: String,
     /// Slider being dragged in the Options dialog.
@@ -1227,7 +1230,10 @@ impl App {
             &mut layout,
             &ctx,
             true,
-            self.newgame.is_none() && self.servers.is_none() && self.ugc.is_none(),
+            self.newgame.is_none()
+                && self.servers.is_none()
+                && self.ugc.is_none()
+                && self.addons.is_none(),
             &self.lang,
             &opt,
             opt_font,
@@ -1301,7 +1307,112 @@ impl App {
             let per_page = ugc::page(&mut layout, &ctx, u, &self.lang, &fonts);
             self.menu_cache.borrow_mut().ugc_per_page = per_page;
         }
+        if let Some(a) = &self.addons {
+            let f = |n: &str| g.ui.font_metrics(Some(n));
+            let (f11, f12, f13, f14b, f32, f48b) = (
+                f(newgame::F11),
+                f(newgame::F12),
+                f(newgame::F13),
+                f(ugc::F14B),
+                f(newgame::F32),
+                f(ugc::F48B),
+            );
+            let fonts = addons::Fonts {
+                f11: &f11,
+                f12: &f12,
+                f13: &f13,
+                f14b: &f14b,
+                f32: &f32,
+                f48b: &f48b,
+                opt: &opt,
+                opt_font,
+            };
+            let per_page = addons::page(&mut layout, &ctx, a, &self.lang, &fonts);
+            self.menu_cache.borrow_mut().ugc_per_page = per_page;
+        }
         layout
+    }
+
+    fn addons_click(&mut self) {
+        let Some(g) = self.gfx.as_ref() else { return };
+        let action = self.main_menu_layout(g).hit(self.cursor).cloned();
+        let per_page = self.menu_cache.borrow().ugc_per_page.max(1);
+        let Some(a) = self.addons.as_mut() else {
+            return;
+        };
+        a.per_page = per_page;
+        a.focus = false;
+        match action {
+            Some(derma::Action::Menu("back")) => self.addons = None,
+            Some(derma::Action::Menu("quit" | "disconnect")) => std::process::exit(0),
+            Some(derma::Action::Menu("resume_game")) => {
+                self.main_menu = false;
+                self.addons = None;
+                self.set_grab(true);
+            }
+            Some(derma::Action::Addons(act)) => {
+                use addons::AdAction as A;
+                match act {
+                    A::Category(c) => {
+                        a.category = c;
+                        a.tag = "";
+                        a.offset = 0;
+                        if c != "subscribed" && a.entries.is_empty() {
+                            a.fetch_registry();
+                        }
+                    }
+                    A::Tag(t) => {
+                        a.tag = if a.tag == t { "" } else { t };
+                        a.offset = 0;
+                    }
+                    A::Search => a.focus = true,
+                    A::Page(dir) => {
+                        let total = a.items().len();
+                        let next = a.offset as i64 + dir as i64 * per_page as i64;
+                        if next >= 0 && (next as usize) < total.max(1) {
+                            a.offset = next as usize;
+                        }
+                    }
+                    A::GoToPage(p) => {
+                        let off = (p.max(1) - 1) * per_page;
+                        if off < a.items().len().max(1) {
+                            a.offset = off;
+                        }
+                    }
+                    A::Enable(id) => a.set_enabled(&id, true),
+                    A::Disable(id) => a.set_enabled(&id, false),
+                    A::Install(id) => a.install(&id),
+                    A::Uninstall(id) => a.uninstall(&id),
+                    A::OpenWorkshop => {
+                        if let Some(r) = a.registry.clone() {
+                            let _ = std::process::Command::new("xdg-open").arg(r).spawn();
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn addons_key(&mut self, code: Option<KeyCode>, text: Option<&str>) {
+        let Some(a) = self.addons.as_mut() else {
+            return;
+        };
+        match code {
+            Some(KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape | KeyCode::Tab) => {
+                a.focus = false
+            }
+            Some(KeyCode::Backspace) => {
+                a.search.pop();
+            }
+            _ => {
+                if let Some(t) = text {
+                    a.search.extend(t.chars().filter(|c| !c.is_control()));
+                    a.search.truncate(64);
+                }
+            }
+        }
+        a.offset = 0;
     }
 
     fn open_ugc(&mut self, kind: &'static str) {
@@ -1775,6 +1886,10 @@ impl App {
             self.ugc_click();
             return;
         }
+        if self.addons.is_some() {
+            self.addons_click();
+            return;
+        }
         let Some(g) = self.gfx.as_ref() else { return };
         let action = self.main_menu_layout(g).hit(self.cursor).cloned();
         match action {
@@ -1786,6 +1901,11 @@ impl App {
             Some(derma::Action::Menu("options")) => self.open_options(),
             Some(derma::Action::Menu("newgame")) => self.open_newgame(),
             Some(derma::Action::Menu(k @ ("saves" | "dupes" | "demos"))) => self.open_ugc(k),
+            Some(derma::Action::Menu("addons")) => {
+                let mut st = addons::AddonsState::new();
+                st.per_page = self.menu_cache.borrow().ugc_per_page.max(1);
+                self.addons = Some(st);
+            }
             Some(derma::Action::Menu("servers")) => {
                 let mut sv = servers::ServersState::new();
                 sv.refresh();
@@ -1841,6 +1961,7 @@ impl App {
                 | derma::Action::NewGame(_)
                 | derma::Action::Servers(_)
                 | derma::Action::Ugc(_)
+                | derma::Action::Addons(_)
                 | derma::Action::Nothing,
             )
             | None => {}
@@ -3725,6 +3846,12 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
+                if self.main_menu && self.addons.as_ref().is_some_and(|a| a.focus) {
+                    if down {
+                        self.addons_key(code, event.text.as_deref());
+                    }
+                    return;
+                }
                 let Some(code) = code else { return };
                 if !event.repeat {
                     self.pending_input.push((format!("{code:?}"), down));
@@ -3744,6 +3871,7 @@ impl ApplicationHandler for App {
                         KeyCode::Escape if self.newgame.is_some() => self.newgame = None,
                         KeyCode::Escape if self.servers.is_some() => self.servers = None,
                         KeyCode::Escape if self.ugc.is_some() => self.ugc = None,
+                        KeyCode::Escape if self.addons.is_some() => self.addons = None,
                         KeyCode::Escape if self.main_menu => {
                             self.main_menu = false;
                             self.set_grab(true);
@@ -3962,6 +4090,9 @@ impl ApplicationHandler for App {
         if let Some(sv) = &mut self.servers {
             sv.poll();
         }
+        if let Some(a) = &mut self.addons {
+            a.poll();
+        }
         if self.settings.fps_max > 0.0 {
             let min = std::time::Duration::from_secs_f32(1.0 / self.settings.fps_max);
             let since = self.last_frame.elapsed();
@@ -4081,6 +4212,17 @@ fn main() -> Result<()> {
             }
         }
     }
+    // the addons installed from the menu (`~/.gmod-rust/addons`), minus the disabled ones
+    let disabled = addons::load_disabled();
+    for a in addons::scan_installed() {
+        if disabled.contains(&a.id) {
+            continue;
+        }
+        match rt.load_addon(&a.path) {
+            Ok(m) => println!("addon {} {} loaded", m.id, m.version),
+            Err(e) => eprintln!("addon {}: {e}", a.path.display()),
+        }
+    }
     println!("{} server actors", rt.actors().len());
     gm_script::attach(rt, &mut server, &mut net.hooks);
     let lo = Loopback::new(0, 0.0, 1);
@@ -4191,6 +4333,7 @@ fn main() -> Result<()> {
         newgame: None,
         servers: None,
         ugc: None,
+        addons: None,
         map_name: map.clone(),
         opt_drag: None,
         opt_modes: Vec::new(),

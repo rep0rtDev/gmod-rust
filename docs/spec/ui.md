@@ -343,3 +343,27 @@ in the 640x480 proportional space of the sheet page.
   `load <name>` (the local player is an admin there, `saves_dir` = `~/.gmod-rust/saves`);
   delete removes the file and its preview; Workshop categories show a message; no saving
   from the menu yet (the game saves from the spawnmenu Saves tab).
+
+## Addons page (`template/addon_list.html`, `css/Workshop.css`, `js/menu/control.Addons.js`)
+
+- Options column: Subscribed (with the `AddonTypes` sub-list gamemode / map / weapon / tool /
+  npc / entity / effects / model / vehicle and the "Search Subscriptions" box), then
+  trending / popular / latest, then followed / favorite / friends / mine / downloaded_ugc,
+  each with the type sub-list when active, then "Open Workshop". Header = `addons.<cat>` or
+  `addons.<tag>` + subtitle.
+- Same `ugc_content` / `workshopcontainer` / grid as Saves; `workshopicon` extras: `size`
+  badge top-right under the name (`GetNiceSize`), a checkbox at the top right in Subscribed,
+  `.installed` bars #d2fc7b, `.disabled` bars #cedcb1, missing preview `img/downloading.png`;
+  controls right: disable / enable (`addon.disable` / `addon.enable`), install / uninstall
+  (`addon.subscribe` = "install", `addon.unsubscribe` = "uninstall"), mark unused in
+  Downloaded; a settings button opens filter (enabled / disabled only) + sort (title, size,
+  updated, subscribed) + select all / page, enable all / disable all.
+- Ours (`addons.rs`): Subscribed = packages under `~/.gmod-rust/addons` (`.gmr` or
+  directories with `manifest.toml`), disabled ids in `cfg/addons_disabled.txt`; the
+  in-process server loads the enabled ones at start. Trending / Top Rated / Latest list
+  the registry in `cfg/registry.txt` (`Registry::open_any`, index read on a thread; the three
+  are the same index in different orders - there are no ratings), install =
+  `Registry::install` into the addons folder (sha + signature checked), uninstall removes
+  the file; Downloaded = index entries that are installed. Type tags are drawn but do not
+  filter (our manifests have no type); the settings panel, checkboxes and bulk actions are
+  not done.

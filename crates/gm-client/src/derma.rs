@@ -382,6 +382,8 @@ pub enum Action {
     Servers(crate::servers::SvAction),
     /// A Saves / Dupes / Demos page control.
     Ugc(crate::ugc::UgcAction),
+    /// An Addons page control.
+    Addons(crate::addons::AdAction),
     Nothing,
 }
 
@@ -1281,8 +1283,9 @@ pub const MENU_FONT_23: &str = "MenuOptions23";
 pub const MENU_FONT_16: &str = "MenuOptions16";
 pub const NAV_FONT: &str = "MenuNav";
 /// `html/img` and gamemode images the menu draws (raw PNG paths).
-pub const MENU_IMAGES: [&str; 18] = [
+pub const MENU_IMAGES: [&str; 19] = [
     "html/img/gradient.png",
+    "html/img/downloading.png",
     "html/img/arrow_left.png",
     "html/img/arrow_right.png",
     "html/img/pagination_page.png",

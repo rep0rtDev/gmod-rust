@@ -15,20 +15,20 @@ use crate::settings::home_dir;
 pub const F14B: &str = "Menu14Bold";
 pub const F48B: &str = "Menu48Bold";
 
-const WHITE: [f32; 4] = rgba(255, 255, 255, 255);
-const BLACK: [f32; 4] = rgba(0, 0, 0, 255);
-const ICON_BG: [f32; 4] = rgba(102, 102, 102, 255);
-const NAME_TEXT: [f32; 4] = rgba(0, 0, 0, 255);
-const DESC_BG: [f32; 4] = rgba(70, 180, 250, 242);
-const MESSAGE: [f32; 4] = rgba(153, 153, 153, 255);
-const SUB: [f32; 4] = rgba(136, 136, 136, 255);
-const CONTROL: [f32; 4] = rgba(245, 255, 128, 255);
-const CONTROL_HOVER: [f32; 4] = rgba(255, 255, 255, 255);
-const LINK: [f32; 4] = rgba(255, 255, 255, 255);
-const LINK_HOVER: [f32; 4] = rgba(255, 255, 170, 255);
-const LINK_ACTIVE: [f32; 4] = rgba(255, 255, 85, 255);
-const PAGE_BTN: [f32; 4] = rgba(35, 135, 237, 255);
-const PAGE_BTN_HOVER: [f32; 4] = rgba(79, 157, 237, 255);
+pub(crate) const WHITE: [f32; 4] = rgba(255, 255, 255, 255);
+pub(crate) const BLACK: [f32; 4] = rgba(0, 0, 0, 255);
+pub(crate) const ICON_BG: [f32; 4] = rgba(102, 102, 102, 255);
+pub(crate) const NAME_TEXT: [f32; 4] = rgba(0, 0, 0, 255);
+pub(crate) const DESC_BG: [f32; 4] = rgba(70, 180, 250, 242);
+pub(crate) const MESSAGE: [f32; 4] = rgba(153, 153, 153, 255);
+pub(crate) const SUB: [f32; 4] = rgba(136, 136, 136, 255);
+pub(crate) const CONTROL: [f32; 4] = rgba(245, 255, 128, 255);
+pub(crate) const CONTROL_HOVER: [f32; 4] = rgba(255, 255, 255, 255);
+pub(crate) const LINK: [f32; 4] = rgba(255, 255, 255, 255);
+pub(crate) const LINK_HOVER: [f32; 4] = rgba(255, 255, 170, 255);
+pub(crate) const LINK_ACTIVE: [f32; 4] = rgba(255, 255, 85, 255);
+pub(crate) const PAGE_BTN: [f32; 4] = rgba(35, 135, 237, 255);
+pub(crate) const PAGE_BTN_HOVER: [f32; 4] = rgba(79, 157, 237, 255);
 
 /// `MyCategories`, `Categories`, `CategoriesSecondary` of `control.Saves.js` (dupes / demos
 /// share them).
@@ -155,18 +155,18 @@ pub struct Fonts<'a> {
     pub opt_font: &'a str,
 }
 
-fn rect(items: &mut Vec<UiItem>, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
+pub(crate) fn rect(items: &mut Vec<UiItem>, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
     items.push(UiItem::Rect { x, y, w, h, color });
 }
 
-fn say(lang: &BTreeMap<String, String>, key: &str, d: &str) -> String {
+pub(crate) fn say(lang: &BTreeMap<String, String>, key: &str, d: &str) -> String {
     lang.get(key)
         .map(|s| s.replace("\\!", "!").replace("\\:", ":"))
         .unwrap_or_else(|| d.to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn shadow_text(
+pub(crate) fn shadow_text(
     out: &mut Layout,
     font: &str,
     fm: &FontMetrics,
@@ -180,7 +180,7 @@ fn shadow_text(
     text(&mut out.items, font, fm, x, y, h, s, c);
 }
 
-fn fit(fm: &FontMetrics, s: &str, w: f32) -> String {
+pub(crate) fn fit(fm: &FontMetrics, s: &str, w: f32) -> String {
     let mut t = s.to_string();
     if fm.text_width(&t) <= w {
         return t;
@@ -192,7 +192,7 @@ fn fit(fm: &FontMetrics, s: &str, w: f32) -> String {
 }
 
 /// Word-wrapped lines of `s` within `w`.
-fn wrap(fm: &FontMetrics, s: &str, w: f32) -> Vec<String> {
+pub(crate) fn wrap(fm: &FontMetrics, s: &str, w: f32) -> Vec<String> {
     let mut lines = Vec::new();
     let mut cur = String::new();
     for word in s.split_whitespace() {
