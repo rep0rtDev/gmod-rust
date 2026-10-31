@@ -851,10 +851,9 @@ impl WorldRenderer {
     ) -> Result<Self> {
         let device = &gpu.device;
         let atlas_size = 4096u32;
-        // the 8-bit atlas holds linear light / lm_scale: 2 covers the LDR overbright range,
-        // the HDR lumps reach further (interim until a float atlas)
-        let lm_scale: f32 = if hdr { 8.0 } else { 2.0 };
-        let mut atlas = Atlas::new(atlas_size, 1.0 / lm_scale);
+        // the float atlas holds linear light as is (lm_scale stays for the uniform layout)
+        let lm_scale: f32 = 1.0;
+        let mut atlas = Atlas::new(atlas_size);
         // the map's env_tonemap_controller (set by logic_auto OnMapSpawn): the exposure the
         // auto path may use lies between its min and max; without a luminance readback we
         // hold mat_hdr_tonemapscale 1 clamped into that range
@@ -1091,7 +1090,7 @@ impl WorldRenderer {
             &atlas.pixels,
             atlas_size,
             atlas_size,
-            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba16Float,
             "lightmap",
         );
         let lm_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -2137,7 +2136,7 @@ pub fn upload_rgba(
         pixels,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(width * 4),
+            bytes_per_row: Some(width * format.block_copy_size(None).unwrap_or(4)),
             rows_per_image: Some(height),
         },
         size,

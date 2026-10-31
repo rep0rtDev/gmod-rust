@@ -1380,6 +1380,7 @@ dependencies = [
  "gm-content",
  "gm-core",
  "gm-formats",
+ "half",
  "png",
  "pollster",
  "thiserror 2.0.21",

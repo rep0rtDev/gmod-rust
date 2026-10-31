@@ -42,8 +42,8 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   tonemap scale, clamped (Source has no filmic curve).
 - Ours: `WorldRenderer::new(.., hdr)` with `hdr = mat_hdr_level >= 1 && Bsp::has_hdr()` takes
   lumps 53 / 54 / 55 (`Bsp::face_lightmap(face, hdr)`, `world_lights(bsp, hdr)`,
-  `LeafAmbient::parse(bsp, hdr)`); applied on map load. Interim: the lightmap atlas stays
-  8-bit and stores linear / 8 in HDR (`Camera.lm_scale`, / 2 in LDR), and the tonemap scale
-  (`Camera.exposure`) is a fixed 1.0 clamped into the map controller's [min, max] - no
-  luminance readback / auto-exposure yet, no bloom; both multiply the shaded colour before
-  the monitor gamma. Todo: Rgba16Float atlas, auto-exposure at the tonemap rate, bloom.
+  `LeafAmbient::parse(bsp, hdr)`); applied on map load. The lightmap atlas is Rgba16Float
+  holding linear light as decoded (HDR values pass through; `Camera.lm_scale` stays 1). The
+  tonemap scale (`Camera.exposure`) is a fixed 1.0 clamped into the map controller's
+  [min, max] - no luminance readback / auto-exposure yet, no bloom; it multiplies the shaded
+  colour before the monitor gamma. Todo: auto-exposure at the tonemap rate, bloom.

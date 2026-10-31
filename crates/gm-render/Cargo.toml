@@ -6,6 +6,7 @@ license = "MIT"
 description = "wgpu renderer for Source maps and models"
 
 [dependencies]
+half = "2"
 gm-core = { path = "../gm-core" }
 gm-formats = { path = "../gm-formats" }
 gm-collision = { path = "../gm-collision" }

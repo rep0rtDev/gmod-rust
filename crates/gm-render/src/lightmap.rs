@@ -4,9 +4,8 @@
 use gm_formats::bsp::lumps::ColorRgbExp32;
 
 pub struct Atlas {
-    /// Linear light is stored times this (1/2 LDR, 1/8 HDR).
-    pub scale: f32,
     pub size: u32,
+    /// Rgba16Float texels: linear light as stored in the BSP (HDR values pass through).
     pub pixels: Vec<u8>,
     shelf_y: u32,
     shelf_h: u32,
@@ -22,11 +21,10 @@ pub struct Placement {
 }
 
 impl Atlas {
-    pub fn new(size: u32, scale: f32) -> Self {
+    pub fn new(size: u32) -> Self {
         Atlas {
             size,
-            pixels: vec![0; (size * size * 4) as usize],
-            scale,
+            pixels: vec![0; (size * size * 8) as usize],
             shelf_y: 0,
             shelf_h: 0,
             cursor_x: 0,
@@ -61,11 +59,11 @@ impl Atlas {
                 let sx = (gx.max(1) - 1).min(w - 1);
                 let sy = (gy.max(1) - 1).min(h - 1);
                 let c = samples[(sy * w + sx) as usize].to_linear();
-                let i = (((p.y - 1 + gy) * self.size + (p.x - 1 + gx)) * 4) as usize;
-                self.pixels[i] = (c[0] * self.scale * 255.0).clamp(0.0, 255.0) as u8;
-                self.pixels[i + 1] = (c[1] * self.scale * 255.0).clamp(0.0, 255.0) as u8;
-                self.pixels[i + 2] = (c[2] * self.scale * 255.0).clamp(0.0, 255.0) as u8;
-                self.pixels[i + 3] = 255;
+                let i = (((p.y - 1 + gy) * self.size + (p.x - 1 + gx)) * 8) as usize;
+                for (k, v) in [c[0], c[1], c[2], 1.0].into_iter().enumerate() {
+                    let h = half::f16::from_f32(v.max(0.0)).to_le_bytes();
+                    self.pixels[i + k * 2..i + k * 2 + 2].copy_from_slice(&h);
+                }
             }
         }
         Some(p)

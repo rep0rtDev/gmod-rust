@@ -50,7 +50,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if material.alpha_test != 0u && albedo.a < 0.5 {
         discard;
     }
-    // lightmap atlas stores linear light / 2 so the Source overbright range fits in 8 bits
+    // lightmap atlas: linear light (Rgba16Float), lm_scale 1
     var light = textureSample(lightmap, lightmap_sampler, in.lm_uv).rgb * camera.lm_scale;
     if material.unlit != 0u {
         light = vec3<f32>(1.0);
