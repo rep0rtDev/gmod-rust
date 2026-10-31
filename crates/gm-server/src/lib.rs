@@ -928,6 +928,8 @@ pub struct Server<'w> {
     pub scripted_entities: Vec<ScriptedEntity>,
     /// The props that are scripted entities, by prop id.
     pub sents: HashMap<u32, SentState>,
+    /// (player, scripted entity) pairs whose hulls overlapped last tick, for the touch edges.
+    pub sent_player_touch: std::collections::HashSet<(u32, u32)>,
     pub scripted_weapons_version: u32,
     /// Names created since the last `take_cvar_new` (replicated to connected clients).
     pub cvar_new: Vec<String>,
@@ -1033,6 +1035,7 @@ impl<'w> Server<'w> {
             scripted_weapons_version: 0,
             scripted_entities: Vec::new(),
             sents: HashMap::new(),
+            sent_player_touch: std::collections::HashSet::new(),
             cvar_new: Vec::new(),
         }
     }
@@ -3487,6 +3490,7 @@ impl<'w> Server<'w> {
         self.physics.step();
         self.impact_sounds();
         self.sent_touches();
+        self.sent_player_touches();
         let landed: Vec<(u32, f32)> = self
             .players
             .iter()
@@ -4085,6 +4089,82 @@ impl<'w> Server<'w> {
                 }
             }
         }
+    }
+
+    /// Players have no physics body, so their touches with scripted entities are an overlap
+    /// test after the move: the player hull (16 x 16 x 72, 36 ducked) against the entity's
+    /// convex AABBs; a new pair is start_touch + touch, a kept one touch, a lost one end_touch
+    /// (`player` names the player, `other` is 0).
+    fn sent_player_touches(&mut self) {
+        if self.sents.is_empty() {
+            if !self.sent_player_touch.is_empty() {
+                self.sent_player_touch.clear();
+            }
+            return;
+        }
+        let mut boxes: Vec<(u32, Vec<(Vec3, Vec3)>)> = Vec::new();
+        for id in self.sents.keys().copied() {
+            let Some(prop) = self.sandbox.props().iter().find(|p| p.id == id) else {
+                continue;
+            };
+            let (Some(b), Some(info)) = (self.bodies.get(&id), self.models.get(&prop.model)) else {
+                continue;
+            };
+            let st = self.physics.state(*b);
+            let aabbs = info
+                .hull_planes
+                .iter()
+                .zip(&info.hulls)
+                .map(|(pl, pts)| {
+                    gm_physics::pickup::world_convex(pl, pts, st.rotation, st.position).1
+                })
+                .collect();
+            boxes.push((id, aabbs));
+        }
+        boxes.sort_by_key(|(id, _)| *id);
+        let mut now = std::collections::HashSet::new();
+        let mut players: Vec<u32> = self.players.keys().copied().collect();
+        players.sort_unstable();
+        for pid in players {
+            let (origin, h) = self.player_hull(pid);
+            if !self.players.get(&pid).is_some_and(|p| p.alive) {
+                continue;
+            }
+            let (lo, hi) = (
+                origin + Vec3::new(-16.0, -16.0, 0.0),
+                origin + Vec3::new(16.0, 16.0, h),
+            );
+            for (ent, aabbs) in &boxes {
+                let hit = aabbs.iter().any(|(a, b)| {
+                    lo.x <= b.x
+                        && hi.x >= a.x
+                        && lo.y <= b.y
+                        && hi.y >= a.y
+                        && lo.z <= b.z
+                        && hi.z >= a.z
+                });
+                if hit {
+                    now.insert((pid, *ent));
+                }
+            }
+        }
+        let mut pairs: Vec<(u32, u32)> = now.union(&self.sent_player_touch).copied().collect();
+        pairs.sort_unstable();
+        for (pid, ent) in pairs {
+            match (
+                now.contains(&(pid, ent)),
+                self.sent_player_touch.contains(&(pid, ent)),
+            ) {
+                (true, false) => {
+                    self.sent_event(ent, "start_touch", pid, 0, 0.0);
+                    self.sent_event(ent, "touch", pid, 0, 0.0);
+                }
+                (true, true) => self.sent_event(ent, "touch", pid, 0, 0.0),
+                (false, true) => self.sent_event(ent, "end_touch", pid, 0, 0.0),
+                (false, false) => {}
+            }
+        }
+        self.sent_player_touch = now;
     }
 
     fn impact_sounds(&mut self) {

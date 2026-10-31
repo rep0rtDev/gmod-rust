@@ -733,6 +733,81 @@ fn scripted_entities_follow_the_measured_sent_cadences() {
 }
 
 #[test]
+fn a_player_walking_into_a_scripted_entity_touches_it() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.add_player(
+        1,
+        glam::Vec3::new(700.0, -600.0, -143.6),
+        glam::Vec3::new(0.0, 90.0, 0.0),
+    );
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "touch".into(),
+        priority: 0,
+        source: r#"
+            state.t = 0
+            state.log = {}
+            local function log(kind) return function(p) table.insert(state.log, kind .. ":" .. state.t .. ":" .. p.player .. ":" .. p.other) end end
+            entity.register("parity_wall", { model = "models/props_junk/wood_crate001a.mdl",
+                start_touch = log("start_touch"), touch = log("touch"), end_touch = log("end_touch") })
+            events.on("tick.pre", function()
+                state.t += 1
+                if state.t == 1 then
+                    world.queue("spawn", 0, { class = "parity_wall", pos = {x = 700, y = -540, z = -123.6}, frozen = true })
+                end
+            end)
+        "#
+        .into(),
+        config: gm_script::ActorConfig::default(),
+    })
+    .unwrap();
+    // 60 u ahead; forward 30 ticks (into the crate), then back 30 ticks
+    for t in 0..60u32 {
+        let cmd = gm_server::PlayerCmd {
+            cmd: gm_move::UserCmd {
+                forward_move: if t < 30 { 400.0 } else { -400.0 },
+                view_angles: glam::Vec3::new(0.0, 90.0, 0.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        rt.pre_tick(&mut server);
+        server.tick(&BTreeMap::from([(1u32, cmd)]));
+        let events = std::mem::take(&mut server.game_events);
+        rt.game_events(&mut server, events);
+        rt.post_tick(&mut server);
+    }
+    let log: Vec<String> = rt.actors()[0].eval("return state.log").unwrap();
+    assert!(!log.is_empty(), "the player reached the crate");
+    assert!(
+        log[0].starts_with("start_touch:") && log[0].ends_with(":1:0"),
+        "{log:?}"
+    );
+    let touches = log.iter().filter(|l| l.starts_with("touch:")).count();
+    assert!(touches >= 5, "touch every tick in contact: {log:?}");
+    assert!(
+        log.last().unwrap().starts_with("end_touch:"),
+        "walking away ends the touch: {log:?}"
+    );
+    assert_eq!(
+        log.iter().filter(|l| l.starts_with("start_touch:")).count(),
+        1,
+        "{log:?}"
+    );
+}
+
+#[test]
 fn scripted_weapon_think_runs_every_tick_after_the_deploy() {
     let Some(inst) = gm_content::find_install() else {
         eprintln!("skipped: no Garry's Mod install");

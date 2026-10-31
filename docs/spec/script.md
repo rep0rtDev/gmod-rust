@@ -448,7 +448,7 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-Scripted entities' touches with players and while both bodies sleep; the weapon selection
+Scripted entities' touches while both bodies sleep; the weapon selection
 menu (attack to confirm, `hud_fastswitch`, `invnext`) and the game's `KEY_*` names / `input.IsKeyDown`
 polling (ours: `input.key` events with the client's key names); the game's pitch-0 miss of +use
 on players (see "+use"). Done since this list was written: the
@@ -590,7 +590,10 @@ class, each with `{entity, class, player, other, amount}`:
   `touch` every tick, a separated pair an `end_touch`. Differences from the game: its three
   `Touch` in the impact tick are one here, and Jolt reports a resting pair only while one of the
   bodies is awake (a crate asleep on a frozen scripted entity stops touching it; the game keeps
-  calling `Touch`); players do not touch yet (only props and the world have bodies here);
+  calling `Touch`). Players have no physics body, so their touches are an overlap test after
+  the move (the player hull against the entity's convex AABBs, every tick), with `player` set and
+  `other` 0; the test walks a player into a crate entity and back: one `start_touch`, a `touch`
+  per tick in contact, one `end_touch`;
 - `damage` with `amount` on every damage the prop takes (`OnTakeDamage`), before health is applied;
 - `remove` in the tick the prop goes (`OnRemove`), whatever removes it (property, undo, cleanup,
   break, script).
