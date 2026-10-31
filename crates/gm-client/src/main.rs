@@ -1364,9 +1364,14 @@ impl App {
             .prev_origin
             .lerp(self.sim.origin, alpha.clamp(0.0, 1.0));
         let eye = if self.sim.ducked { 28.0 } else { 64.0 };
+        // the view punch (landing roll, `move_roll_*`) and the `sv_rollangle` strafe roll
+        let punch = self.sim.pred.as_ref().map_or(Vec3::ZERO, |p| {
+            p.state.punch
+                + Vec3::Z * gm_move::view_roll(&gm_move::MoveConfig::default(), &p.state, self.view)
+        });
         let mut camera = Camera {
             position: o + Vec3::Z * eye,
-            angles: self.view,
+            angles: self.view + punch,
             fov_x: 90.0,
             near: 3.0,
             far: 28000.0,

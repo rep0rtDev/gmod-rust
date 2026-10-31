@@ -256,6 +256,8 @@ SCENARIOS.move = function(scn, done)
 				movetype = ply:GetMoveType(),
 				plat = IsValid(plat) and { plat:GetPos().x, plat:GetPos().y, plat:GetPos().z } or nil,
 				groundent = IsValid(ply:GetGroundEntity()) and ply:GetGroundEntity():GetClass() or (ply:GetGroundEntity() == game.GetWorld() and "worldspawn" or ""),
+				punch = { ply:GetViewPunchAngles().p, ply:GetViewPunchAngles().y, ply:GetViewPunchAngles().r },
+				roll = ply:EyeAngles().r,
 			}
 		end
 		tick = tick + 1

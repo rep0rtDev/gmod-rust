@@ -507,6 +507,12 @@ fn w_state(w: &mut Writer, s: &gm_move::PlayerState) {
     w.u16(s.ladder);
     w.u32(s.ground_ent);
     w.f32(s.ground_friction);
+    w.f32(s.punch.x);
+    w.f32(s.punch.y);
+    w.f32(s.punch.z);
+    w.f32(s.punch_vel.x);
+    w.f32(s.punch_vel.y);
+    w.f32(s.punch_vel.z);
 }
 
 fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
@@ -537,6 +543,8 @@ fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
         ladder: r.u16()?,
         ground_ent: r.u32()?,
         ground_friction: r.f32()?,
+        punch: Vec3::new(r.f32()?, r.f32()?, r.f32()?),
+        punch_vel: Vec3::new(r.f32()?, r.f32()?, r.f32()?),
     })
 }
 

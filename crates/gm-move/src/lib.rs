@@ -50,6 +50,9 @@ pub struct MoveConfig {
     /// (settling at 63 u/s) are not; every value from 1.1 to 1.3 reproduces all recordings.
     pub ground_probe: f32,
     pub tick_interval: f32,
+    /// `sv_rollangle` / `sv_rollspeed`: view roll from the sideways speed; GMod ships 0 / 200.
+    pub roll_angle: f32,
+    pub roll_speed: f32,
 }
 
 impl Default for MoveConfig {
@@ -77,6 +80,8 @@ impl Default for MoveConfig {
             ground_normal_z: 0.7,
             ground_probe: 1.2,
             tick_interval: gm_core::tick::DEFAULT_TICK_INTERVAL,
+            roll_angle: 0.0,
+            roll_speed: 200.0,
         }
     }
 }
@@ -138,6 +143,10 @@ pub struct PlayerState {
     /// Friction factor of the ground surface (measured `move_friction_glass`: 0.625 on glass
     /// scales both the friction drop and the acceleration; the map is 1).
     pub ground_friction: f32,
+    /// View punch angle (pitch, yaw, roll) and its velocity: a landing kicks the roll by
+    /// `fall speed * PUNCH_PER_FALL_SPEED` (`move_roll_fall_*`), the spring decays it every tick.
+    pub punch: Vec3,
+    pub punch_vel: Vec3,
 }
 
 impl Default for PlayerState {
@@ -164,6 +173,8 @@ impl Default for PlayerState {
             ladder: 0,
             ground_ent: 0,
             ground_friction: 1.0,
+            punch: Vec3::ZERO,
+            punch_vel: Vec3::ZERO,
         }
     }
 }
@@ -176,6 +187,44 @@ pub const WATER_SINK_SPEED: f32 = 60.0;
 pub const WATER_JUMP_SPEED: f32 = 100.0;
 /// Climbing speed along the ladder, and the speed the mount pulls the player in with
 /// (measured `move_ladder_*`: 3 u per tick both ways).
+/// Roll of the view punch per u/s of landing speed (`move_roll_fall_*`: 342 u/s -> 4.446 deg).
+pub const PUNCH_PER_FALL_SPEED: f32 = 0.013;
+/// The slowest landing that punches the view (a 342 u/s fall does, a 63 u/s drop does not).
+pub const PUNCH_FALL_SPEED: f32 = 300.0;
+/// Spring that decays the view punch (Source SDK `DecayPunchAngle`: damping 9, constant 65).
+const PUNCH_DAMPING: f32 = 9.0;
+const PUNCH_SPRING: f32 = 65.0;
+
+/// One tick of the view punch spring: the angle moves by its velocity, the velocity is damped
+/// and pulled back by the angle; below the dead zone both reset.
+pub fn decay_punch(st: &mut PlayerState, dt: f32) {
+    if st.punch.length_squared() > 0.001 || st.punch_vel.length_squared() > 0.001 {
+        st.punch += st.punch_vel * dt;
+        st.punch_vel *= (1.0 - PUNCH_DAMPING * dt).max(0.0);
+        st.punch_vel -= st.punch * (PUNCH_SPRING * dt).clamp(0.0, 2.0);
+        st.punch = Vec3::new(
+            st.punch.x.clamp(-89.0, 89.0),
+            st.punch.y.clamp(-179.0, 179.0),
+            st.punch.z.clamp(-89.0, 89.0),
+        );
+    } else {
+        st.punch = Vec3::ZERO;
+        st.punch_vel = Vec3::ZERO;
+    }
+}
+
+/// View roll from the sideways speed (Source `CalcRoll`): `roll_angle` at `roll_speed` and
+/// above, linear below; GMod ships `sv_rollangle 0`, so the default is no roll.
+pub fn view_roll(cfg: &MoveConfig, st: &PlayerState, view_angles: Vec3) -> f32 {
+    if cfg.roll_angle == 0.0 || st.move_type == MoveType::Noclip {
+        return 0.0;
+    }
+    let (_, right) = angle_vectors(view_angles);
+    let side = st.velocity.dot(right);
+    let mag = side.abs().min(cfg.roll_speed) * cfg.roll_angle / cfg.roll_speed;
+    mag.copysign(side)
+}
+
 pub const LADDER_SPEED: f32 = 200.0;
 /// A forward press this close (origin to the ladder line) starts the mount (hull 16 + 8).
 pub const LADDER_MOUNT_REACH: f32 = 24.0;
@@ -286,6 +335,22 @@ impl<'a> Mover<'a> {
 
     /// Advance one tick.
     pub fn tick(&self, st: &mut PlayerState, cmd: &UserCmd) {
+        decay_punch(st, self.cfg.tick_interval);
+        let (was_ground, fall_speed) = (st.on_ground, -st.velocity.z);
+        self.tick_move(st, cmd);
+        // measured (`move_roll_fall_100/300/500/900`): landing from a fall rolls the view by
+        // 0.013 deg per u/s of the fall speed, with no punch velocity; a 63 u/s drop does not
+        if !was_ground
+            && st.on_ground
+            && st.move_type == MoveType::Walk
+            && fall_speed >= PUNCH_FALL_SPEED
+        {
+            st.punch = Vec3::new(0.0, 0.0, fall_speed * PUNCH_PER_FALL_SPEED);
+            st.punch_vel = Vec3::ZERO;
+        }
+    }
+
+    fn tick_move(&self, st: &mut PlayerState, cmd: &UserCmd) {
         let dt = self.cfg.tick_interval;
         match st.move_type {
             MoveType::Noclip => {
@@ -1471,6 +1536,56 @@ mod tests {
         }
         assert!((st.origin.z - floor).abs() < 0.05, "{}", st.origin.z);
         assert_eq!(st.ground_ent, 0);
+    }
+
+    #[test]
+    fn landing_punches_the_view_and_the_spring_decays_it() {
+        // measured (`move_roll_fall`): 774 u/s -> roll 10.062, then 10.062, 9.9148, 9.6425...
+        let mut st = PlayerState {
+            punch: Vec3::new(0.0, 0.0, 10.062),
+            ..PlayerState::default()
+        };
+        let mut seq = Vec::new();
+        for _ in 0..3 {
+            decay_punch(&mut st, gm_core::tick::DEFAULT_TICK_INTERVAL);
+            seq.push(st.punch.z);
+        }
+        for (got, want) in seq.iter().zip([10.062, 9.9148, 9.6425]) {
+            assert!((got - want).abs() < 1e-3, "{seq:?}");
+        }
+        // a fall onto the floor from 100 u punches by 0.013 deg per u/s, a hop does not
+        let world = World::from_boxes(&[(
+            Vec3::new(-512.0, -512.0, -64.0),
+            Vec3::new(512.0, 512.0, 0.0),
+        )]);
+        let m = Mover::new(MoveConfig::default(), &world);
+        let mut st = PlayerState {
+            origin: Vec3::new(0.0, 0.0, 100.0),
+            ..PlayerState::default()
+        };
+        let mut landed = None;
+        for _ in 0..120 {
+            let fall = -st.velocity.z;
+            m.tick(&mut st, &UserCmd::default());
+            if st.on_ground && landed.is_none() {
+                landed = Some((fall, st.punch.z));
+            }
+        }
+        let (fall, punch) = landed.expect("landed");
+        assert!(fall > PUNCH_FALL_SPEED, "{fall}");
+        assert!(
+            (punch - fall * PUNCH_PER_FALL_SPEED).abs() < 1e-3,
+            "{fall} {punch}"
+        );
+        assert_eq!(st.punch_vel, Vec3::ZERO.min(st.punch_vel).max(st.punch_vel));
+        let mut st = PlayerState {
+            origin: Vec3::new(0.0, 0.0, 20.0),
+            ..PlayerState::default()
+        };
+        for _ in 0..60 {
+            m.tick(&mut st, &UserCmd::default());
+        }
+        assert!(st.on_ground && st.punch == Vec3::ZERO);
     }
 
     #[test]
