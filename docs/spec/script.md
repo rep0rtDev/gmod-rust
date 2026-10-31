@@ -448,13 +448,13 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-Scripted entities' touches with players and while both bodies sleep; scripted weapons on the slot digits of
-the client, a `Think` analog for weapons and the game's `KEY_*` names / `input.IsKeyDown`
+Scripted entities' touches with players and while both bodies sleep; the weapon selection
+menu (attack to confirm, `hud_fastswitch`, `invnext`), a `Think` analog for weapons and the game's `KEY_*` names / `input.IsKeyDown`
 polling (ours: `input.key` events with the client's key names); the game's pitch-0 miss of +use
 on players (see "+use"); net message data for WASM guests. Done since this list was written: the
 sandbox gamemode as one package (`addons/gamemodes/sandbox`), prop properties, player models,
 the +use pickup, the spawn menu lists, prop spawn and state writes, scripted weapons, key
-events, +use on players, WASM components, scripted entity classes.
+events, +use on players, WASM components, scripted entity classes, weapon slot digits.
 
 ## Server events
 
@@ -602,6 +602,22 @@ in the first tick, `init` in it, thinks 7 ticks later then every 13 (default), e
 (`think_interval = 0.1`) and every 20 (a think returning 0.3), five
 `use` for five held ticks, `damage` 5 and `remove` in their ticks; a crate dropped on the
 second starts with `start_touch`, touches every tick and never ends a touch it did not start.
+
+## Weapon slots
+
+Measured (`lua_slots`, golden 261031): the sandbox loadout's `GetSlot()` / `GetSlotPos()` are
+slot 0 crowbar 0, physcannon 2, physgun 5, tool gun 100; slot 1 pistol 0, .357 1; slot 2 SMG 0,
+AR2 1; slot 3 shotgun 0, crossbow 1; slot 4 grenade 0, RPG 1; slot 5 camera 100; the spawn's
+active weapon is the crowbar. `slot1`..`slot6`, `invnext`, `invprev` and `lastinv` as a bot's
+console commands change nothing on the server: the selection is the client's menu and the
+server only sees the final switch, so the cycling itself is not measurable there.
+
+Ours (`gm_server::SLOTS`, `slot_order`): the digit keys 1..6 are the slot categories; a press
+takes the first owned weapon of the slot in `slot_pos` order, or the one after the current
+weapon when it is in that slot (wrapping); scripted weapons join by their `slot` / `slot_pos`
+(ties in class list order). Not modelled: the game's selection menu with its attack-to-confirm
+and `hud_fastswitch` (ours applies at once), the mouse wheel / `invnext`; the client skips
+weapons it has no viewmodel for (gravity gun, grenade, camera).
 
 ## WASM components
 

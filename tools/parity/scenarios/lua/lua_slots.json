@@ -1,0 +1,6 @@
+{
+ "name": "lua_slots",
+ "kind": "lua",
+ "needs_bot": true,
+ "code": "\nlocal scn, done = ...\nlocal bot = player.GetBots()[1]\nlocal rows = {}\nfor _, w in ipairs(bot:GetWeapons()) do\n  rows[#rows+1] = { class = w:GetClass(), slot = w:GetSlot(), pos = w:GetSlotPos(), name = w:GetPrintName(),\n    base = w.Base or \"\", scripted = w:IsScripted() }\nend\nlocal active = IsValid(bot:GetActiveWeapon()) and bot:GetActiveWeapon():GetClass() or \"\"\n-- the game's slot1..slot6 / invnext / invprev console commands on a bot: what the server does\nlocal after = {}\nlocal t, phase = 0, 0\nlocal cmds = { \"slot1\", \"slot1\", \"slot1\", \"slot1\", \"slot2\", \"slot3\", \"slot4\", \"slot5\", \"slot6\", \"invnext\", \"invnext\", \"invprev\", \"lastinv\" }\nhook.Add(\"Think\", \"parity_slots\", function()\n  t = t + 1\n  if t % 10 == 0 then\n    phase = phase + 1\n    if cmds[phase] == nil then\n      hook.Remove(\"Think\", \"parity_slots\")\n      done({ weapons = rows, active = active, after = after, fastswitch = GetConVar(\"hud_fastswitch\") and GetConVar(\"hud_fastswitch\"):GetString() or \"\" })\n      return\n    end\n    bot:ConCommand(cmds[phase])\n  elseif t % 10 == 5 and phase > 0 then\n    after[#after+1] = { cmd = cmds[phase], active = IsValid(bot:GetActiveWeapon()) and bot:GetActiveWeapon():GetClass() or \"\" }\n  end\nend)\nreturn \"async\"\n"
+}

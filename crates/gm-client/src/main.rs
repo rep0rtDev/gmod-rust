@@ -1100,6 +1100,42 @@ impl App {
         self.scripted_world = defs.iter().map(|d| leak(&d.world_model)).collect();
     }
 
+    /// A digit key: the game's slot categories (measured `gm_server::SLOTS` plus the scripted
+    /// definitions' `slot` / `slot_pos`). The first owned weapon of the slot, or the one after
+    /// the current when it is in the slot (wrapping); weapons without a viewmodel here are
+    /// skipped. Applied at once (the game's selection menu / `hud_fastswitch` is not modelled).
+    fn select_slot(&mut self, slot: u8) {
+        let Some(snap) = self.local_snap() else {
+            return;
+        };
+        let (owned, active) = (snap.weapons, snap.active);
+        let defs = self.sim.client.world.weapon_defs.clone();
+        let classes = gm_net::msg::weapon_classes(&defs);
+        let order = gm_server::slot_order(&classes, owned, slot, &defs);
+        let to_local = |i: u8| -> Option<u8> {
+            let class = classes.get(i as usize)?;
+            if let Some(w) = WEAPONS.iter().position(|w| w.class == class) {
+                return Some(w as u8);
+            }
+            defs.iter()
+                .position(|d| d.class == *class)
+                .map(|p| (gm_server::LOADOUT.len() + p) as u8)
+        };
+        let usable: Vec<(u8, u8)> = order
+            .iter()
+            .filter_map(|&i| to_local(i).map(|l| (i, l)))
+            .collect();
+        if usable.is_empty() {
+            return;
+        }
+        let at = usable.iter().position(|(i, _)| *i == active);
+        let next = match at {
+            Some(k) => usable[(k + 1) % usable.len()].1,
+            None => usable[0].1,
+        };
+        self.select_weapon(next);
+    }
+
     fn select_weapon(&mut self, weapon: u8) {
         let Some(vm) = self.vm_of(weapon) else { return };
         if self.weapon != weapon {
@@ -2465,16 +2501,12 @@ impl ApplicationHandler for App {
                     match code {
                         KeyCode::Escape if self.grabbed => self.set_grab(false),
                         KeyCode::Escape => el.exit(),
-                        KeyCode::Digit1 => self.select_weapon(0),
-                        KeyCode::Digit2 => self.select_weapon(1),
-                        KeyCode::Digit3 => self.select_weapon(2),
-                        KeyCode::Digit4 => self.select_weapon(3),
-                        KeyCode::Digit5 => self.select_weapon(4),
-                        KeyCode::Digit6 => self.select_weapon(5),
-                        KeyCode::Digit7 => self.select_weapon(6),
-                        KeyCode::Digit8 => self.select_weapon(7),
-                        KeyCode::Digit9 => self.select_weapon(8),
-                        KeyCode::Digit0 => self.select_weapon(9),
+                        KeyCode::Digit1 => self.select_slot(0),
+                        KeyCode::Digit2 => self.select_slot(1),
+                        KeyCode::Digit3 => self.select_slot(2),
+                        KeyCode::Digit4 => self.select_slot(3),
+                        KeyCode::Digit5 => self.select_slot(4),
+                        KeyCode::Digit6 => self.select_slot(5),
                         KeyCode::KeyQ => self.open_menu(),
                         KeyCode::KeyC => {
                             if self.menu.is_none() && !self.context_held {

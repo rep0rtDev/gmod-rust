@@ -683,6 +683,61 @@ pub const LOADOUT: [&str; 13] = [
     "weapon_smg1",
 ];
 
+/// Measured (`lua_slots`): `GetSlot()` / `GetSlotPos()` of the sandbox loadout, the categories
+/// of the digit keys 1..6 and the order within one (the tool gun and camera sit at 100, last).
+pub const SLOTS: [(&str, u8, u8); 13] = [
+    ("weapon_crowbar", 0, 0),
+    ("weapon_physcannon", 0, 2),
+    ("weapon_physgun", 0, 5),
+    ("gmod_tool", 0, 100),
+    ("weapon_pistol", 1, 0),
+    ("weapon_357", 1, 1),
+    ("weapon_smg1", 2, 0),
+    ("weapon_ar2", 2, 1),
+    ("weapon_shotgun", 3, 0),
+    ("weapon_crossbow", 3, 1),
+    ("weapon_frag", 4, 0),
+    ("weapon_rpg", 4, 1),
+    ("gmod_camera", 5, 100),
+];
+
+/// `(slot, slot_pos)` of a weapon class: the measured table for the loadout, the definition
+/// for a scripted one.
+pub fn weapon_slot(class: &str, scripted: &[ScriptedWeapon]) -> Option<(u8, u8)> {
+    SLOTS
+        .iter()
+        .find(|(c, _, _)| *c == class)
+        .map(|(_, s, p)| (*s, *p))
+        .or_else(|| {
+            scripted
+                .iter()
+                .find(|w| w.class == class)
+                .map(|w| (w.slot, w.slot_pos))
+        })
+}
+
+/// The owned weapons of one slot category in the game's menu order (`slot_pos`, then the
+/// class list order), as indices into `classes` (`LOADOUT` then the scripted definitions;
+/// `owned` is the snapshot's weapon mask).
+pub fn slot_order(
+    classes: &[String],
+    owned: u64,
+    slot: u8,
+    scripted: &[ScriptedWeapon],
+) -> Vec<u8> {
+    let mut v: Vec<(u8, u8)> = classes
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| owned & (1u64 << i) != 0)
+        .filter_map(|(i, c)| match weapon_slot(c, scripted) {
+            Some((s, p)) if s == slot => Some((p, i as u8)),
+            _ => None,
+        })
+        .collect();
+    v.sort();
+    v.into_iter().map(|(_, i)| i).collect()
+}
+
 /// Measured (`ragdoll_still`): the server side of a dead player is an `hl2mp_ragdoll` entity
 /// at the player's origin with zero angles and no physics objects at all (0 on the server; the
 /// ragdoll is simulated on each client), so the server only keeps the record.
@@ -4107,5 +4162,62 @@ mod impact_sound_tests {
             let got = heard(speed).unwrap();
             assert!((got - vol).abs() < 0.0005, "{speed} u/s: {got} vs {vol}");
         }
+    }
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::*;
+
+    #[test]
+    fn slot_order_follows_the_measured_table() {
+        let classes: Vec<String> = LOADOUT.iter().map(|c| c.to_string()).collect();
+        let idx = |c: &str| classes.iter().position(|x| x == c).unwrap() as u8;
+        let all = (1u64 << LOADOUT.len()) - 1;
+        assert_eq!(
+            slot_order(&classes, all, 0, &[]),
+            vec![
+                idx("weapon_crowbar"),
+                idx("weapon_physcannon"),
+                idx("weapon_physgun"),
+                idx("gmod_tool")
+            ]
+        );
+        assert_eq!(
+            slot_order(&classes, all, 1, &[]),
+            vec![idx("weapon_pistol"), idx("weapon_357")]
+        );
+        assert_eq!(slot_order(&classes, all, 5, &[]), vec![idx("gmod_camera")]);
+        assert!(slot_order(&classes, all, 6, &[]).is_empty());
+        // only owned weapons: just the physgun and the tool gun
+        let owned = (1u64 << idx("weapon_physgun")) | (1u64 << idx("gmod_tool"));
+        assert_eq!(
+            slot_order(&classes, owned, 0, &[]),
+            vec![idx("weapon_physgun"), idx("gmod_tool")]
+        );
+        // a scripted weapon in slot 1 at pos 0 goes between by position, ties by list order
+        let swep = ScriptedWeapon {
+            class: "swep_x".into(),
+            print_name: "X".into(),
+            slot: 1,
+            slot_pos: 0,
+            hold_type: "pistol".into(),
+            view_model: String::new(),
+            world_model: String::new(),
+            clip_size: -1,
+            default_clip: -1,
+            ammo: String::new(),
+            automatic: false,
+            primary_delay: 0.2,
+            secondary_delay: 0.5,
+            reload_time: 1.4333,
+        };
+        let mut classes2 = classes.clone();
+        classes2.push("swep_x".into());
+        let owned2 = all | (1u64 << LOADOUT.len());
+        assert_eq!(
+            slot_order(&classes2, owned2, 1, std::slice::from_ref(&swep)),
+            vec![idx("weapon_pistol"), LOADOUT.len() as u8, idx("weapon_357")]
+        );
     }
 }
