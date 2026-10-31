@@ -1709,6 +1709,13 @@ impl App {
             Some(k) => order[(k + 1) % order.len()],
             None => order[0],
         };
+        if self.settings.hud_fastswitch {
+            // hud_fastswitch 1: the slot key switches straight away, no bucket menu
+            self.wsel = None;
+            self.select_weapon(next);
+            self.sounds.emit(&self.mount, "Player.WeaponSelected", None);
+            return;
+        }
         self.wsel = Some(next);
         self.sounds
             .emit(&self.mount, "Player.WeaponSelectionMoveSlot", None);
@@ -1730,7 +1737,14 @@ impl App {
             .map(|k| k as i32)
             .unwrap_or(-dir.max(0));
         let n = all.len() as i32;
-        self.wsel = Some(all[((k + dir).rem_euclid(n)) as usize]);
+        let next = all[((k + dir).rem_euclid(n)) as usize];
+        if self.settings.hud_fastswitch {
+            self.wsel = None;
+            self.select_weapon(next);
+            self.sounds.emit(&self.mount, "Player.WeaponSelected", None);
+            return;
+        }
+        self.wsel = Some(next);
         self.sounds
             .emit(&self.mount, "Player.WeaponSelectionMoveSlot", None);
     }

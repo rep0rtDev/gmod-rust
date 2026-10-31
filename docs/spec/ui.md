@@ -280,3 +280,26 @@ in the 640x480 proportional space of the sheet page.
   Game writes `~/.gmod-rust/cfg/server.cfg` (the commands the game would run) and relaunches
   the client on the map; the client's own server applies `server.cfg` through
   `Server::set_cvar` at start. maxplayers / hostname / sv_lan / p2p are stored only.
+
+## Servers page (`template/servers.html`, `css/menu/Servers.css`, `js/menu/control.Servers.js`)
+
+- `.options` column (same 23/16 px style as main.html): `h2` Server List, small lines
+  "N server(s) total" / "N gamemode(s) total", links Internet / Favorites / History / Local
+  Network (`servers_internet` / `servers_favorites` / `servers_history` / `servers_local`,
+  active #ff5), Refresh Listings / Stop Refreshing, Legacy Browser, then the filters
+  (`addons.sort_by` radio players / servers / name, `addons.filter_by` category checkboxes,
+  search; with a gamemode picked: player min-max, max ping, not full / has players / no
+  password / outdated).
+- `.innerpage` (left 320, top 16, right 16): `H1.menuheader` white with 2 px shadow
+  "Gamemodes" + small 50 % #888 "Pick a gamemode from the list below"; `.server_gamemodes
+  .whiterounded` with `.gamemode` tiles: #efefef, 34 tall, padding 5 20, radius 3, icon24 at
+  5,9, name 20 px bold at left 40 / top 5, stats 11 px #555 bottom 3 / left 43 ("N players on
+  M servers"), hover yellow gradient (250 230 150 to 250 250 150). Favorites adds
+  `.add_fav_server`: header `servers_find_title`, input placeholder `127.0.0.1:27015`, button
+  `servers_find`, found servers list rows.
+- With a gamemode: header = gamemode name + `join_a_server`, search box + "Return to
+  gamemodes" link, `.serverlist`: white padding 10 radius 4; `.header` #2387ed radius 4 4 0 0
+  padding 4 at 8/8/8, 11 px; rows `.server` 16 tall + padding 3 4 (22 px pitch), #E7F0FF /
+  odd #F1F6FF, hover #B7DDFD, text #444; columns name (flex, 13 px bold at >= 1280) with
+  favourite star / flag / password icon, map 90 (130 at >= 1280), players 48 ("a / b"),
+  ping 32, rank 64 (`img/rank1..5.png`); double click joins (`servers_join_server`).
