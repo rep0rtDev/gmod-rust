@@ -781,7 +781,12 @@ impl App {
         surface.configure(&gpu.device, &config);
         let bsp = gm_formats::bsp::Bsp::parse(&self.bsp_data)?;
         let t0 = Instant::now();
-        let world = WorldRenderer::new(&gpu, &self.mount, &bsp, format)?;
+        // mat_hdr_level >= 1 takes the HDR lumps when the map has them (applied on map load)
+        let hdr = self.settings.mat_hdr_level >= 1 && bsp.has_hdr();
+        let world = WorldRenderer::new(&gpu, &self.mount, &bsp, format, hdr)?;
+        if hdr {
+            println!("hdr lighting: exposure {:.2}", world.exposure);
+        }
         eprintln!(
             "world: {} faces, {} props, built in {:.1}s",
             world.stats.faces,

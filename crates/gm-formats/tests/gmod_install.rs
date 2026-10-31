@@ -102,7 +102,7 @@ fn gm_construct_lumps_parse() {
         let m = bsp.face_material(f).expect("material");
         assert!(!m.is_empty());
         if f.light_ofs >= 0 {
-            let lm = bsp.face_lightmap(f).unwrap();
+            let lm = bsp.face_lightmap(f, false).unwrap();
             let (w, h) = f.lightmap_dims();
             assert_eq!(lm.len(), (w * h) as usize * f.light_styles());
             lit += 1;

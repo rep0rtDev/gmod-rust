@@ -233,14 +233,24 @@ impl<'a> Bsp<'a> {
         out
     }
 
-    /// LDR lightmap samples for a face: `styles * w * h` entries, style-major.
-    pub fn face_lightmap(&self, face: &lumps::Face) -> Result<Vec<lumps::ColorRgbExp32>> {
+    /// Lightmap samples for a face: `styles * w * h` entries, style-major, from
+    /// `LUMP_LIGHTING` (8) or, with `hdr`, `LUMP_LIGHTING_HDR` (53; same layout, HDR values).
+    pub fn face_lightmap(
+        &self,
+        face: &lumps::Face,
+        hdr: bool,
+    ) -> Result<Vec<lumps::ColorRgbExp32>> {
         if face.light_ofs < 0 {
             return Ok(Vec::new());
         }
         let (w, h) = face.lightmap_dims();
         let count = (w * h) as usize * face.light_styles();
-        let lighting = self.header.lump_data(self.data, Lump::Lighting)?;
+        let lump = if hdr {
+            Lump::LightingHdr
+        } else {
+            Lump::Lighting
+        };
+        let lighting = self.header.lump_data(self.data, lump)?;
         let start = face.light_ofs as usize;
         let bytes = lighting
             .get(start..start + count * lumps::ColorRgbExp32::SIZE)
@@ -249,6 +259,11 @@ impl<'a> Bsp<'a> {
                 needed: count * 4,
             })?;
         read_all("lighting", bytes)
+    }
+
+    /// Whether the map carries HDR lighting (lump 53 is not empty).
+    pub fn has_hdr(&self) -> bool {
+        self.header.lump(Lump::LightingHdr).length > 0
     }
 
     pub fn worldspawn(&self) -> Option<&lumps::Entity> {

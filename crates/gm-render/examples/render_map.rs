@@ -50,7 +50,13 @@ fn main() -> Result<()> {
     let t0 = std::time::Instant::now();
     let gpu = Gpu::headless()?;
     eprintln!("adapter: {}", gpu.adapter_name());
-    let world = WorldRenderer::new(&gpu, &mount, &bsp, wgpu::TextureFormat::Rgba8UnormSrgb)?;
+    let world = WorldRenderer::new(
+        &gpu,
+        &mount,
+        &bsp,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        false,
+    )?;
     eprintln!(
         "world: {} faces ({} in 3D skybox), {} displacements, {} props ({} models), {} triangles, {} materials, {} missing, {} lightmap overflow, built in {:.1}s",
         world.stats.faces,
@@ -136,7 +142,7 @@ fn debug_center_ray(bsp: &gm_formats::bsp::Bsp<'_>, camera: &Camera) {
     };
     let face = &bsp.faces[fi];
     let ti = &bsp.tex_infos[face.tex_info.max(0) as usize];
-    let lm = bsp.face_lightmap(face).unwrap_or_default();
+    let lm = bsp.face_lightmap(face, false).unwrap_or_default();
     let avg = lm
         .iter()
         .take(lm.len().max(1))

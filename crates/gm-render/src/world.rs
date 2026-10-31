@@ -46,7 +46,10 @@ struct CameraUniform {
     alpha: f32,
     /// Monitor gamma (`mat_monitorgamma`): the output is raised to 2.2 / gamma.
     gamma: f32,
-    _pad: [f32; 2],
+    /// Lightmap atlas scale (the atlas stores linear light / lm_scale).
+    lm_scale: f32,
+    /// Tonemap scale (HDR exposure; 1 in LDR).
+    exposure: f32,
 }
 
 /// Source camera: position in units, angles in degrees (pitch, yaw, roll), horizontal FOV.
@@ -94,6 +97,12 @@ pub struct SkyCamera {
 }
 
 pub struct WorldRenderer {
+    /// Linear light / `lm_scale` is what the lightmap atlas stores.
+    pub lm_scale: f32,
+    /// HDR tonemap scale applied in the shader (1 in LDR).
+    pub exposure: f32,
+    /// Whether the HDR lumps were used.
+    pub hdr: bool,
     pipeline: wgpu::RenderPipeline,
     /// Additive, no depth write: beams and glow sprites.
     additive_pipeline: wgpu::RenderPipeline,
@@ -838,10 +847,42 @@ impl WorldRenderer {
         mount: &Mount,
         bsp: &Bsp<'_>,
         color_format: wgpu::TextureFormat,
+        hdr: bool,
     ) -> Result<Self> {
         let device = &gpu.device;
         let atlas_size = 4096u32;
-        let mut atlas = Atlas::new(atlas_size);
+        // the 8-bit atlas holds linear light / lm_scale: 2 covers the LDR overbright range,
+        // the HDR lumps reach further (interim until a float atlas)
+        let lm_scale: f32 = if hdr { 8.0 } else { 2.0 };
+        let mut atlas = Atlas::new(atlas_size, 1.0 / lm_scale);
+        // the map's env_tonemap_controller (set by logic_auto OnMapSpawn): the exposure the
+        // auto path may use lies between its min and max; without a luminance readback we
+        // hold mat_hdr_tonemapscale 1 clamped into that range
+        let (mut tm_min, mut tm_max) = (0.5f32, 2.0f32);
+        for e in bsp
+            .entities
+            .iter()
+            .filter(|e| e.classname() == "logic_auto")
+        {
+            for (k, v) in &e.pairs {
+                if k != "OnMapSpawn" {
+                    continue;
+                }
+                let f: Vec<&str> = v.split(',').collect();
+                if f.len() >= 3 {
+                    match (f[1], f[2].parse::<f32>()) {
+                        ("SetAutoExposureMin", Ok(x)) => tm_min = x,
+                        ("SetAutoExposureMax", Ok(x)) => tm_max = x,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let exposure = if hdr {
+            1.0f32.clamp(tm_min, tm_max)
+        } else {
+            1.0
+        };
         let white = atlas.white().ok_or_else(|| anyhow!("atlas too small"))?;
         let mut stats = Stats::default();
 
@@ -949,7 +990,7 @@ impl WorldRenderer {
             let (tw, th) = (tw as f32, th as f32);
             let (placement, lit) = if face.light_ofs >= 0 && face.light_styles() > 0 {
                 let (w, h) = face.lightmap_dims();
-                let samples = bsp.face_lightmap(face)?;
+                let samples = bsp.face_lightmap(face, hdr)?;
                 match atlas.place(w, h, &samples[..(w * h) as usize]) {
                     Some(p) => (p, true),
                     None => {
@@ -1023,7 +1064,7 @@ impl WorldRenderer {
         }
 
         drop(resolve);
-        let light = crate::light::ModelLight::new(bsp);
+        let light = crate::light::ModelLight::new(bsp, hdr);
         let prop_stats = crate::props::collect_static_props(
             mount,
             bsp,
@@ -1297,6 +1338,11 @@ impl WorldRenderer {
         );
 
         Ok(WorldRenderer {
+            lm_scale,
+
+            exposure,
+
+            hdr,
             pipeline,
             additive_pipeline,
             translucent_pipeline,
@@ -1374,7 +1420,9 @@ impl WorldRenderer {
                 alpha: 1.0,
                 gamma: cam.gamma,
 
-                _pad: [0.0; 2],
+                lm_scale: self.lm_scale,
+
+                exposure: self.exposure,
             }),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
@@ -1435,7 +1483,9 @@ impl WorldRenderer {
                 alpha: 1.0,
                 gamma: camera.gamma,
 
-                _pad: [0.0; 2],
+                lm_scale: self.lm_scale,
+
+                exposure: self.exposure,
             }),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
@@ -1786,7 +1836,9 @@ impl WorldRenderer {
             alpha: 1.0,
             gamma: camera.gamma,
 
-            _pad: [0.0; 2],
+            lm_scale: self.lm_scale,
+
+            exposure: self.exposure,
         };
         gpu.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
@@ -1984,7 +2036,9 @@ impl WorldRenderer {
                 alpha,
                 gamma: camera.gamma,
 
-                _pad: [0.0; 2],
+                lm_scale: self.lm_scale,
+
+                exposure: self.exposure,
             }),
         );
         let mut enc = device.create_command_encoder(&Default::default());

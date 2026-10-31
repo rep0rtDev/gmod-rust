@@ -4,7 +4,7 @@ fn main() {
     let mount = gm_content::Mount::for_install(&install).unwrap();
     let data = mount.read("maps/gm_construct.bsp").unwrap();
     let bsp = gm_formats::bsp::Bsp::parse(&data).unwrap();
-    let light = gm_render::light::ModelLight::new(&bsp);
+    let light = gm_render::light::ModelLight::new(&bsp, false);
     let props = gm_formats::bsp::extra::StaticProps::parse(&bsp).unwrap();
     let mut ratios = Vec::new();
     for (i, p) in props.props.iter().enumerate().step_by(7).take(30) {

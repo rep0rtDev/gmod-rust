@@ -129,9 +129,9 @@ impl LocalLight {
 }
 
 impl ModelLight {
-    pub fn new(bsp: &Bsp<'_>) -> Self {
-        let ambient = LeafAmbient::parse(bsp, false).unwrap_or_default();
-        let lights = gm_formats::bsp::light::world_lights(bsp, false)
+    pub fn new(bsp: &Bsp<'_>, hdr: bool) -> Self {
+        let ambient = LeafAmbient::parse(bsp, hdr).unwrap_or_default();
+        let lights = gm_formats::bsp::light::world_lights(bsp, hdr)
             .unwrap_or_default()
             .iter()
             .map(Light::from_world)

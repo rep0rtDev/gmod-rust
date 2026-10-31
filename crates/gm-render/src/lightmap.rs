@@ -4,6 +4,8 @@
 use gm_formats::bsp::lumps::ColorRgbExp32;
 
 pub struct Atlas {
+    /// Linear light is stored times this (1/2 LDR, 1/8 HDR).
+    pub scale: f32,
     pub size: u32,
     pub pixels: Vec<u8>,
     shelf_y: u32,
@@ -20,10 +22,11 @@ pub struct Placement {
 }
 
 impl Atlas {
-    pub fn new(size: u32) -> Self {
+    pub fn new(size: u32, scale: f32) -> Self {
         Atlas {
             size,
             pixels: vec![0; (size * size * 4) as usize],
+            scale,
             shelf_y: 0,
             shelf_h: 0,
             cursor_x: 0,
@@ -59,9 +62,9 @@ impl Atlas {
                 let sy = (gy.max(1) - 1).min(h - 1);
                 let c = samples[(sy * w + sx) as usize].to_linear();
                 let i = (((p.y - 1 + gy) * self.size + (p.x - 1 + gx)) * 4) as usize;
-                self.pixels[i] = (c[0] * 0.5 * 255.0).clamp(0.0, 255.0) as u8;
-                self.pixels[i + 1] = (c[1] * 0.5 * 255.0).clamp(0.0, 255.0) as u8;
-                self.pixels[i + 2] = (c[2] * 0.5 * 255.0).clamp(0.0, 255.0) as u8;
+                self.pixels[i] = (c[0] * self.scale * 255.0).clamp(0.0, 255.0) as u8;
+                self.pixels[i + 1] = (c[1] * self.scale * 255.0).clamp(0.0, 255.0) as u8;
+                self.pixels[i + 2] = (c[2] * self.scale * 255.0).clamp(0.0, 255.0) as u8;
                 self.pixels[i + 3] = 255;
             }
         }
