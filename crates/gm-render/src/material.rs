@@ -126,10 +126,59 @@ pub struct Rgba {
     pub pixels: Vec<u8>,
 }
 
+/// Decode a PNG (any colour type) to RGBA8.
+pub fn load_png(bytes: &[u8]) -> Result<Rgba> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info()?;
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap_or(0)];
+    let info = reader.next_frame(&mut buf)?;
+    let pixels = match info.color_type {
+        png::ColorType::Rgba => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::Rgb => buf[..info.buffer_size()]
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => buf[..info.buffer_size()]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect(),
+        png::ColorType::Grayscale => buf[..info.buffer_size()]
+            .iter()
+            .flat_map(|&g| [g, g, g, 255])
+            .collect(),
+        png::ColorType::Indexed => anyhow::bail!("indexed PNG left after EXPAND"),
+    };
+    Ok(Rgba {
+        width: info.width,
+        height: info.height,
+        pixels,
+    })
+}
+
 /// Decode a VTF, picking the largest mip whose longer side is at most `max_side`.
 pub fn load_texture(mount: &Mount, name: &str, max_side: u32) -> Result<Rgba> {
-    let path = format!("materials/{}.vtf", name.trim_start_matches('/'));
-    let bytes = mount.read(&path)?;
+    let base = name.trim_start_matches('/');
+    let path = format!("materials/{base}.vtf");
+    let bytes = match mount.read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            // `Material( "x.png" )`: the game also accepts PNG images under materials/
+            let png_path = if base.to_ascii_lowercase().ends_with(".png") {
+                format!("materials/{base}")
+            } else {
+                format!("materials/{base}.png")
+            };
+            return match mount.read(&png_path) {
+                Ok(b) => load_png(&b),
+                Err(_) => Err(e.into()),
+            };
+        }
+    };
     let h = vtf::Header::parse(&bytes)?;
     let mut mip = 0u32;
     while mip + 1 < h.mipmap_count as u32 {

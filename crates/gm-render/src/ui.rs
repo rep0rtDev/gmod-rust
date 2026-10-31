@@ -78,6 +78,16 @@ pub enum UiItem {
         /// Quarter turns clockwise of the texture (`DrawTexturedRectRotated` 0/90/180/270).
         rot: u8,
     },
+    /// A sub-rectangle `uv` = [u0, v0, u1, v1] of an image (GWEN atlas 9-slice pieces).
+    Slice {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        material: String,
+        color: [f32; 4],
+        uv: [f32; 4],
+    },
 }
 
 /// What a font's layout needs outside the renderer: the line height and the advance of
@@ -722,6 +732,21 @@ impl UiRenderer {
                         pen += g.advance;
                     }
                     &f.bind_group
+                }
+                UiItem::Slice {
+                    x,
+                    y,
+                    w,
+                    h,
+                    material,
+                    color,
+                    uv,
+                } => {
+                    let Some(Some(bg)) = self.images.get(material) else {
+                        continue;
+                    };
+                    quad(&mut vertices, *x, *y, x + w, y + h, *uv, *color);
+                    bg
                 }
                 UiItem::Image {
                     x,
