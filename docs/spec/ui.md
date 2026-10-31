@@ -163,3 +163,84 @@ Everything here is read from the installed client (`garrysmod/lua`, `sourceengin
   / Escape return, Quit and Disconnect exit the client; the other pages (new game, servers,
   addons, dupes, saves, demos, options) and the popups are not built yet; fonts are Roboto for
   Helvetica/Arial.
+
+## Options dialog (`garrysmod/resource/OptionsSub*.res`, `sourceengine/resource/*.res`)
+
+The "Options" entry opens the engine's VGUI PropertyDialog (`#GameUI_Options` = "OPTIONS",
+tabs Keyboard / Mouse / Audio / Video / Voice / Multiplayer, OK / Cancel / Apply). The
+garrysmod `.res` files override the sourceengine ones; positions are `xpos,ypos wide x tall`
+in the 640x480 proportional space of the sheet page.
+
+- Video (garrysmod): Label1 Resolution 36,24 160x24; Resolution ComboBox 36,50 160x24;
+  Label4 DisplayMode 254,24; DisplayModeCombo 254,50 182x24 (Full screen / Run in a window);
+  AspectRatioLabel 36,100; AspectRatio ComboBox 36,126 160x24 (Normal (4:3) / Widescreen 16:9
+  / Widescreen 16:10); Gamma label 257,117 140x24; GammaButton 254,126 182x24 "Adjust
+  brightness levels..."; FPSLabel 36,176 168x24 `#GameUI_FPS`; FPSLimitSlider CCvarSlider
+  36,196 168x50 `fps_max`; FPSLimitLabel TextEntry 207,196 36x24; AdvancedButton 254,196
+  182x24 "Advanced..."; BenchmarkButton 39,230 130x24; ThirdPartyVideoCredits URLButton
+  254,254 225x24.
+- Keyboard: listpanel_keybindlist SectionedListPanel 8,10 480x258 (rows from
+  `sourceengine/scripts/kb_act.lst`: Movement +forward/+back/+moveleft/+moveright/+speed/
+  +jump/+duck; Combat +attack/+attack2/+reload/+use/phys_swap/impulse 100/+zoom/impulse 50/
+  slot1-6/invnext/invprev/lastinv; Miscellaneous closecaption/jpeg/save quick/load quick/
+  pause/quit/toggleconsole; Misc keyboard keys +walk/+left/+right/+moveup/+movedown/+lookup/
+  +lookdown/+strafe/+klook; "blank" rows with "====" are section dividers); Defaults 8,276
+  134x24 "Use Defaults"; KeyAdvancedButton 148,276 111x24 "Advanced..."; ChangeKeyButton
+  272,276 106x24 "Edit key"; ClearKeyButton 384,276 105x24 "Clear Key". Defaults from
+  `kb_def.lst`: w/UPARROW +forward, s/DOWNARROW +back, a/, +moveleft, d/. +moveright, SPACE
+  +jump, CTRL +duck, TAB +showscores, e +use, v/' +moveup, c impulse 50, / +movedown, r
+  +reload, ALT +walk, SHIFT +speed, MOUSE1/ENTER +attack, MOUSE2/\ +attack2, f impulse 100,
+  1-6 slotN, MWHEELUP/[ invprev, MWHEELDOWN/] invnext, q lastinv, F5 jpeg, F6/F7 save/load
+  quick, F10 quit prompt, PAUSE pause, ESCAPE escape, ~/` toggleconsole, t impulse 201, y
+  messagemode, u messagemode2, g dropprimary, z +zoom.
+- Mouse (sourceengine): ReverseMouse CCvarNegateCheckButton 28,9 150x28; MouseFilter 200,10
+  150x28; Label3 "Mouse sensitivity" 35,40 148x24; Slider CCvarSlider 200,40 200x40;
+  SensitivityLabel TextEntry 400,40 50x24; MouseRaw 30,70 150x24; MouseAccelerationCheckbox
+  30,100 150x24; MouseAccelerationSlider 200,100 200x40; MouseAccelerationLabel 400,100
+  50x24; Divider1 35,140 396x2; Joystick 28,148 226x28; ReverseJoystick 62,176 296x28;
+  JoystickSouthpaw 62,202 296x28; joystick yaw/pitch sliders 232,237 / 232,274 186x40.
+- Audio (garrysmod): "sfx label" Game volume 36,19; SFXSlider 36,38 393x50; "gmod sfx label"
+  `#GameUI_SoundFXVolume` 36,68; GModSFXSlider 36,88 175x50; MusicVolumeLabel 254,68;
+  MusicSlider 254,88 175x50; SpeakerConfigLabel 36,120 184x24; SpeakerSetup ComboBox 36,145
+  175x24 (Headphones / 2 / 4 / 5.1 / 7.1 Speakers); SoundQualityLabel 254,120; SoundQuality
+  254,145 175x24 (Low / Medium / High); AudioSpokenLanguageLabel 36,176; AudioSpokenLanguage
+  36,200 175x24; RequiresRestartLabel 36,220; Label2 Captioning 254,176; CloseCaptionCheck
+  254,200 175x24 (Disabled / Subtitles (dialog only) / Closed Captions); snd_mute_losefocus
+  33,240 430x28; dsp_enhance_stereo 33,265 210x28; ThirdPartySoundCredits 254,270 200x24.
+- Multiplayer (garrysmod): Label2 Spraypaint image 32,14 150x24; LogoImage 32,38 64x64;
+  SpraypaintList 106,38 124x24; ImportSprayImage 106,78 124x24; Label3 server note 246,38
+  214x40; DisableSprays 240,74 250x28; DownloadFilterLabel 32,105 260x36; Divider2 32,110
+  432x2; DownloadFilterCheck 32,155 300x24; Divider3 32,190 432x2; HTMLLoadingScreen 25,195
+  250x22; FastSwitchCheckbox 25,220 250x22 `hud_fastswitch`; CrosshairSettings 32,245 250x24
+  `crosshair_setup`; FOVSliderLabel 296,205 176x24; FovSliderSlider 296,225 176x50
+  `fov_desired`; Advanced 32,260 144x24.
+- Voice (garrysmod): voice_modenable 33,32 216x28; Microphonelabel 42,70 180x24; mic volume
+  panel 40,94 160x26; ReceiveLabel 246,70; VoiceReceive CCvarSlider 246,94 160x42; MicMeter
+  40,148 158x32; TestMicrophone 40,176 160x24; SteamVoiceSettings 246,176 160x24; MicBoost
+  33,212 216x28.
+- SourceScheme (platform `sourceschemebase.res`, overridden by `garrysmod/resource/
+  SourceScheme.res`): colours White 255, OffWhite 221, DullWhite 190, Orange 255 155 0,
+  TransparentBlack 0 0 0 128, GMod_BG 108 111 114; Border.Bright 200 200 200 255, Border.Dark
+  40 40 40 198, Button.TextColor 82 82 82, Button.BgColor 227 227 227, Button.ArmedTextColor
+  46 114 178, Button.ArmedBgColor 240 240 240, Button.DepressedBgColor 84 178 245 (GMod);
+  base: Frame.BgColor 160 160 160 128, Frame.TitleTextInsetX 16, Frame.ClientInsetX 8,
+  Label.TextColor OffWhite, CheckButton.Check White, CheckButton.BgColor TransparentBlack,
+  ComboBoxButton.ArrowColor DullWhite, ListPanel.BgColor TransparentBlack, selected Orange,
+  SectionedListPanel text DullWhite / header White / divider Black, Slider.NobColor 108,
+  Slider.TrackColor 31, Slider.TextColor 180, TextEntry bg TransparentBlack text OffWhite,
+  Menu.BgColor 160 160 160 64 armed Orange, PropertySheet text OffWhite / selected White,
+  transition 0.25 s; borders: Depressed (dark left/top, bright right/bottom), Raised (the
+  reverse), inset 0 0 1 1. Fonts: Default Verdana 16 w500, DefaultBold Verdana Bold 16
+  w1000, DefaultSmall 13, DefaultVerySmall 12, DefaultLarge 18, Marlett 14 (arrows/checks).
+- GMod `SourceScheme.res` overrides (the light dialog look): Frame.BgColor GMod_BG_Opaque
+  108 111 114 250 (out of focus 97 100 102 240), Frame.ClientInsetY 6, FrameTitleBar font
+  UiBold/DefaultLarge, title text 255 255 255 204, Label.BgColor GMod_BG (transparent),
+  CheckButton.Check Black, disabled bg 180, ComboBoxButton.ArrowColor 81 (armed 110) on a
+  white-blank bg, ListPanel bg White text Black selected 0 168 255 204 (out of focus 132 183
+  241 100), Menu bg 233 text 80 armed 132 183 241 / White; DefaultSmall is Verdana 16 w0 in
+  GMod; HUDNumber Trebuchet MS 40-45 w900, ConsoleText Verdana 14.
+- GMod scheme, controls: PropertySheet text 10 10 10 200 / selected 255, ScrollBar.Wide 15
+  (button fg 60 bg 207, slider fg 220 bg 184 184 184 229), Slider nob 220 track 184 184 184
+  229 text 180, TextEntry bg White text 10 10 10 selected 0 168 255 204 focus edge 0 0 0 196,
+  SectionedListPanel bg White header 50 50 50 divider 0 0 0 150 text 10 10 10 selected
+  0 168 255 204, Tooltip bg 249 238 181 text 110 102 60.
