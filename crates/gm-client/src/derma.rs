@@ -78,6 +78,8 @@ pub const TABT_ACTIVE: Piece = border(0, 384, 63, 31, 8);
 pub const TABT_INACTIVE: Piece = border(128, 384, 63, 31, 8);
 pub const SELECTION: Piece = border(384, 32, 31, 31, 4);
 pub const TREE_PLUS: Piece = normal(448, 96, 15, 15);
+pub const MENU_CHECK: Piece = normal(448, 112, 15, 15);
+pub const MENU_ARROW: Piece = normal(464, 112, 15, 15);
 pub const TREE_MINUS: Piece = normal(464, 96, 15, 15);
 pub const CHECKBOX: Piece = normal(464, 32, 15, 15);
 pub const CATEGORY_OUTER: Piece = border(256, 384, 63, 63, 8);
@@ -1464,6 +1466,225 @@ pub fn property_label(lang: &BTreeMap<String, String>, name: &str) -> String {
 }
 
 const MENU_OPTION_H: f32 = 22.0;
+
+/// A `DMenuOption`: a leaf runs the property `name`; an entry with `children` opens a submenu
+/// (`DMenuOption:AddSubMenu`, right arrow); `checked` draws `Menu_Check` (`SetChecked`).
+#[derive(Clone, Debug, Default)]
+pub struct MenuEntry {
+    pub name: String,
+    pub label: String,
+    pub icon: &'static str,
+    pub checked: Option<bool>,
+    pub children: Vec<MenuEntry>,
+}
+
+/// The entries of `ServerMsg::Properties` as the game's menu: `skin N` grouped under Skin
+/// (`skinX` options checked at the entity's skin), `bodygroups P M` under Body Groups with a
+/// submenu per part, the rest flat.
+pub fn menu_entries(
+    lang: &BTreeMap<String, String>,
+    names: &[String],
+    skin: u8,
+    body: &str,
+) -> Vec<MenuEntry> {
+    let icon_of = |n: &str| PROPERTIES.iter().find(|p| p.0 == n).map_or("", |p| p.2);
+    let skin_fmt = lang
+        .get("skinX")
+        .cloned()
+        .unwrap_or_else(|| "Skin %i".into());
+    let mut out: Vec<MenuEntry> = Vec::new();
+    for n in names {
+        if let Some(i) = n.strip_prefix("skin ") {
+            let child = MenuEntry {
+                name: n.clone(),
+                label: skin_fmt.replace("%i", i).replace("%s", i),
+                icon: "",
+                checked: Some(i.parse::<u8>().is_ok_and(|v| v == skin)),
+                children: Vec::new(),
+            };
+            match out.iter_mut().find(|e| e.name == "skin") {
+                Some(e) => e.children.push(child),
+                None => out.push(MenuEntry {
+                    name: "skin".into(),
+                    label: property_label(lang, "skin"),
+                    icon: icon_of("skin"),
+                    checked: None,
+                    children: vec![child],
+                }),
+            }
+        } else if let Some(rest) = n.strip_prefix("bodygroups ") {
+            let (part, model) = rest.split_once(' ').unwrap_or((rest, "0"));
+            let current = part
+                .parse::<usize>()
+                .ok()
+                .and_then(|p| body.chars().nth(p))
+                .map_or(0, |c| c.to_digit(10).unwrap_or(0));
+            let child = MenuEntry {
+                name: n.clone(),
+                label: format!("Model {model}"),
+                icon: "",
+                checked: Some(model.parse::<u32>().is_ok_and(|m| m == current)),
+                children: Vec::new(),
+            };
+            let group_name = format!("bodygroups {part}");
+            if !out.iter().any(|e| e.name == "bodygroups") {
+                out.push(MenuEntry {
+                    name: "bodygroups".into(),
+                    label: property_label(lang, "bodygroups"),
+                    icon: icon_of("bodygroups"),
+                    checked: None,
+                    children: Vec::new(),
+                });
+            }
+            let root = out.iter_mut().find(|e| e.name == "bodygroups").unwrap();
+            match root.children.iter_mut().find(|g| g.name == group_name) {
+                Some(g) => g.children.push(child),
+                None => root.children.push(MenuEntry {
+                    name: group_name,
+                    label: format!("Body Group {part}"),
+                    icon: "",
+                    checked: None,
+                    children: vec![child],
+                }),
+            }
+        } else {
+            out.push(MenuEntry {
+                name: n.clone(),
+                label: property_label(lang, n),
+                icon: icon_of(n),
+                checked: None,
+                children: Vec::new(),
+            });
+        }
+    }
+    out
+}
+
+/// Where each open level of a DMenu tree sits: (x, y, entries) for the root and the submenus
+/// along `open` (a submenu opens at the right edge of its parent, level with its option).
+fn menu_levels<'a>(
+    font: &FontMetrics,
+    x: f32,
+    y: f32,
+    entries: &'a [MenuEntry],
+    open: &[usize],
+) -> Vec<(f32, f32, &'a [MenuEntry])> {
+    let mut levels = vec![(x, y, entries)];
+    let (mut lx, mut ly, mut cur) = (x, y, entries);
+    for &i in open {
+        let Some(e) = cur.get(i).filter(|e| !e.children.is_empty()) else {
+            break;
+        };
+        let labels: Vec<String> = cur.iter().map(|e| e.label.clone()).collect();
+        let w = dmenu_width(font, &labels);
+        lx += w;
+        ly += i as f32 * MENU_OPTION_H;
+        cur = &e.children;
+        levels.push((lx, ly, cur));
+    }
+    levels
+}
+
+/// The (level, row) under the cursor of an open DMenu tree.
+fn menu_hit(
+    font: &FontMetrics,
+    x: f32,
+    y: f32,
+    entries: &[MenuEntry],
+    open: &[usize],
+    c: (f32, f32),
+) -> Option<(usize, usize)> {
+    menu_levels(font, x, y, entries, open)
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(lvl, (lx, ly, es))| {
+            let labels: Vec<String> = es.iter().map(|e| e.label.clone()).collect();
+            dmenu_row(font, *lx, *ly, &labels, c).map(|r| (lvl, r))
+        })
+}
+
+/// Hovering an option with a submenu opens it (and closes deeper ones); hovering a leaf of a
+/// level closes the levels below it; outside the menu nothing changes.
+pub fn menu_hover(
+    font: &FontMetrics,
+    x: f32,
+    y: f32,
+    entries: &[MenuEntry],
+    open: &mut Vec<usize>,
+    c: (f32, f32),
+) {
+    if let Some((lvl, row)) = menu_hit(font, x, y, entries, open, c) {
+        open.truncate(lvl);
+        let levels = menu_levels(font, x, y, entries, open);
+        if levels[lvl]
+            .2
+            .get(row)
+            .is_some_and(|e| !e.children.is_empty())
+        {
+            open.push(row);
+        }
+    }
+}
+
+/// The leaf property under the cursor, if any.
+pub fn menu_leaf(
+    font: &FontMetrics,
+    x: f32,
+    y: f32,
+    entries: &[MenuEntry],
+    open: &[usize],
+    c: (f32, f32),
+) -> Option<String> {
+    let (lvl, row) = menu_hit(font, x, y, entries, open, c)?;
+    let levels = menu_levels(font, x, y, entries, open);
+    let e = levels[lvl].2.get(row)?;
+    e.children.is_empty().then(|| e.name.clone())
+}
+
+/// A DMenu tree: the root and the open submenus, each a `dmenu` with arrows on submenu
+/// options and `Menu_Check` on checked ones (`SKIN:PaintMenuOption`).
+pub fn dmenu_tree(
+    out: &mut Layout,
+    ctx: &Ctx,
+    x: f32,
+    y: f32,
+    entries: &[MenuEntry],
+    open: &[usize],
+) {
+    for (lx, ly, es) in menu_levels(ctx.font, x, y, entries, open) {
+        let labels: Vec<String> = es.iter().map(|e| e.label.clone()).collect();
+        let w = dmenu_width(ctx.font, &labels);
+        let names: Vec<String> = es.iter().map(|e| e.name.clone()).collect();
+        let icons: Vec<&str> = es.iter().map(|e| e.icon).collect();
+        dmenu(out, ctx, lx, ly, &names, &labels, &icons);
+        for (i, e) in es.iter().enumerate() {
+            let oy = ly + i as f32 * MENU_OPTION_H;
+            if e.checked == Some(true) {
+                nine(
+                    &mut out.items,
+                    &MENU_CHECK,
+                    lx + 5.0,
+                    oy + MENU_OPTION_H * 0.5 - 7.0,
+                    15.0,
+                    15.0,
+                    WHITE,
+                );
+            }
+            if !e.children.is_empty() {
+                nine(
+                    &mut out.items,
+                    &MENU_ARROW,
+                    lx + w - 15.0 - 4.0,
+                    oy + MENU_OPTION_H * 0.5 - 7.0,
+                    15.0,
+                    15.0,
+                    WHITE,
+                );
+            }
+        }
+    }
+}
 
 /// `DMenu` width for these labels: at least the minimum 100, options are `32 + text + 30`.
 pub fn dmenu_width(font: &FontMetrics, labels: &[String]) -> f32 {

@@ -452,3 +452,17 @@ in the 640x480 proportional space of the sheet page.
   name or class, 256 max), Esc clears. Results draw as the 64 px icon grid (icons generated
   like the spawnlists') followed by 128 px ContentIcons. Not done: refresh while typing, the
   right-click menu on results, NPC / vehicle providers.
+
+## Context menu: submenus
+
+- Game (`properties/skin.lua`, `bodygroups.lua`): the Skin property's `MenuOpen` adds a
+  submenu (`DMenuOption:AddSubMenu`, `Menu.RightArrow` 15x15 at the right) with one checkable
+  option per skin (`skinX` = "Skin %i", `Menu_Check` 15x15 at (5, h/2-7) on the current one);
+  Body Groups adds a submenu per part (`string.NiceName`), parts with several models nest a
+  third level with the model names, checked at the current one. Submenus open on hover at the
+  parent's right edge, level with the option.
+- Ours: `derma::menu_entries` groups the server's `skin N` / `bodygroups P M` property names
+  into those trees (checked from the entity's snapshot `skin` / `body`); `menu_hover` opens /
+  closes levels as the cursor moves, `menu_leaf` picks the property to run; arrow and check
+  pieces from the gwenskin atlas (464,112 / 448,112). Not done: body group and model names
+  (the client does not read them from the MDL yet, parts show as "Body Group P" / "Model M").

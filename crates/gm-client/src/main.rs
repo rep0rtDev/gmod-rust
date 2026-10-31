@@ -251,6 +251,9 @@ struct ContextMenu {
     names: Vec<String>,
     x: f32,
     y: f32,
+    /// The entity the properties are for and the open submenu path.
+    ent: u32,
+    open: Vec<usize>,
 }
 
 /// The tool settings panel inside the spawn menu: (x, y, width, first row y, row height).
@@ -1199,13 +1202,30 @@ impl App {
     fn context_row(&self) -> Option<String> {
         let (ctx, g) = (self.context.as_ref()?, self.gfx.as_ref()?);
         let font = g.ui.font_metrics(Some(derma::FONT));
-        let labels: Vec<String> = ctx
-            .names
-            .iter()
-            .map(|n| derma::property_label(&self.lang, n))
-            .collect();
-        let row = derma::dmenu_row(&font, ctx.x, ctx.y, &labels, self.cursor)?;
-        ctx.names.get(row).cloned()
+        let entries = self.context_entries(ctx);
+        derma::menu_leaf(&font, ctx.x, ctx.y, &entries, &ctx.open, self.cursor)
+    }
+
+    /// The context menu's entries for its entity (skin / body groups checked at its state).
+    fn context_entries(&self, ctx: &ContextMenu) -> Vec<derma::MenuEntry> {
+        let ent = self.sim.client.world.entities.get(&ctx.ent);
+        let skin = ent.map_or(0, |e| e.skin);
+        let body = ent.map_or("", |e| e.body.as_str());
+        derma::menu_entries(&self.lang, &ctx.names, skin, body)
+    }
+
+    /// Hovering the context menu opens / closes submenus.
+    fn context_hover(&mut self) {
+        let Some(ctx) = self.context.take() else {
+            return;
+        };
+        let mut ctx = ctx;
+        if let Some(g) = &self.gfx {
+            let font = g.ui.font_metrics(Some(derma::FONT));
+            let entries = self.context_entries(&ctx);
+            derma::menu_hover(&font, ctx.x, ctx.y, &entries, &mut ctx.open, self.cursor);
+        }
+        self.context = Some(ctx);
     }
 
     /// The selected stool's setting schema while the tool gun is out (the panel's content).
@@ -2870,6 +2890,8 @@ impl App {
                         names,
                         x: self.cursor.0,
                         y: self.cursor.1,
+                        ent,
+                        open: Vec::new(),
                     });
                 }
             }
@@ -3490,30 +3512,8 @@ impl App {
                 self.menu_cache.borrow_mut().rows = rows;
             }
             if let Some(ctx) = &self.context {
-                let labels: Vec<String> = ctx
-                    .names
-                    .iter()
-                    .map(|n| derma::property_label(&self.lang, n))
-                    .collect();
-                let icons: Vec<&str> = ctx
-                    .names
-                    .iter()
-                    .map(|n| {
-                        derma::PROPERTIES
-                            .iter()
-                            .find(|p| p.0 == n)
-                            .map_or("", |p| p.2)
-                    })
-                    .collect();
-                derma::dmenu(
-                    &mut layout,
-                    &dctx,
-                    ctx.x,
-                    ctx.y,
-                    &ctx.names,
-                    &labels,
-                    &icons,
-                );
+                let entries = self.context_entries(ctx);
+                derma::dmenu_tree(&mut layout, &dctx, ctx.x, ctx.y, &entries, &ctx.open);
             }
             items.extend(layout.items);
         }
@@ -4309,6 +4309,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
+                self.context_hover();
                 self.panel_drag_move();
                 self.opt_drag_move();
             }
