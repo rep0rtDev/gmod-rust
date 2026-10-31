@@ -517,6 +517,171 @@ fn key_press_and_release_events_follow_the_usercmd_edges() {
 }
 
 #[test]
+fn scripted_entities_follow_the_measured_sent_cadences() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.add_player(
+        1,
+        glam::Vec3::new(700.0, -600.0, -143.6),
+        glam::Vec3::new(20.0, 90.0, 0.0),
+    );
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "sent".into(),
+        priority: 0,
+        source: r#"
+            state.log = {}
+            state.t = 0
+            local function log(kind) return function(p)
+                table.insert(state.log, kind .. ":" .. p.class .. ":" .. state.t .. ":" .. p.player .. ":" .. p.amount)
+            end end
+            entity.register("parity_a", { model = "models/props_junk/wood_crate001a.mdl",
+                use_type = "continuous", init = log("init"), think = log("think"), use = log("use"),
+                remove = log("remove"), damage = log("damage") })
+            entity.register("parity_b", { model = "models/props_junk/wood_crate001a.mdl", think_interval = 0.1,
+                use_type = "onoff", think = log("think"), use = log("use"), use_off = log("use_off") })
+            events.on("tick.pre", function()
+                state.t += 1
+                if state.done then return end
+                state.done = true
+                world.queue("spawn", 0, { class = "parity_a", pos = {x = 700, y = -550, z = -123.6}, frozen = true, tag = "a" })
+                world.queue("spawn", 0, { class = "parity_b", pos = {x = 400, y = -200, z = -123.6}, frozen = true, tag = "b" })
+            end)
+            events.on("entity.spawned", function(p) state[p.tag] = p.entity end)
+        "#
+        .into(),
+        config: gm_script::ActorConfig::default(),
+    })
+    .unwrap();
+    let cmd = |buttons: u32| gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            buttons,
+            view_angles: glam::Vec3::new(20.0, 90.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let step = |server: &mut gm_server::Server, rt: &mut gm_script::Runtime, buttons: u32| {
+        rt.pre_tick(server);
+        server.tick(&BTreeMap::from([(1u32, cmd(buttons))]));
+        let events = std::mem::take(&mut server.game_events);
+        rt.game_events(server, events);
+        rt.post_tick(server);
+    };
+    // spawn in the first tick, thinks, then E held five ticks on A (ticks 40..44)
+    for t in 1..=60 {
+        let buttons = if (40..45).contains(&t) {
+            gm_server::IN_USE
+        } else {
+            0
+        };
+        step(&mut server, &mut rt, buttons);
+    }
+    let a: Option<u32> = rt.actors()[0].eval("return state.a").unwrap();
+    let Some(a) = a else {
+        let log: Vec<String> = rt.actors()[0].eval("return state.log").unwrap();
+        let prints = rt.actors_mut()[0].take_prints();
+        panic!(
+            "no spawn: props {} sents {} classes {} log {log:?} prints {prints:?} events {:?}",
+            server.sandbox.props().len(),
+            server.sents.len(),
+            server.scripted_entities.len(),
+            server.events
+        );
+    };
+    assert!(
+        !server.damage_prop(a, 5.0, 0),
+        "5 damage hurts the crate, does not break it"
+    );
+    let events = std::mem::take(&mut server.game_events);
+    rt.game_events(&mut server, events);
+    assert!(server.remove_prop(a));
+    let events = std::mem::take(&mut server.game_events);
+    rt.game_events(&mut server, events);
+    let log: Vec<String> = rt.actors()[0].eval("return state.log").unwrap();
+    let a_log: Vec<&str> = log
+        .iter()
+        .filter(|l| l.contains(":parity_a:"))
+        .map(|s| s.as_str())
+        .collect();
+    let thinks_a: Vec<u64> = a_log
+        .iter()
+        .filter(|l| l.starts_with("think:"))
+        .map(|l| {
+            l.split(':')
+                .nth(2)
+                .unwrap()
+                .parse()
+                .unwrap_or_else(|_| panic!("bad tick in {l:?}"))
+        })
+        .collect();
+    assert!(
+        a_log[0].starts_with("init:parity_a:"),
+        "Initialize first: {a_log:?}"
+    );
+    let init_tick: u64 = a_log[0]
+        .split(':')
+        .nth(2)
+        .unwrap()
+        .parse()
+        .unwrap_or_else(|_| panic!("bad tick in {:?}", a_log[0]));
+    assert_eq!(
+        thinks_a[0],
+        init_tick + 7,
+        "first Think 7 ticks after Spawn"
+    );
+    assert!(
+        thinks_a.windows(2).all(|w| w[1] - w[0] == 13),
+        "default cadence every 13 ticks: {thinks_a:?}"
+    );
+    let uses: Vec<&&str> = a_log.iter().filter(|l| l.starts_with("use:")).collect();
+    assert_eq!(
+        uses.len(),
+        5,
+        "CONTINUOUS_USE: one Use per held tick: {uses:?}"
+    );
+    assert!(
+        uses[0].starts_with("use:parity_a:") && uses[0].ends_with(":1:1"),
+        "{uses:?}"
+    );
+    assert!(
+        a_log[a_log.len() - 2].starts_with("damage:parity_a:"),
+        "{a_log:?}"
+    );
+    assert!(a_log[a_log.len() - 2].ends_with(":0:5"), "{a_log:?}");
+    assert!(
+        a_log[a_log.len() - 1].starts_with("remove:parity_a:"),
+        "{a_log:?}"
+    );
+    let thinks_b: Vec<u64> = log
+        .iter()
+        .filter(|l| l.starts_with("think:parity_b:"))
+        .map(|l| {
+            l.split(':')
+                .nth(2)
+                .unwrap()
+                .parse()
+                .unwrap_or_else(|_| panic!("bad tick in {l:?}"))
+        })
+        .collect();
+    assert_eq!(thinks_b[0], init_tick + 7);
+    assert!(
+        thinks_b.windows(2).all(|w| w[1] - w[0] == 7),
+        "NextThink 0.1 every 7 ticks: {thinks_b:?}"
+    );
+}
+
+#[test]
 fn use_on_another_player_is_reported_every_tick_held() {
     let Some(inst) = gm_content::find_install() else {
         eprintln!("skipped: no Garry's Mod install");

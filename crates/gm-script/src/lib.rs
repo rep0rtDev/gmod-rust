@@ -1091,6 +1091,29 @@ impl Runtime {
                     p.strs.push(("property", name));
                     "player.property"
                 }
+                E::Sent {
+                    ent,
+                    class,
+                    kind,
+                    player,
+                    other,
+                    amount,
+                } => {
+                    p.ints.push(("entity", ent as i64));
+                    p.strs.push(("class", class));
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("other", other as i64));
+                    p.floats.push(("amount", f64::from(amount)));
+                    match kind {
+                        "init" => "entity.init",
+                        "think" => "entity.think",
+                        "touch" => "entity.touch",
+                        "use" => "entity.use",
+                        "use_off" => "entity.use_off",
+                        "remove" => "entity.remove",
+                        _ => "entity.damage",
+                    }
+                }
                 E::UsePlayer { player, target } => {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("target", target as i64));

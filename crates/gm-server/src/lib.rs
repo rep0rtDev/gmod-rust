@@ -10,7 +10,7 @@ use glam::Vec3;
 use gm_physics::physgun::{Grab, PhysgunParams};
 use gm_physics::{BodyHandle, ConstraintHandle, PropDesc, Surface, World};
 use gm_sandbox::{ConstraintKind, Event, ModelBounds, PropBody, Sandbox, SpawnRequest, ToolHit};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Everything the server needs to know about a model to spawn and trace it.
 pub mod player_models;
@@ -172,6 +172,16 @@ pub enum GameEvent {
         player: u32,
         ent: u32,
         name: String,
+    },
+    /// A scripted entity class callback (`ENT:Initialize/Think/Touch/Use/OnRemove/OnTakeDamage`):
+    /// `kind` is `init`, `think`, `touch`, `use`, `use_off`, `remove` or `damage`.
+    Sent {
+        ent: u32,
+        class: String,
+        kind: &'static str,
+        player: u32,
+        other: u32,
+        amount: f32,
     },
     /// `PlayerUse` on another player: E held with the use ray on that player's hull (nothing
     /// is picked up or moved); every tick like on a prop.
@@ -427,6 +437,39 @@ pub type ModelLoader = Box<dyn FnMut(&str) -> Option<ModelInfo>>;
 /// a press edge only (a press while blocked is lost), an automatic one every `primary_delay`
 /// while held, the secondary once per press, a reload takes `reload_time` and refills the clip
 /// from the reserve at its end, an empty clip plus a press starts the reload.
+/// `ENT:SetUseType`: how `Use` follows the E key (measured `lua_sent`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UseType {
+    /// `CONTINUOUS_USE`: every tick E is held (exactly one per tick, no lag tick).
+    Continuous,
+    /// `SIMPLE_USE`: once per press.
+    Simple,
+    /// `ONOFF_USE`: `use` on the press, `use_off` on the release.
+    OnOff,
+}
+
+/// A scripted entity class (`scripted_ents.Register` of a `base_anim` with physics): the
+/// instances are sandbox props with this model whose callbacks go to the script.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScriptedEntity {
+    pub class: String,
+    pub model: String,
+    /// `NextThink(CurTime() + think)` in the think; `None` is the engine's default cadence.
+    pub think: Option<f32>,
+    pub use_type: UseType,
+}
+
+/// Measured: the first `Think` comes 7 ticks after `Spawn`, then every 13 ticks when the think
+/// does not reschedule itself; `NextThink(CurTime() + 0.1)` gives every 7 ticks, `+ 0.5` every 33.
+pub const SENT_FIRST_THINK_TICKS: u64 = 7;
+pub const SENT_DEFAULT_THINK_TICKS: u64 = 13;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SentState {
+    pub class: String,
+    pub next_think: u64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScriptedWeapon {
     pub class: String,
@@ -500,6 +543,8 @@ pub struct Player {
     pub prev_buttons: u32,
     /// `IN_USE` was down in the last command (a use fires on the press, not the hold).
     pub use_down: bool,
+    /// The `ONOFF_USE` entity the held E is on, for its `use_off` on the release.
+    pub use_target: Option<u32>,
     /// `IN_RELOAD` was down in the last command (the physgun unfreezes on the press).
     pub reload_down: bool,
     pub alive: bool,
@@ -579,6 +624,7 @@ impl Player {
             prev_buttons: 0,
             carry: None,
             use_down: false,
+            use_target: None,
             reload_down: false,
             alive: true,
             health: PLAYER_HEALTH,
@@ -818,6 +864,9 @@ pub struct Server<'w> {
     /// Weapon classes addons registered, in registration order (indices after `LOADOUT` on
     /// the wire); `scripted_weapons_version` grows with every change.
     pub scripted_weapons: Vec<ScriptedWeapon>,
+    pub scripted_entities: Vec<ScriptedEntity>,
+    /// The props that are scripted entities, by prop id.
+    pub sents: HashMap<u32, SentState>,
     pub scripted_weapons_version: u32,
     /// Names created since the last `take_cvar_new` (replicated to connected clients).
     pub cvar_new: Vec<String>,
@@ -921,6 +970,8 @@ impl<'w> Server<'w> {
             tool_schemas_version: 0,
             scripted_weapons: Vec::new(),
             scripted_weapons_version: 0,
+            scripted_entities: Vec::new(),
+            sents: HashMap::new(),
             cvar_new: Vec::new(),
         }
     }
@@ -1230,6 +1281,7 @@ impl<'w> Server<'w> {
         if prop.health <= 0 {
             return false;
         }
+        self.sent_event(ent, "damage", 0, 0, amount);
         let data = self
             .models
             .get(&prop.model)
@@ -1440,6 +1492,92 @@ impl<'w> Server<'w> {
     }
 
     /// `weapons.Register`: a new class or a changed definition of a known one.
+    pub fn register_entity(&mut self, def: ScriptedEntity) {
+        match self
+            .scripted_entities
+            .iter_mut()
+            .find(|e| e.class == def.class)
+        {
+            Some(cur) => *cur = def,
+            None => self.scripted_entities.push(def),
+        }
+    }
+
+    /// Spawns an instance of a scripted entity class: a prop with the class's model plus the
+    /// think schedule; `init` fires in the spawn tick (the game's `Initialize` runs inside `Spawn`).
+    pub fn script_spawn_entity(
+        &mut self,
+        owner: u32,
+        class: &str,
+        pos: Vec3,
+        angles: Vec3,
+        frozen: bool,
+    ) -> Option<u32> {
+        let def = self
+            .scripted_entities
+            .iter()
+            .find(|e| e.class == class)?
+            .clone();
+        let ent = self.script_spawn_prop(owner, &def.model, pos, angles, frozen)?;
+        self.sents.insert(
+            ent,
+            SentState {
+                class: def.class.clone(),
+                next_think: self.tick_count + SENT_FIRST_THINK_TICKS,
+            },
+        );
+        self.sent_event(ent, "init", 0, 0, 0.0);
+        Some(ent)
+    }
+
+    fn sent_event(&mut self, ent: u32, kind: &'static str, player: u32, other: u32, amount: f32) {
+        if let Some(s) = self.sents.get(&ent) {
+            self.game_events.push(GameEvent::Sent {
+                ent,
+                class: s.class.clone(),
+                kind,
+                player,
+                other,
+                amount,
+            });
+        }
+    }
+
+    fn sent_think_ticks(&self, class: &str) -> u64 {
+        match self.scripted_entities.iter().find(|e| e.class == class) {
+            Some(ScriptedEntity { think: Some(s), .. }) => {
+                ((*s / gm_core::tick::DEFAULT_TICK_INTERVAL).round() as u64).max(1)
+            }
+            _ => SENT_DEFAULT_THINK_TICKS,
+        }
+    }
+
+    /// The scripted entities' thinks that are due this tick.
+    fn sent_tick(&mut self) {
+        let now = self.tick_count;
+        let mut due: Vec<u32> = self
+            .sents
+            .iter()
+            .filter(|(_, s)| s.next_think <= now)
+            .map(|(id, _)| *id)
+            .collect();
+        due.sort_unstable();
+        for ent in due {
+            let class = self.sents[&ent].class.clone();
+            let next = now + self.sent_think_ticks(&class);
+            self.sents.get_mut(&ent).unwrap().next_think = next;
+            self.sent_event(ent, "think", 0, 0, 0.0);
+        }
+    }
+
+    fn sent_use_type(&self, ent: u32) -> Option<UseType> {
+        let s = self.sents.get(&ent)?;
+        self.scripted_entities
+            .iter()
+            .find(|e| e.class == s.class)
+            .map(|e| e.use_type)
+    }
+
     pub fn register_weapon(&mut self, def: ScriptedWeapon) {
         match self
             .scripted_weapons
@@ -2926,6 +3064,15 @@ impl<'w> Server<'w> {
         // 5-tick one, also while already carrying); the pickup itself happens on the press
         // (picked the tick after), the next press drops.
         let use_alive = use_key && self.players.get(&player).is_some_and(|p| p.alive);
+        if !use_key {
+            if let Some(ent) = self
+                .players
+                .get_mut(&player)
+                .and_then(|p| p.use_target.take())
+            {
+                self.sent_event(ent, "use_off", player, 0, 0.0);
+            }
+        }
         if use_pressed
             && self
                 .players
@@ -2940,8 +3087,20 @@ impl<'w> Server<'w> {
             } else if let Some(ent) = self.find_use_entity(player, eye, view) {
                 if self.ask(Request::PlayerUse { player, ent }) != Verdict::Cancel {
                     self.game_events.push(GameEvent::Use { player, ent });
-                    if use_pressed {
-                        self.try_pickup(player, ent, view.y);
+                    match self.sent_use_type(ent) {
+                        Some(UseType::Continuous) => self.sent_event(ent, "use", player, 0, 1.0),
+                        Some(UseType::Simple) if use_pressed => {
+                            self.sent_event(ent, "use", player, 0, 1.0)
+                        }
+                        Some(UseType::OnOff) if use_pressed => {
+                            self.sent_event(ent, "use", player, 0, 1.0);
+                            if let Some(p) = self.players.get_mut(&player) {
+                                p.use_target = Some(ent);
+                            }
+                        }
+                        Some(_) => {}
+                        None if use_pressed => self.try_pickup(player, ent, view.y),
+                        None => {}
                     }
                 }
             } else if let Some(target) = self.find_use_player(player, eye, view) {
@@ -3069,6 +3228,7 @@ impl<'w> Server<'w> {
     pub fn tick(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
         let now = self.tick_count as u32;
         self.fire_tick();
+        self.sent_tick();
         let upright: Vec<(BodyHandle, Vec3)> = self
             .sandbox
             .props()
@@ -3667,6 +3827,8 @@ impl<'w> Server<'w> {
         if !self.sandbox.props().iter().any(|p| p.id == id) {
             return false;
         }
+        self.sent_event(id, "remove", 0, 0, 0.0);
+        self.sents.remove(&id);
         self.sandbox.remove_entity(id);
         self.sync_physics();
         true

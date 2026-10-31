@@ -96,6 +96,8 @@ pub enum QueuedWrite {
     /// `entity.spawned`.
     Spawn {
         owner: u32,
+        /// A scripted entity class instead of a plain prop (its model comes from the class).
+        class: Option<String>,
         model: String,
         pos: Vec3,
         angles: Vec3,
@@ -138,6 +140,9 @@ pub enum QueuedWrite {
         health: i32,
     },
     /// `weapon.register`: a scripted weapon class for the server and every client.
+    EntityRegister {
+        def: gm_server::ScriptedEntity,
+    },
     WeaponRegister {
         def: gm_server::ScriptedWeapon,
     },
@@ -553,6 +558,26 @@ spawnmenu = {}
 function spawnmenu.add(category: string, models: { string })
     world.queue("spawnmenu.add", 0, { category = category, models = models })
 end
+entity = {}
+local sents = {}
+-- a scripted entity class: `def` carries model, think_interval (seconds, optional), use_type
+-- ("continuous" default, "simple", "onoff") and the callbacks `init`, `think`, `touch`,
+-- `use`, `use_off`, `remove`, `damage` (each gets the event payload)
+function entity.register(class: string, def)
+    sents[class] = def
+    world.queue("entity.register", 0, {
+        class = class, model = def.model, think = def.think_interval, use_type = def.use_type,
+    })
+end
+for _, kind in ipairs({"init", "think", "touch", "use", "use_off", "remove", "damage"}) do
+    events.on("entity." .. kind, function(p)
+        local d = sents[p.class]
+        if d ~= nil and d[kind] ~= nil then
+            return d[kind](p)
+        end
+    end)
+end
+
 weapon = {}
 local sweps = {}
 -- a scripted weapon: `def` carries the ScriptedWeapon fields plus the callbacks `primary`,
@@ -908,6 +933,26 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         },
                     }
                 }
+                "entity.register" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::EntityRegister {
+                        def: gm_server::ScriptedEntity {
+                            class: t.get("class")?,
+                            model: t.get("model")?,
+                            think: t.get::<Option<f32>>("think")?,
+                            use_type: match t.get::<Option<String>>("use_type")?.as_deref() {
+                                None | Some("continuous") => gm_server::UseType::Continuous,
+                                Some("simple") => gm_server::UseType::Simple,
+                                Some("onoff") => gm_server::UseType::OnOff,
+                                Some(other) => {
+                                    return Err(mlua::Error::runtime(format!(
+                                        "entity.register: unknown use_type {other}"
+                                    )))
+                                }
+                            },
+                        },
+                    }
+                }
                 "weapon.register" => {
                     let t = table_arg(&arg)?;
                     let class: String = t.get("class")?;
@@ -960,7 +1005,8 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     let pos: Table = t.get("pos")?;
                     QueuedWrite::Spawn {
                         owner: t.get::<Option<u32>>("owner")?.unwrap_or(0),
-                        model: t.get("model")?,
+                        class: t.get::<Option<String>>("class")?,
+                        model: t.get::<Option<String>>("model")?.unwrap_or_default(),
                         pos: table_vec3(&pos)?,
                         angles: match t.get::<Option<Table>>("angles")? {
                             Some(a) => table_vec3(&a)?,
@@ -1594,12 +1640,16 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         },
         QueuedWrite::Spawn {
             owner,
+            class,
             model,
             pos,
             angles,
             frozen,
             tag,
-        } => match server.script_spawn_prop(*owner, model, *pos, *angles, *frozen) {
+        } => match match class {
+            Some(c) => server.script_spawn_entity(*owner, c, *pos, *angles, *frozen),
+            None => server.script_spawn_prop(*owner, model, *pos, *angles, *frozen),
+        } {
             Some(ent) => {
                 server
                     .game_events
@@ -1612,6 +1662,10 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             }
             None => false,
         },
+        QueuedWrite::EntityRegister { def } => {
+            server.register_entity(def.clone());
+            true
+        }
         QueuedWrite::WeaponRegister { def } => {
             server.register_weapon(def.clone());
             true

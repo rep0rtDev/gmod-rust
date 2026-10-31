@@ -448,13 +448,14 @@ waits for a real client; a published package is capped at 50 MiB.
 
 ## Not yet
 
-WASM components for native modules; scripted entity classes (a SENT with its own think / touch /
-use callbacks: today a script spawns a prop and listens to `entity.collide`, `player.use` and
-`tick.pre` for it); scripted weapons on the slot digits of the client, a `Think` analog and the
-game's `KEY_*` names / `input.IsKeyDown` polling (ours: `input.key` events with the client's key
-names); the game's pitch-0 miss of +use on players (see "+use"). Done since this list was written: the sandbox
-gamemode as one package (`addons/gamemodes/sandbox`), prop properties, player models, the +use
-pickup, the spawn menu lists, prop spawn and state writes, scripted weapons, key events.
+Scripted entities' touch callbacks (`StartTouch` / `Touch` / `EndTouch` continuity, recorded in
+`lua_sent`; today a script listens to `entity.collide`); scripted weapons on the slot digits of
+the client, a `Think` analog for weapons and the game's `KEY_*` names / `input.IsKeyDown`
+polling (ours: `input.key` events with the client's key names); the game's pitch-0 miss of +use
+on players (see "+use"); net message data for WASM guests. Done since this list was written: the
+sandbox gamemode as one package (`addons/gamemodes/sandbox`), prop properties, player models,
+the +use pickup, the spawn menu lists, prop spawn and state writes, scripted weapons, key
+events, +use on players, WASM components, scripted entity classes.
 
 ## Server events
 
@@ -555,6 +556,42 @@ Measured (`cargo test -p gm-dedicated --test addon_hooks scripted_weapons`): the
 button script against a semi and an automatic weapon gives the recorded call sequence (deploy;
 three primaries at 80/100/120; one secondary; a reload; holster + deploy on the switch; five
 automatic primaries 14 ticks apart; a reload on the empty press) with the recorded clips.
+
+## Scripted entity classes
+
+`entity.register(class, { model, think_interval?, use_type?, init, think, touch, use, use_off,
+remove, damage })` is `scripted_ents.Register` of a `base_anim` with physics: an instance is a sandbox
+prop with the class's model (`world.queue("spawn", owner, { class = ..., pos, angles?, frozen?,
+tag? })`, same limits and `entity.spawned` as a prop spawn) whose callbacks reach the script by
+class, each with `{entity, class, player, other, amount}`:
+
+- `init` in the spawn tick (the game's `Initialize` runs inside `Spawn`; `Activate` adds nothing);
+- `think` first 7 ticks after the spawn, then every `round(think_interval / tick)` ticks
+  (`think_interval = 0.1` is every 7, `0.5` every 33) or every 13 ticks (about 0.2 s) when it is
+  not given, the engine's
+  default cadence when the think does not reschedule itself. The game's `return true` after
+  `NextThink` is not modelled: the cadence is the class's constant;
+- `use` with `player` and `amount = 1` (`USE_ON`): `use_type = "continuous"` (default,
+  `CONTINUOUS_USE`) every tick E is held on it, exactly one per tick and no lag tick; `"simple"`
+  (`SIMPLE_USE`) once per press; `"onoff"` (`ONOFF_USE`) on the press and `use_off` (`USE_OFF`,
+  `amount = 0`) on the release. `player.use` / `player.used` still run first (`PlayerUse`), a
+  scripted entity is never picked up by E;
+- `damage` with `amount` on every damage the prop takes (`OnTakeDamage`), before health is applied;
+- `remove` in the tick the prop goes (`OnRemove`), whatever removes it (property, undo, cleanup,
+  break, script).
+
+Measured (`lua_sent`, golden 261031): four `parity_sent` entities on srcds; `pre-Spawn,
+Initialize, post-Spawn, post-Activate` in one tick, Think ticks `-23, -10, 3, 16` (every 13)
+for the default, every 7 with `NextThink(CurTime() + 0.1)`, every 33 with `+ 0.5`; `Use` 5 times
+for 5 held ticks (continuous), once (simple), `USE_ON` then `USE_OFF` on the release (onoff);
+`OnRemove` in the `Remove` tick, `OnTakeDamage(5)` at once. Also recorded, not implemented:
+`StartTouch` on the first contact, `Touch` three times in the impact tick then every touching
+tick, `EndTouch` when the pair separates, `PhysicsCollide` twice per impact with two speeds. Our
+`touch` callback is not raised yet (use `entity.collide` meanwhile).
+
+Test (`addon_hooks scripted_entities_follow_the_measured_sent_cadences`): two classes spawned
+in tick 2, `init` at 2, thinks at 9 then every 13 (default) and every 7 (`think_interval = 0.1`), five
+`use` for five held ticks, `damage` 5 and `remove` in their ticks.
 
 ## WASM components
 
