@@ -8,6 +8,7 @@ description = "wgpu renderer for Source maps and models"
 [dependencies]
 gm-core = { path = "../gm-core" }
 gm-formats = { path = "../gm-formats" }
+gm-collision = { path = "../gm-collision" }
 gm-content = { path = "../gm-content" }
 wgpu = { version = "30", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12"] }
 pollster = "1"

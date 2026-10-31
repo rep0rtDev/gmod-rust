@@ -12,6 +12,8 @@ pub struct Material {
     pub base_texture: Option<String>,
     pub base_texture2: Option<String>,
     pub translucent: bool,
+    /// `$halflambert`: models lit with the half-Lambert wrap (characters), else plain Lambert.
+    pub half_lambert: bool,
     pub no_draw: bool,
     pub water: bool,
 }
@@ -100,6 +102,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         if mat.base_texture2.is_none() {
             mat.base_texture2 = get("$basetexture2");
         }
+        mat.half_lambert = matches!(get("$halflambert").as_deref(), Some("1"));
         mat.translucent = matches!(get("$translucent").as_deref(), Some("1"))
             || matches!(get("$alphatest").as_deref(), Some("1"));
         mat.no_draw = matches!(get("%compilenodraw").as_deref(), Some("1"))

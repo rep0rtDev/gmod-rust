@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use gm_content::Mount;
 use gm_formats::bsp::extra::{build_disp_mesh, disp_infos, disp_verts, DispInfo};
 use gm_formats::bsp::lumps::{surf, Face};
@@ -103,7 +103,9 @@ pub struct WorldRenderer {
     material_layout: wgpu::BindGroupLayout,
     base_sampler: wgpu::Sampler,
     white_uv: [f32; 2],
-    sun: Vec3,
+    light: crate::light::ModelLight,
+    /// Lighting by model position (8 u cells), rebuilt as models move.
+    light_cache: std::cell::RefCell<HashMap<[i32; 3], crate::light::LocalLight>>,
     sky2d: Option<SkyCube>,
 }
 
@@ -258,7 +260,8 @@ impl DynVertex {
 }
 
 /// One mesh of a `DynModel`: material, vertices, indices.
-type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>);
+/// Material bind group, vertices, indices, `$halflambert`.
+type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>, bool);
 
 /// The bones of a `DynModel` and where its animations come from.
 struct Skeleton {
@@ -362,10 +365,33 @@ impl AnimSource {
         delta: bool,
     ) -> Option<LocalPose> {
         let frames = anim.frames.max(1) as usize;
-        let frame = ((cycle * (frames - 1) as f32).round() as usize).min(frames - 1);
-        let (block, off, frame) = anim.frame_block(&self.mdl, frame)?;
-        let (data, base) = self.data(block)?;
-        gm_formats::mdl::anim_pose(data, base + off, &self.bones, frame, delta)
+        let f = (cycle.clamp(0.0, 1.0) * (frames - 1) as f32).max(0.0);
+        let f0 = (f.floor() as usize).min(frames - 1);
+        let f1 = (f0 + 1).min(frames - 1);
+        let t = f - f0 as f32;
+        let sample = |frame: usize| -> Option<LocalPose> {
+            let (block, off, frame) = anim.frame_block(&self.mdl, frame)?;
+            let (data, base) = self.data(block)?;
+            gm_formats::mdl::anim_pose(data, base + off, &self.bones, frame, delta)
+        };
+        let a = sample(f0)?;
+        if f1 == f0 || t <= 0.0 {
+            return Some(a);
+        }
+        // the game interpolates between the two neighbouring frames (CalcBonePosition /
+        // CalcBoneQuaternion), a nearest frame steps visibly at low animation frame rates
+        let b = sample(f1)?;
+        Some(
+            a.iter()
+                .zip(b.iter())
+                .map(|((pa, qa), (pb, qb))| {
+                    let p = Vec3::from(*pa).lerp(Vec3::from(*pb), t);
+                    let (qa, qb) = (Quat::from_array(*qa), Quat::from_array(*qb));
+                    let qb = if qa.dot(qb) < 0.0 { -qb } else { qb };
+                    (p.to_array(), qa.slerp(qb, t).normalize().to_array())
+                })
+                .collect(),
+        )
     }
 
     fn param(&self, index: i32, params: &[(&str, f32)]) -> f32 {
@@ -971,11 +997,11 @@ impl WorldRenderer {
         }
 
         drop(resolve);
-        let sun = crate::props::sun_direction(bsp);
+        let light = crate::light::ModelLight::new(bsp);
         let prop_stats = crate::props::collect_static_props(
             mount,
             bsp,
-            sun,
+            &light,
             white_uv,
             &mut vertices,
             &mut materials,
@@ -1246,7 +1272,8 @@ impl WorldRenderer {
             material_layout,
             base_sampler,
             white_uv,
-            sun,
+            light,
+            light_cache: Default::default(),
         })
     }
 
@@ -1537,7 +1564,7 @@ impl WorldRenderer {
                         },
                     ],
                 });
-                parts.push((bg, verts, idx));
+                parts.push((bg, verts, idx, mat.half_lambert));
             }
         }
         let skeleton = mount.read(path).ok().map(|bytes| Skeleton {
@@ -1545,7 +1572,7 @@ impl WorldRenderer {
             anims: AnimSource::for_model(mount, bytes, &mdl),
         });
         let mut bounds = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-        for (_, verts, _) in &parts {
+        for (_, verts, _, _) in &parts {
             for v in verts {
                 let p = Vec3::from(v.position);
                 bounds.0 = bounds.0.min(p);
@@ -1625,7 +1652,7 @@ impl WorldRenderer {
         }
         DynModel {
             bounds: (Vec3::splat(-0.5), Vec3::splat(0.5)),
-            parts: vec![(bg, verts, idx)],
+            parts: vec![(bg, verts, idx, false)],
             unlit,
             skeleton: None,
         }
@@ -1650,9 +1677,30 @@ impl WorldRenderer {
         let mut verts: Vec<Vertex> = Vec::new();
         let mut idx: Vec<u32> = Vec::new();
         let mut draws = Vec::new();
+        let mut cache = self.light_cache.borrow_mut();
+        if cache.len() > 4096 {
+            cache.clear();
+        }
         for item in items {
             let (m, xf) = (item.model, &item.transform);
-            for (bg, pv, pi) in &m.parts {
+            // the game lights a model from its origin: ambient cube of the leaf + direct lights
+            let origin = xf.transform_point3(Vec3::ZERO);
+            let local = if m.unlit {
+                None
+            } else {
+                let key = [
+                    (origin.x / 8.0).floor() as i32,
+                    (origin.y / 8.0).floor() as i32,
+                    (origin.z / 8.0).floor() as i32,
+                ];
+                Some(
+                    cache
+                        .entry(key)
+                        .or_insert_with(|| self.light.at(origin, 4))
+                        .clone(),
+                )
+            };
+            for (bg, pv, pi, half_lambert) in &m.parts {
                 let base = verts.len() as u32;
                 for v in pv {
                     let (p, n) = match item.bones {
@@ -1660,16 +1708,15 @@ impl WorldRenderer {
                         None => (Vec3::from(v.position), Vec3::from(v.normal)),
                     };
                     let n = xf.transform_vector3(n).normalize_or_zero();
-                    let shade = if m.unlit {
-                        1.0
-                    } else {
-                        0.45 + 0.55 * n.dot(self.sun).max(0.0)
+                    let shade = match &local {
+                        None => Vec3::ONE,
+                        Some(l) => l.shade(n, *half_lambert),
                     };
                     verts.push(Vertex {
                         position: xf.transform_point3(p).to_array(),
                         uv: v.uv,
                         lm_uv: self.white_uv,
-                        color: [shade; 3],
+                        color: shade.to_array(),
                     });
                 }
                 let first = idx.len() as u32;

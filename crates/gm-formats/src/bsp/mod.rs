@@ -4,6 +4,7 @@
 //! only locates them. Layout per the public VDC "Source BSP File Format" page.
 
 pub mod extra;
+pub mod light;
 pub mod lumps;
 
 use crate::{FormatError, Reader, Result};

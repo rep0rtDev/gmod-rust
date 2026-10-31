@@ -17,3 +17,4 @@ A statement without a harness is a hypothesis and is marked `(unconfirmed)`.
 - [server.md](server.md): the server tick composing movement, sandbox and physics
 - [net.md](net.md): own protocol, packets, commands, delta snapshots, measured loopback numbers
 - [script.md](script.md): Luau actor runtime, phases, budgets, host API v1
+- [render.md](render.md): client rendering: lightmaps, model lighting from the BSP (ambient cubes, world lights, static prop vertex colours), animation sampling

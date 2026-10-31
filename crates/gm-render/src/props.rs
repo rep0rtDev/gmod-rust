@@ -1,5 +1,5 @@
-//! Static props baked into world space, lit by a fixed ambient plus the
-//! `light_environment` direction (a stand-in for vrad's per-vertex lighting).
+//! Static props baked into world space, lit by vrad's per-vertex colours from the pakfile
+//! (`sp_<n>.vhv`) or, when the map has none for a prop, the model lighting of its origin.
 
 use std::collections::HashMap;
 
@@ -110,7 +110,7 @@ pub fn resolve_model_texture(
 pub fn collect_static_props(
     mount: &Mount,
     bsp: &Bsp<'_>,
-    sun: Vec3,
+    light: &crate::light::ModelLight,
     white_uv: [f32; 2],
     vertices: &mut Vec<Vertex>,
     materials: &mut MaterialMap,
@@ -123,7 +123,15 @@ pub fn collect_static_props(
     let mut missing = Vec::new();
     let mut placed = 0;
     let mut triangles = 0;
-    for prop in &props.props {
+    for (prop_index, prop) in props.props.iter().enumerate() {
+        let baked = gm_formats::bsp::light::static_prop_vertex_light(bsp, prop_index, false)
+            .ok()
+            .flatten();
+        let local = if baked.is_none() {
+            Some(light.at(Vec3::from(prop.origin), 4))
+        } else {
+            None
+        };
         let entry = models.entry(prop.model).or_insert_with(|| {
             let path = props.models.get(prop.model as usize)?;
             let (mdl, vvd, vtx) = match load_model(mount, path) {
@@ -189,7 +197,7 @@ pub fn collect_static_props(
                 let Some(Some(key)) = model.texture_keys.get(tex_index) else {
                     continue;
                 };
-                let Some(Some((_, rgba))) = materials.get(key) else {
+                let Some(Some((mat, rgba))) = materials.get(key) else {
                     continue;
                 };
                 let (tw, th) = (rgba.width as f32, rgba.height as f32);
@@ -207,17 +215,26 @@ pub fn collect_static_props(
                         };
                         let p = origin + rot * (Vec3::from(v.position) * scale);
                         let n = (rot * Vec3::from(v.normal)).normalize_or_zero();
-                        let shade = 0.45 + 0.55 * n.dot(sun).max(0.0);
-                        let tint = [
+                        // vrad's colour for this vertex (mesh-local index), else lit here
+                        let baked_color = baked.as_ref().and_then(|b| {
+                            let li = (i as i64 - mdl_mesh.vertex_offset as i64).max(0) as usize;
+                            b.meshes.get(mi)?.get(li).copied()
+                        });
+                        let shade = match (baked_color, &local) {
+                            (Some(c), _) => crate::light::baked_vertex_color(c),
+                            (None, Some(l)) => l.shade(n, mat.half_lambert),
+                            (None, None) => Vec3::splat(0.5),
+                        };
+                        let tint = Vec3::new(
                             prop.diffuse_modulation[0] as f32 / 255.0,
                             prop.diffuse_modulation[1] as f32 / 255.0,
                             prop.diffuse_modulation[2] as f32 / 255.0,
-                        ];
+                        );
                         vertices.push(Vertex {
                             position: p.to_array(),
                             uv: v.uv,
                             lm_uv: white_uv,
-                            color: [shade * tint[0], shade * tint[1], shade * tint[2]],
+                            color: (shade * tint).to_array(),
                         });
                     }
                     local_indices.push(base + li);

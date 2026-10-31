@@ -9,5 +9,6 @@ repository.workspace = true
 [dependencies]
 thiserror = { workspace = true }
 memmap2 = { workspace = true }
+zip = { workspace = true }
 
 [dev-dependencies]
