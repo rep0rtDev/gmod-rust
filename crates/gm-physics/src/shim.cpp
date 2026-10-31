@@ -812,6 +812,9 @@ public:
 		JPH::uint64 pair_key = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
 		std::vector<size_t> &cps = contact_points[pair_key];
 		// the second step of a landing takes the vertex chain (the antipode), not a face
+		// a pair meeting for the first time with the face already through the plane is a body
+		// spawned in the floor (the thruster can, 0.08 u deep): the game settles it upright
+		bool fresh_pair = rest.find(pair_key) == rest.end();
 		bool landing_in_progress = rest[pair_key].phase == 3 && rest[pair_key].landed_tick == tick - 1 && rest[pair_key].land_vn > 2.0f;
 		rest[pair_key].phase = 3; // landing in progress: the resting branch must not read it as a push
 		if (verts_of_b2_used) cps.clear();
@@ -888,7 +891,8 @@ public:
 					face.push_back(b);
 				}
 				bool edge_pair = face.size() == 2 && (face[0]->p - face[1]->p).Length() > 0.2f;
-				if ((face.size() >= 3 || edge_pair) && fastest > 0.3f && d_face > 0.02f && face_slip < 3.0f) {
+				bool spawned_in = fresh_pair && face.size() >= 3 && d_face <= 0.0f && face_slip < 3.0f;
+				if (((face.size() >= 3 || edge_pair) && fastest > 0.3f && d_face > 0.02f && face_slip < 3.0f) || spawned_in) {
 					std::vector<float> acc(face.size(), 0.0f);
 					// the drum's ring is struck in sequence: the hull +x rim vertex as a free single
 					// vertex, then its antipode by the approach the first impact left it
