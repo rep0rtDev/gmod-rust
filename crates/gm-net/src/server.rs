@@ -866,6 +866,12 @@ impl ServerNet {
                         gm_sandbox::Event::LimitHit { limit } => {
                             slot.pending_events.push(format!("LimitHit {limit}"));
                         }
+                        gm_sandbox::Event::Undone { name, .. } => {
+                            slot.pending_events.push(format!("Undone {name}"));
+                        }
+                        gm_sandbox::Event::Cleanup { kind } => {
+                            slot.pending_events.push(format!("Cleanup {kind}"));
+                        }
                         gm_sandbox::Event::Removed { prop } => removed.push(*prop),
                         _ => {}
                     }

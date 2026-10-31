@@ -646,6 +646,8 @@ impl Console {
 }
 
 struct App {
+    /// `notification.AddLegacy` panels (sandbox `AddNotify`).
+    notices: std::cell::RefCell<Notices>,
     /// Pickup history (`cl_hudpickup.lua`) and the weapon bits already announced.
     pickups: std::cell::RefCell<PickupHistory>,
     prev_weapons: Option<u64>,
@@ -777,6 +779,14 @@ impl App {
                 ui.register_font(&gpu, &self.mount, "DermaDefaultBold", "Roboto-Bold", 13.0);
             }
             ui.load_image(&gpu, &self.mount, "gui/corner8");
+            // GModNotify: Arial max(12, ceil(ScreenScaleH(9))) weight 500
+            let text_h = (9.0 * config.height as f32 / 480.0).ceil().max(12.0);
+            if !ui.register_font(&gpu, &self.mount, "GModNotify", "Arial", text_h) {
+                ui.register_font(&gpu, &self.mount, "GModNotify", "Roboto-Regular", text_h);
+            }
+            for n in ["generic", "error", "undo", "hint", "cleanup"] {
+                ui.load_image(&gpu, &self.mount, &format!("vgui/notices/{n}"));
+            }
             for (name, tall) in [
                 ("TargetID", 12.0),
                 ("TargetIDSmall", 11.0),
@@ -1381,6 +1391,20 @@ impl App {
             for e in self.sim.client.events.drain(..) {
                 if let Some(d) = DeathNotice::parse(&e, &self.sim.client.world.players) {
                     self.deaths.push(d);
+                }
+                if let Some((text, kind, length)) = Notices::legacy(&e) {
+                    let fm = self
+                        .gfx
+                        .as_ref()
+                        .map(|g| g.ui.font_metrics(Some("GModNotify")));
+                    let (w, h) = self
+                        .gfx
+                        .as_ref()
+                        .map(|g| (g.config.width as f32, g.config.height as f32))
+                        .unwrap_or((640.0, 480.0));
+                    self.notices
+                        .borrow_mut()
+                        .add(text, kind, length, fm.as_ref(), w, h);
                 }
                 println!("{e}");
                 self.console.log(e);
@@ -2314,6 +2338,9 @@ impl App {
                         color: fg,
                     });
                 }
+                // PaintNotes -> notification Think: spring the panels to the anchor at 80 %
+                // height, charge left 4 % at 0.7 s left, leave right at 0.2 s
+                self.notices.borrow_mut().draw(&mut items, w, h, &g.ui);
                 // HUDDrawPickupHistory: notices slide in from the right edge with their alpha,
                 // corner8 border in the pickup colour, grey body, DermaDefaultBold text
                 {
@@ -3057,6 +3084,7 @@ fn main() -> Result<()> {
         hud_draws: Vec::new(),
     };
     let mut app = App {
+        notices: std::cell::RefCell::new(Notices::default()),
         pickups: std::cell::RefCell::new(PickupHistory::default()),
         prev_weapons: None,
         deaths: Vec::new(),
@@ -3425,5 +3453,188 @@ impl PickupHistory {
         });
         self.top = Some((top * 5.0 + (sh * 0.75 - tall) / 2.0) / 6.0);
         self.wide = (self.wide * 5.0 + wide) / 6.0;
+    }
+}
+
+/// `NOTIFY_*` of notification.lua.
+#[derive(Clone, Copy)]
+enum NotifyKind {
+    Error,
+    Undo,
+    Cleanup,
+}
+
+impl NotifyKind {
+    fn material(self) -> &'static str {
+        match self {
+            Self::Error => "vgui/notices/error",
+            Self::Undo => "vgui/notices/undo",
+            Self::Cleanup => "vgui/notices/cleanup",
+        }
+    }
+}
+
+/// One `NoticePanel`: text, icon, spring state (`fx/fy`, `VelX/VelY`), start and length.
+struct Notice {
+    text: String,
+    kind: NotifyKind,
+    start: Instant,
+    length: f32,
+    x: f32,
+    y: f32,
+    vel_x: f32,
+    vel_y: f32,
+    w: f32,
+    h: f32,
+}
+
+#[derive(Default)]
+struct Notices {
+    list: Vec<Notice>,
+    last: Option<Instant>,
+}
+
+impl Notices {
+    const START_X: f32 = 200.0;
+    const CHARGE_X: f32 = 0.04;
+    const GAP_X: f32 = 0.015;
+    const ANCHOR_Y: f32 = 0.8;
+
+    fn text_h(sh: f32) -> f32 {
+        (9.0 * sh / 480.0).ceil().max(12.0)
+    }
+
+    /// Sandbox `LimitHit` / `OnUndo` / `OnCleanup` texts (hint.hitXlimit, hint.undoneX,
+    /// hint.cleanedX) with their types and lengths.
+    fn legacy(event: &str) -> Option<(String, NotifyKind, f32)> {
+        let (head, rest) = event.split_once(' ')?;
+        Some(match head {
+            "LimitHit" => (
+                format!("You have hit the \"{rest}\" limit!"),
+                NotifyKind::Error,
+                6.0,
+            ),
+            "Undone" => (format!("Undone \"{rest}\""), NotifyKind::Undo, 2.0),
+            "Cleanup" => (
+                format!("Cleaned up all \"{rest}\""),
+                NotifyKind::Cleanup,
+                5.0,
+            ),
+            _ => return None,
+        })
+    }
+
+    fn add(
+        &mut self,
+        text: String,
+        kind: NotifyKind,
+        length: f32,
+        fm: Option<&gm_render::ui::FontMetrics>,
+        sw: f32,
+        sh: f32,
+    ) {
+        let text_h = Self::text_h(sh);
+        let icon_h = (text_h * 1.25).ceil();
+        let (lw, lh) = fm
+            .map(|m| (m.text_width(&text), m.line_height))
+            .unwrap_or((text_h * 0.6 * text.len() as f32, text_h));
+        // SizeToContents: label + padding, the icon docked left with its gap, DockPadding 3
+        let gap = (icon_h * 0.1).ceil();
+        let w = lw + (text_h * 0.75).ceil() + icon_h + gap * 2.0 + 6.0;
+        let h = (lh + (text_h * 0.25).ceil()).max(icon_h + gap * 2.0) + 6.0;
+        self.list.push(Notice {
+            text,
+            kind,
+            start: Instant::now(),
+            length: length.max(0.0),
+            x: sw + Self::START_X,
+            y: sh,
+            vel_x: -5.0,
+            vel_y: 0.0,
+            w,
+            h,
+        });
+    }
+
+    fn draw(&mut self, items: &mut Vec<UiItem>, sw: f32, sh: f32, ui: &UiRenderer) {
+        let now = Instant::now();
+        let dt = self
+            .last
+            .map(|l| now.duration_since(l).as_secs_f32().min(0.1))
+            .unwrap_or(0.0);
+        self.last = Some(now);
+        let text_h = Self::text_h(sh);
+        let icon_h = (text_h * 1.25).ceil();
+        let fm = ui.font_metrics(Some("GModNotify"));
+        let mut total_h = 0.0;
+        let spd = dt * 15.0;
+        let damp = 0.95 - dt * 8.0;
+        self.list.retain_mut(|n| {
+            let age = now.duration_since(n.start).as_secs_f32();
+            if age > n.length {
+                return false;
+            }
+            let h = n.h + (text_h * 0.2).ceil();
+            let ideal_y = sh * Self::ANCHOR_Y - h - total_h;
+            let mut ideal_x = sw - n.w - sw * Self::GAP_X;
+            let timeleft = n.length - age;
+            if timeleft < 0.7 {
+                ideal_x -= sw * Self::CHARGE_X;
+            }
+            if timeleft < 0.2 {
+                ideal_x += n.w * 2.0;
+            }
+            n.y += n.vel_y * spd;
+            n.x += n.vel_x * spd;
+            let dist = ideal_y - n.y;
+            n.vel_y += dist * spd;
+            if dist.abs() < 2.0 && n.vel_y.abs() < 0.1 {
+                n.vel_y = 0.0;
+            }
+            let dist = ideal_x - n.x;
+            n.vel_x += dist * spd;
+            if dist.abs() < 2.0 && n.vel_x.abs() < 0.1 {
+                n.vel_x = 0.0;
+            }
+            n.vel_x *= damp;
+            n.vel_y *= damp;
+            total_h += h;
+            // DPanel background, the icon docked left, the label centred in the rest
+            items.push(UiItem::Rect {
+                x: n.x,
+                y: n.y,
+                w: n.w,
+                h: n.h,
+                color: [20.0 / 255.0, 20.0 / 255.0, 20.0 / 255.0, 0.6],
+            });
+            let gap = (icon_h * 0.1).ceil();
+            let inner_h = n.h - 6.0;
+            items.push(UiItem::Image {
+                x: n.x + 3.0 + gap,
+                y: n.y + 3.0 + (inner_h - icon_h) / 2.0,
+                w: icon_h,
+                h: icon_h,
+                material: n.kind.material().to_string(),
+                color: [1.0, 1.0, 1.0, 1.0],
+                rot: 0,
+            });
+            let label_x = n.x + 3.0 + icon_h + gap * 2.0;
+            let label_w = n.x + n.w - 3.0 - label_x;
+            let tx = label_x + (label_w - fm.text_width(&n.text)) / 2.0;
+            let ty = n.y + 3.0 + (inner_h - fm.line_height) / 2.0;
+            for (d, c) in [
+                (1.0, [0.0, 0.0, 0.0, 200.0 / 255.0]),
+                (0.0, [1.0, 1.0, 1.0, 1.0]),
+            ] {
+                items.push(UiItem::Text {
+                    font: Some("GModNotify".to_string()),
+                    x: tx + d,
+                    y: ty + d,
+                    text: n.text.clone(),
+                    color: c,
+                });
+            }
+            true
+        });
     }
 }

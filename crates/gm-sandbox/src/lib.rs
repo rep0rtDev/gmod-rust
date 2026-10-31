@@ -66,7 +66,11 @@ pub enum Event {
     /// `Player:LimitHit(name)`: the spawn was refused by `sbox_max<name>`.
     LimitHit { limit: String },
     /// `gmod_undo` removed `removed` entities of undo `id` (0 when the entry was already empty).
-    Undone { id: u32, removed: usize },
+    Undone {
+        id: u32,
+        removed: usize,
+        name: String,
+    },
     /// `gmod_cleanup` without arguments: `hook.Run('OnCleanup','all')`.
     Cleanup { kind: String },
     /// An entity left the table (`EntityRemoved`), one per entity, before the Undone/Cleanup.
@@ -2790,7 +2794,11 @@ impl Sandbox {
                     events.push(Event::Removed { prop: e });
                 }
             }
-            events.push(Event::Undone { id: u.id, removed });
+            events.push(Event::Undone {
+                id: u.id,
+                removed,
+                name: u.name.clone(),
+            });
             if removed > 0 {
                 return;
             }
