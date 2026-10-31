@@ -107,6 +107,8 @@ pub struct WorldRenderer {
     pub tm_min: f32,
     pub tm_max: f32,
     pub tm_rate: f32,
+    /// The controller's `SetBloomScale` (bloom strength added in the post pass).
+    pub tm_bloom: f32,
     pipeline: wgpu::RenderPipeline,
     /// Additive, no depth write: beams and glow sprites.
     additive_pipeline: wgpu::RenderPipeline,
@@ -861,7 +863,7 @@ impl WorldRenderer {
         // the map's env_tonemap_controller (set by logic_auto OnMapSpawn): the exposure the
         // auto path may use lies between its min and max; without a luminance readback we
         // hold mat_hdr_tonemapscale 1 clamped into that range
-        let (mut tm_min, mut tm_max, mut tm_rate) = (0.5f32, 2.0f32, 1.0f32);
+        let (mut tm_min, mut tm_max, mut tm_rate, mut tm_bloom) = (0.5f32, 2.0f32, 1.0f32, 1.0f32);
         for e in bsp
             .entities
             .iter()
@@ -877,6 +879,7 @@ impl WorldRenderer {
                         ("SetAutoExposureMin", Ok(x)) => tm_min = x,
                         ("SetAutoExposureMax", Ok(x)) => tm_max = x,
                         ("SetTonemapRate", Ok(x)) => tm_rate = x,
+                        ("SetBloomScale", Ok(x)) => tm_bloom = x,
                         _ => {}
                     }
                 }
@@ -1350,6 +1353,7 @@ impl WorldRenderer {
             tm_min,
             tm_max,
             tm_rate,
+            tm_bloom,
             pipeline,
             additive_pipeline,
             translucent_pipeline,

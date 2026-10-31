@@ -186,6 +186,8 @@ struct Gfx {
     gpu: Gpu,
     world: WorldRenderer,
     depth: wgpu::TextureView,
+    /// Bloom post-process (scene target + passes) when the map renders in HDR.
+    post: gm_render::post::Post,
     models: std::collections::HashMap<String, Option<gm_render::world::DynModel>>,
     player_box: gm_render::world::DynModel,
     /// Physgun beam materials: `sprites/physbeam` along the beam, `physg_glow1` at its end,
@@ -798,6 +800,7 @@ impl App {
             t0.elapsed().as_secs_f32()
         );
         let depth = depth_view(&gpu, config.width, config.height);
+        let post = gm_render::post::Post::new(&gpu, format, config.width, config.height);
         let player_box = world.solid_box(&gpu, [200, 120, 60, 255], false);
         let beam_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeam");
         let beam_active_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeama");
@@ -913,6 +916,7 @@ impl App {
             gpu,
             world,
             depth,
+            post,
             models: Default::default(),
             player_box,
             beam_mat,
@@ -2657,6 +2661,13 @@ impl App {
             }
         };
         let view = frame.texture.create_view(&Default::default());
+        // with bloom the scene goes offscreen and Post composites it onto the frame
+        let bloom = g.world.hdr && self.settings.mat_bloomscale;
+        let scene = if bloom {
+            g.post.scene_view().clone()
+        } else {
+            view.clone()
+        };
         let o = self
             .sim
             .prev_origin
@@ -2716,7 +2727,7 @@ impl App {
             right: Vec3::new(yaw.sin(), -yaw.cos(), 0.0),
         });
         let aspect = g.config.width as f32 / g.config.height as f32;
-        g.world.draw(&g.gpu, &camera, &view, &g.depth, aspect);
+        g.world.draw(&g.gpu, &camera, &scene, &g.depth, aspect);
         let ents = &self.sim.client.world.entities;
         let me = self.sim.client.player_id;
         let held_models = self
@@ -2984,7 +2995,7 @@ impl App {
             }
         }
         let target = ModelTarget {
-            color: &view,
+            color: &scene,
             depth: &g.depth,
             aspect,
             clear_depth: false,
@@ -3080,7 +3091,7 @@ impl App {
             let planes = hud_planes(&self.sim.hud_draws, &self.mount, g);
             if !planes.is_empty() {
                 let aspect = g.config.width as f32 / g.config.height as f32;
-                g.ui.draw_world(&g.gpu, &view, &g.depth, camera.view_proj(aspect), &planes);
+                g.ui.draw_world(&g.gpu, &scene, &g.depth, camera.view_proj(aspect), &planes);
             }
         }
         {
@@ -3118,6 +3129,9 @@ impl App {
         }
         let ui_items = self.ui_items(o);
         let g = self.gfx.as_ref().unwrap();
+        if bloom {
+            g.post.apply(&g.gpu, &view, g.world.tm_bloom);
+        }
         g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);
         if g.world.hdr && self.frames.is_multiple_of(15) {
             let bright =
@@ -3859,6 +3873,7 @@ impl ApplicationHandler for App {
                     g.config.height = s.height.max(1);
                     g.surface.configure(&g.gpu.device, &g.config);
                     g.depth = depth_view(&g.gpu, g.config.width, g.config.height);
+                    g.post.resize(&g.gpu, g.config.width, g.config.height);
                 }
             }
             WindowEvent::KeyboardInput {

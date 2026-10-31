@@ -6,6 +6,7 @@ pub mod gpu;
 pub mod light;
 pub mod lightmap;
 pub mod material;
+pub mod post;
 pub mod props;
 pub mod ui;
 pub mod world;

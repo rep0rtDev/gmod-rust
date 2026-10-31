@@ -52,4 +52,9 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   approached at `SetTonemapRate` per second, three times faster downwards
   (`mat_accelerate_adjust_exposure_down 3`). Measured on gm_construct: on the sunlit floor the
   exposure settles at the 0.7 floor in ~2 s, turning down to a shaded patch it climbs towards 1.8.
-  Todo: bloom (`SetBloomScale` 0.3).
+  Bloom (`gm_render::post::Post`, on when the map is HDR and `mat_bloomscale` is set): the
+  scene draws into an offscreen target, a bright pass at quarter resolution keeps the part of
+  each pixel above a linear luminance of 0.45, a 9-tap separable Gaussian blurs it and the
+  composite adds it times the controller's `SetBloomScale` (0.3 on gm_construct). The
+  threshold / kernel are ours - the engine's downsample and blur shaders were not consulted;
+  the strength follows the map's controller like the exposure bounds do.
