@@ -57,6 +57,8 @@ pub enum UiItem {
         h: f32,
         color: [f32; 4],
     },
+    /// A flat triangle (`surface.DrawPoly` with three vertices).
+    Tri { pts: [[f32; 2]; 3], color: [f32; 4] },
     /// `y` is the top of the line; the text sits on the font's baseline below it. `font` is a
     /// name given to `register_font`, the default font when `None` or unknown.
     Text {
@@ -803,6 +805,15 @@ impl UiRenderer {
                 UiItem::Rect { x, y, w, h, color } => {
                     let [u, v] = self.default.white_uv;
                     quad(&mut vertices, *x, *y, x + w, y + h, [u, v, u, v], *color);
+                    &self.default.bind_group
+                }
+                UiItem::Tri { pts, color } => {
+                    let uv = self.default.white_uv;
+                    vertices.extend(pts.iter().map(|p| Vertex {
+                        position: *p,
+                        uv,
+                        color: *color,
+                    }));
                     &self.default.bind_group
                 }
                 UiItem::Text {

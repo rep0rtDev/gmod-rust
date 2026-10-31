@@ -159,7 +159,9 @@ refusing cans stops the request before the priority 10 actor sees it.
 `world.queue(op, ent, arg)` ops: `set_pos` / `set_angles` (`{x, y, z}`, the other half of the
 transform is kept), `freeze` (`false` thaws), `remove`, `set_velocity` (`{x, y, z, angular =
 {x, y, z}?}` in u/s and deg/s, through the physics body), `weld` (`{ent2, forcelimit?, nocollide?}`;
-`ent2` 0 welds to the world) and `nocollide` (`{ent2}`). Script constraints are owned by the server
+`ent2` 0 welds to the world), `nocollide` (`{ent2}`) and `set_overlay_text` (a string, `nil` / `""` clears;
+scripted entities only: the world tip clients draw when aiming at the entity within 256 u, like
+`ENT:SetOverlayText`; outside singleplayer the owner's name is appended on a second line). Script constraints are owned by the server
 (owner 0): no `sbox_maxconstraints` check, no undo entry, not touched by a player's cleanup, so
 an addon cannot spend a player's limits and a player cannot undo an addon's weld. A duplicate
 weld of the same pair, a self weld or a write to an entity that is gone is rejected and counted in

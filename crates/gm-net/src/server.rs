@@ -44,6 +44,7 @@ pub struct ClientSlot {
     /// `Server::spawn_lists_version` last sent to this client (0: none yet).
     spawn_lists_sent: u32,
     content_lists_sent: u32,
+    overlays_sent: u32,
     tool_schemas_sent: u32,
     weapon_defs_sent: u32,
     /// Last snapshot tick each player / entity state went to this client (for the staleness
@@ -257,6 +258,7 @@ impl ServerNet {
                         cvar_seq: 0,
                         spawn_lists_sent: 0,
                         content_lists_sent: u32::MAX,
+                        overlays_sent: u32::MAX,
                         tool_schemas_sent: 0,
                         weapon_defs_sent: 0,
                         uploads: VecDeque::new(),
@@ -1065,6 +1067,16 @@ impl ServerNet {
                 .write(&mut w);
                 slot.channel.send_reliable(w.buf);
                 slot.content_lists_sent = server.content_version;
+            }
+            if slot.overlays_sent != server.overlay_version {
+                let mut w = Writer::default();
+                ServerMsg::EntityOverlays {
+                    version: server.overlay_version,
+                    items: server.overlays(),
+                }
+                .write(&mut w);
+                slot.channel.send_reliable(w.buf);
+                slot.overlays_sent = server.overlay_version;
             }
             if slot.weapon_defs_sent != server.scripted_weapons_version {
                 let mut w = Writer::default();

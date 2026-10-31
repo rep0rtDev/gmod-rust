@@ -466,3 +466,16 @@ in the 640x480 proportional space of the sheet page.
   closes levels as the cursor moves, `menu_leaf` picks the property to run; arrow and check
   pieces from the gwenskin atlas (464,112 / 448,112). Not done: body group and model names
   (the client does not read them from the MDL yet, parts show as "Body Group P" / "Model M").
+
+## World tips
+
+- Game (`cl_worldtips.lua`, `base_gmodentity`): a scripted entity being looked at by the local
+  player within `MaxWorldTipDistance` 256 adds a world tip of its `GetOverlayText()` (the
+  `GModOverlayText` NW string, plus "\n(player name)" outside singleplayer); drawn at the
+  entity origin's screen position minus (text w + 50, text h + 50): black RoundedBox 8 two px
+  larger, a black pointer triangle (w/1.5-2, h+2) / (w+2, h/2-1) / (origin - 25 + 2), the
+  250 250 200 box and triangle, text GModWorldtip (Helvetica 20 bold) centred in black.
+- Ours: `world.queue("set_overlay_text", ent, text)` stores the text on the server's
+  `SentState`, replicated whole and reliably as `EntityOverlays` (version bumped on change or
+  removal); the client picks the closest overlay entity whose model-bounds box the aim ray hits
+  within 256 u (before the world), draws with `gui/corner8` corners and `UiItem::Tri`.

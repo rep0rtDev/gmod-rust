@@ -70,6 +70,11 @@ pub enum QueuedWrite {
     Remove {
         ent: u32,
     },
+    /// `set_overlay_text`: the world tip clients draw when aiming at a scripted entity.
+    SetOverlayText {
+        ent: u32,
+        text: String,
+    },
     /// `sound.play`: a sound script at a world position, `volume` multiplies the script's.
     Sound {
         name: String,
@@ -572,6 +577,7 @@ function entity.register(class: string, def)
     sents[class] = def
     world.queue("entity.register", 0, {
         class = class, model = def.model, think = def.think_interval, use_type = def.use_type,
+        print_name = def.print_name, category = def.category,
     })
 end
 for _, kind in ipairs({"init", "think", "start_touch", "touch", "end_touch", "use", "use_off", "remove", "damage"}) do
@@ -882,6 +888,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     frozen: !matches!(arg, Value::Boolean(false)),
                 },
                 "remove" => QueuedWrite::Remove { ent },
+                "set_overlay_text" => QueuedWrite::SetOverlayText {
+                    ent,
+                    text: match &arg {
+                        Value::String(s) => s.to_str()?.to_string(),
+                        Value::Nil => String::new(),
+                        _ => return Err(mlua::Error::runtime("set_overlay_text wants a string")),
+                    },
+                },
                 "spawnmenu.add" => {
                     let t = table_arg(&arg)?;
                     let models: Table = t.get("models")?;
@@ -1610,6 +1624,7 @@ pub fn apply_tool_ops(
 pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
     let exists = |server: &Server<'_>, ent: u32| server.sandbox.props().iter().any(|p| p.id == ent);
     match w {
+        QueuedWrite::SetOverlayText { ent, text } => server.set_overlay_text(*ent, text),
         QueuedWrite::SetPos { ent, pos } => {
             if !exists(server, *ent) {
                 return false;

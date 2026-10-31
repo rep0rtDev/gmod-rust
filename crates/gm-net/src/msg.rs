@@ -373,6 +373,12 @@ pub enum ServerMsg {
         weapons: Vec<gm_server::ContentEntry>,
         entities: Vec<gm_server::ContentEntry>,
     },
+    /// The scripted entities' world tips (`SetOverlayText`), latest version whole; sent
+    /// reliably whenever one changes.
+    EntityOverlays {
+        version: u32,
+        items: Vec<(u32, String)>,
+    },
 }
 
 /// A world sound: script name, where, and a volume factor on the script's own.
@@ -813,6 +819,7 @@ impl ServerMsg {
                 | ServerMsg::ToolSchemas { .. }
                 | ServerMsg::WeaponDefs { .. }
                 | ServerMsg::ContentLists { .. }
+                | ServerMsg::EntityOverlays { .. }
         )
     }
 
@@ -1012,6 +1019,15 @@ impl ServerMsg {
                         w.str(&e.name);
                         w.str(&e.category);
                     }
+                }
+            }
+            ServerMsg::EntityOverlays { version, items } => {
+                w.u8(19);
+                w.u32(*version);
+                w.varint(items.len() as u64);
+                for (ent, text) in items {
+                    w.u32(*ent);
+                    w.str(text);
                 }
             }
             ServerMsg::WeaponDefs { version, defs } => {
@@ -1248,6 +1264,15 @@ impl ServerMsg {
                     lists.push((category, models));
                 }
                 ServerMsg::SpawnLists { version, lists }
+            }
+            19 => {
+                let version = r.u32()?;
+                let n = r.varint()?.min(4096) as usize;
+                let mut items = Vec::with_capacity(n);
+                for _ in 0..n {
+                    items.push((r.u32()?, r.str()?));
+                }
+                ServerMsg::EntityOverlays { version, items }
             }
             18 => {
                 let version = r.u32()?;

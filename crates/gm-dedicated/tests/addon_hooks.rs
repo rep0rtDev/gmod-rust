@@ -5252,3 +5252,70 @@ fn prop_protection_example_keeps_other_players_off_a_prop() {
     );
     let _ = crate_id;
 }
+
+#[test]
+fn sent_overlay_text_is_replicated_and_cleared_on_remove() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.add_player(
+        1,
+        glam::Vec3::new(700.0, -600.0, -143.6),
+        glam::Vec3::new(20.0, 90.0, 0.0),
+    );
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "test".into(),
+        name: "sent".into(),
+        priority: 0,
+        source: r#"
+            entity.register("tip_a", { model = "models/props_junk/wood_crate001a.mdl",
+                init = function(p) world.queue("set_overlay_text", p.entity, "Tip A") end })
+            events.on("tick.pre", function()
+                if state.done then return end
+                state.done = true
+                world.queue("spawn", 0, { class = "tip_a", pos = {x = 700, y = -550, z = -123.6}, frozen = true, tag = "a" })
+            end)
+            events.on("entity.spawned", function(p) state[p.tag] = p.entity end)
+        "#
+        .into(),
+        config: gm_script::ActorConfig::default(),
+    })
+    .unwrap();
+    let step = |server: &mut gm_server::Server, rt: &mut gm_script::Runtime| {
+        rt.pre_tick(server);
+        server.tick(&BTreeMap::from([(1u32, gm_server::PlayerCmd::default())]));
+        let events = std::mem::take(&mut server.game_events);
+        rt.game_events(server, events);
+        rt.post_tick(server);
+    };
+    let v0 = server.overlay_version;
+    for _ in 0..5 {
+        step(&mut server, &mut rt);
+    }
+    let a: u32 = rt.actors()[0].eval("return state.a").unwrap();
+    assert_eq!(server.overlays(), vec![(a, "Tip A".to_string())]);
+    assert_ne!(server.overlay_version, v0);
+    // the same text again does not bump the version; a change and a clear do
+    let v1 = server.overlay_version;
+    assert!(server.set_overlay_text(a, "Tip A"));
+    assert_eq!(server.overlay_version, v1);
+    assert!(server.set_overlay_text(a, "Tip B"));
+    assert_eq!(server.overlays(), vec![(a, "Tip B".to_string())]);
+    assert!(
+        !server.set_overlay_text(a + 1000, "x"),
+        "not a scripted entity"
+    );
+    let v2 = server.overlay_version;
+    assert!(server.remove_prop(a));
+    assert!(server.overlays().is_empty());
+    assert_ne!(server.overlay_version, v2);
+}

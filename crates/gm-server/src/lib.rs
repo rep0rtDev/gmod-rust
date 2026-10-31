@@ -653,6 +653,8 @@ pub const SENT_DEFAULT_THINK_TICKS: u64 = 13;
 #[derive(Clone, Debug, PartialEq)]
 pub struct SentState {
     pub class: String,
+    /// `ent.set_overlay_text`: the world tip the clients draw when aiming at it.
+    pub overlay: String,
     pub next_think: u64,
     /// The tick of the last `think` (the `CurTime()` a `NextThink` in its callback is relative to).
     pub last_think: Option<u64>,
@@ -1108,6 +1110,8 @@ pub struct Server<'w> {
     pub spawn_lists_version: u32,
     /// Bumped whenever the Weapons / Entities content lists change (`content_lists`).
     pub content_version: u32,
+    /// Bumped whenever a scripted entity's overlay text changes or such an entity goes away.
+    pub overlay_version: u32,
     /// Setting schemas of scripted stools (`tool.register` with `settings`), by tool name;
     /// `tool_schemas_version` grows with every change so the net layer resends them.
     pub tool_schemas: Vec<(String, Vec<ToolSetting>)>,
@@ -1220,6 +1224,7 @@ impl<'w> Server<'w> {
             spawn_lists: Vec::new(),
             spawn_lists_version: 0,
             content_version: 0,
+            overlay_version: 0,
             tool_schemas: Vec::new(),
             tool_schemas_version: 0,
             scripted_weapons: Vec::new(),
@@ -1785,6 +1790,7 @@ impl<'w> Server<'w> {
                 class: def.class.clone(),
                 next_think: self.tick_count + SENT_FIRST_THINK_TICKS,
                 last_think: None,
+                overlay: String::new(),
             },
         );
         self.sent_event(ent, "init", 0, 0, 0.0);
@@ -2932,6 +2938,30 @@ impl<'w> Server<'w> {
     /// `list.Get("SpawnableEntities")`): the HL2 weapons `lua/autorun/game_hl2.lua` makes
     /// spawnable that this server implements, the scripted weapons, and the scripted entities.
     /// Names starting with `#` are localisation keys (`entities.properties`).
+    /// `ENT:SetOverlayText`: the world tip of scripted entity `ent` (empty clears it).
+    pub fn set_overlay_text(&mut self, ent: u32, text: &str) -> bool {
+        let Some(s) = self.sents.get_mut(&ent) else {
+            return false;
+        };
+        if s.overlay != text {
+            s.overlay = text.to_string();
+            self.overlay_version = self.overlay_version.wrapping_add(1);
+        }
+        true
+    }
+
+    /// Every scripted entity with a non-empty overlay text, by id.
+    pub fn overlays(&self) -> Vec<(u32, String)> {
+        let mut out: Vec<(u32, String)> = self
+            .sents
+            .iter()
+            .filter(|(_, s)| !s.overlay.is_empty())
+            .map(|(id, s)| (*id, s.overlay.clone()))
+            .collect();
+        out.sort_by_key(|(id, _)| *id);
+        out
+    }
+
     pub fn content_lists(&self) -> (Vec<ContentEntry>, Vec<ContentEntry>) {
         let mut weapons: Vec<ContentEntry> = HL2_SPAWNABLE_WEAPONS
             .iter()
@@ -4576,7 +4606,13 @@ impl<'w> Server<'w> {
             return false;
         }
         self.sent_event(id, "remove", 0, 0, 0.0);
-        self.sents.remove(&id);
+        if self
+            .sents
+            .remove(&id)
+            .is_some_and(|s| !s.overlay.is_empty())
+        {
+            self.overlay_version = self.overlay_version.wrapping_add(1);
+        }
         self.sandbox.remove_entity(id);
         self.sync_physics();
         true

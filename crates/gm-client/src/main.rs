@@ -929,6 +929,8 @@ impl App {
             html(&mut ui, derma::MENU_FONT_23, true, 23.0);
             html(&mut ui, derma::MENU_FONT_16, true, 16.0);
             html(&mut ui, derma::NAV_FONT, false, 12.0);
+            // cl_worldtips.lua: GModWorldtip = Helvetica 20 weight 700
+            html(&mut ui, "GModWorldtip", true, 20.0);
             // SourceScheme: Tahoma [$WINDOWS] / Verdana elsewhere, Default 13 / bold / Large 15
             let scheme = if cfg!(windows) { "Tahoma" } else { "Verdana" };
             let scheme_bold = format!("{scheme}-Bold");
@@ -3397,7 +3399,7 @@ impl App {
                 }
             }
         }
-        let ui_items = self.ui_items(o);
+        let ui_items = self.ui_items(o, camera.view_proj(aspect));
         let g = self.gfx.as_ref().unwrap();
         if bloom {
             g.post.apply(&g.gpu, &view, g.world.tm_bloom);
@@ -3453,7 +3455,7 @@ impl App {
             .map(|(_, s)| s.as_slice())
     }
 
-    fn ui_items(&self, o: Vec3) -> Vec<UiItem> {
+    fn ui_items(&self, o: Vec3, view_proj: glam::Mat4) -> Vec<UiItem> {
         let Some(g) = &self.gfx else {
             return Vec::new();
         };
@@ -3848,6 +3850,139 @@ impl App {
                                 color: team,
                             });
                             yy += m.line_height + 5.0;
+                        }
+                    }
+                }
+                // cl_worldtips.lua: the world tip of the scripted entity under the crosshair
+                // within its MaxWorldTipDistance 256 (base_gmodentity); GModWorldtip text in a
+                // rounded 250 250 200 box, black 2 px rim, a pointer towards the entity's origin,
+                // "\n(owner)" appended outside singleplayer; cl_drawworldtooltips 1
+                if !self.sim.client.world.overlays.is_empty() {
+                    let (pt, yw) = (self.view.x.to_radians(), self.view.y.to_radians());
+                    let fwd = Vec3::new(pt.cos() * yw.cos(), pt.cos() * yw.sin(), -pt.sin());
+                    let world_d = (self
+                        .sim
+                        .collision
+                        .trace_ray(o, o + fwd * 256.0, gm_collision::MASK_SOLID)
+                        .end
+                        - o)
+                        .length();
+                    let mut best: Option<(f32, u32)> = None;
+                    for (id, _) in &self.sim.client.world.overlays {
+                        let Some(e) = self.sim.client.world.entities.get(id) else {
+                            continue;
+                        };
+                        let Some((lo, hi)) = g
+                            .models
+                            .get(e.model.as_str())
+                            .and_then(|m| m.as_ref())
+                            .map(|m| m.bounds())
+                        else {
+                            continue;
+                        };
+                        // the model's rest bounds as a world box around the origin (the game
+                        // traces against the collision model; the local box is close enough)
+                        let r = lo.abs().max(hi.abs());
+                        let (mins, maxs) = (e.pos - r, e.pos + r);
+                        let (mut t0, mut t1) = (0.0f32, world_d);
+                        for i in 0..3 {
+                            let (d, s0) = (fwd[i], o[i]);
+                            if d.abs() < 1e-6 {
+                                if s0 < mins[i] || s0 > maxs[i] {
+                                    t0 = f32::INFINITY;
+                                }
+                                continue;
+                            }
+                            let (ta, tb) = ((mins[i] - s0) / d, (maxs[i] - s0) / d);
+                            t0 = t0.max(ta.min(tb));
+                            t1 = t1.min(ta.max(tb));
+                        }
+                        if t0 <= t1 && best.is_none_or(|(bt, _)| t0 < bt) {
+                            best = Some((t0, *id));
+                        }
+                    }
+                    if let Some((_, id)) = best {
+                        let e = &self.sim.client.world.entities[&id];
+                        let mut text = self
+                            .sim
+                            .client
+                            .world
+                            .overlays
+                            .iter()
+                            .find(|(i, _)| *i == id)
+                            .map_or(String::new(), |(_, t)| t.clone());
+                        if self.sim.remote {
+                            if let Some(name) = self
+                                .sim
+                                .client
+                                .world
+                                .players
+                                .iter()
+                                .find(|q| q.id == e.owner)
+                                .map(|q| q.name.as_str())
+                                .filter(|n| !n.is_empty())
+                            {
+                                text = format!("{text}\n({name})");
+                            }
+                        }
+                        let clip = view_proj * e.pos.extend(1.0);
+                        if clip.w > 0.0 {
+                            let px = (clip.x / clip.w * 0.5 + 0.5) * w;
+                            let py = (0.5 - clip.y / clip.w * 0.5) * h;
+                            let fm = g.ui.font_metrics(Some("GModWorldtip"));
+                            let lines: Vec<&str> = text.split('\n').collect();
+                            let tw = lines
+                                .iter()
+                                .map(|l| fm.text_width(l))
+                                .fold(0.0f32, f32::max);
+                            let th = fm.line_height * lines.len() as f32;
+                            let (pad, off) = (10.0, 50.0);
+                            let (x, y) = (px - tw - off, py - th - off);
+                            let bg = [0.0, 0.0, 0.0, 1.0];
+                            let fg = [250.0 / 255.0, 250.0 / 255.0, 200.0 / 255.0, 1.0];
+                            rounded_box(
+                                &mut items,
+                                8.0,
+                                x - pad - 2.0,
+                                y - pad - 2.0,
+                                tw + pad * 2.0 + 4.0,
+                                th + pad * 2.0 + 4.0,
+                                bg,
+                            );
+                            items.push(UiItem::Tri {
+                                pts: [
+                                    [x + tw / 1.5 - 2.0, y + th + 2.0],
+                                    [x + tw + 2.0, y + th / 2.0 - 1.0],
+                                    [px - off / 2.0 + 2.0, py - off / 2.0 + 2.0],
+                                ],
+                                color: bg,
+                            });
+                            rounded_box(
+                                &mut items,
+                                8.0,
+                                x - pad,
+                                y - pad,
+                                tw + pad * 2.0,
+                                th + pad * 2.0,
+                                fg,
+                            );
+                            items.push(UiItem::Tri {
+                                pts: [
+                                    [x + tw / 1.5, y + th],
+                                    [x + tw, y + th / 2.0],
+                                    [px - off / 2.0, py - off / 2.0],
+                                ],
+                                color: fg,
+                            });
+                            for (n, line) in lines.iter().enumerate() {
+                                items.push(UiItem::Text {
+                                    font: Some("GModWorldtip".to_string()),
+                                    x: x + tw / 2.0 - fm.text_width(line) / 2.0,
+                                    y: y + fm.line_height * n as f32,
+                                    text: line.to_string(),
+                                    color: bg,
+                                });
+                            }
                         }
                     }
                 }
@@ -5332,4 +5467,48 @@ fn frame_bright_pixels(gpu: &gm_render::Gpu, frame: &wgpu::Texture, w: u32, h: u
     }
     v.sort_by(|a, b| a.total_cmp(b));
     v[((v.len() - 1) as f32 * 0.98) as usize]
+}
+
+/// `draw.RoundedBox( r, ... )`: the `gui/corner8` corners (the game's 8 px rounded corner
+/// texture) and three rects filling the rest.
+fn rounded_box(items: &mut Vec<UiItem>, r: f32, x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) {
+    let corner = "gui/corner8";
+    let r = r.min(w / 2.0).min(h / 2.0);
+    for (cx, cy, rot) in [
+        (x, y, 0u8),
+        (x + w - r, y, 1),
+        (x + w - r, y + h - r, 2),
+        (x, y + h - r, 3),
+    ] {
+        items.push(UiItem::Image {
+            x: cx,
+            y: cy,
+            w: r,
+            h: r,
+            material: corner.to_string(),
+            color,
+            rot,
+        });
+    }
+    items.push(UiItem::Rect {
+        x: x + r,
+        y,
+        w: w - r * 2.0,
+        h: r,
+        color,
+    });
+    items.push(UiItem::Rect {
+        x,
+        y: y + r,
+        w,
+        h: h - r * 2.0,
+        color,
+    });
+    items.push(UiItem::Rect {
+        x: x + r,
+        y: y + h - r,
+        w: w - r * 2.0,
+        h: r,
+        color,
+    });
 }
