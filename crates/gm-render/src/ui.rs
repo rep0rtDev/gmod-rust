@@ -574,6 +574,7 @@ impl UiRenderer {
             .and_then(|m| m.base_texture)
             .unwrap_or_else(|| name.to_string());
         let loaded = material::load_texture(mount, &texture_name, IMAGE_MAX_SIDE)
+            .inspect_err(|e| eprintln!("ui image {name}: {e}"))
             .ok()
             .map(|mut img| {
                 if additive {

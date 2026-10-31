@@ -701,6 +701,8 @@ struct App {
     /// A text row with the keyboard focus and the text typed so far.
     panel_text: Option<(usize, String)>,
     grabbed: bool,
+    /// The game's main menu over the game (Escape): `menu.html` with the in-game NavBar.
+    main_menu: bool,
     last: Instant,
     acc: f32,
     frames: u32,
@@ -802,6 +804,13 @@ impl App {
             ui.load_image(&gpu, &self.mount, derma::ATLAS);
             ui.load_image(&gpu, &self.mount, derma::HOVER_MAT);
             ui.load_image(&gpu, &self.mount, derma::GENERATING_MAT);
+            // menu.html: Helvetica/Arial (Roboto here), options 23 / 16 px bold, body 12
+            ui.register_font(&gpu, &self.mount, derma::MENU_FONT_23, "Roboto-Bold", 23.0);
+            ui.register_font(&gpu, &self.mount, derma::MENU_FONT_16, "Roboto-Bold", 16.0);
+            ui.register_font(&gpu, &self.mount, derma::NAV_FONT, "Roboto-Regular", 12.0);
+            for name in derma::MENU_IMAGES {
+                ui.load_image(&gpu, &self.mount, name);
+            }
             for name in derma::IMAGES {
                 ui.load_image(&gpu, &self.mount, name);
             }
@@ -1143,6 +1152,47 @@ impl App {
         true
     }
 
+    /// The main menu laid out for this frame (fonts by the CSS width breakpoint).
+    fn main_menu_layout(&self, g: &Gfx) -> derma::Layout {
+        let (w, h) = (g.config.width as f32, g.config.height as f32);
+        let font = g.ui.font_metrics(Some(derma::FONT));
+        let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+        let opt_font = if w > 1280.0 {
+            derma::MENU_FONT_23
+        } else {
+            derma::MENU_FONT_16
+        };
+        let opt = g.ui.font_metrics(Some(opt_font));
+        let nav = g.ui.font_metrics(Some(derma::NAV_FONT));
+        let has_image = |name: &str| g.ui.has_image(name);
+        let ctx = derma::Ctx {
+            w,
+            h,
+            cursor: self.cursor,
+            font: &font,
+            bold: &bold,
+            lists: &self.spawnlists,
+            tool: &self.tool,
+            has_image: &has_image,
+        };
+        let mut layout = derma::Layout::default();
+        derma::main_menu(&mut layout, &ctx, true, &self.lang, &opt, opt_font, &nav);
+        layout
+    }
+
+    fn main_menu_click(&mut self) {
+        let Some(g) = self.gfx.as_ref() else { return };
+        let action = self.main_menu_layout(g).hit(self.cursor).cloned();
+        match action {
+            Some(derma::Action::Menu("resume_game")) => {
+                self.main_menu = false;
+                self.set_grab(true);
+            }
+            Some(derma::Action::Menu("quit" | "disconnect")) => std::process::exit(0),
+            _ => {}
+        }
+    }
+
     fn menu_click(&mut self) {
         if self.panel_click() {
             return;
@@ -1182,7 +1232,8 @@ impl App {
                 self.tool = t.to_string();
                 self.console.log(format!("tool {t}"));
             }
-            Some(derma::Action::Property(_) | derma::Action::Nothing) | None => {}
+            Some(derma::Action::Property(_) | derma::Action::Menu(_) | derma::Action::Nothing)
+            | None => {}
         }
     }
 
@@ -2247,6 +2298,10 @@ impl App {
         let lh = g.ui.line_height();
         let mut items = Vec::new();
         let white = [0.92, 0.92, 0.92, 1.0];
+        if self.main_menu {
+            items.extend(self.main_menu_layout(g).items);
+            return items;
+        }
         if self.context_held || self.context.is_some() {
             // contextmenu.lua: the tool's ControlPanel moves into a 320 wide canvas bottom-right
             let font = g.ui.font_metrics(Some(derma::FONT));
@@ -2492,7 +2547,7 @@ impl App {
                 };
                 // HudCrosshair: the weapon script's Crosshairs glyph (Q for every weapon the
                 // loadout has) centred, ClientScheme Normal 255 208 64
-                if p.alive && self.menu.is_none() && !self.context_held {
+                if p.alive && self.menu.is_none() && !self.context_held && !self.main_menu {
                     let cm = g.ui.font_metrics(Some("Crosshairs"));
                     items.push(UiItem::Text {
                         font: Some("Crosshairs".to_string()),
@@ -2958,7 +3013,14 @@ impl ApplicationHandler for App {
                 }
                 if down && !event.repeat {
                     match code {
-                        KeyCode::Escape if self.grabbed => self.set_grab(false),
+                        KeyCode::Escape if self.main_menu => {
+                            self.main_menu = false;
+                            self.set_grab(true);
+                        }
+                        KeyCode::Escape if self.grabbed => {
+                            self.set_grab(false);
+                            self.main_menu = true;
+                        }
                         KeyCode::Escape => el.exit(),
                         KeyCode::Digit1 => self.wsel_slot(0),
                         KeyCode::Digit2 => self.wsel_slot(1),
@@ -3048,6 +3110,12 @@ impl ApplicationHandler for App {
                     .push((name.to_string(), state == ElementState::Pressed));
                 if button == MouseButton::Left && state == ElementState::Released {
                     self.panel_drag = None;
+                }
+                if self.main_menu {
+                    if state == ElementState::Pressed && button == MouseButton::Left {
+                        self.main_menu_click();
+                    }
+                    return;
                 }
                 if self.menu.is_some() {
                     if state == ElementState::Pressed && button == MouseButton::Left {
@@ -3345,6 +3413,7 @@ fn main() -> Result<()> {
         player_body: String::new(),
         panel_text: None,
         grabbed: false,
+        main_menu: false,
         last: Instant::now(),
         acc: 0.0,
         frames: 0,

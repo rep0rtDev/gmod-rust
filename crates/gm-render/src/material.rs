@@ -176,9 +176,15 @@ pub fn load_texture(mount: &Mount, name: &str, max_side: u32) -> Result<Rgba> {
             } else {
                 format!("materials/{base}.png")
             };
-            return match mount.read(&png_path) {
-                Ok(b) => load_png(&b),
-                Err(_) => Err(e.into()),
+            // or a raw path (`html/img/x.png`, `gamemodes/<gm>/logo.png`)
+            let raw = if base.to_ascii_lowercase().ends_with(".png") {
+                mount.read(base).ok()
+            } else {
+                None
+            };
+            return match raw.or_else(|| mount.read(&png_path).ok()) {
+                Some(b) => load_png(&b),
+                None => Err(e.into()),
             };
         }
     };

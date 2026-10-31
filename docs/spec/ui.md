@@ -141,3 +141,25 @@ Everything here is read from the installed client (`garrysmod/lua`, `sourceengin
   icons icon16 (`MenuIcon`). DMenu: `MenuBG`, min width 100, options 22 tall with text inset 32
   (icon at 4), width = widest `32 + text + 30`, hover `MenuBG_Hover`, text Button.Normal 82 /
   hover 46 114 178. Not yet: skins as a `Skin` submenu (we list `skin N` flat), submenu arrows.
+
+## Main menu (`html/menu.html`, `template/main.html`, `css/menu/*.css`, `lua/menu/*.lua`)
+
+- The game's menu is a CEF page; we lay its CSS out natively. `DIV.page` fills the screen
+  above the 50 px NavBar; `DIV.options` at left 50 / top 50, `UL` margin-left 20 padding 2,
+  `LI` padding 0 16 margin-bottom 1: text x = 86. Entries 23 px bold white, letter-spacing -1,
+  text-shadow 2px 2px 1px black, hover #ffa, active #ff5; at <= 1280 px wide 16 px (width 250).
+  Order: gamemode `logo.png` (288x128), blank, [Resume Game, blank when in game], Start New
+  Game, Find Multiplayer Game, blank, Addons, Dupes, Saves, Demos, blank, Options, blank,
+  [Disconnect], Quit; strings from `resource/localization/en/main_menu.properties`.
+- NavBar: bottom 50 px rgba(0,0,0,.5); buttons 40 tall white radius 4, margin-top 5, right 3,
+  padding-left 35, icon at 5,5, span padding 10, text #333 12 px, hover glow; left group
+  (Back to main menu, 5 px in), centre group (Disconnect, Back to Game, favourite) flex-filled
+  with 10 % margins packed to its end, right group (Problems, Kinect, Games, language flag,
+  gamemode icon24 + title). `html/img/*.png` are raw PNG paths (not under materials/).
+- `background.lua`: out of game only, a random `backgrounds/*.jpg` scaled to ScrH (plus the
+  aspect gap), AngleVel -5/30 deg/s, SizeVel 0.3/30, 30 s per image, the outgoing one fades at
+  255/s; `html/img/gradient.png` (512x64) is drawn 1024 x ScrH on the left always.
+- Ours: Escape over the game opens the in-game variant (cursor released), Resume / Back to Game
+  / Escape return, Quit and Disconnect exit the client; the other pages (new game, servers,
+  addons, dupes, saves, demos, options) and the popups are not built yet; fonts are Roboto for
+  Helvetica/Arial.

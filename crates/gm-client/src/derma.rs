@@ -372,6 +372,8 @@ pub enum Action {
     Tool(&'static str),
     /// A `properties.Add` entry of the right-click menu, by its name.
     Property(String),
+    /// A main menu entry (`template/main.html` ids / NavBar buttons).
+    Menu(&'static str),
     Nothing,
 }
 
@@ -1264,4 +1266,219 @@ pub fn context_canvas(
         CATEGORY_HEADER_TEXT,
     );
     (x, y, 320.0, tall - 10.0)
+}
+
+/// Main menu fonts: `DIV.options A` 23 px bold (16 px at <= 1280 wide), NavBar body 12 px.
+pub const MENU_FONT_23: &str = "MenuOptions23";
+pub const MENU_FONT_16: &str = "MenuOptions16";
+pub const NAV_FONT: &str = "MenuNav";
+/// `html/img` and gamemode images the menu draws (raw PNG paths).
+pub const MENU_IMAGES: [&str; 8] = [
+    "html/img/gradient.png",
+    "gamemodes/sandbox/logo.png",
+    "gamemodes/sandbox/icon24.png",
+    "html/img/disconnect.png",
+    "html/img/back_to_game.png",
+    "html/img/error.png",
+    "html/img/games.png",
+    "resource/localization/en.png",
+];
+
+#[allow(clippy::too_many_arguments)]
+fn shadowed(
+    out: &mut Layout,
+    font: &str,
+    fm: &FontMetrics,
+    x: f32,
+    y: f32,
+    h: f32,
+    s: &str,
+    color: [f32; 4],
+    off: f32,
+) {
+    text(
+        out_items(out),
+        font,
+        fm,
+        x + off,
+        y + off,
+        h,
+        s,
+        rgba(0, 0, 0, 255),
+    );
+    text(out_items(out), font, fm, x, y, h, s, color);
+}
+
+fn out_items(out: &mut Layout) -> &mut Vec<UiItem> {
+    &mut out.items
+}
+
+/// `menu.html` + `template/main.html` as the CSS lays them out: the gradient 1024 wide, the
+/// options list (logo, entries 23/16 px bold white with a 2 px shadow, hover #ffa) at
+/// `50 + 20 + 16` from the left and 50 from the top, the 50 px NavBar (black 50 %) with 40 px
+/// white buttons (text #333, icon at 5,5, span padding 10). Backgrounds only out of game.
+#[allow(clippy::too_many_arguments)]
+pub fn main_menu(
+    out: &mut Layout,
+    ctx: &Ctx,
+    in_game: bool,
+    lang: &BTreeMap<String, String>,
+    opt: &FontMetrics,
+    opt_font: &str,
+    nav: &FontMetrics,
+) {
+    let (w, h) = (ctx.w, ctx.h);
+    if (ctx.has_image)("html/img/gradient.png") {
+        image(&mut out.items, "html/img/gradient.png", 0.0, 0.0, 1024.0, h);
+    }
+    let say = |k: &str, d: &str| lang.get(k).cloned().unwrap_or_else(|| d.to_string());
+    let x = 50.0 + 20.0 + 16.0;
+    let mut y = 50.0 + 2.0;
+    let line = (opt.line_height + 1.0).round();
+    let hover = rgba(255, 255, 170, 255);
+    let mut entries: Vec<Option<(&'static str, String)>> = Vec::new();
+    if in_game {
+        entries.push(Some(("resume_game", say("resume_game", "Resume Game"))));
+        entries.push(None);
+    }
+    entries.push(Some(("newgame", say("new_game", "Start New Game"))));
+    entries.push(Some((
+        "servers",
+        say("find_mp_game", "Find Multiplayer Game"),
+    )));
+    entries.push(None);
+    entries.push(Some(("addons", say("addons", "Addons"))));
+    entries.push(Some(("dupes", say("dupes", "Dupes"))));
+    entries.push(Some(("saves", say("saves", "Saves"))));
+    entries.push(Some(("demos", say("demos", "Demos"))));
+    entries.push(None);
+    entries.push(Some(("options", say("options", "Options"))));
+    entries.push(None);
+    if in_game {
+        entries.push(Some(("disconnect", say("disconnect", "Disconnect"))));
+    }
+    entries.push(Some(("quit", say("quit", "Quit"))));
+    if (ctx.has_image)("gamemodes/sandbox/logo.png") {
+        image(
+            &mut out.items,
+            "gamemodes/sandbox/logo.png",
+            x,
+            y,
+            288.0,
+            128.0,
+        );
+    }
+    y += 128.0 + line;
+    for e in entries {
+        if let Some((id, label)) = e {
+            let tw = opt.text_width(&label);
+            let hovered = inside(ctx.cursor, x, y, tw, line);
+            let color = if hovered { hover } else { WHITE };
+            shadowed(out, opt_font, opt, x, y, line, &label, color, 2.0);
+            out.hits.push(Hit {
+                x,
+                y,
+                w: tw,
+                h: line,
+                action: Action::Menu(id),
+            });
+        }
+        y += line;
+    }
+
+    // NavBar
+    let bar_y = h - 50.0;
+    out.items.push(UiItem::Rect {
+        x: 0.0,
+        y: bar_y,
+        w,
+        h: 50.0,
+        color: rgba(0, 0, 0, 128),
+    });
+    let dark = rgba(51, 51, 51, 255);
+    let button = |out: &mut Layout,
+                  right_edge: f32,
+                  label: Option<&str>,
+                  icon: &str,
+                  id: &'static str|
+     -> f32 {
+        let tw = label.map_or(0.0, |l| nav.text_width(l));
+        let bw = if label.is_some() {
+            35.0 + tw + 10.0
+        } else {
+            40.0
+        }
+        .round();
+        let bx = right_edge - bw;
+        let by = bar_y + 5.0;
+        let hovered = inside(ctx.cursor, bx, by, bw, 40.0);
+        out.items.push(UiItem::Rect {
+            x: bx,
+            y: by,
+            w: bw,
+            h: 40.0,
+            color: if hovered {
+                rgba(255, 255, 255, 255)
+            } else {
+                rgba(255, 255, 255, 240)
+            },
+        });
+        if (ctx.has_image)(icon) {
+            let (ix, iy, sz) = if label.is_some() {
+                (bx + 5.0, by + 5.0, 30.0)
+            } else {
+                (bx + 7.0, by + 7.0, 26.0)
+            };
+            image(&mut out.items, icon, ix, iy, sz, sz);
+        }
+        if let Some(l) = label {
+            text(
+                &mut out.items,
+                NAV_FONT,
+                nav,
+                bx + 35.0 + 10.0 - 10.0 + 10.0,
+                by,
+                40.0,
+                l,
+                dark,
+            );
+        }
+        out.hits.push(Hit {
+            x: bx,
+            y: by,
+            w: bw,
+            h: 40.0,
+            action: Action::Menu(id),
+        });
+        bx - 3.0
+    };
+    let mut right = w - 3.0;
+    right = button(
+        out,
+        right,
+        Some("Sandbox"),
+        "gamemodes/sandbox/icon24.png",
+        "gamemodes",
+    );
+    right = button(out, right, None, "resource/localization/en.png", "language");
+    right = button(out, right, None, "html/img/games.png", "games");
+    right = button(out, right, None, "html/img/error.png", "problems");
+    // the centre group fills between the groups with 10 % margins and packs to its end
+    if in_game {
+        let mut c = right - w * 0.1;
+        c = button(
+            out,
+            c,
+            Some(&say("back_to_game", "Back to Game")),
+            "html/img/back_to_game.png",
+            "resume_game",
+        );
+        let _ = button(
+            out,
+            c,
+            Some(&say("disconnect", "Disconnect")),
+            "html/img/disconnect.png",
+            "disconnect",
+        );
+    }
 }
