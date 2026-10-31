@@ -131,6 +131,7 @@ extern "C" {
     );
     fn gmp_set_impact_step(system: *mut JPC_PhysicsSystem, dt: f32);
     fn gmp_apply_impact_offsets(system: *mut JPC_PhysicsSystem);
+    fn gmp_carry_pivot_velocity(system: *mut JPC_PhysicsSystem, id1: u32, id2: u32, dt: f32);
     fn gmp_set_impact_skip(system: *mut JPC_PhysicsSystem, body_id: u32, on: i32);
     fn gmp_set_impact_enabled(system: *mut JPC_PhysicsSystem, enabled: i32);
     fn gmp_take_impacts(system: *mut JPC_PhysicsSystem, out: *mut RawImpact, max: u32) -> u32;
@@ -459,6 +460,7 @@ pub struct World {
     springs: Vec<Spring>,
     pulleys: Vec<Pulley>,
     drags: Vec<Drag>,
+    pivot_joints: Vec<(u32, u32)>,
     held: std::collections::HashSet<u32>,
     /// Bodies with gravity switched off (`set_gravity`), kept weightless after a release.
     no_gravity: std::collections::HashSet<u32>,
@@ -508,6 +510,7 @@ impl World {
             springs: Vec::new(),
             pulleys: Vec::new(),
             drags: Vec::new(),
+            pivot_joints: Vec::new(),
             held: std::collections::HashSet::new(),
             no_gravity: std::collections::HashSet::new(),
             frozen: std::collections::HashSet::new(),
@@ -937,6 +940,9 @@ impl World {
     ) -> Option<ConstraintHandle> {
         let p = to_jolt(point);
         let c = unsafe { gmp_add_point_constraint(self.system.as_raw(), a.0, b.0, p.x, p.y, p.z) };
+        if !c.is_null() {
+            self.pivot_joints.push((a.0, b.0));
+        }
         (!c.is_null()).then_some(ConstraintHandle(c))
     }
 
@@ -1269,6 +1275,9 @@ impl World {
                 ax.z,
             )
         };
+        if !c.is_null() {
+            self.pivot_joints.push((a.0, b.0));
+        }
         (!c.is_null()).then_some(ConstraintHandle(c))
     }
 
@@ -1516,6 +1525,9 @@ impl World {
             self.system
                 .update(self.tick_interval, 1, self.temp, self.jobs);
             gmp_apply_impact_offsets(self.system.as_raw());
+            for &(a, b) in &self.pivot_joints {
+                gmp_carry_pivot_velocity(self.system.as_raw(), a, b, self.tick_interval);
+            }
         }
     }
 

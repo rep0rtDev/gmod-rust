@@ -349,6 +349,8 @@ struct ConstraintSpec {
     #[serde(default)]
     local_b: Option<[f32; 3]>,
     #[serde(default)]
+    axis: Option<[f32; 3]>,
+    #[serde(default)]
     length: f32,
     #[serde(default)]
     rigid: bool,
@@ -1738,6 +1740,18 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
             "ballsocket" => {
                 let pb = sb.position + sb.rotation * Vec3::from(c.local_b.unwrap_or([0.0; 3]));
                 world.ballsocket(a, b, pb).is_some()
+            }
+            "axis" => {
+                // like constraint.Axis: `axis` is a second point in body 1's frame; the hinge
+                // runs from `local_a` through it (default: from body 1's origin to the pivot)
+                let la = Vec3::from(c.local_a.unwrap_or([0.0; 3]));
+                let pa = sa.position + sa.rotation * la;
+                let pb = sb.position + sb.rotation * Vec3::from(c.local_b.unwrap_or([0.0; 3]));
+                let dir = match c.axis {
+                    Some(ax) => sa.rotation * (Vec3::from(ax) - la),
+                    None => pb - pa,
+                };
+                world.hinge(a, b, pa, dir.normalize_or_zero()).is_some()
             }
             "slider" => {
                 let pa = sa.position + sa.rotation * Vec3::from(c.local_a.unwrap_or([0.0; 3]));

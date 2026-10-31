@@ -227,9 +227,9 @@ void *gmp_add_point_constraint(void *system, unsigned int id1, unsigned int id2,
 	if (!a || !b) return nullptr;
 	// Measured: a crate hanging on a ball socket loses energy at a constant 0.197/s whatever the
 	// lever (24.5 / 35.7 / 63 u), speed (45..190 u/s) or amplitude, with air drag disabled;
-	// a free crate or one on a rope does not. Modelled as 0.16/s linear + angular damping on
-	// the jointed bodies (Jolt's own solver loss supplies the rest).
-	const float bsd = weld_env("GMP_BS_DAMP", 0.16f);
+	// a free crate, one on a rope or one on a hinge does not. Modelled as linear + angular
+	// damping of that rate on the jointed bodies.
+	const float bsd = weld_env("GMP_BS_DAMP", 0.197f);
 	for (JPH::Body *bd : { a, b }) {
 		if (bd->IsStatic()) continue;
 		JPH::MotionProperties *mp = bd->GetMotionProperties();
@@ -1170,6 +1170,28 @@ void gmp_set_inertia(void *system, unsigned int body_id, float mass, float ix, f
 		JPH::Vec3 after = motion->GetInverseInertiaDiagonal();
 		fprintf(stderr, "inertia body %u mass %.3f jolt I=(%.4f %.4f %.4f) phy I=(%.4f %.4f %.4f) now I=(%.4f %.4f %.4f) invmass %.5f\n", body_id, (double)mass, 1.0 / before.GetX(), 1.0 / before.GetY(), 1.0 / before.GetZ(), (double)ix, (double)iy, (double)iz, 1.0 / after.GetX(), 1.0 / after.GetY(), 1.0 / after.GetZ(), (double)motion->GetInverseMass());
 	}
+}
+
+// A body hanging on a point / hinge joint from a non-moving body: Jolt integrates its position
+// with the start-of-step tangential velocity and the next velocity solve projects away the radial
+// part, losing (w*dt)^2 of the kinetic energy per step (0.03-0.06/s on a crate pendulum, where the
+// game is lossless). Carry the velocity along with the body's rotation instead, like the lever it
+// belongs to.
+void gmp_carry_pivot_velocity(void *system, unsigned int id1, unsigned int id2, float dt) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyID ids[2] = { JPH::BodyID(id1), JPH::BodyID(id2) };
+	JPH::BodyLockMultiWrite lock(sys->GetBodyLockInterface(), ids, 2);
+	JPH::Body *a = lock.GetBody(0), *b = lock.GetBody(1);
+	if (!a || !b) return;
+	bool da = a->GetMotionType() == JPH::EMotionType::Dynamic, db = b->GetMotionType() == JPH::EMotionType::Dynamic;
+	if (da == db) return;
+	JPH::Body *bd = da ? a : b;
+	if (!bd->IsActive()) return;
+	JPH::Vec3 w = bd->GetAngularVelocity();
+	float wl = w.Length();
+	if (wl < 1.0e-6f) return;
+	JPH::Quat q = JPH::Quat::sRotation(w / wl, wl * dt);
+	bd->GetMotionProperties()->SetLinearVelocityClamped(q * bd->GetLinearVelocity());
 }
 
 void gmp_apply_impact_offsets(void *system) {

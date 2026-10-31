@@ -2875,6 +2875,18 @@ ang = 5.0
 contact = 1
 
 [[harness]]
+name = "constraint_axis_hang_nodrag"
+scenario = "constraint/axis_hang_nodrag"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
 name = "constraint_ballsocket_nocollide"
 scenario = "constraint/ballsocket_nocollide"
 compare = "rigid"
