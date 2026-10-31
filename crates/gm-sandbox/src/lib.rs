@@ -913,10 +913,8 @@ pub const SERVER_TICK: f32 = 0.015;
 pub const TORQUE_ACCEL: f32 = 1.0;
 /// Axis friction: a motor torque up to this (per unit of the wheel's `friction`) does not move
 /// a resting wheel (torque 300 against friction 1 measured still); while driving the loss is
-/// `WHEEL_FRICTION_LOSS` of the motor torque capped here (friction 1 against 0: 1000 → ~900 deg/s
-/// at 1.2 s instead of ~950, 3000 → 2947 instead of 3116, 10000 → 9690 deg/s²).
+/// this less 0.027 of the torque (272 / 217 / 30 deg/s² measured at torque 1000 / 3000 / 10000).
 pub const WHEEL_FRICTION_TORQUE: f32 = 300.0;
-pub const WHEEL_FRICTION_LOSS: f32 = 0.05;
 /// The spin vphysics caps a driven wheel at (deg/s).
 pub const MAX_WHEEL_SPIN: f32 = 7200.0;
 /// `util.BlastDamage` radius of the dynamite stool and the impulse rule of a blast on a body:
@@ -944,7 +942,9 @@ pub fn wheel_spin_step(spin: f32, torque: f32, scale: f32, friction: f32, dt: f3
     if spin.abs() < 60.0 && motor <= WHEEL_FRICTION_TORQUE * friction {
         return 0.0;
     }
-    let loss = (WHEEL_FRICTION_LOSS * motor).min(WHEEL_FRICTION_TORQUE * friction) * friction;
+    // measured axis friction while driving: 272 deg/s^2 at torque 1000, 217 at 3000, ~30 at
+    // 10000 - a loss shrinking with the torque, (300 - 0.027 torque) per unit of friction
+    let loss = (WHEEL_FRICTION_TORQUE - 0.027 * torque * scale.abs()).max(0.0) * friction;
     // released: the axis friction brakes it on top of the drag (fitted over the three
     // released traces: decel = 0.316 |spin| + ~120 * friction deg/s^2)
     let drive = if scale == 0.0 {
@@ -953,7 +953,7 @@ pub fn wheel_spin_step(spin: f32, torque: f32, scale: f32, friction: f32, dt: f3
         (motor - loss).max(0.0) * scale.signum()
     };
     let s = spin + drive * dt;
-    let s = s * (1.0 - 0.12 * dt);
+    let s = s * (1.0 - 0.04 * dt);
     s.clamp(-MAX_WHEEL_SPIN, MAX_WHEEL_SPIN)
 }
 
