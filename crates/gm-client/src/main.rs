@@ -646,6 +646,13 @@ impl Console {
 }
 
 struct App {
+    /// HL2 weapon selection (`hud_fastswitch 0`): the highlighted weapon as an index into the
+    /// server's class list while the bucket menu is open.
+    wsel: Option<u8>,
+    epoch: Instant,
+    /// `GM:AddHint` timers: hint name and when it fires; `hints_done` is `ProcessedHints`.
+    hints: Vec<(&'static str, Instant)>,
+    hints_done: Vec<&'static str>,
     /// `notification.AddLegacy` panels (sandbox `AddNotify`).
     notices: std::cell::RefCell<Notices>,
     /// Pickup history (`cl_hudpickup.lua`) and the weapon bits already announced.
@@ -787,6 +794,16 @@ impl App {
             for n in ["generic", "error", "undo", "hint", "cleanup"] {
                 ui.load_image(&gpu, &self.mount, &format!("vgui/notices/{n}"));
             }
+            // HL2 weapon selection and crosshair: halflife2.ttf glyph fonts, Verdana labels
+            ui.register_font(&gpu, &self.mount, "WeaponIcons", "HalfLife2", 64.0 * fs);
+            ui.register_font(&gpu, &self.mount, "Crosshairs", "HalfLife2", 40.0 * fs);
+            for (name, tall) in [("HudSelectionNumbers", 11.0), ("HudSelectionText", 8.0)] {
+                if !ui.register_font(&gpu, &self.mount, name, "Verdana", tall * fs) {
+                    ui.register_font(&gpu, &self.mount, name, "Roboto-Bold", tall * fs);
+                }
+            }
+            ui.load_image(&gpu, &self.mount, "weapons/swep");
+            ui.load_image(&gpu, &self.mount, "gui/speech_lid");
             for (name, tall) in [
                 ("TargetID", 12.0),
                 ("TargetIDSmall", 11.0),
@@ -860,6 +877,9 @@ impl App {
         if self.menu.is_some() || self.console.open {
             return;
         }
+        // cl_spawnmenu.lua OnSpawnMenuOpen
+        self.add_hint("OpeningContext", 20);
+        self.add_hint("EditingSpawnlists", 5);
         let lists = &self.sim.client.world.spawn_lists;
         let seen = lists.iter().map(|(_, m)| m.len() + 1).sum::<usize>();
         if self.spawn_models.is_empty() || seen != self.spawn_lists_seen {
@@ -1186,36 +1206,274 @@ impl App {
     /// definitions' `slot` / `slot_pos`). The first owned weapon of the slot, or the one after
     /// the current when it is in the slot (wrapping); weapons without a viewmodel here are
     /// skipped. Applied at once (the game's selection menu / `hud_fastswitch` is not modelled).
-    fn select_slot(&mut self, slot: u8) {
+    /// Local weapon index (`WEAPONS`, then the scripted definitions) of an index into the
+    /// server's class list.
+    fn to_local(&self, i: u8) -> Option<u8> {
+        let defs = &self.sim.client.world.weapon_defs;
+        let classes = gm_net::msg::weapon_classes(defs);
+        let class = classes.get(i as usize)?;
+        if let Some(w) = WEAPONS.iter().position(|w| w.class == class) {
+            return Some(w as u8);
+        }
+        defs.iter()
+            .position(|d| d.class == *class)
+            .map(|p| (gm_server::LOADOUT.len() + p) as u8)
+    }
+
+    /// The owned weapons of every bucket in the game's menu order (class indices).
+    fn buckets(&self) -> Vec<Vec<u8>> {
+        let Some(snap) = self.local_snap() else {
+            return Vec::new();
+        };
+        let defs = &self.sim.client.world.weapon_defs;
+        let classes = gm_net::msg::weapon_classes(defs);
+        (0..6u8)
+            .map(|slot| {
+                gm_server::slot_order(&classes, snap.weapons, slot, defs)
+                    .into_iter()
+                    .filter(|&i| self.to_local(i).is_some())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Slot key with `hud_fastswitch 0`: the bucket menu opens on (or moves to) the first
+    /// weapon of the bucket, or the one after the highlighted/active weapon when it is in it.
+    fn wsel_slot(&mut self, slot: u8) {
+        let Some(active) = self.local_snap().map(|p| p.active) else {
+            return;
+        };
+        let order = self.buckets().swap_remove(slot as usize);
+        if order.is_empty() {
+            self.sounds
+                .emit(&self.mount, "Player.DenyWeaponSelection", None);
+            return;
+        }
+        let cur = self.wsel.unwrap_or(active);
+        let next = match order.iter().position(|&i| i == cur) {
+            Some(k) => order[(k + 1) % order.len()],
+            None => order[0],
+        };
+        self.wsel = Some(next);
+        self.sounds
+            .emit(&self.mount, "Player.WeaponSelectionMoveSlot", None);
+    }
+
+    /// `invnext` / `invprev`: the next or previous owned weapon across the buckets.
+    fn wsel_step(&mut self, dir: i32) {
+        let Some(active) = self.local_snap().map(|p| p.active) else {
+            return;
+        };
+        let all: Vec<u8> = self.buckets().into_iter().flatten().collect();
+        if all.is_empty() {
+            return;
+        }
+        let cur = self.wsel.unwrap_or(active);
+        let k = all
+            .iter()
+            .position(|&i| i == cur)
+            .map(|k| k as i32)
+            .unwrap_or(-dir.max(0));
+        let n = all.len() as i32;
+        self.wsel = Some(all[((k + dir).rem_euclid(n)) as usize]);
+        self.sounds
+            .emit(&self.mount, "Player.WeaponSelectionMoveSlot", None);
+    }
+
+    /// `GM:AddHint`: one timer per hint name, once per session.
+    fn add_hint(&mut self, name: &'static str, delay: u64) {
+        if self.hints_done.contains(&name) {
+            return;
+        }
+        self.hints_done.push(name);
+        self.hints
+            .push((name, Instant::now() + std::time::Duration::from_secs(delay)));
+    }
+
+    /// Fires due hints: `Hint_<name>` with `%+bind%` replaced by the key, NOTIFY_HINT for
+    /// 20 s and a water drip.
+    fn tick_hints(&mut self) {
+        let now = Instant::now();
+        let mut due = Vec::new();
+        self.hints.retain(|(name, at)| {
+            if *at <= now {
+                due.push(*name);
+                false
+            } else {
+                true
+            }
+        });
+        for name in due {
+            let text = match name {
+                "OpeningMenu" => "Press and hold 'Q' to open the SPAWN MENU",
+                "OpeningContext" => "Press and hold 'C' to open the CONTEXT MENU",
+                "ContextClick" => {
+                    "You can also use TOOLS by clicking on the screen with the CONTEXT MENU open"
+                }
+                "Annoy1" => "You can turn these hints off in the CONTEXT MENU",
+                "Annoy2" => {
+                    "Hold 'C', click on DRAWING at the top of the screen, and deselect HINTS"
+                }
+                "PhysgunFreeze" => "Right click to freeze an object or a ragdoll's limb",
+                "PhysgunUse" => "You can rotate objects with the PHYSGUN by holding down 'E'",
+                "EditingSpawnlists" => {
+                    "You can edit your spawnlists by drag and dropping icons around and in between spawnlists!"
+                }
+                _ => continue,
+            };
+            self.notify(text.to_string(), NotifyKind::Hint, 20.0);
+            let n = 1 + (now.elapsed().subsec_nanos() % 4);
+            let wave = format!("ambient/water/drip{n}.wav");
+            self.sounds.play_wave(&self.mount, &wave, 1.0);
+        }
+    }
+
+    /// `GM:AddNotify` -> `notification.AddLegacy`.
+    fn notify(&mut self, text: String, kind: NotifyKind, length: f32) {
+        let fm = self
+            .gfx
+            .as_ref()
+            .map(|g| g.ui.font_metrics(Some("GModNotify")));
+        let (w, h) = self
+            .gfx
+            .as_ref()
+            .map(|g| (g.config.width as f32, g.config.height as f32))
+            .unwrap_or((640.0, 480.0));
+        self.notices
+            .borrow_mut()
+            .add(text, kind, length, fm.as_ref(), w, h);
+    }
+
+    /// HudWeaponSelection (hudlayout.res, bucket layout): the open bucket as a column of
+    /// 112x80 boxes with the WeaponIcons glyph and the highlighted weapon's name at 64, the
+    /// other buckets as 32x32 boxes, numbers at 4,4, gap 8, all on the 640x480 layout scaled
+    /// by the screen height; scripted weapons draw `weapons/swep` and the info bubble.
+    fn draw_weapon_select(&self, items: &mut Vec<UiItem>, _w: f32, h: f32, ui: &UiRenderer) {
+        let Some(sel) = self.wsel else { return };
         let Some(snap) = self.local_snap() else {
             return;
         };
-        let (owned, active) = (snap.weapons, snap.active);
-        let defs = self.sim.client.world.weapon_defs.clone();
-        let classes = gm_net::msg::weapon_classes(&defs);
-        let order = gm_server::slot_order(&classes, owned, slot, &defs);
-        let to_local = |i: u8| -> Option<u8> {
-            let class = classes.get(i as usize)?;
-            if let Some(w) = WEAPONS.iter().position(|w| w.class == class) {
-                return Some(w as u8);
-            }
-            defs.iter()
-                .position(|d| d.class == *class)
-                .map(|p| (gm_server::LOADOUT.len() + p) as u8)
-        };
-        let usable: Vec<(u8, u8)> = order
-            .iter()
-            .filter_map(|&i| to_local(i).map(|l| (i, l)))
-            .collect();
-        if usable.is_empty() {
+        if !snap.alive {
             return;
         }
-        let at = usable.iter().position(|(i, _)| *i == active);
-        let next = match at {
-            Some(k) => usable[(k + 1) % usable.len()].1,
-            None => usable[0].1,
-        };
-        self.select_weapon(next);
+        let s = h / 480.0;
+        let classes = gm_net::msg::weapon_classes(&self.sim.client.world.weapon_defs);
+        let buckets = self.buckets();
+        let fg = [1.0, 220.0 / 255.0, 0.0, 1.0];
+        let dim = [1.0, 220.0 / 255.0, 0.0, 0.5];
+        let box_bg = [0.0, 0.0, 0.0, 80.0 / 255.0];
+        let (small, large_w, large_h, gap) = (32.0 * s, 112.0 * s, 80.0 * s, 8.0 * s);
+        let icons = ui.font_metrics(Some("WeaponIcons"));
+        let numbers = ui.font_metrics(Some("HudSelectionNumbers"));
+        let text_m = ui.font_metrics(Some("HudSelectionText"));
+        let mut x = 0.0;
+        let y0 = 16.0 * s;
+        let t = self.epoch.elapsed().as_secs_f32();
+        for (slot, list) in buckets.iter().enumerate() {
+            if list.is_empty() {
+                continue;
+            }
+            let open = list.contains(&sel);
+            let wide = if open { large_w } else { small };
+            let mut y = y0;
+            let rows = if open { list.len() } else { 1 };
+            for (row, &i) in list.iter().enumerate().take(rows) {
+                let tall = if open { large_h } else { small };
+                items.push(UiItem::Rect {
+                    x,
+                    y,
+                    w: wide,
+                    h: tall,
+                    color: box_bg,
+                });
+                if row == 0 {
+                    items.push(UiItem::Text {
+                        font: Some("HudSelectionNumbers".to_string()),
+                        x: x + 4.0 * s,
+                        y: y + 4.0 * s,
+                        text: (slot + 1).to_string(),
+                        color: fg,
+                    });
+                }
+                if open {
+                    let class = classes.get(i as usize).map(String::as_str).unwrap_or("");
+                    let color = if i == sel { fg } else { dim };
+                    if let Some(glyph) = weapon_icon(class) {
+                        let gw = icons.text_width(glyph);
+                        items.push(UiItem::Text {
+                            font: Some("WeaponIcons".to_string()),
+                            x: x + (wide - gw) / 2.0,
+                            y: y + (64.0 * s - icons.line_height) / 2.0,
+                            text: glyph.to_string(),
+                            color,
+                        });
+                    } else {
+                        // weapon_base DrawWeaponSelection: WepSelectIcon inset 10, bouncing
+                        let fsin = (t * 10.0).sin() * 5.0;
+                        let iw = wide - 20.0;
+                        items.push(UiItem::Image {
+                            x: x + 10.0 + fsin,
+                            y: y + 10.0 - fsin,
+                            w: iw - fsin * 2.0,
+                            h: iw / 2.0 + fsin,
+                            material: "weapons/swep".to_string(),
+                            color: [1.0, 1.0, 1.0, color[3]],
+                            rot: 0,
+                        });
+                        if i == sel {
+                            // PrintWeaponInfo: speech bubble lid and the Author line
+                            let (bx, by) = (x + iw + 20.0 + 10.0, y + tall * 0.95);
+                            let grey = [60.0 / 255.0, 60.0 / 255.0, 60.0 / 255.0, 1.0];
+                            items.push(UiItem::Image {
+                                x: bx,
+                                y: by - 64.0 - 5.0,
+                                w: 128.0,
+                                h: 64.0,
+                                material: "gui/speech_lid".to_string(),
+                                color: grey,
+                                rot: 0,
+                            });
+                            items.push(UiItem::Rect {
+                                x: bx - 5.0,
+                                y: by - 5.0,
+                                w: 260.0,
+                                h: text_m.line_height + 18.0,
+                                color: grey,
+                            });
+                            items.push(UiItem::Text {
+                                font: Some("HudSelectionText".to_string()),
+                                x: bx + 5.0,
+                                y: by + 5.0,
+                                text: "Author".to_string(),
+                                color: [230.0 / 255.0, 230.0 / 255.0, 230.0 / 255.0, 1.0],
+                            });
+                            items.push(UiItem::Text {
+                                font: Some("HudSelectionText".to_string()),
+                                x: bx + 5.0 + text_m.text_width("Author\t"),
+                                y: by + 5.0,
+                                text: "Facepunch".to_string(),
+                                color: [150.0 / 255.0, 150.0 / 255.0, 150.0 / 255.0, 1.0],
+                            });
+                        }
+                    }
+                    if i == sel {
+                        let name =
+                            weapon_select_name(class, self.to_local(i).and_then(|l| self.vm_of(l)));
+                        let tw = text_m.text_width(&name);
+                        items.push(UiItem::Text {
+                            font: Some("HudSelectionText".to_string()),
+                            x: x + (wide - tw) / 2.0,
+                            y: y + 64.0 * s,
+                            text: name,
+                            color: fg,
+                        });
+                    }
+                }
+                y += tall + gap;
+            }
+            x += wide + gap;
+        }
+        let _ = numbers;
     }
 
     fn select_weapon(&mut self, weapon: u8) {
@@ -1356,6 +1614,7 @@ impl App {
             }
             {
                 // HUDWeaponPickedUp: every weapon bit that appeared while alive
+                self.tick_hints();
                 let me = self.sim.client.player_id;
                 if let Some(p) = self
                     .sim
@@ -1388,23 +1647,13 @@ impl App {
                     self.prev_weapons = Some(p.weapons);
                 }
             }
-            for e in self.sim.client.events.drain(..) {
+            let events = std::mem::take(&mut self.sim.client.events);
+            for e in events {
                 if let Some(d) = DeathNotice::parse(&e, &self.sim.client.world.players) {
                     self.deaths.push(d);
                 }
                 if let Some((text, kind, length)) = Notices::legacy(&e) {
-                    let fm = self
-                        .gfx
-                        .as_ref()
-                        .map(|g| g.ui.font_metrics(Some("GModNotify")));
-                    let (w, h) = self
-                        .gfx
-                        .as_ref()
-                        .map(|g| (g.config.width as f32, g.config.height as f32))
-                        .unwrap_or((640.0, 480.0));
-                    self.notices
-                        .borrow_mut()
-                        .add(text, kind, length, fm.as_ref(), w, h);
+                    self.notify(text, kind, length);
                 }
                 println!("{e}");
                 self.console.log(e);
@@ -2320,6 +2569,18 @@ impl App {
                         color: fg,
                     });
                 };
+                // HudCrosshair: the weapon script's Crosshairs glyph (Q for every weapon the
+                // loadout has) centred, ClientScheme Normal 255 208 64
+                if p.alive && self.menu.is_none() && !self.context_held {
+                    let cm = g.ui.font_metrics(Some("Crosshairs"));
+                    items.push(UiItem::Text {
+                        font: Some("Crosshairs".to_string()),
+                        x: w / 2.0 - cm.text_width("Q") / 2.0,
+                        y: h / 2.0 - cm.line_height / 2.0,
+                        text: "Q".to_string(),
+                        color: [1.0, 208.0 / 255.0, 64.0 / 255.0, 1.0],
+                    });
+                }
                 panel(&mut items, 16.0 * s, 102.0 * s, "HEALTH");
                 items.push(UiItem::Text {
                     font: numbers.clone(),
@@ -2341,6 +2602,7 @@ impl App {
                 // PaintNotes -> notification Think: spring the panels to the anchor at 80 %
                 // height, charge left 4 % at 0.7 s left, leave right at 0.2 s
                 self.notices.borrow_mut().draw(&mut items, w, h, &g.ui);
+                self.draw_weapon_select(&mut items, w, h, &g.ui);
                 // HUDDrawPickupHistory: notices slide in from the right edge with their alpha,
                 // corner8 border in the pickup colour, grey body, DermaDefaultBold text
                 {
@@ -2777,17 +3039,19 @@ impl ApplicationHandler for App {
                     match code {
                         KeyCode::Escape if self.grabbed => self.set_grab(false),
                         KeyCode::Escape => el.exit(),
-                        KeyCode::Digit1 => self.select_slot(0),
-                        KeyCode::Digit2 => self.select_slot(1),
-                        KeyCode::Digit3 => self.select_slot(2),
-                        KeyCode::Digit4 => self.select_slot(3),
-                        KeyCode::Digit5 => self.select_slot(4),
-                        KeyCode::Digit6 => self.select_slot(5),
+                        KeyCode::Digit1 => self.wsel_slot(0),
+                        KeyCode::Digit2 => self.wsel_slot(1),
+                        KeyCode::Digit3 => self.wsel_slot(2),
+                        KeyCode::Digit4 => self.wsel_slot(3),
+                        KeyCode::Digit5 => self.wsel_slot(4),
+                        KeyCode::Digit6 => self.wsel_slot(5),
                         KeyCode::KeyQ => self.open_menu(),
                         KeyCode::KeyC => {
                             if self.menu.is_none() && !self.context_held {
                                 self.context_held = true;
                                 self.set_grab(false);
+                                // cl_spawnmenu.lua OnContextMenuOpen
+                                self.add_hint("ContextClick", 20);
                             }
                         }
                         KeyCode::KeyZ => self.sim.client.command(Command::Undo),
@@ -2831,12 +3095,19 @@ impl ApplicationHandler for App {
                 self.panel_drag_move();
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                let lines = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 16.0,
+                };
                 if let Some(menu) = &mut self.menu {
-                    let lines = match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_, y) => y,
-                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 16.0,
-                    };
                     menu.scroll = (menu.scroll as f32 - lines * 3.0).max(0.0) as usize;
+                } else if !self.console.open && !self.context_held && self.grabbed {
+                    // invprev / invnext walk the buckets in order
+                    if lines > 0.0 {
+                        self.wsel_step(-1);
+                    } else if lines < 0.0 {
+                        self.wsel_step(1);
+                    }
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -2884,6 +3155,19 @@ impl ApplicationHandler for App {
                 if !self.grabbed && state == ElementState::Pressed {
                     self.set_grab(true);
                     return;
+                }
+                if let Some(i) = self.wsel {
+                    // +attack confirms the highlighted weapon and is swallowed
+                    if button == MouseButton::Left {
+                        if state == ElementState::Pressed {
+                            self.wsel = None;
+                            if let Some(l) = self.to_local(i) {
+                                self.select_weapon(l);
+                            }
+                            self.sounds.emit(&self.mount, "Player.WeaponSelected", None);
+                        }
+                        return;
+                    }
                 }
                 let b = match button {
                     MouseButton::Left => 0,
@@ -3085,6 +3369,18 @@ fn main() -> Result<()> {
     };
     let mut app = App {
         notices: std::cell::RefCell::new(Notices::default()),
+        wsel: None,
+        epoch: Instant::now(),
+        // cl_hints.lua: GM:AddHint( "OpeningMenu", 30 ), Annoy1 5, Annoy2 7
+        hints: vec![
+            (
+                "OpeningMenu",
+                Instant::now() + std::time::Duration::from_secs(30),
+            ),
+            ("Annoy1", Instant::now() + std::time::Duration::from_secs(5)),
+            ("Annoy2", Instant::now() + std::time::Duration::from_secs(7)),
+        ],
+        hints_done: vec!["OpeningMenu", "Annoy1", "Annoy2"],
         pickups: std::cell::RefCell::new(PickupHistory::default()),
         prev_weapons: None,
         deaths: Vec::new(),
@@ -3460,6 +3756,7 @@ impl PickupHistory {
 #[derive(Clone, Copy)]
 enum NotifyKind {
     Error,
+    Hint,
     Undo,
     Cleanup,
 }
@@ -3468,6 +3765,7 @@ impl NotifyKind {
     fn material(self) -> &'static str {
         match self {
             Self::Error => "vgui/notices/error",
+            Self::Hint => "vgui/notices/hint",
             Self::Undo => "vgui/notices/undo",
             Self::Cleanup => "vgui/notices/cleanup",
         }
@@ -3637,4 +3935,41 @@ impl Notices {
             true
         });
     }
+}
+
+/// WeaponIcons glyph of a loadout weapon (scripts/weapon_*.txt TextureData "weapon").
+fn weapon_icon(class: &str) -> Option<&'static str> {
+    Some(match class {
+        "weapon_crowbar" => "c",
+        "weapon_physcannon" | "weapon_physgun" => "m",
+        "weapon_pistol" => "d",
+        "weapon_357" => "e",
+        "weapon_smg1" => "a",
+        "weapon_ar2" => "l",
+        "weapon_shotgun" => "b",
+        "weapon_crossbow" => "g",
+        "weapon_frag" => "k",
+        "weapon_rpg" => "i",
+        _ => return None,
+    })
+}
+
+/// The selection label: the weapon script's printname through the game's hl2_english /
+/// garrysmod localisation, else the scripted weapon's PrintName.
+fn weapon_select_name(class: &str, vm: Option<&Viewmodel>) -> String {
+    match class {
+        "weapon_crowbar" => "CROWBAR",
+        "weapon_physcannon" => "GRAVITY GUN",
+        "weapon_physgun" => "Physics Gun",
+        "weapon_pistol" => "9MM PISTOL",
+        "weapon_357" => ".357 MAGNUM",
+        "weapon_smg1" => "SMG",
+        "weapon_ar2" => "PULSE-RIFLE",
+        "weapon_shotgun" => "SHOTGUN",
+        "weapon_crossbow" => "CROSSBOW",
+        "weapon_frag" => "GRENADE",
+        "weapon_rpg" => "RPG",
+        _ => return vm.map(|v| v.name.to_string()).unwrap_or_default(),
+    }
+    .to_string()
 }

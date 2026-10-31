@@ -128,6 +128,21 @@ impl Sounds {
     }
 
     /// `emit` with a factor on the script's volume (a prop impact scales by its speed).
+    /// `surface.PlaySound`: a wave by path at the given volume, not positioned.
+    pub fn play_wave(&mut self, mount: &gm_content::Mount, wave: &str, volume: f32) -> bool {
+        let Some(pcm) = self.wave(mount, wave) else {
+            return false;
+        };
+        self.mixer.play(Play {
+            pcm,
+            volume,
+            pitch: 100.0,
+            position: None,
+            level: 75 as _,
+        });
+        true
+    }
+
     pub fn emit_scaled(
         &mut self,
         mount: &gm_content::Mount,
