@@ -350,7 +350,7 @@ public:
 	std::unordered_map<JPH::uint64, std::vector<size_t>> contact_points; // pair -> hull vertex indices that already impacted
 	// resting contact anchors: a body pushed while at rest keeps its tangential velocity in the
 	// push step (no friction) and is caught at its leading edge the step after
-	struct RestState { float vt_prev = 0.0f; float vn_in = 0.0f; int phase = 0; int landed_tick = -1; };
+	struct RestState { float vt_prev = 0.0f; float vn_in = 0.0f; int phase = 0; int landed_tick = -1; float land_vn = 0.0f; };
 	std::unordered_map<JPH::uint64, RestState> rest;
 	// the game integrates up to the moment of impact with the old velocity and the rest of the
 	// step with the new one; Jolt integrates the whole step with the new one, so after the step
@@ -501,7 +501,20 @@ public:
 			if (distinct) touch.push_back(&pt);
 		}
 		int touching = (int)touch.size();
-		if (touching >= 3) {
+		// a landing still in progress (vertex impacts last step) whose touching points keep
+		// arriving fast is the next impact, not a rest: the upright drum's -x rim a tick after
+		// its +x rim (`device_dynamite_push`: +24.6 / +54.5 u/s and +107 deg/s in the game)
+		bool arriving = false;
+		{
+			JPH::uint64 key0 = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
+			auto it = rest.find(key0);
+			// only a body still turning from its first impact (a shot resting drum keeps the
+			// resting rules: `shoot_prop_*_drum`)
+			const JPH::Body &dyn0 = b1.IsDynamic() ? b1 : b2;
+			if (it != rest.end() && it->second.phase == 3 && it->second.landed_tick == tick - 1 && it->second.land_vn > 2.0f && dyn0.GetAngularVelocity().Length() > 0.5f)
+				for (const Pt *t : touch) if ((point_velocity(b1, t->p) - point_velocity(b2, t->p)).Dot(n) < -0.3f) arriving = true;
+		}
+		if (touching >= 3 && !arriving) {
 			// resting contact anchors (`phys_push_drum_*`, `shoot_prop_*_drum`): a sliding resting
 			// face is held by its leading bottom edge - the impulse that stops that edge's
 			// tangential and normal velocity, its tangential part Coulomb-capped by
@@ -576,6 +589,7 @@ public:
 		}
 		const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
 		JPH::Vec3 lv0 = dyn.GetLinearVelocity(), av0 = dyn.GetAngularVelocity();
+		float approach0 = b1.IsDynamic() ? -lv0.Dot(n) : lv0.Dot(n); // the body's normal speed into the surface before this step's impacts
 		float t_impact = -1.0f;
 		bool face_done = false;
 		float e_eff = elasticity;
@@ -670,6 +684,8 @@ public:
 		const float tie_eps = 0.0005f;
 		JPH::uint64 pair_key = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
 		std::vector<size_t> &cps = contact_points[pair_key];
+		// the second step of a landing takes the vertex chain (the antipode), not a face
+		bool landing_in_progress = rest[pair_key].phase == 3 && rest[pair_key].landed_tick == tick - 1 && rest[pair_key].land_vn > 2.0f;
 		rest[pair_key].phase = 3; // landing in progress: the resting branch must not read it as a push
 		if (verts_of_b2_used) cps.clear();
 		for (int round = 0; round < 8; ++round) {
@@ -679,7 +695,7 @@ public:
 			// direction (Gauss-Seidel, accumulated impulses never pull). The game's flat crate
 			// at 653 u/s bounces 98 u/s with its yaw spin 148 -> 0 deg/s (`phys_spin_crate_z200`);
 			// the vertex chain gave no bounce and a 211/169 deg/s tumble
-			if (round == 0) {
+			if (round == 0 && !landing_in_progress) {
 				std::vector<Pt *> face;
 				float fastest = 0.0f, t_first = step_dt;
 				for (Pt &pt : pts) {
@@ -837,8 +853,12 @@ public:
 				if (t_impact >= 0.0f && pt.d > 0.0f && pt.d > -vn * (step_dt - t_impact)) continue;
 				float t = std::max(pt.d, 0.0f) / -vn;
 				// ties: the game took the +x corner of the crate and the +x rim vertex of the barrel
+				// vertices already through the plane all reach it at t = 0: the deepest is the
+				// closest feature (the landed drum's -x rim, not a side vertex), +x only on equal depth
 				bool better = pick == nullptr || t < best_t - tie_eps * 0.01f ||
-					(std::fabs(t - best_t) <= tie_eps * 0.01f && pt.p.GetX() > pick->p.GetX());
+					(std::fabs(t - best_t) <= tie_eps * 0.01f &&
+					 (landing_in_progress ? (pt.d < pick->d - 1e-5f || (std::fabs(pt.d - pick->d) <= 1e-5f && pt.p.GetX() > pick->p.GetX()))
+					                      : pt.p.GetX() > pick->p.GetX()));
 				if (better) { pick = &pt; best_t = t; }
 			}
 			if (pick == nullptr) break;
@@ -907,6 +927,8 @@ public:
 				}
 			}
 			if (std::find(cps.begin(), cps.end(), pick->index) == cps.end()) cps.push_back(pick->index);
+			rest[pair_key].landed_tick = tick; // a vertex impact is a landing step too
+			rest[pair_key].land_vn = approach0;
 			if (debug) {
 				const JPH::Body &db = b1.IsDynamic() ? b1 : b2;
 				JPH::Vec3 r = JPH::Vec3(pick->p - db.GetCenterOfMassPosition());
