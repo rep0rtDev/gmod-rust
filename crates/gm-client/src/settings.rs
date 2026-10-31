@@ -56,6 +56,8 @@ pub struct Settings {
     pub mat_queue_mode: i32,
     pub mat_bloomscale: bool,
     pub mat_monitorgamma: f32,
+    /// `con_enable` (Keyboard - Advanced: "Enable developer console").
+    pub con_enable: bool,
     pub width: u32,
     pub height: u32,
     pub fullscreen: bool,
@@ -103,6 +105,7 @@ impl Default for Settings {
             mat_queue_mode: -1,
             mat_bloomscale: true,
             mat_monitorgamma: 2.2,
+            con_enable: true,
             width: 1280,
             height: 720,
             fullscreen: false,
@@ -358,6 +361,7 @@ impl Settings {
         self.mat_queue_mode = (f("mat_queue_mode", self.mat_queue_mode as f32) as i32).clamp(-1, 2);
         self.mat_bloomscale = b("mat_bloomscale", self.mat_bloomscale);
         self.mat_monitorgamma = f("mat_monitorgamma", self.mat_monitorgamma).clamp(1.6, 2.6);
+        self.con_enable = b("con_enable", self.con_enable);
         self.width = f("mat_setvideomode_w", self.width as f32).max(320.0) as u32;
         self.height = f("mat_setvideomode_h", self.height as f32).max(240.0) as u32;
         self.fullscreen = b("fullscreen", self.fullscreen);
@@ -447,6 +451,7 @@ impl Settings {
             ("mat_queue_mode", format!("{}", self.mat_queue_mode)),
             ("mat_bloomscale", on(self.mat_bloomscale).to_string()),
             ("mat_monitorgamma", format!("{}", self.mat_monitorgamma)),
+            ("con_enable", on(self.con_enable).to_string()),
             ("mat_setvideomode_w", format!("{}", self.width)),
             ("mat_setvideomode_h", format!("{}", self.height)),
             ("fullscreen", on(self.fullscreen).to_string()),

@@ -72,6 +72,8 @@ pub enum OptAction {
     /// OK / Cancel of the open sub-dialog (Advanced video, Gamma).
     SubOk,
     SubCancel,
+    /// A TextEntry clicked: it takes the keyboard until Enter / Tab / a click elsewhere.
+    Entry(&'static str),
 }
 
 /// What the dialog is editing: a copy of the settings until OK / Apply.
@@ -88,6 +90,9 @@ pub struct OptionsState {
     /// on its Cancel.
     pub sub: Option<&'static str>,
     pub sub_backup: Option<Settings>,
+    /// The focused TextEntry (a slider cvar) and what has been typed into it.
+    pub entry_focus: Option<&'static str>,
+    pub entry_text: String,
 }
 
 impl OptionsState {
@@ -102,6 +107,18 @@ impl OptionsState {
             aspect: None,
             sub: None,
             sub_backup: None,
+            entry_focus: None,
+            entry_text: String::new(),
+        }
+    }
+
+    /// Enter / blur of the focused entry: the typed number goes to its slider cvar.
+    pub fn commit_entry(&mut self) {
+        if let Some(name) = self.entry_focus.take() {
+            if let Ok(v) = self.entry_text.trim().parse::<f32>() {
+                slider_set(&mut self.pending, name, v);
+            }
+            self.entry_text.clear();
         }
     }
 }
@@ -163,6 +180,7 @@ pub fn check_get(s: &Settings, name: &str) -> bool {
         "voice_modenable" => s.voice_modenable,
         "voice_loopback" => s.voice_loopback,
         "mat_bloomscale" => s.mat_bloomscale,
+        "con_enable" => s.con_enable,
         _ => false,
     }
 }
@@ -181,6 +199,7 @@ pub fn check_toggle(s: &mut Settings, name: &str) {
         "voice_modenable" => s.voice_modenable = !s.voice_modenable,
         "voice_loopback" => s.voice_loopback = !s.voice_loopback,
         "mat_bloomscale" => s.mat_bloomscale = !s.mat_bloomscale,
+        "con_enable" => s.con_enable = !s.con_enable,
         _ => {}
     }
 }
@@ -634,10 +653,26 @@ impl Page<'_> {
     }
 
     /// TextEntry showing a value (the game's are editable; ours mirror the slider).
-    fn entry(&self, out: &mut Layout, x: f32, y: f32, w: f32, h: f32, value: &str) {
+    #[allow(clippy::too_many_arguments)]
+    fn entry(
+        &self,
+        out: &mut Layout,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        value: &str,
+        cvar: &'static str,
+    ) {
         let (bx, by) = (self.x + x, self.y + y);
         rect(&mut out.items, bx, by, w, h, WHITE_BG);
         border(&mut out.items, bx, by, w, h, false);
+        let focused = self.st.entry_focus == Some(cvar);
+        let shown = if focused {
+            format!("{}|", self.st.entry_text)
+        } else {
+            value.to_string()
+        };
         text(
             &mut out.items,
             FONT,
@@ -645,9 +680,16 @@ impl Page<'_> {
             bx + 4.0,
             by,
             h,
-            value,
+            &shown,
             DARK_TEXT,
         );
+        out.hits.push(Hit {
+            x: bx,
+            y: by,
+            w,
+            h,
+            action: Action::Opt(OptAction::Entry(cvar)),
+        });
     }
 
     /// ComboBox: white field, the arrow button at the right, the open list below it.
@@ -1071,6 +1113,7 @@ pub fn dialog(
                 50.0,
                 24.0,
                 &format!("{:.2}", st.pending.sensitivity),
+                "sensitivity",
             );
             page.check(
                 out,
@@ -1098,6 +1141,7 @@ pub fn dialog(
                 50.0,
                 24.0,
                 &format!("{:.2}", st.pending.m_customaccel_exponent),
+                "m_customaccel_exponent",
             );
             page.divider(out, 35.0, 140.0, 396.0);
             page.label(out, 28.0, 148.0, 226.0, 28.0, "#GameUI_JoystickLabel");
@@ -1170,6 +1214,7 @@ pub fn dialog(
                 36.0,
                 24.0,
                 &format!("{}", st.pending.fps_max),
+                "fps_max",
             );
             page.button(
                 out,
@@ -1357,6 +1402,7 @@ pub fn dialog(
                 36.0,
                 20.0,
                 &format!("{}", st.pending.fov_desired),
+                "fov_desired",
             );
         }
     }
@@ -1448,17 +1494,17 @@ fn sub_dialog(
     modes: &[(u32, u32)],
     fonts: &Fonts,
 ) -> SliderBars {
-    let (w, h) = if sub == "Gamma" {
-        (290.0, 396.0)
-    } else {
-        (482.0, 470.0)
+    let (w, h) = match sub {
+        "Gamma" => (290.0, 396.0),
+        "KeyAdvanced" => (280.0, 136.0),
+        _ => (482.0, 470.0),
     };
     let x = ((ctx.w - w) / 2.0).round();
     let y = ((ctx.h - h) / 2.0).round();
-    let title = if sub == "Gamma" {
-        tok("#GameUI_AdjustGamma_Title")
-    } else {
-        tok("#GameUI_VideoAdvanced_Title")
+    let title = match sub {
+        "Gamma" => tok("#GameUI_AdjustGamma_Title"),
+        "KeyAdvanced" => tok("#GameUI_KeyboardAdvanced_Title"),
+        _ => tok("#GameUI_VideoAdvanced_Title"),
     };
     frame(out, ctx, fonts, x, y, w, h, &title, OptAction::SubCancel);
     let mut page = Page {
@@ -1473,7 +1519,37 @@ fn sub_dialog(
         popup: Vec::new(),
         popup_hits: Vec::new(),
     };
-    if sub == "Gamma" {
+    if sub == "KeyAdvanced" {
+        // optionssubkeyboardadvanceddlg.res
+        page.check(
+            out,
+            20.0,
+            38.0,
+            240.0,
+            24.0,
+            "#GameUI_FastSwitchCheck",
+            "hud_fastswitch",
+        );
+        page.check(
+            out,
+            20.0,
+            66.0,
+            244.0,
+            24.0,
+            "#GameUI_DeveloperConsoleCheck",
+            "con_enable",
+        );
+        page.button(out, 95.0, 100.0, 80.0, 24.0, "#GameUI_OK", OptAction::SubOk);
+        page.button(
+            out,
+            182.0,
+            100.0,
+            80.0,
+            24.0,
+            "#GameUI_Cancel",
+            OptAction::SubCancel,
+        );
+    } else if sub == "Gamma" {
         page.label(out, 16.0, 36.0, 264.0, 53.0, "#GameUI_GammaInfo");
         page.label(out, 16.0, 88.0, 108.0, 24.0, "#GameUI_Gamma");
         page.slider(out, 17.0, 112.0, 200.0, 40.0, "mat_monitorgamma");
@@ -1484,6 +1560,7 @@ fn sub_dialog(
             44.0,
             24.0,
             &format!("{:.1}", st.pending.mat_monitorgamma),
+            "mat_monitorgamma",
         );
         // the test image: three lines of text on black at 3 %, 6 % and 10 % grey, the
         // brightness the slider's gamma gives them on screen

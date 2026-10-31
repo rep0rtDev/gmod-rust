@@ -1809,6 +1809,12 @@ impl App {
             return;
         };
         let was_combo = st.combo.take();
+        if !matches!(
+            action,
+            Some(derma::Action::Opt(options::OptAction::Entry(_)))
+        ) {
+            st.commit_entry();
+        }
         let Some(derma::Action::Opt(a)) = action else {
             return;
         };
@@ -1850,7 +1856,11 @@ impl App {
                 }
             }
             A::ComboItem(name, i) => options::combo_pick(st, name, i, &self.opt_modes),
-            A::Button(name @ ("VideoAdvanced" | "Gamma")) => {
+            A::Entry(name) => {
+                st.entry_focus = Some(name);
+                st.entry_text = format!("{}", options::slider_get(&st.pending, name));
+            }
+            A::Button(name @ ("VideoAdvanced" | "Gamma" | "KeyAdvanced")) => {
                 st.sub = Some(name);
                 st.sub_backup = Some(st.pending.clone());
             }
@@ -3877,6 +3887,37 @@ impl ApplicationHandler for App {
                 if self.main_menu && self.addons.as_ref().is_some_and(|a| a.focus) {
                     if down {
                         self.addons_key(code, event.text.as_deref());
+                    }
+                    return;
+                }
+                if self
+                    .options
+                    .as_ref()
+                    .is_some_and(|o| o.entry_focus.is_some())
+                {
+                    if down {
+                        if let Some(o) = self.options.as_mut() {
+                            match code {
+                                Some(KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Tab) => {
+                                    o.commit_entry()
+                                }
+                                Some(KeyCode::Escape) => {
+                                    o.entry_focus = None;
+                                    o.entry_text.clear();
+                                }
+                                Some(KeyCode::Backspace) => {
+                                    o.entry_text.pop();
+                                }
+                                _ => {
+                                    if let Some(t) = event.text.as_deref() {
+                                        o.entry_text.extend(
+                                            t.chars().filter(|c| c.is_ascii_digit() || *c == '.'),
+                                        );
+                                        o.entry_text.truncate(8);
+                                    }
+                                }
+                            }
+                        }
                     }
                     return;
                 }

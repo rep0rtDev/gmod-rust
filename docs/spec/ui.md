@@ -395,3 +395,12 @@ in the 640x480 proportional space of the sheet page.
   (the game's image is not in the mounted content). Stored only: texture / model / water /
   shadow detail, colour correction, AA, filtering, motion blur, multicore, HDR level and
   bloom (no HDR / AA / post-processing path in the renderer yet).
+- Keyboard - Advanced (`optionssubkeyboardadvanceddlg.res`): "Fast weapon switch"
+  (`hud_fastswitch`) check 20,38 240x24, "Enable developer console" (`con_enable`) 20,66
+  244x24, OK 95,100, Cancel 182,100; title `GameUI_KeyboardAdvanced_Title`. Multiplayer
+  Advanced (`multiplayeradvanceddialog.res`, 540 x 376, a CPanelListPanel 16,56 480x274 of
+  `cfg/settings_default.scr` controls) - GMod ships that `.scr` empty ("isn't needed"), so
+  the game's dialog is an empty list; ours leaves the button inert.
+- TextEntry fields next to the sliders (sensitivity, acceleration exponent, FPS, FOV, gamma)
+  take the keyboard on click (digits and '.', caret), Enter / Tab / a click elsewhere commit
+  through the slider's clamp and rounding, Esc drops the text.
