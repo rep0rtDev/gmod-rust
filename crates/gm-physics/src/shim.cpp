@@ -592,7 +592,10 @@ public:
 
 
 			// a pair that just went through vertex impacts (phase 3) is a landing, not a push from rest
-			bool pushed = rs.phase != 3 && rs.vt_prev < 0.02f && vt > 0.1f;
+			// the rule is the floor's: a prop sliding against another prop (two welded crates
+			// 1 u apart, `constraint_weld_pair`) keeps full friction, the game's contact there
+			// spins the upper crate to -323 deg/s on the tick after the landing
+			bool pushed = !other.IsDynamic() && rs.phase != 3 && rs.vt_prev < 0.02f && vt > 0.1f;
 			if (pushed && vn_in > 0.02f) {
 				// pushed into the floor: the floor takes the normal part with friction on the
 				// weight alone (the drum loses 6-9 u/s whether pushed at 20 or 334 u/s)
