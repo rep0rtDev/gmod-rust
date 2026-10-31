@@ -93,7 +93,13 @@ void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2)
 	const float rf = weld_env("GMP_WELD_ROT_FREQ", 60.0f), rd = weld_env("GMP_WELD_ROT_DAMP", 1.0f);
 	JPH::SixDOFConstraintSettings s;
 	s.mSpace = JPH::EConstraintSpace::WorldSpace;
-	s.mPosition1 = s.mPosition2 = a->GetCenterOfMassPosition();
+	{
+		// anchor at the first body's centre of mass; the second's or the midpoint change
+		// little (`constraint_weld_pair` 13 u either way, see docs/status.md)
+		int anchor = (int)weld_env("GMP_WELD_ANCHOR", 0.0f);
+		JPH::RVec3 pa = a->GetCenterOfMassPosition(), pb = b->GetCenterOfMassPosition();
+		s.mPosition1 = s.mPosition2 = anchor == 0 ? pa : anchor == 1 ? pb : (pa + pb) * 0.5f;
+	}
 	using A = JPH::SixDOFConstraintSettings::EAxis;
 	for (int i = A::TranslationX; i <= A::TranslationZ; i++) {
 		s.SetLimitedAxis((A)i, -1e-4f, 1e-4f);
@@ -384,7 +390,7 @@ public:
 	// the game integrates up to the moment of impact with the old velocity and the rest of the
 	// step with the new one; Jolt integrates the whole step with the new one, so after the step
 	// every impacted body is moved by (v_old - v_new) * t_impact (and turned likewise)
-	struct Offset { JPH::Vec3 dpos; JPH::Vec3 drot; };
+	struct Offset { JPH::Vec3 dpos; JPH::Vec3 drot; bool has_target = false; JPH::RVec3 target_pos; JPH::Quat target_rot; };
 	std::unordered_map<JPH::uint32, Offset> offsets;
 	std::mutex offsets_mutex;
 	std::unordered_map<JPH::uint32, bool> skip; // bodies under a shadow controller (physgun) keep Jolt's contact
@@ -1020,6 +1026,18 @@ public:
 			Offset &o = offsets[dyn.GetID().GetIndexAndSequenceNumber()];
 			o.dpos += dl;
 			o.drot += da;
+			if (face_done) {
+				// Jolt integrates this step with whatever velocity the island solve leaves (the
+				// bounce alone for a free crate, the weld's share for a welded one), so the
+				// landing position is set absolutely: where the body was at the contact time
+				// (`constraint_weld_pair`: the lower crate must end the step at the rest height
+				// -123.7 like the game, not 2 u above it)
+				o.has_target = true;
+				o.target_pos = dyn.GetCenterOfMassPosition() - dyn.GetRotation() * dyn.GetShape()->GetCenterOfMass() + lv0 * t_impact;
+				float a0 = av0.Length() * t_impact;
+				o.target_rot = a0 > 1e-9f ? (JPH::Quat::sRotation(av0 / av0.Length(), a0) * dyn.GetRotation()).Normalized() : dyn.GetRotation();
+			}
+			if (debug) fprintf(stderr, "DBGOFF t=%d id=%u face_done=%d t_impact=%.5f dt=%.5f lv0=(%.3f %.3f %.3f) dl=(%.4f %.4f %.4f)\n", tick, dyn.GetID().GetIndex(), (int)face_done, (double)t_impact, (double)step_dt, (double)lv0.GetX(), (double)lv0.GetY(), (double)lv0.GetZ(), (double)dl.GetX(), (double)dl.GetY(), (double)dl.GetZ());
 		}
 	}
 
@@ -1030,6 +1048,10 @@ public:
 		for (auto &[id, o] : offsets) {
 			JPH::BodyID bid(id);
 			if (!bi.IsAdded(bid)) continue;
+			if (o.has_target) {
+				bi.SetPositionAndRotation(bid, o.target_pos, o.target_rot, JPH::EActivation::DontActivate);
+				continue;
+			}
 			JPH::RVec3 p = bi.GetPosition(bid);
 			JPH::Quat r = bi.GetRotation(bid);
 			float ang = o.drot.Length();
