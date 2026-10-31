@@ -230,6 +230,17 @@ void gmp_set_mass(void *system, unsigned int id, float mass) {
 	mp->SetInverseInertia(mp->GetInverseInertiaDiagonal() / factor, mp->GetInertiaRotation());
 }
 
+// world-space centre of mass of a body (the point a blast's impulse aims at)
+void gmp_center_of_mass(void *system, unsigned int id, float *out) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyLockRead lock(sys->GetBodyLockInterface(), JPH::BodyID(id));
+	if (!lock.Succeeded()) return;
+	JPH::RVec3 c = lock.GetBody().GetCenterOfMassPosition();
+	out[0] = float(c.GetX());
+	out[1] = float(c.GetY());
+	out[2] = float(c.GetZ());
+}
+
 // angular impulse (world axes)
 void gmp_add_angular_impulse(void *system, unsigned int id, float ix, float iy, float iz) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);

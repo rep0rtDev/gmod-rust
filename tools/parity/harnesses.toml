@@ -3240,13 +3240,24 @@ ang = 5.0
 [[harness]]
 name = "constraint_device_dynamite_push"
 scenario = "constraint/device_dynamite_push"
-compare = "rigid"
+compare = "blast"
 realm = "server"
 crates = ["gm-physics", "gm-sandbox"]
 [harness.tolerance]
-pos = 2.0
-rest = 2.0
-ang = 5.0
+dir = 3.0
+ratio_lo = 0.85
+ratio_hi = 1.15
+
+[[harness]]
+name = "constraint_device_dynamite_falloff"
+scenario = "constraint/device_dynamite_falloff"
+compare = "blast"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+dir = 3.0
+ratio_lo = 0.85
+ratio_hi = 1.15
 
 [[harness]]
 name = "toolgun_wheel"

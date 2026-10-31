@@ -614,7 +614,7 @@ fn device_key(d: &mut gm_sandbox::Device, key: i32, down: bool, pos_z: f32) {
                 queued.push(if *delay == 0.0 {
                     1
                 } else {
-                    (*delay / gm_sandbox::SERVER_TICK).ceil() as u32 + 4
+                    (*delay / gm_sandbox::SERVER_TICK).ceil() as u32 + 5
                 });
             }
         }
@@ -1396,6 +1396,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
     let map = scn.map.as_deref().unwrap_or("gm_construct");
     let data = mount.read(&format!("maps/{map}.bsp"))?;
     let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
     let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
         .into_iter()
         .map(|h| h.points)
@@ -1427,6 +1428,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
     let mut bodies = Vec::new();
     let mut infos = Vec::new();
     let mut hull_points: Vec<Vec<Vec3>> = Vec::new();
+    let mut hull_planes: Vec<Vec<Vec<(Vec3, f32)>>> = Vec::new();
     for pr in &scn.props {
         let phy_path = pr
             .model
@@ -1465,6 +1467,16 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
         }
         bodies.push(body);
         hull_points.push(hulls.iter().flatten().copied().collect());
+        hull_planes.push(
+            solid
+                .convexes
+                .iter()
+                .map(|c| {
+                    let pts: Vec<Vec3> = c.points.iter().map(|&p| Vec3::from(p)).collect();
+                    gm_sandbox::hull_planes(&pts, &c.triangles)
+                })
+                .collect(),
+        );
         infos.push(serde_json::json!({ "mass": props.mass, "material": props.surfaceprop }));
     }
     // the probe's devices follow the props in the trace: their bodies, then their state
@@ -1538,6 +1550,16 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
         world.set_gravity(body, d.gravity());
         bodies.push(body);
         hull_points.push(hulls.iter().flatten().copied().collect());
+        hull_planes.push(
+            solid
+                .convexes
+                .iter()
+                .map(|c| {
+                    let pts: Vec<Vec3> = c.points.iter().map(|&p| Vec3::from(p)).collect();
+                    gm_sandbox::hull_planes(&pts, &c.triangles)
+                })
+                .collect(),
+        );
         infos.push(serde_json::json!({ "mass": mass, "material": props.surfaceprop }));
         if let Some(target) = ds.attach {
             let other = bodies[target - 1];
@@ -1781,6 +1803,84 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
                 }
             }
         }
+        // queued dynamite: the blast impulse on every other body within 300 u; the numpad
+        // think runs before the game's Tick record, so a key at t shows in row t
+        let mut blasts = Vec::new();
+        for (body, d) in devices.iter_mut() {
+            if let gm_sandbox::Device::Dynamite { queued, damage, .. } = d {
+                for q in queued.iter_mut() {
+                    *q -= 1;
+                }
+                if queued.contains(&0) {
+                    // the blast is 1 u above the stick (`util.BlastDamage` from the dynamite's
+                    // position; the engine's RadiusDamage lifts its source) and aims at the
+                    // centre of mass of each body, not at the shape origin on the floor
+                    blasts.push((
+                        world.state(*body).position + Vec3::new(0.0, 0.0, 1.0),
+                        *damage,
+                    ));
+                }
+                queued.retain(|q| *q > 0);
+            }
+        }
+        for (origin, damage) in blasts {
+            // SDK `CGameRules::RadiusDamage`: aim at each body's bounds centre, the damage
+            // falls off with the distance to where that ray meets the body (the full length
+            // when another body is in the way, which absorbs mass/350; the world blocks), the
+            // push `min(damage * 300, 30000)` is applied at the blast point. The engine's
+            // random 0.85..1.15 on the push is left at 1: the `blast` compare allows the band.
+            let prop_bodies: Vec<gm_sandbox::PropBody> = bodies
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| !devices.iter().any(|(db, _)| db == *b))
+                .map(|(bi, &b)| {
+                    let st = world.state(b);
+                    gm_sandbox::PropBody {
+                        id: bi as u32 + 1,
+                        pos: st.position,
+                        angles: Vec3::new(st.angles.0, st.angles.1, st.angles.2),
+                        hulls: hull_planes[bi].clone(),
+                    }
+                })
+                .collect();
+            for (bi, &b) in bodies.iter().enumerate() {
+                if devices.iter().any(|(db, _)| *db == b) {
+                    continue;
+                }
+                let st = world.state(b);
+                let (lo, hi) = hull_points[bi].iter().fold(
+                    (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+                    |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+                );
+                let centre = st.position + st.rotation * ((lo + hi) * 0.5);
+                let to = centre - origin;
+                let mut blocked = 0.0;
+                let dist = match gm_sandbox::trace_line(&collision, &prop_bodies, origin, centre) {
+                    Some(h) if h.ent == Some(bi as u32 + 1) => (h.pos - origin).length(),
+                    Some(h) if h.ent.is_none() => continue,
+                    Some(h) => {
+                        let mass = h.ent.map_or(0.0, |e| world.mass(bodies[e as usize - 1]));
+                        if mass >= gm_sandbox::BLAST_ABSORB_MASS {
+                            continue;
+                        }
+                        blocked = mass / gm_sandbox::BLAST_ABSORB_MASS;
+                        to.length()
+                    }
+                    None => to.length(),
+                };
+                if dist >= gm_sandbox::BLAST_RADIUS {
+                    continue;
+                }
+                let dmg = damage.clamp(0.0, 1500.0)
+                    * (1.0 - dist / gm_sandbox::BLAST_RADIUS)
+                    * (1.0 - blocked);
+                world.add_impulse_at(
+                    b,
+                    origin,
+                    to.normalize_or_zero() * gm_sandbox::blast_impulse(dmg),
+                );
+            }
+        }
         let ctrl_rows: Vec<Value> = controllers
             .iter()
             .map(|d| {
@@ -1821,37 +1921,6 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
             if let Some((_, gm_sandbox::Device::Button { on, user, .. })) = devices.get_mut(u) {
                 *on = false;
                 *user = None;
-            }
-        }
-        // queued dynamite: the blast impulse on every other body within 300 u
-        let mut blasts = Vec::new();
-        for (body, d) in devices.iter_mut() {
-            if let gm_sandbox::Device::Dynamite { queued, damage, .. } = d {
-                for q in queued.iter_mut() {
-                    *q -= 1;
-                }
-                if queued.contains(&0) {
-                    blasts.push((world.state(*body).position, *damage));
-                }
-                queued.retain(|q| *q > 0);
-            }
-        }
-        for (origin, damage) in blasts {
-            for (bi, &b) in bodies.iter().enumerate() {
-                if devices.iter().any(|(db, _)| *db == b) {
-                    continue;
-                }
-                let st = world.state(b);
-                let nearest = hull_points[bi]
-                    .iter()
-                    .map(|q| (st.position + st.rotation * *q).distance(origin))
-                    .fold(f32::MAX, f32::min);
-                if nearest >= gm_sandbox::BLAST_RADIUS {
-                    continue;
-                }
-                let dmg = damage.clamp(0.0, 1500.0) * (1.0 - nearest / gm_sandbox::BLAST_RADIUS);
-                let dir = (st.position - origin).normalize_or_zero();
-                world.add_impulse_at(b, st.position, dir * gm_sandbox::blast_impulse(dmg));
             }
         }
         // the hoverball's Think moves its target, then every device's PhysicsSimulate
@@ -5798,6 +5867,106 @@ fn compare_sandbox(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     ok
 }
 
+/// A blast harness: the engine fudges every victim's push by `RandomFloat(0.85, 1.15)`, so the
+/// velocity each prop gains on the blast tick is compared by direction (`dir` degrees) and by
+/// magnitude ratio (`ratio_lo..ratio_hi`, the fudge band) instead of as a rigid trajectory; the
+/// blast tick itself must match. Props the blast never moves (ratio undefined) must be still in
+/// both.
+fn compare_blast(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    use glam::Vec3;
+    let dir_tol = tol
+        .get("dir")
+        .and_then(toml::Value::as_float)
+        .unwrap_or(3.0) as f32;
+    let lo = tol
+        .get("ratio_lo")
+        .and_then(toml::Value::as_float)
+        .unwrap_or(0.85) as f32;
+    let hi = tol
+        .get("ratio_hi")
+        .and_then(toml::Value::as_float)
+        .unwrap_or(1.15) as f32;
+    let ticks = |v: &Value| -> Vec<Value> {
+        v.get("ticks")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let (t, o) = (ticks(theirs), ticks(ours));
+    let n = t.len().min(o.len());
+    let vel = |row: &Value, k: usize| -> Option<Vec3> {
+        let v = row.get("props")?.get(k)?.get("vel")?.as_array()?;
+        Some(Vec3::new(
+            v.first()?.as_f64()? as f32,
+            v.get(1)?.as_f64()? as f32,
+            v.get(2)?.as_f64()? as f32,
+        ))
+    };
+    let props = t
+        .first()
+        .and_then(|r| r.get("props"))
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    // the blast tick: where theirs' props together gain the most horizontal speed (a landing
+    // reverses a fall, a blast shoves everything sideways)
+    let gain = |i: usize| -> f32 {
+        (0..props)
+            .filter_map(|k| Some((vel(&t[i], k)? - vel(&t[i - 1], k)?).truncate().length()))
+            .sum()
+    };
+    let blast = (1..n)
+        .map(|i| (i, gain(i)))
+        .filter(|(_, g)| *g > 50.0)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i);
+    let Some(i) = blast else {
+        println!("  theirs never blasts a prop");
+        return false;
+    };
+    let mut ok = true;
+    for k in 0..props {
+        let (Some(ta), Some(tb), Some(oa), Some(ob)) = (
+            vel(&t[i], k),
+            vel(&t[i - 1], k),
+            vel(&o[i], k),
+            vel(&o[i - 1], k),
+        ) else {
+            println!("  prop {}: missing velocity at tick {i}", k + 1);
+            ok = false;
+            continue;
+        };
+        let (dt, d) = (ta - tb, oa - ob);
+        if dt.length() <= 50.0 {
+            let still = d.length() <= 50.0;
+            println!(
+                "  prop {}: not pushed by theirs at tick {i}, ours gains {:.1}: {}",
+                k + 1,
+                d.length(),
+                if still { "equal" } else { "DIFF" }
+            );
+            ok &= still;
+            continue;
+        }
+        let ratio = d.length() / dt.length();
+        let angle = dt
+            .normalize()
+            .dot(d.normalize_or_zero())
+            .clamp(-1.0, 1.0)
+            .acos()
+            .to_degrees();
+        let pass = (lo..=hi).contains(&ratio) && angle <= dir_tol;
+        println!(
+            "  prop {}: blast tick {i}, theirs {:.1} u/s ours {:.1} u/s (ratio {ratio:.3}, band {lo}..{hi}), direction off {angle:.2} deg (tol {dir_tol}): {}",
+            k + 1,
+            dt.length(),
+            d.length(),
+            if pass { "equal" } else { "DIFF" }
+        );
+        ok &= pass;
+    }
+    ok
+}
+
 fn compare_rigid(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     let first = theirs
         .get("ticks")
@@ -6211,6 +6380,7 @@ fn main() -> Result<()> {
                     "set-equal" => compare_set_equal(&h.name, &t.result, &o.result),
                     "trajectory" => compare_trajectory(&t.result, &o.result, &h.tolerance),
                     "rigid" => compare_rigid(&t.result, &o.result, &h.tolerance),
+                    "blast" => compare_blast(&t.result, &o.result, &h.tolerance),
                     "sandbox" => compare_sandbox(&t.result, &o.result, &h.tolerance),
                     "player" => compare_player(&t.result, &o.result, &h.tolerance),
                     "weapon" => compare_weapon(&t.result, &o.result, &h.tolerance),

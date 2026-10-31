@@ -51,6 +51,7 @@ extern "C" {
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
     fn gmp_set_mass(system: *mut JPC_PhysicsSystem, id: u32, mass: f32);
+    fn gmp_center_of_mass(system: *const JPC_PhysicsSystem, id: u32, out: *mut f32);
     fn gmp_add_impulse(system: *mut JPC_PhysicsSystem, id: u32, ix: f32, iy: f32, iz: f32);
     fn gmp_add_angular_impulse(system: *mut JPC_PhysicsSystem, id: u32, ix: f32, iy: f32, iz: f32);
     fn gmp_point_inverse_mass(
@@ -1011,6 +1012,13 @@ impl World {
 
     /// `PhysObj:SetMass` (kg): inertia scales with it, and the air drag of the same shape slows a
     /// heavier body less (a 100 kg balloon decelerates by `2.05e-5 v^2`, measured).
+    /// World-space centre of mass (Source units); `state().position` is the shape origin.
+    pub fn center_of_mass(&self, body: BodyHandle) -> Vec3 {
+        let mut out = [0.0f32; 3];
+        unsafe { gmp_center_of_mass(self.system.as_raw(), body.0, out.as_mut_ptr()) };
+        from_jolt(glam::Vec3::from_array(out))
+    }
+
     pub fn set_mass(&mut self, body: BodyHandle, mass: f32) {
         let mass = mass.max(1e-3);
         let old = self.mass(body);

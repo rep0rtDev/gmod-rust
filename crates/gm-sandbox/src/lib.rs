@@ -922,6 +922,12 @@ pub const BLAST_RADIUS: f32 = 300.0;
 pub fn blast_impulse(damage: f32) -> f32 {
     (damage * 300.0).min(30000.0)
 }
+/// A body of this mass in the way of a blast absorbs all of it; lighter ones `mass / 350`.
+pub const BLAST_ABSORB_MASS: f32 = 350.0;
+/// The engine's per-victim fudge on the blast push, `RandomFloat(0.85, 1.15)` of `u` in 0..1.
+pub fn blast_jitter(u: f32) -> f32 {
+    0.85 + 0.3 * u.clamp(0.0, 1.0)
+}
 
 /// One tick of a wheel's spin about its motor axis (deg/s, signed along the axis towards the
 /// hit entity): `phys_torque` accelerates by `torque * scale` deg/s² less the axis friction
