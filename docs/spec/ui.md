@@ -37,7 +37,12 @@ Everything here is read from the installed client (`garrysmod/lua`, `sourceengin
   `Player.WeaponSelectionMoveSlot`, `Player.WeaponSelected`, `Player.DenyWeaponSelection`.
 - Crosshair: `Crosshairs` HalfLife2 40 additive, glyph `Q` for every HL2 weapon, colour
   ClientScheme `Normal` 255 208 64.
-- Fonts: the client ships no Arial/Tahoma/Verdana (Windows system fonts); we fall back to Roboto.
+- Fonts: the client ships no Arial/Tahoma/Verdana (system fonts; the game asks the OS, and on
+  Linux its `derma/init.lua` uses DejaVu Sans 14 instead of Tahoma 13). `font_file` looks a
+  family up in `resource/fonts` first, then in the system font directories (Windows\Fonts,
+  fontconfig dirs, macOS Library/Fonts) with the fontconfig substitutions the game gets on
+  Linux (Tahoma / Verdana / Trebuchet MS -> DejaVu Sans, Arial / Helvetica -> Liberation Sans);
+  Roboto from the content is the last resort. Nothing is bundled in the repo.
 
 ## Derma default skin (`lua/skins/default.lua`)
 
@@ -161,7 +166,7 @@ Everything here is read from the installed client (`garrysmod/lua`, `sourceengin
   255/s; `html/img/gradient.png` (512x64) is drawn 1024 x ScrH on the left always.
 - Ours: Escape over the game opens the in-game variant (cursor released), Resume / Back to Game
   / Escape return, Quit and Disconnect exit the client; the other pages (new game, servers,
-  addons, dupes, saves, demos, options) and the popups are not built yet; fonts are Roboto for
+  addons, dupes, saves, demos, options) and the popups are not built yet; fonts are Arial (system) for
   Helvetica/Arial.
 
 ## Options dialog (`garrysmod/resource/OptionsSub*.res`, `sourceengine/resource/*.res`)
@@ -252,7 +257,7 @@ in the 640x480 proportional space of the sheet page.
   are live, as are sensitivity / reverse mouse, volume (mixer master), fov_desired,
   fps_max (frame limiter), resolution / display mode (window), hud_fastswitch is stored.
   Not done: editable TextEntry values, gamma / advanced video / crosshair / spray dialogs,
-  voice meters, sound quality / speakers / captions have no effect, Verdana is Roboto 13.
+  voice meters, sound quality / speakers / captions have no effect, the scheme font is Tahoma (Windows) / Verdana 13 from the system.
 
 ## New Game page (`template/newgame.html`, `css/menu/NewGame.css`, `lua/menu/getmaps.lua`)
 

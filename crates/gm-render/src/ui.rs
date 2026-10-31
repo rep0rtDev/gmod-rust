@@ -302,13 +302,96 @@ fn font_file(mount: &Mount, family: &str) -> Option<Vec<u8>> {
             .trim_end_matches(".TTF")
             .to_string()
     };
-    files
+    if let Some(b) = files
         .iter()
         .find(|p| {
             let s = norm(&stem(p));
             s == want || s == format!("{want}regular")
         })
         .and_then(|p| mount.read(p).ok())
+    {
+        return Some(b);
+    }
+    // the game's scheme fonts (Tahoma, Verdana, Arial, Trebuchet MS) are the operating
+    // system's, not content: look them up in the system font directories, with the
+    // substitutions the game gets from fontconfig on Linux
+    let candidates: &[&str] = match want.as_str() {
+        "tahoma" => &["tahoma", "dejavusans"],
+        "tahomabold" => &["tahomabd", "dejavusansbold"],
+        "verdana" => &["verdana", "dejavusans"],
+        "verdanabold" => &["verdanab", "dejavusansbold"],
+        "arial" | "helvetica" => &["arial", "liberationsansregular", "liberationsans"],
+        "arialbold" | "helveticabold" => &["arialbd", "liberationsansbold"],
+        "trebuchetms" => &["trebuc", "dejavusanscondensed", "dejavusans"],
+        "trebuchetmsbold" => &["trebucbd", "dejavusanscondensedbold", "dejavusansbold"],
+        "dejavusans" => &["dejavusans"],
+        "dejavusansbold" => &["dejavusansbold"],
+        _ => &[],
+    };
+    let system = system_fonts();
+    for c in candidates
+        .iter()
+        .copied()
+        .chain(std::iter::once(want.as_str()))
+    {
+        if let Some(p) = system.iter().find(|p| {
+            let s = norm(&stem(&p.to_string_lossy()));
+            s == c || s == format!("{c}regular")
+        }) {
+            if let Ok(b) = std::fs::read(p) {
+                return Some(b);
+            }
+        }
+    }
+    None
+}
+
+/// Every `.ttf` under the operating system's font directories (walked once).
+fn system_fonts() -> &'static [std::path::PathBuf] {
+    static FONTS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+    FONTS.get_or_init(|| {
+        let mut roots: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(win) = std::env::var_os("WINDIR") {
+            roots.push(std::path::Path::new(&win).join("Fonts"));
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = std::path::Path::new(&home);
+            roots.push(home.join(".fonts"));
+            roots.push(home.join(".local/share/fonts"));
+            roots.push(home.join("Library/Fonts"));
+        }
+        roots.extend(
+            [
+                "/usr/share/fonts",
+                "/usr/local/share/fonts",
+                "/Library/Fonts",
+                "/System/Library/Fonts",
+            ]
+            .iter()
+            .map(std::path::PathBuf::from),
+        );
+        let mut out = Vec::new();
+        fn walk(dir: &std::path::Path, depth: u32, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(rd) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if depth < 4 {
+                        walk(&p, depth + 1, out);
+                    }
+                } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("ttf")) {
+                    out.push(p);
+                }
+            }
+        }
+        for r in &roots {
+            walk(r, 0, &mut out);
+        }
+        out.sort();
+        out
+    })
 }
 
 /// A run of vertices drawn with one texture.

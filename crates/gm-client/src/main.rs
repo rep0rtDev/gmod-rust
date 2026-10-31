@@ -887,40 +887,65 @@ impl App {
             }
             ui.load_image(&gpu, &self.mount, "weapons/swep");
             ui.load_image(&gpu, &self.mount, "gui/speech_lid");
-            // Derma: DermaDefault = Tahoma 13 (500 / 800); Roboto when the system font is missing
-            if !ui.register_font(&gpu, &self.mount, derma::FONT, "Tahoma", 13.0) {
-                ui.register_font(&gpu, &self.mount, derma::FONT, "Roboto-Medium", 13.0);
+            // Derma (derma/init.lua): DermaDefault = Tahoma 13 on Windows, DejaVu Sans 14
+            // elsewhere (500 / 800); system fonts, Roboto from the content when missing
+            let (derma_family, derma_px) = if cfg!(windows) {
+                ("Tahoma", 13.0)
+            } else {
+                ("DejaVu Sans", 14.0)
+            };
+            if !ui.register_font(&gpu, &self.mount, derma::FONT, derma_family, derma_px) {
+                ui.register_font(&gpu, &self.mount, derma::FONT, "Roboto-Medium", derma_px);
             }
-            if !ui.register_font(&gpu, &self.mount, derma::FONT_BOLD, "Tahoma-Bold", 13.0) {
-                ui.register_font(&gpu, &self.mount, derma::FONT_BOLD, "Roboto-Bold", 13.0);
+            let derma_bold = format!("{derma_family}-Bold");
+            if !ui.register_font(&gpu, &self.mount, derma::FONT_BOLD, &derma_bold, derma_px) {
+                ui.register_font(&gpu, &self.mount, derma::FONT_BOLD, "Roboto-Bold", derma_px);
             }
             ui.load_image(&gpu, &self.mount, derma::ATLAS);
             ui.load_image(&gpu, &self.mount, derma::HOVER_MAT);
             ui.load_image(&gpu, &self.mount, derma::GENERATING_MAT);
-            // menu.html: Helvetica/Arial (Roboto here), options 23 / 16 px bold, body 12
-            ui.register_font(&gpu, &self.mount, derma::MENU_FONT_23, "Roboto-Bold", 23.0);
-            ui.register_font(&gpu, &self.mount, derma::MENU_FONT_16, "Roboto-Bold", 16.0);
-            ui.register_font(&gpu, &self.mount, derma::NAV_FONT, "Roboto-Regular", 12.0);
-            // SourceScheme: Verdana 16 / Verdana Bold 16 / DefaultLarge 18 (Roboto here)
-            ui.register_font(&gpu, &self.mount, options::FONT, "Roboto-Regular", 13.0);
-            ui.register_font(&gpu, &self.mount, options::FONT_BOLD, "Roboto-Bold", 13.0);
-            ui.register_font(&gpu, &self.mount, options::FONT_LARGE, "Roboto-Bold", 15.0);
+            // menu.html: Helvetica / Arial (the system's; Liberation Sans via fontconfig on
+            // Linux, as the game's browser gets), options 23 / 16 px bold, body 12
+            let html = |ui: &mut UiRenderer, name: &str, bold: bool, px: f32| {
+                let (family, fallback) = if bold {
+                    ("Arial-Bold", "Roboto-Bold")
+                } else {
+                    ("Arial", "Roboto-Regular")
+                };
+                if !ui.register_font(&gpu, &self.mount, name, family, px) {
+                    ui.register_font(&gpu, &self.mount, name, fallback, px);
+                }
+            };
+            html(&mut ui, derma::MENU_FONT_23, true, 23.0);
+            html(&mut ui, derma::MENU_FONT_16, true, 16.0);
+            html(&mut ui, derma::NAV_FONT, false, 12.0);
+            // SourceScheme: Tahoma [$WINDOWS] / Verdana elsewhere, Default 13 / bold / Large 15
+            let scheme = if cfg!(windows) { "Tahoma" } else { "Verdana" };
+            let scheme_bold = format!("{scheme}-Bold");
+            if !ui.register_font(&gpu, &self.mount, options::FONT, scheme, 13.0) {
+                ui.register_font(&gpu, &self.mount, options::FONT, "Roboto-Regular", 13.0);
+            }
+            for (name, px) in [(options::FONT_BOLD, 13.0), (options::FONT_LARGE, 15.0)] {
+                if !ui.register_font(&gpu, &self.mount, name, &scheme_bold, px) {
+                    ui.register_font(&gpu, &self.mount, name, "Roboto-Bold", px);
+                }
+            }
             ui.load_image(&gpu, &self.mount, "vgui/logos/garrysmod.png");
             // newgame.html: body 12, labels 11 / 11 bold, category header 32 + 14, button 20
-            for (name, font, size) in [
-                (newgame::F10, "Roboto-Regular", 10.0),
-                (newgame::F11, "Roboto-Regular", 11.0),
-                (newgame::F11B, "Roboto-Bold", 11.0),
-                (newgame::F13, "Roboto-Regular", 13.0),
-                (newgame::F14, "Roboto-Regular", 14.0),
-                (newgame::F20, "Roboto-Regular", 20.0),
-                (newgame::F32, "Roboto-Regular", 32.0),
-                (servers::F20B, "Roboto-Bold", 20.0),
-                (servers::F13B, "Roboto-Bold", 13.0),
-                (ugc::F14B, "Roboto-Bold", 14.0),
-                (ugc::F48B, "Roboto-Bold", 48.0),
+            for (name, bold, size) in [
+                (newgame::F10, false, 10.0),
+                (newgame::F11, false, 11.0),
+                (newgame::F11B, true, 11.0),
+                (newgame::F13, false, 13.0),
+                (newgame::F14, false, 14.0),
+                (newgame::F20, false, 20.0),
+                (newgame::F32, false, 32.0),
+                (servers::F20B, true, 20.0),
+                (servers::F13B, true, 13.0),
+                (ugc::F14B, true, 14.0),
+                (ugc::F48B, true, 48.0),
             ] {
-                ui.register_font(&gpu, &self.mount, name, font, size);
+                html(&mut ui, name, bold, size);
             }
             for name in derma::MENU_IMAGES {
                 ui.load_image(&gpu, &self.mount, name);

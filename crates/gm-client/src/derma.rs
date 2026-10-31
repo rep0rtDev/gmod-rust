@@ -16,7 +16,8 @@ use gm_render::ui::{FontMetrics, UiItem};
 /// `SKIN.GwenTexture`, a 512 px PNG under materials/.
 pub const ATLAS: &str = "gwenskin/GModDefault.png";
 const ATLAS_SIZE: f32 = 512.0;
-/// `DermaDefault`: Tahoma 13 weight 500 (Roboto when the system font is missing).
+/// `DermaDefault`: Tahoma 13 (Windows) / DejaVu Sans 14 weight 500, a system font like in the
+/// game (Roboto from the content when it is missing).
 pub const FONT: &str = "DermaDefault";
 pub const FONT_BOLD: &str = "DermaDefaultBold";
 /// SpawnIcon's hover overlay.
