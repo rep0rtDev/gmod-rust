@@ -937,14 +937,18 @@ pub fn blast_jitter(u: f32) -> f32 {
 /// torque (which also holds a resting wheel the motor cannot overcome), the spin is capped at
 /// 7200 deg/s, and the angular drag vphysics has over Jolt's is added (the free wheel decays
 /// ~0.31/s in the game, Jolt gives ~0.19/s).
+/// Axis friction on a released wheel (deg/s^2 per unit of friction).
+pub const WHEEL_RELEASED_FRICTION: f32 = 120.0;
 pub fn wheel_spin_step(spin: f32, torque: f32, scale: f32, friction: f32, dt: f32) -> f32 {
     let motor = TORQUE_ACCEL * torque * scale.abs();
     if spin.abs() < 60.0 && motor <= WHEEL_FRICTION_TORQUE * friction {
         return 0.0;
     }
     let loss = (WHEEL_FRICTION_LOSS * motor).min(WHEEL_FRICTION_TORQUE * friction) * friction;
+    // released: the axis friction brakes it on top of the drag (fitted over the three
+    // released traces: decel = 0.316 |spin| + ~120 * friction deg/s^2)
     let drive = if scale == 0.0 {
-        0.0
+        -(WHEEL_RELEASED_FRICTION * friction * dt).min(spin.abs()) * spin.signum() / dt
     } else {
         (motor - loss).max(0.0) * scale.signum()
     };
