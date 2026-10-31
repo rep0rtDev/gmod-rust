@@ -351,6 +351,8 @@ struct ConstraintSpec {
     #[serde(default)]
     rigid: bool,
     #[serde(default)]
+    nocollide: bool,
+    #[serde(default)]
     constant: Option<f32>,
     #[serde(default)]
     damping: Option<f32>,
@@ -1717,7 +1719,12 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
                     )
                     .is_some()
             }
-            "weld" => world.weld(a, b).is_some(),
+            "weld" => {
+                if c.nocollide {
+                    world.set_pair_collision(a, b, false);
+                }
+                world.weld(a, b).is_some()
+            }
             "rope" => {
                 let pa = sa.position + sa.rotation * Vec3::from(c.local_a.unwrap_or([0.0; 3]));
                 let pb = sb.position + sb.rotation * Vec3::from(c.local_b.unwrap_or([0.0; 3]));
