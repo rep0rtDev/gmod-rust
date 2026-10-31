@@ -1,0 +1,88 @@
+{
+ "name": "toolgun_button",
+ "kind": "toolgun",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  }
+ ],
+ "ops": [
+  {
+   "op": "click",
+   "tool": "button",
+   "pitch": 20.0,
+   "yaw": 0.0,
+   "settings": {
+    "model": "models/maxofs2d/button_05.mdl",
+    "keygroup": 37,
+    "description": "",
+    "toggle": 1
+   },
+   "wait": 10
+  },
+  {
+   "op": "use",
+   "down": true,
+   "wait": 10
+  },
+  {
+   "op": "use",
+   "down": false,
+   "wait": 10
+  },
+  {
+   "op": "use",
+   "down": true,
+   "wait": 10
+  },
+  {
+   "op": "use",
+   "down": false,
+   "wait": 10
+  },
+  {
+   "op": "click",
+   "tool": "button",
+   "pitch": 60.0,
+   "yaw": 0.0,
+   "settings": {
+    "model": "models/maxofs2d/button_05.mdl",
+    "keygroup": 37,
+    "description": "",
+    "toggle": 0
+   },
+   "wait": 10
+  },
+  {
+   "op": "use",
+   "down": true,
+   "wait": 10
+  },
+  {
+   "op": "use",
+   "down": false,
+   "wait": 10
+  },
+  {
+   "op": "cleanup"
+  }
+ ]
+}

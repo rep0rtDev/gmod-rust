@@ -1,0 +1,134 @@
+{
+ "name": "toolgun_wheel",
+ "kind": "toolgun",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  },
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -440.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  }
+ ],
+ "ops": [
+  {
+   "op": "click",
+   "tool": "wheel",
+   "pitch": 30.0,
+   "yaw": 0.0,
+   "settings": {
+    "torque": 3000,
+    "friction": 1,
+    "nocollide": 1,
+    "forcelimit": 0,
+    "fwd": 45,
+    "bck": 42,
+    "toggle": 0,
+    "model": "models/props_vehicles/carparts_wheel01a.mdl",
+    "rx": 90,
+    "ry": 0,
+    "rz": 90
+   },
+   "wait": 10
+  },
+  {
+   "op": "numpad",
+   "key": 45,
+   "down": true,
+   "wait": 40
+  },
+  {
+   "op": "numpad",
+   "key": 45,
+   "down": false,
+   "wait": 20
+  },
+  {
+   "op": "numpad",
+   "key": 42,
+   "down": true,
+   "wait": 20
+  },
+  {
+   "op": "numpad",
+   "key": 42,
+   "down": false,
+   "wait": 20
+  },
+  {
+   "op": "click",
+   "tool": "wheel",
+   "pitch": 30.0,
+   "yaw": 38.0,
+   "settings": {
+    "torque": 3000,
+    "friction": 1,
+    "nocollide": 1,
+    "forcelimit": 0,
+    "fwd": 45,
+    "bck": 42,
+    "toggle": 1,
+    "model": "models/props_vehicles/carparts_wheel01a.mdl",
+    "rx": 90,
+    "ry": 0,
+    "rz": 90
+   },
+   "wait": 10
+  },
+  {
+   "op": "numpad",
+   "key": 45,
+   "down": true,
+   "wait": 2
+  },
+  {
+   "op": "numpad",
+   "key": 45,
+   "down": false,
+   "wait": 30
+  },
+  {
+   "op": "numpad",
+   "key": 45,
+   "down": true,
+   "wait": 2
+  },
+  {
+   "op": "numpad",
+   "key": 45,
+   "down": false,
+   "wait": 20
+  },
+  {
+   "op": "cleanup"
+  }
+ ]
+}

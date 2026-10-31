@@ -109,6 +109,7 @@ SCENARIOS.move = function(scn, done)
 		return
 	end
 	if not bot:Alive() then bot:Spawn() end
+	bot:SetHealth(100)
 	bot:StripWeapons()
 	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
 	local ang = Angle(scn.angles and scn.angles[1] or 0, scn.angles and scn.angles[2] or 0, 0)
@@ -385,6 +386,7 @@ SCENARIOS.physgun = function(scn, done)
 		return
 	end
 	if not bot:Alive() then bot:Spawn() end
+	bot:SetHealth(100)
 	bot:StripWeapons()
 	local weapon = scn.weapon or "weapon_physgun"
 	bot:Give(weapon)
@@ -506,6 +508,8 @@ SCENARIOS.constraint = function(scn, done)
 	end
 	if IsValid(bot) then
 		RunConsoleCommand("bot_zombie", "1")
+		if not bot:Alive() then bot:Spawn() end
+		bot:SetHealth(100)
 		bot:SetPos(Vector(scn.start and scn.start[1] or 600, scn.start and scn.start[2] or -500, scn.start and scn.start[3] or -143))
 		bot:SetLocalVelocity(Vector(0, 0, 0))
 	end
@@ -534,6 +538,35 @@ SCENARIOS.constraint = function(scn, done)
 			e = MakeThruster(bot, d.model or "models/props_phx2/garbage_metalcan001a.mdl", ang, pos, d.key or 45, d.key_bk or 42, d.force or 1500, d.toggle and 1 or 0, "fire", 0, "", false)
 		elseif d.kind == "hoverball" then
 			e = MakeHoverBall(bot, pos, d.key_dn or 43, d.key_up or 46, d.speed or 5, d.resistance or 5, d.strength or 10, d.model or "models/dav0r/hoverball.mdl", nil, d.key_on or 40)
+		elseif d.kind == "wheel" then
+			-- the stool: hit on `attach` with `normal`, wheel angle rx/ry/rz 90/0/90, Motor to the hit entity
+			local normal = Vector(d.normal[1], d.normal[2], d.normal[3])
+			local target = ents_[d.attach]
+			e = MakeWheel(bot, pos, normal:Angle() + Angle(90, 0, 90), d.model or "models/props_vehicles/carparts_wheel01a.mdl", d.fwd or 45, d.bck or 42, nil, nil, d.toggle or false, d.torque or 3000)
+			if IsValid(e) then
+				local cur = e:GetPos()
+				e:SetPos(pos + (cur - e:NearestPoint(cur - normal * 512)))
+				e:GetPhysicsObject():Wake()
+				local lpos1 = e:GetPhysicsObject():WorldToLocal(e:GetPos() + normal)
+				local lpos2 = target:GetPhysicsObject():WorldToLocal(pos)
+				local constr, axis = constraint.Motor(e, target, 0, 0, lpos1, lpos2, d.friction or 1, d.torque or 3000, 0, (d.nocollide == nil) and 1 or d.nocollide, d.toggle or false, bot, d.forcelimit or 0)
+				e:SetMotor(constr)
+				e:SetDirection(constr.direction)
+				e:SetAxis(normal)
+			end
+		elseif d.kind == "dynamite" then
+			e = MakeDynamite(bot, pos, angle_zero, d.key or 52, d.damage or 200, d.model or "models/dav0r/tnt/tnt.mdl", d.remove or false, d.delay or 0)
+			if IsValid(e) and d.normal then
+				local normal = Vector(d.normal[1], d.normal[2], d.normal[3])
+				local cur = e:GetPos()
+				e:SetPos(pos + (cur - e:NearestPoint(cur - normal * 512)))
+			end
+		elseif d.kind == "button" then
+			e = MakeButton(bot, d.model or "models/maxofs2d/button_05.mdl", ang, pos, d.key or 37, "", d.toggle == nil and true or d.toggle)
+			if IsValid(e) then
+				e:SetPos(pos - (d.normal and Vector(d.normal[1], d.normal[2], d.normal[3]) or Vector(0, 0, 1)) * e:OBBMins().z)
+				if d.attach then constraint.Weld(e, ents_[d.attach], 0, 0, 0, true) end
+			end
 		elseif d.kind == "balloon" then
 			e = MakeBalloon(bot, 255, 255, 0, d.force or 500, { Pos = pos, Model = d.model or "models/maxofs2d/balloon_classic.mdl", Skin = 1 })
 			if IsValid(e) and d.rope_to then
@@ -590,12 +623,24 @@ SCENARIOS.constraint = function(scn, done)
 	end
 	-- numpad keys of the bot at given ticks: { t = 20, key = 37, down = true }
 	local keys = scn.keys or {}
+	local numpad_log = {}
+	if not PARITY_NUMPAD_WRAPPED then
+		PARITY_NUMPAD_WRAPPED = true
+		local act, deact = numpad.Activate, numpad.Deactivate
+		numpad.Activate = function(pl, key, is_button) PARITY_NUMPAD_LOG = PARITY_NUMPAD_LOG or {} PARITY_NUMPAD_LOG[#PARITY_NUMPAD_LOG + 1] = { key = key, down = true, button = is_button or false } return act(pl, key, is_button) end
+		numpad.Deactivate = function(pl, key, is_button) PARITY_NUMPAD_LOG = PARITY_NUMPAD_LOG or {} PARITY_NUMPAD_LOG[#PARITY_NUMPAD_LOG + 1] = { key = key, down = false, button = is_button or false } return deact(pl, key, is_button) end
+	end
+	PARITY_NUMPAD_LOG = {}
 	local total = scn.ticks or 200
 	local tick, ticks = 0, {}
 	hook.Add("Tick", "parity_constraint", function()
 		for _, k in ipairs(keys) do
 			if k.t == tick then
-				if k.down then numpad.Activate(bot, k.key, false) else numpad.Deactivate(bot, k.key, false) end
+				if k.use then
+					-- +use on device `k.use` (ONOFF_USE: USE_ON on the press, USE_OFF on the release)
+					local e = devices[k.use]
+					if IsValid(e) then e:Use(bot, bot, k.down and USE_ON or USE_OFF, 1) end
+				elseif k.down then numpad.Activate(bot, k.key, false) else numpad.Deactivate(bot, k.key, false) end
 			end
 		end
 		local row = { t = tick, props = {} }
@@ -614,12 +659,20 @@ SCENARIOS.constraint = function(scn, done)
 					local d = { class = e:GetClass(), mass = IsValid(ph) and ph:GetMass() or nil, gravity = IsValid(ph) and ph:IsGravityEnabled() or nil }
 					if e:GetClass() == "gmod_thruster" then d.on = e:GetOn() d.mul = e.Multiply
 					elseif e:GetClass() == "gmod_hoverball" then d.target_z = e:GetTargetZ() d.zvel = e.ZVelocity d.enabled = e:GetEnabled()
-					elseif e:GetClass() == "gmod_balloon" then d.force = e:GetForce() end
+					elseif e:GetClass() == "gmod_balloon" then d.force = e:GetForce()
+					elseif e:GetClass() == "gmod_wheel" then
+						local m = e:GetMotor()
+						d.direction = e:GetDirection() d.toggle_state = e.ToggleState d.torque_scale = e.TorqueScale d.base_torque = e.BaseTorque
+						if IsValid(m) then d.forcescale = m.forcescale d.is_on = m.is_on d.motor_direction = m.direction d.torque = m.torque end
+					elseif e:GetClass() == "gmod_dynamite" then d.health = e:Health() d.queued = #(e.QueuedExplosions or {}) d.damage = e:GetDamage() d.delay = e:GetDelay()
+					elseif e:GetClass() == "gmod_button" then d.on = e:GetOn() d.key = e:GetKey() d.is_toggle = e:GetIsToggle() d.last_user = IsValid(e.LastUser) end
 					row.dev[i] = d
 				else
 					row.dev[i] = {}
 				end
 			end
+			row.bot_hp = bot:Health()
+			if #PARITY_NUMPAD_LOG > 0 then row.numpad = PARITY_NUMPAD_LOG PARITY_NUMPAD_LOG = {} end
 		end
 		if #controllers > 0 then
 			row.ctrl = {}
@@ -655,6 +708,7 @@ SCENARIOS.sandbox = function(scn, done)
 		return
 	end
 	if not bot:Alive() then bot:Spawn() end
+	bot:SetHealth(100)
 	bot:SetPos(Vector(scn.start[1], scn.start[2], scn.start[3]))
 	bot:SetLocalVelocity(Vector(0, 0, 0))
 	for _, e in ipairs(ents.FindByClass("prop_physics")) do e:Remove() end
@@ -754,13 +808,14 @@ SCENARIOS.toolgun = function(scn, done)
 		return
 	end
 	if not bot:Alive() then bot:Spawn() end
+	bot:SetHealth(100)
 	bot:SetPos(Vector(scn.start[1], scn.start[2], scn.start[3]))
 	bot:SetLocalVelocity(Vector(0, 0, 0))
 	bot:StripWeapons()
 	bot:Give("gmod_tool")
 	bot:SelectWeapon("gmod_tool")
 	-- a clean table: leftovers of earlier scenarios would collide with the props placed here
-	for _, cls in ipairs({ "prop_physics", "phys_constraint", "phys_lengthconstraint", "keyframe_rope", "gmod_thruster", "gmod_hoverball", "gmod_balloon" }) do
+	for _, cls in ipairs({ "prop_physics", "phys_constraint", "phys_lengthconstraint", "keyframe_rope", "gmod_thruster", "gmod_hoverball", "gmod_balloon", "gmod_wheel", "gmod_button", "gmod_dynamite" }) do
 		for _, e in ipairs(ents.FindByClass(cls)) do e:Remove() end
 	end
 	undo.GetTable()[bot:UniqueID()] = nil
@@ -804,7 +859,7 @@ SCENARIOS.toolgun = function(scn, done)
 				out.props[i] = { index = -1 }
 			end
 		end
-		for _, cls in ipairs({ "phys_constraint", "phys_lengthconstraint", "phys_ballsocket", "phys_hinge", "phys_slideconstraint", "phys_spring", "phys_pulleyconstraint", "logic_collision_pair" }) do
+		for _, cls in ipairs({ "phys_constraint", "phys_lengthconstraint", "phys_ballsocket", "phys_hinge", "phys_slideconstraint", "phys_spring", "phys_pulleyconstraint", "logic_collision_pair", "phys_torque" }) do
 			for _, c in ipairs(ents.FindByClass(cls)) do
 				local t = c:GetTable()
 				out.constraints[#out.constraints + 1] = { index = c:EntIndex(), class = cls, type = t.Type,
@@ -813,6 +868,7 @@ SCENARIOS.toolgun = function(scn, done)
 					forcelimit = t.forcelimit, nocollide = t.nocollide, rigid = t.rigid, width = t.width, material = t.material, torquelimit = t.torquelimit, friction = t.friction, lpos = vec(t.LPos), constant = t.constant, damping = t.damping, rdamping = t.rdamping, stretchonly = t.stretchonly,
 					length1 = t.Length1, length2 = t.Length2, key = t.key, fixed = t.fixed, fwd_speed = t.fwd_speed, bwd_speed = t.bwd_speed, toggle = t.toggle, fwd_bind = t.fwd_bind, bwd_bind = t.bwd_bind,
 					period = t.period, amplitude = t.amplitude, starton = t.starton, ent4 = entref(t.Ent4), lpos4 = vec(t.LPos4), wpos2 = vec(t.WPos2), wpos3 = vec(t.WPos3),
+					torque = t.torque, forcetime = t.forcetime, forcescale = t.forcescale, direction = t.direction, is_on = t.is_on, local_axis = vec(t.LocalAxis),
 					pos = vec(c:GetPos()) }
 			end
 		end
@@ -826,7 +882,7 @@ SCENARIOS.toolgun = function(scn, done)
 			out.ropes[#out.ropes + 1] = { index = r:EntIndex(), pos = vec(r:GetPos()), length = r:GetKeyValues().Length, width = r:GetKeyValues().Width }
 		end
 		out.ents = {}
-		for _, cls in ipairs({ "gmod_thruster", "gmod_hoverball", "gmod_balloon" }) do
+		for _, cls in ipairs({ "gmod_thruster", "gmod_hoverball", "gmod_balloon", "gmod_wheel", "gmod_button", "gmod_dynamite" }) do
 			for _, e in ipairs(ents.FindByClass(cls)) do
 				local t, ph = e:GetTable(), e:GetPhysicsObject()
 				local p, a = e:GetPos(), e:GetAngles()
@@ -835,7 +891,13 @@ SCENARIOS.toolgun = function(scn, done)
 					key = t.key, key_bck = t.key_bck, force = t.force, toggle = t.toggle, key_d = t.key_d, key_u = t.key_u, key_o = t.key_o,
 					speed = t.speed, strength = t.strength, resistance = t.resistance, r = t.r, g = t.g, b = t.b }
 				if cls == "gmod_thruster" then d.on = e:GetOn() d.mul = e.Multiply d.offset = vec(e:GetOffset())
-				elseif cls == "gmod_hoverball" then d.target_z = e:GetTargetZ() d.enabled = e:GetEnabled() d.zvel = e.ZVelocity end
+				elseif cls == "gmod_hoverball" then d.target_z = e:GetTargetZ() d.enabled = e:GetEnabled() d.zvel = e.ZVelocity
+				elseif cls == "gmod_wheel" then
+					local m = e:GetMotor()
+					d.direction = e:GetDirection() d.toggle = e:GetToggle() d.toggle_state = e.ToggleState d.base_torque = e.BaseTorque d.torque_scale = e.TorqueScale d.key_f = e.key_f d.key_r = e.key_r d.axis = vec(e.Axis)
+					if IsValid(m) then d.forcescale = m.forcescale d.is_on = m.is_on end
+				elseif cls == "gmod_button" then d.on = e:GetOn() d.key = e:GetKey() d.is_toggle = e:GetIsToggle() d.description = e.GetDescription and e:GetDescription() or e:GetNWString("description", nil)
+				elseif cls == "gmod_dynamite" then d.health = e:Health() d.damage = e:GetDamage() d.delay = e:GetDelay() d.remove = e:GetShouldRemove() d.key = e.key end
 				out.ents[#out.ents + 1] = d
 			end
 		end
@@ -846,7 +908,7 @@ SCENARIOS.toolgun = function(scn, done)
 		table.sort(ulist, function(a, b) return a.id < b.id end)
 		out.undos = ulist
 		out.counts = { constraints = bot:GetCount("constraints"), ropeconstraints = bot:GetCount("ropeconstraints"), props = bot:GetCount("props"),
-			thrusters = bot:GetCount("thrusters"), hoverballs = bot:GetCount("hoverballs"), balloons = bot:GetCount("balloons") }
+			thrusters = bot:GetCount("thrusters"), hoverballs = bot:GetCount("hoverballs"), balloons = bot:GetCount("balloons") , wheels = bot:GetCount("wheels"), buttons = bot:GetCount("buttons"), dynamite = bot:GetCount("dynamite")}
 		local wep = bot:GetWeapon("gmod_tool")
 		out.stage = IsValid(wep) and wep:GetNWInt("Stage", 0) or -1
 		return out
@@ -912,6 +974,11 @@ SCENARIOS.toolgun = function(scn, done)
 			RunConsoleCommand(op.name, op.value)
 		elseif op.op == "numpad" then
 			if op.down == false then numpad.Deactivate(bot, op.key, false) else numpad.Activate(bot, op.key, false) end
+		elseif op.op == "use" then
+			-- +use the newest gmod_button (ONOFF_USE edge)
+			local bs = ents.FindByClass("gmod_button")
+			table.sort(bs, function(a, b) return a:EntIndex() > b:EntIndex() end)
+			if bs[1] then bs[1]:Use(bot, bot, op.down == false and USE_OFF or USE_ON, 1) end
 		elseif op.op == "wait" then
 			wait = op.ticks or 10
 		end
@@ -1483,6 +1550,7 @@ SCENARIOS.damage = function(scn, done)
 	end
 	if scn.falldamage ~= nil then RunConsoleCommand("mp_falldamage", tostring(scn.falldamage)) end
 	if not bot:Alive() then bot:Spawn() end
+	bot:SetHealth(100)
 	local base = Vector(scn.start[1], scn.start[2], scn.start[3])
 	local drops = {}
 	for i, h in ipairs(scn.heights or {}) do drops[(i - 1) * (scn.spacing or 200)] = h end
@@ -1513,6 +1581,7 @@ SCENARIOS.damage = function(scn, done)
 			local h = drops[tick]
 			if h then
 				if not bot:Alive() then bot:Spawn() end
+				bot:SetHealth(100)
 				bot:SetHealth(scn.health or 100)
 				bot:SetArmor(scn.armor or 0)
 				bot:SetPos(base + Vector(0, 0, h))
@@ -1556,6 +1625,7 @@ SCENARIOS.ragdoll = function(scn, done)
 		return
 	end
 	if not bot:Alive() then bot:Spawn() end
+	bot:SetHealth(100)
 	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
 	local ang = Angle(0, scn.yaw or 0, 0)
 	bot:SetPos(start)
@@ -1677,6 +1747,7 @@ SCENARIOS.hooks = function(scn, done)
 		return
 	end
 	if not bot:Alive() then bot:Spawn() end
+	bot:SetHealth(100)
 	bot:SetPos(Vector(scn.start[1], scn.start[2], scn.start[3]))
 	bot:SetEyeAngles(Angle(30, 0, 0))
 	for _, e in ipairs(ents.FindByClass("prop_physics")) do e:Remove() end

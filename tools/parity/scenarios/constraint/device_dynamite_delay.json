@@ -1,0 +1,60 @@
+{
+ "name": "device_dynamite_delay",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "bot": true,
+ "start": [
+  600.0,
+  -500.0,
+  -143.0
+ ],
+ "ticks": 200,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": false
+  }
+ ],
+ "constraints": [],
+ "devices": [
+  {
+   "kind": "dynamite",
+   "pos": [
+    923.235,
+    -500.0,
+    -143.97
+   ],
+   "normal": [
+    0,
+    0,
+    1
+   ],
+   "key": 52,
+   "damage": 200,
+   "delay": 1,
+   "remove": true
+  }
+ ],
+ "keys": [
+  {
+   "t": 20,
+   "key": 52,
+   "down": true
+  },
+  {
+   "t": 22,
+   "key": 52,
+   "down": false
+  }
+ ]
+}

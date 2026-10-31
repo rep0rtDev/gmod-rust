@@ -1,0 +1,74 @@
+{
+ "name": "device_dynamite_push",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "bot": true,
+ "start": [
+  923.235,
+  -700.0,
+  -143.0
+ ],
+ "ticks": 200,
+ "props": [
+  {
+   "model": "models/props_c17/oildrum001.mdl",
+   "pos": [
+    1023.235,
+    -500.0,
+    -121.0
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": false
+  },
+  {
+   "model": "models/props_c17/oildrum001.mdl",
+   "pos": [
+    923.235,
+    -300.0,
+    -121.0
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": false
+  }
+ ],
+ "constraints": [],
+ "devices": [
+  {
+   "kind": "dynamite",
+   "pos": [
+    923.235,
+    -500.0,
+    -143.97
+   ],
+   "normal": [
+    0,
+    0,
+    1
+   ],
+   "key": 52,
+   "damage": 200,
+   "delay": 0,
+   "remove": false
+  }
+ ],
+ "keys": [
+  {
+   "t": 80,
+   "key": 52,
+   "down": true
+  },
+  {
+   "t": 82,
+   "key": 52,
+   "down": false
+  }
+ ]
+}

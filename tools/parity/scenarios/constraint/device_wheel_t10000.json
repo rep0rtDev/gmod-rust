@@ -1,0 +1,62 @@
+{
+ "name": "device_wheel_t10000",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "bot": true,
+ "start": [
+  600.0,
+  -500.0,
+  -143.0
+ ],
+ "ticks": 200,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    823.235,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  }
+ ],
+ "constraints": [],
+ "devices": [
+  {
+   "kind": "wheel",
+   "pos": [
+    842.5,
+    -500.0,
+    -123.7
+   ],
+   "normal": [
+    1,
+    0,
+    0
+   ],
+   "attach": 1,
+   "torque": 10000,
+   "friction": 1,
+   "fwd": 45,
+   "bck": 42,
+   "toggle": false
+  }
+ ],
+ "keys": [
+  {
+   "t": 20,
+   "key": 45,
+   "down": true
+  },
+  {
+   "t": 120,
+   "key": 45,
+   "down": false
+  }
+ ]
+}

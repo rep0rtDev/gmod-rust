@@ -1,0 +1,84 @@
+{
+ "name": "toolgun_dynamite",
+ "kind": "toolgun",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [
+  {
+   "model": "models/props_c17/oildrum001.mdl",
+   "pos": [
+    900.0,
+    -500.0,
+    -121.0
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": false
+  }
+ ],
+ "ops": [
+  {
+   "op": "click",
+   "tool": "dynamite",
+   "pitch": 60.0,
+   "yaw": 0.0,
+   "settings": {
+    "group": 52,
+    "damage": 40,
+    "delay": 0,
+    "model": "models/dav0r/tnt/tnt.mdl",
+    "remove": 0
+   },
+   "wait": 10
+  },
+  {
+   "op": "numpad",
+   "key": 52,
+   "down": true,
+   "wait": 5
+  },
+  {
+   "op": "numpad",
+   "key": 52,
+   "down": false,
+   "wait": 40
+  },
+  {
+   "op": "click",
+   "tool": "dynamite",
+   "pitch": 45.0,
+   "yaw": 60.0,
+   "settings": {
+    "group": 52,
+    "damage": 40,
+    "delay": 0.5,
+    "model": "models/dav0r/tnt/tnt.mdl",
+    "remove": 1
+   },
+   "wait": 10
+  },
+  {
+   "op": "numpad",
+   "key": 52,
+   "down": true,
+   "wait": 2
+  },
+  {
+   "op": "numpad",
+   "key": 52,
+   "down": false,
+   "wait": 60
+  },
+  {
+   "op": "cleanup"
+  }
+ ]
+}
