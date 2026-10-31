@@ -69,8 +69,16 @@ struct Disp {
     material2: u32,
 }
 
+/// A `func_useableladder`: the line the player climbs, bottom to top (mount points).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ladder {
+    pub bottom: Vec3,
+    pub top: Vec3,
+}
+
 pub struct World {
     disps: Vec<Disp>,
+    ladders: Vec<Ladder>,
     planes: Vec<Plane>,
     nodes: Vec<Node>,
     leafs: Vec<Leaf>,
@@ -151,7 +159,24 @@ impl World {
             }
             _ => (Vec::new(), 0),
         };
+        let ladders = bsp
+            .entities
+            .iter()
+            .filter(|e| e.classname() == "func_useableladder")
+            .filter_map(|e| {
+                // the map's `point0`/`point1` are world positions (the entity's origin is
+                // where Hammer placed the helper, not a base for them)
+                let a = Vec3::from(gm_formats::bsp::lumps::parse_vec3(e.get("point0")?)?);
+                let b = Vec3::from(gm_formats::bsp::lumps::parse_vec3(e.get("point1")?)?);
+                Some(if a.z <= b.z {
+                    Ladder { bottom: a, top: b }
+                } else {
+                    Ladder { bottom: b, top: a }
+                })
+            })
+            .collect();
         World {
+            ladders,
             disps: displacements(bsp, &mut materials),
             planes: bsp
                 .planes
@@ -275,6 +300,7 @@ impl World {
         let leaf_brushes: Vec<u16> = (0..brushes.len() as u16).collect();
         World {
             disps: Vec::new(),
+            ladders: Vec::new(),
             planes,
             nodes: Vec::new(),
             leafs: vec![Leaf {
@@ -412,6 +438,16 @@ impl World {
     /// Material under a standing player's feet (`origin` at the feet): a short ray down finds
     /// the floor the player rests on, which can be up to a step below the origin (an idle player
     /// on gm_construct's spawn stands 1 u above the floor brush).
+    pub fn ladders(&self) -> &[Ladder] {
+        &self.ladders
+    }
+
+    /// Adds ladders to a built world (tests, tools).
+    pub fn with_ladders(mut self, ladders: &[Ladder]) -> Self {
+        self.ladders.extend_from_slice(ladders);
+        self
+    }
+
     pub fn ground_material(&self, origin: Vec3) -> Option<&str> {
         // the player hull's footprint, as the game's ground trace: on a displacement the hull
         // rests on the triangle its sweep clipped against, not the one under the origin
@@ -891,6 +927,7 @@ mod tests {
         ];
         World {
             disps: Vec::new(),
+            ladders: Vec::new(),
             planes,
             // single node splitting on z=0: above is leaf 0 (empty), below leaf 1 (the brush)
             nodes: vec![Node {

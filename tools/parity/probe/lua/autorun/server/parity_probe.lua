@@ -152,7 +152,8 @@ SCENARIOS.move = function(scn, done)
 		local a = sg and Angle(sg.pitch or 0, sg.yaw or 0, 0) or ang
 		cmd:ClearButtons()
 		cmd:ClearMovement()
-		cmd:SetButtons(sg and sg.buttons or 0)
+		-- a ladder from the previous scenario would keep the bot frozen: jumping is the only exit from Lua
+		cmd:SetButtons(sg and sg.buttons or (ply:GetMoveType() == MOVETYPE_LADDER and IN_JUMP or 0))
 		cmd:SetForwardMove(sg and sg.forward or 0)
 		cmd:SetSideMove(sg and sg.side or 0)
 		cmd:SetUpMove(sg and sg.up or 0)
@@ -161,9 +162,10 @@ SCENARIOS.move = function(scn, done)
 	hook.Add("SetupMove", "parity_move", function(ply, mv, cmd)
 		if ply ~= bot then return end
 		if tick < 0 then
+			local onLadder = ply:GetMoveType() == MOVETYPE_LADDER
 			mv:SetOrigin(start)
 			mv:SetVelocity(Vector(0, 0, 0))
-			mv:SetButtons(0)
+			mv:SetButtons(onLadder and IN_JUMP or 0)
 			mv:SetForwardSpeed(0)
 			mv:SetSideSpeed(0)
 			mv:SetUpSpeed(0)
@@ -183,6 +185,22 @@ SCENARIOS.move = function(scn, done)
 		mv:SetAngles(a)
 		ply:SetEyeAngles(a)
 	end)
+	local function ladderInfo()
+		local out = {}
+		for _, e in ipairs(ents.FindByClass("func_useableladder")) do
+			local st = e:GetSaveTable() or {}
+			local l = { pos = { e:GetPos().x, e:GetPos().y, e:GetPos().z } }
+			for k, v in pairs(st) do
+				if isvector(v) then l[k] = { v.x, v.y, v.z } elseif isnumber(v) or isbool(v) then l[k] = v end
+			end
+			out[#out + 1] = l
+		end
+		local dm = {}
+		for _, e in ipairs(ents.FindByClass("info_ladder_dismount")) do
+			dm[#dm + 1] = { e:GetPos().x, e:GetPos().y, e:GetPos().z }
+		end
+		return { ladders = out, dismounts = dm }
+	end
 	hook.Add("FinishMove", "parity_move", function(ply, mv)
 		if ply ~= bot then return end
 		if tick >= 0 then
@@ -195,6 +213,7 @@ SCENARIOS.move = function(scn, done)
 				ducked = ply:Crouching(),
 				water = ply:WaterLevel(),
 				speed = ply:GetMaxSpeed(),
+				movetype = ply:GetMoveType(),
 			}
 		end
 		tick = tick + 1
@@ -211,6 +230,7 @@ SCENARIOS.move = function(scn, done)
 				final = { p.x, p.y, p.z },
 				hull = { mins = { ply:OBBMins().x, ply:OBBMins().y, ply:OBBMins().z }, maxs = { ply:OBBMaxs().x, ply:OBBMaxs().y, ply:OBBMaxs().z } },
 				speeds = { walk = ply:GetWalkSpeed(), run = ply:GetRunSpeed(), crouched = ply:GetCrouchedWalkSpeed(), jump = ply:GetJumpPower(), duck = ply:GetDuckSpeed(), unduck = ply:GetUnDuckSpeed(), step = ply:GetStepSize() },
+				ladders = ladderInfo(),
 			})
 		end
 	end)

@@ -2635,3 +2635,80 @@ crates = ["gm-move", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
+
+[[harness]]
+name = "move_ladder_up"
+scenario = "move/ladder_up"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_ladder_down"
+scenario = "move/ladder_down"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_ladder_jump"
+scenario = "move/ladder_jump"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_ladder_pitch"
+scenario = "move/ladder_pitch"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_ladder_back"
+scenario = "move/ladder_back"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_ladder_angles"
+scenario = "move/ladder_angles"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_ladder_thresh"
+scenario = "move/ladder_thresh"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5

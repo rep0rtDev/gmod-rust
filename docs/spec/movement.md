@@ -68,9 +68,19 @@ Measured on gm_construct's pond (x -3040..1824, y 2016..4000, surface at z -162,
 - **Drowning.** None: 60 s at level 3 (`lua_drown`, 4000 ticks) gave no `EntityTakeDamage`, no `PlayerHurt`, hp stayed 100. Not implemented, on purpose.
 - Not measured: `sv_waterdist`, water jump out onto a ledge, currents, slime/lava damage.
 
+## Ladders
+
+Measured on gm_construct's `func_useableladder` (the line x -2920, y -1076 from z -104.64 to -7.36 in front of a wall at y -1058, lower floor at -96; the top ends in a 48 u crawlspace, so the top dismount could not be measured). Seven traces in `tools/parity/golden/261031/` (`move_ladder_up/down/jump/pitch/back/angles/thresh`), six bit-exact, `move_ladder_jump` off by one tick at the landing (below).
+
+- **Mount.** A forward press (forward move or `IN_FORWARD`) with the ladder line within 24 u of the origin horizontally (hull 16 + 8), in front of the view and within the ladder's height, grabs it: on the press tick nothing moves and the velocity is zeroed; the following ticks slide the origin 3 u (200 u/s) straight at the line (the game's MOVETYPE_NONE, still grounded, velocity 0); on the line the movetype is LADDER and the climb starts next tick. `move_ladder_back`: press at tick 20 from 24 u, on the line at 28, climbing from 29.
+- **Climb.** Only the buttons move: the wish is the view forward for `IN_FORWARD`, minus forward for `IN_BACK`, plus/minus the view right for the strafes (forward move without buttons does nothing). Up at 200 u/s along the ladder unless the unit wish points down steeper than 0.3 (forward at pitch 17 climbs, 18 descends; back at pitch 0 or 25 climbs, at -45 descends; strafes, being level, always climb). The hull sweep along the ladder stops dead on the floor or the ceiling (velocity 0) and the player stays on the ladder at either end; no gravity, never grounded.
+- **Jump.** `IN_JUMP` leaves the ladder: velocity = view forward x 200 + 50 up, then the ordinary air tick (gravity, collision). `move_ladder_jump` from the top under the ceiling: the hop is clipped at once, the forward part stops at the wall.
+- **Sounds.** `ladder{1..4}.wav` (the `ladder` surface property) at volume 1 on the mount tick, then on the tick after a climbing tick whenever 450 ms have passed since the last climbing step, idle time included (`move_ladder_thresh`: 20, 30, 60, 90).
+- **Open.** Landing after the jump, tick 108: the game is still falling 1.13 u above the floor (ground false, velocity -256.5), we ground there with the 2 u probe. The game's own hull trace at that spot (y -1074.03, the hull a float off the wall) reports start-solid even with MASK_SOLID while every point around is empty; something near the top of the wall (solid above z -70 at y -1060 in a slab test) that our world does not have or that the game's sweep ignores. Also unmeasured: the top dismount (`info_ladder_dismount`), `sv_ladder_useonly`, mounting from above.
+
 ## Not implemented yet
 
-Ladders, moving platforms and props as ground, fall damage, view roll, surface friction modifiers, `sv_maxspeed` style limits set by Lua, prediction error correction, `Player.Wade`.
+Moving platforms and props as ground, fall damage, view roll, surface friction modifiers, `sv_maxspeed` style limits set by Lua, prediction error correction, `Player.Wade`.
 
 ## Probe
 
@@ -80,7 +90,7 @@ Measured since: `move_fall_200` (the 140 u/s rule holds when landing from 200 u)
 
 `move_air_left`, `move_air_right`, `move_air_alt` (alternating strafes through a whole jump) and `move_airstrafe` pin the air friction rule; `move_stairs_down` recorded.
 
-Open: slopes, ladders, moving ground.
+Open: slopes, moving ground.
 
 ## Displacements
 

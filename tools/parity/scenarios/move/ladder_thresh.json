@@ -1,0 +1,160 @@
+{
+  "name": "move_ladder_thresh",
+  "kind": "move",
+  "map": "gm_construct",
+  "start": [
+    -2920.0,
+    -1100.0,
+    -95.0
+  ],
+  "angles": [
+    0,
+    90
+  ],
+  "segments": [
+    {
+      "ticks": 20,
+      "buttons": 0,
+      "forward": 0,
+      "side": 0,
+      "up": 0,
+      "pitch": 0,
+      "yaw": 90
+    },
+    {
+      "ticks": 12,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": -45,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": 16,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": 18,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": 17,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": 19,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 16,
+      "forward": -450,
+      "side": 0,
+      "up": 0,
+      "pitch": 25,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": 25,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 512,
+      "forward": 0,
+      "side": -450,
+      "up": 0,
+      "pitch": 25,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": 25,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 1024,
+      "forward": 0,
+      "side": 450,
+      "up": 0,
+      "pitch": -45,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": 25,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 1024,
+      "forward": 0,
+      "side": 450,
+      "up": 0,
+      "pitch": 0,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": 25,
+      "yaw": 90
+    },
+    {
+      "ticks": 6,
+      "buttons": 512,
+      "forward": 0,
+      "side": -450,
+      "up": 0,
+      "pitch": -60,
+      "yaw": 90
+    },
+    {
+      "ticks": 10,
+      "buttons": 0,
+      "forward": 0,
+      "side": 0,
+      "up": 0,
+      "pitch": 0,
+      "yaw": 90
+    }
+  ]
+}

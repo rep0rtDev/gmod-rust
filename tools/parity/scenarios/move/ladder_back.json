@@ -1,0 +1,52 @@
+{
+  "name": "move_ladder_back",
+  "kind": "move",
+  "map": "gm_construct",
+  "start": [
+    -2920.0,
+    -1100.0,
+    -95.0
+  ],
+  "angles": [
+    0,
+    90
+  ],
+  "segments": [
+    {
+      "ticks": 20,
+      "buttons": 0,
+      "forward": 0,
+      "side": 0,
+      "up": 0,
+      "pitch": 0,
+      "yaw": 90
+    },
+    {
+      "ticks": 40,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": -45,
+      "yaw": 90
+    },
+    {
+      "ticks": 40,
+      "buttons": 8,
+      "forward": 450,
+      "side": 0,
+      "up": 0,
+      "pitch": 0,
+      "yaw": 270
+    },
+    {
+      "ticks": 40,
+      "buttons": 0,
+      "forward": 0,
+      "side": 0,
+      "up": 0,
+      "pitch": 0,
+      "yaw": 90
+    }
+  ]
+}

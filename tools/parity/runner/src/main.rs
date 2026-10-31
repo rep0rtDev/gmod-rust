@@ -373,8 +373,10 @@ fn run_move(scn: &Scenario) -> Result<Value> {
             let feet = st.origin;
             let (was_on_ground, prev_vz) = (st.on_ground, st.velocity.z);
             let prev_level = st.water_level;
+            let (prev_move, prev_vz_l) = (st.move_type, st.velocity.z);
             let step = steps.before_move(&st, mover.step_max_speed(&cmd), 15.0);
             mover.tick(&mut st, &cmd);
+            let ladder_step = steps.ladder_step(prev_move, prev_vz_l, &st, 15.0);
             if let Some(name) = steps.water_sound(prev_level, &st, &cmd) {
                 let e = scripts.get(name);
                 sounds.push(serde_json::json!({
@@ -400,17 +402,15 @@ fn run_move(scn: &Scenario) -> Result<Value> {
             }
             let land_step = landed.then(|| steps.on_land(fall_speed)).flatten();
             let land_feet = st.origin;
-            for (feet, step, wade) in step
+            let wade = |level: u8| (level == 1).then_some(gm_move::WADE_MATERIAL);
+            for (feet, step, override_material) in step
                 .or_else(|| jumped.then(|| steps.on_jump()))
-                .map(|s| (feet, s, prev_level == 1))
+                .map(|s| (feet, s, wade(prev_level)))
                 .into_iter()
-                .chain(land_step.map(|s| (land_feet, s, st.water_level == 1)))
+                .chain(land_step.map(|s| (land_feet, s, wade(st.water_level))))
+                .chain(ladder_step.map(|s| (st.origin, s, Some(gm_move::LADDER_MATERIAL))))
             {
-                let material = if wade {
-                    Some(gm_move::WADE_MATERIAL)
-                } else {
-                    world.ground_material(feet)
-                };
+                let material = override_material.or_else(|| world.ground_material(feet));
                 let set = gm_dedicated::step_sounds(&mount, &table, material);
                 let (name, other) = match set {
                     Some(s) if step.right => (Some(s.right), Some(s.left)),

@@ -500,8 +500,11 @@ fn w_state(w: &mut Writer, s: &gm_move::PlayerState) {
     w.u8(match s.move_type {
         gm_move::MoveType::Walk => 0,
         gm_move::MoveType::Noclip => 1,
+        gm_move::MoveType::LadderMount => 2,
+        gm_move::MoveType::Ladder => 3,
     });
     w.u8(s.water_level);
+    w.u16(s.ladder);
 }
 
 fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
@@ -522,12 +525,14 @@ fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
         boost_yaw: r.f32()?,
         ducked_at_tick_start: r.bool()?,
         surface_friction: r.f32()?,
-        move_type: if r.u8()? == 0 {
-            gm_move::MoveType::Walk
-        } else {
-            gm_move::MoveType::Noclip
+        move_type: match r.u8()? {
+            0 => gm_move::MoveType::Walk,
+            1 => gm_move::MoveType::Noclip,
+            2 => gm_move::MoveType::LadderMount,
+            _ => gm_move::MoveType::Ladder,
         },
         water_level: r.u8()?,
+        ladder: r.u16()?,
     })
 }
 

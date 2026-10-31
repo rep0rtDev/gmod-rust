@@ -95,6 +95,9 @@ pub struct UserCmd {
 pub enum MoveType {
     Walk,
     Noclip,
+    /// Being pulled onto a ladder (the game's MOVETYPE_NONE while it slides the player in).
+    LadderMount,
+    Ladder,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -128,6 +131,8 @@ pub struct PlayerState {
     pub move_type: MoveType,
     /// 0 dry, 1 feet, 2 waist, 3 eyes (the game's WaterLevel), from `check_water`.
     pub water_level: u8,
+    /// Index into the world's ladders while mounting or climbing one.
+    pub ladder: u16,
 }
 
 impl Default for PlayerState {
@@ -151,6 +156,7 @@ impl Default for PlayerState {
             surface_friction: 1.0,
             move_type: MoveType::Walk,
             water_level: 0,
+            ladder: 0,
         }
     }
 }
@@ -161,29 +167,17 @@ pub const WATER_SPEED_SCALE: f32 = 0.8;
 pub const WATER_SINK_SPEED: f32 = 60.0;
 /// Holding jump while swimming sets the vertical speed to this every tick.
 pub const WATER_JUMP_SPEED: f32 = 100.0;
-
-impl Footsteps {
-    /// The water sound a tick voices (after `before_move`), from the water level entering the
-    /// tick and the state after the move: `Player.Swim` (volume 0.5) on wading in from dry
-    /// ground (`move_water_walk` tick 117) and on a jump held while the tick starts swimming,
-    /// once a second (`move_water_swim` ticks 160, 250, 328: the held jump at 227 came while
-    /// bobbing at the surface with the waist out, 250 is the next tick that starts at the waist).
-    pub fn water_sound(
-        &mut self,
-        prev_level: u8,
-        st: &PlayerState,
-        cmd: &UserCmd,
-    ) -> Option<&'static str> {
-        if prev_level == 0 && st.water_level > 0 {
-            return Some("Player.Swim");
-        }
-        if prev_level >= 2 && cmd.buttons & buttons::JUMP != 0 && self.swim_ms <= 0.0 {
-            self.swim_ms = 1000.0;
-            return Some("Player.Swim");
-        }
-        None
-    }
-}
+/// Climbing speed along the ladder, and the speed the mount pulls the player in with
+/// (measured `move_ladder_*`: 3 u per tick both ways).
+pub const LADDER_SPEED: f32 = 200.0;
+/// A forward press this close (origin to the ladder line) starts the mount (hull 16 + 8).
+pub const LADDER_MOUNT_REACH: f32 = 24.0;
+/// A climb wish pointing down more steeply than this (its z, unit length) descends.
+pub const LADDER_DOWN_SLOPE: f32 = 0.3;
+/// Jumping off: the view forward at `LADDER_SPEED` plus this much up.
+pub const LADDER_JUMP_UP: f32 = 50.0;
+/// Pseudo material for the footsteps on a ladder (`$surfaceprop ladder`).
+pub const LADDER_MATERIAL: &str = "surfaceprop:ladder";
 
 /// Footsteps in water up to the feet use this surface property instead of the floor's
 /// (measured: `slosh*.wav` at the normal step volume), as the `surfaceprop:` pseudo material.
@@ -254,9 +248,33 @@ impl<'a> Mover<'a> {
     /// Advance one tick.
     pub fn tick(&self, st: &mut PlayerState, cmd: &UserCmd) {
         let dt = self.cfg.tick_interval;
-        if st.move_type == MoveType::Noclip {
-            self.noclip(st, cmd, dt);
-            return;
+        match st.move_type {
+            MoveType::Noclip => {
+                self.noclip(st, cmd, dt);
+                return;
+            }
+            MoveType::LadderMount => {
+                self.ladder_mount_step(st, dt);
+                self.categorize(st);
+                return;
+            }
+            MoveType::Ladder if cmd.buttons & buttons::JUMP == 0 => {
+                self.ladder_move(st, cmd, dt);
+                return;
+            }
+            MoveType::Ladder => {
+                // measured (`move_ladder_jump`): off along the view at the climb speed, plus a hop
+                let (forward, _) = angle_vectors(cmd.view_angles);
+                st.move_type = MoveType::Walk;
+                st.on_ground = false;
+                st.velocity = forward * LADDER_SPEED + Vec3::Z * LADDER_JUMP_UP;
+            }
+            MoveType::Walk => {
+                if self.ladder_mount(st, cmd) {
+                    self.categorize(st);
+                    return;
+                }
+            }
         }
         st.ducked_at_tick_start = st.ducked;
         self.duck(st, cmd, dt);
@@ -347,6 +365,95 @@ impl<'a> Mover<'a> {
     /// Swimming (water level 2+), fitted tick for tick to `move_water_swim`: the wish follows
     /// the full view direction (jump adds the max speed upwards, no input sinks at 60), speed
     /// scaled by 0.8; friction on the whole vector, acceleration limited by the speed left.
+    /// A forward press near a ladder the player faces grabs it: the game stops the player
+    /// where he is and pulls him onto the ladder line over the following ticks
+    /// (measured `move_ladder_back`: nothing moves on the press tick).
+    fn ladder_mount(&self, st: &mut PlayerState, cmd: &UserCmd) -> bool {
+        if cmd.forward_move <= 0.0 && cmd.buttons & buttons::FORWARD == 0 {
+            return false;
+        }
+        let (forward, _) = angle_vectors(cmd.view_angles);
+        let look = forward.truncate();
+        for (i, l) in self.world.ladders().iter().enumerate() {
+            let to = l.bottom.truncate() - st.origin.truncate();
+            if to.length() > LADDER_MOUNT_REACH + 1e-3 || look.dot(to) <= 0.0 {
+                continue;
+            }
+            if st.origin.z < l.bottom.z - self.cfg.step_size || st.origin.z > l.top.z {
+                continue;
+            }
+            st.move_type = MoveType::LadderMount;
+            st.ladder = i as u16;
+            st.velocity = Vec3::ZERO;
+            return true;
+        }
+        false
+    }
+
+    /// `LADDER_SPEED` straight at the ladder line; on the line the climb starts next tick.
+    fn ladder_mount_step(&self, st: &mut PlayerState, dt: f32) {
+        let Some(l) = self.world.ladders().get(st.ladder as usize) else {
+            st.move_type = MoveType::Walk;
+            return;
+        };
+        let to = l.bottom.truncate() - st.origin.truncate();
+        let step = LADDER_SPEED * dt;
+        st.velocity = Vec3::ZERO;
+        if to.length() <= step {
+            st.origin.x = l.bottom.x;
+            st.origin.y = l.bottom.y;
+            st.move_type = MoveType::Ladder;
+        } else {
+            let d = to.normalize() * step;
+            st.origin.x += d.x;
+            st.origin.y += d.y;
+        }
+    }
+
+    /// Measured (`move_ladder_angles`, `move_ladder_thresh`): the move buttons build a wish
+    /// from the view (forward, minus forward for back, right for the strafes) and the player
+    /// climbs up at `LADDER_SPEED` unless that wish points down steeper than
+    /// `LADDER_DOWN_SLOPE`; the floor and ceiling stop the climb dead and the player stays
+    /// on the ladder at either end.
+    fn ladder_move(&self, st: &mut PlayerState, cmd: &UserCmd, dt: f32) {
+        let Some(l) = self.world.ladders().get(st.ladder as usize) else {
+            st.move_type = MoveType::Walk;
+            return;
+        };
+        st.on_ground = false;
+        let dir = (l.top - l.bottom).normalize_or_zero();
+        let (forward, right) = angle_vectors(cmd.view_angles);
+        let mut wish = Vec3::ZERO;
+        if cmd.buttons & buttons::FORWARD != 0 {
+            wish += forward;
+        }
+        if cmd.buttons & buttons::BACK != 0 {
+            wish -= forward;
+        }
+        if cmd.buttons & buttons::MOVERIGHT != 0 {
+            wish += right;
+        }
+        if cmd.buttons & buttons::MOVELEFT != 0 {
+            wish -= right;
+        }
+        let Some(wish) = wish.try_normalize() else {
+            st.velocity = Vec3::ZERO;
+            return;
+        };
+        let speed = if wish.z < -LADDER_DOWN_SLOPE {
+            -LADDER_SPEED
+        } else {
+            LADDER_SPEED
+        };
+        st.velocity = dir * speed;
+        let end = st.origin + st.velocity * dt;
+        let t = self.trace(st, st.origin, end);
+        st.origin = t.end;
+        if t.fraction < 1.0 {
+            st.velocity = Vec3::ZERO;
+        }
+    }
+
     fn water_move(&self, st: &mut PlayerState, cmd: &UserCmd, dt: f32) {
         let (forward, right) = angle_vectors(cmd.view_angles);
         let max_speed = self.max_speed(st, cmd);
@@ -790,6 +897,8 @@ pub struct Footsteps {
     pub right: bool,
     /// Milliseconds until a held jump in the water voices `Player.Swim` again.
     pub swim_ms: f32,
+    /// Milliseconds of climbing until the next ladder step.
+    pub ladder_ms: f32,
 }
 
 impl Footsteps {
@@ -862,6 +971,58 @@ impl Footsteps {
             volume,
             right: self.right,
         })
+    }
+
+    /// Ladder steps (`ladder*.wav`, measured `move_ladder_*`): one at full volume on the tick
+    /// the ladder is grabbed (no timer), then on the tick after a climbing tick whenever
+    /// 450 ms have passed since the last climbing step, idle time included.
+    pub fn ladder_step(
+        &mut self,
+        prev: MoveType,
+        prev_vz: f32,
+        st: &PlayerState,
+        tick_ms: f32,
+    ) -> Option<Step> {
+        if self.ladder_ms > 0.0 {
+            self.ladder_ms = (self.ladder_ms - tick_ms).max(0.0);
+        }
+        if prev == MoveType::Walk && st.move_type == MoveType::LadderMount {
+            self.right = !self.right;
+            return Some(Step {
+                volume: 1.0,
+                right: self.right,
+            });
+        }
+        if prev != MoveType::Ladder || prev_vz == 0.0 || self.ladder_ms > 0.0 {
+            return None;
+        }
+        self.ladder_ms = 450.0;
+        self.right = !self.right;
+        Some(Step {
+            volume: 0.5,
+            right: self.right,
+        })
+    }
+
+    /// The water sound a tick voices (after `before_move`), from the water level entering the
+    /// tick and the state after the move: `Player.Swim` (volume 0.5) on wading in from dry
+    /// ground (`move_water_walk` tick 117) and on a jump held while the tick starts swimming,
+    /// once a second (`move_water_swim` ticks 160, 250, 328: the held jump at 227 came while
+    /// bobbing at the surface with the waist out, 250 is the next tick that starts at the waist).
+    pub fn water_sound(
+        &mut self,
+        prev_level: u8,
+        st: &PlayerState,
+        cmd: &UserCmd,
+    ) -> Option<&'static str> {
+        if prev_level == 0 && st.water_level > 0 {
+            return Some("Player.Swim");
+        }
+        if prev_level >= 2 && cmd.buttons & buttons::JUMP != 0 && self.swim_ms <= 0.0 {
+            self.swim_ms = 1000.0;
+            return Some("Player.Swim");
+        }
+        None
     }
 }
 
@@ -992,6 +1153,193 @@ mod tests {
             vels.push(st.velocity);
         }
         (st, vels)
+    }
+
+    /// Flat floor at 0, a wall at y 100 and a ladder 24 u in front of it up to z 120,
+    /// under a ceiling at 200.
+    fn ladder_world() -> World {
+        World::from_boxes(&[
+            (
+                Vec3::new(-512.0, -512.0, -64.0),
+                Vec3::new(512.0, 512.0, 0.0),
+            ),
+            (
+                Vec3::new(-512.0, 100.0, 0.0),
+                Vec3::new(512.0, 164.0, 300.0),
+            ),
+            (
+                Vec3::new(-512.0, -512.0, 200.0),
+                Vec3::new(512.0, 512.0, 264.0),
+            ),
+        ])
+        .with_ladders(&[gm_collision::Ladder {
+            bottom: Vec3::new(0.0, 76.0, -8.0),
+            top: Vec3::new(0.0, 76.0, 120.0),
+        }])
+    }
+
+    fn climb_cmd(buttons: u32, pitch: f32) -> UserCmd {
+        UserCmd {
+            buttons,
+            forward_move: if buttons & buttons::FORWARD != 0 {
+                450.0
+            } else {
+                0.0
+            },
+            view_angles: Vec3::new(pitch, 90.0, 0.0),
+            ..UserCmd::default()
+        }
+    }
+
+    /// Walks the player into the ladder from 24 u out and climbs 10 ticks.
+    fn on_ladder(world: &World) -> (Mover<'_>, PlayerState) {
+        let m = Mover::new(MoveConfig::default(), world);
+        let mut st = PlayerState {
+            origin: Vec3::new(0.0, 52.0, 0.0),
+            on_ground: true,
+            ..PlayerState::default()
+        };
+        for _ in 0..20 {
+            m.tick(&mut st, &climb_cmd(buttons::FORWARD, -45.0));
+        }
+        assert_eq!(st.move_type, MoveType::Ladder);
+        (m, st)
+    }
+
+    #[test]
+    fn ladder_mount_pulls_in_at_200_then_climbs() {
+        let world = ladder_world();
+        let m = Mover::new(MoveConfig::default(), &world);
+        let mut st = PlayerState {
+            origin: Vec3::new(0.0, 52.0, 0.0),
+            on_ground: true,
+            ..PlayerState::default()
+        };
+        let cmd = climb_cmd(buttons::FORWARD, -45.0);
+        // measured (`move_ladder_back`): the press tick stops the player where he is
+        m.tick(&mut st, &cmd);
+        assert_eq!(st.move_type, MoveType::LadderMount);
+        assert_eq!(st.origin, Vec3::new(0.0, 52.0, 0.0));
+        assert_eq!(st.velocity, Vec3::ZERO);
+        for i in 1..=8 {
+            m.tick(&mut st, &cmd);
+            assert!(
+                (st.origin.y - (52.0 + 3.0 * i as f32)).abs() < 1e-3,
+                "tick {i}"
+            );
+        }
+        assert_eq!(st.move_type, MoveType::Ladder);
+        assert_eq!(st.origin.z, 0.0);
+        m.tick(&mut st, &cmd);
+        assert_eq!(st.velocity, Vec3::new(0.0, 0.0, 200.0));
+        assert_eq!(st.origin.z, 3.0);
+        assert!(!st.on_ground);
+    }
+
+    #[test]
+    fn ladder_direction_by_view_and_button() {
+        let world = ladder_world();
+        let (m, start) = on_ladder(&world);
+        // measured (`move_ladder_thresh`): forward at pitch 17 climbs, 18 descends; back and
+        // the strafes point their own way, strafes being level always climb
+        for (buttons, pitch, up) in [
+            (buttons::FORWARD, 0.0, true),
+            (buttons::FORWARD, 17.0, true),
+            (buttons::FORWARD, 18.0, false),
+            (buttons::FORWARD, 25.0, false),
+            (buttons::BACK, 0.0, true),
+            (buttons::BACK, 25.0, true),
+            (buttons::BACK, -45.0, false),
+            (buttons::MOVERIGHT, -45.0, true),
+            (buttons::MOVELEFT, 25.0, true),
+        ] {
+            let mut st = start;
+            m.tick(&mut st, &climb_cmd(buttons, pitch));
+            assert_eq!(
+                st.velocity.z,
+                if up { 200.0 } else { -200.0 },
+                "{buttons} {pitch}"
+            );
+        }
+        let mut st = start;
+        m.tick(&mut st, &climb_cmd(0, -45.0));
+        assert_eq!(st.velocity, Vec3::ZERO);
+        assert_eq!(st.origin, start.origin);
+    }
+
+    #[test]
+    fn ladder_ends_stop_the_climb_and_jump_leaves() {
+        let world = ladder_world();
+        let (m, mut st) = on_ladder(&world);
+        for _ in 0..60 {
+            m.tick(&mut st, &climb_cmd(buttons::FORWARD, -45.0));
+        }
+        // the ceiling at 200 holds the 72 u hull at 128, still on the ladder, speed zeroed
+        assert_eq!(st.move_type, MoveType::Ladder);
+        assert!((st.origin.z - 128.0).abs() < 0.1, "{}", st.origin.z);
+        assert_eq!(st.velocity, Vec3::ZERO);
+        for _ in 0..60 {
+            m.tick(&mut st, &climb_cmd(buttons::FORWARD, 45.0));
+        }
+        assert!(st.origin.z.abs() < 0.1, "{}", st.origin.z);
+        assert_eq!(st.move_type, MoveType::Ladder);
+        // measured (`move_ladder_jump`): off along the view at 200 plus 50 up, then gravity
+        let mut cmd = climb_cmd(buttons::FORWARD | buttons::JUMP, -45.0);
+        cmd.view_angles.y = 270.0;
+        m.tick(&mut st, &cmd);
+        assert_eq!(st.move_type, MoveType::Walk);
+        assert!(!st.on_ground);
+        assert!(st.velocity.y < -100.0, "{}", st.velocity.y);
+        assert!(
+            (st.velocity.z - (141.42 + 50.0 - 9.0)).abs() < 0.1,
+            "{}",
+            st.velocity.z
+        );
+    }
+
+    #[test]
+    fn ladder_steps_mount_then_every_450ms_of_wall_time() {
+        let mut f = Footsteps::default();
+        let mount = PlayerState {
+            move_type: MoveType::LadderMount,
+            ..PlayerState::default()
+        };
+        let climb = PlayerState {
+            move_type: MoveType::Ladder,
+            ..PlayerState::default()
+        };
+        let s = f.ladder_step(MoveType::Walk, 0.0, &mount, 15.0).unwrap();
+        assert_eq!(s.volume, 1.0);
+        for _ in 0..8 {
+            assert!(f
+                .ladder_step(MoveType::LadderMount, 0.0, &climb, 15.0)
+                .is_none());
+        }
+        // first climbing tick: nothing yet, the step follows it
+        assert!(f
+            .ladder_step(MoveType::LadderMount, 0.0, &climb, 15.0)
+            .is_none());
+        assert_eq!(
+            f.ladder_step(MoveType::Ladder, 200.0, &climb, 15.0)
+                .unwrap()
+                .volume,
+            0.5
+        );
+        for _ in 0..29 {
+            assert!(f
+                .ladder_step(MoveType::Ladder, 200.0, &climb, 15.0)
+                .is_none());
+        }
+        assert!(f
+            .ladder_step(MoveType::Ladder, 200.0, &climb, 15.0)
+            .is_some());
+        // standing still runs the timer down too
+        for _ in 0..40 {
+            assert!(f.ladder_step(MoveType::Ladder, 0.0, &climb, 15.0).is_none());
+        }
+        assert!(f
+            .ladder_step(MoveType::Ladder, -200.0, &climb, 15.0)
+            .is_some());
     }
 
     #[test]

@@ -3431,7 +3431,7 @@ impl<'w> Server<'w> {
             self.resolve_melee(attacker, eye, forward);
         }
         self.drive_tick(cmds);
-        let mut steps: Vec<(Vec3, gm_move::Step, bool)> = Vec::new();
+        let mut steps: Vec<(Vec3, gm_move::Step, Option<&str>)> = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -3451,6 +3451,7 @@ impl<'w> Server<'w> {
                 }
                 let (prev_vz, was_airborne) = (p.state.velocity.z, !p.state.on_ground);
                 let prev_level = p.state.water_level;
+                let (prev_move, prev_vz_l) = (p.state.move_type, p.state.velocity.z);
                 // footsteps see the state entering the tick, at the feet (the origin)
                 let feet = p.state.origin;
                 let step = p.steps.before_move(
@@ -3470,7 +3471,19 @@ impl<'w> Server<'w> {
                 }
                 let jumped = p.state.boost_pending && !was_airborne;
                 if let Some(step) = step.or_else(|| jumped.then(|| p.steps.on_jump())) {
-                    steps.push((feet, step, prev_level == 1));
+                    steps.push((
+                        feet,
+                        step,
+                        (prev_level == 1).then_some(gm_move::WADE_MATERIAL),
+                    ));
+                }
+                if let Some(step) = p.steps.ladder_step(
+                    prev_move,
+                    prev_vz_l,
+                    &p.state,
+                    gm_core::tick::DEFAULT_TICK_INTERVAL * 1000.0,
+                ) {
+                    steps.push((p.state.origin, step, Some(gm_move::LADDER_MATERIAL)));
                 }
                 // a landing: the hurting ones also voice `Player.FallDamage` (`move_step_fall_*`)
                 if p.state.on_ground && was_airborne {
@@ -3482,13 +3495,17 @@ impl<'w> Server<'w> {
                         });
                     }
                     if let Some(step) = p.steps.on_land(-prev_vz) {
-                        steps.push((p.state.origin, step, p.state.water_level == 1));
+                        steps.push((
+                            p.state.origin,
+                            step,
+                            (p.state.water_level == 1).then_some(gm_move::WADE_MATERIAL),
+                        ));
                     }
                 }
             }
         }
-        for (feet, step, wade) in steps {
-            self.footstep(feet, step, wade);
+        for (feet, step, material) in steps {
+            self.footstep(feet, step, material);
         }
         // entities after the players' moves: a projectile's hit or blast this tick pushes and
         // hurts a target that has already moved (its velocity shows the push raw)
@@ -4032,12 +4049,10 @@ impl<'w> Server<'w> {
     /// lands at 116 u/s and takes a second 188 u/s contact in the same tick plays 116).
     /// A footstep at `feet`: the wave set is the `stepleft`/`stepright` of the brush side under
     /// the feet (measured `move_step_*`: the server emits the surface's step wave, level 75).
-    fn footstep(&mut self, feet: Vec3, step: gm_move::Step, wade: bool) {
-        let material = if wade {
-            Some(gm_move::WADE_MATERIAL.to_owned())
-        } else {
-            self.collision.ground_material(feet).map(str::to_owned)
-        };
+    fn footstep(&mut self, feet: Vec3, step: gm_move::Step, override_material: Option<&str>) {
+        let material = override_material
+            .map(str::to_owned)
+            .or_else(|| self.collision.ground_material(feet).map(str::to_owned));
         let key = material.clone().unwrap_or_default();
         if !self.step_sounds.contains_key(&key) {
             let loaded = self
