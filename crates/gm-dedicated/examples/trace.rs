@@ -9,7 +9,7 @@ fn main() {
     let b = glam::Vec3::new(v[3], v[4], v[5]);
     let tr = world.collision.trace_ray(a, b, gm_collision::MASK_SOLID);
     println!(
-        "fraction {:.4} end {:?} normal {:?}",
-        tr.fraction, tr.end, tr.normal
+        "fraction {:.4} end {:?} normal {:?} contents {:#x}",
+        tr.fraction, tr.end, tr.normal, tr.contents
     );
 }

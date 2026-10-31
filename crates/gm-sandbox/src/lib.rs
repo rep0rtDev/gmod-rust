@@ -828,7 +828,7 @@ pub struct Sandbox {
     /// Shapes of the device models the stools may spawn (the physics owner registers them).
     shapes: BTreeMap<String, ModelShape>,
     /// Blasts that go off this tick (the physics owner deals them and drains the list).
-    blasts: Vec<(Vec3, f32)>,
+    blasts: Vec<(Vec3, f32, u32)>,
 }
 
 /// A powered stool entity riding on an ordinary prop: `gmod_thruster`, `gmod_hoverball`,
@@ -2647,9 +2647,9 @@ impl Sandbox {
                         };
                         let ent = b.constraint();
                         if ticks == 0 {
-                            let origin = self.props.iter().find(|p| p.id == ent).map(|p| p.pos);
-                            if let Some(origin) = origin {
-                                self.blasts.push((origin, *damage));
+                            let stick = self.props.iter().find(|p| p.id == ent);
+                            if let Some(p) = stick {
+                                self.blasts.push((p.pos, *damage, p.owner));
                             }
                             if *remove {
                                 removed.push(ent);
@@ -2765,8 +2765,9 @@ impl Sandbox {
         true
     }
 
-    /// Blasts due this tick as `(origin, damage)` (drained): the physics owner deals them.
-    pub fn take_blasts(&mut self) -> Vec<(Vec3, f32)> {
+    /// Blasts due this tick as `(origin, damage, attacker)` (drained): the physics owner deals
+    /// them; the attacker is the stick's owner (`util.BlastDamage(self, self:GetPlayer(), ..)`).
+    pub fn take_blasts(&mut self) -> Vec<(Vec3, f32, u32)> {
         std::mem::take(&mut self.blasts)
     }
 
@@ -2793,7 +2794,7 @@ impl Sandbox {
         }
         for (id, damage, remove) in due {
             if let Some(p) = self.props.iter().find(|p| p.id == id) {
-                self.blasts.push((p.pos, damage));
+                self.blasts.push((p.pos, damage, p.owner));
             }
             if remove {
                 self.remove_entity(id);

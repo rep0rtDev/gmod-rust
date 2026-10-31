@@ -3373,8 +3373,8 @@ impl<'w> Server<'w> {
                 gm_sandbox::Device::Button { .. } | gm_sandbox::Device::Dynamite { .. } => {}
             }
         }
-        for (origin, damage) in self.sandbox.take_blasts() {
-            self.blast(origin, damage);
+        for (origin, damage, attacker) in self.sandbox.take_blasts() {
+            self.blast(origin, damage, attacker);
         }
     }
 
@@ -3383,7 +3383,7 @@ impl<'w> Server<'w> {
     /// with `d` to its nearest point, a body also the impulse `min(dmg * 300, 30000)` towards its
     /// centre (measured on 30 kg drums: 1003 u/s at 100 u, 819 at 200). The dynamite itself is
     /// not hit (the game's `BlastDamage` inflictor); a `remove` dynamite is already gone.
-    fn blast(&mut self, dyn_pos: Vec3, damage: f32) {
+    fn blast(&mut self, dyn_pos: Vec3, damage: f32, attacker: u32) {
         let damage = damage.clamp(0.0, 1500.0);
         let radius = gm_sandbox::BLAST_RADIUS;
         let mut hits: Vec<(u32, gm_physics::BodyHandle, f32, Vec3)> = Vec::new();
@@ -3439,10 +3439,16 @@ impl<'w> Server<'w> {
             .filter(|(_, d)| *d < radius)
             .collect();
         for (pid, d) in players {
+            // `PlayerShouldTakeDamage`: another player's stick only hurts with
+            // sbox_playershurtplayers; one's own (or the world's) always does
+            if !self.players_hurt_players && attacker != 0 && attacker != pid {
+                continue;
+            }
             let dmg = damage * (1.0 - d / radius);
             if let Some(t) = self.players.get_mut(&pid) {
-                t.last_damage = (0, "gmod_dynamite");
+                t.last_damage = (attacker, "gmod_dynamite");
             }
+            self.push_player(pid, dyn_pos, dmg);
             self.damage_player(pid, dmg, weapons::DMG_BLAST);
         }
     }
