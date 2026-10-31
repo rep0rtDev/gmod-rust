@@ -1447,13 +1447,12 @@ pub fn payload_table(lua: &Lua, p: &Payload) -> Result<Table> {
     for (k, v) in &p.vecs {
         t.set(*k, vec3_table(lua, *v)?)?;
     }
-    if !p.settings.is_empty() {
-        let st = lua.create_table()?;
-        for (k, v) in &p.settings {
-            st.set(k.as_str(), v.as_str())?;
-        }
-        t.set("settings", st)?;
+    // always a table: a click without client settings reads `ctx.settings.x` as nil
+    let st = lua.create_table()?;
+    for (k, v) in &p.settings {
+        st.set(k.as_str(), v.as_str())?;
     }
+    t.set("settings", st)?;
     for (k, v) in &p.bools {
         t.set(*k, *v)?;
     }
