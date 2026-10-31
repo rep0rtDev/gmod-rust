@@ -595,6 +595,32 @@ public:
 		float e_eff = elasticity;
 		float extra = 0.0f;
 		auto rel = [&](JPH::RVec3Arg p) { return point_velocity(b1, p) - point_velocity(b2, p); };
+		// does the vertex really reach the plane this step? Its velocity along the normal is a
+		// linear extrapolation: a rim vertex of a wheel spinning over a gap approaches at rim
+		// speed yet swings past (the game's wheel 2.3 u above the floor never touches, ours was
+		// kicked at ~2000 deg/s); rotate the lever arm by w dt and look where it ends up
+		auto reaches = [&](const Pt &pt) -> bool {
+			const JPH::Body &dynb = b1.IsDynamic() ? b1 : b2;
+			const JPH::Body &othb = b1.IsDynamic() ? b2 : b1;
+			JPH::Vec3 w = dynb.GetAngularVelocity();
+			float wl = w.Length();
+			JPH::Vec3 r = JPH::Vec3(pt.p - dynb.GetCenterOfMassPosition());
+			JPH::Vec3 r2 = wl > 1e-6f ? JPH::Quat::sRotation(w / wl, wl * step_dt) * r : r;
+			JPH::Vec3 move = dynb.GetLinearVelocity() * step_dt + (r2 - r) - point_velocity(othb, pt.p) * step_dt;
+			float dn = move.Dot(n) * (b1.IsDynamic() ? 1.0f : -1.0f);
+			return pt.d + dn <= 0.0f;
+		};
+		// a manifold Jolt predicts speculatively (every point still off the plane) whose points
+		// all swing past is no contact at all this step: without this Jolt's solver brakes the
+		// spinning wheel over the gap (2741 -> 2220 deg/s in one tick) where the game's runs on
+		{
+			bool any_arrives = false;
+			for (const Pt &pt : pts) if (pt.d <= 0.0f || reaches(pt)) { any_arrives = true; break; }
+			if (!any_arrives) {
+				s.mIsSensor = true;
+				return;
+			}
+		}
 		// friction tilt: tan(angle) = f (1 + sqrt(e)); push = c n - s (tangential part of the
 		// unit relative velocity) unless the motion is already inside the friction cone
 		float tilt = std::atan(friction * (1.0f + std::sqrt(elasticity)));
@@ -700,7 +726,7 @@ public:
 				float fastest = 0.0f, t_first = step_dt;
 				for (Pt &pt : pts) {
 					float vn = rel(pt.p).Dot(n);
-					if (vn >= -threshold || (pt.d > 0.0f && pt.d > -vn * step_dt)) continue;
+					if (vn >= -threshold || (pt.d > 0.0f && (pt.d > -vn * step_dt || !reaches(pt)))) continue;
 					bool dup = false;
 					for (const Pt *f : face) if ((f->p - pt.p).LengthSq() < 1e-6f) { dup = true; break; }
 					if (dup) continue;
@@ -847,7 +873,7 @@ public:
 			for (Pt &pt : pts) {
 				float vn = rel(pt.p).Dot(n);
 				if (vn >= -threshold) continue;
-				if (pt.d > 0.0f && pt.d > -vn * step_dt) continue;
+				if (pt.d > 0.0f && (pt.d > -vn * step_dt || !reaches(pt))) continue;
 				// a later vertex enters the step only if it reaches the plane in the time left
 				// after the first touch (`phys_drop_edge_crate`: the far side needs 12 ms with 7 left)
 				if (t_impact >= 0.0f && pt.d > 0.0f && pt.d > -vn * (step_dt - t_impact)) continue;
