@@ -404,3 +404,7 @@ in the 640x480 proportional space of the sheet page.
 - TextEntry fields next to the sliders (sensitivity, acceleration exponent, FPS, FOV, gamma)
   take the keyboard on click (digits and '.', caret), Enter / Tab / a click elsewhere commit
   through the slider's clamp and rounding, Esc drops the text.
+- Multiplayer page leftovers: the "Customize crosshair" button (`CrosshairSettings`, no
+  crosshair cvars or dialog `.res` in the mounted content), "Import spray" (a file dialog that
+  converts an image to `materials/vgui/logos/<name>.vtf`; we draw no sprays) and the Voice
+  page's "Test microphone" (needs capture; gm-audio has playback only) stay inert buttons.

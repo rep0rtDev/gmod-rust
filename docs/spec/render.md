@@ -21,3 +21,26 @@ Open: HDR path; the game's `r_lightaverage`/`r_ambientboost`; `$phong`, `$rimlig
 ## Animation
 
 Sequences are sampled between the two neighbouring frames (position lerp, quaternion slerp), as the game's bone setup does; a nearest frame visibly steps on the 5-15 fps HL2 weapon animations (the measured viewmodel idles are 5-10 fps).
+
+## HDR (measured on the mounted gm_construct.bsp, VBSP 20)
+
+- HDR lumps are present and the same size as LDR: lump 53 LIGHTING_HDR 12274916 bytes (v1)
+  = lump 8, lump 54 WORLDLIGHTS_HDR 12144 = lump 15, lump 55 LEAF_AMBIENT_LIGHTING_HDR 670516
+  (v1) vs lump 56 LDR 665840. The game runs the map in HDR (`mat_hdr_level 2`), so its light
+  tone comes from these lumps plus tonemapping, not from lumps 8/15/56.
+- `light_environment` `sun_light`: `_light 242 234 218 560`, `_lightHDR -1 -1 -1 300`
+  (-1 = keep the LDR colour, HDR brightness 300), `_lightscaleHDR 0.8`, `_ambient 114 136 148
+  420`, `_ambientHDR -1 -1 -1 900`, `_AmbientScaleHDR 1.1`, pitch -56, angles 0 306 0,
+  SunSpreadAngle 6. `env_sun` at -2845 6842 12256, size 16, `sprites/light_glow02_add_noz`,
+  colour 241 240 199, HDRColorScale 1.0. `env_fog_controller`: fogcolor 142 164 178, start
+  1024, end 250000, maxdensity 1, enabled.
+- `env_tonemap_controller` "TonemapController" set by `logic_auto` OnMapSpawn:
+  SetAutoExposureMax 1.8, SetAutoExposureMin 0.7, SetBloomScale 0.3, SetTonemapRate 0.2.
+  Engine defaults otherwise: `mat_autoexposure_min 0.5`, `mat_autoexposure_max 2`,
+  `mat_bloomscale 1`, `mat_hdr_tonemapscale 1` (the exposure the auto path converges to),
+  bloom threshold via `mat_bloom_scalefactor_scalar`; the tone map is linear: colour x
+  tonemap scale, clamped (Source has no filmic curve).
+- Ours (todo): read lumps 53/54/55 when `mat_hdr_level >= 1`, carry the HDR lightmap in
+  linear float (RGBExp32 decodes the same way), apply the tonemap scale (auto-exposure
+  tracking the histogram between the controller's min / max at the tonemap rate) before the
+  monitor gamma, bloom as a bright-pass blur added at `bloomscale`.
