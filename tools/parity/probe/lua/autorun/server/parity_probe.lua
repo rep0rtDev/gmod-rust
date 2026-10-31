@@ -659,6 +659,9 @@ SCENARIOS.constraint = function(scn, done)
 					local ph = e:GetPhysicsObject()
 					local d = { class = e:GetClass(), mass = IsValid(ph) and ph:GetMass() or nil, gravity = IsValid(ph) and ph:IsGravityEnabled() or nil }
 					if e:GetClass() == "gmod_thruster" then d.on = e:GetOn() d.mul = e.Multiply
+						if e.ForceAngle then d.force_angle = { e.ForceAngle.x, e.ForceAngle.y, e.ForceAngle.z } end
+						if e.ForceLinear then d.force_linear = { e.ForceLinear.x, e.ForceLinear.y, e.ForceLinear.z } end
+						if IsValid(ph) then local ia = ph:GetInertia() local mc = ph:GetMassCenter() d.inertia = { ia.x, ia.y, ia.z } d.mass_center = { mc.x, mc.y, mc.z } end
 					elseif e:GetClass() == "gmod_hoverball" then d.target_z = e:GetTargetZ() d.zvel = e.ZVelocity d.enabled = e:GetEnabled()
 					elseif e:GetClass() == "gmod_balloon" then d.force = e:GetForce()
 					elseif e:GetClass() == "gmod_wheel" then
