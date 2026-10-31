@@ -646,6 +646,9 @@ impl Console {
 }
 
 struct App {
+    /// Pickup history (`cl_hudpickup.lua`) and the weapon bits already announced.
+    pickups: std::cell::RefCell<PickupHistory>,
+    prev_weapons: Option<u64>,
     /// Kill feed (`cl_deathnotice.lua`): attacker, victim, inflictor class, when.
     deaths: Vec<DeathNotice>,
     mount: gm_content::Mount,
@@ -769,6 +772,11 @@ impl App {
             }
             // TargetID / TargetIDSmall: Verdana 12 / 11 bold (the 480-599 line variants)
             ui.register_font(&gpu, &self.mount, "HL2MPTypeDeath", "csd", 64.0 * fs);
+            // DermaDefaultBold: Tahoma 13 weight 800 (derma/init.lua), not scaled by yres
+            if !ui.register_font(&gpu, &self.mount, "DermaDefaultBold", "Tahoma", 13.0) {
+                ui.register_font(&gpu, &self.mount, "DermaDefaultBold", "Roboto-Bold", 13.0);
+            }
+            ui.load_image(&gpu, &self.mount, "gui/corner8");
             for (name, tall) in [
                 ("TargetID", 12.0),
                 ("TargetIDSmall", 11.0),
@@ -1335,6 +1343,40 @@ impl App {
             if !self.weapon_synced && self.sim.client.world.local.is_some() {
                 self.weapon_synced = true;
                 self.select_weapon(self.weapon);
+            }
+            {
+                // HUDWeaponPickedUp: every weapon bit that appeared while alive
+                let me = self.sim.client.player_id;
+                if let Some(p) = self
+                    .sim
+                    .client
+                    .world
+                    .players
+                    .iter()
+                    .find(|p| Some(p.id) == me)
+                {
+                    let prev = self.prev_weapons.unwrap_or(0);
+                    if p.alive {
+                        let mut gained = p.weapons & !prev;
+                        while gained != 0 {
+                            let bit = gained.trailing_zeros();
+                            gained &= gained - 1;
+                            if let Some(vm) = self.vm_of(bit as u8) {
+                                let m = self
+                                    .gfx
+                                    .as_ref()
+                                    .map(|g| g.ui.font_metrics(Some("DermaDefaultBold")));
+                                self.pickups.borrow_mut().add(
+                                    vm.name,
+                                    None,
+                                    [1.0, 200.0 / 255.0, 50.0 / 255.0],
+                                    m.as_ref(),
+                                );
+                            }
+                        }
+                    }
+                    self.prev_weapons = Some(p.weapons);
+                }
             }
             for e in self.sim.client.events.drain(..) {
                 if let Some(d) = DeathNotice::parse(&e, &self.sim.client.world.players) {
@@ -1992,6 +2034,7 @@ impl App {
                         h: lh - 2.0,
                         material: icon,
                         color: white,
+                        rot: 0,
                     });
                 }
                 items.push(UiItem::Text {
@@ -2213,6 +2256,7 @@ impl App {
                         h: *h,
                         material: material.clone(),
                         color: *color,
+                        rot: 0,
                     },
                 });
             }
@@ -2269,6 +2313,13 @@ impl App {
                         text: p.armor.to_string(),
                         color: fg,
                     });
+                }
+                // HUDDrawPickupHistory: notices slide in from the right edge with their alpha,
+                // corner8 border in the pickup colour, grey body, DermaDefaultBold text
+                {
+                    let mut ph = self.pickups.borrow_mut();
+                    let fm = g.ui.font_metrics(Some("DermaDefaultBold"));
+                    ph.draw(&mut items, w, h, &fm);
                 }
                 // DrawDeathNotice(0.85, 0.04): kill icon glyph (HL2MPTypeDeath, 255 80 0),
                 // attacker right-aligned 16 px left of it, victim 16 px right, ChatFont,
@@ -3006,6 +3057,8 @@ fn main() -> Result<()> {
         hud_draws: Vec::new(),
     };
     let mut app = App {
+        pickups: std::cell::RefCell::new(PickupHistory::default()),
+        prev_weapons: None,
         deaths: Vec::new(),
         mount,
         bsp_data,
@@ -3144,6 +3197,7 @@ fn hud_planes(
                         h: *h,
                         material: material.clone(),
                         color: *color,
+                        rot: 0,
                     }),
                     _ => {}
                 }
@@ -3210,5 +3264,166 @@ fn kill_icon(class: &str) -> (&'static str, f32) {
         "weapon_crowbar" => ("6", 0.45),
         "weapon_physcannon" | "weapon_physgun" => (",", 0.55),
         _ => ("9", 0.52),
+    }
+}
+
+/// One pickup notice of `cl_hudpickup.lua`.
+struct Pickup {
+    name: String,
+    amount: Option<String>,
+    color: [f32; 3],
+    at: Instant,
+    /// Smoothed row centre; none until first drawn.
+    y: Option<f32>,
+    width: f32,
+    height: f32,
+}
+
+/// `GM.PickupHistory*`: notices, the smoothed top and width of the column.
+struct PickupHistory {
+    list: Vec<Pickup>,
+    top: Option<f32>,
+    wide: f32,
+}
+
+impl Default for PickupHistory {
+    fn default() -> Self {
+        Self {
+            list: Vec::new(),
+            top: None,
+            wide: 300.0,
+        }
+    }
+}
+
+impl PickupHistory {
+    const HOLD: f32 = 5.0;
+    const FADEIN: f32 = 0.04;
+    const FADEOUT: f32 = 0.3;
+
+    fn add(
+        &mut self,
+        name: &str,
+        amount: Option<i32>,
+        color: [f32; 3],
+        fm: Option<&gm_render::ui::FontMetrics>,
+    ) {
+        let (mut width, height) = fm
+            .map(|m| (m.text_width(name), m.line_height))
+            .unwrap_or((8.0 * name.len() as f32, 13.0));
+        if let Some(a) = amount {
+            width += fm.map(|m| m.text_width(&a.to_string())).unwrap_or(16.0) + 16.0;
+        }
+        self.list.push(Pickup {
+            name: name.to_string(),
+            amount: amount.map(|a| a.to_string()),
+            color,
+            at: Instant::now(),
+            y: None,
+            width,
+            height,
+        });
+    }
+
+    fn draw(&mut self, items: &mut Vec<UiItem>, sw: f32, sh: f32, fm: &gm_render::ui::FontMetrics) {
+        let top = *self.top.get_or_insert(sh / 2.0);
+        let x = sw - self.wide - 20.0;
+        let mut y = top;
+        let (mut tall, mut wide) = (0.0f32, 0.0f32);
+        let font = Some("DermaDefaultBold".to_string());
+        let border = 8.0;
+        let corner = "gui/corner8".to_string();
+        let pickup_wide = self.wide;
+        self.list.retain_mut(|v| {
+            let vy = v.y.get_or_insert(y);
+            *vy = (*vy * 5.0 + y) / 6.0;
+            let delta = (Self::HOLD - v.at.elapsed().as_secs_f32()) / Self::HOLD;
+            let colordelta = delta.clamp(0.6, 0.7);
+            let alpha = if delta > 1.0 - Self::FADEIN {
+                ((1.0 - delta) * (255.0 / Self::FADEIN)).clamp(0.0, 255.0)
+            } else if delta < Self::FADEOUT {
+                (delta * (255.0 / Self::FADEOUT)).clamp(0.0, 255.0)
+            } else {
+                255.0
+            };
+            let a = alpha / 255.0;
+            let vx = x + pickup_wide - pickup_wide * a;
+            let (rx, ry, rw, rh) = (
+                (vx - 4.0).round(),
+                (*vy - v.height / 2.0 - 4.0).round(),
+                (pickup_wide + 9.0).round(),
+                (v.height + 8.0).round(),
+            );
+            let col = [v.color[0], v.color[1], v.color[2], a];
+            let img = |x: f32, y: f32, rot: u8, color: [f32; 4]| UiItem::Image {
+                x: x - border / 2.0,
+                y: y - border / 2.0,
+                w: border,
+                h: border,
+                material: corner.clone(),
+                color,
+                rot,
+            };
+            // coloured left part: two corners, the edge and a square of the row height
+            items.push(img(rx + border / 2.0, ry + border / 2.0, 0, col));
+            items.push(img(rx + border / 2.0, ry + rh - border / 2.0, 1, col));
+            items.push(UiItem::Rect {
+                x: rx,
+                y: ry + border,
+                w: border,
+                h: rh - border * 2.0,
+                color: col,
+            });
+            items.push(UiItem::Rect {
+                x: rx + border,
+                y: ry,
+                w: v.height - 4.0,
+                h: rh,
+                color: col,
+            });
+            let g = 230.0 * colordelta / 255.0;
+            let grey = [g, g, g, a];
+            items.push(img(rx + rw - border / 2.0, ry + rh - border / 2.0, 2, grey));
+            items.push(img(rx + rw - border / 2.0, ry + border / 2.0, 3, grey));
+            items.push(UiItem::Rect {
+                x: rx + rw - border,
+                y: ry + border,
+                w: border,
+                h: rh - border * 2.0,
+                color: grey,
+            });
+            items.push(UiItem::Rect {
+                x: rx + border + v.height - 4.0,
+                y: ry,
+                w: rw - (v.height - 4.0) - border * 2.0,
+                h: rh,
+                color: grey,
+            });
+            let ty = ry + rh / 2.0 - fm.line_height / 2.0;
+            for (dx, c) in [(1.0, [0.0, 0.0, 0.0, a * 0.5]), (0.0, [1.0, 1.0, 1.0, a])] {
+                items.push(UiItem::Text {
+                    font: font.clone(),
+                    x: vx + v.height + 8.0 + dx,
+                    y: ty + dx,
+                    text: v.name.clone(),
+                    color: c,
+                });
+                if let Some(am) = &v.amount {
+                    items.push(UiItem::Text {
+                        font: font.clone(),
+                        x: vx + pickup_wide - fm.text_width(am) + dx,
+                        y: ty + dx,
+                        text: am.clone(),
+                        color: c,
+                    });
+                }
+            }
+            y += v.height + 16.0;
+            tall += v.height + 18.0;
+            wide = wide.max(v.width + v.height + 24.0);
+            alpha > 0.0
+        });
+        self.top = Some((top * 5.0 + (sh * 0.75 - tall) / 2.0) / 6.0);
+        self.wide = (self.wide * 5.0 + wide) / 6.0;
     }
 }

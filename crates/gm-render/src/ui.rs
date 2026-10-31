@@ -75,6 +75,8 @@ pub enum UiItem {
         h: f32,
         material: String,
         color: [f32; 4],
+        /// Quarter turns clockwise of the texture (`DrawTexturedRectRotated` 0/90/180/270).
+        rot: u8,
     },
 }
 
@@ -642,6 +644,32 @@ impl UiRenderer {
                 v(x0, y1, u0, v1),
             ]);
         }
+        // the texture's corners (tl, tr, br, bl) turned clockwise `rot` quarters
+        fn quad_rot(
+            vertices: &mut Vec<Vertex>,
+            x0: f32,
+            y0: f32,
+            x1: f32,
+            y1: f32,
+            rot: u8,
+            color: [f32; 4],
+        ) {
+            let c = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+            let at = |i: usize| c[(i + 4 - (rot as usize % 4)) % 4];
+            let v = |x: f32, y: f32, uv: [f32; 2]| Vertex {
+                position: [x, y],
+                uv,
+                color,
+            };
+            vertices.extend_from_slice(&[
+                v(x0, y0, at(0)),
+                v(x1, y0, at(1)),
+                v(x1, y1, at(2)),
+                v(x0, y0, at(0)),
+                v(x1, y1, at(2)),
+                v(x0, y1, at(3)),
+            ]);
+        }
         fn push_batch<'a>(
             bg: &'a wgpu::BindGroup,
             from: u32,
@@ -702,19 +730,12 @@ impl UiRenderer {
                     h,
                     material,
                     color,
+                    rot,
                 } => {
                     let Some(Some(bg)) = self.images.get(material) else {
                         continue;
                     };
-                    quad(
-                        &mut vertices,
-                        *x,
-                        *y,
-                        x + w,
-                        y + h,
-                        [0.0, 0.0, 1.0, 1.0],
-                        *color,
-                    );
+                    quad_rot(&mut vertices, *x, *y, x + w, y + h, *rot, *color);
                     bg
                 }
             };
