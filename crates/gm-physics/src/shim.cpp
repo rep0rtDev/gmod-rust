@@ -91,7 +91,7 @@ void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2)
 	// deformation at rest and the lower crate's re-push at the landing tick (4.6 u peak,
 	// our contact model, not the weld) remain open
 	const float tf = weld_env("GMP_WELD_FREQ", 60.0f), td = weld_env("GMP_WELD_DAMP", 1.0f);
-	const float rf = weld_env("GMP_WELD_ROT_FREQ", 5.0f), rd = weld_env("GMP_WELD_ROT_DAMP", 1.0f);
+	const float rf = weld_env("GMP_WELD_ROT_FREQ", 15.0f), rd = weld_env("GMP_WELD_ROT_DAMP", 0.5f);
 	// measured on `constraint_weld_pair` (+ its nocollide twin, identical through the
 	// landing): the game's weld is a position correction, not a rigid joint. on the tick
 	// after the lower crate lands it acts like a point impulse at a spot between the
@@ -99,10 +99,11 @@ void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2)
 	// limited in force (the upper keeps falling at -206 of -268 u/s), and the
 	// orientation is pulled back slowly over ~20 ticks while the pair slides. so: anchor
 	// on the centre-of-mass line at the second body's height, translation = position
-	// motors with a force limit per kilogram of the heavier body, rotation = soft 5 Hz
-	// position motors. 60 Hz / rigid welds cancelled the split within the solve and
-	// the pair slid 27 u instead of 8; this rests 7 u off (the game's later +y slide is
-	// still missing). `device_hoverball_crate` stays within tolerance (1.8 u of 2).
+	// motors with a force limit per kilogram of the heavier body, rotation = 15 Hz
+	// position motors at half damping (the pull-back of the tilted upper crate is what
+	// drags the lower one +y 8 u over the next 20 ticks; 5 Hz gives 7 u short, 60 Hz
+	// cancels the split within the solve and the pair slid 27 u). `device_hoverball_crate`
+	// stays within tolerance.
 	JPH::SixDOFConstraintSettings s;
 	s.mSpace = JPH::EConstraintSpace::WorldSpace;
 	{
