@@ -616,8 +616,9 @@ Ours (`gm_server::SLOTS`, `slot_order`): the digit keys 1..6 are the slot catego
 takes the first owned weapon of the slot in `slot_pos` order, or the one after the current
 weapon when it is in that slot (wrapping); scripted weapons join by their `slot` / `slot_pos`
 (ties in class list order). Not modelled: the game's selection menu with its attack-to-confirm
-and `hud_fastswitch` (ours applies at once), the mouse wheel / `invnext`; the client skips
-weapons it has no viewmodel for (gravity gun, grenade, camera).
+and `hud_fastswitch` (ours applies at once), the mouse wheel / `invnext`. Every loadout weapon
+has a client viewmodel (`c_physcannon` with `hold_idle` / `altfire`, `c_grenade` with `throw` /
+`lob`); the game's camera has no weapon model, so nothing is drawn for it, as in the game.
 
 ## WASM components
 

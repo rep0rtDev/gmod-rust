@@ -321,7 +321,7 @@ const fn vm(
 }
 
 /// Slots on the number keys 1..9, 0; the physgun is slot 0 (key 1).
-const WEAPONS: [Viewmodel; 10] = [
+const WEAPONS: [Viewmodel; 13] = [
     Viewmodel {
         hold: Some("hold_idle"),
         ..vm(
@@ -434,6 +434,31 @@ const WEAPONS: [Viewmodel; 10] = [
             "fire",
         )
     },
+    Viewmodel {
+        hold: Some("hold_idle"),
+        alt: Some("altfire"),
+        ..vm(
+            "weapon_physcannon",
+            "physcannon",
+            "models/weapons/c_physcannon.mdl",
+            "idle",
+            "draw",
+            "fire",
+        )
+    },
+    Viewmodel {
+        alt: Some("lob"),
+        ..vm(
+            "weapon_frag",
+            "frag",
+            "models/weapons/c_grenade.mdl",
+            "idle01",
+            "draw",
+            "throw",
+        )
+    },
+    // the game's camera has no weapon model: nothing is drawn (the load of "" fails once)
+    vm("gmod_camera", "camera", "", "idle", "draw", "fire"),
 ];
 
 /// `NetCmd::weapon`: 1 while the physgun is out (the server's physgun acts on attack), 2 for
