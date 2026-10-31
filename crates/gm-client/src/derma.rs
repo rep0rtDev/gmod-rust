@@ -160,7 +160,7 @@ pub fn nine(items: &mut Vec<UiItem>, p: &Piece, x: f32, y: f32, w: f32, h: f32, 
 }
 
 #[allow(clippy::too_many_arguments)]
-fn text(
+pub(crate) fn text(
     items: &mut Vec<UiItem>,
     font: &str,
     fm: &FontMetrics,
@@ -179,7 +179,7 @@ fn text(
     });
 }
 
-fn image(items: &mut Vec<UiItem>, name: &str, x: f32, y: f32, w: f32, h: f32) {
+pub(crate) fn image(items: &mut Vec<UiItem>, name: &str, x: f32, y: f32, w: f32, h: f32) {
     items.push(UiItem::Image {
         x,
         y,
@@ -191,7 +191,7 @@ fn image(items: &mut Vec<UiItem>, name: &str, x: f32, y: f32, w: f32, h: f32) {
     });
 }
 
-fn inside((cx, cy): (f32, f32), x: f32, y: f32, w: f32, h: f32) -> bool {
+pub(crate) fn inside((cx, cy): (f32, f32), x: f32, y: f32, w: f32, h: f32) -> bool {
     cx >= x && cx < x + w && cy >= y && cy < y + h
 }
 
@@ -374,14 +374,16 @@ pub enum Action {
     Property(String),
     /// A main menu entry (`template/main.html` ids / NavBar buttons).
     Menu(&'static str),
+    /// An Options dialog control.
+    Opt(crate::options::OptAction),
     Nothing,
 }
 
 pub struct Hit {
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
     pub action: Action,
 }
 

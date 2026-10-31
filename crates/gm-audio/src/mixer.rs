@@ -66,10 +66,21 @@ struct Voice {
     level: f32,
 }
 
-#[derive(Default)]
 struct Shared {
     voices: Vec<Voice>,
     listener: Listener,
+    /// `volume`: master gain over every voice.
+    master: f32,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Shared {
+            voices: Vec::new(),
+            listener: Listener::default(),
+            master: 1.0,
+        }
+    }
 }
 
 /// Per-channel gains for a voice against the listener (constant-power pan on the
@@ -95,6 +106,7 @@ fn mix(shared: &Mutex<Shared>, out: &mut [f32], channels: usize, out_rate: f64) 
     out.fill(0.0);
     let Ok(mut s) = shared.lock() else { return };
     let listener = s.listener;
+    let master = s.master;
     let _ = out_rate;
     for v in &mut s.voices {
         let (gl, gr) = pan(&listener, v.position, v.level);
@@ -106,7 +118,8 @@ fn mix(shared: &Mutex<Shared>, out: &mut [f32], channels: usize, out_rate: f64) 
                 break;
             }
             let f = (v.cursor - i as f64) as f32;
-            let sample = (v.pcm.samples[i] * (1.0 - f) + v.pcm.samples[i + 1] * f) * v.gain;
+            let sample =
+                (v.pcm.samples[i] * (1.0 - f) + v.pcm.samples[i + 1] * f) * v.gain * master;
             match channels {
                 1 => frame[0] += sample * (gl + gr) * 0.707,
                 _ => {
@@ -182,6 +195,13 @@ impl Mixer {
 
     pub fn is_live(&self) -> bool {
         self._stream.is_some()
+    }
+
+    /// The `volume` cvar: master gain, clamped to 0..1.
+    pub fn set_master(&self, volume: f32) {
+        if let Ok(mut s) = self.shared.lock() {
+            s.master = volume.clamp(0.0, 1.0);
+        }
     }
 
     pub fn set_listener(&self, listener: Listener) {

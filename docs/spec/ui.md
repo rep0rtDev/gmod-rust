@@ -244,3 +244,12 @@ in the 640x480 proportional space of the sheet page.
   229 text 180, TextEntry bg White text 10 10 10 selected 0 168 255 204 focus edge 0 0 0 196,
   SectionedListPanel bg White header 50 50 50 divider 0 0 0 150 text 10 10 10 selected
   0 168 255 204, Tooltip bg 249 238 181 text 110 102 60.
+- Ours: `Options` in the main menu opens the dialog natively (512x406 centred, GMod scheme,
+  six pages at the `.res` positions). Settings live in `~/.gmod-rust/cfg/config.cfg` in the
+  game's syntax (`bind "key" "cmd"`, `cvar "value"`), defaults from the mounted
+  `cfg/config_default.cfg` + `scripts/kb_def.lst`; every key the client reads goes through
+  the binds (Source key names), so the Keyboard page's Edit key / Clear Key / Use Defaults
+  are live, as are sensitivity / reverse mouse, volume (mixer master), fov_desired,
+  fps_max (frame limiter), resolution / display mode (window), hud_fastswitch is stored.
+  Not done: editable TextEntry values, gamma / advanced video / crosshair / spray dialogs,
+  voice meters, sound quality / speakers / captions have no effect, Verdana is Roboto 13.

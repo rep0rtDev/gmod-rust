@@ -8,6 +8,8 @@
 //! console lines (`status`, `cvar`, `save`, `load`, ...).
 
 mod derma;
+mod options;
+mod settings;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -224,6 +226,8 @@ struct MenuCache {
     max_scroll: f32,
     /// The tool's setting rows as laid out.
     rows: Vec<derma::ControlRow>,
+    /// Options dialog slider bars `(cvar, x0, x1)` of the last frame.
+    opt_bars: options::SliderBars,
 }
 
 struct SpawnMenu {
@@ -701,6 +705,20 @@ struct App {
     /// A text row with the keyboard focus and the text typed so far.
     panel_text: Option<(usize, String)>,
     grabbed: bool,
+    /// Options dialog cvars and binds (`cfg/config.cfg`).
+    settings: settings::Settings,
+    /// The Options dialog while open.
+    options: Option<options::OptionsState>,
+    /// Slider being dragged in the Options dialog.
+    opt_drag: Option<&'static str>,
+    /// Monitor modes for the Video page.
+    opt_modes: Vec<(u32, u32)>,
+    /// Keyboard tab rows (`scripts/kb_act.lst`).
+    kb_rows: Vec<settings::KbRow>,
+    /// `resource/*_english.txt` tokens (GameUI_*, Valve_*, GarrysMod_*), lower-cased keys.
+    gameui: BTreeMap<String, String>,
+    /// Last presented frame, for `fps_max`.
+    last_frame: Instant,
     /// The game's main menu over the game (Escape): `menu.html` with the in-game NavBar.
     main_menu: bool,
     last: Instant,
@@ -808,6 +826,11 @@ impl App {
             ui.register_font(&gpu, &self.mount, derma::MENU_FONT_23, "Roboto-Bold", 23.0);
             ui.register_font(&gpu, &self.mount, derma::MENU_FONT_16, "Roboto-Bold", 16.0);
             ui.register_font(&gpu, &self.mount, derma::NAV_FONT, "Roboto-Regular", 12.0);
+            // SourceScheme: Verdana 16 / Verdana Bold 16 / DefaultLarge 18 (Roboto here)
+            ui.register_font(&gpu, &self.mount, options::FONT, "Roboto-Regular", 13.0);
+            ui.register_font(&gpu, &self.mount, options::FONT_BOLD, "Roboto-Bold", 13.0);
+            ui.register_font(&gpu, &self.mount, options::FONT_LARGE, "Roboto-Bold", 15.0);
+            ui.load_image(&gpu, &self.mount, "vgui/logos/garrysmod.png");
             for name in derma::MENU_IMAGES {
                 ui.load_image(&gpu, &self.mount, name);
             }
@@ -1180,7 +1203,179 @@ impl App {
         layout
     }
 
+    /// The Options dialog laid out for this frame (caches the slider bars for dragging).
+    fn options_layout(&self, g: &Gfx, st: &options::OptionsState) -> derma::Layout {
+        let (w, h) = (g.config.width as f32, g.config.height as f32);
+        let font = g.ui.font_metrics(Some(derma::FONT));
+        let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+        let default = g.ui.font_metrics(Some(options::FONT));
+        let sbold = g.ui.font_metrics(Some(options::FONT_BOLD));
+        let large = g.ui.font_metrics(Some(options::FONT_LARGE));
+        let has_image = |name: &str| g.ui.has_image(name);
+        let ctx = derma::Ctx {
+            w,
+            h,
+            cursor: self.cursor,
+            font: &font,
+            bold: &bold,
+            lists: &self.spawnlists,
+            tool: &self.tool,
+            has_image: &has_image,
+        };
+        let fonts = options::Fonts {
+            default: &default,
+            bold: &sbold,
+            large: &large,
+        };
+        let mut layout = derma::Layout::default();
+        let bars = options::dialog(
+            &mut layout,
+            &ctx,
+            st,
+            &self.kb_rows,
+            &self.gameui,
+            &self.opt_modes,
+            &fonts,
+        );
+        self.menu_cache.borrow_mut().opt_bars = bars;
+        layout
+    }
+
+    fn open_options(&mut self) {
+        if let Some(g) = &self.gfx {
+            let mut modes: Vec<(u32, u32)> = g
+                .window
+                .current_monitor()
+                .map(|m| {
+                    m.video_modes()
+                        .map(|v| (v.size().width, v.size().height))
+                        .collect()
+                })
+                .unwrap_or_default();
+            modes.push((g.config.width, g.config.height));
+            modes.sort_unstable();
+            modes.dedup();
+            self.opt_modes = modes;
+        }
+        self.options = Some(options::OptionsState::new(&self.settings));
+    }
+
+    /// OK / Apply: the pending settings become the live ones, saved to `cfg/config.cfg`.
+    fn apply_options(&mut self) {
+        let Some(st) = &self.options else { return };
+        let pending = st.pending.clone();
+        let resize = pending.width != self.settings.width
+            || pending.height != self.settings.height
+            || pending.fullscreen != self.settings.fullscreen;
+        self.settings = pending;
+        if let Err(e) = self.settings.save() {
+            eprintln!("config.cfg: {e}");
+        }
+        self.sounds.mixer.set_master(self.settings.volume);
+        if resize {
+            if let Some(g) = &self.gfx {
+                if self.settings.fullscreen {
+                    g.window
+                        .set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                } else {
+                    g.window.set_fullscreen(None);
+                    let _ = g.window.request_inner_size(winit::dpi::PhysicalSize::new(
+                        self.settings.width,
+                        self.settings.height,
+                    ));
+                }
+            }
+        }
+    }
+
+    fn options_click(&mut self) {
+        let Some(g) = self.gfx.as_ref() else { return };
+        let Some(st) = self.options.as_ref() else {
+            return;
+        };
+        let action = self.options_layout(g, st).hit(self.cursor).cloned();
+        let Some(st) = self.options.as_mut() else {
+            return;
+        };
+        let was_combo = st.combo.take();
+        let Some(derma::Action::Opt(a)) = action else {
+            return;
+        };
+        use options::OptAction as A;
+        match a {
+            A::Tab(i) => {
+                st.tab = i;
+                st.waiting_key = false;
+            }
+            A::Ok => {
+                self.apply_options();
+                self.options = None;
+            }
+            A::Apply => self.apply_options(),
+            A::Cancel | A::Close => self.options = None,
+            A::KbRow(i) => {
+                st.kb_sel = Some(i);
+                st.waiting_key = false;
+            }
+            A::EditKey => {
+                if st.kb_sel.is_some() {
+                    st.waiting_key = true;
+                }
+            }
+            A::ClearKey => {
+                if let Some(r) = st.kb_sel.and_then(|i| self.kb_rows.get(i)) {
+                    st.pending.unbind_command(&r.action);
+                }
+            }
+            A::Defaults => st.pending.binds = settings::Settings::default_binds(&self.mount),
+            A::Slider(name) => {
+                self.opt_drag = Some(name);
+                self.opt_drag_move();
+            }
+            A::Check(name) => options::check_toggle(&mut st.pending, name),
+            A::Combo(name) => {
+                if was_combo != Some(name) {
+                    st.combo = Some(name);
+                }
+            }
+            A::ComboItem(name, i) => options::combo_pick(st, name, i, &self.opt_modes),
+            A::Button(_) => {}
+        }
+    }
+
+    fn opt_drag_move(&mut self) {
+        let Some(name) = self.opt_drag else { return };
+        let bar = self
+            .menu_cache
+            .borrow()
+            .opt_bars
+            .iter()
+            .find(|(n, _, _)| *n == name)
+            .map(|&(_, x0, x1)| (x0, x1));
+        let (Some((x0, x1)), Some(st)) = (bar, self.options.as_mut()) else {
+            return;
+        };
+        let f = ((self.cursor.0 - x0) / (x1 - x0)).clamp(0.0, 1.0);
+        let (lo, hi) = options::slider_range(name);
+        options::slider_set(&mut st.pending, name, lo + f * (hi - lo));
+    }
+
+    /// A key / mouse button while the Keyboard page waits for one: bind it.
+    fn options_bind(&mut self, key: &str) {
+        let Some(st) = self.options.as_mut() else {
+            return;
+        };
+        if let Some(r) = st.kb_sel.and_then(|i| self.kb_rows.get(i)) {
+            st.pending.bind(key, &r.action);
+        }
+        st.waiting_key = false;
+    }
+
     fn main_menu_click(&mut self) {
+        if self.options.is_some() {
+            self.options_click();
+            return;
+        }
         let Some(g) = self.gfx.as_ref() else { return };
         let action = self.main_menu_layout(g).hit(self.cursor).cloned();
         match action {
@@ -1189,6 +1384,7 @@ impl App {
                 self.set_grab(true);
             }
             Some(derma::Action::Menu("quit" | "disconnect")) => std::process::exit(0),
+            Some(derma::Action::Menu("options")) => self.open_options(),
             _ => {}
         }
     }
@@ -1232,7 +1428,12 @@ impl App {
                 self.tool = t.to_string();
                 self.console.log(format!("tool {t}"));
             }
-            Some(derma::Action::Property(_) | derma::Action::Menu(_) | derma::Action::Nothing)
+            Some(
+                derma::Action::Property(_)
+                | derma::Action::Menu(_)
+                | derma::Action::Opt(_)
+                | derma::Action::Nothing,
+            )
             | None => {}
         }
     }
@@ -1615,48 +1816,123 @@ impl App {
         }
     }
 
+    /// A bound console command on key press (`down`) / release (`+` commands end).
+    fn run_bind(&mut self, cmd: &str, down: bool) {
+        if down {
+            match cmd {
+                "slot1" | "slot2" | "slot3" | "slot4" | "slot5" | "slot6" => {
+                    let n = cmd.as_bytes()[4] - b'1';
+                    self.wsel_slot(n);
+                }
+                "invnext" => self.wsel_step(1),
+                "invprev" => self.wsel_step(-1),
+                "+menu" => self.open_menu(),
+                "+menu_context" => {
+                    if self.menu.is_none() && !self.context_held {
+                        self.context_held = true;
+                        self.set_grab(false);
+                        // cl_spawnmenu.lua OnContextMenuOpen
+                        self.add_hint("ContextClick", 20);
+                    }
+                }
+                "gmod_undo" | "undo" => self.sim.client.command(Command::Undo),
+                "gmod_cleanup" => self.sim.client.command(Command::Cleanup),
+                "noclip" => {
+                    self.noclip = !self.noclip;
+                    self.sim.client.command(Command::Noclip { on: self.noclip });
+                }
+                "+reload" if self.weapon == 1 => self.sim.client.command(Command::ToolClick {
+                    tool: self.tool.clone(),
+                    right: false,
+                    reload: true,
+                    settings: self.tool_settings_list(),
+                }),
+                _ => {}
+            }
+        } else {
+            match cmd {
+                "+menu" if self.menu.is_some() => {
+                    self.menu = None;
+                    self.panel_drag = None;
+                    self.panel_text = None;
+                    self.set_grab(true);
+                }
+                "+menu_context" if self.context_held => {
+                    self.context_held = false;
+                    self.context = None;
+                    if self.menu.is_none() {
+                        self.set_grab(true);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Whether a key (Source name) is held: `MOUSEn` from the button set, the rest by code.
+    fn key_down(&self, key: &str) -> bool {
+        match settings::mouse_button(key) {
+            Some(b) => self.mouse.contains(&b),
+            None => settings::key_code(key).is_some_and(|c| self.keys.contains(&c)),
+        }
+    }
+
+    /// Whether any key bound to `command` is held.
+    fn down(&self, command: &str) -> bool {
+        self.settings
+            .binds
+            .iter()
+            .any(|(k, c)| c == command && self.key_down(k))
+    }
+
+    /// The command bound to a key code, if any.
+    fn bound(&self, code: KeyCode) -> Option<String> {
+        let name = settings::key_name(code)?;
+        self.settings.binds.get(name).cloned()
+    }
+
     fn cmd(&self) -> NetCmd {
-        let k = |c: KeyCode| self.keys.contains(&c);
+        let k = |a: &str| self.down(a);
         let mut b = 0;
-        let run = k(KeyCode::ShiftLeft);
+        let run = k("+speed");
         let speed = if run { 400.0 } else { 200.0 };
         let mut fwd = 0.0;
         let mut side = 0.0;
-        if k(KeyCode::KeyW) {
+        if k("+forward") {
             fwd += speed;
             b |= buttons::FORWARD;
         }
-        if k(KeyCode::KeyS) {
+        if k("+back") {
             fwd -= speed;
             b |= buttons::BACK;
         }
-        if k(KeyCode::KeyD) {
+        if k("+moveright") {
             side += speed;
             b |= buttons::MOVERIGHT;
         }
-        if k(KeyCode::KeyA) {
+        if k("+moveleft") {
             side -= speed;
             b |= buttons::MOVELEFT;
         }
-        if k(KeyCode::Space) {
+        if k("+jump") {
             b |= buttons::JUMP;
         }
-        if k(KeyCode::ControlLeft) {
+        if k("+duck") {
             b |= buttons::DUCK;
         }
         if run {
             b |= buttons::SPEED;
         }
-        if k(KeyCode::KeyE) {
+        if k("+use") {
             b |= buttons::USE;
         }
-        if k(KeyCode::KeyR) && self.weapon != 1 {
+        if k("+reload") && self.weapon != 1 {
             b |= buttons::RELOAD;
         }
-        if self.mouse.contains(&0) {
+        if k("+attack") {
             b |= buttons::ATTACK;
         }
-        if self.mouse.contains(&1) {
+        if k("+attack2") {
             b |= buttons::ATTACK2;
         }
         NetCmd {
@@ -1804,7 +2080,7 @@ impl App {
         let mut camera = Camera {
             position: o + Vec3::Z * eye,
             angles: self.view + punch,
-            fov_x: 90.0,
+            fov_x: self.settings.fov_desired,
             near: 3.0,
             far: 28000.0,
         };
@@ -2300,6 +2576,9 @@ impl App {
         let white = [0.92, 0.92, 0.92, 1.0];
         if self.main_menu {
             items.extend(self.main_menu_layout(g).items);
+            if let Some(st) = &self.options {
+                items.extend(self.options_layout(g, st).items);
+            }
             return items;
         }
         if self.context_held || self.context.is_some() {
@@ -2417,6 +2696,7 @@ impl App {
                 visible: layout.visible.clone(),
                 max_scroll: layout.max_scroll,
                 rows,
+                opt_bars: Vec::new(),
             };
             items.extend(layout.items);
             return items;
@@ -2956,6 +3236,7 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
+        self.sounds.mixer.set_master(self.settings.volume);
         if self.gfx.is_none() {
             if let Err(e) = self.init_gfx(el) {
                 self.error = Some(e);
@@ -3013,6 +3294,16 @@ impl ApplicationHandler for App {
                 }
                 if down && !event.repeat {
                     match code {
+                        _ if self.options.as_ref().is_some_and(|o| o.waiting_key) => {
+                            if code == KeyCode::Escape {
+                                if let Some(o) = self.options.as_mut() {
+                                    o.waiting_key = false;
+                                }
+                            } else if let Some(name) = settings::key_name(code) {
+                                self.options_bind(name);
+                            }
+                        }
+                        KeyCode::Escape if self.options.is_some() => self.options = None,
                         KeyCode::Escape if self.main_menu => {
                             self.main_menu = false;
                             self.set_grab(true);
@@ -3022,75 +3313,58 @@ impl ApplicationHandler for App {
                             self.main_menu = true;
                         }
                         KeyCode::Escape => el.exit(),
-                        KeyCode::Digit1 => self.wsel_slot(0),
-                        KeyCode::Digit2 => self.wsel_slot(1),
-                        KeyCode::Digit3 => self.wsel_slot(2),
-                        KeyCode::Digit4 => self.wsel_slot(3),
-                        KeyCode::Digit5 => self.wsel_slot(4),
-                        KeyCode::Digit6 => self.wsel_slot(5),
-                        KeyCode::KeyQ => self.open_menu(),
-                        KeyCode::KeyC => {
-                            if self.menu.is_none() && !self.context_held {
-                                self.context_held = true;
-                                self.set_grab(false);
-                                // cl_spawnmenu.lua OnContextMenuOpen
-                                self.add_hint("ContextClick", 20);
+                        _ => {
+                            if let Some(cmd) = self.bound(code) {
+                                self.run_bind(&cmd, true);
                             }
                         }
-                        KeyCode::KeyZ => self.sim.client.command(Command::Undo),
-                        KeyCode::KeyV => {
-                            self.noclip = !self.noclip;
-                            self.sim.client.command(Command::Noclip { on: self.noclip });
-                        }
-                        KeyCode::KeyR if self.weapon == 1 => {
-                            self.sim.client.command(Command::ToolClick {
-                                tool: self.tool.clone(),
-                                right: false,
-                                reload: true,
-                                settings: self.tool_settings_list(),
-                            })
-                        }
-                        // the reload animation when the clip can take rounds from the reserve
-                        _ => {}
                     }
                 }
                 if down {
                     self.keys.insert(code);
                 } else {
                     self.keys.remove(&code);
-                    if code == KeyCode::KeyQ && self.menu.is_some() {
-                        self.menu = None;
-                        self.panel_drag = None;
-                        self.panel_text = None;
-                        self.set_grab(true);
-                    }
-                    if code == KeyCode::KeyC && self.context_held {
-                        self.context_held = false;
-                        self.context = None;
-                        if self.menu.is_none() {
-                            self.set_grab(true);
-                        }
+                    if let Some(cmd) = self.bound(code) {
+                        self.run_bind(&cmd, false);
                     }
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
                 self.panel_drag_move();
+                self.opt_drag_move();
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let lines = match delta {
                     winit::event::MouseScrollDelta::LineDelta(_, y) => y,
                     winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 16.0,
                 };
-                if let Some(menu) = &mut self.menu {
+                if let Some(o) = &mut self.options {
+                    if o.waiting_key {
+                        let key = if lines > 0.0 {
+                            "MWHEELUP"
+                        } else {
+                            "MWHEELDOWN"
+                        };
+                        self.options_bind(key);
+                    } else {
+                        o.kb_scroll = (o.kb_scroll - lines * 60.0).max(0.0);
+                    }
+                } else if let Some(menu) = &mut self.menu {
                     let max = self.menu_cache.borrow().max_scroll;
                     menu.st.scroll = (menu.st.scroll - lines * 64.0).clamp(0.0, max);
                 } else if !self.console.open && !self.context_held && self.grabbed {
-                    // invprev / invnext walk the buckets in order
-                    if lines > 0.0 {
-                        self.wsel_step(-1);
-                    } else if lines < 0.0 {
-                        self.wsel_step(1);
+                    // MWHEELUP / MWHEELDOWN binds (invprev / invnext by default)
+                    let key = if lines > 0.0 {
+                        "MWHEELUP"
+                    } else {
+                        "MWHEELDOWN"
+                    };
+                    if lines != 0.0 {
+                        if let Some(cmd) = self.settings.binds.get(key).cloned() {
+                            self.run_bind(&cmd, true);
+                            self.run_bind(&cmd, false);
+                        }
                     }
                 }
             }
@@ -3112,7 +3386,19 @@ impl ApplicationHandler for App {
                     self.panel_drag = None;
                 }
                 if self.main_menu {
-                    if state == ElementState::Pressed && button == MouseButton::Left {
+                    if state == ElementState::Released {
+                        self.opt_drag = None;
+                    } else if self.options.as_ref().is_some_and(|o| o.waiting_key) {
+                        let b = match button {
+                            MouseButton::Left => 0,
+                            MouseButton::Right => 1,
+                            MouseButton::Middle => 2,
+                            MouseButton::Back => 3,
+                            MouseButton::Forward => 4,
+                            MouseButton::Other(_) => return,
+                        };
+                        self.options_bind(settings::mouse_name(b));
+                    } else if button == MouseButton::Left {
                         self.main_menu_click();
                     }
                     return;
@@ -3165,7 +3451,10 @@ impl ApplicationHandler for App {
                 let b = match button {
                     MouseButton::Left => 0,
                     MouseButton::Right => 1,
-                    _ => return,
+                    MouseButton::Middle => 2,
+                    MouseButton::Back => 3,
+                    MouseButton::Forward => 4,
+                    MouseButton::Other(_) => return,
                 };
                 if state == ElementState::Pressed {
                     if self.mouse.insert(b) {
@@ -3208,9 +3497,11 @@ impl ApplicationHandler for App {
         }
         if let DeviceEvent::MouseMotion { delta } = event {
             if self.grabbed {
-                // m_yaw / m_pitch 0.022 at sensitivity 3
-                self.view.y -= delta.0 as f32 * 0.066;
-                self.view.x = (self.view.x + delta.1 as f32 * 0.066).clamp(-89.0, 89.0);
+                // m_yaw / m_pitch 0.022 * sensitivity (3 by default)
+                let k = 0.022 * self.settings.sensitivity;
+                let pitch = if self.settings.m_pitch_invert { -k } else { k };
+                self.view.y -= delta.0 as f32 * k;
+                self.view.x = (self.view.x + delta.1 as f32 * pitch).clamp(-89.0, 89.0);
                 self.view.y = self.view.y.rem_euclid(360.0);
             }
         }
@@ -3218,6 +3509,14 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, _: &ActiveEventLoop) {
         self.step();
+        if self.settings.fps_max > 0.0 {
+            let min = std::time::Duration::from_secs_f32(1.0 / self.settings.fps_max);
+            let since = self.last_frame.elapsed();
+            if since < min {
+                std::thread::sleep(min - since);
+            }
+        }
+        self.last_frame = Instant::now();
         if let Some(g) = &self.gfx {
             g.window.request_redraw();
         }
@@ -3360,6 +3659,12 @@ fn main() -> Result<()> {
         last_snapshot_tick: 0,
         hud_draws: Vec::new(),
     };
+    let settings = settings::Settings::load(&mount);
+    let kb_rows = settings::load_kb_act(&mount);
+    let mut gameui = BTreeMap::new();
+    for f in ["valve", "gameui", "garrysmod"] {
+        settings::load_tokens(&mount, &format!("resource/{f}_english.txt"), &mut gameui);
+    }
     let mut app = App {
         notices: std::cell::RefCell::new(Notices::default()),
         wsel: None,
@@ -3414,6 +3719,13 @@ fn main() -> Result<()> {
         panel_text: None,
         grabbed: false,
         main_menu: false,
+        settings,
+        options: None,
+        opt_drag: None,
+        opt_modes: Vec::new(),
+        kb_rows,
+        gameui,
+        last_frame: Instant::now(),
         last: Instant::now(),
         acc: 0.0,
         frames: 0,
