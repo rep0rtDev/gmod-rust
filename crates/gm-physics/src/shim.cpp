@@ -37,6 +37,7 @@ float gmp_get_penetration_slop(const void *system) {
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <cstdlib>
+#include <cfloat>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <vector>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
@@ -90,20 +91,40 @@ void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2)
 	// deformation at rest and the lower crate's re-push at the landing tick (4.6 u peak,
 	// our contact model, not the weld) remain open
 	const float tf = weld_env("GMP_WELD_FREQ", 60.0f), td = weld_env("GMP_WELD_DAMP", 1.0f);
-	const float rf = weld_env("GMP_WELD_ROT_FREQ", 60.0f), rd = weld_env("GMP_WELD_ROT_DAMP", 1.0f);
+	const float rf = weld_env("GMP_WELD_ROT_FREQ", 5.0f), rd = weld_env("GMP_WELD_ROT_DAMP", 1.0f);
+	// measured on `constraint_weld_pair` (+ its nocollide twin, identical through the
+	// landing): the game's weld is a position correction, not a rigid joint. on the tick
+	// after the lower crate lands it acts like a point impulse at a spot between the
+	// hulls at the upper crate's height (upper +46 u/s y, -323 deg/s; lower -42 u/s y),
+	// limited in force (the upper keeps falling at -206 of -268 u/s), and the
+	// orientation is pulled back slowly over ~20 ticks while the pair slides. so: anchor
+	// on the centre-of-mass line at the second body's height, translation = position
+	// motors with a force limit per kilogram of the heavier body, rotation = soft 5 Hz
+	// position motors. 60 Hz / rigid welds cancelled the split within the solve and
+	// the pair slid 27 u instead of 8; this rests 7 u off (the game's later +y slide is
+	// still missing). `device_hoverball_crate` stays within tolerance (1.8 u of 2).
 	JPH::SixDOFConstraintSettings s;
 	s.mSpace = JPH::EConstraintSpace::WorldSpace;
 	{
 		// anchor at the first body's centre of mass; the second's or the midpoint change
 		// little (`constraint_weld_pair` 13 u either way, see docs/status.md)
-		int anchor = (int)weld_env("GMP_WELD_ANCHOR", 0.0f);
+		int anchor = (int)weld_env("GMP_WELD_ANCHOR", 3.0f);
 		JPH::RVec3 pa = a->GetCenterOfMassPosition(), pb = b->GetCenterOfMassPosition();
-		s.mPosition1 = s.mPosition2 = anchor == 0 ? pa : anchor == 1 ? pb : (pa + pb) * 0.5f;
+		JPH::RVec3 horiz = pb + (pa - pb) * weld_env("GMP_WELD_ANCHOR_K", 0.5f);
+		horiz.SetY(pb.GetY());
+		s.mPosition1 = s.mPosition2 = anchor == 0 ? pa : anchor == 1 ? pb : anchor == 2 ? (pa + pb) * 0.5f : horiz;
 	}
 	using A = JPH::SixDOFConstraintSettings::EAxis;
+	const float mh = 1.0f / std::min(a->GetMotionProperties()->GetInverseMass(), b->GetMotionProperties()->GetInverseMass());
+	const float force = weld_env("GMP_WELD_FORCE", 80.0f) * mh;
 	for (int i = A::TranslationX; i <= A::TranslationZ; i++) {
-		s.SetLimitedAxis((A)i, -1e-4f, 1e-4f);
-		s.mLimitsSpringSettings[i] = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, tf, td);
+		if (force > 0.0f) {
+			s.MakeFreeAxis((A)i);
+			s.mMotorSettings[i] = JPH::MotorSettings(tf, td, force, FLT_MAX);
+		} else {
+			s.SetLimitedAxis((A)i, -1e-4f, 1e-4f);
+			s.mLimitsSpringSettings[i] = JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping, tf, td);
+		}
 	}
 	for (int i = A::RotationX; i <= A::RotationZ; i++) {
 		s.MakeFreeAxis((A)i);
@@ -111,6 +132,10 @@ void *gmp_add_fixed_constraint(void *system, unsigned int id1, unsigned int id2)
 	}
 	auto *c = static_cast<JPH::SixDOFConstraint *>(s.Create(*a, *b));
 	for (int i = A::RotationX; i <= A::RotationZ; i++) c->SetMotorState((A)i, JPH::EMotorState::Position);
+	if (force > 0.0f) {
+		for (int i = A::TranslationX; i <= A::TranslationZ; i++) c->SetMotorState((A)i, JPH::EMotorState::Position);
+		c->SetTargetPositionCS(JPH::Vec3::sZero());
+	}
 	c->SetTargetOrientationBS(JPH::Quat::sIdentity());
 	sys->AddConstraint(c);
 	return c;
