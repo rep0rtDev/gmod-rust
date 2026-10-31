@@ -574,10 +574,17 @@ public:
 		// several points) are not a face: the lockers pivoting on a corner would be anchored and
 		// never tip over, where the game's roll it over in 40 ticks
 		std::vector<const Pt *> touch;
+		// distinct points: 5 cm apart, or a quarter of the touching span for a small face (the
+		// thruster can's bottom ring is 2.6 u across; merged into one corner, every tick of a
+		// thruster pressing the can into the floor became a vertex impact and the can tumbled)
+		float touch_span = 0.0f;
+		for (const Pt &u : pts) for (const Pt &v : pts)
+			if (u.d <= 0.001f && v.d <= 0.001f) touch_span = std::max(touch_span, (u.p - v.p).Length());
+		const float distinct_min = std::min(0.05f, 0.25f * touch_span);
 		for (const Pt &pt : pts) {
 			if (pt.d > 0.001f) continue;
 			bool distinct = true;
-			for (const Pt *o : touch) if ((o->p - pt.p).Length() < 0.05f) { distinct = false; break; }
+			for (const Pt *o : touch) if ((o->p - pt.p).Length() < distinct_min) { distinct = false; break; }
 			if (distinct) touch.push_back(&pt);
 		}
 		int touching = (int)touch.size();
