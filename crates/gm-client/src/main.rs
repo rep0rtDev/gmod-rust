@@ -736,6 +736,8 @@ struct App {
     gameui: BTreeMap<String, String>,
     /// Last presented frame, for `fps_max`.
     last_frame: Instant,
+    /// Last HDR auto-exposure probe.
+    exposure_at: Instant,
     /// The game's main menu over the game (Escape): `menu.html` with the in-game NavBar.
     main_menu: bool,
     last: Instant,
@@ -778,6 +780,8 @@ impl App {
             .ok_or_else(|| anyhow!("surface not supported by the adapter"))?;
         config.format = format;
         config.present_mode = wgpu::PresentMode::AutoVsync;
+        // the HDR auto-exposure probe reads the frame back
+        config.usage |= wgpu::TextureUsages::COPY_SRC;
         surface.configure(&gpu.device, &config);
         let bsp = gm_formats::bsp::Bsp::parse(&self.bsp_data)?;
         let t0 = Instant::now();
@@ -3115,6 +3119,18 @@ impl App {
         let ui_items = self.ui_items(o);
         let g = self.gfx.as_ref().unwrap();
         g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);
+        if g.world.hdr && self.frames.is_multiple_of(15) {
+            let bright =
+                frame_bright_pixels(&g.gpu, &frame.texture, g.config.width, g.config.height);
+            let dt = self.exposure_at.elapsed().as_secs_f32().min(1.0);
+            self.exposure_at = Instant::now();
+            let g = self.gfx.as_mut().unwrap();
+            g.world.update_exposure(bright, dt);
+            if std::env::var_os("GM_HDR_LOG").is_some() {
+                println!("hdr: bright {bright:.3} exposure {:.3}", g.world.exposure);
+            }
+        }
+        let g = self.gfx.as_ref().unwrap();
         g.gpu.queue.present(frame);
         self.frames += 1;
         let el = self.fps_at.elapsed().as_secs_f32();
@@ -4424,6 +4440,7 @@ fn main() -> Result<()> {
         kb_rows,
         gameui,
         last_frame: Instant::now(),
+        exposure_at: Instant::now(),
         last: Instant::now(),
         acc: 0.0,
         frames: 0,
@@ -4978,4 +4995,25 @@ fn weapon_select_name(class: &str, vm: Option<&Viewmodel>) -> String {
         _ => return vm.map(|v| v.name.to_string()).unwrap_or_default(),
     }
     .to_string()
+}
+
+/// Brightness the brightest 2 % of the frame's pixels reach (linear, 0..1), sampled on a
+/// 16 px grid of the presented sRGB frame; feeds the HDR auto-exposure.
+fn frame_bright_pixels(gpu: &gm_render::Gpu, frame: &wgpu::Texture, w: u32, h: u32) -> f32 {
+    let Ok(px) = gpu.read_texture(frame, w, h) else {
+        return 0.0;
+    };
+    let mut v: Vec<f32> = Vec::with_capacity(((w / 16 + 1) * (h / 16 + 1)) as usize);
+    for y in (0..h).step_by(16) {
+        for x in (0..w).step_by(16) {
+            let i = ((y * w + x) * 4) as usize;
+            let m = px[i].max(px[i + 1]).max(px[i + 2]) as f32 / 255.0;
+            v.push(m.powf(2.2));
+        }
+    }
+    if v.is_empty() {
+        return 0.0;
+    }
+    v.sort_by(|a, b| a.total_cmp(b));
+    v[((v.len() - 1) as f32 * 0.98) as usize]
 }

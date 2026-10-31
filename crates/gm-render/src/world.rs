@@ -103,6 +103,10 @@ pub struct WorldRenderer {
     pub exposure: f32,
     /// Whether the HDR lumps were used.
     pub hdr: bool,
+    /// Auto-exposure bounds and rate of the map's env_tonemap_controller.
+    pub tm_min: f32,
+    pub tm_max: f32,
+    pub tm_rate: f32,
     pipeline: wgpu::RenderPipeline,
     /// Additive, no depth write: beams and glow sprites.
     additive_pipeline: wgpu::RenderPipeline,
@@ -857,7 +861,7 @@ impl WorldRenderer {
         // the map's env_tonemap_controller (set by logic_auto OnMapSpawn): the exposure the
         // auto path may use lies between its min and max; without a luminance readback we
         // hold mat_hdr_tonemapscale 1 clamped into that range
-        let (mut tm_min, mut tm_max) = (0.5f32, 2.0f32);
+        let (mut tm_min, mut tm_max, mut tm_rate) = (0.5f32, 2.0f32, 1.0f32);
         for e in bsp
             .entities
             .iter()
@@ -872,6 +876,7 @@ impl WorldRenderer {
                     match (f[1], f[2].parse::<f32>()) {
                         ("SetAutoExposureMin", Ok(x)) => tm_min = x,
                         ("SetAutoExposureMax", Ok(x)) => tm_max = x,
+                        ("SetTonemapRate", Ok(x)) => tm_rate = x,
                         _ => {}
                     }
                 }
@@ -1342,6 +1347,9 @@ impl WorldRenderer {
             exposure,
 
             hdr,
+            tm_min,
+            tm_max,
+            tm_rate,
             pipeline,
             additive_pipeline,
             translucent_pipeline,
@@ -1547,6 +1555,24 @@ pub fn body_group_choice(body: &str, part: usize, n: usize) -> usize {
 
 impl WorldRenderer {
     /// Loads `path` (body group 0, skin 0) for `draw_models`; `None` if it has no drawable mesh.
+    /// Auto-exposure step from a frame probe: `bright` is the brightness (linear, 0..1 of
+    /// the display range) the brightest 2 % of pixels reach, which the tonemap aims at 60 %
+    /// (`mat_tonemap_percent_bright_pixels` / `mat_tonemap_percent_target`); the goal is
+    /// clamped to the controller's min / max and approached at its rate, three times faster
+    /// when going down (`mat_accelerate_adjust_exposure_down`).
+    pub fn update_exposure(&mut self, bright: f32, dt: f32) {
+        if !self.hdr || bright <= 0.0 || !bright.is_finite() || dt <= 0.0 {
+            return;
+        }
+        let goal = (self.exposure * 0.6 / bright).clamp(self.tm_min, self.tm_max);
+        let rate = if goal < self.exposure {
+            self.tm_rate * 3.0
+        } else {
+            self.tm_rate
+        };
+        self.exposure += (goal - self.exposure) * (rate * dt).min(1.0);
+    }
+
     pub fn load_model(&self, gpu: &Gpu, mount: &Mount, path: &str) -> Option<DynModel> {
         self.load_model_variant(gpu, mount, path, 0, "")
     }

@@ -44,6 +44,12 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   lumps 53 / 54 / 55 (`Bsp::face_lightmap(face, hdr)`, `world_lights(bsp, hdr)`,
   `LeafAmbient::parse(bsp, hdr)`); applied on map load. The lightmap atlas is Rgba16Float
   holding linear light as decoded (HDR values pass through; `Camera.lm_scale` stays 1). The
-  tonemap scale (`Camera.exposure`) is a fixed 1.0 clamped into the map controller's
-  [min, max] - no luminance readback / auto-exposure yet, no bloom; it multiplies the shaded
-  colour before the monitor gamma. Todo: auto-exposure at the tonemap rate, bloom.
+  tonemap scale (`Camera.exposure`) multiplies the shaded colour before the monitor gamma and
+  is driven by auto-exposure: every 15th frame the client reads the presented frame back
+  (`Gpu::read_texture`, 16 px grid) and takes the brightness the brightest 2 % of pixels reach;
+  the goal is `exposure * 0.6 / bright` (the engine's `mat_tonemap_percent_bright_pixels 2` /
+  `mat_tonemap_percent_target 60`), clamped into the controller's [AutoExposureMin, Max] and
+  approached at `SetTonemapRate` per second, three times faster downwards
+  (`mat_accelerate_adjust_exposure_down 3`). Measured on gm_construct: on the sunlit floor the
+  exposure settles at the 0.7 floor in ~2 s, turning down to a shaded patch it climbs towards 1.8.
+  Todo: bloom (`SetBloomScale` 0.3).
