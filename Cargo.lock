@@ -1301,6 +1301,7 @@ version = "0.0.1"
 dependencies = [
  "memmap2",
  "thiserror 2.0.21",
+ "zip",
 ]
 
 [[package]]
@@ -1375,6 +1376,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "glam 0.29.3",
+ "gm-collision",
  "gm-content",
  "gm-core",
  "gm-formats",

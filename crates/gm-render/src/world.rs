@@ -91,6 +91,8 @@ pub struct SkyCamera {
 
 pub struct WorldRenderer {
     pipeline: wgpu::RenderPipeline,
+    /// Additive, no depth write: beams and glow sprites.
+    additive_pipeline: wgpu::RenderPipeline,
     /// Alpha-blended, no depth write: models drawn with `ModelTarget::alpha` below 1 (ghosts).
     translucent_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
@@ -266,6 +268,7 @@ type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>, bool);
 /// The bones of a `DynModel` and where its animations come from.
 struct Skeleton {
     bones: Vec<gm_formats::mdl::Bone>,
+    attachments: Vec<gm_formats::mdl::Attachment>,
     /// The model's own animations first, then those of its include models.
     anims: Vec<AnimSource>,
 }
@@ -525,6 +528,25 @@ pub struct DrawItem<'a> {
 }
 
 impl DynModel {
+    /// Model-space transform of a named attachment given the bones' world (model-space)
+    /// matrices from `bone_world`.
+    pub fn attachment(&self, name: &str, bones: &[Mat4]) -> Option<Mat4> {
+        let sk = self.skeleton.as_ref()?;
+        let a = sk
+            .attachments
+            .iter()
+            .find(|a| a.name.eq_ignore_ascii_case(name))?;
+        let bone = bones.get(usize::try_from(a.bone).ok()?)?;
+        let l = a.local;
+        let local = Mat4::from_cols_array_2d(&[
+            [l[0][0], l[1][0], l[2][0], 0.0],
+            [l[0][1], l[1][1], l[2][1], 0.0],
+            [l[0][2], l[1][2], l[2][2], 0.0],
+            [l[0][3], l[1][3], l[2][3], 1.0],
+        ]);
+        Some(*bone * local)
+    }
+
     /// Rest-pose vertex bounds in model space (min, max).
     pub fn bounds(&self) -> (Vec3, Vec3) {
         self.bounds
@@ -1257,9 +1279,22 @@ impl WorldRenderer {
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
         );
+        let additive_pipeline = make_pipeline(
+            "additive",
+            Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent::OVER,
+            }),
+            false,
+        );
 
         Ok(WorldRenderer {
             pipeline,
+            additive_pipeline,
             translucent_pipeline,
             camera_buffer,
             camera_bind_group,
@@ -1569,6 +1604,7 @@ impl WorldRenderer {
         }
         let skeleton = mount.read(path).ok().map(|bytes| Skeleton {
             bones: mdl.bones.clone(),
+            attachments: mdl.attachments.clone(),
             anims: AnimSource::for_model(mount, bytes, &mdl),
         });
         let mut bounds = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
@@ -1589,6 +1625,198 @@ impl WorldRenderer {
 
     /// A unit cube (-0.5..0.5) of one colour, scaled by the item transform: player boxes,
     /// the physgun beam.
+    /// A `Sprite` / `UnlitGeneric` material (`materials/<name>.vmt`) as a bind group for
+    /// [`draw_additive`](Self::draw_additive): the base texture, full bright.
+    pub fn sprite_material(&self, gpu: &Gpu, mount: &Mount, name: &str) -> Option<wgpu::BindGroup> {
+        let mat = crate::material::load(mount, name).ok()?;
+        let tex = mat.base_texture.as_deref()?;
+        let rgba = crate::material::load_texture(mount, tex, 512).ok()?;
+        let device = &gpu.device;
+        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sprite params"),
+            contents: bytemuck::bytes_of(&MaterialParams {
+                alpha_test: 0,
+                unlit: 1,
+                pad: [0; 2],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let t = upload_rgba(
+            gpu,
+            &rgba.pixels,
+            rgba.width,
+            rgba.height,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            name,
+        );
+        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(name),
+            layout: &self.material_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &t.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.base_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params.as_entire_binding(),
+                },
+            ],
+        }))
+    }
+
+    /// Camera-facing strip along `points` (world space), `width` units wide, the texture's
+    /// u across the beam and v along it (`u0` is the scroll offset along the length, one
+    /// repeat per `u_per_unit` units; the game's beam sprites are 64 across x 128 along);
+    /// `color` multiplies the texture (vertex `color`, alpha 1).
+    pub fn beam_strip(
+        &self,
+        points: &[Vec3],
+        width: f32,
+        color: [f32; 3],
+        eye: Vec3,
+        u0: f32,
+        u_per_unit: f32,
+    ) -> (Vec<Vertex>, Vec<u32>) {
+        let mut verts = Vec::with_capacity(points.len() * 2);
+        let mut idx = Vec::new();
+        let mut u = u0;
+        for (i, p) in points.iter().enumerate() {
+            let dir = if i + 1 < points.len() {
+                points[i + 1] - *p
+            } else if i > 0 {
+                *p - points[i - 1]
+            } else {
+                Vec3::X
+            };
+            if i > 0 {
+                u += (*p - points[i - 1]).length() * u_per_unit;
+            }
+            let to_eye = (eye - *p).normalize_or_zero();
+            let side = dir.cross(to_eye).normalize_or_zero() * (width * 0.5);
+            let base = verts.len() as u32;
+            for (s, across) in [(-1.0f32, 0.0f32), (1.0, 1.0)] {
+                verts.push(Vertex {
+                    position: (*p + side * s).to_array(),
+                    uv: [across, u],
+                    lm_uv: self.white_uv,
+                    color,
+                });
+            }
+            if i > 0 {
+                idx.extend([base - 2, base - 1, base, base - 1, base + 1, base]);
+            }
+        }
+        (verts, idx)
+    }
+
+    /// Camera-facing square of `size` units at `pos` (a `vp_parallel` sprite).
+    pub fn sprite_quad(
+        &self,
+        pos: Vec3,
+        size: f32,
+        color: [f32; 3],
+        camera: &Camera,
+    ) -> (Vec<Vertex>, Vec<u32>) {
+        let fwd = camera.forward();
+        let right = fwd.cross(Vec3::Z).normalize_or_zero();
+        let up = right.cross(fwd).normalize_or_zero();
+        let h = size * 0.5;
+        let verts = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .into_iter()
+            .map(|(x, y)| Vertex {
+                position: (pos + right * (x * h) + up * (y * h)).to_array(),
+                uv: [(x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5],
+                lm_uv: self.white_uv,
+                color,
+            })
+            .collect();
+        (verts, vec![0, 1, 2, 0, 2, 3])
+    }
+
+    /// Draws additive geometry (beams, glows) over the current colour with the current depth
+    /// (tested, not written): each item is a material bind group with world-space vertices.
+    pub fn draw_additive(
+        &self,
+        gpu: &Gpu,
+        camera: &Camera,
+        target: &ModelTarget<'_>,
+        items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
+    ) {
+        let mut verts: Vec<Vertex> = Vec::new();
+        let mut idx: Vec<u32> = Vec::new();
+        let mut draws = Vec::new();
+        for (bg, v, i) in items {
+            let base = verts.len() as u32;
+            let first = idx.len() as u32;
+            verts.extend_from_slice(v);
+            idx.extend(i.iter().map(|k| k + base));
+            draws.push((*bg, first, i.len() as u32));
+        }
+        if idx.is_empty() {
+            return;
+        }
+        let device = &gpu.device;
+        let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("additive vertices"),
+            contents: bytemuck::cast_slice(&verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("additive indices"),
+            contents: bytemuck::cast_slice(&idx),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let cam = CameraUniform {
+            view_proj: camera.view_proj(target.aspect).to_cols_array_2d(),
+            alpha: 1.0,
+            _pad: [0.0; 3],
+        };
+        gpu.queue
+            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
+        let mut enc = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("additive"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target.color,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: target.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.additive_pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            for (bg, first, count) in draws {
+                pass.set_bind_group(1, bg, &[]);
+                pass.draw_indexed(first..first + count, 0, 0..1);
+            }
+        }
+        gpu.queue.submit([enc.finish()]);
+    }
+
     pub fn solid_box(&self, gpu: &Gpu, rgba: [u8; 4], unlit: bool) -> DynModel {
         let device = &gpu.device;
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

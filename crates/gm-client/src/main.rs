@@ -25,6 +25,10 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
+/// `cl_weaponcolor` default "0.30 1.80 2.10" clamped to the display range: the beam and
+/// glow tint of the physgun.
+const PHYSGUN_BEAM_COLOR: [f32; 3] = [0.3, 1.0, 1.0];
+
 const SPAWN_MODEL: &str = "models/props_c17/oildrum001.mdl";
 
 struct Sim {
@@ -176,7 +180,13 @@ struct Gfx {
     depth: wgpu::TextureView,
     models: std::collections::HashMap<String, Option<gm_render::world::DynModel>>,
     player_box: gm_render::world::DynModel,
-    beam: gm_render::world::DynModel,
+    /// Physgun beam materials: `sprites/physbeam` along the beam, `physg_glow1` at its end,
+    /// `physg_glow2` at the muzzle (the game's materials, additive sprites).
+    beam_mat: Option<wgpu::BindGroup>,
+    /// `sprites/physbeama`: the brighter beam while something is held.
+    beam_active_mat: Option<wgpu::BindGroup>,
+    glow1: Option<wgpu::BindGroup>,
+    glow2: Option<wgpu::BindGroup>,
     ui: UiRenderer,
 }
 
@@ -741,7 +751,10 @@ impl App {
         );
         let depth = depth_view(&gpu, config.width, config.height);
         let player_box = world.solid_box(&gpu, [200, 120, 60, 255], false);
-        let beam = world.solid_box(&gpu, [90, 200, 255, 255], true);
+        let beam_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeam");
+        let beam_active_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeama");
+        let glow1 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow1");
+        let glow2 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow2");
         let ui = UiRenderer::new(&gpu, &self.mount, format)?;
         {
             let m = ui.font_metrics(None);
@@ -764,7 +777,10 @@ impl App {
             depth,
             models: Default::default(),
             player_box,
-            beam,
+            beam_mat,
+            beam_active_mat,
+            glow1,
+            glow2,
             ui,
         });
         self.set_grab(true);
@@ -1595,11 +1611,31 @@ impl App {
                 }
             }
         }
-        // physgun beam: from just below and right of the eye to the held prop, or along the aim
+        // physgun beam: from the viewmodel's `muzzle` attachment to the held prop, or along the
+        // aim; leaves along the barrel and bends to the target (the game's curved beam), drawn
+        // additive with the game's `sprites/physbeam`, a glow at each end
+        let mut additive: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
+            Vec::new();
         if self.weapon == 0 && self.mouse.contains(&0) {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
-            let start = camera.position + right * 6.0 - Vec3::Z * 6.0 + fwd * 12.0;
+            let muzzle = match (vm, vm_seq) {
+                (Some(vm), Some((seq, t))) => g
+                    .models
+                    .get(vm.path)
+                    .and_then(|m| m.as_ref())
+                    .and_then(|m| {
+                        let w = m.bone_world(seq, t, None, &[])?;
+                        let a = m.attachment("muzzle", &w)?;
+                        Some(
+                            gm_render::world::model_transform(camera.position, self.view)
+                                .transform_point3(a.w_axis.truncate()),
+                        )
+                    }),
+                _ => None,
+            };
+            let start =
+                muzzle.unwrap_or(camera.position + right * 6.0 - Vec3::Z * 6.0 + fwd * 12.0);
             let held = self
                 .sim
                 .client
@@ -1623,16 +1659,45 @@ impl App {
             let d = end - start;
             let len = d.length();
             if len > 1.0 {
-                let rot = glam::Quat::from_rotation_arc(Vec3::X, d / len);
-                items.push(DrawItem {
-                    model: &g.beam,
-                    transform: glam::Mat4::from_scale_rotation_translation(
-                        Vec3::new(len, 1.0, 1.0),
-                        rot,
-                        start + d * 0.5,
-                    ),
-                    bones: None,
-                });
+                let color = PHYSGUN_BEAM_COLOR;
+                // cubic bezier: out along the barrel for half the distance, into the end point
+                let (p0, p1, p2, p3) = (start, start + fwd * (len * 0.5), end, end);
+                let n = 24;
+                let points: Vec<Vec3> = (0..=n)
+                    .map(|i| {
+                        let t = i as f32 / n as f32;
+                        let u = 1.0 - t;
+                        p0 * (u * u * u)
+                            + p1 * (3.0 * u * u * t)
+                            + p2 * (3.0 * u * t * t)
+                            + p3 * (t * t * t)
+                    })
+                    .collect();
+                let scroll = -self.fps_at.elapsed().as_secs_f32() * 2.0;
+                let mat = if held.is_some() {
+                    g.beam_active_mat.as_ref().or(g.beam_mat.as_ref())
+                } else {
+                    g.beam_mat.as_ref()
+                };
+                if let Some(bm) = mat {
+                    let (v, i) = g.world.beam_strip(
+                        &points,
+                        6.0,
+                        color,
+                        camera.position,
+                        scroll,
+                        1.0 / 128.0,
+                    );
+                    additive.push((bm, v, i));
+                }
+                if let Some(gl) = &g.glow1 {
+                    let (v, i) = g.world.sprite_quad(end, 12.0, color, &camera);
+                    additive.push((gl, v, i));
+                }
+                if let Some(gl) = &g.glow2 {
+                    let (v, i) = g.world.sprite_quad(start, 6.0, color, &camera);
+                    additive.push((gl, v, i));
+                }
             }
         }
         let target = ModelTarget {
@@ -1643,6 +1708,9 @@ impl App {
             alpha: 1.0,
         };
         g.world.draw_models(&g.gpu, &camera, &target, &items);
+        if !additive.is_empty() {
+            g.world.draw_additive(&g.gpu, &camera, &target, &additive);
+        }
         for d in &ghost_draws {
             let gm_script::DrawCmd::Model {
                 model,

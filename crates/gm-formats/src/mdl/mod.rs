@@ -254,6 +254,24 @@ pub struct Mdl {
     pub skins: Vec<Vec<i16>>,
     pub surface_prop: String,
     pub key_values: String,
+    pub attachments: Vec<Attachment>,
+}
+
+/// `mstudioattachment_t`: a named point on a bone (muzzles, beam origins) as a row-major 3x4
+/// matrix in the bone's space.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attachment {
+    pub name: String,
+    pub flags: u32,
+    pub bone: i32,
+    pub local: [[f32; 4]; 3],
+}
+
+impl Attachment {
+    /// The attachment's position in bone space.
+    pub fn position(&self) -> [f32; 3] {
+        [self.local[0][3], self.local[1][3], self.local[2][3]]
+    }
 }
 
 /// One hit box of the model's default hit box set (`mstudiobbox_t`): an AABB in its bone's
@@ -950,6 +968,26 @@ impl Mdl {
         } else {
             String::new()
         };
+        let mut attachments = Vec::new();
+        for i in 0..header.attachment_count.max(0) as usize {
+            let base = header.attachment_offset as usize + i * 92;
+            let mut r = Reader::at(data, base);
+            let name_idx = r.i32()?;
+            let flags = r.u32()?;
+            let bone = r.i32()?;
+            let mut local = [[0f32; 4]; 3];
+            for row in local.iter_mut() {
+                for v in row.iter_mut() {
+                    *v = r.f32()?;
+                }
+            }
+            attachments.push(Attachment {
+                name: cstr_at(data, offset(base, name_idx))?.to_string(),
+                flags,
+                bone,
+                local,
+            });
+        }
         Ok(Mdl {
             header,
             bones,
@@ -959,6 +997,7 @@ impl Mdl {
             skins,
             surface_prop,
             key_values,
+            attachments,
         })
     }
 
