@@ -27,6 +27,7 @@ fn main() -> Result<()> {
             fov_x: 90.0,
             near: 7.0,
             far: 28000.0,
+            gamma: 2.2,
         }
     } else {
         let spawn = bsp
@@ -42,6 +43,7 @@ fn main() -> Result<()> {
             fov_x: 90.0,
             near: 7.0,
             far: 28000.0,
+            gamma: 2.2,
         }
     };
 

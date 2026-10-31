@@ -69,6 +69,9 @@ pub enum OptAction {
     Combo(&'static str),
     ComboItem(&'static str, usize),
     Button(&'static str),
+    /// OK / Cancel of the open sub-dialog (Advanced video, Gamma).
+    SubOk,
+    SubCancel,
 }
 
 /// What the dialog is editing: a copy of the settings until OK / Apply.
@@ -81,6 +84,10 @@ pub struct OptionsState {
     pub waiting_key: bool,
     pub combo: Option<&'static str>,
     pub aspect: Option<usize>,
+    /// The open sub-dialog (`VideoAdvanced` / `Gamma`) and the pending settings to restore
+    /// on its Cancel.
+    pub sub: Option<&'static str>,
+    pub sub_backup: Option<Settings>,
 }
 
 impl OptionsState {
@@ -93,6 +100,8 @@ impl OptionsState {
             waiting_key: false,
             combo: None,
             aspect: None,
+            sub: None,
+            sub_backup: None,
         }
     }
 }
@@ -105,6 +114,7 @@ pub fn slider_range(name: &str) -> (f32, f32) {
         "volume" | "snd_musicvolume" | "voice_scale" => (0.0, 1.0),
         "fov_desired" => (75.0, 100.0),
         "fps_max" => (30.0, 300.0),
+        "mat_monitorgamma" => (1.6, 2.6),
         _ => (0.0, 1.0),
     }
 }
@@ -118,6 +128,7 @@ pub fn slider_get(s: &Settings, name: &str) -> f32 {
         "voice_scale" => s.voice_scale,
         "fov_desired" => s.fov_desired,
         "fps_max" => s.fps_max,
+        "mat_monitorgamma" => s.mat_monitorgamma,
         _ => 0.0,
     }
 }
@@ -133,6 +144,7 @@ pub fn slider_set(s: &mut Settings, name: &str, v: f32) {
         "voice_scale" => s.voice_scale = (v * 100.0).round() / 100.0,
         "fov_desired" => s.fov_desired = v.round(),
         "fps_max" => s.fps_max = v.round(),
+        "mat_monitorgamma" => s.mat_monitorgamma = (v * 10.0).round() / 10.0,
         _ => {}
     }
 }
@@ -150,6 +162,7 @@ pub fn check_get(s: &Settings, name: &str) -> bool {
         "cl_spraydisable" => s.cl_spraydisable,
         "voice_modenable" => s.voice_modenable,
         "voice_loopback" => s.voice_loopback,
+        "mat_bloomscale" => s.mat_bloomscale,
         _ => false,
     }
 }
@@ -167,6 +180,7 @@ pub fn check_toggle(s: &mut Settings, name: &str) {
         "cl_spraydisable" => s.cl_spraydisable = !s.cl_spraydisable,
         "voice_modenable" => s.voice_modenable = !s.voice_modenable,
         "voice_loopback" => s.voice_loopback = !s.voice_loopback,
+        "mat_bloomscale" => s.mat_bloomscale = !s.mat_bloomscale,
         _ => {}
     }
 }
@@ -191,6 +205,15 @@ pub fn combo_items(
     tok: &dyn Fn(&str) -> String,
 ) -> (Vec<String>, usize) {
     let s = &st.pending;
+    // tokens the shipped gameui_english.txt lacks fall back to the game's visible text
+    let tok_or = |key: &str, literal: &str| -> String {
+        let t = tok(key);
+        if t == key.trim_start_matches('#') {
+            literal.to_string()
+        } else {
+            t
+        }
+    };
     match name {
         "Resolution" => {
             let aspect = st.aspect.unwrap_or_else(|| aspect_of(s.width, s.height));
@@ -253,6 +276,98 @@ pub fn combo_items(
             (s.closecaption as usize).min(2),
         ),
         "AudioSpokenLanguage" => (vec!["English".to_string()], 0),
+        "ModelDetail" => (
+            vec![
+                tok("#GameUI_Low"),
+                tok("#GameUI_Medium"),
+                tok("#GameUI_High"),
+            ],
+            (2 - s.r_rootlod.clamp(0, 2)) as usize,
+        ),
+        "TextureDetail" => (
+            vec![
+                tok("#GameUI_Low"),
+                tok("#GameUI_Medium"),
+                tok("#GameUI_High"),
+                tok_or("#GameUI_VeryHigh", "Very High"),
+            ],
+            (2 - s.mat_picmip.clamp(-1, 2)) as usize,
+        ),
+        "ShaderDetail" => (vec![tok("#GameUI_Low"), tok("#GameUI_High")], 1),
+        "WaterDetail" => (
+            vec![
+                tok_or("#GameUI_Simple", "Simple Reflections"),
+                tok_or("#GameUI_Reflect_World", "Reflect World"),
+                tok_or("#GameUI_Reflect_All", "Reflect All"),
+            ],
+            match (s.r_waterforceexpensive, s.r_waterforcereflectentities) {
+                (false, _) => 0,
+                (true, false) => 1,
+                (true, true) => 2,
+            },
+        ),
+        "ShadowDetail" => (
+            vec![tok("#GameUI_Low"), tok("#GameUI_High")],
+            usize::from(s.r_shadowrendertotexture),
+        ),
+        "ColorCorrection" => (
+            vec![tok("#GameUI_Disabled"), tok("#GameUI_Enabled")],
+            usize::from(s.mat_colorcorrection),
+        ),
+        "AntialiasingMode" => (
+            vec![
+                tok("#GameUI_None"),
+                tok("#GameUI_2X"),
+                tok("#GameUI_4X"),
+                tok("#GameUI_8X"),
+            ],
+            match s.mat_antialias {
+                2 => 1,
+                4 => 2,
+                8 => 3,
+                _ => 0,
+            },
+        ),
+        "FilteringMode" => (
+            vec![
+                tok("#GameUI_Bilinear"),
+                tok("#GameUI_Trilinear"),
+                tok("#GameUI_Anisotropic2X"),
+                tok("#GameUI_Anisotropic4X"),
+                tok("#GameUI_Anisotropic8X"),
+                tok("#GameUI_Anisotropic16X"),
+            ],
+            match (s.mat_trilinear, s.mat_forceaniso) {
+                (false, 0 | 1) => 0,
+                (true, 0 | 1) => 1,
+                (_, 2) => 2,
+                (_, 4) => 3,
+                (_, 8) => 4,
+                _ => 5,
+            },
+        ),
+        "VSync" => (
+            vec![tok("#GameUI_Disabled"), tok("#GameUI_Enabled")],
+            usize::from(s.mat_vsync),
+        ),
+        "MotionBlur" => (
+            vec![tok("#GameUI_Disabled"), tok("#GameUI_Enabled")],
+            usize::from(s.mat_motion_blur_enabled),
+        ),
+        "HDR" => (
+            vec![
+                tok("#GameUI_hdr_level0"),
+                tok("#GameUI_hdr_level1"),
+                tok("#GameUI_hdr_level2"),
+            ],
+            (s.mat_hdr_level as usize).min(2),
+        ),
+        "Multicore" => (
+            vec![tok("#GameUI_Disabled"), tok("#GameUI_Enabled")],
+            usize::from(s.mat_queue_mode != 0),
+        ),
+        "D3D9Ex" => (vec![tok("#GameUI_Disabled"), tok("#GameUI_Enabled")], 1),
+        "dxlabel" => (vec!["DirectX v9.0".to_string()], 0),
         "DownloadFilterCheck" => (
             vec![
                 tok("#GameUI_DownloadFilter_ALL"),
@@ -296,6 +411,23 @@ pub fn combo_pick(st: &mut OptionsState, name: &str, index: usize, modes: &[(u32
             st.pending.cl_downloadfilter =
                 ["all", "nosounds", "mapsonly", "none"][index.min(3)].to_string()
         }
+        "ModelDetail" => st.pending.r_rootlod = 2 - index.min(2) as i32,
+        "TextureDetail" => st.pending.mat_picmip = 2 - index.min(3) as i32,
+        "WaterDetail" => {
+            st.pending.r_waterforceexpensive = index >= 1;
+            st.pending.r_waterforcereflectentities = index >= 2;
+        }
+        "ShadowDetail" => st.pending.r_shadowrendertotexture = index == 1,
+        "ColorCorrection" => st.pending.mat_colorcorrection = index == 1,
+        "AntialiasingMode" => st.pending.mat_antialias = [1, 2, 4, 8][index.min(3)],
+        "FilteringMode" => {
+            st.pending.mat_trilinear = index >= 1;
+            st.pending.mat_forceaniso = [1, 1, 2, 4, 8, 16][index.min(5)];
+        }
+        "VSync" => st.pending.mat_vsync = index == 1,
+        "MotionBlur" => st.pending.mat_motion_blur_enabled = index == 1,
+        "HDR" => st.pending.mat_hdr_level = index.min(2) as u8,
+        "Multicore" => st.pending.mat_queue_mode = if index == 1 { -1 } else { 0 },
         _ => {}
     }
 }
@@ -1229,13 +1361,242 @@ pub fn dialog(
         }
     }
     let Page {
-        bars,
+        mut bars,
         popup,
         popup_hits,
         ..
     } = page;
     out.items.extend(popup);
     // the open list is on top: `Layout::hit` takes the last region, so its hits go last
+    out.hits.extend(popup_hits);
+    if let Some(sub) = st.sub {
+        bars.extend(sub_dialog(out, ctx, st, sub, &tok, modes, fonts));
+    }
+    bars
+}
+
+/// A frame like the Options one: background, border, title and the close button.
+#[allow(clippy::too_many_arguments)]
+fn frame(
+    out: &mut Layout,
+    ctx: &Ctx,
+    fonts: &Fonts,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    title: &str,
+    close: OptAction,
+) {
+    out.hits.push(Hit {
+        x: 0.0,
+        y: 0.0,
+        w: ctx.w,
+        h: ctx.h,
+        action: Action::Nothing,
+    });
+    rect(&mut out.items, x, y, w, h, FRAME_BG);
+    border(&mut out.items, x, y, w, h, true);
+    text(
+        &mut out.items,
+        FONT_LARGE,
+        fonts.large,
+        x + 16.0,
+        y + 4.0,
+        24.0,
+        title,
+        TITLE_TEXT,
+    );
+    let (cx, cy) = (x + w - 8.0 - 18.0, y + 6.0);
+    let hovered = inside(ctx.cursor, cx, cy, 18.0, 18.0);
+    let c = if hovered { WHITE_BG } else { TITLE_TEXT };
+    for i in 0..9 {
+        rect(
+            &mut out.items,
+            cx + 4.0 + i as f32,
+            cy + 4.0 + i as f32,
+            2.0,
+            2.0,
+            c,
+        );
+        rect(
+            &mut out.items,
+            cx + 12.0 - i as f32,
+            cy + 4.0 + i as f32,
+            2.0,
+            2.0,
+            c,
+        );
+    }
+    out.hits.push(Hit {
+        x: cx,
+        y: cy,
+        w: 18.0,
+        h: 18.0,
+        action: Action::Opt(close),
+    });
+}
+
+/// `OptionsSubVideoAdvancedDlg.res` (482 wide; the game lays the OK / Cancel row out at the
+/// bottom in code) and `optionssubvideogammadlg.res` (290 x 396), centred over Options.
+fn sub_dialog(
+    out: &mut Layout,
+    ctx: &Ctx,
+    st: &OptionsState,
+    sub: &str,
+    tok: &dyn Fn(&str) -> String,
+    modes: &[(u32, u32)],
+    fonts: &Fonts,
+) -> SliderBars {
+    let (w, h) = if sub == "Gamma" {
+        (290.0, 396.0)
+    } else {
+        (482.0, 470.0)
+    };
+    let x = ((ctx.w - w) / 2.0).round();
+    let y = ((ctx.h - h) / 2.0).round();
+    let title = if sub == "Gamma" {
+        tok("#GameUI_AdjustGamma_Title")
+    } else {
+        tok("#GameUI_VideoAdvanced_Title")
+    };
+    frame(out, ctx, fonts, x, y, w, h, &title, OptAction::SubCancel);
+    let mut page = Page {
+        x,
+        y,
+        cursor: ctx.cursor,
+        fonts,
+        st,
+        tok,
+        modes,
+        bars: Vec::new(),
+        popup: Vec::new(),
+        popup_hits: Vec::new(),
+    };
+    if sub == "Gamma" {
+        page.label(out, 16.0, 36.0, 264.0, 53.0, "#GameUI_GammaInfo");
+        page.label(out, 16.0, 88.0, 108.0, 24.0, "#GameUI_Gamma");
+        page.slider(out, 17.0, 112.0, 200.0, 40.0, "mat_monitorgamma");
+        page.entry(
+            out,
+            228.0,
+            114.0,
+            44.0,
+            24.0,
+            &format!("{:.1}", st.pending.mat_monitorgamma),
+        );
+        // the test image: three lines of text on black at 3 %, 6 % and 10 % grey, the
+        // brightness the slider's gamma gives them on screen
+        let (ix, iy, iw, ih) = (x + 16.0, y + 156.0, 256.0, 192.0);
+        rect(&mut out.items, ix, iy, iw, ih, rgba(0, 0, 0, 255));
+        let g = st.pending.mat_monitorgamma;
+        let info = tok("#GameUI_GammaInfo");
+        let mut line = info.split('.').next().unwrap_or("").to_string();
+        while fonts.large.text_width(&line) > iw - 48.0 && !line.is_empty() {
+            line.pop();
+        }
+        for (i, level) in [0.03f32, 0.06, 0.10].iter().enumerate() {
+            let v = (level.powf(2.2 / g) * 255.0).round().clamp(0.0, 255.0) as u8;
+            let c = [v as f32 / 255.0, v as f32 / 255.0, v as f32 / 255.0, 1.0];
+            text(
+                &mut out.items,
+                FONT_LARGE,
+                fonts.large,
+                ix + 24.0,
+                iy + 40.0 + i as f32 * 44.0,
+                24.0,
+                &line,
+                c,
+            );
+        }
+        page.button(
+            out,
+            104.0,
+            356.0,
+            80.0,
+            24.0,
+            "#GameUI_OK",
+            OptAction::SubOk,
+        );
+        page.button(
+            out,
+            192.0,
+            356.0,
+            80.0,
+            24.0,
+            "#GameUI_Cancel",
+            OptAction::SubCancel,
+        );
+    } else {
+        page.label(out, 22.0, 34.0, 112.0, 24.0, "#GameUI_Model_Detail");
+        page.combo(out, 22.0, 58.0, 132.0, 24.0, "ModelDetail");
+        page.label(out, 175.0, 34.0, 124.0, 24.0, "#GameUI_Texture_Detail");
+        page.combo(out, 176.0, 58.0, 132.0, 24.0, "TextureDetail");
+        page.label(out, 330.0, 34.0, 132.0, 24.0, "#GameUI_Shader_Detail");
+        page.combo(out, 330.0, 58.0, 132.0, 24.0, "ShaderDetail");
+        page.label(out, 22.0, 94.0, 132.0, 24.0, "#GameUI_Water_Detail");
+        page.combo(out, 22.0, 118.0, 132.0, 24.0, "WaterDetail");
+        page.label(out, 176.0, 94.0, 132.0, 24.0, "#GameUI_Shadow_Detail");
+        page.combo(out, 176.0, 118.0, 132.0, 24.0, "ShadowDetail");
+        page.label(out, 330.0, 94.0, 132.0, 24.0, "#GameUI_Color_Correction");
+        page.combo(out, 330.0, 118.0, 132.0, 24.0, "ColorCorrection");
+        page.divider(out, 22.0, 160.0, 438.0);
+        page.label(out, 22.0, 172.0, 156.0, 24.0, "#GameUI_Antialiasing_Mode");
+        page.combo(out, 22.0, 196.0, 132.0, 24.0, "AntialiasingMode");
+        page.label(out, 176.0, 172.0, 152.0, 24.0, "#GameUI_Filtering_Mode");
+        page.combo(out, 176.0, 196.0, 132.0, 24.0, "FilteringMode");
+        page.label(out, 330.0, 172.0, 154.0, 24.0, "#GameUI_Wait_For_VSync");
+        page.combo(out, 330.0, 196.0, 132.0, 24.0, "VSync");
+        page.label(out, 22.0, 232.0, 138.0, 24.0, "#GameUI_MotionBlur");
+        page.combo(out, 22.0, 258.0, 132.0, 24.0, "MotionBlur");
+        page.label(out, 176.0, 232.0, 168.0, 24.0, "#GameUI_FOV");
+        page.slider(out, 176.0, 252.0, 140.0, 50.0, "fov_desired");
+        page.label(out, 330.0, 232.0, 168.0, 24.0, "#GameUI_MulticoreRendering");
+        page.combo(out, 330.0, 258.0, 132.0, 24.0, "Multicore");
+        page.label(out, 22.0, 292.0, 138.0, 24.0, "#GameUI_HDR");
+        page.combo(out, 22.0, 316.0, 132.0, 24.0, "HDR");
+        page.check(
+            out,
+            170.0,
+            316.0,
+            292.0,
+            24.0,
+            "#GameUI_Bloom",
+            "mat_bloomscale",
+        );
+        page.divider(out, 22.0, 352.0, 438.0);
+        page.label(out, 22.0, 360.0, 288.0, 24.0, "#GameUI_DX_Installed");
+        page.label(out, 333.0, 360.0, 130.0, 24.0, "DirectX v9.0");
+        page.label(out, 22.0, 385.0, 288.0, 24.0, "#GameUI_DX_Level");
+        page.combo(out, 330.0, 385.0, 132.0, 24.0, "dxlabel");
+        page.label(out, 22.0, 410.0, 288.0, 24.0, "#GameUI_D3D9Ex");
+        page.combo(out, 330.0, 410.0, 132.0, 24.0, "D3D9Ex");
+        page.button(
+            out,
+            290.0,
+            h - 34.0,
+            80.0,
+            24.0,
+            "#GameUI_OK",
+            OptAction::SubOk,
+        );
+        page.button(
+            out,
+            382.0,
+            h - 34.0,
+            80.0,
+            24.0,
+            "#GameUI_Cancel",
+            OptAction::SubCancel,
+        );
+    }
+    let Page {
+        bars,
+        popup,
+        popup_hits,
+        ..
+    } = page;
+    out.items.extend(popup);
     out.hits.extend(popup_hits);
     bars
 }

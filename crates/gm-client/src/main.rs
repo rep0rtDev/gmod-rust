@@ -1091,6 +1091,7 @@ impl App {
                 fov_x: 50.0,
                 near: 1.0,
                 far: 1.0,
+                gamma: 2.2,
             }
             .forward();
             let dist = radius / (25f32.to_radians().tan()) * 1.05;
@@ -1100,6 +1101,7 @@ impl App {
                 fov_x: 50.0,
                 near: (dist - radius).max(0.5),
                 far: dist + radius * 2.0,
+                gamma: 2.2,
             };
             let (color, depth) = gm_render::world::icon_targets(&g.gpu, 64, g.config.format);
             let color_view = color.create_view(&Default::default());
@@ -1770,6 +1772,17 @@ impl App {
             eprintln!("config.cfg: {e}");
         }
         self.sounds.mixer.set_master(self.settings.volume);
+        if let Some(g) = self.gfx.as_mut() {
+            let mode = if self.settings.mat_vsync {
+                wgpu::PresentMode::AutoVsync
+            } else {
+                wgpu::PresentMode::AutoNoVsync
+            };
+            if g.config.present_mode != mode {
+                g.config.present_mode = mode;
+                g.surface.configure(&g.gpu.device, &g.config);
+            }
+        }
         if resize {
             if let Some(g) = &self.gfx {
                 if self.settings.fullscreen {
@@ -1837,7 +1850,21 @@ impl App {
                 }
             }
             A::ComboItem(name, i) => options::combo_pick(st, name, i, &self.opt_modes),
+            A::Button(name @ ("VideoAdvanced" | "Gamma")) => {
+                st.sub = Some(name);
+                st.sub_backup = Some(st.pending.clone());
+            }
             A::Button(_) => {}
+            A::SubOk => {
+                st.sub = None;
+                st.sub_backup = None;
+            }
+            A::SubCancel => {
+                if let Some(b) = st.sub_backup.take() {
+                    st.pending = b;
+                }
+                st.sub = None;
+            }
         }
     }
 
@@ -2627,6 +2654,7 @@ impl App {
             fov_x: self.settings.fov_desired,
             near: 3.0,
             far: 28000.0,
+            gamma: self.settings.mat_monitorgamma,
         };
         // driving a prop: a chase camera on it (the game's observer mode on the entity; the
         // distance is not measured)
@@ -3865,6 +3893,16 @@ impl ApplicationHandler for App {
                                 }
                             } else if let Some(name) = settings::key_name(code) {
                                 self.options_bind(name);
+                            }
+                        }
+                        KeyCode::Escape
+                            if self.options.as_ref().is_some_and(|o| o.sub.is_some()) =>
+                        {
+                            if let Some(o) = self.options.as_mut() {
+                                if let Some(b) = o.sub_backup.take() {
+                                    o.pending = b;
+                                }
+                                o.sub = None;
                             }
                         }
                         KeyCode::Escape if self.options.is_some() => self.options = None,

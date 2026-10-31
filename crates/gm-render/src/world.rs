@@ -44,7 +44,9 @@ struct CameraUniform {
     view_proj: [[f32; 4]; 4],
     /// Output alpha of every fragment (1 opaque; `ModelTarget::alpha` for translucent models).
     alpha: f32,
-    _pad: [f32; 3],
+    /// Monitor gamma (`mat_monitorgamma`): the output is raised to 2.2 / gamma.
+    gamma: f32,
+    _pad: [f32; 2],
 }
 
 /// Source camera: position in units, angles in degrees (pitch, yaw, roll), horizontal FOV.
@@ -55,6 +57,8 @@ pub struct Camera {
     pub fov_x: f32,
     pub near: f32,
     pub far: f32,
+    /// `mat_monitorgamma` 1.6..2.6, 2.2 = neutral.
+    pub gamma: f32,
 }
 
 impl Camera {
@@ -1368,7 +1372,9 @@ impl WorldRenderer {
             bytemuck::bytes_of(&CameraUniform {
                 view_proj: cam.view_proj(aspect).to_cols_array_2d(),
                 alpha: 1.0,
-                _pad: [0.0; 3],
+                gamma: cam.gamma,
+
+                _pad: [0.0; 2],
             }),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
@@ -1427,7 +1433,9 @@ impl WorldRenderer {
             bytemuck::bytes_of(&CameraUniform {
                 view_proj: vp.to_cols_array_2d(),
                 alpha: 1.0,
-                _pad: [0.0; 3],
+                gamma: camera.gamma,
+
+                _pad: [0.0; 2],
             }),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
@@ -1776,7 +1784,9 @@ impl WorldRenderer {
         let cam = CameraUniform {
             view_proj: camera.view_proj(target.aspect).to_cols_array_2d(),
             alpha: 1.0,
-            _pad: [0.0; 3],
+            gamma: camera.gamma,
+
+            _pad: [0.0; 2],
         };
         gpu.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
@@ -1972,7 +1982,9 @@ impl WorldRenderer {
             bytemuck::bytes_of(&CameraUniform {
                 view_proj: camera.view_proj(aspect).to_cols_array_2d(),
                 alpha,
-                _pad: [0.0; 3],
+                gamma: camera.gamma,
+
+                _pad: [0.0; 2],
             }),
         );
         let mut enc = device.create_command_encoder(&Default::default());

@@ -367,3 +367,31 @@ in the 640x480 proportional space of the sheet page.
   the file; Downloaded = index entries that are installed. Type tags are drawn but do not
   filter (our manifests have no type); the settings panel, checkboxes and bulk actions are
   not done.
+
+## Advanced video and Gamma dialogs (`OptionsSubVideoAdvancedDlg.res`, `optionssubvideogammadlg.res`)
+
+- Advanced (482 wide; the game places OK / Cancel at the bottom in code): combos 132 x 24 in
+  three columns at x 22 / 176 / 330 with labels 24 above: Model detail (`r_rootlod` 2/1/0 =
+  Low/Medium/High), Texture detail (`mat_picmip` 2/1/0/-1 = Low..Very High), Shader detail
+  (row 58); Water detail (`r_waterforceexpensive` + `r_waterforcereflectentities` = Simple /
+  Reflect World / Reflect All), Shadow detail (`r_shadowrendertotexture`), Color Correction
+  (`mat_colorcorrection`) (row 118); divider 160; Antialiasing (`mat_antialias` 1/2/4/8),
+  Filtering (`mat_trilinear` + `mat_forceaniso` 2..16), Wait for vertical sync (`mat_vsync`)
+  (row 196); Motion Blur (`mat_motion_blur_enabled`), FOV slider 176,252 140x50
+  (`fov_desired` 75..100), Multicore Rendering (`mat_queue_mode` -1/0) (row 258); HDR
+  (`mat_hdr_level` 0/1/2 = None / Bloom / Full) at 22,316 with the Bloom check 170,316
+  292x24; divider 352; "Software DirectX level" 360 + "Hardware DirectX level" combo 330,385;
+  "Windows Aero extensions" combo 330,410. Titles `GameUI_VideoAdvanced_Title` ("VIDEO -
+  ADVANCED"), `GameUI_AdjustGamma_Title`. `GameUI_VeryHigh` / `GameUI_Simple` /
+  `GameUI_Reflect_*` tokens are not in the shipped `gameui_english.txt`.
+- Gamma (290 x 396): `GameUI_GammaInfo` label 16,36 264x53 ("Adjust the slider until all
+  three lines of text below are visible"), Gamma label 16,88, slider 17,112 200x40
+  (`mat_monitorgamma` 1.6..2.6), entry 228,114 44x24, image panel 16,156 256x192, OK 104,356,
+  Cancel 192,356.
+- Ours: both are modal sub-dialogs of Options (`OptionsState::sub`, Cancel / Esc restores the
+  pending copy); the values persist in `config.cfg`; applied: `mat_vsync` (surface present
+  mode), `fov_desired`, `mat_monitorgamma` (the world shader raises the output to 2.2 /
+  gamma, `Camera::gamma`); the gamma test image is three text lines at 3 / 6 / 10 % grey
+  (the game's image is not in the mounted content). Stored only: texture / model / water /
+  shadow detail, colour correction, AA, filtering, motion blur, multicore, HDR level and
+  bloom (no HDR / AA / post-processing path in the renderer yet).

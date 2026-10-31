@@ -37,6 +37,25 @@ pub struct Settings {
     pub fov_desired: f32,
     /// `fps_max`, 0 = unlimited.
     pub fps_max: f32,
+    /// Advanced video (`OptionsSubVideoAdvancedDlg.res`): `mat_picmip` 2..-1 (texture detail
+    /// Low..Very High), `r_rootlod` 2..0 (model detail), water / shadow / colour correction,
+    /// `mat_antialias` 1/2/4/8, `mat_trilinear` + `mat_forceaniso`, `mat_vsync`,
+    /// `mat_hdr_level` 0..2, motion blur, `mat_queue_mode` (-1 multicore), bloom; gamma 1.6..2.6.
+    pub mat_picmip: i32,
+    pub r_rootlod: i32,
+    pub r_waterforceexpensive: bool,
+    pub r_waterforcereflectentities: bool,
+    pub r_shadowrendertotexture: bool,
+    pub mat_colorcorrection: bool,
+    pub mat_antialias: u32,
+    pub mat_trilinear: bool,
+    pub mat_forceaniso: u32,
+    pub mat_vsync: bool,
+    pub mat_hdr_level: u8,
+    pub mat_motion_blur_enabled: bool,
+    pub mat_queue_mode: i32,
+    pub mat_bloomscale: bool,
+    pub mat_monitorgamma: f32,
     pub width: u32,
     pub height: u32,
     pub fullscreen: bool,
@@ -69,6 +88,21 @@ impl Default for Settings {
             cl_spraydisable: false,
             fov_desired: 75.0,
             fps_max: 300.0,
+            mat_picmip: 0,
+            r_rootlod: 0,
+            r_waterforceexpensive: true,
+            r_waterforcereflectentities: false,
+            r_shadowrendertotexture: true,
+            mat_colorcorrection: true,
+            mat_antialias: 1,
+            mat_trilinear: true,
+            mat_forceaniso: 8,
+            mat_vsync: true,
+            mat_hdr_level: 2,
+            mat_motion_blur_enabled: false,
+            mat_queue_mode: -1,
+            mat_bloomscale: true,
+            mat_monitorgamma: 2.2,
             width: 1280,
             height: 720,
             fullscreen: false,
@@ -306,6 +340,24 @@ impl Settings {
         self.cl_spraydisable = b("cl_spraydisable", self.cl_spraydisable);
         self.fov_desired = f("fov_desired", self.fov_desired).clamp(75.0, 100.0);
         self.fps_max = f("fps_max", self.fps_max).max(0.0);
+        self.mat_picmip = (f("mat_picmip", self.mat_picmip as f32) as i32).clamp(-1, 2);
+        self.r_rootlod = (f("r_rootlod", self.r_rootlod as f32) as i32).clamp(0, 2);
+        self.r_waterforceexpensive = b("r_waterforceexpensive", self.r_waterforceexpensive);
+        self.r_waterforcereflectentities = b(
+            "r_waterforcereflectentities",
+            self.r_waterforcereflectentities,
+        );
+        self.r_shadowrendertotexture = b("r_shadowrendertotexture", self.r_shadowrendertotexture);
+        self.mat_colorcorrection = b("mat_colorcorrection", self.mat_colorcorrection);
+        self.mat_antialias = (f("mat_antialias", self.mat_antialias as f32) as u32).clamp(1, 8);
+        self.mat_trilinear = b("mat_trilinear", self.mat_trilinear);
+        self.mat_forceaniso = (f("mat_forceaniso", self.mat_forceaniso as f32) as u32).clamp(1, 16);
+        self.mat_vsync = b("mat_vsync", self.mat_vsync);
+        self.mat_hdr_level = (f("mat_hdr_level", self.mat_hdr_level as f32) as u8).min(2);
+        self.mat_motion_blur_enabled = b("mat_motion_blur_enabled", self.mat_motion_blur_enabled);
+        self.mat_queue_mode = (f("mat_queue_mode", self.mat_queue_mode as f32) as i32).clamp(-1, 2);
+        self.mat_bloomscale = b("mat_bloomscale", self.mat_bloomscale);
+        self.mat_monitorgamma = f("mat_monitorgamma", self.mat_monitorgamma).clamp(1.6, 2.6);
         self.width = f("mat_setvideomode_w", self.width as f32).max(320.0) as u32;
         self.height = f("mat_setvideomode_h", self.height as f32).max(240.0) as u32;
         self.fullscreen = b("fullscreen", self.fullscreen);
@@ -365,6 +417,36 @@ impl Settings {
             ("cl_spraydisable", on(self.cl_spraydisable).to_string()),
             ("fov_desired", format!("{}", self.fov_desired)),
             ("fps_max", format!("{}", self.fps_max)),
+            ("mat_picmip", format!("{}", self.mat_picmip)),
+            ("r_rootlod", format!("{}", self.r_rootlod)),
+            (
+                "r_waterforceexpensive",
+                on(self.r_waterforceexpensive).to_string(),
+            ),
+            (
+                "r_waterforcereflectentities",
+                on(self.r_waterforcereflectentities).to_string(),
+            ),
+            (
+                "r_shadowrendertotexture",
+                on(self.r_shadowrendertotexture).to_string(),
+            ),
+            (
+                "mat_colorcorrection",
+                on(self.mat_colorcorrection).to_string(),
+            ),
+            ("mat_antialias", format!("{}", self.mat_antialias)),
+            ("mat_trilinear", on(self.mat_trilinear).to_string()),
+            ("mat_forceaniso", format!("{}", self.mat_forceaniso)),
+            ("mat_vsync", on(self.mat_vsync).to_string()),
+            ("mat_hdr_level", format!("{}", self.mat_hdr_level)),
+            (
+                "mat_motion_blur_enabled",
+                on(self.mat_motion_blur_enabled).to_string(),
+            ),
+            ("mat_queue_mode", format!("{}", self.mat_queue_mode)),
+            ("mat_bloomscale", on(self.mat_bloomscale).to_string()),
+            ("mat_monitorgamma", format!("{}", self.mat_monitorgamma)),
             ("mat_setvideomode_w", format!("{}", self.width)),
             ("mat_setvideomode_h", format!("{}", self.height)),
             ("fullscreen", on(self.fullscreen).to_string()),

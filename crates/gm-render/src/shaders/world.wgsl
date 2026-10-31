@@ -1,7 +1,7 @@
 struct Camera {
     view_proj: mat4x4<f32>,
     alpha: f32,
-    _pad0: f32,
+    gamma: f32,
     _pad1: f32,
     _pad2: f32,
 };
@@ -55,5 +55,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if material.unlit != 0u {
         light = vec3<f32>(1.0);
     }
-    return vec4<f32>(albedo.rgb * light * in.color, camera.alpha);
+    let shaded = albedo.rgb * light * in.color;
+    // mat_monitorgamma: 2.2 is neutral, lower brightens
+    return vec4<f32>(pow(max(shaded, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma)), camera.alpha);
 }
