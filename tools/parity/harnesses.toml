@@ -3092,6 +3092,26 @@ crates = ["gm-physics", "gm-sandbox"]
 pos = 2.0
 rest = 2.0
 ang = 5.0
+[[harness]]
+name = "constraint_device_thruster_lift_flat"
+scenario = "constraint/device_thruster_lift_flat"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+[[harness]]
+name = "constraint_device_thruster_lift_yaw"
+scenario = "constraint/device_thruster_lift_yaw"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
 contact = 1
 
 [[harness]]
