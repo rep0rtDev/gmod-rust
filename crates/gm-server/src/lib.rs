@@ -3057,7 +3057,90 @@ impl<'w> Server<'w> {
                     self.physics
                         .add_impulse(body, Vec3::new(0.0, 0.0, force * 5000.0 * dt * dt));
                 }
+                gm_sandbox::Device::Wheel {
+                    torque,
+                    friction,
+                    scale,
+                    local_axis,
+                    ..
+                } => {
+                    let axis = (st.rotation * local_axis).normalize_or_zero();
+                    let along = st.angular_velocity.dot(axis);
+                    let spin = gm_sandbox::wheel_spin_step(along, torque, scale, friction, dt);
+                    let w = st.angular_velocity + axis * (spin - along);
+                    self.physics.set_velocity(body, st.velocity, w);
+                }
+                gm_sandbox::Device::Button { .. } | gm_sandbox::Device::Dynamite { .. } => {}
             }
+        }
+        for (origin, damage) in self.sandbox.take_blasts() {
+            self.blast(origin, damage);
+        }
+    }
+
+    /// `gmod_dynamite:Explode` with no delay: `util.BlastDamage(radius 300, damage)` from the
+    /// dynamite's origin - every body and player within the radius takes `damage * (1 - d / 300)`
+    /// with `d` to its nearest point, a body also the impulse `min(dmg * 300, 30000)` towards its
+    /// centre (measured on 30 kg drums: 1003 u/s at 100 u, 819 at 200). The dynamite itself is
+    /// not hit (the game's `BlastDamage` inflictor); a `remove` dynamite is already gone.
+    fn blast(&mut self, dyn_pos: Vec3, damage: f32) {
+        let damage = damage.clamp(0.0, 1500.0);
+        let radius = gm_sandbox::BLAST_RADIUS;
+        let mut hits: Vec<(u32, gm_physics::BodyHandle, f32, Vec3)> = Vec::new();
+        let dynamite: Vec<u32> = self
+            .sandbox
+            .devices()
+            .iter()
+            .filter(|(_, d)| matches!(d, gm_sandbox::Device::Dynamite { .. }))
+            .map(|(id, _)| *id)
+            .collect();
+        for p in self.sandbox.props().iter() {
+            if dynamite.contains(&p.id) && p.pos.distance(dyn_pos) < 1.0 {
+                continue;
+            }
+            let Some(&body) = self.bodies.get(&p.id) else {
+                continue;
+            };
+            let st = self.physics.state(body);
+            let nearest = self
+                .models
+                .get(&p.model)
+                .map(|m| {
+                    m.hulls
+                        .iter()
+                        .flatten()
+                        .map(|q| (st.position + st.rotation * *q).distance(dyn_pos))
+                        .fold(f32::MAX, f32::min)
+                })
+                .unwrap_or_else(|| st.position.distance(dyn_pos));
+            if nearest >= radius {
+                continue;
+            }
+            let dmg = damage * (1.0 - nearest / radius);
+            let dir = (st.position - dyn_pos).normalize_or_zero();
+            hits.push((p.id, body, dmg, dir));
+        }
+        for (ent, body, dmg, dir) in hits {
+            let centre = self.physics.state(body).position;
+            self.physics
+                .add_impulse_at(body, centre, dir * gm_sandbox::blast_impulse(dmg));
+            self.damage_prop(ent, dmg, weapons::DMG_BLAST);
+        }
+        let players: Vec<(u32, f32)> = self
+            .players
+            .iter()
+            .filter(|(_, p)| p.alive)
+            .map(|(pid, p)| {
+                let h = if p.state.ducked { 36.0 } else { 72.0 };
+                let mins = p.state.origin + Vec3::new(-16.0, -16.0, 0.0);
+                let maxs = p.state.origin + Vec3::new(16.0, 16.0, h);
+                (*pid, dyn_pos.clamp(mins, maxs).distance(dyn_pos))
+            })
+            .filter(|(_, d)| *d < radius)
+            .collect();
+        for (pid, d) in players {
+            let dmg = damage * (1.0 - d / radius);
+            self.damage_player(pid, dmg, weapons::DMG_BLAST);
         }
     }
 
@@ -3367,6 +3450,7 @@ impl<'w> Server<'w> {
                 .and_then(|p| p.use_target.take())
             {
                 self.sent_event(ent, "use_off", player, 0, 0.0);
+                self.sandbox.button_use(ent, player, false);
             }
         }
         if use_pressed
@@ -3383,6 +3467,12 @@ impl<'w> Server<'w> {
             } else if let Some(ent) = self.find_use_entity(player, eye, view) {
                 if self.ask(Request::PlayerUse { player, ent }) != Verdict::Cancel {
                     self.game_events.push(GameEvent::Use { player, ent });
+                    if use_pressed && self.sandbox.button_use(ent, player, true) {
+                        if let Some(p) = self.players.get_mut(&player) {
+                            p.use_target = Some(ent);
+                        }
+                        return;
+                    }
                     match self.sent_use_type(ent) {
                         Some(UseType::Continuous) => self.sent_event(ent, "use", player, 0, 1.0),
                         Some(UseType::Simple) if use_pressed => {

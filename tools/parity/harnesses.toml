@@ -3132,3 +3132,146 @@ realm = "server"
 crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
+
+[[harness]]
+name = "constraint_device_wheel_motor"
+scenario = "constraint/device_wheel_motor"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+spin = 0.1
+
+[[harness]]
+name = "constraint_device_wheel_toggle"
+scenario = "constraint/device_wheel_toggle"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+spin = 0.1
+
+[[harness]]
+name = "constraint_device_wheel_t1000"
+scenario = "constraint/device_wheel_t1000"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+spin = 0.1
+
+[[harness]]
+name = "constraint_device_wheel_t10000"
+scenario = "constraint/device_wheel_t10000"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+spin = 0.1
+
+[[harness]]
+name = "constraint_device_wheel_nofriction"
+scenario = "constraint/device_wheel_nofriction"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+spin = 0.1
+
+[[harness]]
+name = "constraint_device_button_toggle"
+scenario = "constraint/device_button_toggle"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+
+[[harness]]
+name = "constraint_device_button_hold"
+scenario = "constraint/device_button_hold"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+
+[[harness]]
+name = "constraint_device_dynamite_blast"
+scenario = "constraint/device_dynamite_blast"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+
+[[harness]]
+name = "constraint_device_dynamite_delay"
+scenario = "constraint/device_dynamite_delay"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+
+[[harness]]
+name = "constraint_device_dynamite_push"
+scenario = "constraint/device_dynamite_push"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+
+[[harness]]
+name = "toolgun_wheel"
+scenario = "toolgun/wheel"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_button"
+scenario = "toolgun/button"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_dynamite"
+scenario = "toolgun/dynamite"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1
+

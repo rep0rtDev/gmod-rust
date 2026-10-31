@@ -83,6 +83,9 @@ pub struct Limits {
     pub max_thrusters: i32,
     pub max_hoverballs: i32,
     pub max_balloons: i32,
+    pub max_wheels: i32,
+    pub max_buttons: i32,
+    pub max_dynamite: i32,
 }
 
 impl Default for Limits {
@@ -94,6 +97,9 @@ impl Default for Limits {
             max_thrusters: 30,
             max_hoverballs: 50,
             max_balloons: 50,
+            max_wheels: 50,
+            max_buttons: 50,
+            max_dynamite: 20,
         }
     }
 }
@@ -107,6 +113,9 @@ impl Limits {
             "thrusters" => self.max_thrusters,
             "hoverballs" => self.max_hoverballs,
             "balloons" => self.max_balloons,
+            "wheels" => self.max_wheels,
+            "buttons" => self.max_buttons,
+            "dynamite" => self.max_dynamite,
             _ => -1,
         }
     }
@@ -519,6 +528,25 @@ pub struct ToolSettings {
     pub balloon_ropelength: f32,
     pub balloon_force: f32,
     pub balloon_model: String,
+    pub wheel_torque: f32,
+    pub wheel_friction: f32,
+    pub wheel_nocollide: bool,
+    pub wheel_forcelimit: f32,
+    pub wheel_fwd: i32,
+    pub wheel_bck: i32,
+    pub wheel_toggle: bool,
+    pub wheel_model: String,
+    pub wheel_rx: f32,
+    pub wheel_ry: f32,
+    pub wheel_rz: f32,
+    pub button_model: String,
+    pub button_keygroup: i32,
+    pub button_toggle: bool,
+    pub dynamite_group: i32,
+    pub dynamite_damage: f32,
+    pub dynamite_delay: f32,
+    pub dynamite_model: String,
+    pub dynamite_remove: bool,
 }
 
 impl Default for ToolSettings {
@@ -587,6 +615,25 @@ impl Default for ToolSettings {
             balloon_ropelength: 64.0,
             balloon_force: 500.0,
             balloon_model: "models/maxofs2d/balloon_classic.mdl".into(),
+            wheel_torque: 3000.0,
+            wheel_friction: 1.0,
+            wheel_nocollide: true,
+            wheel_forcelimit: 0.0,
+            wheel_fwd: 45,
+            wheel_bck: 42,
+            wheel_toggle: false,
+            wheel_model: "models/props_vehicles/carparts_wheel01a.mdl".into(),
+            wheel_rx: 90.0,
+            wheel_ry: 0.0,
+            wheel_rz: 90.0,
+            button_model: "models/maxofs2d/button_05.mdl".into(),
+            button_keygroup: 37,
+            button_toggle: true,
+            dynamite_group: 52,
+            dynamite_damage: 200.0,
+            dynamite_delay: 0.0,
+            dynamite_model: "models/dav0r/tnt/tnt.mdl".into(),
+            dynamite_remove: false,
         }
     }
 }
@@ -732,6 +779,8 @@ pub struct Sandbox {
     devices: BTreeMap<u32, Device>,
     /// Shapes of the device models the stools may spawn (the physics owner registers them).
     shapes: BTreeMap<String, ModelShape>,
+    /// Blasts that go off this tick (the physics owner deals them and drains the list).
+    blasts: Vec<(Vec3, f32)>,
 }
 
 /// A powered stool entity riding on an ordinary prop: `gmod_thruster`, `gmod_hoverball`,
@@ -768,6 +817,83 @@ pub enum Device {
     },
     /// `gmod_balloon`: constant upward force `force * 5000 * dt` on a 100 kg body without gravity.
     Balloon { force: f32 },
+    /// `gmod_wheel` with its `constraint.Motor` (`phys_torque` on the wheel's `Axis` constraint
+    /// `axis`): `scale` is the motor's `forcescale` (`direction * mul * TorqueScale`, 0 at rest),
+    /// the spin accelerates by `TORQUE_ACCEL * torque * scale` deg/s^2 about the axis towards
+    /// the hit entity (measured), capped at `MAX_WHEEL_SPIN`.
+    Wheel {
+        torque: f32,
+        friction: f32,
+        scale: f32,
+        toggle: bool,
+        toggle_state: bool,
+        direction: f32,
+        key_f: i32,
+        key_r: i32,
+        axis: u32,
+        /// The axis in the wheel's frame (`WPos2 - WPos1`, the hit side).
+        local_axis: Vec3,
+    },
+    /// `gmod_button` (`ONOFF_USE`): `numpad.Activate(owner, key, true)` while on. A toggle flips
+    /// on each press; otherwise it is on while `user` holds +use.
+    Button {
+        key: i32,
+        toggle: bool,
+        on: bool,
+        user: Option<u32>,
+    },
+    /// `gmod_dynamite`: `util.BlastDamage(radius 300, clamp(damage, 0, 1500))` on the key, after
+    /// `delay` seconds when set (queued, fired by a 0.05 s think), removed when `remove`.
+    Dynamite {
+        damage: f32,
+        delay: f32,
+        remove: bool,
+        key: i32,
+        /// Explosions waiting (server ticks left), the queue of `Explode` with a delay.
+        queued: Vec<u32>,
+    },
+}
+
+/// The server tick the device timers count in (seconds).
+pub const SERVER_TICK: f32 = 0.015;
+
+/// `phys_torque`: deg/s^2 of wheel spin per unit of `force * scale` (measured on the 70 kg
+/// `carparts_wheel01a`: 2917 deg/s^2 for 3000 without axis friction).
+pub const TORQUE_ACCEL: f32 = 1.0;
+/// Axis friction: a motor torque up to this (per unit of the wheel's `friction`) does not move
+/// a resting wheel (torque 300 against friction 1 measured still); while driving the loss is
+/// `WHEEL_FRICTION_LOSS` of the motor torque capped here (friction 1 against 0: 1000 → ~900 deg/s
+/// at 1.2 s instead of ~950, 3000 → 2947 instead of 3116, 10000 → 9690 deg/s²).
+pub const WHEEL_FRICTION_TORQUE: f32 = 300.0;
+pub const WHEEL_FRICTION_LOSS: f32 = 0.05;
+/// The spin vphysics caps a driven wheel at (deg/s).
+pub const MAX_WHEEL_SPIN: f32 = 7200.0;
+/// `util.BlastDamage` radius of the dynamite stool and the impulse rule of a blast on a body:
+/// `min(damage * 300, 30000)` kg u/s towards the body's centre.
+pub const BLAST_RADIUS: f32 = 300.0;
+pub fn blast_impulse(damage: f32) -> f32 {
+    (damage * 300.0).min(30000.0)
+}
+
+/// One tick of a wheel's spin about its motor axis (deg/s, signed along the axis towards the
+/// hit entity): `phys_torque` accelerates by `torque * scale` deg/s² less the axis friction
+/// torque (which also holds a resting wheel the motor cannot overcome), the spin is capped at
+/// 7200 deg/s, and the angular drag vphysics has over Jolt's is added (the free wheel decays
+/// ~0.31/s in the game, Jolt gives ~0.19/s).
+pub fn wheel_spin_step(spin: f32, torque: f32, scale: f32, friction: f32, dt: f32) -> f32 {
+    let motor = TORQUE_ACCEL * torque * scale.abs();
+    if spin.abs() < 60.0 && motor <= WHEEL_FRICTION_TORQUE * friction {
+        return 0.0;
+    }
+    let loss = (WHEEL_FRICTION_LOSS * motor).min(WHEEL_FRICTION_TORQUE * friction) * friction;
+    let drive = if scale == 0.0 {
+        0.0
+    } else {
+        (motor - loss).max(0.0) * scale.signum()
+    };
+    let s = spin + drive * dt;
+    let s = s * (1.0 - 0.12 * dt);
+    s.clamp(-MAX_WHEEL_SPIN, MAX_WHEEL_SPIN)
 }
 
 impl Device {
@@ -778,17 +904,16 @@ impl Device {
                 strength, enabled, ..
             } => Some(if *enabled { 150.0 * strength } else { 15.0 }),
             Device::Balloon { .. } => Some(100.0),
-            Device::Thruster { .. } => None,
+            Device::Thruster { .. }
+            | Device::Wheel { .. }
+            | Device::Button { .. }
+            | Device::Dynamite { .. } => None,
         }
     }
 
     /// `PhysObj:EnableGravity` as the device leaves it.
     pub fn gravity(&self) -> bool {
-        match self {
-            Device::Balloon { .. } => false,
-            Device::Hoverball { .. } => true,
-            Device::Thruster { .. } => true,
-        }
+        !matches!(self, Device::Balloon { .. })
     }
 }
 
@@ -839,6 +964,10 @@ pub enum NumpadBind {
     /// `Hoverball_Up` / `Hoverball_Down`: `ZVelocity` +-75 while held.
     HoverballMove(u32, f32),
     HoverballToggle(u32),
+    /// `WheelForward` / `WheelReverse` (`mul` +1 / -1).
+    Wheel(u32, f32),
+    /// `DynamiteBlow` on the press.
+    Dynamite(u32),
     /// Down sets the direction, up stops (a non-toggle winch).
     WinchDir(u32, i8),
     WinchToggle(u32, i8),
@@ -853,6 +982,8 @@ impl NumpadBind {
             | NumpadBind::Thruster(c, _)
             | NumpadBind::HoverballMove(c, _)
             | NumpadBind::HoverballToggle(c)
+            | NumpadBind::Wheel(c, _)
+            | NumpadBind::Dynamite(c)
             | NumpadBind::WinchDir(c, _)
             | NumpadBind::WinchToggle(c, _)
             | NumpadBind::MuscleToggle(c) => c,
@@ -924,6 +1055,22 @@ fn normalize_angle(a: f32) -> f32 {
         a += 360.0;
     }
     a
+}
+
+/// `pos - NearestPoint(pos - normal * 512)` along `normal`: how far the model's OBB (the MDL
+/// hull box, not the collision hull) reaches against `normal` when rotated by `rot`.
+pub fn obb_depth(shape: &ModelShape, rot: Quat, normal: Vec3) -> f32 {
+    let (lo, hi) = (shape.min, shape.max);
+    let mut depth = 0.0f32;
+    for i in 0..8 {
+        let c = Vec3::new(
+            if i & 1 == 0 { lo.x } else { hi.x },
+            if i & 2 == 0 { lo.y } else { hi.y },
+            if i & 4 == 0 { lo.z } else { hi.z },
+        );
+        depth = depth.max((rot * c).dot(-normal));
+    }
+    depth
 }
 
 /// `Entity:NearestPoint` on the model box at `pos`/`rot`.
@@ -1468,6 +1615,9 @@ impl Sandbox {
                 | "thruster"
                 | "hoverball"
                 | "balloon"
+                | "wheel"
+                | "button"
+                | "dynamite"
                 | "elastic"
         )
     }
@@ -1613,6 +1763,9 @@ impl Sandbox {
         let (count, model) = match tool {
             "thruster" => ("thrusters", s.thruster_model.clone()),
             "hoverball" => ("hoverballs", s.hoverball_model.clone()),
+            "wheel" => ("wheels", s.wheel_model.clone()),
+            "button" => ("buttons", s.button_model.clone()),
+            "dynamite" => ("dynamite", s.dynamite_model.clone()),
             _ => ("balloons", s.balloon_model.clone()),
         };
         let Some(shape) = self.shapes.get(&model).cloned() else {
@@ -1623,23 +1776,26 @@ impl Sandbox {
         }
         let n = hit.normal;
         // `HitNormal:Angle()` with the pitch turned 90 degrees up: the model's z along the normal
-        let angles = if tool == "balloon" {
-            Vec3::ZERO
-        } else {
-            let a = angle_of(n);
-            Vec3::new(a.x + 90.0, a.y, a.z)
+        let angles = match tool {
+            "balloon" | "dynamite" => Vec3::ZERO,
+            "wheel" => {
+                let a = angle_of(n);
+                Vec3::new(
+                    normalize_angle(a.x + s.wheel_rx),
+                    normalize_angle(a.y + s.wheel_ry),
+                    normalize_angle(a.z + s.wheel_rz),
+                )
+            }
+            _ => {
+                let a = angle_of(n);
+                Vec3::new(a.x + 90.0, a.y, a.z)
+            }
         };
         let rot = rotation(angles);
-        let pos = if tool == "thruster" {
+        let pos = if tool == "thruster" || tool == "button" {
             hit.pos - n * shape.min.z
         } else {
-            // `NearestPoint(pos - normal * 512)`: the hull point furthest along -normal
-            let depth = shape
-                .points
-                .iter()
-                .map(|p| (rot * *p).dot(-n))
-                .fold(0.0f32, f32::max);
-            hit.pos + n * depth
+            hit.pos + n * obb_depth(&shape, rot, n)
         };
         let id = self.next_id;
         self.next_id += 1;
@@ -1692,6 +1848,38 @@ impl Sandbox {
                     key_toggle: s.hoverball_key_on,
                 }
             }
+            "wheel" => {
+                binds.push((s.wheel_fwd, NumpadBind::Wheel(id, 1.0)));
+                binds.push((s.wheel_bck, NumpadBind::Wheel(id, -1.0)));
+                Device::Wheel {
+                    torque: s.wheel_torque,
+                    friction: s.wheel_friction,
+                    scale: 0.0,
+                    toggle: s.wheel_toggle,
+                    toggle_state: false,
+                    direction: 1.0,
+                    key_f: s.wheel_fwd,
+                    key_r: s.wheel_bck,
+                    axis: 0,
+                    local_axis: rot.inverse() * (hit.pos - pos),
+                }
+            }
+            "button" => Device::Button {
+                key: s.button_keygroup,
+                toggle: s.button_toggle,
+                on: false,
+                user: None,
+            },
+            "dynamite" => {
+                binds.push((s.dynamite_group, NumpadBind::Dynamite(id)));
+                Device::Dynamite {
+                    damage: s.dynamite_damage,
+                    delay: s.dynamite_delay,
+                    remove: s.dynamite_remove,
+                    key: s.dynamite_group,
+                    queued: Vec::new(),
+                }
+            }
             _ => Device::Balloon {
                 force: s.balloon_force.clamp(-1e34, 1e34),
             },
@@ -1728,12 +1916,48 @@ impl Sandbox {
                     undo_ents.push(self.next_id);
                     self.next_id += 1;
                 }
-            } else {
+            } else if tool == "wheel" {
+                // `constraint.Motor`: an Axis (no table of its own) plus the phys_torque
+                let (tpos, trot) = self.prop_pose(target).unwrap_or_default();
+                let lpos1 = rot.inverse() * n;
+                let lpos2 = trot.inverse() * (hit.pos - tpos);
+                let axis_id = self.next_id;
+                self.next_id += 1;
+                self.constraints.push(Constraint {
+                    id: axis_id,
+                    owner: player,
+                    ent1: Some(id),
+                    ent2: Some(target),
+                    kind: ConstraintKind::Axis {
+                        lpos1,
+                        lpos2,
+                        local_axis: lpos1,
+                        forcelimit: s.wheel_forcelimit,
+                        torquelimit: 0.0,
+                        friction: s.wheel_friction,
+                        nocollide: s.wheel_nocollide,
+                    },
+                });
+                if let Some(Device::Wheel { axis, .. }) = self.devices.get_mut(&id) {
+                    *axis = axis_id;
+                }
+                // undo: the torque entity, the axis, the wheel
+                undo_ents.insert(0, axis_id);
+                undo_ents.insert(0, self.next_id);
+                self.next_id += 1;
+                self.add_cleanup(player, count, axis_id);
+            } else if tool != "dynamite" {
                 let nocollide = tool == "thruster" && !s.thruster_collision;
                 if let Some(weld) = self.weld(player, Some(id), Some(target), 0.0, nocollide) {
                     undo_ents.push(weld);
                     self.add_cleanup(player, count, weld);
                 }
+            }
+        } else if tool == "button" {
+            // a button on the world is welded to the world
+            if let Some(weld) = self.weld(player, Some(id), None, 0.0, false) {
+                undo_ents.push(weld);
+                self.add_cleanup(player, count, weld);
             }
         }
         self.push_undo(
@@ -2074,7 +2298,14 @@ impl Sandbox {
         {
             return false;
         }
-        if matches!(tool, "thruster" | "hoverball" | "balloon") {
+        if matches!(
+            tool,
+            "thruster" | "hoverball" | "balloon" | "wheel" | "button" | "dynamite"
+        ) {
+            // a wheel needs an entity to drive against
+            if tool == "wheel" && hit.ent.is_none() {
+                return false;
+            }
             return self.place_device(player, tool, hit, tool == "balloon", events);
         }
         // a pulley's first and last click must be entities; the two pulley points are anywhere
@@ -2289,6 +2520,7 @@ impl Sandbox {
             .collect();
         binds.retain(|b| live.contains(&b.constraint()));
         let binds = binds.clone();
+        let mut removed = Vec::new();
         for b in binds {
             if let Some(dev) = self.devices.get_mut(&b.constraint()) {
                 match (b, dev) {
@@ -2307,6 +2539,62 @@ impl Sandbox {
                             *mul += if down { m } else { -m };
                         }
                         *on = *mul != 0.0;
+                    }
+                    (
+                        NumpadBind::Wheel(_, mul),
+                        Device::Wheel {
+                            scale,
+                            toggle,
+                            toggle_state,
+                            direction,
+                            ..
+                        },
+                    ) => {
+                        // `ENT:Forward(onoff, mul)`: a toggle ignores the release
+                        if *toggle && !down {
+                            continue;
+                        }
+                        let mut speed = *direction * mul;
+                        if !down {
+                            speed = 0.0;
+                        }
+                        if *toggle {
+                            *toggle_state = !*toggle_state;
+                            if !*toggle_state {
+                                speed = 0.0;
+                            }
+                        }
+                        *scale = speed;
+                    }
+                    (
+                        NumpadBind::Dynamite(_),
+                        Device::Dynamite {
+                            delay,
+                            damage,
+                            remove,
+                            queued,
+                            ..
+                        },
+                    ) if down => {
+                        let delay = delay.min(3600.0);
+                        // measured: a 1 s delay blows 70 ticks after the key (the 0.05 s think)
+                        let ticks = if delay == 0.0 {
+                            0
+                        } else {
+                            (delay / SERVER_TICK).ceil() as u32 + 3
+                        };
+                        let ent = b.constraint();
+                        if ticks == 0 {
+                            let origin = self.props.iter().find(|p| p.id == ent).map(|p| p.pos);
+                            if let Some(origin) = origin {
+                                self.blasts.push((origin, *damage));
+                            }
+                            if *remove {
+                                removed.push(ent);
+                            }
+                        } else {
+                            queued.push(ticks);
+                        }
                     }
                     (NumpadBind::HoverballMove(_, d), Device::Hoverball { zvel, .. }) => {
                         *zvel = if down { d * 75.0 } else { 0.0 };
@@ -2340,6 +2628,9 @@ impl Sandbox {
                 NumpadBind::MuscleToggle(_) if down => ctrl.muscle_toggle(),
                 _ => {}
             }
+        }
+        for id in removed {
+            self.remove_entity(id);
         }
     }
 
@@ -2377,9 +2668,75 @@ impl Sandbox {
             .collect()
     }
 
+    /// `gmod_button:Use` on a +use edge by `player` (`ONOFF_USE`: `on` = USE_ON): a toggle flips
+    /// on the press, a plain button is on from the press and off on the release (`Think` sees
+    /// the user no longer holding +use). The key goes through `numpad` as the owner's.
+    pub fn button_use(&mut self, prop: u32, player: u32, on: bool) -> bool {
+        let Some(Device::Button {
+            key,
+            toggle,
+            on: is_on,
+            user,
+        }) = self.devices.get_mut(&prop)
+        else {
+            return false;
+        };
+        let (key, owner) = (
+            *key,
+            self.props.iter().find(|p| p.id == prop).map(|p| p.owner),
+        );
+        let new_state = if *toggle {
+            if !on {
+                return true;
+            }
+            !*is_on
+        } else {
+            if on && user.is_some() {
+                return true;
+            }
+            on
+        };
+        *is_on = new_state;
+        *user = if new_state { Some(player) } else { None };
+        let owner = owner.unwrap_or(player);
+        self.numpad(owner, key, new_state);
+        true
+    }
+
+    /// Blasts due this tick as `(origin, damage)` (drained): the physics owner deals them.
+    pub fn take_blasts(&mut self) -> Vec<(Vec3, f32)> {
+        std::mem::take(&mut self.blasts)
+    }
+
     /// The hoverballs' `Think`: a held key moves the target height by `zvel * speed * dt`; a
-    /// re-enabled one targets where it is (`NaN` marks that).
+    /// re-enabled one targets where it is (`NaN` marks that); queued dynamite counts down.
     pub fn tick_devices(&mut self, dt: f32) {
+        // queued dynamite: the blast from where the stick is now, then `remove` takes it away
+        let mut due = Vec::new();
+        for (id, d) in &mut self.devices {
+            if let Device::Dynamite {
+                queued,
+                damage,
+                remove,
+                ..
+            } = d
+            {
+                for q in queued.iter_mut() {
+                    *q = q.saturating_sub(1);
+                }
+                let n = queued.iter().filter(|q| **q == 0).count();
+                queued.retain(|q| *q > 0);
+                due.extend(std::iter::repeat_n((*id, *damage, *remove), n));
+            }
+        }
+        for (id, damage, remove) in due {
+            if let Some(p) = self.props.iter().find(|p| p.id == id) {
+                self.blasts.push((p.pos, damage));
+            }
+            if remove {
+                self.remove_entity(id);
+            }
+        }
         let poses: Vec<(u32, f32)> = self.props.iter().map(|p| (p.id, p.pos.z)).collect();
         for (id, d) in &mut self.devices {
             if let Device::Hoverball {

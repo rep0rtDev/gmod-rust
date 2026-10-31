@@ -230,6 +230,12 @@ void gmp_set_mass(void *system, unsigned int id, float mass) {
 	mp->SetInverseInertia(mp->GetInverseInertiaDiagonal() / factor, mp->GetInertiaRotation());
 }
 
+// angular impulse (world axes)
+void gmp_add_angular_impulse(void *system, unsigned int id, float ix, float iy, float iz) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	sys->GetBodyInterface().AddAngularImpulse(JPH::BodyID(id), JPH::Vec3(ix, iy, iz));
+}
+
 // impulse through the mass centre (no torque)
 void gmp_add_impulse(void *system, unsigned int id, float ix, float iy, float iz) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);

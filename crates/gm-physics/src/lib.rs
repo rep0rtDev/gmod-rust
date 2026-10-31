@@ -52,6 +52,7 @@ extern "C" {
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
     fn gmp_set_mass(system: *mut JPC_PhysicsSystem, id: u32, mass: f32);
     fn gmp_add_impulse(system: *mut JPC_PhysicsSystem, id: u32, ix: f32, iy: f32, iz: f32);
+    fn gmp_add_angular_impulse(system: *mut JPC_PhysicsSystem, id: u32, ix: f32, iy: f32, iz: f32);
     fn gmp_point_inverse_mass(
         system: *mut JPC_PhysicsSystem,
         id: u32,
@@ -1031,6 +1032,28 @@ impl World {
             1.0 / k
         } else {
             0.0
+        }
+    }
+
+    /// Angular impulse about world axes (kg * u^2 * rad/s), waking the body.
+    pub fn add_angular_impulse(&mut self, body: BodyHandle, impulse: Vec3) {
+        if self.frozen.contains(&body.0) {
+            return;
+        }
+        let i = dir_to_jolt(impulse) * UNITS_TO_METERS * UNITS_TO_METERS;
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_ActivateBody(bi, body.0);
+            gmp_add_angular_impulse(self.system.as_raw(), body.0, i.x, i.y, i.z);
+        }
+    }
+
+    /// Caps a body's spin (deg/s, as `BodyState`), the game's 7200 deg/s vphysics limit for driven wheels.
+    pub fn clamp_angular_speed(&mut self, body: BodyHandle, max: f32) {
+        let st = self.state(body);
+        let w = st.angular_velocity.length();
+        if w > max {
+            self.set_velocity(body, st.velocity, st.angular_velocity * (max / w));
         }
     }
 

@@ -49,6 +49,27 @@ pub enum SavedDeviceKind {
     Balloon {
         force: f32,
     },
+    Wheel {
+        torque: f32,
+        #[serde(default = "one")]
+        friction: f32,
+        toggle: bool,
+        direction: f32,
+        key_f: i32,
+        key_r: i32,
+        axis: Option<usize>,
+        local_axis: [f32; 3],
+    },
+    Button {
+        key: i32,
+        toggle: bool,
+    },
+    Dynamite {
+        damage: f32,
+        delay: f32,
+        remove: bool,
+        key: i32,
+    },
 }
 
 impl From<&Device> for SavedDeviceKind {
@@ -93,6 +114,38 @@ impl From<&Device> for SavedDeviceKind {
                 key_toggle,
             },
             Device::Balloon { force } => SavedDeviceKind::Balloon { force },
+            Device::Wheel {
+                torque,
+                friction,
+                toggle,
+                direction,
+                key_f,
+                key_r,
+                local_axis,
+                ..
+            } => SavedDeviceKind::Wheel {
+                torque,
+                friction,
+                toggle,
+                direction,
+                key_f,
+                key_r,
+                axis: None,
+                local_axis: arr(local_axis),
+            },
+            Device::Button { key, toggle, .. } => SavedDeviceKind::Button { key, toggle },
+            Device::Dynamite {
+                damage,
+                delay,
+                remove,
+                key,
+                ..
+            } => SavedDeviceKind::Dynamite {
+                damage,
+                delay,
+                remove,
+                key,
+            },
         }
     }
 }
@@ -153,6 +206,57 @@ impl SavedDeviceKind {
                 ],
             ),
             SavedDeviceKind::Balloon { force } => (Device::Balloon { force }, Vec::new()),
+            SavedDeviceKind::Wheel {
+                torque,
+                friction,
+                toggle,
+                direction,
+                key_f,
+                key_r,
+                local_axis,
+                ..
+            } => (
+                Device::Wheel {
+                    torque,
+                    friction,
+                    scale: 0.0,
+                    toggle,
+                    toggle_state: false,
+                    direction,
+                    key_f,
+                    key_r,
+                    axis: 0,
+                    local_axis: Vec3::from(local_axis),
+                },
+                vec![
+                    (key_f, NumpadBind::Wheel(id, 1.0)),
+                    (key_r, NumpadBind::Wheel(id, -1.0)),
+                ],
+            ),
+            SavedDeviceKind::Button { key, toggle } => (
+                Device::Button {
+                    key,
+                    toggle,
+                    on: false,
+                    user: None,
+                },
+                Vec::new(),
+            ),
+            SavedDeviceKind::Dynamite {
+                damage,
+                delay,
+                remove,
+                key,
+            } => (
+                Device::Dynamite {
+                    damage,
+                    delay,
+                    remove,
+                    key,
+                    queued: Vec::new(),
+                },
+                vec![(key, NumpadBind::Dynamite(id))],
+            ),
         }
     }
 }
@@ -844,4 +948,8 @@ impl Server<'_> {
         self.sync_after_script();
         (ids.iter().filter(|i| i.is_some()).count(), constraints)
     }
+}
+
+fn one() -> f32 {
+    1.0
 }
