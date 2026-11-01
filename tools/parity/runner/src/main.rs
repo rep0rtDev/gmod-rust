@@ -193,6 +193,9 @@ struct PropSpec {
     angles: Option<[f32; 3]>,
     #[serde(default)]
     frozen: bool,
+    /// Every physics object frozen (a ragdoll that must not drift before the clicks).
+    #[serde(default)]
+    frozen_all: bool,
     #[serde(default)]
     nodrag: bool,
 }
@@ -238,6 +241,9 @@ fn apply_click_settings(
     if !matches!(
         tool,
         "ballsocket"
+            | "eyeposer"
+            | "faceposer"
+            | "finger"
             | "slider"
             | "elastic"
             | "hydraulic"
@@ -276,6 +282,26 @@ fn apply_click_settings(
     };
     let ts = &mut sb.tool_settings;
     match tool {
+        "eyeposer" => {
+            ts.eyeposer_x = num("x");
+            ts.eyeposer_y = num("y");
+            ts.eyeposer_strabismus = num("strabismus");
+        }
+        "faceposer" => {
+            for i in 0..ts.faceposer_flex.len() {
+                ts.faceposer_flex[i] = num(&format!("flex{i}"));
+            }
+            ts.faceposer_scale = num("scale");
+        }
+        "finger" => {
+            for i in 0..ts.finger.len() {
+                let t = text(&i.to_string());
+                let mut it = t
+                    .split_whitespace()
+                    .map(|v| v.parse::<f32>().unwrap_or(0.0));
+                ts.finger[i] = [it.next().unwrap_or(0.0), it.next().unwrap_or(0.0)];
+            }
+        }
         "thruster" => {
             ts.thruster_force = num("force");
             ts.thruster_model = text("model");
@@ -4289,6 +4315,11 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         })
         .collect();
     server.add_existing_props(&existing);
+    for (i, p) in scn.props.iter().enumerate() {
+        if p.frozen_all {
+            server.freeze_all_parts(i as u32 + 1);
+        }
+    }
     let all_props = !scn.props.is_empty();
     let mut script = match &scn.addon {
         Some(dir) => {
@@ -4310,6 +4341,9 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             "props": sb.props().iter().filter(|p| all_props || p.owner == player).map(|p| json!({
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen,
                 "bone_scales": server.bone_scales(p.id).iter().map(|(b, s)| json!({ "bone": b, "s": [s.x, s.y, s.z] })).collect::<Vec<_>>(),
+                "bone_angles": server.bone_angles(p.id).iter().map(|(b, a)| json!({ "bone": b, "a": [a.x, a.y, a.z] })).collect::<Vec<_>>(),
+                "eye_target": server.eye_target(p.id).map(|t| json!([t.x, t.y, t.z])),
+                "flex": server.flex_state(p.id).map(|(w, scale)| json!({ "n": w.len(), "w": w, "scale": scale })),
             })).collect::<Vec<_>>(),
             "count": sb.count(player),
             "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "n": u.entities.len() })).collect::<Vec<_>>(),
@@ -4337,10 +4371,12 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 let ret = match op.button.as_deref() {
                     Some("reload") => {
                         let hit = server.tool_hit(player);
-                        if tool == "inflator" {
-                            hit.as_ref().is_some_and(|h| server.inflator_reload(h))
-                        } else {
-                            server.sandbox.tool_reload(player, &tool, hit.as_ref())
+                        match hit
+                            .as_ref()
+                            .and_then(|h| server.tool_reload_ext(player, &tool, h))
+                        {
+                            Some(r) => r,
+                            None => server.sandbox.tool_reload(player, &tool, hit.as_ref()),
                         }
                     }
                     b => match server.tool_click_full(player, &tool, b == Some("right")) {
@@ -4363,7 +4399,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }
             "undo" => server.undo(player),
             "cleanup" => server.cleanup(player),
-            "wait" => {}
+            "wait" | "think" => {}
             "cvar" => {
                 if op.name.as_deref() == Some("sbox_maxprops") {
                     server.sandbox.limits.max_props =
@@ -4378,12 +4414,19 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }
         }
         rec["immediate"] = snapshot(&server);
-        let ticks = if op.op == "wait" {
+        let ticks = if matches!(op.op.as_str(), "wait" | "think") {
             op.ticks.unwrap_or(3)
         } else {
             op.wait.unwrap_or(3)
         };
+        // "think": the stool's TOOL:Think runs every tick with the op's settings (the probe
+        // calls tool:Think() itself because a bot has no gmod_toolmode for SWEP:Think)
+        let think_tool = (op.op == "think").then(|| op.tool.clone().unwrap_or_default());
         for _ in 0..ticks {
+            if let Some(t) = &think_tool {
+                apply_click_settings(&mut server.sandbox, t, op.settings.as_ref());
+                server.tool_think(player, t);
+            }
             server.tick(&idle);
         }
         rec["after"] = snapshot(&server);
@@ -5458,6 +5501,63 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     println!("  op {i}: ret {tr_ret} vs {ou_ret}");
                     ok = false;
                 }
+            }
+            // posers: eye target (local to the eyes attachment), flex weights / scale, bone angles
+            let near = |x: &Value, y: &Value, tol: f32| match (x.as_array(), y.as_array()) {
+                (Some(_), Some(_)) => (v3(x) - v3(y)).abs().max_element() < tol,
+                (None, None) => true,
+                _ => false,
+            };
+            if !near(&a["eye_target"], &b["eye_target"], 0.05) {
+                println!(
+                    "  op {i}: prop {} eye target {} vs {}",
+                    k + 1,
+                    a["eye_target"],
+                    b["eye_target"]
+                );
+                ok = false;
+            }
+            let (fa, fb) = (&a["flex"], &b["flex"]);
+            let flex_same = match (fa.as_object(), fb.as_object()) {
+                (Some(_), Some(_)) => {
+                    let (wa, wb) = (
+                        fa["w"].as_array().cloned().unwrap_or_default(),
+                        fb["w"].as_array().cloned().unwrap_or_default(),
+                    );
+                    wa.len() == wb.len()
+                        && wa.iter().zip(&wb).all(|(x, y)| {
+                            (x.as_f64().unwrap_or(0.0) - y.as_f64().unwrap_or(0.0)).abs() < 1e-3
+                        })
+                        && (fa["scale"].as_f64().unwrap_or(0.0)
+                            - fb["scale"].as_f64().unwrap_or(0.0))
+                        .abs()
+                            < 1e-3
+                }
+                (None, None) => true,
+                _ => false,
+            };
+            if !flex_same {
+                println!("  op {i}: prop {} flex {} vs {}", k + 1, fa, fb);
+                ok = false;
+            }
+            let (ta_a, oa_a) = (
+                a["bone_angles"].as_array().cloned().unwrap_or_default(),
+                b["bone_angles"].as_array().cloned().unwrap_or_default(),
+            );
+            let ang_same = ta_a.len() == oa_a.len()
+                && ta_a.iter().zip(&oa_a).all(|(x, y)| {
+                    x["bone"] == y["bone"] && (v3(&x["a"]) - v3(&y["a"])).abs().max_element() < 0.05
+                });
+            if !ang_same {
+                println!(
+                    "  op {i}: prop {} bone angles {} vs {} entries ({:?} vs {:?})",
+                    k + 1,
+                    ta_a.len(),
+                    oa_a.len(),
+                    ta_a.first(),
+                    oa_a.first()
+                );
+                ok = false;
             }
             // inflator: manipulated bone scales, exact to 1e-3
             let (ta_s, oa_s) = (

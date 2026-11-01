@@ -55,6 +55,8 @@ pub struct Header {
     pub body_part_offset: i32,
     pub attachment_count: i32,
     pub attachment_offset: i32,
+    pub flex_controller_count: i32,
+    pub flex_controller_offset: i32,
     pub surface_prop_offset: i32,
     pub key_value_offset: i32,
     pub key_value_count: i32,
@@ -120,7 +122,8 @@ impl Header {
         let attachment_offset = r.i32()?;
         r.skip(12)?; // local nodes
         r.skip(8)?; // flex descs
-        r.skip(8)?; // flex controllers
+        let flex_controller_count = r.i32()?;
+        let flex_controller_offset = r.i32()?;
         r.skip(8)?; // flex rules
         r.skip(8)?; // ik chains
         r.skip(8)?; // mouths
@@ -174,6 +177,8 @@ impl Header {
             body_part_offset,
             attachment_count,
             attachment_offset,
+            flex_controller_count,
+            flex_controller_offset,
             surface_prop_offset,
             key_value_offset,
             key_value_count,
@@ -255,6 +260,17 @@ pub struct Mdl {
     pub surface_prop: String,
     pub key_values: String,
     pub attachments: Vec<Attachment>,
+    /// `mstudioflexcontroller_t`: the face sliders (`GetFlexNum`, `GetFlexBounds`).
+    pub flex_controllers: Vec<FlexController>,
+}
+
+/// One flex controller: a named face slider with its `min..max` range.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlexController {
+    pub kind: String,
+    pub name: String,
+    pub min: f32,
+    pub max: f32,
 }
 
 /// `mstudioattachment_t`: a named point on a bone (muzzles, beam origins) as a row-major 3x4
@@ -998,6 +1014,22 @@ impl Mdl {
                 local,
             });
         }
+        let mut flex_controllers = Vec::new();
+        for i in 0..header.flex_controller_count.max(0) as usize {
+            let base = header.flex_controller_offset as usize + i * 20;
+            let mut r = Reader::at(data, base);
+            let kind_idx = r.i32()?;
+            let name_idx = r.i32()?;
+            let _local_to_global = r.i32()?;
+            let min = r.f32()?;
+            let max = r.f32()?;
+            flex_controllers.push(FlexController {
+                kind: cstr_at(data, offset(base, kind_idx))?.to_string(),
+                name: cstr_at(data, offset(base, name_idx))?.to_string(),
+                min,
+                max,
+            });
+        }
         Ok(Mdl {
             header,
             bones,
@@ -1008,6 +1040,7 @@ impl Mdl {
             surface_prop,
             key_values,
             attachments,
+            flex_controllers,
         })
     }
 

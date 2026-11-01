@@ -642,6 +642,15 @@ pub struct ToolSettings {
     pub camera_toggle: bool,
     pub camera_locked: bool,
     pub dynamite_remove: bool,
+    /// eyeposer sliders `x` / `y` (0..1 -> -1..1) and `strabismus` (-1..1).
+    pub eyeposer_x: f32,
+    pub eyeposer_y: f32,
+    pub eyeposer_strabismus: f32,
+    /// faceposer `flex<i>` sliders (in the controller's own range) and `scale`.
+    pub faceposer_flex: Vec<f32>,
+    pub faceposer_scale: f32,
+    /// finger poser `finger_<i>` = "x y" per finger part (15 per hand).
+    pub finger: Vec<[f32; 2]>,
 }
 
 impl ToolSettings {
@@ -834,6 +843,12 @@ impl Default for ToolSettings {
             emitter_starton: false,
             emitter_effect: "sparks".into(),
             camera_key: 37,
+            eyeposer_x: 0.0,
+            eyeposer_y: 0.0,
+            eyeposer_strabismus: 0.0,
+            faceposer_flex: vec![0.0; 96],
+            faceposer_scale: 0.0,
+            finger: vec![[0.0; 2]; 15],
             camera_toggle: true,
             camera_locked: false,
             dynamite_remove: false,
@@ -2592,6 +2607,9 @@ impl Sandbox {
                 | "camera"
                 | "leafblower"
                 | "inflator"
+                | "eyeposer"
+                | "faceposer"
+                | "finger"
                 | "duplicator"
                 | "ballsocket"
                 | "slider"

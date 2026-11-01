@@ -55,10 +55,47 @@ pub struct RagdollInfo {
     /// Collision bounds of the spawned entity (the hull box widened by the root solid's convex
     /// extents), unrotated about the root bone: what the sandbox spawn flush measures against.
     pub bounds: gm_sandbox::ModelBounds,
+    /// Model attachments (`LookupAttachment` / `GetAttachment`): the eyeposer's `eyes`.
+    pub attachments: Vec<AttachmentInfo>,
+    /// Flex controllers (`GetFlexNum` / `GetFlexBounds`): the faceposer's sliders.
+    pub flex_controllers: Vec<gm_formats::mdl::FlexController>,
 }
 
-/// World pose of every bone of a ragdoll model placed with its origin at `pos` rotated by `rot`,
-/// composed down the hierarchy from the model's ragdoll pose.
+/// Poser stools' per-player state: eyeposer selection / operation (0 none, 1 picked, 2 live
+/// slider tracking), faceposer entity and its `FaceTimer`, finger poser hand.
+#[derive(Debug, Clone, Default)]
+struct PoserState {
+    eye_selected: Option<u32>,
+    eye_operation: u8,
+    face_ent: Option<u32>,
+    face_timer: f32,
+    hand_ent: Option<u32>,
+    hand: u8,
+}
+
+/// Hand bone names the finger poser accepts (`FingerPoserSkeletons` list), left / right.
+const HAND_BONES: [(&str, &str); 10] = [
+    ("ValveBiped.Bip01_L_Hand", "ValveBiped.Bip01_R_Hand"),
+    ("bip_hand_L", "bip_hand_R"),
+    ("Bip01_L_Hand", "Bip01_R_Hand"),
+    ("Left_hand", "Right_hand"),
+    ("Bip01 L Hand", "Bip01 R Hand"),
+    ("Dog_Model.Hand_L", "Dog_Model.Hand_R"),
+    ("ValveBiped.Hand1_L", "ValveBiped.Hand1_R"),
+    ("wrist_L", "wrist_R"),
+    ("wrist_A_L", "wrist_A_R"),
+    ("ValveBiped.Bip01_L_Hand", "ValveBiped.Bip01_R_Hand"),
+];
+
+/// A model attachment as a pose in its bone's space.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttachmentInfo {
+    pub name: String,
+    pub bone: usize,
+    pub pos: Vec3,
+    pub rot: Quat,
+}
+
 /// Rotation of the root solid's bone in the ragdoll pose under an identity entity rotation.
 fn ragdoll_root_pose_rot(rd: &RagdollInfo) -> Quat {
     let root = rd
@@ -74,6 +111,8 @@ fn ragdoll_root_pose_rot(rd: &RagdollInfo) -> Quat {
         .unwrap_or(Quat::IDENTITY)
 }
 
+/// World pose of every bone of a ragdoll model placed with its origin at `pos` rotated by `rot`,
+/// composed down the hierarchy from the model's ragdoll pose.
 fn ragdoll_bone_world(rd: &RagdollInfo, pos: Vec3, rot: Quat) -> (Vec<Vec3>, Vec<Quat>) {
     let n = rd.bones.len();
     let (mut wpos, mut wrot) = (vec![pos; n], vec![rot; n]);
@@ -1269,6 +1308,15 @@ pub struct Server<'w> {
     ragdoll_bodies: BTreeMap<u32, RagdollRuntime>,
     /// `Entity:ManipulateBoneScale` per model bone (inflator stool), absent = all 1.
     bone_scales: BTreeMap<u32, Vec<Vec3>>,
+    /// `Entity:ManipulateBoneAngles` per model bone (finger poser), absent = all zero.
+    bone_angles: BTreeMap<u32, Vec<Vec3>>,
+    /// `Entity:SetEyeTarget` (eyeposer, local to the `eyes` attachment); the duplicator's
+    /// `eyetarget` modifier, cleared by `vector_origin`.
+    eye_targets: BTreeMap<u32, Vec3>,
+    /// `SetFlexWeight` per controller and `SetFlexScale` (faceposer).
+    flexes: BTreeMap<u32, (Vec<f32>, f32)>,
+    /// Per-player poser stool state (the game keeps it on the tool object / weapon NW vars).
+    posers: BTreeMap<u32, PoserState>,
     constraints: BTreeMap<u32, ConstraintHandle>,
     /// NoCollide pairs by sandbox constraint id.
     nocollides: BTreeMap<u32, (BodyHandle, BodyHandle)>,
@@ -1401,6 +1449,10 @@ impl<'w> Server<'w> {
             bodies: BTreeMap::new(),
             ragdoll_bodies: BTreeMap::new(),
             bone_scales: BTreeMap::new(),
+            bone_angles: BTreeMap::new(),
+            eye_targets: BTreeMap::new(),
+            flexes: BTreeMap::new(),
+            posers: BTreeMap::new(),
             constraints: BTreeMap::new(),
             nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
@@ -3651,6 +3703,15 @@ impl<'w> Server<'w> {
         if tool == "inflator" {
             return ToolClick::Done(self.inflator_click(&hit, if right { -1.0 } else { 1.0 }));
         }
+        if tool == "eyeposer" {
+            return ToolClick::Done(self.eyeposer_click(player, &hit, right));
+        }
+        if tool == "faceposer" {
+            return ToolClick::Done(self.faceposer_click(player, &hit, right));
+        }
+        if tool == "finger" {
+            return ToolClick::Done(self.finger_click(player, &hit, right));
+        }
         if tool == "duplicator" {
             let ret = if right {
                 self.duplicator_paste(player, &hit, &mut events)
@@ -4013,6 +4074,9 @@ impl<'w> Server<'w> {
                 self.bodies.insert(id, b);
             } else {
                 self.bone_scales.remove(&id);
+                self.bone_angles.remove(&id);
+                self.eye_targets.remove(&id);
+                self.flexes.remove(&id);
                 if let Some(RagdollRuntime {
                     bodies: bones,
                     joints,
@@ -5392,6 +5456,371 @@ impl<'w> Server<'w> {
             self.bone_scales.remove(&ent);
         }
         is_ragdoll
+    }
+
+    /// `EnableMotion(false)` on every physics object of a ragdoll (scenario `frozen_all`).
+    pub fn freeze_all_parts(&mut self, ent: u32) {
+        if let Some(rt) = self.ragdoll_bodies.get_mut(&ent) {
+            for (i, b) in rt.bodies.clone().into_iter().enumerate() {
+                self.physics.freeze(b);
+                if let Some(f) = rt.frozen.get_mut(i) {
+                    *f = true;
+                }
+            }
+            self.sandbox.set_frozen(ent, true);
+        }
+    }
+
+    /// Server time of the current tick (`CurTime`).
+    fn cur_time(&self) -> f32 {
+        self.tick_count as f32 * 0.015
+    }
+
+    fn ragdoll_of(&self, ent: u32) -> Option<&RagdollInfo> {
+        self.sandbox
+            .props()
+            .iter()
+            .find(|p| p.id == ent)
+            .and_then(|p| self.models.get(&p.model))
+            .and_then(|m| m.ragdoll.as_ref())
+    }
+
+    fn prop_exists(&self, ent: Option<u32>) -> bool {
+        ent.is_some_and(|e| self.sandbox.props().iter().any(|p| p.id == e))
+    }
+
+    /// `Entity:GetBoneMatrix` of a ragdoll bone: its physics object's pose composed with the
+    /// bone's offset from that object's bone in the ragdoll pose.
+    fn bone_world(&self, ent: u32, bone: usize) -> Option<(Vec3, Quat)> {
+        let rd = self.ragdoll_of(ent)?;
+        let rt = self.ragdoll_bodies.get(&ent)?;
+        let solid = Self::phys_bone_of(rd, bone)?;
+        let st = self.physics.state(*rt.bodies.get(solid)?);
+        let (pp, pr) = ragdoll_bone_world(rd, Vec3::ZERO, Quat::IDENTITY);
+        let sb = rd
+            .bones
+            .iter()
+            .position(|b| b.name.eq_ignore_ascii_case(&rd.solids[solid].bone))?;
+        let inv = pr[sb].inverse();
+        Some((
+            st.position + st.rotation * (inv * (pp[bone] - pp[sb])),
+            st.rotation * (inv * pr[bone]),
+        ))
+    }
+
+    /// `Entity:GetAttachment(LookupAttachment(name))` on a ragdoll: world pose of the point.
+    fn attachment_world(&self, ent: u32, name: &str) -> Option<(Vec3, Quat)> {
+        let rd = self.ragdoll_of(ent)?;
+        let a = rd
+            .attachments
+            .iter()
+            .find(|a| a.name.eq_ignore_ascii_case(name))?;
+        let (bp, br) = self.bone_world(ent, a.bone)?;
+        Some((bp + br * a.pos, br * a.rot))
+    }
+
+    fn has_attachment(&self, ent: u32, name: &str) -> bool {
+        self.ragdoll_of(ent).is_some_and(|rd| {
+            rd.attachments
+                .iter()
+                .any(|a| a.name.eq_ignore_ascii_case(name))
+        })
+    }
+
+    /// eyeposer.lua `SetEyeTarget`: `vector_origin` clears the duplicator modifier.
+    fn set_eye_target(&mut self, ent: u32, target: Vec3) {
+        if target == Vec3::ZERO {
+            self.eye_targets.remove(&ent);
+        } else {
+            self.eye_targets.insert(ent, target);
+        }
+    }
+
+    /// eyeposer.lua `ConvertRelativeToEyesAttachment`: `WorldToLocal(pos, angle_zero,
+    /// eyes.Pos, eyes.Ang)` (an NPC keeps the world position).
+    fn eyes_local(&self, ent: u32, pos: Vec3) -> Option<Vec3> {
+        let (ap, ar) = self.attachment_world(ent, "eyes")?;
+        Some(ar.inverse() * (pos - ap))
+    }
+
+    /// eyeposer.lua LeftClick / RightClick (measured `server_eyeposer`): the first left click
+    /// picks an entity with an `eyes` attachment (true; false when there is none), the second
+    /// aims its eyes at the hit point (local to the attachment); right click picks it for the
+    /// live sliders (`Think` operation 2) and answers whether something was/is picked.
+    pub fn eyeposer_click(&mut self, player: u32, hit: &ToolHit, right: bool) -> bool {
+        let st = self.posers.entry(player).or_default().clone();
+        let selected_valid = self.prop_exists(st.eye_selected);
+        if right {
+            let ent = hit.ent;
+            let ps = self.posers.entry(player).or_default();
+            ps.eye_selected = ent;
+            let Some(e) = ent else {
+                return selected_valid;
+            };
+            if !self.has_attachment(e, "eyes") {
+                self.posers.entry(player).or_default().eye_selected = None;
+                return false;
+            }
+            self.posers.entry(player).or_default().eye_operation = 2;
+            return true;
+        }
+        if !selected_valid || st.eye_operation != 1 {
+            let ps = self.posers.entry(player).or_default();
+            ps.eye_selected = hit.ent;
+            let Some(e) = hit.ent else {
+                return false;
+            };
+            if !self.has_attachment(e, "eyes") {
+                self.posers.entry(player).or_default().eye_selected = None;
+                return false;
+            }
+            self.posers.entry(player).or_default().eye_operation = 1;
+            return true;
+        }
+        let ps = self.posers.entry(player).or_default();
+        ps.eye_selected = None;
+        ps.eye_operation = 0;
+        let Some(e) = st.eye_selected else {
+            return false;
+        };
+        let Some(local) = self.eyes_local(e, hit.pos) else {
+            return false;
+        };
+        self.set_eye_target(e, local);
+        true
+    }
+
+    /// eyeposer.lua Reload: drops the selection, clears the target of any entity (true), false
+    /// on the world.
+    pub fn eyeposer_reload(&mut self, player: u32, hit: &ToolHit) -> bool {
+        let ps = self.posers.entry(player).or_default();
+        ps.eye_selected = None;
+        ps.eye_operation = 0;
+        let Some(e) = hit.ent else {
+            return false;
+        };
+        self.set_eye_target(e, Vec3::ZERO);
+        true
+    }
+
+    /// eyeposer.lua `CalculateEyeTarget`: the sliders as a look direction 45 deg each way and a
+    /// strabismus distance (1000 u, scaled down by 10000^(s) for crossed eyes, negated for
+    /// walleyed); not converted into the attachment for a ragdoll.
+    fn eyeposer_target(&self) -> Vec3 {
+        let ts = &self.sandbox.tool_settings;
+        let x = ts.eyeposer_x * 2.0 - 1.0;
+        let y = ts.eyeposer_y * 2.0 - 1.0;
+        let fwd = gm_sandbox::forward(y * 45.0, x * 45.0);
+        let s = ts.eyeposer_strabismus.clamp(-1.0, 1.0);
+        let mut distance = 1000.0;
+        if s < 0.0 {
+            let s = s + 1.0;
+            distance *= 10000f32.powf(s - 1.0);
+        } else if s > 0.0 {
+            distance *= -(10000f32.powf(-s));
+        }
+        fwd * distance
+    }
+
+    /// faceposer.lua LeftClick / RightClick: left picks an entity with flex controllers for
+    /// `Think` (true; false for none / no flexes), right picks it with a 1 s hold on the
+    /// sliders and answers true even for the world (false only for a flexless entity).
+    pub fn faceposer_click(&mut self, player: u32, hit: &ToolHit, right: bool) -> bool {
+        let flex_num = hit
+            .ent
+            .and_then(|e| self.ragdoll_of(e))
+            .map_or(0, |rd| rd.flex_controllers.len());
+        if right {
+            self.posers.entry(player).or_default().face_ent = hit.ent;
+            if hit.ent.is_none() {
+                return true;
+            }
+            if flex_num == 0 {
+                return false;
+            }
+            let now = self.cur_time();
+            self.posers.entry(player).or_default().face_timer = now + 1.0;
+            return true;
+        }
+        if hit.ent.is_none() || flex_num == 0 {
+            return false;
+        }
+        let ps = self.posers.entry(player).or_default();
+        ps.face_timer = 0.0;
+        ps.face_ent = hit.ent;
+        true
+    }
+
+    /// finger.lua: the hand bones of an entity (`GetHandPositions`), left and right.
+    fn hand_bones(&self, ent: u32) -> Option<(usize, usize)> {
+        let rd = self.ragdoll_of(ent)?;
+        let find = |n: &str| rd.bones.iter().position(|b| b.name == n);
+        let left = HAND_BONES.iter().find_map(|(l, _)| find(l))?;
+        let right = HAND_BONES.iter().find_map(|(_, r)| find(r))?;
+        Some((left, right))
+    }
+
+    /// finger.lua `GetFingerBone`: `ValveBiped.Bip01_<L|R>_Finger<f>[<part>]`.
+    fn finger_bone(&self, ent: u32, finger: usize, part: usize, hand: u8) -> Option<usize> {
+        let rd = self.ragdoll_of(ent)?;
+        let side = if hand == 1 { "R" } else { "L" };
+        let name = if part == 0 {
+            format!("ValveBiped.Bip01_{side}_Finger{finger}")
+        } else {
+            format!("ValveBiped.Bip01_{side}_Finger{finger}{part}")
+        };
+        rd.bones.iter().position(|b| b.name == name)
+    }
+
+    /// finger.lua `ApplyValues`: the 15 "x y" sliders of one hand become bone angles - the
+    /// thumb (first three parts) as (y, x, 0), the other fingers as (x, y, 0).
+    fn finger_apply(&mut self, ent: u32, hand: u8) {
+        let n = self.ragdoll_of(ent).map_or(0, |rd| rd.bones.len());
+        let vals = self.sandbox.tool_settings.finger.clone();
+        for (i, v) in vals.iter().enumerate().take(15) {
+            let ang = if i < 3 {
+                Vec3::new(v[1], v[0], 0.0)
+            } else {
+                Vec3::new(v[0], v[1], 0.0)
+            };
+            if let Some(bone) = self.finger_bone(ent, i / 3, i % 3, hand) {
+                let angles = self
+                    .bone_angles
+                    .entry(ent)
+                    .or_insert_with(|| vec![Vec3::ZERO; n]);
+                if let Some(a) = angles.get_mut(bone) {
+                    *a = ang;
+                }
+            }
+        }
+    }
+
+    /// finger.lua LeftClick / RightClick: the hand nearer the hit point gets the sliders (left
+    /// click, true; false without hand bones or on nothing), right click picks that hand for
+    /// the panel (true; true as well on the world, which drops the pick).
+    pub fn finger_click(&mut self, player: u32, hit: &ToolHit, right: bool) -> bool {
+        let Some(ent) = hit.ent else {
+            if right {
+                let ps = self.posers.entry(player).or_default();
+                ps.hand_ent = None;
+                ps.hand = 0;
+                return true;
+            }
+            return false;
+        };
+        let Some((l, r)) = self.hand_bones(ent) else {
+            return false;
+        };
+        let (Some((lp, _)), Some((rp, _))) = (self.bone_world(ent, l), self.bone_world(ent, r))
+        else {
+            return false;
+        };
+        let hand = u8::from(lp.distance(hit.pos) >= rp.distance(hit.pos));
+        if right {
+            let ps = self.posers.entry(player).or_default();
+            ps.hand_ent = Some(ent);
+            ps.hand = hand;
+            return true;
+        }
+        self.finger_apply(ent, hand);
+        true
+    }
+
+    /// `TOOL:Think` of the poser stools for a player holding `tool` this tick: the eyeposer
+    /// tracks its sliders while an entity is picked by right click, the faceposer pushes its
+    /// sliders into the picked entity's flexes once `FaceTimer` has passed.
+    pub fn tool_think(&mut self, player: u32, tool: &str) {
+        let st = self.posers.entry(player).or_default().clone();
+        match tool {
+            "eyeposer" => {
+                if !self.prop_exists(st.eye_selected) {
+                    self.posers.entry(player).or_default().eye_operation = 0;
+                    return;
+                }
+                if st.eye_operation != 2 {
+                    return;
+                }
+                let target = self.eyeposer_target();
+                if let Some(e) = st.eye_selected {
+                    self.set_eye_target(e, target);
+                }
+            }
+            "faceposer" => {
+                if st.face_timer > self.cur_time() {
+                    return;
+                }
+                let Some(e) = st.face_ent.filter(|e| self.prop_exists(Some(*e))) else {
+                    return;
+                };
+                let Some(rd) = self.ragdoll_of(e) else {
+                    return;
+                };
+                let ctrls: Vec<(f32, f32)> = rd
+                    .flex_controllers
+                    .iter()
+                    .map(|c| (c.min, c.max))
+                    .take(96)
+                    .collect();
+                if ctrls.is_empty() {
+                    return;
+                }
+                let ts = &self.sandbox.tool_settings;
+                let weights: Vec<f32> = ctrls
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (min, max))| {
+                        let v = ts.faceposer_flex.get(i).copied().unwrap_or(0.0);
+                        (v - min) / (max - min)
+                    })
+                    .collect();
+                let scale = ts.faceposer_scale;
+                self.flexes.insert(e, (weights, scale));
+            }
+            _ => {}
+        }
+    }
+
+    /// Reload of the stools the server keeps state for; `None` for the sandbox's own stools.
+    pub fn tool_reload_ext(&mut self, player: u32, tool: &str, hit: &ToolHit) -> Option<bool> {
+        match tool {
+            "inflator" => Some(self.inflator_reload(hit)),
+            "eyeposer" => Some(self.eyeposer_reload(player, hit)),
+            _ => None,
+        }
+    }
+
+    /// `Entity:GetManipulateBoneAngles` entries that are not zero (finger poser).
+    pub fn bone_angles(&self, prop: u32) -> Vec<(usize, Vec3)> {
+        self.bone_angles
+            .get(&prop)
+            .map(|v| {
+                v.iter()
+                    .enumerate()
+                    .filter(|(_, a)| a.abs().max_element() > 1e-6)
+                    .map(|(i, a)| (i, *a))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The eyeposer's stored eye target of `prop`, if any.
+    pub fn eye_target(&self, prop: u32) -> Option<Vec3> {
+        self.eye_targets.get(&prop).copied()
+    }
+
+    /// Flex weights and scale of `prop`: zeros / 1 for an untouched ragdoll with controllers,
+    /// `None` for a flexless model.
+    pub fn flex_state(&self, prop: u32) -> Option<(Vec<f32>, f32)> {
+        let n = self.ragdoll_of(prop)?.flex_controllers.len();
+        if n == 0 {
+            return None;
+        }
+        Some(
+            self.flexes
+                .get(&prop)
+                .cloned()
+                .unwrap_or((vec![0.0; n], 1.0)),
+        )
     }
 
     /// Bones of `prop` whose manipulated scale is not 1 (inflator), as (bone index, scale).

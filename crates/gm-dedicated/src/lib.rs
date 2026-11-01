@@ -222,6 +222,22 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
             anim_friction: phy.anim_friction.clone(),
             // measured (kleiner / alyx): the hull box widened by the root solid's convex
             // extents in its bone frame (mins.z -5.94 / -5.87 = the pelvis hull's bottom)
+            attachments: mdl
+                .attachments
+                .iter()
+                .filter_map(|a| {
+                    let m = &a.local;
+                    let col = |c: usize| glam::Vec3::new(m[0][c], m[1][c], m[2][c]);
+                    Some(gm_server::AttachmentInfo {
+                        name: a.name.clone(),
+                        bone: usize::try_from(a.bone).ok()?,
+                        pos: glam::Vec3::from(a.position()),
+                        rot: glam::Quat::from_mat3(&glam::Mat3::from_cols(col(0), col(1), col(2)))
+                            .normalize(),
+                    })
+                })
+                .collect(),
+            flex_controllers: mdl.flex_controllers.clone(),
             bounds: {
                 let mut b = gm_sandbox::ModelBounds {
                     min: Vec3::from(mdl.header.hull_min),

@@ -956,6 +956,8 @@ SCENARIOS.toolgun = function(scn, done)
 		if IsValid(ph) then
 			ph:Wake()
 			if pr.frozen then ph:EnableMotion(false) end
+			-- frozen_all: every physics object of a ragdoll (a pose that cannot drift before the clicks)
+			if pr.frozen_all then for k = 0, ent:GetPhysicsObjectCount() - 1 do ent:GetPhysicsObjectNum(k):EnableMotion(false) end end
 		end
 		props[i] = ent
 	end
@@ -985,6 +987,16 @@ SCENARIOS.toolgun = function(scn, done)
 					gravity = IsValid(ph) and ph:IsGravityEnabled() or nil, physmat = IsValid(ph) and ph:GetMaterial() or nil }
 				if e:GetClass() == "prop_ragdoll" then
 					out.props[i].bone_scales = {}
+					out.props[i].bone_angles = {}
+					for b = 0, e:GetBoneCount() - 1 do
+						local an = e:GetManipulateBoneAngles(b)
+						if an ~= angle_zero then out.props[i].bone_angles[#out.props[i].bone_angles + 1] = { bone = b, a = { an.p, an.y, an.r } } end
+					end
+					local em = e.EntityMods and e.EntityMods.eyetarget
+					if em and em.EyeTarget then out.props[i].eye_target = { em.EyeTarget.x, em.EyeTarget.y, em.EyeTarget.z } end
+					local fx = { n = e:GetFlexNum(), w = {}, scale = e:GetFlexScale() }
+					for f = 0, e:GetFlexNum() - 1 do fx.w[f + 1] = e:GetFlexWeight(f) end
+					out.props[i].flex = fx
 					for b = 0, e:GetBoneCount() - 1 do
 						local sc = e:GetManipulateBoneScale(b)
 						if sc ~= Vector(1, 1, 1) then out.props[i].bone_scales[#out.props[i].bone_scales + 1] = { bone = b, s = { sc.x, sc.y, sc.z } } end
@@ -1098,8 +1110,8 @@ SCENARIOS.toolgun = function(scn, done)
 				-- a bot has no client cvars: the scenario's settings stand in for GetClientNumber / GetClientInfo
 				local settings = op.settings or {}
 				local oldNum, oldInfo = tool.GetClientNumber, tool.GetClientInfo
-				tool.GetClientNumber = function(self, name, default) local v = settings[name]; if v ~= nil then return tonumber(v) or 0 end return oldNum(self, name, default) end
-				tool.GetClientInfo = function(self, name, default) local v = settings[name]; if v ~= nil then return tostring(v) end return oldInfo(self, name, default) end
+				tool.GetClientNumber = function(self, name, default) local v = settings[name]; if v == nil then v = settings[tonumber(name)] end; if v ~= nil then return tonumber(v) or 0 end return oldNum(self, name, default) end
+				tool.GetClientInfo = function(self, name, default) local v = settings[name]; if v == nil then v = settings[tonumber(name)] end; if v ~= nil then return tostring(v) end return oldInfo(self, name, default) end
 				rec.settings = settings
 				local ok, ret = pcall(fn, tool, tr)
 				tool.GetClientNumber, tool.GetClientInfo = oldNum, oldInfo
@@ -1122,6 +1134,28 @@ SCENARIOS.toolgun = function(scn, done)
 			if bs[1] then bs[1]:Use(bot, bot, op.down == false and USE_OFF or USE_ON, 1) end
 		elseif op.op == "wait" then
 			wait = op.ticks or 10
+		elseif op.op == "think" then
+			-- the stool's Think every tick for `ticks` ticks with the op's settings as the client cvars
+			-- (a bot has no gmod_toolmode, so SWEP:Think never reaches TOOL:Think on its own)
+			wait = op.ticks or 10
+			local wep = bot:GetWeapon("gmod_tool")
+			local tool = IsValid(wep) and wep:GetToolObject(op.tool) or nil
+			if tool then
+				local settings = op.settings or {}
+				local oldNum, oldInfo = tool.GetClientNumber, tool.GetClientInfo
+				tool.GetClientNumber = function(self, name, default) local v = settings[name]; if v == nil then v = settings[tonumber(name)] end; if v ~= nil then return tonumber(v) or 0 end return oldNum(self, name, default) end
+				tool.GetClientInfo = function(self, name, default) local v = settings[name]; if v == nil then v = settings[tonumber(name)] end; if v ~= nil then return tostring(v) end return oldInfo(self, name, default) end
+				local left = wait
+				hook.Add("Tick", "parity_tool_think", function()
+					if left <= 0 then
+						hook.Remove("Tick", "parity_tool_think")
+						tool.GetClientNumber, tool.GetClientInfo = oldNum, oldInfo
+						return
+					end
+					left = left - 1
+					tool:Think()
+				end)
+			end
 		end
 		rec.immediate = snapshot()
 		timer.Simple(engine.TickInterval() * wait, function()

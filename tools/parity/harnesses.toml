@@ -443,6 +443,33 @@ crates = ["gm-server", "gm-sandbox"]
 pos = 2.0
 
 [[harness]]
+name = "server_eyeposer"
+scenario = "server/eyeposer"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_faceposer"
+scenario = "server/faceposer"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_finger"
+scenario = "server/finger"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
 name = "server_axis"
 scenario = "server/axis"
 compare = "server"
