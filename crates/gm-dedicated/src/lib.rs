@@ -32,7 +32,9 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
         friction: sp.friction,
         elasticity: sp.elasticity,
     };
-    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    // 0 worker threads: the impact listener applies impulses from Jolt's contact callbacks,
+    // and with workers their order (and the float sums) differs run to run
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     tune_solver(&mut physics);
     let world_body = physics.add_static_hulls(&world_hulls, surface)?;
     let (disp_pos, disp_idx) = gm_physics::brush::displacement_mesh(&bsp, gm_physics::REST_GAP);

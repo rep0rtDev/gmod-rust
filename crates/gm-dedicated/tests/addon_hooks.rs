@@ -2211,7 +2211,7 @@ fn a_server_requiring_auth_welcomes_only_clients_that_prove_an_identity() {
     let mut sn = gm_net::ServerNet::new("gm_construct", spawn);
     let mut server2 = gm_server::Server::new(
         &world.collision,
-        gm_physics::World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1),
+        gm_physics::World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0),
         world.world_body,
     );
     let net = gm_net::Loopback::new(2, 0.0, 8);

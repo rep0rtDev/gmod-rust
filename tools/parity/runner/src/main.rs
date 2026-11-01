@@ -1164,7 +1164,7 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
         &mount.read("scripts/surfaceproperties.txt")?,
     )]);
     let (world_sp, prop_sp) = (table.get("concrete"), table.get(&props.surfaceprop));
-    let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     tune_solver(&mut world);
     world.add_static_hulls(
         &world_hulls,
@@ -1416,7 +1416,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
         &mount.read("scripts/surfaceproperties.txt")?,
     )]);
     let world_sp = table.get("concrete");
-    let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     tune_solver(&mut world);
     world.add_static_hulls(
         &world_hulls,
@@ -2029,7 +2029,7 @@ fn phys_setup(scn: &Scenario) -> Result<PhysSetup> {
     )]);
     let world_sp = table.get("concrete");
     let prop_sp = table.get(&props.surfaceprop);
-    let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     tune_solver(&mut world);
     world.add_static_hulls(
         &world_hulls,
@@ -2483,7 +2483,7 @@ fn run_hit(scn: &Scenario) -> Result<Value> {
         .into_iter()
         .map(|h| h.points)
         .collect();
-    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     let world_body = physics.add_static_hulls(
         &world_hulls,
         Surface {
@@ -2607,7 +2607,7 @@ fn run_shoot_prop(scn: &Scenario) -> Result<Value> {
         .into_iter()
         .map(|h| h.points)
         .collect();
-    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     let world_body = physics.add_static_hulls(
         &world_hulls,
         Surface {
@@ -3036,7 +3036,7 @@ fn run_fire(scn: &Scenario) -> Result<Value> {
                     .into_iter()
                     .map(|h| h.points)
                     .collect();
-            let mut pw = gm_physics::World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+            let mut pw = gm_physics::World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
             pw.add_static_hulls(
                 &world_hulls,
                 gm_physics::Surface {
@@ -3411,7 +3411,7 @@ fn run_player(scn: &Scenario) -> Result<Value> {
         .into_iter()
         .map(|h| h.points)
         .collect();
-    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     let world_body = physics.add_static_hulls(
         &world_hulls,
         Surface {
@@ -3560,7 +3560,7 @@ fn run_damage(scn: &Scenario) -> Result<Value> {
         .into_iter()
         .map(|h| h.points)
         .collect();
-    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     let world_body = physics.add_static_hulls(
         &world_hulls,
         Surface {
@@ -3666,7 +3666,7 @@ fn run_ragdoll(scn: &Scenario) -> Result<Value> {
         .into_iter()
         .map(|h| h.points)
         .collect();
-    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     let world_body = physics.add_static_hulls(
         &world_hulls,
         Surface {
@@ -3782,7 +3782,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         friction: world_sp.friction,
         elasticity: world_sp.elasticity,
     };
-    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     tune_solver(&mut physics);
     let world_body = physics.add_static_hulls(&world_hulls, world_surface)?;
     let (disp_pos, disp_idx) = gm_physics::brush::displacement_mesh(&bsp, gm_physics::REST_GAP);
@@ -4036,7 +4036,7 @@ fn run_net(scn: &Scenario) -> Result<Value> {
         friction: world_sp.friction,
         elasticity: world_sp.elasticity,
     };
-    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     tune_solver(&mut physics);
     let world_body = physics.add_static_hulls(&world_hulls, world_surface)?;
     let (disp_pos, disp_idx) = gm_physics::brush::displacement_mesh(&bsp, gm_physics::REST_GAP);
@@ -4708,7 +4708,7 @@ fn run_hooks(scn: &Scenario) -> Result<Value> {
         friction: world_sp.friction,
         elasticity: world_sp.elasticity,
     };
-    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     tune_solver(&mut physics);
     let world_body = physics.add_static_hulls(&world_hulls, world_surface)?;
     let mut server = gm_server::Server::new(&collision, physics, world_body);
@@ -4812,7 +4812,7 @@ fn run_cvar_callbacks(scn: &Scenario) -> Result<Value> {
         friction: world_sp.friction,
         elasticity: world_sp.elasticity,
     };
-    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 1);
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     tune_solver(&mut physics);
     let world_body = physics.add_static_hulls(&world_hulls, world_surface)?;
     let mut server = gm_server::Server::new(&collision, physics, world_body);
