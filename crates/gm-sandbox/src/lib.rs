@@ -1376,7 +1376,9 @@ impl Sandbox {
     }
 
     fn exists(&self, id: u32) -> bool {
-        self.props.iter().any(|p| p.id == id) || self.constraints.iter().any(|c| c.id == id)
+        self.props.iter().any(|p| p.id == id)
+            || self.constraints.iter().any(|c| c.id == id)
+            || self.devices.contains_key(&id)
     }
 
     pub fn constraints(&self) -> &[Constraint] {
@@ -2518,6 +2520,9 @@ impl Sandbox {
             self.set_prop_pose(ent1, target_pos, target);
             let (pos1, rot1) = self.prop_pose(ent1).unwrap_or_default();
             let lpos1 = rot1.inverse() * (wpos2 + norm2 * 64.0 - pos1);
+            // constraint.Motor passes no LocalAxis, so the Axis keeps the second click point
+            // (prop-1 local) as its axis point: the hinge runs from LPos1 back to the surface
+            let axis_point = rot1.inverse() * (wpos2 - pos1);
             if o2.ent != o1.ent {
                 let axis_id = self.next_id;
                 self.next_id += 1;
@@ -2529,7 +2534,7 @@ impl Sandbox {
                     kind: ConstraintKind::Axis {
                         lpos1,
                         lpos2: o2.pos,
-                        local_axis: lpos1,
+                        local_axis: axis_point,
                         forcelimit: s.motor_forcelimit,
                         torquelimit: 0.0,
                         friction: s.motor_friction,
@@ -2552,7 +2557,7 @@ impl Sandbox {
                         direction: 1.0,
                         key_f: s.motor_fwd,
                         key_r: s.motor_bwd,
-                        local_axis: lpos1.normalize_or_zero(),
+                        local_axis: (axis_point - lpos1).normalize_or_zero(),
                         applied: 0.0,
                     },
                 );

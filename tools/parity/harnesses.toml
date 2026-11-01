@@ -3530,3 +3530,12 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 spin = 0.1
+
+[[harness]]
+name = "toolgun_motor"
+scenario = "toolgun/motor"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+[harness.tolerance]
+pos = 0.1

@@ -5283,6 +5283,38 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
         // `constraint.Motor`: the game lists the phys_torque with its own table next to the Axis
         let mut constraints = constraints;
         for (id, d) in sb.devices() {
+            if let gm_sandbox::Device::Motor {
+                ent,
+                axis,
+                torque,
+                friction,
+                forcetime,
+                scale,
+                toggle,
+                direction,
+                ..
+            } = d
+            {
+                if let Some(c) = sb.constraints().iter().find(|c| c.id == *axis) {
+                    if let ConstraintKind::Axis {
+                        lpos1,
+                        lpos2,
+                        local_axis,
+                        nocollide,
+                        forcelimit,
+                        ..
+                    } = &c.kind
+                    {
+                        constraints.push(json!({
+                            "class": "phys_torque", "type": "Motor", "ent1": entref(Some(*ent)), "ent2": entref(c.ent2),
+                            "lpos1": [lpos1.x, lpos1.y, lpos1.z], "lpos2": [lpos2.x, lpos2.y, lpos2.z], "friction": friction, "nocollide": nocollide,
+                            "forcelimit": forcelimit, "torque": torque, "forcetime": forcetime, "forcescale": scale, "direction": direction, "toggle": toggle,
+                            "local_axis": [local_axis.x, local_axis.y, local_axis.z],
+                        }));
+                    }
+                }
+                continue;
+            }
             if let gm_sandbox::Device::Wheel {
                 torque,
                 scale,
@@ -5370,6 +5402,7 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 match hit {
                     Some(h) => {
                         rec["trace"] = json!({ "hit": true, "pos": [h.pos.x, h.pos.y, h.pos.z], "normal": [h.normal.x, h.normal.y, h.normal.z], "ent": entref(h.ent), "eye": [eye.x, eye.y, eye.z], "fraction": h.fraction });
+                        let no_objects = sb.tool(player).objects.is_empty();
                         let ret = match op.button.as_deref() {
                             Some("reload") => sb.tool_reload(player, &tool, Some(&h)),
                             Some("right") => sb.tool_right_click(player, &tool, &h, &mut events),
@@ -5377,6 +5410,16 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                         };
                         rec["ok"] = json!(true);
                         rec["ret"] = json!(ret);
+                        // motor.lua alone answers a first click on the world with `return end`
+                        // (nil); the other stools fall through to false
+                        if tool == "motor"
+                            && !ret
+                            && no_objects
+                            && h.ent.is_none()
+                            && !matches!(op.button.as_deref(), Some("reload") | Some("right"))
+                        {
+                            rec["ret"] = json!("nil");
+                        }
                     }
                     None => {
                         rec["trace"] = json!({ "hit": false });
