@@ -64,6 +64,8 @@ pub struct Solid {
 pub struct SolidProps {
     pub index: u32,
     pub name: String,
+    /// The parent bone of a ragdoll part (its own name for the root).
+    pub parent: String,
     pub mass: f32,
     pub surfaceprop: String,
     pub damping: f32,
@@ -72,11 +74,46 @@ pub struct SolidProps {
     pub volume: f32,
 }
 
+/// A `ragdollconstraint { ... }` block: the joint between two solids with per-axis rotation
+/// limits in degrees (x, y, z of the child's frame) and friction.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RagdollConstraint {
+    pub parent: u32,
+    pub child: u32,
+    /// `[xmin, xmax]`, `[ymin, ymax]`, `[zmin, zmax]`.
+    pub limits: [[f32; 2]; 3],
+    pub friction: [f32; 3],
+}
+
+/// `editparams { ... }`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EditParams {
+    pub root_name: String,
+    pub total_mass: f32,
+    pub concave: bool,
+    pub joint_merge: Vec<String>,
+}
+
+/// Everything in the text section besides the solids.
+#[derive(Debug, Clone, Default)]
+pub struct TextSection {
+    pub solids: Vec<SolidProps>,
+    pub constraints: Vec<RagdollConstraint>,
+    /// `collisionrules { "collisionpair" "a,b" }`: the only pairs of solids that collide with
+    /// each other (every other pair of a ragdoll passes through).
+    pub collision_pairs: Vec<(u32, u32)>,
+    pub edit: EditParams,
+}
+
 #[derive(Debug, Clone)]
 pub struct Phy {
     pub checksum: u32,
     pub solids: Vec<Solid>,
     pub props: Vec<SolidProps>,
+    /// Ragdoll joints, collision pairs and edit params of the text section.
+    pub constraints: Vec<RagdollConstraint>,
+    pub collision_pairs: Vec<(u32, u32)>,
+    pub edit: EditParams,
     pub text: String,
 }
 
@@ -134,11 +171,14 @@ impl Phy {
             .position(|&b| b == 0)
             .unwrap_or(text_bytes.len());
         let text = String::from_utf8_lossy(&text_bytes[..end]).into_owned();
-        let props = parse_text(&text)?;
+        let section = parse_text(&text)?;
         Ok(Phy {
             checksum,
             solids,
-            props,
+            props: section.solids,
+            constraints: section.constraints,
+            collision_pairs: section.collision_pairs,
+            edit: section.edit,
             text,
         })
     }
@@ -230,9 +270,9 @@ fn parse_solid(d: &[u8]) -> Result<Solid> {
     })
 }
 
-fn parse_text(text: &str) -> Result<Vec<SolidProps>> {
+fn parse_text(text: &str) -> Result<TextSection> {
     if text.trim().is_empty() {
-        return Ok(Vec::new());
+        return Ok(TextSection::default());
     }
     // Some shipped files have typos in `editparams` ("break break {"), so when the whole
     // section fails to parse the solids are read on their own.
@@ -243,17 +283,47 @@ fn parse_text(text: &str) -> Result<Vec<SolidProps>> {
             keyvalues::parse(head).map_err(|_| Error::Text(e))?
         }
     };
-    let mut out = Vec::new();
-    for node in kv
-        .nodes
-        .iter()
-        .filter(|n| n.key.eq_ignore_ascii_case("solid"))
-    {
+    let mut out = TextSection::default();
+    for node in &kv.nodes {
         let get = |k: &str| node.get_str(k).unwrap_or("");
         let num = |k: &str| get(k).trim().parse::<f32>().unwrap_or(0.0);
-        out.push(SolidProps {
+        if node.key.eq_ignore_ascii_case("ragdollconstraint") {
+            out.constraints.push(RagdollConstraint {
+                parent: num("parent") as u32,
+                child: num("child") as u32,
+                limits: [
+                    [num("xmin"), num("xmax")],
+                    [num("ymin"), num("ymax")],
+                    [num("zmin"), num("zmax")],
+                ],
+                friction: [num("xfriction"), num("yfriction"), num("zfriction")],
+            });
+            continue;
+        }
+        if node.key.eq_ignore_ascii_case("editparams") {
+            out.edit = EditParams {
+                root_name: get("rootname").to_string(),
+                total_mass: num("totalmass"),
+                concave: num("concave") != 0.0,
+                joint_merge: node
+                    .children()
+                    .iter()
+                    .filter(|c| c.key.eq_ignore_ascii_case("jointmerge"))
+                    .filter_map(|c| match &c.value {
+                        keyvalues::Value::Str(v) => Some(v.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            };
+            continue;
+        }
+        if !node.key.eq_ignore_ascii_case("solid") {
+            continue;
+        }
+        out.solids.push(SolidProps {
             index: num("index") as u32,
             name: get("name").to_string(),
+            parent: get("parent").to_string(),
             mass: num("mass"),
             surfaceprop: get("surfaceprop").to_string(),
             damping: num("damping"),
@@ -262,5 +332,51 @@ fn parse_text(text: &str) -> Result<Vec<SolidProps>> {
             volume: num("volume"),
         });
     }
+    // repeated keys: read the pairs off the text itself
+    let mut rest = text;
+    while let Some(i) = rest.find("\"collisionpair\"") {
+        rest = &rest[i + "\"collisionpair\"".len()..];
+        let Some(a) = rest.find('"') else { break };
+        let Some(b) = rest[a + 1..].find('"') else {
+            break;
+        };
+        let pair = &rest[a + 1..a + 1 + b];
+        if let Some((x, y)) = pair.split_once(',') {
+            if let (Ok(x), Ok(y)) = (x.trim().parse(), y.trim().parse()) {
+                out.collision_pairs.push((x, y));
+            }
+        }
+        rest = &rest[a + 1 + b..];
+    }
     Ok(out)
+}
+
+#[cfg(test)]
+mod text_tests {
+    use super::*;
+
+    #[test]
+    fn ragdoll_text_section() {
+        let text = r#"solid { "index" "0" "name" "pelvis" "parent" "pelvis" "mass" "12.5" "surfaceprop" "flesh" }
+solid { "index" "1" "name" "spine" "parent" "pelvis" "mass" "24" "surfaceprop" "flesh" }
+ragdollconstraint { "parent" "0" "child" "1" "xmin" "-48" "xmax" "48" "xfriction" "0" "ymin" "-25" "ymax" "25" "yfriction" "0" "zmin" "-25" "zmax" "50" "zfriction" "0" }
+collisionrules { "collisionpair" "6,8" "collisionpair" "4,11" }
+editparams { "rootname" "pelvis" "totalmass" "90.000000" }
+"#;
+        let t = parse_text(text).unwrap();
+        assert_eq!(t.solids.len(), 2);
+        assert_eq!(t.solids[1].parent, "pelvis");
+        assert_eq!(
+            t.constraints,
+            [RagdollConstraint {
+                parent: 0,
+                child: 1,
+                limits: [[-48.0, 48.0], [-25.0, 25.0], [-25.0, 50.0]],
+                friction: [0.0; 3],
+            }]
+        );
+        assert_eq!(t.collision_pairs, [(6, 8), (4, 11)]);
+        assert_eq!(t.edit.root_name, "pelvis");
+        assert_eq!(t.edit.total_mass, 90.0);
+    }
 }

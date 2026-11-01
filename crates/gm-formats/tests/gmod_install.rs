@@ -302,6 +302,33 @@ fn gm_construct_props_disps_pvs() {
 }
 
 #[test]
+fn hl2_ragdoll_phy_text_section() {
+    let Some(dir) = gmod_dir() else {
+        return;
+    };
+    let ar = gm_formats::vpk::Archive::open(dir.join("sourceengine/hl2_misc_dir.vpk")).unwrap();
+    let phy = gm_formats::phy::Phy::parse(&ar.read("models/kleiner.phy").unwrap()).unwrap();
+    assert_eq!(phy.solids.len(), 15);
+    assert_eq!(phy.props.len(), 15);
+    assert_eq!(phy.props[0].name, "ValveBiped.Bip01_Pelvis");
+    assert_eq!(phy.props[1].parent, "ValveBiped.Bip01_Pelvis");
+    assert_eq!(phy.props[2].parent, "ValveBiped.Bip01_Spine2");
+    // one joint per non-root solid
+    assert_eq!(phy.constraints.len(), 14);
+    let spine = phy
+        .constraints
+        .iter()
+        .find(|c| c.parent == 0 && c.child == 1)
+        .unwrap();
+    assert_eq!(spine.limits, [[-48.0, 48.0], [-25.0, 25.0], [-25.0, 50.0]]);
+    assert_eq!(phy.collision_pairs.len(), 13);
+    assert!(phy.collision_pairs.contains(&(6, 8)));
+    assert_eq!(phy.edit.root_name, "valvebiped.bip01_pelvis");
+    assert_eq!(phy.edit.total_mass, 90.0);
+    assert_eq!(phy.edit.joint_merge.len(), 2);
+}
+
+#[test]
 fn hl2_props_phy_parse() {
     let Some(dir) = gmod_dir() else {
         return;
