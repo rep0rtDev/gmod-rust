@@ -9,13 +9,15 @@
 
 use std::sync::Arc;
 
-use crate::acoustics::Shared;
+use crate::acoustics::{Shared, REVERB_DURATION, REVERB_ORDER};
 
 use audionimbus::effect::{
+    AmbisonicsDecodeEffect, AmbisonicsDecodeEffectParams, AmbisonicsDecodeEffectSettings,
     BinauralEffect, BinauralEffectParams, BinauralEffectSettings, DirectEffect, DirectEffectParams,
-    DirectEffectSettings,
+    DirectEffectSettings, Parametric, ReflectionEffect, ReflectionEffectParams,
+    ReflectionEffectSettings, Rendering, SpeakerLayout,
 };
-use audionimbus::geometry::Vector3;
+use audionimbus::geometry::{CoordinateSystem, Vector3};
 use audionimbus::{
     AudioBufferMut, AudioBufferRef, AudioSettings, Context, Hrtf, HrtfInterpolation, HrtfSettings,
 };
@@ -97,6 +99,18 @@ pub struct Voice {
     done: bool,
 }
 
+/// Listener-centric reverb: the parametric reflection effect over the wet sum of the
+/// positioned voices, first-order ambisonics decoded binaurally in the listener's frame.
+struct Reverb {
+    effect: ReflectionEffect<Parametric>,
+    decode: AmbisonicsDecodeEffect,
+    params: Option<ReflectionEffectParams<Parametric>>,
+    wet: Vec<f32>,
+    ambi: Vec<f32>,
+    out: Vec<f32>,
+    channels: usize,
+}
+
 /// The Steam Audio state of one output stream.
 pub struct Engine {
     _context: Context,
@@ -111,7 +125,15 @@ pub struct Engine {
     bin_out: Vec<f32>,
     /// Mailboxes to the acoustics thread, when there is a scene.
     pub shared: Option<Arc<Shared>>,
+    reverb: Option<Reverb>,
+    /// Listener's eyes under water: the game's `dsp_water` (preset 14) is a muffling
+    /// low-pass; ours is a one-pole at [`UNDERWATER_CUTOFF`] over the mix.
+    pub underwater: bool,
+    lp: [f32; 2],
 }
+
+/// Underwater low-pass cutoff (Hz).
+pub const UNDERWATER_CUTOFF: f32 = 900.0;
 
 impl Engine {
     pub fn new(context: &Context, rate: u32) -> anyhow::Result<Engine> {
@@ -122,6 +144,34 @@ impl Engine {
         };
         let hrtf = Hrtf::try_new(&context, &settings, &HrtfSettings::default())
             .map_err(|e| anyhow::anyhow!("steam audio hrtf: {e}"))?;
+        let channels = ((REVERB_ORDER + 1) * (REVERB_ORDER + 1)) as usize;
+        let reverb = Reverb {
+            effect: ReflectionEffect::try_new(
+                &context,
+                &settings,
+                &ReflectionEffectSettings {
+                    impulse_response_size: (REVERB_DURATION * rate as f32) as u32,
+                    num_channels: channels as u32,
+                },
+            )
+            .map_err(|e| anyhow::anyhow!("steam audio reflection effect: {e}"))?,
+            decode: AmbisonicsDecodeEffect::try_new(
+                &context,
+                &settings,
+                &AmbisonicsDecodeEffectSettings {
+                    speaker_layout: SpeakerLayout::Stereo,
+                    hrtf: hrtf.clone(),
+                    max_order: REVERB_ORDER,
+                    rendering: Rendering::Binaural,
+                },
+            )
+            .map_err(|e| anyhow::anyhow!("steam audio ambisonics decode: {e}"))?,
+            params: None,
+            wet: vec![0.0; FRAME],
+            ambi: vec![0.0; FRAME * channels],
+            out: vec![0.0; FRAME * 2],
+            channels,
+        };
         Ok(Engine {
             _context: context,
             hrtf,
@@ -134,6 +184,9 @@ impl Engine {
             direct_out: vec![0.0; FRAME],
             bin_out: vec![0.0; FRAME * 2],
             shared: None,
+            reverb: Some(reverb),
+            underwater: false,
+            lp: [0.0; 2],
         })
     }
 
@@ -209,6 +262,9 @@ impl Engine {
         self.exchange();
         let listener = self.listener;
         let master = self.master;
+        if let Some(r) = &mut self.reverb {
+            r.wet.fill(0.0);
+        }
         for v in &mut self.voices {
             v.fill(&mut self.mono);
             match v.position {
@@ -235,6 +291,12 @@ impl Engine {
                     let mut dout =
                         AudioBufferMut::try_new(&mut self.direct_out, 1).expect("direct frame");
                     let _ = v.direct.apply(&params, &input, &mut dout);
+                    if let Some(r) = &mut self.reverb {
+                        let g = v.gain * master;
+                        for (w, d) in r.wet.iter_mut().zip(&self.direct_out) {
+                            *w += d * g;
+                        }
+                    }
                     let local = if dist > 1e-3 {
                         let n = d / dist;
                         Vec3::new(
@@ -267,9 +329,54 @@ impl Engine {
             }
         }
         self.voices.retain(|v| !v.done);
+        if let Some(r) = &mut self.reverb {
+            if let Some(params) = &r.params {
+                let input = AudioBufferRef::try_new(&r.wet, 1).expect("wet frame");
+                let mut ambi =
+                    AudioBufferMut::try_new(&mut r.ambi, r.channels).expect("ambisonics frame");
+                if r.effect.apply(params, &input, &mut ambi).is_ok() {
+                    let ambi_in =
+                        AudioBufferRef::try_new(&r.ambi, r.channels).expect("ambisonics frame");
+                    let mut stereo = AudioBufferMut::try_new(&mut r.out, 2).expect("reverb frame");
+                    let dparams = AmbisonicsDecodeEffectParams {
+                        order: REVERB_ORDER,
+                        hrtf: self.hrtf.clone(),
+                        orientation: CoordinateSystem {
+                            right: dir_sa(listener.right),
+                            up: dir_sa(listener.up),
+                            ahead: dir_sa(listener.ahead),
+                            origin: to_sa(listener.position),
+                        },
+                    };
+                    if r.decode.apply(&dparams, &ambi_in, &mut stereo).is_ok() {
+                        let (l, rr) = r.out.split_at(FRAME);
+                        for ((o, l), rr) in out.as_chunks_mut::<2>().0.iter_mut().zip(l).zip(rr) {
+                            o[0] += l;
+                            o[1] += rr;
+                        }
+                    }
+                }
+            }
+        }
+        if self.underwater {
+            let a = 1.0 - (-std::f32::consts::TAU * UNDERWATER_CUTOFF / self.rate as f32).exp();
+            for o in out.as_chunks_mut::<2>().0.iter_mut() {
+                for (sample, state) in o.iter_mut().zip(self.lp.iter_mut()) {
+                    *state += a * (*sample - *state);
+                    *sample = *state;
+                }
+            }
+        } else {
+            self.lp = [0.0; 2];
+        }
         for x in out.iter_mut() {
             *x = x.clamp(-1.0, 1.0);
         }
+    }
+
+    /// Whether a reverb has been received from the acoustics thread.
+    pub fn has_reverb(&self) -> bool {
+        self.reverb.as_ref().is_some_and(|r| r.params.is_some())
     }
 }
 
@@ -293,6 +400,13 @@ impl Engine {
             for v in &mut self.voices {
                 if let Some(p) = paths.get(&v.id) {
                     v.path = *p;
+                }
+            }
+        }
+        if let Some(r) = &mut self.reverb {
+            if let Ok(mut fresh) = shared.reverb.try_lock() {
+                if let Some(p) = fresh.take() {
+                    r.params = Some(p);
                 }
             }
         }

@@ -132,9 +132,20 @@ is the data: scripts, waves, levels, pitches, channels, cue loops.
 - Tests: a 20 u concrete slab between a source 200 u ahead and the listener: occlusion
   0, transmission (0.0018, 0.00009, 0.00003), mix peak under a fifth of the open one;
   gm_construct builds and commits from the install.
-- Not yet: reflections, soundscapes, DSP presets, dynamic occluders (props), doppler (the
-  game has none either). Nodraw faces are not in the face lump, so a wall whose only
-  face is nodraw does not occlude.
+- Reverb (listener-centric, instead of the game's `env_soundscape` DSP presets): the
+  acoustics thread traces parametric reflections from the listener's position every third
+  pass (2048 rays, 8 bounces, 1.5 s, first-order ambisonics) and hands the decay times /
+  EQ to the engine, which runs the `ReflectionEffect` over the wet sum of the positioned
+  voices (after their distance and occlusion) and decodes the ambisonics binaurally in the
+  listener's frame. No reverb without geometry, so the offline/headless engine and tests
+  stay dry unless a scene is set. A 10 × 10 × 4 m concrete room rings after a 50 ms click
+  (test); open sky does not.
+- Under water (the game's `dsp_water`, preset 14, when the eyes are in `CONTENTS_WATER`):
+  a one-pole low-pass at 900 Hz over the whole mix; the client checks the camera's point
+  contents every frame.
+- Not yet: soundscapes (`playlooping` / `playrandom` ambience), dynamic occluders
+  (props), doppler (the game has none either). Nodraw faces are not in the face lump, so
+  a wall whose only face is nodraw does not occlude.
 
 ## World sounds: footsteps (measured)
 

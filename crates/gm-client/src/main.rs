@@ -3011,6 +3011,11 @@ impl App {
                 self.view.x,
                 self.view.y,
             ));
+        self.sounds.mixer.set_underwater(
+            self.sim.collision.point_contents(camera.position)
+                & gm_formats::bsp::lumps::contents::WATER
+                != 0,
+        );
         let aspect = g.config.width as f32 / g.config.height as f32;
         g.world
             .draw(&g.gpu, &camera, &attach, resolve, &g.depth, aspect);

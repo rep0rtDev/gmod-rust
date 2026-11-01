@@ -287,13 +287,38 @@ mod tests {
         let context =
             audionimbus::Context::try_new(&audionimbus::ContextSettings::default()).unwrap();
         let t = std::time::Instant::now();
-        let a = crate::acoustics::Acoustics::new(&context, 48000, &g).unwrap();
+        let mut a = crate::acoustics::Acoustics::new(&context, 48000, &g).unwrap();
+        let scene = t.elapsed();
+        // a listener at the spawn with one voice: a direct pass and a reverb pass
+        let snap = crate::acoustics::Snapshot {
+            listener: Some(crate::mixer::Listener::from_view(
+                Vec3::new(0.0, 0.0, 64.0),
+                0.0,
+                0.0,
+            )),
+            voices: vec![(1, Vec3::new(200.0, 0.0, 64.0))],
+        };
+        let t = std::time::Instant::now();
+        let (paths, reverb) = a.step(&snap).unwrap();
+        let first = t.elapsed();
+        let t = std::time::Instant::now();
+        let (_, none) = a.step(&snap).unwrap();
+        let direct_only = t.elapsed();
+        assert!(
+            reverb.is_some() && none.is_none(),
+            "reverb every {} passes",
+            crate::acoustics::REVERB_EVERY
+        );
+        assert_eq!(paths.len(), 1);
         eprintln!(
-            "gm_construct: {} triangles, {} materials, build {:?}, scene {:?}",
+            "gm_construct: {} triangles, {} materials, build {:?}, scene {:?}, direct+reverb pass {:?}, direct pass {:?}, path {:?}",
             a.triangles,
             g.materials.len(),
             build,
-            t.elapsed()
+            scene,
+            first,
+            direct_only,
+            paths[&1]
         );
     }
 }

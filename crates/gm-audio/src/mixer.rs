@@ -77,6 +77,7 @@ pub enum Cmd {
     Listener(Listener),
     Master(f32),
     Scene(Arc<Shared>),
+    Underwater(bool),
 }
 
 fn apply(engine: &mut Engine, cmd: Cmd) {
@@ -92,6 +93,7 @@ fn apply(engine: &mut Engine, cmd: Cmd) {
         Cmd::Listener(l) => engine.listener = l,
         Cmd::Master(m) => engine.master = m.clamp(0.0, 1.0),
         Cmd::Scene(shared) => engine.shared = Some(shared),
+        Cmd::Underwater(u) => engine.underwater = u,
     }
 }
 
@@ -315,9 +317,14 @@ impl Mixer {
             .lock()
             .map(|s| s.clone())
             .unwrap_or_default();
-        let paths = a.step(&snap)?;
+        let (paths, reverb) = a.step(&snap)?;
         if let Ok(mut p) = shared.paths.lock() {
             *p = paths;
+        }
+        if reverb.is_some() {
+            if let Ok(mut r) = shared.reverb.lock() {
+                *r = reverb;
+            }
         }
         Ok(())
     }
@@ -334,6 +341,11 @@ impl Mixer {
 
     pub fn set_listener(&self, listener: Listener) {
         let _ = self.tx.send(Cmd::Listener(listener));
+    }
+
+    /// The listener's eyes are under water: low-pass the mix.
+    pub fn set_underwater(&self, underwater: bool) {
+        let _ = self.tx.send(Cmd::Underwater(underwater));
     }
 
     /// Start a sound; the id stops or moves it later.
@@ -512,6 +524,59 @@ mod tests {
             wall_peak < open_peak * 0.2,
             "open {open_peak} walled {wall_peak}"
         );
+    }
+
+    /// A closed concrete room keeps ringing after a short click; the open world does not.
+    #[test]
+    fn a_room_has_a_reverb_tail() {
+        let mut g = Geometry::default();
+        // 10 x 10 x 4 m room around the listener, walls 0.5 m thick, inward faces count
+        let (a, b) = (
+            Vec3::new(-200.0, -200.0, -40.0),
+            Vec3::new(200.0, 200.0, 120.0),
+        );
+        g.push_box(a - Vec3::splat(20.0), b + Vec3::splat(20.0), "concrete");
+        g.push_box(a, b, "concrete");
+        let mut tails = Vec::new();
+        for geometry in [Geometry::default(), g] {
+            let mut m = Mixer::offline(48000).unwrap();
+            m.set_listener(Listener::from_view(Vec3::ZERO, 0.0, 0.0));
+            m.set_scene(geometry).unwrap();
+            m.play(play(tone(48000, 0.05), Some(Vec3::new(100.0, 0.0, 0.0))));
+            m.render(FRAME);
+            for _ in 0..acoustics::REVERB_EVERY {
+                m.simulate().unwrap();
+            }
+            m.render(FRAME * 8); // the click and the ramp
+            let tail = m.render(FRAME * 8);
+            tails.push((
+                m.engine().unwrap().has_reverb(),
+                peak(&tail, 0).max(peak(&tail, 1)),
+            ));
+        }
+        assert!(!tails[0].0, "no reverb without geometry: {tails:?}");
+        assert!(tails[1].0, "the room produces a reverb: {tails:?}");
+        assert!(tails[1].1 > 1e-3, "and it rings after the click: {tails:?}");
+        assert!(tails[0].1 < 1e-6, "silence outside: {tails:?}");
+    }
+
+    #[test]
+    fn underwater_muffles() {
+        let mut m = Mixer::offline(48000).unwrap();
+        let hiss: Vec<f32> = (0..24000)
+            .map(|i| if i % 2 == 0 { 0.5 } else { -0.5 })
+            .collect();
+        let pcm = Arc::new(Pcm {
+            rate: 48000,
+            samples: hiss,
+            loop_start: None,
+        });
+        m.play(play(pcm.clone(), None));
+        let dry = peak(&m.render(FRAME * 2), 0);
+        m.set_underwater(true);
+        m.play(play(pcm, None));
+        let wet = peak(&m.render(FRAME * 2), 0);
+        assert!(wet < dry * 0.3, "dry {dry} wet {wet}");
     }
 
     #[test]
