@@ -4555,6 +4555,8 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             "exit" => {
                 server.exit_vehicle(player);
             }
+            // console variables of the game (ai_disabled for clean damage readings): nothing here
+            "concmd" => {}
             "firebullets" => {
                 // the game's op aims `Player:FireBullets` at the first (matching) NPC's centre
                 let target = server

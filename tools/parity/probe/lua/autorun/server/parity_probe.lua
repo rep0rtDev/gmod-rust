@@ -1265,6 +1265,8 @@ SCENARIOS.toolgun = function(scn, done)
 			end
 		elseif op.op == "exit" then
 			bot:ExitVehicle()
+		elseif op.op == "concmd" then
+			RunConsoleCommand(op.cmd, tostring(op.value or ""))
 		elseif op.op == "firebullets" then
 			-- the bot's bullet (`Player:FireBullets`) at the first NPC's centre with the ammo's player damage cvar
 			local target
