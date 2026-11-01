@@ -595,6 +595,8 @@ SCENARIOS.constraint = function(scn, done)
 			ok = constraint.Rope(a, b, 0, 0, la, lb, c.length or 0, c.addlength or 0, c.force or 0, c.width or 1, "cable/rope", c.rigid or false)
 		elseif c.kind == "axis" then
 			ok = constraint.Axis(a, b, 0, 0, la, lb, c.force or 0, c.torque or 0, c.friction or 0, c.nocollide and 1 or 0, c.axis and Vector(c.axis[1], c.axis[2], c.axis[3]) or nil)
+		elseif c.kind == "motor" then
+			ok = constraint.Motor(a, b, 0, 0, la, lb, c.friction or 1, c.torque or 500, c.forcetime or 0, c.nocollide and 1 or 0, c.toggle and 1 or 0, bot, c.force or 0, c.fwd_key or 45, c.bwd_key or 42, 1, c.axis and Vector(c.axis[1], c.axis[2], c.axis[3]) or nil)
 		elseif c.kind == "nocollide" then
 			ok = constraint.NoCollide(a, b, 0, 0)
 		elseif c.kind == "ballsocket" then

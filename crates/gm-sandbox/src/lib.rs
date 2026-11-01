@@ -545,6 +545,14 @@ pub struct ToolSettings {
     pub wheel_rx: f32,
     pub wheel_ry: f32,
     pub wheel_rz: f32,
+    pub motor_torque: f32,
+    pub motor_friction: f32,
+    pub motor_forcelimit: f32,
+    pub motor_forcetime: f32,
+    pub motor_nocollide: bool,
+    pub motor_toggle: bool,
+    pub motor_fwd: i32,
+    pub motor_bwd: i32,
     pub button_model: String,
     pub button_keygroup: i32,
     pub button_toggle: bool,
@@ -584,10 +592,12 @@ impl ToolSettings {
             muscle_addlength, muscle_period, pulley_width, pulley_forcelimit, thruster_force,
             hoverball_speed, hoverball_resistance, hoverball_strength, balloon_ropelength,
             balloon_force, wheel_torque, wheel_friction, wheel_forcelimit, wheel_rx, wheel_ry,
-            wheel_rz, dynamite_damage, dynamite_delay;
+            wheel_rz, motor_torque, motor_friction, motor_forcelimit, motor_forcetime,
+            dynamite_damage, dynamite_delay;
             axis_nocollide, weld_nocollide, rope_rigid, ballsocket_nocollide, elastic_stretchonly,
             hydraulic_fixed, hydraulic_toggle, winch_toggle, muscle_fixed, muscle_starton,
             pulley_rigid, thruster_toggle, thruster_collision, wheel_nocollide, wheel_toggle,
+            motor_nocollide, motor_toggle,
             button_toggle, dynamite_remove;
             rope_material, slider_material, elastic_material, hydraulic_material, winch_material,
             muscle_material, pulley_material, thruster_model, thruster_soundname, hoverball_model,
@@ -595,7 +605,7 @@ impl ToolSettings {
             wheel_model, button_model, dynamite_model;
             hydraulic_key, winch_fwd_key, winch_bwd_key, muscle_key, thruster_key,
             thruster_key_back, hoverball_key_up, hoverball_key_down, hoverball_key_on, wheel_fwd,
-            wheel_bck, button_keygroup, dynamite_group
+            wheel_bck, motor_fwd, motor_bwd, button_keygroup, dynamite_group
         )
     }
 }
@@ -678,6 +688,14 @@ impl Default for ToolSettings {
             wheel_rx: 90.0,
             wheel_ry: 0.0,
             wheel_rz: 90.0,
+            motor_torque: 500.0,
+            motor_friction: 1.0,
+            motor_forcelimit: 0.0,
+            motor_forcetime: 0.0,
+            motor_nocollide: true,
+            motor_toggle: false,
+            motor_fwd: 45,
+            motor_bwd: 42,
             button_model: "models/maxofs2d/button_05.mdl".into(),
             button_keygroup: 37,
             button_toggle: true,
@@ -906,6 +924,26 @@ pub enum Device {
         /// the step after the key (the game's wheel shows 0 deg/s on the key tick).
         applied: f32,
     },
+    /// `constraint.Motor`'s `phys_torque` (its own entity, keyed by its id): `torque * scale`
+    /// deg/s^2 about `axis` (the Axis constraint it rides on) on prop `ent`, the wheel's law
+    /// (`wheel_spin_step`) - measured on a hinged crate at torque 500 / 3000: the drive is in
+    /// angular-velocity units whatever the body, the axis friction and release are the wheel's.
+    Motor {
+        ent: u32,
+        axis: u32,
+        torque: f32,
+        friction: f32,
+        forcetime: f32,
+        scale: f32,
+        toggle: bool,
+        is_on: bool,
+        direction: f32,
+        key_f: i32,
+        key_r: i32,
+        /// Hinge direction in `ent`'s frame.
+        local_axis: Vec3,
+        applied: f32,
+    },
     /// `gmod_button` (`ONOFF_USE`): `numpad.Activate(owner, key, true)` while on. A toggle flips
     /// on each press; otherwise it is on while `user` holds +use.
     Button {
@@ -936,6 +974,10 @@ pub const TORQUE_ACCEL: f32 = 1.0;
 /// a resting wheel (torque 300 against friction 1 measured still); while driving the loss is
 /// this less 0.027 of the torque (272 / 217 / 30 deg/s² measured at torque 1000 / 3000 / 10000).
 pub const WHEEL_FRICTION_TORQUE: f32 = 300.0;
+/// The same cap for a body hinged in the air (`constraint.Motor` on a crate): 280 - the crate
+/// starts at 500 - 280 = 220 deg/s^2 and runs down at 270-276 under 120 deg/s; the wheel's extra
+/// 20 is its floor contact (a wheel at torque 300 never moves, `constraint_device_wheel_toggle`).
+pub const MOTOR_FRICTION_TORQUE: f32 = 280.0;
 /// The spin vphysics caps a driven wheel at (deg/s).
 pub const MAX_WHEEL_SPIN: f32 = 7200.0;
 /// `util.BlastDamage` radius of the dynamite stool and the impulse rule of a blast on a body:
@@ -962,14 +1004,32 @@ pub fn blast_jitter(u: f32) -> f32 {
 /// ~215 at 900, ~150-200 at 3000, the same while driven and released.
 pub const WHEEL_AXIS_FRICTION_A: f32 = 190.0;
 pub const WHEEL_AXIS_FRICTION_B: f32 = 35000.0;
-pub fn wheel_spin_step(spin: f32, torque: f32, scale: f32, friction: f32, dt: f32) -> f32 {
+/// `on_floor`: the wheel recordings (a wheel on the floor beside its crate) stop dead under
+/// 60 deg/s once the motor is off; a hinged crate in the air (`constraint_device_motor_crate`)
+/// runs down through 92 -> 52 -> 11 deg/s at the axis friction instead.
+pub fn wheel_spin_step(
+    spin: f32,
+    torque: f32,
+    scale: f32,
+    friction: f32,
+    dt: f32,
+    on_floor: bool,
+) -> f32 {
     let motor = TORQUE_ACCEL * torque * scale.abs();
-    if spin.abs() < 60.0 && motor <= WHEEL_FRICTION_TORQUE * friction {
+    let cap = if on_floor {
+        WHEEL_FRICTION_TORQUE
+    } else {
+        MOTOR_FRICTION_TORQUE
+    };
+    if on_floor && spin.abs() < 60.0 && motor <= cap * friction {
         return 0.0;
     }
-    let loss = (WHEEL_AXIS_FRICTION_A + WHEEL_AXIS_FRICTION_B / spin.abs().max(60.0))
-        .min(WHEEL_FRICTION_TORQUE)
-        * friction;
+    // at rest the axis friction holds what the motor cannot overcome
+    if spin.abs() < 1.0 && motor <= cap * friction {
+        return 0.0;
+    }
+    let loss =
+        (WHEEL_AXIS_FRICTION_A + WHEEL_AXIS_FRICTION_B / spin.abs().max(60.0)).min(cap) * friction;
     let drive = if scale == 0.0 {
         // released: the axis friction brakes the spin on top of the body's air drag
         -(loss * dt).min(spin.abs()) * spin.signum() / dt
@@ -993,6 +1053,7 @@ impl Device {
             Device::Balloon { .. } => Some(100.0),
             Device::Thruster { .. }
             | Device::Wheel { .. }
+            | Device::Motor { .. }
             | Device::Button { .. }
             | Device::Dynamite { .. } => None,
         }
@@ -1053,6 +1114,8 @@ pub enum NumpadBind {
     HoverballToggle(u32),
     /// `WheelForward` / `WheelReverse` (`mul` +1 / -1).
     Wheel(u32, f32),
+    /// `MotorControl` (`dir` +1 / -1).
+    Motor(u32, f32),
     /// `DynamiteBlow` on the press.
     Dynamite(u32),
     /// Down sets the direction, up stops (a non-toggle winch).
@@ -1070,6 +1133,7 @@ impl NumpadBind {
             | NumpadBind::HoverballMove(c, _)
             | NumpadBind::HoverballToggle(c)
             | NumpadBind::Wheel(c, _)
+            | NumpadBind::Motor(c, _)
             | NumpadBind::Dynamite(c)
             | NumpadBind::WinchDir(c, _)
             | NumpadBind::WinchToggle(c, _)
@@ -1450,6 +1514,23 @@ impl Sandbox {
         self.props.retain(|p| p.id != id);
         self.constraints
             .retain(|c| c.id != id && !(was_prop && (c.ent1 == Some(id) || c.ent2 == Some(id))));
+        // a motor and its Axis delete each other, both go with their prop
+        let axes: Vec<u32> = self
+            .devices
+            .iter()
+            .filter_map(|(k, d)| match d {
+                Device::Motor { ent, axis, .. } if *k == id || *ent == id || *axis == id => {
+                    Some(*axis)
+                }
+                _ => None,
+            })
+            .collect();
+        if !axes.is_empty() {
+            self.devices.retain(
+                |k, d| !matches!(d, Device::Motor { ent, axis, .. } if *k == id || *ent == id || *axis == id),
+            );
+            self.constraints.retain(|c| !axes.contains(&c.id));
+        }
     }
 
     /// `PhysObj:EnableMotion(!frozen)`.
@@ -1684,6 +1765,19 @@ impl Sandbox {
             "nocollide" => matches!(k, ConstraintKind::NoCollide),
             _ => false,
         };
+        if tool == "motor" {
+            // `RemoveConstraints(ent, "Motor")`: the phys_torque goes and takes its Axis along
+            let motors: Vec<u32> = self
+                .devices
+                .iter()
+                .filter(|(_, d)| matches!(d, Device::Motor { ent: e, .. } if *e == ent))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in &motors {
+                self.remove_entity(*id);
+            }
+            return !motors.is_empty();
+        }
         let before = self.constraints.len();
         self.constraints
             .retain(|c| !(is_type(&c.kind) && (c.ent1 == Some(ent) || c.ent2 == Some(ent))));
@@ -2392,6 +2486,98 @@ impl Sandbox {
         true
     }
 
+    /// `motor.lua`'s second click: the Axis of `finish_axis` (the hinge point 64 u out along
+    /// the second normal), friction / forcelimit / nocollide from the motor's settings, plus the
+    /// `phys_torque` device bound to the numpad keys; undo and counts take both.
+    pub fn finish_motor(&mut self, player: u32, events: &mut Vec<Event>) -> bool {
+        let objs = self.tool(player).objects;
+        if objs.len() < 2 {
+            return false;
+        }
+        let (o1, o2) = (objs[0].clone(), objs[1].clone());
+        if !self.check_limit(player, "constraints", events) {
+            self.clear_objects(player);
+            return false;
+        }
+        let s = self.tool_settings.clone();
+        if let Some(ent1) = o1.ent {
+            let norm1 = self.object_world_normal(&o1);
+            let norm2 = self.object_world_normal(&o2);
+            let wpos2 = self.object_world_pos(&o2);
+            let (centre, _) = self.prop_pose(ent1).unwrap_or_default();
+            let current = self
+                .props
+                .iter()
+                .find(|p| p.id == ent1)
+                .map(|p| p.angles)
+                .unwrap_or_default();
+            let target = align_angles(current, angle_of(norm1), angle_of(-norm2));
+            self.set_prop_pose(ent1, centre, target);
+            let grabbed = self.object_world_pos(&o1);
+            let target_pos = wpos2 + (centre - grabbed) + norm2 * 0.2;
+            self.set_prop_pose(ent1, target_pos, target);
+            let (pos1, rot1) = self.prop_pose(ent1).unwrap_or_default();
+            let lpos1 = rot1.inverse() * (wpos2 + norm2 * 64.0 - pos1);
+            if o2.ent != o1.ent {
+                let axis_id = self.next_id;
+                self.next_id += 1;
+                self.constraints.push(Constraint {
+                    id: axis_id,
+                    owner: player,
+                    ent1: o1.ent,
+                    ent2: o2.ent,
+                    kind: ConstraintKind::Axis {
+                        lpos1,
+                        lpos2: o2.pos,
+                        local_axis: lpos1,
+                        forcelimit: s.motor_forcelimit,
+                        torquelimit: 0.0,
+                        friction: s.motor_friction,
+                        nocollide: s.motor_nocollide,
+                    },
+                });
+                let motor_id = self.next_id;
+                self.next_id += 1;
+                self.devices.insert(
+                    motor_id,
+                    Device::Motor {
+                        ent: ent1,
+                        axis: axis_id,
+                        torque: s.motor_torque,
+                        friction: s.motor_friction,
+                        forcetime: s.motor_forcetime,
+                        scale: 0.0,
+                        toggle: s.motor_toggle,
+                        is_on: false,
+                        direction: 1.0,
+                        key_f: s.motor_fwd,
+                        key_r: s.motor_bwd,
+                        local_axis: lpos1.normalize_or_zero(),
+                        applied: 0.0,
+                    },
+                );
+                for (key, bind) in [
+                    (s.motor_fwd, NumpadBind::Motor(motor_id, 1.0)),
+                    (s.motor_bwd, NumpadBind::Motor(motor_id, -1.0)),
+                ] {
+                    self.numpad.entry((player, key)).or_default().push(bind);
+                }
+                self.push_undo(
+                    player,
+                    "Motor",
+                    "#tool.motor.name".into(),
+                    Some("Undone #tool.motor.name".into()),
+                    vec![motor_id, axis_id],
+                );
+                self.add_count(player, "constraints", motor_id);
+                self.add_cleanup(player, "constraints", motor_id);
+                self.add_cleanup(player, "constraints", axis_id);
+            }
+        }
+        self.clear_objects(player);
+        true
+    }
+
     pub fn tool_left_click(
         &mut self,
         player: u32,
@@ -2399,7 +2585,7 @@ impl Sandbox {
         hit: &ToolHit,
         events: &mut Vec<Event>,
     ) -> bool {
-        if (tool == "nocollide" || tool == "axis")
+        if (tool == "nocollide" || tool == "axis" || tool == "motor")
             && hit.ent.is_none()
             && self.tool(player).objects.is_empty()
         {
@@ -2461,6 +2647,7 @@ impl Sandbox {
             }
             "rope" => self.finish_rope(player, events),
             "axis" => self.finish_axis(player, events),
+            "motor" => self.finish_motor(player, events),
             "ballsocket" | "slider" | "elastic" => self.finish_two_point(player, tool, events),
             "hydraulic" | "winch" | "muscle" => self.finish_powered(player, tool, events),
             "nocollide" => {
@@ -2674,6 +2861,39 @@ impl Sandbox {
                         *scale = speed;
                     }
                     (
+                        NumpadBind::Motor(_, dir),
+                        Device::Motor {
+                            scale,
+                            toggle,
+                            is_on,
+                            direction,
+                            ..
+                        },
+                    ) => {
+                        // `MotorControl`: a toggle flips on a press of the running direction
+                        // (or when off), a press of the other direction turns it round and
+                        // keeps it on, releases do nothing; otherwise down = on, up = off
+                        let activate = if *toggle {
+                            if !down {
+                                continue;
+                            }
+                            if *direction == dir || !*is_on {
+                                *is_on = !*is_on;
+                                *is_on
+                            } else {
+                                true
+                            }
+                        } else {
+                            down
+                        };
+                        if activate {
+                            *direction = dir;
+                            *scale = dir;
+                        } else {
+                            *scale = 0.0;
+                        }
+                    }
+                    (
                         NumpadBind::Dynamite(_),
                         Device::Dynamite {
                             delay,
@@ -2821,7 +3041,7 @@ impl Sandbox {
     /// After the motors drove this tick: `phys_torque` picks a changed `Scale` up next step.
     pub fn settle_wheel_scales(&mut self) {
         for d in self.devices.values_mut() {
-            if let Device::Wheel { scale, applied, .. } = d {
+            if let Device::Wheel { scale, applied, .. } | Device::Motor { scale, applied, .. } = d {
                 *applied = *scale;
             }
         }

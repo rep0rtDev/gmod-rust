@@ -442,6 +442,16 @@ pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
             flag("wheel_toggle", false),
             text("wheel_model", "models/props_vehicles/carparts_wheel01a.mdl"),
         ],
+        "motor" => vec![
+            key("motor_fwd", 45),
+            key("motor_bwd", 42),
+            num("motor_torque", 500.0, 0.0, 10000.0),
+            num("motor_forcelimit", 0.0, 0.0, 50000.0),
+            num("motor_friction", 1.0, 0.0, 100.0),
+            num("motor_forcetime", 0.0, 0.0, 120.0),
+            flag("motor_nocollide", true),
+            flag("motor_toggle", false),
+        ],
         "button" => vec![
             key("button_keygroup", 37),
             flag("button_toggle", true),
@@ -3387,7 +3397,12 @@ impl<'w> Server<'w> {
             self.thruster_loops.remove(&id);
         }
         for (id, d) in devices {
-            let Some(&body) = self.bodies.get(&id) else {
+            // a motor drives the prop it was built on
+            let driven = match &d {
+                gm_sandbox::Device::Motor { ent, .. } => *ent,
+                _ => id,
+            };
+            let Some(&body) = self.bodies.get(&driven) else {
                 continue;
             };
             let st = self.physics.state(body);
@@ -3468,10 +3483,19 @@ impl<'w> Server<'w> {
                     applied,
                     local_axis,
                     ..
+                }
+                | gm_sandbox::Device::Motor {
+                    torque,
+                    friction,
+                    applied,
+                    local_axis,
+                    ..
                 } => {
+                    let on_floor = matches!(d, gm_sandbox::Device::Wheel { .. });
                     let axis = (st.rotation * local_axis).normalize_or_zero();
                     let along = st.angular_velocity.dot(axis);
-                    let spin = gm_sandbox::wheel_spin_step(along, torque, applied, friction, dt);
+                    let spin =
+                        gm_sandbox::wheel_spin_step(along, torque, applied, friction, dt, on_floor);
                     let w = st.angular_velocity + axis * (spin - along);
                     self.physics.set_velocity(body, st.velocity, w);
                 }

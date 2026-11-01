@@ -3494,3 +3494,39 @@ pos = 2.0
 rest = 2.0
 ang = 5.0
 contact = 1
+
+[[harness]]
+name = "constraint_device_motor_crate"
+scenario = "constraint/device_motor_crate"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+spin = 0.1
+
+[[harness]]
+name = "constraint_device_motor_crate_t3000"
+scenario = "constraint/device_motor_crate_t3000"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+spin = 0.1
+
+[[harness]]
+name = "constraint_device_motor_drum"
+scenario = "constraint/device_motor_drum"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+spin = 0.1

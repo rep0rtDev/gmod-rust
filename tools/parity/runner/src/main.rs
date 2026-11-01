@@ -377,6 +377,10 @@ struct ConstraintSpec {
     #[serde(default)]
     bwd_key: Option<i32>,
     #[serde(default)]
+    torque: Option<f32>,
+    #[serde(default)]
+    friction: Option<f32>,
+    #[serde(default)]
     fwd_speed: Option<f32>,
     #[serde(default)]
     bwd_speed: Option<f32>,
@@ -581,6 +585,43 @@ fn device_key(d: &mut gm_sandbox::Device, key: i32, down: bool, pos_z: f32) {
                 }
             }
         }
+        Device::Motor {
+            scale,
+            toggle,
+            is_on,
+            direction,
+            key_f,
+            key_r,
+            ..
+        } => {
+            // `MotorControl` (see `Sandbox::numpad`)
+            let dir = if key == *key_f {
+                1.0
+            } else if key == *key_r {
+                -1.0
+            } else {
+                return;
+            };
+            let activate = if *toggle {
+                if !down {
+                    return;
+                }
+                if *direction == dir || !*is_on {
+                    *is_on = !*is_on;
+                    *is_on
+                } else {
+                    true
+                }
+            } else {
+                down
+            };
+            if activate {
+                *direction = dir;
+                *scale = dir;
+            } else {
+                *scale = 0.0;
+            }
+        }
         Device::Wheel {
             scale,
             toggle,
@@ -641,6 +682,7 @@ fn device_simulate(
     use glam::Vec3;
     use gm_sandbox::Device;
     let st = world.state(body);
+    let on_floor = matches!(d, Device::Wheel { .. });
     match d {
         Device::Thruster {
             force,
@@ -692,10 +734,19 @@ fn device_simulate(
             local_axis,
             applied,
             ..
+        }
+        | Device::Motor {
+            torque,
+            friction,
+            scale,
+            local_axis,
+            applied,
+            ..
         } => {
             let axis = (st.rotation * *local_axis).normalize_or_zero();
             let along = st.angular_velocity.dot(axis);
-            let spin = gm_sandbox::wheel_spin_step(along, *torque, *applied, *friction, dt);
+            let spin =
+                gm_sandbox::wheel_spin_step(along, *torque, *applied, *friction, dt, on_floor);
             *applied = *scale;
             world.set_velocity(
                 body,
@@ -724,6 +775,15 @@ fn device_row(d: &gm_sandbox::Device, mass: f32) -> Value {
         }
         Device::Balloon { force } => {
             json!({ "class": "gmod_balloon", "mass": mass, "force": force })
+        }
+        Device::Motor {
+            torque,
+            scale,
+            is_on,
+            direction,
+            ..
+        } => {
+            json!({ "class": "phys_torque", "mass": mass, "forcescale": scale, "direction": direction, "is_on": is_on, "torque": torque })
         }
         Device::Wheel {
             torque,
@@ -1756,6 +1816,40 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
                     None => pb - pa,
                 };
                 world.hinge(a, b, pa, dir.normalize_or_zero()).is_some()
+            }
+            "motor" => {
+                // constraint.Motor: the Axis above plus a phys_torque on body 1 (the probe
+                // builds it with LocalAxis = `axis`, keys fwd 45 / bwd 42)
+                let la = Vec3::from(c.local_a.unwrap_or([0.0; 3]));
+                let pa = sa.position + sa.rotation * la;
+                let pb = sb.position + sb.rotation * Vec3::from(c.local_b.unwrap_or([0.0; 3]));
+                let dir = match c.axis {
+                    Some(ax) => sa.rotation * (Vec3::from(ax) - la),
+                    None => pb - pa,
+                };
+                let ok = world.hinge(a, b, pa, dir.normalize_or_zero()).is_some();
+                if c.nocollide {
+                    world.set_pair_collision(a, b, false);
+                }
+                devices.push((
+                    a,
+                    gm_sandbox::Device::Motor {
+                        ent: 0,
+                        axis: 0,
+                        torque: c.torque.unwrap_or(500.0),
+                        friction: c.friction.unwrap_or(1.0),
+                        forcetime: 0.0,
+                        scale: 0.0,
+                        toggle: c.toggle.unwrap_or(false),
+                        is_on: false,
+                        direction: 1.0,
+                        key_f: c.fwd_key.unwrap_or(45),
+                        key_r: c.bwd_key.unwrap_or(42),
+                        local_axis: (sa.rotation.inverse() * dir).normalize_or_zero(),
+                        applied: 0.0,
+                    },
+                ));
+                ok
             }
             "slider" => {
                 let pa = sa.position + sa.rotation * Vec3::from(c.local_a.unwrap_or([0.0; 3]));
@@ -5068,6 +5162,9 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                     Some(gm_sandbox::Device::Wheel { .. }) => {
                         json!({ "index": -1, "class": "gmod_wheel", "prop": 0 })
                     }
+                    Some(gm_sandbox::Device::Motor { .. }) => {
+                        json!({ "index": -1, "class": "phys_torque", "prop": 0 })
+                    }
                     Some(gm_sandbox::Device::Button { .. }) => {
                         json!({ "index": -1, "class": "gmod_button", "prop": 0 })
                     }
@@ -5169,6 +5266,10 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                     gm_sandbox::Device::Wheel { torque, scale, toggle, toggle_state, direction, key_f, key_r, .. } => json!({
                         "class": "gmod_wheel", "base_torque": torque, "torque_scale": 1.0, "forcescale": scale, "toggle": toggle, "toggle_state": toggle_state,
                         "direction": direction, "key_f": key_f, "key_r": key_r, "is_on": false,
+                    }),
+                    gm_sandbox::Device::Motor { torque, scale, toggle, is_on, direction, key_f, key_r, forcetime, .. } => json!({
+                        "class": "phys_torque", "torque": torque, "forcescale": scale, "toggle": toggle, "is_on": is_on, "direction": direction,
+                        "key_f": key_f, "key_r": key_r, "forcetime": forcetime,
                     }),
                     gm_sandbox::Device::Button { key, toggle, on, .. } => json!({ "class": "gmod_button", "key": key, "is_toggle": toggle, "toggle": toggle, "on": on, "mass": 3.0 }),
                     gm_sandbox::Device::Dynamite { damage, delay, remove, key, .. } => json!({ "class": "gmod_dynamite", "damage": damage, "delay": delay, "remove": remove, "key": key, "health": 0 }),
