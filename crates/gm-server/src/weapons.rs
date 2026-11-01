@@ -962,6 +962,30 @@ impl Inventory {
 /// table, not the `sk_plr_dmg_*` convars the server also carries: pistol 12 against sk 5, SMG1
 /// 12 against 4, .357 75 against 40, buckshot 4 per pellet against 8). Unmeasured types are
 /// `None` until recorded.
+/// Damage of a player's bullet to an NPC (`sk_plr_dmg_<ammo>`, measured `server_npc_damage`):
+/// the single-player table, not the player-vs-player one.
+pub fn npc_bullet_damage(ammo: &str) -> Option<f32> {
+    match ammo {
+        "Pistol" => Some(5.0),
+        "SMG1" => Some(4.0),
+        "357" => Some(40.0),
+        "AR2" => Some(8.0),
+        "Buckshot" => Some(8.0),
+        "XBowBolt" => Some(100.0),
+        "AlyxGun" => Some(5.0),
+        _ => None,
+    }
+}
+
+/// `GM:ScaleNPCDamage`: head x2, arms and legs x0.25, the rest untouched.
+pub fn npc_hitgroup_scale(group: u8) -> f32 {
+    match group {
+        HITGROUP_HEAD => 2.0,
+        4..=7 => 0.25,
+        _ => 1.0,
+    }
+}
+
 pub fn bullet_damage(ammo: &str) -> Option<f32> {
     match ammo {
         "Pistol" | "SMG1" => Some(12.0),

@@ -241,6 +241,9 @@ struct OpSpec {
     offset: Option<[f32; 3]>,
     #[serde(default)]
     pos: Option<[f32; 3]>,
+    /// `firebullets`: ammo type of the oracle shot.
+    #[serde(default)]
+    ammo: Option<String>,
     /// `spawnnpc`: weapon handed to the NPC ("none" for unarmed).
     #[serde(default)]
     weapon: Option<String>,
@@ -4419,7 +4422,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 "index": id, "key": n.key, "class": n.class, "model": n.model, "skin": n.skin,
                 "pos": [n.pos.x, n.pos.y, n.pos.z], "ang": [n.angles.x, n.angles.y, n.angles.z],
                 "mins": [n.mins.x, n.mins.y, n.mins.z], "maxs": [n.maxs.x, n.maxs.y, n.maxs.z],
-                "health": n.health, "maxhealth": n.max_health, "weapon": n.weapon, "movetype": n.movetype, "solid": n.solid,
+                "health": n.health.round() as i32, "maxhealth": n.max_health, "weapon": n.weapon, "movetype": n.movetype, "solid": n.solid,
             })).collect::<Vec<_>>(),
             "weapons": server.players.get(&player).map(|pl| {
                 let mut w: Vec<Value> = pl.weapons.iter().map(|c| {
@@ -4515,6 +4518,26 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 if let Some(t) = target {
                     server.teleport_player(player, t);
                 }
+            }
+            "firebullets" => {
+                // the game's op aims `Player:FireBullets` at the first (matching) NPC's centre
+                let target = server
+                    .npcs
+                    .iter()
+                    .find(|(_, n)| op.class.as_deref().is_none_or(|c| c == n.class))
+                    .map(|(_, n)| n.pos + (n.mins + n.maxs) * 0.5);
+                let eye = server.eye(player).map(|e| e.0).unwrap_or_default();
+                let dir = target.map(|t| (t - eye).normalize()).unwrap_or(Vec3::X);
+                let ammo: &'static str = match op.ammo.as_deref().unwrap_or("Pistol") {
+                    "Pistol" => "Pistol",
+                    "SMG1" => "SMG1",
+                    "357" => "357",
+                    "AR2" => "AR2",
+                    "Buckshot" => "Buckshot",
+                    "XBowBolt" => "XBowBolt",
+                    _ => "Pistol",
+                };
+                server.fire_bullets(player, dir, ammo, None);
             }
             "spawnnpc" => {
                 let key = op.class.clone().unwrap_or_default();

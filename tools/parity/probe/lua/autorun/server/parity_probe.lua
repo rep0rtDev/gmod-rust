@@ -826,6 +826,17 @@ SCENARIOS.sandbox = function(scn, done)
 		cmd:ClearButtons()
 		if engine.TickCount() <= pressUntil then cmd:SetButtons(pressButtons) end
 	end)
+	-- damage taken by NPCs (`EntityTakeDamage`): amount, hitgroup, attacker, inflictor, health after
+	PARITY_NPC_DAMAGE = {}
+	hook.Add("EntityTakeDamage", "parity_sandbox_npcdmg", function(ent, dmg)
+		if not ent:IsNPC() then return end
+		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { index = ent:EntIndex(), class = ent:GetClass(), amount = dmg:GetDamage(), types = dmg:GetDamageType(),
+			hitgroup = ent:LastHitGroup(), attacker = IsValid(dmg:GetAttacker()) and dmg:GetAttacker():GetClass() or "", inflictor = IsValid(dmg:GetInflictor()) and dmg:GetInflictor():GetClass() or "",
+			health = ent:Health(), tick = engine.TickCount(), force = vec(dmg:GetDamageForce()) }
+	end)
+	hook.Add("ScaleNPCDamage", "parity_sandbox_npcdmg", function(npc, hitgroup, dmg)
+		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { scale = true, index = npc:EntIndex(), hitgroup = hitgroup, amount = dmg:GetDamage(), tick = engine.TickCount() }
+	end)
 	hook.Add("SetupMove", "parity_sandbox_pin", function(ply, mv)
 		if ply ~= bot then return end
 		mv:SetOrigin(pin)
@@ -1031,6 +1042,17 @@ SCENARIOS.toolgun = function(scn, done)
 			end
 		end
 		table.sort(out.npcs, function(a, b) return a.index < b.index end)
+		-- corpses: every prop_ragdoll on the map that is not one of the bot's spawned props
+		out.damage = PARITY_NPC_DAMAGE or {}
+		PARITY_NPC_DAMAGE = {}
+		out.ragdolls = {}
+		for _, e in ipairs(ents.FindByClass("prop_ragdoll")) do
+			if e:GetCreator() ~= bot and not e.parity_scenario_prop then
+				local p, a = e:GetPos(), e:GetAngles()
+				out.ragdolls[#out.ragdolls + 1] = { index = e:EntIndex(), model = e:GetModel(), pos = vec(p), ang = { a.p, a.y, a.r }, parts = e:GetPhysicsObjectCount() }
+			end
+		end
+		table.sort(out.ragdolls, function(a, b) return a.index < b.index end)
 		out.weapons = {}
 		for _, w in ipairs(bot:GetWeapons()) do
 			out.weapons[#out.weapons + 1] = { class = w:GetClass(), clip1 = w:Clip1(), clip2 = w:Clip2() }
@@ -1208,10 +1230,24 @@ SCENARIOS.toolgun = function(scn, done)
 			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal) }
 			rec.bot_ang = { bot:GetAngles().p, bot:GetAngles().y, bot:GetAngles().r }
 			concommand.Run(bot, "gmod_spawnnpc", { op.class, op.weapon or "none" }, op.class)
+		elseif op.op == "give" then
+			-- the bot gets and selects a weapon (`Give` + `SelectWeapon`) to shoot NPCs with
+			bot:Give(op.class)
+			bot:SelectWeapon(op.class)
+		elseif op.op == "firebullets" then
+			-- the bot's bullet (`Player:FireBullets`) at the first NPC's centre with the ammo's player damage cvar
+			local target
+			for _, e in ipairs(ents.GetAll()) do if e:IsNPC() and (not op.class or e:GetClass() == op.class) then target = e break end end
+			local eye = bot:GetShootPos()
+			local dir = target and (target:WorldSpaceCenter() + Vector(0, 0, op.dz or 0) - eye):GetNormalized() or bot:EyeAngles():Forward()
+			local dmg = op.damage or GetConVar(op.cvar or ("sk_plr_dmg_" .. string.lower(op.ammo or "pistol"))):GetFloat()
+			rec.shot = { from = vec(eye), dir = vec(dir), damage = dmg, target = target and target:EntIndex() or -1, tpos = target and vec(target:WorldSpaceCenter()) or nil }
+			bot:FireBullets({ Num = op.num or 1, Src = eye, Dir = dir, Spread = Vector(0, 0, 0), Tracer = 0, Force = op.force or 1, Damage = dmg, AmmoType = op.ammo or "Pistol" })
 		elseif op.op == "press" then
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
 			pressButtons = op.buttons == "use" and IN_USE or (op.buttons == "attack" and IN_ATTACK or 0)
 			pressUntil = engine.TickCount() + (op.ticks or 1)
+			rec.active = IsValid(bot:GetActiveWeapon()) and { class = bot:GetActiveWeapon():GetClass(), next = bot:GetActiveWeapon():GetNextPrimaryFire() - CurTime() } or nil
 		elseif op.op == "teleport" then
 			-- the bot steps onto a point or onto its op.ent-th world weapon (pickup by touch); the move pin follows
 			local target = op.pos and Vector(op.pos[1], op.pos[2], op.pos[3]) or nil

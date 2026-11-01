@@ -1764,7 +1764,8 @@ impl Sandbox {
     }
 
     fn exists(&self, id: u32) -> bool {
-        self.props.iter().any(|p| p.id == id)
+        self.foreign.contains(&id)
+            || self.props.iter().any(|p| p.id == id)
             || self.constraints.iter().any(|c| c.id == id)
             || self.devices.contains_key(&id)
     }
@@ -1987,6 +1988,7 @@ impl Sandbox {
     /// prop go with it, undo entries keep their ids (they skip dead entities when run).
     pub fn remove_entity(&mut self, id: u32) {
         let was_prop = self.props.iter().any(|p| p.id == id);
+        self.foreign.remove(&id);
         self.props.retain(|p| p.id != id);
         if was_prop {
             // the device state of a prop (camera, lamp, ...) dies with it

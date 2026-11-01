@@ -314,6 +314,13 @@ pub enum GameEvent {
         player: u32,
         class: String,
     },
+    /// An NPC died (its body lingers `NPC_CORPSE_TICKS`); the corpse is the client's ragdoll.
+    NpcKilled {
+        npc: u32,
+        attacker: u32,
+        key: String,
+        class: String,
+    },
     /// The carried prop was let go (second +use, death, the prop removed or physgunned).
     Drop {
         player: u32,
@@ -885,7 +892,8 @@ pub struct Npc {
     /// Collision hull (`OBBMins` / `OBBMaxs`) around `pos`.
     pub mins: Vec3,
     pub maxs: Vec3,
-    pub health: i32,
+    /// Float inside like the engine (shown rounded); goes negative on the killing hit and stays.
+    pub health: f32,
     pub max_health: i32,
     /// Weapon class carried (`additionalequipment`), empty for none.
     pub weapon: String,
@@ -897,7 +905,13 @@ pub struct Npc {
     pub sequence: &'static str,
     /// A walker whose `DropToFloor` found nothing at spawn settles onto the floor next tick.
     pub settle: bool,
+    /// Tick of death: the body lingers `NPC_CORPSE_TICKS` (MOVETYPE_NONE) before it goes.
+    pub dead_at: Option<u64>,
 }
+
+/// Ticks a dead NPC stays on the server before it is removed (measured 66..106 for the
+/// metropolice, 76..96 for the headcrab); the corpse itself is the client's ragdoll.
+pub const NPC_CORPSE_TICKS: u64 = 90;
 
 /// Where `Spawn_NPC` puts an NPC class relative to the hit point.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1827,6 +1841,29 @@ pub const NPC_USABLE_WEAPONS: [&str; 11] = [
 
 pub fn npc_def(key: &str) -> Option<&'static NpcDef> {
     NPC_LIST.iter().find(|d| d.key == key)
+}
+
+/// Entry fraction of the segment `eye + d * t` into the box, `None` when it misses.
+fn ray_box(eye: Vec3, d: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for a in 0..3 {
+        if d[a].abs() < 1e-6 {
+            if eye[a] < lo[a] || eye[a] > hi[a] {
+                return None;
+            }
+            continue;
+        }
+        let (mut ta, mut tb) = ((lo[a] - eye[a]) / d[a], (hi[a] - eye[a]) / d[a]);
+        if ta > tb {
+            std::mem::swap(&mut ta, &mut tb);
+        }
+        t0 = t0.max(ta);
+        t1 = t1.min(tb);
+        if t0 > t1 {
+            return None;
+        }
+    }
+    Some(t0)
 }
 
 /// World model of each HL2 weapon class (what `Spawn_Weapon` leaves lying on the ground).
@@ -3330,9 +3367,8 @@ impl<'w> Server<'w> {
         seen_tick: u32,
         damage: Option<f32>,
     ) {
-        let Some(base) = damage.or_else(|| weapons::bullet_damage(shot.ammo)) else {
-            return;
-        };
+        // the player-vs-player table may lack the ammo (AR2 is NPC-only); NPCs have their own
+        let base = damage.or_else(|| weapons::bullet_damage(shot.ammo));
         const MAX_TRACE: f32 = 56755.84;
         let end = eye + forward * MAX_TRACE;
         let world = self
@@ -3374,6 +3410,45 @@ impl<'w> Server<'w> {
                 best = Some((*id, t0));
             }
         }
+        // NPC hulls: the nearest live body on the ray takes the bullet before players behind it
+        let mut npc_hit: Option<(u32, f32)> = None;
+        for (id, n) in &self.npcs {
+            if n.dead_at.is_some() || n.solid == 0 {
+                continue;
+            }
+            if let Some(t) = ray_box(eye, d, n.pos + n.mins, n.pos + n.maxs) {
+                if npc_hit.is_none_or(|b| t < b.1) {
+                    npc_hit = Some((*id, t));
+                }
+            }
+        }
+        if let Some((npc, t)) = npc_hit {
+            if best.is_none_or(|b| t < b.1)
+                && prop.as_ref().is_none_or(|h| t < h.fraction)
+                && t < world.fraction
+            {
+                let Some(dmg) = weapons::npc_bullet_damage(shot.ammo).map(|v| damage.unwrap_or(v))
+                else {
+                    return;
+                };
+                let hit = eye + d * t;
+                let group = self
+                    .npcs
+                    .get(&npc)
+                    .and_then(|n| {
+                        let h = n.maxs.z - n.mins.z;
+                        weapons::hitgroup_at((hit.z - (n.pos.z + n.mins.z)) * 72.0 / h.max(1.0))
+                    })
+                    .unwrap_or(weapons::HITGROUP_CHEST);
+                for _ in 0..shot.pellets {
+                    self.damage_npc(npc, attacker, dmg, group);
+                }
+                return;
+            }
+        }
+        let Some(base) = base else {
+            return;
+        };
         if let Some(h) = prop {
             if best.is_none_or(|b| h.fraction < b.1) {
                 if let Some(damage) = weapons::prop_bullet_damage(shot.ammo) {
@@ -4466,7 +4541,7 @@ impl<'w> Server<'w> {
                 angles: Vec3::new(0.0, yaw + 180.0 + def.rotate_yaw, 0.0),
                 mins,
                 maxs,
-                health: def.health,
+                health: def.health as f32,
                 max_health: def.health,
                 weapon: if armed {
                     weapon.to_string()
@@ -4478,6 +4553,7 @@ impl<'w> Server<'w> {
                 solid: def.solid,
                 sequence: def.sequence,
                 settle,
+                dead_at: None,
             },
         );
         self.sandbox.add_count(player, "npcs", id);
@@ -4504,6 +4580,72 @@ impl<'w> Server<'w> {
             gm_collision::MASK_PLAYERSOLID,
         );
         (!tr.start_solid && tr.fraction < 1.0).then_some(tr.end)
+    }
+
+    /// A bullet hit on an NPC: `sk_plr_dmg` x `ScaleNPCDamage` x the class's own scale (classic
+    /// zombies take half from bullets); health goes below zero and the NPC dies in place
+    /// (`MOVETYPE_NONE`, still solid), removed `NPC_CORPSE_TICKS` later.
+    pub fn damage_npc(&mut self, id: u32, attacker: u32, amount: f32, group: u8) -> bool {
+        let tick = self.tick_count;
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        if n.dead_at.is_some() {
+            return false;
+        }
+        let class_scale = if n.class == "npc_zombie" { 0.5 } else { 1.0 };
+        n.health -= amount * weapons::npc_hitgroup_scale(group) * class_scale;
+        if n.health <= 0.0 {
+            n.dead_at = Some(tick);
+            n.movetype = 0;
+            // the weapon leaves the dead hands (the game drops it)
+            n.weapon.clear();
+            let (key, class) = (n.key.clone(), n.class.clone());
+            self.game_events.push(GameEvent::NpcKilled {
+                npc: id,
+                attacker,
+                key,
+                class,
+            });
+        }
+        true
+    }
+
+    /// Bodies whose corpse time ran out leave the world (undo / cleanup entries go dead).
+    fn remove_dead_npcs(&mut self) {
+        let gone: Vec<u32> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| {
+                n.dead_at
+                    .is_some_and(|t| self.tick_count.saturating_sub(t) >= NPC_CORPSE_TICKS)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in gone {
+            self.npcs.remove(&id);
+            self.sandbox.remove_entity(id);
+        }
+    }
+
+    /// `Player:FireBullets` straight along `dir` with `damage` (the runner's oracle shot).
+    pub fn fire_bullets(
+        &mut self,
+        player: u32,
+        dir: Vec3,
+        ammo: &'static str,
+        damage: Option<f32>,
+    ) {
+        let Some((eye, _)) = self.eye(player) else {
+            return;
+        };
+        let shot = weapons::Shot {
+            pellets: 1,
+            spread: 0.0,
+            ammo,
+        };
+        let tick = self.tick_count;
+        self.resolve_shot_with(player, eye, dir, shot, "", tick as u32, damage);
     }
 
     /// Walkers that appeared above the floor stand on it the next tick.
@@ -6163,6 +6305,7 @@ impl<'w> Server<'w> {
         self.sent_player_touches();
         self.weapon_pickups();
         self.settle_npcs();
+        self.remove_dead_npcs();
         // undo.lua counts ticks with removals (its EntityRemoved hook coalesces them through a
         // 0 s timer) and purges all-dead undo lists on every 16th
         if self.events[events_at_start.min(self.events.len())..]

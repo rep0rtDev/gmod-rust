@@ -1102,6 +1102,18 @@ impl Runtime {
                     p.strs.push(("class", class));
                     "player.weapon_pickup"
                 }
+                E::NpcKilled {
+                    npc,
+                    attacker,
+                    key,
+                    class,
+                } => {
+                    p.ints.push(("npc", npc as i64));
+                    p.ints.push(("attacker", attacker as i64));
+                    p.strs.push(("key", key));
+                    p.strs.push(("class", class));
+                    "npc.killed"
+                }
                 E::Drop { player, ent } => {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("entity", ent as i64));

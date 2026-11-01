@@ -1,0 +1,642 @@
+{
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "name": "server_npc_damage",
+ "ops": [
+  {
+   "op": "spawnnpc",
+   "class": "npc_zombie",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "wait",
+   "ticks": 90
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_metropolice",
+   "weapon": "weapon_stunstick",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "firebullets",
+   "ammo": "357"
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "firebullets",
+   "ammo": "357"
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "wait",
+   "ticks": 40
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "wait",
+   "ticks": 100
+  },
+  {
+   "op": "wait",
+   "ticks": 200
+  },
+  {
+   "op": "wait",
+   "ticks": 300
+  },
+  {
+   "op": "wait",
+   "ticks": 400
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_combine_s",
+   "weapon": "weapon_smg1",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "SMG1"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "wait",
+   "ticks": 40
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "wait",
+   "ticks": 100
+  },
+  {
+   "op": "wait",
+   "ticks": 200
+  },
+  {
+   "op": "wait",
+   "ticks": 300
+  },
+  {
+   "op": "wait",
+   "ticks": 400
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_headcrab",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "wait",
+   "ticks": 40
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "wait",
+   "ticks": 100
+  },
+  {
+   "op": "wait",
+   "ticks": 200
+  },
+  {
+   "op": "wait",
+   "ticks": 300
+  },
+  {
+   "op": "wait",
+   "ticks": 400
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_citizen",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Buckshot"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Buckshot"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Buckshot"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Buckshot"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Buckshot"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Buckshot"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Buckshot"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Buckshot"
+  },
+  {
+   "op": "wait",
+   "ticks": 15
+  },
+  {
+   "op": "wait",
+   "ticks": 90
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_alyx",
+   "weapon": "weapon_alyxgun",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "firebullets",
+   "ammo": "AR2"
+  },
+  {
+   "op": "wait",
+   "ticks": 6
+  },
+  {
+   "op": "wait",
+   "ticks": 90
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  }
+ ]
+}
