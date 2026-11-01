@@ -30,6 +30,7 @@ pub struct RagdollSolid {
     pub bone: String,
     pub hulls: Vec<Vec<Vec3>>,
     pub mass: f32,
+    pub volume: f32,
     pub mass_center: Vec3,
     pub inertia: Vec3,
     pub drag_axis_areas: Vec3,
@@ -1207,6 +1208,8 @@ pub struct Server<'w> {
     pub players: BTreeMap<u32, Player>,
     mover: gm_move::Mover<'w>,
     bodies: BTreeMap<u32, BodyHandle>,
+    /// prop_ragdoll: every bone body (the root is also in `bodies`) and the joints between them.
+    ragdoll_bodies: BTreeMap<u32, (Vec<BodyHandle>, Vec<gm_physics::ConstraintHandle>)>,
     constraints: BTreeMap<u32, ConstraintHandle>,
     /// NoCollide pairs by sandbox constraint id.
     nocollides: BTreeMap<u32, (BodyHandle, BodyHandle)>,
@@ -1337,6 +1340,7 @@ impl<'w> Server<'w> {
             players: BTreeMap::new(),
             mover: gm_move::Mover::new(gm_move::MoveConfig::default(), collision),
             bodies: BTreeMap::new(),
+            ragdoll_bodies: BTreeMap::new(),
             constraints: BTreeMap::new(),
             nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
@@ -3423,6 +3427,92 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// `prop_ragdoll`: one body per `.phy` solid at its bone's bind pose under the prop's
+    /// transform, the `ragdollconstraint` joints between them, self-collision only for the
+    /// `collisionrules` pairs. The root solid stands for the entity in `bodies`.
+    fn spawn_ragdoll_bodies(&mut self, p: &gm_sandbox::Prop, rd: &RagdollInfo) {
+        let root_rot = gm_physics::quat_from_angles(p.angles.x, p.angles.y, p.angles.z);
+        let n = rd.bones.len();
+        let (mut wpos, mut wrot) = (vec![p.pos; n], vec![root_rot; n]);
+        for (i, b) in rd.bones.iter().enumerate() {
+            let (pp, pr) = match usize::try_from(b.parent) {
+                Ok(k) if k < i => (wpos[k], wrot[k]),
+                _ => (p.pos, root_rot),
+            };
+            wpos[i] = pp + pr * b.pos;
+            wrot[i] = pr * b.quat;
+        }
+        let bone_pose = |name: &str| {
+            rd.bones
+                .iter()
+                .position(|b| b.name.eq_ignore_ascii_case(name))
+                .map(|i| (wpos[i], wrot[i]))
+                .unwrap_or((p.pos, root_rot))
+        };
+        let mut bodies: Vec<BodyHandle> = Vec::with_capacity(rd.solids.len());
+        for s in &rd.solids {
+            let (pos, rot) = bone_pose(&s.bone);
+            let (pitch, yaw, roll) = gm_physics::angles_from_quat(rot);
+            let Ok(body) = self.physics.add_prop(&PropDesc {
+                hulls: &s.hulls,
+                mass: s.mass,
+                volume: s.volume,
+                position: pos,
+                angles: (pitch, yaw, roll),
+                velocity: Vec3::ZERO,
+                angular_velocity: Vec3::ZERO,
+                surface: s.surface,
+                linear_damping: s.linear_damping,
+                angular_damping: s.angular_damping,
+                drag_axis_areas: s.drag_axis_areas,
+                inertia: Some(s.inertia),
+                mass_center: Some(s.mass_center),
+            }) else {
+                for b in bodies {
+                    self.physics.remove_body(b);
+                }
+                return;
+            };
+            if p.frozen {
+                self.physics.freeze(body);
+            }
+            if !p.gravity {
+                self.physics.set_gravity(body, false);
+            }
+            bodies.push(body);
+        }
+        let mut joints = Vec::new();
+        for j in &rd.joints {
+            let (Some(&pb), Some(&cb)) =
+                (bodies.get(j.parent as usize), bodies.get(j.child as usize))
+            else {
+                continue;
+            };
+            let (pivot, frame) = bone_pose(&rd.solids[j.child as usize].bone);
+            if let Some(c) = self
+                .physics
+                .ragdoll_joint(pb, cb, pivot, frame, j.limits, j.friction)
+            {
+                joints.push(c);
+            }
+        }
+        for a in 0..bodies.len() {
+            for b in a + 1..bodies.len() {
+                let allowed = rd.collision_pairs.iter().any(|&(x, y)| {
+                    (x as usize, y as usize) == (a, b) || (x as usize, y as usize) == (b, a)
+                });
+                if !allowed {
+                    self.physics.set_pair_collision(bodies[a], bodies[b], false);
+                }
+            }
+        }
+        if let Some(&root) = bodies.first() {
+            self.bodies.insert(p.id, root);
+        }
+        self.sandbox.set_mass(p.id, rd.total_mass.max(1.0));
+        self.ragdoll_bodies.insert(p.id, (bodies, joints));
+    }
+
     /// The tool gun's trace from the player's eye: what a click would hit.
     pub fn tool_hit(&self, player: u32) -> Option<ToolHit> {
         let (eye, eye_angles) = self.eye(player)?;
@@ -3804,6 +3894,14 @@ impl<'w> Server<'w> {
             if live.contains(&id) {
                 self.bodies.insert(id, b);
             } else {
+                if let Some((bones, joints)) = self.ragdoll_bodies.remove(&id) {
+                    for j in joints {
+                        self.physics.remove_constraint(j);
+                    }
+                    for rb in bones.into_iter().filter(|rb| *rb != b) {
+                        self.physics.remove_body(rb);
+                    }
+                }
                 self.physics.remove_body(b);
             }
         }
@@ -3817,6 +3915,10 @@ impl<'w> Server<'w> {
                     let Some(info) = self.models.get(&p.model) else {
                         continue;
                     };
+                    if let Some(rd) = info.ragdoll.clone() {
+                        self.spawn_ragdoll_bodies(p, &rd);
+                        continue;
+                    }
                     let Ok(body) = self.physics.add_prop(&PropDesc {
                         hulls: &info.hulls,
                         mass: info.mass,
@@ -4987,6 +5089,13 @@ impl<'w> Server<'w> {
     /// Physics state of a sandbox prop (velocity in Source units, angular body-local deg/s).
     pub fn prop_state(&self, prop: u32) -> Option<gm_physics::BodyState> {
         self.bodies.get(&prop).map(|b| self.physics.state(*b))
+    }
+
+    /// A prop_ragdoll's bone bodies and joints (`None` for a plain prop).
+    pub fn ragdoll_parts(&self, prop: u32) -> Option<(&[BodyHandle], usize)> {
+        self.ragdoll_bodies
+            .get(&prop)
+            .map(|(b, j)| (b.as_slice(), j.len()))
     }
 
     pub fn body_of(&self, prop: u32) -> Option<BodyHandle> {

@@ -5366,3 +5366,45 @@ fn ragdoll_model_info_carries_every_solid_joint_and_bone() {
         gm_dedicated::model_info(&mount, "models/props_junk/wood_crate001a.mdl").unwrap();
     assert!(crate_info.ragdoll.is_none());
 }
+
+#[test]
+fn kleiner_spawns_as_a_jointed_ragdoll_and_settles() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.add_player(
+        1,
+        glam::Vec3::new(823.235, -500.0, -143.0),
+        glam::Vec3::new(30.0, 0.0, 0.0),
+    );
+    let id = server.spawn_prop(1, "models/kleiner.mdl").unwrap();
+    server.tick(&BTreeMap::new());
+    let (bones, joints) = server.ragdoll_parts(id).expect("a ragdoll");
+    let bones: Vec<_> = bones.to_vec();
+    assert_eq!(bones.len(), 15);
+    assert_eq!(joints, 14);
+    let root = server.body_of(id).unwrap();
+    assert_eq!(bones[0], root);
+    let start = server.physics.state(root).position;
+    for _ in 0..300 {
+        server.tick(&BTreeMap::new());
+    }
+    let end = server.physics.state(root).position;
+    // it fell onto the construct floor (-143 is the player's feet) and stayed in one piece
+    assert!(end.z < start.z && end.z > -160.0, "{start} -> {end}");
+    for &b in &bones {
+        let p = server.physics.state(b).position;
+        assert!(
+            p.distance(end) < 120.0 && p.z > -160.0,
+            "bone {p} root {end}"
+        );
+    }
+}

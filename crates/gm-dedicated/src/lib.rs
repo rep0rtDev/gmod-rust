@@ -167,6 +167,7 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
                             .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
                             .collect(),
                         mass: if pr.mass > 0.0 { pr.mass } else { 1.0 },
+                        volume: pr.volume,
                         mass_center: Vec3::from(s.mass_center),
                         inertia: Vec3::from(s.rotation_inertia),
                         drag_axis_areas: Vec3::from(s.drag_axis_areas),
