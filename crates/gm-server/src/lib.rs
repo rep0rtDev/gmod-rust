@@ -98,6 +98,14 @@ pub struct DecalMod {
 }
 
 /// A model attachment as a pose in its bone's space.
+/// An MDL attachment resolved into model space through its bone's bind pose.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModelAttachment {
+    pub name: String,
+    pub pos: Vec3,
+    pub forward: Vec3,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachmentInfo {
     pub name: String,
@@ -171,6 +179,8 @@ pub struct ModelInfo {
     pub prop_data: PropData,
     /// Set for models whose `.phy` has more than one solid: a `prop_ragdoll` when spawned.
     pub ragdoll: Option<RagdollInfo>,
+    /// Attachments in model space (bind pose): vehicle seats / exits, muzzle points.
+    pub attachments: Vec<ModelAttachment>,
     /// The `break` sound script of the surface property (`Wood_Crate.Break`).
     pub break_sound: Option<String>,
     /// `Entity:SkinCount`: skin families in the MDL (1 when unknown).
@@ -320,6 +330,14 @@ pub enum GameEvent {
         attacker: u32,
         key: String,
         class: String,
+    },
+    EnterVehicle {
+        player: u32,
+        vehicle: u32,
+    },
+    ExitVehicle {
+        player: u32,
+        vehicle: u32,
     },
     /// The carried prop was let go (second +use, death, the prop removed or physgunned).
     Drop {
@@ -1843,6 +1861,139 @@ pub fn npc_def(key: &str) -> Option<&'static NpcDef> {
     NPC_LIST.iter().find(|d| d.key == key)
 }
 
+/// A sandbox vehicle: a physics prop of the sandbox with a seat (`Spawn_Vehicle`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Vehicle {
+    /// Spawnmenu list key (`VehicleName`), e.g. `Chair_Wood`.
+    pub key: String,
+    pub class: String,
+    pub model: String,
+    pub health: i32,
+    pub max_health: i32,
+    pub driver: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VehicleDef {
+    pub key: &'static str,
+    pub class: &'static str,
+    pub model: &'static str,
+    /// `Offset` along the hit normal (0 unless the list says otherwise).
+    pub offset: f32,
+    /// `Health` of the list entry (`SetHealth` / `SetMaxHealth`), else the model's prop_data.
+    pub health: Option<i32>,
+}
+
+macro_rules! veh {
+    ($key:expr, $class:expr, $model:expr) => {
+        VehicleDef {
+            key: $key,
+            class: $class,
+            model: $model,
+            offset: 0.0,
+            health: None,
+        }
+    };
+}
+
+/// The spawnmenu's vehicle list (`base_vehicles.lua`; measured `server_vehicle_spawn`).
+pub static VEHICLE_LIST: &[VehicleDef] = &[
+    veh!("Jeep", "prop_vehicle_jeep", "models/buggy.mdl"),
+    veh!("Airboat", "prop_vehicle_airboat", "models/airboat.mdl"),
+    veh!(
+        "Pod",
+        "prop_vehicle_prisoner_pod",
+        "models/vehicles/prisoner_pod_inner.mdl"
+    ),
+    veh!("Jalopy", "prop_vehicle_jeep", "models/vehicle.mdl"),
+    VehicleDef {
+        key: "prop_vehicle_apc",
+        class: "prop_vehicle_apc",
+        model: "models/combine_apc.mdl",
+        offset: 0.0,
+        health: Some(0),
+    },
+    veh!(
+        "Chair_Wood",
+        "prop_vehicle_prisoner_pod",
+        "models/nova/chair_wood01.mdl"
+    ),
+    veh!(
+        "Chair_Plastic",
+        "prop_vehicle_prisoner_pod",
+        "models/nova/chair_plastic01.mdl"
+    ),
+    veh!(
+        "Chair_Office1",
+        "prop_vehicle_prisoner_pod",
+        "models/nova/chair_office01.mdl"
+    ),
+    veh!(
+        "Chair_Office2",
+        "prop_vehicle_prisoner_pod",
+        "models/nova/chair_office02.mdl"
+    ),
+    veh!(
+        "Seat_Jeep",
+        "prop_vehicle_prisoner_pod",
+        "models/nova/jeep_seat.mdl"
+    ),
+    veh!(
+        "Seat_Airboat",
+        "prop_vehicle_prisoner_pod",
+        "models/nova/airboat_seat.mdl"
+    ),
+    veh!(
+        "Seat_Jalopy",
+        "prop_vehicle_prisoner_pod",
+        "models/nova/jalopy_seat.mdl"
+    ),
+    VehicleDef {
+        key: "phx_seat",
+        class: "prop_vehicle_prisoner_pod",
+        model: "models/props_phx/carseat2.mdl",
+        offset: 16.0,
+        health: None,
+    },
+    VehicleDef {
+        key: "phx_seat2",
+        class: "prop_vehicle_prisoner_pod",
+        model: "models/props_phx/carseat3.mdl",
+        offset: 16.0,
+        health: None,
+    },
+    VehicleDef {
+        key: "phx_seat3",
+        class: "prop_vehicle_prisoner_pod",
+        model: "models/props_phx/carseat2.mdl",
+        offset: 16.0,
+        health: None,
+    },
+];
+
+pub fn vehicle_def(key: &str) -> Option<&'static VehicleDef> {
+    VEHICLE_LIST.iter().find(|d| d.key == key)
+}
+
+/// Name the spawnmenu shows for a vehicle key (`vehicle.Name`), used in the undo text.
+pub fn vehicle_name(def: &VehicleDef) -> String {
+    match def.key {
+        "Jeep" => "#spawnmenu.vehicle.jeep".into(),
+        "Airboat" => "#spawnmenu.vehicle.airboat".into(),
+        "Pod" => "#spawnmenu.vehicle.prisoner_pod".into(),
+        "Jalopy" => "#spawnmenu.vehicle.jalopy".into(),
+        "prop_vehicle_apc" => "#prop_vehicle_apc".into(),
+        "Chair_Wood" => "#spawnmenu.chair.wooden".into(),
+        "Chair_Plastic" => "#spawnmenu.chair.plastic".into(),
+        "Chair_Office1" => "#spawnmenu.chair.office".into(),
+        "Chair_Office2" => "#spawnmenu.chair.office_big".into(),
+        "Seat_Jeep" => "#spawnmenu.chair.jeep".into(),
+        "Seat_Airboat" => "#spawnmenu.chair.airboat".into(),
+        "Seat_Jalopy" => "#spawnmenu.chair.jalopy".into(),
+        k => k.into(),
+    }
+}
+
 /// Entry fraction of the segment `eye + d * t` into the box, `None` when it misses.
 fn ray_box(eye: Vec3, d: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
     let (mut t0, mut t1) = (0.0f32, 1.0f32);
@@ -1987,6 +2138,8 @@ pub struct Player {
     pub carry: Option<(u32, gm_physics::pickup::Carry)>,
     /// The prop driven with the `drive` property.
     pub driving: Option<Driving>,
+    /// The vehicle this player sits in (`Player:GetVehicle`): the body rides its seat point.
+    pub seat: Option<u32>,
     /// Scripted weapons carried, by class.
     pub swep: BTreeMap<String, SwepState>,
     /// Buttons of the last command, for the `KeyPress` / `KeyRelease` edges.
@@ -2070,6 +2223,7 @@ impl Player {
             view_angles,
             held: None,
             driving: None,
+            seat: None,
             swep: BTreeMap::new(),
             prev_buttons: 0,
             carry: None,
@@ -2404,6 +2558,8 @@ pub struct Server<'w> {
     pub world_weapons: HashMap<u32, String>,
     /// NPCs spawned from the NPCs tab (`Spawn_NPC`), by sandbox id (foreign to the prop list).
     pub npcs: BTreeMap<u32, Npc>,
+    /// Vehicles (`Spawn_Vehicle`): sandbox prop id -> seat state.
+    pub vehicles: BTreeMap<u32, Vehicle>,
     /// Ticks that removed an entity since undo.lua last purged dead undo lists (every 16).
     undo_purge_ticks: u32,
     /// (player, scripted entity) pairs whose hulls overlapped last tick, for the touch edges.
@@ -2528,6 +2684,7 @@ impl<'w> Server<'w> {
             sents: HashMap::new(),
             world_weapons: HashMap::new(),
             npcs: BTreeMap::new(),
+            vehicles: BTreeMap::new(),
             undo_purge_ticks: 0,
             sent_player_touch: std::collections::HashSet::new(),
             cvar_new: Vec::new(),
@@ -2700,6 +2857,7 @@ impl<'w> Server<'w> {
             "sbox_maxprops" => self.sandbox.limits.max_props = num as i32,
             "sbox_maxragdolls" => self.sandbox.limits.max_ragdolls = num as i32,
             "sbox_maxnpcs" => self.sandbox.limits.max_npcs = num as i32,
+            "sbox_maxvehicles" => self.sandbox.limits.max_vehicles = num as i32,
             "sbox_maxconstraints" => self.sandbox.limits.max_constraints = num as i32,
             "sbox_maxropeconstraints" => self.sandbox.limits.max_ropeconstraints = num as i32,
             "sbox_playershurtplayers" => self.players_hurt_players = num != 0.0,
@@ -4488,6 +4646,203 @@ impl<'w> Server<'w> {
         Some(id)
     }
 
+    /// `Spawn_Vehicle` (`gm_spawnvehicle <key>`, creator type 2): the list entry's model as a
+    /// physics prop at `HitPos + HitNormal * Offset`, facing the player (yaw + 180); counted and
+    /// cleaned up as `vehicles` (`sbox_maxvehicles` 4), undo "Vehicle".
+    pub fn spawn_vehicle(&mut self, player: u32, key: &str) -> Option<u32> {
+        if !self.players.get(&player).is_some_and(|p| p.alive) {
+            return None;
+        }
+        let def = *vehicle_def(key)?;
+        let mut events = Vec::new();
+        if !self.sandbox.check_limit(player, "vehicles", &mut events) {
+            self.events.extend(events);
+            return None;
+        }
+        let hit = self.tool_hit(player)?;
+        let yaw = self
+            .players
+            .get(&player)
+            .map(|p| p.view_angles.y)
+            .unwrap_or(0.0);
+        if !self.models.contains_key(def.model) {
+            let loaded = self.model_loader.as_mut().and_then(|f| f(def.model))?;
+            self.register_model(def.model, loaded);
+        }
+        let pos = hit.pos + hit.normal * def.offset;
+        let id = self.sandbox.restore_prop(
+            player,
+            def.model,
+            pos,
+            Vec3::new(0.0, yaw + 180.0, 0.0),
+            false,
+        );
+        self.sandbox.add_count(player, "vehicles", id);
+        self.sandbox.add_cleanup(player, "vehicles", id);
+        self.sync_physics();
+        let health = def.health.unwrap_or_else(|| {
+            self.models
+                .get(def.model)
+                .map(|m| m.prop_data.health)
+                .unwrap_or(0)
+        });
+        self.vehicles.insert(
+            id,
+            Vehicle {
+                key: def.key.to_string(),
+                class: def.class.to_string(),
+                model: def.model.to_string(),
+                health,
+                // measured: pods / chairs read GetMaxHealth 1 with 0 health, the cars 0
+                max_health: if def.class == "prop_vehicle_prisoner_pod" && health == 0 {
+                    1
+                } else {
+                    health
+                },
+                driver: None,
+            },
+        );
+        let name = vehicle_name(&def);
+        self.sandbox.push_undo(
+            player,
+            "Vehicle",
+            format!("#undo.generic.vehicle ({name})"),
+            Some(format!("Undone {name}")),
+            vec![id],
+        );
+        self.events.extend(events);
+        Some(id)
+    }
+
+    /// Pose of a vehicle's attachment in the world (model space through the prop's transform).
+    fn vehicle_attachment(&self, veh: u32, name: &str) -> Option<(Vec3, Vec3)> {
+        let prop = self.sandbox.props().iter().find(|p| p.id == veh)?;
+        let att = self
+            .models
+            .get(&prop.model)?
+            .attachments
+            .iter()
+            .find(|a| a.name == name)?;
+        let rot = gm_sandbox::rotation(prop.angles);
+        Some((prop.pos + rot * att.pos, rot * att.forward))
+    }
+
+    /// `Player:EnterVehicle`: the body moves to the seat (`vehicle_feet_passenger0`, else the
+    /// vehicle's origin), takes the vehicle's angles and stops moving on its own (MOVETYPE_NOCLIP
+    /// in the game); a vehicle seats one player.
+    pub fn enter_vehicle(&mut self, player: u32, veh: u32) -> bool {
+        let Some(v) = self.vehicles.get(&veh) else {
+            return false;
+        };
+        if v.driver.is_some()
+            || self
+                .players
+                .get(&player)
+                .is_none_or(|p| !p.alive || p.seat.is_some())
+        {
+            return false;
+        }
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == veh).cloned() else {
+            return false;
+        };
+        let seat = self
+            .vehicle_attachment(veh, "vehicle_feet_passenger0")
+            .map(|a| a.0)
+            .unwrap_or(prop.pos);
+        self.drop_carry(player);
+        if let Some(p) = self.players.get_mut(&player) {
+            p.seat = Some(veh);
+            p.state.origin = seat;
+            p.state.velocity = Vec3::ZERO;
+            p.view_angles = prop.angles;
+        }
+        if let Some(v) = self.vehicles.get_mut(&veh) {
+            v.driver = Some(player);
+        }
+        self.game_events.push(GameEvent::EnterVehicle {
+            player,
+            vehicle: veh,
+        });
+        true
+    }
+
+    /// `Player:ExitVehicle` (measured): a pod / chair puts the player 100 u to the vehicle's
+    /// left and 12 u up facing that way (yaw + 90), a jeep 90 u behind and 11.5 u up facing
+    /// away from it; the body then falls to the floor.
+    pub fn exit_vehicle(&mut self, player: u32) -> bool {
+        let Some(veh) = self.players.get(&player).and_then(|p| p.seat) else {
+            return false;
+        };
+        let (pos, yaw) = match self.sandbox.props().iter().find(|p| p.id == veh) {
+            Some(prop) => {
+                let rot = gm_sandbox::rotation(prop.angles);
+                let (fwd, right, up) = (rot * Vec3::X, rot * Vec3::NEG_Y, rot * Vec3::Z);
+                let jeep = self
+                    .vehicles
+                    .get(&veh)
+                    .is_some_and(|v| v.class == "prop_vehicle_jeep");
+                if jeep {
+                    (prop.pos - fwd * 90.0 + up * 11.5, prop.angles.y + 180.0)
+                } else {
+                    (prop.pos - right * 100.0 + up * 12.0, prop.angles.y + 90.0)
+                }
+            }
+            None => (
+                self.players[&player].state.origin,
+                self.players[&player].view_angles.y,
+            ),
+        };
+        if let Some(p) = self.players.get_mut(&player) {
+            p.seat = None;
+            p.state.origin = pos;
+            p.state.velocity = Vec3::ZERO;
+            p.view_angles = Vec3::new(0.0, yaw.rem_euclid(360.0), 0.0);
+        }
+        if let Some(v) = self.vehicles.get_mut(&veh) {
+            v.driver = None;
+        }
+        self.game_events.push(GameEvent::ExitVehicle {
+            player,
+            vehicle: veh,
+        });
+        true
+    }
+
+    /// Seated players ride their vehicle's seat point; a vehicle that went drops its driver.
+    fn ride_vehicles(&mut self) {
+        let seated: Vec<(u32, u32)> = self
+            .players
+            .iter()
+            .filter_map(|(id, p)| p.seat.map(|v| (*id, v)))
+            .collect();
+        for (player, veh) in seated {
+            if !self.vehicles.contains_key(&veh)
+                || !self.sandbox.props().iter().any(|p| p.id == veh)
+            {
+                if let Some(p) = self.players.get_mut(&player) {
+                    p.seat = None;
+                }
+                continue;
+            }
+            let seat = self
+                .vehicle_attachment(veh, "vehicle_feet_passenger0")
+                .map(|a| a.0)
+                .or_else(|| {
+                    self.sandbox
+                        .props()
+                        .iter()
+                        .find(|p| p.id == veh)
+                        .map(|p| p.pos)
+                });
+            if let (Some(seat), Some(p)) = (seat, self.players.get_mut(&player)) {
+                p.state.origin = seat;
+                p.state.velocity = Vec3::ZERO;
+            }
+        }
+        self.vehicles
+            .retain(|id, _| self.sandbox.props().iter().any(|p| p.id == *id));
+    }
+
     /// `Spawn_NPC` (`gmod_spawnnpc <key> <weapon>`, creator type 1): the list entry's class at
     /// `HitPos + HitNormal * Offset` (32 unless the entry says otherwise), dropped to the floor
     /// for walkers, facing the player (yaw + 180), with the class's health, hull and the given
@@ -4670,6 +5025,14 @@ impl<'w> Server<'w> {
     /// NPCs whose undo / cleanup entry went: the sandbox no longer lists them as foreign.
     fn prune_npcs(&mut self) {
         self.npcs.retain(|id, _| self.sandbox.is_foreign(*id));
+        let live: std::collections::BTreeSet<u32> =
+            self.sandbox.props().iter().map(|p| p.id).collect();
+        self.vehicles.retain(|id, _| live.contains(id));
+        for p in self.players.values_mut() {
+            if p.seat.is_some_and(|v| !live.contains(&v)) {
+                p.seat = None;
+            }
+        }
     }
 
     /// Replace a player's inventory with exactly `classes` (the probe's bot carries only the
@@ -5852,7 +6215,9 @@ impl<'w> Server<'w> {
                 self.sandbox.button_use(ent, player, false);
             }
         }
-        if use_pressed
+        if use_pressed && self.players.get(&player).is_some_and(|p| p.seat.is_some()) {
+            self.exit_vehicle(player);
+        } else if use_pressed
             && self
                 .players
                 .get(&player)
@@ -5869,6 +6234,12 @@ impl<'w> Server<'w> {
                     if use_pressed && self.sandbox.button_use(ent, player, true) {
                         if let Some(p) = self.players.get_mut(&player) {
                             p.use_target = Some(ent);
+                        }
+                        return;
+                    }
+                    if self.vehicles.contains_key(&ent) {
+                        if use_pressed {
+                            self.enter_vehicle(player, ent);
                         }
                         return;
                     }
@@ -6200,7 +6571,7 @@ impl<'w> Server<'w> {
                     buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
                     ..pc.cmd
                 };
-                if p.driving.is_some() {
+                if p.driving.is_some() || p.seat.is_some() {
                     // the driver's body stays where it is (measured: origin never moves)
                     cmd.buttons = 0;
                     cmd.forward_move = 0.0;
@@ -6306,6 +6677,7 @@ impl<'w> Server<'w> {
         self.weapon_pickups();
         self.settle_npcs();
         self.remove_dead_npcs();
+        self.ride_vehicles();
         // undo.lua counts ticks with removals (its EntityRemoved hook coalesces them through a
         // 0 s timer) and purges all-dead undo lists on every 16th
         if self.events[events_at_start.min(self.events.len())..]
@@ -7502,6 +7874,9 @@ impl<'w> Server<'w> {
             }
             1 => {
                 self.spawn_npc(player, &name, "none");
+            }
+            2 => {
+                self.spawn_vehicle(player, &name);
             }
             _ => {}
         }

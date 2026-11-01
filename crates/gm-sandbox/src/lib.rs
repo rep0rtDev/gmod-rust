@@ -113,6 +113,7 @@ pub struct Limits {
     pub max_cameras: i32,
     pub max_ragdolls: i32,
     pub max_npcs: i32,
+    pub max_vehicles: i32,
 }
 
 impl Default for Limits {
@@ -133,6 +134,7 @@ impl Default for Limits {
             max_cameras: 10,
             max_ragdolls: 10,
             max_npcs: 10,
+            max_vehicles: 4,
         }
     }
 }
@@ -143,6 +145,7 @@ impl Limits {
             "props" => self.max_props,
             "ragdolls" => self.max_ragdolls,
             "npcs" => self.max_npcs,
+            "vehicles" => self.max_vehicles,
             "constraints" => self.max_constraints,
             "ropeconstraints" => self.max_ropeconstraints,
             "thrusters" => self.max_thrusters,

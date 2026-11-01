@@ -542,6 +542,15 @@ crates = ["gm-server", "gm-sandbox"]
 pos = 2.0
 
 [[harness]]
+name = "server_vehicle_spawn"
+scenario = "server/vehicle_spawn"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
 name = "server_npc_damage"
 scenario = "server/npc_damage"
 compare = "server"

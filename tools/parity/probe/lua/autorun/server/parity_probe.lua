@@ -1043,6 +1043,22 @@ SCENARIOS.toolgun = function(scn, done)
 		end
 		table.sort(out.npcs, function(a, b) return a.index < b.index end)
 		-- corpses: every prop_ragdoll on the map that is not one of the bot's spawned props
+		out.vehicles = {}
+		for _, e in ipairs(ents.GetAll()) do
+			if e:IsVehicle() then
+				local p, a = e:GetPos(), e:GetAngles()
+				local mn, mx = e:OBBMins(), e:OBBMaxs()
+				local ph = e:GetPhysicsObject()
+				local d = e:GetDriver()
+				out.vehicles[#out.vehicles + 1] = { index = e:EntIndex(), class = e:GetClass(), key = e.VehicleName, model = e:GetModel(), pos = vec(p), ang = { a.p, a.y, a.r },
+					mins = vec(mn), maxs = vec(mx), health = e:Health(), maxhealth = e:GetMaxHealth(), movetype = e:GetMoveType(), solid = e:GetSolid(),
+					mass = IsValid(ph) and ph:GetMass() or -1, asleep = IsValid(ph) and ph:IsAsleep() or false, vel = IsValid(ph) and vec(ph:GetVelocity()) or nil,
+					driver = IsValid(d) and d:EntIndex() or -1, script = e:GetKeyValues().vehiclescript or e:GetInternalVariable("m_vehicleScript") or "", colgroup = e:GetCollisionGroup(),
+					bodygroups = e:GetBodyGroups() and #e:GetBodyGroups() or 0, skin = e:GetSkin() }
+			end
+		end
+		table.sort(out.vehicles, function(a, b) return a.index < b.index end)
+		out.bot = { pos = vec(bot:GetPos()), ang = { bot:EyeAngles().p, bot:EyeAngles().y, bot:EyeAngles().r }, invehicle = bot:InVehicle(), movetype = bot:GetMoveType(), vehicle = IsValid(bot:GetVehicle()) and bot:GetVehicle():EntIndex() or -1 }
 		out.damage = PARITY_NPC_DAMAGE or {}
 		PARITY_NPC_DAMAGE = {}
 		out.ragdolls = {}
@@ -1234,6 +1250,19 @@ SCENARIOS.toolgun = function(scn, done)
 			-- the bot gets and selects a weapon (`Give` + `SelectWeapon`) to shoot NPCs with
 			bot:Give(op.class)
 			bot:SelectWeapon(op.class)
+		elseif op.op == "spawnvehicle" then
+			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			local eye = bot:GetShootPos()
+			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 4096, filter = { bot } })
+			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal) }
+			concommand.Run(bot, "gm_spawnvehicle", { op.class }, op.class)
+		elseif op.op == "enter" then
+			-- the bot takes the (first / matching) vehicle's seat like +use would
+			for _, e in ipairs(ents.GetAll()) do
+				if e:IsVehicle() and (not op.class or e.VehicleName == op.class) then bot:EnterVehicle(e) break end
+			end
+		elseif op.op == "exit" then
+			bot:ExitVehicle()
 		elseif op.op == "firebullets" then
 			-- the bot's bullet (`Player:FireBullets`) at the first NPC's centre with the ammo's player damage cvar
 			local target

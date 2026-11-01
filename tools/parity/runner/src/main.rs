@@ -4313,6 +4313,10 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         physics.add_static_mesh(&disp_pos, &disp_idx, world_surface)?;
     }
     let mut server = gm_server::Server::new(&collision, physics, world_body);
+    let loader_mount = gm_content::Mount::for_install(&inst)?;
+    let loader: gm_server::ModelLoader =
+        Box::new(move |m: &str| gm_dedicated::model_info(&loader_mount, m).ok());
+    server.model_loader = Some(loader);
     let player = 1u32;
     let start = Vec3::from(scn.start.unwrap_or([0.0; 3]));
     let ang = scn.angles.clone().unwrap_or_default();
@@ -4404,7 +4408,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
     let snapshot = |server: &gm_server::Server| -> Value {
         let sb = &server.sandbox;
         json!({
-            "props": sb.props().iter().filter(|p| server.world_weapon_class(p.id).is_none() && if all_props { p.owner == 0 } else { p.owner == player }).map(|p| json!({
+            "props": sb.props().iter().filter(|p| server.world_weapon_class(p.id).is_none() && !server.vehicles.contains_key(&p.id) && if all_props { p.owner == 0 } else { p.owner == player }).map(|p| json!({
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen,
                 "bone_scales": server.bone_scales(p.id).iter().map(|(b, s)| json!({ "bone": b, "s": [s.x, s.y, s.z] })).collect::<Vec<_>>(),
                 "bone_angles": server.bone_angles(p.id).iter().map(|(b, a)| json!({ "bone": b, "a": [a.x, a.y, a.z] })).collect::<Vec<_>>(),
@@ -4414,10 +4418,24 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             })).collect::<Vec<_>>(),
             "world_decals": decal_rows(server.decals(0)),
             // creator: what the player spawned during the ops (scenario props have no owner)
-            "spawned": sb.props().iter().filter(|p| (all_props || server.world_weapon_class(p.id).is_some()) && p.owner == player).map(|p| json!({
+            "spawned": sb.props().iter().filter(|p| (all_props || server.world_weapon_class(p.id).is_some()) && p.owner == player && !server.vehicles.contains_key(&p.id)).map(|p| json!({
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
                 "class": server.world_weapon_class(p.id).unwrap_or("prop_physics"),
             })).collect::<Vec<_>>(),
+            "vehicles": server.vehicles.iter().filter_map(|(id, v)| {
+                let p = server.sandbox.props().iter().find(|p| p.id == *id)?;
+                Some(json!({
+                    "index": id, "key": v.key, "class": v.class, "model": v.model,
+                    "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
+                    "health": v.health, "maxhealth": v.max_health, "driver": v.driver.map(|d| d as i64).unwrap_or(-1),
+                }))
+            }).collect::<Vec<_>>(),
+            "bot": server.players.get(&player).map(|pl| json!({
+                "pos": [pl.state.origin.x, pl.state.origin.y, pl.state.origin.z],
+                "ang": [pl.view_angles.x, pl.view_angles.y, pl.view_angles.z],
+                "invehicle": pl.seat.is_some(),
+                "vehicle": pl.seat.map(|v| v as i64).unwrap_or(-1),
+            })),
             "npcs": server.npcs.iter().map(|(id, n)| json!({
                 "index": id, "key": n.key, "class": n.class, "model": n.model, "skin": n.skin,
                 "pos": [n.pos.x, n.pos.y, n.pos.z], "ang": [n.angles.x, n.angles.y, n.angles.z],
@@ -4518,6 +4536,24 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 if let Some(t) = target {
                     server.teleport_player(player, t);
                 }
+            }
+            "spawnvehicle" => {
+                let key = op.class.clone().unwrap_or_default();
+                rec["class"] = json!(key);
+                server.spawn_vehicle(player, &key);
+            }
+            "enter" => {
+                let veh = server
+                    .vehicles
+                    .iter()
+                    .find(|(_, v)| op.class.as_deref().is_none_or(|c| c == v.key))
+                    .map(|(id, _)| *id);
+                if let Some(veh) = veh {
+                    server.enter_vehicle(player, veh);
+                }
+            }
+            "exit" => {
+                server.exit_vehicle(player);
             }
             "firebullets" => {
                 // the game's op aims `Player:FireBullets` at the first (matching) NPC's centre
@@ -5691,6 +5727,48 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             ta["spawned"].as_array().cloned().unwrap_or_default(),
             oa["spawned"].as_array().cloned().unwrap_or_default(),
         );
+        if ta["vehicles"].is_array() && oa["vehicles"].is_array() {
+            let (tv, ov) = (
+                ta["vehicles"].as_array().cloned().unwrap_or_default(),
+                oa["vehicles"].as_array().cloned().unwrap_or_default(),
+            );
+            if tv.len() != ov.len() {
+                println!("  op {i}: {} vehicles vs {}", tv.len(), ov.len());
+                ok = false;
+            }
+            for (a, b) in tv.iter().zip(&ov) {
+                let dp = (v3(&a["pos"]) - v3(&b["pos"])).length();
+                let da = gm_sandbox::rotation(v3(&a["ang"]))
+                    .angle_between(gm_sandbox::rotation(v3(&b["ang"])))
+                    .to_degrees();
+                let driven = |x: &Value| x["driver"].as_i64().unwrap_or(-1) >= 0;
+                if a["key"] != b["key"]
+                    || a["class"] != b["class"]
+                    || a["model"] != b["model"]
+                    || dp > pos_tol
+                    || da > 5.0
+                    || a["health"] != b["health"]
+                    || a["maxhealth"] != b["maxhealth"]
+                    || driven(a) != driven(b)
+                {
+                    println!("  op {i}: vehicle {} pos err {dp:.3} angle err {da:.2} hp {}/{} driver {} vs {} {} hp {}/{} driver {}", a["key"], a["health"], a["maxhealth"], a["driver"], b["key"], b["model"], b["health"], b["maxhealth"], b["driver"]);
+                    ok = false;
+                }
+            }
+            if ta["bot"].is_object() && oa["bot"].is_object() {
+                let (tb, ob) = (&ta["bot"], &oa["bot"]);
+                let dp = (v3(&tb["pos"]) - v3(&ob["pos"])).length();
+                if tb["invehicle"] != ob["invehicle"]
+                    || (tb["invehicle"].as_bool() == Some(true) && dp > pos_tol)
+                {
+                    println!(
+                        "  op {i}: bot in vehicle {} vs {} pos err {dp:.3}",
+                        tb["invehicle"], ob["invehicle"]
+                    );
+                    ok = false;
+                }
+            }
+        }
         if ta["npcs"].is_array() && oa["npcs"].is_array() {
             let (tn, on) = (
                 ta["npcs"].as_array().cloned().unwrap_or_default(),

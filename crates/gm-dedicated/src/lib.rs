@@ -263,6 +263,7 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
         }
     });
     Ok(gm_server::ModelInfo {
+        attachments: model_attachments(&mdl),
         ragdoll,
         bounds: gm_sandbox::ModelBounds {
             min: Vec3::from(mdl.header.hull_min),
@@ -384,6 +385,39 @@ impl ServerConfig {
             })
             .collect()
     }
+}
+
+/// Attachments carried into model space through their bone's bind pose (the bone chain's
+/// `pos` / `quat`, the pose a static prop is drawn in).
+fn model_attachments(mdl: &gm_formats::mdl::Mdl) -> Vec<gm_server::ModelAttachment> {
+    fn bind(mdl: &gm_formats::mdl::Mdl, bone: usize) -> glam::Mat4 {
+        let b = &mdl.bones[bone];
+        let local = glam::Mat4::from_rotation_translation(
+            glam::Quat::from_array(b.quat).normalize(),
+            glam::Vec3::from_array(b.pos),
+        );
+        if b.parent >= 0 && (b.parent as usize) < mdl.bones.len() && b.parent as usize != bone {
+            bind(mdl, b.parent as usize) * local
+        } else {
+            local
+        }
+    }
+    mdl.attachments
+        .iter()
+        .filter_map(|a| {
+            let bone = a.bone.max(0) as usize;
+            if bone >= mdl.bones.len() {
+                return None;
+            }
+            let m = bind(mdl, bone);
+            let l = &a.local;
+            Some(gm_server::ModelAttachment {
+                name: a.name.clone(),
+                pos: m.transform_point3(glam::Vec3::new(l[0][3], l[1][3], l[2][3])),
+                forward: m.transform_vector3(glam::Vec3::new(l[0][0], l[1][0], l[2][0])),
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

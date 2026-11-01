@@ -1114,6 +1114,16 @@ impl Runtime {
                     p.strs.push(("class", class));
                     "npc.killed"
                 }
+                E::EnterVehicle { player, vehicle } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("vehicle", vehicle as i64));
+                    "player.enter_vehicle"
+                }
+                E::ExitVehicle { player, vehicle } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("vehicle", vehicle as i64));
+                    "player.exit_vehicle"
+                }
                 E::Drop { player, ent } => {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("entity", ent as i64));
