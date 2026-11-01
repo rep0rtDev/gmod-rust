@@ -91,7 +91,7 @@ Wheel motor as fitted (`gm_sandbox::wheel_spin_step`; a changed `Scale` drives f
 
 ## Not yet measured
 
-The other stools (camera, inflator, eyeposer, faceposer, finger, paint, creator, editentity, leafblower), wheel / button / dynamite in gm-sandbox (measured above), the thruster's effects / sound / damage settings, the hull-trace fallback, ragdoll bones, the keyframe_rope's own simulation, force / torque limits breaking a constraint (the pulley's `forcelimit` is stored only), an unbalanced pulley (both measured pairs weigh the same).
+The other stools (inflator, eyeposer, faceposer, finger, paint, creator, editentity, leafblower), wheel / button / dynamite in gm-sandbox (measured above), the thruster's effects / sound / damage settings, the hull-trace fallback, ragdoll bones, the keyframe_rope's own simulation, force / torque limits breaking a constraint (the pulley's `forcelimit` is stored only), an unbalanced pulley (both measured pairs weigh the same).
 
 ### remover (measured, `toolgun_remover`)
 
@@ -174,3 +174,33 @@ its own collisions disabled. Settings on creation: `delay` clamped 0.05..20, `sc
 new entity. Numpad: with toggle the key down flips `on`, key up does nothing; without toggle the key
 holds `on` while down. Undo `gmod_emitter` and cleanup `emitters` as the other devices; ghost model
 on the client, saves and dupes carry the state. The particle effect itself is client-side (frontend).
+
+### camera (measured, `toolgun_camera`)
+
+Recorded on srcds (`tools/parity/scenarios/toolgun/camera.json`: six cameras on keys 37..41, numpad
+in both modes, key -1, undo, cleanup). `camera.lua` / `gmod_cameraprop`, `models/dav0r/camera.mdl`,
+limit `sbox_maxcameras` 10, cleanup `cameras`, undo `gmod_cameraprop`:
+
+- a click puts the camera at `trace.StartPos` (the eye) with the player's eye angles (pitch, yaw,
+  0), physics asleep (`PhysObj:Sleep`, so it hangs where it was made until touched),
+  `COLLISION_GROUP_WEAPON`; key -1 is `false`;
+- your cameras on the same control key are removed first (`ents.Remove`, gone at the end of the
+  tick) and their presence lets you past the limit; `locked` makes it `MOVETYPE_NONE` /
+  `SOLID_BBOX` / `COLLISION_GROUP_WORLD`, physgun-proof;
+- a right click is the left click plus `SetTracking(trace.Entity, WorldToLocal(HitPos))` (the
+  world becomes the player at its origin), which also makes it `MOVETYPE_NONE` / `SOLID_BBOX`; the
+  angles follow the target client-side only, the server keeps the eye angles;
+- the toolgun trace starts inside the camera that sits at the eye: the engine reports a
+  `startsolid` hit at fraction 0 on that camera with a zero normal, so the second click on a key
+  tracks or hits the previous camera (ours: `trace_line` returns the containing prop at the start);
+- numpad: with toggle `Camera_Toggle` flips `Player:SetViewEntity` on key down (back to the player
+  when this camera was the one in use); without toggle `Camera_On` holds the view while the key is
+  down and `Camera_Off` restores it. `UsingPlayer` on the camera sticks until it is turned off
+  through it (a camera turned on, then superseded by another, still reports a viewer);
+- `OnRemove` resets the viewer's view with the engine's deferred deletion, one tick after undo /
+  cleanup / replacement (the snapshot right after the op still shows the view);
+- `ENT:CanTool` is `false` while `MOVETYPE_NONE` (locked or tracking): every stool click on such a
+  camera is refused.
+
+Saves and dupes carry key / toggle / locked / tracking; the view entity itself is per player and
+not saved. Rendering through the camera is client work (frontend).

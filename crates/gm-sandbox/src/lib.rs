@@ -104,6 +104,7 @@ pub struct Limits {
     pub max_lamps: i32,
     pub max_lights: i32,
     pub max_emitters: i32,
+    pub max_cameras: i32,
 }
 
 impl Default for Limits {
@@ -121,6 +122,7 @@ impl Default for Limits {
             max_lamps: 3,
             max_lights: 5,
             max_emitters: 20,
+            max_cameras: 10,
         }
     }
 }
@@ -140,6 +142,7 @@ impl Limits {
             "lamps" => self.max_lamps,
             "lights" => self.max_lights,
             "emitters" => self.max_emitters,
+            "cameras" => self.max_cameras,
             _ => -1,
         }
     }
@@ -622,6 +625,9 @@ pub struct ToolSettings {
     pub emitter_toggle: bool,
     pub emitter_starton: bool,
     pub emitter_effect: String,
+    pub camera_key: i32,
+    pub camera_toggle: bool,
+    pub camera_locked: bool,
     pub dynamite_remove: bool,
 }
 
@@ -665,7 +671,7 @@ impl ToolSettings {
             pulley_rigid, thruster_toggle, thruster_collision, wheel_nocollide, wheel_toggle,
             motor_nocollide, motor_toggle,
             button_toggle, dynamite_remove, lamp_toggle, light_toggle, physprop_gravity_toggle,
-            emitter_toggle, emitter_starton;
+            emitter_toggle, emitter_starton, camera_toggle, camera_locked;
             rope_material, slider_material, elastic_material, hydraulic_material, winch_material,
             muscle_material, pulley_material, thruster_model, thruster_soundname, hoverball_model,
             balloon_model,
@@ -674,7 +680,7 @@ impl ToolSettings {
             hydraulic_key, winch_fwd_key, winch_bwd_key, muscle_key, thruster_key,
             thruster_key_back, hoverball_key_up, hoverball_key_down, hoverball_key_on, wheel_fwd,
             wheel_bck, motor_fwd, motor_bwd, button_keygroup, dynamite_group, lamp_key, light_key,
-            emitter_key
+            emitter_key, camera_key
         )
     }
 }
@@ -814,6 +820,9 @@ impl Default for ToolSettings {
             emitter_toggle: true,
             emitter_starton: false,
             emitter_effect: "sparks".into(),
+            camera_key: 37,
+            camera_toggle: true,
+            camera_locked: false,
             dynamite_remove: false,
         }
     }
@@ -836,6 +845,9 @@ pub struct ToolHit {
     /// `None` is the world.
     pub ent: Option<u32>,
     pub fraction: f32,
+    /// Where the trace started (the player's eye) and the direction it looked.
+    pub start: Vec3,
+    pub dir: Vec3,
 }
 
 /// `MAX_TRACE_LENGTH` of the engine, the reach of `util.GetPlayerTrace`.
@@ -907,17 +919,35 @@ fn ray_convex(start: Vec3, end: Vec3, planes: &[(Vec3, f32)]) -> Option<(f32, Ve
 /// A line trace against the world (brushes and displacements, `MASK_SOLID`) and the props'
 /// collision hulls; the nearest hit wins. `None` entity is the world.
 pub fn trace_line(world: &World, props: &[PropBody], start: Vec3, end: Vec3) -> Option<ToolHit> {
+    let dir = (end - start).normalize_or_zero();
     let tr = world.trace_ray(start, end, MASK_SOLID);
     let mut best = tr.hit().then_some(ToolHit {
         pos: tr.end,
         normal: tr.normal,
         ent: None,
         fraction: tr.fraction,
+        start,
+        dir,
     });
     for p in props {
         let rot = rotation(p.angles);
         let inv = rot.inverse();
         let (ls, le) = (inv * (start - p.pos), inv * (end - p.pos));
+        // a start inside a prop (a camera at the eye): the engine's `startsolid` hit at fraction
+        // 0 on that entity, with a zero normal
+        if p.hulls
+            .iter()
+            .any(|h| h.iter().all(|&(n, d)| n.dot(ls) - d <= 0.0))
+        {
+            return Some(ToolHit {
+                pos: start,
+                normal: Vec3::ZERO,
+                ent: Some(p.id),
+                fraction: 0.0,
+                start,
+                dir,
+            });
+        }
         for hull in &p.hulls {
             if let Some((t, n)) = ray_convex(ls, le, hull) {
                 if best.is_none_or(|b| t < b.fraction) {
@@ -926,6 +956,8 @@ pub fn trace_line(world: &World, props: &[PropBody], start: Vec3, end: Vec3) -> 
                         normal: rot * n,
                         ent: Some(p.id),
                         fraction: t,
+                        start,
+                        dir,
                     });
                 }
             }
@@ -964,6 +996,10 @@ pub struct Sandbox {
     blasts: Vec<(Vec3, f32, u32)>,
     /// The remover's `timer.Simple(1)` deletions: seconds left per prop.
     removing: BTreeMap<u32, f32>,
+    /// `Player:SetViewEntity`: the camera a player looks through.
+    view: BTreeMap<u32, u32>,
+    /// `ents.Remove` from a stool: gone at the end of the tick, untouched until then.
+    deleting: Vec<u32>,
 }
 
 /// The thruster tool's sound list (`ThrusterSounds`); `StartThrustSound` ignores any other
@@ -1117,7 +1153,19 @@ pub enum Device {
         effect: String,
         scale: f32,
     },
+    /// gmod_cameraprop: a view entity for its owner; `tracking` is `(entity, local point)`
+    /// with `None` for the player, `viewer` the player who last turned it on
+    Camera {
+        key: i32,
+        toggle: bool,
+        locked: bool,
+        tracking: Option<(Option<u32>, Vec3)>,
+        viewer: Option<u32>,
+    },
 }
+
+/// gmod_cameraprop's model.
+pub const CAMERA_MODEL: &str = "models/dav0r/camera.mdl";
 
 /// trails.lua's `trail_materials` (outside single player only these get through).
 pub const TRAIL_MATERIALS: &[&str] = &[
@@ -1290,7 +1338,8 @@ impl Device {
             | Device::Lamp { .. }
             | Device::Light { .. }
             | Device::Trail { .. }
-            | Device::Emitter { .. } => None,
+            | Device::Emitter { .. }
+            | Device::Camera { .. } => None,
         }
     }
 
@@ -1357,6 +1406,8 @@ pub enum NumpadBind {
     LightSwitch(u32),
     /// `Emitter_On` / `Emitter_Off`
     Emitter(u32),
+    /// `Camera_Toggle` or `Camera_On` / `Camera_Off`
+    Camera(u32),
     /// Down sets the direction, up stops (a non-toggle winch).
     WinchDir(u32, i8),
     WinchToggle(u32, i8),
@@ -1376,6 +1427,7 @@ impl NumpadBind {
             | NumpadBind::Dynamite(c)
             | NumpadBind::LightSwitch(c)
             | NumpadBind::Emitter(c)
+            | NumpadBind::Camera(c)
             | NumpadBind::WinchDir(c, _)
             | NumpadBind::WinchToggle(c, _)
             | NumpadBind::MuscleToggle(c) => c,
@@ -1770,6 +1822,10 @@ impl Sandbox {
     pub fn remove_entity(&mut self, id: u32) {
         let was_prop = self.props.iter().any(|p| p.id == id);
         self.props.retain(|p| p.id != id);
+        if was_prop {
+            // the device state of a prop (camera, lamp, ...) dies with it
+            self.devices.remove(&id);
+        }
         self.constraints
             .retain(|c| c.id != id && !(was_prop && (c.ent1 == Some(id) || c.ent2 == Some(id))));
         // a motor and its Axis delete each other, both go with their prop
@@ -1882,6 +1938,13 @@ impl Sandbox {
         hit: &ToolHit,
         events: &mut Vec<Event>,
     ) -> bool {
+        if !self.can_tool(hit) {
+            return false;
+        }
+        if tool == "camera" {
+            // camera.lua: `RightClick = LeftClick + SetTracking(trace.Entity, local hit)`
+            return self.camera_click(player, hit, true, events);
+        }
         if tool == "balloon" || tool == "light" {
             // light.lua: `RightClick = LeftClick(trace, false)`, no rope
             return self.place_device(player, tool, hit, false, events);
@@ -2161,6 +2224,152 @@ impl Sandbox {
         true
     }
 
+    /// `ENT:CanTool`: a locked or tracking camera (`MOVETYPE_NONE`) refuses every stool.
+    fn can_tool(&self, hit: &ToolHit) -> bool {
+        let Some(e) = hit.ent else {
+            return true;
+        };
+        !matches!(
+            self.devices.get(&e),
+            Some(Device::Camera { locked: true, .. })
+                | Some(Device::Camera {
+                    tracking: Some(_),
+                    ..
+                })
+        )
+    }
+
+    /// `Player:GetViewEntity()` when it is not the player.
+    pub fn view_entity(&self, player: u32) -> Option<u32> {
+        self.view.get(&player).copied()
+    }
+
+    fn set_viewer(&mut self, cam: u32, who: Option<u32>) {
+        if let Some(Device::Camera { viewer, .. }) = self.devices.get_mut(&cam) {
+            *viewer = who;
+        }
+    }
+
+    /// gmod_cameraprop's numpad: `Camera_Toggle` flips the view on key down; `Camera_On` /
+    /// `Camera_Off` hold it. The camera remembers its last user (`UsingPlayer`) until it is
+    /// turned off through it.
+    fn camera_key(&mut self, player: u32, cam: u32, down: bool) {
+        let Some(Device::Camera { toggle, .. }) = self.devices.get(&cam) else {
+            return;
+        };
+        let toggle = *toggle;
+        let viewing = self.view.get(&player) == Some(&cam);
+        let on = if toggle {
+            if !down {
+                return;
+            }
+            !viewing
+        } else {
+            down
+        };
+        if on {
+            self.view.insert(player, cam);
+            self.set_viewer(cam, Some(player));
+        } else if viewing {
+            self.view.remove(&player);
+            self.set_viewer(cam, None);
+        }
+    }
+
+    /// camera.lua `LeftClick` / `MakeCamera`: `false` for key -1; your cameras on the same key
+    /// go (next tick, `ents.Remove`) and let you past the `cameras` limit; the new one sits at
+    /// the eye with the eye angles, asleep; locked or tracking makes it `MOVETYPE_NONE`. A
+    /// right click tracks the hit entity at the local hit point (the world and players: the
+    /// player at its origin).
+    fn camera_click(
+        &mut self,
+        player: u32,
+        hit: &ToolHit,
+        track: bool,
+        events: &mut Vec<Event>,
+    ) -> bool {
+        let s = self.tool_settings.clone();
+        let key = s.camera_key;
+        if key == -1 {
+            return false;
+        }
+        let same: Vec<u32> = self
+            .devices
+            .iter()
+            .filter(|(k, d)| {
+                matches!(d, Device::Camera { key: ck, .. } if *ck == key)
+                    && self.props.iter().any(|p| p.id == **k && p.owner == player)
+            })
+            .map(|(k, _)| *k)
+            .collect();
+        if same.is_empty() && !self.check_limit(player, "cameras", events) {
+            return false;
+        }
+        self.deleting.extend(same);
+        // `ply:EyeAngles()`, not the trace (which may end at the eye inside an old camera)
+        let dir = hit.dir;
+        let angles = Vec3::new(
+            (-dir.z).clamp(-1.0, 1.0).asin().to_degrees(),
+            dir.y.atan2(dir.x).to_degrees(),
+            0.0,
+        );
+        let tracking = track.then(|| {
+            let ent = hit.ent.filter(|e| self.props.iter().any(|p| p.id == *e));
+            let lpos = match ent.and_then(|e| self.props.iter().find(|p| p.id == e)) {
+                Some(p) => hit.pos - p.pos,
+                None => Vec3::ZERO,
+            };
+            (ent, lpos)
+        });
+        let locked = s.camera_locked;
+        let id = self.next_id;
+        self.next_id += 1;
+        self.props.push(Prop {
+            id,
+            owner: player,
+            model: CAMERA_MODEL.into(),
+            pos: hit.start,
+            angles,
+            frozen: locked || tracking.is_some(),
+            gravity: true,
+            collide: true,
+            upright: None,
+            health: 0,
+            skin: 0,
+            body: String::new(),
+            fire: None,
+            material: String::new(),
+            color: [255; 4],
+            render_mode: 0,
+            render_fx: 0,
+            phys_material: String::new(),
+        });
+        self.devices.insert(
+            id,
+            Device::Camera {
+                key,
+                toggle: s.camera_toggle,
+                locked,
+                tracking,
+                viewer: None,
+            },
+        );
+        self.numpad
+            .entry((player, key))
+            .or_default()
+            .push(NumpadBind::Camera(id));
+        self.add_count(player, "cameras", id);
+        self.add_cleanup(player, "cameras", id);
+        self.push_undo(
+            player,
+            "gmod_cameraprop",
+            "gmod_cameraprop".into(),
+            None,
+            vec![id],
+        );
+        true
+    }
+
     /// The trail on an entity goes (`SetTrails` always removes the old one first).
     fn remove_trail(&mut self, ent: u32) {
         self.devices
@@ -2233,7 +2442,10 @@ impl Sandbox {
     /// Advances the remover's timers; the props whose second is up are to be deleted
     /// (`remove_entity`) by the caller.
     pub fn tick_removals(&mut self, dt: f32) -> Vec<u32> {
-        let mut due = Vec::new();
+        // `OnRemove` of a camera runs with the engine's deferred deletion at the end of the
+        // tick: until then its viewer still looks through it
+        self.view.retain(|_, c| self.devices.contains_key(c));
+        let mut due = std::mem::take(&mut self.deleting);
         for (id, left) in self.removing.iter_mut() {
             *left -= dt;
             if *left <= 1e-4 {
@@ -2269,6 +2481,7 @@ impl Sandbox {
                 | "physprop"
                 | "trails"
                 | "emitter"
+                | "camera"
                 | "duplicator"
                 | "ballsocket"
                 | "slider"
@@ -3237,8 +3450,14 @@ impl Sandbox {
         hit: &ToolHit,
         events: &mut Vec<Event>,
     ) -> bool {
+        if !self.can_tool(hit) {
+            return false;
+        }
         if tool == "trails" {
             return self.trails_click(player, hit);
+        }
+        if tool == "camera" {
+            return self.camera_click(player, hit, false, events);
         }
         if matches!(tool, "material" | "colour" | "physprop") {
             let s = self.tool_settings.clone();
@@ -3558,6 +3777,10 @@ impl Sandbox {
         let binds = binds.clone();
         let mut removed = Vec::new();
         for b in binds {
+            if let NumpadBind::Camera(cam) = &b {
+                self.camera_key(player, *cam, down);
+                continue;
+            }
             if let Some(dev) = self.devices.get_mut(&b.constraint()) {
                 match (b, dev) {
                     (
@@ -4025,6 +4248,8 @@ mod tests {
             normal: Vec3::Z,
             ent,
             fraction: 0.5,
+            start: Vec3::ZERO,
+            dir: Vec3::NEG_Z,
         };
         assert!(sb.tool_left_click(
             1,
@@ -4134,6 +4359,8 @@ mod tests {
             pos: Vec3::new(0.0, 0.0, z),
             normal: Vec3::Z,
             fraction: 0.5,
+            start: Vec3::ZERO,
+            dir: Vec3::NEG_Z,
         };
         assert!(sb.tool_left_click(1, "hydraulic", &hit(a, 19.0), &mut ev));
         assert_eq!(sb.tool(1).stage, 1);

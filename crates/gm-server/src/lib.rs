@@ -450,6 +450,11 @@ pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
             num("trails_endsize", 0.0, 0.0, 128.0),
             text("trails_material", "trails/lol"),
         ],
+        "camera" => vec![
+            key("camera_key", 37),
+            flag("camera_toggle", true),
+            flag("camera_locked", false),
+        ],
         "emitter" => vec![
             key("emitter_key", 51),
             num("emitter_delay", 1.0, 0.05, 20.0),
@@ -3589,7 +3594,8 @@ impl<'w> Server<'w> {
                 | gm_sandbox::Device::Lamp { .. }
                 | gm_sandbox::Device::Light { .. }
                 | gm_sandbox::Device::Trail { .. }
-                | gm_sandbox::Device::Emitter { .. } => {}
+                | gm_sandbox::Device::Emitter { .. }
+                | gm_sandbox::Device::Camera { .. } => {}
             }
         }
         self.sandbox.settle_wheel_scales();
@@ -3788,6 +3794,13 @@ impl<'w> Server<'w> {
                     };
                     if p.frozen {
                         self.physics.freeze(body);
+                    }
+                    if matches!(
+                        self.sandbox.devices().get(&p.id),
+                        Some(gm_sandbox::Device::Camera { .. })
+                    ) {
+                        // gmod_cameraprop spawns asleep: it hangs at the eye until touched
+                        self.physics.deactivate(body);
                     }
                     if !p.gravity {
                         self.physics.set_gravity(body, false);

@@ -117,6 +117,12 @@ pub enum SavedDeviceKind {
         effect: String,
         scale: f32,
     },
+    Camera {
+        key: i32,
+        toggle: bool,
+        locked: bool,
+        tracking: Option<(Option<u32>, [f32; 3])>,
+    },
 }
 
 impl From<&Device> for SavedDeviceKind {
@@ -280,6 +286,18 @@ impl From<&Device> for SavedDeviceKind {
                 on,
                 effect,
                 scale,
+            },
+            Device::Camera {
+                key,
+                toggle,
+                locked,
+                tracking,
+                ..
+            } => SavedDeviceKind::Camera {
+                key,
+                toggle,
+                locked,
+                tracking: tracking.map(|(e, l)| (e, l.to_array())),
             },
         }
     }
@@ -502,6 +520,21 @@ impl SavedDeviceKind {
                     scale,
                 },
                 vec![(key, NumpadBind::Emitter(id))],
+            ),
+            SavedDeviceKind::Camera {
+                key,
+                toggle,
+                locked,
+                tracking,
+            } => (
+                Device::Camera {
+                    key,
+                    toggle,
+                    locked,
+                    tracking: tracking.map(|(e, l)| (e, Vec3::from_array(l))),
+                    viewer: None,
+                },
+                vec![(key, NumpadBind::Camera(id))],
             ),
         }
     }

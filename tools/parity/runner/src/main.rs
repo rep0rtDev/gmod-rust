@@ -252,6 +252,7 @@ fn apply_click_settings(
             | "physprop"
             | "trails"
             | "emitter"
+            | "camera"
     ) {
         return;
     }
@@ -298,6 +299,11 @@ fn apply_click_settings(
             ts.trails_startsize = num("startsize");
             ts.trails_endsize = num("endsize");
             ts.trails_material = text("material");
+        }
+        "camera" => {
+            ts.camera_key = num("key") as i32;
+            ts.camera_toggle = flag("toggle");
+            ts.camera_locked = flag("locked");
         }
         "emitter" => {
             ts.emitter_key = num("key") as i32;
@@ -560,6 +566,7 @@ impl DeviceSpec {
                 "lamp" => "models/lamps/torch.mdl",
                 "light" => gm_sandbox::LIGHT_MODEL,
                 "emitter" => gm_sandbox::EMITTER_MODEL,
+                "camera" => gm_sandbox::CAMERA_MODEL,
                 _ => "models/maxofs2d/balloon_classic.mdl",
             }
             .to_string()
@@ -755,7 +762,7 @@ fn device_key(d: &mut gm_sandbox::Device, key: i32, down: bool, pos_z: f32) {
                 }
             }
         }
-        Device::Trail { .. } => {}
+        Device::Trail { .. } | Device::Camera { .. } => {}
         Device::Lamp {
             key: k, toggle, on, ..
         }
@@ -876,7 +883,8 @@ fn device_simulate(
         | Device::Lamp { .. }
         | Device::Light { .. }
         | Device::Trail { .. }
-        | Device::Emitter { .. } => {}
+        | Device::Emitter { .. }
+        | Device::Camera { .. } => {}
     }
 }
 
@@ -960,6 +968,16 @@ fn device_row(d: &gm_sandbox::Device, mass: f32) -> Value {
         } => {
             json!({ "class": "gmod_emitter", "mass": mass, "key": key, "delay": delay, "toggle": toggle, "on": on,
                 "effect": effect, "scale": scale })
+        }
+        Device::Camera {
+            key,
+            toggle,
+            locked,
+            tracking,
+            viewer,
+        } => {
+            json!({ "class": "gmod_cameraprop", "mass": mass, "key": key, "toggle": u8::from(*toggle),
+                "locked": u8::from(*locked), "tracking": tracking.is_some(), "viewer": viewer.is_some() })
         }
         Device::Light {
             color,
@@ -5306,6 +5324,7 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
         "models/lamps/torch.mdl",
         gm_sandbox::LIGHT_MODEL,
         gm_sandbox::EMITTER_MODEL,
+        gm_sandbox::CAMERA_MODEL,
     ] {
         if let Ok(shape) = model_shape(&mount, model) {
             sb.set_model_shape(model, shape);
@@ -5359,6 +5378,9 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                     }
                     Some(gm_sandbox::Device::Emitter { .. }) => {
                         json!({ "index": -1, "class": "gmod_emitter", "prop": 0 })
+                    }
+                    Some(gm_sandbox::Device::Camera { .. }) => {
+                        json!({ "index": -1, "class": "gmod_cameraprop", "prop": 0 })
                     }
                     None => json!({ "prop": id, "class": "prop_physics" }),
                 },
@@ -5470,6 +5492,11 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                         "class": "env_spritetrail", "parent": ent, "r": color[0], "g": color[1], "b": color[2], "a": color[3],
                         "length": length, "startsize": start_size, "endsize": end_size, "material": material,
                     }),
+                    gm_sandbox::Device::Camera { key, toggle, locked, tracking, viewer } => json!({
+                        "class": "gmod_cameraprop", "key": key, "toggle": u8::from(*toggle), "locked": u8::from(*locked),
+                        "movetype": if *locked || tracking.is_some() { 0 } else { 6 }, "solid": if *locked || tracking.is_some() { 2 } else { 6 },
+                        "tracking": tracking.is_some(), "viewer": viewer.is_some(),
+                    }),
                     gm_sandbox::Device::Emitter { key, delay, toggle, on, effect, scale } => json!({
                         "class": "gmod_emitter", "key": key, "delay": delay, "toggle": toggle, "on": on, "effect": effect, "scale": scale,
                     }),
@@ -5575,6 +5602,7 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
             "constraints": constraints,
             "controllers": controllers,
             "ents": ents,
+            "viewcam": sb.view_entity(player).is_some(),
             "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "text": u.text, "custom": u.custom, "n": u.entities.len() })).collect::<Vec<_>>(),
             "counts": { "constraints": sb.count_of(player, "constraints"), "ropeconstraints": sb.count_of(player, "ropeconstraints"), "props": sb.count(player),
                 "thrusters": sb.count_of(player, "thrusters"), "hoverballs": sb.count_of(player, "hoverballs"), "balloons": sb.count_of(player, "balloons"),
@@ -5909,14 +5937,28 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                 .iter()
                 .filter_map(|g| {
                     let gp = v3(&g["pos"]);
-                    let mut best: Option<(usize, f32)> = None;
+                    // several at one spot (cameras at the eye): the control key breaks the tie
+                    // (same key too: the closest angles)
+                    let mut best: Option<(usize, f32, u8, f32)> = None;
                     for (j, m) in oe.iter().enumerate() {
                         let d = (v3(&m["pos"]) - gp).length();
-                        if !used[j] && best.is_none_or(|(_, bd)| d < bd) {
-                            best = Some((j, d));
+                        let key_off = u8::from(
+                            g.get("key").is_some()
+                                && m.get("key").is_some()
+                                && g["key"] != m["key"],
+                        );
+                        let dang = (v3(&m["ang"]) - v3(&g["ang"])).length();
+                        if !used[j]
+                            && best.is_none_or(|(_, bd, bk, ba)| {
+                                d < bd - 1e-3
+                                    || ((d - bd).abs() <= 1e-3
+                                        && (key_off < bk || (key_off == bk && dang < ba)))
+                            })
+                        {
+                            best = Some((j, d, key_off, dang));
                         }
                     }
-                    best.map(|(j, _)| {
+                    best.map(|(j, _, _, _)| {
                         used[j] = true;
                         (g, &oe[j])
                     })
@@ -5951,6 +5993,8 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     "remove",
                     "texture",
                     "effect",
+                    "locked",
+                    "viewer",
                 ] {
                     if g.get(k).is_some() && g[k] != m[k] {
                         bad.push(format!("{k} {} vs {}", g[k], m[k]));
@@ -6040,6 +6084,13 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                 })
                 .collect()
         };
+        if ta.get("viewcam").is_some() && ta["viewcam"] != oa["viewcam"] {
+            println!(
+                "  op {i} {op}: viewcam {} vs {}",
+                ta["viewcam"], oa["viewcam"]
+            );
+            ok = false;
+        }
         if undos(ta) != undos(oa) {
             println!("  op {i} {op}: undos {:?} vs {:?}", undos(ta), undos(oa));
             ok = false;

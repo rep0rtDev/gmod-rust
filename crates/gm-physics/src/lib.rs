@@ -115,6 +115,7 @@ extern "C" {
         friction: f32,
         elasticity: f32,
     );
+    fn gmp_deactivate(system: *mut JPC_PhysicsSystem, body_id: u32);
     fn gmp_set_hull_points(
         system: *mut JPC_PhysicsSystem,
         body_id: u32,
@@ -1389,6 +1390,11 @@ impl World {
     /// (measured: 50 u/s up decays to 46.4 over 120 ticks). A held body stays weightless.
     /// A new surface for a live body (`PhysObj:SetMaterial`): friction and restitution the way
     /// `add_body` set them, and the impact listener's table.
+    /// `PhysObj:Sleep()`: the body rests where it is until something touches it.
+    pub fn deactivate(&mut self, body: BodyHandle) {
+        unsafe { gmp_deactivate(self.system.as_raw(), body.0) }
+    }
+
     pub fn set_surface(&mut self, body: BodyHandle, surface: Surface) {
         unsafe {
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());

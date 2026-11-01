@@ -1162,6 +1162,10 @@ void gmp_set_surface(void *system, unsigned int body_id, float friction, float e
 	if (auto *l = listener_of(system)) l->surfaces[body_id] = GmpSurface{friction, elasticity};
 }
 
+void gmp_deactivate(void *system, unsigned int body_id) {
+	reinterpret_cast<JPH::PhysicsSystem *>(system)->GetBodyInterface().DeactivateBody(JPH::BodyID(body_id));
+}
+
 void gmp_set_hull_points(void *system, unsigned int body_id, const float *xyz, unsigned int count) {
 	if (auto *l = listener_of(system)) {
 		std::vector<JPH::Vec3> v;
