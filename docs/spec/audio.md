@@ -82,6 +82,26 @@ gm_construct floor):
   collision at 13, 37 for 34, 9 for 9); we play it at the collision tick. The second,
   smaller bounces follow the physics divergence of the drop itself (the drum rolls
   differently after 48 ticks and its second 0.3 impact is not reproduced).
+
+Scrape loops (`scraperough` of the surface property, `Wood_Crate.ScrapeRough`,
+`Metal_Box.ScrapeRough` for the drum's `Metal_Barrel`), measured with the same hook on a
+resting crate pushed along the floor at 80 / 120 / 150 / 250 / 500 u/s and a drum on its side
+pushed across its axis (`phys_sound_slide_crate*`, `phys_sound_roll_drum`):
+
+- The loop (`CreateSound` patch on the prop, the hook sees it twice at start: volume, then
+  volume + pitch) starts one or two ticks after the push at every speed tried (66 u/s and up)
+  and is never re-emitted while it plays; the only later entries are the fade-out (0.25 →
+  0.08 at 0.025 per tick in the 250 push, 0.036 per tick in the 500 one), beginning when the
+  slip falls under ~40 u/s. Stop itself is not hooked.
+- Volume factor (times the script's 0.5): 0.5 from 135 u/s up (exact cap in three
+  recordings), 0.164 at 66 u/s and 0.154 at 114 u/s - the game's factor is its friction
+  energy in that tick, which follows the contact points rather than the speed (114 u/s is
+  quieter than 66). We start at `slip / 300` capped at 0.5 (`scrape_volume`) and stop with a
+  0.15 s fade under 40 u/s (`SCRAPE_SOUND_MIN_SPEED`), on separation or sleep.
+- Rolling: the drum slips for one tick after the push (scrape loop at 0.25) and then rolls
+  (418 deg/s at 103 u/s = r 14 u) with no further sound - no `roll` loop was heard. Our slip
+  is the body speed less its spin times the volume-equivalent radius.
+- Pitch comes from the script (`96,104`), not the speed: 96-102 across the recordings.
 - Pitch 98-100 and `SNDLVL_75dB` come from the script; no server-side override was seen.
 
 ## Mixer: Steam Audio

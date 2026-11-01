@@ -35,6 +35,8 @@ pub struct ModelInfo {
     pub inertia: Option<Vec3>,
     /// The `impacthard` sound script of the model's surface property (`Wood_Crate.ImpactHard`).
     pub impact_hard: Option<String>,
+    /// The `scraperough` loop of the surface property (`Wood_Crate.ScrapeRough`).
+    pub scrape_rough: Option<String>,
     /// The model's `prop_data` through `scripts/propdata.txt`.
     pub prop_data: PropData,
     /// The `break` sound script of the surface property (`Wood_Crate.Break`).
@@ -491,6 +493,22 @@ pub type RequestHook = Box<dyn FnMut(&mut Server<'_>, &Request) -> Verdict>;
 /// `(speed / IMPACT_SOUND_FULL_SPEED)^2` capped at 1; `None` under the audible threshold.
 pub fn impact_volume(speed: f32) -> Option<f32> {
     (speed >= IMPACT_SOUND_MIN_SPEED).then(|| (speed / IMPACT_SOUND_FULL_SPEED).powi(2).min(1.0))
+}
+
+/// A sliding contact scrapes from this slip speed (units/s) up; under it the loop fades out
+/// (`phys_sound_slide_crate*`: the game's loop starts the tick after the push at every push
+/// speed tried, 66 u/s and up, and fades from ~40 u/s down).
+pub const SCRAPE_SOUND_MIN_SPEED: f32 = 40.0;
+/// The scrape loop's volume factor: `slip / 300` capped at `SCRAPE_SOUND_MAX` (the game's
+/// factor is its friction energy, capped at 0.5: 0.5 from 135 u/s up, 0.15..0.16 at 66 and
+/// 114 u/s in two recordings - contact-point noise, not a law; the cap is exact).
+pub const SCRAPE_SOUND_MAX: f32 = 0.5;
+/// The fade of a scrape loop that stops (the game's envelope: 0.025 per tick from 0.25).
+pub const SCRAPE_SOUND_FADE: f32 = 0.15;
+
+/// Volume factor of the scrape loop at a slip speed; `None` under the threshold.
+pub fn scrape_volume(slip: f32) -> Option<f32> {
+    (slip >= SCRAPE_SOUND_MIN_SPEED).then(|| (slip / 300.0).min(SCRAPE_SOUND_MAX))
 }
 
 /// Result of a tool gun click on the server.
@@ -1087,6 +1105,8 @@ pub struct Server<'w> {
     sounds: Vec<WorldSound>,
     /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
     thruster_loops: BTreeSet<u32>,
+    /// Props whose scrape loop is playing (the volume factor it started with).
+    scrapes: BTreeMap<u32, f32>,
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
     pub game_events: Vec<GameEvent>,
@@ -1209,6 +1229,7 @@ impl<'w> Server<'w> {
             nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
             sounds: Vec::new(),
+            scrapes: BTreeMap::new(),
             thruster_loops: BTreeSet::new(),
             clipboards: BTreeMap::new(),
             hull_planes: BTreeMap::new(),
@@ -4268,7 +4289,9 @@ impl<'w> Server<'w> {
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
         self.physics.step();
         self.impact_sounds();
-        self.sent_touches();
+        let contacts = self.physics.take_contacts();
+        self.scrape_sounds(&contacts);
+        self.sent_touches(contacts);
         self.sent_player_touches();
         let landed: Vec<(u32, f32)> = self
             .players
@@ -4860,11 +4883,104 @@ impl<'w> Server<'w> {
         });
     }
 
+    /// Scrape loops (`scraperough` of the prop's surface property) on props sliding in a
+    /// contact: started at `scrape_volume` of the slip speed when a touching prop slides
+    /// faster than `SCRAPE_SOUND_MIN_SPEED`, stopped with `SCRAPE_SOUND_FADE` when it slows
+    /// down, separates or sleeps. The slip is the body speed less what its spin rolls off
+    /// (a rolling drum scrapes only while it still slips, `phys_sound_roll_drum`).
+    fn scrape_sounds(&mut self, contacts: &[gm_physics::Contact]) {
+        let mut touching: Vec<u32> = Vec::new();
+        for c in contacts {
+            if c.kind == gm_physics::ContactKind::Removed {
+                continue;
+            }
+            for body in c.bodies {
+                if let Some((&id, _)) = self.bodies.iter().find(|(_, b)| **b == body) {
+                    if !touching.contains(&id) {
+                        touching.push(id);
+                    }
+                }
+            }
+        }
+        let mut sliding: Vec<(u32, f32, Vec3)> = Vec::new();
+        for id in touching {
+            let Some(body) = self.bodies.get(&id) else {
+                continue;
+            };
+            let st = self.physics.state(*body);
+            if !st.active {
+                continue;
+            }
+            let Some(model) = self
+                .sandbox
+                .props()
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| p.model.clone())
+            else {
+                continue;
+            };
+            let Some(info) = self.models.get(&model) else {
+                continue;
+            };
+            let radius = (info.volume * 3.0 / (4.0 * std::f32::consts::PI)).cbrt();
+            let rolled = st.angular_velocity.length().to_radians() * radius;
+            let slip = (st.velocity.length() - rolled).max(0.0);
+            if let Some(vol) = scrape_volume(slip) {
+                sliding.push((id, vol, st.position));
+            }
+        }
+        let stopped: Vec<u32> = self
+            .scrapes
+            .keys()
+            .copied()
+            .filter(|id| !sliding.iter().any(|(s, _, _)| s == id))
+            .collect();
+        for id in stopped {
+            self.scrapes.remove(&id);
+            let pos = self
+                .bodies
+                .get(&id)
+                .map(|b| self.physics.state(*b).position)
+                .unwrap_or_default();
+            self.sounds.push(WorldSound {
+                pos,
+                ent: id,
+                stop: true,
+                fade: SCRAPE_SOUND_FADE,
+                ..Default::default()
+            });
+        }
+        for (id, vol, pos) in sliding {
+            if self.scrapes.contains_key(&id) {
+                continue;
+            }
+            let Some(name) = self
+                .sandbox
+                .props()
+                .iter()
+                .find(|p| p.id == id)
+                .and_then(|p| self.models.get(&p.model))
+                .and_then(|m| m.scrape_rough.clone())
+            else {
+                continue;
+            };
+            self.scrapes.insert(id, vol);
+            self.sounds.push(WorldSound {
+                name,
+                pos,
+                volume: vol,
+                ent: id,
+                looping: true,
+                ..Default::default()
+            });
+        }
+    }
+
     /// `StartTouch` / `Touch` / `EndTouch` of the scripted entities from the step's contact
     /// pairs: a new pair is a start_touch and a touch, a persisted one a touch, a removed one
     /// an end_touch (the game's three `Touch` in the impact tick are one here).
-    fn sent_touches(&mut self) {
-        let contacts = self.physics.take_contacts();
+    fn sent_touches(&mut self, contacts: Vec<gm_physics::Contact>) {
         if self.sents.is_empty() || contacts.is_empty() {
             return;
         }
@@ -5041,6 +5157,19 @@ impl<'w> Server<'w> {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod scrape_sound_tests {
+    use super::scrape_volume;
+
+    #[test]
+    fn the_loop_starts_from_40_and_caps_at_half() {
+        assert_eq!(scrape_volume(39.0), None);
+        assert_eq!(scrape_volume(60.0), Some(0.2));
+        assert_eq!(scrape_volume(150.0), Some(0.5));
+        assert_eq!(scrape_volume(500.0), Some(0.5));
     }
 }
 

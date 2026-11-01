@@ -177,6 +177,7 @@ SCENARIOS.move = function(scn, done)
 			level = d.SoundLevel,
 			pitch = d.Pitch,
 			chan = d.Channel,
+			flags = d.Flags,
 		}
 	end)
 	local function segmentAt(t)
@@ -348,6 +349,7 @@ SCENARIOS.phys = function(scn, done)
 			level = d.SoundLevel,
 			pitch = d.Pitch,
 			chan = d.Channel,
+			flags = d.Flags,
 		}
 	end)
 	hook.Add("Tick", "parity_phys", function()
@@ -431,6 +433,7 @@ SCENARIOS.physgun = function(scn, done)
 			level = d.SoundLevel,
 			pitch = d.Pitch,
 			chan = d.Channel,
+			flags = d.Flags,
 		}
 	end)
 	hook.Add("StartCommand", "parity_physgun", function(ply, cmd)

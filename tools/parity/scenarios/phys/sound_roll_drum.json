@@ -1,0 +1,1 @@
+{"name": "phys_sound_roll_drum", "kind": "phys", "map": "gm_construct", "model": "models/props_c17/oildrum001.mdl", "start": [703.4, -413.0, -120.0], "angles": [0, 0, 90], "velocity": [150, 0, 0], "push_tick": 40, "ticks": 240}

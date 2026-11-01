@@ -1,0 +1,1 @@
+{"name": "phys_sound_slide_crate", "kind": "phys", "map": "gm_construct", "model": "models/props_junk/wood_crate001a.mdl", "start": [823.235, -500.0, -119.6], "angles": [0, 0, 0], "velocity": [250, 0, 0], "push_tick": 40, "ticks": 200}
