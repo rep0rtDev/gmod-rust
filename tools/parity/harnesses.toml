@@ -3572,6 +3572,16 @@ crates = ["gm-physics", "gm-server"]
 pos = 4.0
 
 [[harness]]
+name = "phys_ragdoll_kleiner_hang_side"
+scenario = "phys/ragdoll_kleiner_hang_side"
+compare = "ragdoll_parts"
+realm = "server"
+crates = ["gm-physics", "gm-server"]
+
+[harness.tolerance]
+pos = 4.0
+
+[[harness]]
 name = "phys_ragdoll_kleiner_hang"
 scenario = "phys/ragdoll_kleiner_hang"
 compare = "ragdoll_parts"
