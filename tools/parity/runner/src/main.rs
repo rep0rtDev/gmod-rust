@@ -5687,12 +5687,14 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                         rec["ret"] = json!(ret);
                         // motor.lua alone answers a first click on the world with `return end`
                         // (nil); the other stools fall through to false
-                        if tool == "motor"
-                            && !ret
-                            && no_objects
-                            && h.ent.is_none()
-                            && !matches!(op.button.as_deref(), Some("reload") | Some("right"))
-                        {
+                        let not_left =
+                            matches!(op.button.as_deref(), Some("reload") | Some("right"));
+                        if tool == "motor" && !ret && no_objects && h.ent.is_none() && !not_left {
+                            rec["ret"] = json!("nil");
+                        }
+                        // leafblower.lua's LeftClick has no return at all, and it has no Reload
+                        // (the base tool answers nil); RightClick is the base's false
+                        if tool == "leafblower" && op.button.as_deref() != Some("right") {
                             rec["ret"] = json!("nil");
                         }
                     }

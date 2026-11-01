@@ -1000,6 +1000,9 @@ pub struct Sandbox {
     view: BTreeMap<u32, u32>,
     /// `ents.Remove` from a stool: gone at the end of the tick, untouched until then.
     deleting: Vec<u32>,
+    /// `PhysObj:ApplyForceOffset` from a stool (the leafblower): `(prop, point, impulse)`,
+    /// applied by the physics owner.
+    impulses: Vec<(u32, Vec3, Vec3)>,
 }
 
 /// The thruster tool's sound list (`ThrusterSounds`); `StartThrustSound` ignores any other
@@ -2482,6 +2485,7 @@ impl Sandbox {
                 | "trails"
                 | "emitter"
                 | "camera"
+                | "leafblower"
                 | "duplicator"
                 | "ballsocket"
                 | "slider"
@@ -3459,6 +3463,10 @@ impl Sandbox {
         if tool == "camera" {
             return self.camera_click(player, hit, false, events);
         }
+        if tool == "leafblower" {
+            self.leafblower_click(hit);
+            return false;
+        }
         if matches!(tool, "material" | "colour" | "physprop") {
             let s = self.tool_settings.clone();
             let Some(p) = hit
@@ -4023,6 +4031,23 @@ impl Sandbox {
 
     /// Blasts due this tick as `(origin, damage, attacker)` (drained): the physics owner deals
     /// them; the attacker is the stick's owner (`util.BlastDamage(self, self:GetPlayer(), ..)`).
+    /// leafblower.lua `LeftClick` (no return, so nil): on an entity with a physics object,
+    /// `ApplyForceOffset(-(StartPos - HitPos) * 32 * clamp(1 - distance / 512, 0, 1), HitPos)` -
+    /// an impulse away from the player, fading to nothing at 512 units.
+    pub fn leafblower_click(&mut self, hit: &ToolHit) {
+        let Some(ent) = hit.ent.filter(|e| self.props.iter().any(|p| p.id == *e)) else {
+            return;
+        };
+        let direction = hit.start - hit.pos;
+        let ratio = (1.0 - direction.length() / 512.0).clamp(0.0, 1.0);
+        self.impulses
+            .push((ent, hit.pos, -direction * (32.0 * ratio)));
+    }
+
+    pub fn take_impulses(&mut self) -> Vec<(u32, Vec3, Vec3)> {
+        std::mem::take(&mut self.impulses)
+    }
+
     pub fn take_blasts(&mut self) -> Vec<(Vec3, f32, u32)> {
         std::mem::take(&mut self.blasts)
     }
@@ -4145,6 +4170,41 @@ impl Sandbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leafblower_impulse_fades_with_distance() {
+        let mut sb = Sandbox::default();
+        let mut ev = Vec::new();
+        let b = crate_bounds();
+        let req = SpawnRequest {
+            eye: Vec3::new(0.0, 0.0, -100.0),
+            eye_angles: Vec3::new(30.0, 0.0, 0.0),
+            model: "m",
+            bounds: b,
+        };
+        let id = sb.spawn_prop(&floor(), &[], 1, &req, &mut ev).unwrap();
+        let hit = |dist: f32| ToolHit {
+            pos: Vec3::new(dist, 0.0, 0.0),
+            normal: Vec3::NEG_X,
+            ent: Some(id),
+            fraction: 0.1,
+            start: Vec3::ZERO,
+            dir: Vec3::X,
+        };
+        assert!(!sb.tool_left_click(1, "leafblower", &hit(100.0), &mut ev));
+        let [(prop, point, impulse)] = sb.take_impulses()[..] else {
+            panic!("one impulse");
+        };
+        assert_eq!(prop, id);
+        assert_eq!(point, Vec3::new(100.0, 0.0, 0.0));
+        // 100 * 32 * (1 - 100 / 512) along the look direction
+        assert!(
+            (impulse - Vec3::new(2575.0, 0.0, 0.0)).length() < 0.5,
+            "{impulse}"
+        );
+        sb.tool_left_click(1, "leafblower", &hit(600.0), &mut ev);
+        assert_eq!(sb.take_impulses()[0].2, Vec3::ZERO);
+    }
 
     fn floor() -> World {
         World::from_boxes(&[(

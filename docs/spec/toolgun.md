@@ -91,7 +91,7 @@ Wheel motor as fitted (`gm_sandbox::wheel_spin_step`; a changed `Scale` drives f
 
 ## Not yet measured
 
-The other stools (inflator, eyeposer, faceposer, finger, paint, creator, editentity, leafblower), wheel / button / dynamite in gm-sandbox (measured above), the thruster's effects / sound / damage settings, the hull-trace fallback, ragdoll bones, the keyframe_rope's own simulation, force / torque limits breaking a constraint (the pulley's `forcelimit` is stored only), an unbalanced pulley (both measured pairs weigh the same).
+The other stools (inflator, eyeposer, faceposer, finger, paint, creator), wheel / button / dynamite in gm-sandbox (measured above), the thruster's effects / sound / damage settings, the hull-trace fallback, ragdoll bones, the keyframe_rope's own simulation, force / torque limits breaking a constraint (the pulley's `forcelimit` is stored only), an unbalanced pulley (both measured pairs weigh the same).
 
 ### remover (measured, `toolgun_remover`)
 
@@ -204,3 +204,21 @@ limit `sbox_maxcameras` 10, cleanup `cameras`, undo `gmod_cameraprop`:
 
 Saves and dupes carry key / toggle / locked / tracking; the view entity itself is per player and
 not saved. Rendering through the camera is client work (frontend).
+
+### leafblower (measured, `toolgun_leafblower`)
+
+`leafblower.lua` has only a `LeftClick` (no return, so nil; `Reload` is the base tool's nil,
+`RightClick` the base's `false`): on an entity with a physics object it applies
+`PhysObj:ApplyForceOffset(-(StartPos - HitPos) * 32 * clamp(1 - distance / 512, 0, 1), HitPos)` -
+an impulse away from the player at the hit point, full at the muzzle and nothing beyond 512 units
+(unit test: 100 units -> 2575 kg*u/s). The owner plays `ambient/wind/wind_hit2.wav` (level 75, pitch
+75..125) at most every 0.5 s. Ours: `Sandbox::leafblower_click` queues `(prop, point, impulse)`,
+the server applies it through Jolt with the blasts each tick; a frozen prop takes nothing, as in the
+game (the recording clicks a frozen crate: returns only).
+
+### editentity (read, not measured)
+
+The stool is a client panel (`DEntityProperties`) over the `editvariable` net message; the server
+side is `GM:VariableEdited` -> `CanEditVariable` (admin or single player) -> `Entity:EditValue`.
+No stock sandbox or base entity declares an `edit` table on a NetworkVar, so on a dedicated server
+there is nothing for it to change; nothing to build server-side until an entity has editable vars.

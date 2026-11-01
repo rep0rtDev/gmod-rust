@@ -3532,6 +3532,16 @@ ang = 5.0
 spin = 0.1
 
 [[harness]]
+name = "toolgun_leafblower"
+scenario = "toolgun/leafblower"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
 name = "toolgun_camera"
 scenario = "toolgun/camera"
 compare = "toolgun"

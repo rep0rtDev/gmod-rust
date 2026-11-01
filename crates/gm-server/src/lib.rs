@@ -3602,6 +3602,11 @@ impl<'w> Server<'w> {
         for (origin, damage, attacker) in self.sandbox.take_blasts() {
             self.blast(origin, damage, attacker);
         }
+        for (prop, point, impulse) in self.sandbox.take_impulses() {
+            if let Some(body) = self.bodies.get(&prop) {
+                self.physics.add_impulse_at(*body, point, impulse);
+            }
+        }
     }
 
     /// `gmod_dynamite:Explode` with no delay: `util.BlastDamage(radius 300, damage)` from the
