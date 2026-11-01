@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use glam::Vec3;
 
-pub use acoustics::{Acoustics, Snapshot};
+pub use acoustics::{Acoustics, Occluder, Snapshot};
 pub use engine::{Engine, Path, Play};
 pub use mixer::{distance_gain, Listener, Mixer};
 pub use scene::Geometry;

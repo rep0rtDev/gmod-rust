@@ -13,7 +13,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use audionimbus::effect::{Parametric, ReflectionEffectParams, Transmission};
-use audionimbus::geometry::{CoordinateSystem, Scene, StaticMesh, StaticMeshSettings};
+use audionimbus::geometry::{
+    CoordinateSystem, InstancedMesh, InstancedMeshHandle, InstancedMeshSettings, Matrix, Scene,
+    StaticMesh, StaticMeshSettings,
+};
 use audionimbus::model::AirAbsorptionModel;
 use audionimbus::simulation::{
     Direct, DirectSimulationParameters, DirectSimulationSettings, Occlusion, OcclusionAlgorithm,
@@ -22,9 +25,9 @@ use audionimbus::simulation::{
     Source, TransmissionParameters,
 };
 use audionimbus::{AudioSettings, Context};
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 
-use crate::engine::{dir_sa, to_sa, Path, FRAME};
+use crate::engine::{dir_sa, to_sa, Path, FRAME, UNITS_TO_METERS};
 use crate::mixer::Listener;
 use crate::scene::Geometry;
 
@@ -37,6 +40,39 @@ pub struct Snapshot {
 
 pub type Paths = HashMap<u32, Path>;
 
+/// A moving solid the sound has to get around: a prop at its pose.
+#[derive(Debug, Clone)]
+pub struct Occluder {
+    pub ent: u32,
+    /// Hull cache key (the model path).
+    pub key: Arc<str>,
+    /// The hull in the model's frame, game units.
+    pub hull: Arc<Geometry>,
+    /// Model to world, game units and axes.
+    pub transform: Mat4,
+}
+
+/// Game-space model matrix to Steam Audio space for a sub-scene already in meters:
+/// `S P M P^-1 S^-1` with `P` the axis map of [`to_sa`] and `S` the unit scale.
+pub fn sa_matrix(m: Mat4) -> Matrix<f32, 4, 4> {
+    let p = Mat4::from_cols_array_2d(&[
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]);
+    let s = Mat4::from_scale(Vec3::splat(UNITS_TO_METERS));
+    let w = s * p * m * p.inverse() * s.inverse();
+    let c = w.to_cols_array_2d();
+    let mut e = [[0.0f32; 4]; 4];
+    for (r, row) in e.iter_mut().enumerate() {
+        for (col, x) in row.iter_mut().enumerate() {
+            *x = c[col][r];
+        }
+    }
+    Matrix { elements: e }
+}
+
 /// The mailboxes between the audio thread and the simulation thread.
 #[derive(Default)]
 pub struct Shared {
@@ -44,6 +80,8 @@ pub struct Shared {
     pub paths: Mutex<Paths>,
     /// The latest reverb at the listener; the engine takes it and keeps it until the next.
     pub reverb: Mutex<Option<ReflectionEffectParams<Parametric>>>,
+    /// The props at their poses, from the game thread.
+    pub occluders: Mutex<Vec<Occluder>>,
     pub stop: AtomicBool,
 }
 
@@ -76,8 +114,11 @@ type Sim =
 
 pub struct Acoustics {
     simulator: Sim,
-    _scene: Scene,
+    scene: Scene,
     sources: HashMap<u32, Source<Direct>>,
+    sub_scenes: HashMap<Arc<str>, Scene>,
+    instances: HashMap<u32, (InstancedMeshHandle, Arc<str>, Mat4)>,
+    context: Context,
     reverb: Source<(), Reflections, (), Parametric>,
     passes: u32,
     pub triangles: usize,
@@ -138,12 +179,83 @@ impl Acoustics {
         simulator.commit();
         Ok(Acoustics {
             simulator,
-            _scene: scene,
+            scene,
             sources: HashMap::new(),
+            sub_scenes: HashMap::new(),
+            instances: HashMap::new(),
+            context: context.clone(),
             reverb,
             passes: 0,
             triangles,
         })
+    }
+
+    /// Put the props where the game says: new ones get an instanced copy of their hull's
+    /// sub-scene, moved ones a new transform, gone ones are removed. Returns whether the
+    /// scene changed.
+    pub fn sync_occluders(&mut self, occluders: &[Occluder]) -> anyhow::Result<bool> {
+        let mut changed = false;
+        let live: std::collections::HashSet<u32> = occluders.iter().map(|o| o.ent).collect();
+        let gone: Vec<u32> = self
+            .instances
+            .keys()
+            .filter(|e| !live.contains(e))
+            .copied()
+            .collect();
+        for e in gone {
+            if let Some((h, _, _)) = self.instances.remove(&e) {
+                self.scene.remove_instanced_mesh(h);
+                changed = true;
+            }
+        }
+        for o in occluders {
+            if o.hull.triangles.is_empty() {
+                continue;
+            }
+            let same = self
+                .instances
+                .get(&o.ent)
+                .is_some_and(|(_, key, _)| *key == o.key);
+            if same {
+                let (h, _, m) = self.instances.get_mut(&o.ent).expect("checked");
+                if *m != o.transform {
+                    *m = o.transform;
+                    self.scene
+                        .update_instanced_mesh_transform(*h, sa_matrix(o.transform));
+                    changed = true;
+                }
+                continue;
+            }
+            if let Some((h, _, _)) = self.instances.remove(&o.ent) {
+                self.scene.remove_instanced_mesh(h);
+            }
+            if !self.sub_scenes.contains_key(&o.key) {
+                let sub = sub_scene(&self.context, &o.hull)?;
+                self.sub_scenes.insert(o.key.clone(), sub);
+            }
+            let sub = self.sub_scenes[&o.key].clone();
+            let mesh = InstancedMesh::try_new(
+                &self.scene,
+                &InstancedMeshSettings {
+                    sub_scene: sub,
+                    transform: sa_matrix(o.transform),
+                },
+            )
+            .map_err(|e| anyhow::anyhow!("steam audio instanced mesh: {e}"))?;
+            let h = self.scene.add_instanced_mesh(mesh);
+            self.instances
+                .insert(o.ent, (h, o.key.clone(), o.transform));
+            changed = true;
+        }
+        if changed {
+            self.scene.commit();
+        }
+        Ok(changed)
+    }
+
+    /// Instanced props in the scene.
+    pub fn occluders(&self) -> usize {
+        self.instances.len()
     }
 
     /// One simulation pass over the voices in `snap` (voices not seen are dropped) and,
@@ -224,7 +336,9 @@ impl Acoustics {
             .map_err(|e| anyhow::anyhow!("steam audio shared inputs: {e}"))?;
         self.simulator.commit();
         self.simulator.run_direct();
-        let reverb = if self.passes.is_multiple_of(REVERB_EVERY) && self.triangles > 0 {
+        let reverb = if self.passes.is_multiple_of(REVERB_EVERY)
+            && (self.triangles > 0 || !self.instances.is_empty())
+        {
             self.simulator
                 .run_reflections()
                 .map_err(|e| anyhow::anyhow!("steam audio reflections: {e}"))?;
@@ -259,6 +373,34 @@ impl Acoustics {
     }
 }
 
+/// A hull as its own committed scene (meters), to instance under the props.
+fn sub_scene(context: &Context, hull: &Geometry) -> anyhow::Result<Scene> {
+    let mut scene =
+        Scene::try_new(context).map_err(|e| anyhow::anyhow!("steam audio sub-scene: {e}"))?;
+    let vertices: Vec<_> = hull.vertices.iter().map(|&v| to_sa(v)).collect();
+    let tris: Vec<_> = hull
+        .triangles
+        .iter()
+        .map(|t| audionimbus::geometry::Triangle {
+            indices: [t[0] as i32, t[1] as i32, t[2] as i32],
+        })
+        .collect();
+    let material_indices: Vec<usize> = hull.material_of.iter().map(|&m| m as usize).collect();
+    let mesh = StaticMesh::try_new(
+        &scene,
+        &StaticMeshSettings {
+            vertices: &vertices,
+            triangles: &tris,
+            material_indices: &material_indices,
+            materials: &hull.materials,
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("steam audio hull mesh: {e}"))?;
+    scene.add_static_mesh(mesh);
+    scene.commit();
+    Ok(scene)
+}
+
 /// Run the simulation in its own thread until `shared.stop`.
 pub fn spawn(
     context: Context,
@@ -276,6 +418,14 @@ pub fn spawn(
                     .lock()
                     .map(|s| s.clone())
                     .unwrap_or_default();
+                let occluders = shared
+                    .occluders
+                    .lock()
+                    .map(|o| o.clone())
+                    .unwrap_or_default();
+                if let Err(e) = acoustics.sync_occluders(&occluders) {
+                    eprintln!("acoustics: {e}");
+                }
                 match acoustics.step(&snap) {
                     Ok((paths, reverb)) => {
                         if let Ok(mut p) = shared.paths.lock() {

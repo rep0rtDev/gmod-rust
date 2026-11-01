@@ -193,6 +193,26 @@ impl Geometry {
         g
     }
 
+    /// A prop's collision hull (`.phy`, first solid: its convex pieces as triangle soup in
+    /// the model's frame, game units) with the solid's surface property.
+    pub fn from_phy(phy: &gm_formats::phy::Phy, surfaceprop: &str) -> Geometry {
+        let mut g = Geometry::default();
+        let Some(solid) = phy.solids.first() else {
+            return g;
+        };
+        let m = g.intern(surfaceprop);
+        for c in &solid.convexes {
+            let base = g.vertices.len() as u32;
+            g.vertices.extend(c.points.iter().map(|p| Vec3::from(*p)));
+            for t in &c.triangles {
+                g.triangles
+                    .push([base + t[0] as u32, base + t[1] as u32, base + t[2] as u32]);
+                g.material_of.push(m);
+            }
+        }
+        g
+    }
+
     /// An axis-aligned box of one surface property (tests, stand-ins), faces outward.
     pub fn push_box(&mut self, mins: Vec3, maxs: Vec3, surfaceprop: &str) {
         let m = self.intern(surfaceprop);

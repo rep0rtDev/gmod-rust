@@ -649,6 +649,9 @@ impl Console {
     }
 }
 
+/// A prop hull for the acoustic occluders (`None`: the model has no usable `.phy`).
+type OccluderHull = Option<(std::sync::Arc<str>, std::sync::Arc<gm_audio::Geometry>)>;
+
 struct App {
     /// HL2 weapon selection (`hud_fastswitch 0`): the highlighted weapon as an index into the
     /// server's class list while the bucket menu is open.
@@ -692,6 +695,8 @@ struct App {
     /// Weapon sounds from the scripts, mixed on the default output device.
     sounds: gm_audio::Sounds,
     soundscapes: gm_audio::Soundscapes,
+    /// Prop collision hulls for the acoustic occluders, by model path (`None`: no `.phy`).
+    occluder_hulls: std::collections::HashMap<String, OccluderHull>,
     last_render: Instant,
     /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
     menu: Option<SpawnMenu>,
@@ -3107,6 +3112,49 @@ impl App {
                 self.sounds.follow(id, p.pos);
             }
         }
+        // the props are acoustic occluders: their hulls at their interpolated poses
+        {
+            let mut occluders = Vec::new();
+            for e in self.sim.client.world.entities.values() {
+                if e.model.is_empty() {
+                    continue;
+                }
+                let mount = &self.mount;
+                let hull = self
+                    .occluder_hulls
+                    .entry(e.model.clone())
+                    .or_insert_with(|| {
+                        let phy = e.model.strip_suffix(".mdl").map(|m| format!("{m}.phy"))?;
+                        let phy = gm_formats::phy::Phy::parse(&mount.read(&phy).ok()?).ok()?;
+                        let prop = phy
+                            .props
+                            .first()
+                            .map(|p| p.surfaceprop.to_ascii_lowercase())
+                            .unwrap_or_default();
+                        let g = gm_audio::Geometry::from_phy(&phy, &prop);
+                        (!g.triangles.is_empty()).then(|| {
+                            (
+                                std::sync::Arc::from(e.model.as_str()),
+                                std::sync::Arc::new(g),
+                            )
+                        })
+                    });
+                let Some((key, hull)) = hull else {
+                    continue;
+                };
+                let (pos, ang) = match self.sim.interp.sample(e.id, rt) {
+                    Some(p) => (p.pos, p.angles),
+                    None => (e.pos, e.angles),
+                };
+                occluders.push(gm_audio::Occluder {
+                    ent: e.id,
+                    key: key.clone(),
+                    hull: hull.clone(),
+                    transform: gm_render::world::model_transform(pos, ang),
+                });
+            }
+            self.sounds.mixer.set_occluders(occluders);
+        }
         let dt = self.last_render.elapsed().as_secs_f32().min(0.1);
         self.last_render = Instant::now();
         let air_since = &mut self.air_since;
@@ -4921,6 +4969,7 @@ fn main() -> Result<()> {
         gestures: Default::default(),
         sounds,
         soundscapes: gm_audio::Soundscapes::default(),
+        occluder_hulls: std::collections::HashMap::new(),
         last_render: Instant::now(),
         menu: None,
         spawnlists: Vec::new(),

@@ -167,8 +167,14 @@ is the data: scripts, waves, levels, pitches, channels, cue loops.
   new in over `fadetime` (3 s default). gm_construct names `construct.outside / inside /
   lake / garage`, which no shipped file defines, so there (as in the game) nothing plays;
   gm_flatgrass has no `env_soundscape`. HL2 maps carry the full set (~380 definitions).
-- Not yet: dynamic occluders (props), doppler (the game has none either). Nodraw faces
-  are not in the face lump, so a wall whose only face is nodraw does not occlude.
+- Props occlude too: every entity with a model has its `.phy` hull (first solid, convex
+  pieces as triangles, the solid's surface property) built once into a Steam Audio
+  sub-scene and instanced at its interpolated pose each frame; the simulation thread adds,
+  moves and removes the instances and recommits the scene when anything changed. Test: a
+  20 u concrete slab as a prop between source and listener occludes (0), moved 2000 u
+  aside it does not (1).
+- Not yet: doppler (the game has none either). Nodraw faces are not in the face lump, so
+  a wall whose only face is nodraw does not occlude.
 
 ## World sounds: footsteps (measured)
 

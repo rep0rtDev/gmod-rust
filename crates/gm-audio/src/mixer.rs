@@ -11,7 +11,7 @@ use audionimbus::{Context, ContextSettings};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use glam::Vec3;
 
-use crate::acoustics::{self, Acoustics, Shared};
+use crate::acoustics::{self, Acoustics, Occluder, Shared};
 use crate::engine::{Engine, Play, FRAME};
 use crate::scene::Geometry;
 
@@ -309,11 +309,26 @@ impl Mixer {
         self.shared = None;
     }
 
+    /// The props at their poses this frame; the simulation thread instances their hulls.
+    pub fn set_occluders(&self, occluders: Vec<Occluder>) {
+        if let Some(s) = &self.shared {
+            if let Ok(mut o) = s.occluders.lock() {
+                *o = occluders;
+            }
+        }
+    }
+
     /// Offline only: one simulation pass over the last rendered frame's voices.
     pub fn simulate(&mut self) -> anyhow::Result<()> {
         let (Some(a), Some(shared)) = (&mut self.acoustics, &self.shared) else {
             return Ok(());
         };
+        let occluders = shared
+            .occluders
+            .lock()
+            .map(|o| o.clone())
+            .unwrap_or_default();
+        a.sync_occluders(&occluders)?;
         let snap = shared
             .snapshot
             .lock()
@@ -532,6 +547,46 @@ mod tests {
             wall_peak < open_peak * 0.2,
             "open {open_peak} walled {wall_peak}"
         );
+    }
+
+    /// The same slab as an instanced prop between the source and the listener occludes;
+    /// moved aside it does not.
+    #[test]
+    fn a_prop_occludes_until_it_moves() {
+        let source = Some(Vec3::new(200.0, 0.0, 0.0));
+        let mut m = Mixer::offline(48000).unwrap();
+        m.set_listener(Listener::from_view(Vec3::ZERO, 0.0, 0.0));
+        m.set_scene(Geometry::default()).unwrap();
+        let mut hull = Geometry::default();
+        hull.push_box(
+            Vec3::new(-10.0, -400.0, -400.0),
+            Vec3::new(10.0, 400.0, 400.0),
+            "concrete",
+        );
+        let hull = Arc::new(hull);
+        let key: Arc<str> = Arc::from("models/slab.mdl");
+        let at = |x: f32| {
+            vec![Occluder {
+                ent: 5,
+                key: key.clone(),
+                hull: hull.clone(),
+                transform: glam::Mat4::from_translation(Vec3::new(x, 0.0, 0.0)),
+            }]
+        };
+        m.set_occluders(at(100.0));
+        m.play(play(tone(48000, 2.0), source));
+        m.render(FRAME);
+        m.simulate().unwrap();
+        m.render(FRAME * 16);
+        let blocked = m.engine().unwrap().voices()[0].path;
+        assert!(blocked.occlusion < 0.05, "{blocked:?}");
+        m.set_occluders(at(2100.0));
+        m.simulate().unwrap();
+        m.render(FRAME * 16);
+        let open = m.engine().unwrap().voices()[0].path;
+        assert!(open.occlusion > 0.99, "{open:?}");
+        m.set_occluders(Vec::new());
+        m.simulate().unwrap();
     }
 
     /// A closed concrete room keeps ringing after a short click; the open world does not.
