@@ -123,6 +123,7 @@ mod tests {
                     scale: 1.0,
                 }),
                 eye_target: Some(Vec3::new(7.0, -4.0, -25.0)),
+                sequence: String::new(),
             }],
             removed: vec![1],
             own: OwnSandbox {

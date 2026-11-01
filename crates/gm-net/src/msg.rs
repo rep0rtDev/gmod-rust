@@ -183,6 +183,8 @@ pub struct EntityState {
     pub flex: Option<FlexState>,
     /// Eye target (eyeposer), local to the `eyes` attachment.
     pub eye_target: Option<Vec3>,
+    /// Sequence the entity plays (NPC idle); empty for props, which do not animate.
+    pub sequence: String,
 }
 
 pub use gm_server::BonePose;
@@ -462,7 +464,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 6;
+pub const PROTOCOL: u16 = 7;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -989,6 +991,7 @@ impl ServerMsg {
                         w.f32(t.y);
                         w.f32(t.z);
                     }
+                    w.str(&e.sequence);
                 }
                 w.varint(removed.len() as u64);
                 for id in removed {
@@ -1297,6 +1300,7 @@ impl ServerMsg {
                         } else {
                             None
                         },
+                        sequence: r.str()?,
                     });
                 }
                 let n = r.varint()? as usize;

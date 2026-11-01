@@ -983,6 +983,7 @@ impl ServerNet {
                     manips: Vec::new(),
                     flex: None,
                     eye_target: None,
+                    sequence: n.sequence.to_string(),
                 },
             );
         }
@@ -1050,6 +1051,7 @@ impl ServerNet {
                         .flex_state(p.id)
                         .map(|(weights, scale)| crate::msg::FlexState { weights, scale }),
                     eye_target: server.eye_target(p.id),
+                    sequence: String::new(),
                 },
             );
         }

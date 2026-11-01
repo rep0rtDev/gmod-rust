@@ -46,6 +46,7 @@ the first server packet: the welcome was dropped as acked and the client never j
 - `Snapshot` every `snapshot_every` ticks (2 = 33 Hz): tick, baseline tick (0 = full), the
   client's last run usercmd tick, all players (origin, velocity, view, ducked, held prop), the
   entities that changed against the baseline (id, model, pos, angles, frozen, owner, skin / bodygroups, material / colour / render mode and fx; a prop_ragdoll adds the pose and frozen flag of every physics object, and any entity its manipulated bones - inflator scale, finger angles -, flex weights + scale and eye target when a poser touched it: protocol 6), the ids
+  Protocol 7: each entity also carries `sequence`, the animation it plays (empty for props; an NPC's current idle), which the client loops in place on its render clock.
   removed since, and the client's own sandbox view (count, constraints, undo stack, maxprops). The
   baseline is the newest snapshot the client acked; the server keeps the last 64 it sent, the
   client the last 64 it applied, and a snapshot whose baseline the client lost is skipped until a

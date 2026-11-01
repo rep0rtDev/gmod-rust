@@ -166,6 +166,7 @@ impl Sim {
                             manips: Vec::new(),
                             flex: None,
                             eye_target: None,
+                            sequence: String::new(),
                         },
                     )
                 })
@@ -3283,12 +3284,26 @@ impl App {
         // transform is the identity), bone manipulations on top
         let rag_poses: Vec<(u32, Vec<glam::Mat4>)> = ents
             .values()
-            .filter(|e| !e.bones.is_empty())
+            .filter(|e| !e.bones.is_empty() || !e.sequence.is_empty())
             .filter_map(|e| {
-                let m = g.models.get(&e.model)?.as_ref()?;
                 let p = self.sim.interp.sample(e.id, rt);
-                let parts = p.as_ref().map_or(&e.bones, |p| &p.bones);
                 let (pos, ang) = p.as_ref().map_or((e.pos, e.angles), |p| (p.pos, p.angles));
+                if e.bones.is_empty() {
+                    // an NPC plays its sequence in place (the server's idle), looping on the
+                    // render clock; the bones come out in model space, so place them
+                    let m = g
+                        .models
+                        .get(&format!("{}#{}#{}", e.model, e.skin, e.body))
+                        .or_else(|| g.models.get(&e.model))?
+                        .as_ref()?;
+                    let t = rt * gm_core::tick::DEFAULT_TICK_INTERVAL;
+                    let local = m.bone_world_gesture(&e.sequence, t, None, &[], None)?;
+                    let place = gm_render::world::model_transform(pos, ang);
+                    let world: Vec<glam::Mat4> = local.iter().map(|b| place * *b).collect();
+                    return Some((e.id, m.skin_matrices(&world)));
+                }
+                let m = g.models.get(&e.model)?.as_ref()?;
+                let parts = p.as_ref().map_or(&e.bones, |p| &p.bones);
                 let world = ragdoll_bone_matrices(m, parts, pos, ang, &e.manips)?;
                 Some((e.id, m.skin_matrices(&world)))
             })
