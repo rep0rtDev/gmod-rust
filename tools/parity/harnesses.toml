@@ -3942,3 +3942,9 @@ realm = "server"
 crates = ["gm-server", "gm-sandbox"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_vehicle_settle"
+scenario = "server/vehicle_settle"
+compare = "server"
+realm = "server"

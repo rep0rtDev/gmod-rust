@@ -1875,7 +1875,84 @@ pub struct Vehicle {
     pub health: i32,
     pub max_health: i32,
     pub driver: Option<u32>,
+    /// Raycast wheels of a car (`wheel_fl` .. `wheel_rr` hubs in body space); empty for seats.
+    pub wheels: Vec<Wheel>,
+    /// The vehicle script's `addgravity` (extra gravity in g).
+    pub add_gravity: f32,
+    /// The vehicle script's `massoverride` (kg) the springs scale with.
+    pub mass: f32,
 }
+
+/// One raycast wheel: the hub in body space, the tyre radius, the axle's spring constant
+/// (`springConstant`, per kg of body) and `springDamping`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Wheel {
+    pub hub: Vec3,
+    pub radius: f32,
+    pub spring: f32,
+    /// `springDamping` (rebound) and `springDampingCompression`, per kg of body.
+    pub damping: f32,
+    pub damping_compression: f32,
+}
+
+/// The numbers of a car's vehicle script that the suspension needs (`scripts/vehicles/*.txt`
+/// of the game: body mass, extra gravity, per-axle wheel radius / spring / damping).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VehicleScript {
+    pub mass: f32,
+    pub add_gravity: f32,
+    /// (radius, springConstant, springDamping, springDampingCompression) of the front and the
+    /// rear axle.
+    pub front: (f32, f32, f32, f32),
+    pub rear: (f32, f32, f32, f32),
+    /// Measured hub extension below its spawn point at rest (`server_vehicle_settle`): the cars
+    /// rise 3.7 u on their springs, the airboat 3.4 u before its hull takes the floor.
+    pub rest: f32,
+}
+
+/// `vehiclescript` of the spawnmenu's cars (`base_vehicles.lua`): jeep_test, airboat, jalopy,
+/// apc_gmod.
+pub fn vehicle_script(key: &str) -> Option<VehicleScript> {
+    Some(match key {
+        "Jeep" => VehicleScript {
+            mass: 1000.0,
+            add_gravity: 0.5,
+            front: (18.0, 40.0, 0.7, 9.0),
+            rear: (22.0, 40.0, 0.7, 9.0),
+            rest: 3.7,
+        },
+        "Airboat" => VehicleScript {
+            mass: 500.0,
+            add_gravity: 0.0,
+            front: (10.0, 60.0, 4.0, 4.0),
+            rear: (10.0, 60.0, 4.0, 4.0),
+            rest: 3.4,
+        },
+        "Jalopy" => VehicleScript {
+            mass: 1000.0,
+            add_gravity: 0.5,
+            front: (18.0, 40.0, 0.7, 9.0),
+            rear: (19.5, 40.0, 0.7, 9.0),
+            rest: 3.7,
+        },
+        "prop_vehicle_apc" => VehicleScript {
+            mass: 1000.0,
+            add_gravity: 0.5,
+            front: (28.0, 40.0, 0.7, 9.0),
+            rear: (28.0, 40.0, 0.7, 9.0),
+            rest: 3.7,
+        },
+        _ => return None,
+    })
+}
+
+/// Measured `server_vehicle_settle`: a car spawns with its body at the hit point and every
+/// wheel touching the ground (hub a tyre radius plus 1 u over the body origin), then rises
+/// `VehicleScript::rest` as the springs take the load. So the unloaded spring holds the hub
+/// `rest + g_total / (4 k)` below the hub point (`Wheel::natural`) and the body's weight (g plus
+/// `addgravity`) compresses it back.
+const VEHICLE_WHEEL_TRAVEL: f32 = 60.0;
+const VEHICLE_TYRE_FRICTION: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VehicleDef {
@@ -4723,8 +4800,12 @@ impl<'w> Server<'w> {
                     health
                 },
                 driver: None,
+                wheels: Vec::new(),
+                add_gravity: 0.0,
+                mass: 0.0,
             },
         );
+        self.setup_car(id, key);
         let name = vehicle_name(&def);
         self.sandbox.push_undo(
             player,
@@ -4844,6 +4925,124 @@ impl<'w> Server<'w> {
             }
         }
         (origin + Vec3::new(0.0, 0.0, VEHICLE_EXIT_TOP), fwd)
+    }
+
+    /// A car's body takes the script's mass and its four `wheel_*` attachments become raycast
+    /// wheels (the axle with the larger model y is the front).
+    fn setup_car(&mut self, veh: u32, key: &str) {
+        let Some(script) = vehicle_script(key) else {
+            return;
+        };
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == veh).cloned() else {
+            return;
+        };
+        let hubs: Vec<Vec3> = ["wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr"]
+            .iter()
+            .filter_map(|n| {
+                self.models
+                    .get(&prop.model)?
+                    .attachments
+                    .iter()
+                    .find(|a| &a.name == n)
+                    .map(|a| a.pos)
+            })
+            .collect();
+        if hubs.len() != 4 {
+            return;
+        }
+        let mid = hubs.iter().map(|h| h.y).sum::<f32>() / 4.0;
+        let wheels = hubs
+            .iter()
+            .map(|&hub| {
+                let (radius, spring, damping, damping_compression) = if hub.y > mid {
+                    script.front
+                } else {
+                    script.rear
+                };
+                Wheel {
+                    hub: Vec3::new(hub.x, hub.y, radius + 1.0),
+                    radius,
+                    spring,
+                    damping,
+                    damping_compression,
+                }
+            })
+            .collect();
+        if let Some(&body) = self.bodies.get(&veh) {
+            self.physics.set_mass(body, script.mass);
+        }
+        if let Some(v) = self.vehicles.get_mut(&veh) {
+            v.wheels = wheels;
+            v.add_gravity = script.add_gravity;
+            v.mass = script.mass;
+        }
+    }
+
+    /// Cars before the physics step: each wheel casts from its hub down the body's up axis and
+    /// pushes the body up by its spring (`springConstant` per kg of body over the unloaded
+    /// rest, `springDamping` on the hub's vertical speed); the script's `addgravity` pulls the
+    /// body down on top of gravity. The wheels see the world only for now.
+    fn tick_vehicles(&mut self) {
+        let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        let cars: Vec<(u32, Vec<Wheel>, f32, f32, f32)> = self
+            .vehicles
+            .iter()
+            .filter(|(_, v)| !v.wheels.is_empty())
+            .filter_map(|(id, v)| {
+                let script = vehicle_script(&v.key)?;
+                Some((*id, v.wheels.clone(), v.add_gravity, v.mass, script.rest))
+            })
+            .collect();
+        for (id, wheels, add_gravity, mass, rest) in cars {
+            let Some(&body) = self.bodies.get(&id) else {
+                continue;
+            };
+            if self.physics.is_frozen(body) {
+                continue;
+            }
+            let st = self.physics.state(body);
+            let com = self.physics.center_of_mass(body);
+            // the state's angular velocity is in degrees per second
+            let omega = st.angular_velocity * (std::f32::consts::PI / 180.0);
+            let up = st.rotation * Vec3::Z;
+            let g_total = (1.0 + add_gravity) * 600.0;
+            if add_gravity > 0.0 {
+                self.physics
+                    .add_impulse(body, Vec3::new(0.0, 0.0, -add_gravity * 600.0 * mass * dt));
+            }
+            let share = mass / wheels.len() as f32;
+            for w in &wheels {
+                let hub = st.position + st.rotation * w.hub;
+                let len = w.radius + VEHICLE_WHEEL_TRAVEL;
+                let tr = self
+                    .collision
+                    .trace_ray(hub, hub - up * len, gm_collision::MASK_SOLID);
+                if tr.fraction >= 1.0 {
+                    continue;
+                }
+                let ext = tr.fraction * len - w.radius;
+                let natural = rest + g_total / (4.0 * w.spring);
+                let v_hub = st.velocity + omega.cross(hub - com);
+                let v_up = v_hub.dot(up);
+                // the script's heavier `springDampingCompression` is not applied: one-sided
+                // damping on a rigid body (no wheel bodies) ratchets the car upward
+                let damping = w.damping;
+                let force = mass * (w.spring * (natural - ext) - damping * v_up);
+                if force <= 0.0 {
+                    continue;
+                }
+                self.physics.add_impulse_at(body, hub, up * (force * dt));
+                // the tyre holds the contact still: the hub's ground-plane velocity is taken
+                // out, bounded by the friction cone of the spring's load
+                let v_h = v_hub - up * v_up;
+                let want = v_h.length() * share;
+                if want > 1e-3 {
+                    let cap = VEHICLE_TYRE_FRICTION * force * dt;
+                    self.physics
+                        .add_impulse_at(body, com, -v_h.normalize() * want.min(cap));
+                }
+            }
+        }
     }
 
     /// A player hull swept `start` -> `end` against the world and the solid bodies.
@@ -6766,6 +6965,7 @@ impl<'w> Server<'w> {
         // hurts a target that has already moved (its velocity shows the push raw)
         self.tick_projectiles(launches);
         self.tick_devices();
+        self.tick_vehicles();
         // winch controllers think before the physics step, like any entity's Think
         for (id, len) in self
             .sandbox
@@ -7529,8 +7729,13 @@ impl<'w> Server<'w> {
                         health
                     },
                     driver: None,
+                    wheels: Vec::new(),
+                    add_gravity: 0.0,
+                    mass: 0.0,
                 },
             );
+            self.sync_physics();
+            self.setup_car(id, def.key);
         }
         if !sp.parts.is_empty() {
             self.sync_physics();

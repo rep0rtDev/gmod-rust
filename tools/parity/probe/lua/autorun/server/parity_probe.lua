@@ -1055,6 +1055,7 @@ SCENARIOS.toolgun = function(scn, done)
 					mass = IsValid(ph) and ph:GetMass() or -1, asleep = IsValid(ph) and ph:IsAsleep() or false, vel = IsValid(ph) and vec(ph:GetVelocity()) or nil,
 					driver = IsValid(d) and d:EntIndex() or -1, script = e:GetKeyValues().vehiclescript or e:GetInternalVariable("m_vehicleScript") or "", colgroup = e:GetCollisionGroup(),
 					bodygroups = e:GetBodyGroups() and #e:GetBodyGroups() or 0, skin = e:GetSkin(),
+					wheels = (function() local w = {} for _, n in ipairs({ "wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr" }) do local i = e:LookupAttachment(n) if i and i > 0 then local at = e:GetAttachment(i) local tr = util.TraceLine({ start = at.Pos, endpos = at.Pos - Vector(0, 0, 400), filter = { e, bot } }) w[n] = { pos = vec(at.Pos), ground = tr.Hit and tr.HitPos.z or nil } end end return w end)(),
 					seat = (function() local i = e:LookupAttachment("vehicle_feet_passenger0") if i and i > 0 then local at = e:GetAttachment(i) return { pos = vec(at.Pos), ang = { at.Ang.p, at.Ang.y, at.Ang.r } } end return nil end)(),
 					exit1 = (function() local i = e:LookupAttachment("exit1") if i and i > 0 then local at = e:GetAttachment(i) return { pos = vec(at.Pos), ang = { at.Ang.p, at.Ang.y, at.Ang.r } } end return nil end)() }
 			end
