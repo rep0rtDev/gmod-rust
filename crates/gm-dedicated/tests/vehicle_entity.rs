@@ -81,12 +81,16 @@ fn chair_spawns_seats_and_releases_the_player() {
         "rides the seat"
     );
     assert!(server.exit_vehicle(1));
+    // measured: the first free exit point is 90 u along the chair's axis (behind it) and
+    // 11.4 u up, the player faces that way; the per-side law is `server_vehicle_exit_*`
     let out = server.players[&1].state.origin - chair;
+    let flat = Vec3::new(out.x, out.y, 0.0);
     assert!(
-        (out - Vec3::new(0.0, -100.0, 12.0)).length() < 1.0,
+        (flat.length() - 90.0).abs() < 0.5 && (out.z - 11.4).abs() < 0.1,
         "exit offset {out:?}"
     );
-    assert!((server.players[&1].view_angles.y - 270.0).abs() < 0.01);
+    let want_yaw = flat.y.atan2(flat.x).to_degrees().rem_euclid(360.0);
+    assert!((server.players[&1].view_angles.y - want_yaw).abs() < 0.01);
     assert_eq!(server.vehicles[&id].driver, None);
     server.sandbox.limits.max_vehicles = 2;
     assert!(server.spawn_vehicle(1, "Chair_Wood").is_some());

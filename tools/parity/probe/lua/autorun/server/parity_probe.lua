@@ -1264,6 +1264,8 @@ SCENARIOS.toolgun = function(scn, done)
 				if e:IsVehicle() and (not op.class or e.VehicleName == op.class) then bot:EnterVehicle(e) break end
 			end
 		elseif op.op == "exit" then
+			-- optional view angles before the exit (does the engine pick the exit side by the view?)
+			if op.yaw then bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw, 0)) end
 			bot:ExitVehicle()
 		elseif op.op == "concmd" then
 			RunConsoleCommand(op.cmd, tostring(op.value or ""))

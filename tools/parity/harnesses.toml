@@ -3853,3 +3853,92 @@ realm = "server"
 crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
+[[harness]]
+name = "server_vehicle_exit_left"
+scenario = "server/vehicle_exit_left"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_vehicle_exit_lr"
+scenario = "server/vehicle_exit_lr"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_vehicle_exit_lrb"
+scenario = "server/vehicle_exit_lrb"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_vehicle_exit_right"
+scenario = "server/vehicle_exit_right"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_vehicle_exit_leftfar"
+scenario = "server/vehicle_exit_leftfar"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_vehicle_exit_back"
+scenario = "server/vehicle_exit_back"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_vehicle_exit_leftnear"
+scenario = "server/vehicle_exit_leftnear"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_vehicle_exit_view"
+scenario = "server/vehicle_exit_view"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_vehicle_exit_plain"
+scenario = "server/vehicle_exit_plain"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_vehicle_exit_farcrate"
+scenario = "server/vehicle_exit_farcrate"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0

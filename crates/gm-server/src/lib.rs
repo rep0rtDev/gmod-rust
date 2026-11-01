@@ -930,6 +930,10 @@ pub struct Npc {
 /// Ticks a dead NPC stays on the server before it is removed (measured 66..106 for the
 /// metropolice, 76..96 for the headcrab); the corpse itself is the client's ragdoll.
 pub const NPC_CORPSE_TICKS: u64 = 90;
+/// Vehicle exit point height over the vehicle origin and the "all sides blocked" top exit
+/// (measured `server_vehicle_exit_*`, chair: 11.4 / 90.9 u).
+const VEHICLE_EXIT_Z: f32 = 11.4;
+const VEHICLE_EXIT_TOP: f32 = 90.9;
 
 /// Where `Spawn_NPC` puts an NPC class relative to the hit point.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -4794,17 +4798,8 @@ impl<'w> Server<'w> {
         };
         let (pos, yaw) = match self.sandbox.props().iter().find(|p| p.id == veh) {
             Some(prop) => {
-                let rot = gm_sandbox::rotation(prop.angles);
-                let (fwd, right, up) = (rot * Vec3::X, rot * Vec3::NEG_Y, rot * Vec3::Z);
-                let jeep = self
-                    .vehicles
-                    .get(&veh)
-                    .is_some_and(|v| v.class == "prop_vehicle_jeep");
-                if jeep {
-                    (prop.pos - fwd * 90.0 + up * 11.5, prop.angles.y + 180.0)
-                } else {
-                    (prop.pos - right * 100.0 + up * 12.0, prop.angles.y + 90.0)
-                }
+                let (pos, dir) = self.vehicle_exit_point(prop.id, prop.pos, prop.angles);
+                (pos, dir.y.atan2(dir.x).to_degrees())
             }
             None => (
                 self.players[&player].state.origin,
@@ -4824,6 +4819,64 @@ impl<'w> Server<'w> {
             player,
             vehicle: veh,
         });
+        true
+    }
+
+    /// Measured `server_vehicle_exit_*` (chair, jeep): the engine tries four points around the
+    /// vehicle in order, each a player-hull sweep from the origin (+`VEHICLE_EXIT_Z`) that must
+    /// reach its end; the vehicle's own sides are a quarter turn from its angles (like its
+    /// attachments): behind 90 u, ahead 90 u, left 100 u, right 170 u; all blocked -> straight
+    /// above (90.9 u on the chair, then the player falls).
+    fn vehicle_exit_point(&self, veh: u32, origin: Vec3, angles: Vec3) -> (Vec3, Vec3) {
+        let rot = gm_sandbox::rotation(angles);
+        let fwd = rot * Vec3::X;
+        let left = rot * Vec3::Y;
+        let start = origin + Vec3::new(0.0, 0.0, VEHICLE_EXIT_Z);
+        let bodies: Vec<PropBody> = self
+            .trace_bodies()
+            .into_iter()
+            .filter(|b| b.id != veh)
+            .collect();
+        for (dir, dist) in [(-fwd, 90.0), (fwd, 90.0), (left, 100.0), (-left, 170.0)] {
+            let end = start + dir * dist;
+            if self.exit_hull_clear(start, end, &bodies) {
+                return (end, dir);
+            }
+        }
+        (origin + Vec3::new(0.0, 0.0, VEHICLE_EXIT_TOP), fwd)
+    }
+
+    /// A player hull swept `start` -> `end` against the world and the solid bodies.
+    fn exit_hull_clear(&self, start: Vec3, end: Vec3, bodies: &[PropBody]) -> bool {
+        let (mins, maxs) = (Vec3::new(-16.0, -16.0, 0.0), Vec3::new(16.0, 16.0, 72.0));
+        let tr = self
+            .collision
+            .trace_box(start, end, mins, maxs, gm_collision::MASK_PLAYERSOLID);
+        if tr.start_solid || tr.fraction < 1.0 {
+            return false;
+        }
+        let ext = (maxs - mins) * 0.5;
+        let center = (mins + maxs) * 0.5;
+        let steps = ((end - start).length() / 4.0).ceil().max(1.0) as usize;
+        for i in 0..=steps {
+            let c = start.lerp(end, i as f32 / steps as f32) + center;
+            for b in bodies {
+                let inv = gm_sandbox::rotation(b.angles).inverse();
+                let lc = inv * (c - b.pos);
+                let (lx, ly, lz) = (inv * Vec3::X, inv * Vec3::Y, inv * Vec3::Z);
+                let inside = b.hulls.iter().any(|h| {
+                    h.iter().all(|&(n, d)| {
+                        let r = n.dot(lx).abs() * ext.x
+                            + n.dot(ly).abs() * ext.y
+                            + n.dot(lz).abs() * ext.z;
+                        n.dot(lc) - d - r <= 0.0
+                    })
+                });
+                if inside {
+                    return false;
+                }
+            }
+        }
         true
     }
 
