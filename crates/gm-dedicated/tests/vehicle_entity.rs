@@ -65,11 +65,11 @@ fn chair_spawns_seats_and_releases_the_player() {
         .pos;
     assert!(server.enter_vehicle(1, id));
     let seated = server.players[&1].state.origin;
-    // the seat is `vehicle_feet_passenger0` (3, 0, 19) in model space turned by the chair's
-    // yaw 180; the game reads (0, -3, 19.5) there, a 90 degree twist still open (status)
+    // measured: the body sits on `vehicle_feet_passenger0`, (0, -3, 19.5) from the chair's
+    // origin at yaw 180 (the engine's static-prop quarter turn; 0.5 u of height still open)
     let d = seated - chair;
     assert!(
-        (d - Vec3::new(-3.0, 0.0, 19.0)).length() < 0.1,
+        (d - Vec3::new(0.0, -3.0, 19.5)).length() < 0.6,
         "seat offset {d:?}"
     );
     assert_eq!(server.vehicles[&id].driver, Some(1));

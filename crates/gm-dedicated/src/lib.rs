@@ -409,7 +409,15 @@ fn model_attachments(mdl: &gm_formats::mdl::Mdl) -> Vec<gm_server::ModelAttachme
             if bone >= mdl.bones.len() {
                 return None;
             }
-            let m = bind(mdl, bone);
+            // measured (`server_vehicle_seat`: nova chairs, jeep seat): on a one-bone static
+            // prop the engine's attachment sits a quarter turn further round z than the bone
+            // chain gives ((3, 19, 0) in the bone reads (0, 3, 19.5) on the chair), the
+            // $staticprop compile convention
+            let m = if mdl.bones.len() == 1 {
+                glam::Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2) * bind(mdl, bone)
+            } else {
+                bind(mdl, bone)
+            };
             let l = &a.local;
             Some(gm_server::ModelAttachment {
                 name: a.name.clone(),

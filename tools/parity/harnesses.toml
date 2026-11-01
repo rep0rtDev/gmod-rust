@@ -551,6 +551,15 @@ crates = ["gm-server", "gm-sandbox"]
 pos = 2.0
 
 [[harness]]
+name = "server_vehicle_seat"
+scenario = "server/vehicle_seat"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
 name = "server_npc_damage"
 scenario = "server/npc_damage"
 compare = "server"

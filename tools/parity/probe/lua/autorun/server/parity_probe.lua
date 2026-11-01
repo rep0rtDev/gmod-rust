@@ -1054,7 +1054,9 @@ SCENARIOS.toolgun = function(scn, done)
 					mins = vec(mn), maxs = vec(mx), health = e:Health(), maxhealth = e:GetMaxHealth(), movetype = e:GetMoveType(), solid = e:GetSolid(),
 					mass = IsValid(ph) and ph:GetMass() or -1, asleep = IsValid(ph) and ph:IsAsleep() or false, vel = IsValid(ph) and vec(ph:GetVelocity()) or nil,
 					driver = IsValid(d) and d:EntIndex() or -1, script = e:GetKeyValues().vehiclescript or e:GetInternalVariable("m_vehicleScript") or "", colgroup = e:GetCollisionGroup(),
-					bodygroups = e:GetBodyGroups() and #e:GetBodyGroups() or 0, skin = e:GetSkin() }
+					bodygroups = e:GetBodyGroups() and #e:GetBodyGroups() or 0, skin = e:GetSkin(),
+					seat = (function() local i = e:LookupAttachment("vehicle_feet_passenger0") if i and i > 0 then local at = e:GetAttachment(i) return { pos = vec(at.Pos), ang = { at.Ang.p, at.Ang.y, at.Ang.r } } end return nil end)(),
+					exit1 = (function() local i = e:LookupAttachment("exit1") if i and i > 0 then local at = e:GetAttachment(i) return { pos = vec(at.Pos), ang = { at.Ang.p, at.Ang.y, at.Ang.r } } end return nil end)() }
 			end
 		end
 		table.sort(out.vehicles, function(a, b) return a.index < b.index end)

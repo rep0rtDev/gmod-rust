@@ -1,0 +1,206 @@
+{
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "name": "server_vehicle_seat",
+ "ops": [
+  {
+   "op": "spawnvehicle",
+   "class": "Chair_Wood",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "enter",
+   "class": "Chair_Wood"
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "exit"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Chair_Wood",
+   "pitch": 20.0,
+   "yaw": 90.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "enter",
+   "class": "Chair_Wood"
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "exit"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Chair_Wood",
+   "pitch": 20.0,
+   "yaw": -90.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "enter",
+   "class": "Chair_Wood"
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "exit"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Pod",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "enter",
+   "class": "Pod"
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "exit"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Seat_Jeep",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "enter",
+   "class": "Seat_Jeep"
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "exit"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Chair_Office1",
+   "pitch": 20.0,
+   "yaw": 45.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "enter",
+   "class": "Chair_Office1"
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "exit"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  }
+ ]
+}
