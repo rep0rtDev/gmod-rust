@@ -66,6 +66,8 @@ Recorded with a bot dropped from heights and hit with `TakeDamageInfo`:
 
 On the dedicated server a dead player's body is an `hl2mp_ragdoll` entity created on the death tick at the player's origin with zero angles and **no physics objects** (`GetPhysicsObjectCount()` is 0 for all 135 ticks it exists): the ragdoll is simulated on each client from the player's model (`models/player/kleiner.phy`: 15 solids, 14 `ragdollconstraint` blocks and `collisionrules` pairs in the PHY text), the server only carries the record. `gm-server` keeps that record (`Ragdoll`: class, model, origin, angles, velocity, tick) on the dead player; harness `ragdoll_still` equal (class, count 0, tick, origin, alive per tick). The client-side ragdoll simulation (Jolt articulated body from the PHY constraints) is a client realm item.
 
+## prop_ragdoll (measured, `phys_ragdoll_kleiner*`)
+
 Measured against srcds with the per-body probe (`phys_ragdoll_kleiner`: `prop_ragdoll` kleiner dropped from z -40 over the construct floor, every `GetPhysicsObjectNum(i)` pose/velocity per tick, 15 parts, 200 ticks; `phys_ragdoll_kleiner_hang`: the same with the pelvis `EnableMotion(false)` in the air, 400 ticks):
 
 - Spawn pose is frame 0 of the model's `ragdoll` sequence (`$sequence ragdoll`), not the bind pose: kleiner's root is yawed 90 deg and the limbs hang differently. `gm-dedicated` decodes that frame (`.ani` block when the animation is external) and falls back to the bind pose when there is no such sequence. With it all 15 parts are equal at spawn and through the free fall (tick 38).
