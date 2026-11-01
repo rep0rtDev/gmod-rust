@@ -106,3 +106,29 @@ The other stools (lamp, light, trails, motor, emitter, camera, ...), wheel / but
   second time). The player's `constraints` count follows the removed constraints at once.
 - Ours: `Sandbox::remover_remove` marks the prop (`is_removing`), the server drops its physics body and
   leaves it out of snapshots, `tick_removals` deletes it after 1 s; the tool trace ignores it meanwhile.
+
+### lamp and light (measured, `toolgun_lamp`, `toolgun_light`)
+
+- lamp: left click spawns `gmod_lamp` (torch model, skin 1, angle zero) with its hull's extreme
+  along the hit normal on the hit point (`NearestPoint` offset), lit from the start when the
+  `toggle` convar is 1 (`MakeLamp(.., on = !toggle)`), dark with toggle 0; a click on the
+  player's own lamp re-applies the convars and rebinds the numpad instead of spawning; right
+  click on any lamp copies its settings into the convars (true), false elsewhere. Limit
+  `sbox_maxlamps` 3 (the fourth click answers false with `LimitHit lamps`). Undo `gmod_lamp`,
+  cleanup `lamps`.
+- light: left click spawns `gmod_light` (`light_tubular`) 8 u out along the normal with
+  `HitNormal:Angle() - (90, 0, 0)` and ropes it to what was hit (`constraint.Rope` from local
+  (0, 0, 6.5) to the local hit point, length 0 + addlength `ropelength`, width 1), the world
+  included; right click is the same without the rope. Limit `sbox_maxlights` 5. Undo
+  `gmod_light` with the rope, cleanup `lights`.
+- `LampToggle` / `LightToggle` on the numpad: without toggle the key holds the light (down on,
+  up off); with toggle a press flips it, the release does nothing. Recorded: toggle lamp 1 off
+  after a press, back on after the next; hold lamp lit only between down and up.
+- Ours: `Device::Lamp` / `Device::Light` with `NumpadBind::LightSwitch`; the server does not
+  move them (physics of the free-standing lamp and the roped light settle in the game, the
+  toolgun comparison checks a device's pose only on the op that placed it).
+- Found while measuring: the toolgun comparison had compared our own device snapshot against
+  itself, never the game's; fixed, which surfaced `gmod_thruster.GetOffset()` (the model's
+  bottom once a key event leaves `mul <= 0`, the top from spawn and while thrusting; ours
+  follows) and the game's `+use` picking the toggle button at `toolgun_button` op 6 where our
+  runner presses the newest one (open, `toolgun_button` red).

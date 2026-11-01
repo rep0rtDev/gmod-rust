@@ -427,6 +427,29 @@ pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
             num("hoverball_strength", 10.0, 0.1, 10.0),
             text("hoverball_model", "models/dav0r/hoverball.mdl"),
         ],
+        "lamp" => vec![
+            num("lamp_r", 255.0, 0.0, 255.0),
+            num("lamp_g", 255.0, 0.0, 255.0),
+            num("lamp_b", 255.0, 0.0, 255.0),
+            key("lamp_key", 37),
+            num("lamp_fov", 90.0, 10.0, 170.0),
+            num("lamp_distance", 1024.0, 64.0, 2048.0),
+            num("lamp_brightness", 4.0, 0.0, 8.0),
+            text("lamp_texture", "effects/flashlight001"),
+            text("lamp_model", "models/lamps/torch.mdl"),
+            flag("lamp_toggle", true),
+        ],
+        "light" => vec![
+            num("light_ropelength", 64.0, 4.0, 1024.0),
+            text("light_ropematerial", "cable/rope"),
+            num("light_r", 255.0, 0.0, 255.0),
+            num("light_g", 255.0, 0.0, 255.0),
+            num("light_b", 255.0, 0.0, 255.0),
+            num("light_brightness", 2.0, 0.0, 6.0),
+            num("light_size", 256.0, 0.0, 1024.0),
+            key("light_key", 37),
+            flag("light_toggle", true),
+        ],
         "balloon" => vec![
             num("balloon_ropelength", 64.0, 5.0, 1000.0),
             num("balloon_force", 500.0, -1000.0, 2000.0),
@@ -3335,10 +3358,15 @@ impl<'w> Server<'w> {
             self.sync_physics();
             return ToolClick::Done(ret);
         }
-        if matches!(tool, "thruster" | "hoverball" | "balloon") {
+        if matches!(
+            tool,
+            "thruster" | "hoverball" | "balloon" | "lamp" | "light"
+        ) {
             let model = match tool {
                 "thruster" => self.sandbox.tool_settings.thruster_model.clone(),
                 "hoverball" => self.sandbox.tool_settings.hoverball_model.clone(),
+                "lamp" => self.sandbox.tool_settings.lamp_model.clone(),
+                "light" => gm_sandbox::LIGHT_MODEL.to_string(),
                 _ => self.sandbox.tool_settings.balloon_model.clone(),
             };
             if !self.sandbox.has_model_shape(&model) {
@@ -3502,7 +3530,10 @@ impl<'w> Server<'w> {
                     let w = st.angular_velocity + axis * (spin - along);
                     self.physics.set_velocity(body, st.velocity, w);
                 }
-                gm_sandbox::Device::Button { .. } | gm_sandbox::Device::Dynamite { .. } => {}
+                gm_sandbox::Device::Button { .. }
+                | gm_sandbox::Device::Dynamite { .. }
+                | gm_sandbox::Device::Lamp { .. }
+                | gm_sandbox::Device::Light { .. } => {}
             }
         }
         self.sandbox.settle_wheel_scales();

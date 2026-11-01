@@ -92,6 +92,8 @@ pub struct Limits {
     pub max_wheels: i32,
     pub max_buttons: i32,
     pub max_dynamite: i32,
+    pub max_lamps: i32,
+    pub max_lights: i32,
 }
 
 impl Default for Limits {
@@ -106,6 +108,8 @@ impl Default for Limits {
             max_wheels: 50,
             max_buttons: 50,
             max_dynamite: 20,
+            max_lamps: 3,
+            max_lights: 5,
         }
     }
 }
@@ -122,6 +126,8 @@ impl Limits {
             "wheels" => self.max_wheels,
             "buttons" => self.max_buttons,
             "dynamite" => self.max_dynamite,
+            "lamps" => self.max_lamps,
+            "lights" => self.max_lights,
             _ => -1,
         }
     }
@@ -562,6 +568,25 @@ pub struct ToolSettings {
     pub dynamite_damage: f32,
     pub dynamite_delay: f32,
     pub dynamite_model: String,
+    pub lamp_r: f32,
+    pub lamp_g: f32,
+    pub lamp_b: f32,
+    pub lamp_fov: f32,
+    pub lamp_distance: f32,
+    pub lamp_brightness: f32,
+    pub lamp_toggle: bool,
+    pub lamp_texture: String,
+    pub lamp_model: String,
+    pub lamp_key: i32,
+    pub light_r: f32,
+    pub light_g: f32,
+    pub light_b: f32,
+    pub light_brightness: f32,
+    pub light_size: f32,
+    pub light_ropelength: f32,
+    pub light_toggle: bool,
+    pub light_ropematerial: String,
+    pub light_key: i32,
     pub dynamite_remove: bool,
 }
 
@@ -595,19 +620,21 @@ impl ToolSettings {
             hoverball_speed, hoverball_resistance, hoverball_strength, balloon_ropelength,
             balloon_force, wheel_torque, wheel_friction, wheel_forcelimit, wheel_rx, wheel_ry,
             wheel_rz, motor_torque, motor_friction, motor_forcelimit, motor_forcetime,
-            dynamite_damage, dynamite_delay;
+            dynamite_damage, dynamite_delay, lamp_r, lamp_g, lamp_b, lamp_fov, lamp_distance,
+            lamp_brightness, light_r, light_g, light_b, light_brightness, light_size,
+            light_ropelength;
             axis_nocollide, weld_nocollide, rope_rigid, ballsocket_nocollide, elastic_stretchonly,
             hydraulic_fixed, hydraulic_toggle, winch_toggle, muscle_fixed, muscle_starton,
             pulley_rigid, thruster_toggle, thruster_collision, wheel_nocollide, wheel_toggle,
             motor_nocollide, motor_toggle,
-            button_toggle, dynamite_remove;
+            button_toggle, dynamite_remove, lamp_toggle, light_toggle;
             rope_material, slider_material, elastic_material, hydraulic_material, winch_material,
             muscle_material, pulley_material, thruster_model, thruster_soundname, hoverball_model,
             balloon_model,
-            wheel_model, button_model, dynamite_model;
+            wheel_model, button_model, dynamite_model, lamp_texture, lamp_model, light_ropematerial;
             hydraulic_key, winch_fwd_key, winch_bwd_key, muscle_key, thruster_key,
             thruster_key_back, hoverball_key_up, hoverball_key_down, hoverball_key_on, wheel_fwd,
-            wheel_bck, motor_fwd, motor_bwd, button_keygroup, dynamite_group
+            wheel_bck, motor_fwd, motor_bwd, button_keygroup, dynamite_group, lamp_key, light_key
         )
     }
 }
@@ -705,6 +732,25 @@ impl Default for ToolSettings {
             dynamite_damage: 200.0,
             dynamite_delay: 0.0,
             dynamite_model: "models/dav0r/tnt/tnt.mdl".into(),
+            lamp_r: 255.0,
+            lamp_g: 255.0,
+            lamp_b: 255.0,
+            lamp_fov: 90.0,
+            lamp_distance: 1024.0,
+            lamp_brightness: 4.0,
+            lamp_toggle: true,
+            lamp_texture: "effects/flashlight001".into(),
+            lamp_model: "models/lamps/torch.mdl".into(),
+            lamp_key: 37,
+            light_r: 255.0,
+            light_g: 255.0,
+            light_b: 255.0,
+            light_brightness: 2.0,
+            light_size: 256.0,
+            light_ropelength: 64.0,
+            light_toggle: true,
+            light_ropematerial: "cable/rope".into(),
+            light_key: 37,
             dynamite_remove: false,
         }
     }
@@ -890,6 +936,9 @@ pub enum Device {
         bottom_z: f32,
         key: i32,
         key_back: i32,
+        /// `GetOffset()` sits at the model's bottom (`ThrustOffsetR`) once a key event left the
+        /// thruster off; at the top (`ThrustOffset`) from spawn and while thrusting
+        rear: bool,
     },
     /// `gmod_hoverball`: holds `target_z` with a damped quadratic acceleration, mass
     /// `150 * strength` while enabled (15 when off); gravity stays on at creation (the game
@@ -966,7 +1015,31 @@ pub enum Device {
         /// Explosions waiting (server ticks left), the queue of `Explode` with a delay.
         queued: Vec<u32>,
     },
+    /// gmod_lamp: a projected-texture spotlight on a prop (torch and the like); `on` is the
+    /// `On` network var, the numpad `LampToggle` flips or holds it
+    Lamp {
+        color: [u8; 3],
+        texture: String,
+        fov: f32,
+        distance: f32,
+        brightness: f32,
+        toggle: bool,
+        on: bool,
+        key: i32,
+    },
+    /// gmod_light: the tubular point light, usually roped to what it was placed on
+    Light {
+        color: [u8; 3],
+        brightness: f32,
+        size: f32,
+        toggle: bool,
+        on: bool,
+        key: i32,
+    },
 }
+
+/// gmod_light's one model.
+pub const LIGHT_MODEL: &str = "models/maxofs2d/light_tubular.mdl";
 
 /// The server tick the device timers count in (seconds).
 pub const SERVER_TICK: f32 = 0.015;
@@ -1059,7 +1132,9 @@ impl Device {
             | Device::Wheel { .. }
             | Device::Motor { .. }
             | Device::Button { .. }
-            | Device::Dynamite { .. } => None,
+            | Device::Dynamite { .. }
+            | Device::Lamp { .. }
+            | Device::Light { .. } => None,
         }
     }
 
@@ -1122,6 +1197,8 @@ pub enum NumpadBind {
     Motor(u32, f32),
     /// `DynamiteBlow` on the press.
     Dynamite(u32),
+    /// `LampToggle` / `LightToggle`: hold or flip the light
+    LightSwitch(u32),
     /// Down sets the direction, up stops (a non-toggle winch).
     WinchDir(u32, i8),
     WinchToggle(u32, i8),
@@ -1139,6 +1216,7 @@ impl NumpadBind {
             | NumpadBind::Wheel(c, _)
             | NumpadBind::Motor(c, _)
             | NumpadBind::Dynamite(c)
+            | NumpadBind::LightSwitch(c)
             | NumpadBind::WinchDir(c, _)
             | NumpadBind::WinchToggle(c, _)
             | NumpadBind::MuscleToggle(c) => c,
@@ -1628,8 +1706,15 @@ impl Sandbox {
         hit: &ToolHit,
         events: &mut Vec<Event>,
     ) -> bool {
-        if tool == "balloon" {
+        if tool == "balloon" || tool == "light" {
+            // light.lua: `RightClick = LeftClick(trace, false)`, no rope
             return self.place_device(player, tool, hit, false, events);
+        }
+        if tool == "lamp" {
+            // lamp.lua: copies a gmod_lamp's settings into the convars, anyone's lamp
+            return hit
+                .ent
+                .is_some_and(|e| matches!(self.devices.get(&e), Some(Device::Lamp { .. })));
         }
         if tool == "remover" {
             let Some(ent) = hit.ent else {
@@ -1903,6 +1988,8 @@ impl Sandbox {
                 | "axis"
                 | "nocollide"
                 | "remover"
+                | "lamp"
+                | "light"
                 | "duplicator"
                 | "ballsocket"
                 | "slider"
@@ -2064,8 +2151,71 @@ impl Sandbox {
             "wheel" => ("wheels", s.wheel_model.clone()),
             "button" => ("buttons", s.button_model.clone()),
             "dynamite" => ("dynamite", s.dynamite_model.clone()),
+            "lamp" => ("lamps", s.lamp_model.clone()),
+            "light" => ("lights", LIGHT_MODEL.to_string()),
             _ => ("balloons", s.balloon_model.clone()),
         };
+        // a click on the player's own lamp / light re-applies the settings instead
+        if matches!(tool, "lamp" | "light") {
+            if let Some(e) = hit.ent {
+                let own = self.props.iter().any(|p| p.id == e && p.owner == player);
+                let key = match (tool, self.devices.get_mut(&e)) {
+                    (
+                        "lamp",
+                        Some(Device::Lamp {
+                            color,
+                            texture,
+                            fov,
+                            distance,
+                            brightness,
+                            toggle,
+                            key,
+                            ..
+                        }),
+                    ) if own => {
+                        *color = [
+                            s.lamp_r.clamp(0.0, 255.0) as u8,
+                            s.lamp_g.clamp(0.0, 255.0) as u8,
+                            s.lamp_b.clamp(0.0, 255.0) as u8,
+                        ];
+                        *texture = s.lamp_texture.clone();
+                        *fov = s.lamp_fov;
+                        *distance = s.lamp_distance;
+                        *brightness = s.lamp_brightness;
+                        *toggle = s.lamp_toggle;
+                        *key = s.lamp_key;
+                        Some(s.lamp_key)
+                    }
+                    (
+                        "light",
+                        Some(Device::Light {
+                            color,
+                            brightness,
+                            size,
+                            toggle,
+                            key,
+                            ..
+                        }),
+                    ) if own => {
+                        *color = [
+                            s.light_r.clamp(0.0, 255.0) as u8,
+                            s.light_g.clamp(0.0, 255.0) as u8,
+                            s.light_b.clamp(0.0, 255.0) as u8,
+                        ];
+                        *brightness = s.light_brightness.clamp(-10.0, 20.0);
+                        *size = s.light_size;
+                        *toggle = s.light_toggle;
+                        *key = s.light_key;
+                        Some(s.light_key)
+                    }
+                    _ => None,
+                };
+                if let Some(key) = key {
+                    self.rebind(player, e, key, NumpadBind::LightSwitch(e));
+                    return true;
+                }
+            }
+        }
         let Some(shape) = self.shapes.get(&model).cloned() else {
             return false;
         };
@@ -2075,7 +2225,12 @@ impl Sandbox {
         let n = hit.normal;
         // `HitNormal:Angle()` with the pitch turned 90 degrees up: the model's z along the normal
         let angles = match tool {
-            "balloon" | "dynamite" => Vec3::ZERO,
+            "balloon" | "dynamite" | "lamp" => Vec3::ZERO,
+            // light.lua: `HitNormal:Angle() - Angle(90, 0, 0)`
+            "light" => {
+                let a = angle_of(n);
+                Vec3::new(a.x - 90.0, a.y, a.z)
+            }
             "wheel" => {
                 let a = angle_of(n);
                 Vec3::new(
@@ -2092,6 +2247,8 @@ impl Sandbox {
         let rot = rotation(angles);
         let pos = if tool == "thruster" || tool == "button" {
             hit.pos - n * shape.min.z
+        } else if tool == "light" {
+            hit.pos + n * 8.0
         } else {
             hit.pos + n * obb_depth(&shape, rot, n)
         };
@@ -2108,7 +2265,8 @@ impl Sandbox {
             collide: true,
             upright: None,
             health: 0,
-            skin: u8::from(tool == "balloon"),
+            // gmod_lamp: `SetSkin(lightInfo.Skin)`, 1 for the torch and the other stock lamps
+            skin: u8::from(matches!(tool, "balloon" | "lamp")),
             body: String::new(),
             fire: None,
         });
@@ -2132,6 +2290,65 @@ impl Sandbox {
                     bottom_z: shape.min.z,
                     key: s.thruster_key,
                     key_back: s.thruster_key_back,
+                    rear: false,
+                }
+            }
+            "lamp" => {
+                binds.push((s.lamp_key, NumpadBind::LightSwitch(id)));
+                Device::Lamp {
+                    color: [
+                        s.lamp_r.clamp(0.0, 255.0) as u8,
+                        s.lamp_g.clamp(0.0, 255.0) as u8,
+                        s.lamp_b.clamp(0.0, 255.0) as u8,
+                    ],
+                    texture: s.lamp_texture.clone(),
+                    fov: s.lamp_fov,
+                    distance: s.lamp_distance,
+                    brightness: s.lamp_brightness,
+                    toggle: s.lamp_toggle,
+                    // `MakeLamp(.., toggle, .., on = !toggle)`: lit from the start with the toggle convar
+                    on: s.lamp_toggle,
+                    key: s.lamp_key,
+                }
+            }
+            "light" => {
+                binds.push((s.light_key, NumpadBind::LightSwitch(id)));
+                if attach {
+                    // `constraint.Rope(light, ent, 0, bone, (0, 0, 6.5), local hit, 0, length, 0, 1, mat)`
+                    let lpos2 = match hit.ent.and_then(|e| self.props.iter().find(|p| p.id == e)) {
+                        Some(p) => rotation(p.angles).inverse() * (hit.pos - p.pos),
+                        None => hit.pos,
+                    };
+                    // (length 0, addlength = the convar)
+                    let mut rs = s.clone();
+                    rs.rope_addlength = s.light_ropelength.clamp(4.0, 1024.0);
+                    rs.rope_material = s.light_ropematerial.clone();
+                    rs.rope_width = 1.0;
+                    rs.rope_rigid = false;
+                    if let Some(rope) = self.rope(
+                        player,
+                        Some(id),
+                        hit.ent,
+                        Vec3::new(0.0, 0.0, 6.5),
+                        lpos2,
+                        0.0,
+                        &rs,
+                    ) {
+                        undo_ents.push(rope);
+                        self.add_cleanup(player, count, rope);
+                    }
+                }
+                Device::Light {
+                    color: [
+                        s.light_r.clamp(0.0, 255.0) as u8,
+                        s.light_g.clamp(0.0, 255.0) as u8,
+                        s.light_b.clamp(0.0, 255.0) as u8,
+                    ],
+                    brightness: s.light_brightness.clamp(-10.0, 20.0),
+                    size: s.light_size,
+                    toggle: s.light_toggle,
+                    on: s.light_toggle,
+                    key: s.light_key,
                 }
             }
             "hoverball" => {
@@ -2250,7 +2467,7 @@ impl Sandbox {
                 undo_ents.insert(0, self.next_id);
                 self.next_id += 1;
                 self.add_cleanup(player, count, axis_id);
-            } else if tool != "dynamite" {
+            } else if !matches!(tool, "dynamite" | "lamp" | "light") {
                 let nocollide = tool == "thruster" && !s.thruster_collision;
                 if let Some(weld) = self.weld(player, Some(id), Some(target), 0.0, nocollide) {
                     undo_ents.push(weld);
@@ -2711,13 +2928,26 @@ impl Sandbox {
         }
         if matches!(
             tool,
-            "thruster" | "hoverball" | "balloon" | "wheel" | "button" | "dynamite"
+            "thruster"
+                | "hoverball"
+                | "balloon"
+                | "wheel"
+                | "button"
+                | "dynamite"
+                | "lamp"
+                | "light"
         ) {
             // a wheel needs an entity to drive against
             if tool == "wheel" && hit.ent.is_none() {
                 return false;
             }
-            return self.place_device(player, tool, hit, tool == "balloon", events);
+            return self.place_device(
+                player,
+                tool,
+                hit,
+                matches!(tool, "balloon" | "light"),
+                events,
+            );
         }
         // a pulley's first and last click must be entities; the two pulley points are anywhere
         if tool == "pulley"
@@ -2911,6 +3141,17 @@ impl Sandbox {
 
     /// `numpad.Activate` / `Deactivate`: a key edge of a player drives every controller bound
     /// to it; a repeat while held does nothing, bindings of gone constraints are dropped.
+    /// `numpad.Remove(old); numpad.OnDown/OnUp(ply, key, ..)`: the entity's binds move to `key`.
+    fn rebind(&mut self, player: u32, ent: u32, key: i32, bind: NumpadBind) {
+        for ((p, _), binds) in self.numpad.iter_mut() {
+            if *p == player {
+                binds.retain(|b| b.constraint() != ent);
+            }
+        }
+        self.numpad.retain(|_, b| !b.is_empty());
+        self.numpad.entry((player, key)).or_default().push(bind);
+    }
+
     pub fn numpad(&mut self, player: u32, key: i32, down: bool) {
         let held = self.numpad_held.entry(player).or_default();
         if held.contains(&key) == down {
@@ -2939,7 +3180,11 @@ impl Sandbox {
                     (
                         NumpadBind::Thruster(_, m),
                         Device::Thruster {
-                            mul, toggle, on, ..
+                            mul,
+                            toggle,
+                            on,
+                            rear,
+                            ..
                         },
                     ) => {
                         if *toggle {
@@ -2951,6 +3196,7 @@ impl Sandbox {
                             *mul += if down { m } else { -m };
                         }
                         *on = *mul != 0.0;
+                        *rear = *mul <= 0.0;
                     }
                     (
                         NumpadBind::Wheel(_, mul),
@@ -3009,6 +3255,17 @@ impl Sandbox {
                             *scale = dir;
                         } else {
                             *scale = 0.0;
+                        }
+                    }
+                    (
+                        NumpadBind::LightSwitch(_),
+                        Device::Lamp { toggle, on, .. } | Device::Light { toggle, on, .. },
+                    ) => {
+                        // no toggle: the key holds the light; toggle: a press flips it
+                        if !*toggle {
+                            *on = down;
+                        } else if down {
+                            *on = !*on;
                         }
                     }
                     (

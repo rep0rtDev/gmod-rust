@@ -83,6 +83,24 @@ pub enum SavedDeviceKind {
         remove: bool,
         key: i32,
     },
+    Lamp {
+        color: [u8; 3],
+        texture: String,
+        fov: f32,
+        distance: f32,
+        brightness: f32,
+        toggle: bool,
+        on: bool,
+        key: i32,
+    },
+    Light {
+        color: [u8; 3],
+        brightness: f32,
+        size: f32,
+        toggle: bool,
+        on: bool,
+        key: i32,
+    },
 }
 
 impl From<&Device> for SavedDeviceKind {
@@ -183,6 +201,40 @@ impl From<&Device> for SavedDeviceKind {
                 remove,
                 key,
             },
+            Device::Lamp {
+                color,
+                texture,
+                fov,
+                distance,
+                brightness,
+                toggle,
+                on,
+                key,
+            } => SavedDeviceKind::Lamp {
+                color,
+                texture,
+                fov,
+                distance,
+                brightness,
+                toggle,
+                on,
+                key,
+            },
+            Device::Light {
+                color,
+                brightness,
+                size,
+                toggle,
+                on,
+                key,
+            } => SavedDeviceKind::Light {
+                color,
+                brightness,
+                size,
+                toggle,
+                on,
+                key,
+            },
         }
     }
 }
@@ -211,6 +263,7 @@ impl SavedDeviceKind {
                     bottom_z,
                     key,
                     key_back,
+                    rear: false,
                 },
                 vec![
                     (key, NumpadBind::Thruster(id, 1.0)),
@@ -327,6 +380,46 @@ impl SavedDeviceKind {
                     queued: Vec::new(),
                 },
                 vec![(key, NumpadBind::Dynamite(id))],
+            ),
+            SavedDeviceKind::Lamp {
+                color,
+                texture,
+                fov,
+                distance,
+                brightness,
+                toggle,
+                on,
+                key,
+            } => (
+                Device::Lamp {
+                    color,
+                    texture,
+                    fov,
+                    distance,
+                    brightness,
+                    toggle,
+                    on,
+                    key,
+                },
+                vec![(key, NumpadBind::LightSwitch(id))],
+            ),
+            SavedDeviceKind::Light {
+                color,
+                brightness,
+                size,
+                toggle,
+                on,
+                key,
+            } => (
+                Device::Light {
+                    color,
+                    brightness,
+                    size,
+                    toggle,
+                    on,
+                    key,
+                },
+                vec![(key, NumpadBind::LightSwitch(id))],
             ),
         }
     }

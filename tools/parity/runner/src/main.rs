@@ -243,6 +243,10 @@ fn apply_click_settings(
             | "wheel"
             | "button"
             | "dynamite"
+            | "lamp"
+            | "light"
+            | "thruster"
+            | "hoverball"
     ) {
         return;
     }
@@ -262,6 +266,47 @@ fn apply_click_settings(
     };
     let ts = &mut sb.tool_settings;
     match tool {
+        "thruster" => {
+            ts.thruster_force = num("force");
+            ts.thruster_model = text("model");
+            ts.thruster_key = num("keygroup") as i32;
+            ts.thruster_key_back = num("keygroup_back") as i32;
+            ts.thruster_toggle = flag("toggle");
+            ts.thruster_collision = flag("collision");
+            ts.thruster_soundname = text("soundname");
+        }
+        "hoverball" => {
+            ts.hoverball_key_up = num("keyup") as i32;
+            ts.hoverball_key_down = num("keydn") as i32;
+            ts.hoverball_key_on = num("keyon") as i32;
+            ts.hoverball_speed = num("speed");
+            ts.hoverball_resistance = num("resistance");
+            ts.hoverball_strength = num("strength");
+            ts.hoverball_model = text("model");
+        }
+        "lamp" => {
+            ts.lamp_r = num("r");
+            ts.lamp_g = num("g");
+            ts.lamp_b = num("b");
+            ts.lamp_key = num("key") as i32;
+            ts.lamp_fov = num("fov");
+            ts.lamp_distance = num("distance");
+            ts.lamp_brightness = num("brightness");
+            ts.lamp_texture = text("texture");
+            ts.lamp_model = text("model");
+            ts.lamp_toggle = flag("toggle");
+        }
+        "light" => {
+            ts.light_ropelength = num("ropelength");
+            ts.light_ropematerial = text("ropematerial");
+            ts.light_r = num("r");
+            ts.light_g = num("g");
+            ts.light_b = num("b");
+            ts.light_brightness = num("brightness");
+            ts.light_size = num("size");
+            ts.light_key = num("key") as i32;
+            ts.light_toggle = flag("toggle");
+        }
         "ballsocket" => {
             ts.ballsocket_forcelimit = num("forcelimit");
             ts.ballsocket_nocollide = flag("nocollide");
@@ -474,6 +519,8 @@ impl DeviceSpec {
                 "wheel" => "models/props_vehicles/carparts_wheel01a.mdl",
                 "button" => "models/maxofs2d/button_05.mdl",
                 "dynamite" => "models/dav0r/tnt/tnt.mdl",
+                "lamp" => "models/lamps/torch.mdl",
+                "light" => gm_sandbox::LIGHT_MODEL,
                 _ => "models/maxofs2d/balloon_classic.mdl",
             }
             .to_string()
@@ -493,6 +540,7 @@ impl DeviceSpec {
                 bottom_z,
                 key: self.key.unwrap_or(45),
                 key_back: self.key_bk.unwrap_or(42),
+                rear: false,
             },
             "hoverball" => gm_sandbox::Device::Hoverball {
                 target_z: self.pos[2],
@@ -548,6 +596,7 @@ fn device_key(d: &mut gm_sandbox::Device, key: i32, down: bool, pos_z: f32) {
             on,
             key: fwd,
             key_back,
+            rear,
             ..
         } => {
             let m = if key == *fwd {
@@ -565,6 +614,7 @@ fn device_key(d: &mut gm_sandbox::Device, key: i32, down: bool, pos_z: f32) {
                 *mul += if down { m } else { -m };
             }
             *on = *mul != 0.0;
+            *rear = *mul <= 0.0;
         }
         Device::Hoverball {
             target_z,
@@ -652,6 +702,20 @@ fn device_key(d: &mut gm_sandbox::Device, key: i32, down: bool, pos_z: f32) {
                 }
             }
             *scale = speed;
+        }
+        Device::Lamp {
+            key: k, toggle, on, ..
+        }
+        | Device::Light {
+            key: k, toggle, on, ..
+        } => {
+            if key == *k {
+                if !*toggle {
+                    *on = down;
+                } else if down {
+                    *on = !*on;
+                }
+            }
         }
         Device::Dynamite {
             key: k,
@@ -754,7 +818,10 @@ fn device_simulate(
                 st.angular_velocity + axis * (spin - along),
             );
         }
-        Device::Button { .. } | Device::Dynamite { .. } => {}
+        Device::Button { .. }
+        | Device::Dynamite { .. }
+        | Device::Lamp { .. }
+        | Device::Light { .. } => {}
     }
 }
 
@@ -802,6 +869,31 @@ fn device_row(d: &gm_sandbox::Device, mass: f32) -> Value {
             ..
         } => {
             json!({ "class": "gmod_button", "mass": mass, "on": on, "last_user": user.is_some(), "key": key, "is_toggle": toggle, "gravity": true })
+        }
+        Device::Lamp {
+            color,
+            texture,
+            fov,
+            distance,
+            brightness,
+            toggle,
+            on,
+            key,
+        } => {
+            json!({ "class": "gmod_lamp", "mass": mass, "on": on, "toggle": toggle, "key": key, "fov": fov,
+                "distance": distance, "brightness": brightness, "texture": texture,
+                "r": color[0], "g": color[1], "b": color[2] })
+        }
+        Device::Light {
+            color,
+            brightness,
+            size,
+            toggle,
+            on,
+            key,
+        } => {
+            json!({ "class": "gmod_light", "mass": mass, "on": on, "toggle": toggle, "key": key, "size": size,
+                "brightness": brightness, "r": color[0], "g": color[1], "b": color[2] })
         }
         Device::Dynamite {
             queued,
@@ -5134,6 +5226,8 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
         "models/props_vehicles/carparts_wheel01a.mdl",
         "models/maxofs2d/button_05.mdl",
         "models/dav0r/tnt/tnt.mdl",
+        "models/lamps/torch.mdl",
+        gm_sandbox::LIGHT_MODEL,
     ] {
         if let Ok(shape) = model_shape(&mount, model) {
             sb.set_model_shape(model, shape);
@@ -5142,6 +5236,10 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
     let entref = |e: Option<u32>| -> Value {
         match e {
             None => json!({ "index": 0, "class": "worldspawn" }),
+            // the probe numbers the scenario's props; what the stools placed is prop 0
+            Some(id) if id as usize > scn.props.len() => {
+                json!({ "index": -1, "class": "prop_physics", "prop": 0 })
+            }
             Some(id) => json!({ "prop": id, "class": "prop_physics" }),
         }
     };
@@ -5171,6 +5269,12 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                     }
                     Some(gm_sandbox::Device::Dynamite { .. }) => {
                         json!({ "index": -1, "class": "gmod_dynamite", "prop": 0 })
+                    }
+                    Some(gm_sandbox::Device::Lamp { .. }) => {
+                        json!({ "index": -1, "class": "gmod_lamp", "prop": 0 })
+                    }
+                    Some(gm_sandbox::Device::Light { .. }) => {
+                        json!({ "index": -1, "class": "gmod_light", "prop": 0 })
                     }
                     None => json!({ "prop": id, "class": "prop_physics" }),
                 },
@@ -5256,8 +5360,9 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 let d = sb.devices().get(&p.id)?;
                 let mut e = json!({ "prop": p.id, "model": p.model, "skin": p.skin, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z] });
                 let extra = match d {
-                    gm_sandbox::Device::Thruster { force, mul, toggle, on, top_z, key, key_back, .. } => json!({
-                        "class": "gmod_thruster", "force": force, "mul": mul, "toggle": u8::from(*toggle), "on": on, "offset": [0.0, 0.0, top_z], "key": key, "key_bck": key_back, "gravity": true,
+                    gm_sandbox::Device::Thruster { force, mul, toggle, on, top_z, bottom_z, key, key_back, rear, .. } => json!({
+                        "class": "gmod_thruster", "force": force, "mul": mul, "toggle": u8::from(*toggle), "on": on,
+                        "offset": [0.0, 0.0, if *rear { *bottom_z } else { *top_z }], "key": key, "key_bck": key_back, "gravity": true,
                     }),
                     gm_sandbox::Device::Hoverball { target_z, zvel, speed, resistance, strength, enabled, key_up, key_down, key_toggle } => json!({
                         "class": "gmod_hoverball", "mass": d.mass(), "target_z": target_z, "zvel": zvel, "speed": speed, "resistance": resistance, "strength": strength,
@@ -5273,6 +5378,14 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                         "key_f": key_f, "key_r": key_r, "forcetime": forcetime,
                     }),
                     gm_sandbox::Device::Button { key, toggle, on, .. } => json!({ "class": "gmod_button", "key": key, "is_toggle": toggle, "toggle": toggle, "on": on, "mass": 3.0 }),
+                    gm_sandbox::Device::Lamp { color, texture, fov, distance, brightness, toggle, on, key } => json!({
+                        "class": "gmod_lamp", "r": color[0], "g": color[1], "b": color[2], "texture": texture, "fov": fov,
+                        "distance": distance, "brightness": brightness, "toggle": toggle, "on": on, "key": key,
+                    }),
+                    gm_sandbox::Device::Light { color, brightness, size, toggle, on, key } => json!({
+                        "class": "gmod_light", "r": color[0], "g": color[1], "b": color[2], "brightness": brightness,
+                        "size": size, "toggle": toggle, "on": on, "key": key,
+                    }),
                     gm_sandbox::Device::Dynamite { damage, delay, remove, key, .. } => json!({ "class": "gmod_dynamite", "damage": damage, "delay": delay, "remove": remove, "key": key, "health": 0 }),
                 };
                 for (k, v) in extra.as_object().into_iter().flatten() {
@@ -5393,6 +5506,19 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
             sb.props().iter().map(|p| (p.pos, p.angles)).collect();
         match op.op.as_str() {
             "click" => {
+                // what the stools placed is traced too (a lamp re-click lands on the lamp)
+                for p in sb.props() {
+                    if !bodies.iter().any(|b| b.id == p.id) {
+                        if let Ok(hulls) = model_hull_planes(&mount, &p.model) {
+                            bodies.push(PropBody {
+                                id: p.id,
+                                pos: p.pos,
+                                angles: p.angles,
+                                hulls,
+                            });
+                        }
+                    }
+                }
                 // non-solid (being removed) props are not traced
                 bodies.retain(|b| !sb.is_removing(b.id));
                 for b in bodies.iter_mut() {
@@ -5546,6 +5672,9 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         }
     };
     let (mut max_trace, mut max_lpos, mut max_len) = (0.0f32, 0.0f32, 0.0f32);
+    // device entities whose placement pose was already checked: afterwards the game's physics
+    // moves them (a balloon rises, a thruster flies) and ours does not run here
+    let mut seen_ents: std::collections::HashSet<i64> = std::collections::HashSet::new();
     for (i, (t, o)) in tr.iter().zip(or).enumerate() {
         let op = t["op"].as_str().unwrap_or("");
         if op == "click" {
@@ -5562,7 +5691,10 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                 );
                 ok = false;
             } else if tt["hit"] == json!(true) {
-                max_trace = max_trace.max((v3(&tt["pos"]) - v3(&ot["pos"])).length());
+                // a hit on what a stool placed lands where the game's physics left it
+                if ent_key(&tt["ent"]) != "prop0" {
+                    max_trace = max_trace.max((v3(&tt["pos"]) - v3(&ot["pos"])).length());
+                }
             }
             let ret = |v: &Value| {
                 v.as_str()
@@ -5617,18 +5749,19 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             }
         }
         // devices: the game's `immediate` snapshot (before the wait), ours never moves
-        let (te, oe) = (
-            o["immediate"]["ents"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default(),
-            oa["ents"].as_array().cloned().unwrap_or_default(),
-        );
-        // ...unless the wait removed some (a `remove` dynamite): then the game's `after`
-        let te = match t["after"]["ents"].as_array() {
-            Some(after) if after.len() < te.len() => after.clone(),
-            _ => te,
+        // ...unless the wait removed some (a `remove` dynamite): then both `after`s
+        let ents_of = |r: &Value, after: bool| -> Vec<Value> {
+            let v = if after || r["immediate"]["ents"].is_null() {
+                &r["after"]["ents"]
+            } else {
+                &r["immediate"]["ents"]
+            };
+            v.as_array().cloned().unwrap_or_default()
         };
+        let removed_in_wait = t["after"]["ents"]
+            .as_array()
+            .is_some_and(|a| a.len() < ents_of(t, false).len());
+        let (te, oe) = (ents_of(t, removed_in_wait), ents_of(o, removed_in_wait));
         let te = &te;
         if te.len() != oe.len() {
             println!(
@@ -5638,7 +5771,27 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             );
             ok = false;
         } else {
-            for (g, m) in te.iter().zip(oe.iter()) {
+            // the game lists them by entity index (freed indices get reused): pair by position
+            let mut used = vec![false; oe.len()];
+            let pairs: Vec<(&Value, &Value)> = te
+                .iter()
+                .filter_map(|g| {
+                    let gp = v3(&g["pos"]);
+                    let mut best: Option<(usize, f32)> = None;
+                    for (j, m) in oe.iter().enumerate() {
+                        let d = (v3(&m["pos"]) - gp).length();
+                        if !used[j] && best.is_none_or(|(_, bd)| d < bd) {
+                            best = Some((j, d));
+                        }
+                    }
+                    best.map(|(j, _)| {
+                        used[j] = true;
+                        (g, &oe[j])
+                    })
+                })
+                .collect();
+            for (g, m) in pairs {
+                let placed_now = seen_ents.insert(g["index"].as_i64().unwrap_or(-1));
                 let dp = (v3(&g["pos"]) - v3(&m["pos"])).length();
                 let da = gm_sandbox::rotation(v3(&g["ang"]))
                     .angle_between(gm_sandbox::rotation(v3(&m["ang"])))
@@ -5664,6 +5817,7 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     "toggle_state",
                     "is_toggle",
                     "remove",
+                    "texture",
                 ] {
                     if g.get(k).is_some() && g[k] != m[k] {
                         bad.push(format!("{k} {} vs {}", g[k], m[k]));
@@ -5684,6 +5838,10 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     "direction",
                     "damage",
                     "delay",
+                    "fov",
+                    "distance",
+                    "brightness",
+                    "size",
                 ] {
                     if let (Some(a), Some(b)) = (g[k].as_f64(), m[k].as_f64()) {
                         if (a - b).abs() > 1e-3 * a.abs().max(1.0) {
@@ -5705,7 +5863,7 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                         format!(", {}", bad.join(", "))
                     }
                 );
-                if dp > pos_tol || da > 0.5 || !bad.is_empty() {
+                if (placed_now && (dp > pos_tol || da > 0.5)) || !bad.is_empty() {
                     ok = false;
                 }
             }
