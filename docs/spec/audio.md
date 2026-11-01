@@ -114,8 +114,27 @@ is the data: scripts, waves, levels, pitches, channels, cue loops.
 - Sum hard-clipped to [-1, 1]; stereo folded to mono for one-channel devices.
 - Tests (offline engine): a source on the right is louder in the right ear, loops wrap,
   channel replacement, cue points; no device needed.
-- Not yet: scene occlusion, reflections, soundscapes, DSP presets, doppler (the game has
-  none either).
+- Acoustic scene (`gm-audio/scene.rs`): the map's faces (world model and brush entities
+  at their `origin`; sky, trigger, hint and skip faces left out, displacements as their
+  built meshes) fan-triangulated into one Steam Audio static mesh, in meters, y up. Each
+  triangle carries the acoustic material of its texture's `$surfaceprop` (the client
+  resolves VMTs, patches included): Steam Audio's preset materials assigned by what the
+  surface property is made of (`wood_crate` → hollow wood, `metal_barrel` → thin metal,
+  `chainlink` / `metalgrate` mostly transparent, `concrete` / `brick` / `rock` nearly
+  opaque), `default` for the rest. gm_construct: 41 462 triangles, built in ~2 ms, scene
+  committed in ~50 ms.
+- Direct simulation (`gm-audio/acoustics.rs`, its own thread at ~30 Hz): per positioned
+  voice, volumetric occlusion (source radius 0.4 m, 16 samples), transmission through the
+  hit materials (4 rays, three bands) and air absorption over the distance; the audio
+  thread publishes voice positions and the listener after each frame and picks up the
+  results with `try_lock`, never waiting. The `DirectEffect` ramps its gains over frames,
+  so a wall closing between source and listener takes a few frames to be heard.
+- Tests: a 20 u concrete slab between a source 200 u ahead and the listener: occlusion
+  0, transmission (0.0018, 0.00009, 0.00003), mix peak under a fifth of the open one;
+  gm_construct builds and commits from the install.
+- Not yet: reflections, soundscapes, DSP presets, dynamic occluders (props), doppler (the
+  game has none either). Nodraw faces are not in the face lump, so a wall whose only
+  face is nodraw does not occlude.
 
 ## World sounds: footsteps (measured)
 

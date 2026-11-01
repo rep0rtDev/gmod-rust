@@ -9,14 +9,15 @@
 
 use std::sync::Arc;
 
+use crate::acoustics::Shared;
+
 use audionimbus::effect::{
     BinauralEffect, BinauralEffectParams, BinauralEffectSettings, DirectEffect, DirectEffectParams,
     DirectEffectSettings,
 };
 use audionimbus::geometry::Vector3;
 use audionimbus::{
-    AudioBufferMut, AudioBufferRef, AudioSettings, Context, ContextSettings, Hrtf,
-    HrtfInterpolation, HrtfSettings,
+    AudioBufferMut, AudioBufferRef, AudioSettings, Context, Hrtf, HrtfInterpolation, HrtfSettings,
 };
 use glam::Vec3;
 
@@ -108,12 +109,13 @@ pub struct Engine {
     mono: Vec<f32>,
     direct_out: Vec<f32>,
     bin_out: Vec<f32>,
+    /// Mailboxes to the acoustics thread, when there is a scene.
+    pub shared: Option<Arc<Shared>>,
 }
 
 impl Engine {
-    pub fn new(rate: u32) -> anyhow::Result<Engine> {
-        let context = Context::try_new(&ContextSettings::default())
-            .map_err(|e| anyhow::anyhow!("steam audio context: {e}"))?;
+    pub fn new(context: &Context, rate: u32) -> anyhow::Result<Engine> {
+        let context = context.clone();
         let settings = AudioSettings {
             sampling_rate: rate,
             frame_size: FRAME as u32,
@@ -131,6 +133,7 @@ impl Engine {
             mono: vec![0.0; FRAME],
             direct_out: vec![0.0; FRAME],
             bin_out: vec![0.0; FRAME * 2],
+            shared: None,
         })
     }
 
@@ -203,6 +206,7 @@ impl Engine {
     pub fn render(&mut self, out: &mut [f32]) {
         debug_assert_eq!(out.len(), FRAME * 2);
         out.fill(0.0);
+        self.exchange();
         let listener = self.listener;
         let master = self.master;
         for v in &mut self.voices {
@@ -265,6 +269,32 @@ impl Engine {
         self.voices.retain(|v| !v.done);
         for x in out.iter_mut() {
             *x = x.clamp(-1.0, 1.0);
+        }
+    }
+}
+
+impl Engine {
+    /// Tell the acoustics thread where things are and take the paths it found; `try_lock`
+    /// only, the render never waits.
+    fn exchange(&mut self) {
+        let Some(shared) = &self.shared else {
+            return;
+        };
+        if let Ok(mut snap) = shared.snapshot.try_lock() {
+            snap.listener = Some(self.listener);
+            snap.voices.clear();
+            snap.voices.extend(
+                self.voices
+                    .iter()
+                    .filter_map(|v| v.position.map(|p| (v.id, p))),
+            );
+        }
+        if let Ok(paths) = shared.paths.try_lock() {
+            for v in &mut self.voices {
+                if let Some(p) = paths.get(&v.id) {
+                    v.path = *p;
+                }
+            }
         }
     }
 }

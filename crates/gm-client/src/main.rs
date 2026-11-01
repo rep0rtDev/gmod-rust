@@ -848,6 +848,21 @@ impl App {
         if hdr {
             println!("hdr lighting: exposure {:.2}", world.exposure);
         }
+        {
+            let t = Instant::now();
+            let mount = &self.mount;
+            let geometry = gm_audio::Geometry::from_bsp(&bsp, |texture| {
+                gm_dedicated::material_surfaceprop(mount, texture)
+            });
+            let triangles = geometry.triangles.len();
+            match self.sounds.mixer.set_scene(geometry) {
+                Ok(()) => println!(
+                    "acoustics: {triangles} triangles in {:.0} ms",
+                    t.elapsed().as_secs_f32() * 1000.0
+                ),
+                Err(e) => println!("acoustics: {e}"),
+            }
+        }
         eprintln!(
             "world: {} faces, {} props, built in {:.1}s",
             world.stats.faces,

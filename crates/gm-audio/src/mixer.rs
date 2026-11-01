@@ -7,10 +7,13 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
+use audionimbus::{Context, ContextSettings};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use glam::Vec3;
 
+use crate::acoustics::{self, Acoustics, Shared};
 use crate::engine::{Engine, Play, FRAME};
+use crate::scene::Geometry;
 
 /// Where sounds are heard from: eye position and the view frame (unit vectors).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -73,6 +76,7 @@ pub enum Cmd {
     Move(u32, Vec3),
     Listener(Listener),
     Master(f32),
+    Scene(Arc<Shared>),
 }
 
 fn apply(engine: &mut Engine, cmd: Cmd) {
@@ -87,6 +91,7 @@ fn apply(engine: &mut Engine, cmd: Cmd) {
         Cmd::Move(id, p) => engine.set_position(id, p),
         Cmd::Listener(l) => engine.listener = l,
         Cmd::Master(m) => engine.master = m.clamp(0.0, 1.0),
+        Cmd::Scene(shared) => engine.shared = Some(shared),
     }
 }
 
@@ -137,6 +142,7 @@ impl Stream {
 
 /// The output device and the voices playing on it.
 pub struct Mixer {
+    context: Option<Context>,
     tx: Sender<Cmd>,
     voices: Arc<AtomicUsize>,
     next_id: AtomicU32,
@@ -144,6 +150,10 @@ pub struct Mixer {
     _stream: Option<cpal::Stream>,
     /// Without a device the engine stays here and renders on demand.
     offline: Option<Stream>,
+    /// Offline: the simulation runs inline in [`Mixer::simulate`].
+    acoustics: Option<Acoustics>,
+    shared: Option<Arc<Shared>>,
+    thread: Option<std::thread::JoinHandle<()>>,
     /// What was opened, or why nothing was.
     pub device: String,
 }
@@ -162,7 +172,11 @@ impl Mixer {
         };
         let channels = cfg.channels() as usize;
         let out_rate = cfg.sample_rate().0;
-        let engine = match Engine::new(out_rate) {
+        let context = match Context::try_new(&ContextSettings::default()) {
+            Ok(c) => c,
+            Err(e) => return Mixer::offline_because(format!("steam audio context: {e}")),
+        };
+        let engine = match Engine::new(&context, out_rate) {
             Ok(e) => e,
             Err(e) => return Mixer::offline_because(format!("{e}")),
         };
@@ -187,12 +201,16 @@ impl Mixer {
                     return Mixer::offline_because(format!("{name}: {e}"));
                 }
                 Mixer {
+                    context: Some(context),
                     tx,
                     voices,
                     next_id: AtomicU32::new(1),
                     out_rate: out_rate as f64,
                     _stream: Some(s),
                     offline: None,
+                    acoustics: None,
+                    shared: None,
+                    thread: None,
                     device: format!("{name} ({out_rate} Hz, {channels} ch)"),
                 }
             }
@@ -202,10 +220,13 @@ impl Mixer {
 
     /// An engine without a device at `rate` Hz: [`Mixer::render`] produces the mix.
     pub fn offline(rate: u32) -> anyhow::Result<Mixer> {
-        let engine = Engine::new(rate)?;
+        let context = Context::try_new(&ContextSettings::default())
+            .map_err(|e| anyhow::anyhow!("steam audio context: {e}"))?;
+        let engine = Engine::new(&context, rate)?;
         let (tx, rx) = channel();
         let voices = Arc::new(AtomicUsize::new(0));
         Ok(Mixer {
+            context: Some(context),
             tx,
             voices: voices.clone(),
             next_id: AtomicU32::new(1),
@@ -218,6 +239,9 @@ impl Mixer {
                 block: vec![0.0; FRAME * 2],
                 voices,
             }),
+            acoustics: None,
+            shared: None,
+            thread: None,
             device: format!("offline ({rate} Hz)"),
         })
     }
@@ -231,12 +255,16 @@ impl Mixer {
             Err(e) => {
                 let (tx, _rx) = channel();
                 Mixer {
+                    context: None,
                     tx,
                     voices: Arc::new(AtomicUsize::new(0)),
                     next_id: AtomicU32::new(1),
                     out_rate: 48000.0,
                     _stream: None,
                     offline: None,
+                    acoustics: None,
+                    shared: None,
+                    thread: None,
                     device: format!("silent: {why}; {e}"),
                 }
             }
@@ -245,6 +273,58 @@ impl Mixer {
 
     pub fn is_live(&self) -> bool {
         self._stream.is_some()
+    }
+
+    /// The map's acoustic geometry: live, the simulation thread starts over it; offline,
+    /// [`Mixer::simulate`] steps it. Replaces any previous scene.
+    pub fn set_scene(&mut self, geometry: Geometry) -> anyhow::Result<()> {
+        let Some(context) = self.context.clone() else {
+            anyhow::bail!("no steam audio context ({})", self.device);
+        };
+        self.stop_acoustics();
+        let shared = Arc::new(Shared::default());
+        let rate = self.out_rate as u32;
+        if self.offline.is_some() {
+            self.acoustics = Some(Acoustics::new(&context, rate, &geometry)?);
+        } else {
+            self.thread = Some(acoustics::spawn(context, rate, geometry, shared.clone())?);
+        }
+        let _ = self.tx.send(Cmd::Scene(shared.clone()));
+        self.shared = Some(shared);
+        Ok(())
+    }
+
+    fn stop_acoustics(&mut self) {
+        if let Some(s) = &self.shared {
+            s.stop.store(true, Ordering::Relaxed);
+        }
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        self.acoustics = None;
+        self.shared = None;
+    }
+
+    /// Offline only: one simulation pass over the last rendered frame's voices.
+    pub fn simulate(&mut self) -> anyhow::Result<()> {
+        let (Some(a), Some(shared)) = (&mut self.acoustics, &self.shared) else {
+            return Ok(());
+        };
+        let snap = shared
+            .snapshot
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default();
+        let paths = a.step(&snap)?;
+        if let Ok(mut p) = shared.paths.lock() {
+            *p = paths;
+        }
+        Ok(())
+    }
+
+    /// Triangles in the acoustic scene (offline only; live reports through the thread).
+    pub fn scene_triangles(&self) -> Option<usize> {
+        self.acoustics.as_ref().map(|a| a.triangles)
     }
 
     /// The `volume` cvar: master gain, clamped to 0..1.
@@ -295,6 +375,12 @@ impl Mixer {
             s.drain();
             &mut s.engine
         })
+    }
+}
+
+impl Drop for Mixer {
+    fn drop(&mut self) {
+        self.stop_acoustics();
     }
 }
 
@@ -381,6 +467,51 @@ mod tests {
         assert!((l - r).abs() < 1e-5 && l > 0.3, "{l} {r}");
         m.render(FRAME);
         assert_eq!(m.voices(), 0, "0.02 s tone ends inside two frames");
+    }
+
+    /// Source 200 u ahead; a concrete slab between it and the listener occludes it.
+    #[test]
+    fn a_wall_occludes_and_the_mix_drops() {
+        let source = Some(Vec3::new(200.0, 0.0, 0.0));
+        let mut open = Mixer::offline(48000).unwrap();
+        open.set_listener(Listener::from_view(Vec3::ZERO, 0.0, 0.0));
+        open.set_scene(Geometry::default()).unwrap();
+        let mut walled = Mixer::offline(48000).unwrap();
+        walled.set_listener(Listener::from_view(Vec3::ZERO, 0.0, 0.0));
+        let mut g = Geometry::default();
+        g.push_box(
+            Vec3::new(90.0, -400.0, -400.0),
+            Vec3::new(110.0, 400.0, 400.0),
+            "concrete",
+        );
+        walled.set_scene(g).unwrap();
+        assert_eq!(walled.scene_triangles(), Some(12));
+        let mut peaks = Vec::new();
+        for m in [&mut open, &mut walled] {
+            m.play(play(tone(48000, 1.0), source));
+            m.render(FRAME); // publishes the voice to the snapshot
+            m.simulate().unwrap();
+            m.render(FRAME * 16); // the effect ramps its gains over frames
+            let out = m.render(FRAME * 4);
+            let path = m.engine().unwrap().voices()[0].path;
+            peaks.push((peak(&out, 0).max(peak(&out, 1)), path));
+        }
+        let (open_peak, open_path) = peaks[0];
+        let (wall_peak, wall_path) = peaks[1];
+        assert!(
+            open_path.occlusion > 0.99 && open_path.transmission[0] > 0.99,
+            "{open_path:?}"
+        );
+        assert!(wall_path.occlusion < 0.05, "{wall_path:?}");
+        assert!(
+            wall_path.transmission[0] < 0.1
+                && wall_path.transmission[2] < wall_path.transmission[0],
+            "concrete passes little, less at high frequencies: {wall_path:?}"
+        );
+        assert!(
+            wall_peak < open_peak * 0.2,
+            "open {open_peak} walled {wall_peak}"
+        );
     }
 
     #[test]
