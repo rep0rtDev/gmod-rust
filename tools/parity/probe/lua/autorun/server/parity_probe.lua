@@ -863,7 +863,8 @@ SCENARIOS.toolgun = function(scn, done)
 				local ph = e:GetPhysicsObject()
 				local p, a, v = e:GetPos(), e:GetAngles(), IsValid(ph) and ph:GetVelocity() or Vector(0, 0, 0)
 				out.props[i] = { index = e:EntIndex(), pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r }, vel = { v.x, v.y, v.z },
-					frozen = IsValid(ph) and not ph:IsMotionEnabled() or false, asleep = IsValid(ph) and ph:IsAsleep() or false }
+					frozen = IsValid(ph) and not ph:IsMotionEnabled() or false, asleep = IsValid(ph) and ph:IsAsleep() or false,
+					solid = e:IsSolid(), nodraw = e:GetNoDraw(), movetype = e:GetMoveType() }
 			else
 				out.props[i] = { index = -1 }
 			end

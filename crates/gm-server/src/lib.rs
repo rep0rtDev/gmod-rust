@@ -3376,6 +3376,9 @@ impl<'w> Server<'w> {
     fn tick_devices(&mut self) {
         let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
         self.sandbox.tick_devices(dt);
+        for id in self.sandbox.tick_removals(dt) {
+            self.remove_prop(id);
+        }
         let devices: Vec<(u32, gm_sandbox::Device)> = self
             .sandbox
             .devices()
@@ -3639,7 +3642,14 @@ impl<'w> Server<'w> {
     /// placement, props the tool moved are teleported, frozen flags follow, gone entities are
     /// removed (constraints first), new constraints are created from their recorded points.
     fn sync_physics(&mut self) {
-        let live: Vec<u32> = self.sandbox.props().iter().map(|p| p.id).collect();
+        // a prop the remover has made non-solid (`SetNotSolid` + `MOVETYPE_NONE`) keeps no body
+        let live: Vec<u32> = self
+            .sandbox
+            .props()
+            .iter()
+            .filter(|p| !self.sandbox.is_removing(p.id))
+            .map(|p| p.id)
+            .collect();
         let live_c: Vec<u32> = self.sandbox.constraints().iter().map(|c| c.id).collect();
         for (id, c) in std::mem::take(&mut self.constraints) {
             if live_c.contains(&id) {
@@ -3664,6 +3674,9 @@ impl<'w> Server<'w> {
         }
         let props: Vec<_> = self.sandbox.props().to_vec();
         for p in &props {
+            if self.sandbox.is_removing(p.id) {
+                continue;
+            }
             match self.bodies.get(&p.id) {
                 None => {
                     let Some(info) = self.models.get(&p.model) else {

@@ -92,3 +92,17 @@ Wheel motor as fitted (`gm_sandbox::wheel_spin_step`; a changed `Scale` drives f
 ## Not yet measured
 
 The other stools (lamp, light, trails, motor, emitter, camera, ...), wheel / button / dynamite in gm-sandbox (measured above), the thruster's effects / sound / damage settings, the hull-trace fallback, ragdoll bones, the keyframe_rope's own simulation, force / torque limits breaking a constraint (the pulley's `forcelimit` is stored only), an unbalanced pulley (both measured pairs weigh the same).
+
+### remover (measured, `toolgun_remover`)
+
+- Left click on an entity (not the world, not a player): `constraint.RemoveAll(ent)` at once, then the
+  entity turns non-solid, `MOVETYPE_NONE` and invisible (`IsSolid` false, `GetNoDraw` true, movetype 0
+  in the recording) and is deleted by `timer.Simple(1)` a second later (gone in the snapshot 80 ticks
+  after the click, still listed 10 ticks after). Returns true and pokes the client with
+  `achievements.Remover()`; false on the world. No undo entry.
+- Right click: every entity of `constraint.GetAllConstrainedEntities(ent)` (the entity and everything
+  reachable over constraints) goes the same way, one `for i=1,N do achievements.Remover() end`.
+- Reload: `constraint.RemoveAll(ent)`, returns whether anything went (true on a welded pair, false the
+  second time). The player's `constraints` count follows the removed constraints at once.
+- Ours: `Sandbox::remover_remove` marks the prop (`is_removing`), the server drops its physics body and
+  leaves it out of snapshots, `tick_removals` deletes it after 1 s; the tool trace ignores it meanwhile.

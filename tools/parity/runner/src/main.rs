@@ -2500,6 +2500,7 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
                 Event::Spawned { .. } => {
                     messages.push(json!({ "t": i, "lua": "achievements.SpawnedProp()" }))
                 }
+                Event::Lua { code } => messages.push(json!({ "t": i, "lua": code })),
                 Event::Cleanup { kind } => messages
                     .push(json!({ "t": i, "lua": format!("hook.Run('OnCleanup','{kind}')") })),
                 Event::Undone { .. } | Event::Removed { .. } => {}
@@ -5354,7 +5355,12 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 "thrusters": sb.count_of(player, "thrusters"), "hoverballs": sb.count_of(player, "hoverballs"), "balloons": sb.count_of(player, "balloons"),
                 "wheels": sb.count_of(player, "wheels"), "buttons": sb.count_of(player, "buttons"), "dynamite": sb.count_of(player, "dynamite") },
             "stage": sb.tool(player).stage,
-            "props": sb.props().iter().filter(|p| !sb.devices().contains_key(&p.id)).map(|p| json!({ "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen })).collect::<Vec<_>>(),
+            // the scenario's props by index (`{ index: -1 }` once deleted, like the probe), then
+            // whatever the stools placed
+            "props": (1..=scn.props.len() as u32).map(|id| match sb.props().iter().find(|p| p.id == id) {
+                Some(p) => json!({ "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen, "solid": !sb.is_removing(p.id) }),
+                None => json!({ "index": -1 }),
+            }).chain(sb.props().iter().filter(|p| p.id > scn.props.len() as u32 && !sb.devices().contains_key(&p.id)).map(|p| json!({ "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen }))).collect::<Vec<_>>(),
         })
     };
     let golden = golden_trace(&scn.name);
@@ -5387,6 +5393,8 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
             sb.props().iter().map(|p| (p.pos, p.angles)).collect();
         match op.op.as_str() {
             "click" => {
+                // non-solid (being removed) props are not traced
+                bodies.retain(|b| !sb.is_removing(b.id));
                 for b in bodies.iter_mut() {
                     if let Some(p) = sb.props().iter().find(|p| p.id == b.id) {
                         b.pos = p.pos;
@@ -5458,12 +5466,23 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 }
                 _ => {}
             },
-            "wait" => {}
+            "wait" => {
+                // the probe idles `ticks` before its snapshot: device and remover timers run
+                for _ in 0..op.ticks.unwrap_or(0) {
+                    sb.tick_devices(gm_sandbox::SERVER_TICK);
+                    for id in sb.tick_removals(gm_sandbox::SERVER_TICK) {
+                        sb.remove_entity(id);
+                        bodies.retain(|b| b.id != id);
+                    }
+                    sb.tick_controllers(gm_core::tick::DEFAULT_TICK_INTERVAL);
+                }
+            }
             other => bail!("unknown toolgun op {other}"),
         }
         for e in &events {
             match e {
                 Event::LimitHit { limit } => messages.push(json!({ "t": i, "limit": limit })),
+                Event::Lua { code } => messages.push(json!({ "t": i, "lua": code })),
                 Event::Cleanup { kind } => messages
                     .push(json!({ "t": i, "lua": format!("hook.Run('OnCleanup','{kind}')") })),
                 Event::Spawned { .. } | Event::Undone { .. } | Event::Removed { .. } => {}
@@ -5486,6 +5505,10 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
         // controllers think meanwhile (nothing else moves here)
         for _ in 0..op.wait.unwrap_or(3) {
             sb.tick_devices(gm_sandbox::SERVER_TICK);
+            for id in sb.tick_removals(gm_sandbox::SERVER_TICK) {
+                sb.remove_entity(id);
+                bodies.retain(|b| b.id != id);
+            }
             // the stool-side effects only; the blast itself needs a physics world
             let _ = sb.take_blasts();
             sb.tick_controllers(gm_core::tick::DEFAULT_TICK_INTERVAL);
@@ -5574,6 +5597,24 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         if ta["stage"] != oa["stage"] {
             println!("  op {i} {op}: stage {} vs {}", ta["stage"], oa["stage"]);
             ok = false;
+        }
+        // the remover: a prop turns non-solid at once and is deleted a second later
+        if let (Some(tp), Some(op_)) = (ta["props"].as_array(), oa["props"].as_array()) {
+            let state = |v: &Value| {
+                if v["index"].as_i64() == Some(-1) {
+                    "gone"
+                } else if v["solid"] == json!(false) {
+                    "not solid"
+                } else {
+                    "solid"
+                }
+            };
+            for (k, (a, b)) in tp.iter().zip(op_).enumerate() {
+                if state(a) != state(b) {
+                    println!("  op {i} {op}: prop {} {} vs {}", k + 1, state(a), state(b));
+                    ok = false;
+                }
+            }
         }
         // devices: the game's `immediate` snapshot (before the wait), ours never moves
         let (te, oe) = (
@@ -6034,6 +6075,20 @@ fn compare_sandbox(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         let (tl, ol) = (limits(theirs, tick, true), limits(ours, i as i64, false));
         if tl != ol {
             println!("  op {i} {op}: limit hits {tl:?} vs {ol:?}");
+            ok = false;
+        }
+        let luas = |m: &Value, key: i64| -> Vec<String> {
+            m["messages"]
+                .as_array()
+                .unwrap_or(&empty)
+                .iter()
+                .filter(|m| m["t"].as_i64() == Some(key) && m.get("lua").is_some())
+                .map(|m| m["lua"].as_str().unwrap_or("").to_string())
+                .collect()
+        };
+        let (tl, ol) = (luas(theirs, tick), luas(ours, i as i64));
+        if tl != ol {
+            println!("  op {i} {op}: SendLua {tl:?} vs {ol:?}");
             ok = false;
         }
     }

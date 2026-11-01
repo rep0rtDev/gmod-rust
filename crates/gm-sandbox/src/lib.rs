@@ -75,6 +75,8 @@ pub enum Event {
     Cleanup { kind: String },
     /// An entity left the table (`EntityRemoved`), one per entity, before the Undone/Cleanup.
     Removed { prop: u32 },
+    /// `Player:SendLua` from a stool (the remover's achievement pokes).
+    Lua { code: String },
 }
 
 /// `sbox_*` limits (measured defaults: props 200, constraints 2000, ropeconstraints 1000);
@@ -851,6 +853,8 @@ pub struct Sandbox {
     shapes: BTreeMap<String, ModelShape>,
     /// Blasts that go off this tick (the physics owner deals them and drains the list).
     blasts: Vec<(Vec3, f32, u32)>,
+    /// The remover's `timer.Simple(1)` deletions: seconds left per prop.
+    removing: BTreeMap<u32, f32>,
 }
 
 /// The thruster tool's sound list (`ThrusterSounds`); `StartThrustSound` ignores any other
@@ -1627,6 +1631,20 @@ impl Sandbox {
         if tool == "balloon" {
             return self.place_device(player, tool, hit, false, events);
         }
+        if tool == "remover" {
+            let Some(ent) = hit.ent else {
+                return false;
+            };
+            let n = self
+                .constrained_entities(ent)
+                .into_iter()
+                .filter(|e| self.remover_remove(*e))
+                .count();
+            events.push(Event::Lua {
+                code: format!("for i=1,{n} do achievements.Remover() end"),
+            });
+            return true;
+        }
         if tool != "weld" {
             return false;
         }
@@ -1753,6 +1771,9 @@ impl Sandbox {
         let Some(ent) = hit.and_then(|h| h.ent) else {
             return false;
         };
+        if tool == "remover" {
+            return self.remove_all_constraints(ent) != 0;
+        }
         let is_type = |k: &ConstraintKind| match tool {
             "ballsocket" => matches!(k, ConstraintKind::Ballsocket { .. }),
             "slider" => matches!(k, ConstraintKind::Slider { .. }),
@@ -1787,6 +1808,85 @@ impl Sandbox {
         self.constraints.len() != before
     }
 
+    /// `constraint.RemoveAll(ent)`: every constraint in the entity's table goes (a motor's
+    /// phys_torque sits there too and takes its Axis along); returns how many went.
+    pub fn remove_all_constraints(&mut self, ent: u32) -> usize {
+        let motors: Vec<u32> = self
+            .devices
+            .iter()
+            .filter(|(_, d)| matches!(d, Device::Motor { ent: e, .. } if *e == ent))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &motors {
+            self.remove_entity(*id);
+        }
+        let before = self.constraints.len();
+        self.constraints
+            .retain(|c| !(c.ent1 == Some(ent) || c.ent2 == Some(ent)));
+        let n = before - self.constraints.len() + motors.len() * 2;
+        self.drop_parts();
+        n
+    }
+
+    /// `constraint.GetAllConstrainedEntities(ent)`: the entity and everything reachable over
+    /// constraints (the world is not an entity).
+    pub fn constrained_entities(&self, ent: u32) -> Vec<u32> {
+        let mut out = vec![ent];
+        let mut i = 0;
+        while i < out.len() {
+            let e = out[i];
+            i += 1;
+            for c in &self.constraints {
+                let other = if c.ent1 == Some(e) {
+                    c.ent2
+                } else if c.ent2 == Some(e) {
+                    c.ent1
+                } else {
+                    None
+                };
+                if let Some(o) = other {
+                    if !out.contains(&o) {
+                        out.push(o);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The remover's `DoRemoveEntity`: the constraints go now, the entity turns non-solid and
+    /// invisible, and `timer.Simple(1)` deletes it a second later (a second call on the same
+    /// entity within that second is a no-op that still counts).
+    fn remover_remove(&mut self, id: u32) -> bool {
+        if !self.props.iter().any(|p| p.id == id) {
+            return false;
+        }
+        self.remove_all_constraints(id);
+        self.removing.entry(id).or_insert(1.0);
+        true
+    }
+
+    /// Whether the remover has this prop non-solid and invisible, waiting for its deletion.
+    pub fn is_removing(&self, id: u32) -> bool {
+        self.removing.contains_key(&id)
+    }
+
+    /// Advances the remover's timers; the props whose second is up are to be deleted
+    /// (`remove_entity`) by the caller.
+    pub fn tick_removals(&mut self, dt: f32) -> Vec<u32> {
+        let mut due = Vec::new();
+        for (id, left) in self.removing.iter_mut() {
+            *left -= dt;
+            if *left <= 1e-4 {
+                due.push(*id);
+            }
+        }
+        for id in &due {
+            self.removing.remove(id);
+        }
+        due
+    }
+
     /// Left click of `weld` or `rope` on what the tool trace hit. Returns what `TOOL:LeftClick`
     /// returns (whether the gun fires its effect).
     /// Tool stage of a player (scripted stools set it like the Rust ones).
@@ -1802,6 +1902,7 @@ impl Sandbox {
                 | "rope"
                 | "axis"
                 | "nocollide"
+                | "remover"
                 | "duplicator"
                 | "ballsocket"
                 | "slider"
@@ -2590,6 +2691,18 @@ impl Sandbox {
         hit: &ToolHit,
         events: &mut Vec<Event>,
     ) -> bool {
+        if tool == "remover" {
+            let Some(ent) = hit.ent else {
+                return false;
+            };
+            if !self.remover_remove(ent) {
+                return false;
+            }
+            events.push(Event::Lua {
+                code: "achievements.Remover()".into(),
+            });
+            return true;
+        }
         if (tool == "nocollide" || tool == "axis" || tool == "motor")
             && hit.ent.is_none()
             && self.tool(player).objects.is_empty()

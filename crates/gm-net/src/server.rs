@@ -946,6 +946,10 @@ impl ServerNet {
         // cluster of every prop once per send, not once per client
         let mut clusters: BTreeMap<u32, i32> = BTreeMap::new();
         for p in server.sandbox.props() {
+            // the remover's `SetNoDraw` props wait for their deletion unseen
+            if server.sandbox.is_removing(p.id) {
+                continue;
+            }
             if self.use_pvs {
                 clusters.insert(p.id, server.collision.cluster_at(p.pos));
             }
