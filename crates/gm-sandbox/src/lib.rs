@@ -112,6 +112,7 @@ pub struct Limits {
     pub max_emitters: i32,
     pub max_cameras: i32,
     pub max_ragdolls: i32,
+    pub max_npcs: i32,
 }
 
 impl Default for Limits {
@@ -131,6 +132,7 @@ impl Default for Limits {
             max_emitters: 20,
             max_cameras: 10,
             max_ragdolls: 10,
+            max_npcs: 10,
         }
     }
 }
@@ -140,6 +142,7 @@ impl Limits {
         match kind {
             "props" => self.max_props,
             "ragdolls" => self.max_ragdolls,
+            "npcs" => self.max_npcs,
             "constraints" => self.max_constraints,
             "ropeconstraints" => self.max_ropeconstraints,
             "thrusters" => self.max_thrusters,
@@ -1029,6 +1032,8 @@ pub struct Sandbox {
     props: Vec<Prop>,
     constraints: Vec<Constraint>,
     tools: BTreeMap<u32, ToolGun>,
+    /// Server-side entities that are not props (NPCs) but live in undo / cleanup lists.
+    foreign: std::collections::BTreeSet<u32>,
     undo: BTreeMap<u32, Vec<Undo>>,
     cleanup: BTreeMap<u32, BTreeMap<String, Vec<u32>>>,
     counts: BTreeMap<u32, BTreeMap<String, Vec<u32>>>,
@@ -1776,7 +1781,12 @@ impl Sandbox {
     /// removed something): a player whose every undo entry has no live entity left loses the
     /// whole list; lists with a live entry keep even their dead entries.
     pub fn purge_dead_undos(&mut self) {
-        let live: std::collections::HashSet<u32> = self.props.iter().map(|p| p.id).collect();
+        let live: std::collections::HashSet<u32> = self
+            .props
+            .iter()
+            .map(|p| p.id)
+            .chain(self.foreign.iter().copied())
+            .collect();
         self.undo.retain(|_, list| {
             list.iter()
                 .any(|u| u.entities.iter().any(|e| live.contains(e)))
@@ -1787,7 +1797,7 @@ impl Sandbox {
     pub fn undo_live(&self, u: &Undo) -> usize {
         u.entities
             .iter()
-            .filter(|e| self.props.iter().any(|p| p.id == **e))
+            .filter(|e| self.props.iter().any(|p| p.id == **e) || self.foreign.contains(e))
             .count()
     }
 
@@ -3864,8 +3874,24 @@ impl Sandbox {
         Some(id)
     }
 
+    /// An entity id for something the server owns outside the prop list (an NPC): undo and
+    /// cleanup remove it like a prop, the server drops its own state when `is_foreign` is false.
+    pub fn alloc_foreign(&mut self) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.foreign.insert(id);
+        id
+    }
+
+    pub fn is_foreign(&self, id: u32) -> bool {
+        self.foreign.contains(&id)
+    }
+
     /// Removes an entity; a prop takes its constraints with it.
     fn remove(&mut self, id: u32) -> bool {
+        if self.foreign.remove(&id) {
+            return true;
+        }
         let props_before = self.props.len();
         self.props.retain(|p| p.id != id);
         if self.props.len() != props_before {

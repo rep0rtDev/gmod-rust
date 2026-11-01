@@ -948,6 +948,44 @@ impl ServerNet {
         let mut world: BTreeMap<u32, EntityState> = BTreeMap::new();
         // cluster of every prop once per send, not once per client
         let mut clusters: BTreeMap<u32, i32> = BTreeMap::new();
+        for (id, n) in &server.npcs {
+            if self.use_pvs {
+                clusters.insert(*id, server.collision.cluster_at(n.pos));
+            }
+            let model_id = match self.model_ids.get(&n.model) {
+                Some(&id) => id,
+                None => {
+                    self.models.push(n.model.clone());
+                    let id = self.models.len() as u32;
+                    self.model_ids.insert(n.model.clone(), id);
+                    id
+                }
+            };
+            world.insert(
+                *id,
+                EntityState {
+                    id: *id,
+                    model: n.model.clone(),
+                    model_id,
+                    pos: n.pos,
+                    angles: n.angles,
+                    vel: Vec3::ZERO,
+                    angvel: Vec3::ZERO,
+                    frozen: false,
+                    skin: n.skin,
+                    body: String::new(),
+                    owner: 0,
+                    material: String::new(),
+                    color: [255; 4],
+                    render_mode: 0,
+                    render_fx: 0,
+                    bones: Vec::new(),
+                    manips: Vec::new(),
+                    flex: None,
+                    eye_target: None,
+                },
+            );
+        }
         for p in server.sandbox.props() {
             // the remover's `SetNoDraw` props wait for their deletion unseen
             if server.sandbox.is_removing(p.id) {

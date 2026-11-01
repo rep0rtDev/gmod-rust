@@ -1,0 +1,1166 @@
+{
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "name": "server_npc_spawn",
+ "ops": [
+  {
+   "op": "spawnnpc",
+   "class": "npc_alyx",
+   "weapon": "weapon_alyxgun",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_barney",
+   "weapon": "weapon_smg1",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_breen",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_dog",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_eli",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_gman",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_kleiner",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_mossman",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_vortigaunt",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "VortigauntSlave",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_citizen",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "Rebel",
+   "weapon": "weapon_pistol",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_odessa",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "Medic",
+   "weapon": "weapon_pistol",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "Refugee",
+   "weapon": "weapon_pistol",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "VortigauntUriah",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_magnusson",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_fisherman",
+   "weapon": "weapon_oldmanharpoon",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_turret_floor_resistance",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_rollermine_hacked",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_manhack_hacked",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_zombie",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_zombie_torso",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_poisonzombie",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_antlion",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_antlionguard",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_barnacle",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_fastzombie",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_headcrab",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_headcrab_black",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_headcrab_fast",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_fastzombie_torso",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_zombine",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_antlionguardian",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_antlion_grub",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_antlion_worker",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_monk",
+   "weapon": "weapon_annabelle",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_crow",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_pigeon",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_seagull",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_metropolice",
+   "weapon": "weapon_stunstick",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_rollermine",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_rollermine_friendly",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_turret_floor",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_combine_s",
+   "weapon": "weapon_smg1",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "ShotgunSoldier",
+   "weapon": "weapon_shotgun",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "CombinePrison",
+   "weapon": "weapon_smg1",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "PrisonShotgunner",
+   "weapon": "weapon_shotgun",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "CombineElite",
+   "weapon": "weapon_ar2",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_cscanner",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_clawscanner",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_combinegunship",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_combinedropship",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_helicopter",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_combine_camera",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_turret_ceiling",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_strider",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_stalker",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_manhack",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_citizen_rebel_enemy",
+   "weapon": "weapon_pistol",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_hunter",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_portal_turret_floor",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_rocket_turret",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_security_camera",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  }
+ ]
+}

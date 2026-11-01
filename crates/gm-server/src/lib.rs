@@ -872,6 +872,963 @@ pub const WEAPON_TRIGGER_BLOAT: f32 = 36.0;
 /// undo.lua purges all-dead undo lists after this many entity-removing ticks.
 pub const UNDO_PURGE_EVERY: u32 = 16;
 
+/// An NPC in the world: the engine's hull-moving character, not a physics prop.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Npc {
+    /// Spawnmenu list key (`NPCName`), e.g. `Rebel`; the entity class is `class`.
+    pub key: String,
+    pub class: String,
+    pub model: String,
+    pub skin: u8,
+    pub pos: Vec3,
+    pub angles: Vec3,
+    /// Collision hull (`OBBMins` / `OBBMaxs`) around `pos`.
+    pub mins: Vec3,
+    pub maxs: Vec3,
+    pub health: i32,
+    pub max_health: i32,
+    /// Weapon class carried (`additionalequipment`), empty for none.
+    pub weapon: String,
+    /// `GetBloodColor`: 0 red, 2 yellow (vortigaunt), 5 zombie, -1 none.
+    pub blood: i8,
+    pub movetype: u8,
+    pub solid: u8,
+    /// Sequence the NPC plays when it appears.
+    pub sequence: &'static str,
+    /// A walker whose `DropToFloor` found nothing at spawn settles onto the floor next tick.
+    pub settle: bool,
+}
+
+/// Where `Spawn_NPC` puts an NPC class relative to the hit point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NpcDef {
+    pub key: &'static str,
+    pub class: &'static str,
+    /// Fixed model, or a `humans/groupNN` directory the citizen picks a random model from.
+    pub model: &'static str,
+    pub random_group: bool,
+    pub skin: u8,
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
+    pub health: i32,
+    /// Default weapon (the spawnmenu's first entry) and whether the class may carry one.
+    pub weapon: &'static str,
+    pub blood: i8,
+    /// `Offset` along the hit normal (32 unless the list says otherwise) and `DropToFloor`.
+    pub offset: f32,
+    pub drop: bool,
+    pub movetype: u8,
+    pub solid: u8,
+    pub sequence: &'static str,
+    /// `Rotate` of the list entry on top of facing the player (floor turrets face away).
+    pub rotate_yaw: f32,
+    /// Appears at the offset and stands on the floor a tick later (birds; the antlion guard,
+    /// whose hull overlaps the wall at the measured spot so `DropToFloor` finds nothing).
+    pub settle: bool,
+}
+
+const H: ([f32; 3], [f32; 3]) = ([-13.0, -13.0, 0.0], [13.0, 13.0, 72.0]);
+const TINY: ([f32; 3], [f32; 3]) = ([-12.0, -12.0, 0.0], [12.0, 12.0, 24.0]);
+
+macro_rules! npc {
+    ($key:expr, $class:expr, $model:expr, $hull:expr, $hp:expr, $wep:expr, $blood:expr, $seq:expr) => {
+        NpcDef {
+            key: $key,
+            class: $class,
+            model: $model,
+            random_group: false,
+            skin: 0,
+            mins: $hull.0,
+            maxs: $hull.1,
+            health: $hp,
+            weapon: $wep,
+            blood: $blood,
+            offset: 32.0,
+            drop: true,
+            movetype: 3,
+            solid: 2,
+            sequence: $seq,
+            rotate_yaw: 0.0,
+            settle: false,
+        }
+    };
+}
+
+/// The spawnmenu's NPC list as the game places them (measured `server_npc_spawn`: hull, health,
+/// default weapon, blood colour, first sequence per key). Ceiling-only classes (barnacle,
+/// combine camera, ceiling turret) spawn nothing from a floor hit and are left out.
+pub static NPC_LIST: &[NpcDef] = &[
+    npc!(
+        "npc_alyx",
+        "npc_alyx",
+        "models/alyx.mdl",
+        H,
+        80,
+        "weapon_alyxgun",
+        0,
+        "Idle_subtle"
+    ),
+    npc!(
+        "npc_barney",
+        "npc_barney",
+        "models/barney.mdl",
+        H,
+        80,
+        "weapon_smg1",
+        0,
+        "idle_subtle"
+    ),
+    npc!(
+        "npc_breen",
+        "npc_breen",
+        "models/breen.mdl",
+        H,
+        8,
+        "",
+        0,
+        "B_idle01"
+    ),
+    NpcDef {
+        key: "npc_dog",
+        class: "npc_dog",
+        model: "models/dog.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-15.0, -15.0, 0.0],
+        maxs: [15.0, 15.0, 72.0],
+        health: 999,
+        weapon: "",
+        blood: 3,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "idle01",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    npc!(
+        "npc_eli",
+        "npc_eli",
+        "models/eli.mdl",
+        H,
+        8,
+        "",
+        0,
+        "e_idle01"
+    ),
+    npc!(
+        "npc_gman",
+        "npc_gman",
+        "models/gman.mdl",
+        H,
+        8,
+        "",
+        0,
+        "B_idle01"
+    ),
+    npc!(
+        "npc_kleiner",
+        "npc_kleiner",
+        "models/kleiner.mdl",
+        H,
+        8,
+        "",
+        0,
+        "idle_subtle"
+    ),
+    npc!(
+        "npc_mossman",
+        "npc_mossman",
+        "models/mossman.mdl",
+        H,
+        8,
+        "",
+        0,
+        "m_idle01"
+    ),
+    npc!(
+        "npc_vortigaunt",
+        "npc_vortigaunt",
+        "models/vortigaunt.mdl",
+        H,
+        100,
+        "",
+        2,
+        "Idle01"
+    ),
+    npc!(
+        "VortigauntSlave",
+        "npc_vortigaunt",
+        "models/vortigaunt_slave.mdl",
+        H,
+        100,
+        "",
+        2,
+        "Idle01"
+    ),
+    NpcDef {
+        key: "npc_citizen",
+        class: "npc_citizen",
+        model: "models/humans/group01",
+        random_group: true,
+        skin: 0,
+        mins: H.0,
+        maxs: H.1,
+        health: 40,
+        weapon: "",
+        blood: 0,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "idle_subtle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "Rebel",
+        class: "npc_citizen",
+        model: "models/humans/group03",
+        random_group: true,
+        skin: 0,
+        mins: H.0,
+        maxs: H.1,
+        health: 40,
+        weapon: "weapon_pistol",
+        blood: 0,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "idle_subtle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    npc!(
+        "npc_odessa",
+        "npc_citizen",
+        "models/odessa.mdl",
+        H,
+        40,
+        "",
+        0,
+        "idle_subtle"
+    ),
+    NpcDef {
+        key: "Medic",
+        class: "npc_citizen",
+        model: "models/humans/group03m",
+        random_group: true,
+        skin: 0,
+        mins: H.0,
+        maxs: H.1,
+        health: 40,
+        weapon: "weapon_pistol",
+        blood: 0,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "idle_subtle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "Refugee",
+        class: "npc_citizen",
+        model: "models/humans/group02",
+        random_group: true,
+        skin: 0,
+        mins: H.0,
+        maxs: H.1,
+        health: 40,
+        weapon: "weapon_pistol",
+        blood: 0,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "idle_subtle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    npc!(
+        "VortigauntUriah",
+        "npc_vortigaunt",
+        "models/vortigaunt_doctor.mdl",
+        H,
+        100,
+        "",
+        2,
+        "Idle01"
+    ),
+    npc!(
+        "npc_magnusson",
+        "npc_magnusson",
+        "models/magnusson.mdl",
+        H,
+        8,
+        "",
+        0,
+        "idle_subtle"
+    ),
+    npc!(
+        "npc_fisherman",
+        "npc_fisherman",
+        "models/lostcoast/fisherman/fisherman.mdl",
+        H,
+        80,
+        "weapon_oldmanharpoon",
+        0,
+        "idle"
+    ),
+    NpcDef {
+        key: "npc_turret_floor_resistance",
+        class: "npc_turret_floor",
+        model: "models/combine_turrets/floor_turret.mdl",
+        random_group: false,
+        skin: 1,
+        mins: [-21.0, -16.0, -0.4],
+        maxs: [24.1, 16.0, 64.0],
+        health: 100,
+        weapon: "",
+        blood: -1,
+        offset: 2.0,
+        drop: false,
+        movetype: 6,
+        solid: 6,
+        sequence: "idle",
+        rotate_yaw: 180.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_rollermine_hacked",
+        class: "npc_rollermine",
+        model: "models/roller.mdl",
+        random_group: false,
+        skin: 1,
+        mins: [-20.0; 3],
+        maxs: [20.0; 3],
+        health: 0,
+        weapon: "",
+        blood: -1,
+        offset: 20.0,
+        drop: false,
+        movetype: 6,
+        solid: 6,
+        sequence: "idle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_manhack_hacked",
+        class: "npc_manhack",
+        model: "models/manhack.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-8.0, -8.0, -4.0],
+        maxs: [8.0, 8.0, 4.0],
+        health: 25,
+        weapon: "",
+        blood: -1,
+        offset: 32.0,
+        drop: false,
+        movetype: 6,
+        solid: 2,
+        sequence: "idle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    npc!(
+        "npc_zombie",
+        "npc_zombie",
+        "models/zombie/classic.mdl",
+        H,
+        50,
+        "",
+        5,
+        "Idle01"
+    ),
+    npc!(
+        "npc_zombie_torso",
+        "npc_zombie_torso",
+        "models/zombie/classic_torso.mdl",
+        TINY,
+        50,
+        "",
+        5,
+        "Idle02"
+    ),
+    npc!(
+        "npc_poisonzombie",
+        "npc_poisonzombie",
+        "models/zombie/poison.mdl",
+        H,
+        175,
+        "",
+        5,
+        "Idle01"
+    ),
+    NpcDef {
+        key: "npc_antlion",
+        class: "npc_antlion",
+        model: "models/antlion.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-16.0, -16.0, 0.0],
+        maxs: [16.0, 16.0, 64.0],
+        health: 30,
+        weapon: "",
+        blood: 4,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "DistractIdle4",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_antlionguard",
+        class: "npc_antlionguard",
+        model: "models/antlion_guard.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-40.0, -40.0, 0.0],
+        maxs: [40.0, 40.0, 100.0],
+        health: 500,
+        weapon: "",
+        blood: 1,
+        offset: 32.0,
+        drop: false,
+        movetype: 3,
+        solid: 2,
+        sequence: "alertidle",
+        rotate_yaw: 0.0,
+        settle: true,
+    },
+    npc!(
+        "npc_fastzombie",
+        "npc_fastzombie",
+        "models/zombie/fast.mdl",
+        H,
+        50,
+        "",
+        5,
+        "idle"
+    ),
+    npc!(
+        "npc_headcrab",
+        "npc_headcrab",
+        "models/headcrabclassic.mdl",
+        TINY,
+        10,
+        "",
+        2,
+        "IdleB"
+    ),
+    npc!(
+        "npc_headcrab_black",
+        "npc_headcrab_black",
+        "models/headcrabblack.mdl",
+        TINY,
+        35,
+        "",
+        2,
+        "IdleSniff"
+    ),
+    npc!(
+        "npc_headcrab_fast",
+        "npc_headcrab_fast",
+        "models/headcrab.mdl",
+        TINY,
+        10,
+        "",
+        2,
+        "Idle02"
+    ),
+    npc!(
+        "npc_fastzombie_torso",
+        "npc_fastzombie_torso",
+        "models/zombie/fast_torso.mdl",
+        TINY,
+        50,
+        "",
+        5,
+        "Idle01"
+    ),
+    npc!(
+        "npc_zombine",
+        "npc_zombine",
+        "models/zombie/zombie_soldier.mdl",
+        H,
+        100,
+        "",
+        5,
+        "Idle01"
+    ),
+    NpcDef {
+        key: "npc_antlionguardian",
+        class: "npc_antlionguard",
+        model: "models/antlion_guard.mdl",
+        random_group: false,
+        skin: 1,
+        mins: [-40.0, -40.0, 0.0],
+        maxs: [40.0, 40.0, 100.0],
+        health: 500,
+        weapon: "",
+        blood: 1,
+        offset: 32.0,
+        drop: false,
+        movetype: 3,
+        solid: 2,
+        sequence: "alertidle",
+        rotate_yaw: 0.0,
+        settle: true,
+    },
+    NpcDef {
+        key: "npc_antlion_grub",
+        class: "npc_antlion_grub",
+        model: "models/antlion_grub.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-19.0, -15.3, -3.4],
+        maxs: [29.7, 14.9, 12.1],
+        health: 1,
+        weapon: "",
+        blood: 4,
+        offset: 3.44,
+        drop: false,
+        movetype: 0,
+        solid: 2,
+        sequence: "idle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_antlion_worker",
+        class: "npc_antlion_worker",
+        model: "models/antlion_worker.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-16.0, -16.0, 0.0],
+        maxs: [16.0, 16.0, 64.0],
+        health: 60,
+        weapon: "",
+        blood: 6,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "DistractIdle4",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    npc!(
+        "npc_monk",
+        "npc_monk",
+        "models/monk.mdl",
+        H,
+        100,
+        "weapon_annabelle",
+        0,
+        "Idle03"
+    ),
+    NpcDef {
+        key: "npc_crow",
+        class: "npc_crow",
+        model: "models/crow.mdl",
+        random_group: false,
+        skin: 0,
+        mins: TINY.0,
+        maxs: TINY.1,
+        health: 1,
+        weapon: "",
+        blood: 0,
+        offset: 32.0,
+        drop: false,
+        movetype: 3,
+        solid: 2,
+        sequence: "Idle01",
+        rotate_yaw: 0.0,
+        settle: true,
+    },
+    NpcDef {
+        key: "npc_pigeon",
+        class: "npc_pigeon",
+        model: "models/pigeon.mdl",
+        random_group: false,
+        skin: 0,
+        mins: TINY.0,
+        maxs: TINY.1,
+        health: 1,
+        weapon: "",
+        blood: 0,
+        offset: 32.0,
+        drop: false,
+        movetype: 3,
+        solid: 2,
+        sequence: "Idle01",
+        rotate_yaw: 0.0,
+        settle: true,
+    },
+    NpcDef {
+        key: "npc_seagull",
+        class: "npc_seagull",
+        model: "models/seagull.mdl",
+        random_group: false,
+        skin: 0,
+        mins: TINY.0,
+        maxs: TINY.1,
+        health: 1,
+        weapon: "",
+        blood: 0,
+        offset: 32.0,
+        drop: false,
+        movetype: 3,
+        solid: 2,
+        sequence: "Idle01",
+        rotate_yaw: 0.0,
+        settle: true,
+    },
+    npc!(
+        "npc_metropolice",
+        "npc_metropolice",
+        "models/police.mdl",
+        H,
+        40,
+        "weapon_stunstick",
+        0,
+        "batonidle2"
+    ),
+    NpcDef {
+        key: "npc_rollermine",
+        class: "npc_rollermine",
+        model: "models/roller.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-20.0; 3],
+        maxs: [20.0; 3],
+        health: 0,
+        weapon: "",
+        blood: -1,
+        offset: 20.0,
+        drop: false,
+        movetype: 6,
+        solid: 6,
+        sequence: "idle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_rollermine_friendly",
+        class: "npc_rollermine",
+        model: "models/roller.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-20.0; 3],
+        maxs: [20.0; 3],
+        health: 0,
+        weapon: "",
+        blood: -1,
+        offset: 20.0,
+        drop: false,
+        movetype: 6,
+        solid: 6,
+        sequence: "idle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_turret_floor",
+        class: "npc_turret_floor",
+        model: "models/combine_turrets/floor_turret.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-21.0, -16.0, -0.4],
+        maxs: [24.1, 16.0, 64.0],
+        health: 100,
+        weapon: "",
+        blood: -1,
+        offset: 2.0,
+        drop: false,
+        movetype: 6,
+        solid: 6,
+        sequence: "idle",
+        rotate_yaw: 180.0,
+        settle: false,
+    },
+    npc!(
+        "npc_combine_s",
+        "npc_combine_s",
+        "models/combine_soldier.mdl",
+        H,
+        50,
+        "weapon_smg1",
+        0,
+        "Idle1"
+    ),
+    NpcDef {
+        key: "ShotgunSoldier",
+        class: "npc_combine_s",
+        model: "models/combine_soldier.mdl",
+        random_group: false,
+        skin: 1,
+        mins: H.0,
+        maxs: H.1,
+        health: 50,
+        weapon: "weapon_shotgun",
+        blood: 0,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "Idle1",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    npc!(
+        "CombinePrison",
+        "npc_combine_s",
+        "models/combine_soldier_prisonguard.mdl",
+        H,
+        50,
+        "weapon_smg1",
+        0,
+        "Idle1"
+    ),
+    NpcDef {
+        key: "PrisonShotgunner",
+        class: "npc_combine_s",
+        model: "models/combine_soldier_prisonguard.mdl",
+        random_group: false,
+        skin: 1,
+        mins: H.0,
+        maxs: H.1,
+        health: 50,
+        weapon: "weapon_shotgun",
+        blood: 0,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "Idle1",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    npc!(
+        "CombineElite",
+        "npc_combine_s",
+        "models/combine_super_soldier.mdl",
+        H,
+        70,
+        "weapon_ar2",
+        0,
+        "Idle1"
+    ),
+    NpcDef {
+        key: "npc_cscanner",
+        class: "npc_cscanner",
+        model: "models/combine_scanner.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-8.0, -8.0, -4.0],
+        maxs: [8.0, 8.0, 4.0],
+        health: 30,
+        weapon: "",
+        blood: -1,
+        offset: 20.0,
+        drop: false,
+        movetype: 6,
+        solid: 2,
+        sequence: "idle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_clawscanner",
+        class: "npc_clawscanner",
+        model: "models/shield_scanner.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-8.0, -8.0, -4.0],
+        maxs: [8.0, 8.0, 4.0],
+        health: 30,
+        weapon: "",
+        blood: -1,
+        offset: 20.0,
+        drop: false,
+        movetype: 6,
+        solid: 2,
+        sequence: "HoverClosed",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_combinegunship",
+        class: "npc_combinegunship",
+        model: "models/gunship.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-38.0; 3],
+        maxs: [38.0; 3],
+        health: 100,
+        weapon: "",
+        blood: -1,
+        offset: 300.0,
+        drop: false,
+        movetype: 3,
+        solid: 2,
+        sequence: "prop_turn",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_combinedropship",
+        class: "npc_combinedropship",
+        model: "models/combine_dropship.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-40.0, -40.0, 0.0],
+        maxs: [40.0, 40.0, 40.0],
+        health: 1000,
+        weapon: "",
+        blood: -1,
+        offset: 300.0,
+        drop: false,
+        movetype: 3,
+        solid: 2,
+        sequence: "ragdoll",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_helicopter",
+        class: "npc_helicopter",
+        model: "models/combine_helicopter.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-38.0; 3],
+        maxs: [38.0; 3],
+        health: 600,
+        weapon: "",
+        blood: -1,
+        offset: 300.0,
+        drop: false,
+        movetype: 3,
+        solid: 2,
+        sequence: "idle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_strider",
+        class: "npc_strider",
+        model: "models/combine_strider.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-38.0; 3],
+        maxs: [38.0; 3],
+        health: 350,
+        weapon: "",
+        blood: -1,
+        offset: 506.0,
+        drop: false,
+        movetype: 3,
+        solid: 2,
+        sequence: "Idle01",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    npc!(
+        "npc_stalker",
+        "npc_stalker",
+        "models/stalker.mdl",
+        H,
+        50,
+        "",
+        0,
+        "idle01"
+    ),
+    NpcDef {
+        key: "npc_manhack",
+        class: "npc_manhack",
+        model: "models/manhack.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-8.0, -8.0, -4.0],
+        maxs: [8.0, 8.0, 4.0],
+        health: 25,
+        weapon: "",
+        blood: -1,
+        offset: 32.0,
+        drop: false,
+        movetype: 6,
+        solid: 2,
+        sequence: "idle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_citizen_rebel_enemy",
+        class: "npc_citizen",
+        model: "models/humans/group03",
+        random_group: true,
+        skin: 0,
+        mins: H.0,
+        maxs: H.1,
+        health: 40,
+        weapon: "weapon_pistol",
+        blood: 0,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "idle_subtle",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+    NpcDef {
+        key: "npc_hunter",
+        class: "npc_hunter",
+        model: "models/hunter.mdl",
+        random_group: false,
+        skin: 0,
+        mins: [-18.0, -18.0, 0.0],
+        maxs: [18.0, 18.0, 100.0],
+        health: 210,
+        weapon: "",
+        blood: -1,
+        offset: 32.0,
+        drop: true,
+        movetype: 3,
+        solid: 2,
+        sequence: "idle_3",
+        rotate_yaw: 0.0,
+        settle: false,
+    },
+];
+
+/// Weapons any NPC may be handed (`list.Get("NPCUsableWeapons")`), next to a class's own list.
+pub const NPC_USABLE_WEAPONS: [&str; 11] = [
+    "weapon_pistol",
+    "weapon_357",
+    "weapon_smg1",
+    "weapon_shotgun",
+    "weapon_ar2",
+    "weapon_rpg",
+    "weapon_alyxgun",
+    "weapon_annabelle",
+    "weapon_crossbow",
+    "weapon_stunstick",
+    "weapon_crowbar",
+];
+
+pub fn npc_def(key: &str) -> Option<&'static NpcDef> {
+    NPC_LIST.iter().find(|d| d.key == key)
+}
+
 /// World model of each HL2 weapon class (what `Spawn_Weapon` leaves lying on the ground).
 pub fn hl2_world_model(class: &str) -> Option<&'static str> {
     Some(match class {
@@ -1408,6 +2365,8 @@ pub struct Server<'w> {
     pub sents: HashMap<u32, SentState>,
     /// Weapon entities lying in the world (`Spawn_Weapon`): prop id -> weapon class.
     pub world_weapons: HashMap<u32, String>,
+    /// NPCs spawned from the NPCs tab (`Spawn_NPC`), by sandbox id (foreign to the prop list).
+    pub npcs: BTreeMap<u32, Npc>,
     /// Ticks that removed an entity since undo.lua last purged dead undo lists (every 16).
     undo_purge_ticks: u32,
     /// (player, scripted entity) pairs whose hulls overlapped last tick, for the touch edges.
@@ -1531,6 +2490,7 @@ impl<'w> Server<'w> {
             scripted_entities: Vec::new(),
             sents: HashMap::new(),
             world_weapons: HashMap::new(),
+            npcs: BTreeMap::new(),
             undo_purge_ticks: 0,
             sent_player_touch: std::collections::HashSet::new(),
             cvar_new: Vec::new(),
@@ -1702,6 +2662,7 @@ impl<'w> Server<'w> {
         match name {
             "sbox_maxprops" => self.sandbox.limits.max_props = num as i32,
             "sbox_maxragdolls" => self.sandbox.limits.max_ragdolls = num as i32,
+            "sbox_maxnpcs" => self.sandbox.limits.max_npcs = num as i32,
             "sbox_maxconstraints" => self.sandbox.limits.max_constraints = num as i32,
             "sbox_maxropeconstraints" => self.sandbox.limits.max_ropeconstraints = num as i32,
             "sbox_playershurtplayers" => self.players_hurt_players = num != 0.0,
@@ -3452,6 +4413,123 @@ impl<'w> Server<'w> {
         Some(id)
     }
 
+    /// `Spawn_NPC` (`gmod_spawnnpc <key> <weapon>`, creator type 1): the list entry's class at
+    /// `HitPos + HitNormal * Offset` (32 unless the entry says otherwise), dropped to the floor
+    /// for walkers, facing the player (yaw + 180), with the class's health, hull and the given
+    /// weapon when the list allows it ("none" or an unlisted class: unarmed). Counted and
+    /// cleaned up as `npcs` (`sbox_maxnpcs`), undo "NPC" `#undo.generic.npc (<name>)`.
+    pub fn spawn_npc(&mut self, player: u32, key: &str, weapon: &str) -> Option<u32> {
+        if !self.players.get(&player).is_some_and(|p| p.alive) {
+            return None;
+        }
+        let def = *npc_def(key)?;
+        let mut events = Vec::new();
+        if !self.sandbox.check_limit(player, "npcs", &mut events) {
+            self.events.extend(events);
+            return None;
+        }
+        let hit = self.tool_hit(player)?;
+        let yaw = self
+            .players
+            .get(&player)
+            .map(|p| p.view_angles.y)
+            .unwrap_or(0.0);
+        let (mins, maxs) = (Vec3::from(def.mins), Vec3::from(def.maxs));
+        let mut pos = hit.pos + hit.normal * def.offset;
+        let mut settle = false;
+        if def.drop {
+            // `DropToFloor`: the hull swept 256 u down lands where it first touches (measured:
+            // birds and the big hulls appear 32 u up and stand on the floor a tick later)
+            match self.npc_floor(pos, mins, maxs) {
+                Some(p) => pos = p,
+                None => settle = true,
+            }
+        }
+        settle |= def.settle;
+        let id = self.sandbox.alloc_foreign();
+        let model = if def.random_group {
+            format!("{}/male_{:02}.mdl", def.model, 1 + id % 9)
+        } else {
+            def.model.to_string()
+        };
+        let armed = weapon != "none"
+            && !weapon.is_empty()
+            && (NPC_USABLE_WEAPONS.contains(&weapon) || def.weapon == weapon);
+        self.npcs.insert(
+            id,
+            Npc {
+                key: def.key.to_string(),
+                class: def.class.to_string(),
+                model,
+                skin: def.skin,
+                pos,
+                angles: Vec3::new(0.0, yaw + 180.0 + def.rotate_yaw, 0.0),
+                mins,
+                maxs,
+                health: def.health,
+                max_health: def.health,
+                weapon: if armed {
+                    weapon.to_string()
+                } else {
+                    String::new()
+                },
+                blood: def.blood,
+                movetype: def.movetype,
+                solid: def.solid,
+                sequence: def.sequence,
+                settle,
+            },
+        );
+        self.sandbox.add_count(player, "npcs", id);
+        self.sandbox.add_cleanup(player, "npcs", id);
+        let name = format!("#{key}");
+        self.sandbox.push_undo(
+            player,
+            "NPC",
+            format!("#undo.generic.npc ({name})"),
+            Some(format!("Undone {name}")),
+            vec![id],
+        );
+        self.events.extend(events);
+        Some(id)
+    }
+
+    /// Where a hull at `pos` lands when swept 256 u down (`None`: starts in solid or no floor).
+    fn npc_floor(&self, pos: Vec3, mins: Vec3, maxs: Vec3) -> Option<Vec3> {
+        let tr = self.collision.trace_box(
+            pos,
+            pos - Vec3::new(0.0, 0.0, 256.0),
+            mins,
+            maxs,
+            gm_collision::MASK_PLAYERSOLID,
+        );
+        (!tr.start_solid && tr.fraction < 1.0).then_some(tr.end)
+    }
+
+    /// Walkers that appeared above the floor stand on it the next tick.
+    fn settle_npcs(&mut self) {
+        let pending: Vec<(u32, Vec3, Vec3, Vec3)> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| n.settle)
+            .map(|(id, n)| (*id, n.pos, n.mins, n.maxs))
+            .collect();
+        for (id, pos, mins, maxs) in pending {
+            let floor = self.npc_floor(pos, mins, maxs);
+            if let Some(n) = self.npcs.get_mut(&id) {
+                if let Some(p) = floor {
+                    n.pos = p;
+                }
+                n.settle = false;
+            }
+        }
+    }
+
+    /// NPCs whose undo / cleanup entry went: the sandbox no longer lists them as foreign.
+    fn prune_npcs(&mut self) {
+        self.npcs.retain(|id, _| self.sandbox.is_foreign(*id));
+    }
+
     /// Replace a player's inventory with exactly `classes` (the probe's bot carries only the
     /// toolgun); the first one becomes active.
     pub fn set_weapons(&mut self, id: u32, classes: &[&str]) {
@@ -4262,6 +5340,7 @@ impl<'w> Server<'w> {
         let mut events = Vec::new();
         self.sandbox.undo(player, &mut events);
         self.events.extend(events);
+        self.prune_npcs();
         self.sync_physics();
     }
 
@@ -4269,6 +5348,7 @@ impl<'w> Server<'w> {
         let mut events = Vec::new();
         self.sandbox.cleanup(player, &mut events);
         self.events.extend(events);
+        self.prune_npcs();
         self.sync_physics();
     }
 
@@ -4856,6 +5936,28 @@ impl<'w> Server<'w> {
                 )
             })
             .flatten()
+            .chain(
+                self.npcs
+                    .iter()
+                    .filter(|(_, n)| n.solid != 0)
+                    .map(|(id, n)| {
+                        let (lo, hi) = (n.pos + n.mins, n.pos + n.maxs);
+                        gm_collision::Convex {
+                            entity: *id,
+                            friction: 1.0,
+                            planes: vec![
+                                (Vec3::X, hi.x),
+                                (Vec3::NEG_X, -lo.x),
+                                (Vec3::Y, hi.y),
+                                (Vec3::NEG_Y, -lo.y),
+                                (Vec3::Z, hi.z),
+                                (Vec3::NEG_Z, -lo.z),
+                            ],
+                            mins: lo,
+                            maxs: hi,
+                        }
+                    }),
+            )
             .collect();
         self.mover.set_props(prop_convexes);
         for (id, p) in self.players.iter_mut() {
@@ -5060,6 +6162,7 @@ impl<'w> Server<'w> {
         self.sent_touches(contacts);
         self.sent_player_touches();
         self.weapon_pickups();
+        self.settle_npcs();
         // undo.lua counts ticks with removals (its EntityRemoved hook coalesces them through a
         // 0 s timer) and purges all-dead undo lists on every 16th
         if self.events[events_at_start.min(self.events.len())..]
@@ -6253,6 +7356,9 @@ impl<'w> Server<'w> {
             }
             3 => {
                 self.spawn_weapon(player, &name);
+            }
+            1 => {
+                self.spawn_npc(player, &name, "none");
             }
             _ => {}
         }

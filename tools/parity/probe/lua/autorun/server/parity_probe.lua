@@ -1017,6 +1017,20 @@ SCENARIOS.toolgun = function(scn, done)
 			end
 		end
 		table.sort(out.spawned, function(a, b) return a.index < b.index end)
+		out.npcs = {}
+		for _, e in ipairs(ents.FindByClass("npc_*")) do
+			if e:GetCreator() == bot then
+				local p, a = e:GetPos(), e:GetAngles()
+				local mn, mx = e:OBBMins(), e:OBBMaxs()
+				local w = e.GetActiveWeapon and e:GetActiveWeapon() or NULL
+				out.npcs[#out.npcs + 1] = { index = e:EntIndex(), class = e:GetClass(), key = e.NPCName, model = e:GetModel(), skin = e:GetSkin(),
+					pos = vec(p), ang = { a.p, a.y, a.r }, health = e:Health(), maxhealth = e:GetMaxHealth(), mins = vec(mn), maxs = vec(mx),
+					weapon = IsValid(w) and w:GetClass() or "", movetype = e:GetMoveType(), solid = e:GetSolid(), blood = e:GetBloodColor(),
+					sequence = e:GetSequenceName(e:GetSequence()), squad = e.GetSquad and e:GetSquad() or "", flags = e:GetSpawnFlags(), hull = e.GetHullType and e:GetHullType() or -1,
+					npcstate = e.GetNPCState and e:GetNPCState() or -1, eyes = vec(e:EyePos()) }
+			end
+		end
+		table.sort(out.npcs, function(a, b) return a.index < b.index end)
 		out.weapons = {}
 		for _, w in ipairs(bot:GetWeapons()) do
 			out.weapons[#out.weapons + 1] = { class = w:GetClass(), clip1 = w:Clip1(), clip2 = w:Clip2() }
@@ -1186,6 +1200,14 @@ SCENARIOS.toolgun = function(scn, done)
 			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 2048, filter = { bot } })
 			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal) }
 			concommand.Run(bot, "gm_spawnswep", { op.class }, op.class)
+		elseif op.op == "spawnnpc" then
+			-- Spawn_NPC straight from the spawnmenu's NPCs tab (gm_spawnnpc <list key> <weapon>)
+			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			local eye = bot:GetShootPos()
+			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 2048, filter = { bot } })
+			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal) }
+			rec.bot_ang = { bot:GetAngles().p, bot:GetAngles().y, bot:GetAngles().r }
+			concommand.Run(bot, "gmod_spawnnpc", { op.class, op.weapon or "none" }, op.class)
 		elseif op.op == "press" then
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
 			pressButtons = op.buttons == "use" and IN_USE or (op.buttons == "attack" and IN_ATTACK or 0)

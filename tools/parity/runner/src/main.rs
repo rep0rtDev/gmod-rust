@@ -241,6 +241,9 @@ struct OpSpec {
     offset: Option<[f32; 3]>,
     #[serde(default)]
     pos: Option<[f32; 3]>,
+    /// `spawnnpc`: weapon handed to the NPC ("none" for unarmed).
+    #[serde(default)]
+    weapon: Option<String>,
     /// `press`: "use" / "attack" held for `ticks`.
     #[serde(default)]
     buttons: Option<String>,
@@ -4412,6 +4415,12 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
                 "class": server.world_weapon_class(p.id).unwrap_or("prop_physics"),
             })).collect::<Vec<_>>(),
+            "npcs": server.npcs.iter().map(|(id, n)| json!({
+                "index": id, "key": n.key, "class": n.class, "model": n.model, "skin": n.skin,
+                "pos": [n.pos.x, n.pos.y, n.pos.z], "ang": [n.angles.x, n.angles.y, n.angles.z],
+                "mins": [n.mins.x, n.mins.y, n.mins.z], "maxs": [n.maxs.x, n.maxs.y, n.maxs.z],
+                "health": n.health, "maxhealth": n.max_health, "weapon": n.weapon, "movetype": n.movetype, "solid": n.solid,
+            })).collect::<Vec<_>>(),
             "weapons": server.players.get(&player).map(|pl| {
                 let mut w: Vec<Value> = pl.weapons.iter().map(|c| {
                     let clip = pl.inventory.clips.get(c).copied().unwrap_or([-1, -1]);
@@ -4506,6 +4515,11 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 if let Some(t) = target {
                     server.teleport_player(player, t);
                 }
+            }
+            "spawnnpc" => {
+                let key = op.class.clone().unwrap_or_default();
+                rec["class"] = json!(key);
+                server.spawn_npc(player, &key, op.weapon.as_deref().unwrap_or("none"));
             }
             "press" => {}
             "undo" => server.undo(player),
@@ -5654,6 +5668,46 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             ta["spawned"].as_array().cloned().unwrap_or_default(),
             oa["spawned"].as_array().cloned().unwrap_or_default(),
         );
+        if ta["npcs"].is_array() && oa["npcs"].is_array() {
+            let (tn, on) = (
+                ta["npcs"].as_array().cloned().unwrap_or_default(),
+                oa["npcs"].as_array().cloned().unwrap_or_default(),
+            );
+            if tn.len() != on.len() {
+                println!("  op {i}: {} npcs vs {}", tn.len(), on.len());
+                ok = false;
+            }
+            for (a, b) in tn.iter().zip(&on) {
+                let dp = (v3(&a["pos"]) - v3(&b["pos"])).length();
+                let da = gm_sandbox::rotation(v3(&a["ang"]))
+                    .angle_between(gm_sandbox::rotation(v3(&b["ang"])))
+                    .to_degrees();
+                // citizens draw a random model from their group directory
+                let (ma, mb) = (
+                    a["model"].as_str().unwrap_or(""),
+                    b["model"].as_str().unwrap_or(""),
+                );
+                let model_same = ma == mb
+                    || (ma.contains("/humans/")
+                        && ma.rsplit_once('/').map(|x| x.0) == mb.rsplit_once('/').map(|x| x.0));
+                let hull_same = (v3(&a["mins"]) - v3(&b["mins"])).length() < 0.1
+                    && (v3(&a["maxs"]) - v3(&b["maxs"])).length() < 0.1;
+                if a["class"] != b["class"]
+                    || !model_same
+                    || dp > pos_tol
+                    || da > 5.0
+                    || !hull_same
+                    || a["health"] != b["health"]
+                    || a["maxhealth"] != b["maxhealth"]
+                    || a["weapon"] != b["weapon"]
+                    || a["movetype"] != b["movetype"]
+                    || a["solid"] != b["solid"]
+                {
+                    println!("  op {i}: npc {} {} pos err {dp:.3} angle err {da:.2} {} hp {}/{} wep {} vs {} {} {} hp {}/{} wep {}", a["key"], a["class"], ma, a["health"], a["maxhealth"], a["weapon"], b["class"], mb, if hull_same { "" } else { "HULL" }, b["health"], b["maxhealth"], b["weapon"]);
+                    ok = false;
+                }
+            }
+        }
         if ta["weapons"].is_array() && oa["weapons"].is_array() {
             let strip = |v: &Value| -> Vec<Value> {
                 v.as_array().cloned().unwrap_or_default().into_iter().map(|w| json!({ "class": w["class"], "clip1": w["clip1"], "clip2": w["clip2"] })).collect()
