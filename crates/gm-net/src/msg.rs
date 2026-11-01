@@ -171,7 +171,11 @@ pub struct EntityState {
     pub color: [u8; 4],
     pub render_mode: u8,
     pub render_fx: u8,
+    /// prop_ragdoll: pose of every physics object (`GetPhysicsObjectNum(i)`), empty on a prop.
+    pub bones: Vec<BonePose>,
 }
+
+pub use gm_server::BonePose;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlayerSnap {
@@ -433,7 +437,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 4;
+pub const PROTOCOL: u16 = 5;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -926,6 +930,12 @@ impl ServerMsg {
                     }
                     w.u8(e.render_mode);
                     w.u8(e.render_fx);
+                    w.varint(e.bones.len() as u64);
+                    for b in &e.bones {
+                        w.qpos(b.pos);
+                        w.qang(b.angles);
+                        w.bool(b.frozen);
+                    }
                 }
                 w.varint(removed.len() as u64);
                 for id in removed {
@@ -1192,6 +1202,18 @@ impl ServerMsg {
                         color: [r.u8()?, r.u8()?, r.u8()?, r.u8()?],
                         render_mode: r.u8()?,
                         render_fx: r.u8()?,
+                        bones: {
+                            let n = r.varint()? as usize;
+                            let mut bones = Vec::with_capacity(n);
+                            for _ in 0..n {
+                                bones.push(BonePose {
+                                    pos: r.qpos()?,
+                                    angles: r.qang()?,
+                                    frozen: r.bool()?,
+                                });
+                            }
+                            bones
+                        },
                     });
                 }
                 let n = r.varint()? as usize;

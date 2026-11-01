@@ -105,6 +105,7 @@ pub struct Limits {
     pub max_lights: i32,
     pub max_emitters: i32,
     pub max_cameras: i32,
+    pub max_ragdolls: i32,
 }
 
 impl Default for Limits {
@@ -123,6 +124,7 @@ impl Default for Limits {
             max_lights: 5,
             max_emitters: 20,
             max_cameras: 10,
+            max_ragdolls: 10,
         }
     }
 }
@@ -131,6 +133,7 @@ impl Limits {
     fn get(&self, kind: &str) -> i32 {
         match kind {
             "props" => self.max_props,
+            "ragdolls" => self.max_ragdolls,
             "constraints" => self.max_constraints,
             "ropeconstraints" => self.max_ropeconstraints,
             "thrusters" => self.max_thrusters,
@@ -154,6 +157,16 @@ pub struct SpawnRequest<'a> {
     pub eye: Vec3,
     pub eye_angles: Vec3,
     pub model: &'a str,
+    pub bounds: ModelBounds,
+}
+
+/// What `place_ragdoll` needs of a ragdoll model beyond `SpawnRequest`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RagdollSpawn {
+    /// Root bone (physics object 0) position in model space in the model's ragdoll pose.
+    pub root_local: Vec3,
+    /// The entity's collision bounds (hull box widened by the root solid), unrotated about the
+    /// root.
     pub bounds: ModelBounds,
 }
 
@@ -832,6 +845,9 @@ impl Default for ToolSettings {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PropBody {
     pub id: u32,
+    /// Physics object index on the entity (`GetPhysicsObjectNum`): 0 for a prop, the bone body
+    /// for a ragdoll part (one `PropBody` per part).
+    pub bone: u32,
     pub pos: Vec3,
     pub angles: Vec3,
     pub hulls: Vec<Vec<(Vec3, f32)>>,
@@ -844,6 +860,8 @@ pub struct ToolHit {
     pub normal: Vec3,
     /// `None` is the world.
     pub ent: Option<u32>,
+    /// `PhysicsBone` of the hit: the ragdoll part's physics object index, 0 on a prop.
+    pub bone: u32,
     pub fraction: f32,
     /// Where the trace started (the player's eye) and the direction it looked.
     pub start: Vec3,
@@ -925,6 +943,7 @@ pub fn trace_line(world: &World, props: &[PropBody], start: Vec3, end: Vec3) -> 
         pos: tr.end,
         normal: tr.normal,
         ent: None,
+        bone: 0,
         fraction: tr.fraction,
         start,
         dir,
@@ -943,6 +962,7 @@ pub fn trace_line(world: &World, props: &[PropBody], start: Vec3, end: Vec3) -> 
                 pos: start,
                 normal: Vec3::ZERO,
                 ent: Some(p.id),
+                bone: p.bone,
                 fraction: 0.0,
                 start,
                 dir,
@@ -955,6 +975,7 @@ pub fn trace_line(world: &World, props: &[PropBody], start: Vec3, end: Vec3) -> 
                         pos: start + (end - start) * t,
                         normal: rot * n,
                         ent: Some(p.id),
+                        bone: p.bone,
                         fraction: t,
                         start,
                         dir,
@@ -1576,6 +1597,38 @@ pub fn place_prop(
     }
 }
 
+/// `DoPlayerEntitySpawn` for a `prop_ragdoll` (measured, `phys_ragdoll_kleiner_spawn`): the
+/// model is posed at the hit point with angles (-90, yaw + 180, 0); `InitRagdoll` then moves the
+/// entity origin to the root bone with zero angles and collision bounds of the hull box widened
+/// by the root solid's convex extents, so the flush offset (hit minus the box point nearest to 512 u behind the surface)
+/// is measured on that unrotated box about the root; it moves every physics object (kleiner on
+/// the floor: 25.6 u back toward the player, 5.9 u up). No per-axis nudges.
+pub fn place_ragdoll(
+    world: &World,
+    props: &[PropBody],
+    eye: Vec3,
+    eye_angles: Vec3,
+    rag: &RagdollSpawn,
+) -> Placement {
+    let dir = forward(eye_angles.x, eye_angles.y);
+    let end = eye + dir * 2048.0;
+    let (hit, normal, hit_ent) = match trace_line(world, props, eye, end) {
+        Some(h) => (h.pos, h.normal, h.ent),
+        None => (end, Vec3::ZERO, None),
+    };
+    let angles = Vec3::new(-90.0, normalize_angle(eye_angles.y + 180.0), 0.0);
+    let root = hit + rotation(angles) * rag.root_local;
+    let far = hit - normal * 512.0;
+    let nearest = nearest_point(root, Quat::IDENTITY, &rag.bounds, far);
+    Placement {
+        hit,
+        normal,
+        hit_ent,
+        pos: hit + (hit - nearest),
+        angles,
+    }
+}
+
 impl Sandbox {
     pub fn new(limits: Limits) -> Self {
         Sandbox {
@@ -1789,6 +1842,58 @@ impl Sandbox {
             vec![id],
         );
         self.add_cleanup(player, "props", id);
+        Some(id)
+    }
+
+    /// `GMODSpawnRagdoll` (`commands.lua`): the same placement as a prop except the spawn
+    /// angles are pitched -90 (`DoPlayerEntitySpawn` for `prop_ragdoll`), the flush offset moves
+    /// every physics object, limit `ragdolls` (`sbox_maxragdolls`), undo `prop_ragdoll` /
+    /// `#prop_ragdoll (<model>)`, cleanup `ragdolls`.
+    pub fn spawn_ragdoll(
+        &mut self,
+        world: &World,
+        props: &[PropBody],
+        player: u32,
+        req: &SpawnRequest<'_>,
+        rag: &RagdollSpawn,
+        events: &mut Vec<Event>,
+    ) -> Option<u32> {
+        if !self.check_limit(player, "ragdolls", events) {
+            return None;
+        }
+        let model = req.model;
+        let placement = place_ragdoll(world, props, req.eye, req.eye_angles, rag);
+        let id = self.next_id;
+        self.next_id += 1;
+        self.props.push(Prop {
+            id,
+            owner: player,
+            model: model.to_string(),
+            pos: placement.pos,
+            angles: placement.angles,
+            frozen: false,
+            gravity: true,
+            collide: true,
+            upright: None,
+            health: 0,
+            skin: 0,
+            body: String::new(),
+            fire: None,
+            material: String::new(),
+            color: [255; 4],
+            render_mode: 0,
+            render_fx: 0,
+            phys_material: String::new(),
+        });
+        events.push(Event::Spawned { prop: id });
+        self.push_undo(
+            player,
+            "prop_ragdoll",
+            format!("#prop_ragdoll ({model})"),
+            None,
+            vec![id],
+        );
+        self.add_cleanup(player, "ragdolls", id);
         Some(id)
     }
 
@@ -4187,6 +4292,7 @@ mod tests {
             pos: Vec3::new(dist, 0.0, 0.0),
             normal: Vec3::NEG_X,
             ent: Some(id),
+            bone: 0,
             fraction: 0.1,
             start: Vec3::ZERO,
             dir: Vec3::X,
@@ -4307,6 +4413,7 @@ mod tests {
             pos,
             normal: Vec3::Z,
             ent,
+            bone: 0,
             fraction: 0.5,
             start: Vec3::ZERO,
             dir: Vec3::NEG_Z,
@@ -4418,6 +4525,7 @@ mod tests {
             ent: Some(ent),
             pos: Vec3::new(0.0, 0.0, z),
             normal: Vec3::Z,
+            bone: 0,
             fraction: 0.5,
             start: Vec3::ZERO,
             dir: Vec3::NEG_Z,

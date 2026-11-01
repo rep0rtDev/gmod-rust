@@ -382,12 +382,7 @@ end
 SCENARIOS.ragdoll_drop = function(scn, done)
 	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
 	local ang = Angle(scn.angles and scn.angles[1] or 0, scn.angles and scn.angles[2] or 0, scn.angles and scn.angles[3] or 0)
-	local ent = ents.Create("prop_ragdoll")
-	ent:SetModel(scn.model)
-	ent:SetPos(start)
-	ent:SetAngles(ang)
-	ent:Spawn()
-	ent:Activate()
+	local function go(ent)
 	local n = ent:GetPhysicsObjectCount()
 	if n == 0 then
 		done({ error = "no physics objects for " .. tostring(scn.model) })
@@ -420,9 +415,52 @@ SCENARIOS.ragdoll_drop = function(scn, done)
 		if tick >= total then
 			hook.Remove("Tick", "parity_ragdoll")
 			ent:Remove()
-			done({ start = { start.x, start.y, start.z }, model = scn.model, bones = bones, ticks = ticks })
+			done({ start = { start.x, start.y, start.z }, model = scn.model, bones = bones, ticks = ticks, spawn = SPAWN_INFO })
 		end
 	end)
+	end
+	if scn.player_spawn then
+		-- the sandbox spawn path (gm_spawn -> GMODSpawnRagdoll) from a bot standing at `start`
+		-- looking along `angles`; the ragdoll is picked up from PlayerSpawnedRagdoll
+		local bot = player.GetBots()[1]
+		if not IsValid(bot) then
+			RunConsoleCommand("bot")
+			timer.Simple(1, function() SCENARIOS.ragdoll_drop(scn, done) end)
+			return
+		end
+		if not bot:Alive() then bot:Spawn() end
+		bot:SetPos(start)
+		bot:SetEyeAngles(ang)
+		bot:SetLocalVelocity(Vector(0, 0, 0))
+		hook.Add("PlayerSpawnedRagdoll", "parity_ragdoll_spawn", function(ply, model, ent)
+			hook.Remove("PlayerSpawnedRagdoll", "parity_ragdoll_spawn")
+			local tr = ply:GetEyeTrace()
+			local mn, mx = ent:GetCollisionBounds()
+			local omn, omx = ent:OBBMins(), ent:OBBMaxs()
+			local e = ply:EyePos()
+			SPAWN_INFO = { pos = { ent:GetPos().x, ent:GetPos().y, ent:GetPos().z }, ang = { ent:GetAngles().p, ent:GetAngles().y, ent:GetAngles().r },
+				mins = { mn.x, mn.y, mn.z }, maxs = { mx.x, mx.y, mx.z }, obb_mins = { omn.x, omn.y, omn.z }, obb_maxs = { omx.x, omx.y, omx.z },
+				hit = { tr.HitPos.x, tr.HitPos.y, tr.HitPos.z }, normal = { tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z }, eye = { e.x, e.y, e.z },
+				eye_ang = { ply:EyeAngles().p, ply:EyeAngles().y, ply:EyeAngles().r } }
+			go(ent)
+		end)
+		-- bots have no client to run gm_spawn; CCSpawn ends in this sandbox function. The bot
+		-- is placed right before the spawn: a fresh bot respawns at a spawn point first.
+		timer.Simple(0.5, function()
+			bot:SetPos(start)
+			bot:SetEyeAngles(ang)
+			bot:SetLocalVelocity(Vector(0, 0, 0))
+			timer.Simple(0, function() GMODSpawnRagdoll(bot, scn.model, 0, "", nil) end)
+		end)
+		return
+	end
+	local ent = ents.Create("prop_ragdoll")
+	ent:SetModel(scn.model)
+	ent:SetPos(start)
+	ent:SetAngles(ang)
+	ent:Spawn()
+	ent:Activate()
+	go(ent)
 end
 
 -- physgun: a bot holding weapon_physgun drives IN_ATTACK and view angles over a prop,
@@ -446,13 +484,16 @@ SCENARIOS.physgun = function(scn, done)
 	bot:SetEyeAngles(ang)
 	bot:SetLocalVelocity(Vector(0, 0, 0))
 	bot:SetMoveType(MOVETYPE_WALK)
-	local ent = ents.Create("prop_physics")
+	local ent = ents.Create(util.IsValidRagdoll(scn.model) and "prop_ragdoll" or "prop_physics")
 	ent:SetModel(scn.model)
 	ent:SetPos(Vector(scn.prop[1], scn.prop[2], scn.prop[3]))
 	ent:SetAngles(Angle(scn.prop_angles and scn.prop_angles[1] or 0, scn.prop_angles and scn.prop_angles[2] or 0, scn.prop_angles and scn.prop_angles[3] or 0))
 	ent:Spawn()
 	ent:Activate()
 	local phys = ent:GetPhysicsObject()
+	if scn.frozen and ent:GetPhysicsObjectCount() > 1 then
+		ent:GetPhysicsObjectNum(0):EnableMotion(false)
+	end
 	local segs = scn.segments
 	local total = 0
 	for _, sg in ipairs(segs) do total = total + sg.ticks end
@@ -521,6 +562,15 @@ SCENARIOS.physgun = function(scn, done)
 				eye = { e.x, e.y, e.z },
 				eye_ang = { ea.p, ea.y, ea.r },
 			}
+			if ent:GetPhysicsObjectCount() > 1 then
+				local parts = {}
+				for i = 0, ent:GetPhysicsObjectCount() - 1 do
+					local ph = ent:GetPhysicsObjectNum(i)
+					local pp, pa = ph:GetPos(), ph:GetAngles()
+					parts[#parts + 1] = { pos = { pp.x, pp.y, pp.z }, ang = { pa.p, pa.y, pa.r }, frozen = not ph:IsMotionEnabled() }
+				end
+				ticks[#ticks].parts = parts
+			end
 		end
 		tick = tick + 1
 		if tick >= total then

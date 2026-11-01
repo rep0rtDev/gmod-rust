@@ -3542,6 +3542,36 @@ crates = ["gm-physics", "gm-server"]
 pos = 4.0
 
 [[harness]]
+name = "phys_ragdoll_kleiner_spawn"
+scenario = "phys/ragdoll_kleiner_spawn"
+compare = "ragdoll_parts"
+realm = "server"
+crates = ["gm-sandbox", "gm-server"]
+
+[harness.tolerance]
+pos = 4.0
+
+[[harness]]
+name = "phys_ragdoll_alyx_spawn"
+scenario = "phys/ragdoll_alyx_spawn"
+compare = "ragdoll_parts"
+realm = "server"
+crates = ["gm-sandbox", "gm-server"]
+
+[harness.tolerance]
+pos = 4.0
+
+[[harness]]
+name = "physgun_ragdoll_grab"
+scenario = "physgun/ragdoll_grab"
+compare = "ragdoll_parts"
+realm = "server"
+crates = ["gm-physics", "gm-server"]
+
+[harness.tolerance]
+pos = 4.0
+
+[[harness]]
 name = "phys_ragdoll_kleiner_hang"
 scenario = "phys/ragdoll_kleiner_hang"
 compare = "ragdoll_parts"

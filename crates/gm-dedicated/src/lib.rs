@@ -195,6 +195,15 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
                             .iter()
                             .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
                             .collect(),
+                        planes: s
+                            .convexes
+                            .iter()
+                            .map(|c| {
+                                let pts: Vec<Vec3> =
+                                    c.points.iter().map(|&p| Vec3::from(p)).collect();
+                                gm_sandbox::hull_planes(&pts, &c.triangles)
+                            })
+                            .collect(),
                         mass: if pr.mass > 0.0 { pr.mass } else { 1.0 },
                         volume: pr.volume,
                         mass_center: Vec3::from(s.mass_center),
@@ -211,6 +220,19 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
             collision_pairs: phy.collision_pairs.clone(),
             total_mass: phy.edit.total_mass,
             anim_friction: phy.anim_friction.clone(),
+            // measured (kleiner / alyx): the hull box widened by the root solid's convex
+            // extents in its bone frame (mins.z -5.94 / -5.87 = the pelvis hull's bottom)
+            bounds: {
+                let mut b = gm_sandbox::ModelBounds {
+                    min: Vec3::from(mdl.header.hull_min),
+                    max: Vec3::from(mdl.header.hull_max),
+                };
+                for p in solid.convexes.iter().flat_map(|c| c.points.iter()) {
+                    b.min = b.min.min(Vec3::from(*p));
+                    b.max = b.max.max(Vec3::from(*p));
+                }
+                b
+            },
             bones: ragdoll_pose(mount, model, &mdl_data, &mdl)
                 .unwrap_or_else(|| mdl.bones.iter().map(|b| (b.pos, b.quat)).collect())
                 .into_iter()

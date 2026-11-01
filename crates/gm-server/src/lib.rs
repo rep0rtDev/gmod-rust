@@ -29,6 +29,8 @@ pub struct BoneInfo {
 pub struct RagdollSolid {
     pub bone: String,
     pub hulls: Vec<Vec<Vec3>>,
+    /// Outward planes of each hull (bone-local), for the tool/physgun trace.
+    pub planes: Vec<Vec<(Vec3, f32)>>,
     pub mass: f32,
     pub volume: f32,
     pub mass_center: Vec3,
@@ -50,6 +52,25 @@ pub struct RagdollInfo {
     pub total_mass: f32,
     pub bones: Vec<BoneInfo>,
     pub anim_friction: Option<gm_formats::phy::AnimatedFriction>,
+    /// Collision bounds of the spawned entity (the hull box widened by the root solid's convex
+    /// extents), unrotated about the root bone: what the sandbox spawn flush measures against.
+    pub bounds: gm_sandbox::ModelBounds,
+}
+
+/// World pose of every bone of a ragdoll model placed with its origin at `pos` rotated by `rot`,
+/// composed down the hierarchy from the model's ragdoll pose.
+fn ragdoll_bone_world(rd: &RagdollInfo, pos: Vec3, rot: Quat) -> (Vec<Vec3>, Vec<Quat>) {
+    let n = rd.bones.len();
+    let (mut wpos, mut wrot) = (vec![pos; n], vec![rot; n]);
+    for (i, b) in rd.bones.iter().enumerate() {
+        let (pp, pr) = match usize::try_from(b.parent) {
+            Ok(k) if k < i => (wpos[k], wrot[k]),
+            _ => (pos, rot),
+        };
+        wpos[i] = pp + pr * b.pos;
+        wrot[i] = pr * b.quat;
+    }
+    (wpos, wrot)
 }
 
 /// A live prop_ragdoll: every bone body (the root is also in `Server::bodies`), the joints
@@ -59,6 +80,17 @@ struct RagdollRuntime {
     joints: Vec<gm_physics::ConstraintHandle>,
     spawn_tick: u64,
     anim_friction: Option<gm_formats::phy::AnimatedFriction>,
+    /// Per bone body: physgun-frozen (`PhysObj:EnableMotion(false)` on that object only).
+    frozen: Vec<bool>,
+}
+
+/// One ragdoll physics object in a snapshot.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct BonePose {
+    pub pos: Vec3,
+    pub angles: Vec3,
+    /// `PhysObj:IsMoveable()` false (physgun-frozen bone).
+    pub frozen: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1558,6 +1590,7 @@ impl<'w> Server<'w> {
         let num = v.trim().parse::<f32>().unwrap_or(0.0);
         match name {
             "sbox_maxprops" => self.sandbox.limits.max_props = num as i32,
+            "sbox_maxragdolls" => self.sandbox.limits.max_ragdolls = num as i32,
             "sbox_maxconstraints" => self.sandbox.limits.max_constraints = num as i32,
             "sbox_maxropeconstraints" => self.sandbox.limits.max_ropeconstraints = num as i32,
             "sbox_playershurtplayers" => self.players_hurt_players = num != 0.0,
@@ -2346,6 +2379,7 @@ impl<'w> Server<'w> {
                 let hulls = self.hull_planes.get(&p.model)?.clone();
                 Some(PropBody {
                     id: p.id,
+                    bone: 0,
                     pos: p.pos,
                     angles: p.angles,
                     hulls,
@@ -2912,6 +2946,7 @@ impl<'w> Server<'w> {
             .enumerate()
             .map(|(i, (model, pos, angles, _))| PropBody {
                 id: i as u32 + 1,
+                bone: 0,
                 pos: *pos,
                 angles: *angles,
                 hulls: self.hull_planes.get(model).cloned().unwrap_or_default(),
@@ -3111,19 +3146,53 @@ impl<'w> Server<'w> {
     }
 
     pub fn trace_bodies(&self) -> Vec<PropBody> {
-        self.sandbox
-            .props()
-            .iter()
-            .filter_map(|p| {
-                let hulls = self.hull_planes.get(&p.model)?.clone();
-                Some(PropBody {
-                    id: p.id,
-                    pos: p.pos,
-                    angles: p.angles,
-                    hulls,
-                })
-            })
-            .collect()
+        let mut out = Vec::new();
+        for p in self.sandbox.props() {
+            if let (Some(r), Some(rd)) = (
+                self.ragdoll_bodies.get(&p.id),
+                self.models.get(&p.model).and_then(|m| m.ragdoll.as_ref()),
+            ) {
+                for (i, (&b, solid)) in r.bodies.iter().zip(&rd.solids).enumerate() {
+                    let st = self.physics.state(b);
+                    let (pitch, yaw, roll) = gm_physics::angles_from_quat(st.rotation);
+                    out.push(PropBody {
+                        id: p.id,
+                        bone: i as u32,
+                        pos: st.position,
+                        angles: Vec3::new(pitch, yaw, roll),
+                        hulls: solid.planes.clone(),
+                    });
+                }
+                continue;
+            }
+            let Some(hulls) = self.hull_planes.get(&p.model).cloned() else {
+                continue;
+            };
+            out.push(PropBody {
+                id: p.id,
+                bone: 0,
+                pos: p.pos,
+                angles: p.angles,
+                hulls,
+            });
+        }
+        out
+    }
+
+    /// The body the physgun acts on: a ragdoll's `bone` physics object, else the prop body.
+    fn part_body(&self, ent: u32, bone: u32) -> Option<BodyHandle> {
+        match self.ragdoll_bodies.get(&ent) {
+            Some(r) => r.bodies.get(bone as usize).copied(),
+            None => self.bodies.get(&ent).copied(),
+        }
+    }
+
+    /// `PhysObj:IsMoveable()` false on a ragdoll part (a prop answers through `Prop::frozen`).
+    fn part_frozen(&self, ent: u32, bone: u32) -> bool {
+        self.ragdoll_bodies
+            .get(&ent)
+            .and_then(|r| r.frozen.get(bone as usize).copied())
+            .unwrap_or(false)
     }
 
     /// `gm_spawn <model>` by a player.
@@ -3232,18 +3301,35 @@ impl<'w> Server<'w> {
         let info = self.models.get(model)?.clone();
         let bodies = self.trace_bodies();
         let mut events = Vec::new();
-        let id = self.sandbox.spawn_prop(
-            self.collision,
-            &bodies,
-            player,
-            &SpawnRequest {
-                eye,
-                eye_angles,
-                model,
-                bounds: info.bounds,
-            },
-            &mut events,
-        );
+        let req = SpawnRequest {
+            eye,
+            eye_angles,
+            model,
+            bounds: info.bounds,
+        };
+        let id = if let Some(rd) = &info.ragdoll {
+            // the entity origin after `InitRagdoll` is the root bone (solid 0) of the posed model
+            let (wpos, _) = ragdoll_bone_world(rd, Vec3::ZERO, Quat::IDENTITY);
+            let root_local = rd
+                .solids
+                .first()
+                .and_then(|s| {
+                    rd.bones
+                        .iter()
+                        .position(|b| b.name.eq_ignore_ascii_case(&s.bone))
+                })
+                .map(|i| wpos[i])
+                .unwrap_or(Vec3::ZERO);
+            let rag = gm_sandbox::RagdollSpawn {
+                root_local,
+                bounds: rd.bounds,
+            };
+            self.sandbox
+                .spawn_ragdoll(self.collision, &bodies, player, &req, &rag, &mut events)
+        } else {
+            self.sandbox
+                .spawn_prop(self.collision, &bodies, player, &req, &mut events)
+        };
         self.events.extend(events);
         if let Some(id) = id {
             self.sandbox.set_health(id, info.prop_data.health);
@@ -3442,16 +3528,7 @@ impl<'w> Server<'w> {
     /// `collisionrules` pairs. The root solid stands for the entity in `bodies`.
     fn spawn_ragdoll_bodies(&mut self, p: &gm_sandbox::Prop, rd: &RagdollInfo) {
         let root_rot = gm_physics::quat_from_angles(p.angles.x, p.angles.y, p.angles.z);
-        let n = rd.bones.len();
-        let (mut wpos, mut wrot) = (vec![p.pos; n], vec![root_rot; n]);
-        for (i, b) in rd.bones.iter().enumerate() {
-            let (pp, pr) = match usize::try_from(b.parent) {
-                Ok(k) if k < i => (wpos[k], wrot[k]),
-                _ => (p.pos, root_rot),
-            };
-            wpos[i] = pp + pr * b.pos;
-            wrot[i] = pr * b.quat;
-        }
+        let (wpos, wrot) = ragdoll_bone_world(rd, p.pos, root_rot);
         let bone_pose = |name: &str| {
             rd.bones
                 .iter()
@@ -3520,6 +3597,7 @@ impl<'w> Server<'w> {
             self.bodies.insert(p.id, root);
         }
         self.sandbox.set_mass(p.id, rd.total_mass.max(1.0));
+        let n_bodies = bodies.len();
         self.ragdoll_bodies.insert(
             p.id,
             RagdollRuntime {
@@ -3527,6 +3605,7 @@ impl<'w> Server<'w> {
                 joints,
                 spawn_tick: self.tick_count,
                 anim_friction: rd.anim_friction.clone(),
+                frozen: vec![false; n_bodies],
             },
         );
     }
@@ -4313,37 +4392,51 @@ impl<'w> Server<'w> {
                 let hit = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward);
                 match hit.and_then(|h| h.ent.map(|e| (e, h))) {
                     Some((ent, h))
-                        if !self.sandbox.props().iter().any(|p| p.id == ent && p.frozen) =>
+                        if !self.sandbox.props().iter().any(|p| p.id == ent && p.frozen)
+                            && !self.part_frozen(ent, h.bone) =>
                     {
                         let allowed = !matches!(
                             self.ask(Request::PhysgunPickup { player, ent }),
                             Verdict::Cancel
                         );
-                        let body = allowed.then(|| self.bodies.get(&ent).copied()).flatten();
+                        let body = allowed.then(|| self.part_body(ent, h.bone)).flatten();
                         body.map(|b| {
                             let st = self.physics.state(b);
-                            (
-                                ent,
-                                Grab::new(eye, forward, h.pos, st.position, st.rotation, view.y),
-                            )
+                            let mut g =
+                                Grab::new(eye, forward, h.pos, st.position, st.rotation, view.y);
+                            g.bone = h.bone;
+                            (ent, g)
                         })
                     }
                     _ => None,
                 }
             }
-            Some((ent, _)) if !attack => {
-                if let Some(b) = self.bodies.get(&ent).copied() {
+            Some((ent, g)) if !attack => {
+                if let Some(b) = self.part_body(ent, g.bone) {
                     self.physics.release(b);
                 }
                 self.game_events
                     .push(GameEvent::PhysgunDrop { player, ent });
                 None
             }
-            Some((ent, _)) if attack2 => {
-                if let Some(b) = self.bodies.get(&ent).copied() {
+            Some((ent, g)) if attack2 => {
+                if let Some(b) = self.part_body(ent, g.bone) {
                     self.physics.freeze(b);
                 }
-                self.sandbox.set_frozen(ent, true);
+                // sandbox `OnPhysgunFreeze`: only the held physics object stops; the ragdoll
+                // entity counts as frozen once every part is
+                let all = match self.ragdoll_bodies.get_mut(&ent) {
+                    Some(r) => {
+                        if let Some(f) = r.frozen.get_mut(g.bone as usize) {
+                            *f = true;
+                        }
+                        r.frozen.iter().all(|f| *f)
+                    }
+                    None => true,
+                };
+                if all {
+                    self.sandbox.set_frozen(ent, true);
+                }
                 self.game_events
                     .push(GameEvent::PhysgunFreeze { player, ent });
                 None
@@ -4358,7 +4451,7 @@ impl<'w> Server<'w> {
         }
         let held = match held {
             Some((ent, mut g)) => {
-                if let Some(b) = self.bodies.get(&ent).copied() {
+                if let Some(b) = self.part_body(ent, g.bone) {
                     if use_key {
                         g.rotate(pc.mouse_x, pc.mouse_y, right);
                     }
@@ -5144,6 +5237,26 @@ impl<'w> Server<'w> {
                 self.physics.set_ragdoll_friction(j, f);
             }
         }
+    }
+
+    /// Snapshot poses of a prop_ragdoll's physics objects (empty for a plain prop).
+    pub fn ragdoll_bone_poses(&self, prop: u32) -> Vec<BonePose> {
+        let Some(r) = self.ragdoll_bodies.get(&prop) else {
+            return Vec::new();
+        };
+        r.bodies
+            .iter()
+            .zip(&r.frozen)
+            .map(|(&b, &frozen)| {
+                let st = self.physics.state(b);
+                let (pitch, yaw, roll) = gm_physics::angles_from_quat(st.rotation);
+                BonePose {
+                    pos: st.position,
+                    angles: Vec3::new(pitch, yaw, roll),
+                    frozen,
+                }
+            })
+            .collect()
     }
 
     /// A prop_ragdoll's bone bodies and joints (`None` for a plain prop).

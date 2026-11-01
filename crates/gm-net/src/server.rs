@@ -981,6 +981,7 @@ impl ServerNet {
                     color: p.color,
                     render_mode: p.render_mode,
                     render_fx: p.render_fx,
+                    bones: server.ragdoll_bone_poses(p.id),
                 },
             );
         }

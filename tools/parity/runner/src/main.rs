@@ -133,6 +133,10 @@ struct Scenario {
     prop_z: Option<f32>,
     #[serde(default)]
     frozen: bool,
+    /// ragdoll_drop: the ragdoll comes from a player's `gm_spawn` at `start` looking along
+    /// `angles` (the sandbox spawn path), not from a scripted placement.
+    #[serde(default)]
+    player_spawn: bool,
     #[serde(default)]
     record_setup: bool,
     target_armor: Option<i32>,
@@ -1123,6 +1127,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         "shoot_prop" => run_shoot_prop(scn)?,
         "damage" => run_damage(scn)?,
         "ragdoll" => run_ragdoll(scn)?,
+        "physgun" if model_is_ragdoll(scn)? => run_physgun_ragdoll(scn)?,
         "physgun" => run_physgun(scn)?,
         "constraint" => run_constraint(scn)?,
         "sandbox" => run_sandbox(scn)?,
@@ -2153,6 +2158,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
                     let st = world.state(b);
                     gm_sandbox::PropBody {
                         id: bi as u32 + 1,
+                        bone: 0,
                         pos: st.position,
                         angles: Vec3::new(st.angles.0, st.angles.1, st.angles.2),
                         hulls: hull_planes[bi].clone(),
@@ -2387,7 +2393,16 @@ struct PhysSetup {
 }
 
 /// prop_ragdoll dropped from `start`: every bone body's transform per tick through the server
-fn run_ragdoll_drop(scn: &Scenario) -> Result<Value> {
+/// The brush world of the scenario's map as a `gm_server` world: collision, Jolt world with the
+/// static map body, and a model loader reading the mounted game.
+fn server_world(
+    scn: &Scenario,
+) -> Result<(
+    gm_collision::World,
+    gm_physics::World,
+    gm_physics::BodyHandle,
+    gm_server::ModelLoader,
+)> {
     use glam::Vec3;
     use gm_physics::{Surface, World};
     let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
@@ -2408,11 +2423,34 @@ fn run_ragdoll_drop(scn: &Scenario) -> Result<Value> {
             elasticity: 0.25,
         },
     )?;
-    let mut server = gm_server::Server::new(&collision, physics, world_body);
     let m2 = gm_content::Mount::for_install(&inst)?;
-    server.model_loader = Some(Box::new(move |m: &str| {
-        gm_dedicated::model_info(&m2, m).ok()
-    }));
+    let loader: gm_server::ModelLoader =
+        Box::new(move |m: &str| gm_dedicated::model_info(&m2, m).ok());
+    Ok((collision, physics, world_body, loader))
+}
+
+/// A model whose `.phy` has several solids spawns as a prop_ragdoll.
+fn model_is_ragdoll(scn: &Scenario) -> Result<bool> {
+    let Some(model) = scn.model.as_deref() else {
+        return Ok(false);
+    };
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let phy_path = model
+        .strip_suffix(".mdl")
+        .map(|m| format!("{m}.phy"))
+        .unwrap_or_else(|| model.to_string());
+    let Ok(data) = mount.read(&phy_path) else {
+        return Ok(false);
+    };
+    Ok(gm_formats::phy::Phy::parse(&data)?.solids.len() > 1)
+}
+
+fn run_ragdoll_drop(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    let (collision, physics, world_body, loader) = server_world(scn)?;
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    server.model_loader = Some(loader);
     let model = scn
         .model
         .as_deref()
@@ -2420,9 +2458,16 @@ fn run_ragdoll_drop(scn: &Scenario) -> Result<Value> {
     let start = Vec3::from(scn.start.context("ragdoll scenario needs a start")?);
     let ang = scn.angles.clone().unwrap_or_default();
     let at = |i: usize| ang.get(i).copied().unwrap_or(0.0);
-    let id = server
-        .script_spawn_prop(0, model, start, Vec3::new(at(0), at(1), at(2)), false)
-        .context("ragdoll did not spawn")?;
+    let id = if scn.player_spawn {
+        server.add_player(1, start, Vec3::new(at(0), at(1), at(2)));
+        server
+            .spawn_prop(1, model)
+            .context("gm_spawn did not spawn the ragdoll")?
+    } else {
+        server
+            .script_spawn_prop(0, model, start, Vec3::new(at(0), at(1), at(2)), false)
+            .context("ragdoll did not spawn")?
+    };
     let parts: Vec<_> = server
         .ragdoll_parts(id)
         .map(|(b, _)| b.to_vec())
@@ -2458,6 +2503,101 @@ fn run_ragdoll_drop(scn: &Scenario) -> Result<Value> {
         "bones": bones,
         "ticks": ticks,
     }))
+}
+
+/// `physgun` scenario on a ragdoll model: the bot drives `weapon_physgun` through
+/// `gm_server` (the trace picks a bone body, the grab/freeze act on that body) and every
+/// physics object is recorded per tick like `ragdoll_drop`.
+fn run_physgun_ragdoll(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    let (collision, physics, world_body, loader) = server_world(scn)?;
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    server.model_loader = Some(loader);
+    let model = scn
+        .model
+        .as_deref()
+        .context("physgun scenario needs a model")?;
+    let start = Vec3::from(scn.start.context("physgun scenario needs a start")?);
+    let view0 = scn.angles.clone().unwrap_or_default();
+    let at = |i: usize| view0.get(i).copied().unwrap_or(0.0);
+    let ang0 = Vec3::new(at(0), at(1), 0.0);
+    let pa = scn.prop_angles.unwrap_or([0.0; 3]);
+    let id = server
+        .script_spawn_prop(
+            0,
+            model,
+            Vec3::from(scn.prop.context("physgun scenario needs a prop position")?),
+            Vec3::from(pa),
+            false,
+        )
+        .context("ragdoll did not spawn")?;
+    let parts: Vec<_> = server
+        .ragdoll_parts(id)
+        .map(|(b, _)| b.to_vec())
+        .context("model is not a ragdoll")?;
+    if scn.frozen {
+        server.physics.freeze(parts[0]);
+    }
+    server.add_player(1, start, ang0);
+    let cmd = |buttons: u32, ang: Vec3, fwd: f32, side: f32, mx: f32, my: f32| {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert(
+            1,
+            gm_server::PlayerCmd {
+                seen_tick: 0,
+                cmd: gm_move::UserCmd {
+                    buttons,
+                    view_angles: ang,
+                    forward_move: fwd,
+                    side_move: side,
+                    up_move: 0.0,
+                },
+                physgun: true,
+                mouse_x: mx,
+                mouse_y: my,
+            },
+        );
+        m
+    };
+    // the probe lets everything settle for 60 ticks before the first segment
+    for _ in 0..60 {
+        server.tick(&cmd(0, ang0, 0.0, 0.0, 0.0, 0.0));
+    }
+    let mut ticks = Vec::new();
+    let mut t = 0u32;
+    for sg in &scn.segments {
+        for _ in 0..sg.ticks {
+            let rows: Vec<Value> = parts
+                .iter()
+                .enumerate()
+                .map(|(i, &b)| {
+                    let st = server.physics.state(b);
+                    let bp = server.ragdoll_bone_poses(id);
+                    serde_json::json!({
+                        "pos": [st.position.x, st.position.y, st.position.z],
+                        "ang": [st.angles.0, st.angles.1, st.angles.2],
+                        "frozen": bp.get(i).is_some_and(|b| b.frozen),
+                    })
+                })
+                .collect();
+            let held = server
+                .players
+                .get(&1)
+                .and_then(|p| p.held.as_ref())
+                .map(|(_, g)| g.bone);
+            ticks.push(serde_json::json!({ "t": t, "parts": rows, "held_bone": held }));
+            server.tick(&cmd(
+                sg.buttons,
+                Vec3::new(sg.pitch, sg.yaw, 0.0),
+                sg.forward,
+                sg.side,
+                sg.mouse_x,
+                sg.mouse_y,
+            ));
+            t += 1;
+        }
+    }
+    Ok(serde_json::json!({ "model": model, "ticks": ticks }))
 }
 
 fn run_phys(scn: &Scenario) -> Result<Value> {
@@ -2643,6 +2783,7 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
         hull_cache.insert(pr.model.clone(), hulls.clone());
         placed.push(PropBody {
             id: i as u32 + 1,
+            bone: 0,
             pos: Vec3::from(pr.pos),
             angles: Vec3::from(pr.angles.unwrap_or([0.0; 3])),
             hulls,
@@ -2712,6 +2853,7 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
             }
             bodies.push(PropBody {
                 id: p.id,
+                bone: 0,
                 pos: p.pos,
                 angles: p.angles,
                 hulls: hull_cache[&p.model].clone(),
@@ -5374,6 +5516,7 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
     for (i, pr) in scn.props.iter().enumerate() {
         bodies.push(PropBody {
             id: i as u32 + 1,
+            bone: 0,
             pos: Vec3::from(pr.pos),
             angles: Vec3::from(pr.angles.unwrap_or([0.0; 3])),
             hulls: model_hull_planes(&mount, &pr.model)?,
@@ -5729,6 +5872,7 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                         if let Ok(hulls) = model_hull_planes(&mount, &p.model) {
                             bodies.push(PropBody {
                                 id: p.id,
+                                bone: 0,
                                 pos: p.pos,
                                 angles: p.angles,
                                 hulls,

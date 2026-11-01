@@ -108,6 +108,7 @@ mod tests {
                 color: [255; 4],
                 render_mode: 0,
                 render_fx: 0,
+                bones: Vec::new(),
             }],
             removed: vec![1],
             own: OwnSandbox {

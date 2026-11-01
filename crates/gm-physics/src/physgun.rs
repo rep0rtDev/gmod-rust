@@ -33,6 +33,8 @@ impl Default for PhysgunParams {
 /// What the gun remembers from the grab.
 #[derive(Debug, Clone, Copy)]
 pub struct Grab {
+    /// Physics object index held on the entity (a ragdoll bone; 0 on a prop).
+    pub bone: u32,
     pub distance: f32,
     /// body origin minus hit point, in body space
     pub offset: Vec3,
@@ -62,6 +64,7 @@ impl Grab {
         yaw: f32,
     ) -> Self {
         Grab {
+            bone: 0,
             distance: (hit - eye).dot(forward),
             offset: body_rot.inverse() * (body_pos - hit),
             yaw,

@@ -338,6 +338,10 @@ pub struct Sequence {
     pub param: [i32; 2],
     pub param_start: [f32; 2],
     pub param_end: [f32; 2],
+    /// The sequence's bounding box (`bbmin`/`bbmax`), the entity's collision bounds while it
+    /// plays (a ragdoll's spawn flush uses the `ragdoll` sequence box).
+    pub bbmin: [f32; 3],
+    pub bbmax: [f32; 3],
 }
 
 impl Sequence {
@@ -552,8 +556,12 @@ pub fn sequences(data: &[u8], header: &Header) -> Vec<Sequence> {
             .filter_map(|i| i16_at(data, o + anim_idx as usize + i * 2))
             .collect();
         let f = |p: usize| f32::from_bits(i32_at(data, p).unwrap_or(0) as u32);
+        let bbmin = [f(o + 32), f(o + 36), f(o + 40)];
+        let bbmax = [f(o + 44), f(o + 48), f(o + 52)];
         out.push(Sequence {
             name,
+            bbmin,
+            bbmax,
             anim,
             autolayers,
             group_size,

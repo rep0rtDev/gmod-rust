@@ -5398,8 +5398,12 @@ fn kleiner_spawns_as_a_jointed_ragdoll_and_settles() {
         server.tick(&BTreeMap::new());
     }
     let end = server.physics.state(root).position;
-    // it fell onto the construct floor (-143 is the player's feet) and stayed in one piece
-    assert!(end.z < start.z && end.z > -160.0, "{start} -> {end}");
+    // the spawn flush lays it on the construct floor (the game's pelvis rests at z -138, 5.9 u
+    // above the player's feet at -143.6); it stays there in one piece
+    assert!(
+        (start.z - -138.0).abs() < 1.0 && (end.z - start.z).abs() < 3.0 && end.z > -160.0,
+        "{start} -> {end}"
+    );
     for &b in &bones {
         let p = server.physics.state(b).position;
         assert!(

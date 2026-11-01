@@ -293,6 +293,7 @@ impl Runtime {
             if let Some(Some(hulls)) = self.hulls.get(&e.model) {
                 props.push(gm_sandbox::PropBody {
                     id: e.id,
+                    bone: 0,
                     pos: e.pos,
                     angles: e.angles,
                     hulls: hulls.clone(),

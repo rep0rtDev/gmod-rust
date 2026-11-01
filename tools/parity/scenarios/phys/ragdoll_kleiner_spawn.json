@@ -1,0 +1,18 @@
+{
+ "name": "phys_ragdoll_kleiner_spawn",
+ "kind": "ragdoll_drop",
+ "map": "gm_construct",
+ "model": "models/kleiner.mdl",
+ "start": [
+  823.235,
+  -500.0,
+  -143.6
+ ],
+ "angles": [
+  30,
+  0,
+  0
+ ],
+ "player_spawn": true,
+ "ticks": 200
+}
