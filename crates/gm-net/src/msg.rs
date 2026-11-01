@@ -64,6 +64,10 @@ pub enum Command {
     SpawnSent {
         class: String,
     },
+    /// `gm_spawnswep`: drop a weapon entity where the player looks (Weapons tab middle click).
+    SpawnWeapon {
+        class: String,
+    },
     Console {
         line: String,
     },
@@ -710,6 +714,10 @@ impl ClientMsg {
                         w.u8(19);
                         w.str(class);
                     }
+                    Command::SpawnWeapon { class } => {
+                        w.u8(20);
+                        w.str(class);
+                    }
                     Command::Console { line } => {
                         w.u8(8);
                         w.str(line);
@@ -823,6 +831,7 @@ impl ClientMsg {
                     9 => Command::SelectWeapon { class: r.str()? },
                     18 => Command::GiveWeapon { class: r.str()? },
                     19 => Command::SpawnSent { class: r.str()? },
+                    20 => Command::SpawnWeapon { class: r.str()? },
                     10 => Command::Chat { text: r.str()? },
                     11 => Command::Noclip { on: r.bool()? },
                     12 => Command::Property { name: r.str()? },

@@ -578,6 +578,9 @@ pub struct SavedProp {
     /// `EntityMods.decal<i>` (paint stool).
     #[serde(default)]
     pub decals: Vec<SavedDecal>,
+    /// Weapon class when the prop is a weapon entity lying in the world (`Spawn_Weapon`).
+    #[serde(default)]
+    pub weapon: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

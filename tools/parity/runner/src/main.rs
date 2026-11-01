@@ -229,6 +229,21 @@ struct OpSpec {
     /// `GetClientInfo` with them; a bot has no cvars, so anything missing reads 0 / "").
     #[serde(default)]
     settings: Option<serde_json::Map<String, Value>>,
+    /// `spawnswep`: weapon class.
+    #[serde(default)]
+    class: Option<String>,
+    /// `teleport`: onto the player's n-th (1-based, by id) weapon entity, `above` units up.
+    #[serde(default)]
+    ent: Option<usize>,
+    #[serde(default)]
+    above: f32,
+    #[serde(default)]
+    offset: Option<[f32; 3]>,
+    #[serde(default)]
+    pos: Option<[f32; 3]>,
+    /// `press`: "use" / "attack" held for `ticks`.
+    #[serde(default)]
+    buttons: Option<String>,
 }
 
 /// Puts a click's `settings` into the sandbox's tool settings the way the probe's bot sees them
@@ -4319,12 +4334,34 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             .and_then(|v| v.as_str())
             .filter(|n| n.ends_with(".mdl"))
             .map(str::to_string);
-        for m in op.model.iter().chain(setting_model.iter()) {
+        // weapon entities: the class's world model (creator type 3 names the class)
+        let setting_class = op
+            .settings
+            .as_ref()
+            .and_then(|st| st.get("name"))
+            .and_then(|v| v.as_str())
+            .filter(|n| n.starts_with("weapon_"))
+            .map(str::to_string);
+        let weapon_model = op
+            .class
+            .iter()
+            .chain(setting_class.iter())
+            .filter_map(|c| gm_server::hl2_world_model(c))
+            .map(str::to_string)
+            .collect::<Vec<String>>();
+        for m in op
+            .model
+            .iter()
+            .chain(setting_model.iter())
+            .chain(weapon_model.iter())
+        {
             if known.insert(m.clone()) {
                 server.register_model(m, model_info(&mount, m)?);
             }
         }
     }
+    // the probe's bot carries only the toolgun
+    server.set_weapons(player, &["gmod_tool"]);
     let existing: Vec<(String, Vec3, Vec3, bool)> = scn
         .props
         .iter()
@@ -4361,7 +4398,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
     let snapshot = |server: &gm_server::Server| -> Value {
         let sb = &server.sandbox;
         json!({
-            "props": sb.props().iter().filter(|p| if all_props { p.owner == 0 } else { p.owner == player }).map(|p| json!({
+            "props": sb.props().iter().filter(|p| server.world_weapon_class(p.id).is_none() && if all_props { p.owner == 0 } else { p.owner == player }).map(|p| json!({
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen,
                 "bone_scales": server.bone_scales(p.id).iter().map(|(b, s)| json!({ "bone": b, "s": [s.x, s.y, s.z] })).collect::<Vec<_>>(),
                 "bone_angles": server.bone_angles(p.id).iter().map(|(b, a)| json!({ "bone": b, "a": [a.x, a.y, a.z] })).collect::<Vec<_>>(),
@@ -4371,11 +4408,21 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             })).collect::<Vec<_>>(),
             "world_decals": decal_rows(server.decals(0)),
             // creator: what the player spawned during the ops (scenario props have no owner)
-            "spawned": sb.props().iter().filter(|p| all_props && p.owner == player).map(|p| json!({
+            "spawned": sb.props().iter().filter(|p| (all_props || server.world_weapon_class(p.id).is_some()) && p.owner == player).map(|p| json!({
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
+                "class": server.world_weapon_class(p.id).unwrap_or("prop_physics"),
             })).collect::<Vec<_>>(),
+            "weapons": server.players.get(&player).map(|pl| {
+                let mut w: Vec<Value> = pl.weapons.iter().map(|c| {
+                    let clip = pl.inventory.clips.get(c).copied().unwrap_or([-1, -1]);
+                    json!({ "class": c, "clip1": clip[0], "clip2": clip[1] })
+                }).collect();
+                w.sort_by(|a, b| a["class"].as_str().cmp(&b["class"].as_str()));
+                w
+            }).unwrap_or_default(),
+            "active": server.players.get(&player).map(|pl| pl.active_weapon.clone()).unwrap_or_default(),
             "count": sb.count(player),
-            "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "n": u.entities.len() })).collect::<Vec<_>>(),
+            "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "n": u.entities.len(), "live": sb.undo_live(u) })).collect::<Vec<_>>(),
             "constraints": sb.constraints().len(),
         })
     };
@@ -4426,6 +4473,41 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 };
                 rec["ret"] = json!(ret);
             }
+            "spawnswep" => {
+                let class = op.class.clone().unwrap_or_default();
+                rec["class"] = json!(class);
+                server.spawn_weapon(player, &class);
+            }
+            "teleport" => {
+                let mut target = op.pos.map(Vec3::from);
+                if let Some(n) = op.ent {
+                    let mut weps: Vec<&gm_sandbox::Prop> = server
+                        .sandbox
+                        .props()
+                        .iter()
+                        .filter(|p| {
+                            p.owner == player
+                                && server.world_weapon_class(p.id).is_some_and(|c| {
+                                    op.class.as_deref().is_none_or(|want| want == c)
+                                })
+                        })
+                        .collect();
+                    weps.sort_by_key(|p| p.id);
+                    target = weps.get(n.wrapping_sub(1)).map(|p| {
+                        p.pos
+                            + op.offset
+                                .map(Vec3::from)
+                                .unwrap_or(Vec3::new(0.0, 0.0, op.above))
+                    });
+                }
+                rec["target"] = target
+                    .map(|t| json!([t.x, t.y, t.z]))
+                    .unwrap_or(json!(false));
+                if let Some(t) = target {
+                    server.teleport_player(player, t);
+                }
+            }
+            "press" => {}
             "undo" => server.undo(player),
             "cleanup" => server.cleanup(player),
             "wait" | "think" => {}
@@ -4451,12 +4533,30 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         // "think": the stool's TOOL:Think runs every tick with the op's settings (the probe
         // calls tool:Think() itself because a bot has no gmod_toolmode for SWEP:Think)
         let think_tool = (op.op == "think").then(|| op.tool.clone().unwrap_or_default());
-        for _ in 0..ticks {
+        // "press": the buttons are held for the op's ticks (the probe's StartCommand hook)
+        let held = (op.op == "press").then(|| {
+            let mut cmd = gm_server::PlayerCmd::default();
+            cmd.cmd.buttons = match op.buttons.as_deref() {
+                Some("use") => gm_move::buttons::USE,
+                Some("attack") => gm_move::buttons::ATTACK,
+                _ => 0,
+            };
+            std::collections::BTreeMap::from([(player, cmd)])
+        });
+        let press_ticks = if op.op == "press" {
+            op.ticks.unwrap_or(1)
+        } else {
+            0
+        };
+        for k in 0..ticks.max(press_ticks) {
             if let Some(t) = &think_tool {
                 apply_click_settings(&mut server.sandbox, t, op.settings.as_ref());
                 server.tool_think(player, t);
             }
-            server.tick(&idle);
+            match &held {
+                Some(h) if k < press_ticks => server.tick(h),
+                _ => server.tick(&idle),
+            }
         }
         rec["after"] = snapshot(&server);
         results.push(rec);
@@ -5509,14 +5609,30 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             ta["undos"].as_array().unwrap_or(&empty),
             oa["undos"].as_array().unwrap_or(&empty),
         );
-        if tu.len() != ou.len()
-            || tu
+        // undo.lua drops an all-dead list on every 16th removing tick counted from the server's
+        // start, a phase a recording cannot carry: entries with live entities must match, dead
+        // ones (`live` 0; absent in older recordings means live) only get a note
+        fn live_entries(l: &[Value]) -> Vec<&Value> {
+            l.iter().filter(|u| u["live"].as_u64() != Some(0)).collect()
+        }
+        let (tl, ol) = (live_entries(tu), live_entries(ou));
+        // ids restart with a purged list, so they only count while no entry is dead
+        let ids_count = tl.len() == tu.len() && ol.len() == ou.len();
+        if tl.len() != ol.len()
+            || tl
                 .iter()
-                .zip(ou)
-                .any(|(a, b)| a["id"] != b["id"] || a["name"] != b["name"])
+                .zip(&ol)
+                .any(|(a, b)| (ids_count && a["id"] != b["id"]) || a["name"] != b["name"])
         {
             println!("  op {i}: undo stack {} vs {}", tu.len(), ou.len());
             ok = false;
+        }
+        if tu.len() - tl.len() != ou.len() - ol.len() {
+            println!(
+                "  op {i}: note: dead undo entries {} vs {} (undo.lua purge phase)",
+                tu.len() - tl.len(),
+                ou.len() - ol.len()
+            );
         }
         let (tp, op_) = (
             ta["props"].as_array().unwrap_or(&empty),
@@ -5538,6 +5654,18 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             ta["spawned"].as_array().cloned().unwrap_or_default(),
             oa["spawned"].as_array().cloned().unwrap_or_default(),
         );
+        if ta["weapons"].is_array() && oa["weapons"].is_array() {
+            let strip = |v: &Value| -> Vec<Value> {
+                v.as_array().cloned().unwrap_or_default().into_iter().map(|w| json!({ "class": w["class"], "clip1": w["clip1"], "clip2": w["clip2"] })).collect()
+            };
+            if strip(&ta["weapons"]) != strip(&oa["weapons"]) || ta["active"] != oa["active"] {
+                println!(
+                    "  op {i}: weapons {} / {} vs {} / {}",
+                    ta["weapons"], ta["active"], oa["weapons"], oa["active"]
+                );
+                ok = false;
+            }
+        }
         if ts_.len() != os_.len() {
             println!("  op {i}: {} spawned vs {}", ts_.len(), os_.len());
             ok = false;
@@ -5547,7 +5675,9 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                 let da = gm_sandbox::rotation(v3(&a["ang"]))
                     .angle_between(gm_sandbox::rotation(v3(&b["ang"])))
                     .to_degrees();
-                if a["model"] != b["model"] || dp > pos_tol || da > 5.0 {
+                let class_differs =
+                    a["class"].is_string() && b["class"].is_string() && a["class"] != b["class"];
+                if a["model"] != b["model"] || class_differs || dp > pos_tol || da > 5.0 {
                     println!(
                         "  op {i}: spawned {} {} pos err {dp:.3} angle err {da:.2} ({:?} vs {:?})",
                         k + 1,

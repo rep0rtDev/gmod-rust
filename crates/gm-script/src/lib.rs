@@ -866,6 +866,15 @@ impl Runtime {
                     gm_server::Verdict::Cancel
                 }
             }
+            gm_server::Request::PickupWeapon { player, class } => {
+                p.ints.push(("player", *player as i64));
+                p.strs.push(("class", class.clone()));
+                if self.ask(server, "player.pickup_weapon_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
             gm_server::Request::PhysgunPickup { player, ent } => {
                 p.ints.push(("player", *player as i64));
                 p.ints.push(("entity", *ent as i64));
@@ -1087,6 +1096,11 @@ impl Runtime {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("entity", ent as i64));
                     "player.pickup"
+                }
+                E::WeaponPickup { player, class } => {
+                    p.ints.push(("player", player as i64));
+                    p.strs.push(("class", class));
+                    "player.weapon_pickup"
                 }
                 E::Drop { player, ent } => {
                     p.ints.push(("player", player as i64));

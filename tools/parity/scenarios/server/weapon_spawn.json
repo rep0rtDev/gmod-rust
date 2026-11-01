@@ -1,0 +1,119 @@
+{
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "name": "server_weapon_spawn",
+ "ops": [
+  {
+   "op": "click",
+   "tool": "creator",
+   "pitch": 25.0,
+   "yaw": -40.0,
+   "settings": {
+    "type": 3,
+    "name": "weapon_357"
+   }
+  },
+  {
+   "op": "wait",
+   "ticks": 30
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_crowbar",
+   "pitch": 25.0,
+   "yaw": 40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 30
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_smg1",
+   "pitch": 10.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 30
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_bogus",
+   "pitch": 10.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 40.0,
+   "yaw": 90.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "above": 8,
+   "class": "weapon_357"
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "above": 8,
+   "class": "weapon_crowbar"
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "above": 8,
+   "class": "weapon_smg1"
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  }
+ ]
+}

@@ -1,0 +1,113 @@
+{
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "name": "server_weapon_pickup",
+ "ops": [
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 25.0,
+   "yaw": -40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "above": 8
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 25.0,
+   "yaw": 40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "above": 8
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -500.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_crowbar",
+   "pitch": 40.0,
+   "yaw": 90.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "press",
+   "buttons": "use",
+   "pitch": 45.0,
+   "yaw": 90.0,
+   "ticks": 3
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_smg1",
+   "pitch": 40.0,
+   "yaw": 180.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "press",
+   "buttons": "use",
+   "pitch": 45.0,
+   "yaw": 180.0,
+   "ticks": 3
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  }
+ ]
+}

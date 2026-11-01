@@ -819,6 +819,13 @@ SCENARIOS.sandbox = function(scn, done)
 	bot:SetLocalVelocity(Vector(0, 0, 0))
 	-- a fresh bot wanders a few frames: pin it at `start` for the run
 	local pin = Vector(scn.start[1], scn.start[2], scn.start[3])
+	-- `press`: buttons the bot holds down until a tick (IN_USE pickup)
+	local pressButtons, pressUntil = 0, -1
+	hook.Add("StartCommand", "parity_sandbox_press", function(ply, cmd)
+		if ply ~= bot then return end
+		cmd:ClearButtons()
+		if engine.TickCount() <= pressUntil then cmd:SetButtons(pressButtons) end
+	end)
 	hook.Add("SetupMove", "parity_sandbox_pin", function(ply, mv)
 		if ply ~= bot then return end
 		mv:SetOrigin(pin)
@@ -895,6 +902,18 @@ SCENARIOS.sandbox = function(scn, done)
 			rec.trace = { hit = tr.Hit, pos = { tr.HitPos.x, tr.HitPos.y, tr.HitPos.z }, normal = { tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z }, ent = IsValid(tr.Entity) and tr.Entity:GetClass() or "world", placed = placedIndex, eye = { eye.x, eye.y, eye.z } }
 			rec.model = op.model
 			concommand.Run(bot, "gm_spawn", { op.model }, op.model)
+		elseif op.op == "spawnswep" then
+			-- Spawn_Weapon straight from the spawnmenu's weapons tab (gm_spawnswep)
+			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			local eye = bot:GetShootPos()
+			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 2048, filter = { bot } })
+			rec.trace = { hit = tr.Hit, pos = { tr.HitPos.x, tr.HitPos.y, tr.HitPos.z }, normal = { tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z } }
+			concommand.Run(bot, "gm_spawnswep", { op.class }, op.class)
+		elseif op.op == "teleport" then
+			-- the bot steps onto a point (pickup by touch); the move pin follows
+			pin = Vector(op.pos[1], op.pos[2], op.pos[3])
+			bot:SetPos(pin)
+			bot:SetLocalVelocity(Vector(0, 0, 0))
 		elseif op.op == "undo" then
 			concommand.Run(bot, "gmod_undo", {}, "")
 		elseif op.op == "cleanup" then
@@ -990,13 +1009,25 @@ SCENARIOS.toolgun = function(scn, done)
 		end
 		out.world_decals = decal_rows(game.GetWorld())
 		out.spawned = {}
-		for _, e in ipairs(table.Add(ents.FindByClass("prop_physics"), ents.FindByClass("prop_ragdoll"))) do
-			if e:GetCreator() == bot and not e.parity_scenario_prop then
+		for _, e in ipairs(table.Add(table.Add(ents.FindByClass("prop_physics"), ents.FindByClass("prop_ragdoll")), ents.FindByClass("weapon_*"))) do
+			-- weapons lying in the world only (a carried one has the player as owner)
+			if e:GetCreator() == bot and not e.parity_scenario_prop and not (e:IsWeapon() and IsValid(e:GetOwner())) then
 				local p, a = e:GetPos(), e:GetAngles()
-				out.spawned[#out.spawned + 1] = { index = e:EntIndex(), model = e:GetModel(), pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r } }
+				out.spawned[#out.spawned + 1] = { index = e:EntIndex(), class = e:GetClass(), model = e:GetModel(), pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r }, solid = e:GetSolid(), movetype = e:GetMoveType(), frozen = IsValid(e:GetPhysicsObject()) and not e:GetPhysicsObject():IsMotionEnabled() or false }
 			end
 		end
 		table.sort(out.spawned, function(a, b) return a.index < b.index end)
+		out.weapons = {}
+		for _, w in ipairs(bot:GetWeapons()) do
+			out.weapons[#out.weapons + 1] = { class = w:GetClass(), clip1 = w:Clip1(), clip2 = w:Clip2() }
+		end
+		table.sort(out.weapons, function(a, b) return a.class < b.class end)
+		out.active = IsValid(bot:GetActiveWeapon()) and bot:GetActiveWeapon():GetClass() or ""
+		out.ammo = {}
+		for i = 1, 32 do
+			local n = bot:GetAmmoCount(i)
+			if n > 0 then out.ammo[tostring(i)] = n end
+		end
 		for i, e in ipairs(props) do
 			if IsValid(e) then
 				local ph = e:GetPhysicsObject()
@@ -1078,7 +1109,14 @@ SCENARIOS.toolgun = function(scn, done)
 		table.sort(out.ents, function(a, b) return a.index < b.index end)
 		local undos = undo.GetTable()[bot:UniqueID()] or {}
 		local ulist = {}
-		for k, u in pairs(undos) do ulist[#ulist + 1] = { id = k, name = u.Name, text = u.NiceText, custom = u.CustomUndoText, n = #u.Entities } end
+		for k, u in pairs(undos) do
+			-- live: entities an undo would still remove (a weapon a player carries is gone from the world)
+			local live = 0
+			for _, e in pairs(u.Entities) do
+				if IsValid(e) and not (e:IsWeapon() and IsValid(e:GetOwner())) then live = live + 1 end
+			end
+			ulist[#ulist + 1] = { id = k, name = u.Name, text = u.NiceText, custom = u.CustomUndoText, n = #u.Entities, live = live }
+		end
 		table.sort(ulist, function(a, b) return a.id < b.id end)
 		out.undos = ulist
 		out.viewcam = IsValid(bot:GetViewEntity()) and bot:GetViewEntity() != bot
@@ -1140,6 +1178,36 @@ SCENARIOS.toolgun = function(scn, done)
 				rec.ok, rec.ret = ok, ok and ret or tostring(ret)
 			else
 				rec.ok, rec.ret = false, tool and "miss" or "no tool"
+			end
+		elseif op.op == "spawnswep" then
+			-- Spawn_Weapon straight from the spawnmenu's weapons tab (gm_spawnswep)
+			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			local eye = bot:GetShootPos()
+			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 2048, filter = { bot } })
+			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal) }
+			concommand.Run(bot, "gm_spawnswep", { op.class }, op.class)
+		elseif op.op == "press" then
+			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			pressButtons = op.buttons == "use" and IN_USE or (op.buttons == "attack" and IN_ATTACK or 0)
+			pressUntil = engine.TickCount() + (op.ticks or 1)
+		elseif op.op == "teleport" then
+			-- the bot steps onto a point or onto its op.ent-th world weapon (pickup by touch); the move pin follows
+			local target = op.pos and Vector(op.pos[1], op.pos[2], op.pos[3]) or nil
+			if op.ent then
+				local weps = {}
+				for _, e in ipairs(ents.FindByClass("weapon_*")) do
+					if e:GetCreator() == bot and not IsValid(e:GetOwner()) and (not op.class or e:GetClass() == op.class) then weps[#weps + 1] = e end
+				end
+				table.sort(weps, function(a, b) return a:EntIndex() < b:EntIndex() end)
+				local w = weps[op.ent]
+				local off = op.offset or { 0, 0, op.above or 0 }
+				if IsValid(w) then target = w:GetPos() + Vector(off[1], off[2], off[3]) end
+			end
+			rec.target = target and vec(target) or false
+			if target then
+				pin = target
+				bot:SetPos(pin)
+				bot:SetLocalVelocity(Vector(0, 0, 0))
 			end
 		elseif op.op == "undo" then
 			concommand.Run(bot, "gmod_undo", {}, "")

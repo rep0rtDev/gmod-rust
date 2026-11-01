@@ -784,6 +784,9 @@ impl ServerNet {
                     Command::SpawnSent { class } => {
                         server.spawn_sent(slot.player, &class);
                     }
+                    Command::SpawnWeapon { class } => {
+                        server.spawn_weapon(slot.player, &class);
+                    }
                     Command::Cleanup => server.cleanup(slot.player),
                     Command::Numpad { key, down } => {
                         server.sandbox.numpad(slot.player, i32::from(key), down)

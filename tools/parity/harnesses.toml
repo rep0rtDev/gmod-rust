@@ -488,6 +488,51 @@ crates = ["gm-server", "gm-sandbox"]
 pos = 2.0
 
 [[harness]]
+name = "server_weapon_spawn"
+scenario = "server/weapon_spawn"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_weapon_pickup"
+scenario = "server/weapon_pickup"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_weapon_touch"
+scenario = "server/weapon_touch"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_weapon_touch2"
+scenario = "server/weapon_touch2"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_weapon_touch3"
+scenario = "server/weapon_touch3"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
 name = "server_axis"
 scenario = "server/axis"
 compare = "server"

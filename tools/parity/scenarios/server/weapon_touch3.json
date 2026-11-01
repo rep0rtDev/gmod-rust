@@ -1,0 +1,766 @@
+{
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "name": "server_weapon_touch3",
+ "ops": [
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 25.0,
+   "yaw": -40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "offset": [
+    0,
+    0,
+    24
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -500.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 25.0,
+   "yaw": -40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "offset": [
+    0,
+    0,
+    32
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -500.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 25.0,
+   "yaw": -40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "offset": [
+    0,
+    0,
+    48
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -500.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 25.0,
+   "yaw": -40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 60
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "offset": [
+    0,
+    0,
+    56
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -500.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 25.0,
+   "yaw": -40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 250
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "offset": [
+    0,
+    0,
+    24
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -500.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 25.0,
+   "yaw": -40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 250
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "offset": [
+    0,
+    0,
+    48
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -500.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 25.0,
+   "yaw": -40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 250
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "offset": [
+    0,
+    0,
+    56
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -500.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnswep",
+   "class": "weapon_357",
+   "pitch": 25.0,
+   "yaw": -40.0
+  },
+  {
+   "op": "wait",
+   "ticks": 250
+  },
+  {
+   "op": "teleport",
+   "ent": 1,
+   "offset": [
+    0,
+    0,
+    64
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -500.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  }
+ ]
+}

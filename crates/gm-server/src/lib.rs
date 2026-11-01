@@ -309,6 +309,11 @@ pub enum GameEvent {
         player: u32,
         ent: u32,
     },
+    /// The player walked into a weapon entity and took it (the entity is gone).
+    WeaponPickup {
+        player: u32,
+        class: String,
+    },
     /// The carried prop was let go (second +use, death, the prop removed or physgunned).
     Drop {
         player: u32,
@@ -398,6 +403,8 @@ pub enum Request {
     /// `AllowPlayerPickup`: the used prop is light enough (`gm_physics::pickup::MAX_MASS`,
     /// `MAX_SIZE`) and would be carried.
     PlayerPickup { player: u32, ent: u32 },
+    /// `PlayerCanPickupWeapon`: the player walked into a weapon entity it does not carry.
+    PickupWeapon { player: u32, class: String },
     /// `CanProperty`: the player asked for a context-menu property on a prop.
     Property { player: u32, ent: u32, name: String },
     /// `PlayerSetModel` on (re)spawn with the model the player's choice translates to;
@@ -857,6 +864,33 @@ pub const HL2_SPAWNABLE_WEAPONS: [&str; 13] = [
     "weapon_ar2",
     "weapon_357",
 ];
+
+/// Sideways bloat of a world weapon's pickup trigger around its collision box (upward half of
+/// it; measured `server_weapon_touch`, `server_weapon_touch2`).
+pub const WEAPON_TRIGGER_BLOAT: f32 = 36.0;
+
+/// undo.lua purges all-dead undo lists after this many entity-removing ticks.
+pub const UNDO_PURGE_EVERY: u32 = 16;
+
+/// World model of each HL2 weapon class (what `Spawn_Weapon` leaves lying on the ground).
+pub fn hl2_world_model(class: &str) -> Option<&'static str> {
+    Some(match class {
+        "weapon_physcannon" => "models/weapons/w_physics.mdl",
+        "weapon_stunstick" => "models/weapons/w_stunbaton.mdl",
+        "weapon_frag" => "models/weapons/w_grenade.mdl",
+        "weapon_crossbow" => "models/weapons/w_crossbow.mdl",
+        "weapon_bugbait" => "models/weapons/w_bugbait.mdl",
+        "weapon_rpg" => "models/weapons/w_rocket_launcher.mdl",
+        "weapon_crowbar" => "models/weapons/w_crowbar.mdl",
+        "weapon_shotgun" => "models/weapons/w_shotgun.mdl",
+        "weapon_pistol" => "models/weapons/w_pistol.mdl",
+        "weapon_slam" => "models/weapons/w_slam.mdl",
+        "weapon_smg1" => "models/weapons/w_smg1.mdl",
+        "weapon_ar2" => "models/weapons/w_irifle.mdl",
+        "weapon_357" => "models/weapons/w_357.mdl",
+        _ => return None,
+    })
+}
 
 /// A scripted entity class (`scripted_ents.Register` of a `base_anim` with physics): the
 /// instances are sandbox props with this model whose callbacks go to the script.
@@ -1372,6 +1406,10 @@ pub struct Server<'w> {
     pub scripted_entities: Vec<ScriptedEntity>,
     /// The props that are scripted entities, by prop id.
     pub sents: HashMap<u32, SentState>,
+    /// Weapon entities lying in the world (`Spawn_Weapon`): prop id -> weapon class.
+    pub world_weapons: HashMap<u32, String>,
+    /// Ticks that removed an entity since undo.lua last purged dead undo lists (every 16).
+    undo_purge_ticks: u32,
     /// (player, scripted entity) pairs whose hulls overlapped last tick, for the touch edges.
     pub sent_player_touch: std::collections::HashSet<(u32, u32)>,
     pub scripted_weapons_version: u32,
@@ -1492,6 +1530,8 @@ impl<'w> Server<'w> {
             scripted_weapons_version: 0,
             scripted_entities: Vec::new(),
             sents: HashMap::new(),
+            world_weapons: HashMap::new(),
+            undo_purge_ticks: 0,
             sent_player_touch: std::collections::HashSet::new(),
             cvar_new: Vec::new(),
         }
@@ -3363,6 +3403,192 @@ impl<'w> Server<'w> {
         Some(id)
     }
 
+    /// `Spawn_Weapon` (`gm_spawnswep`, the Weapons tab's middle click, creator type 3): the
+    /// weapon entity lands 32 u along the hit normal from the player's eye trace (pulled back to
+    /// halfway when that point is outside the world), no angles, physics on; undo "SWEP" with
+    /// `#undo.generic.weapon (<print name>)`, cleanup as a sent without counting (measured:
+    /// `server_weapon_spawn`). Unknown classes spawn nothing and leave no undo entry.
+    pub fn spawn_weapon(&mut self, player: u32, class: &str) -> Option<u32> {
+        if !self.players.get(&player).is_some_and(|p| p.alive) {
+            return None;
+        }
+        let (model, print_name) = match self.scripted_weapons.iter().find(|w| w.class == class) {
+            Some(sw) => (sw.world_model.clone(), sw.print_name.clone()),
+            None => {
+                if !HL2_SPAWNABLE_WEAPONS.contains(&class) {
+                    return None;
+                }
+                (hl2_world_model(class)?.to_string(), format!("#{class}"))
+            }
+        };
+        if model.is_empty() {
+            return None;
+        }
+        let hit = self.tool_hit(player)?;
+        let mut pos = hit.pos + hit.normal * 32.0;
+        let oob = self
+            .collision
+            .trace_ray(hit.pos, pos, gm_collision::MASK_SOLID);
+        if oob.fraction < 1.0 {
+            pos = oob.end + oob.normal * (hit.pos.distance(oob.end) / 2.0);
+        }
+        if !self.models.contains_key(&model) {
+            let loaded = self.model_loader.as_mut().and_then(|f| f(&model))?;
+            self.register_model(&model, loaded);
+        }
+        let id = self
+            .sandbox
+            .restore_prop(player, &model, pos, Vec3::ZERO, false);
+        self.sandbox.add_cleanup(player, "sents", id);
+        self.sync_physics();
+        self.world_weapons.insert(id, class.to_string());
+        self.sandbox.push_undo(
+            player,
+            "SWEP",
+            format!("#undo.generic.weapon ({print_name})"),
+            Some(format!("Undone {print_name}")),
+            vec![id],
+        );
+        Some(id)
+    }
+
+    /// Replace a player's inventory with exactly `classes` (the probe's bot carries only the
+    /// toolgun); the first one becomes active.
+    pub fn set_weapons(&mut self, id: u32, classes: &[&str]) {
+        let Some(p) = self.players.get_mut(&id) else {
+            return;
+        };
+        p.weapons.clear();
+        p.active_weapon.clear();
+        p.inventory.clear();
+        for c in classes {
+            self.give_weapon(id, c);
+        }
+        if let (Some(first), Some(p)) = (classes.first(), self.players.get_mut(&id)) {
+            p.active_weapon = first.to_string();
+        }
+    }
+
+    /// Class of the weapon entity `ent`, if it is one.
+    pub fn world_weapon_class(&self, ent: u32) -> Option<&str> {
+        self.world_weapons.get(&ent).map(String::as_str)
+    }
+
+    /// Players walking into a weapon entity pick it up: the entity goes, the class joins the
+    /// inventory with its default clip and no reserve ammo, the active weapon stays (measured:
+    /// `server_weapon_spawn`, `server_weapon_pickup`). A class already carried removes the
+    /// entity too and changes nothing; +use from 68 u away picks nothing up.
+    fn weapon_pickups(&mut self) {
+        if self.world_weapons.is_empty() {
+            return;
+        }
+        self.world_weapons
+            .retain(|id, _| self.sandbox.props().iter().any(|p| p.id == *id));
+        let mut boxes: Vec<(u32, String, (Vec3, Vec3))> = Vec::new();
+        for (id, class) in &self.world_weapons {
+            let Some(prop) = self.sandbox.props().iter().find(|p| p.id == *id) else {
+                continue;
+            };
+            let (Some(b), Some(info)) = (self.bodies.get(id), self.models.get(&prop.model)) else {
+                continue;
+            };
+            let st = self.physics.state(*b);
+            let mut lo = Vec3::splat(f32::INFINITY);
+            let mut hi = Vec3::splat(f32::NEG_INFINITY);
+            for (pl, pts) in info.hull_planes.iter().zip(&info.hulls) {
+                let (a, b) = gm_physics::pickup::world_convex(pl, pts, st.rotation, st.position).1;
+                lo = lo.min(a);
+                hi = hi.max(b);
+            }
+            if lo.x > hi.x {
+                continue;
+            }
+            // measured (`server_weapon_touch*`): the pickup trigger is the weapon's world box
+            // bloated 36 u sideways and 18 u upward, not downward
+            lo -= Vec3::new(WEAPON_TRIGGER_BLOAT, WEAPON_TRIGGER_BLOAT, 0.0);
+            hi += Vec3::new(
+                WEAPON_TRIGGER_BLOAT,
+                WEAPON_TRIGGER_BLOAT,
+                WEAPON_TRIGGER_BLOAT / 2.0,
+            );
+            boxes.push((*id, class.clone(), (lo, hi)));
+        }
+        boxes.sort_by_key(|(id, _, _)| *id);
+        let mut players: Vec<u32> = self.players.keys().copied().collect();
+        players.sort_unstable();
+        let mut taken: Vec<(u32, u32, String)> = Vec::new();
+        for pid in players {
+            let Some(p) = self.players.get(&pid) else {
+                continue;
+            };
+            if !p.alive {
+                continue;
+            }
+            let (origin, h) = self.player_hull(pid);
+            let skin = Vec3::splat(2.0 * gm_collision::DIST_EPSILON);
+            let (lo, hi) = (
+                origin + Vec3::new(-16.0, -16.0, 0.0) - skin,
+                origin + Vec3::new(16.0, 16.0, h) + skin,
+            );
+            for (ent, class, (a, b)) in &boxes {
+                if taken.iter().any(|(e, _, _)| e == ent) {
+                    continue;
+                }
+                let hit = lo.x <= b.x
+                    && hi.x >= a.x
+                    && lo.y <= b.y
+                    && hi.y >= a.y
+                    && lo.z <= b.z
+                    && hi.z >= a.z;
+                if hit {
+                    taken.push((*ent, pid, class.clone()));
+                }
+            }
+        }
+        for (ent, pid, class) in taken {
+            if self.ask(Request::PickupWeapon {
+                player: pid,
+                class: class.clone(),
+            }) == Verdict::Cancel
+            {
+                continue;
+            }
+            self.world_weapons.remove(&ent);
+            self.remove_prop(ent);
+            let scripted = self
+                .scripted_weapons
+                .iter()
+                .find(|w| w.class == class)
+                .cloned();
+            let Some(p) = self.players.get_mut(&pid) else {
+                continue;
+            };
+            // measured: a class already carried still takes the entity off the ground and
+            // changes nothing in the inventory (no reserve ammo either)
+            if p.weapons.contains(&class) {
+                continue;
+            }
+            p.weapons.push(class.clone());
+            match scripted {
+                Some(sw) => {
+                    p.inventory
+                        .clips
+                        .insert(class.clone(), [sw.default_clip.max(-1), -1]);
+                    p.swep.entry(class.clone()).or_default();
+                }
+                None => {
+                    if let Some(def) = weapons::def(&class) {
+                        p.inventory
+                            .clips
+                            .insert(class.clone(), [def.clip1, def.clip2]);
+                    }
+                }
+            }
+            self.game_events
+                .push(GameEvent::WeaponPickup { player: pid, class });
+        }
+    }
+
     pub fn spawn_prop(&mut self, player: u32, model: &str) -> Option<u32> {
         let (eye, eye_angles) = self.eye(player)?;
         if !self.models.contains_key(model) {
@@ -4578,6 +4804,7 @@ impl<'w> Server<'w> {
     /// poses flow back into the sandbox.
     pub fn tick(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
         let now = self.tick_count as u32;
+        let events_at_start = self.events.len();
         self.fire_tick();
         self.sent_tick();
         let upright: Vec<(BodyHandle, Vec3)> = self
@@ -4832,6 +5059,19 @@ impl<'w> Server<'w> {
         self.scrape_sounds(&contacts);
         self.sent_touches(contacts);
         self.sent_player_touches();
+        self.weapon_pickups();
+        // undo.lua counts ticks with removals (its EntityRemoved hook coalesces them through a
+        // 0 s timer) and purges all-dead undo lists on every 16th
+        if self.events[events_at_start.min(self.events.len())..]
+            .iter()
+            .any(|e| matches!(e, Event::Removed { .. }))
+        {
+            self.undo_purge_ticks += 1;
+            if self.undo_purge_ticks >= UNDO_PURGE_EVERY {
+                self.undo_purge_ticks = 0;
+                self.sandbox.purge_dead_undos();
+            }
+        }
         let landed: Vec<(u32, f32)> = self
             .players
             .iter()
@@ -5510,6 +5750,7 @@ impl<'w> Server<'w> {
                     scale: *scale,
                 }),
             eye_target: self.eye_targets.get(&p.id).map(|t| arr(*t)),
+            weapon: self.world_weapons.get(&p.id).cloned(),
             decals: self
                 .decals(p.id)
                 .iter()
@@ -5527,6 +5768,9 @@ impl<'w> Server<'w> {
     /// ragdoll objects teleported to their saved poses (and frozen), bone manipulations, flexes,
     /// eye target and decals back on.
     pub fn apply_saved_state(&mut self, id: u32, sp: &save::SavedProp, origin: Vec3) {
+        if let Some(class) = &sp.weapon {
+            self.world_weapons.insert(id, class.clone());
+        }
         if !sp.parts.is_empty() {
             self.sync_physics();
             if let Some(rt) = self.ragdoll_bodies.get_mut(&id) {
@@ -6006,6 +6250,9 @@ impl<'w> Server<'w> {
             }
             0 => {
                 self.spawn_sent(player, &name);
+            }
+            3 => {
+                self.spawn_weapon(player, &name);
             }
             _ => {}
         }
