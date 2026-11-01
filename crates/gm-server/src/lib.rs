@@ -3443,20 +3443,7 @@ impl<'w> Server<'w> {
         let saved: Vec<save::SavedProp> = group
             .iter()
             .filter_map(|id| props.iter().find(|p| p.id == *id))
-            .map(|p| save::SavedProp {
-                model: p.model.clone(),
-                pos: (p.pos - anchor_pos).to_array(),
-                angles: p.angles.to_array(),
-                frozen: p.frozen,
-                skin: p.skin,
-                body: p.body.clone(),
-                material: p.material.clone(),
-                color: Some(p.color),
-                render_mode: p.render_mode,
-                render_fx: p.render_fx,
-                phys_material: p.phys_material.clone(),
-                gravity: Some(p.gravity),
-            })
+            .map(|p| self.saved_prop(p, anchor_pos))
             .collect();
         let constraints = cons
             .iter()
@@ -3535,6 +3522,7 @@ impl<'w> Server<'w> {
                 self.sandbox.set_phys_props(id, g, &p.phys_material);
             }
             self.sandbox.set_body(id, p.body.clone());
+            self.apply_saved_state(id, p, hit.pos);
             self.sandbox.add_count(player, "props", id);
             self.sandbox.add_cleanup(player, "props", id);
             ids.push(Some(id));
@@ -5463,6 +5451,153 @@ impl<'w> Server<'w> {
             self.bone_scales.remove(&ent);
         }
         is_ragdoll
+    }
+
+    /// A prop as a save / dupe entry, positions relative to `origin`: the sandbox fields plus
+    /// the ragdoll's physics objects and whatever the posers and the paint stool left on it
+    /// (the game's `PhysicsObjects`, `BoneManip`, `FlexWeight` / `FlexScale`, `EntityMods`).
+    pub fn saved_prop(&self, p: &gm_sandbox::Prop, origin: Vec3) -> save::SavedProp {
+        let arr = |v: Vec3| v.to_array();
+        let mut manips: BTreeMap<u32, save::SavedBoneManip> = BTreeMap::new();
+        for (b, s) in self.bone_scales(p.id) {
+            manips
+                .entry(b as u32)
+                .or_insert(save::SavedBoneManip {
+                    bone: b as u32,
+                    scale: [1.0; 3],
+                    angles: [0.0; 3],
+                })
+                .scale = arr(s);
+        }
+        for (b, a) in self.bone_angles(p.id) {
+            manips
+                .entry(b as u32)
+                .or_insert(save::SavedBoneManip {
+                    bone: b as u32,
+                    scale: [1.0; 3],
+                    angles: [0.0; 3],
+                })
+                .angles = arr(a);
+        }
+        save::SavedProp {
+            model: p.model.clone(),
+            pos: arr(p.pos - origin),
+            angles: arr(p.angles),
+            frozen: p.frozen,
+            skin: p.skin,
+            body: p.body.clone(),
+            material: p.material.clone(),
+            color: Some(p.color),
+            render_mode: p.render_mode,
+            render_fx: p.render_fx,
+            phys_material: p.phys_material.clone(),
+            gravity: Some(p.gravity),
+            parts: self
+                .ragdoll_bone_poses(p.id)
+                .iter()
+                .map(|b| save::SavedPart {
+                    pos: arr(b.pos - origin),
+                    angles: arr(b.angles),
+                    frozen: b.frozen,
+                })
+                .collect(),
+            bone_manips: manips.into_values().collect(),
+            flex: self
+                .flexes
+                .get(&p.id)
+                .map(|(weights, scale)| save::SavedFlex {
+                    weights: weights.clone(),
+                    scale: *scale,
+                }),
+            eye_target: self.eye_targets.get(&p.id).map(|t| arr(*t)),
+            decals: self
+                .decals(p.id)
+                .iter()
+                .map(|d| save::SavedDecal {
+                    bone: d.bone,
+                    name: d.name.clone(),
+                    pos1: arr(d.pos1),
+                    pos2: arr(d.pos2),
+                })
+                .collect(),
+        }
+    }
+
+    /// The other half of [`saved_prop`](Self::saved_prop) on a freshly restored prop `id`:
+    /// ragdoll objects teleported to their saved poses (and frozen), bone manipulations, flexes,
+    /// eye target and decals back on.
+    pub fn apply_saved_state(&mut self, id: u32, sp: &save::SavedProp, origin: Vec3) {
+        if !sp.parts.is_empty() {
+            self.sync_physics();
+            if let Some(rt) = self.ragdoll_bodies.get_mut(&id) {
+                let bodies = rt.bodies.clone();
+                for (i, (b, part)) in bodies.iter().zip(&sp.parts).enumerate() {
+                    let pos = Vec3::from(part.pos) + origin;
+                    let a = part.angles;
+                    self.physics
+                        .teleport(*b, pos, gm_physics::quat_from_angles(a[0], a[1], a[2]));
+                    if part.frozen {
+                        self.physics.freeze(*b);
+                    }
+                    if let Some(f) = rt.frozen.get_mut(i) {
+                        *f = part.frozen;
+                    }
+                }
+                let root_pose = sp.parts.first().map(|part| {
+                    let a = part.angles;
+                    (
+                        Vec3::from(part.pos) + origin,
+                        gm_physics::quat_from_angles(a[0], a[1], a[2]),
+                    )
+                });
+                if let Some((_, rot)) = root_pose {
+                    rt.init_root_rot = rot * gm_sandbox::rotation(Vec3::from(sp.angles)).inverse();
+                }
+                // the sandbox pose must sit on the root (sync teleports a body that left it)
+                if let Some((pos, _)) = root_pose {
+                    self.sandbox.set_prop_pose(id, pos, Vec3::from(sp.angles));
+                }
+            }
+        }
+        if !sp.bone_manips.is_empty() {
+            let n = self.ragdoll_of(id).map_or(0, |rd| rd.bones.len());
+            let mut scales = vec![Vec3::ONE; n];
+            let mut angles = vec![Vec3::ZERO; n];
+            for m in &sp.bone_manips {
+                if let Some(i) = scales.get_mut(m.bone as usize) {
+                    *i = Vec3::from(m.scale);
+                }
+                if let Some(i) = angles.get_mut(m.bone as usize) {
+                    *i = Vec3::from(m.angles);
+                }
+            }
+            if scales.iter().any(|s| *s != Vec3::ONE) {
+                self.bone_scales.insert(id, scales);
+            }
+            if angles.iter().any(|a| *a != Vec3::ZERO) {
+                self.bone_angles.insert(id, angles);
+            }
+        }
+        if let Some(f) = &sp.flex {
+            self.flexes.insert(id, (f.weights.clone(), f.scale));
+        }
+        if let Some(t) = sp.eye_target {
+            self.set_eye_target(id, Vec3::from(t));
+        }
+        if !sp.decals.is_empty() {
+            self.decals.insert(
+                id,
+                sp.decals
+                    .iter()
+                    .map(|d| DecalMod {
+                        bone: d.bone,
+                        name: d.name.clone(),
+                        pos1: Vec3::from(d.pos1),
+                        pos2: Vec3::from(d.pos2),
+                    })
+                    .collect(),
+            );
+        }
     }
 
     /// `EnableMotion(false)` on every physics object of a ragdoll (scenario `frozen_all`).

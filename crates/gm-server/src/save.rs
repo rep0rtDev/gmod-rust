@@ -563,6 +563,49 @@ pub struct SavedProp {
     pub phys_material: String,
     #[serde(default)]
     pub gravity: Option<bool>,
+    /// prop_ragdoll: pose and frozen flag of every physics object (`PhysicsObjects` of a dupe).
+    #[serde(default)]
+    pub parts: Vec<SavedPart>,
+    /// `BoneManip`: manipulated bones (inflator scale, finger poser angles).
+    #[serde(default)]
+    pub bone_manips: Vec<SavedBoneManip>,
+    /// `FlexWeight` / `FlexScale` (faceposer).
+    #[serde(default)]
+    pub flex: Option<SavedFlex>,
+    /// `EntityMods.eyetarget` (eyeposer), local to the `eyes` attachment.
+    #[serde(default)]
+    pub eye_target: Option<[f32; 3]>,
+    /// `EntityMods.decal<i>` (paint stool).
+    #[serde(default)]
+    pub decals: Vec<SavedDecal>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedPart {
+    pub pos: [f32; 3],
+    pub angles: [f32; 3],
+    pub frozen: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedBoneManip {
+    pub bone: u32,
+    pub scale: [f32; 3],
+    pub angles: [f32; 3],
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedFlex {
+    pub weights: Vec<f32>,
+    pub scale: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedDecal {
+    pub bone: u32,
+    pub name: String,
+    pub pos1: [f32; 3],
+    pub pos2: [f32; 3],
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1152,20 +1195,7 @@ impl Server<'_> {
             map: map.to_string(),
             props: props
                 .iter()
-                .map(|p| SavedProp {
-                    model: p.model.clone(),
-                    pos: arr(p.pos),
-                    angles: arr(p.angles),
-                    frozen: p.frozen,
-                    skin: p.skin,
-                    body: p.body.clone(),
-                    material: p.material.clone(),
-                    color: Some(p.color),
-                    render_mode: p.render_mode,
-                    render_fx: p.render_fx,
-                    phys_material: p.phys_material.clone(),
-                    gravity: Some(p.gravity),
-                })
+                .map(|p| self.saved_prop(p, Vec3::ZERO))
                 .collect(),
             constraints: self
                 .sandbox
@@ -1229,6 +1259,7 @@ impl Server<'_> {
                 self.sandbox.set_phys_props(id, g, &p.phys_material);
             }
             self.sandbox.set_body(id, p.body.clone());
+            self.apply_saved_state(id, p, Vec3::ZERO);
             ids.push(Some(id));
         }
         let mut constraints = 0;
