@@ -440,6 +440,24 @@ pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
             flag("physprop_gravity_toggle", true),
             text("physprop_material", "metal_bouncy"),
         ],
+        "trails" => vec![
+            num("trails_r", 255.0, 0.0, 255.0),
+            num("trails_g", 255.0, 0.0, 255.0),
+            num("trails_b", 255.0, 0.0, 255.0),
+            num("trails_a", 255.0, 0.0, 255.0),
+            num("trails_length", 5.0, 0.1, 10.0),
+            num("trails_startsize", 32.0, 0.0, 128.0),
+            num("trails_endsize", 0.0, 0.0, 128.0),
+            text("trails_material", "trails/lol"),
+        ],
+        "emitter" => vec![
+            key("emitter_key", 51),
+            num("emitter_delay", 1.0, 0.05, 20.0),
+            flag("emitter_toggle", true),
+            flag("emitter_starton", false),
+            text("emitter_effect", "sparks"),
+            num("emitter_scale", 1.0, 0.1, 6.0),
+        ],
         "lamp" => vec![
             num("lamp_r", 255.0, 0.0, 255.0),
             num("lamp_g", 255.0, 0.0, 255.0),
@@ -3395,13 +3413,14 @@ impl<'w> Server<'w> {
         }
         if matches!(
             tool,
-            "thruster" | "hoverball" | "balloon" | "lamp" | "light"
+            "thruster" | "hoverball" | "balloon" | "lamp" | "light" | "emitter"
         ) {
             let model = match tool {
                 "thruster" => self.sandbox.tool_settings.thruster_model.clone(),
                 "hoverball" => self.sandbox.tool_settings.hoverball_model.clone(),
                 "lamp" => self.sandbox.tool_settings.lamp_model.clone(),
                 "light" => gm_sandbox::LIGHT_MODEL.to_string(),
+                "emitter" => gm_sandbox::EMITTER_MODEL.to_string(),
                 _ => self.sandbox.tool_settings.balloon_model.clone(),
             };
             if !self.sandbox.has_model_shape(&model) {
@@ -3568,7 +3587,9 @@ impl<'w> Server<'w> {
                 gm_sandbox::Device::Button { .. }
                 | gm_sandbox::Device::Dynamite { .. }
                 | gm_sandbox::Device::Lamp { .. }
-                | gm_sandbox::Device::Light { .. } => {}
+                | gm_sandbox::Device::Light { .. }
+                | gm_sandbox::Device::Trail { .. }
+                | gm_sandbox::Device::Emitter { .. } => {}
             }
         }
         self.sandbox.settle_wheel_scales();

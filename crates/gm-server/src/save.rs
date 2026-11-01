@@ -101,6 +101,22 @@ pub enum SavedDeviceKind {
         on: bool,
         key: i32,
     },
+    Trail {
+        ent: u32,
+        color: [u8; 4],
+        length: f32,
+        start_size: f32,
+        end_size: f32,
+        material: String,
+    },
+    Emitter {
+        key: i32,
+        delay: f32,
+        toggle: bool,
+        on: bool,
+        effect: String,
+        scale: f32,
+    },
 }
 
 impl From<&Device> for SavedDeviceKind {
@@ -234,6 +250,36 @@ impl From<&Device> for SavedDeviceKind {
                 toggle,
                 on,
                 key,
+            },
+            Device::Trail {
+                ent,
+                color,
+                length,
+                start_size,
+                end_size,
+                material,
+            } => SavedDeviceKind::Trail {
+                ent,
+                color,
+                length,
+                start_size,
+                end_size,
+                material,
+            },
+            Device::Emitter {
+                key,
+                delay,
+                toggle,
+                on,
+                effect,
+                scale,
+            } => SavedDeviceKind::Emitter {
+                key,
+                delay,
+                toggle,
+                on,
+                effect,
+                scale,
             },
         }
     }
@@ -420,6 +466,42 @@ impl SavedDeviceKind {
                     key,
                 },
                 vec![(key, NumpadBind::LightSwitch(id))],
+            ),
+            SavedDeviceKind::Trail {
+                ent,
+                color,
+                length,
+                start_size,
+                end_size,
+                material,
+            } => (
+                Device::Trail {
+                    ent,
+                    color,
+                    length,
+                    start_size,
+                    end_size,
+                    material,
+                },
+                Vec::new(),
+            ),
+            SavedDeviceKind::Emitter {
+                key,
+                delay,
+                toggle,
+                on,
+                effect,
+                scale,
+            } => (
+                Device::Emitter {
+                    key,
+                    delay,
+                    toggle,
+                    on,
+                    effect,
+                    scale,
+                },
+                vec![(key, NumpadBind::Emitter(id))],
             ),
         }
     }

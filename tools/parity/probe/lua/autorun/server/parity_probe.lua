@@ -824,7 +824,7 @@ SCENARIOS.toolgun = function(scn, done)
 	bot:Give("gmod_tool")
 	bot:SelectWeapon("gmod_tool")
 	-- a clean table: leftovers of earlier scenarios would collide with the props placed here
-	for _, cls in ipairs({ "prop_physics", "phys_constraint", "phys_lengthconstraint", "keyframe_rope", "gmod_thruster", "gmod_hoverball", "gmod_balloon", "gmod_wheel", "gmod_button", "gmod_dynamite", "gmod_lamp", "gmod_light" }) do
+	for _, cls in ipairs({ "prop_physics", "phys_constraint", "phys_lengthconstraint", "keyframe_rope", "gmod_thruster", "gmod_hoverball", "gmod_balloon", "gmod_wheel", "gmod_button", "gmod_dynamite", "gmod_lamp", "gmod_light", "gmod_emitter", "env_spritetrail" }) do
 		for _, e in ipairs(ents.FindByClass(cls)) do e:Remove() end
 	end
 	undo.GetTable()[bot:UniqueID()] = nil
@@ -894,7 +894,7 @@ SCENARIOS.toolgun = function(scn, done)
 			out.ropes[#out.ropes + 1] = { index = r:EntIndex(), pos = vec(r:GetPos()), length = r:GetKeyValues().Length, width = r:GetKeyValues().Width }
 		end
 		out.ents = {}
-		for _, cls in ipairs({ "gmod_thruster", "gmod_hoverball", "gmod_balloon", "gmod_wheel", "gmod_button", "gmod_dynamite", "gmod_lamp", "gmod_light" }) do
+		for _, cls in ipairs({ "gmod_thruster", "gmod_hoverball", "gmod_balloon", "gmod_wheel", "gmod_button", "gmod_dynamite", "gmod_lamp", "gmod_light", "gmod_emitter", "env_spritetrail" }) do
 			for _, e in ipairs(ents.FindByClass(cls)) do
 				local t, ph = e:GetTable(), e:GetPhysicsObject()
 				local p, a = e:GetPos(), e:GetAngles()
@@ -911,7 +911,9 @@ SCENARIOS.toolgun = function(scn, done)
 				elseif cls == "gmod_button" then d.on = e:GetOn() d.key = e:GetKey() d.is_toggle = e:GetIsToggle() d.description = e.GetDescription and e:GetDescription() or e:GetNWString("description", nil)
 				elseif cls == "gmod_dynamite" then d.health = e:Health() d.damage = e:GetDamage() d.delay = e:GetDelay() d.remove = e:GetShouldRemove() d.key = e.key
 				elseif cls == "gmod_lamp" then local c = e:GetColor() d.on = e:GetOn() d.toggle = e:GetToggle() d.fov = e:GetLightFOV() d.distance = e:GetDistance() d.brightness = e:GetBrightness() d.texture = e:GetFlashlightTexture() d.key = t.KeyDown d.r = c.r d.g = c.g d.b = c.b
-				elseif cls == "gmod_light" then local c = e:GetColor() d.on = e:GetOn() d.toggle = e:GetToggle() d.size = e:GetLightSize() d.brightness = e:GetBrightness() d.key = t.KeyDown d.r = c.r d.g = c.g d.b = c.b end
+				elseif cls == "gmod_light" then local c = e:GetColor() d.on = e:GetOn() d.toggle = e:GetToggle() d.size = e:GetLightSize() d.brightness = e:GetBrightness() d.key = t.KeyDown d.r = c.r d.g = c.g d.b = c.b
+				elseif cls == "gmod_emitter" then d.on = e:GetOn() d.toggle = e:GetToggle() d.delay = e:GetDelay() d.scale = e:GetScale() d.effect = e:GetEffect() d.key = t.key d.nocollide = IsValid(ph) and not ph:IsCollisionEnabled() or nil
+				elseif cls == "env_spritetrail" then local c = e:GetColor() d.r = c.r d.g = c.g d.b = c.b d.a = c.a d.parent = IsValid(e:GetParent()) and e:GetParent():EntIndex() or 0 d.startsize = e:GetInternalVariable("m_flStartWidth") d.endsize = e:GetInternalVariable("m_flEndWidth") d.length = e:GetInternalVariable("m_flLifeTime") d.material = e:GetInternalVariable("m_iszSpriteName") end
 				out.ents[#out.ents + 1] = d
 			end
 		end

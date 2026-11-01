@@ -103,6 +103,7 @@ pub struct Limits {
     pub max_dynamite: i32,
     pub max_lamps: i32,
     pub max_lights: i32,
+    pub max_emitters: i32,
 }
 
 impl Default for Limits {
@@ -119,6 +120,7 @@ impl Default for Limits {
             max_dynamite: 20,
             max_lamps: 3,
             max_lights: 5,
+            max_emitters: 20,
         }
     }
 }
@@ -137,6 +139,7 @@ impl Limits {
             "dynamite" => self.max_dynamite,
             "lamps" => self.max_lamps,
             "lights" => self.max_lights,
+            "emitters" => self.max_emitters,
             _ => -1,
         }
     }
@@ -605,6 +608,20 @@ pub struct ToolSettings {
     pub colour_fx: f32,
     pub physprop_gravity_toggle: bool,
     pub physprop_material: String,
+    pub trails_r: f32,
+    pub trails_g: f32,
+    pub trails_b: f32,
+    pub trails_a: f32,
+    pub trails_length: f32,
+    pub trails_startsize: f32,
+    pub trails_endsize: f32,
+    pub trails_material: String,
+    pub emitter_key: i32,
+    pub emitter_delay: f32,
+    pub emitter_scale: f32,
+    pub emitter_toggle: bool,
+    pub emitter_starton: bool,
+    pub emitter_effect: String,
     pub dynamite_remove: bool,
 }
 
@@ -640,20 +657,24 @@ impl ToolSettings {
             wheel_rz, motor_torque, motor_friction, motor_forcelimit, motor_forcetime,
             dynamite_damage, dynamite_delay, lamp_r, lamp_g, lamp_b, lamp_fov, lamp_distance,
             lamp_brightness, light_r, light_g, light_b, light_brightness, light_size,
-            light_ropelength, colour_r, colour_g, colour_b, colour_a, colour_mode, colour_fx;
+            light_ropelength, colour_r, colour_g, colour_b, colour_a, colour_mode, colour_fx,
+            trails_r, trails_g, trails_b, trails_a, trails_length, trails_startsize, trails_endsize,
+            emitter_delay, emitter_scale;
             axis_nocollide, weld_nocollide, rope_rigid, ballsocket_nocollide, elastic_stretchonly,
             hydraulic_fixed, hydraulic_toggle, winch_toggle, muscle_fixed, muscle_starton,
             pulley_rigid, thruster_toggle, thruster_collision, wheel_nocollide, wheel_toggle,
             motor_nocollide, motor_toggle,
-            button_toggle, dynamite_remove, lamp_toggle, light_toggle, physprop_gravity_toggle;
+            button_toggle, dynamite_remove, lamp_toggle, light_toggle, physprop_gravity_toggle,
+            emitter_toggle, emitter_starton;
             rope_material, slider_material, elastic_material, hydraulic_material, winch_material,
             muscle_material, pulley_material, thruster_model, thruster_soundname, hoverball_model,
             balloon_model,
             wheel_model, button_model, dynamite_model, lamp_texture, lamp_model, light_ropematerial,
-            material_override, physprop_material;
+            material_override, physprop_material, trails_material, emitter_effect;
             hydraulic_key, winch_fwd_key, winch_bwd_key, muscle_key, thruster_key,
             thruster_key_back, hoverball_key_up, hoverball_key_down, hoverball_key_on, wheel_fwd,
-            wheel_bck, motor_fwd, motor_bwd, button_keygroup, dynamite_group, lamp_key, light_key
+            wheel_bck, motor_fwd, motor_bwd, button_keygroup, dynamite_group, lamp_key, light_key,
+            emitter_key
         )
     }
 }
@@ -779,6 +800,20 @@ impl Default for ToolSettings {
             colour_fx: 0.0,
             physprop_gravity_toggle: true,
             physprop_material: "metal_bouncy".into(),
+            trails_r: 255.0,
+            trails_g: 255.0,
+            trails_b: 255.0,
+            trails_a: 255.0,
+            trails_length: 5.0,
+            trails_startsize: 32.0,
+            trails_endsize: 0.0,
+            trails_material: "trails/lol".into(),
+            emitter_key: 51,
+            emitter_delay: 1.0,
+            emitter_scale: 1.0,
+            emitter_toggle: true,
+            emitter_starton: false,
+            emitter_effect: "sparks".into(),
             dynamite_remove: false,
         }
     }
@@ -1064,7 +1099,49 @@ pub enum Device {
         on: bool,
         key: i32,
     },
+    /// env_spritetrail of the trails stool, parented to `ent` (its own entity: undo, cleanup)
+    Trail {
+        ent: u32,
+        color: [u8; 4],
+        length: f32,
+        start_size: f32,
+        end_size: f32,
+        material: String,
+    },
+    /// gmod_emitter: a particle effect every `delay` seconds while `on`
+    Emitter {
+        key: i32,
+        delay: f32,
+        toggle: bool,
+        on: bool,
+        effect: String,
+        scale: f32,
+    },
 }
+
+/// trails.lua's `trail_materials` (outside single player only these get through).
+pub const TRAIL_MATERIALS: &[&str] = &[
+    "trails/plasma",
+    "trails/tube",
+    "trails/electric",
+    "trails/smoke",
+    "trails/laser",
+    "trails/physbeam",
+    "trails/love",
+    "trails/lol",
+    "effects/beam001_blu",
+    "effects/beam001_red",
+    "effects/beam001_white",
+    "effects/arrowtrail_blu",
+    "effects/arrowtrail_red",
+    "effects/repair_claw_trail_blue",
+    "effects/repair_claw_trail_red",
+    "effects/australiumtrail_red",
+    "effects/beam_generic01",
+];
+
+/// gmod_emitter's model.
+pub const EMITTER_MODEL: &str = "models/props_lab/tpplug.mdl";
 
 /// material.lua's `OverrideMaterials` list: what the material stool may apply outside single
 /// player.
@@ -1211,7 +1288,9 @@ impl Device {
             | Device::Button { .. }
             | Device::Dynamite { .. }
             | Device::Lamp { .. }
-            | Device::Light { .. } => None,
+            | Device::Light { .. }
+            | Device::Trail { .. }
+            | Device::Emitter { .. } => None,
         }
     }
 
@@ -1276,6 +1355,8 @@ pub enum NumpadBind {
     Dynamite(u32),
     /// `LampToggle` / `LightToggle`: hold or flip the light
     LightSwitch(u32),
+    /// `Emitter_On` / `Emitter_Off`
+    Emitter(u32),
     /// Down sets the direction, up stops (a non-toggle winch).
     WinchDir(u32, i8),
     WinchToggle(u32, i8),
@@ -1294,6 +1375,7 @@ impl NumpadBind {
             | NumpadBind::Motor(c, _)
             | NumpadBind::Dynamite(c)
             | NumpadBind::LightSwitch(c)
+            | NumpadBind::Emitter(c)
             | NumpadBind::WinchDir(c, _)
             | NumpadBind::WinchToggle(c, _)
             | NumpadBind::MuscleToggle(c) => c,
@@ -1707,6 +1789,8 @@ impl Sandbox {
             );
             self.constraints.retain(|c| !axes.contains(&c.id));
         }
+        // a prop's trail goes with it
+        self.remove_trail(id);
     }
 
     /// `PhysObj:EnableMotion(!frozen)`.
@@ -1801,6 +1885,18 @@ impl Sandbox {
         if tool == "balloon" || tool == "light" {
             // light.lua: `RightClick = LeftClick(trace, false)`, no rope
             return self.place_device(player, tool, hit, false, events);
+        }
+        if tool == "emitter" {
+            // emitter.lua: `RightClick = LeftClick(trace, worldweld = true)`
+            return self.place_device(player, tool, hit, true, events);
+        }
+        if tool == "trails" {
+            // SetTrails(ply, ent, nil): the trail goes, true on any entity
+            let Some(ent) = hit.ent.filter(|e| self.props.iter().any(|p| p.id == *e)) else {
+                return false;
+            };
+            self.remove_trail(ent);
+            return true;
         }
         if matches!(tool, "material" | "colour") {
             // copies the entity's material / colour into the convars
@@ -2065,6 +2161,52 @@ impl Sandbox {
         true
     }
 
+    /// The trail on an entity goes (`SetTrails` always removes the old one first).
+    fn remove_trail(&mut self, ent: u32) {
+        self.devices
+            .retain(|_, d| !matches!(d, Device::Trail { ent: e, .. } if *e == ent));
+    }
+
+    /// trails.lua `LeftClick`: the old trail goes, then `SetTrails` with the convars - nothing
+    /// for a zero-sized trail or (outside single player) a material off the list, else an
+    /// env_spritetrail of its own with length 0.1..10 and sizes 0..128.
+    fn trails_click(&mut self, player: u32, hit: &ToolHit) -> bool {
+        let s = self.tool_settings.clone();
+        let Some(ent) = hit.ent.filter(|e| self.props.iter().any(|p| p.id == *e)) else {
+            return false;
+        };
+        self.remove_trail(ent);
+        if s.trails_startsize <= 0.0 && s.trails_endsize <= 0.0 {
+            return false;
+        }
+        if !TRAIL_MATERIALS.contains(&s.trails_material.as_str()) {
+            return false;
+        }
+        let c = |v: f32| v.clamp(0.0, 255.0) as u8;
+        let id = self.next_id;
+        self.next_id += 1;
+        self.devices.insert(
+            id,
+            Device::Trail {
+                ent,
+                color: [c(s.trails_r), c(s.trails_g), c(s.trails_b), c(s.trails_a)],
+                length: s.trails_length.clamp(0.1, 10.0),
+                start_size: s.trails_startsize.clamp(0.0, 128.0).max(0.0001),
+                end_size: s.trails_endsize.clamp(0.0, 128.0),
+                material: s.trails_material.clone(),
+            },
+        );
+        self.add_cleanup(player, "trails", id);
+        self.push_undo(
+            player,
+            "Trail",
+            "#tool.trails.name".into(),
+            Some("Undone #tool.trails.name".into()),
+            vec![id],
+        );
+        true
+    }
+
     /// The material / colour stools' state on a prop (saves, dupes).
     pub fn set_render(&mut self, id: u32, material: &str, color: [u8; 4], mode: u8, fx: u8) {
         if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
@@ -2125,6 +2267,8 @@ impl Sandbox {
                 | "material"
                 | "colour"
                 | "physprop"
+                | "trails"
+                | "emitter"
                 | "duplicator"
                 | "ballsocket"
                 | "slider"
@@ -2288,10 +2432,11 @@ impl Sandbox {
             "dynamite" => ("dynamite", s.dynamite_model.clone()),
             "lamp" => ("lamps", s.lamp_model.clone()),
             "light" => ("lights", LIGHT_MODEL.to_string()),
+            "emitter" => ("emitters", EMITTER_MODEL.to_string()),
             _ => ("balloons", s.balloon_model.clone()),
         };
         // a click on the player's own lamp / light re-applies the settings instead
-        if matches!(tool, "lamp" | "light") {
+        if matches!(tool, "lamp" | "light" | "emitter") {
             if let Some(e) = hit.ent {
                 let own = self.props.iter().any(|p| p.id == e && p.owner == player);
                 let key = match (tool, self.devices.get_mut(&e)) {
@@ -2322,6 +2467,24 @@ impl Sandbox {
                         Some(s.lamp_key)
                     }
                     (
+                        "emitter",
+                        Some(Device::Emitter {
+                            key,
+                            delay,
+                            toggle,
+                            effect,
+                            scale,
+                            ..
+                        }),
+                    ) if own => {
+                        *effect = s.emitter_effect.clone();
+                        *delay = s.emitter_delay.clamp(0.05, 20.0);
+                        *toggle = s.emitter_toggle;
+                        *scale = s.emitter_scale.clamp(0.1, 6.0);
+                        *key = s.emitter_key;
+                        Some(s.emitter_key)
+                    }
+                    (
                         "light",
                         Some(Device::Light {
                             color,
@@ -2346,7 +2509,12 @@ impl Sandbox {
                     _ => None,
                 };
                 if let Some(key) = key {
-                    self.rebind(player, e, key, NumpadBind::LightSwitch(e));
+                    let bind = if tool == "emitter" {
+                        NumpadBind::Emitter(e)
+                    } else {
+                        NumpadBind::LightSwitch(e)
+                    };
+                    self.rebind(player, e, key, bind);
                     return true;
                 }
             }
@@ -2361,6 +2529,8 @@ impl Sandbox {
         // `HitNormal:Angle()` with the pitch turned 90 degrees up: the model's z along the normal
         let angles = match tool {
             "balloon" | "dynamite" | "lamp" => Vec3::ZERO,
+            // emitter.lua: `HitNormal:Angle()` as is
+            "emitter" => angle_of(n),
             // light.lua: `HitNormal:Angle() - Angle(90, 0, 0)`
             "light" => {
                 let a = angle_of(n);
@@ -2384,6 +2554,13 @@ impl Sandbox {
             hit.pos - n * shape.min.z
         } else if tool == "light" {
             hit.pos + n * 8.0
+        } else if tool == "emitter" {
+            // on the hit point when welded, one unit out when left on the world
+            if hit.ent.is_some() || attach {
+                hit.pos
+            } else {
+                hit.pos + n
+            }
         } else {
             hit.pos + n * obb_depth(&shape, rot, n)
         };
@@ -2397,7 +2574,8 @@ impl Sandbox {
             angles,
             frozen: false,
             gravity: tool != "balloon",
-            collide: true,
+            // a welded emitter: `EnableCollisions(false)`
+            collide: !(tool == "emitter" && (hit.ent.is_some() || attach)),
             upright: None,
             health: 0,
             // gmod_lamp: `SetSkin(lightInfo.Skin)`, 1 for the torch and the other stock lamps
@@ -2449,6 +2627,17 @@ impl Sandbox {
                     // `MakeLamp(.., toggle, .., on = !toggle)`: lit from the start with the toggle convar
                     on: s.lamp_toggle,
                     key: s.lamp_key,
+                }
+            }
+            "emitter" => {
+                binds.push((s.emitter_key, NumpadBind::Emitter(id)));
+                Device::Emitter {
+                    key: s.emitter_key,
+                    delay: s.emitter_delay.clamp(0.05, 20.0),
+                    toggle: s.emitter_toggle,
+                    on: s.emitter_starton,
+                    effect: s.emitter_effect.clone(),
+                    scale: s.emitter_scale.clamp(0.1, 6.0),
                 }
             }
             "light" => {
@@ -2608,14 +2797,14 @@ impl Sandbox {
                 self.next_id += 1;
                 self.add_cleanup(player, count, axis_id);
             } else if !matches!(tool, "dynamite" | "lamp" | "light") {
-                let nocollide = tool == "thruster" && !s.thruster_collision;
+                let nocollide = (tool == "thruster" && !s.thruster_collision) || tool == "emitter";
                 if let Some(weld) = self.weld(player, Some(id), Some(target), 0.0, nocollide) {
                     undo_ents.push(weld);
                     self.add_cleanup(player, count, weld);
                 }
             }
-        } else if tool == "button" {
-            // a button on the world is welded to the world
+        } else if tool == "button" || (tool == "emitter" && attach) {
+            // a button on the world is welded to the world (an emitter on a right click too)
             if let Some(weld) = self.weld(player, Some(id), None, 0.0, false) {
                 undo_ents.push(weld);
                 self.add_cleanup(player, count, weld);
@@ -3048,6 +3237,9 @@ impl Sandbox {
         hit: &ToolHit,
         events: &mut Vec<Event>,
     ) -> bool {
+        if tool == "trails" {
+            return self.trails_click(player, hit);
+        }
         if matches!(tool, "material" | "colour" | "physprop") {
             let s = self.tool_settings.clone();
             let Some(p) = hit
@@ -3119,6 +3311,7 @@ impl Sandbox {
                 | "dynamite"
                 | "lamp"
                 | "light"
+                | "emitter"
         ) {
             // a wheel needs an entity to drive against
             if tool == "wheel" && hit.ent.is_none() {
@@ -3296,6 +3489,13 @@ impl Sandbox {
             self.drop_parts();
             return true;
         }
+        // a device of its own (trail, motor torque entity): it and what hangs off it go
+        if self.devices.contains_key(&id) {
+            self.remove_entity(id);
+            self.devices.remove(&id);
+            self.drop_parts();
+            return true;
+        }
         let before = self.constraints.len();
         self.constraints.retain(|c| c.id != id);
         self.drop_parts();
@@ -3438,6 +3638,16 @@ impl Sandbox {
                             *scale = dir;
                         } else {
                             *scale = 0.0;
+                        }
+                    }
+                    (NumpadBind::Emitter(_), Device::Emitter { toggle, on, .. }) => {
+                        // Emitter_On flips a toggle, else holds; Emitter_Off only without toggle
+                        if *toggle {
+                            if down {
+                                *on = !*on;
+                            }
+                        } else {
+                            *on = down;
                         }
                     }
                     (

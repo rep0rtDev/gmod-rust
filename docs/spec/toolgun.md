@@ -91,7 +91,7 @@ Wheel motor as fitted (`gm_sandbox::wheel_spin_step`; a changed `Scale` drives f
 
 ## Not yet measured
 
-The other stools (lamp, light, trails, motor, emitter, camera, ...), wheel / button / dynamite in gm-sandbox (measured above), the thruster's effects / sound / damage settings, the hull-trace fallback, ragdoll bones, the keyframe_rope's own simulation, force / torque limits breaking a constraint (the pulley's `forcelimit` is stored only), an unbalanced pulley (both measured pairs weigh the same).
+The other stools (camera, inflator, eyeposer, faceposer, finger, paint, creator, editentity, leafblower), wheel / button / dynamite in gm-sandbox (measured above), the thruster's effects / sound / damage settings, the hull-trace fallback, ragdoll bones, the keyframe_rope's own simulation, force / torque limits breaking a constraint (the pulley's `forcelimit` is stored only), an unbalanced pulley (both measured pairs weigh the same).
 
 ### remover (measured, `toolgun_remover`)
 
@@ -150,3 +150,27 @@ The other stools (lamp, light, trails, motor, emitter, camera, ...), wheel / but
   entity snapshot (protocol 4), saved and duped; the server pushes gravity and the surface
   (friction, elasticity from `surfaceproperties.txt`) to the live Jolt body when they change.
   Rendering the override / colour is client work, not done yet.
+
+### trails and emitter (measured, `toolgun_trails`, `toolgun_emitter`)
+
+Recorded on srcds with a frozen crate (`tools/parity/scenarios/toolgun/trails.json`, `emitter.json`).
+
+Trails (`trails.lua`): left click on a prop first removes its old `env_spritetrail`, then `SetTrails`
+with the convars: nothing (and `false`) when both sizes are `<= 0` or, outside single player, when the
+material is not one of the 17 `trail_materials` (`trails/plasma` ... `effects/beam_generic01`); else a
+sprite trail of its own with length clamped to 0.1..10, start / end size to 0..128 (start at least
+0.0001), colour channels 0..255, parented to the prop, undo entry `Trail` / `#tool.trails.name` and
+cleanup list `trails`. The entity's colour alpha stays 255 (the requested alpha goes to `renderamt`),
+its model name is `<material>.vmt`. Right click removes the trail and returns `true` on any prop (also
+without a trail), world is `false` both ways. The undo entries of trails replaced by a later click stay
+in the list (dead, skipped by the next undo), so after four clicks and one undo three remain - ours now
+removes prop-less devices by id (`Sandbox::remove`) instead of popping the whole list.
+
+Emitter (`emitter.lua`, `gmod_emitter`, `models/props_lab/tpplug.mdl`, limit `sbox_maxemitters` 20):
+placed at the hit point with `HitNormal:Angle()`, one unit out along the normal when left on the
+world; on a prop (or on the world with a right click, `worldweld`) it is welded with `nocollide` and
+its own collisions disabled. Settings on creation: `delay` clamped 0.05..20, `scale` 0.1..6, `toggle`,
+`starton`, `effect`, `key`. A left click on your own emitter rewrites those and rebinds the key without a
+new entity. Numpad: with toggle the key down flips `on`, key up does nothing; without toggle the key
+holds `on` while down. Undo `gmod_emitter` and cleanup `emitters` as the other devices; ghost model
+on the client, saves and dupes carry the state. The particle effect itself is client-side (frontend).

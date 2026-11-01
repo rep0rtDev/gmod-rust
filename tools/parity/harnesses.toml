@@ -3532,6 +3532,26 @@ ang = 5.0
 spin = 0.1
 
 [[harness]]
+name = "toolgun_trails"
+scenario = "toolgun/trails"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_emitter"
+scenario = "toolgun/emitter"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
 name = "toolgun_material"
 scenario = "toolgun/material"
 compare = "toolgun"

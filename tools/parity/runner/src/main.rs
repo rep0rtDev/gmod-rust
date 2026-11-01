@@ -250,6 +250,8 @@ fn apply_click_settings(
             | "material"
             | "colour"
             | "physprop"
+            | "trails"
+            | "emitter"
     ) {
         return;
     }
@@ -286,6 +288,24 @@ fn apply_click_settings(
             ts.hoverball_resistance = num("resistance");
             ts.hoverball_strength = num("strength");
             ts.hoverball_model = text("model");
+        }
+        "trails" => {
+            ts.trails_r = num("r");
+            ts.trails_g = num("g");
+            ts.trails_b = num("b");
+            ts.trails_a = num("a");
+            ts.trails_length = num("length");
+            ts.trails_startsize = num("startsize");
+            ts.trails_endsize = num("endsize");
+            ts.trails_material = text("material");
+        }
+        "emitter" => {
+            ts.emitter_key = num("key") as i32;
+            ts.emitter_delay = num("delay");
+            ts.emitter_toggle = flag("toggle");
+            ts.emitter_starton = flag("starton");
+            ts.emitter_effect = text("effect");
+            ts.emitter_scale = num("scale");
         }
         "material" => {
             ts.material_override = text("override");
@@ -539,6 +559,7 @@ impl DeviceSpec {
                 "dynamite" => "models/dav0r/tnt/tnt.mdl",
                 "lamp" => "models/lamps/torch.mdl",
                 "light" => gm_sandbox::LIGHT_MODEL,
+                "emitter" => gm_sandbox::EMITTER_MODEL,
                 _ => "models/maxofs2d/balloon_classic.mdl",
             }
             .to_string()
@@ -721,6 +742,20 @@ fn device_key(d: &mut gm_sandbox::Device, key: i32, down: bool, pos_z: f32) {
             }
             *scale = speed;
         }
+        Device::Emitter {
+            key: k, toggle, on, ..
+        } => {
+            if key == *k {
+                if *toggle {
+                    if down {
+                        *on = !*on;
+                    }
+                } else {
+                    *on = down;
+                }
+            }
+        }
+        Device::Trail { .. } => {}
         Device::Lamp {
             key: k, toggle, on, ..
         }
@@ -839,7 +874,9 @@ fn device_simulate(
         Device::Button { .. }
         | Device::Dynamite { .. }
         | Device::Lamp { .. }
-        | Device::Light { .. } => {}
+        | Device::Light { .. }
+        | Device::Trail { .. }
+        | Device::Emitter { .. } => {}
     }
 }
 
@@ -901,6 +938,28 @@ fn device_row(d: &gm_sandbox::Device, mass: f32) -> Value {
             json!({ "class": "gmod_lamp", "mass": mass, "on": on, "toggle": toggle, "key": key, "fov": fov,
                 "distance": distance, "brightness": brightness, "texture": texture,
                 "r": color[0], "g": color[1], "b": color[2] })
+        }
+        Device::Trail {
+            color,
+            length,
+            start_size,
+            end_size,
+            material,
+            ..
+        } => {
+            json!({ "class": "env_spritetrail", "r": color[0], "g": color[1], "b": color[2], "a": color[3],
+                "length": length, "startsize": start_size, "endsize": end_size, "material": material })
+        }
+        Device::Emitter {
+            key,
+            delay,
+            toggle,
+            on,
+            effect,
+            scale,
+        } => {
+            json!({ "class": "gmod_emitter", "mass": mass, "key": key, "delay": delay, "toggle": toggle, "on": on,
+                "effect": effect, "scale": scale })
         }
         Device::Light {
             color,
@@ -5246,6 +5305,7 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
         "models/dav0r/tnt/tnt.mdl",
         "models/lamps/torch.mdl",
         gm_sandbox::LIGHT_MODEL,
+        gm_sandbox::EMITTER_MODEL,
     ] {
         if let Ok(shape) = model_shape(&mount, model) {
             sb.set_model_shape(model, shape);
@@ -5293,6 +5353,12 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                     }
                     Some(gm_sandbox::Device::Light { .. }) => {
                         json!({ "index": -1, "class": "gmod_light", "prop": 0 })
+                    }
+                    Some(gm_sandbox::Device::Trail { .. }) => {
+                        json!({ "index": -1, "class": "env_spritetrail", "prop": 0 })
+                    }
+                    Some(gm_sandbox::Device::Emitter { .. }) => {
+                        json!({ "index": -1, "class": "gmod_emitter", "prop": 0 })
                     }
                     None => json!({ "prop": id, "class": "prop_physics" }),
                 },
@@ -5371,7 +5437,7 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 Some(json!({ "constraint": c.id, "type": u8::from(k.muscle), "length": k.length, "min": k.min, "max": k.max, "dir": k.direction }))
             })
             .collect();
-        let ents: Vec<Value> = sb
+        let mut ents: Vec<Value> = sb
             .props()
             .iter()
             .filter_map(|p| {
@@ -5400,6 +5466,13 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                         "class": "gmod_lamp", "r": color[0], "g": color[1], "b": color[2], "texture": texture, "fov": fov,
                         "distance": distance, "brightness": brightness, "toggle": toggle, "on": on, "key": key,
                     }),
+                    gm_sandbox::Device::Trail { ent, color, length, start_size, end_size, material } => json!({
+                        "class": "env_spritetrail", "parent": ent, "r": color[0], "g": color[1], "b": color[2], "a": color[3],
+                        "length": length, "startsize": start_size, "endsize": end_size, "material": material,
+                    }),
+                    gm_sandbox::Device::Emitter { key, delay, toggle, on, effect, scale } => json!({
+                        "class": "gmod_emitter", "key": key, "delay": delay, "toggle": toggle, "on": on, "effect": effect, "scale": scale,
+                    }),
                     gm_sandbox::Device::Light { color, brightness, size, toggle, on, key } => json!({
                         "class": "gmod_light", "r": color[0], "g": color[1], "b": color[2], "brightness": brightness,
                         "size": size, "toggle": toggle, "on": on, "key": key,
@@ -5412,6 +5485,27 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 Some(e)
             })
             .collect();
+        for d in sb.devices().values() {
+            if let gm_sandbox::Device::Trail {
+                ent,
+                color,
+                length,
+                start_size,
+                end_size,
+                material,
+            } = d
+            {
+                let Some(p) = sb.props().iter().find(|p| p.id == *ent) else {
+                    continue;
+                };
+                ents.push(json!({
+                    "prop": p.id, "class": "env_spritetrail", "model": format!("{material}.vmt"), "skin": 0,
+                    "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
+                    "parent": ent, "r": color[0], "g": color[1], "b": color[2], "a": color[3],
+                    "length": length, "startsize": start_size, "endsize": end_size, "material": material,
+                }));
+            }
+        }
         // `constraint.Motor`: the game lists the phys_torque with its own table next to the Axis
         let mut constraints = constraints;
         for (id, d) in sb.devices() {
@@ -5856,6 +5950,7 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     "is_toggle",
                     "remove",
                     "texture",
+                    "effect",
                 ] {
                     if g.get(k).is_some() && g[k] != m[k] {
                         bad.push(format!("{k} {} vs {}", g[k], m[k]));
@@ -5880,6 +5975,11 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     "distance",
                     "brightness",
                     "size",
+                    "delay",
+                    "scale",
+                    "length",
+                    "startsize",
+                    "endsize",
                 ] {
                     if let (Some(a), Some(b)) = (g[k].as_f64(), m[k].as_f64()) {
                         if (a - b).abs() > 1e-3 * a.abs().max(1.0) {
