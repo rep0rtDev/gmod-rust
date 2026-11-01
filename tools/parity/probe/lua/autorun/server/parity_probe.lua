@@ -32,7 +32,7 @@ local function findFlat(dir, namePattern, searchPath)
 end
 
 local SCENARIOS = {}
-local ASYNC = { move = true, phys = true, physgun = true, constraint = true }
+local ASYNC = { move = true, phys = true, ragdoll_drop = true, physgun = true, constraint = true }
 
 -- { kind = "file_find", globs = { "models/props_c17/*.mdl", "materials/**/*.vmt" }, search = "GAME" }
 SCENARIOS.file_find = function(scn)
@@ -374,6 +374,53 @@ SCENARIOS.phys = function(scn, done)
 			hook.Remove("EntityEmitSound", "parity_phys")
 			ent:Remove()
 			done({ start = { start.x, start.y, start.z }, model = scn.model, info = info, ticks = ticks, collisions = collisions, sounds = sounds })
+		end
+	end)
+end
+
+-- ragdoll_drop: spawn a prop_ragdoll, record every physics object's transform every tick
+SCENARIOS.ragdoll_drop = function(scn, done)
+	local start = Vector(scn.start[1], scn.start[2], scn.start[3])
+	local ang = Angle(scn.angles and scn.angles[1] or 0, scn.angles and scn.angles[2] or 0, scn.angles and scn.angles[3] or 0)
+	local ent = ents.Create("prop_ragdoll")
+	ent:SetModel(scn.model)
+	ent:SetPos(start)
+	ent:SetAngles(ang)
+	ent:Spawn()
+	ent:Activate()
+	local n = ent:GetPhysicsObjectCount()
+	if n == 0 then
+		done({ error = "no physics objects for " .. tostring(scn.model) })
+		ent:Remove()
+		return
+	end
+	local bones = {}
+	for i = 0, n - 1 do
+		local ph = ent:GetPhysicsObjectNum(i)
+		ph:Wake()
+		local mc = ph:GetMassCenter()
+		bones[#bones + 1] = { bone = ent:GetBoneName(ent:TranslatePhysBoneToBone(i)), mass = ph:GetMass(), material = ph:GetMaterial(),
+			mass_center = { mc.x, mc.y, mc.z }, convexes = #ph:GetMeshConvexes() }
+	end
+	if scn.frozen then
+		ent:GetPhysicsObjectNum(0):EnableMotion(false)
+	end
+	local total = scn.ticks or 200
+	local tick, ticks = 0, {}
+	hook.Add("Tick", "parity_ragdoll", function()
+		if not IsValid(ent) then return end
+		local row = { t = tick, parts = {} }
+		for i = 0, n - 1 do
+			local ph = ent:GetPhysicsObjectNum(i)
+			local p, a, v = ph:GetPos(), ph:GetAngles(), ph:GetVelocity()
+			row.parts[#row.parts + 1] = { pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r }, vel = { v.x, v.y, v.z }, asleep = ph:IsAsleep() }
+		end
+		ticks[#ticks + 1] = row
+		tick = tick + 1
+		if tick >= total then
+			hook.Remove("Tick", "parity_ragdoll")
+			ent:Remove()
+			done({ start = { start.x, start.y, start.z }, model = scn.model, bones = bones, ticks = ticks })
 		end
 	end)
 end

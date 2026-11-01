@@ -99,6 +99,7 @@ extern "C" {
         limits: *const f32,
         friction: *const f32,
     ) -> *mut std::ffi::c_void;
+    fn gmp_set_ragdoll_friction(constraint: *mut std::ffi::c_void, friction: f32);
     fn gmp_add_hinge_constraint(
         system: *mut JPC_PhysicsSystem,
         id1: u32,
@@ -1341,6 +1342,11 @@ impl World {
             self.pivot_joints.push((parent.0, child.0));
         }
         (!c.is_null()).then_some(ConstraintHandle(c))
+    }
+
+    /// Dry friction of a ragdoll joint's three rotation axes (Jolt torque units).
+    pub fn set_ragdoll_friction(&mut self, joint: ConstraintHandle, friction: f32) {
+        unsafe { gmp_set_ragdoll_friction(joint.0, friction) }
     }
 
     /// `PhysObj:SetVelocity` + `AddAngleVelocity`: Source units per second and body-local

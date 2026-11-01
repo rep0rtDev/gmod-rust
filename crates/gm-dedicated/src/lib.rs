@@ -118,8 +118,37 @@ pub fn surface_table(mount: &gm_content::Mount) -> Result<gm_physics::surface::S
 }
 
 /// MDL hull box, PHY convexes (points and outward planes) and physics properties of a model.
+/// Frame 0 of the model's `ragdoll` sequence (or its first sequence): the pose a `prop_ragdoll`
+/// spawns in. Character models carry their facing in the root bone of that frame, not in the
+/// bind pose, so a ragdoll built from the bind pose would face 90 degrees off.
+fn ragdoll_pose(
+    mount: &gm_content::Mount,
+    model: &str,
+    data: &[u8],
+    mdl: &gm_formats::mdl::Mdl,
+) -> Option<Vec<([f32; 3], [f32; 4])>> {
+    let seqs = gm_formats::mdl::sequences(data, &mdl.header);
+    let seq = seqs
+        .iter()
+        .find(|s| s.name.eq_ignore_ascii_case("ragdoll"))
+        .or(seqs.first())?;
+    let desc = gm_formats::mdl::anim_descs(data, &mdl.header)
+        .into_iter()
+        .nth(seq.anim.max(0) as usize)?;
+    let delta = desc.flags & 0x04 != 0;
+    if desc.block == 0 {
+        let start = mdl.header.local_anim_offset as usize + desc.index as usize;
+        return gm_formats::mdl::anim_pose(data, start, &mdl.bones, 0, delta);
+    }
+    let ani = mount.read(&model.replace(".mdl", ".ani")).ok()?;
+    let (_, blocks) = gm_formats::mdl::anim_blocks(data);
+    let (start, _) = *blocks.get(desc.block as usize)?;
+    gm_formats::mdl::anim_pose(&ani, start + desc.index as usize, &mdl.bones, 0, delta)
+}
+
 pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::ModelInfo> {
-    let mdl = gm_formats::mdl::Mdl::parse(&mount.read(model)?)?;
+    let mdl_data = mount.read(model)?;
+    let mdl = gm_formats::mdl::Mdl::parse(&mdl_data)?;
     let phy_path = model
         .strip_suffix(".mdl")
         .map(|m| format!("{m}.phy"))
@@ -181,14 +210,16 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
             joints: phy.constraints.clone(),
             collision_pairs: phy.collision_pairs.clone(),
             total_mass: phy.edit.total_mass,
-            bones: mdl
-                .bones
-                .iter()
-                .map(|b| gm_server::BoneInfo {
+            anim_friction: phy.anim_friction.clone(),
+            bones: ragdoll_pose(mount, model, &mdl_data, &mdl)
+                .unwrap_or_else(|| mdl.bones.iter().map(|b| (b.pos, b.quat)).collect())
+                .into_iter()
+                .zip(&mdl.bones)
+                .map(|((pos, quat), b)| gm_server::BoneInfo {
                     name: b.name.clone(),
                     parent: b.parent,
-                    pos: Vec3::from(b.pos),
-                    quat: glam::Quat::from_array(b.quat),
+                    pos: Vec3::from(pos),
+                    quat: glam::Quat::from_array(quat),
                 })
                 .collect(),
         }

@@ -1,0 +1,17 @@
+{
+ "name": "phys_ragdoll_kleiner",
+ "kind": "ragdoll_drop",
+ "map": "gm_construct",
+ "model": "models/kleiner.mdl",
+ "start": [
+  823.235,
+  -500.0,
+  -40.0
+ ],
+ "angles": [
+  0,
+  0,
+  0
+ ],
+ "ticks": 200
+}

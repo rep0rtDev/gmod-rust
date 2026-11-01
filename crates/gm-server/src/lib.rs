@@ -49,6 +49,16 @@ pub struct RagdollInfo {
     pub collision_pairs: Vec<(u32, u32)>,
     pub total_mass: f32,
     pub bones: Vec<BoneInfo>,
+    pub anim_friction: Option<gm_formats::phy::AnimatedFriction>,
+}
+
+/// A live prop_ragdoll: every bone body (the root is also in `Server::bodies`), the joints
+/// between them and the joint-friction animation running since `spawn_tick`.
+struct RagdollRuntime {
+    bodies: Vec<BodyHandle>,
+    joints: Vec<gm_physics::ConstraintHandle>,
+    spawn_tick: u64,
+    anim_friction: Option<gm_formats::phy::AnimatedFriction>,
 }
 
 #[derive(Clone, Debug)]
@@ -1209,7 +1219,7 @@ pub struct Server<'w> {
     mover: gm_move::Mover<'w>,
     bodies: BTreeMap<u32, BodyHandle>,
     /// prop_ragdoll: every bone body (the root is also in `bodies`) and the joints between them.
-    ragdoll_bodies: BTreeMap<u32, (Vec<BodyHandle>, Vec<gm_physics::ConstraintHandle>)>,
+    ragdoll_bodies: BTreeMap<u32, RagdollRuntime>,
     constraints: BTreeMap<u32, ConstraintHandle>,
     /// NoCollide pairs by sandbox constraint id.
     nocollides: BTreeMap<u32, (BodyHandle, BodyHandle)>,
@@ -3510,7 +3520,15 @@ impl<'w> Server<'w> {
             self.bodies.insert(p.id, root);
         }
         self.sandbox.set_mass(p.id, rd.total_mass.max(1.0));
-        self.ragdoll_bodies.insert(p.id, (bodies, joints));
+        self.ragdoll_bodies.insert(
+            p.id,
+            RagdollRuntime {
+                bodies,
+                joints,
+                spawn_tick: self.tick_count,
+                anim_friction: rd.anim_friction.clone(),
+            },
+        );
     }
 
     /// The tool gun's trace from the player's eye: what a click would hit.
@@ -3894,7 +3912,12 @@ impl<'w> Server<'w> {
             if live.contains(&id) {
                 self.bodies.insert(id, b);
             } else {
-                if let Some((bones, joints)) = self.ragdoll_bodies.remove(&id) {
+                if let Some(RagdollRuntime {
+                    bodies: bones,
+                    joints,
+                    ..
+                }) = self.ragdoll_bodies.remove(&id)
+                {
                     for j in joints {
                         self.physics.remove_constraint(j);
                     }
@@ -4616,6 +4639,7 @@ impl<'w> Server<'w> {
                 self.physics.set_spring_rest(*h, len);
             }
         }
+        self.animate_ragdoll_friction();
         // the physics step after bullets, moves and projectiles: a prop hit by any of them takes
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
         self.physics.step();
@@ -5091,11 +5115,42 @@ impl<'w> Server<'w> {
         self.bodies.get(&prop).map(|b| self.physics.state(*b))
     }
 
+    /// `.phy` `animatedfriction` -> Jolt joint friction torque. Measured on kleiner hung by a
+    /// frozen pelvis (`phys_ragdoll_kleiner_hang`): the head sags from -75 to -3 pitch over 1.5 s;
+    /// 0.15..0.3 track that, 1.0 locks every joint, 0 drops the head in 10 ticks.
+    const RAGDOLL_FRICTION_SCALE: f32 = 0.25;
+
+    /// `.phy` `animatedfriction`: every joint's dry friction ramps `min` -> `max` over
+    /// `time_in` seconds from the spawn, holds `time_hold`, falls back to `min` over `time_out`
+    /// and stays there (a fresh ragdoll lands stiff-legged and only then folds).
+    fn animate_ragdoll_friction(&mut self) {
+        let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        for r in self.ragdoll_bodies.values() {
+            let Some(af) = &r.anim_friction else {
+                continue;
+            };
+            let t = (self.tick_count - r.spawn_tick) as f32 * dt;
+            let s = if t < af.time_in {
+                t / af.time_in.max(1e-6)
+            } else if t < af.time_in + af.time_hold {
+                1.0
+            } else if t < af.time_in + af.time_hold + af.time_out {
+                1.0 - (t - af.time_in - af.time_hold) / af.time_out.max(1e-6)
+            } else {
+                0.0
+            };
+            let f = (af.min + (af.max - af.min) * s) * Self::RAGDOLL_FRICTION_SCALE;
+            for &j in &r.joints {
+                self.physics.set_ragdoll_friction(j, f);
+            }
+        }
+    }
+
     /// A prop_ragdoll's bone bodies and joints (`None` for a plain prop).
     pub fn ragdoll_parts(&self, prop: u32) -> Option<(&[BodyHandle], usize)> {
         self.ragdoll_bodies
             .get(&prop)
-            .map(|(b, j)| (b.as_slice(), j.len()))
+            .map(|r| (r.bodies.as_slice(), r.joints.len()))
     }
 
     pub fn body_of(&self, prop: u32) -> Option<BodyHandle> {

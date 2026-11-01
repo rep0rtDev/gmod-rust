@@ -1115,6 +1115,7 @@ fn run_ours(scn: &Scenario) -> Result<Trace> {
         }
         "move" => run_move(scn)?,
         "phys" => run_phys(scn)?,
+        "ragdoll_drop" => run_ragdoll_drop(scn)?,
         "player" => run_player(scn)?,
         "weapon" => run_weapon(scn)?,
         "fire" => run_fire(scn)?,
@@ -2383,6 +2384,80 @@ struct PhysSetup {
     volume: f32,
     convexes: usize,
     model: String,
+}
+
+/// prop_ragdoll dropped from `start`: every bone body's transform per tick through the server
+fn run_ragdoll_drop(scn: &Scenario) -> Result<Value> {
+    use glam::Vec3;
+    use gm_physics::{Surface, World};
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let map = scn.map.as_deref().unwrap_or("gm_construct");
+    let data = mount.read(&format!("maps/{map}.bsp"))?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+        .into_iter()
+        .map(|h| h.points)
+        .collect();
+    let mut physics = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
+    let world_body = physics.add_static_hulls(
+        &world_hulls,
+        Surface {
+            friction: 0.8,
+            elasticity: 0.25,
+        },
+    )?;
+    let mut server = gm_server::Server::new(&collision, physics, world_body);
+    let m2 = gm_content::Mount::for_install(&inst)?;
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    let model = scn
+        .model
+        .as_deref()
+        .context("ragdoll scenario needs a model")?;
+    let start = Vec3::from(scn.start.context("ragdoll scenario needs a start")?);
+    let ang = scn.angles.clone().unwrap_or_default();
+    let at = |i: usize| ang.get(i).copied().unwrap_or(0.0);
+    let id = server
+        .script_spawn_prop(0, model, start, Vec3::new(at(0), at(1), at(2)), false)
+        .context("ragdoll did not spawn")?;
+    let parts: Vec<_> = server
+        .ragdoll_parts(id)
+        .map(|(b, _)| b.to_vec())
+        .context("model is not a ragdoll")?;
+    if scn.frozen {
+        server.physics.freeze(parts[0]);
+    }
+    let bones: Vec<Value> = parts
+        .iter()
+        .map(|&b| serde_json::json!({ "mass": server.physics.mass(b) }))
+        .collect();
+    let total = scn.ticks.unwrap_or(200);
+    let mut ticks = Vec::with_capacity(total as usize);
+    for t in 0..total {
+        let rows: Vec<Value> = parts
+            .iter()
+            .map(|&b| {
+                let st = server.physics.state(b);
+                serde_json::json!({
+                    "pos": [st.position.x, st.position.y, st.position.z],
+                    "ang": [st.angles.0, st.angles.1, st.angles.2],
+                    "vel": [st.velocity.x, st.velocity.y, st.velocity.z],
+                    "asleep": !st.active,
+                })
+            })
+            .collect();
+        ticks.push(serde_json::json!({ "t": t, "parts": rows }));
+        server.tick(&std::collections::BTreeMap::new());
+    }
+    Ok(serde_json::json!({
+        "start": [start.x, start.y, start.z],
+        "model": model,
+        "bones": bones,
+        "ticks": ticks,
+    }))
 }
 
 fn run_phys(scn: &Scenario) -> Result<Value> {
@@ -6552,6 +6627,65 @@ fn compare_blast(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     ok
 }
 
+/// Every bone body's position per tick within `pos` (units); the worst part and tick are printed.
+fn compare_ragdoll_parts(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
+    let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(4.0) as f32;
+    let v3 = |v: &Value| {
+        let f = |i: usize| v.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        glam::Vec3::new(f(0), f(1), f(2))
+    };
+    let empty = Vec::new();
+    let rows = |v: &Value| -> Vec<Vec<glam::Vec3>> {
+        v.get("ticks")
+            .and_then(Value::as_array)
+            .unwrap_or(&empty)
+            .iter()
+            .map(|t| {
+                t.get("parts")
+                    .and_then(Value::as_array)
+                    .unwrap_or(&empty)
+                    .iter()
+                    .map(|p| v3(&p["pos"]))
+                    .collect()
+            })
+            .collect()
+    };
+    let (a, b) = (rows(theirs), rows(ours));
+    if a.is_empty() || b.is_empty() || a[0].len() != b[0].len() {
+        println!(
+            "    ragdoll: {} vs {} ticks, {} vs {} parts",
+            a.len(),
+            b.len(),
+            a.first().map_or(0, Vec::len),
+            b.first().map_or(0, Vec::len)
+        );
+        return false;
+    }
+    let mut worst = (0.0f32, 0usize, 0usize);
+    let mut first_bad = None;
+    for (t, (ta, tb)) in a.iter().zip(&b).enumerate() {
+        for (i, (pa, pb)) in ta.iter().zip(tb).enumerate() {
+            let e = pa.distance(*pb);
+            if e > worst.0 {
+                worst = (e, t, i);
+            }
+            if e > pos_tol && first_bad.is_none() {
+                first_bad = Some((t, i, e));
+            }
+        }
+    }
+    println!(
+        "    ragdoll: worst part {} at tick {} off by {:.2} u (tol {pos_tol}){}",
+        worst.2,
+        worst.1,
+        worst.0,
+        first_bad.map_or(String::new(), |(t, i, e)| format!(
+            ", first over at tick {t} part {i} ({e:.2})"
+        ))
+    );
+    first_bad.is_none()
+}
+
 fn compare_rigid(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     let first = theirs
         .get("ticks")
@@ -6974,6 +7108,7 @@ fn main() -> Result<()> {
                     "shoot_prop" => compare_shoot_prop(&t.result, &o.result, &h.tolerance),
                     "damage" => compare_damage(&t.result, &o.result, &h.tolerance),
                     "ragdoll" => compare_ragdoll(&t.result, &o.result, &h.tolerance),
+                    "ragdoll_parts" => compare_ragdoll_parts(&t.result, &o.result, &h.tolerance),
                     "net_player" => compare_net_player(&t.result, &o.result, &h.tolerance),
                     "server" => compare_server(&t.result, &o.result, &h.tolerance),
                     "toolgun" => compare_toolgun(&t.result, &o.result, &h.tolerance),

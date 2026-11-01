@@ -241,6 +241,12 @@ void *gmp_add_ragdoll_constraint(void *system, unsigned int parent_id, unsigned 
 	return c;
 }
 
+void gmp_set_ragdoll_friction(void *constraint, float friction) {
+	auto *c = reinterpret_cast<JPH::SixDOFConstraint *>(constraint);
+	using A = JPH::SixDOFConstraintSettings::EAxis;
+	for (int i = 0; i < 3; ++i) c->SetMaxFriction((A)(A::RotationX + i), friction);
+}
+
 void *gmp_add_hinge_constraint(void *system, unsigned int id1, unsigned int id2, float px, float py, float pz,
                                float ax, float ay, float az) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);

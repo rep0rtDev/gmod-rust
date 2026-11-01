@@ -94,6 +94,17 @@ pub struct EditParams {
     pub joint_merge: Vec<String>,
 }
 
+/// `animatedfriction`: joint friction the ragdoll starts with, ramping `min` -> `max` over
+/// `time_in` seconds, holding `time_hold`, then back to `min` over `time_out`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AnimatedFriction {
+    pub min: f32,
+    pub max: f32,
+    pub time_in: f32,
+    pub time_out: f32,
+    pub time_hold: f32,
+}
+
 /// Everything in the text section besides the solids.
 #[derive(Debug, Clone, Default)]
 pub struct TextSection {
@@ -103,6 +114,7 @@ pub struct TextSection {
     /// each other (every other pair of a ragdoll passes through).
     pub collision_pairs: Vec<(u32, u32)>,
     pub edit: EditParams,
+    pub anim_friction: Option<AnimatedFriction>,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +126,7 @@ pub struct Phy {
     pub constraints: Vec<RagdollConstraint>,
     pub collision_pairs: Vec<(u32, u32)>,
     pub edit: EditParams,
+    pub anim_friction: Option<AnimatedFriction>,
     pub text: String,
 }
 
@@ -179,6 +192,7 @@ impl Phy {
             constraints: section.constraints,
             collision_pairs: section.collision_pairs,
             edit: section.edit,
+            anim_friction: section.anim_friction,
             text,
         })
     }
@@ -315,6 +329,16 @@ fn parse_text(text: &str) -> Result<TextSection> {
                     })
                     .collect(),
             };
+            continue;
+        }
+        if node.key.eq_ignore_ascii_case("animatedfriction") {
+            out.anim_friction = Some(AnimatedFriction {
+                min: num("animfrictionmin"),
+                max: num("animfrictionmax"),
+                time_in: num("animfrictiontimein"),
+                time_out: num("animfrictiontimeout"),
+                time_hold: num("animfrictiontimehold"),
+            });
             continue;
         }
         if !node.key.eq_ignore_ascii_case("solid") {
