@@ -3790,10 +3790,15 @@ fn a_stools_ghost_is_drawn_at_the_clients_trace_hit() {
     assert!((pos.x - eye.x).abs() < 0.01 && (pos.y - eye.y).abs() < 0.01);
     assert_eq!(*angles, glam::Vec3::new(0.0, 90.0, 0.0));
     assert!((alpha - 0.4).abs() < 0.001, "102/255: {alpha}");
+    // Looking up: the sky brushes are solid to the trace and the stools' UpdateGhost only
+    // checks `trace.Hit` (wheel.lua:214), so the ghost sits on the skybox ceiling.
+    let up = crt.client_ghost(&cw, "crate_lua", &[], eye, glam::Vec3::Z);
+    let [gm_script::DrawCmd::Model { pos, .. }] = up.as_slice() else {
+        panic!("one ghost on the sky: {up:?}");
+    };
     assert!(
-        crt.client_ghost(&cw, "crate_lua", &[], eye, glam::Vec3::Z)
-            .is_empty(),
-        "nothing above the spawn within reach"
+        (pos.x - eye.x).abs() < 0.01 && (pos.y - eye.y).abs() < 0.01 && pos.z > 9000.0,
+        "sky ceiling straight above the spawn: {pos}"
     );
     assert!(
         crt.client_ghost(&cw, "weld", &[], eye, down).is_empty(),
