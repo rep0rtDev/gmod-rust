@@ -97,6 +97,9 @@ pub struct Voice {
     direct: DirectEffect,
     binaural: BinauralEffect,
     done: bool,
+    /// Gain step per source sample while fading out (0: not fading) and the gain so far.
+    fade: f32,
+    fade_gain: f32,
 }
 
 /// Listener-centric reverb: the parametric reflection effect over the wet sum of the
@@ -234,6 +237,8 @@ impl Engine {
             direct,
             binaural,
             done: false,
+            fade: 0.0,
+            fade_gain: 1.0,
         });
         Ok(())
     }
@@ -242,10 +247,20 @@ impl Engine {
         self.voices.retain(|v| v.id != id);
     }
 
-    /// Stop what plays on an entity's channel (every channel when `channel` is `None`).
-    pub fn stop_channel(&mut self, ent: u32, channel: Option<u8>) {
-        self.voices
-            .retain(|v| !(v.ent == ent && channel.is_none_or(|c| c == v.channel)));
+    /// Stop what plays on an entity's channel (every channel when `channel` is `None`),
+    /// at once or fading out over `fade` seconds (the game's `ChangeVolume(0, t)`).
+    pub fn stop_channel(&mut self, ent: u32, channel: Option<u8>, fade: f32) {
+        let hit = |v: &Voice| v.ent == ent && channel.is_none_or(|c| c == v.channel);
+        if fade <= 0.0 {
+            self.voices.retain(|v| !hit(v));
+            return;
+        }
+        for v in self.voices.iter_mut().filter(|v| hit(v)) {
+            let step = 1.0 / (fade * self.rate as f32 * v.step as f32).max(1.0);
+            if v.fade == 0.0 || step > v.fade {
+                v.fade = step;
+            }
+        }
     }
 
     /// Move a looping voice with its entity.
@@ -438,6 +453,16 @@ impl Voice {
             let f = (self.cursor - i as f64) as f32;
             *m = s[i] * (1.0 - f) + s[i + 1] * f;
             self.cursor += self.step;
+        }
+        if self.fade > 0.0 {
+            for m in mono.iter_mut() {
+                *m *= self.fade_gain;
+                self.fade_gain -= self.fade;
+                if self.fade_gain <= 0.0 {
+                    self.fade_gain = 0.0;
+                    self.done = true;
+                }
+            }
         }
     }
 }

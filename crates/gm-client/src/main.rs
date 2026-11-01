@@ -2879,8 +2879,18 @@ impl App {
                 self.console.log(e);
             }
             for s in std::mem::take(&mut self.sim.client.sounds) {
-                self.sounds
-                    .emit_scaled(&self.mount, &s.name, Some(s.pos), s.volume);
+                if s.stop {
+                    self.sounds.stop_entity(s.ent, s.fade);
+                } else {
+                    self.sounds.play_at(
+                        &self.mount,
+                        &s.name,
+                        Some(s.pos),
+                        s.volume,
+                        s.ent,
+                        s.looping,
+                    );
+                }
             }
         }
     }
@@ -3069,6 +3079,12 @@ impl App {
             }
         }
         let rt = self.sim.interp.render_tick(self.sim.client.world.tick) + alpha.clamp(0.0, 1.0);
+        // looping entity sounds (thrusters) ride along with their interpolated entity
+        for id in self.sounds.following() {
+            if let Some(p) = self.sim.interp.sample(id, rt) {
+                self.sounds.follow(id, p.pos);
+            }
+        }
         let dt = self.last_render.elapsed().as_secs_f32().min(0.1);
         self.last_render = Instant::now();
         let air_since = &mut self.air_since;

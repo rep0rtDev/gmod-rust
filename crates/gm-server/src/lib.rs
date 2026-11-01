@@ -10,7 +10,7 @@ use glam::Vec3;
 use gm_physics::physgun::{Grab, PhysgunParams};
 use gm_physics::{BodyHandle, ConstraintHandle, PropDesc, Surface, World};
 use gm_sandbox::{ConstraintKind, Event, ModelBounds, PropBody, Sandbox, SpawnRequest, ToolHit};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Everything the server needs to know about a model to spawn and trace it.
 pub mod player_models;
@@ -105,13 +105,20 @@ pub const DMG_DIRECT: u32 = 0x1000_0000;
 pub const PROPERTY_IGNITE_SECONDS: f32 = 360.0;
 
 /// A sound the server tells every client to play in the world this tick.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct WorldSound {
     /// Sound script name.
     pub name: String,
     pub pos: Vec3,
     /// Multiplies the script's volume.
     pub volume: f32,
+    /// Owner entity (0: the world); keys channel replacement and position following.
+    pub ent: u32,
+    /// Loop until stopped (`CreateSound` patches: the thruster's).
+    pub looping: bool,
+    /// Stop the entity's sounds instead, fading over `fade` seconds (`ChangeVolume(0, t)`).
+    pub stop: bool,
+    pub fade: f32,
 }
 
 /// Game events of this tick for the addon runtime (`ServerHooks::game_events`), drained by the
@@ -403,6 +410,7 @@ pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
             num("thruster_force", 1500.0, 1.0, 10000.0),
             flag("thruster_toggle", false),
             flag("thruster_collision", false),
+            text("thruster_soundname", "PhysicsCannister.ThrusterLoop"),
             text(
                 "thruster_model",
                 "models/props_phx2/garbage_metalcan001a.mdl",
@@ -1077,6 +1085,8 @@ pub struct Server<'w> {
     models: BTreeMap<String, ModelInfo>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
     sounds: Vec<WorldSound>,
+    /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
+    thruster_loops: BTreeSet<u32>,
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
     pub game_events: Vec<GameEvent>,
@@ -1199,6 +1209,7 @@ impl<'w> Server<'w> {
             nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
             sounds: Vec::new(),
+            thruster_loops: BTreeSet::new(),
             clipboards: BTreeMap::new(),
             hull_planes: BTreeMap::new(),
             events: Vec::new(),
@@ -1526,6 +1537,7 @@ impl<'w> Server<'w> {
             name: "General.BurningObject".to_string(),
             pos,
             volume: 1.0,
+            ..Default::default()
         });
         true
     }
@@ -1575,6 +1587,7 @@ impl<'w> Server<'w> {
                 name,
                 pos,
                 volume: 1.0,
+                ..Default::default()
             });
         }
         self.game_events.push(GameEvent::PropBreak { ent });
@@ -3315,6 +3328,20 @@ impl<'w> Server<'w> {
             .iter()
             .map(|(id, d)| (*id, d.clone()))
             .collect();
+        let gone: Vec<u32> = self
+            .thruster_loops
+            .iter()
+            .filter(|id| !devices.iter().any(|(d, _)| d == *id))
+            .copied()
+            .collect();
+        for id in gone {
+            self.sounds.push(WorldSound {
+                ent: id,
+                stop: true,
+                ..Default::default()
+            });
+            self.thruster_loops.remove(&id);
+        }
         for (id, d) in devices {
             let Some(&body) = self.bodies.get(&id) else {
                 continue;
@@ -3326,8 +3353,32 @@ impl<'w> Server<'w> {
                     mul,
                     on,
                     top_z,
+                    sound,
                     ..
                 } => {
+                    // `Switch(on)`: `StartThrustSound` plays the loop at 0.5 on the
+                    // entity's static channel, `StopThrustSound` fades it out over 0.25 s
+                    let was = self.thruster_loops.contains(&id);
+                    if on && !was && !sound.is_empty() {
+                        self.sounds.push(WorldSound {
+                            name: sound.clone(),
+                            pos: st.position,
+                            volume: 0.5,
+                            ent: id,
+                            looping: true,
+                            ..Default::default()
+                        });
+                        self.thruster_loops.insert(id);
+                    } else if !on && was {
+                        self.sounds.push(WorldSound {
+                            pos: st.position,
+                            ent: id,
+                            stop: true,
+                            fade: 0.25,
+                            ..Default::default()
+                        });
+                        self.thruster_loops.remove(&id);
+                    }
                     if !on || mul == 0.0 {
                         continue;
                     }
@@ -4131,6 +4182,7 @@ impl<'w> Server<'w> {
                         name: name.to_owned(),
                         pos: p.state.origin,
                         volume: 0.5,
+                        ..Default::default()
                     });
                 }
                 let jumped = p.state.boost_pending && !was_airborne;
@@ -4170,6 +4222,7 @@ impl<'w> Server<'w> {
                             name: "Player.FallDamage".to_owned(),
                             pos: p.state.origin,
                             volume: 1.0,
+                            ..Default::default()
                         });
                     }
                     if let Some(step) = p.steps.on_land(-prev_vz) {
@@ -4748,7 +4801,12 @@ impl<'w> Server<'w> {
     }
 
     pub fn play_sound(&mut self, name: String, pos: Vec3, volume: f32) {
-        self.sounds.push(WorldSound { name, pos, volume });
+        self.sounds.push(WorldSound {
+            name,
+            pos,
+            volume,
+            ..Default::default()
+        });
     }
 
     /// The world sounds of the last tick.
@@ -4785,6 +4843,7 @@ impl<'w> Server<'w> {
             name: name.clone(),
             pos: feet,
             volume: step.volume,
+            ..Default::default()
         });
     }
 
@@ -4965,6 +5024,7 @@ impl<'w> Server<'w> {
                     name,
                     pos: imp.point,
                     volume,
+                    ..Default::default()
                 });
             }
         }

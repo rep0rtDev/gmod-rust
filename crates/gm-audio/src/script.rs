@@ -13,6 +13,22 @@ pub struct Entry {
     pub pitch: (f32, f32),
     /// Sound level in dB; 0 means no attenuation with distance.
     pub level: f32,
+    /// `CHAN_*`: 0 auto, 1 weapon, 2 voice, 3 item, 4 body, 5 stream, 6 static. A sound on
+    /// a non-auto channel replaces what its entity plays on that channel.
+    pub channel: u8,
+}
+
+/// `CHAN_AUTO` .. `CHAN_STATIC` by name (the SDK's numbering), auto for anything else.
+pub fn parse_channel(v: &str) -> u8 {
+    match v.trim().to_ascii_uppercase().as_str() {
+        "CHAN_WEAPON" => 1,
+        "CHAN_VOICE" => 2,
+        "CHAN_ITEM" => 3,
+        "CHAN_BODY" => 4,
+        "CHAN_STREAM" => 5,
+        "CHAN_STATIC" => 6,
+        _ => 0,
+    }
 }
 
 impl Default for Entry {
@@ -22,6 +38,7 @@ impl Default for Entry {
             volume: (1.0, 1.0),
             pitch: (100.0, 100.0),
             level: SNDLVL_NORM,
+            channel: 0,
         }
     }
 }
@@ -105,6 +122,7 @@ fn entry(node: &Node) -> Option<Entry> {
             ("volume", Value::Str(v)) => e.volume = parse_range(v, 1.0),
             ("pitch", Value::Str(v)) => e.pitch = parse_range(v, 100.0),
             ("soundlevel", Value::Str(v)) => e.level = parse_level(v).unwrap_or(SNDLVL_NORM),
+            ("channel", Value::Str(v)) => e.channel = parse_channel(v),
             _ => {}
         }
     }

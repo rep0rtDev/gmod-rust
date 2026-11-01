@@ -72,7 +72,7 @@ pub fn distance_gain(level: f32, dist: f32) -> f32 {
 pub enum Cmd {
     Play(u32, Play),
     Stop(u32),
-    StopChannel(u32, Option<u8>),
+    StopChannel(u32, Option<u8>, f32),
     Move(u32, Vec3),
     Listener(Listener),
     Master(f32),
@@ -88,7 +88,7 @@ fn apply(engine: &mut Engine, cmd: Cmd) {
             }
         }
         Cmd::Stop(id) => engine.stop(id),
-        Cmd::StopChannel(ent, ch) => engine.stop_channel(ent, ch),
+        Cmd::StopChannel(ent, ch, fade) => engine.stop_channel(ent, ch, fade),
         Cmd::Move(id, p) => engine.set_position(id, p),
         Cmd::Listener(l) => engine.listener = l,
         Cmd::Master(m) => engine.master = m.clamp(0.0, 1.0),
@@ -359,8 +359,9 @@ impl Mixer {
         let _ = self.tx.send(Cmd::Stop(id));
     }
 
-    pub fn stop_channel(&self, ent: u32, channel: Option<u8>) {
-        let _ = self.tx.send(Cmd::StopChannel(ent, channel));
+    /// Stop an entity's channel (all of them for `None`), fading out over `fade` seconds.
+    pub fn stop_channel(&self, ent: u32, channel: Option<u8>, fade: f32) {
+        let _ = self.tx.send(Cmd::StopChannel(ent, channel, fade));
     }
 
     pub fn move_voice(&self, id: u32, position: Vec3) {
@@ -592,8 +593,25 @@ mod tests {
         m.play(p);
         m.render(FRAME);
         assert_eq!(m.voices(), 1, "same entity + channel replaces");
-        m.stop_channel(7, None);
+        m.stop_channel(7, None, 0.0);
         m.render(FRAME);
         assert_eq!(m.voices(), 0);
+    }
+
+    #[test]
+    fn a_fade_out_takes_its_time() {
+        let mut m = Mixer::offline(48000).unwrap();
+        let mut p = play(tone(48000, 0.01), None);
+        p.looping = true;
+        p.ent = 3;
+        p.channel = 6;
+        m.play(p);
+        m.render(FRAME);
+        m.stop_channel(3, Some(6), 0.1); // 4800 samples: 9.4 frames
+        let early = peak(&m.render(FRAME * 2), 0);
+        let late = peak(&m.render(FRAME * 6), 0);
+        assert!(early > 0.2 && late < early && late > 0.0, "{early} {late}");
+        m.render(FRAME * 3);
+        assert_eq!(m.voices(), 0, "gone after the fade");
     }
 }

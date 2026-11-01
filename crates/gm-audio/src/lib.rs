@@ -67,6 +67,8 @@ pub struct Sounds {
     pub scripts: Scripts,
     cache: HashMap<String, Option<Arc<Pcm>>>,
     rng: Rng,
+    /// Voice ids of entity sounds by (entity, channel), for stops and following.
+    tracked: HashMap<(u32, u8), u32>,
 }
 
 /// The game's soundscripts, without a device: the manifest's files (GMod's lists its own
@@ -104,6 +106,7 @@ impl Sounds {
             scripts,
             cache: HashMap::new(),
             rng: Rng::new(),
+            tracked: HashMap::new(),
         }
     }
 
@@ -159,26 +162,71 @@ impl Sounds {
         position: Option<Vec3>,
         scale: f32,
     ) -> bool {
+        self.play_at(mount, name, position, scale, 0, false)
+    }
+
+    /// A script entry on entity `ent` (0: the world): the entry's channel keys replacement
+    /// on that entity, a loop plays until [`Sounds::stop_entity`] and follows the entity
+    /// through [`Sounds::follow`].
+    pub fn play_at(
+        &mut self,
+        mount: &gm_content::Mount,
+        name: &str,
+        position: Option<Vec3>,
+        scale: f32,
+        ent: u32,
+        looping: bool,
+    ) -> bool {
         let Some(e) = self.scripts.get(name).cloned() else {
             return false;
         };
+        if e.waves.is_empty() {
+            return false;
+        }
         let wave = &e.waves[(self.rng.next() % e.waves.len() as u64) as usize];
         let Some(pcm) = self.wave(mount, wave) else {
             return false;
         };
         let volume = self.rng.range(e.volume) * scale;
         let pitch = self.rng.range(e.pitch);
-        self.mixer.play(Play {
+        let channel = e.channel;
+        let id = self.mixer.play(Play {
             pcm,
             volume,
             pitch,
             position,
             level: e.level,
-            looping: false,
-            ent: 0,
-            channel: 0,
+            looping,
+            ent,
+            channel,
         });
+        if ent != 0 && (looping || channel != 0) {
+            self.tracked.insert((ent, channel), id);
+        }
         true
+    }
+
+    /// Stop everything `ent` plays, fading out over `fade` seconds.
+    pub fn stop_entity(&mut self, ent: u32, fade: f32) {
+        self.mixer.stop_channel(ent, None, fade);
+        self.tracked.retain(|(e, _), _| *e != ent);
+    }
+
+    /// Entities with tracked (looping or channelled) sounds, for [`Sounds::follow`].
+    pub fn following(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.tracked.keys().map(|(e, _)| *e).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    /// Move an entity's tracked sounds with it.
+    pub fn follow(&mut self, ent: u32, position: Vec3) {
+        for (&(e, _), &id) in &self.tracked {
+            if e == ent {
+                self.mixer.move_voice(id, position);
+            }
+        }
     }
 }
 

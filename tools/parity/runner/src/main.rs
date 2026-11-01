@@ -482,6 +482,7 @@ impl DeviceSpec {
             "thruster" => gm_sandbox::Device::Thruster {
                 force: self.force.unwrap_or(1500.0),
                 mul: 0.0,
+                sound: String::new(),
                 toggle: self.toggle,
                 on: false,
                 top_z,

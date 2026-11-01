@@ -35,6 +35,8 @@ pub enum SavedDeviceKind {
         bottom_z: f32,
         key: i32,
         key_back: i32,
+        #[serde(default)]
+        sound: String,
     },
     Hoverball {
         target_z: f32,
@@ -83,6 +85,7 @@ impl From<&Device> for SavedDeviceKind {
                 bottom_z,
                 key,
                 key_back,
+                sound,
                 ..
             } => SavedDeviceKind::Thruster {
                 force,
@@ -90,6 +93,7 @@ impl From<&Device> for SavedDeviceKind {
                 toggle,
                 top_z,
                 bottom_z,
+                sound,
                 key,
                 key_back,
             },
@@ -162,10 +166,12 @@ impl SavedDeviceKind {
                 bottom_z,
                 key,
                 key_back,
+                sound,
             } => (
                 Device::Thruster {
                     force,
                     mul,
+                    sound,
                     toggle,
                     on: mul != 0.0,
                     top_z,

@@ -522,6 +522,8 @@ pub struct ToolSettings {
     pub thruster_key_back: i32,
     pub thruster_toggle: bool,
     pub thruster_collision: bool,
+    /// Soundscript of the loop while thrusting; one of [`THRUSTER_SOUNDS`] or nothing.
+    pub thruster_soundname: String,
     pub hoverball_key_up: i32,
     pub hoverball_key_down: i32,
     pub hoverball_key_on: i32,
@@ -588,7 +590,8 @@ impl ToolSettings {
             pulley_rigid, thruster_toggle, thruster_collision, wheel_nocollide, wheel_toggle,
             button_toggle, dynamite_remove;
             rope_material, slider_material, elastic_material, hydraulic_material, winch_material,
-            muscle_material, pulley_material, thruster_model, hoverball_model, balloon_model,
+            muscle_material, pulley_material, thruster_model, thruster_soundname, hoverball_model,
+            balloon_model,
             wheel_model, button_model, dynamite_model;
             hydraulic_key, winch_fwd_key, winch_bwd_key, muscle_key, thruster_key,
             thruster_key_back, hoverball_key_up, hoverball_key_down, hoverball_key_on, wheel_fwd,
@@ -652,6 +655,7 @@ impl Default for ToolSettings {
             thruster_key: 45,
             thruster_key_back: 42,
             thruster_toggle: false,
+            thruster_soundname: "PhysicsCannister.ThrusterLoop".into(),
             thruster_collision: false,
             hoverball_key_up: 46,
             hoverball_key_down: 43,
@@ -831,6 +835,21 @@ pub struct Sandbox {
     blasts: Vec<(Vec3, f32, u32)>,
 }
 
+/// The thruster tool's sound list (`ThrusterSounds`); `StartThrustSound` ignores any other
+/// name, so an unlisted setting means a silent thruster.
+pub const THRUSTER_SOUNDS: [&str; 10] = [
+    "PhysicsCannister.ThrusterLoop",
+    "WeaponDissolve.Charge",
+    "WeaponDissolve.Beam",
+    "eli_lab.elevator_move",
+    "combine.sheild_loop",
+    "k_lab.ringsrotating",
+    "k_lab.teleport_rings_high",
+    "k_lab2.DropshipRotorLoop",
+    "Town.d1_town_01_spin_loop",
+    "",
+];
+
 /// A powered stool entity riding on an ordinary prop: `gmod_thruster`, `gmod_hoverball`,
 /// `gmod_balloon` (the game's SENTs with a motion controller).
 #[derive(Clone, Debug, PartialEq)]
@@ -841,6 +860,8 @@ pub enum Device {
         force: f32,
         /// `Multiply`: +1 forward, -1 back, their sum while both keys are held; a toggle flips.
         mul: f32,
+        /// Loop soundscript while on (empty: silent).
+        sound: String,
         toggle: bool,
         on: bool,
         top_z: f32,
@@ -1903,6 +1924,11 @@ impl Sandbox {
                 Device::Thruster {
                     force: s.thruster_force.clamp(0.0, 1e10),
                     mul: 0.0,
+                    sound: if THRUSTER_SOUNDS.contains(&s.thruster_soundname.as_str()) {
+                        s.thruster_soundname.clone()
+                    } else {
+                        String::new()
+                    },
                     toggle: s.thruster_toggle,
                     on: false,
                     top_z: shape.max.z,

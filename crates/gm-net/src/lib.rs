@@ -147,6 +147,10 @@ mod tests {
                 name: "Wood_Crate.ImpactHard".into(),
                 pos: Vec3::new(760.5, -491.25, -123.5),
                 volume: 0.0381,
+                ent: 12,
+                looping: true,
+                stop: false,
+                fade: 0.25,
             }],
         };
         let mut w = Writer::default();

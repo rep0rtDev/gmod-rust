@@ -387,6 +387,13 @@ pub struct SoundEvent {
     pub name: String,
     pub pos: Vec3,
     pub volume: f32,
+    /// Owner entity (0: the world); the client follows it and keys channel replacement by it.
+    pub ent: u32,
+    /// Loop until stopped (the game's `CreateSound` patches).
+    pub looping: bool,
+    /// Stop what `ent` plays instead of starting `name`, fading out over `fade` seconds.
+    pub stop: bool,
+    pub fade: f32,
 }
 
 /// A published addon package: identity is the sha256 of the `.gmr` bytes.
@@ -410,7 +417,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 1;
+pub const PROTOCOL: u16 = 2;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1075,6 +1082,9 @@ impl ServerMsg {
                     w.str(&s.name);
                     w.vec3(s.pos);
                     w.f32(s.volume);
+                    w.varint(s.ent as u64);
+                    w.u8(u8::from(s.looping) | (u8::from(s.stop) << 1));
+                    w.f32(s.fade);
                 }
             }
         }
@@ -1242,10 +1252,20 @@ impl ServerMsg {
                 let n = r.varint()?.min(1024) as usize;
                 let mut list = Vec::with_capacity(n);
                 for _ in 0..n {
+                    let name = r.str()?;
+                    let pos = r.vec3()?;
+                    let volume = r.f32()?;
+                    let ent = r.varint()? as u32;
+                    let flags = r.u8()?;
+                    let fade = r.f32()?;
                     list.push(SoundEvent {
-                        name: r.str()?,
-                        pos: r.vec3()?,
-                        volume: r.f32()?,
+                        name,
+                        pos,
+                        volume,
+                        ent,
+                        looping: flags & 1 != 0,
+                        stop: flags & 2 != 0,
+                        fade,
                     });
                 }
                 ServerMsg::Sounds { tick, list }

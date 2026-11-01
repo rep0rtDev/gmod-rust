@@ -663,6 +663,10 @@ impl ServerNet {
                 name: s.name,
                 pos: s.pos,
                 volume: s.volume,
+                ent: s.ent,
+                looping: s.looping,
+                stop: s.stop,
+                fade: s.fade,
             }));
         let events = std::mem::take(&mut server.game_events);
         for e in &events {

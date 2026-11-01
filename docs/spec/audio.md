@@ -143,6 +143,17 @@ is the data: scripts, waves, levels, pitches, channels, cue loops.
 - Under water (the game's `dsp_water`, preset 14, when the eyes are in `CONTENTS_WATER`):
   a one-pole low-pass at 900 Hz over the whole mix; the client checks the camera's point
   contents every frame.
+- Entity sounds over the wire (`ServerMsg::Sounds`, protocol 2): name, position, volume
+  factor, owner entity, loop flag, or a stop with a fade time. The client plays an entry on
+  its script `channel` (`CHAN_*`, parsed from the soundscripts); a sound on a non-auto
+  channel of the same entity replaces the one there, loops and channelled sounds are
+  tracked per (entity, channel) and moved with the interpolated entity every frame. A stop
+  fades the entity's voices out over the given seconds (the game's `ChangeVolume(0, t)`).
+- Thruster (`gmod_thruster`, from its Lua): `Switch(on)` starts the loop of the tool's
+  `soundname` (default `PhysicsCannister.ThrusterLoop`, `CHAN_STATIC`, 100 dB) at volume
+  0.5, pitch 100, on the thruster entity; `Switch(off)` fades it to silence over 0.25 s. A
+  name outside the tool's `ThrusterSounds` list is silent, as `StartThrustSound` ignores
+  it. Removing the thruster stops the loop. Saves keep the sound name.
 - Not yet: soundscapes (`playlooping` / `playrandom` ambience), dynamic occluders
   (props), doppler (the game has none either). Nodraw faces are not in the face lump, so
   a wall whose only face is nodraw does not occlude.
