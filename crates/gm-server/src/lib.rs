@@ -4481,6 +4481,25 @@ impl<'w> Server<'w> {
                 hulls,
             });
         }
+        // NPCs: the hull box (the game's trace hits their bounding box)
+        for (&id, n) in &self.npcs {
+            let (mins, maxs) = (n.mins, n.maxs);
+            let hull = vec![
+                (Vec3::X, maxs.x),
+                (Vec3::NEG_X, -mins.x),
+                (Vec3::Y, maxs.y),
+                (Vec3::NEG_Y, -mins.y),
+                (Vec3::Z, maxs.z),
+                (Vec3::NEG_Z, -mins.z),
+            ];
+            out.push(PropBody {
+                id,
+                bone: 0,
+                pos: n.pos,
+                angles: Vec3::new(0.0, n.angles.y, 0.0),
+                hulls: vec![hull],
+            });
+        }
         out
     }
 
@@ -5256,6 +5275,11 @@ impl<'w> Server<'w> {
         let Some(root) = hit.ent else {
             return false;
         };
+        if self.npcs.contains_key(&root) {
+            // measured `server_duplicator_npc`: the game's duplicator refuses an NPC (left
+            // click false, nothing on the clipboard)
+            return false;
+        }
         let props = self.sandbox.props();
         let Some(anchor) = props.iter().find(|p| p.id == root) else {
             return false;

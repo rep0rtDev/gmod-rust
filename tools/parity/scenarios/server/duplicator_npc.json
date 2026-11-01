@@ -1,0 +1,71 @@
+{
+ "name": "server_duplicator_npc",
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "ops": [
+  {
+   "op": "spawnnpc",
+   "class": "npc_kleiner",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "pitch": 20.0,
+   "yaw": 0.0,
+   "wait": 10
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 25.0,
+   "yaw": 40.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 30
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 25.0,
+   "yaw": -40.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 30
+  },
+  {
+   "op": "undo",
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  }
+ ]
+}

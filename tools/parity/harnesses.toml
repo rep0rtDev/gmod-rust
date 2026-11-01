@@ -3756,6 +3756,16 @@ crates = ["gm-sandbox", "gm-collision"]
 pos = 0.1
 
 [[harness]]
+name = "server_duplicator_npc"
+scenario = "server/duplicator_npc"
+compare = "server"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
 name = "toolgun_trails"
 scenario = "toolgun/trails"
 compare = "toolgun"
