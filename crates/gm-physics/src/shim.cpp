@@ -208,6 +208,39 @@ void gmp_rope_predict(void *system, float dt) {
 }
 
 // hinge (phys_hinge): world space point and axis in Jolt metres/axes
+// ragdoll joint (a .phy `ragdollconstraint`): the child pinned to the parent at `p`, rotation
+// about the child's frame axes limited per axis (radians, pyramid swing), with dry friction
+void *gmp_add_ragdoll_constraint(void *system, unsigned int parent_id, unsigned int child_id, float px, float py,
+                                 float pz, float qx, float qy, float qz, float qw, const float *limits,
+                                 const float *friction) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyID ids[2] = { JPH::BodyID(parent_id), JPH::BodyID(child_id) };
+	JPH::BodyLockMultiWrite lock(sys->GetBodyLockInterface(), ids, 2);
+	JPH::Body *a = lock.GetBody(0), *b = lock.GetBody(1);
+	if (!a || !b) return nullptr;
+	JPH::SixDOFConstraintSettings s;
+	s.mSpace = JPH::EConstraintSpace::WorldSpace;
+	s.mPosition1 = s.mPosition2 = JPH::RVec3(px, py, pz);
+	JPH::Quat q = JPH::Quat(qx, qy, qz, qw).Normalized();
+	s.mAxisX1 = s.mAxisX2 = q.RotateAxisX();
+	s.mAxisY1 = s.mAxisY2 = q.RotateAxisY();
+	s.mSwingType = JPH::ESwingType::Pyramid;
+	using A = JPH::SixDOFConstraintSettings::EAxis;
+	for (int i = 0; i < 3; ++i) s.MakeFixedAxis((A)i);
+	for (int i = 0; i < 3; ++i) {
+		float lo = limits[2 * i], hi = limits[2 * i + 1];
+		if (hi <= lo) {
+			s.MakeFixedAxis((A)(A::RotationX + i));
+		} else {
+			s.SetLimitedAxis((A)(A::RotationX + i), lo, hi);
+		}
+		s.mMaxFriction[A::RotationX + i] = friction[i];
+	}
+	JPH::Constraint *c = s.Create(*a, *b);
+	sys->AddConstraint(c);
+	return c;
+}
+
 void *gmp_add_hinge_constraint(void *system, unsigned int id1, unsigned int id2, float px, float py, float pz,
                                float ax, float ay, float az) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);

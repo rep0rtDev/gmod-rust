@@ -85,6 +85,20 @@ extern "C" {
     ) -> *mut std::ffi::c_void;
     fn gmp_rope_predict(system: *mut JPC_PhysicsSystem, dt: f32);
     fn gmp_rope_clear(system: *mut JPC_PhysicsSystem);
+    fn gmp_add_ragdoll_constraint(
+        system: *mut JPC_PhysicsSystem,
+        parent_id: u32,
+        child_id: u32,
+        px: f32,
+        py: f32,
+        pz: f32,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+        qw: f32,
+        limits: *const f32,
+        friction: *const f32,
+    ) -> *mut std::ffi::c_void;
     fn gmp_add_hinge_constraint(
         system: *mut JPC_PhysicsSystem,
         id1: u32,
@@ -1289,6 +1303,46 @@ impl World {
         (!c.is_null()).then_some(ConstraintHandle(c))
     }
 
+    /// A `.phy` `ragdollconstraint`: `child` pinned to `parent` at `pivot` (Source units), free to
+    /// turn about the axes of `frame` (the child's world rotation) within `limits_deg`
+    /// (`[[xmin, xmax], [ymin, ymax], [zmin, zmax]]` in Source's frame) against `friction`.
+    pub fn ragdoll_joint(
+        &mut self,
+        parent: BodyHandle,
+        child: BodyHandle,
+        pivot: Vec3,
+        frame: Quat,
+        limits_deg: [[f32; 2]; 3],
+        friction: [f32; 3],
+    ) -> Option<ConstraintHandle> {
+        let p = to_jolt(pivot);
+        let q = quat_to_jolt(frame);
+        // Source x -> Jolt x, Source z -> Jolt y, Source y -> Jolt -z (limits flip sign)
+        let [lx, ly, lz] = limits_deg;
+        let limits: [f32; 6] = [lx[0], lx[1], lz[0], lz[1], -ly[1], -ly[0]].map(f32::to_radians);
+        let fr = [friction[0], friction[2], friction[1]];
+        let c = unsafe {
+            gmp_add_ragdoll_constraint(
+                self.system.as_raw(),
+                parent.0,
+                child.0,
+                p.x,
+                p.y,
+                p.z,
+                q.x,
+                q.y,
+                q.z,
+                q.w,
+                limits.as_ptr(),
+                fr.as_ptr(),
+            )
+        };
+        if !c.is_null() {
+            self.pivot_joints.push((parent.0, child.0));
+        }
+        (!c.is_null()).then_some(ConstraintHandle(c))
+    }
+
     /// `PhysObj:SetVelocity` + `AddAngleVelocity`: Source units per second and body-local
     /// degrees per second.
     pub fn set_velocity(&mut self, body: BodyHandle, velocity: Vec3, angular: Vec3) {
@@ -1620,6 +1674,52 @@ mod tests {
             assert!((gmp_get_speculative_distance(raw) - speculative_contact_m()).abs() < 1e-6);
             assert!((gmp_get_penetration_slop(raw) - PENETRATION_SLOP_M).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn ragdoll_joint_pins_and_limits() {
+        let hang = |limit: f32| {
+            let mut w = World::new(600.0, 0.015, 1);
+            let hull = box_hull(Vec3::ZERO, Vec3::splat(10.0));
+            let desc = |x: f32| PropDesc {
+                hulls: std::slice::from_ref(&hull),
+                mass: 5.0,
+                volume: 8000.0,
+                position: Vec3::new(x, 0.0, 0.0),
+                angles: (0.0, 0.0, 0.0),
+                velocity: Vec3::ZERO,
+                angular_velocity: Vec3::ZERO,
+                surface: Surface::default(),
+                linear_damping: 0.0,
+                angular_damping: 0.0,
+                drag_axis_areas: Vec3::ONE,
+                inertia: None,
+                mass_center: None,
+            };
+            let parent = w.add_prop(&desc(0.0)).unwrap();
+            w.freeze(parent);
+            let child = w.add_prop(&desc(40.0)).unwrap();
+            w.set_pair_collision(parent, child, false);
+            let pivot = Vec3::new(20.0, 0.0, 0.0);
+            let lim = [[-limit, limit]; 3];
+            assert!(w
+                .ragdoll_joint(parent, child, pivot, Quat::IDENTITY, lim, [0.0; 3])
+                .is_some());
+            w.optimize();
+            for _ in 0..200 {
+                w.step();
+            }
+            let c = w.state(child).position;
+            (c, c.distance(pivot))
+        };
+        // the pin holds at 20 units; a 10 degree cone lets the child sag by at most ~3.5 units
+        let (c, d) = hang(10.0);
+        assert!((d - 20.0).abs() < 1.0, "pinned {d}");
+        assert!(c.z < -1.0 && c.z > -5.0, "limited sag {c}");
+        // wide limits: it hangs straight down
+        let (c, d) = hang(170.0);
+        assert!((d - 20.0).abs() < 1.5, "pinned {d}");
+        assert!(c.z < -17.0, "hangs {c}");
     }
 
     #[test]
