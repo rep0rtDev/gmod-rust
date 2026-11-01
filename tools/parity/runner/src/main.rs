@@ -2921,51 +2921,10 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
 
 /// Loads what `gm-server` needs to spawn and trace a model: MDL hull box, PHY convexes and
 /// physics properties.
+/// Model metadata exactly as the dedicated server loads it (hulls, prop data, ragdoll solids
+/// and joints), so server-kind scenarios see ragdoll models as prop_ragdolls.
 fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::ModelInfo> {
-    use glam::Vec3;
-    let mdl = gm_formats::mdl::Mdl::parse(&mount.read(model)?)?;
-    let phy_path = model
-        .strip_suffix(".mdl")
-        .map(|m| format!("{m}.phy"))
-        .unwrap_or_else(|| model.to_string());
-    let phy = gm_formats::phy::Phy::parse(&mount.read(&phy_path)?)?;
-    let solid = phy.solids.first().context("PHY has no solids")?;
-    let props = phy.props.first().cloned().unwrap_or_default();
-    let table = gm_physics::surface::SurfaceTable::parse(&[&String::from_utf8_lossy(
-        &mount.read("scripts/surfaceproperties.txt")?,
-    )]);
-    let sp = table.get(&props.surfaceprop);
-    Ok(gm_server::ModelInfo {
-        bounds: gm_sandbox::ModelBounds {
-            min: Vec3::from(mdl.header.hull_min),
-            max: Vec3::from(mdl.header.hull_max),
-        },
-        hulls: solid
-            .convexes
-            .iter()
-            .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
-            .collect(),
-        hull_planes: model_hull_planes(mount, model)?,
-        mass_center: Vec3::from(solid.mass_center),
-        mass: if props.mass > 0.0 { props.mass } else { 1.0 },
-        volume: props.volume,
-        surfaceprop: String::new(),
-        surface: gm_physics::Surface {
-            friction: sp.friction,
-            elasticity: sp.elasticity,
-        },
-        linear_damping: props.damping,
-        angular_damping: props.rotdamping,
-        drag_axis_areas: Vec3::from(solid.drag_axis_areas),
-        inertia: Some(Vec3::from(solid.rotation_inertia)),
-        impact_hard: table.sound(&props.surfaceprop, "impacthard"),
-        scrape_rough: table.sound(&props.surfaceprop, "scraperough"),
-        prop_data: gm_dedicated::prop_data(mount, &mdl.key_values),
-        ragdoll: None,
-        break_sound: table.sound(&props.surfaceprop, "break"),
-        skins: 1,
-        body_groups: Vec::new(),
-    })
+    gm_dedicated::model_info(mount, model)
 }
 
 /// A bot's life cycle through the server loop: spawned, killed at the scenario's ticks,
@@ -4350,6 +4309,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         json!({
             "props": sb.props().iter().filter(|p| all_props || p.owner == player).map(|p| json!({
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen,
+                "bone_scales": server.bone_scales(p.id).iter().map(|(b, s)| json!({ "bone": b, "s": [s.x, s.y, s.z] })).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
             "count": sb.count(player),
             "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "n": u.entities.len() })).collect::<Vec<_>>(),
@@ -4377,7 +4337,11 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 let ret = match op.button.as_deref() {
                     Some("reload") => {
                         let hit = server.tool_hit(player);
-                        server.sandbox.tool_reload(player, &tool, hit.as_ref())
+                        if tool == "inflator" {
+                            hit.as_ref().is_some_and(|h| server.inflator_reload(h))
+                        } else {
+                            server.sandbox.tool_reload(player, &tool, hit.as_ref())
+                        }
                     }
                     b => match server.tool_click_full(player, &tool, b == Some("right")) {
                         gm_server::ToolClick::Done(r) => r,
@@ -5485,6 +5449,33 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     k + 1,
                     v3(&a["pos"]),
                     v3(&b["pos"])
+                );
+                ok = false;
+            }
+            // stool answers, when the recording has them (toolgun-recorded server harnesses)
+            if let (Some(tr_ret), Some(ou_ret)) = (ta.get("ret"), oa.get("ret")) {
+                if tr_ret != ou_ret {
+                    println!("  op {i}: ret {tr_ret} vs {ou_ret}");
+                    ok = false;
+                }
+            }
+            // inflator: manipulated bone scales, exact to 1e-3
+            let (ta_s, oa_s) = (
+                a["bone_scales"].as_array().cloned().unwrap_or_default(),
+                b["bone_scales"].as_array().cloned().unwrap_or_default(),
+            );
+            let same = ta_s.len() == oa_s.len()
+                && ta_s.iter().zip(&oa_s).all(|(x, y)| {
+                    x["bone"] == y["bone"] && (v3(&x["s"]) - v3(&y["s"])).abs().max_element() < 1e-3
+                });
+            if !same {
+                println!(
+                    "  op {i}: prop {} bone scales {} vs {} entries ({:?} vs {:?})",
+                    k + 1,
+                    ta_s.len(),
+                    oa_s.len(),
+                    ta_s.first(),
+                    oa_s.first()
                 );
                 ok = false;
             }

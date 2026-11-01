@@ -2591,6 +2591,7 @@ impl Sandbox {
                 | "emitter"
                 | "camera"
                 | "leafblower"
+                | "inflator"
                 | "duplicator"
                 | "ballsocket"
                 | "slider"

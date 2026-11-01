@@ -32,7 +32,7 @@ local function findFlat(dir, namePattern, searchPath)
 end
 
 local SCENARIOS = {}
-local ASYNC = { move = true, phys = true, ragdoll_drop = true, physgun = true, constraint = true }
+local ASYNC = { move = true, phys = true, ragdoll_drop = true, physgun = true, constraint = true, server = true }
 
 -- { kind = "file_find", globs = { "models/props_c17/*.mdl", "materials/**/*.vmt" }, search = "GAME" }
 SCENARIOS.file_find = function(scn)
@@ -817,12 +817,19 @@ SCENARIOS.sandbox = function(scn, done)
 	bot:SetHealth(100)
 	bot:SetPos(Vector(scn.start[1], scn.start[2], scn.start[3]))
 	bot:SetLocalVelocity(Vector(0, 0, 0))
+	-- a fresh bot wanders a few frames: pin it at `start` for the run
+	local pin = Vector(scn.start[1], scn.start[2], scn.start[3])
+	hook.Add("SetupMove", "parity_sandbox_pin", function(ply, mv)
+		if ply ~= bot then return end
+		mv:SetOrigin(pin)
+		mv:SetVelocity(Vector(0, 0, 0))
+	end)
 	for _, e in ipairs(ents.FindByClass("prop_physics")) do e:Remove() end
 	undo.GetTable()[bot:UniqueID()] = nil
 	-- props that are already on the table (not the bot's): spawn targets
 	local placed = {}
 	for i, pr in ipairs(scn.props or {}) do
-		local ent = ents.Create("prop_physics")
+		local ent = ents.Create(util.IsValidRagdoll(pr.model) and "prop_ragdoll" or "prop_physics")
 		ent:SetModel(pr.model)
 		ent:SetPos(Vector(pr.pos[1], pr.pos[2], pr.pos[3]))
 		ent:SetAngles(Angle(pr.angles and pr.angles[1] or 0, pr.angles and pr.angles[2] or 0, pr.angles and pr.angles[3] or 0))
@@ -839,13 +846,21 @@ SCENARIOS.sandbox = function(scn, done)
 	meta.LimitHit = function(ply, str) if ply == bot then messages[#messages + 1] = { t = engine.TickCount(), limit = str } end return oldLimitHit(ply, str) end
 	local function snapshot()
 		local props = {}
-		for _, e in ipairs(ents.FindByClass("prop_physics")) do
-			if e:GetCreator() == bot then
+		for _, e in ipairs(table.Add(ents.FindByClass("prop_physics"), ents.FindByClass("prop_ragdoll"))) do
+			if e:GetCreator() == bot or e:GetClass() == "prop_ragdoll" then
 				local ph = e:GetPhysicsObject()
 				local p, a = e:GetPos(), e:GetAngles()
-				props[#props + 1] = { id = e:EntIndex(), model = e:GetModel(), pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r },
+				local row = { id = e:EntIndex(), model = e:GetModel(), pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r },
 					frozen = IsValid(ph) and not ph:IsMotionEnabled() or false, asleep = IsValid(ph) and ph:IsAsleep() or false,
 					obb_mins = { e:OBBMins().x, e:OBBMins().y, e:OBBMins().z }, obb_maxs = { e:OBBMaxs().x, e:OBBMaxs().y, e:OBBMaxs().z } }
+				if e:GetClass() == "prop_ragdoll" then
+					row.bone_scales = {}
+					for b = 0, e:GetBoneCount() - 1 do
+						local sc = e:GetManipulateBoneScale(b)
+						if sc ~= Vector(1, 1, 1) then row.bone_scales[#row.bone_scales + 1] = { bone = b, s = { sc.x, sc.y, sc.z } } end
+					end
+				end
+				props[#props + 1] = row
 			end
 		end
 		table.sort(props, function(a, b) return a.id < b.id end)
@@ -863,6 +878,7 @@ SCENARIOS.sandbox = function(scn, done)
 			meta.SendLua, meta.LimitHit = oldSendLua, oldLimitHit
 			local pl = {}
 			for i, pe in ipairs(placed) do if IsValid(pe) then local p, a = pe:GetPos(), pe:GetAngles() pl[i] = { pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r } } end end
+			hook.Remove("SetupMove", "parity_sandbox_pin")
 			done({ results = results, messages = messages, placed = pl, eye = { bot:GetShootPos().x, bot:GetShootPos().y, bot:GetShootPos().z } })
 			return
 		end
@@ -904,6 +920,9 @@ ASYNC.sandbox = true
 -- after every op the constraints (their ctable), props, undo stack, counts and messages are recorded.
 -- { kind = "toolgun", start = {x,y,z}, props = { {model=..., pos={...}, angles={...}, frozen=false} },
 --   ops = { {op="click", tool="weld", pitch=30, yaw=0, button="left"}, {op="undo"}, {op="wait", ticks=10}, {op="cvar", name=..., value=...} } }
+-- `server` harnesses record through the sandbox scenario
+SCENARIOS.server = function(scn, done) return SCENARIOS.toolgun(scn, done) end
+
 SCENARIOS.toolgun = function(scn, done)
 	-- the sandbox bot wanders on its own AI between clicks (15 u per op in long recordings): freeze it
 	RunConsoleCommand("bot_zombie", "1")
@@ -927,7 +946,7 @@ SCENARIOS.toolgun = function(scn, done)
 	undo.GetTable()[bot:UniqueID()] = nil
 	local props = {}
 	for i, pr in ipairs(scn.props or {}) do
-		local ent = ents.Create("prop_physics")
+		local ent = ents.Create(util.IsValidRagdoll(pr.model) and "prop_ragdoll" or "prop_physics")
 		ent:SetModel(pr.model)
 		ent:SetPos(Vector(pr.pos[1], pr.pos[2], pr.pos[3]))
 		ent:SetAngles(Angle(pr.angles and pr.angles[1] or 0, pr.angles and pr.angles[2] or 0, pr.angles and pr.angles[3] or 0))
@@ -964,6 +983,13 @@ SCENARIOS.toolgun = function(scn, done)
 					solid = e:IsSolid(), nodraw = e:GetNoDraw(), movetype = e:GetMoveType(),
 					material = e:GetMaterial(), color = { e:GetColor().r, e:GetColor().g, e:GetColor().b, e:GetColor().a }, rendermode = e:GetRenderMode(), renderfx = e:GetRenderFX(),
 					gravity = IsValid(ph) and ph:IsGravityEnabled() or nil, physmat = IsValid(ph) and ph:GetMaterial() or nil }
+				if e:GetClass() == "prop_ragdoll" then
+					out.props[i].bone_scales = {}
+					for b = 0, e:GetBoneCount() - 1 do
+						local sc = e:GetManipulateBoneScale(b)
+						if sc ~= Vector(1, 1, 1) then out.props[i].bone_scales[#out.props[i].bone_scales + 1] = { bone = b, s = { sc.x, sc.y, sc.z } } end
+					end
+				end
 			else
 				out.props[i] = { index = -1 }
 			end

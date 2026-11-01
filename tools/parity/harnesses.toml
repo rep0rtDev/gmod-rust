@@ -434,6 +434,15 @@ crates = ["gm-server", "gm-sandbox", "gm-physics", "gm-move"]
 pos = 2.0
 
 [[harness]]
+name = "server_inflator"
+scenario = "server/inflator"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
 name = "server_axis"
 scenario = "server/axis"
 compare = "server"

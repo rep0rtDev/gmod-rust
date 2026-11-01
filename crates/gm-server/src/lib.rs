@@ -59,6 +59,21 @@ pub struct RagdollInfo {
 
 /// World pose of every bone of a ragdoll model placed with its origin at `pos` rotated by `rot`,
 /// composed down the hierarchy from the model's ragdoll pose.
+/// Rotation of the root solid's bone in the ragdoll pose under an identity entity rotation.
+fn ragdoll_root_pose_rot(rd: &RagdollInfo) -> Quat {
+    let root = rd
+        .solids
+        .first()
+        .map(|s| s.bone.as_str())
+        .unwrap_or_default();
+    let (_, wrot) = ragdoll_bone_world(rd, Vec3::ZERO, Quat::IDENTITY);
+    rd.bones
+        .iter()
+        .position(|b| b.name.eq_ignore_ascii_case(root))
+        .and_then(|i| wrot.get(i).copied())
+        .unwrap_or(Quat::IDENTITY)
+}
+
 fn ragdoll_bone_world(rd: &RagdollInfo, pos: Vec3, rot: Quat) -> (Vec<Vec3>, Vec<Quat>) {
     let n = rd.bones.len();
     let (mut wpos, mut wrot) = (vec![pos; n], vec![rot; n]);
@@ -1252,6 +1267,8 @@ pub struct Server<'w> {
     bodies: BTreeMap<u32, BodyHandle>,
     /// prop_ragdoll: every bone body (the root is also in `bodies`) and the joints between them.
     ragdoll_bodies: BTreeMap<u32, RagdollRuntime>,
+    /// `Entity:ManipulateBoneScale` per model bone (inflator stool), absent = all 1.
+    bone_scales: BTreeMap<u32, Vec<Vec3>>,
     constraints: BTreeMap<u32, ConstraintHandle>,
     /// NoCollide pairs by sandbox constraint id.
     nocollides: BTreeMap<u32, (BodyHandle, BodyHandle)>,
@@ -1383,6 +1400,7 @@ impl<'w> Server<'w> {
             mover: gm_move::Mover::new(gm_move::MoveConfig::default(), collision),
             bodies: BTreeMap::new(),
             ragdoll_bodies: BTreeMap::new(),
+            bone_scales: BTreeMap::new(),
             constraints: BTreeMap::new(),
             nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
@@ -3630,6 +3648,9 @@ impl<'w> Server<'w> {
             return ToolClick::Unknown(hit);
         }
         let mut events = Vec::new();
+        if tool == "inflator" {
+            return ToolClick::Done(self.inflator_click(&hit, if right { -1.0 } else { 1.0 }));
+        }
         if tool == "duplicator" {
             let ret = if right {
                 self.duplicator_paste(player, &hit, &mut events)
@@ -3991,6 +4012,7 @@ impl<'w> Server<'w> {
             if live.contains(&id) {
                 self.bodies.insert(id, b);
             } else {
+                self.bone_scales.remove(&id);
                 if let Some(RagdollRuntime {
                     bodies: bones,
                     joints,
@@ -4772,8 +4794,24 @@ impl<'w> Server<'w> {
         }
         for (id, body) in &self.bodies {
             let st = self.physics.state(*body);
+            // prop_ragdoll (measured server_inflator / ragdoll spawn): the entity sits on the
+            // root physics object, its angles are the root's turn since the ragdoll pose, so
+            // a freshly placed ragdoll reads (0, 0, 0) whatever its root bone's own rotation
+            let rot = match self.ragdoll_bodies.contains_key(id) {
+                true => self
+                    .sandbox
+                    .props()
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .and_then(|p| self.models.get(&p.model))
+                    .and_then(|m| m.ragdoll.as_ref())
+                    .map_or(st.rotation, |rd| {
+                        st.rotation * ragdoll_root_pose_rot(rd).inverse()
+                    }),
+                false => st.rotation,
+            };
             self.sandbox
-                .set_prop_pose(*id, st.position, gm_sandbox::angles_of(st.rotation));
+                .set_prop_pose(*id, st.position, gm_sandbox::angles_of(rot));
         }
     }
 
@@ -5237,6 +5275,137 @@ impl<'w> Server<'w> {
                 self.physics.set_ragdoll_friction(j, f);
             }
         }
+    }
+
+    /// `Entity:TranslateBoneToPhysBone`: the solid of the bone itself or of its nearest
+    /// ancestor that has one.
+    fn phys_bone_of(rd: &RagdollInfo, mut bone: usize) -> Option<usize> {
+        loop {
+            let b = rd.bones.get(bone)?;
+            if let Some(i) = rd
+                .solids
+                .iter()
+                .position(|s| s.bone.eq_ignore_ascii_case(&b.name))
+            {
+                return Some(i);
+            }
+            bone = usize::try_from(b.parent).ok()?;
+        }
+    }
+
+    /// inflator.lua `GetNiceBoneScale`: limb and spine bones grow across their length only,
+    /// the pelvis and a few TF2 arm bones along x/z, everything else uniformly.
+    fn nice_bone_scale(name: &str, scale: f32) -> Vec3 {
+        const YZ: [&str; 32] = [
+            "ValveBiped.Bip01_L_UpperArm",
+            "ValveBiped.Bip01_L_Forearm",
+            "ValveBiped.Bip01_L_Thigh",
+            "ValveBiped.Bip01_L_Calf",
+            "ValveBiped.Bip01_R_UpperArm",
+            "ValveBiped.Bip01_R_Forearm",
+            "ValveBiped.Bip01_R_Thigh",
+            "ValveBiped.Bip01_R_Calf",
+            "ValveBiped.Bip01_Spine2",
+            "ValveBiped.Bip01_Spine1",
+            "ValveBiped.Bip01_Spine",
+            "ValveBiped.Bip01_Spinebut",
+            "ValveBiped.spine4",
+            "ValveBiped.spine3",
+            "ValveBiped.spine2",
+            "ValveBiped.spine1",
+            "ValveBiped.hlp_ulna_R",
+            "ValveBiped.hlp_ulna_L",
+            "ValveBiped.arm1_L",
+            "ValveBiped.arm1_R",
+            "ValveBiped.arm2_L",
+            "ValveBiped.arm2_R",
+            "ValveBiped.leg_bone1_L",
+            "ValveBiped.leg_bone1_R",
+            "ValveBiped.leg_bone2_L",
+            "ValveBiped.leg_bone2_R",
+            "ValveBiped.leg_bone3_L",
+            "ValveBiped.leg_bone3_R",
+            "bip_knee_L",
+            "bip_knee_R",
+            "bip_hip_R",
+            "bip_hip_L",
+        ];
+        const XZ: [&str; 7] = [
+            "ValveBiped.Bip01_pelvis",
+            "bip_upperArm_L",
+            "bip_upperArm_R",
+            "bip_lowerArm_L",
+            "bip_lowerArm_R",
+            "bip_forearm_L",
+            "bip_forearm_R",
+        ];
+        let lower = name.to_ascii_lowercase();
+        if YZ.contains(&name) || lower.contains("leg") || lower.contains("arm") {
+            Vec3::new(0.0, scale, scale)
+        } else if XZ.contains(&name) {
+            Vec3::new(scale, 0.0, scale)
+        } else {
+            Vec3::splat(scale)
+        }
+    }
+
+    /// inflator.lua `LeftClick` (`scale` 1) / `RightClick` (-1): on a prop_ragdoll every model
+    /// bone sharing the hit physics bone grows by `GetNiceBoneScale * 0.01`, clamped at 0;
+    /// both clicks answer false (the stool repeats while held), any other entity false.
+    pub fn inflator_click(&mut self, hit: &ToolHit, scale: f32) -> bool {
+        let Some(ent) = hit.ent else {
+            return false;
+        };
+        let Some(rd) = self
+            .sandbox
+            .props()
+            .iter()
+            .find(|p| p.id == ent)
+            .and_then(|p| self.models.get(&p.model))
+            .and_then(|m| m.ragdoll.as_ref())
+        else {
+            return false;
+        };
+        let n = rd.bones.len();
+        let scales = self
+            .bone_scales
+            .entry(ent)
+            .or_insert_with(|| vec![Vec3::ONE; n]);
+        for (i, b) in rd.bones.iter().enumerate() {
+            if Self::phys_bone_of(rd, i) != Some(hit.bone as usize) {
+                continue;
+            }
+            let v = Self::nice_bone_scale(&b.name, scale) * 0.1;
+            scales[i] = (scales[i] + v * 0.1).max(Vec3::ZERO);
+        }
+        false
+    }
+
+    /// inflator.lua `Reload`: every bone of a prop_ragdoll back to scale 1 (true), false on
+    /// anything else.
+    pub fn inflator_reload(&mut self, hit: &ToolHit) -> bool {
+        let Some(ent) = hit.ent else {
+            return false;
+        };
+        let is_ragdoll = self.ragdoll_bodies.contains_key(&ent);
+        if is_ragdoll {
+            self.bone_scales.remove(&ent);
+        }
+        is_ragdoll
+    }
+
+    /// Bones of `prop` whose manipulated scale is not 1 (inflator), as (bone index, scale).
+    pub fn bone_scales(&self, prop: u32) -> Vec<(usize, Vec3)> {
+        self.bone_scales
+            .get(&prop)
+            .map(|v| {
+                v.iter()
+                    .enumerate()
+                    .filter(|(_, s)| (**s - Vec3::ONE).abs().max_element() > 1e-6)
+                    .map(|(i, s)| (i, *s))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Snapshot poses of a prop_ragdoll's physics objects (empty for a plain prop).
