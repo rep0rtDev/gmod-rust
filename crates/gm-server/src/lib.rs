@@ -2321,6 +2321,13 @@ impl<'w> Server<'w> {
     /// see takes nothing.
     fn explode(&mut self, at: Vec3, attacker: u32, base: f32, radius: f32, class: &'static str) {
         let src = at + Vec3::new(0.0, 0.0, 1.0);
+        // the `Explosion` effect's sound (`BaseExplosionEffect.Sound`, CHAN_STATIC, 140 dB)
+        self.sounds.push(WorldSound {
+            name: "BaseExplosionEffect.Sound".to_owned(),
+            pos: src,
+            volume: 1.0,
+            ..Default::default()
+        });
         let bodies = self.prop_bodies();
         let targets: Vec<(u32, Vec3)> = self
             .sandbox
@@ -3457,6 +3464,12 @@ impl<'w> Server<'w> {
         // ray gets no spin). Measured on five drums at 50..250 u: every ratio to the exact
         // law fell in 0.98..1.14.
         let src = dyn_pos + Vec3::new(0.0, 0.0, 1.0);
+        self.sounds.push(WorldSound {
+            name: "BaseExplosionEffect.Sound".to_owned(),
+            pos: src,
+            volume: 1.0,
+            ..Default::default()
+        });
         let bodies = self.prop_bodies();
         let dynamite: Vec<u32> = self
             .sandbox

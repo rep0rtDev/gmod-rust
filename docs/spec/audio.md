@@ -167,6 +167,10 @@ is the data: scripts, waves, levels, pitches, channels, cue loops.
   new in over `fadetime` (3 s default). gm_construct names `construct.outside / inside /
   lake / garage`, which no shipped file defines, so there (as in the game) nothing plays;
   gm_flatgrass has no `env_soundscape`. HL2 maps carry the full set (~380 definitions).
+- Explosions (dynamite's `util.Effect("Explosion")`, grenades, rockets): the effect's
+  `BaseExplosionEffect.Sound` (CHAN_STATIC, 140 dB, one of its `rndwave`s) at the blast
+  point, 1 u above the inflictor. The game's other sandbox entities (balloon, button,
+  hoverball, wheel, lamp, light) play nothing in their Lua.
 - Props occlude too: every entity with a model has its `.phy` hull (first solid, convex
   pieces as triangles, the solid's surface property) built once into a Steam Audio
   sub-scene and instanced at its interpolated pose each frame; the simulation thread adds,
