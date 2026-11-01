@@ -9,6 +9,8 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
   STEAMAUDIO_VERSION: "4.8.1"
+  # libopus (audiopus_sys) declares cmake_minimum_required 2.8; CMake 4 refuses it
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 jobs:
   public-tree:
