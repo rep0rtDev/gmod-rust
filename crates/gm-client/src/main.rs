@@ -163,6 +163,9 @@ impl Sim {
                             render_mode: 0,
                             render_fx: 0,
                             bones: Vec::new(),
+                            manips: Vec::new(),
+                            flex: None,
+                            eye_target: None,
                         },
                     )
                 })

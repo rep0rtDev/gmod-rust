@@ -173,9 +173,30 @@ pub struct EntityState {
     pub render_fx: u8,
     /// prop_ragdoll: pose of every physics object (`GetPhysicsObjectNum(i)`), empty on a prop.
     pub bones: Vec<BonePose>,
+    /// Manipulated model bones (inflator scale, finger poser angles); only the touched ones.
+    pub manips: Vec<BoneManip>,
+    /// Flex weights and scale (faceposer) of a model with flex controllers.
+    pub flex: Option<FlexState>,
+    /// Eye target (eyeposer), local to the `eyes` attachment.
+    pub eye_target: Option<Vec3>,
 }
 
 pub use gm_server::BonePose;
+
+/// `ManipulateBoneScale` / `ManipulateBoneAngles` of one model bone.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoneManip {
+    pub bone: u16,
+    pub scale: Vec3,
+    pub angles: Vec3,
+}
+
+/// `SetFlexWeight` per controller and `SetFlexScale`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlexState {
+    pub weights: Vec<f32>,
+    pub scale: f32,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlayerSnap {
@@ -437,7 +458,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 5;
+pub const PROTOCOL: u16 = 6;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -936,6 +957,29 @@ impl ServerMsg {
                         w.qang(b.angles);
                         w.bool(b.frozen);
                     }
+                    w.varint(e.manips.len() as u64);
+                    for m in &e.manips {
+                        w.u16(m.bone);
+                        for v in [m.scale, m.angles] {
+                            w.f32(v.x);
+                            w.f32(v.y);
+                            w.f32(v.z);
+                        }
+                    }
+                    w.bool(e.flex.is_some());
+                    if let Some(f) = &e.flex {
+                        w.varint(f.weights.len() as u64);
+                        for v in &f.weights {
+                            w.f32(*v);
+                        }
+                        w.f32(f.scale);
+                    }
+                    w.bool(e.eye_target.is_some());
+                    if let Some(t) = e.eye_target {
+                        w.f32(t.x);
+                        w.f32(t.y);
+                        w.f32(t.z);
+                    }
                 }
                 w.varint(removed.len() as u64);
                 for id in removed {
@@ -1213,6 +1257,36 @@ impl ServerMsg {
                                 });
                             }
                             bones
+                        },
+                        manips: {
+                            let n = r.varint()? as usize;
+                            let mut manips = Vec::with_capacity(n);
+                            for _ in 0..n {
+                                manips.push(BoneManip {
+                                    bone: r.u16()?,
+                                    scale: Vec3::new(r.f32()?, r.f32()?, r.f32()?),
+                                    angles: Vec3::new(r.f32()?, r.f32()?, r.f32()?),
+                                });
+                            }
+                            manips
+                        },
+                        flex: if r.bool()? {
+                            let n = r.varint()? as usize;
+                            let mut weights = Vec::with_capacity(n);
+                            for _ in 0..n {
+                                weights.push(r.f32()?);
+                            }
+                            Some(FlexState {
+                                weights,
+                                scale: r.f32()?,
+                            })
+                        } else {
+                            None
+                        },
+                        eye_target: if r.bool()? {
+                            Some(Vec3::new(r.f32()?, r.f32()?, r.f32()?))
+                        } else {
+                            None
                         },
                     });
                 }

@@ -982,6 +982,33 @@ impl ServerNet {
                     render_mode: p.render_mode,
                     render_fx: p.render_fx,
                     bones: server.ragdoll_bone_poses(p.id),
+                    manips: {
+                        let mut m: std::collections::BTreeMap<u16, crate::msg::BoneManip> =
+                            Default::default();
+                        for (b, s) in server.bone_scales(p.id) {
+                            m.entry(b as u16)
+                                .or_insert(crate::msg::BoneManip {
+                                    bone: b as u16,
+                                    scale: Vec3::ONE,
+                                    angles: Vec3::ZERO,
+                                })
+                                .scale = s;
+                        }
+                        for (b, a) in server.bone_angles(p.id) {
+                            m.entry(b as u16)
+                                .or_insert(crate::msg::BoneManip {
+                                    bone: b as u16,
+                                    scale: Vec3::ONE,
+                                    angles: Vec3::ZERO,
+                                })
+                                .angles = a;
+                        }
+                        m.into_values().collect()
+                    },
+                    flex: server
+                        .flex_state(p.id)
+                        .map(|(weights, scale)| crate::msg::FlexState { weights, scale }),
+                    eye_target: server.eye_target(p.id),
                 },
             );
         }

@@ -108,7 +108,21 @@ mod tests {
                 color: [255; 4],
                 render_mode: 0,
                 render_fx: 0,
-                bones: Vec::new(),
+                bones: vec![BonePose {
+                    pos: Vec3::new(4.0, 5.0, 6.0),
+                    angles: Vec3::new(0.0, 90.0, 0.0),
+                    frozen: true,
+                }],
+                manips: vec![BoneManip {
+                    bone: 3,
+                    scale: Vec3::new(1.0, 1.02, 1.02),
+                    angles: Vec3::new(10.0, -5.0, 0.0),
+                }],
+                flex: Some(FlexState {
+                    weights: vec![0.5, 1.0, 0.0],
+                    scale: 1.0,
+                }),
+                eye_target: Some(Vec3::new(7.0, -4.0, -25.0)),
             }],
             removed: vec![1],
             own: OwnSandbox {
