@@ -427,6 +427,19 @@ pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
             num("hoverball_strength", 10.0, 0.1, 10.0),
             text("hoverball_model", "models/dav0r/hoverball.mdl"),
         ],
+        "material" => vec![text("material_override", "debug/env_cubemap_model")],
+        "colour" => vec![
+            num("colour_r", 255.0, 0.0, 255.0),
+            num("colour_g", 255.0, 0.0, 255.0),
+            num("colour_b", 255.0, 0.0, 255.0),
+            num("colour_a", 255.0, 0.0, 255.0),
+            num("colour_mode", 0.0, 0.0, 9.0),
+            num("colour_fx", 0.0, 0.0, 24.0),
+        ],
+        "physprop" => vec![
+            flag("physprop_gravity_toggle", true),
+            text("physprop_material", "metal_bouncy"),
+        ],
         "lamp" => vec![
             num("lamp_r", 255.0, 0.0, 255.0),
             num("lamp_g", 255.0, 0.0, 255.0),
@@ -1117,6 +1130,10 @@ fn ray_box_entry(start: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
 }
 
 pub struct Server<'w> {
+    /// `scripts/surfaceproperties.txt`, for the physprop stool's `PhysObj:SetMaterial`.
+    pub surface_table: Option<gm_physics::surface::SurfaceTable>,
+    /// Gravity and physics material applied to each body (physprop), to push changes to Jolt.
+    applied_physprops: std::collections::BTreeMap<u32, (bool, String)>,
     /// Duplicator clipboards: the copied group with poses relative to the copied prop.
     pub clipboards: BTreeMap<u32, save::Save>,
     pub hits: Vec<Hit>,
@@ -1249,6 +1266,8 @@ pub const SBOX_CVARS: [(&str, &str); 24] = [
 impl<'w> Server<'w> {
     pub fn new(collision: &'w gm_collision::World, physics: World, world_body: BodyHandle) -> Self {
         Server {
+            surface_table: None,
+            applied_physprops: std::collections::BTreeMap::new(),
             hits: Vec::new(),
             hit_model: None,
             collision,
@@ -3200,6 +3219,12 @@ impl<'w> Server<'w> {
                 frozen: p.frozen,
                 skin: p.skin,
                 body: p.body.clone(),
+                material: p.material.clone(),
+                color: Some(p.color),
+                render_mode: p.render_mode,
+                render_fx: p.render_fx,
+                phys_material: p.phys_material.clone(),
+                gravity: Some(p.gravity),
             })
             .collect();
         let constraints = cons
@@ -3268,6 +3293,16 @@ impl<'w> Server<'w> {
             let health = self.models.get(&p.model).map_or(0, |m| m.prop_data.health);
             self.sandbox.set_health(id, health);
             self.sandbox.set_skin(id, p.skin);
+            self.sandbox.set_render(
+                id,
+                &p.material,
+                p.color.unwrap_or([255; 4]),
+                p.render_mode,
+                p.render_fx,
+            );
+            if let Some(g) = p.gravity {
+                self.sandbox.set_phys_props(id, g, &p.phys_material);
+            }
             self.sandbox.set_body(id, p.body.clone());
             self.sandbox.add_count(player, "props", id);
             self.sandbox.add_cleanup(player, "props", id);
@@ -3925,6 +3960,40 @@ impl<'w> Server<'w> {
             if let Some(h) = handle {
                 self.constraints.insert(c.id, h);
             }
+        }
+        // physprop: gravity and the physics material of a live body follow the prop
+        let want: Vec<(u32, bool, String, String)> = self
+            .sandbox
+            .props()
+            .iter()
+            .map(|p| (p.id, p.gravity, p.phys_material.clone(), p.model.clone()))
+            .collect();
+        self.applied_physprops
+            .retain(|id, _| want.iter().any(|(i, ..)| i == id));
+        for (id, gravity, phys_material, model) in want {
+            let Some(&b) = self.bodies.get(&id) else {
+                continue;
+            };
+            let state = (gravity, phys_material.clone());
+            if self.applied_physprops.get(&id) == Some(&state) {
+                continue;
+            }
+            self.physics.set_gravity(b, gravity);
+            let surface = if phys_material.is_empty() {
+                self.models.get(&model).map(|m| m.surface)
+            } else {
+                self.surface_table.as_ref().map(|t| {
+                    let sp = t.get(&phys_material);
+                    Surface {
+                        friction: sp.friction,
+                        elasticity: sp.elasticity,
+                    }
+                })
+            };
+            if let Some(sf) = surface {
+                self.physics.set_surface(b, sf);
+            }
+            self.applied_physprops.insert(id, state);
         }
     }
 

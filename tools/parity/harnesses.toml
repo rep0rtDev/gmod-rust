@@ -3532,6 +3532,36 @@ ang = 5.0
 spin = 0.1
 
 [[harness]]
+name = "toolgun_material"
+scenario = "toolgun/material"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_colour"
+scenario = "toolgun/colour"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
+name = "toolgun_physprop"
+scenario = "toolgun/physprop"
+compare = "toolgun"
+realm = "server"
+crates = ["gm-sandbox", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.1
+
+[[harness]]
 name = "toolgun_lamp"
 scenario = "toolgun/lamp"
 compare = "toolgun"

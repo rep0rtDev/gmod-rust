@@ -166,6 +166,11 @@ pub struct EntityState {
     /// `Entity:GetBodyGroups` digits of the prop.
     pub body: String,
     pub owner: u32,
+    /// `SetMaterial` override, `SetColor` rgba, render mode and fx (material / colour stools)
+    pub material: String,
+    pub color: [u8; 4],
+    pub render_mode: u8,
+    pub render_fx: u8,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -428,7 +433,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 3;
+pub const PROTOCOL: u16 = 4;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -915,6 +920,12 @@ impl ServerMsg {
                     w.u8(e.skin);
                     w.str(&e.body);
                     w.u32(e.owner);
+                    w.str(&e.material);
+                    for c in e.color {
+                        w.u8(c);
+                    }
+                    w.u8(e.render_mode);
+                    w.u8(e.render_fx);
                 }
                 w.varint(removed.len() as u64);
                 for id in removed {
@@ -1177,6 +1188,10 @@ impl ServerMsg {
                         skin: r.u8()?,
                         body: r.str()?,
                         owner: r.u32()?,
+                        material: r.str()?,
+                        color: [r.u8()?, r.u8()?, r.u8()?, r.u8()?],
+                        render_mode: r.u8()?,
+                        render_fx: r.u8()?,
                     });
                 }
                 let n = r.varint()? as usize;

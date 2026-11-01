@@ -119,6 +119,7 @@ fn main() -> Result<()> {
     let t0 = Instant::now();
     let world = gm_dedicated::load_world(&mount, &args.map)?;
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.surface_table = gm_dedicated::surface_table(&mount).ok();
     let mount_for_models = gm_content::Mount::for_install(&inst)?;
     server.model_loader = Some(Box::new(move |model: &str| {
         gm_dedicated::model_info(&mount_for_models, model)

@@ -977,6 +977,10 @@ impl ServerNet {
                     skin: p.skin,
                     body: p.body.clone(),
                     owner: p.owner,
+                    material: p.material.clone(),
+                    color: p.color,
+                    render_mode: p.render_mode,
+                    render_fx: p.render_fx,
                 },
             );
         }

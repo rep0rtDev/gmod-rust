@@ -864,7 +864,9 @@ SCENARIOS.toolgun = function(scn, done)
 				local p, a, v = e:GetPos(), e:GetAngles(), IsValid(ph) and ph:GetVelocity() or Vector(0, 0, 0)
 				out.props[i] = { index = e:EntIndex(), pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r }, vel = { v.x, v.y, v.z },
 					frozen = IsValid(ph) and not ph:IsMotionEnabled() or false, asleep = IsValid(ph) and ph:IsAsleep() or false,
-					solid = e:IsSolid(), nodraw = e:GetNoDraw(), movetype = e:GetMoveType() }
+					solid = e:IsSolid(), nodraw = e:GetNoDraw(), movetype = e:GetMoveType(),
+					material = e:GetMaterial(), color = { e:GetColor().r, e:GetColor().g, e:GetColor().b, e:GetColor().a }, rendermode = e:GetRenderMode(), renderfx = e:GetRenderFX(),
+					gravity = IsValid(ph) and ph:IsGravityEnabled() or nil, physmat = IsValid(ph) and ph:GetMaterial() or nil }
 			else
 				out.props[i] = { index = -1 }
 			end

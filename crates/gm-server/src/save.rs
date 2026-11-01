@@ -436,6 +436,18 @@ pub struct SavedProp {
     pub skin: u8,
     #[serde(default)]
     pub body: String,
+    #[serde(default)]
+    pub material: String,
+    #[serde(default)]
+    pub color: Option<[u8; 4]>,
+    #[serde(default)]
+    pub render_mode: u8,
+    #[serde(default)]
+    pub render_fx: u8,
+    #[serde(default)]
+    pub phys_material: String,
+    #[serde(default)]
+    pub gravity: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1032,6 +1044,12 @@ impl Server<'_> {
                     frozen: p.frozen,
                     skin: p.skin,
                     body: p.body.clone(),
+                    material: p.material.clone(),
+                    color: Some(p.color),
+                    render_mode: p.render_mode,
+                    render_fx: p.render_fx,
+                    phys_material: p.phys_material.clone(),
+                    gravity: Some(p.gravity),
                 })
                 .collect(),
             constraints: self
@@ -1085,6 +1103,16 @@ impl Server<'_> {
                 p.frozen,
             );
             self.sandbox.set_skin(id, p.skin);
+            self.sandbox.set_render(
+                id,
+                &p.material,
+                p.color.unwrap_or([255; 4]),
+                p.render_mode,
+                p.render_fx,
+            );
+            if let Some(g) = p.gravity {
+                self.sandbox.set_phys_props(id, g, &p.phys_material);
+            }
             self.sandbox.set_body(id, p.body.clone());
             ids.push(Some(id));
         }

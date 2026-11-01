@@ -247,6 +247,9 @@ fn apply_click_settings(
             | "light"
             | "thruster"
             | "hoverball"
+            | "material"
+            | "colour"
+            | "physprop"
     ) {
         return;
     }
@@ -283,6 +286,21 @@ fn apply_click_settings(
             ts.hoverball_resistance = num("resistance");
             ts.hoverball_strength = num("strength");
             ts.hoverball_model = text("model");
+        }
+        "material" => {
+            ts.material_override = text("override");
+        }
+        "colour" => {
+            ts.colour_r = num("r");
+            ts.colour_g = num("g");
+            ts.colour_b = num("b");
+            ts.colour_a = num("a");
+            ts.colour_mode = num("mode");
+            ts.colour_fx = num("fx");
+        }
+        "physprop" => {
+            ts.physprop_gravity_toggle = flag("gravity_toggle");
+            ts.physprop_material = text("material");
         }
         "lamp" => {
             ts.lamp_r = num("r");
@@ -5471,7 +5489,8 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
             // the scenario's props by index (`{ index: -1 }` once deleted, like the probe), then
             // whatever the stools placed
             "props": (1..=scn.props.len() as u32).map(|id| match sb.props().iter().find(|p| p.id == id) {
-                Some(p) => json!({ "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen, "solid": !sb.is_removing(p.id) }),
+                Some(p) => json!({ "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen, "solid": !sb.is_removing(p.id),
+                    "material": p.material, "color": p.color, "rendermode": p.render_mode, "renderfx": p.render_fx, "gravity": p.gravity, "physmat": p.phys_material }),
                 None => json!({ "index": -1 }),
             }).chain(sb.props().iter().filter(|p| p.id > scn.props.len() as u32 && !sb.devices().contains_key(&p.id)).map(|p| json!({ "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen }))).collect::<Vec<_>>(),
         })
@@ -5745,6 +5764,25 @@ fn compare_toolgun(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                 if state(a) != state(b) {
                     println!("  op {i} {op}: prop {} {} vs {}", k + 1, state(a), state(b));
                     ok = false;
+                }
+                // the material / colour / physprop stools: the game's row carries the fields
+                for key in ["material", "color", "rendermode", "renderfx", "gravity"] {
+                    if a.get(key).is_some() && b.get(key).is_some() && a[key] != b[key] {
+                        println!(
+                            "  op {i} {op}: prop {} {key} {} vs {}",
+                            k + 1,
+                            a[key],
+                            b[key]
+                        );
+                        ok = false;
+                    }
+                }
+                // the PHY's own material is the game's default; ours keeps the override only
+                if let (Some(g), Some(m)) = (a["physmat"].as_str(), b["physmat"].as_str()) {
+                    if !m.is_empty() && g != m {
+                        println!("  op {i} {op}: prop {} physmat {g} vs {m}", k + 1);
+                        ok = false;
+                    }
                 }
             }
         }

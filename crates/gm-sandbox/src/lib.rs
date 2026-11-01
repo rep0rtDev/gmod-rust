@@ -38,6 +38,15 @@ pub struct Prop {
     pub body: String,
     /// The `entityflame` on the prop (`Ignite`), in server ticks.
     pub fire: Option<Fire>,
+    /// `Entity:SetMaterial` override (the material stool), empty for the model's own
+    pub material: String,
+    /// `Entity:SetColor` r, g, b, a
+    pub color: [u8; 4],
+    /// `RENDERMODE_*` 0..9 and `renderfx` (the colour stool)
+    pub render_mode: u8,
+    pub render_fx: u8,
+    /// `PhysObj:SetMaterial` surfaceprop override (the physprop stool), empty for the PHY's
+    pub phys_material: String,
 }
 
 /// A flame on a prop: damage thinks every 13 ticks until `until`, then the flame lingers
@@ -587,6 +596,15 @@ pub struct ToolSettings {
     pub light_toggle: bool,
     pub light_ropematerial: String,
     pub light_key: i32,
+    pub material_override: String,
+    pub colour_r: f32,
+    pub colour_g: f32,
+    pub colour_b: f32,
+    pub colour_a: f32,
+    pub colour_mode: f32,
+    pub colour_fx: f32,
+    pub physprop_gravity_toggle: bool,
+    pub physprop_material: String,
     pub dynamite_remove: bool,
 }
 
@@ -622,16 +640,17 @@ impl ToolSettings {
             wheel_rz, motor_torque, motor_friction, motor_forcelimit, motor_forcetime,
             dynamite_damage, dynamite_delay, lamp_r, lamp_g, lamp_b, lamp_fov, lamp_distance,
             lamp_brightness, light_r, light_g, light_b, light_brightness, light_size,
-            light_ropelength;
+            light_ropelength, colour_r, colour_g, colour_b, colour_a, colour_mode, colour_fx;
             axis_nocollide, weld_nocollide, rope_rigid, ballsocket_nocollide, elastic_stretchonly,
             hydraulic_fixed, hydraulic_toggle, winch_toggle, muscle_fixed, muscle_starton,
             pulley_rigid, thruster_toggle, thruster_collision, wheel_nocollide, wheel_toggle,
             motor_nocollide, motor_toggle,
-            button_toggle, dynamite_remove, lamp_toggle, light_toggle;
+            button_toggle, dynamite_remove, lamp_toggle, light_toggle, physprop_gravity_toggle;
             rope_material, slider_material, elastic_material, hydraulic_material, winch_material,
             muscle_material, pulley_material, thruster_model, thruster_soundname, hoverball_model,
             balloon_model,
-            wheel_model, button_model, dynamite_model, lamp_texture, lamp_model, light_ropematerial;
+            wheel_model, button_model, dynamite_model, lamp_texture, lamp_model, light_ropematerial,
+            material_override, physprop_material;
             hydraulic_key, winch_fwd_key, winch_bwd_key, muscle_key, thruster_key,
             thruster_key_back, hoverball_key_up, hoverball_key_down, hoverball_key_on, wheel_fwd,
             wheel_bck, motor_fwd, motor_bwd, button_keygroup, dynamite_group, lamp_key, light_key
@@ -751,6 +770,15 @@ impl Default for ToolSettings {
             light_toggle: true,
             light_ropematerial: "cable/rope".into(),
             light_key: 37,
+            material_override: "debug/env_cubemap_model".into(),
+            colour_r: 255.0,
+            colour_g: 255.0,
+            colour_b: 255.0,
+            colour_a: 255.0,
+            colour_mode: 0.0,
+            colour_fx: 0.0,
+            physprop_gravity_toggle: true,
+            physprop_material: "metal_bouncy".into(),
             dynamite_remove: false,
         }
     }
@@ -1037,6 +1065,55 @@ pub enum Device {
         key: i32,
     },
 }
+
+/// material.lua's `OverrideMaterials` list: what the material stool may apply outside single
+/// player.
+pub const OVERRIDE_MATERIALS: &[&str] = &[
+    "models/wireframe",
+    "debug/env_cubemap_model",
+    "models/shadertest/shader3",
+    "models/shadertest/shader4",
+    "models/shadertest/shader5",
+    "models/shiny",
+    "models/debug/debugwhite",
+    "Models/effects/comball_sphere",
+    "Models/effects/comball_tape",
+    "Models/effects/splodearc_sheet",
+    "Models/effects/vol_light001",
+    "models/props_combine/stasisshield_sheet",
+    "models/props_combine/portalball001_sheet",
+    "models/props_combine/com_shield001a",
+    "models/props_c17/frostedglass_01a",
+    "models/props_lab/Tank_Glass001",
+    "models/props_combine/tprings_globe",
+    "models/rendertarget",
+    "models/screenspace",
+    "brick/brick_model",
+    "models/props_pipes/GutterMetal01a",
+    "models/props_pipes/Pipesystem01a_skin3",
+    "models/props_wasteland/wood_fence01a",
+    "models/props_foliage/tree_deciduous_01a_trunk",
+    "models/props_c17/FurnitureFabric003a",
+    "models/props_c17/FurnitureMetal001a",
+    "models/props_c17/paper01",
+    "models/flesh",
+    "phoenix_storms/metalset_1-2",
+    "phoenix_storms/metalfloor_2-3",
+    "phoenix_storms/plastic",
+    "phoenix_storms/wood",
+    "phoenix_storms/bluemetal",
+    "phoenix_storms/cube",
+    "phoenix_storms/dome",
+    "phoenix_storms/gear",
+    "phoenix_storms/stripes",
+    "phoenix_storms/wire/pcb_green",
+    "phoenix_storms/wire/pcb_red",
+    "phoenix_storms/wire/pcb_blue",
+    "hunter/myplastic",
+    "models/XQM/LightLinesRed_tool",
+    "models/player/shared/gold_player",
+    "models/player/shared/ice_player",
+];
 
 /// gmod_light's one model.
 pub const LIGHT_MODEL: &str = "models/maxofs2d/light_tubular.mdl";
@@ -1397,6 +1474,11 @@ impl Sandbox {
             skin: 0,
             body: String::new(),
             fire: None,
+            material: String::new(),
+            color: [255; 4],
+            render_mode: 0,
+            render_fx: 0,
+            phys_material: String::new(),
         });
         id
     }
@@ -1555,6 +1637,11 @@ impl Sandbox {
             skin: 0,
             body: String::new(),
             fire: None,
+            material: String::new(),
+            color: [255; 4],
+            render_mode: 0,
+            render_fx: 0,
+            phys_material: String::new(),
         });
         events.push(Event::Spawned { prop: id });
         self.push_undo(
@@ -1586,6 +1673,11 @@ impl Sandbox {
                 skin: 0,
                 body: String::new(),
                 fire: None,
+                material: String::new(),
+                color: [255; 4],
+                render_mode: 0,
+                render_fx: 0,
+                phys_material: String::new(),
             });
             self.next_id = self.next_id.max(b.id + 1);
         }
@@ -1709,6 +1801,15 @@ impl Sandbox {
         if tool == "balloon" || tool == "light" {
             // light.lua: `RightClick = LeftClick(trace, false)`, no rope
             return self.place_device(player, tool, hit, false, events);
+        }
+        if matches!(tool, "material" | "colour") {
+            // copies the entity's material / colour into the convars
+            return hit
+                .ent
+                .is_some_and(|e| self.props.iter().any(|p| p.id == e));
+        }
+        if tool == "physprop" {
+            return false;
         }
         if tool == "lamp" {
             // lamp.lua: copies a gmod_lamp's settings into the convars, anyone's lamp
@@ -1859,6 +1960,19 @@ impl Sandbox {
         if tool == "remover" {
             return self.remove_all_constraints(ent) != 0;
         }
+        if matches!(tool, "material" | "colour") {
+            let Some(p) = self.props.iter_mut().find(|p| p.id == ent) else {
+                return false;
+            };
+            if tool == "material" {
+                p.material.clear();
+            } else {
+                p.color = [255; 4];
+                p.render_mode = 0;
+                p.render_fx = 0;
+            }
+            return true;
+        }
         let is_type = |k: &ConstraintKind| match tool {
             "ballsocket" => matches!(k, ConstraintKind::Ballsocket { .. }),
             "slider" => matches!(k, ConstraintKind::Slider { .. }),
@@ -1951,6 +2065,24 @@ impl Sandbox {
         true
     }
 
+    /// The material / colour stools' state on a prop (saves, dupes).
+    pub fn set_render(&mut self, id: u32, material: &str, color: [u8; 4], mode: u8, fx: u8) {
+        if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
+            p.material = material.to_string();
+            p.color = color;
+            p.render_mode = mode;
+            p.render_fx = fx;
+        }
+    }
+
+    /// The physprop stool's state on a prop (saves, dupes).
+    pub fn set_phys_props(&mut self, id: u32, gravity: bool, material: &str) {
+        if let Some(p) = self.props.iter_mut().find(|p| p.id == id) {
+            p.gravity = gravity;
+            p.phys_material = material.to_string();
+        }
+    }
+
     /// Whether the remover has this prop non-solid and invisible, waiting for its deletion.
     pub fn is_removing(&self, id: u32) -> bool {
         self.removing.contains_key(&id)
@@ -1990,6 +2122,9 @@ impl Sandbox {
                 | "remover"
                 | "lamp"
                 | "light"
+                | "material"
+                | "colour"
+                | "physprop"
                 | "duplicator"
                 | "ballsocket"
                 | "slider"
@@ -2269,6 +2404,11 @@ impl Sandbox {
             skin: u8::from(matches!(tool, "balloon" | "lamp")),
             body: String::new(),
             fire: None,
+            material: String::new(),
+            color: [255; 4],
+            render_mode: 0,
+            render_fx: 0,
+            phys_material: String::new(),
         });
         let mut undo_ents = vec![id];
         let mut binds: Vec<(i32, NumpadBind)> = Vec::new();
@@ -2908,6 +3048,49 @@ impl Sandbox {
         hit: &ToolHit,
         events: &mut Vec<Event>,
     ) -> bool {
+        if matches!(tool, "material" | "colour" | "physprop") {
+            let s = self.tool_settings.clone();
+            let Some(p) = hit
+                .ent
+                .and_then(|e| self.props.iter_mut().find(|p| p.id == e))
+            else {
+                return false;
+            };
+            match tool {
+                // material.lua: outside single player only the OverrideMaterials list (or
+                // clearing) gets through, but the click still answers true
+                "material" => {
+                    if s.material_override.is_empty()
+                        || OVERRIDE_MATERIALS.contains(&s.material_override.as_str())
+                    {
+                        p.material = s.material_override.clone();
+                    }
+                }
+                "colour" => {
+                    // measured: 300 -> 255, -5 -> 251, 99.6 -> 99 (capped above, cast below)
+                    let c = |v: f32| (v.min(255.0) as i32) as u8;
+                    p.color = [c(s.colour_r), c(s.colour_g), c(s.colour_b), c(s.colour_a)];
+                    let mut mode = s.colour_mode;
+                    // SetColour: a translucent colour in RENDERMODE_NORMAL goes TRANSCOLOR
+                    if p.color[3] < 255 && mode == 0.0 {
+                        mode = 1.0;
+                    }
+                    p.render_mode = mode.clamp(0.0, 9.0) as u8;
+                    let fx = s.colour_fx;
+                    p.render_fx = if (0.0..=16.0).contains(&fx) || fx == 24.0 {
+                        fx as u8
+                    } else {
+                        0
+                    };
+                }
+                _ => {
+                    // construct.SetPhysProp: gravity and the physics material of the object
+                    p.gravity = s.physprop_gravity_toggle;
+                    p.phys_material = s.physprop_material.clone();
+                }
+            }
+            return true;
+        }
         if tool == "remover" {
             let Some(ent) = hit.ent else {
                 return false;

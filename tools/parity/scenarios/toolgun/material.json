@@ -1,0 +1,97 @@
+{
+ "kind": "toolgun",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -500.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  }
+ ],
+ "name": "toolgun_material",
+ "ops": [
+  {
+   "op": "click",
+   "tool": "material",
+   "pitch": 30.0,
+   "yaw": 0.0,
+   "settings": {
+    "override": "models/wireframe"
+   }
+  },
+  {
+   "op": "click",
+   "tool": "material",
+   "pitch": 30.0,
+   "yaw": 0.0,
+   "settings": {
+    "override": "models/not_in_the_list"
+   }
+  },
+  {
+   "op": "click",
+   "tool": "material",
+   "pitch": 30.0,
+   "yaw": 0.0,
+   "settings": {
+    "override": "models/wireframe"
+   },
+   "button": "right"
+  },
+  {
+   "op": "click",
+   "tool": "material",
+   "pitch": 30.0,
+   "yaw": 0.0,
+   "settings": {
+    "override": "phoenix_storms/gear"
+   }
+  },
+  {
+   "op": "click",
+   "tool": "material",
+   "pitch": 30.0,
+   "yaw": 0.0,
+   "settings": {
+    "override": "models/wireframe"
+   },
+   "button": "reload"
+  },
+  {
+   "op": "click",
+   "tool": "material",
+   "pitch": 5.0,
+   "yaw": 0.0,
+   "settings": {
+    "override": "models/wireframe"
+   }
+  },
+  {
+   "op": "click",
+   "tool": "material",
+   "pitch": 30.0,
+   "yaw": 0.0,
+   "settings": {
+    "override": ""
+   }
+  },
+  {
+   "op": "cleanup"
+  }
+ ]
+}

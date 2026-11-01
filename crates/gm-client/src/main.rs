@@ -158,6 +158,10 @@ impl Sim {
                             skin: 0,
                             body: String::new(),
                             owner: 0,
+                            material: String::new(),
+                            color: [255; 4],
+                            render_mode: 0,
+                            render_fx: 0,
                         },
                     )
                 })

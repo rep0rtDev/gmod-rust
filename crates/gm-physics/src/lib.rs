@@ -1387,6 +1387,26 @@ impl World {
 
     /// `PhysObj:EnableGravity`: off, the body keeps its velocity and only the air drag acts
     /// (measured: 50 u/s up decays to 46.4 over 120 ticks). A held body stays weightless.
+    /// A new surface for a live body (`PhysObj:SetMaterial`): friction and restitution the way
+    /// `add_body` set them, and the impact listener's table.
+    pub fn set_surface(&mut self, body: BodyHandle, surface: Surface) {
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_SetFriction(bi, body.0, surface.friction * surface.friction);
+            JPC_BodyInterface_SetRestitution(
+                bi,
+                body.0,
+                0.5 * (surface.elasticity + self.world_elasticity),
+            );
+            gmp_set_surface(
+                self.system.as_raw(),
+                body.0,
+                surface.friction,
+                surface.elasticity,
+            );
+        }
+    }
+
     pub fn set_gravity(&mut self, body: BodyHandle, on: bool) {
         self.no_gravity.remove(&body.0);
         if !on {

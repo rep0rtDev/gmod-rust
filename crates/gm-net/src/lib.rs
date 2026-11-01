@@ -104,6 +104,10 @@ mod tests {
                 skin: 0,
                 body: String::new(),
                 owner: 1,
+                material: String::new(),
+                color: [255; 4],
+                render_mode: 0,
+                render_fx: 0,
             }],
             removed: vec![1],
             own: OwnSandbox {

@@ -132,3 +132,21 @@ The other stools (lamp, light, trails, motor, emitter, camera, ...), wheel / but
   bottom once a key event leaves `mul <= 0`, the top from spawn and while thrusting; ours
   follows) and the game's `+use` picking the toggle button at `toolgun_button` op 6 where our
   runner presses the newest one (open, `toolgun_button` red).
+
+### material, colour, physprop (measured, `toolgun_material`, `toolgun_colour`, `toolgun_physprop`)
+
+- material: left click `Entity:SetMaterial(override)`; on a dedicated server only the 44
+  `OverrideMaterials` of material.lua (or an empty string) get through, a name outside the list
+  leaves the material alone but the click still answers true. Right click (copy into the
+  convar) true on any entity; reload clears. The world answers false everywhere.
+- colour: left click `SetColor(r, g, b, a)`, the channels capped at 255 above and cast below
+  (300 -> 255, -5 -> 251, 99.6 -> 99); `RenderMode` clamped 0..9 and forced to 1
+  (`RENDERMODE_TRANSCOLOR`) when a < 255 in mode 0; `renderfx` kept when 0..16 or 24, else 0.
+  Reload resets to white / 0 / 0; right click copies (true).
+- physprop: left click `construct.SetPhysProp`: `EnableGravity(gravity_toggle)` and
+  `PhysObj:SetMaterial(material)` (`ice`, `metal_bouncy`, `gmod_bouncy`...); right click and the
+  world answer false. The probe reads `IsGravityEnabled` / `GetMaterial` back.
+- Ours: `Prop.material / color / render_mode / render_fx / phys_material`, replicated in the
+  entity snapshot (protocol 4), saved and duped; the server pushes gravity and the surface
+  (friction, elasticity from `surfaceproperties.txt`) to the live Jolt body when they change.
+  Rendering the override / colour is client work, not done yet.
