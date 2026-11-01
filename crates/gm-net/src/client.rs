@@ -88,6 +88,8 @@ pub struct InterpPose {
     pub vel: Vec3,
     pub angvel: Vec3,
     pub extrapolated: bool,
+    /// prop_ragdoll: the interpolated pose of every physics object.
+    pub bones: Vec<crate::msg::BonePose>,
 }
 
 impl Interpolator {
@@ -125,6 +127,7 @@ impl Interpolator {
                 vel: e.vel,
                 angvel: e.angvel,
                 extrapolated: true,
+                bones: e.bones.clone(),
             });
         }
         let after = self
@@ -140,6 +143,7 @@ impl Interpolator {
                 vel: eb.vel,
                 angvel: eb.angvel,
                 extrapolated: false,
+                bones: eb.bones.clone(),
             });
         }
         let (ta, a) = &self.snapshots[after - 1];
@@ -150,16 +154,35 @@ impl Interpolator {
                 vel: eb.vel,
                 angvel: eb.angvel,
                 extrapolated: false,
+                bones: eb.bones.clone(),
             });
         };
         let f = ((render_tick - *ta as f32) / (*tb as f32 - *ta as f32).max(1.0)).clamp(0.0, 1.0);
         let rot = gm_sandbox::rotation(ea.angles).slerp(gm_sandbox::rotation(eb.angles), f);
+        // ragdoll parts: each physics object interpolated on its own (a part missing on one
+        // side keeps the newer pose)
+        let bones = eb
+            .bones
+            .iter()
+            .enumerate()
+            .map(|(i, bb)| match ea.bones.get(i) {
+                Some(ba) => crate::msg::BonePose {
+                    pos: ba.pos.lerp(bb.pos, f),
+                    angles: gm_sandbox::angles_of(
+                        gm_sandbox::rotation(ba.angles).slerp(gm_sandbox::rotation(bb.angles), f),
+                    ),
+                    frozen: bb.frozen,
+                },
+                None => bb.clone(),
+            })
+            .collect();
         Some(InterpPose {
             pos: ea.pos.lerp(eb.pos, f),
             angles: gm_sandbox::angles_of(rot),
             vel: ea.vel.lerp(eb.vel, f),
             angvel: ea.angvel.lerp(eb.angvel, f),
             extrapolated: false,
+            bones,
         })
     }
 }

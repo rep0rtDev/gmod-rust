@@ -291,6 +291,76 @@ fn player_model_key(p: &PlayerSnap) -> String {
 
 /// GMod's default `viewmodel_fov`.
 const VIEWMODEL_FOV: f32 = 54.0;
+/// World-space bone matrices of a prop_ragdoll from its networked physics objects: every bone
+/// follows the object of its `physics_bone` (MDL `TranslateBoneToPhysBone`) by its offset from
+/// that object's own bone in the model's `ragdoll` pose (bind pose without one); bones no object
+/// drives ride the entity. `ManipulateBoneAngles` / `ManipulateBoneScale` apply in bone space.
+fn ragdoll_bone_matrices(
+    m: &gm_render::world::DynModel,
+    parts: &[gm_net::msg::BonePose],
+    pos: Vec3,
+    angles: Vec3,
+    manips: &[gm_net::msg::BoneManip],
+) -> Option<Vec<glam::Mat4>> {
+    let bones = m.skeleton_bones()?;
+    let pose_local: Vec<glam::Mat4> = match m.bone_world("ragdoll", 0.0, None, &[]) {
+        Some(w) if w.len() == bones.len() => w,
+        _ => {
+            let mut w = Vec::with_capacity(bones.len());
+            for (i, b) in bones.iter().enumerate() {
+                let local = glam::Mat4::from_rotation_translation(
+                    glam::Quat::from_array(b.quat),
+                    Vec3::from(b.pos),
+                );
+                let parent = usize::try_from(b.parent)
+                    .ok()
+                    .filter(|k| *k < i)
+                    .map_or(glam::Mat4::IDENTITY, |k| w[k]);
+                w.push(parent * local);
+            }
+            w
+        }
+    };
+    // the bone an object is named after: the first (parent-most) bone it drives
+    let mut solid_bone: Vec<Option<usize>> = vec![None; parts.len()];
+    for (i, b) in bones.iter().enumerate() {
+        if let Some(slot) = usize::try_from(b.physics_bone)
+            .ok()
+            .and_then(|k| solid_bone.get_mut(k))
+        {
+            if slot.is_none() {
+                *slot = Some(i);
+            }
+        }
+    }
+    let entity = gm_render::world::model_transform(pos, angles);
+    let mut world: Vec<glam::Mat4> = bones
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let driven = usize::try_from(b.physics_bone)
+                .ok()
+                .and_then(|k| Some((parts.get(k)?, (*solid_bone.get(k)?)?)));
+            match driven {
+                Some((part, sb)) => {
+                    gm_render::world::model_transform(part.pos, part.angles)
+                        * pose_local[sb].inverse()
+                        * pose_local[i]
+                }
+                None => entity * pose_local[i],
+            }
+        })
+        .collect();
+    for mp in manips {
+        if let Some(w) = world.get_mut(mp.bone as usize) {
+            *w = *w
+                * gm_render::world::model_transform(Vec3::ZERO, mp.angles)
+                * glam::Mat4::from_scale(mp.scale);
+        }
+    }
+    Some(world)
+}
+
 /// Hands drawn on the `c_` viewmodels' arm bones when the local player's model is not known
 /// yet (the game's default, kleiner's citizen hands).
 const HANDS_MODEL: &str = "models/weapons/c_arms_citizen.mdl";
@@ -3209,6 +3279,20 @@ impl App {
             &'a gm_render::world::DynModel,
         );
         let mut player_poses: Vec<PlayerPose<'_>> = Vec::new();
+        // prop_ragdoll: skinning from the networked physics objects (world space, so the draw
+        // transform is the identity), bone manipulations on top
+        let rag_poses: Vec<(u32, Vec<glam::Mat4>)> = ents
+            .values()
+            .filter(|e| !e.bones.is_empty())
+            .filter_map(|e| {
+                let m = g.models.get(&e.model)?.as_ref()?;
+                let p = self.sim.interp.sample(e.id, rt);
+                let parts = p.as_ref().map_or(&e.bones, |p| &p.bones);
+                let (pos, ang) = p.as_ref().map_or((e.pos, e.angles), |p| (p.pos, p.angles));
+                let world = ragdoll_bone_matrices(m, parts, pos, ang, &e.manips)?;
+                Some((e.id, m.skin_matrices(&world)))
+            })
+            .collect();
         let mut items: Vec<_> = ents
             .values()
             .filter_map(|e| {
@@ -3216,14 +3300,22 @@ impl App {
                     Some(p) => (p.pos, p.angles),
                     None => (e.pos, e.angles),
                 };
+                let model = if e.skin == 0 && e.body.is_empty() {
+                    g.models.get(&e.model)?.as_ref()?
+                } else {
+                    g.models
+                        .get(&format!("{}#{}#{}", e.model, e.skin, e.body))?
+                        .as_ref()?
+                };
+                if let Some((_, skin)) = rag_poses.iter().find(|(id, _)| *id == e.id) {
+                    return Some(DrawItem {
+                        model,
+                        transform: glam::Mat4::IDENTITY,
+                        bones: Some(skin.as_slice()),
+                    });
+                }
                 Some(DrawItem {
-                    model: if e.skin == 0 && e.body.is_empty() {
-                        g.models.get(&e.model)?.as_ref()?
-                    } else {
-                        g.models
-                            .get(&format!("{}#{}#{}", e.model, e.skin, e.body))?
-                            .as_ref()?
-                    },
+                    model,
                     transform: gm_render::world::model_transform(pos, ang),
                     bones: None,
                 })

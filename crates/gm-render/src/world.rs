@@ -694,6 +694,11 @@ impl DynModel {
         })
     }
 
+    /// The model's bones (hierarchy, bind pose, `physics_bone` of each), when it has a skeleton.
+    pub fn skeleton_bones(&self) -> Option<&[gm_formats::mdl::Bone]> {
+        self.skeleton.as_ref().map(|sk| sk.bones.as_slice())
+    }
+
     /// Skinning matrices from bone transforms: bone world times pose-to-bone.
     pub fn skin_matrices(&self, world: &[Mat4]) -> Vec<Mat4> {
         let Some(sk) = self.skeleton.as_ref() else {
