@@ -82,13 +82,25 @@ fn npc_spawns_takes_bullets_and_dies_in_place() {
     server.tick(&idle);
     assert!(!server.npcs.contains_key(&id));
     assert!(server.npcs.contains_key(&z));
+    // a save carries the live NPC (key, model, pose, health, weapon) and brings it back
+    let save = server.save_world("gm_construct");
+    assert_eq!(save.npcs.len(), 1);
+    assert_eq!(save.npcs[0].key, "npc_zombie");
+    assert_eq!(save.npcs[0].health, 47.5);
+    server.cleanup(1);
+    assert!(server.npcs.is_empty());
+    server.load_world(&save, 1);
+    assert_eq!(server.npcs.len(), 1);
+    assert_eq!(server.npcs.values().next().unwrap().health, 47.5);
+    // the restored zombie stays (counted like a spawned one)
     // sbox_maxnpcs counts the live ones
     server.sandbox.limits.max_npcs = 2;
     assert!(server.spawn_npc(1, "npc_kleiner", "none").is_some());
     assert!(server.spawn_npc(1, "npc_kleiner", "none").is_none());
+    // the restored NPC has no undo entry (as in the game); cleanup takes everything
     server.undo(1);
-    server.undo(1);
-    server.undo(1);
+    assert_eq!(server.npcs.len(), 1);
+    server.cleanup(1);
     assert!(
         server.npcs.is_empty(),
         "{:?}",

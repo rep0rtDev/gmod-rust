@@ -127,6 +127,7 @@ Recorded through the toolgun probe on a kleiner `prop_ragdoll` with every physic
 ### Saves and duplicator: ragdolls and poser state
 
 A save / dupe entry of a prop carries, like the game's `duplicator.CopyEntTable`, the pose and frozen flag of every physics object of a prop_ragdoll (`PhysicsObjects`), the manipulated bones (`BoneManip`: inflator scale, finger angles), `FlexWeight` / `FlexScale` and the `EntityMods` of the eyeposer (`eyetarget`) and the paint stool (`decal<i>`). Loading or pasting rebuilds the ragdoll, teleports its objects to the saved poses (frozen ones stay frozen), re-bases the entity on the root and restores the poser state (`Server::saved_prop` / `apply_saved_state`; test `ragdoll_parts_and_poser_state_roundtrip_through_a_save`). Older files without these fields load as before.
+- NPCs and vehicles: a save lists live NPCs (`npcs`: key, class, model, pose, health, weapon, skin) and brings them back counted as `npcs` without undo entries; a vehicle prop carries its `VehicleName` key (`vehicle`) and comes back as a vehicle (seat, health from the list / prop_data, counted as `vehicles`). Dupes carry props (incl. vehicles) only; NPCs in dupes and the game's exact NPC save fields (`npc.*` keyvalues, squad, relationships) are open.
 
 ## Weapons: loadout, ammo, switching
 

@@ -5022,6 +5022,37 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// An NPC back from a save (no undo entry, counted and cleaned up as `npcs`).
+    pub fn restore_npc(&mut self, owner: u32, n: &save::SavedNpc, origin: Vec3) -> Option<u32> {
+        let def = *npc_def(&n.key)?;
+        let id = self.sandbox.alloc_foreign();
+        self.npcs.insert(
+            id,
+            Npc {
+                key: def.key.to_string(),
+                class: n.class.clone(),
+                model: n.model.clone(),
+                skin: n.skin,
+                pos: Vec3::from(n.pos) + origin,
+                angles: Vec3::from(n.angles),
+                mins: Vec3::from(def.mins),
+                maxs: Vec3::from(def.maxs),
+                health: n.health,
+                max_health: def.health,
+                weapon: n.weapon.clone(),
+                blood: def.blood,
+                movetype: def.movetype,
+                solid: def.solid,
+                sequence: def.sequence,
+                settle: false,
+                dead_at: None,
+            },
+        );
+        self.sandbox.add_count(owner, "npcs", id);
+        self.sandbox.add_cleanup(owner, "npcs", id);
+        Some(id)
+    }
+
     /// NPCs whose undo / cleanup entry went: the sandbox no longer lists them as foreign.
     fn prune_npcs(&mut self) {
         self.npcs.retain(|id, _| self.sandbox.is_foreign(*id));
@@ -5277,6 +5308,8 @@ impl<'w> Server<'w> {
                 props: saved,
                 constraints,
                 devices: Vec::new(),
+                // dupes carry props only; NPCs ride along in saves
+                npcs: Vec::new(),
             },
         );
         true
@@ -7369,6 +7402,7 @@ impl<'w> Server<'w> {
                 }),
             eye_target: self.eye_targets.get(&p.id).map(|t| arr(*t)),
             weapon: self.world_weapons.get(&p.id).cloned(),
+            vehicle: self.vehicles.get(&p.id).map(|v| v.key.clone()),
             decals: self
                 .decals(p.id)
                 .iter()
@@ -7388,6 +7422,38 @@ impl<'w> Server<'w> {
     pub fn apply_saved_state(&mut self, id: u32, sp: &save::SavedProp, origin: Vec3) {
         if let Some(class) = &sp.weapon {
             self.world_weapons.insert(id, class.clone());
+        }
+        if let Some(def) = sp.vehicle.as_deref().and_then(vehicle_def) {
+            let health = def.health.unwrap_or_else(|| {
+                self.models
+                    .get(def.model)
+                    .map(|m| m.prop_data.health)
+                    .unwrap_or(0)
+            });
+            let owner = self
+                .sandbox
+                .props()
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| p.owner)
+                .unwrap_or(0);
+            self.sandbox.add_count(owner, "vehicles", id);
+            self.sandbox.add_cleanup(owner, "vehicles", id);
+            self.vehicles.insert(
+                id,
+                Vehicle {
+                    key: def.key.to_string(),
+                    class: def.class.to_string(),
+                    model: def.model.to_string(),
+                    health,
+                    max_health: if def.class == "prop_vehicle_prisoner_pod" && health == 0 {
+                        1
+                    } else {
+                        health
+                    },
+                    driver: None,
+                },
+            );
         }
         if !sp.parts.is_empty() {
             self.sync_physics();

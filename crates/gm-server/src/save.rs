@@ -17,6 +17,8 @@ pub struct Save {
     /// Powered stool entities on props (by prop index); absent in older files.
     #[serde(default)]
     pub devices: Vec<SavedDevice>,
+    #[serde(default)]
+    pub npcs: Vec<SavedNpc>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -581,6 +583,24 @@ pub struct SavedProp {
     /// Weapon class when the prop is a weapon entity lying in the world (`Spawn_Weapon`).
     #[serde(default)]
     pub weapon: Option<String>,
+    /// Vehicle list key when the prop is a vehicle (`Spawn_Vehicle`: `VehicleName`).
+    #[serde(default)]
+    pub vehicle: Option<String>,
+}
+
+/// An NPC in a save: the spawnmenu key, its class / model and state (`npc.NPCName`, health, weapon).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedNpc {
+    pub key: String,
+    pub class: String,
+    pub model: String,
+    pub pos: [f32; 3],
+    pub angles: [f32; 3],
+    pub health: f32,
+    #[serde(default)]
+    pub weapon: String,
+    #[serde(default)]
+    pub skin: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1214,6 +1234,21 @@ impl Server<'_> {
                     kind: SavedKind::from(&c.kind),
                 })
                 .collect(),
+            npcs: self
+                .npcs
+                .values()
+                .filter(|n| n.dead_at.is_none())
+                .map(|n| SavedNpc {
+                    key: n.key.clone(),
+                    class: n.class.clone(),
+                    model: n.model.clone(),
+                    pos: n.pos.to_array(),
+                    angles: n.angles.to_array(),
+                    health: n.health,
+                    weapon: n.weapon.clone(),
+                    skin: n.skin,
+                })
+                .collect(),
             devices: self
                 .sandbox
                 .devices()
@@ -1285,6 +1320,9 @@ impl Server<'_> {
             let (device, binds) = d.kind.restore(id);
             self.sandbox.set_gravity(id, device.gravity());
             self.sandbox.restore_device(id, device, &binds);
+        }
+        for n in &save.npcs {
+            self.restore_npc(owner, n, Vec3::ZERO);
         }
         self.sync_after_script();
         (ids.iter().filter(|i| i.is_some()).count(), constraints)
