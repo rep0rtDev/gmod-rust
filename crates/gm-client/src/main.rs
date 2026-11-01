@@ -691,6 +691,7 @@ struct App {
     gestures: std::collections::HashMap<u32, (&'static str, Instant, u8)>,
     /// Weapon sounds from the scripts, mixed on the default output device.
     sounds: gm_audio::Sounds,
+    soundscapes: gm_audio::Soundscapes,
     last_render: Instant,
     /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
     menu: Option<SpawnMenu>,
@@ -862,6 +863,16 @@ impl App {
                 ),
                 Err(e) => println!("acoustics: {e}"),
             }
+            self.soundscapes.clear(&mut self.sounds);
+            self.soundscapes = gm_audio::Soundscapes::new(
+                gm_audio::SoundscapeDefinitions::from_mount(&self.mount),
+                gm_audio::SoundscapeEnv::from_bsp(&bsp),
+            );
+            println!(
+                "soundscapes: {} defined, {} env_soundscape in the map",
+                self.soundscapes.defs.len(),
+                self.soundscapes.envs.len()
+            );
         }
         eprintln!(
             "world: {} faces, {} props, built in {:.1}s",
@@ -3026,6 +3037,17 @@ impl App {
                 & gm_formats::bsp::lumps::contents::WATER
                 != 0,
         );
+        {
+            let collision = self.sim.collision;
+            let sees = |from: Vec3, to: Vec3| {
+                collision
+                    .trace_ray(from, to, gm_collision::MASK_SOLID)
+                    .fraction
+                    >= 1.0
+            };
+            self.soundscapes
+                .update(&mut self.sounds, &self.mount, camera.position, &sees);
+        }
         let aspect = g.config.width as f32 / g.config.height as f32;
         g.world
             .draw(&g.gpu, &camera, &attach, resolve, &g.depth, aspect);
@@ -4898,6 +4920,7 @@ fn main() -> Result<()> {
         anim_time: Default::default(),
         gestures: Default::default(),
         sounds,
+        soundscapes: gm_audio::Soundscapes::default(),
         last_render: Instant::now(),
         menu: None,
         spawnlists: Vec::new(),

@@ -74,6 +74,7 @@ pub enum Cmd {
     Stop(u32),
     StopChannel(u32, Option<u8>, f32),
     Move(u32, Vec3),
+    Volume(u32, f32),
     Listener(Listener),
     Master(f32),
     Scene(Arc<Shared>),
@@ -90,6 +91,7 @@ fn apply(engine: &mut Engine, cmd: Cmd) {
         Cmd::Stop(id) => engine.stop(id),
         Cmd::StopChannel(ent, ch, fade) => engine.stop_channel(ent, ch, fade),
         Cmd::Move(id, p) => engine.set_position(id, p),
+        Cmd::Volume(id, v) => engine.set_volume(id, v),
         Cmd::Listener(l) => engine.listener = l,
         Cmd::Master(m) => engine.master = m.clamp(0.0, 1.0),
         Cmd::Scene(shared) => engine.shared = Some(shared),
@@ -366,6 +368,11 @@ impl Mixer {
 
     pub fn move_voice(&self, id: u32, position: Vec3) {
         let _ = self.tx.send(Cmd::Move(id, position));
+    }
+
+    /// Change a playing voice's gain (soundscape fades).
+    pub fn set_volume(&self, id: u32, volume: f32) {
+        let _ = self.tx.send(Cmd::Volume(id, volume));
     }
 
     /// Voices playing after the last rendered block.

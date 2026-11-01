@@ -263,6 +263,12 @@ impl Engine {
         }
     }
 
+    pub fn set_volume(&mut self, id: u32, volume: f32) {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
+            v.gain = volume.max(0.0);
+        }
+    }
+
     /// Move a looping voice with its entity.
     pub fn set_position(&mut self, id: u32, position: Vec3) {
         if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {

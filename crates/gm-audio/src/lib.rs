@@ -9,6 +9,7 @@ pub mod engine;
 pub mod mixer;
 pub mod scene;
 pub mod script;
+pub mod soundscape;
 pub mod wav;
 
 use std::collections::HashMap;
@@ -21,6 +22,7 @@ pub use engine::{Engine, Path, Play};
 pub use mixer::{distance_gain, Listener, Mixer};
 pub use scene::Geometry;
 pub use script::{Entry, Scripts};
+pub use soundscape::{Definitions as SoundscapeDefinitions, Env as SoundscapeEnv, Soundscapes};
 pub use wav::Pcm;
 
 /// Soundscripts of the base game the client plays from.
@@ -108,6 +110,17 @@ impl Sounds {
             rng: Rng::new(),
             tracked: HashMap::new(),
         }
+    }
+
+    /// Scripts with an offline engine at `rate` Hz (tests, headless tools).
+    pub fn offline(mount: &gm_content::Mount, rate: u32) -> anyhow::Result<Sounds> {
+        Ok(Sounds {
+            mixer: Mixer::offline(rate)?,
+            scripts: load_scripts(mount),
+            cache: HashMap::new(),
+            rng: Rng::new(),
+            tracked: HashMap::new(),
+        })
     }
 
     /// Decode `sound/<wave>` once.

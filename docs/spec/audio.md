@@ -154,9 +154,21 @@ is the data: scripts, waves, levels, pitches, channels, cue loops.
   0.5, pitch 100, on the thruster entity; `Switch(off)` fades it to silence over 0.25 s. A
   name outside the tool's `ThrusterSounds` list is silent, as `StartThrustSound` ignores
   it. Removing the thruster stops the loop. Saves keep the sound name.
-- Not yet: soundscapes (`playlooping` / `playrandom` ambience), dynamic occluders
-  (props), doppler (the game has none either). Nodraw faces are not in the face lump, so
-  a wall whose only face is nodraw does not occlude.
+- Soundscapes (`gm-audio/soundscape.rs`): `scripts/soundscapes.txt` plus the manifest's
+  files, first definition wins; `playlooping` (volume / pitch ranges, `attenuation` or
+  `soundlevel`, `position` 0..7 or none = at the listener, following it, no falloff),
+  `playrandom` (`time` range between plays, a wave from `rndwave`, `position "random"` =
+  100..500 u from the listener at a random bearing - an approximation), `playsoundscape`
+  (folded in: volumes multiplied, indices shifted by `positionoverride`, four levels).
+  `dsp` is parsed and ignored (reverb comes from the geometry). Selection every frame
+  from the map's `env_soundscape` entities: the nearest whose radius (-1: unbounded) holds
+  the camera and whose origin has a clear `MASK_SOLID` ray to it; it stays until another
+  takes over (none in sight keeps the current). A change fades the old loops out and the
+  new in over `fadetime` (3 s default). gm_construct names `construct.outside / inside /
+  lake / garage`, which no shipped file defines, so there (as in the game) nothing plays;
+  gm_flatgrass has no `env_soundscape`. HL2 maps carry the full set (~380 definitions).
+- Not yet: dynamic occluders (props), doppler (the game has none either). Nodraw faces
+  are not in the face lump, so a wall whose only face is nodraw does not occlude.
 
 ## World sounds: footsteps (measured)
 
