@@ -768,9 +768,13 @@ impl Inventory {
                 *reserve -= take;
                 self.reloading = false;
                 self.rearm = f.rearm_after_reload;
-                // both timers restart from the refill (SMG1, AR2, .357: -0.015 on that tick)
-                self.next_primary = 0.0;
-                self.next_secondary = 0.0;
+                // both timers restart from the refill (SMG1, AR2, .357: -0.015 on that tick); a
+                // `rearm_after_reload` weapon lets them run on through the refill tick and
+                // restarts them the tick after (crossbow: -0.0267 then -0.015)
+                if !f.rearm_after_reload {
+                    self.next_primary = 0.0;
+                    self.next_secondary = 0.0;
+                }
             }
         }
         if self.need_pump {
