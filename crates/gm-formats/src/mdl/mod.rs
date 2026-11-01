@@ -676,8 +676,10 @@ fn quat48(b: &[u8]) -> [f32; 4] {
     let u = |i: usize| u16::from_le_bytes(b[i..i + 2].try_into().unwrap());
     let c = |v: u16| (v as f32 - 32768.0) * (1.0 / 32768.0);
     let (x, y) = (c(u(0)), c(u(2)));
+    // z keeps 15 bits: offset 16384, scale 1/16384 (alyx's pelvis in her ragdoll frame reads
+    // (0.5, 0.5, 0.5, 0.5) only with it; the 16-bit formula gave z -0.25)
     let zw = u(4);
-    let z = c(zw & 0x7fff);
+    let z = ((zw & 0x7fff) as f32 - 16384.0) * (1.0 / 16384.0);
     let w = (1.0 - x * x - y * y - z * z).max(0.0).sqrt();
     [x, y, z, if zw & 0x8000 != 0 { -w } else { w }]
 }
