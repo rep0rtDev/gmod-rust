@@ -84,6 +84,12 @@ pub enum Event {
     Cleanup { kind: String },
     /// An entity left the table (`EntityRemoved`), one per entity, before the Undone/Cleanup.
     Removed { prop: u32 },
+    /// paint stool: `util.Decal(name, pos1, pos2)` for the clients.
+    Decal {
+        name: String,
+        pos1: Vec3,
+        pos2: Vec3,
+    },
     /// `Player:SendLua` from a stool (the remover's achievement pokes).
     Lua { code: String },
 }
@@ -651,6 +657,11 @@ pub struct ToolSettings {
     pub faceposer_scale: f32,
     /// finger poser `finger_<i>` = "x y" per finger part (15 per hand).
     pub finger: Vec<[f32; 2]>,
+    /// paint stool `decal` name.
+    pub paint_decal: String,
+    /// creator stool `type` (0 SENT, 1 vehicle, 2 NPC, 3 weapon, 4 prop) and `name`.
+    pub creator_type: i32,
+    pub creator_name: String,
 }
 
 impl ToolSettings {
@@ -849,6 +860,9 @@ impl Default for ToolSettings {
             faceposer_flex: vec![0.0; 96],
             faceposer_scale: 0.0,
             finger: vec![[0.0; 2]; 15],
+            paint_decal: String::new(),
+            creator_type: 0,
+            creator_name: String::new(),
             camera_toggle: true,
             camera_locked: false,
             dynamite_remove: false,
@@ -2610,6 +2624,8 @@ impl Sandbox {
                 | "eyeposer"
                 | "faceposer"
                 | "finger"
+                | "paint"
+                | "creator"
                 | "duplicator"
                 | "ballsocket"
                 | "slider"

@@ -470,6 +470,24 @@ crates = ["gm-server", "gm-sandbox"]
 pos = 2.0
 
 [[harness]]
+name = "server_paint"
+scenario = "server/paint"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_creator"
+scenario = "server/creator"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
 name = "server_axis"
 scenario = "server/axis"
 compare = "server"

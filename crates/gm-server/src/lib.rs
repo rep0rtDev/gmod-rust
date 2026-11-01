@@ -87,6 +87,16 @@ const HAND_BONES: [(&str, &str); 10] = [
     ("ValveBiped.Bip01_L_Hand", "ValveBiped.Bip01_R_Hand"),
 ];
 
+/// One paint stool decal as the game stores it (`duplicator` modifier `decal<i>`): the two
+/// trace points (hit +- normal) local to the physics object `bone` of the entity.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecalMod {
+    pub bone: u32,
+    pub name: String,
+    pub pos1: Vec3,
+    pub pos2: Vec3,
+}
+
 /// A model attachment as a pose in its bone's space.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachmentInfo {
@@ -94,21 +104,6 @@ pub struct AttachmentInfo {
     pub bone: usize,
     pub pos: Vec3,
     pub rot: Quat,
-}
-
-/// Rotation of the root solid's bone in the ragdoll pose under an identity entity rotation.
-fn ragdoll_root_pose_rot(rd: &RagdollInfo) -> Quat {
-    let root = rd
-        .solids
-        .first()
-        .map(|s| s.bone.as_str())
-        .unwrap_or_default();
-    let (_, wrot) = ragdoll_bone_world(rd, Vec3::ZERO, Quat::IDENTITY);
-    rd.bones
-        .iter()
-        .position(|b| b.name.eq_ignore_ascii_case(root))
-        .and_then(|i| wrot.get(i).copied())
-        .unwrap_or(Quat::IDENTITY)
 }
 
 /// World pose of every bone of a ragdoll model placed with its origin at `pos` rotated by `rot`,
@@ -136,6 +131,9 @@ struct RagdollRuntime {
     anim_friction: Option<gm_formats::phy::AnimatedFriction>,
     /// Per bone body: physgun-frozen (`PhysObj:EnableMotion(false)` on that object only).
     frozen: Vec<bool>,
+    /// Root body rotation when the ragdoll was built: the entity's angles read as the root's
+    /// turn since then (the ragdoll init re-bases the entity on the root with zero angles).
+    init_root_rot: Quat,
 }
 
 /// One ragdoll physics object in a snapshot.
@@ -1317,6 +1315,8 @@ pub struct Server<'w> {
     flexes: BTreeMap<u32, (Vec<f32>, f32)>,
     /// Per-player poser stool state (the game keeps it on the tool object / weapon NW vars).
     posers: BTreeMap<u32, PoserState>,
+    /// Paint stool decals per entity: the duplicator's `decal<i>` modifiers (none on the world).
+    decals: BTreeMap<u32, Vec<DecalMod>>,
     constraints: BTreeMap<u32, ConstraintHandle>,
     /// NoCollide pairs by sandbox constraint id.
     nocollides: BTreeMap<u32, (BodyHandle, BodyHandle)>,
@@ -1453,6 +1453,7 @@ impl<'w> Server<'w> {
             eye_targets: BTreeMap::new(),
             flexes: BTreeMap::new(),
             posers: BTreeMap::new(),
+            decals: BTreeMap::new(),
             constraints: BTreeMap::new(),
             nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
@@ -3606,6 +3607,11 @@ impl<'w> Server<'w> {
                 .map(|i| (wpos[i], wrot[i]))
                 .unwrap_or((p.pos, root_rot))
         };
+        let root_pose = rd
+            .solids
+            .first()
+            .map(|s| bone_pose(&s.bone))
+            .unwrap_or((p.pos, root_rot));
         let mut bodies: Vec<BodyHandle> = Vec::with_capacity(rd.solids.len());
         for s in &rd.solids {
             let (pos, rot) = bone_pose(&s.bone);
@@ -3676,8 +3682,12 @@ impl<'w> Server<'w> {
                 spawn_tick: self.tick_count,
                 anim_friction: rd.anim_friction.clone(),
                 frozen: vec![false; n_bodies],
+                init_root_rot: root_pose.1,
             },
         );
+        // the ragdoll init re-bases the entity on its root physics object with zero angles
+        // (measured: a creator-spawned kleiner reads angles (0, 0, 0) the tick it appears)
+        self.sandbox.set_prop_pose(p.id, root_pose.0, Vec3::ZERO);
     }
 
     /// The tool gun's trace from the player's eye: what a click would hit.
@@ -3711,6 +3721,12 @@ impl<'w> Server<'w> {
         }
         if tool == "finger" {
             return ToolClick::Done(self.finger_click(player, &hit, right));
+        }
+        if tool == "paint" {
+            return ToolClick::Done(self.paint_click(&hit));
+        }
+        if tool == "creator" {
+            return ToolClick::Done(!right && self.creator_click(player));
         }
         if tool == "duplicator" {
             let ret = if right {
@@ -4077,6 +4093,7 @@ impl<'w> Server<'w> {
                 self.bone_angles.remove(&id);
                 self.eye_targets.remove(&id);
                 self.flexes.remove(&id);
+                self.decals.remove(&id);
                 if let Some(RagdollRuntime {
                     bodies: bones,
                     joints,
@@ -4858,22 +4875,12 @@ impl<'w> Server<'w> {
         }
         for (id, body) in &self.bodies {
             let st = self.physics.state(*body);
-            // prop_ragdoll (measured server_inflator / ragdoll spawn): the entity sits on the
-            // root physics object, its angles are the root's turn since the ragdoll pose, so
-            // a freshly placed ragdoll reads (0, 0, 0) whatever its root bone's own rotation
-            let rot = match self.ragdoll_bodies.contains_key(id) {
-                true => self
-                    .sandbox
-                    .props()
-                    .iter()
-                    .find(|p| p.id == *id)
-                    .and_then(|p| self.models.get(&p.model))
-                    .and_then(|m| m.ragdoll.as_ref())
-                    .map_or(st.rotation, |rd| {
-                        st.rotation * ragdoll_root_pose_rot(rd).inverse()
-                    }),
-                false => st.rotation,
-            };
+            // prop_ragdoll (measured server_inflator / server_creator): the entity sits on the
+            // root physics object, its angles are the root's turn since the ragdoll was built
+            let rot = self
+                .ragdoll_bodies
+                .get(id)
+                .map_or(st.rotation, |rt| st.rotation * rt.init_root_rot.inverse());
             self.sandbox
                 .set_prop_pose(*id, st.position, gm_sandbox::angles_of(rot));
         }
@@ -5785,8 +5792,89 @@ impl<'w> Server<'w> {
         match tool {
             "inflator" => Some(self.inflator_reload(hit)),
             "eyeposer" => Some(self.eyeposer_reload(player, hit)),
+            "paint" => Some(self.paint_reload(hit)),
             _ => None,
         }
+    }
+
+    /// Pose of the physics object `bone` of `ent` (the root when out of range), identity for
+    /// the world.
+    fn phys_object_pose(&self, ent: Option<u32>, bone: u32) -> (Vec3, Quat) {
+        let Some(e) = ent else {
+            return (Vec3::ZERO, Quat::IDENTITY);
+        };
+        let body = self
+            .ragdoll_bodies
+            .get(&e)
+            .and_then(|rt| rt.bodies.get(bone as usize).copied())
+            .or_else(|| self.bodies.get(&e).copied());
+        match body {
+            Some(b) => {
+                let st = self.physics.state(b);
+                (st.position, st.rotation)
+            }
+            None => (Vec3::ZERO, Quat::IDENTITY),
+        }
+    }
+
+    /// paint.lua LeftClick / RightClick (`PlaceDecal`, measured `server_paint`): the hit point
+    /// +- its normal, local to the hit physics object, stored as the next `decal<i>` modifier
+    /// of the entity (the world included); `util.Decal` goes to the clients; always false.
+    pub fn paint_click(&mut self, hit: &ToolHit) -> bool {
+        let name = self.sandbox.tool_settings.paint_decal.clone();
+        let (pos, rot) = self.phys_object_pose(hit.ent, hit.bone);
+        let inv = rot.inverse();
+        let p1 = hit.pos + hit.normal;
+        let p2 = hit.pos - hit.normal;
+        // the world gets the decal but no modifier: `duplicator.StoreEntityModifier` wants a
+        // valid entity and worldspawn is not one (measured: world EntityMods stay empty)
+        if let Some(e) = hit.ent {
+            self.decals.entry(e).or_default().push(DecalMod {
+                bone: hit.bone,
+                name: name.clone(),
+                pos1: inv * (p1 - pos),
+                pos2: inv * (p2 - pos),
+            });
+        }
+        self.events.push(gm_sandbox::Event::Decal {
+            name,
+            pos1: p1,
+            pos2: p2,
+        });
+        false
+    }
+
+    /// paint.lua Reload: `RemoveAllDecals` and the modifiers of an entity (true), false on the
+    /// world.
+    pub fn paint_reload(&mut self, hit: &ToolHit) -> bool {
+        let Some(e) = hit.ent else {
+            return false;
+        };
+        self.decals.remove(&e);
+        true
+    }
+
+    /// The paint stool's decals on `ent` in placement order.
+    pub fn decals(&self, ent: u32) -> &[DecalMod] {
+        self.decals.get(&ent).map_or(&[], |v| v.as_slice())
+    }
+
+    /// creator.lua LeftClick: `creator_type` 4 spawns `creator_name` as a prop / ragdoll through
+    /// the player's spawn (`CCSpawn`), 0 a scripted entity (`Spawn_SENT`); vehicles, NPCs and
+    /// weapons (1..3) have no spawn here yet. Always true.
+    pub fn creator_click(&mut self, player: u32) -> bool {
+        let ts = &self.sandbox.tool_settings;
+        let (kind, name) = (ts.creator_type, ts.creator_name.clone());
+        match kind {
+            4 => {
+                self.spawn_prop(player, &name);
+            }
+            0 => {
+                self.spawn_sent(player, &name);
+            }
+            _ => {}
+        }
+        true
     }
 
     /// `Entity:GetManipulateBoneAngles` entries that are not zero (finger poser).

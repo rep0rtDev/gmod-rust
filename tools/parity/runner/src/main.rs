@@ -244,6 +244,8 @@ fn apply_click_settings(
             | "eyeposer"
             | "faceposer"
             | "finger"
+            | "paint"
+            | "creator"
             | "slider"
             | "elastic"
             | "hydraulic"
@@ -292,6 +294,11 @@ fn apply_click_settings(
                 ts.faceposer_flex[i] = num(&format!("flex{i}"));
             }
             ts.faceposer_scale = num("scale");
+        }
+        "paint" => ts.paint_decal = text("decal"),
+        "creator" => {
+            ts.creator_type = num("type") as i32;
+            ts.creator_name = text("name");
         }
         "finger" => {
             for i in 0..ts.finger.len() {
@@ -2933,7 +2940,7 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
                 Event::Lua { code } => messages.push(json!({ "t": i, "lua": code })),
                 Event::Cleanup { kind } => messages
                     .push(json!({ "t": i, "lua": format!("hook.Run('OnCleanup','{kind}')") })),
-                Event::Undone { .. } | Event::Removed { .. } => {}
+                Event::Undone { .. } | Event::Removed { .. } | Event::Decal { .. } => {}
             }
         }
         let snap = snapshot(&sb);
@@ -4248,6 +4255,14 @@ fn compare_ragdoll(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
 }
 
 /// The whole server loop: a bot runs sandbox commands and the props live in Jolt between them.
+fn decal_rows(d: &[gm_server::DecalMod]) -> Vec<Value> {
+    d.iter()
+        .map(|d| {
+            json!({ "bone": d.bone, "decal": d.name, "p1": [d.pos1.x, d.pos1.y, d.pos1.z], "p2": [d.pos2.x, d.pos2.y, d.pos2.z] })
+        })
+        .collect()
+}
+
 fn run_server(scn: &Scenario) -> Result<Value> {
     use glam::Vec3;
     use gm_physics::{Surface, World};
@@ -4296,7 +4311,15 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         }
     }
     for op in &scn.ops {
-        if let Some(m) = &op.model {
+        // creator: the model travels in the stool's `name` setting
+        let setting_model = op
+            .settings
+            .as_ref()
+            .and_then(|st| st.get("name"))
+            .and_then(|v| v.as_str())
+            .filter(|n| n.ends_with(".mdl"))
+            .map(str::to_string);
+        for m in op.model.iter().chain(setting_model.iter()) {
             if known.insert(m.clone()) {
                 server.register_model(m, model_info(&mount, m)?);
             }
@@ -4338,12 +4361,18 @@ fn run_server(scn: &Scenario) -> Result<Value> {
     let snapshot = |server: &gm_server::Server| -> Value {
         let sb = &server.sandbox;
         json!({
-            "props": sb.props().iter().filter(|p| all_props || p.owner == player).map(|p| json!({
+            "props": sb.props().iter().filter(|p| if all_props { p.owner == 0 } else { p.owner == player }).map(|p| json!({
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen,
                 "bone_scales": server.bone_scales(p.id).iter().map(|(b, s)| json!({ "bone": b, "s": [s.x, s.y, s.z] })).collect::<Vec<_>>(),
                 "bone_angles": server.bone_angles(p.id).iter().map(|(b, a)| json!({ "bone": b, "a": [a.x, a.y, a.z] })).collect::<Vec<_>>(),
                 "eye_target": server.eye_target(p.id).map(|t| json!([t.x, t.y, t.z])),
                 "flex": server.flex_state(p.id).map(|(w, scale)| json!({ "n": w.len(), "w": w, "scale": scale })),
+                "decals": decal_rows(server.decals(p.id)),
+            })).collect::<Vec<_>>(),
+            "world_decals": decal_rows(server.decals(0)),
+            // creator: what the player spawned during the ops (scenario props have no owner)
+            "spawned": sb.props().iter().filter(|p| all_props && p.owner == player).map(|p| json!({
+                "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
             })).collect::<Vec<_>>(),
             "count": sb.count(player),
             "undos": sb.undos(player).iter().map(|u| json!({ "id": u.id, "name": u.name, "n": u.entities.len() })).collect::<Vec<_>>(),
@@ -5434,6 +5463,25 @@ fn compare_timers(theirs: &Value, ours: &Value) -> bool {
     ok
 }
 
+/// Paint decal rows: same count, bone, name and local points to 0.05 u.
+fn decals_same(a: &Value, b: &Value) -> bool {
+    let v3 = |v: &Value| -> glam::Vec3 {
+        let f = |i: usize| v[i].as_f64().unwrap_or(0.0) as f32;
+        glam::Vec3::new(f(0), f(1), f(2))
+    };
+    let (x, y) = (
+        a.as_array().cloned().unwrap_or_default(),
+        b.as_array().cloned().unwrap_or_default(),
+    );
+    x.len() == y.len()
+        && x.iter().zip(&y).all(|(p, q)| {
+            p["bone"] == q["bone"]
+                && p["decal"] == q["decal"]
+                && (v3(&p["p1"]) - v3(&q["p1"])).abs().max_element() < 0.05
+                && (v3(&p["p2"]) - v3(&q["p2"])).abs().max_element() < 0.05
+        })
+}
+
 fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(2.0) as f32;
     let empty = Vec::new();
@@ -5478,6 +5526,38 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             println!("  op {i}: {} props vs {}", tp.len(), op_.len());
             ok = false;
             continue;
+        }
+        if !decals_same(&ta["world_decals"], &oa["world_decals"]) {
+            println!(
+                "  op {i}: world decals {} vs {}",
+                ta["world_decals"], oa["world_decals"]
+            );
+            ok = false;
+        }
+        let (ts_, os_) = (
+            ta["spawned"].as_array().cloned().unwrap_or_default(),
+            oa["spawned"].as_array().cloned().unwrap_or_default(),
+        );
+        if ts_.len() != os_.len() {
+            println!("  op {i}: {} spawned vs {}", ts_.len(), os_.len());
+            ok = false;
+        } else {
+            for (k, (a, b)) in ts_.iter().zip(&os_).enumerate() {
+                let dp = (v3(&a["pos"]) - v3(&b["pos"])).length();
+                let da = gm_sandbox::rotation(v3(&a["ang"]))
+                    .angle_between(gm_sandbox::rotation(v3(&b["ang"])))
+                    .to_degrees();
+                if a["model"] != b["model"] || dp > pos_tol || da > 5.0 {
+                    println!(
+                        "  op {i}: spawned {} {} pos err {dp:.3} angle err {da:.2} ({:?} vs {:?})",
+                        k + 1,
+                        a["model"],
+                        v3(&a["pos"]),
+                        v3(&b["pos"])
+                    );
+                    ok = false;
+                }
+            }
         }
         for (k, (a, b)) in tp.iter().zip(op_).enumerate() {
             let dp = (v3(&a["pos"]) - v3(&b["pos"])).length();
@@ -5556,6 +5636,15 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     oa_a.len(),
                     ta_a.first(),
                     oa_a.first()
+                );
+                ok = false;
+            }
+            if !decals_same(&a["decals"], &b["decals"]) {
+                println!(
+                    "  op {i}: prop {} decals {} vs {}",
+                    k + 1,
+                    a["decals"],
+                    b["decals"]
                 );
                 ok = false;
             }
@@ -6065,7 +6154,10 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
                 Event::Lua { code } => messages.push(json!({ "t": i, "lua": code })),
                 Event::Cleanup { kind } => messages
                     .push(json!({ "t": i, "lua": format!("hook.Run('OnCleanup','{kind}')") })),
-                Event::Spawned { .. } | Event::Undone { .. } | Event::Removed { .. } => {}
+                Event::Spawned { .. }
+                | Event::Undone { .. }
+                | Event::Removed { .. }
+                | Event::Decal { .. } => {}
             }
         }
         let moved: Vec<usize> = sb

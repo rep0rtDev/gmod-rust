@@ -945,8 +945,12 @@ SCENARIOS.toolgun = function(scn, done)
 	end
 	undo.GetTable()[bot:UniqueID()] = nil
 	local props = {}
+	for d = 1, 64 do duplicator.ClearEntityModifier(game.GetWorld(), "decal" .. d) end
+	game.GetWorld().DecalCount = nil
+	for _, e in ipairs(table.Add(ents.FindByClass("prop_physics"), ents.FindByClass("prop_ragdoll"))) do if e:GetCreator() == bot then e:Remove() end end
 	for i, pr in ipairs(scn.props or {}) do
 		local ent = ents.Create(util.IsValidRagdoll(pr.model) and "prop_ragdoll" or "prop_physics")
+		ent.parity_scenario_prop = true
 		ent:SetModel(pr.model)
 		ent:SetPos(Vector(pr.pos[1], pr.pos[2], pr.pos[3]))
 		ent:SetAngles(Angle(pr.angles and pr.angles[1] or 0, pr.angles and pr.angles[2] or 0, pr.angles and pr.angles[3] or 0))
@@ -976,6 +980,23 @@ SCENARIOS.toolgun = function(scn, done)
 	end
 	local function snapshot()
 		local out = { props = {}, constraints = {}, ropes = {} }
+		local function decal_rows(e)
+			local dl = {}
+			for d = 1, 64 do
+				local m = e.EntityMods and e.EntityMods["decal" .. d]
+				if m then dl[#dl + 1] = { bone = m.bone, decal = m.decal, p1 = vec(m.Pos1), p2 = vec(m.Pos2) } end
+			end
+			return dl
+		end
+		out.world_decals = decal_rows(game.GetWorld())
+		out.spawned = {}
+		for _, e in ipairs(table.Add(ents.FindByClass("prop_physics"), ents.FindByClass("prop_ragdoll"))) do
+			if e:GetCreator() == bot and not e.parity_scenario_prop then
+				local p, a = e:GetPos(), e:GetAngles()
+				out.spawned[#out.spawned + 1] = { index = e:EntIndex(), model = e:GetModel(), pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r } }
+			end
+		end
+		table.sort(out.spawned, function(a, b) return a.index < b.index end)
 		for i, e in ipairs(props) do
 			if IsValid(e) then
 				local ph = e:GetPhysicsObject()
@@ -985,6 +1006,7 @@ SCENARIOS.toolgun = function(scn, done)
 					solid = e:IsSolid(), nodraw = e:GetNoDraw(), movetype = e:GetMoveType(),
 					material = e:GetMaterial(), color = { e:GetColor().r, e:GetColor().g, e:GetColor().b, e:GetColor().a }, rendermode = e:GetRenderMode(), renderfx = e:GetRenderFX(),
 					gravity = IsValid(ph) and ph:IsGravityEnabled() or nil, physmat = IsValid(ph) and ph:GetMaterial() or nil }
+				out.props[i].decals = decal_rows(e)
 				if e:GetClass() == "prop_ragdoll" then
 					out.props[i].bone_scales = {}
 					out.props[i].bone_angles = {}
