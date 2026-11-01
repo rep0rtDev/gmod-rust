@@ -1330,9 +1330,16 @@ impl<'w> Server<'w> {
             p.armor = (p.armor as f32 - to_armor).floor() as i32;
             to_health = amount - to_armor;
         }
-        p.damage_acc += to_health;
-        let whole = p.damage_acc.floor();
-        p.damage_acc -= whole;
+        // blast damage is whole to the nearest (111.9 -> 112, 86.48 -> 86, 3.87 -> 4 measured on
+        // rockets); bullets carry their fraction over in the accumulator (24 -> 4.8 -> 4, 5, 14)
+        let whole = if dmg_type & weapons::DMG_BLAST != 0 {
+            to_health.round()
+        } else {
+            p.damage_acc += to_health;
+            let whole = p.damage_acc.floor();
+            p.damage_acc -= whole;
+            whole
+        };
         p.health -= whole as i32;
         if p.health <= 0 {
             p.alive = false;
@@ -2437,9 +2444,12 @@ impl<'w> Server<'w> {
         }
     }
 
-    /// The first player (other than `owner`, alive) whose hit boxes the segment crosses: what a
-    /// rocket collides with and the laser dot lands on (`hit_rpg_direct`: the game's rocket
-    /// passed 2 u under the hull's top, over the head box, without touching). Without a hit
+    /// The first player (other than `owner`, alive) whose hit boxes the segment crosses: what an
+    /// ignited rocket collides with and the laser dot lands on (`hit_rpg_direct` / `_dot150`:
+    /// the game's 1500 u/s rocket passed 1.5 u under the hull's top, over the head box, without
+    /// touching; `_dot300` through the head at 5.7 u under it hit). Before ignition the rocket is
+    /// a 4-u box against the hull instead (`projectile_touch`, `ROCKET_HALF`: `_dot50` / `_dot100`
+    /// touched 4 u in front of the hull's face, `_dot100` 2.6 u above its top). Without a hit
     /// model the hull stands in.
     fn hitbox_touch(&self, owner: u32, start: Vec3, end: Vec3) -> Option<(u32, Vec3)> {
         let Some(model) = &self.hit_model else {
@@ -2548,7 +2558,12 @@ impl<'w> Server<'w> {
                 projectile::Event::None => {
                     let (kind, owner, end) = (pr.kind, pr.owner, pr.origin);
                     let touch = match kind {
-                        weapons::Launch::Rocket => self.hitbox_touch(owner, prev, end),
+                        weapons::Launch::Rocket if pr.ignited() => {
+                            self.hitbox_touch(owner, prev, end)
+                        }
+                        weapons::Launch::Rocket => {
+                            self.projectile_touch(owner, prev, end, projectile::ROCKET_HALF, true)
+                        }
                         weapons::Launch::Bolt => {
                             self.projectile_touch(owner, prev, end, projectile::BOLT_HALF, true)
                         }
@@ -2703,8 +2718,9 @@ impl<'w> Server<'w> {
         }
         for (eye, mut pr) in spawned {
             if pr.kind == weapons::Launch::Rocket {
-                // the laser dot sits on a player standing in the aim before the wall
-                if let Some((_, at)) = self.hitbox_touch(pr.owner, eye, pr.target) {
+                // the laser dot sits on the hull of a player standing in the aim before the
+                // wall (2 u in front of its face at eye height in `hit_rpg_dot100` / `_dot300`)
+                if let Some((_, at)) = self.projectile_touch(pr.owner, eye, pr.target, 0.0, true) {
                     pr.target = at;
                 }
             }

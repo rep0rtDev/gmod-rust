@@ -1526,6 +1526,9 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
+# blast damage falls 0.6 per u of the rocket's path (its own tol is 1 u) and the knock-back with it
+damage = 0.15
+vel = 2.0
 
 
 [[harness]]
@@ -1535,6 +1538,9 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
+# blast damage falls 0.6 per u of the rocket's path (its own tol is 1 u) and the knock-back with it
+damage = 0.15
+vel = 2.0
 
 
 [[harness]]
@@ -1553,6 +1559,9 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
+# blast damage falls 0.6 per u of the rocket's path (its own tol is 1 u) and the knock-back with it
+damage = 0.15
+vel = 2.0
 
 
 
@@ -1563,6 +1572,9 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
+# blast damage falls 0.6 per u of the rocket's path (its own tol is 1 u) and the knock-back with it
+damage = 0.15
+vel = 2.0
 
 
 

@@ -16,6 +16,10 @@ const ROCKET_MUZZLE: (f32, f32, f32) = (12.0, 6.0, -3.0);
 const ROCKET_LAUNCH: f32 = 300.0;
 const ROCKET_KICK: f32 = 119.0;
 const ROCKET_IGNITE_TICKS: u32 = 20;
+/// Half size of the rocket's box before ignition: the game's slow rocket touches a player 4 u
+/// in front of the hull's face and up to 4 u above its top (`hit_rpg_dot50` / `_dot100`); the
+/// ignited rocket is traced against the hit boxes instead (`Server::hitbox_touch`).
+pub const ROCKET_HALF: f32 = 4.0;
 const ROCKET_SPEED: f32 = 1500.0;
 /// The ignited rocket's heading is a damped second-order system restoring to the aim it was
 /// launched along: `turn = ROCKET_TURN_KEEP * turn + ROCKET_TURN_GAIN * (aim - heading)`
@@ -356,6 +360,9 @@ impl Projectile {
         let half = match self.kind {
             Launch::Bolt => Some(BOLT_HALF),
             Launch::Smg1Grenade => Some(AR2_GRENADE_HALF),
+            // the free-falling rocket is a 4-u box (it blows up 4 u above the floor it falls
+            // onto, `hit_rpg_floor45`); ignited it is a point (`hit_rpg_floor30`: 1 u above)
+            Launch::Rocket if self.movetype == MoveType::FlyGravity => Some(ROCKET_HALF),
             _ => None,
         };
         if let Some(half) = half {
@@ -405,6 +412,11 @@ impl Projectile {
                 return;
             }
         }
+    }
+
+    /// A rocket past its free-fall ticks, flying at `ROCKET_SPEED`.
+    pub fn ignited(&self) -> bool {
+        self.kind == Launch::Rocket && self.movetype == MoveType::Fly
     }
 
     fn step_rocket(&mut self, world: &World) -> Event {
