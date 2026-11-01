@@ -276,6 +276,10 @@ pub struct ClientNet {
     pub addon_msgs: Vec<(String, Vec<u8>)>,
     /// World sounds the server played (`ServerMsg::Sounds`), drained by the game.
     pub sounds: Vec<SoundEvent>,
+    /// Other players' voice frames (player, seq, opus), drained by the game.
+    pub voice: Vec<(u32, u16, Vec<u8>)>,
+    /// Our voice frames to send with the next tick.
+    pub pending_voice: Vec<(u16, Vec<u8>)>,
     /// The packages the server published (from `ServerMsg::Addons`).
     pub server_addons: Vec<crate::msg::AddonInfo>,
     /// Downloads in progress by sha: (total, bytes so far).
@@ -307,6 +311,8 @@ impl ClientNet {
             events: Vec::new(),
             addon_msgs: Vec::new(),
             sounds: Vec::new(),
+            voice: Vec::new(),
+            pending_voice: Vec::new(),
             models: Vec::new(),
             server_addons: Vec::new(),
             downloading: BTreeMap::new(),
@@ -406,6 +412,11 @@ impl ClientNet {
                 tick: self.world.tick,
             }
             .write(&mut w);
+            unreliable.push(w.buf);
+        }
+        for (seq, data) in self.pending_voice.drain(..) {
+            let mut w = Writer::default();
+            ClientMsg::Voice { seq, data }.write(&mut w);
             unreliable.push(w.buf);
         }
         let packet = self.channel.build(&unreliable);
@@ -518,6 +529,7 @@ impl ClientNet {
                     }
                     ServerMsg::Event { text, .. } => self.events.push(text),
                     ServerMsg::Sounds { list, .. } => self.sounds.extend(list),
+                    ServerMsg::Voice { player, seq, data } => self.voice.push((player, seq, data)),
                     ServerMsg::Addon { name, data, .. } => self.addon_msgs.push((name, data)),
                     ServerMsg::Cvar { name, value, .. } => {
                         self.world.cvars.insert(name, value);

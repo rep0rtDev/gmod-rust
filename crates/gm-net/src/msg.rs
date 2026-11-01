@@ -139,6 +139,11 @@ pub enum ClientMsg {
     AckSnapshot {
         tick: u32,
     },
+    /// Unreliable: one 20 ms Opus frame of the player's voice (`gm_audio::voice`).
+    Voice {
+        seq: u16,
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -324,6 +329,12 @@ pub enum ServerMsg {
         ent: u32,
         names: Vec<String>,
     },
+    /// Unreliable: a frame of another player's voice, relayed as received.
+    Voice {
+        player: u32,
+        seq: u16,
+        data: Vec<u8>,
+    },
     /// Reliable: new entries of the connection's model table, `names[i]` is model `from + i`
     /// (ids start at 1); sent before the first snapshot that uses them.
     /// Reliable, right after `Hello`: a random nonce the client signs to prove its identity
@@ -417,7 +428,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 2;
+pub const PROTOCOL: u16 = 3;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -707,6 +718,11 @@ impl ClientMsg {
                 w.u8(4);
                 w.u32(*tick);
             }
+            ClientMsg::Voice { seq, data } => {
+                w.u8(9);
+                w.u16(*seq);
+                w.bytes(data);
+            }
             ClientMsg::Addon { name, data } => {
                 w.u8(5);
                 w.str(name);
@@ -796,6 +812,10 @@ impl ClientMsg {
                 ClientMsg::Command { seq, cmd }
             }
             4 => ClientMsg::AckSnapshot { tick: r.u32()? },
+            9 => ClientMsg::Voice {
+                seq: r.u16()?,
+                data: r.bytes()?.to_vec(),
+            },
             5 => ClientMsg::Addon {
                 name: r.str()?,
                 data: r.bytes()?.to_vec(),
@@ -1027,6 +1047,12 @@ impl ServerMsg {
                         w.str(&e.category);
                     }
                 }
+            }
+            ServerMsg::Voice { player, seq, data } => {
+                w.u8(20);
+                w.u32(*player);
+                w.u16(*seq);
+                w.bytes(data);
             }
             ServerMsg::EntityOverlays { version, items } => {
                 w.u8(19);
@@ -1285,6 +1311,11 @@ impl ServerMsg {
                 }
                 ServerMsg::SpawnLists { version, lists }
             }
+            20 => ServerMsg::Voice {
+                player: r.u32()?,
+                seq: r.u16()?,
+                data: r.bytes()?.to_vec(),
+            },
             19 => {
                 let version = r.u32()?;
                 let n = r.varint()?.min(4096) as usize;

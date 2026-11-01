@@ -14,6 +14,7 @@ mod options;
 mod servers;
 mod settings;
 mod ugc;
+mod voice;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -694,6 +695,7 @@ struct App {
     gestures: std::collections::HashMap<u32, (&'static str, Instant, u8)>,
     /// Weapon sounds from the scripts, mixed on the default output device.
     sounds: gm_audio::Sounds,
+    voice: voice::VoiceChat,
     soundscapes: gm_audio::Soundscapes,
     /// Prop collision hulls for the acoustic occluders, by model path (`None`: no `.phy`).
     occluder_hulls: std::collections::HashMap<String, OccluderHull>,
@@ -2715,6 +2717,7 @@ impl App {
                 "invnext" => self.wsel_step(1),
                 "invprev" => self.wsel_step(-1),
                 "+menu" => self.open_menu(),
+                "+voicerecord" => self.voice.start(),
                 "+menu_context" => {
                     if self.menu.is_none() && !self.context_held {
                         self.context_held = true;
@@ -2752,6 +2755,7 @@ impl App {
                         self.set_grab(true);
                     }
                 }
+                "+voicerecord" => self.voice.stop(),
                 _ => {}
             }
         }
@@ -3154,6 +3158,33 @@ impl App {
                 });
             }
             self.sounds.mixer.set_occluders(occluders);
+        }
+        // voice chat: our microphone out, the others' frames in at their mouths
+        {
+            let own = self.sim.client.player_id;
+            let speakers: Vec<voice::Speaker> = self
+                .sim
+                .client
+                .world
+                .players
+                .iter()
+                .filter(|p| Some(p.id) != own)
+                .map(|p| voice::Speaker {
+                    id: p.id,
+                    mouth: p.origin + Vec3::Z * if p.ducked { 28.0 } else { 64.0 },
+                })
+                .collect();
+            let received = std::mem::take(&mut self.sim.client.voice);
+            let packets = self.voice.update(
+                &mut self.sounds,
+                received,
+                &speakers,
+                own,
+                self.settings.voice_modenable,
+                self.settings.voice_scale,
+                self.settings.voice_loopback,
+            );
+            self.sim.client.pending_voice.extend(packets);
         }
         let dt = self.last_render.elapsed().as_secs_f32().min(0.1);
         self.last_render = Instant::now();
@@ -4968,6 +4999,7 @@ fn main() -> Result<()> {
         anim_time: Default::default(),
         gestures: Default::default(),
         sounds,
+        voice: voice::VoiceChat::default(),
         soundscapes: gm_audio::Soundscapes::default(),
         occluder_hulls: std::collections::HashMap::new(),
         last_render: Instant::now(),

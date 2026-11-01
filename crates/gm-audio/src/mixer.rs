@@ -75,6 +75,7 @@ pub enum Cmd {
     StopChannel(u32, Option<u8>, f32),
     Move(u32, Vec3),
     Volume(u32, f32),
+    Feed(u32, Vec<f32>),
     Listener(Listener),
     Master(f32),
     Scene(Arc<Shared>),
@@ -92,6 +93,7 @@ fn apply(engine: &mut Engine, cmd: Cmd) {
         Cmd::StopChannel(ent, ch, fade) => engine.stop_channel(ent, ch, fade),
         Cmd::Move(id, p) => engine.set_position(id, p),
         Cmd::Volume(id, v) => engine.set_volume(id, v),
+        Cmd::Feed(id, s) => engine.feed(id, &s),
         Cmd::Listener(l) => engine.listener = l,
         Cmd::Master(m) => engine.master = m.clamp(0.0, 1.0),
         Cmd::Scene(shared) => engine.shared = Some(shared),
@@ -390,6 +392,11 @@ impl Mixer {
         let _ = self.tx.send(Cmd::Volume(id, volume));
     }
 
+    /// Samples for a streaming voice (voice chat), mono at [`Mixer::out_rate`].
+    pub fn feed(&self, id: u32, samples: Vec<f32>) {
+        let _ = self.tx.send(Cmd::Feed(id, samples));
+    }
+
     /// Voices playing after the last rendered block.
     pub fn voices(&self) -> usize {
         self.voices.load(Ordering::Relaxed)
@@ -470,7 +477,30 @@ mod tests {
             looping: false,
             ent: 0,
             channel: 0,
+            stream: false,
         }
+    }
+
+    #[test]
+    fn a_stream_plays_what_it_is_fed_and_waits_otherwise() {
+        let mut m = Mixer::offline(48000).unwrap();
+        let mut p = play(tone(48000, 0.001), None);
+        p.stream = true;
+        p.ent = 9;
+        p.channel = 2;
+        let id = m.play(p);
+        assert_eq!(peak(&m.render(FRAME), 0), 0.0, "nothing fed: silence");
+        m.feed(id, vec![0.5; FRAME]);
+        assert!(peak(&m.render(FRAME), 0) > 0.3);
+        assert_eq!(
+            peak(&m.render(FRAME), 0),
+            0.0,
+            "drained: silence, still alive"
+        );
+        assert_eq!(m.voices(), 1);
+        m.stop_channel(9, Some(2), 0.0);
+        m.render(FRAME);
+        assert_eq!(m.voices(), 0);
     }
 
     fn peak(buf: &[f32], channel: usize) -> f32 {

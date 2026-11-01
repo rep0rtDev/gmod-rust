@@ -177,6 +177,17 @@ is the data: scripts, waves, levels, pitches, channels, cue loops.
   moves and removes the instances and recommits the scene when anything changed. Test: a
   20 u concrete slab as a prop between source and listener occludes (0), moved 2000 u
   aside it does not (1).
+- Voice chat (`gm_audio::voice`, `gm-client/src/voice.rs`): `+voicerecord` (the game's
+  default binds `x` / `MOUSE5`) holds the default input device open; mono at 48 kHz, Opus
+  VoIP 24 kbit/s, 20 ms frames (960 samples), `ClientMsg::Voice { seq, data }` unreliable
+  with the tick. The server relays `ServerMsg::Voice { player, seq, data }` to every other
+  client the same tick (sandbox: all talk, like `sv_alltalk 1`). The client decodes per
+  speaker (a gap of one or two frames is concealed by the decoder) into a streaming voice on
+  the speaker's CHAN_VOICE at the mouth (eye height, 3D through the same direct/HRTF path,
+  SNDLVL_NORM), gain `voice_scale`, `voice_modenable` off mutes everyone, `voice_loopback`
+  plays our own frames back in the head; a speaker silent for 0.5 s is stopped. Not wire
+  compatible with the game's Steam voice (own ecosystem). Tests: tone through the codec,
+  lost packet concealed, stream voice plays what it is fed and waits otherwise.
 - Not yet: doppler (the game has none either). Nodraw faces are not in the face lump, so
   a wall whose only face is nodraw does not occlude.
 

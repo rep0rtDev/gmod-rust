@@ -10,6 +10,7 @@ pub mod mixer;
 pub mod scene;
 pub mod script;
 pub mod soundscape;
+pub mod voice;
 pub mod wav;
 
 use std::collections::HashMap;
@@ -164,6 +165,7 @@ impl Sounds {
             looping: false,
             ent: 0,
             channel: 0,
+            stream: false,
         });
         true
     }
@@ -212,11 +214,62 @@ impl Sounds {
             looping,
             ent,
             channel,
+            stream: false,
         });
         if ent != 0 && (looping || channel != 0) {
             self.tracked.insert((ent, channel), id);
         }
         true
+    }
+
+    /// A streaming voice (voice chat) on `ent`'s CHAN_VOICE at `position` (`None`: in the
+    /// head, for loopback), fed through [`Sounds::feed`]; replaces the entity's previous one.
+    pub fn stream(&mut self, ent: u32, position: Option<Vec3>, volume: f32) -> u32 {
+        let id = self.mixer.play(Play {
+            pcm: Arc::new(Pcm {
+                rate: voice::RATE,
+                samples: Vec::new(),
+                loop_start: None,
+            }),
+            volume,
+            pitch: 1.0,
+            position,
+            level: 75.0,
+            looping: false,
+            ent,
+            channel: 2,
+            stream: true,
+        });
+        self.tracked.insert((ent, 2), id);
+        id
+    }
+
+    /// The streaming voice `ent` has, if any.
+    pub fn stream_of(&self, ent: u32) -> Option<u32> {
+        self.tracked.get(&(ent, 2)).copied()
+    }
+
+    /// Decoded voice samples (mono, [`voice::RATE`]) for a streaming voice, resampled to
+    /// the output rate.
+    pub fn feed(&self, id: u32, samples: &[f32]) {
+        let out = self.mixer.out_rate as u32;
+        let samples = if out == voice::RATE {
+            samples.to_vec()
+        } else {
+            let step = voice::RATE as f64 / out as f64;
+            let n = (samples.len() as f64 / step) as usize;
+            (0..n)
+                .map(|k| {
+                    let x = k as f64 * step;
+                    let i = x as usize;
+                    let f = (x - i as f64) as f32;
+                    let a = samples[i.min(samples.len() - 1)];
+                    let b = samples[(i + 1).min(samples.len() - 1)];
+                    a * (1.0 - f) + b * f
+                })
+                .collect()
+        };
+        self.mixer.feed(id, samples);
     }
 
     /// Stop everything `ent` plays, fading out over `fade` seconds.

@@ -105,6 +105,8 @@ pub struct ServerNet {
     pub timeout_ticks: u32,
     /// World sounds of the last tick, sent with the next snapshots.
     pending_sounds: Vec<SoundEvent>,
+    /// Voice frames received this tick (speaker, seq, opus), relayed to everyone else.
+    pending_voice: Vec<(u32, u16, Vec<u8>)>,
     /// Human-readable connection events (joins, leaves, kicks) since the last `take_log`.
     pub log: Vec<String>,
     /// Where the console's `save` / `load` keep `<name>.rdup`.
@@ -157,6 +159,7 @@ impl ServerNet {
             max_players: 64,
             timeout_ticks: DEFAULT_TIMEOUT_TICKS,
             pending_sounds: Vec::new(),
+            pending_voice: Vec::new(),
             log: Vec::new(),
             saves_dir: None,
             addons: Vec::new(),
@@ -437,6 +440,11 @@ impl ServerNet {
                     ClientMsg::AckSnapshot { tick } => {
                         if tick > slot.acked_snapshot {
                             slot.acked_snapshot = tick;
+                        }
+                    }
+                    ClientMsg::Voice { seq, data } => {
+                        if slot.player != 0 && data.len() <= 512 {
+                            self.pending_voice.push((slot.player, seq, data));
                         }
                     }
                 }
@@ -1011,6 +1019,8 @@ impl ServerNet {
                 vm_serial: p.inventory.vm_serial,
             })
             .collect();
+        // voice goes out every tick to everyone but the speaker (sandbox: all talk)
+        let voice = std::mem::take(&mut self.pending_voice);
         // sounds ride with the snapshots: on a tick without one they stay pending
         let sounds = if snapshot_tick {
             std::mem::take(&mut self.pending_sounds)
@@ -1103,6 +1113,18 @@ impl ServerNet {
                 slot.tool_schemas_sent = server.tool_schemas_version;
             }
             let mut unreliable = Vec::new();
+            for (speaker, seq, data) in &voice {
+                if *speaker != slot.player && slot.player != 0 {
+                    let mut w = Writer::default();
+                    ServerMsg::Voice {
+                        player: *speaker,
+                        seq: *seq,
+                        data: data.clone(),
+                    }
+                    .write(&mut w);
+                    unreliable.push(w.buf);
+                }
+            }
             if snapshot_tick {
                 if slot.models_sent < self.models.len() {
                     let mut w = Writer::default();

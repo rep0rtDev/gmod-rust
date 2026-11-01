@@ -62,6 +62,9 @@ pub struct Play {
     /// (`CHAN_AUTO`, 0, never replaces).
     pub ent: u32,
     pub channel: u8,
+    /// A live stream (voice chat): `pcm` is ignored, samples arrive through
+    /// [`Engine::feed`] at the engine rate and the voice lasts until stopped.
+    pub stream: bool,
 }
 
 /// What the simulation thread knows about a voice's path to the listener.
@@ -100,6 +103,8 @@ pub struct Voice {
     /// Gain step per source sample while fading out (0: not fading) and the gain so far.
     fade: f32,
     fade_gain: f32,
+    /// Streamed samples not yet played (`None`: a one-shot from `pcm`).
+    stream: Option<std::collections::VecDeque<f32>>,
 }
 
 /// Listener-centric reverb: the parametric reflection effect over the wet sum of the
@@ -239,6 +244,7 @@ impl Engine {
             done: false,
             fade: 0.0,
             fade_gain: 1.0,
+            stream: p.stream.then(std::collections::VecDeque::new),
         });
         Ok(())
     }
@@ -259,6 +265,23 @@ impl Engine {
             let step = 1.0 / (fade * self.rate as f32 * v.step as f32).max(1.0);
             if v.fade == 0.0 || step > v.fade {
                 v.fade = step;
+            }
+        }
+    }
+
+    /// Append samples (engine rate, mono) to a streaming voice; more than half a second
+    /// queued is dropped from the front to keep the latency bounded.
+    pub fn feed(&mut self, id: u32, samples: &[f32]) {
+        if let Some(q) = self
+            .voices
+            .iter_mut()
+            .find(|v| v.id == id)
+            .and_then(|v| v.stream.as_mut())
+        {
+            q.extend(samples.iter().copied());
+            let cap = self.rate as usize / 2;
+            if q.len() > cap {
+                q.drain(..q.len() - cap);
             }
         }
     }
@@ -438,6 +461,13 @@ impl Voice {
     /// Next `FRAME` source samples at the voice's pitch (linear interpolation), zero past
     /// the end of a one-shot; a loop wraps to the cue point.
     fn fill(&mut self, mono: &mut [f32]) {
+        if let Some(q) = &mut self.stream {
+            for m in mono.iter_mut() {
+                *m = q.pop_front().unwrap_or(0.0);
+            }
+            self.apply_fade(mono);
+            return;
+        }
         let s = &self.pcm.samples;
         let n = s.len();
         let loop_start = self.pcm.loop_start.unwrap_or(0).min(n.saturating_sub(1));
@@ -460,6 +490,10 @@ impl Voice {
             *m = s[i] * (1.0 - f) + s[i + 1] * f;
             self.cursor += self.step;
         }
+        self.apply_fade(mono);
+    }
+
+    fn apply_fade(&mut self, mono: &mut [f32]) {
         if self.fade > 0.0 {
             for m in mono.iter_mut() {
                 *m *= self.fade_gain;

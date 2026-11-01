@@ -471,6 +471,7 @@ impl Soundscapes {
                     looping: false,
                     ent: 0,
                     channel: 0,
+                    stream: false,
                 });
             }
             let next = self.range(r.time);
@@ -539,6 +540,7 @@ impl Soundscapes {
                 looping: true,
                 ent,
                 channel: 7 + k as u8,
+                stream: false,
             });
             loops.push(LoopVoice {
                 id,

@@ -13,3 +13,4 @@ glam = { workspace = true }
 anyhow = { workspace = true }
 cpal = "0.15"
 audionimbus = "0.16"
+opus = "0.3"
