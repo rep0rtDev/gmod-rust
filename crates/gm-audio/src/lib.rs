@@ -4,6 +4,7 @@
 //! named entry (`Weapon_Pistol.Single`) by picking a wave, volume and pitch as the script
 //! says, decoding and caching the WAV, and handing it to the [`Mixer`].
 
+pub mod engine;
 pub mod mixer;
 pub mod script;
 pub mod wav;
@@ -13,7 +14,8 @@ use std::sync::Arc;
 
 use glam::Vec3;
 
-pub use mixer::{Listener, Mixer, Play};
+pub use engine::{Engine, Path, Play};
+pub use mixer::{distance_gain, Listener, Mixer};
 pub use script::{Entry, Scripts};
 pub use wav::Pcm;
 
@@ -139,6 +141,9 @@ impl Sounds {
             pitch: 100.0,
             position: None,
             level: 75 as _,
+            looping: false,
+            ent: 0,
+            channel: 0,
         });
         true
     }
@@ -165,6 +170,9 @@ impl Sounds {
             pitch,
             position,
             level: e.level,
+            looping: false,
+            ent: 0,
+            channel: 0,
         });
         true
     }

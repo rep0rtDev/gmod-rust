@@ -2989,11 +2989,13 @@ impl App {
             gm_script::DrawCmd::Model { model, .. } => Some(model.as_str()),
             _ => None,
         });
-        let yaw = self.view.y.to_radians();
-        self.sounds.mixer.set_listener(gm_audio::Listener {
-            position: camera.position,
-            right: Vec3::new(yaw.sin(), -yaw.cos(), 0.0),
-        });
+        self.sounds
+            .mixer
+            .set_listener(gm_audio::Listener::from_view(
+                camera.position,
+                self.view.x,
+                self.view.y,
+            ));
         let aspect = g.config.width as f32 / g.config.height as f32;
         g.world
             .draw(&g.gpu, &camera, &attach, resolve, &g.depth, aspect);

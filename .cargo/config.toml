@@ -1,0 +1,7 @@
+# Binaries look for Steam Audio's libphonon next to themselves (gm-audio's build script
+# copies it there from STEAMAUDIO_LIB_DIR), so `cargo run` and a launcher install both work.
+[target.'cfg(all(unix, not(target_os = "macos")))']
+rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
+
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path"]

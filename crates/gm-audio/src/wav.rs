@@ -9,6 +9,9 @@ use anyhow::{anyhow, bail, Result};
 pub struct Pcm {
     pub rate: u32,
     pub samples: Vec<f32>,
+    /// The first `cue ` point: where a looping sound restarts (the engine loops a wave
+    /// with a cue from that sample to its end; without one from the start).
+    pub loop_start: Option<usize>,
 }
 
 impl Pcm {
@@ -36,6 +39,7 @@ pub fn parse(bytes: &[u8]) -> Result<Pcm> {
     }
     let mut fmt: Option<(u16, u16, u32, u16)> = None;
     let mut data: Option<&[u8]> = None;
+    let mut loop_start = None;
     let mut i = 12;
     while i + 8 <= bytes.len() {
         let id = &bytes[i..i + 4];
@@ -52,6 +56,9 @@ pub fn parse(bytes: &[u8]) -> Result<Pcm> {
                 fmt = Some((tag, channels, rate, bits));
             }
             b"data" => data = Some(body),
+            b"cue " if u32_at(body, 0).unwrap_or(0) > 0 => {
+                loop_start = u32_at(body, 4 + 20).map(|n| n as usize);
+            }
             _ => {}
         }
         i += 8 + n + (n & 1);
@@ -65,7 +72,7 @@ pub fn parse(bytes: &[u8]) -> Result<Pcm> {
         bail!("unsupported channel count {channels}");
     }
     let ch = channels as usize;
-    let samples = match bits {
+    let samples: Vec<f32> = match bits {
         8 => data
             .chunks_exact(ch)
             .map(|f| f.iter().map(|&s| (s as f32 - 128.0) / 128.0).sum::<f32>() / ch as f32)
@@ -83,7 +90,12 @@ pub fn parse(bytes: &[u8]) -> Result<Pcm> {
             .collect(),
         _ => bail!("unsupported bit depth {bits}"),
     };
-    Ok(Pcm { rate, samples })
+    let loop_start = loop_start.filter(|&n| n + 1 < samples.len());
+    Ok(Pcm {
+        rate,
+        samples,
+        loop_start,
+    })
 }
 
 #[cfg(test)]
@@ -122,6 +134,25 @@ mod tests {
         assert!(p.samples[0].abs() < 1e-6, "stereo folds to its mix");
         assert!((p.samples[1] - 32767.0 / 32768.0).abs() < 1e-6);
         assert!((p.duration() - 2.0 / 44100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cue_point_is_the_loop_start() {
+        let mut b = wav(1, 16, 22050, &[0; 8]);
+        b.extend(b"cue ");
+        b.extend(28u32.to_le_bytes());
+        b.extend(1u32.to_le_bytes());
+        b.extend(1u32.to_le_bytes());
+        b.extend(0u32.to_le_bytes());
+        b.extend(b"data");
+        b.extend(0u32.to_le_bytes());
+        b.extend(0u32.to_le_bytes());
+        b.extend(2u32.to_le_bytes());
+        let n = (b.len() - 8) as u32;
+        b[4..8].copy_from_slice(&n.to_le_bytes());
+        let p = parse(&b).unwrap();
+        assert_eq!(p.loop_start, Some(2));
+        assert_eq!(parse(&wav(1, 16, 22050, &[0; 8])).unwrap().loop_start, None);
     }
 
     #[test]

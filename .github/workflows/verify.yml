@@ -8,6 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  STEAMAUDIO_VERSION: "4.8.1"
 
 jobs:
   public-tree:
@@ -29,6 +30,19 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: sudo apt-get update && sudo apt-get install -y cmake g++ libclang-dev libasound2-dev
+      # Steam Audio SDK (Valve, Apache 2.0): gm-audio links libphonon; not in the tree
+      - uses: actions/cache@v4
+        id: steamaudio
+        with:
+          path: ~/steamaudio
+          key: steamaudio-${{ env.STEAMAUDIO_VERSION }}
+      - if: steps.steamaudio.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/steamaudio.zip "https://github.com/ValveSoftware/steam-audio/releases/download/v${STEAMAUDIO_VERSION}/steamaudio_${STEAMAUDIO_VERSION}.zip"
+          mkdir -p ~/steamaudio && unzip -q /tmp/steamaudio.zip -d ~/steamaudio
+      - run: |
+          echo "STEAMAUDIO_LIB_DIR=$HOME/steamaudio/steamaudio/lib/linux-x64" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$HOME/steamaudio/steamaudio/lib/linux-x64" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings

@@ -84,18 +84,38 @@ gm_construct floor):
   differently after 48 ticks and its second 0.3 impact is not reproduced).
 - Pitch 98-100 and `SNDLVL_75dB` come from the script; no server-side override was seen.
 
-## Mixer (approximation)
+## Mixer: Steam Audio
 
-- Output: cpal default device, its rate and channel count; no device (headless) → sounds
-  are accepted and dropped, the game runs the same (`audio: ...` on startup says which).
-- Voices: one-shot, linear resampling at `pitch / 100 × source rate / output rate`, gain
-  `volume` from the script, summed and hard-clipped to [-1, 1].
-- Distance: attenuation from the SDK's public `SNDLVL_TO_ATTN` (`20 / (level - 50)`, 4
-  under 50 dB; 0 dB = no attenuation), then gain `1 - dist × attn / 1000` clamped to
-  [0, 1] (silence at 4500 u for gunfire, 1250 u for `SNDLVL_NORM`). This linear law is the
-  classic one the scripts' levels were tuned around, not the engine's measured curve.
-- Pan: constant-power on the listener's horizontal right vector (`(sin yaw, -cos yaw, 0)`);
-  sounds at the listener are centered. No occlusion, DSP, doppler or soundscapes.
+Not the engine's mix (the game pans by power and runs DSP presets); ours is Steam Audio
+4.8.1 (`audionimbus` 0.16 over `libphonon`, Valve's Apache 2.0 SDK, fetched by the
+developer / CI from `STEAMAUDIO_LIB_DIR`, never in the tree; `gm-audio/build.rs` copies it
+next to the binaries and the workspace rpath is `$ORIGIN`). What is kept 1:1 from the game
+is the data: scripts, waves, levels, pitches, channels, cue loops.
+
+- Output: cpal default device at its rate and channel count; the engine renders stereo
+  frames of 512 samples on the audio thread and the game thread only queues commands
+  (play / stop / move / listener / master), no lock on the render path. Without a device
+  (headless, CI) the same engine renders offline on demand (`Mixer::render`), which is
+  how the tests listen. `audio: ...` on startup says which.
+- Voices: linear resampling at `pitch / 100 × source rate / output rate`, gain `volume`
+  from the script. A sound on a non-`CHAN_AUTO` channel of the same entity replaces the
+  one playing there (the engine's channel rule); loops restart at the WAV's first `cue `
+  point, or the start without one, until stopped.
+- Direct path (`DirectEffect` per voice): distance gain from the SDK's public
+  `SNDLVL_TO_ATTN` (`20 / (level - 50)`, 4 under 50 dB; 0 dB = no attenuation), then
+  `1 - dist × attn / 1000` clamped to [0, 1] (silence at 4500 u for gunfire, 1250 u for
+  `SNDLVL_NORM`) - the linear law the scripts' levels were tuned around; occlusion,
+  frequency-dependent transmission and air absorption are the effect's inputs, fed by the
+  acoustic simulation when there is one (unity until then).
+- Spatialization (`BinauralEffect` per voice): HRTF with bilinear interpolation on the
+  direction in the listener's frame (right / up / ahead from the view angles, so pitch and
+  roll count, not only yaw). Game axes to Steam Audio: `(x, z, -y) × 0.0254`, the same map
+  the physics uses for Jolt. Sounds at the listener are centred without HRTF.
+- Sum hard-clipped to [-1, 1]; stereo folded to mono for one-channel devices.
+- Tests (offline engine): a source on the right is louder in the right ear, loops wrap,
+  channel replacement, cue points; no device needed.
+- Not yet: scene occlusion, reflections, soundscapes, DSP presets, doppler (the game has
+  none either).
 
 ## World sounds: footsteps (measured)
 

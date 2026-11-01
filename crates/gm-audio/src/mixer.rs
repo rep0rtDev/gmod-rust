@@ -1,43 +1,52 @@
-//! A small mixer: one-shot voices with pitch (resampled linearly), volume, and a position
-//! that is attenuated with distance and panned against the listener. Output goes through
-//! cpal's default device; without one (headless) the mixer still accepts sounds and drops
-//! them, so the game runs the same.
+//! The output stream: cpal's default device pulls fixed [`FRAME`] blocks from the
+//! Steam Audio [`Engine`] on the audio thread; the game thread talks to it through a
+//! command queue (no lock on the render path). Without a device (headless) the engine
+//! renders offline on demand ([`Mixer::render`]), which is also how tests listen.
 
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use glam::Vec3;
 
-use crate::wav::Pcm;
+use crate::engine::{Engine, Play, FRAME};
 
-/// Where sounds are heard from: eye position and the horizontal right vector.
+/// Where sounds are heard from: eye position and the view frame (unit vectors).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Listener {
     pub position: Vec3,
     pub right: Vec3,
+    pub up: Vec3,
+    pub ahead: Vec3,
 }
 
 impl Default for Listener {
     fn default() -> Self {
         Listener {
             position: Vec3::ZERO,
-            right: Vec3::Y,
+            right: -Vec3::Y,
+            up: Vec3::Z,
+            ahead: Vec3::X,
         }
     }
 }
 
-/// One sound to start.
-#[derive(Debug, Clone)]
-pub struct Play {
-    pub pcm: Arc<Pcm>,
-    /// Linear gain before distance.
-    pub volume: f32,
-    /// Percent: 100 is the recorded rate.
-    pub pitch: f32,
-    /// World position; `None` plays at the listener (the owner's own weapon).
-    pub position: Option<Vec3>,
-    /// Sound level in dB at the source (`SNDLVL_*`); 0 carries without attenuation.
-    pub level: f32,
+impl Listener {
+    /// From the view angles (degrees, pitch down positive as the game stores them).
+    pub fn from_view(position: Vec3, pitch: f32, yaw: f32) -> Listener {
+        let (sp, cp) = pitch.to_radians().sin_cos();
+        let (sy, cy) = yaw.to_radians().sin_cos();
+        let ahead = Vec3::new(cp * cy, cp * sy, -sp);
+        let right = Vec3::new(sy, -cy, 0.0);
+        let up = right.cross(ahead).normalize_or_zero();
+        Listener {
+            position,
+            right,
+            up,
+            ahead,
+        }
+    }
 }
 
 /// Distance gain of a sound with level `level` dB heard `dist` units away. The SDK's
@@ -57,139 +66,180 @@ pub fn distance_gain(level: f32, dist: f32) -> f32 {
     (1.0 - dist * attn / 1000.0).clamp(0.0, 1.0)
 }
 
-struct Voice {
-    pcm: Arc<Pcm>,
-    cursor: f64,
-    step: f64,
-    gain: f32,
-    position: Option<Vec3>,
-    level: f32,
+pub enum Cmd {
+    Play(u32, Play),
+    Stop(u32),
+    StopChannel(u32, Option<u8>),
+    Move(u32, Vec3),
+    Listener(Listener),
+    Master(f32),
 }
 
-struct Shared {
-    voices: Vec<Voice>,
-    listener: Listener,
-    /// `volume`: master gain over every voice.
-    master: f32,
-}
-
-impl Default for Shared {
-    fn default() -> Self {
-        Shared {
-            voices: Vec::new(),
-            listener: Listener::default(),
-            master: 1.0,
+fn apply(engine: &mut Engine, cmd: Cmd) {
+    match cmd {
+        Cmd::Play(id, p) => {
+            if let Err(e) = engine.play(id, p) {
+                eprintln!("audio: {e}");
+            }
         }
+        Cmd::Stop(id) => engine.stop(id),
+        Cmd::StopChannel(ent, ch) => engine.stop_channel(ent, ch),
+        Cmd::Move(id, p) => engine.set_position(id, p),
+        Cmd::Listener(l) => engine.listener = l,
+        Cmd::Master(m) => engine.master = m.clamp(0.0, 1.0),
     }
 }
 
-/// Per-channel gains for a voice against the listener (constant-power pan on the
-/// horizontal right vector; sounds at the listener are centered).
-fn pan(listener: &Listener, position: Option<Vec3>, level: f32) -> (f32, f32) {
-    let Some(p) = position else {
-        return (0.707, 0.707);
-    };
-    let d = p - listener.position;
-    let dist = d.length();
-    let g = distance_gain(level, dist);
-    let side = if dist > 1.0 {
-        (d / dist).dot(listener.right).clamp(-1.0, 1.0)
-    } else {
-        0.0
-    };
-    // side -1 (left) .. 1 (right) -> angle 0 .. pi/2
-    let a = (side + 1.0) * 0.25 * std::f32::consts::PI;
-    (g * a.cos(), g * a.sin())
+/// Audio-thread state: the engine, its queue and the rendered frames not yet consumed.
+struct Stream {
+    engine: Engine,
+    rx: Receiver<Cmd>,
+    fifo: Vec<f32>,
+    block: Vec<f32>,
+    voices: Arc<AtomicUsize>,
 }
 
-fn mix(shared: &Mutex<Shared>, out: &mut [f32], channels: usize, out_rate: f64) {
-    out.fill(0.0);
-    let Ok(mut s) = shared.lock() else { return };
-    let listener = s.listener;
-    let master = s.master;
-    let _ = out_rate;
-    for v in &mut s.voices {
-        let (gl, gr) = pan(&listener, v.position, v.level);
-        let n = v.pcm.samples.len();
-        for frame in out.chunks_exact_mut(channels) {
-            let i = v.cursor as usize;
-            if i + 1 >= n {
-                v.cursor = n as f64;
-                break;
-            }
-            let f = (v.cursor - i as f64) as f32;
-            let sample =
-                (v.pcm.samples[i] * (1.0 - f) + v.pcm.samples[i + 1] * f) * v.gain * master;
+impl Stream {
+    fn drain(&mut self) {
+        while let Ok(cmd) = self.rx.try_recv() {
+            apply(&mut self.engine, cmd);
+        }
+    }
+
+    /// Fill `out` (interleaved, `channels` wide) from whole engine frames.
+    fn fill(&mut self, out: &mut [f32], channels: usize) {
+        self.drain();
+        let frames = out.len() / channels;
+        while self.fifo.len() < frames * 2 {
+            self.engine.render(&mut self.block);
+            self.fifo.extend_from_slice(&self.block);
+        }
+        for (o, s) in out
+            .chunks_exact_mut(channels)
+            .zip(self.fifo.as_chunks::<2>().0)
+        {
             match channels {
-                1 => frame[0] += sample * (gl + gr) * 0.707,
+                1 => o[0] = (s[0] + s[1]) * 0.5,
                 _ => {
-                    frame[0] += sample * gl;
-                    frame[1] += sample * gr;
+                    o[0] = s[0];
+                    o[1] = s[1];
+                    for x in &mut o[2..] {
+                        *x = 0.0;
+                    }
                 }
             }
-            v.cursor += v.step;
         }
-    }
-    s.voices
-        .retain(|v| (v.cursor as usize) + 1 < v.pcm.samples.len());
-    for x in out.iter_mut() {
-        *x = x.clamp(-1.0, 1.0);
+        self.fifo.drain(..frames * 2);
+        self.voices
+            .store(self.engine.voices().len(), Ordering::Relaxed);
     }
 }
 
 /// The output device and the voices playing on it.
 pub struct Mixer {
-    shared: Arc<Mutex<Shared>>,
-    out_rate: f64,
+    tx: Sender<Cmd>,
+    voices: Arc<AtomicUsize>,
+    next_id: AtomicU32,
+    pub out_rate: f64,
     _stream: Option<cpal::Stream>,
-    /// Device name, or why there is none.
+    /// Without a device the engine stays here and renders on demand.
+    offline: Option<Stream>,
+    /// What was opened, or why nothing was.
     pub device: String,
 }
 
 impl Mixer {
-    /// Open the default output device; a mixer without one plays silently.
+    /// Open the default output device; without one the mixer renders offline.
     pub fn open() -> Mixer {
-        let shared = Arc::new(Mutex::new(Shared::default()));
         let host = cpal::default_host();
         let Some(device) = host.default_output_device() else {
-            return Mixer::silent(shared, "no output device".into());
+            return Mixer::offline_because("no output device".into());
         };
         let name = device.name().unwrap_or_else(|_| "?".into());
         let cfg = match device.default_output_config() {
             Ok(c) => c,
-            Err(e) => return Mixer::silent(shared, format!("{name}: {e}")),
+            Err(e) => return Mixer::offline_because(format!("{name}: {e}")),
         };
         let channels = cfg.channels() as usize;
-        let out_rate = cfg.sample_rate().0 as f64;
-        let s = shared.clone();
-        let stream = device.build_output_stream(
+        let out_rate = cfg.sample_rate().0;
+        let engine = match Engine::new(out_rate) {
+            Ok(e) => e,
+            Err(e) => return Mixer::offline_because(format!("{e}")),
+        };
+        let (tx, rx) = channel();
+        let voices = Arc::new(AtomicUsize::new(0));
+        let mut stream = Stream {
+            engine,
+            rx,
+            fifo: Vec::with_capacity(FRAME * 8),
+            block: vec![0.0; FRAME * 2],
+            voices: voices.clone(),
+        };
+        let built = device.build_output_stream(
             &cfg.config(),
-            move |out: &mut [f32], _| mix(&s, out, channels, out_rate),
+            move |out: &mut [f32], _| stream.fill(out, channels),
             |e| eprintln!("audio stream error: {e}"),
             None,
         );
-        match stream {
-            Ok(stream) => {
-                if let Err(e) = stream.play() {
-                    return Mixer::silent(shared, format!("{name}: {e}"));
+        match built {
+            Ok(s) => {
+                if let Err(e) = s.play() {
+                    return Mixer::offline_because(format!("{name}: {e}"));
                 }
                 Mixer {
-                    shared,
-                    out_rate,
-                    _stream: Some(stream),
+                    tx,
+                    voices,
+                    next_id: AtomicU32::new(1),
+                    out_rate: out_rate as f64,
+                    _stream: Some(s),
+                    offline: None,
                     device: format!("{name} ({out_rate} Hz, {channels} ch)"),
                 }
             }
-            Err(e) => Mixer::silent(shared, format!("{name}: {e}")),
+            Err(e) => Mixer::offline_because(format!("{name}: {e}")),
         }
     }
 
-    fn silent(shared: Arc<Mutex<Shared>>, why: String) -> Mixer {
-        Mixer {
-            shared,
-            out_rate: 44100.0,
+    /// An engine without a device at `rate` Hz: [`Mixer::render`] produces the mix.
+    pub fn offline(rate: u32) -> anyhow::Result<Mixer> {
+        let engine = Engine::new(rate)?;
+        let (tx, rx) = channel();
+        let voices = Arc::new(AtomicUsize::new(0));
+        Ok(Mixer {
+            tx,
+            voices: voices.clone(),
+            next_id: AtomicU32::new(1),
+            out_rate: rate as f64,
             _stream: None,
-            device: why,
+            offline: Some(Stream {
+                engine,
+                rx,
+                fifo: Vec::new(),
+                block: vec![0.0; FRAME * 2],
+                voices,
+            }),
+            device: format!("offline ({rate} Hz)"),
+        })
+    }
+
+    fn offline_because(why: String) -> Mixer {
+        match Mixer::offline(48000) {
+            Ok(mut m) => {
+                m.device = format!("offline: {why}");
+                m
+            }
+            Err(e) => {
+                let (tx, _rx) = channel();
+                Mixer {
+                    tx,
+                    voices: Arc::new(AtomicUsize::new(0)),
+                    next_id: AtomicU32::new(1),
+                    out_rate: 48000.0,
+                    _stream: None,
+                    offline: None,
+                    device: format!("silent: {why}; {e}"),
+                }
+            }
         }
     }
 
@@ -199,42 +249,59 @@ impl Mixer {
 
     /// The `volume` cvar: master gain, clamped to 0..1.
     pub fn set_master(&self, volume: f32) {
-        if let Ok(mut s) = self.shared.lock() {
-            s.master = volume.clamp(0.0, 1.0);
-        }
+        let _ = self.tx.send(Cmd::Master(volume));
     }
 
     pub fn set_listener(&self, listener: Listener) {
-        if let Ok(mut s) = self.shared.lock() {
-            s.listener = listener;
-        }
+        let _ = self.tx.send(Cmd::Listener(listener));
     }
 
-    pub fn play(&self, p: Play) {
-        if !self.is_live() || p.pcm.samples.len() < 2 {
-            return;
-        }
-        let step = p.pcm.rate as f64 * (p.pitch.max(1.0) as f64 / 100.0) / self.out_rate;
-        if let Ok(mut s) = self.shared.lock() {
-            s.voices.push(Voice {
-                pcm: p.pcm,
-                cursor: 0.0,
-                step,
-                gain: p.volume.clamp(0.0, 1.0),
-                position: p.position,
-                level: p.level,
-            });
-        }
+    /// Start a sound; the id stops or moves it later.
+    pub fn play(&self, p: Play) -> u32 {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed).max(1);
+        let _ = self.tx.send(Cmd::Play(id, p));
+        id
     }
 
+    pub fn stop(&self, id: u32) {
+        let _ = self.tx.send(Cmd::Stop(id));
+    }
+
+    pub fn stop_channel(&self, ent: u32, channel: Option<u8>) {
+        let _ = self.tx.send(Cmd::StopChannel(ent, channel));
+    }
+
+    pub fn move_voice(&self, id: u32, position: Vec3) {
+        let _ = self.tx.send(Cmd::Move(id, position));
+    }
+
+    /// Voices playing after the last rendered block.
     pub fn voices(&self) -> usize {
-        self.shared.lock().map(|s| s.voices.len()).unwrap_or(0)
+        self.voices.load(Ordering::Relaxed)
+    }
+
+    /// Offline only: apply the queued commands and render `frames` stereo frames.
+    pub fn render(&mut self, frames: usize) -> Vec<f32> {
+        let mut out = vec![0.0; frames * 2];
+        if let Some(s) = &mut self.offline {
+            s.fill(&mut out, 2);
+        }
+        out
+    }
+
+    /// Offline only: the engine, for inspection.
+    pub fn engine(&mut self) -> Option<&mut Engine> {
+        self.offline.as_mut().map(|s| {
+            s.drain();
+            &mut s.engine
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wav::Pcm;
 
     #[test]
     fn gain_falls_linearly_to_the_level_range() {
@@ -251,48 +318,86 @@ mod tests {
     }
 
     #[test]
-    fn pan_follows_the_listener_right_vector() {
-        let l = Listener {
-            position: Vec3::ZERO,
-            right: Vec3::Y,
-        };
-        let (gl, gr) = pan(&l, Some(Vec3::new(0.0, 100.0, 0.0)), 140.0);
-        assert!(
-            gl.abs() < 1e-5 && gr > 0.9,
-            "right of the listener: {gl} {gr}"
-        );
-        let (gl, gr) = pan(&l, Some(Vec3::new(100.0, 0.0, 0.0)), 140.0);
-        assert!((gl - gr).abs() < 1e-5, "ahead: centered");
-        let (gl, gr) = pan(&l, None, 140.0);
-        assert!((gl - 0.707).abs() < 1e-3 && (gr - 0.707).abs() < 1e-3);
+    fn listener_frame_follows_the_view_angles() {
+        let l = Listener::from_view(Vec3::ZERO, 0.0, 0.0);
+        assert!((l.ahead - Vec3::X).length() < 1e-6);
+        assert!((l.right + Vec3::Y).length() < 1e-6);
+        assert!((l.up - Vec3::Z).length() < 1e-6);
+        let l = Listener::from_view(Vec3::ZERO, 90.0, 0.0);
+        assert!((l.ahead + Vec3::Z).length() < 1e-6, "looking down");
+        assert!((l.up - Vec3::X).length() < 1e-6);
+    }
+
+    fn tone(rate: u32, seconds: f32) -> Arc<Pcm> {
+        let n = (rate as f32 * seconds) as usize;
+        Arc::new(Pcm {
+            rate,
+            samples: (0..n)
+                .map(|i| (i as f32 * 440.0 / rate as f32 * std::f32::consts::TAU).sin() * 0.5)
+                .collect(),
+            loop_start: None,
+        })
+    }
+
+    fn play(pcm: Arc<Pcm>, position: Option<Vec3>) -> Play {
+        Play {
+            pcm,
+            volume: 1.0,
+            pitch: 100.0,
+            position,
+            level: 75.0,
+            looping: false,
+            ent: 0,
+            channel: 0,
+        }
+    }
+
+    fn peak(buf: &[f32], channel: usize) -> f32 {
+        buf.iter()
+            .skip(channel)
+            .step_by(2)
+            .fold(0.0f32, |m, x| m.max(x.abs()))
     }
 
     #[test]
-    fn mixes_voices_with_pitch_and_drops_them_when_done() {
-        let shared = Mutex::new(Shared::default());
-        let pcm = Arc::new(Pcm {
-            rate: 100,
-            samples: vec![0.5; 10],
-        });
-        shared.lock().unwrap().voices.push(Voice {
-            pcm,
-            cursor: 0.0,
-            step: 2.0,
-            gain: 1.0,
-            position: None,
-            level: 0.0,
-        });
-        let mut out = vec![0.0f32; 8];
-        mix(&shared, &mut out, 2, 100.0);
-        assert!((out[0] - 0.5 * 0.707).abs() < 1e-3);
-        assert_eq!(shared.lock().unwrap().voices.len(), 1);
-        mix(&shared, &mut out, 2, 100.0);
-        assert_eq!(
-            shared.lock().unwrap().voices.len(),
-            0,
-            "10 samples at step 2 end"
-        );
-        mix(&shared, &mut out, 2, 100.0);
-        assert!(out.iter().all(|&x| x == 0.0));
+    fn hrtf_puts_a_sound_on_the_right_in_the_right_ear() {
+        let mut m = Mixer::offline(48000).unwrap();
+        m.set_listener(Listener::from_view(Vec3::ZERO, 0.0, 0.0));
+        // right of the listener (yaw 0: -y is right), 100 u away
+        m.play(play(tone(48000, 0.5), Some(Vec3::new(0.0, -100.0, 0.0))));
+        let out = m.render(FRAME * 4);
+        let (l, r) = (peak(&out, 0), peak(&out, 1));
+        assert!(r > l * 1.5, "left {l} right {r}");
+        let out = m.render(FRAME * 4);
+        assert!(peak(&out, 0) > 0.0, "still playing");
+    }
+
+    #[test]
+    fn unpositioned_sounds_are_centred_and_end() {
+        let mut m = Mixer::offline(48000).unwrap();
+        m.play(play(tone(48000, 0.02), None));
+        let out = m.render(FRAME);
+        let (l, r) = (peak(&out, 0), peak(&out, 1));
+        assert!((l - r).abs() < 1e-5 && l > 0.3, "{l} {r}");
+        m.render(FRAME);
+        assert_eq!(m.voices(), 0, "0.02 s tone ends inside two frames");
+    }
+
+    #[test]
+    fn channels_replace_and_loops_wrap() {
+        let mut m = Mixer::offline(48000).unwrap();
+        let mut p = play(tone(48000, 0.01), None);
+        p.looping = true;
+        p.ent = 7;
+        p.channel = 6;
+        m.play(p.clone());
+        m.render(FRAME * 4);
+        assert_eq!(m.voices(), 1, "the loop keeps playing");
+        m.play(p);
+        m.render(FRAME);
+        assert_eq!(m.voices(), 1, "same entity + channel replaces");
+        m.stop_channel(7, None);
+        m.render(FRAME);
+        assert_eq!(m.voices(), 0);
     }
 }
