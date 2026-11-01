@@ -5332,3 +5332,37 @@ fn sent_overlay_text_is_replicated_and_cleared_on_remove() {
     assert_eq!(server.sandbox.count_of(1, "props"), 0);
     assert_eq!(server.overlays(), vec![(b, "Tip A".to_string())]);
 }
+
+#[test]
+fn ragdoll_model_info_carries_every_solid_joint_and_bone() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let info = gm_dedicated::model_info(&mount, "models/kleiner.mdl").unwrap();
+    let rd = info.ragdoll.expect("kleiner is a ragdoll");
+    assert_eq!(rd.solids.len(), 15);
+    assert_eq!(rd.solids[0].bone, "ValveBiped.Bip01_Pelvis");
+    assert!(rd
+        .solids
+        .iter()
+        .all(|s| !s.hulls.is_empty() && s.mass > 0.0));
+    assert!((rd.solids.iter().map(|s| s.mass).sum::<f32>() - rd.total_mass).abs() < 1.0);
+    assert_eq!(rd.joints.len(), 14);
+    assert_eq!(rd.collision_pairs.len(), 13);
+    let pelvis = rd
+        .bones
+        .iter()
+        .position(|b| b.name == "ValveBiped.Bip01_Pelvis")
+        .unwrap();
+    // kleiner's skeleton is rooted at the pelvis itself (`editparams` rootname)
+    assert!(rd.bones[pelvis].parent < 0, "the pelvis is the root bone");
+    // every solid names a bone of the skeleton
+    for s in &rd.solids {
+        assert!(rd.bones.iter().any(|b| b.name == s.bone), "{}", s.bone);
+    }
+    let crate_info =
+        gm_dedicated::model_info(&mount, "models/props_junk/wood_crate001a.mdl").unwrap();
+    assert!(crate_info.ragdoll.is_none());
+}

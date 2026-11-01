@@ -144,7 +144,56 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
             gm_sandbox::hull_planes(&pts, &c.triangles)
         })
         .collect();
+    let ragdoll = (phy.solids.len() > 1).then(|| {
+        let sp_of = |name: &str| {
+            let sp = table.get(name);
+            Surface {
+                friction: sp.friction,
+                elasticity: sp.elasticity,
+            }
+        };
+        gm_server::RagdollInfo {
+            solids: phy
+                .solids
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let pr = phy.props.get(i).cloned().unwrap_or_default();
+                    gm_server::RagdollSolid {
+                        bone: pr.name.clone(),
+                        hulls: s
+                            .convexes
+                            .iter()
+                            .map(|c| c.points.iter().map(|&p| Vec3::from(p)).collect())
+                            .collect(),
+                        mass: if pr.mass > 0.0 { pr.mass } else { 1.0 },
+                        mass_center: Vec3::from(s.mass_center),
+                        inertia: Vec3::from(s.rotation_inertia),
+                        drag_axis_areas: Vec3::from(s.drag_axis_areas),
+                        surface: sp_of(&pr.surfaceprop),
+                        surfaceprop: pr.surfaceprop.clone(),
+                        linear_damping: pr.damping,
+                        angular_damping: pr.rotdamping,
+                    }
+                })
+                .collect(),
+            joints: phy.constraints.clone(),
+            collision_pairs: phy.collision_pairs.clone(),
+            total_mass: phy.edit.total_mass,
+            bones: mdl
+                .bones
+                .iter()
+                .map(|b| gm_server::BoneInfo {
+                    name: b.name.clone(),
+                    parent: b.parent,
+                    pos: Vec3::from(b.pos),
+                    quat: glam::Quat::from_array(b.quat),
+                })
+                .collect(),
+        }
+    });
     Ok(gm_server::ModelInfo {
+        ragdoll,
         bounds: gm_sandbox::ModelBounds {
             min: Vec3::from(mdl.header.hull_min),
             max: Vec3::from(mdl.header.hull_max),

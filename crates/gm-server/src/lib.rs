@@ -6,7 +6,7 @@ pub mod projectile;
 pub mod save;
 pub mod weapons;
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use gm_physics::physgun::{Grab, PhysgunParams};
 use gm_physics::{BodyHandle, ConstraintHandle, PropDesc, Surface, World};
 use gm_sandbox::{ConstraintKind, Event, ModelBounds, PropBody, Sandbox, SpawnRequest, ToolHit};
@@ -14,6 +14,41 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Everything the server needs to know about a model to spawn and trace it.
 pub mod player_models;
+
+/// One bone of the MDL skeleton (parent-relative bind pose, Source units).
+#[derive(Clone, Debug)]
+pub struct BoneInfo {
+    pub name: String,
+    pub parent: i32,
+    pub pos: Vec3,
+    pub quat: Quat,
+}
+
+/// One `.phy` solid of a ragdoll: the body of a bone.
+#[derive(Clone, Debug)]
+pub struct RagdollSolid {
+    pub bone: String,
+    pub hulls: Vec<Vec<Vec3>>,
+    pub mass: f32,
+    pub mass_center: Vec3,
+    pub inertia: Vec3,
+    pub drag_axis_areas: Vec3,
+    pub surface: Surface,
+    pub surfaceprop: String,
+    pub linear_damping: f32,
+    pub angular_damping: f32,
+}
+
+/// Everything a `prop_ragdoll` needs from its model: solids per bone, the joints between them
+/// (`.phy` `ragdollconstraint`), which solid pairs collide, and the skeleton for the bind pose.
+#[derive(Clone, Debug)]
+pub struct RagdollInfo {
+    pub solids: Vec<RagdollSolid>,
+    pub joints: Vec<gm_formats::phy::RagdollConstraint>,
+    pub collision_pairs: Vec<(u32, u32)>,
+    pub total_mass: f32,
+    pub bones: Vec<BoneInfo>,
+}
 
 #[derive(Clone, Debug)]
 pub struct ModelInfo {
@@ -39,6 +74,8 @@ pub struct ModelInfo {
     pub scrape_rough: Option<String>,
     /// The model's `prop_data` through `scripts/propdata.txt`.
     pub prop_data: PropData,
+    /// Set for models whose `.phy` has more than one solid: a `prop_ragdoll` when spawned.
+    pub ragdoll: Option<RagdollInfo>,
     /// The `break` sound script of the surface property (`Wood_Crate.Break`).
     pub break_sound: Option<String>,
     /// `Entity:SkinCount`: skin families in the MDL (1 when unknown).

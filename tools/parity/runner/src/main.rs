@@ -2744,6 +2744,7 @@ fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::Model
         impact_hard: table.sound(&props.surfaceprop, "impacthard"),
         scrape_rough: table.sound(&props.surfaceprop, "scraperough"),
         prop_data: gm_dedicated::prop_data(mount, &mdl.key_values),
+        ragdoll: None,
         break_sound: table.sound(&props.surfaceprop, "break"),
         skins: 1,
         body_groups: Vec::new(),
