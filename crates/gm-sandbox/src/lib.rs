@@ -933,31 +933,32 @@ pub fn blast_jitter(u: f32) -> f32 {
 /// One tick of a wheel's spin about its motor axis (deg/s, signed along the axis towards the
 /// hit entity): `phys_torque` accelerates by `torque * scale` deg/s² less the axis friction
 /// torque (which also holds a resting wheel the motor cannot overcome), the spin is capped at
-/// 7200 deg/s, and the angular drag vphysics has over Jolt's is added (the free wheel decays
-/// ~0.31/s in the game, Jolt gives ~0.19/s).
-/// Axis friction on a released wheel (deg/s^2 per unit of friction).
-pub const WHEEL_RELEASED_FRICTION: f32 = 120.0;
+/// 7200 deg/s; the free wheel's decay is the body's quadratic angular drag plus the axis
+/// friction law above (no extra linear damping: the frictionless wheel decays as 1.0e-4 spin^2).
+/// Axis friction of a turning wheel per unit of `friction`, deg/s^2: `A + B / |spin|`,
+/// capped at `WHEEL_FRICTION_TORQUE`. Measured on the 261031 wheel recordings with the air
+/// drag (1.0e-4 spin^2, the body's quadratic angular drag) taken out: ~305 at 400 deg/s,
+/// ~215 at 900, ~150-200 at 3000, the same while driven and released.
+pub const WHEEL_AXIS_FRICTION_A: f32 = 190.0;
+pub const WHEEL_AXIS_FRICTION_B: f32 = 35000.0;
 pub fn wheel_spin_step(spin: f32, torque: f32, scale: f32, friction: f32, dt: f32) -> f32 {
     let motor = TORQUE_ACCEL * torque * scale.abs();
     if spin.abs() < 60.0 && motor <= WHEEL_FRICTION_TORQUE * friction {
         return 0.0;
     }
-    // measured axis friction while driving: 272 deg/s^2 at torque 1000, 217 at 3000, ~30 at
-    // 10000 - a loss shrinking with the torque, (300 - 0.027 torque) per unit of friction
-    let loss = (WHEEL_FRICTION_TORQUE - 0.027 * torque * scale.abs()).max(0.0) * friction;
-    // released: the axis friction brakes it on top of the drag (fitted over the three
-    // released traces: decel = 0.316 |spin| + ~120 * friction deg/s^2)
+    let loss = (WHEEL_AXIS_FRICTION_A + WHEEL_AXIS_FRICTION_B / spin.abs().max(60.0))
+        .min(WHEEL_FRICTION_TORQUE)
+        * friction;
     let drive = if scale == 0.0 {
-        -(WHEEL_RELEASED_FRICTION * friction * dt).min(spin.abs()) * spin.signum() / dt
+        // released: the axis friction brakes the spin on top of the body's air drag
+        -(loss * dt).min(spin.abs()) * spin.signum() / dt
     } else if spin.abs() >= 60.0 && spin.signum() != scale.signum() {
-        // braking against the spin the axis friction opposes the spin, not the motor: the
-        // game's wheel loses 50 deg/s a tick at torque 3000 and friction 1 (3000 + 217)
+        // braking against the spin the axis friction opposes the spin, not the motor
         (motor + loss) * scale.signum()
     } else {
         (motor - loss).max(0.0) * scale.signum()
     };
     let s = spin + drive * dt;
-    let s = s * (1.0 - 0.04 * dt);
     s.clamp(-MAX_WHEEL_SPIN, MAX_WHEEL_SPIN)
 }
 
