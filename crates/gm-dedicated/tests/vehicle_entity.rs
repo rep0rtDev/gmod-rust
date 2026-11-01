@@ -66,7 +66,7 @@ fn chair_spawns_seats_and_releases_the_player() {
     assert!(server.enter_vehicle(1, id));
     let seated = server.players[&1].state.origin;
     // measured: the body sits on `vehicle_feet_passenger0`, (0, -3, 19.5) from the chair's
-    // origin at yaw 180 (the engine's static-prop quarter turn; 0.5 u of height still open)
+    // origin at yaw 180 (the root bone's idle-frame quarter turn; 0.5 u of height still open)
     let d = seated - chair;
     assert!(
         (d - Vec3::new(0.0, -3.0, 19.5)).length() < 0.6,

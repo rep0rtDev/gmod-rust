@@ -1254,6 +1254,9 @@ SCENARIOS.toolgun = function(scn, done)
 			bot:SelectWeapon(op.class)
 		elseif op.op == "spawnvehicle" then
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			-- Spawn_Vehicle reads ply:GetAngles(); a real player's body yaw follows the view, the
+			-- bot's does not between a vehicle exit and the next command
+			bot:SetAngles(Angle(0, op.yaw or 0, 0))
 			local eye = bot:GetShootPos()
 			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 4096, filter = { bot } })
 			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal) }

@@ -127,10 +127,21 @@ fn ragdoll_pose(
     data: &[u8],
     mdl: &gm_formats::mdl::Mdl,
 ) -> Option<Vec<([f32; 3], [f32; 4])>> {
+    sequence_frame0(mount, model, data, mdl, Some("ragdoll"))
+}
+
+/// Frame 0 of the named sequence (or the model's first sequence when absent / `None`): the pose
+/// an idle entity of the model stands in.
+fn sequence_frame0(
+    mount: &gm_content::Mount,
+    model: &str,
+    data: &[u8],
+    mdl: &gm_formats::mdl::Mdl,
+    name: Option<&str>,
+) -> Option<Vec<([f32; 3], [f32; 4])>> {
     let seqs = gm_formats::mdl::sequences(data, &mdl.header);
-    let seq = seqs
-        .iter()
-        .find(|s| s.name.eq_ignore_ascii_case("ragdoll"))
+    let seq = name
+        .and_then(|n| seqs.iter().find(|s| s.name.eq_ignore_ascii_case(n)))
         .or(seqs.first())?;
     let desc = gm_formats::mdl::anim_descs(data, &mdl.header)
         .into_iter()
@@ -263,7 +274,10 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
         }
     });
     Ok(gm_server::ModelInfo {
-        attachments: model_attachments(&mdl),
+        attachments: model_attachments(
+            &mdl,
+            sequence_frame0(mount, model, &mdl_data, &mdl, None).as_deref(),
+        ),
         ragdoll,
         bounds: gm_sandbox::ModelBounds {
             min: Vec3::from(mdl.header.hull_min),
@@ -387,17 +401,30 @@ impl ServerConfig {
     }
 }
 
-/// Attachments carried into model space through their bone's bind pose (the bone chain's
-/// `pos` / `quat`, the pose a static prop is drawn in).
-fn model_attachments(mdl: &gm_formats::mdl::Mdl) -> Vec<gm_server::ModelAttachment> {
-    fn bind(mdl: &gm_formats::mdl::Mdl, bone: usize) -> glam::Mat4 {
+/// Attachments carried into model space through their bone chain in the model's idle pose
+/// (frame 0 of its first sequence, like the game's `GetAttachment` on an entity standing in
+/// it; the bind pose as fallback). Measured `server_vehicle_seat` / `server_vehicle_spawn`:
+/// the idle frame turns a one-bone static prop's root a quarter turn and the jeep's a half
+/// turn against the bind pose, so the bind pose alone put the jeep seat 97 u off.
+fn model_attachments(
+    mdl: &gm_formats::mdl::Mdl,
+    idle: Option<&[([f32; 3], [f32; 4])]>,
+) -> Vec<gm_server::ModelAttachment> {
+    fn bind(
+        mdl: &gm_formats::mdl::Mdl,
+        idle: Option<&[([f32; 3], [f32; 4])]>,
+        bone: usize,
+    ) -> glam::Mat4 {
         let b = &mdl.bones[bone];
+        let (pos, quat) = idle
+            .and_then(|p| p.get(bone).copied())
+            .unwrap_or((b.pos, b.quat));
         let local = glam::Mat4::from_rotation_translation(
-            glam::Quat::from_array(b.quat).normalize(),
-            glam::Vec3::from_array(b.pos),
+            glam::Quat::from_array(quat).normalize(),
+            glam::Vec3::from_array(pos),
         );
         if b.parent >= 0 && (b.parent as usize) < mdl.bones.len() && b.parent as usize != bone {
-            bind(mdl, b.parent as usize) * local
+            bind(mdl, idle, b.parent as usize) * local
         } else {
             local
         }
@@ -409,15 +436,7 @@ fn model_attachments(mdl: &gm_formats::mdl::Mdl) -> Vec<gm_server::ModelAttachme
             if bone >= mdl.bones.len() {
                 return None;
             }
-            // measured (`server_vehicle_seat`: nova chairs, jeep seat): on a one-bone static
-            // prop the engine's attachment sits a quarter turn further round z than the bone
-            // chain gives ((3, 19, 0) in the bone reads (0, 3, 19.5) on the chair), the
-            // $staticprop compile convention
-            let m = if mdl.bones.len() == 1 {
-                glam::Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2) * bind(mdl, bone)
-            } else {
-                bind(mdl, bone)
-            };
+            let m = bind(mdl, idle, bone);
             let l = &a.local;
             Some(gm_server::ModelAttachment {
                 name: a.name.clone(),
