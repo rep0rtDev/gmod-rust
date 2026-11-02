@@ -1672,3 +1672,33 @@ fn sandbox_sent_giveswep_and_ragdoll_hooks() {
         ("my_sent", 9, "weapon_crowbar", "models/alyx.mdl")
     );
 }
+
+#[test]
+fn step_sound_time_hook_returns_the_interval() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"PlayerStepSoundTime\", \"t\", function(ply, kind, walking) state.kind, state.walking = kind, walking; return 123 end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut p = Payload::default();
+    p.ints.push(("player", 1));
+    p.ints.push(("kind", 3));
+    p.bools.push(("walking", true));
+    let reply = rt.actors_mut()[0]
+        .dispatch_reply(&snap, "player.step_time", &p, 3)
+        .unwrap();
+    assert!(matches!(reply, gm_script::actor::Reply::Number(n) if n == 123.0));
+    let (kind, walking): (i32, bool) = rt.actors()[0]
+        .eval("return state.kind, state.walking")
+        .unwrap();
+    assert_eq!((kind, walking), (3, true));
+}

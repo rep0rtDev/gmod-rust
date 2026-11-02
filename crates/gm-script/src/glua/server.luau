@@ -713,6 +713,10 @@ local prev_move = {}
     events.on("sandbox.check_limit", function(p)
         if hook.Run("PlayerCheckLimit", Player(p.player), p.kind, p.current or 0, p.max or -1) == false then return false end
     end)
+    events.on("player.step_time", function(p)
+        local r = hook.Run("PlayerStepSoundTime", Player(p.player), p.kind or 0, p.walking == true)
+        if type(r) == "number" then return r end
+    end)
     events.on("player.footstep", function(p)
         local filter = RecipientFilter and RecipientFilter() or nil
         if hook.Run("PlayerFootstep", Player(p.player), Vector(p.px, p.py, p.pz), p.right or 0, p.sound, p.volume or 1, filter) == true then
@@ -816,6 +820,8 @@ function GM:CreateTeams() if team and team.SetUp then team.SetUp(TEAM_UNASSIGNED
 function GM:PlayerDeathThink(ply) end -- the server owns the respawn timer; `true` here keeps the player dead
 function GM:PlayerSilentDeath(ply) end
 function GM:PlayerDeathSound(ply) return false end
+-- nil keeps the measured cadence (400 / 350 / 250 ms by max speed, +50 crouched)
+function GM:PlayerStepSoundTime(ply, kind, walking) end
 function GM:PlayerFootstep(ply, pos, foot, sound, volume, filter) return false end
 function GM:PlayerStepSoundTime(ply, type, walking) return walking and 400 or 300 end
 function GM:PlayerShouldTaunt(ply, act) return true end

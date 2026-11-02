@@ -976,6 +976,12 @@ pub enum Request {
         ent: u32,
     },
     /// `GetFallDamage`: landing at `speed` is about to deal `amount`; `Amount` replaces it.
+    /// `PlayerStepSoundTime`: a footstep just played; `Amount(ms)` replaces the time to the next.
+    StepTime {
+        player: u32,
+        kind: u8,
+        walking: bool,
+    },
     FallDamage {
         player: u32,
         speed: f32,
@@ -14086,6 +14092,24 @@ impl<'w> Server<'w> {
         }) == Verdict::Cancel
         {
             return;
+        }
+        // `PlayerStepSoundTime`: a number from the hook replaces the measured cadence
+        let water = self.players.get(&player).map_or(0, |p| p.state.water_level);
+        let kind = if water >= 2 {
+            2
+        } else if water == 1 {
+            3
+        } else {
+            0
+        };
+        if let Verdict::Amount(ms) = self.ask(Request::StepTime {
+            player,
+            kind,
+            walking: step.volume < 0.5,
+        }) {
+            if let Some(p) = self.players.get_mut(&player) {
+                p.steps.time_ms = ms.max(0.0);
+            }
         }
         let Some(name) = name else {
             return;

@@ -847,6 +847,16 @@ impl Runtime {
                     gm_server::Verdict::Cancel
                 }
             }
+            gm_server::Request::StepTime {
+                player,
+                kind,
+                walking,
+            } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("kind", *kind as i64));
+                p.bools.push(("walking", *walking));
+                self.ask_amount(server, "player.step_time", p)
+            }
             gm_server::Request::FallDamage {
                 player,
                 speed,

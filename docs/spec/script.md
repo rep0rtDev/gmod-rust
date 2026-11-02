@@ -712,6 +712,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `GM:PlayerStepSoundTime(ply, kind, walking)` is asked after every footstep the server plays
+  (`Request::StepTime`; kind `STEPSOUNDTIME_NORMAL` / `WATER_KNEE` / `WATER_FOOT` from the
+  water level, ladder steps do not pass here): a number replaces the milliseconds to the next
+  step, nil keeps the measured cadence (400 / 350 / 250 ms by max speed, +50 crouched).
+  `GM:PlayerDeathSound` stays a stub (the server emits no death sound to suppress), `GM:ShouldCollide`
+  too (the physics has a layer-pair filter only, no per-entity contact filter).
 - NextBots: a scripted entity with `Base = "base_nextbot"` (or `Type = "nextbot"`) gets a server
   ground mover (`Server::nextbots`, `NextBot`): each tick the xy velocity ramps toward the
   `Approach` goal at the desired speed (accel / decel), gravity pulls an airborne bot, the hull
