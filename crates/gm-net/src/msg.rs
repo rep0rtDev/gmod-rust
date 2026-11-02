@@ -195,6 +195,8 @@ pub struct EntityState {
     pub sequence_finished: bool,
     /// Gesture layer played on top (`Entity:AddGestureSequence`), if any.
     pub gesture: Option<GestureState>,
+    /// Pose parameter values a script set, by name (`Entity:SetPoseParameter`).
+    pub pose: Vec<(String, f32)>,
 }
 
 /// A gesture layer on the wire (the server's `GestureLayer`).
@@ -487,7 +489,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 9;
+pub const PROTOCOL: u16 = 10;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1037,6 +1039,11 @@ impl ServerMsg {
                         w.i32(g.priority);
                         w.bool(g.finished);
                     }
+                    w.varint(e.pose.len() as u64);
+                    for (n, v) in &e.pose {
+                        w.str(n);
+                        w.f32(*v);
+                    }
                 }
                 w.varint(removed.len() as u64);
                 for id in removed {
@@ -1362,6 +1369,14 @@ impl ServerMsg {
                             })
                         } else {
                             None
+                        },
+                        pose: {
+                            let n = r.varint()? as usize;
+                            let mut v = Vec::with_capacity(n.min(64));
+                            for _ in 0..n {
+                                v.push((r.str()?, r.f32()?));
+                            }
+                            v
                         },
                     });
                 }

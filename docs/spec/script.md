@@ -579,6 +579,13 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   and priority are state the client does not blend by yet (the gesture plays at full weight).
   Activity-based `AddGesture` / `FindGestureLayer` / `IsPlayingGesture` / `RemoveGesture` /
   `RestartGesture` (we have no activity table) and `SetLayerBlendIn / BlendOut` stay stubs.
+- Pose parameters: the model data lists them (`name, start, end, loop range`, include models
+  merged); `Entity:GetNumPoseParameters` / `GetPoseParameterName` / `LookupPoseParameter` /
+  `GetPoseParameterRange` read that table, `SetPoseParameter(name|id, value)` stores a value on
+  the server (wrapped into the range of a looping parameter, clamped otherwise; a parameter the
+  model lacks is refused), `GetPoseParameter` reads it back, `ClearPoseParameters` drops them
+  all. Snapshots carry the set values by name and the client drives the model's blend grids with
+  them (NPCs and scripted entities; players keep their movement-derived parameters).
 
 Done in `glua/server.luau`:
 

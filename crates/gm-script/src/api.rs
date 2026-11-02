@@ -158,6 +158,15 @@ pub enum QueuedWrite {
     EntityResetSequence {
         ent: u32,
     },
+    /// `Entity:SetPoseParameter` / `ClearPoseParameters`.
+    EntityPose {
+        ent: u32,
+        name: String,
+        value: f32,
+    },
+    EntityPoseClear {
+        ent: u32,
+    },
     /// `Entity:AddGestureSequence` / `SetLayer*` / `RemoveLayer` on the gesture layer.
     EntityGesture {
         ent: u32,
@@ -840,6 +849,11 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("cycle", e.cycle)?;
     t.set("playback_rate", e.playback_rate)?;
     t.set("sequence_finished", e.sequence_finished)?;
+    let pose = lua.create_table()?;
+    for (n, v) in &e.pose {
+        pose.set(n.as_str(), *v)?;
+    }
+    t.set("pose", pose)?;
     if let Some(g) = &e.gesture {
         let gt = lua.create_table()?;
         gt.set("sequence", g.sequence.as_str())?;
@@ -1839,6 +1853,15 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     rate: f32_arg(&arg),
                 },
                 "ent.reset_sequence" => QueuedWrite::EntityResetSequence { ent },
+                "ent.pose" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::EntityPose {
+                        ent,
+                        name: t.get::<Option<String>>("name")?.unwrap_or_default(),
+                        value: t.get::<Option<f32>>("value")?.unwrap_or(0.0),
+                    }
+                }
+                "ent.pose_clear" => QueuedWrite::EntityPoseClear { ent },
                 "ent.gesture" => QueuedWrite::EntityGesture {
                     ent,
                     op: gesture_op(&table_arg(&arg)?)?,
@@ -2345,6 +2368,16 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 sa.set(i + 1, e)?;
             }
             t.set("sequence_anim", sa)?;
+            let pp = lua.create_table()?;
+            for (i, (name, start, end, wrap)) in m.pose_params.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("name", name.as_str())?;
+                e.set("start", *start)?;
+                e.set("end", *end)?;
+                e.set("loop", *wrap)?;
+                pp.set(i + 1, e)?;
+            }
+            t.set("pose_params", pp)?;
             let an = lua.create_table()?;
             for (i, (name, fps, frames, flags)) in m.anims.iter().enumerate() {
                 let e = lua.create_table()?;
@@ -3027,6 +3060,10 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::EntityCycle { ent, cycle } => server.set_cycle(*ent, *cycle),
         QueuedWrite::EntityPlaybackRate { ent, rate } => server.set_playback_rate(*ent, *rate),
         QueuedWrite::EntityResetSequence { ent } => server.reset_sequence_info(*ent),
+        QueuedWrite::EntityPose { ent, name, value } => {
+            server.set_pose_parameter(*ent, name, *value)
+        }
+        QueuedWrite::EntityPoseClear { ent } => server.clear_pose_parameters(*ent),
         QueuedWrite::EntityGesture { ent, op } => match op {
             GestureOp::Add { sequence, autokill } => server.add_gesture(*ent, sequence, *autokill),
             GestureOp::Remove => server.remove_gesture(*ent),

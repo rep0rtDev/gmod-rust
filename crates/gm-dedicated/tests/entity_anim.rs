@@ -110,3 +110,60 @@ fn npc_animator_runs_sequences_and_a_gesture_layer() {
     assert!(!server.remove_gesture(id));
     assert!(server.anim(id).unwrap().gesture.is_none());
 }
+
+#[test]
+fn pose_parameters_clamp_or_wrap_into_the_model_range_and_clear() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let model = "models/alyx.mdl";
+    server.register_model(model, gm_dedicated::model_info(&mount, model).unwrap());
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_alyx", "none").unwrap();
+    let params = server.models[model].script.pose_params.clone();
+    assert!(!params.is_empty(), "alyx has pose parameters");
+    let (name, lo, hi, wrap) = params
+        .iter()
+        .find(|p| p.3 == 0.0 && p.2 > p.1)
+        .cloned()
+        .expect("a clamped parameter");
+    assert!(!server.set_pose_parameter(id, "no_such_param", 1.0));
+    assert!(server.set_pose_parameter(id, &name.to_uppercase(), (lo + hi) * 0.5));
+    assert_eq!(server.pose_parameters(id).unwrap()[&name], (lo + hi) * 0.5);
+    assert!(server.set_pose_parameter(id, &name, hi + 1000.0));
+    assert_eq!(
+        server.pose_parameters(id).unwrap()[&name],
+        hi,
+        "clamped {wrap}"
+    );
+    if let Some((wname, wlo, whi, _)) = params.iter().find(|p| p.3 > 0.0 && p.2 > p.1) {
+        assert!(server.set_pose_parameter(id, wname, whi + (whi - wlo) * 0.25));
+        let v = server.pose_parameters(id).unwrap()[wname];
+        assert!(
+            (v - (wlo + (whi - wlo) * 0.25)).abs() < 1e-3,
+            "wrapped: {v}"
+        );
+    }
+    server.tick(&idle);
+    assert!(server.pose_parameters(id).is_some(), "survives the tick");
+    assert!(server.clear_pose_parameters(id));
+    assert!(server.pose_parameters(id).is_none());
+    assert!(!server.clear_pose_parameters(9999));
+}

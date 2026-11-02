@@ -171,6 +171,7 @@ impl Sim {
                             playback_rate: 1.0,
                             sequence_finished: false,
                             gesture: None,
+                            pose: Vec::new(),
                         },
                     )
                 })
@@ -3319,7 +3320,9 @@ impl App {
                         let (glen, _) = m.sequence_length(&g.sequence)?;
                         Some((g.sequence.as_str(), g.cycle * glen))
                     });
-                    let local = m.bone_world_gesture(&e.sequence, t, None, &[], gesture)?;
+                    let params: Vec<(&str, f32)> =
+                        e.pose.iter().map(|(n, v)| (n.as_str(), *v)).collect();
+                    let local = m.bone_world_gesture(&e.sequence, t, None, &params, gesture)?;
                     let place = gm_render::world::model_transform(pos, ang);
                     let world: Vec<glam::Mat4> = local.iter().map(|b| place * *b).collect();
                     return Some((e.id, m.skin_matrices(&world)));

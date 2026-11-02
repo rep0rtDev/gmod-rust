@@ -129,6 +129,7 @@ mod tests {
                 playback_rate: 1.0,
                 sequence_finished: false,
                 gesture: None,
+                pose: Vec::new(),
             }],
             removed: vec![1],
             own: OwnSandbox {

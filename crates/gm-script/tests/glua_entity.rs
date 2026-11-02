@@ -39,6 +39,7 @@ fn snapshot() -> Arc<Snapshot> {
             playback_rate: 1.0,
             sequence_finished: false,
             gesture: None,
+            pose: Vec::new(),
             bone_scales: vec![(1, Vec3::new(2.0, 2.0, 2.0))],
             bone_angles: vec![],
             flex: Some((vec![0.5], 1.0)),
@@ -86,6 +87,7 @@ fn snapshot() -> Arc<Snapshot> {
             playback_rate: 1.0,
             sequence_finished: false,
             gesture: None,
+            pose: Vec::new(),
             bone_scales: vec![(1, Vec3::new(2.0, 2.0, 2.0))],
             bone_angles: vec![],
             flex: Some((vec![0.5], 1.0)),
@@ -542,4 +544,18 @@ fn animator_writes_carry_sequence_cycle_rate_and_gesture_layer() {
         }
     ));
     assert_eq!(writes.len(), 7);
+}
+
+#[test]
+fn pose_parameter_writes_carry_name_and_value() {
+    let (_, writes) = run("Entity(7):SetPoseParameter(\"aim_yaw\", 30)
+         Entity(7):ClearPoseParameters()");
+    assert!(matches!(
+        &writes[0],
+        QueuedWrite::EntityPose { ent: 7, name, value } if name == "aim_yaw" && *value == 30.0
+    ));
+    assert!(matches!(
+        &writes[1],
+        QueuedWrite::EntityPoseClear { ent: 7 }
+    ));
 }

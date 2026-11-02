@@ -38,6 +38,7 @@ pub struct EntitySnap {
     pub playback_rate: f32,
     pub sequence_finished: bool,
     pub gesture: Option<gm_server::GestureLayer>,
+    pub pose: Vec<(String, f32)>,
     /// Poser state: non-identity bone scales / angles `(bone, value)`, flex weights + scale, eye target.
     pub bone_scales: Vec<(u32, Vec3)>,
     pub bone_angles: Vec<(u32, Vec3)>,
@@ -326,6 +327,7 @@ impl Snapshot {
                             cycle: e.cycle,
                             playback_rate: e.playback_rate,
                             sequence_finished: e.sequence_finished,
+                            pose: e.pose.clone(),
                             gesture: e.gesture.as_ref().map(|g| gm_server::GestureLayer {
                                 sequence: g.sequence.clone(),
                                 cycle: g.cycle,
@@ -435,6 +437,9 @@ impl Snapshot {
                             cycle: server.anim(p.id).map_or(0.0, |a| a.cycle),
                             playback_rate: server.anim(p.id).map_or(1.0, |a| a.rate),
                             sequence_finished: server.anim(p.id).is_some_and(|a| a.finished),
+                            pose: server.pose_parameters(p.id).map_or_else(Vec::new, |m| {
+                                m.iter().map(|(k, v)| (k.clone(), *v)).collect()
+                            }),
                             gesture: server.anim(p.id).and_then(|a| a.gesture.clone()),
                             bone_scales: server
                                 .bone_scales(p.id)
@@ -495,6 +500,9 @@ impl Snapshot {
                             cycle: server.anim(id).map_or(0.0, |a| a.cycle),
                             playback_rate: server.anim(id).map_or(1.0, |a| a.rate),
                             sequence_finished: server.anim(id).is_some_and(|a| a.finished),
+                            pose: server.pose_parameters(id).map_or_else(Vec::new, |m| {
+                                m.iter().map(|(k, v)| (k.clone(), *v)).collect()
+                            }),
                             gesture: server.anim(id).and_then(|a| a.gesture.clone()),
                             bone_scales: Vec::new(),
                             bone_angles: Vec::new(),

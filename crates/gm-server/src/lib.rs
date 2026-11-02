@@ -165,6 +165,8 @@ pub struct ModelScriptData {
     /// Bind pose of each bone relative to its parent: position and angles (`GetBonePosition`
     /// composes these up the chain; no animation layer on the server).
     pub bone_bind: Vec<(Vec3, Vec3)>,
+    /// Pose parameters: `(name, start, end, loop range)`; a loop range > 0 wraps (angles).
+    pub pose_params: Vec<(String, f32, f32, f32)>,
     pub sequences: Vec<String>,
     /// Per sequence: `(fps, frames, anim flags)` of its first animation (0x1 = looping).
     pub sequence_anim: Vec<(f32, i32, i32)>,
@@ -283,6 +285,11 @@ impl ModelScriptData {
             let Ok(m) = gm_formats::mdl::Mdl::parse(&bytes) else {
                 continue;
             };
+            for p in gm_formats::mdl::pose_params(&bytes, &m.header) {
+                if !out.pose_params.iter().any(|q| q.0 == p.name) {
+                    out.pose_params.push((p.name, p.start, p.end, p.loop_range));
+                }
+            }
             let seqs = gm_formats::mdl::sequences(&bytes, &m.header);
             let anims = gm_formats::mdl::anim_descs(&bytes, &m.header);
             for q in &seqs {
@@ -325,6 +332,10 @@ impl ModelScriptData {
                         ),
                     )
                 })
+                .collect(),
+            pose_params: gm_formats::mdl::pose_params(data, &mdl.header)
+                .into_iter()
+                .map(|p| (p.name, p.start, p.end, p.loop_range))
                 .collect(),
             sequences: seqs.iter().map(|q| q.name.clone()).collect(),
             sequence_anim: seqs
@@ -4104,6 +4115,8 @@ pub struct Server<'w> {
     pub script_shapes: BTreeMap<u32, PhysShape>,
     /// Animators of NPCs (always) and of props a script gave a sequence, by entity id.
     pub anims: BTreeMap<u32, EntAnim>,
+    /// Pose parameter values scripts set (`Entity:SetPoseParameter`), by entity then name.
+    pub poses: BTreeMap<u32, BTreeMap<String, f32>>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
     sounds: Vec<WorldSound>,
     /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
@@ -4258,6 +4271,7 @@ impl<'w> Server<'w> {
             surface_overrides: BTreeMap::new(),
             script_shapes: BTreeMap::new(),
             anims: BTreeMap::new(),
+            poses: BTreeMap::new(),
             sounds: Vec::new(),
             scrapes: BTreeMap::new(),
             thruster_loops: BTreeSet::new(),
@@ -7449,6 +7463,13 @@ impl<'w> Server<'w> {
         }
         let ids: BTreeSet<u32> = live.iter().map(|l| l.0).collect();
         self.anims.retain(|id, _| ids.contains(id));
+        let all: BTreeSet<u32> = self
+            .npcs
+            .keys()
+            .copied()
+            .chain(self.sandbox.props().iter().map(|p| p.id))
+            .collect();
+        self.poses.retain(|id, _| all.contains(id));
         for (id, model, base) in live {
             let mut a = self.anims.remove(&id).unwrap_or_default();
             if let Some(base) = base {
@@ -7618,6 +7639,44 @@ impl<'w> Server<'w> {
         if let Some(p) = patch.priority {
             g.priority = p;
         }
+        true
+    }
+
+    /// Pose parameter values an entity has set (`Entity:GetPoseParameter`).
+    pub fn pose_parameters(&self, ent: u32) -> Option<&BTreeMap<String, f32>> {
+        self.poses.get(&ent)
+    }
+
+    /// `Entity:SetPoseParameter`: the model must have the parameter (name case-insensitive);
+    /// the value is wrapped into the range of a looping parameter, clamped otherwise.
+    pub fn set_pose_parameter(&mut self, ent: u32, name: &str, value: f32) -> bool {
+        let Some(model) = self.anim_model(ent) else {
+            return false;
+        };
+        let Some((pname, start, end, wrap)) = self.models.get(&model).and_then(|m| {
+            m.script
+                .pose_params
+                .iter()
+                .find(|p| p.0.eq_ignore_ascii_case(name))
+                .cloned()
+        }) else {
+            return false;
+        };
+        let v = if wrap > 0.0 && end > start {
+            start + (value - start).rem_euclid(end - start)
+        } else {
+            value.clamp(start.min(end), end.max(start))
+        };
+        self.poses.entry(ent).or_default().insert(pname, v);
+        true
+    }
+
+    /// `Entity:ClearPoseParameters`: every parameter back to its default.
+    pub fn clear_pose_parameters(&mut self, ent: u32) -> bool {
+        if self.anim_model(ent).is_none() {
+            return false;
+        }
+        self.poses.remove(&ent);
         true
     }
 

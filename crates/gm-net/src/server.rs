@@ -1021,6 +1021,7 @@ impl ServerNet {
                     playback_rate: server.anim(*id).map_or(1.0, |a| a.rate),
                     sequence_finished: server.anim(*id).is_some_and(|a| a.finished),
                     gesture: gesture_state(server.anim(*id)),
+                    pose: pose_list(server.pose_parameters(*id)),
                 },
             );
         }
@@ -1095,6 +1096,7 @@ impl ServerNet {
                     playback_rate: server.anim(p.id).map_or(1.0, |a| a.rate),
                     sequence_finished: server.anim(p.id).is_some_and(|a| a.finished),
                     gesture: gesture_state(server.anim(p.id)),
+                    pose: pose_list(server.pose_parameters(p.id)),
                 },
             );
         }
@@ -1504,6 +1506,13 @@ fn parse_hex(hex: &str) -> Option<[u8; 32]> {
         *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()?;
     }
     Some(out)
+}
+
+/// Pose parameter values as they go on the wire.
+fn pose_list(pose: Option<&std::collections::BTreeMap<String, f32>>) -> Vec<(String, f32)> {
+    pose.map_or_else(Vec::new, |m| {
+        m.iter().map(|(k, v)| (k.clone(), *v)).collect()
+    })
 }
 
 /// The gesture layer of an animator as it goes on the wire.
