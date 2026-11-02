@@ -804,6 +804,16 @@ IsPointInBounds / GetWorldTransformMatrix`; `GetNoDraw / SetNoDraw` map onto ren
 (`RENDERMODE_NONE`). Cycle, playback rate, activities, pose parameters, gestures / layers and
 sequence writes need a server-side animation clock and stay stubs.
 
+Poser state: `EntitySnap.bone_scales / bone_angles` (non-identity entries), `flex` (weights +
+scale) and `eye_target` are the tables the inflator, bone poser, face poser and eye poser write;
+`Entity:ManipulateBoneScale / ManipulateBoneAngles / GetManipulateBoneScale /
+GetManipulateBoneAngles / HasBoneManipulations / SetFlexWeight / GetFlexWeight / SetFlexScale /
+GetFlexScale / HasFlexManipulatior / SetEyeTarget / GetEyeTarget` read them and write through
+`set_bone_manip / set_flex / set_eye_target` (`Server::set_bone_manip`, `set_flex`,
+`set_eye_target`, bounded by the model's bone / flex counts). `SetSkin` now also applies to NPCs.
+Bone position offsets and jiggle have no storage and stay stubs; `Player:Say` waits for a
+server-side chat injection (chat lives in the net layer).
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

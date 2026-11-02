@@ -33,6 +33,10 @@ fn snapshot() -> Arc<Snapshot> {
             render_mode: 1,
             render_fx: 0,
             sequence: "idle".into(),
+            bone_scales: vec![(1, Vec3::new(2.0, 2.0, 2.0))],
+            bone_angles: vec![],
+            flex: Some((vec![0.5], 1.0)),
+            eye_target: None,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -63,6 +67,10 @@ fn snapshot() -> Arc<Snapshot> {
             render_mode: 1,
             render_fx: 0,
             sequence: "idle".into(),
+            bone_scales: vec![(1, Vec3::new(2.0, 2.0, 2.0))],
+            bone_angles: vec![],
+            flex: Some((vec![0.5], 1.0)),
+            eye_target: None,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -774,5 +782,44 @@ fn animation_and_bounds_math_over_the_model() {
     assert!(matches!(
         &writes[0],
         QueuedWrite::SetRender { mode: Some(10), .. }
+    ));
+}
+
+#[test]
+fn poser_state_reads_and_writes() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local e = Entity(5)
+             state.r = { e:GetManipulateBoneScale(1).x, e:GetManipulateBoneScale(0).x, e:GetManipulateBoneAngles(1).y, e:HasBoneManipulations() and 1 or 0,
+                 e:GetFlexWeight(0), e:GetFlexWeight(3), e:GetFlexScale(), e:HasFlexManipulatior() and 1 or 0, e:GetEyeTarget() == nil and 1 or 0 }
+             e:ManipulateBoneScale(1, Vector(3, 3, 3))
+             e:ManipulateBoneAngles(2, Angle(10, 20, 30))
+             e:SetFlexWeight(0, 0.75)
+             e:SetFlexScale(2)
+             e:SetEyeTarget(Vector(1, 2, 3))
+             e:SetEyeTarget(nil)
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!(r, vec![2.0, 1.0, 0.0, 1.0, 0.5, 0.0, 1.0, 1.0, 1.0]);
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(
+        matches!(&writes[0], QueuedWrite::SetBoneManip { ent: 5, bone: 1, scale: Some(s), angles: None } if s.x == 3.0)
+    );
+    assert!(
+        matches!(&writes[1], QueuedWrite::SetBoneManip { bone: 2, scale: None, angles: Some(a), .. } if a.y == 20.0)
+    );
+    assert!(
+        matches!(&writes[2], QueuedWrite::SetFlex { id: Some(0), value, .. } if *value == 0.75)
+    );
+    assert!(matches!(&writes[3], QueuedWrite::SetFlex { id: None, value, .. } if *value == 2.0));
+    assert!(matches!(&writes[4], QueuedWrite::SetEyeTarget { target: Some(t), .. } if t.z == 3.0));
+    assert!(matches!(
+        &writes[5],
+        QueuedWrite::SetEyeTarget { target: None, .. }
     ));
 }

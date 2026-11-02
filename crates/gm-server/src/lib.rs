@@ -5410,6 +5410,80 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// Script `ManipulateBoneScale` / `ManipulateBoneAngles` on a prop or ragdoll: the same
+    /// per-bone tables the inflator and bone poser write (identity when unset).
+    pub fn set_bone_manip(
+        &mut self,
+        ent: u32,
+        bone: usize,
+        scale: Option<Vec3>,
+        angles: Option<Vec3>,
+    ) -> bool {
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent) else {
+            return false;
+        };
+        let bones = self
+            .models
+            .get(&prop.model)
+            .map_or(0, |m| m.script.bones.len());
+        if bone >= bones {
+            return false;
+        }
+        if let Some(sc) = scale {
+            let v = self
+                .bone_scales
+                .entry(ent)
+                .or_insert_with(|| vec![Vec3::ONE; bones]);
+            v.resize(bones, Vec3::ONE);
+            v[bone] = sc;
+        }
+        if let Some(an) = angles {
+            let v = self
+                .bone_angles
+                .entry(ent)
+                .or_insert_with(|| vec![Vec3::ZERO; bones]);
+            v.resize(bones, Vec3::ZERO);
+            v[bone] = an;
+        }
+        true
+    }
+
+    /// Script `SetFlexWeight` (`Some(id)`) / `SetFlexScale` (`id` None, `value` is the scale).
+    pub fn set_flex(&mut self, ent: u32, id: Option<usize>, value: f32) -> bool {
+        let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent) else {
+            return false;
+        };
+        let n = self
+            .models
+            .get(&prop.model)
+            .map_or(0, |m| m.script.flexes.len());
+        let st = self
+            .flexes
+            .entry(ent)
+            .or_insert_with(|| (vec![0.0; n], 1.0));
+        st.0.resize(n, 0.0);
+        match id {
+            Some(i) if i < n => st.0[i] = value,
+            Some(_) => return false,
+            None => st.1 = value,
+        }
+        true
+    }
+
+    /// Script `SetEyeTarget` (`None` clears it); the eyeposer's own setter does the storing.
+    pub fn set_script_eye_target(&mut self, ent: u32, target: Option<Vec3>) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == ent) {
+            return false;
+        }
+        match target {
+            Some(t) => self.set_eye_target(ent, t),
+            None => {
+                self.eye_targets.remove(&ent);
+            }
+        }
+        true
+    }
+
     pub fn entity_parent(&self, id: u32) -> u32 {
         self.parents.get(&id).map_or(0, |l| l.parent)
     }
@@ -9871,6 +9945,14 @@ impl<'w> Server<'w> {
 
     /// Skin family of a prop; out of the model's range is refused.
     pub fn set_prop_skin(&mut self, ent: u32, skin: u8) -> bool {
+        if let Some(n) = self.npcs.get_mut(&ent) {
+            let skins = self.models.get(&n.model).map_or(1, |m| m.skins);
+            if skin >= skins {
+                return false;
+            }
+            n.skin = skin;
+            return true;
+        }
         let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent) else {
             return false;
         };

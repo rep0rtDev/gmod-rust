@@ -275,6 +275,23 @@ pub enum QueuedWrite {
         player: u32,
         vehicle: Option<u32>,
     },
+    /// `ManipulateBoneScale` / `ManipulateBoneAngles`: each `Some` replaces that part.
+    SetBoneManip {
+        ent: u32,
+        bone: u32,
+        scale: Option<Vec3>,
+        angles: Option<Vec3>,
+    },
+    /// `SetFlexWeight` (`Some(id)`) / `SetFlexScale` (`None`).
+    SetFlex {
+        ent: u32,
+        id: Option<u32>,
+        value: f32,
+    },
+    SetEyeTarget {
+        ent: u32,
+        target: Option<Vec3>,
+    },
     PlayerStripWeapon {
         player: u32,
         class: Option<String>,
@@ -548,6 +565,23 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("render_mode", e.render_mode)?;
     t.set("render_fx", e.render_fx)?;
     t.set("sequence", e.sequence.as_str())?;
+    let bs = lua.create_table()?;
+    for (b, v) in &e.bone_scales {
+        bs.set(*b, vec3_table(lua, *v)?)?;
+    }
+    t.set("bone_scales", bs)?;
+    let ba = lua.create_table()?;
+    for (b, v) in &e.bone_angles {
+        ba.set(*b, vec3_table(lua, *v)?)?;
+    }
+    t.set("bone_angles", ba)?;
+    if let Some((w, sc)) = &e.flex {
+        t.set("flex_weights", w.clone())?;
+        t.set("flex_scale", *sc)?;
+    }
+    if let Some(et) = e.eye_target {
+        t.set("eye_target", vec3_table(lua, et)?)?;
+    }
     Ok(t)
 }
 
@@ -1405,6 +1439,36 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         _ => Some(int_arg(&arg)?.max(0) as u32),
                     },
                 },
+                "set_bone_manip" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::SetBoneManip {
+                        ent,
+                        bone: t.get::<u32>("bone")?,
+                        scale: match t.get::<Option<Table>>("scale")? {
+                            Some(v) => Some(table_vec3(&v)?),
+                            None => None,
+                        },
+                        angles: match t.get::<Option<Table>>("angles")? {
+                            Some(v) => Some(table_vec3(&v)?),
+                            None => None,
+                        },
+                    }
+                }
+                "set_flex" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::SetFlex {
+                        ent,
+                        id: t.get::<Option<u32>>("id")?,
+                        value: t.get::<f32>("value")?,
+                    }
+                }
+                "set_eye_target" => QueuedWrite::SetEyeTarget {
+                    ent,
+                    target: match &arg {
+                        Value::Nil => None,
+                        _ => Some(table_vec3(&table_arg(&arg)?)?),
+                    },
+                },
                 "player.strip_weapon" => QueuedWrite::PlayerStripWeapon {
                     player: ent,
                     class: match &arg {
@@ -2252,6 +2316,16 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             Some(v) => server.enter_vehicle(*player, *v),
             None => server.exit_vehicle(*player),
         },
+        QueuedWrite::SetBoneManip {
+            ent,
+            bone,
+            scale,
+            angles,
+        } => server.set_bone_manip(*ent, *bone as usize, *scale, *angles),
+        QueuedWrite::SetFlex { ent, id, value } => {
+            server.set_flex(*ent, id.map(|i| i as usize), *value)
+        }
+        QueuedWrite::SetEyeTarget { ent, target } => server.set_script_eye_target(*ent, *target),
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())
         }

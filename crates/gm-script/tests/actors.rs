@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 fn spec(name: &str, priority: i32, source: &str) -> ActorSpec {
-    spec_budget(name, priority, source, 5)
+    spec_budget(name, priority, source, 50)
 }
 
 fn spec_budget(name: &str, priority: i32, source: &str, cpu_ms: u64) -> ActorSpec {
@@ -44,16 +44,18 @@ fn sandbox_has_no_process_access() {
 #[test]
 fn cpu_budget_aborts_and_throttles() {
     let mut rt = Runtime::new();
-    rt.load(spec(
+    rt.load(spec_budget(
         "spin",
         0,
         "events.on('tick.pre', function() while true do end end)",
+        5,
     ))
     .unwrap();
-    rt.load(spec(
+    rt.load(spec_budget(
         "fine",
         0,
         "events.on('tick.pre', function() state.n = (state.n or 0) + 1 end)",
+        5,
     ))
     .unwrap();
     let snap = Arc::new(Snapshot::default());

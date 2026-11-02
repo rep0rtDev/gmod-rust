@@ -1327,6 +1327,19 @@ function ENT:IsPointInBounds(pos) local lo, hi = self:WorldSpaceAABB(); return p
 function ENT:GetWorldTransformMatrix() local m = Matrix(); m:SetTranslation(self:GetPos()); m:SetAngles(self:GetAngles()); return m end
 function ENT:GetNoDraw() return self:GetRenderMode() == 10 end
 function ENT:SetNoDraw(nd) self:SetRenderMode(nd and 10 or 0) end
+-- Poser state: the inflator / bone poser / face poser / eye poser tables, readable and writable.
+function ENT:GetManipulateBoneScale(b) local sn = snap(self.__id); local v = sn and sn.bone_scales and sn.bone_scales[b]; return v and Vector(v.x, v.y, v.z) or Vector(1, 1, 1) end
+function ENT:GetManipulateBoneAngles(b) local sn = snap(self.__id); local v = sn and sn.bone_angles and sn.bone_angles[b]; return v and Angle(v.x, v.y, v.z) or Angle(0, 0, 0) end
+function ENT:ManipulateBoneScale(b, sc) qwrite("set_bone_manip", self.__id, { bone = b, scale = v3(sc) }) end
+function ENT:ManipulateBoneAngles(b, a) qwrite("set_bone_manip", self.__id, { bone = b, angles = { x = a.p, y = a.y, z = a.r } }) end
+function ENT:HasBoneManipulations() local sn = snap(self.__id); return sn ~= nil and ((sn.bone_scales and next(sn.bone_scales) ~= nil) or (sn.bone_angles and next(sn.bone_angles) ~= nil)) == true end
+function ENT:GetFlexWeight(i) local sn = snap(self.__id); local w = sn and sn.flex_weights; return w and w[(i or 0) + 1] or 0 end
+function ENT:GetFlexScale() local sn = snap(self.__id); return sn and sn.flex_scale or 1 end
+function ENT:SetFlexWeight(i, w) qwrite("set_flex", self.__id, { id = i, value = w }) end
+function ENT:SetFlexScale(sc) qwrite("set_flex", self.__id, { value = sc }) end
+function ENT:HasFlexManipulatior() local sn = snap(self.__id); return sn ~= nil and sn.flex_weights ~= nil end
+function ENT:GetEyeTarget() local sn = snap(self.__id); local t = sn and sn.eye_target; return t and Vector(t.x, t.y, t.z) or nil end
+function ENT:SetEyeTarget(t) qwrite("set_eye_target", self.__id, t and v3(t) or nil) end
 function ENT:GetSequenceList() local m = minfo(self); local out = {}; if m then for i, q in ipairs(m.sequences) do out[i - 1] = q end end return out end
 function ENT:GetHitBoxCount(set) local m = minfo(self); return m and m.hitboxes or 0 end
 function ENT:GetHitboxSetCount() local m = minfo(self); return m and m.hitbox_sets or 0 end

@@ -33,6 +33,11 @@ pub struct EntitySnap {
     pub render_fx: u8,
     /// Sequence the entity plays (NPCs; props do not animate on the server).
     pub sequence: String,
+    /// Poser state: non-identity bone scales / angles `(bone, value)`, flex weights + scale, eye target.
+    pub bone_scales: Vec<(u32, Vec3)>,
+    pub bone_angles: Vec<(u32, Vec3)>,
+    pub flex: Option<(Vec<f32>, f32)>,
+    pub eye_target: Option<Vec3>,
     /// NPC only: the player it has as target / chases, and the end of its current path.
     pub npc_target: u32,
     pub npc_chase: u32,
@@ -231,6 +236,10 @@ impl Snapshot {
                             render_mode: e.render_mode,
                             render_fx: e.render_fx,
                             sequence: e.sequence.clone(),
+                            bone_scales: Vec::new(),
+                            bone_angles: Vec::new(),
+                            flex: e.flex.as_ref().map(|f| (f.weights.clone(), f.scale)),
+                            eye_target: e.eye_target,
                             npc_target: 0,
                             npc_chase: 0,
                             npc_goal: None,
@@ -309,6 +318,18 @@ impl Snapshot {
                             render_mode: p.render_mode,
                             render_fx: p.render_fx,
                             sequence: String::new(),
+                            bone_scales: server
+                                .bone_scales(p.id)
+                                .into_iter()
+                                .map(|(i, v)| (i as u32, v))
+                                .collect(),
+                            bone_angles: server
+                                .bone_angles(p.id)
+                                .into_iter()
+                                .map(|(i, v)| (i as u32, v))
+                                .collect(),
+                            flex: server.flex_state(p.id),
+                            eye_target: server.eye_target(p.id),
                             npc_target: 0,
                             npc_chase: 0,
                             npc_goal: None,
@@ -341,6 +362,10 @@ impl Snapshot {
                             render_mode: 0,
                             render_fx: 0,
                             sequence: n.sequence.to_string(),
+                            bone_scales: Vec::new(),
+                            bone_angles: Vec::new(),
+                            flex: None,
+                            eye_target: None,
                             npc_target: n.target.unwrap_or(0),
                             npc_chase: n.chase.unwrap_or(0),
                             npc_goal: n.goal.as_ref().and_then(|g| g.points.last().copied()),
