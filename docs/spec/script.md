@@ -851,6 +851,10 @@ player's command is processed) for `Player:GetPreviousWeapon`. `Entity:AddEffect
 RemoveEffects / IsEffectActive` and the `EFlags` family keep a per-entity bitmask in the script
 layer; `EF_NODRAW` is the one flag with a server meaning and maps onto `SetNoDraw`.
 
+Every bullet shot asks `EntityFireBullets` (a `false` fires nothing) and reports
+`PostEntityFireBullets` after it resolved; a hit on an NPC runs `ScaleNPCDamage` / `EntityTakeDamage`
+over a CTakeDamageInfo the way player damage does (the changed amount is what the NPC loses).
+
 A dead player's due respawn asks `PlayerDeathThink` (a `true` keeps them dead, asked again next
 tick), the `kill` command asks `CanPlayerSuicide`, and the player's own weapon selection asks
 `PlayerSwitchWeapon` (scripted `Player:SelectWeapon` / `Kill` are not asked).

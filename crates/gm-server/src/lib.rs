@@ -493,6 +493,14 @@ pub enum GameEvent {
         hit: Option<(u32, Vec3, Vec3)>,
         other: String,
     },
+    /// `attacker` fired bullets (`PostEntityFireBullets`), after the shot resolved.
+    FiredBullets {
+        attacker: u32,
+        src: Vec3,
+        dir: Vec3,
+        pellets: u8,
+        ammo: &'static str,
+    },
     /// The sandbox spawned an NPC / vehicle / weapon for the player (`PlayerSpawnedNPC` etc.).
     Spawned {
         player: u32,
@@ -545,6 +553,22 @@ pub enum Request {
     EnterVehicle { player: u32, vehicle: u32 },
     /// `CanExitVehicle`: the seated player pressed +use.
     ExitVehicle { player: u32, vehicle: u32 },
+    /// `ScaleNPCDamage`: a hit on an NPC is about to take `amount` off it (`Amount` replaces it).
+    NpcDamage {
+        npc: u32,
+        attacker: u32,
+        amount: f32,
+        group: u8,
+    },
+    /// `EntityFireBullets`: `attacker` is about to fire `pellets` of `ammo` from `src` along `dir`.
+    FireBullets {
+        attacker: u32,
+        src: Vec3,
+        dir: Vec3,
+        pellets: u8,
+        ammo: &'static str,
+        damage: f32,
+    },
     /// `PlayerDeathThink`: the dead player's respawn is due; `Cancel` keeps them dead for now
     /// (asked again next tick).
     Respawn { player: u32 },
@@ -4400,6 +4424,24 @@ impl<'w> Server<'w> {
     ) {
         // the player-vs-player table may lack the ammo (AR2 is NPC-only); NPCs have their own
         let base = damage.or_else(|| weapons::bullet_damage(shot.ammo));
+        if self.ask(Request::FireBullets {
+            attacker,
+            src: eye,
+            dir: forward,
+            pellets: shot.pellets,
+            ammo: shot.ammo,
+            damage: base.unwrap_or(0.0),
+        }) == Verdict::Cancel
+        {
+            return;
+        }
+        self.game_events.push(GameEvent::FiredBullets {
+            attacker,
+            src: eye,
+            dir: forward,
+            pellets: shot.pellets,
+            ammo: shot.ammo,
+        });
         const MAX_TRACE: f32 = 56755.84;
         let end = eye + forward * MAX_TRACE;
         let world = self
@@ -6645,6 +6687,19 @@ impl<'w> Server<'w> {
     /// (`MOVETYPE_NONE`, still solid), removed `NPC_CORPSE_TICKS` later.
     pub fn damage_npc(&mut self, id: u32, attacker: u32, amount: f32, group: u8) -> bool {
         let tick = self.tick_count;
+        if !self.npcs.get(&id).is_some_and(|n| n.dead_at.is_none()) {
+            return false;
+        }
+        let amount = match self.ask(Request::NpcDamage {
+            npc: id,
+            attacker,
+            amount,
+            group,
+        }) {
+            Verdict::Cancel => return false,
+            Verdict::Amount(a) => a,
+            _ => amount,
+        };
         let Some(n) = self.npcs.get_mut(&id) else {
             return false;
         };

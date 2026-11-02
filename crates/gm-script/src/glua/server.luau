@@ -649,6 +649,21 @@ local prev_move = {}
     events.on("player.pickup_weapon_request", function(p) if hook.Run("PlayerCanPickupWeapon", Player(p.player), __glua_classes.Weapon.__from(p.class, p.player)) == false then return false end end)
     events.on("player.enter_vehicle_request", function(p) if hook.Run("CanPlayerEnterVehicle", Player(p.player), Entity(p.vehicle), 0) == false then return false end end)
     events.on("player.exit_vehicle_request", function(p) if hook.Run("CanExitVehicle", Entity(p.vehicle), Player(p.player)) == false then return false end end)
+    events.on("npc.damage", function(p)
+        local d = dmginfo_for(p)
+        d:SetDamageType(DMG_BULLET)
+        hook.Run("ScaleNPCDamage", Entity(p.npc), p.group or HITGROUP_GENERIC, d)
+        if hook.Run("EntityTakeDamage", Entity(p.npc), d) == true then return false end
+        if d:GetDamage() ~= (p.amount or 0) then return d:GetDamage() end
+    end)
+    local function bullet_data(p)
+        return { Attacker = Player(p.attacker), Src = Vector(p.sx, p.sy, p.sz), Dir = Vector(p.dx, p.dy, p.dz),
+            Num = p.pellets, Damage = p.damage or 0, AmmoType = p.ammo, Spread = Vector(0, 0, 0), Tracer = 1, Force = 1 }
+    end
+    events.on("entity.fire_bullets_request", function(p)
+        if hook.Run("EntityFireBullets", Player(p.attacker), bullet_data(p)) == false then return false end
+    end)
+    events.on("entity.fired_bullets", function(p) hook.Run("PostEntityFireBullets", Player(p.attacker), bullet_data(p)) end)
     events.on("player.respawn_request", function(p) if hook.Run("PlayerDeathThink", Player(p.player)) == true then return false end end)
     events.on("player.suicide_request", function(p) if hook.Run("CanPlayerSuicide", Player(p.player)) == false then return false end end)
     events.on("player.switch_weapon_request", function(p)

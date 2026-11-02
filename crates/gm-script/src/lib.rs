@@ -894,6 +894,46 @@ impl Runtime {
                     gm_server::Verdict::Cancel
                 }
             }
+            gm_server::Request::NpcDamage {
+                npc,
+                attacker,
+                amount,
+                group,
+            } => {
+                p.ints.push(("npc", *npc as i64));
+                p.ints.push(("attacker", *attacker as i64));
+                p.floats.push(("amount", *amount as f64));
+                p.ints.push(("group", *group as i64));
+                self.ask_amount(server, "npc.damage", p)
+            }
+            gm_server::Request::FireBullets {
+                attacker,
+                src,
+                dir,
+                pellets,
+                ammo,
+                damage,
+            } => {
+                p.ints.push(("attacker", *attacker as i64));
+                p.ints.push(("pellets", *pellets as i64));
+                p.strs.push(("ammo", ammo.to_string()));
+                p.floats.push(("damage", *damage as f64));
+                for (k, v) in [
+                    ("sx", src.x),
+                    ("sy", src.y),
+                    ("sz", src.z),
+                    ("dx", dir.x),
+                    ("dy", dir.y),
+                    ("dz", dir.z),
+                ] {
+                    p.floats.push((k, v as f64));
+                }
+                if self.ask(server, "entity.fire_bullets_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
             gm_server::Request::Respawn { player } => {
                 p.ints.push(("player", *player as i64));
                 if self.ask(server, "player.respawn_request", p) {
@@ -1256,6 +1296,28 @@ impl Runtime {
                         "think" => "weapon.think",
                         _ => "weapon.holster",
                     }
+                }
+                E::FiredBullets {
+                    attacker,
+                    src,
+                    dir,
+                    pellets,
+                    ammo,
+                } => {
+                    p.ints.push(("attacker", attacker as i64));
+                    p.ints.push(("pellets", pellets as i64));
+                    p.strs.push(("ammo", ammo.to_string()));
+                    for (k, v) in [
+                        ("sx", src.x),
+                        ("sy", src.y),
+                        ("sz", src.z),
+                        ("dx", dir.x),
+                        ("dy", dir.y),
+                        ("dz", dir.z),
+                    ] {
+                        p.floats.push((k, v as f64));
+                    }
+                    "entity.fired_bullets"
                 }
                 E::Spawned {
                     player,

@@ -179,3 +179,63 @@ fn chair_spawns_seats_and_releases_the_player() {
     server.undo(1);
     assert!(server.vehicles.is_empty());
 }
+
+#[test]
+fn fire_bullets_and_npc_damage_are_asked() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.model_loader = Some(Box::new(move |m| gm_dedicated::model_info(&mount, m).ok()));
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::FireBullets { .. } => gm_server::Verdict::Cancel,
+        gm_server::Request::NpcDamage { .. } => gm_server::Verdict::Amount(0.0),
+        _ => gm_server::Verdict::Allow,
+    }));
+    let before = server.game_events.len();
+    server.fire_bullets(1, Vec3::new(1.0, 0.0, 0.0), "Pistol", Some(5.0));
+    assert!(
+        !server.game_events[before..]
+            .iter()
+            .any(|e| matches!(e, gm_server::GameEvent::FiredBullets { .. })),
+        "EntityFireBullets refuses"
+    );
+    let npc = server
+        .spawn_npc(1, "npc_zombie", "none")
+        .expect("zombie spawns");
+    let hp = server.npcs[&npc].health;
+    server.damage_npc(npc, 1, 10.0, 0);
+    assert_eq!(
+        server.npcs[&npc].health, hp,
+        "ScaleNPCDamage zeroed the hit"
+    );
+    server.request_hook = None;
+    server.fire_bullets(1, Vec3::new(1.0, 0.0, 0.0), "Pistol", Some(5.0));
+    assert!(matches!(
+        server.game_events.last(),
+        Some(gm_server::GameEvent::FiredBullets {
+            attacker: 1,
+            pellets: 1,
+            ..
+        })
+    ));
+    server.damage_npc(npc, 1, 10.0, 0);
+    assert!(server.npcs[&npc].health < hp);
+}
