@@ -927,7 +927,11 @@ segment, cursor moves, cursor data, position on path and closest position are po
 `Update` / `Chase` need a NextBot locomotion and `Draw` the client: stubs.
 `Entity:IsPlayerHolding` is true while any player holds the entity with the physgun or
 carries it with +use; `Entity:WaterLevel` is the mover's water level for players (0 dry,
-1 feet, 2 waist, 3 eyes) and 0 for everything else (props have no water state). `GetPreferredCarryAngles` (the hook, else the scripted
+1 feet, 2 waist, 3 eyes) and 0 for everything else (props have no water state).
+A Player object answers every Entity method: its own methods first, then the Entity
+method (those read the entity snapshot, which a player has none of: parent NULL, no children,
+model scale 1 and so on), then its NW vars; before this only a whitelist of Entity methods
+existed on players. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

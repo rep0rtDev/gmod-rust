@@ -1394,3 +1394,42 @@ fn held_props_and_water_level_come_from_the_player_snapshot() {
         .unwrap();
     assert_eq!((wl, held, other), (2, true, false));
 }
+
+#[test]
+fn a_player_answers_every_entity_method() {
+    let mut rt = runtime(
+        "state = {}
+         events.on('tick.pre', function()
+             local p = Player(1)
+             local missing = {}
+             for k, v in pairs(__glua_classes.Entity) do
+                 if type(v) == 'function' and p[k] == nil then missing[#missing + 1] = k end
+             end
+             table.sort(missing)
+             state.missing = table.concat(missing, ' ')
+             state.parent = IsValid(p:GetParent())
+             state.children = #p:GetChildren()
+             state.scale = p:GetModelScale()
+             state.fire = p:IsOnFire()
+             state.blood = p:GetBloodColor()
+             state.holding = p:IsPlayerHolding()
+             state.idx = p:EntIndex()
+             state.cls = p:GetClass()
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let a = &rt.actors()[0];
+    let missing: String = a.eval("return state.missing").unwrap();
+    assert_eq!(missing, "", "Entity methods a Player cannot call");
+    let (parent, children, scale, fire): (bool, i64, f64, bool) = a
+        .eval("return state.parent, state.children, state.scale, state.fire")
+        .unwrap();
+    assert_eq!((parent, children, scale, fire), (false, 0, 1.0, false));
+    let (blood, holding, idx, cls): (i64, bool, i64, String) = a
+        .eval("return state.blood, state.holding, state.idx, state.cls")
+        .unwrap();
+    assert_eq!((blood, holding, idx, cls.as_str()), (0, false, 1, "player"));
+}

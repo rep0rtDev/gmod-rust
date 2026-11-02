@@ -307,9 +307,13 @@ function WEP:GetOwner() local o = rawget(self, "__owner"); return o and Player(o
 
 ------------------------------------------------------------------------ Player
 local PLY = {}
+-- A Player is an Entity: its own methods first, then every Entity method (they read the
+-- entity snapshot by __id, which is 0 for a player: no entity, neutral answers), then NW vars.
 PLY.__index = function(self, k)
     local m = rawget(PLY, k)
     if m ~= nil then return m end
+    local e = rawget(ENT, k)
+    if type(e) == "function" then return e end
     return rawget(self, "__vars")[k]
 end
 PLY.__newindex = ENT.__newindex
@@ -328,7 +332,7 @@ function Player(id)
     if type(id) ~= "number" or id <= 0 then return NULL end
     local p = players[id]
     if p then return p end
-    p = setmetatable({ __pid = id, __vars = {}, __tables = {} }, PLY)
+    p = setmetatable({ __pid = id, __id = 0, __vars = {}, __tables = {} }, PLY)
     players[id] = p
     return p
 end
