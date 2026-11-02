@@ -2157,3 +2157,48 @@ fn entity_outputs_fire_through_inputs() {
         .unwrap();
     assert_eq!(flags, vec![true; 3]);
 }
+
+#[test]
+fn spawn_function_takes_over_the_sent_spawn() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "scripted_ents.Register({ Type = 'anim', Model = 'models/props_c17/oildrum001.mdl', SpawnFunction = function(tbl, ply, tr, class) state.called = class; state.ply = ply:EntIndex() end }, 'my_sent')
+            scripted_ents.Register({ Type = 'anim', Model = 'models/props_c17/oildrum001.mdl' }, 'plain_sent')"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut p = Payload::default();
+    p.ints.push(("player", 1));
+    p.strs.push(("kind", "sent".into()));
+    p.strs.push(("name", "my_sent".into()));
+    let reply = rt.actors_mut()[0]
+        .dispatch_reply(&snap, "sandbox.spawn_request", &p, 3)
+        .unwrap();
+    assert!(
+        matches!(reply, gm_script::actor::Reply::Cancel),
+        "{reply:?}"
+    );
+    let (called, ply): (String, i32) = rt.actors()[0]
+        .eval("return state.called, state.ply")
+        .unwrap();
+    assert_eq!((called.as_str(), ply), ("my_sent", 1));
+    let mut p = Payload::default();
+    p.ints.push(("player", 1));
+    p.strs.push(("kind", "sent".into()));
+    p.strs.push(("name", "plain_sent".into()));
+    let reply = rt.actors_mut()[0]
+        .dispatch_reply(&snap, "sandbox.spawn_request", &p, 3)
+        .unwrap();
+    assert!(
+        !matches!(reply, gm_script::actor::Reply::Cancel),
+        "{reply:?}"
+    );
+}

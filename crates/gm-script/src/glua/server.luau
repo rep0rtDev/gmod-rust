@@ -844,6 +844,24 @@ local prev_move = {}
         elseif p.kind == "sent" then r = hook.Run("PlayerSpawnSENT", ply, p.name)
         elseif p.kind == "giveswep" then r = hook.Run("PlayerGiveSWEP", ply, p.name, weapons.GetStored(p.name) or {}) end
         if r == false then return false end
+        -- @hook ENTITY:SpawnFunction
+        -- a class with its own SpawnFunction creates the entity itself (undo / cleanup / the
+        -- spawned hook as the game's Spawn_SENT); the server then skips its own creation
+        if p.kind == "sent" then
+            local d = scripted_ents.GetStored(p.name)
+            if d and d.t.SpawnFunction then
+                local e = d.t.SpawnFunction(d.t, ply, ply:GetEyeTrace(), p.name)
+                if IsValid(e) then
+                    undo.Create("SENT")
+                    if undo.SetPlayer then undo.SetPlayer(ply) end
+                    undo.AddEntity(e)
+                    undo.Finish("#" .. p.name)
+                    ply:AddCleanup("sents", e)
+                    hook.Run("PlayerSpawnedSENT", ply, e)
+                end
+                return false
+            end
+        end
     end)
     events.on("sandbox.spawned", function(p)
         local ply, e = Player(p.player), Entity(p.entity)

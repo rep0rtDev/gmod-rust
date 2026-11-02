@@ -712,6 +712,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `ENTITY:PhysicsSimulate(phys, dt)` runs every tick on scripted entities that define it; its
+  `(linear, angular, SIM_*)` return is applied as velocity this tick (forces over the mass, LOCAL
+  in the entity frame). `ENTITY:SpawnFunction(ply, tr, class)` of a class takes over the SENT
+  spawn (undo / cleanup / `PlayerSpawnedSENT` as the game's Spawn_SENT); the server skips its own
+  creation for such classes.
 - Entity outputs as base_entity keeps them: `ENTITY:StoreOutput(name, "targets,input,param,delay,
   times")`, `TriggerOutput(name, activator, data)` fires every stored entry through `Entity:Fire`
   (`!self` / `!activator` / named targets; times counts down, -1 forever), `AddOutputFromKeyValue`
