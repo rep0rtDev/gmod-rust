@@ -932,6 +932,7 @@ pub struct Npc {
     pub run: bool,
     pub goal: Option<NpcPath>,
     pub next_goal: Option<Vec3>,
+    pub chase: Option<u32>,
     pub spawn_tick: u64,
     pub next_think: u64,
     pub think_interval: u8,
@@ -962,6 +963,10 @@ pub struct NpcMoveDef {
 pub const NPC_THINK_TICKS: u8 = 7;
 pub const NPC_THINK_PHASE: u64 = 3;
 pub const NPC_THINK_TICKS_FAR: u8 = 13;
+/// A chasing NPC comes to rest this far from its target and re-paths once the target has
+/// moved this much off the end of its path.
+pub const NPC_CHASE_REACH: f32 = 64.0;
+const NPC_CHASE_REPATH: f32 = 16.0;
 const NPC_YAW_RATE: f32 = 150.0;
 const NPC_YAW_RATE_PER_SPEED: f32 = 0.267;
 const NPC_TURN_ACCEL: f32 = 0.89;
@@ -5285,6 +5290,7 @@ impl<'w> Server<'w> {
                 dead_at: None,
                 remove_at: None,
                 next_goal: None,
+                chase: None,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,
@@ -5477,6 +5483,38 @@ impl<'w> Server<'w> {
         true
     }
 
+    /// Own behaviour, no oracle: the NPC follows `player`, re-pathing on its think whenever
+    /// the player has left the end of its path, without halting, and rests NPC_CHASE_REACH
+    /// away until the player moves off again.
+    pub fn npc_chase(&mut self, id: u32, player: u32, run: bool) -> bool {
+        if self.nav.is_none() || !self.players.contains_key(&player) {
+            return false;
+        }
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        if n.dead_at.is_some() {
+            return false;
+        }
+        n.chase = Some(player);
+        n.run = run;
+        n.next_goal = None;
+        if let Some(g) = n.goal.as_mut() {
+            g.halt = false;
+        }
+        true
+    }
+
+    /// Drops any goal or chase; the NPC stands where it is.
+    pub fn npc_stop(&mut self, id: u32) {
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.goal = None;
+            n.next_goal = None;
+            n.chase = None;
+            n.move_speed = 0.0;
+        }
+    }
+
     /// Switches a moving NPC between its walk and run gait from the next think on.
     pub fn npc_set_run(&mut self, id: u32, run: bool) {
         if let Some(n) = self.npcs.get_mut(&id) {
@@ -5523,6 +5561,36 @@ impl<'w> Server<'w> {
                 NPC_THINK_TICKS
             };
             n.next_think = now + n.think_interval as u64;
+            if let Some(p) = n.chase {
+                match self.players.get(&p).map(|pl| pl.state.origin) {
+                    Some(target) => {
+                        let stale = n.goal.as_ref().is_none_or(|g| {
+                            g.points.last().is_none_or(|e| {
+                                e.truncate().distance(target.truncate()) > NPC_CHASE_REPATH
+                            })
+                        });
+                        let away = n.pos.truncate().distance(target.truncate()) > NPC_CHASE_REACH;
+                        if stale && away {
+                            let extents = Vec3::new(32.0, 32.0, 72.0);
+                            if let Some(path) = self
+                                .nav
+                                .as_deref()
+                                .and_then(|nav| nav.find_path(n.pos, target, extents))
+                            {
+                                n.goal = Some(NpcPath {
+                                    points: path.points,
+                                    idx: 1,
+                                    partial: path.partial,
+                                    braking: false,
+                                    halt: false,
+                                });
+                            }
+                        }
+                    }
+                    None => n.chase = None,
+                }
+            }
+            let chasing = n.chase.is_some();
             let Some(goal) = n.goal.as_mut() else {
                 continue;
             };
@@ -5555,6 +5623,9 @@ impl<'w> Server<'w> {
             let mut remaining = pos.truncate().distance(points[idx].truncate());
             for w in points[idx..].windows(2) {
                 remaining += w[0].truncate().distance(w[1].truncate());
+            }
+            if chasing {
+                remaining = (remaining - NPC_CHASE_REACH).max(0.0);
             }
             let s0 = v0 * dt;
             let a = accel * dt * dt;
@@ -5607,7 +5678,7 @@ impl<'w> Server<'w> {
                     left = 0.0;
                 }
             }
-            if arrived {
+            if arrived && !chasing {
                 at = points[points.len() - 1].truncate();
             }
             let lift = Vec3::new(0.0, 0.0, 18.0);
@@ -5703,6 +5774,7 @@ impl<'w> Server<'w> {
                 dead_at: None,
                 remove_at: None,
                 next_goal: None,
+                chase: None,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,

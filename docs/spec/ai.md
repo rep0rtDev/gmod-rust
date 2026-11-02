@@ -152,7 +152,21 @@ Test: `gm-dedicated/tests/npc_entity.rs::npc_walks_the_navmesh_to_a_goal` (step 
 think, yaw = motion within 1 deg, feet on the traced floor within 0.5 u, exact arrival, the game's
 think grid: first think after the goal + 53 x 7 ticks).
 
+## Chase (own behaviour, `Server::npc_chase` / `npc_stop`)
+
+Our design on top of the measured locomotion; the game is no oracle here (its chase is a
+schedule we do not port). `npc_chase(id, player, run)` makes the NPC follow a player: on
+each think, if the player is more than `NPC_CHASE_REPATH` = 16 u off the end of the
+current path and more than `NPC_CHASE_REACH` = 64 u away, a fresh Detour path from the
+NPC's feet replaces the goal without touching the speed (no halt, unlike a re-issued
+`npc_goto`); the braking staircase runs on the path length minus the reach, so the NPC
+comes to rest exactly 64 u short of the player and starts again when the player moves
+off. `npc_stop` drops goal and chase. A player who leaves ends the chase. Test:
+`npc_entity.rs::npc_chases_a_moving_player` (rests 64 +- 1 u away, follows a teleported
+player with monotonically growing steps, i.e. no halt).
+
 ## Not yet
 
-Gaits of the other classes (zombie, soldier, ...), behaviour (idle / chase / combat),
-crowd avoidance, dynamic obstacles (props), off-mesh links (ladders, jumps).
+Gaits of the other classes (zombie, soldier, ...), idle / combat behaviour, crowd
+avoidance, dynamic obstacles (props), off-mesh links (ladders, jumps), addon API for
+`npc_goto` / `npc_chase`.

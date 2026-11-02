@@ -210,3 +210,71 @@ fn npc_walks_the_navmesh_to_a_goal() {
         "ticks vs the game's grid for a straight walk"
     );
 }
+
+#[test]
+fn npc_chases_a_moving_player() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_navmesh(world.nav.clone());
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_citizen", "none").unwrap();
+    server.tick(&idle);
+    // the player steps 400 u west; the NPC follows and rests NPC_CHASE_REACH away
+    let away = start + Vec3::new(-400.0, 0.0, 0.0);
+    server.teleport_player(1, away);
+    assert!(server.npc_chase(id, 1, false));
+    let mut ticks = 0;
+    loop {
+        server.tick(&idle);
+        ticks += 1;
+        let n = &server.npcs[&id];
+        if n.goal.is_none() && n.move_speed == 0.0 && ticks > 20 {
+            break;
+        }
+        assert!(ticks < 1500, "never settled: at {}", n.pos);
+    }
+    let player = server.players[&1].state.origin;
+    let d = server.npcs[&id].pos.truncate().distance(player.truncate());
+    eprintln!("rested {d:.2} u from the player after {ticks} ticks");
+    assert!(
+        (d - gm_server::NPC_CHASE_REACH).abs() < 1.0,
+        "rested {d} u from the player"
+    );
+    // the player moves on: the NPC re-paths on its think and walks again without a halt
+    server.teleport_player(1, away + Vec3::new(-300.0, 0.0, 0.0));
+    let mut last = server.npcs[&id].pos;
+    let mut steps = Vec::new();
+    for _ in 0..200 {
+        server.tick(&idle);
+        let p = server.npcs[&id].pos;
+        let s = p.truncate().distance(last.truncate());
+        if s > 1e-4 {
+            steps.push(s);
+        }
+        last = p;
+    }
+    eprintln!("steps after the move: {:?}", &steps[..steps.len().min(8)]);
+    assert!(steps.len() >= 8, "did not follow: {steps:?}");
+    for w in steps[..6].windows(2) {
+        assert!(w[1] > w[0], "stalled while following: {steps:?}");
+    }
+    assert!(server.npcs[&id].chase == Some(1));
+}
