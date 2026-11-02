@@ -1,0 +1,210 @@
+{
+ "name": "server_vehicle_damage",
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "ops": [
+  {
+   "op": "concmd",
+   "cmd": "ai_disabled",
+   "value": "1"
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Chair_Wood",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol",
+   "target": "vehicle"
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol",
+   "target": "vehicle"
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "firebullets",
+   "ammo": "Pistol",
+   "target": "vehicle"
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "firebullets",
+   "ammo": "357",
+   "target": "vehicle"
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Pod",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "firebullets",
+   "ammo": "357",
+   "target": "vehicle"
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "firebullets",
+   "ammo": "357",
+   "target": "vehicle",
+   "damage": 500
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Jeep",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "firebullets",
+   "ammo": "357",
+   "target": "vehicle"
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "firebullets",
+   "ammo": "357",
+   "target": "vehicle",
+   "damage": 5000
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Chair_Wood",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "enter"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "firebullets",
+   "ammo": "357",
+   "target": "vehicle",
+   "dz": 30
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  }
+ ]
+}

@@ -3966,3 +3966,9 @@ name = "server_pod_drop"
 scenario = "server/pod_drop"
 compare = "server"
 realm = "server"
+
+[[harness]]
+name = "server_vehicle_damage"
+scenario = "server/vehicle_damage"
+compare = "server"
+realm = "server"

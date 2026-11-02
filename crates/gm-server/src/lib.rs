@@ -2587,7 +2587,7 @@ pub struct Server<'w> {
     constraints: BTreeMap<u32, ConstraintHandle>,
     /// NoCollide pairs by sandbox constraint id.
     nocollides: BTreeMap<u32, (BodyHandle, BodyHandle)>,
-    models: BTreeMap<String, ModelInfo>,
+    pub models: BTreeMap<String, ModelInfo>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
     sounds: Vec<WorldSound>,
     /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
@@ -3792,7 +3792,11 @@ impl<'w> Server<'w> {
         force: Vec3,
         inflictor: &'static str,
     ) {
-        let broke = self.damage_prop(prop, damage, dmg_type);
+        // measured `server_vehicle_damage`: a vehicle takes neither bullet damage nor the bullet's
+        // push (the wooden chair stays 30/30 and does not move a unit across pistol and .357 hits,
+        // the pod 0/1 after 500, the jeep after 5000)
+        let vehicle = self.vehicles.contains_key(&prop);
+        let broke = !vehicle && self.damage_prop(prop, damage, dmg_type);
         self.prop_hits.push(PropHit {
             tick: self.tick_count,
             attacker,
@@ -3804,7 +3808,7 @@ impl<'w> Server<'w> {
             inflictor,
             broke,
         });
-        if !broke {
+        if !broke && !vehicle {
             if let Some(&body) = self.bodies.get(&prop) {
                 self.physics.add_impulse_at(body, pos, force);
             }

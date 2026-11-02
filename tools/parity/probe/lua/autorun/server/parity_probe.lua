@@ -1297,7 +1297,11 @@ SCENARIOS.toolgun = function(scn, done)
 		elseif op.op == "firebullets" then
 			-- the bot's bullet (`Player:FireBullets`) at the first NPC's centre with the ammo's player damage cvar
 			local target
-			for _, e in ipairs(ents.GetAll()) do if e:IsNPC() and (not op.class or e:GetClass() == op.class) then target = e break end end
+			if op.target == "vehicle" then
+				for _, e in ipairs(ents.GetAll()) do if e:IsVehicle() and (not op.class or e:GetClass() == op.class) then target = e break end end
+			else
+				for _, e in ipairs(ents.GetAll()) do if e:IsNPC() and (not op.class or e:GetClass() == op.class) then target = e break end end
+			end
 			local eye = bot:GetShootPos()
 			local dir = target and (target:WorldSpaceCenter() + Vector(0, 0, op.dz or 0) - eye):GetNormalized() or bot:EyeAngles():Forward()
 			local dmg = op.damage or GetConVar(op.cvar or ("sk_plr_dmg_" .. string.lower(op.ammo or "pistol"))):GetFloat()

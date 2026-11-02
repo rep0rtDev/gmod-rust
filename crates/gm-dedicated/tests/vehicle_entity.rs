@@ -63,6 +63,30 @@ fn chair_spawns_seats_and_releases_the_player() {
         .find(|p| p.id == id)
         .unwrap()
         .pos;
+    // measured `server_vehicle_damage`: bullets neither hurt nor push a vehicle (the chair stays
+    // 30/30 and does not move across pistol and .357 hits, even with 500 damage)
+    let (eye, _) = server.eye(1).unwrap();
+    let centre = chair + Vec3::new(0.0, 0.0, 16.0);
+    server.fire_bullets(1, (centre - eye).normalize(), "357", Some(500.0));
+    for _ in 0..5 {
+        server.tick(&idle);
+    }
+    assert_eq!(
+        server.vehicles[&id].health, 30,
+        "vehicles take no bullet damage"
+    );
+    let after = server
+        .sandbox
+        .props()
+        .iter()
+        .find(|p| p.id == id)
+        .unwrap()
+        .pos;
+    assert!(
+        (after - chair).length() < 0.05,
+        "bullets do not push a vehicle: moved {}",
+        (after - chair).length()
+    );
     assert!(server.enter_vehicle(1, id));
     let seated = server.players[&1].state.origin;
     // measured: the body sits on `vehicle_feet_passenger0`, (0, -3, 19.5) from the chair's

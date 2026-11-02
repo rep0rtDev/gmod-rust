@@ -244,6 +244,12 @@ struct OpSpec {
     /// `firebullets`: ammo type of the oracle shot.
     #[serde(default)]
     ammo: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    dz: Option<f32>,
+    #[serde(default)]
+    damage: Option<f32>,
     /// `spawnnpc`: weapon handed to the NPC ("none" for unarmed).
     #[serde(default)]
     weapon: Option<String>,
@@ -4562,11 +4568,36 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             "concmd" => {}
             "firebullets" => {
                 // the game's op aims `Player:FireBullets` at the first (matching) NPC's centre
-                let target = server
-                    .npcs
-                    .iter()
-                    .find(|(_, n)| op.class.as_deref().is_none_or(|c| c == n.class))
-                    .map(|(_, n)| n.pos + (n.mins + n.maxs) * 0.5);
+                let target = if op.target.as_deref() == Some("vehicle") {
+                    // `WorldSpaceCenter` of the first vehicle: the model box centre at its pose
+                    let mut keys: Vec<u32> = server.vehicles.keys().copied().collect();
+                    keys.sort_unstable();
+                    keys.first().and_then(|&id| {
+                        let st = server.prop_state(id)?;
+                        let model = server.vehicles.get(&id)?.model.clone();
+                        let verts = server
+                            .models
+                            .get(&model)
+                            .map(|m| m.hulls.concat())
+                            .unwrap_or_default();
+                        let centre = if verts.is_empty() {
+                            Vec3::new(0.0, 0.0, 16.0)
+                        } else {
+                            let mins = verts.iter().fold(Vec3::splat(f32::MAX), |a, v| a.min(*v));
+                            let maxs = verts.iter().fold(Vec3::splat(f32::MIN), |a, v| a.max(*v));
+                            (mins + maxs) * 0.5
+                        };
+                        let ang = Vec3::new(st.angles.0, st.angles.1, st.angles.2);
+                        Some(st.position + gm_sandbox::rotation(ang).mul_vec3(centre))
+                    })
+                } else {
+                    server
+                        .npcs
+                        .iter()
+                        .find(|(_, n)| op.class.as_deref().is_none_or(|c| c == n.class))
+                        .map(|(_, n)| n.pos + (n.mins + n.maxs) * 0.5)
+                }
+                .map(|t| t + Vec3::new(0.0, 0.0, op.dz.unwrap_or(0.0)));
                 let eye = server.eye(player).map(|e| e.0).unwrap_or_default();
                 let dir = target.map(|t| (t - eye).normalize()).unwrap_or(Vec3::X);
                 let ammo: &'static str = match op.ammo.as_deref().unwrap_or("Pistol") {
@@ -4578,7 +4609,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                     "XBowBolt" => "XBowBolt",
                     _ => "Pistol",
                 };
-                server.fire_bullets(player, dir, ammo, None);
+                server.fire_bullets(player, dir, ammo, op.damage);
             }
             "spawnnpc" => {
                 let key = op.class.clone().unwrap_or_default();
