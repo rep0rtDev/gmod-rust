@@ -945,6 +945,8 @@ pub struct Npc {
     /// Melee: the tick the current swing ends and the tick its damage lands.
     pub swing_until: u64,
     pub melee_hit_at: Option<u64>,
+    /// Set by an addon's `npc_target` clear: no target is picked until the next `npc_target`.
+    pub passive: bool,
     pub spawn_tick: u64,
     pub next_think: u64,
     pub think_interval: u8,
@@ -5426,6 +5428,7 @@ impl<'w> Server<'w> {
                 chase_reach: NPC_CHASE_REACH,
                 swing_until: 0,
                 melee_hit_at: None,
+                passive: false,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,
@@ -5647,6 +5650,42 @@ impl<'w> Server<'w> {
             n.next_goal = None;
             n.chase = None;
             n.move_speed = 0.0;
+        }
+    }
+
+    /// Addon control of the combat target. `Some(player)`: engage that player (the sight and
+    /// loss rules of `npc_combat_think` then apply as usual). `None`: drop the target, stop,
+    /// and stay passive until the next `npc_target`. False for a dead NPC or unknown player.
+    pub fn npc_target(&mut self, id: u32, player: Option<u32>) -> bool {
+        if let Some(p) = player {
+            if !self.players.get(&p).is_some_and(|pl| pl.alive) {
+                return false;
+            }
+        }
+        let now = self.tick_count;
+        let Some(n) = self.npcs.get_mut(&id).filter(|n| n.dead_at.is_none()) else {
+            return false;
+        };
+        match player {
+            Some(p) => {
+                if n.target != Some(p) {
+                    n.target = Some(p);
+                    n.burst_left = NPC_BURST_SHOTS;
+                    n.next_shot = now + n.think_interval as u64;
+                }
+                n.target_seen = now;
+                n.passive = false;
+                true
+            }
+            None => {
+                n.target = None;
+                n.passive = true;
+                n.melee_hit_at = None;
+                n.swing_until = 0;
+                n.burst_left = 0;
+                self.npc_stop(id);
+                true
+            }
         }
     }
 
@@ -5881,7 +5920,7 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
-        if n.dead_at.is_some() || !npc_hostile(&n.class) {
+        if n.dead_at.is_some() || n.passive || !npc_hostile(&n.class) {
             return;
         }
         let melee = npc_melee(&n.class).filter(|_| npc_weapon_shot(&n.weapon).is_none());
@@ -6172,6 +6211,7 @@ impl<'w> Server<'w> {
                 chase_reach: NPC_CHASE_REACH,
                 swing_until: 0,
                 melee_hit_at: None,
+                passive: false,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,

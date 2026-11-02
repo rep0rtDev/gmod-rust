@@ -106,6 +106,12 @@ pub enum QueuedWrite {
     NpcStop {
         ent: u32,
     },
+    /// `npc_target`: `{player}` engages that player, no value drops the target and keeps the
+    /// NPC passive until the next `npc_target`.
+    NpcTarget {
+        ent: u32,
+        player: Option<u32>,
+    },
     SetVelocity {
         ent: u32,
         velocity: Vec3,
@@ -920,6 +926,13 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     }
                 }
                 "npc_stop" => QueuedWrite::NpcStop { ent },
+                "npc_target" => QueuedWrite::NpcTarget {
+                    ent,
+                    player: match &arg {
+                        Value::Table(t) => Some(t.get::<u32>("player")?),
+                        _ => None,
+                    },
+                },
                 "set_overlay_text" => QueuedWrite::SetOverlayText {
                     ent,
                     text: match &arg {
@@ -1686,6 +1699,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::Remove { ent } => server.remove_prop(*ent),
         QueuedWrite::NpcGoto { ent, pos, run } => server.npc_goto(*ent, *pos, *run),
         QueuedWrite::NpcChase { ent, player, run } => server.npc_chase(*ent, *player, *run),
+        QueuedWrite::NpcTarget { ent, player } => server.npc_target(*ent, *player),
         QueuedWrite::NpcStop { ent } => {
             if !server.npcs.contains_key(ent) {
                 return false;

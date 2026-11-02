@@ -196,7 +196,9 @@ Implemented in `Server::npc_combat_think`, run once per NPC think right after th
 
 Tests (`gm-dedicated/tests/npc_entity.rs`): `armed_soldier_fires_bursts_at_a_visible_player` - a soldier with an SMG1 178 u from a standing player fires 27 shots in 300 ticks with gaps 7/7/7/7/28, the player goes 100 -> 19 (every shot hits the 32 u hull from that range; the game's soldier hit nothing in 1200 ticks - the aim offset of its proficiency table is a documented divergence, our model is deliberately more lethal at short range). `soldier_chases_a_target_out_of_sight_then_gives_up` - a hidden navmesh spot 1120 u away makes the soldier chase without firing, a return to view re-engages, a player beyond sight range is dropped after 335 ticks with chase and goal cleared.
 
-Pending: melee for headcrabs, antlions and the fast/poison zombies (unmeasured), the game's crouch-to-fire pose, hit reactions / flinch, squads, cover, and an addon API to set or clear the target.
+Addon control: `npc_target` (`Server::npc_target(id, Some(player))`) forces the target, `npc_target` with no value drops it and sets `Npc::passive`, which keeps the NPC out of combat until the next `npc_target`; `npc_goto` / `npc_chase` / `npc_stop` are untouched.
+
+Pending: melee for headcrabs, antlions and the fast/poison zombies (unmeasured), the game's crouch-to-fire pose, hit reactions / flinch, squads and cover.
 
 ## Melee: measured inputs and our model
 

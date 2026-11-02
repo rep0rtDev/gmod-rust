@@ -520,3 +520,50 @@ fn zombie_closes_in_and_claws_the_player() {
         "player not pushed west"
     );
 }
+
+/// Addon control: `npc_target` clear makes an engaged soldier passive (no fire, no chase)
+/// until the next `npc_target`, which can also force a farther player over the nearest.
+#[test]
+fn npc_target_overrides_and_clears_the_combat_target() {
+    let world = combat_server!(world);
+    let (mut server, idle, start) = combat_server!(world, server);
+    server.add_player(
+        2,
+        start + Vec3::new(0.0, 200.0, 0.0),
+        Vec3::new(20.0, 0.0, 0.0),
+    );
+    server.set_weapons(2, &["gmod_tool"]);
+    let mut cmds = idle.clone();
+    cmds.insert(2, idle[&1].clone());
+    let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    for _ in 0..40 {
+        server.tick(&cmds);
+    }
+    assert_eq!(server.npcs[&id].target, Some(1), "nearest player first");
+    assert!(server.npcs[&id].shots > 0);
+    // clear: passive
+    assert!(server.npc_target(id, None));
+    let shots = server.npcs[&id].shots;
+    let hp = (server.players[&1].health, server.players[&2].health);
+    for _ in 0..100 {
+        server.tick(&cmds);
+    }
+    let n = &server.npcs[&id];
+    assert!(n.passive && n.target.is_none() && n.goal.is_none());
+    assert_eq!(n.shots, shots, "fired while passive");
+    assert_eq!((server.players[&1].health, server.players[&2].health), hp);
+    // force the farther player 2
+    assert!(server.npc_target(id, Some(2)));
+    let hp2 = server.players[&2].health;
+    for _ in 0..100 {
+        server.tick(&cmds);
+    }
+    let n = &server.npcs[&id];
+    assert_eq!(n.target, Some(2));
+    assert!(n.shots > shots, "did not fire at the forced target");
+    assert!(server.players[&2].health < hp2, "player 2 untouched");
+    assert_eq!(server.players[&1].health, hp.0, "player 1 was hit");
+    // rejections
+    assert!(!server.npc_target(id, Some(9)));
+    assert!(!server.npc_target(999, None));
+}
