@@ -1208,7 +1208,7 @@ function ENT:SetNetworkVarsFromMapInput(t) self:RestoreNetworkVars(t) end
 function ENT:CallDTVarProxies(t, slot, v) end
 function ENT:DTVar(t, slot, name) self:NetworkVar(t, slot, name) end
 function ENT:SetNetworkKeyValue(k, v) local n = rawget(self, "__dt_keys") and rawget(self, "__dt_keys")[string.lower(k)]; if n then self["Set" .. n](self, v); return true end return false end
-function ENT:SetKeyValue(k, v) hook.Run("EntityKeyValue", self, k, tostring(v)); if not self:SetNetworkKeyValue(k, v) then rawset(self, "__kv", rawget(self, "__kv") or {}); rawget(self, "__kv")[k] = v end end
+function ENT:SetKeyValue(k, v) hook.Run("EntityKeyValue", self, k, tostring(v)); local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(self.__id); if si and si.KeyValue then si:KeyValue(k, tostring(v)) end if not self:SetNetworkKeyValue(k, v) then rawset(self, "__kv", rawget(self, "__kv") or {}); rawget(self, "__kv")[k] = v end end
 function ENT:GetKeyValues() return rawget(self, "__kv") or {} end
 function ENT:AddCallback(hook, fn) rawset(self, "__cbs", rawget(self, "__cbs") or {}); local c = rawget(self, "__cbs"); c[hook] = c[hook] or {}; table.insert(c[hook], fn); return #c[hook] end
 function ENT:RemoveCallback(hook, id) local c = rawget(self, "__cbs"); if c and c[hook] then c[hook][id] = nil end end
@@ -1241,7 +1241,7 @@ function ENT:StopLoopingSound(id) end
 function ENT:StartLoopingSound(name) return 0 end
 function ENT:StopParticles() end
 function ENT:RemoveAllDecals() end
-function ENT:Input(name, activator, caller, data) if name == "Kill" then self:Remove() return true end return false end
+function ENT:Input(name, activator, caller, data) local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(self.__id); if si and si.AcceptInput and si:AcceptInput(name, activator or NULL, caller or NULL, data) == true then return true end if name == "Kill" then self:Remove() return true end return false end
 function ENT:Fire(input, param, delay, activator, caller)
     if (delay or 0) > 0 then local me = self; timer.Simple(delay, function() if IsValid(me) then me:Input(input, activator, caller, param) end end) else self:Input(input, activator, caller, param) end
 end

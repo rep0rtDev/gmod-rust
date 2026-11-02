@@ -140,6 +140,10 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
                     .collect();
                 if !name.is_empty() && name != "event" {
                     present.push(format!("{prefix}{name}"));
+                    if prefix == "GM:" {
+                        // the sandbox gamemode documents its hooks under SANDBOX: too
+                        present.push(format!("SANDBOX:{name}"));
+                    }
                 }
             }
         }

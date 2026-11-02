@@ -88,3 +88,54 @@ fn scripted_entity_tables_register_and_dispatch() {
     assert_eq!(stored, "Crate");
     assert!(based);
 }
+
+#[test]
+fn scripted_callbacks_reach_more_events() {
+    let mut rt = runtime(
+        "ENT = { Type = 'anim', PrintName = 'Kv', Model = 'models/props_junk/wood_crate001a.mdl' }
+         function ENT:SetupDataTables() state.dt = (state.dt or 0) + 1 end
+         function ENT:Initialize() state.init = state.dt end
+         function ENT:KeyValue(k, v) state.kv = k .. '=' .. v end
+         function ENT:AcceptInput(name, a, c, d) state.input = name .. ':' .. tostring(d) return true end
+         scripted_ents.Register(ENT, 'kv_ent')
+         SWEP = { PrintName = 'Gate', Primary = { ClipSize = 1, DefaultClip = 1, Ammo = 'Pistol' }, Secondary = {} }
+         function SWEP:CanPrimaryAttack() return false end
+         function SWEP:PrimaryAttack() state.fired = true end
+         function SWEP:Equip(o) state.equip = o:UserID() end
+         weapons.Register(SWEP, 'weapon_gate')
+         events.on('tick.pre', function()
+             Entity(4):SetKeyValue('speed', 5)
+             state.kill = Entity(4):Input('Open', NULL, NULL, 'wide')
+         end)",
+    );
+    let snap = Arc::new(Snapshot::default());
+    let a = &mut rt.actors_mut()[0];
+    let mut p = Payload::default();
+    p.ints.push(("entity", 4));
+    p.strs.push(("class", "kv_ent".into()));
+    a.dispatch(&snap, "entity.init", &p, 1).unwrap();
+    a.dispatch(&snap, "entity.init", &p, 1).unwrap();
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let mut w = Payload::default();
+    w.ints.push(("player", 1));
+    w.strs.push(("weapon", "weapon_gate".into()));
+    a.dispatch(&snap, "weapon.primary", &w, 1).unwrap();
+    let mut pk = Payload::default();
+    pk.ints.push(("player", 1));
+    pk.strs.push(("class", "weapon_gate".into()));
+    a.dispatch(&snap, "player.weapon_pickup", &pk, 1).unwrap();
+    let (dt, init, kv, input, kill, fired, equip): (i64, i64, String, String, bool, bool, i64) = a
+        .eval("return state.dt, state.init, state.kv, state.input, state.kill, state.fired == true, state.equip")
+        .unwrap();
+    assert_eq!(
+        (dt, init),
+        (1, 1),
+        "SetupDataTables once, before Initialize"
+    );
+    assert_eq!(kv, "speed=5");
+    assert_eq!(input, "Open:wide");
+    assert!(kill, "AcceptInput returning true handles the input");
+    assert!(!fired, "CanPrimaryAttack false gates PrimaryAttack");
+    assert_eq!(equip, 1);
+}

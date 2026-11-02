@@ -718,6 +718,18 @@ entities are client-side stubs) and `duplicator` (class / modifier / constraint 
 classes until the server has the objects. The documented `KEY_` enum is defined. The presence
 scan also lists one nested table level (`math.ease.*`).
 
+More scripted callbacks: `ENTITY:SetupDataTables` runs once before `Initialize`, `KeyValue` /
+`AcceptInput` are reached through `Entity:SetKeyValue` / `Entity:Input` (an `AcceptInput`
+returning true handles the input), `PreEntityCopy` / `OnEntityCopyTableFinish` /
+`PostEntityCopy` / `OnDuplicated` / `PostEntityPaste` from the duplicator. Every SWEP inherits
+a `weapon_base` layer (`weapons.__base`): `CanPrimaryAttack` / `CanSecondaryAttack` gate the
+attacks and track a local clip through `TakePrimaryAmmo`, `ShootBullet` fires through the owner's
+`FireBullets`, `Equip` / `OwnerChanged` run on `player.weapon_pickup`, `Initialize` and
+`SetupDataTables` on first deploy. `PLAYER` class callbacks (`Init / Spawn / Loadout / Death /
+SetModel / ClassChanged`) run through `player_manager` on the gamemode hooks. Raised `GM:` hooks
+are listed under `SANDBOX:` as well. Callbacks the server never calls (AI schedules / tasks,
+movement, animation, client effects) are acknowledged as stubs in the manifest, not claimed.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`
