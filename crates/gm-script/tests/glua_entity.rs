@@ -1,6 +1,6 @@
 //! Entity / Player classes and the ents / player / util libraries over the snapshot and queue.
 use glam::Vec3;
-use gm_script::api::{Payload, QueuedWrite};
+use gm_script::api::{GestureOp, Payload, QueuedWrite};
 use gm_script::snapshot::{EntitySnap, PlayerSnap};
 use gm_script::{ActorConfig, ActorSpec, Runtime, Snapshot};
 use std::sync::Arc;
@@ -35,6 +35,10 @@ fn snapshot() -> Arc<Snapshot> {
             render_mode: 1,
             render_fx: 0,
             sequence: "idle".into(),
+            cycle: 0.0,
+            playback_rate: 1.0,
+            sequence_finished: false,
+            gesture: None,
             bone_scales: vec![(1, Vec3::new(2.0, 2.0, 2.0))],
             bone_angles: vec![],
             flex: Some((vec![0.5], 1.0)),
@@ -78,6 +82,10 @@ fn snapshot() -> Arc<Snapshot> {
             render_mode: 1,
             render_fx: 0,
             sequence: "idle".into(),
+            cycle: 0.0,
+            playback_rate: 1.0,
+            sequence_finished: false,
+            gesture: None,
             bone_scales: vec![(1, Vec3::new(2.0, 2.0, 2.0))],
             bone_angles: vec![],
             flex: Some((vec![0.5], 1.0)),
@@ -498,4 +506,40 @@ fn physics_init_shapes_travel_with_the_spawn_or_rebuild_the_body() {
             asleep: false
         }
     ));
+}
+
+#[test]
+fn animator_writes_carry_sequence_cycle_rate_and_gesture_layer() {
+    let (_, writes) = run("Entity(7):SetSequence(\"walk\")
+         Entity(7):SetCycle(0.25)
+         Entity(7):SetPlaybackRate(2)
+         Entity(7):ResetSequenceInfo()
+         Entity(7):AddGestureSequence(\"wave\", false)
+         Entity(7):SetLayerWeight(0, 0.5)
+         Entity(7):SetLayerWeight(3, 0.5)
+         Entity(7):RemoveAllGestures()");
+    assert!(matches!(&writes[0], QueuedWrite::EntitySequence { ent: 7, name } if name == "walk"));
+    assert!(matches!(&writes[1], QueuedWrite::EntityCycle { ent: 7, cycle } if *cycle == 0.25));
+    assert!(matches!(&writes[2], QueuedWrite::EntityPlaybackRate { ent: 7, rate } if *rate == 2.0));
+    assert!(matches!(
+        &writes[3],
+        QueuedWrite::EntityResetSequence { ent: 7 }
+    ));
+    assert!(matches!(
+        &writes[4],
+        QueuedWrite::EntityGesture { ent: 7, op: GestureOp::Add { sequence, autokill: false } } if sequence == "wave"
+    ));
+    assert!(matches!(
+        &writes[5],
+        QueuedWrite::EntityGesture { ent: 7, op: GestureOp::Set(p) } if p.weight == Some(0.5) && p.cycle.is_none()
+    ));
+    // layer ids other than 0 do not exist: nothing queued, the remove follows directly
+    assert!(matches!(
+        &writes[6],
+        QueuedWrite::EntityGesture {
+            ent: 7,
+            op: GestureOp::Remove
+        }
+    ));
+    assert_eq!(writes.len(), 7);
 }

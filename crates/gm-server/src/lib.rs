@@ -268,6 +268,38 @@ impl ModelScriptData {
         self.inertia = info.inertia.unwrap_or(Vec3::ZERO);
     }
 
+    /// `from_mdl` plus the sequences of the model's `$includemodel` files (NPC and player
+    /// models keep their animations there), read through `read`.
+    pub fn from_mdl_with_includes(
+        mdl: &gm_formats::mdl::Mdl,
+        data: &[u8],
+        read: impl Fn(&str) -> Option<Vec<u8>>,
+    ) -> Self {
+        let mut out = Self::from_mdl(mdl, data);
+        for inc in gm_formats::mdl::include_models(data, &mdl.header) {
+            let Some(bytes) = read(&inc) else {
+                continue;
+            };
+            let Ok(m) = gm_formats::mdl::Mdl::parse(&bytes) else {
+                continue;
+            };
+            let seqs = gm_formats::mdl::sequences(&bytes, &m.header);
+            let anims = gm_formats::mdl::anim_descs(&bytes, &m.header);
+            for q in &seqs {
+                if out.sequences.contains(&q.name) {
+                    continue;
+                }
+                out.sequences.push(q.name.clone());
+                out.sequence_anim.push(
+                    anims
+                        .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
+                        .map_or((0.0, 0, 0), |a| (a.fps, a.frames, a.flags)),
+                );
+            }
+        }
+        out
+    }
+
     pub fn from_mdl(mdl: &gm_formats::mdl::Mdl, data: &[u8]) -> Self {
         let seqs = gm_formats::mdl::sequences(data, &mdl.header);
         let anims = gm_formats::mdl::anim_descs(data, &mdl.header);
@@ -1338,7 +1370,7 @@ pub struct Npc {
     pub movetype: u8,
     pub solid: u8,
     /// Sequence the NPC plays when it appears.
-    pub sequence: &'static str,
+    pub sequence: String,
     /// A walker whose `DropToFloor` found nothing at spawn settles onto the floor next tick.
     pub settle: bool,
     /// Tick of death: the body lingers `NPC_CORPSE_TICKS` (MOVETYPE_NONE) before it goes.
@@ -1403,7 +1435,7 @@ pub struct Npc {
     /// Tick of the last shot (the shoot sequence runs 7 ticks past it) and the sequence to
     /// return to when combat ends.
     pub last_shot: u64,
-    pub rest_sequence: Option<&'static str>,
+    pub rest_sequence: Option<String>,
     pub spawn_tick: u64,
     pub next_think: u64,
     pub think_interval: u8,
@@ -2985,6 +3017,56 @@ pub struct VehicleScript {
 /// `vehiclescript` of the spawnmenu's cars (`base_vehicles.lua`): jeep_test, airboat, jalopy,
 /// apc_gmod.
 /// `ENT:PhysicsInit*` of a scripted entity: what its body is made of instead of the model's PHY.
+/// One gesture layer on top of an entity's sequence (`Entity:AddGesture*`, layer 0): its own
+/// sequence, cycle and rate, the weight/priority scripts set, looping and autokill flags.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GestureLayer {
+    pub sequence: String,
+    pub cycle: f32,
+    pub rate: f32,
+    pub weight: f32,
+    pub looping: bool,
+    pub autokill: bool,
+    pub priority: i32,
+    pub finished: bool,
+}
+
+/// Script changes to a gesture layer (`Entity:SetLayer*`); `None` leaves a field alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GesturePatch {
+    pub sequence: Option<String>,
+    pub cycle: Option<f32>,
+    pub rate: Option<f32>,
+    pub weight: Option<f32>,
+    pub looping: Option<bool>,
+    pub autokill: Option<bool>,
+    pub priority: Option<i32>,
+}
+
+/// An entity's animator: the sequence it plays, the cycle `tick_anims` advances from the
+/// model's fps and frame count (`rate` scales it), whether the end was reached since the last
+/// reset, and the gesture layer, if any.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EntAnim {
+    pub sequence: String,
+    pub cycle: f32,
+    pub rate: f32,
+    pub finished: bool,
+    pub gesture: Option<GestureLayer>,
+}
+
+impl Default for EntAnim {
+    fn default() -> Self {
+        Self {
+            sequence: String::new(),
+            cycle: 0.0,
+            rate: 1.0,
+            finished: false,
+            gesture: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PhysShape {
     /// `PhysicsInit(SOLID_VPHYSICS)`: the model's hulls.
@@ -4020,6 +4102,8 @@ pub struct Server<'w> {
     /// Physics shapes scripted entities asked for (`ENT:PhysicsInit*`), consulted when their
     /// body is built instead of the model's PHY hulls.
     pub script_shapes: BTreeMap<u32, PhysShape>,
+    /// Animators of NPCs (always) and of props a script gave a sequence, by entity id.
+    pub anims: BTreeMap<u32, EntAnim>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
     sounds: Vec<WorldSound>,
     /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
@@ -4173,6 +4257,7 @@ impl<'w> Server<'w> {
             mounted: Vec::new(),
             surface_overrides: BTreeMap::new(),
             script_shapes: BTreeMap::new(),
+            anims: BTreeMap::new(),
             sounds: Vec::new(),
             scrapes: BTreeMap::new(),
             thruster_loops: BTreeSet::new(),
@@ -7326,6 +7411,227 @@ impl<'w> Server<'w> {
     }
 
     /// Whether an entity has a physics body right now (none for `SOLID_NONE` script shapes).
+    /// `(duration, looping)` of `seq` on `model`, from the sequence's first animation.
+    fn seq_duration(&self, model: &str, seq: &str) -> Option<(f32, bool)> {
+        let m = self.models.get(model)?;
+        let i = m.script.sequences.iter().position(|q| q == seq)?;
+        let (fps, frames, flags) = *m.script.sequence_anim.get(i)?;
+        (fps > 0.0).then(|| ((frames - 1).max(1) as f32 / fps, flags & 1 != 0))
+    }
+
+    /// Model of an animatable entity: an NPC or a sandbox prop.
+    fn anim_model(&self, ent: u32) -> Option<String> {
+        if let Some(n) = self.npcs.get(&ent) {
+            return Some(n.model.clone());
+        }
+        self.sandbox
+            .props()
+            .iter()
+            .find(|p| p.id == ent)
+            .map(|p| p.model.clone())
+    }
+
+    /// Advances every animator one tick: an NPC's sequence follows what its AI plays (a change
+    /// restarts the cycle), the cycle moves by `rate * dt / duration`, loops wrap, one-shots
+    /// clamp at 1, either marks the sequence finished; the gesture layer the same, an autokill
+    /// layer goes away at its end. Animators of gone entities are dropped.
+    fn tick_anims(&mut self) {
+        let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        let mut live: Vec<(u32, String, Option<String>)> = self
+            .npcs
+            .iter()
+            .map(|(id, n)| (*id, n.model.clone(), Some(n.sequence.clone())))
+            .collect();
+        for p in self.sandbox.props() {
+            if self.anims.contains_key(&p.id) {
+                live.push((p.id, p.model.clone(), None));
+            }
+        }
+        let ids: BTreeSet<u32> = live.iter().map(|l| l.0).collect();
+        self.anims.retain(|id, _| ids.contains(id));
+        for (id, model, base) in live {
+            let mut a = self.anims.remove(&id).unwrap_or_default();
+            if let Some(base) = base {
+                if a.sequence != base {
+                    a.sequence = base;
+                    a.cycle = 0.0;
+                    a.finished = false;
+                }
+            }
+            if let Some((dur, looping)) = self.seq_duration(&model, &a.sequence) {
+                a.cycle += a.rate * dt / dur;
+                if a.cycle >= 1.0 {
+                    a.finished = true;
+                    a.cycle = if looping {
+                        a.cycle.rem_euclid(1.0)
+                    } else {
+                        1.0
+                    };
+                }
+            }
+            if let Some(g) = a.gesture.as_mut() {
+                if let Some((dur, _)) = self.seq_duration(&model, &g.sequence) {
+                    g.cycle += g.rate * dt / dur;
+                    if g.cycle >= 1.0 {
+                        g.finished = true;
+                        g.cycle = if g.looping {
+                            g.cycle.rem_euclid(1.0)
+                        } else {
+                            1.0
+                        };
+                    }
+                }
+                if g.finished && g.autokill {
+                    a.gesture = None;
+                }
+            }
+            self.anims.insert(id, a);
+        }
+    }
+
+    /// The animator of an entity (`Entity:GetCycle` and friends); NPCs have one after their
+    /// first tick, props only once a script set a sequence.
+    pub fn anim(&self, ent: u32) -> Option<&EntAnim> {
+        self.anims.get(&ent)
+    }
+
+    /// `Entity:SetSequence`: the model must have the sequence; an NPC's AI sequence changes too
+    /// (its rest sequence is forgotten), the cycle restarts.
+    pub fn set_sequence(&mut self, ent: u32, name: &str) -> bool {
+        let Some(model) = self.anim_model(ent) else {
+            return false;
+        };
+        if self.seq_duration(&model, name).is_none() {
+            return false;
+        }
+        if let Some(n) = self.npcs.get_mut(&ent) {
+            n.sequence = name.to_string();
+            n.rest_sequence = None;
+        }
+        let a = self.anims.entry(ent).or_default();
+        a.sequence = name.to_string();
+        a.cycle = 0.0;
+        a.finished = false;
+        true
+    }
+
+    /// `Entity:SetCycle`: the cycle clamped to `[0, 1]`, the finished flag cleared.
+    pub fn set_cycle(&mut self, ent: u32, cycle: f32) -> bool {
+        let Some(a) = self.anim_entry(ent) else {
+            return false;
+        };
+        a.cycle = cycle.clamp(0.0, 1.0);
+        a.finished = false;
+        true
+    }
+
+    /// `Entity:SetPlaybackRate`.
+    pub fn set_playback_rate(&mut self, ent: u32, rate: f32) -> bool {
+        let Some(a) = self.anim_entry(ent) else {
+            return false;
+        };
+        a.rate = rate;
+        true
+    }
+
+    /// `Entity:ResetSequenceInfo`: cycle 0, finished cleared.
+    pub fn reset_sequence_info(&mut self, ent: u32) -> bool {
+        let Some(a) = self.anim_entry(ent) else {
+            return false;
+        };
+        a.cycle = 0.0;
+        a.finished = false;
+        true
+    }
+
+    /// The animator of a live NPC or prop, created on demand (an NPC's from its AI sequence).
+    fn anim_entry(&mut self, ent: u32) -> Option<&mut EntAnim> {
+        let base = self.npcs.get(&ent).map(|n| n.sequence.clone());
+        if base.is_none() && !self.sandbox.props().iter().any(|p| p.id == ent) {
+            return None;
+        }
+        Some(self.anims.entry(ent).or_insert_with(|| EntAnim {
+            sequence: base.unwrap_or_default(),
+            ..EntAnim::default()
+        }))
+    }
+
+    /// `Entity:AddGesture*`: one gesture layer per entity (a second call replaces it); the
+    /// model must have the sequence. Weight 1, rate 1, not looping.
+    pub fn add_gesture(&mut self, ent: u32, name: &str, autokill: bool) -> bool {
+        let Some(model) = self.anim_model(ent) else {
+            return false;
+        };
+        if self.seq_duration(&model, name).is_none() {
+            return false;
+        }
+        let Some(a) = self.anim_entry(ent) else {
+            return false;
+        };
+        a.gesture = Some(GestureLayer {
+            sequence: name.to_string(),
+            cycle: 0.0,
+            rate: 1.0,
+            weight: 1.0,
+            looping: false,
+            autokill,
+            priority: 0,
+            finished: false,
+        });
+        true
+    }
+
+    /// `Entity:SetLayer*` on the gesture layer; a sequence the model lacks is refused.
+    pub fn set_gesture(&mut self, ent: u32, patch: &GesturePatch) -> bool {
+        let Some(model) = self.anim_model(ent) else {
+            return false;
+        };
+        if let Some(seq) = &patch.sequence {
+            if self.seq_duration(&model, seq).is_none() {
+                return false;
+            }
+        }
+        let Some(g) = self.anims.get_mut(&ent).and_then(|a| a.gesture.as_mut()) else {
+            return false;
+        };
+        if let Some(seq) = &patch.sequence {
+            g.sequence = seq.clone();
+            g.cycle = 0.0;
+            g.finished = false;
+        }
+        if let Some(c) = patch.cycle {
+            g.cycle = c.clamp(0.0, 1.0);
+            g.finished = false;
+        }
+        if let Some(r) = patch.rate {
+            g.rate = r;
+        }
+        if let Some(w) = patch.weight {
+            g.weight = w.clamp(0.0, 1.0);
+        }
+        if let Some(l) = patch.looping {
+            g.looping = l;
+        }
+        if let Some(k) = patch.autokill {
+            g.autokill = k;
+        }
+        if let Some(p) = patch.priority {
+            g.priority = p;
+        }
+        true
+    }
+
+    /// `Entity:RemoveGesture` / `RemoveAllGestures` / `RemoveLayer`.
+    pub fn remove_gesture(&mut self, ent: u32) -> bool {
+        match self.anims.get_mut(&ent) {
+            Some(a) if a.gesture.is_some() => {
+                a.gesture = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn has_body(&self, ent: u32) -> bool {
         self.bodies.contains_key(&ent)
     }
@@ -7764,7 +8070,7 @@ impl<'w> Server<'w> {
             blood: def.blood,
             movetype: def.movetype,
             solid: def.solid,
-            sequence: def.sequence,
+            sequence: def.sequence.to_string(),
             settle,
             dead_at: None,
             remove_at: None,
@@ -8669,9 +8975,9 @@ impl<'w> Server<'w> {
                 let firing = n.shots > 0 && now < n.last_shot + n.think_interval as u64;
                 let seq = if firing { shoot } else { between };
                 if n.sequence != shoot && n.sequence != between {
-                    n.rest_sequence = Some(n.sequence);
+                    n.rest_sequence = Some(n.sequence.clone());
                 }
-                n.sequence = seq;
+                n.sequence = seq.to_string();
             }
         }
         if err.abs() > NPC_FIRE_FACING_DEG || now < n.next_shot {
@@ -8684,7 +8990,7 @@ impl<'w> Server<'w> {
         n.shots += 1;
         n.last_shot = now;
         if let Some((shoot, _)) = npc_combat_sequences(&n.class) {
-            n.sequence = shoot;
+            n.sequence = shoot.to_string();
         }
         n.next_shot = if n.burst_left == 0 {
             now + NPC_BURST_GAP_TICKS
@@ -9453,7 +9759,7 @@ impl<'w> Server<'w> {
                 blood: def.blood,
                 movetype: def.movetype,
                 solid: def.solid,
-                sequence: def.sequence,
+                sequence: def.sequence.to_string(),
                 settle: false,
                 dead_at: None,
                 remove_at: None,
@@ -11449,6 +11755,7 @@ impl<'w> Server<'w> {
         self.tick_projectiles(launches);
         self.tick_devices();
         self.tick_vehicles();
+        self.tick_anims();
         // winch controllers think before the physics step, like any entity's Think
         for (id, len) in self
             .sandbox

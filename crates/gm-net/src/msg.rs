@@ -185,8 +185,29 @@ pub struct EntityState {
     pub flex: Option<FlexState>,
     /// Eye target (eyeposer), local to the `eyes` attachment.
     pub eye_target: Option<Vec3>,
-    /// Sequence the entity plays (NPC idle); empty for props, which do not animate.
+    /// Sequence the entity plays (an NPC's AI sequence or a script's `SetSequence`); empty for
+    /// props that do not animate.
     pub sequence: String,
+    /// The server animator's cycle `[0, 1]` of that sequence at this snapshot and its rate.
+    pub cycle: f32,
+    pub playback_rate: f32,
+    /// The sequence reached its end since it was (re)started.
+    pub sequence_finished: bool,
+    /// Gesture layer played on top (`Entity:AddGestureSequence`), if any.
+    pub gesture: Option<GestureState>,
+}
+
+/// A gesture layer on the wire (the server's `GestureLayer`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GestureState {
+    pub sequence: String,
+    pub cycle: f32,
+    pub rate: f32,
+    pub weight: f32,
+    pub looping: bool,
+    pub autokill: bool,
+    pub priority: i32,
+    pub finished: bool,
 }
 
 pub use gm_server::BonePose;
@@ -466,7 +487,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 8;
+pub const PROTOCOL: u16 = 9;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1002,6 +1023,20 @@ impl ServerMsg {
                         w.f32(t.z);
                     }
                     w.str(&e.sequence);
+                    w.f32(e.cycle);
+                    w.f32(e.playback_rate);
+                    w.bool(e.sequence_finished);
+                    w.bool(e.gesture.is_some());
+                    if let Some(g) = &e.gesture {
+                        w.str(&g.sequence);
+                        w.f32(g.cycle);
+                        w.f32(g.rate);
+                        w.f32(g.weight);
+                        w.bool(g.looping);
+                        w.bool(g.autokill);
+                        w.i32(g.priority);
+                        w.bool(g.finished);
+                    }
                 }
                 w.varint(removed.len() as u64);
                 for id in removed {
@@ -1311,6 +1346,23 @@ impl ServerMsg {
                             None
                         },
                         sequence: r.str()?,
+                        cycle: r.f32()?,
+                        playback_rate: r.f32()?,
+                        sequence_finished: r.bool()?,
+                        gesture: if r.bool()? {
+                            Some(GestureState {
+                                sequence: r.str()?,
+                                cycle: r.f32()?,
+                                rate: r.f32()?,
+                                weight: r.f32()?,
+                                looping: r.bool()?,
+                                autokill: r.bool()?,
+                                priority: r.i32()?,
+                                finished: r.bool()?,
+                            })
+                        } else {
+                            None
+                        },
                     });
                 }
                 let n = r.varint()? as usize;

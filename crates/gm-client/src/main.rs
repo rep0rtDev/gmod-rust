@@ -167,6 +167,10 @@ impl Sim {
                             flex: None,
                             eye_target: None,
                             sequence: String::new(),
+                            cycle: 0.0,
+                            playback_rate: 1.0,
+                            sequence_finished: false,
+                            gesture: None,
                         },
                     )
                 })
@@ -3300,8 +3304,22 @@ impl App {
                         .get(&format!("{}#{}#{}", e.model, e.skin, e.body))
                         .or_else(|| g.models.get(&e.model))?
                         .as_ref()?;
-                    let t = rt * gm_core::tick::DEFAULT_TICK_INTERVAL;
-                    let local = m.bone_world_gesture(&e.sequence, t, None, &[], None)?;
+                    // the server animator's clock: its cycle at the snapshot, run on at its
+                    // rate for the render time since; the gesture layer at its cycle
+                    let since = (rt - self.sim.client.world.tick as f32).max(0.0)
+                        * gm_core::tick::DEFAULT_TICK_INTERVAL;
+                    let (len, looping) = m.sequence_length(&e.sequence)?;
+                    let t = e.cycle * len + e.playback_rate * since;
+                    let t = if looping {
+                        t.rem_euclid(len.max(1e-3))
+                    } else {
+                        t.min(len)
+                    };
+                    let gesture = e.gesture.as_ref().and_then(|g| {
+                        let (glen, _) = m.sequence_length(&g.sequence)?;
+                        Some((g.sequence.as_str(), g.cycle * glen))
+                    });
+                    let local = m.bone_world_gesture(&e.sequence, t, None, &[], gesture)?;
                     let place = gm_render::world::model_transform(pos, ang);
                     let world: Vec<glam::Mat4> = local.iter().map(|b| place * *b).collect();
                     return Some((e.id, m.skin_matrices(&world)));

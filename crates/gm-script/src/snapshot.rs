@@ -33,6 +33,11 @@ pub struct EntitySnap {
     pub render_fx: u8,
     /// Sequence the entity plays (NPCs; props do not animate on the server).
     pub sequence: String,
+    /// The server animator's cycle `[0, 1]`, playback rate, finished flag and gesture layer.
+    pub cycle: f32,
+    pub playback_rate: f32,
+    pub sequence_finished: bool,
+    pub gesture: Option<gm_server::GestureLayer>,
     /// Poser state: non-identity bone scales / angles `(bone, value)`, flex weights + scale, eye target.
     pub bone_scales: Vec<(u32, Vec3)>,
     pub bone_angles: Vec<(u32, Vec3)>,
@@ -318,6 +323,19 @@ impl Snapshot {
                             render_mode: e.render_mode,
                             render_fx: e.render_fx,
                             sequence: e.sequence.clone(),
+                            cycle: e.cycle,
+                            playback_rate: e.playback_rate,
+                            sequence_finished: e.sequence_finished,
+                            gesture: e.gesture.as_ref().map(|g| gm_server::GestureLayer {
+                                sequence: g.sequence.clone(),
+                                cycle: g.cycle,
+                                rate: g.rate,
+                                weight: g.weight,
+                                looping: g.looping,
+                                autokill: g.autokill,
+                                priority: g.priority,
+                                finished: g.finished,
+                            }),
                             bone_scales: Vec::new(),
                             bone_angles: Vec::new(),
                             flex: e.flex.as_ref().map(|f| (f.weights.clone(), f.scale)),
@@ -411,7 +429,13 @@ impl Snapshot {
                             material: p.material.clone(),
                             render_mode: p.render_mode,
                             render_fx: p.render_fx,
-                            sequence: String::new(),
+                            sequence: server
+                                .anim(p.id)
+                                .map_or(String::new(), |a| a.sequence.clone()),
+                            cycle: server.anim(p.id).map_or(0.0, |a| a.cycle),
+                            playback_rate: server.anim(p.id).map_or(1.0, |a| a.rate),
+                            sequence_finished: server.anim(p.id).is_some_and(|a| a.finished),
+                            gesture: server.anim(p.id).and_then(|a| a.gesture.clone()),
                             bone_scales: server
                                 .bone_scales(p.id)
                                 .into_iter()
@@ -464,7 +488,14 @@ impl Snapshot {
                             material: String::new(),
                             render_mode: 0,
                             render_fx: 0,
-                            sequence: n.sequence.to_string(),
+                            sequence: server
+                                .anim(id)
+                                .map_or(n.sequence.as_str(), |a| a.sequence.as_str())
+                                .to_string(),
+                            cycle: server.anim(id).map_or(0.0, |a| a.cycle),
+                            playback_rate: server.anim(id).map_or(1.0, |a| a.rate),
+                            sequence_finished: server.anim(id).is_some_and(|a| a.finished),
+                            gesture: server.anim(id).and_then(|a| a.gesture.clone()),
                             bone_scales: Vec::new(),
                             bone_angles: Vec::new(),
                             flex: None,

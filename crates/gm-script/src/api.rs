@@ -139,6 +139,30 @@ pub enum QueuedWrite {
         ent: u32,
         shape: gm_server::PhysShape,
     },
+    /// `Entity:SetSequence` / `ResetSequence` by sequence name.
+    EntitySequence {
+        ent: u32,
+        name: String,
+    },
+    /// `Entity:SetCycle`.
+    EntityCycle {
+        ent: u32,
+        cycle: f32,
+    },
+    /// `Entity:SetPlaybackRate`.
+    EntityPlaybackRate {
+        ent: u32,
+        rate: f32,
+    },
+    /// `Entity:ResetSequenceInfo`.
+    EntityResetSequence {
+        ent: u32,
+    },
+    /// `Entity:AddGestureSequence` / `SetLayer*` / `RemoveLayer` on the gesture layer.
+    EntityGesture {
+        ent: u32,
+        op: GestureOp,
+    },
     SetSkin {
         ent: u32,
         skin: u8,
@@ -685,6 +709,42 @@ fn cvar_string(v: &Value) -> Result<String> {
 }
 
 /// `{ kind = "model" | "box" | "sphere" | "static" | "none", mins, maxs, radius }`.
+/// What a script does to an entity's gesture layer.
+#[derive(Clone, Debug, PartialEq)]
+pub enum GestureOp {
+    Add { sequence: String, autokill: bool },
+    Remove,
+    Set(gm_server::GesturePatch),
+}
+
+fn f32_arg(v: &Value) -> f32 {
+    match v {
+        Value::Number(n) => *n as f32,
+        Value::Integer(i) => *i as f32,
+        _ => 0.0,
+    }
+}
+
+fn gesture_op(t: &Table) -> Result<GestureOp> {
+    let op: String = t.get::<Option<String>>("op")?.unwrap_or_default();
+    Ok(match op.as_str() {
+        "add" => GestureOp::Add {
+            sequence: t.get::<Option<String>>("sequence")?.unwrap_or_default(),
+            autokill: t.get::<Option<bool>>("autokill")?.unwrap_or(true),
+        },
+        "remove" => GestureOp::Remove,
+        _ => GestureOp::Set(gm_server::GesturePatch {
+            sequence: t.get("sequence")?,
+            cycle: t.get("cycle")?,
+            rate: t.get("rate")?,
+            weight: t.get("weight")?,
+            looping: t.get("looping")?,
+            autokill: t.get("autokill")?,
+            priority: t.get("priority")?,
+        }),
+    })
+}
+
 fn phys_shape(t: &Table) -> Result<gm_server::PhysShape> {
     let kind: String = t.get::<Option<String>>("kind")?.unwrap_or_default();
     Ok(match kind.as_str() {
@@ -777,6 +837,21 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("render_mode", e.render_mode)?;
     t.set("render_fx", e.render_fx)?;
     t.set("sequence", e.sequence.as_str())?;
+    t.set("cycle", e.cycle)?;
+    t.set("playback_rate", e.playback_rate)?;
+    t.set("sequence_finished", e.sequence_finished)?;
+    if let Some(g) = &e.gesture {
+        let gt = lua.create_table()?;
+        gt.set("sequence", g.sequence.as_str())?;
+        gt.set("cycle", g.cycle)?;
+        gt.set("rate", g.rate)?;
+        gt.set("weight", g.weight)?;
+        gt.set("looping", g.looping)?;
+        gt.set("autokill", g.autokill)?;
+        gt.set("priority", g.priority)?;
+        gt.set("finished", g.finished)?;
+        t.set("gesture", gt)?;
+    }
     t.set("weapon", e.weapon.as_str())?;
     t.set("blood", e.blood)?;
     t.set("npc_target_seen", e.npc_target_seen)?;
@@ -1750,6 +1825,23 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 "ent.physics" => QueuedWrite::EntityPhysics {
                     ent,
                     shape: phys_shape(&table_arg(&arg)?)?,
+                },
+                "ent.sequence" => QueuedWrite::EntitySequence {
+                    ent,
+                    name: str_arg(&arg)?,
+                },
+                "ent.cycle" => QueuedWrite::EntityCycle {
+                    ent,
+                    cycle: f32_arg(&arg),
+                },
+                "ent.rate" => QueuedWrite::EntityPlaybackRate {
+                    ent,
+                    rate: f32_arg(&arg),
+                },
+                "ent.reset_sequence" => QueuedWrite::EntityResetSequence { ent },
+                "ent.gesture" => QueuedWrite::EntityGesture {
+                    ent,
+                    op: gesture_op(&table_arg(&arg)?)?,
                 },
                 "vehicle.engine" => QueuedWrite::VehicleEngine {
                     ent,
@@ -2931,6 +3023,15 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         } => server.set_vehicle_controls(*ent, *throttle, *steer, *handbrake),
         QueuedWrite::VehicleBoost { ent, boost } => server.set_vehicle_boost(*ent, *boost),
         QueuedWrite::EntityPhysics { ent, shape } => server.set_script_shape(*ent, shape.clone()),
+        QueuedWrite::EntitySequence { ent, name } => server.set_sequence(*ent, name),
+        QueuedWrite::EntityCycle { ent, cycle } => server.set_cycle(*ent, *cycle),
+        QueuedWrite::EntityPlaybackRate { ent, rate } => server.set_playback_rate(*ent, *rate),
+        QueuedWrite::EntityResetSequence { ent } => server.reset_sequence_info(*ent),
+        QueuedWrite::EntityGesture { ent, op } => match op {
+            GestureOp::Add { sequence, autokill } => server.add_gesture(*ent, sequence, *autokill),
+            GestureOp::Remove => server.remove_gesture(*ent),
+            GestureOp::Set(patch) => server.set_gesture(*ent, patch),
+        },
         QueuedWrite::VehicleEngine { ent, on } => server.set_vehicle_engine(*ent, *on),
         QueuedWrite::PlayerVehicle { player, vehicle } => match vehicle {
             Some(v) => server.enter_vehicle(*player, *v),

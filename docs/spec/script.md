@@ -561,6 +561,24 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   body (`SOLID_NONE`, `PhysicsDestroy`). Before `Spawn` the shape rides with the spawn; on a live
   entity the body is dropped and rebuilt on the next tick. `PhysWake` wakes the body.
   `PhysicsInitConvex / MultiConvex` (hulls from points) and `PhysicsFromMesh` stay stubs.
+- The server animator (`Server.anims`): every NPC and every prop a script gave a sequence has a
+  sequence, a cycle advanced each tick by `rate * dt / duration` (duration `(frames - 1) / fps`
+  of the sequence's first animation, include models' sequences merged in), a finished flag set
+  once the end is reached (loops wrap, one-shots clamp at 1), and at most one gesture layer
+  (id 0) with its own sequence, cycle, rate, weight, looping/autokill flags and priority. An
+  NPC's AI sequence changes restart the cycle. Snapshots carry cycle, rate, finished and the
+  layer; the client plays the server's cycle (extrapolated at the rate since the snapshot)
+  and the gesture on top. GLua: `Entity:SetSequence(id|name)` / `ResetSequence` (the model
+  must have it) / `ResetSequenceInfo` / `GetCycle` / `SetCycle` / `GetPlaybackRate` /
+  `SetPlaybackRate` / `IsSequenceFinished`; `AddGestureSequence(seq, autokill)` /
+  `AddLayeredSequence(seq, priority)` (always layer 0, a second call replaces it) /
+  `FindGestureSequenceLayer` / `RemoveAllGestures` / `RemoveLayer` / `GetLayerCycle` /
+  `GetLayerDuration` / `GetLayerPlaybackRate` / `GetLayerSequence` / `GetLayerWeight` /
+  `SetLayerAutokill` / `SetLayerCycle` / `SetLayerDuration` (sets the rate) / `SetLayerLooping` /
+  `SetLayerPlaybackRate` / `SetLayerPriority` / `SetLayerSequence` / `SetLayerWeight`. Weight
+  and priority are state the client does not blend by yet (the gesture plays at full weight).
+  Activity-based `AddGesture` / `FindGestureLayer` / `IsPlayingGesture` / `RemoveGesture` /
+  `RestartGesture` (we have no activity table) and `SetLayerBlendIn / BlendOut` stay stubs.
 
 Done in `glua/server.luau`:
 

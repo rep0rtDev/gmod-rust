@@ -125,6 +125,10 @@ mod tests {
                 }),
                 eye_target: Some(Vec3::new(7.0, -4.0, -25.0)),
                 sequence: String::new(),
+                cycle: 0.0,
+                playback_rate: 1.0,
+                sequence_finished: false,
+                gesture: None,
             }],
             removed: vec![1],
             own: OwnSandbox {

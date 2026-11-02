@@ -577,7 +577,7 @@ fn soldier_hit_mid_burst_ends_it_and_crouches() {
     let world = combat_server!(world);
     let (mut server, idle, _start) = combat_server!(world, server);
     let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
-    let rest = server.npcs[&id].sequence;
+    let rest = server.npcs[&id].sequence.clone();
     let mut shots = Vec::new();
     let mut seqs = Vec::new();
     let mut last = 0;
@@ -594,8 +594,8 @@ fn soldier_hit_mid_burst_ends_it_and_crouches() {
                 hit_in_burst = Some(tick + 2);
             }
         }
-        if seqs.last().map(|(_, s)| *s) != Some(n.sequence) {
-            seqs.push((tick, n.sequence));
+        if seqs.last().map(|(_, s): &(u64, String)| s.as_str()) != Some(n.sequence.as_str()) {
+            seqs.push((tick, n.sequence.clone()));
         }
         if hit_in_burst == Some(tick) || hit_in_gap == Some(tick) {
             assert!(server.damage_npc(id, 1, 10.0, 0));

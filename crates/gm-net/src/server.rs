@@ -1013,7 +1013,14 @@ impl ServerNet {
                     manips: Vec::new(),
                     flex: None,
                     eye_target: None,
-                    sequence: n.sequence.to_string(),
+                    sequence: server
+                        .anim(*id)
+                        .map_or(n.sequence.as_str(), |a| a.sequence.as_str())
+                        .to_string(),
+                    cycle: server.anim(*id).map_or(0.0, |a| a.cycle),
+                    playback_rate: server.anim(*id).map_or(1.0, |a| a.rate),
+                    sequence_finished: server.anim(*id).is_some_and(|a| a.finished),
+                    gesture: gesture_state(server.anim(*id)),
                 },
             );
         }
@@ -1081,7 +1088,13 @@ impl ServerNet {
                         .flex_state(p.id)
                         .map(|(weights, scale)| crate::msg::FlexState { weights, scale }),
                     eye_target: server.eye_target(p.id),
-                    sequence: String::new(),
+                    sequence: server
+                        .anim(p.id)
+                        .map_or(String::new(), |a| a.sequence.clone()),
+                    cycle: server.anim(p.id).map_or(0.0, |a| a.cycle),
+                    playback_rate: server.anim(p.id).map_or(1.0, |a| a.rate),
+                    sequence_finished: server.anim(p.id).is_some_and(|a| a.finished),
+                    gesture: gesture_state(server.anim(p.id)),
                 },
             );
         }
@@ -1491,4 +1504,19 @@ fn parse_hex(hex: &str) -> Option<[u8; 32]> {
         *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()?;
     }
     Some(out)
+}
+
+/// The gesture layer of an animator as it goes on the wire.
+fn gesture_state(anim: Option<&gm_server::EntAnim>) -> Option<crate::msg::GestureState> {
+    anim.and_then(|a| a.gesture.as_ref())
+        .map(|g| crate::msg::GestureState {
+            sequence: g.sequence.clone(),
+            cycle: g.cycle,
+            rate: g.rate,
+            weight: g.weight,
+            looping: g.looping,
+            autokill: g.autokill,
+            priority: g.priority,
+            finished: g.finished,
+        })
 }
