@@ -316,7 +316,66 @@ function VEH:GetWheelContactPoint(i)
     if not w or not w.contact then return Vector(0, 0, 0), false end
     return Vector(w.contact.x, w.contact.y, w.contact.z), w.touching == true
 end
-function VEH:GetSpringLength(i) local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]; return w and w.radius or 0 end
+-- suspension rest length is one value for the car's wheels (the vehicle script has one)
+function VEH:GetSpringLength(i) local v = vinfo(self); return v and v.rest or 0 end
+function VEH:SetSpringLength(i, len) qwrite("vehicle.tuning", self.__id, { rest = tonumber(len) or 0 }) end
+-- throttle caps clamp the driver's pedal in the drive step each tick
+function VEH:SetMaxThrottle(t) qwrite("vehicle.tuning", self.__id, { max_throttle = tonumber(t) or 1 }) end
+function VEH:SetMaxReverseThrottle(t) qwrite("vehicle.tuning", self.__id, { max_rev_throttle = math.abs(tonumber(t) or 1) }) end
+function VEH:GetMaxThrottle() local v = vinfo(self); return v and v.max_throttle or 1 end
+function VEH:GetMaxReverseThrottle() local v = vinfo(self); return v and -v.max_rev_throttle or -1 end
+-- one steering cone at every speed (the measured spec interpolates slow -> fast)
+function VEH:SetSteeringDegrees(d) local x = tonumber(d) or 0; qwrite("vehicle.tuning", self.__id, { deg_slow = x, deg_fast = x }) end
+-- tyre friction is one value for the car (the raycast wheels share it); the wheel index is accepted
+function VEH:SetWheelFriction(i, f) qwrite("vehicle.tuning", self.__id, { tyre_mu = tonumber(f) or 0 }) end
+function VEH:GetWheelFriction(i) local v = vinfo(self); return v and v.tyre_mu or 0 end
+-- the subset of the game's vehicle params table our drive model has: steering degrees, engine top
+-- speeds (mph -> u/s), axle suspension constants (applied to every wheel) and wheel friction
+function VEH:SetVehicleParams(p)
+    if type(p) ~= "table" then return end
+    local tune = {}
+    if type(p.steering) == "table" then
+        tune.deg_slow = tonumber(p.steering.degreesSlow)
+        tune.deg_fast = tonumber(p.steering.degreesFast)
+    end
+    if type(p.engine) == "table" then
+        if p.engine.maxSpeed then tune.max_fwd = tonumber(p.engine.maxSpeed) * 17.6 end
+        if p.engine.maxRevSpeed then tune.max_rev = tonumber(p.engine.maxRevSpeed) * 17.6 end
+    end
+    if type(p.axles) == "table" then
+        local n = self:GetWheelCount()
+        for _, ax in ipairs(p.axles) do
+            if type(ax.wheels) == "table" and ax.wheels.frictionScale then tune.tyre_mu = tonumber(ax.wheels.frictionScale) end
+            if type(ax.suspension) == "table" then
+                for i = 0, math.max(n - 1, 0) do
+                    qwrite("vehicle.wheel", self.__id, { idx = i, spring = tonumber(ax.suspension.springConstant),
+                        damping = tonumber(ax.suspension.springDamping), damping_compression = tonumber(ax.suspension.springDampingCompression) })
+                end
+            end
+        end
+    end
+    if next(tune) then qwrite("vehicle.tuning", self.__id, tune) end
+end
+-- seat and view points come from the vehicle model's attachments, as the server's enter path uses them
+function VEH:GetPassengerSeatPoint(i)
+    local a = self:GetAttachment(self:LookupAttachment("vehicle_feet_passenger0"))
+    if a then return a.Pos, a.Ang end
+    return self:GetPos(), self:GetAngles()
+end
+function VEH:GetVehicleViewPosition(role)
+    local a = self:GetAttachment(self:LookupAttachment("vehicle_driver_eyes"))
+    if a then return a.Pos, a.Ang, 0 end
+    return self:GetPos(), self:GetAngles(), 0
+end
+-- the server's exit search: a 32x32x72 hull from 11.4 u above the origin, clear = exit point
+function VEH:CheckExitPoint(yaw, dist)
+    local start = self:GetPos() + Vector(0, 0, 11.4)
+    local dir = Angle(0, tonumber(yaw) or 0, 0):Forward()
+    local endpos = start + dir * (tonumber(dist) or 0)
+    local tr = util.TraceHull({ start = start, endpos = endpos, mins = Vector(-16, -16, 0), maxs = Vector(16, 16, 72), filter = self })
+    if tr and tr.Hit then return nil end
+    return endpos
+end
 function VEH:GetVehicleClass() return self:GetClass() end
 -- driving: the controls live on the server's vehicle (kept until changed), the drive law runs
 -- in its tick; readbacks come from the snapshot of the last tick
@@ -2049,7 +2108,7 @@ function VEH:IsBoosting() local v = vinfo(self); return v ~= nil and v.engine ==
 function VEH:SetBoost(b) qwrite("vehicle.boost", self.__id, tonumber(b) or 0) end
 function VEH:BoostTimeLeft() return 0 end
 function VEH:IsVehicleBodyInWater() return false end
-for _, name in ipairs({ "CheckExitPoint", "GetAmmo", "GetCameraDistance", "GetPassengerSeatPoint", "GetThirdPersonMode", "GetVehicleViewPosition", "GetWheel", "HasBrakePedal", "SetCameraDistance", "SetHasBrakePedal", "SetMaxReverseThrottle", "SetMaxThrottle", "SetSpringLength", "SetSteeringDegrees", "SetThirdPersonMode", "SetVehicleClass", "SetVehicleEntryAnim", "SetVehicleParams", "SetWheelFriction" }) do
+for _, name in ipairs({ "GetAmmo", "GetCameraDistance", "GetThirdPersonMode", "GetWheel", "HasBrakePedal", "SetCameraDistance", "SetHasBrakePedal", "SetThirdPersonMode", "SetVehicleClass", "SetVehicleEntryAnim" }) do
     if VEH[name] == nil then VEH[name] = stub("Vehicle:" .. name) end
 end
 

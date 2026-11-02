@@ -3176,6 +3176,36 @@ pub fn npc_def(key: &str) -> Option<&'static NpcDef> {
 }
 
 /// A sandbox vehicle: a physics prop of the sandbox with a seat (`Spawn_Vehicle`).
+/// Script tuning of a vehicle (`Vehicle:SetMaxThrottle` / `SetSteeringDegrees` / `SetWheelFriction` /
+/// `SetSpringLength` / `SetVehicleParams`): overrides over the measured drive spec, `None` = the spec.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VehicleTuning {
+    pub max_throttle: f32,
+    pub max_rev_throttle: f32,
+    pub deg_slow: Option<f32>,
+    pub deg_fast: Option<f32>,
+    pub tyre_mu: Option<f32>,
+    pub max_fwd: Option<f32>,
+    pub max_rev: Option<f32>,
+    /// Suspension rest length (u) for every wheel.
+    pub rest: Option<f32>,
+}
+
+impl Default for VehicleTuning {
+    fn default() -> Self {
+        Self {
+            max_throttle: 1.0,
+            max_rev_throttle: 1.0,
+            deg_slow: None,
+            deg_fast: None,
+            tyre_mu: None,
+            max_fwd: None,
+            max_rev: None,
+            rest: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Vehicle {
     /// Spawnmenu list key (`VehicleName`), e.g. `Chair_Wood`.
@@ -3193,6 +3223,31 @@ pub struct Vehicle {
     pub mass: f32,
     /// Driver inputs and the driving state they produced last tick.
     pub controls: VehicleControls,
+    pub tuning: VehicleTuning,
+}
+
+impl Vehicle {
+    /// The drive spec of this car with the script tuning applied.
+    pub fn spec(&self) -> Option<DriveSpec> {
+        let mut s = drive_spec(&self.key)?;
+        let t = &self.tuning;
+        if let Some(d) = t.deg_slow {
+            s.deg_slow = d;
+        }
+        if let Some(d) = t.deg_fast {
+            s.deg_fast = d;
+        }
+        if let Some(m) = t.tyre_mu {
+            s.tyre_mu = m;
+        }
+        if let Some(m) = t.max_fwd {
+            s.max_fwd = m;
+        }
+        if let Some(m) = t.max_rev {
+            s.max_rev = m;
+        }
+        Some(s)
+    }
 }
 
 /// One raycast wheel: the hub in body space, the tyre radius, the axle's spring constant
@@ -3599,6 +3654,7 @@ type CarRow = (
     f32,
     VehicleControls,
     Option<DriveSpec>,
+    VehicleTuning,
 );
 const VEHICLE_TYRE_FRICTION: f32 = 1.0;
 
@@ -7676,6 +7732,7 @@ impl<'w> Server<'w> {
             id,
             Vehicle {
                 controls: VehicleControls::default(),
+                tuning: VehicleTuning::default(),
                 key: def.key.to_string(),
                 class: def.class.to_string(),
                 model: def.model.to_string(),
@@ -7825,6 +7882,81 @@ impl<'w> Server<'w> {
             return false;
         };
         v.controls.boost = boost.clamp(0.0, 1.0);
+        true
+    }
+
+    /// Script tuning of a vehicle; `Some` fields are applied, non-finite values ignored.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_vehicle_tuning(
+        &mut self,
+        veh: u32,
+        max_throttle: Option<f32>,
+        max_rev_throttle: Option<f32>,
+        deg_slow: Option<f32>,
+        deg_fast: Option<f32>,
+        tyre_mu: Option<f32>,
+        max_fwd: Option<f32>,
+        max_rev: Option<f32>,
+        rest: Option<f32>,
+    ) -> bool {
+        let Some(v) = self.vehicles.get_mut(&veh) else {
+            return false;
+        };
+        let t = &mut v.tuning;
+        let ok = |x: f32| x.is_finite() && x >= 0.0;
+        if let Some(x) = max_throttle.filter(|x| ok(*x)) {
+            t.max_throttle = x.min(1.0);
+        }
+        if let Some(x) = max_rev_throttle.filter(|x| ok(*x)) {
+            t.max_rev_throttle = x.min(1.0);
+        }
+        if let Some(x) = deg_slow.filter(|x| ok(*x)) {
+            t.deg_slow = Some(x);
+        }
+        if let Some(x) = deg_fast.filter(|x| ok(*x)) {
+            t.deg_fast = Some(x);
+        }
+        if let Some(x) = tyre_mu.filter(|x| ok(*x)) {
+            t.tyre_mu = Some(x);
+        }
+        if let Some(x) = max_fwd.filter(|x| ok(*x)) {
+            t.max_fwd = Some(x);
+        }
+        if let Some(x) = max_rev.filter(|x| ok(*x)) {
+            t.max_rev = Some(x);
+        }
+        if let Some(x) = rest.filter(|x| ok(*x)) {
+            t.rest = Some(x);
+        }
+        true
+    }
+
+    /// Suspension constants of one raycast wheel (`SetVehicleParams` axles); `Some` fields applied.
+    pub fn set_vehicle_wheel(
+        &mut self,
+        veh: u32,
+        idx: usize,
+        spring: Option<f32>,
+        damping: Option<f32>,
+        damping_compression: Option<f32>,
+    ) -> bool {
+        let Some(w) = self
+            .vehicles
+            .get_mut(&veh)
+            .and_then(|v| v.wheels.get_mut(idx))
+        else {
+            return false;
+        };
+        let ok = |x: f32| x.is_finite() && x >= 0.0;
+        if let Some(x) = spring.filter(|x| ok(*x)) {
+            w.spring = x;
+        }
+        if let Some(x) = damping.filter(|x| ok(*x)) {
+            w.damping = x;
+        }
+        if let Some(x) = damping_compression.filter(|x| ok(*x)) {
+            w.damping_compression = x;
+        }
         true
     }
 
@@ -8664,13 +8796,14 @@ impl<'w> Server<'w> {
                     v.wheels.clone(),
                     v.add_gravity,
                     v.mass,
-                    script.rest,
+                    v.tuning.rest.unwrap_or(script.rest),
                     v.controls.clone(),
-                    drive_spec(&v.key),
+                    v.spec(),
+                    v.tuning.clone(),
                 ))
             })
             .collect();
-        for (id, wheels, add_gravity, mass, rest, mut c, spec) in cars {
+        for (id, wheels, add_gravity, mass, rest, mut c, spec, tune) in cars {
             let Some(&body) = self.bodies.get(&id) else {
                 continue;
             };
@@ -8775,7 +8908,10 @@ impl<'w> Server<'w> {
                 }
             }
             if driving && contacts > 0 {
-                let throttle = c.throttle.clamp(-1.0, 1.0);
+                let throttle = c.throttle.clamp(
+                    -tune.max_rev_throttle.clamp(0.0, 1.0),
+                    tune.max_throttle.clamp(0.0, 1.0),
+                );
                 let stop = -speed.signum() * (speed.abs() / dt);
                 let accel = if c.handbrake {
                     stop.abs().min(spec.brake) * stop.signum()
@@ -13440,6 +13576,7 @@ impl<'w> Server<'w> {
                 id,
                 Vehicle {
                     controls: VehicleControls::default(),
+                    tuning: VehicleTuning::default(),
                     key: def.key.to_string(),
                     class: def.class.to_string(),
                     model: def.model.to_string(),
@@ -14627,6 +14764,39 @@ pub fn parent_world(parent: (Vec3, Quat), local: (Vec3, Quat)) -> (Vec3, Quat) {
 
 #[cfg(test)]
 mod parent_tests {
+    #[test]
+    fn vehicle_tuning_overrides_the_spec() {
+        let key = ["jeep", "Jeep", "airboat", "jalopy"]
+            .into_iter()
+            .find(|k| super::drive_spec(k).is_some())
+            .expect("a car key");
+        let base = super::drive_spec(key).unwrap();
+        let mut v = super::Vehicle {
+            key: key.into(),
+            class: "prop_vehicle_jeep".into(),
+            model: String::new(),
+            health: 0,
+            max_health: 0,
+            driver: None,
+            wheels: Vec::new(),
+            add_gravity: 0.0,
+            mass: 1.0,
+            controls: super::VehicleControls::default(),
+            tuning: super::VehicleTuning::default(),
+        };
+        assert_eq!(v.spec(), Some(base));
+        v.tuning.deg_slow = Some(20.0);
+        v.tuning.deg_fast = Some(20.0);
+        v.tuning.tyre_mu = Some(0.8);
+        v.tuning.max_fwd = Some(528.0);
+        let s = v.spec().unwrap();
+        assert_eq!(
+            (s.deg_slow, s.deg_fast, s.tyre_mu, s.max_fwd),
+            (20.0, 20.0, 0.8, 528.0)
+        );
+        assert_eq!(s.max_rev, base.max_rev);
+    }
+
     use super::*;
 
     #[test]

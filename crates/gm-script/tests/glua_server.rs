@@ -974,6 +974,7 @@ fn vehicle_record_reads_the_server_table() {
         5,
         gm_server::Vehicle {
             key: "Jeep".into(),
+            tuning: gm_server::VehicleTuning::default(),
             controls: gm_server::VehicleControls {
                 throttle: 1.0,
                 steer: 0.5,
@@ -1044,6 +1045,7 @@ fn vehicle_driving_readbacks_and_writes() {
         5,
         gm_server::Vehicle {
             key: "Jeep".into(),
+            tuning: gm_server::VehicleTuning::default(),
             class: "prop_vehicle_jeep".into(),
             model: "models/buggy.mdl".into(),
             health: 100,
@@ -2288,5 +2290,36 @@ fn npc_max_yaw_write() {
             .iter()
             .any(|w| matches!(w, QueuedWrite::NpcMaxYaw { ent: 5, rate } if *rate == 48.0)),
         "{writes:?}"
+    );
+}
+
+#[test]
+fn vehicle_tuning_queues_writes() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local v = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.Vehicle }, __glua_classes.Entity)
+             v:SetMaxThrottle(0.5)
+             v:SetSteeringDegrees(20)
+             v:SetSpringLength(0, 9)
+             v:SetVehicleParams({ engine = { maxSpeed = 30 }, axles = { { suspension = { springConstant = 50 }, wheels = { frictionScale = 0.8 } } } })
+         end)",
+    );
+    rt.actors_mut()[0]
+        .dispatch(&snapshot(), "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let d = format!("{:?}", rt.drain_writes());
+    assert!(d.contains("max_throttle: Some(0.5)"), "{d}");
+    assert!(
+        d.contains("deg_slow: Some(20.0)") && d.contains("deg_fast: Some(20.0)"),
+        "{d}"
+    );
+    assert!(d.contains("rest: Some(9.0)"), "{d}");
+    assert!(
+        d.contains("max_fwd: Some(528.0)") && d.contains("tyre_mu: Some(0.8)"),
+        "{d}"
+    );
+    assert!(
+        d.contains("VehicleWheel") && d.contains("spring: Some(50.0)"),
+        "{d}"
     );
 }

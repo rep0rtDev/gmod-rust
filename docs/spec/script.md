@@ -719,7 +719,18 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
 - `ENTITY:SetMaxYawSpeed(deg/s)` on an NPC overrides the turn rate the AI uses while turning
   in place and while halting toward a new goal (0 / non-positive restores the measured class
   rate: 150 deg/s, +0.267 per u/s of speed while halting); the snapshot carries it as `npc_max_yaw`.
-- `NPC:DropWeapon()` drops the carried weapon as a world weapon entity (the same path a dying\n  NPC uses); `Give` / `SelectWeapon` set the carried class, `GetEnemyLastTimeSeen` reads the\n  last-seen tick of the enemy.\n- `ENTITY:OnStateChange(old, new)` of a scripted NPC fires on the think where its derived NPC\n  state (dead / combat with an enemy / alert on a path / idle) changed; `ENTITY:IsJumpLegal(start,\n  apex, dest)` is asked by `CLuaLocomotion:JumpAcrossGap` (apex = midpoint + jump height),\n  `false` cancels the jump.\n- `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
+- `NPC:DropWeapon()` drops the carried weapon as a world weapon entity (the same path a dying\n  NPC uses); `Give` / `SelectWeapon` set the carried class, `GetEnemyLastTimeSeen` reads the\n  last-seen tick of the enemy.\n- `ENTITY:OnStateChange(old, new)` of a scripted NPC fires on the think where its derived NPC\n  state (dead / combat with an enemy / alert on a path / idle) changed; `ENTITY:IsJumpLegal(start,\n  apex, dest)` is asked by `CLuaLocomotion:JumpAcrossGap` (apex = midpoint + jump height),\n  `false` cancels the jump.\n- Vehicle tuning over the measured drive spec: `Vehicle:SetMaxThrottle` / `SetMaxReverseThrottle`
+  clamp the pedal in the drive step, `SetSteeringDegrees` sets one steering cone at every speed
+  (the spec interpolates slow -> fast), `SetWheelFriction` sets the tyre friction (one value for
+  the car's raycast wheels; the wheel index is accepted), `SetSpringLength` the suspension rest
+  length (one value, as in the vehicle script), `SetVehicleParams` applies the subset our model has
+  (steering degrees, engine top speeds in mph, axle suspension constants to every wheel, wheel
+  frictionScale). `GetPassengerSeatPoint` / `GetVehicleViewPosition` read the model's
+  `vehicle_feet_passenger0` / `vehicle_driver_eyes` attachments, `CheckExitPoint(yaw, dist)` sweeps
+  the server's exit hull (32x32x72 from 11.4 u up). Stubs with a reason: `GetWheel` (raycast wheels
+  have no bodies), `HasBrakePedal` / `SetHasBrakePedal` (no separate brake-pedal path in the drive
+  model), camera / third-person (client), `SetVehicleClass` / `SetVehicleEntryAnim`, `GetAmmo`.
+- `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.
 - `ENTITY:PhysicsSimulate(phys, dt)` runs every tick on scripted entities that define it; its

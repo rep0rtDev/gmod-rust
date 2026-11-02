@@ -508,6 +508,26 @@ pub enum QueuedWrite {
         handbrake: Option<bool>,
     },
     /// `Vehicle:SetBoost`.
+    /// `Vehicle:SetMaxThrottle` / `SetSteeringDegrees` / `SetWheelFriction` / `SetSpringLength` / `SetVehicleParams`.
+    VehicleTuning {
+        ent: u32,
+        max_throttle: Option<f32>,
+        max_rev_throttle: Option<f32>,
+        deg_slow: Option<f32>,
+        deg_fast: Option<f32>,
+        tyre_mu: Option<f32>,
+        max_fwd: Option<f32>,
+        max_rev: Option<f32>,
+        rest: Option<f32>,
+    },
+    /// Suspension constants of one wheel (`SetVehicleParams` axles).
+    VehicleWheel {
+        ent: u32,
+        idx: u32,
+        spring: Option<f32>,
+        damping: Option<f32>,
+        damping_compression: Option<f32>,
+    },
     VehicleBoost {
         ent: u32,
         boost: f32,
@@ -2249,6 +2269,30 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         handbrake: t.get::<Option<bool>>("handbrake")?,
                     }
                 }
+                "vehicle.tuning" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::VehicleTuning {
+                        ent,
+                        max_throttle: t.get::<Option<f32>>("max_throttle")?,
+                        max_rev_throttle: t.get::<Option<f32>>("max_rev_throttle")?,
+                        deg_slow: t.get::<Option<f32>>("deg_slow")?,
+                        deg_fast: t.get::<Option<f32>>("deg_fast")?,
+                        tyre_mu: t.get::<Option<f32>>("tyre_mu")?,
+                        max_fwd: t.get::<Option<f32>>("max_fwd")?,
+                        max_rev: t.get::<Option<f32>>("max_rev")?,
+                        rest: t.get::<Option<f32>>("rest")?,
+                    }
+                }
+                "vehicle.wheel" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::VehicleWheel {
+                        ent,
+                        idx: t.get::<Option<u32>>("idx")?.unwrap_or(0),
+                        spring: t.get::<Option<f32>>("spring")?,
+                        damping: t.get::<Option<f32>>("damping")?,
+                        damping_compression: t.get::<Option<f32>>("damping_compression")?,
+                    }
+                }
                 "vehicle.boost" => QueuedWrite::VehicleBoost {
                     ent,
                     boost: match &arg {
@@ -3150,8 +3194,18 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             t.set("speed", c.speed)?;
             t.set("contacts", c.wheels_in_contact)?;
             t.set("gear", c.gear)?;
-            if let Some(spec) = gm_server::drive_spec(&v.key) {
+            t.set("max_throttle", v.tuning.max_throttle)?;
+            t.set("max_rev_throttle", v.tuning.max_rev_throttle)?;
+            t.set(
+                "rest",
+                v.tuning
+                    .rest
+                    .or_else(|| gm_server::vehicle_script(&v.key).map(|s| s.rest))
+                    .unwrap_or(0.0),
+            )?;
+            if let Some(spec) = v.spec() {
                 t.set("rpm", c.rpm(&spec))?;
+                t.set("tyre_mu", spec.tyre_mu)?;
                 t.set(
                     "cone",
                     gm_server::VehicleControls::steer_cone(c.speed, &spec),
@@ -3864,6 +3918,34 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             steer,
             handbrake,
         } => server.set_vehicle_controls(*ent, *throttle, *steer, *handbrake),
+        QueuedWrite::VehicleTuning {
+            ent,
+            max_throttle,
+            max_rev_throttle,
+            deg_slow,
+            deg_fast,
+            tyre_mu,
+            max_fwd,
+            max_rev,
+            rest,
+        } => server.set_vehicle_tuning(
+            *ent,
+            *max_throttle,
+            *max_rev_throttle,
+            *deg_slow,
+            *deg_fast,
+            *tyre_mu,
+            *max_fwd,
+            *max_rev,
+            *rest,
+        ),
+        QueuedWrite::VehicleWheel {
+            ent,
+            idx,
+            spring,
+            damping,
+            damping_compression,
+        } => server.set_vehicle_wheel(*ent, *idx as usize, *spring, *damping, *damping_compression),
         QueuedWrite::VehicleBoost { ent, boost } => server.set_vehicle_boost(*ent, *boost),
         QueuedWrite::EntityPhysics { ent, shape } => server.set_script_shape(*ent, shape.clone()),
         QueuedWrite::EntitySequence { ent, name } => server.set_sequence(*ent, name),
