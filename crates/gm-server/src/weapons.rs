@@ -1006,6 +1006,7 @@ pub fn bullet_damage(ammo: &str) -> Option<f32> {
 
 pub const DMG_BULLET: u32 = 2;
 pub const DMG_SLASH: u32 = 4;
+pub const DMG_POISON: u32 = 0x20000;
 pub const DMG_BUCKSHOT: u32 = 1 << 29;
 pub const DMG_ALWAYSGIB: u32 = 1 << 13;
 

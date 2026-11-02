@@ -920,3 +920,76 @@ fn soldier_takes_cover_when_hit() {
     }
     assert!(back, "never re-engaged");
 }
+
+/// Antlion (server_npc_melee_antlion): a ~100 u reach swipe for 5 alternating with an 84 u
+/// pounce that lands 5 inside 55 u, hits of each kind 168 ticks apart.
+#[test]
+fn antlion_alternates_swipe_and_pounce() {
+    let world = combat_server!(world);
+    let (mut server, idle, _start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_antlion", "none").unwrap();
+    let mut hits = Vec::new();
+    let mut hp = server.players[&1].health;
+    for tick in 0..700u64 {
+        server.tick(&idle);
+        let p = &server.players[&1];
+        if p.health != hp {
+            let d = server.npcs[&id]
+                .pos
+                .truncate()
+                .distance(p.state.origin.truncate());
+            hits.push((tick, hp - p.health, d));
+            hp = p.health;
+        }
+    }
+    eprintln!("hits {hits:?}");
+    assert!(hits.len() >= 4, "hits {hits:?}");
+    assert!(hits.iter().all(|(_, d, _)| *d == 5));
+    assert!(
+        hits[0].2 > 60.0 && hits[0].2 <= 101.0,
+        "swipe from {}",
+        hits[0].2
+    );
+    assert!(hits[1].2 <= 56.0, "pounce landed from {}", hits[1].2);
+    let period = hits[2].0 - hits[0].0;
+    assert!((140..=200).contains(&period), "period {period}");
+}
+
+/// Poison zombie (server_npc_melee_poisonzombie): the thrown headcrab's bite leaves the
+/// player at 1 hp 187 ticks after the throw begins; the claw then lands 25.
+#[test]
+fn poison_zombie_throws_then_claws() {
+    let world = combat_server!(world);
+    let (mut server, idle, _start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_poisonzombie", "none").unwrap();
+    let mut events = Vec::new();
+    let mut hp = server.players[&1].health;
+    let mut throw_at = None;
+    for tick in 0..700u64 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if throw_at.is_none() && n.melee_swing.is_some_and(|m| m.poison) {
+            throw_at = Some((
+                tick,
+                n.pos
+                    .truncate()
+                    .distance(server.players[&1].state.origin.truncate()),
+            ));
+        }
+        let p = &server.players[&1];
+        if p.health != hp {
+            events.push((tick, p.health));
+            hp = p.health;
+        }
+    }
+    eprintln!("throw {throw_at:?} events {events:?}");
+    let (t0, d0) = throw_at.expect("never threw");
+    assert!(d0 <= 140.0 && d0 > 100.0, "threw from {d0}");
+    assert!(!events.is_empty());
+    assert_eq!(events[0].1, 1, "the bite leaves 1 hp: {events:?}");
+    assert!(
+        (180..=195).contains(&(events[0].0 - t0)),
+        "bite {} after the throw",
+        events[0].0 - t0
+    );
+}

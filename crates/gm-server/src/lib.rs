@@ -946,6 +946,10 @@ pub struct Npc {
     pub swing_until: u64,
     pub melee_hit_at: Option<u64>,
     pub melee_hits_left: u8,
+    /// Index of the current melee move, the move being swung, and the dash left to run.
+    pub melee_move: usize,
+    pub melee_swing: Option<NpcMelee>,
+    pub melee_dash: f32,
     /// Leap attack (headcrabs): velocity while airborne, the tick a hang on the player's hull
     /// ends, and the earliest tick of the next leap.
     pub flight: Option<Vec3>,
@@ -1079,7 +1083,33 @@ pub struct NpcMelee {
     pub punch: f32,
     /// Closes in at the run gait.
     pub run: bool,
+    /// The move begins once the player is within this 2D distance (the reach by default).
+    pub start_range: f32,
+    /// A ground dash toward the player over the first NPC_LUNGE_TICKS of the swing (u).
+    pub lunge: f32,
+    /// A back-step after the hit over NPC_LUNGE_TICKS (u).
+    pub recoil: f32,
+    /// The hit is a poison bite: after the damage the player is left with at least 1 hp.
+    pub poison: bool,
 }
+
+const NPC_LUNGE_TICKS: u64 = 21;
+/// Poison on top of the bite (the game's poison headcrab leaves the player at 1 hp).
+const NPC_POISON_DAMAGE: f32 = 94.0;
+
+const MELEE_PLAIN: NpcMelee = NpcMelee {
+    damage: 0.0,
+    reach: 0.0,
+    swing_ticks: 0,
+    hit_tick: 0,
+    hit_gap: None,
+    punch: 0.0,
+    run: false,
+    start_range: 0.0,
+    lunge: 0.0,
+    recoil: 0.0,
+    poison: false,
+};
 
 /// A leap attack: the NPC throws itself at the player on a ballistic arc (`speed` u/s
 /// horizontal, aimed `aim_height` above the player's origin under NPC_GRAVITY), damages on
@@ -1127,33 +1157,88 @@ pub fn npc_leap(class: &str) -> Option<NpcLeap> {
     }
 }
 
-/// Measured on the game's zombie (server_npc_melee_zombie): attackE starts inside 55 u, lasts
-/// 84 ticks, 25 DMG_SLASH at tick 48, the player leaves at ~325 u/s (damage force 125 plus a
-/// 200 u/s claw punch). Zombine shares the zombie's claws; other melee classes are unmeasured.
-pub fn npc_melee(class: &str) -> Option<NpcMelee> {
-    match class {
-        "npc_zombie" | "npc_zombine" => Some(NpcMelee {
-            damage: 25.0,
-            reach: 55.0,
-            swing_ticks: 84,
-            hit_tick: 48,
-            hit_gap: None,
-            punch: 325.0,
-            run: false,
-        }),
-        // server_npc_melee_fastzombie: runs in, stops at 46-50 u, `Melee` (35 ticks) claws at
-        // the swing's think and 14 ticks later for 3 each, then roars 98 ticks before running again
-        "npc_fastzombie" => Some(NpcMelee {
-            damage: 3.0,
-            reach: 52.0,
-            swing_ticks: 133,
-            hit_tick: 0,
-            hit_gap: Some(14),
-            punch: 60.0,
+/// The melee moves of a class, cycled in order; after the last the cycle restarts at
+/// `repeat_from`. Measured on the game: zombie (server_npc_melee_zombie: attackE inside 55 u,
+/// 84 ticks, 25 DMG_SLASH at tick 48, ~325 u/s launch), fast zombie (double claw), antlion
+/// (a ~100 u swipe alternating with an 84 u pounce, 168-tick period), poison zombie (a
+/// headcrab throw whose bite lands 187 ticks later, then a 25-damage claw from ~66 u).
+pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
+    const ZOMBIE: [NpcMelee; 1] = [NpcMelee {
+        damage: 25.0,
+        reach: 55.0,
+        swing_ticks: 84,
+        hit_tick: 48,
+        punch: 325.0,
+        start_range: 55.0,
+        ..MELEE_PLAIN
+    }];
+    const FAST: [NpcMelee; 1] = [NpcMelee {
+        damage: 3.0,
+        reach: 52.0,
+        swing_ticks: 133,
+        hit_tick: 0,
+        hit_gap: Some(14),
+        punch: 60.0,
+        run: true,
+        start_range: 52.0,
+        ..MELEE_PLAIN
+    }];
+    const ANTLION: [NpcMelee; 2] = [
+        NpcMelee {
+            damage: 5.0,
+            reach: 100.0,
+            swing_ticks: 98,
+            hit_tick: 34,
+            punch: 250.0,
             run: true,
-        }),
+            start_range: 100.0,
+            ..MELEE_PLAIN
+        },
+        NpcMelee {
+            damage: 5.0,
+            reach: 55.0,
+            swing_ticks: 63,
+            hit_tick: 34,
+            punch: 250.0,
+            run: true,
+            start_range: 120.0,
+            lunge: 84.0,
+            recoil: 21.0,
+            ..MELEE_PLAIN
+        },
+    ];
+    const POISON: [NpcMelee; 2] = [
+        NpcMelee {
+            damage: 5.0,
+            reach: 160.0,
+            swing_ticks: 168,
+            hit_tick: 187,
+            start_range: 140.0,
+            poison: true,
+            ..MELEE_PLAIN
+        },
+        NpcMelee {
+            damage: 25.0,
+            reach: 70.0,
+            swing_ticks: 98,
+            hit_tick: 62,
+            punch: 325.0,
+            start_range: 70.0,
+            ..MELEE_PLAIN
+        },
+    ];
+    match class {
+        "npc_zombie" | "npc_zombine" => Some((&ZOMBIE, 0)),
+        "npc_fastzombie" => Some((&FAST, 0)),
+        "npc_antlion" => Some((&ANTLION, 0)),
+        "npc_poisonzombie" => Some((&POISON, 1)),
         _ => None,
     }
+}
+
+/// The class's first melee move (its approach gait and reach).
+pub fn npc_melee(class: &str) -> Option<NpcMelee> {
+    npc_melee_moves(class).map(|(m, _)| m[0])
 }
 const NPC_YAW_RATE_PER_SPEED: f32 = 0.267;
 const NPC_TURN_ACCEL: f32 = 0.89;
@@ -1232,6 +1317,21 @@ const NPC_MOVE_HEADCRAB: NpcMoveDef = NpcMoveDef {
     run: 49.5,
     run_accel: 100.0,
 };
+/// Antlion run ramp measured in server_npc_melee_antlion (3.9, 11.7 u per think); its top
+/// speed never showed on the short approach and is a placeholder.
+const NPC_MOVE_ANTLION: NpcMoveDef = NpcMoveDef {
+    walk: 200.0,
+    walk_accel: 110.0,
+    run: 200.0,
+    run_accel: 110.0,
+};
+/// Poison zombie walk measured in server_npc_melee_poisonzombie (5.85 u per think).
+const NPC_MOVE_POISONZOMBIE: NpcMoveDef = NpcMoveDef {
+    walk: 55.2,
+    walk_accel: 104.0,
+    run: 55.2,
+    run_accel: 104.0,
+};
 /// Zombie approach measured in server_npc_melee_zombie (4.73 u per think); it never runs.
 const NPC_MOVE_ZOMBIE: NpcMoveDef = NpcMoveDef {
     walk: 44.6,
@@ -1248,6 +1348,8 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
         "npc_combine_s" => NPC_MOVE_COMBINE,
         "npc_zombie" | "npc_zombine" => NPC_MOVE_ZOMBIE,
         "npc_fastzombie" => NPC_MOVE_FASTZOMBIE,
+        "npc_antlion" => NPC_MOVE_ANTLION,
+        "npc_poisonzombie" => NPC_MOVE_POISONZOMBIE,
         "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => NPC_MOVE_HEADCRAB,
         _ => NPC_MOVE_CITIZEN,
     }
@@ -5540,6 +5642,9 @@ impl<'w> Server<'w> {
                 swing_until: 0,
                 melee_hit_at: None,
                 melee_hits_left: 0,
+                melee_move: 0,
+                melee_swing: None,
+                melee_dash: 0.0,
                 flight: None,
                 hung_until: 0,
                 next_leap: 0,
@@ -6140,8 +6245,9 @@ impl<'w> Server<'w> {
             self.npc_leap_think(id, now, l);
             return;
         }
-        let melee = npc_melee(&n.class).filter(|_| npc_weapon_shot(&n.weapon).is_none());
-        if let Some(m) = melee {
+        let melee = npc_melee_moves(&n.class).filter(|_| npc_weapon_shot(&n.weapon).is_none());
+        if let Some((moves, _)) = melee {
+            let m = moves[n.melee_move.min(moves.len() - 1)];
             self.npc_melee_think(id, now, m);
             return;
         }
@@ -6357,8 +6463,8 @@ impl<'w> Server<'w> {
         };
         n.target = Some(player);
         n.target_seen = now;
-        n.chase_reach = m.reach - 3.0;
-        if dist <= m.reach {
+        n.chase_reach = m.start_range.min(m.reach) - 3.0;
+        if dist <= m.start_range {
             n.chase = None;
             n.goal = None;
             n.next_goal = None;
@@ -6366,6 +6472,15 @@ impl<'w> Server<'w> {
             n.swing_until = now + m.swing_ticks;
             n.melee_hit_at = Some(now + m.hit_tick);
             n.melee_hits_left = if m.hit_gap.is_some() { 2 } else { 1 };
+            n.melee_swing = Some(m);
+            n.melee_dash = m.lunge;
+            if let Some((moves, repeat)) = npc_melee_moves(&n.class) {
+                n.melee_move = if n.melee_move + 1 < moves.len() {
+                    n.melee_move + 1
+                } else {
+                    repeat
+                };
+            }
             let to = origin.truncate() - feet.truncate();
             if to.length_squared() > 1e-6 {
                 n.angles.y = to.y.atan2(to.x).to_degrees();
@@ -6659,7 +6774,7 @@ impl<'w> Server<'w> {
             .npcs
             .iter()
             .filter(|(_, n)| n.dead_at.is_none() && n.melee_hit_at == Some(now))
-            .filter_map(|(id, n)| Some((*id, n.target?, npc_melee(&n.class)?)))
+            .filter_map(|(id, n)| Some((*id, n.target?, n.melee_swing?)))
             .collect();
         for (id, player, m) in due {
             let Some(n) = self.npcs.get_mut(&id) else {
@@ -6684,9 +6799,65 @@ impl<'w> Server<'w> {
                 glam::Vec2::X
             };
             if self.damage_player(player, m.damage, weapons::DMG_SLASH) > 0.0 {
+                if m.poison {
+                    let left = self.players.get(&player).map_or(0, |p| p.health);
+                    let dose = NPC_POISON_DAMAGE.min((left - 1).max(0) as f32);
+                    if dose > 0.0 {
+                        self.damage_player(player, dose, weapons::DMG_POISON);
+                    }
+                }
                 if let Some(p) = self.players.get_mut(&player) {
                     p.state.velocity += dir.extend(0.0) * m.punch;
                 }
+                if m.recoil > 0.0 {
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.melee_dash = -m.recoil;
+                    }
+                }
+            }
+        }
+        // lunges and recoils: the dash toward (or away from) the target, spread over
+        // NPC_LUNGE_TICKS, hull-swept and dropped to the floor
+        let dashing: Vec<(u32, u32)> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| n.dead_at.is_none() && n.melee_dash.abs() > 1e-3)
+            .filter_map(|(id, n)| Some((*id, n.target?)))
+            .collect();
+        for (id, player) in dashing {
+            let Some(p) = self.players.get(&player) else {
+                continue;
+            };
+            let origin = p.state.origin;
+            let Some(n) = self.npcs.get(&id) else {
+                continue;
+            };
+            let (pos, mins, maxs, dash) = (n.pos, n.mins, n.maxs, n.melee_dash);
+            let to = (origin - pos).truncate();
+            if to.length_squared() < 1e-6 {
+                continue;
+            }
+            let per_tick = dash / NPC_LUNGE_TICKS as f32;
+            let step = (to.normalize() * per_tick).extend(0.0);
+            let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
+            let tr = self.collision.trace_box(
+                pos + lift,
+                pos + step + lift,
+                mins,
+                maxs,
+                gm_collision::MASK_PLAYERSOLID,
+            );
+            let reached = if tr.start_solid { pos + lift } else { tr.end };
+            let floor = self
+                .npc_floor(reached, mins, maxs)
+                .unwrap_or(reached - lift);
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.pos = floor;
+                n.melee_dash = if dash.abs() <= per_tick.abs() + 1e-3 || tr.fraction < 0.999 {
+                    0.0
+                } else {
+                    dash - per_tick
+                };
             }
         }
     }
@@ -6781,6 +6952,9 @@ impl<'w> Server<'w> {
                 swing_until: 0,
                 melee_hit_at: None,
                 melee_hits_left: 0,
+                melee_move: 0,
+                melee_swing: None,
+                melee_dash: 0.0,
                 flight: None,
                 hung_until: 0,
                 next_leap: 0,
