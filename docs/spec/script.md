@@ -692,6 +692,14 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   dead player's ragdoll is a server record without an entity id, so `GetRagdollEntity` /
   `CreateRagdoll` stay stubs; `LagCompensation` (shots already rewind by `seen_tick`, script
   traces do not) and `SetAvoidPlayers` (players do not collide) too.
+- Scripted NPC schedules (`Type = "ai"`), as the game's base_ai runs them in Lua: `RunAI` on every
+  think picks `SelectSchedule()` when idle and steps the current `ai_schedule` task by task
+  (`StartTask` on the first think, `RunTask` after; `TaskComplete()` ends a task; `NextTask`,
+  `ScheduleFinished`, `TaskTime`, `SetTask`, `DoSchedule`, `StartSchedule`); `Schedule:AddTaskEx`
+  / `Init`, `Task:Init` / `IsEngineType` / `IsFNameType` / `Start` / `Run` (+ `_FName`) and
+  `TASKSTATUS_*` complete the classes. Engine tasks (`EngTask`) have no backend here and
+  complete at once; `StartEngineSchedule` / `StartEngineTask` / `RunEngineTask` and the
+  `NPC:SetSchedule` family on engine NPCs stay stubs (our AI is not schedule-based).
 - NextBots: a scripted entity with `Base = "base_nextbot"` (or `Type = "nextbot"`) gets a server
   ground mover (`Server::nextbots`, `NextBot`): each tick the xy velocity ramps toward the
   `Approach` goal at the desired speed (accel / decel), gravity pulls an airborne bot, the hull

@@ -86,6 +86,9 @@ local function instance_for(store, defs, class, id, extra)
     if extra == nil and scripted_ents.__is_nextbot and scripted_ents.__is_nextbot(defs[class]) then
         for k, v in pairs(scripted_ents.__nextbot_methods) do if def[k] == nil then def[k] = v end end
     end
+    if extra == nil and scripted_ents.__is_ai and scripted_ents.__is_ai(defs[class]) then
+        for k, v in pairs(scripted_ents.__ai_methods) do if def[k] == nil then def[k] = v end end
+    end
     local wrapper = extra or Entity(id)
     inst = setmetatable({}, { __index = function(_, k)
         local v = def[k]
@@ -107,7 +110,7 @@ function scripted_ents.Register(ENT, class)
         model = ENT.Model, think_interval = ENT.ThinkInterval, use_type = ENT.UseType,
         print_name = ENT.PrintName, category = ENT.Category,
         init = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.SetupDataTables and not rawget(i, "__dt") then rawset(i, "__dt", true); i:SetupDataTables() end if i.Initialize then i:Initialize() end if i.SpawnFunction == nil then end end,
-        think = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if scripted_ents.__is_nextbot(ENT) then scripted_ents.__nextbot_think(i) end if i.Think then local r = i:Think(); local nt = rawget(i, "__next_think"); if nt then rawset(i, "__next_think", nil); return nt end return r end end,
+        think = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if scripted_ents.__is_nextbot(ENT) then scripted_ents.__nextbot_think(i) end if scripted_ents.__is_ai(ENT) and i.RunAI then i:RunAI() end if i.Think then local r = i:Think(); local nt = rawget(i, "__next_think"); if nt then rawset(i, "__next_think", nil); return nt end return r end end,
         start_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.StartTouch then i:StartTouch(Entity(p.other)) end end,
         touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.Touch then i:Touch(Entity(p.other)) end end,
         end_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.EndTouch then i:EndTouch(Entity(p.other)) end end,
@@ -352,3 +355,48 @@ end
 function NB:GetLastKnownArea() return rawget(self, "__area") or NULL end
 function NB:ClearLastKnownArea() rawset(self, "__area", nil) end
 scripted_ents.__nextbot_methods = NB
+
+-- @hook ENTITY:SelectSchedule
+-- @hook ENTITY:RunAI
+-- @hook ENTITY:StartSchedule
+-- @hook ENTITY:DoSchedule
+-- @hook ENTITY:SetTask
+-- @hook ENTITY:NextTask
+-- @hook ENTITY:StartTask
+-- @hook ENTITY:RunTask
+-- @hook ENTITY:TaskFinished
+-- @hook ENTITY:TaskTime
+-- @hook ENTITY:ScheduleFinished
+-- Scripted NPC (Type "ai") schedules, as the game's base_ai runs them: RunAI every think picks
+-- SelectSchedule() when idle and steps the current schedule task by task (StartTask on the
+-- first think, RunTask after, TaskComplete() ends a task, NextTask / ScheduleFinished).
+-- Engine tasks (EngTask) have no backend here and complete at once.
+local AIM = {}
+function AIM:SelectSchedule() end
+function AIM:StartSchedule(sched) self.CurrentSchedule = sched; self.CurrentTaskID = 1; self:SetTask(sched:GetTask(1)) end
+function AIM:SetTask(task) self.CurrentTask = task; self.TaskStatus = TASKSTATUS_NEW; self.TaskStartTime = CurTime() end
+function AIM:TaskComplete() self.TaskStatus = TASKSTATUS_COMPLETE end
+function AIM:TaskFinished() return self.TaskStatus == TASKSTATUS_COMPLETE end
+function AIM:TaskTime() return CurTime() - (self.TaskStartTime or CurTime()) end
+function AIM:StartTask(task) if task:IsEngineType() then self:TaskComplete() else task:Start(self) end end
+function AIM:RunTask(task) if not task:IsEngineType() then task:Run(self) end end
+function AIM:NextTask(sched)
+    self.CurrentTaskID = (self.CurrentTaskID or 0) + 1
+    if self.CurrentTaskID <= sched:NumTasks() then self:SetTask(sched:GetTask(self.CurrentTaskID)) else self.CurrentTask = nil end
+end
+function AIM:ScheduleFinished() self.CurrentSchedule = nil; self.CurrentTask = nil; self.CurrentTaskID = 0 end
+function AIM:DoSchedule(sched)
+    local task = self.CurrentTask
+    if task then
+        if self.TaskStatus == TASKSTATUS_NEW then self.TaskStatus = TASKSTATUS_RUNNING; self:StartTask(task)
+        elseif self.TaskStatus == TASKSTATUS_RUNNING then self:RunTask(task) end
+    end
+    if self:TaskFinished() then self:NextTask(sched) end
+    if (self.CurrentTaskID or 0) > sched:NumTasks() then self:ScheduleFinished() end
+end
+function AIM:RunAI()
+    local s = self.CurrentSchedule
+    if s then self:DoSchedule(s) else local n = self:SelectSchedule(); if n then self:StartSchedule(n) end end
+end
+scripted_ents.__is_ai = function(ENT) return ENT ~= nil and ENT.Type == "ai" end
+scripted_ents.__ai_methods = AIM

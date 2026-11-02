@@ -1066,3 +1066,53 @@ fn hint_and_screen_fade_writes() {
     assert!(writes.iter().any(|w| matches!(w, QueuedWrite::PlayerHint { player: 1, name, delay } if name == "OpenSpawnMenu" && *delay == 2.0)));
     assert!(writes.iter().any(|w| matches!(w, QueuedWrite::PlayerScreenFade { player: 1, flags: 2, color: [255, 0, 0, 128], time, hold } if *time == 1.0 && *hold == 0.5)));
 }
+
+#[test]
+fn scripted_npc_schedule_runs_task_by_task() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source: "local ENT = { Type = \"ai\", Base = \"base_ai\", Model = \"models/props_c17/oildrum001.mdl\" }
+            state.log = \"\"
+            function ENT:SelectSchedule()
+                if state.sel then return end
+                state.sel = true
+                local s = ai_schedule.New(\"demo\")
+                s:AddTaskEx(\"TaskStart_A\", \"Task_A\", 7)
+                s:EngTask(\"TASK_WAIT\", 1)
+                s:AddTaskEx(\"TaskStart_B\", \"Task_B\", nil)
+                return s
+            end
+            function ENT:TaskStart_A(d) state.log = state.log .. \"A\" .. tostring(d) end
+            function ENT:Task_A() state.log = state.log .. \"a\"; self:TaskComplete() end
+            function ENT:TaskStart_B() state.log = state.log .. \"B\"; self:TaskComplete() end
+            scripted_ents.Register(ENT, \"my_npc\")"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut ev = Payload::default();
+    ev.ints.push(("entity", 5));
+    ev.ints.push(("player", 0));
+    ev.ints.push(("other", 0));
+    ev.floats.push(("amount", 0.0));
+    ev.strs.push(("class", "my_npc".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.init", &ev, 7)
+        .unwrap();
+    for n in 0..5 {
+        rt.actors_mut()[0]
+            .dispatch(&snap, "entity.think", &ev, 8 + n)
+            .unwrap();
+    }
+    let (log, done): (String, bool) = rt.actors()[0]
+        .eval("local i = scripted_ents.__instance(5); return state.log, i.CurrentSchedule == nil and i:TaskTime() >= 0")
+        .unwrap();
+    assert_eq!((log.as_str(), done), ("A7aB", true));
+}
