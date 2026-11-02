@@ -682,7 +682,15 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   tick; `BehaveStart` / `BehaveUpdate` around it), `NextBot:MoveToPos(pos, {tolerance, lookahead,
   maxage, repath})` drives a `PathFollower` to the goal, `PathFollower:Update(bot)` approaches the
   current goal and advances the cursor on arrival, `Chase(bot, ent)` recomputes when the target
-  moved > 30 u. No navmesh-area awareness yet (`IsAreaTraversable` true, ground normal up).
+  moved > 30 u. `NextBot:StartActivity` / `GetActivity` go through the entity animator and the
+  model's activity tags, `PlaySequenceAndWait` yields the behaviour until the sequence finished
+  (or its duration at the playback rate passed), `BodyMoveXY` writes `move_x` / `move_y` pose
+  parameters from the locomotion velocity in the body frame over the desired speed, `SetFOV` /
+  `SetMaxVisionRange` (90 deg / 2000 u) feed `IsAbleToSee(ent, useFOV)` (range, cone, clear
+  `util.TraceLine` from the eyes), `GetLastKnownArea` is the nav area under the bot refreshed on
+  every think (`ClearLastKnownArea` forgets it). Stubs stay for hiding spots (`FindSpot(s)`),
+  `BecomeRagdoll` (no ragdoll write) and `SetSolidMask` (the mover sweeps with
+  `MASK_PLAYERSOLID`). `IsAreaTraversable` is true, the ground normal up.
 
 Done in `glua/server.luau`:
 

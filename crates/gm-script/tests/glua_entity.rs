@@ -965,3 +965,54 @@ fn nextbot_behaviour_coroutine_and_loco_writes() {
         .unwrap();
     assert!(is_bot);
 }
+
+#[test]
+fn nextbot_vision_and_body_helpers() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source:
+            "local ENT = { Base = \"base_nextbot\", Model = \"models/props_c17/oildrum001.mdl\" }
+            function ENT:RunBehaviour()
+                self:SetFOV(120); self:SetMaxVisionRange(500)
+                state.fov, state.range = self:GetFOV(), self:GetMaxVisionRange()
+                state.area = self:GetLastKnownArea() == NULL
+                self:BodyMoveXY()
+                self:PlaySequenceAndWait(\"idle\", 1)
+                state.done = true
+            end
+            scripted_ents.Register(ENT, \"my_bot2\")"
+                .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut ev = Payload::default();
+    ev.ints.push(("entity", 5));
+    ev.ints.push(("player", 0));
+    ev.ints.push(("other", 0));
+    ev.floats.push(("amount", 0.0));
+    ev.strs.push(("class", "my_bot2".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.init", &ev, 7)
+        .unwrap();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.think", &ev, 8)
+        .unwrap();
+    let (fov, range, area, done): (f32, f32, bool, bool) = rt.actors()[0]
+        .eval("return state.fov, state.range, state.area, state.done == true")
+        .unwrap();
+    assert_eq!((fov, range, area, done), (120.0, 500.0, true, true));
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(writes
+        .iter()
+        .any(|w| matches!(w, QueuedWrite::EntityPose { ent: 5, name, .. } if name == "move_x")));
+    assert!(writes
+        .iter()
+        .any(|w| matches!(w, QueuedWrite::EntityPose { ent: 5, name, .. } if name == "move_y")));
+}

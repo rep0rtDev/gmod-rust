@@ -724,7 +724,7 @@ for _, n in ipairs({ "EndBlock", "StartBlock", "WriteAngle", "WriteBool", "Write
 __glua_classes["ITexture"] = __glua_classes["ITexture"] or {}
 for _, n in ipairs({ "Download", "GetColor", "GetMappingHeight", "GetMappingWidth", "GetName", "GetNumAnimationFrames", "Height", "IsError", "IsErrorTexture", "Width" }) do if __glua_classes["ITexture"][n] == nil then __glua_classes["ITexture"][n] = stub("ITexture:" .. n) end end
 __glua_classes["NextBot"] = __glua_classes["NextBot"] or {}
-for _, n in ipairs({ "BecomeRagdoll", "BodyMoveXY", "ClearLastKnownArea", "FindSpot", "FindSpots", "GetActivity", "GetFOV", "GetLastKnownArea", "GetMaxVisionRange", "GetSolidMask", "IsAbleToSee", "PlaySequenceAndWait", "SetFOV", "SetMaxVisionRange", "SetSolidMask", "StartActivity" }) do if __glua_classes["NextBot"][n] == nil then __glua_classes["NextBot"][n] = stub("NextBot:" .. n) end end
+for _, n in ipairs({ "BecomeRagdoll", "FindSpot", "FindSpots", "GetSolidMask", "SetSolidMask"}) do if __glua_classes["NextBot"][n] == nil then __glua_classes["NextBot"][n] = stub("NextBot:" .. n) end end
 __glua_classes["PhysCollide"] = __glua_classes["PhysCollide"] or {}
 for _, n in ipairs({ "Destroy", "IsValid", "TraceBox" }) do if __glua_classes["PhysCollide"][n] == nil then __glua_classes["PhysCollide"][n] = stub("PhysCollide:" .. n) end end
 __glua_classes["Schedule"] = __glua_classes["Schedule"] or {}

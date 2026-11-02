@@ -271,6 +271,10 @@ function scripted_ents.__nextbot_think(i)
         rawset(i, "__behaviour", co)
         if i.BehaveStart then i:BehaveStart() end
     end
+    if navmesh and navmesh.IsLoaded and navmesh.IsLoaded() then
+        local a = navmesh.GetNavArea(i.Entity:GetPos(), 120)
+        if a ~= nil and a ~= NULL then rawset(i, "__area", a) end
+    end
     if i.BehaveUpdate then i:BehaveUpdate(engine.TickInterval()) end
     if co and coroutine.status(co) == "suspended" then
         local ok, err = coroutine.resume(co)
@@ -304,4 +308,47 @@ function NB:HandleStuck() self.loco:ClearStuck() end
 function NB:GetRangeTo(pos) if type(pos) == "table" and pos.GetPos then pos = pos:GetPos() end return self:GetPos():Distance(pos) end
 function NB:GetRangeSquaredTo(pos) local d = self:GetRangeTo(pos); return d * d end
 function NB:IsNextBot() return true end
+-- activity / sequence helpers over the entity animator
+function NB:StartActivity(act) rawset(self, "__act", act); self:SetAnimation(act) end
+function NB:GetActivity() local a = self:GetSequenceActivity(self:GetSequence()); if a == -1 then return rawget(self, "__act") or -1 end return a end
+-- plays `seq` (name or index) at `speed`, yielding the behaviour coroutine until it finished
+function NB:PlaySequenceAndWait(seq, speed)
+    speed = tonumber(speed) or 1
+    self:SetSequence(seq)
+    self:SetPlaybackRate(speed)
+    local dur = self:SequenceDuration(type(seq) == "number" and seq or self:LookupSequence(seq)) or 0
+    local until_t = CurTime() + (speed > 0 and dur / speed or dur)
+    while CurTime() < until_t and not self:IsSequenceFinished() do coroutine.yield() end
+end
+-- move_x / move_y pose parameters from the locomotion velocity in the body frame
+function NB:BodyMoveXY()
+    local v = self.loco and self.loco:GetVelocity() or Vector()
+    local speed = self.loco and self.loco:GetDesiredSpeed() or 0
+    if speed <= 0 then speed = math.max(v:Length2D(), 1) end
+    local ang = self:GetAngles()
+    local fwd, right = ang:Forward(), ang:Right()
+    self:SetPoseParameter("move_x", (v.x * fwd.x + v.y * fwd.y) / speed)
+    self:SetPoseParameter("move_y", (v.x * right.x + v.y * right.y) / speed)
+end
+function NB:SetFOV(f) rawset(self, "__fov", tonumber(f) or 90) end
+function NB:GetFOV() return rawget(self, "__fov") or 90 end
+function NB:SetMaxVisionRange(r) rawset(self, "__vision", tonumber(r) or 2000) end
+function NB:GetMaxVisionRange() return rawget(self, "__vision") or 2000 end
+-- within range, inside the FOV cone when asked, and a clear line from the eyes
+function NB:IsAbleToSee(ent, useFOV)
+    if not IsValid(ent) then return false end
+    local eye = self:EyePos()
+    local target = ent.WorldSpaceCenter and ent:WorldSpaceCenter() or ent:GetPos()
+    local d = target - eye
+    if d:Length() > self:GetMaxVisionRange() then return false end
+    if useFOV ~= false and d:Length() > 1 then
+        local cosang = math.cos(math.rad(self:GetFOV() * 0.5))
+        local dn = Vector(d.x, d.y, d.z); dn:Normalize()
+        if dn:Dot(self:GetAngles():Forward()) < cosang then return false end
+    end
+    local tr = util.TraceLine({ start = eye, endpos = target, filter = self.Entity or self })
+    return not tr.Hit or tr.Fraction > 0.999 or tr.Entity == ent
+end
+function NB:GetLastKnownArea() return rawget(self, "__area") or NULL end
+function NB:ClearLastKnownArea() rawset(self, "__area", nil) end
 scripted_ents.__nextbot_methods = NB
