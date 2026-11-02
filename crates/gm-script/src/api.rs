@@ -2335,6 +2335,10 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 e.set("spring", w.spring)?;
                 e.set("damping", w.damping)?;
                 e.set("damping_compression", w.damping_compression)?;
+                if let Some(ct) = v.controls.contacts.get(i) {
+                    e.set("contact", vec3_table(lua, ct.point)?)?;
+                    e.set("touching", ct.touching)?;
+                }
                 ws.set(i + 1, e)?;
             }
             t.set("wheels", ws)?;

@@ -279,6 +279,11 @@ end
 function VEH:GetWheelCount() local v = vinfo(self); return v and #v.wheels or 0 end
 function VEH:GetWheelBaseHeight(i) local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]; return w and (w.hub.z - w.radius) or 0 end
 function VEH:GetWheelTotalHeight(i) local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]; return w and (w.radius * 2) or 0 end
+function VEH:GetWheelContactPoint(i)
+    local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]
+    if not w or not w.contact then return Vector(0, 0, 0), false end
+    return Vector(w.contact.x, w.contact.y, w.contact.z), w.touching == true
+end
 function VEH:GetSpringLength(i) local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]; return w and w.radius or 0 end
 function VEH:GetVehicleClass() return self:GetClass() end
 -- driving: the controls live on the server's vehicle (kept until changed), the drive law runs
@@ -1759,7 +1764,7 @@ function VEH:IsBoosting() local v = vinfo(self); return v ~= nil and v.engine ==
 function VEH:SetBoost(b) qwrite("vehicle.boost", self.__id, tonumber(b) or 0) end
 function VEH:BoostTimeLeft() return 0 end
 function VEH:IsVehicleBodyInWater() return false end
-for _, name in ipairs({ "CheckExitPoint", "GetAmmo", "GetCameraDistance", "GetPassengerSeatPoint", "GetThirdPersonMode", "GetVehicleParams", "GetVehicleViewPosition", "GetWheel", "GetWheelBaseHeight", "GetWheelContactPoint", "GetWheelTotalHeight", "HasBrakePedal", "SetCameraDistance", "SetHasBrakePedal", "SetMaxReverseThrottle", "SetMaxThrottle", "SetSpringLength", "SetSteeringDegrees", "SetThirdPersonMode", "SetVehicleClass", "SetVehicleEntryAnim", "SetVehicleParams", "SetWheelFriction" }) do
+for _, name in ipairs({ "CheckExitPoint", "GetAmmo", "GetCameraDistance", "GetPassengerSeatPoint", "GetThirdPersonMode", "GetVehicleViewPosition", "GetWheel", "HasBrakePedal", "SetCameraDistance", "SetHasBrakePedal", "SetMaxReverseThrottle", "SetMaxThrottle", "SetSpringLength", "SetSteeringDegrees", "SetThirdPersonMode", "SetVehicleClass", "SetVehicleEntryAnim", "SetVehicleParams", "SetWheelFriction" }) do
     if VEH[name] == nil then VEH[name] = stub("Vehicle:" .. name) end
 end
 

@@ -942,6 +942,7 @@ fn vehicle_record_reads_the_server_table() {
                 speed: 300.0,
                 wheels_in_contact: 4,
                 gear: 1,
+                contacts: Vec::new(),
             },
             class: "prop_vehicle_jeep".into(),
             model: "models/buggy.mdl".into(),
@@ -1019,6 +1020,7 @@ fn vehicle_driving_readbacks_and_writes() {
                 speed: 300.0,
                 wheels_in_contact: 4,
                 gear: 1,
+                contacts: Vec::new(),
             },
         },
     );

@@ -3006,6 +3006,17 @@ pub struct VehicleControls {
     pub wheels_in_contact: u32,
     /// Gear index of the automatic transmission (0 = first).
     pub gear: u8,
+    /// Each wheel's ground trace of the last tick (`Vehicle:GetWheelContactPoint`).
+    pub contacts: Vec<WheelContact>,
+}
+
+/// A wheel's ground trace: its hub in the world, the point the tyre meets (the trace end when
+/// nothing is under it) and whether it touches.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WheelContact {
+    pub hub: Vec3,
+    pub point: Vec3,
+    pub touching: bool,
 }
 
 /// The driving law of a wheeled vehicle, measured on srcds (`server_vehicle_drive`: a driverless
@@ -7438,12 +7449,18 @@ impl<'w> Server<'w> {
             let mid_y = wheels.iter().map(|w| w.hub.y).sum::<f32>() / wheels.len() as f32;
             let share = mass / wheels.len() as f32;
             let mut contacts = 0u32;
+            let mut traces = Vec::with_capacity(wheels.len());
             for w in &wheels {
                 let hub = st.position + st.rotation * w.hub;
                 let len = w.radius + VEHICLE_WHEEL_TRAVEL;
                 let tr = self
                     .collision
                     .trace_ray(hub, hub - up * len, gm_collision::MASK_SOLID);
+                traces.push(WheelContact {
+                    hub,
+                    point: hub - up * (len * tr.fraction.min(1.0)),
+                    touching: tr.fraction < 1.0,
+                });
                 if tr.fraction >= 1.0 {
                     continue;
                 }
@@ -7533,6 +7550,7 @@ impl<'w> Server<'w> {
             c.steer_angle = angle;
             c.speed = speed;
             c.wheels_in_contact = contacts;
+            c.contacts = traces;
             if driving {
                 let rpm = c.rpm(&spec);
                 if !spec.gears.is_empty()

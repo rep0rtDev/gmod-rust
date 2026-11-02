@@ -693,8 +693,9 @@ The rest of `Player`, `PhysObj`, `Weapon` and `Vehicle` (end of `glua/entity.lua
   mph, in 28 ticks while boosted, creeps above, and decays back once off; the game holds 677 in its
   higher gear afterwards, ours returns to the plateau; no 3 s limit through the API, as in the
   game). `SetMaxThrottle / SetMaxReverseThrottle` stay stubs: measured, they do not touch the API
-  throttle (full acceleration with the cap at 0.5). `SetSpringLength / SetWheelFriction /
-  SetSteeringDegrees / SetVehicleParams` stay stubs (no such inputs on our wheels).
+  throttle (full acceleration with the cap at 0.5). `GetWheelContactPoint(i)` is the wheel's ground trace of the last tick (point,
+  touching). `GetWheel / SetSpringLength / SetWheelFriction / SetSteeringDegrees / SetVehicleParams`
+  stay stubs (no wheel bodies, no such inputs on our wheels).
 
 GM hooks and the coverage manifest: a hook is not a Lua value, so `glua::list` counts a `GM`
 hook as present when a bridge in the GLua sources raises it (`hook.Run("Name"`), and a scripted

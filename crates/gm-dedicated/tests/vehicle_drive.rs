@@ -52,6 +52,19 @@ fn jeep_drives_like_the_measured_one() {
         "settled: {}",
         speed(&server, veh)
     );
+    let contacts = &server.vehicles[&veh].controls.contacts;
+    assert_eq!(contacts.len(), 4);
+    for ct in contacts {
+        assert!(ct.touching, "wheel on the ground: {ct:?}");
+        assert!(
+            (ct.point.z + 12800.0).abs() < 6.0,
+            "contact on the floor: {ct:?}"
+        );
+        assert!(
+            ct.hub.z > ct.point.z + 10.0,
+            "hub above the contact: {ct:?}"
+        );
+    }
     let yaw0 = yaw(&server, veh);
 
     // full throttle: +5.85 u/s per tick, 234 u/s after 40 ticks, 614..640 plateau by 110
