@@ -1962,3 +1962,50 @@ fn pulley_and_motor_writes() {
         QueuedWrite::Motor { ent: 5, ent2: 6, axis_point, torque, toggle: true, key_f: 7, key_r: 8, .. }
             if *axis_point == Vec3::Z && *torque == 500.0)), "{writes:?}");
 }
+
+#[test]
+fn nav_area_search_lists_follow_total_cost() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            local A = __glua_classes.CNavArea
+            local a, b, c = setmetatable({ __id = 1 }, A), setmetatable({ __id = 2 }, A), setmetatable({ __id = 3 }, A)
+            a:ClearSearchLists()
+            state.empty0 = a:IsOpenListEmpty()
+            a:SetCostSoFar(4); a:SetTotalCost(10); a:AddToOpenList()
+            b:SetTotalCost(5); b:AddToOpenList()
+            c:SetTotalCost(7); c:AddToOpenList(); c:AddToOpenList()
+            state.first = a:PopOpenList() == b
+            state.bopen = b:IsOpen()
+            c:SetTotalCost(20); c:UpdateOnOpenList()
+            state.second = a:PopOpenList() == a
+            state.third = a:PopOpenList() == c
+            state.empty1 = a:IsOpenListEmpty() and a:PopOpenList() == nil
+            a:AddToClosedList(); state.closed = a:IsClosed(); a:RemoveFromClosedList(); state.closed2 = a:IsClosed()
+            a:SetParent(b, 3); state.parent = a:GetParent() == b; state.how = a:GetParentHow(); state.how2 = c:GetParentHow()
+            state.cost = a:GetCostSoFar()
+            a:ClearSearchLists(); state.cost2 = a:GetCostSoFar() end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let a = &rt.actors()[0];
+    let flags: Vec<bool> = a
+        .eval("return { state.empty0, state.first, not state.bopen, state.second, state.third, state.empty1, state.closed, not state.closed2, state.parent }")
+        .unwrap();
+    assert_eq!(flags, vec![true; 9]);
+    let (how, how2, cost, cost2): (i32, i32, f32, f32) = a
+        .eval("return state.how, state.how2, state.cost, state.cost2")
+        .unwrap();
+    assert_eq!((how, how2, cost, cost2), (3, 9, 4.0, 0.0));
+}

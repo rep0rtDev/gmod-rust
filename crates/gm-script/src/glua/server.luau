@@ -1128,7 +1128,34 @@ function NAVAREA:IsCompletelyVisible(pos) if not sees(self.__center, pos) then r
 function NAVAREA:IsPartiallyVisible(pos) if sees(self.__center, pos) then return true end for _, c in ipairs(P(self).corners) do if sees(c, pos) then return true end end return false end
 function NAVAREA:ComputeGroundHeightChange(other) return other.__center.z - self.__center.z end
 function NAVAREA:ComputeAdjacentConnectionHeightChange(other) return other.__center.z - self.__center.z end
-for _, name in ipairs({ "AddAttributes", "AddHidingSpot", "AddToClosedList", "AddToOpenList", "ClearSearchLists", "ComputeAdjacentConnectionHeightChange", "ComputeDirection", "ConnectTo", "Disconnect", "Draw", "DrawSpots", "GetAdjacentAreaDistances", "GetAdjacentAreas", "GetAdjacentAreasAtSide", "GetAdjacentCount", "GetAdjacentCountAtSide", "GetAttributes", "GetCorner", "GetCostSoFar", "GetExposedSpots", "GetExtentInfo", "GetHidingSpots", "GetIncomingConnectionDistances", "GetIncomingConnections", "GetIncomingConnectionsAtSide", "GetLadders", "GetLaddersAtSide", "GetLightIntensity", "GetParent", "GetParentHow", "GetPlace", "GetRandomAdjacentAreaAtSide", "GetRandomPoint", "GetSizeX", "GetSizeY", "GetSpotEncounters", "GetTotalCost", "GetVisibleAreas", "HasAttributes", "IsBlocked", "IsClosed", "IsCompletelyVisible", "IsConnected", "IsConnectedAtSide", "IsCoplanar", "IsDamaging", "IsFlat", "IsOpen", "IsOpenListEmpty", "IsOverlapping", "IsOverlappingArea", "IsPartiallyVisible", "IsPotentiallyVisible", "IsRoughlySquare", "IsUnderwater", "MarkAsBlocked", "MarkAsDamaging", "MarkAsUnblocked", "PlaceOnGround", "PopOpenList", "Remove", "RemoveAttributes", "RemoveFromClosedList", "SetAttributes", "SetCorner", "SetCostSoFar", "SetParent", "SetPlace", "SetTotalCost", "UpdateOnOpenList" }) do
+-- A* scratch state of a Lua path search (the game keeps it on the areas): one open list ordered
+-- by total cost, a closed set, cost so far / total cost / parent + how per area id.
+local nav_search = { open = {}, closed = {}, cost = {}, total = {}, parent = {}, how = {}, area = {} }
+local function nav_open_index(id) for i, v in ipairs(nav_search.open) do if v == id then return i end end end
+local function nav_open_insert(id)
+    local total = nav_search.total[id] or 0
+    local open = nav_search.open
+    local at = #open + 1
+    for i, v in ipairs(open) do if (nav_search.total[v] or 0) > total then at = i break end end
+    table.insert(open, at, id)
+end
+function NAVAREA:ClearSearchLists() nav_search = { open = {}, closed = {}, cost = {}, total = {}, parent = {}, how = {}, area = {} } end
+function NAVAREA:IsOpenListEmpty() return #nav_search.open == 0 end
+function NAVAREA:AddToOpenList() nav_search.area[self.__id] = self; if not nav_open_index(self.__id) then nav_open_insert(self.__id) end end
+function NAVAREA:IsOpen() return nav_open_index(self.__id) ~= nil end
+function NAVAREA:UpdateOnOpenList() local i = nav_open_index(self.__id); if i then table.remove(nav_search.open, i); nav_open_insert(self.__id) end end
+function NAVAREA:PopOpenList() local id = table.remove(nav_search.open, 1); if id then return nav_search.area[id] or area_of(id) end return nil end
+function NAVAREA:AddToClosedList() nav_search.closed[self.__id] = true end
+function NAVAREA:RemoveFromClosedList() nav_search.closed[self.__id] = nil end
+function NAVAREA:IsClosed() return nav_search.closed[self.__id] == true end
+function NAVAREA:SetCostSoFar(c) nav_search.cost[self.__id] = tonumber(c) or 0 end
+function NAVAREA:GetCostSoFar() return nav_search.cost[self.__id] or 0 end
+function NAVAREA:SetTotalCost(c) nav_search.total[self.__id] = tonumber(c) or 0 end
+function NAVAREA:GetTotalCost() return nav_search.total[self.__id] or 0 end
+function NAVAREA:SetParent(parent, how) if parent then nav_search.area[parent.__id] = parent end nav_search.parent[self.__id] = parent and parent.__id or nil; nav_search.how[self.__id] = how end
+function NAVAREA:GetParent() local p = nav_search.parent[self.__id]; if p then return nav_search.area[p] or area_of(p) end return nil end
+function NAVAREA:GetParentHow() return nav_search.how[self.__id] or 9 end
+for _, name in ipairs({ "AddAttributes", "AddHidingSpot", "ComputeAdjacentConnectionHeightChange", "ComputeDirection", "ConnectTo", "Disconnect", "Draw", "DrawSpots", "GetAdjacentAreaDistances", "GetAdjacentAreas", "GetAdjacentAreasAtSide", "GetAdjacentCount", "GetAdjacentCountAtSide", "GetAttributes", "GetCorner", "GetExposedSpots", "GetExtentInfo", "GetHidingSpots", "GetIncomingConnectionDistances", "GetIncomingConnections", "GetIncomingConnectionsAtSide", "GetLadders", "GetLaddersAtSide", "GetLightIntensity", "GetPlace", "GetRandomAdjacentAreaAtSide", "GetRandomPoint", "GetSizeX", "GetSizeY", "GetSpotEncounters", "GetVisibleAreas", "HasAttributes", "IsBlocked", "IsCompletelyVisible", "IsConnected", "IsConnectedAtSide", "IsCoplanar", "IsDamaging", "IsFlat", "IsOverlapping", "IsOverlappingArea", "IsPartiallyVisible", "IsPotentiallyVisible", "IsRoughlySquare", "IsUnderwater", "MarkAsBlocked", "MarkAsDamaging", "MarkAsUnblocked", "PlaceOnGround", "Remove", "RemoveAttributes", "SetAttributes", "SetCorner", "SetPlace" }) do
     if NAVAREA[name] == nil then NAVAREA[name] = stub("CNavArea:" .. name) end
 end
 __glua_classes.CNavArea = NAVAREA

@@ -712,6 +712,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `CNavArea:AddToOpenList` / `PopOpenList` / `IsOpen` / `IsOpenListEmpty` / `UpdateOnOpenList`,
+  `AddToClosedList` / `RemoveFromClosedList` / `IsClosed`, `Set/GetCostSoFar`, `Set/GetTotalCost`,
+  `SetParent` / `GetParent` / `GetParentHow` and `ClearSearchLists` are the A* scratch state of
+  a Lua path search kept by the runtime per area id (one open list ordered by total cost, as the
+  game's); `GetParentHow` is 9 (no traverse) until set.
 - `constraint.Rope` / `Axis` / `Ballsocket` / `Slider` / `Elastic` queue a `constrain` write with
   the kind's fields (local attachment points as given, the elastic's rest length measured now);
   the record joins the sandbox table like a stool's and the physics sync builds the joint from
