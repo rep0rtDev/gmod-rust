@@ -349,6 +349,17 @@ void gmp_set_mass(void *system, unsigned int id, float mass) {
 	mp->SetInverseInertia(mp->GetInverseInertiaDiagonal() / factor, mp->GetInertiaRotation());
 }
 
+// `PhysObj:GetMass`: the body's mass (kg), 0 for a static/kinematic one
+float gmp_body_mass(void *system, unsigned int id) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyLockRead lock(sys->GetBodyLockInterface(), JPH::BodyID(id));
+	if (!lock.Succeeded()) return 0.0f;
+	const JPH::Body &b = lock.GetBody();
+	if (!b.IsDynamic()) return 0.0f;
+	float inv = b.GetMotionProperties()->GetInverseMass();
+	return inv > 0.0f ? 1.0f / inv : 0.0f;
+}
+
 // world-space centre of mass of a body (the point a blast's impulse aims at)
 void gmp_center_of_mass(void *system, unsigned int id, float *out) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);

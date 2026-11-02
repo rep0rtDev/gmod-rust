@@ -4428,6 +4428,9 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                     "index": id, "key": v.key, "class": v.class, "model": v.model,
                     "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
                     "health": v.health, "maxhealth": v.max_health, "driver": v.driver.map(|d| d as i64).unwrap_or(-1),
+                    "mass": server.body_of(*id).map(|b| server.physics.mass(b)),
+                    "vel": server.prop_state(*id).map(|st| [st.velocity.x, st.velocity.y, st.velocity.z]),
+                    "asleep": server.prop_state(*id).map(|st| !st.active),
                 }))
             }).collect::<Vec<_>>(),
             "bot": server.players.get(&player).map(|pl| json!({

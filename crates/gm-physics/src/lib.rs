@@ -51,6 +51,7 @@ extern "C" {
     ) -> *mut std::ffi::c_void;
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
     fn gmp_set_mass(system: *mut JPC_PhysicsSystem, id: u32, mass: f32);
+    fn gmp_body_mass(system: *const JPC_PhysicsSystem, id: u32) -> f32;
     fn gmp_center_of_mass(system: *const JPC_PhysicsSystem, id: u32, out: *mut f32);
     fn gmp_add_impulse(system: *mut JPC_PhysicsSystem, id: u32, ix: f32, iy: f32, iz: f32);
     fn gmp_add_angular_impulse(system: *mut JPC_PhysicsSystem, id: u32, ix: f32, iy: f32, iz: f32);
@@ -1068,13 +1069,7 @@ impl World {
 
     /// Mass of a body (kg); 0 for a static or frozen one.
     pub fn mass(&self, body: BodyHandle) -> f32 {
-        let st = self.state(body);
-        let k = self.point_inverse_mass(body, st.position, Vec3::Z);
-        if k > 1e-12 {
-            1.0 / k
-        } else {
-            0.0
-        }
+        unsafe { gmp_body_mass(self.system.as_raw(), body.0) }
     }
 
     /// Angular impulse about world axes (kg * u^2 * rad/s), waking the body.

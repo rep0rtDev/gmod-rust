@@ -1,0 +1,380 @@
+{
+ "name": "server_pod_drop",
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "ops": [
+  {
+   "op": "spawnvehicle",
+   "class": "Pod",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  }
+ ]
+}
