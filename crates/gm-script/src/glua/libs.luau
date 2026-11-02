@@ -179,7 +179,7 @@ function RunString(code, identifier, handleError)
     return err
 end
 RunStringEx = RunString
-for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CreatePhysCollideBox", "CreatePhysCollidesFromModel", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "IsMounted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "Path", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "SentenceDuration", "SetPhysConstraintSystem", "SoundDuration", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
+for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CreatePhysCollideBox", "CreatePhysCollidesFromModel", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "IsMounted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "SentenceDuration", "SetPhysConstraintSystem", "SoundDuration", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
 
 
 -- Tool: the tool gun's per-mode state object (ghost entities need the client realm).
@@ -352,6 +352,103 @@ do
     end
 end
 for _, n in ipairs({ "ConnectTo", "Disconnect", "GetBottom", "GetBottomArea", "GetID", "GetLength", "GetNormal", "GetPosAtHeight", "GetTop", "GetTopBehindArea", "GetTopForwardArea", "GetTopLeftArea", "GetTopRightArea", "GetWidth", "IsConnectedAtSide", "IsValid", "Remove", "SetBottomArea", "SetTopBehindArea", "SetTopForwardArea", "SetTopLeftArea", "SetTopRightArea" }) do if __glua_classes.CNavLadder[n] == nil then __glua_classes.CNavLadder[n] = stub("CNavLadder:" .. n) end end
+-- PathFollower: a polyline from our navmesh path query (nav.path) with the game's segment
+-- table and cursor. Update / Chase need a NextBot's locomotion, Draw the client: stubs.
+do
+    local PF = __glua_classes.PathFollower
+    local function load_points(self, pts)
+        local segs, dist = {}, 0
+        for i, pos in ipairs(pts) do
+            local nxt = pts[i + 1]
+            local len = nxt and pos:Distance(nxt) or 0
+            local fwd = nxt and (nxt - pos):GetNormalized() or (segs[i - 1] and segs[i - 1].forward or Vector(1, 0, 0))
+            segs[i] = {
+                pos = pos, length = len, distanceFromStart = dist, forward = fwd, type = 0, how = 0,
+                curvature = 0, area = (navmesh and navmesh.GetNavArea) and navmesh.GetNavArea(pos, 120) or NULL,
+                ladder = NULL, m_portalCenter = pos, m_portalHalfWidth = 0,
+            }
+            dist = dist + len
+        end
+        self.segs, self.length, self.cursor, self.age_at = segs, dist, 0, CurTime()
+    end
+    function PF:__load(pts) load_points(self, pts) return #pts > 0 end
+    function PF:Compute(bot, goal, costfn)
+        self.segs, self.length, self.cursor = {}, 0, 0
+        if not IsValid(bot) or goal == nil then return false end
+        local r = nav.path(bot:GetPos(), goal)
+        if not r or not r.ok then return false end
+        local pts = {}
+        for i, q in ipairs(r.points) do pts[i] = Vector(q.x, q.y, q.z) end
+        load_points(self, pts)
+        self.partial = r.partial
+        return #pts > 0 and not r.partial
+    end
+    function PF:IsValid() return self.segs ~= nil and #self.segs > 0 end
+    function PF:Invalidate() self.segs, self.length, self.cursor = {}, 0, 0 end
+    function PF:GetAllSegments() return self.segs or {} end
+    function PF:FirstSegment() return self.segs and self.segs[1] or nil end
+    function PF:LastSegment() return self.segs and self.segs[#self.segs] or nil end
+    function PF:GetLength() return self.length or 0 end
+    function PF:GetStart() local s = self:FirstSegment(); return s and s.pos or Vector() end
+    function PF:GetEnd() local s = self:LastSegment(); return s and s.pos or Vector() end
+    function PF:GetAge() return self.age_at and (CurTime() - self.age_at) or 0 end
+    function PF:ResetAge() self.age_at = CurTime() end
+    function PF:GetGoalTolerance() return self.tolerance or 0 end
+    function PF:SetGoalTolerance(t) self.tolerance = tonumber(t) or 0 end
+    function PF:GetMinLookAheadDistance() return self.lookahead or 0 end
+    function PF:SetMinLookAheadDistance(d) self.lookahead = tonumber(d) or 0 end
+    local function seg_at(self, dist)
+        local segs = self.segs or {}
+        for i = #segs, 1, -1 do if dist >= segs[i].distanceFromStart then return i end end
+        return 1
+    end
+    function PF:GetPositionOnPath(dist)
+        local segs = self.segs or {}
+        if #segs == 0 then return Vector() end
+        dist = math.max(0, math.min(dist or 0, self.length or 0))
+        local i = seg_at(self, dist)
+        local s = segs[i]
+        if s.length <= 0 then return s.pos end
+        return s.pos + s.forward * math.min(dist - s.distanceFromStart, s.length)
+    end
+    function PF:MoveCursorTo(dist) self.cursor = math.max(0, math.min(tonumber(dist) or 0, self.length or 0)) end
+    function PF:MoveCursor(delta) self:MoveCursorTo((self.cursor or 0) + (tonumber(delta) or 0)) end
+    function PF:MoveCursorToStart() self.cursor = 0 end
+    function PF:MoveCursorToEnd() self.cursor = self.length or 0 end
+    function PF:GetCursorPosition() return self.cursor or 0 end
+    function PF:GetCursorData()
+        local segs = self.segs or {}
+        if #segs == 0 then return { curvature = 0, forward = Vector(1, 0, 0), pos = Vector() } end
+        local s = segs[seg_at(self, self.cursor or 0)]
+        return { curvature = 0, forward = s.forward, pos = self:GetPositionOnPath(self.cursor or 0) }
+    end
+    local function closest(self, pos)
+        local segs = self.segs or {}
+        local best, bd, bdist = Vector(), math.huge, 0
+        for i = 1, #segs do
+            local s = segs[i]
+            local q, t = s.pos, 0
+            if s.length > 0 then
+                t = math.max(0, math.min(s.length, (pos - s.pos):Dot(s.forward)))
+                q = s.pos + s.forward * t
+            end
+            local d = q:DistToSqr(pos)
+            if d < bd then best, bd, bdist = q, d, s.distanceFromStart + t end
+        end
+        return best, bdist
+    end
+    function PF:GetClosestPosition(pos) local q = closest(self, pos); return q end
+    function PF:MoveCursorToClosestPosition(pos) local _, d = closest(self, pos); self.cursor = d end
+    function PF:GetCurrentGoal()
+        local segs = self.segs or {}
+        if #segs == 0 then return nil end
+        local i = seg_at(self, self.cursor or 0)
+        return segs[math.min(i + 1, #segs)]
+    end
+    function PF:NextSegment() local segs = self.segs or {}; return segs[math.min(seg_at(self, self.cursor or 0) + 1, #segs)] end
+    function PF:PriorSegment() local segs = self.segs or {}; return segs[math.max(seg_at(self, self.cursor or 0) - 1, 1)] end
+end
+function Path(kind) return setmetatable({ kind = kind or "Follow", segs = {}, length = 0, cursor = 0 }, __glua_classes.PathFollower) end
 for _, n in ipairs({ "Chase", "Compute", "Draw", "FirstSegment", "GetAge", "GetAllSegments", "GetClosestPosition", "GetCurrentGoal", "GetCursorData", "GetCursorPosition", "GetEnd", "GetGoalTolerance", "GetHindrance", "GetLength", "GetMinLookAheadDistance", "GetPositionOnPath", "GetStart", "Invalidate", "IsValid", "LastSegment", "MoveCursor", "MoveCursorTo", "MoveCursorToClosestPosition", "MoveCursorToEnd", "MoveCursorToStart", "NextSegment", "PriorSegment", "ResetAge", "SetGoalTolerance", "SetMinLookAheadDistance", "Update" }) do if __glua_classes.PathFollower[n] == nil then __glua_classes.PathFollower[n] = stub("PathFollower:" .. n) end end
 for _, n in ipairs({ "Approach", "ClearStuck", "FaceTowards", "GetAcceleration", "GetAvoidAllowed", "GetClimbAllowed", "GetCurrentAcceleration", "GetDeathDropHeight", "GetDeceleration", "GetDesiredSpeed", "GetGravity", "GetGroundMotionVector", "GetGroundNormal", "GetJumpGapsAllowed", "GetJumpHeight", "GetMaxJumpHeight", "GetMaxYawRate", "GetNextBot", "GetStepHeight", "GetVelocity", "IsAreaTraversable", "IsAttemptingToMove", "IsClimbingOrJumping", "IsOnGround", "IsStuck", "IsUsingLadder", "Jump", "JumpAcrossGap", "SetAcceleration", "SetAvoidAllowed", "SetClimbAllowed", "SetDeathDropHeight", "SetDeceleration", "SetDesiredSpeed", "SetGravity", "SetJumpGapsAllowed", "SetJumpHeight", "SetMaxYawRate", "SetStepHeight", "SetVelocity" }) do if __glua_classes.CLuaLocomotion[n] == nil then __glua_classes.CLuaLocomotion[n] = stub("CLuaLocomotion:" .. n) end end
 drive = drive or {}

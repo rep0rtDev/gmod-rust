@@ -1328,3 +1328,47 @@ fn run_string_and_compile_string_compile_chunks_in_the_sandbox() {
         "the sandbox globals apply to compiled chunks"
     );
 }
+
+#[test]
+fn path_follower_segments_and_cursor_follow_the_polyline() {
+    let rt = runtime(
+        "state = {}\n\
+         local p = Path('Follow')\n\
+         state.empty = p:IsValid()\n\
+         p:__load({ Vector(0, 0, 0), Vector(100, 0, 0), Vector(100, 50, 0) })\n\
+         state.valid = p:IsValid()\n\
+         state.len = p:GetLength()\n\
+         state.segs = #p:GetAllSegments()\n\
+         state.first = tostring(p:FirstSegment().pos)\n\
+         state.last = tostring(p:LastSegment().pos)\n\
+         p:MoveCursorTo(120)\n\
+         state.cur = tostring(p:GetCursorData().pos)\n\
+         state.goal = tostring(p:GetCurrentGoal().pos)\n\
+         state.on = tostring(p:GetPositionOnPath(50))\n\
+         state.close = tostring(p:GetClosestPosition(Vector(50, 30, 0)))\n\
+         p:MoveCursorToClosestPosition(Vector(100, 25, 0))\n\
+         state.ccur = p:GetCursorPosition()\n\
+         p:MoveCursor(1000)\n\
+         state.clamped = p:GetCursorPosition()\n\
+         state.d2 = p:FirstSegment().distanceFromStart .. ' ' .. p:LastSegment().distanceFromStart\n",
+    );
+    let a = &rt.actors()[0];
+    let (empty, valid, len, segs): (bool, bool, f64, i64) = a
+        .eval("return state.empty, state.valid, state.len, state.segs")
+        .unwrap();
+    assert_eq!((empty, valid, len, segs), (false, true, 150.0, 3));
+    let (first, last, cur, goal): (String, String, String, String) = a
+        .eval("return state.first, state.last, state.cur, state.goal")
+        .unwrap();
+    assert_eq!(first, "0.000000 0.000000 0.000000");
+    assert_eq!(last, "100.000000 50.000000 0.000000");
+    assert_eq!(cur, "100.000000 20.000000 0.000000");
+    assert_eq!(goal, last, "the goal past the cursor is the last segment");
+    let (on, close, ccur, clamped, d2): (String, String, f64, f64, String) = a
+        .eval("return state.on, state.close, state.ccur, state.clamped, state.d2")
+        .unwrap();
+    assert_eq!(on, "50.000000 0.000000 0.000000");
+    assert_eq!(close, "50.000000 0.000000 0.000000");
+    assert_eq!((ccur, clamped), (125.0, 150.0));
+    assert_eq!(d2, "0 150");
+}

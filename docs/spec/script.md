@@ -919,7 +919,12 @@ corners and the polygon across every edge): centre, corners, extent, `Contains` 
 `GetClosestPointOnArea` from the polygon, `GetRandomPoint` uniform over its fan, neighbours
 and sides (NORTH -y, EAST +x, SOUTH +y, WEST -x by the dominant axis between centres),
 incoming connections, overlap and corner visibility; `navmesh.GetNavArea` finds the polygon
-under a point. Attributes, places, hiding spots, ladders, search lists and editing stay stubs. `GetPreferredCarryAngles` (the hook, else the scripted
+under a point. Attributes, places, hiding spots, ladders, search lists and editing stay stubs.
+`Path(kind)` is a `PathFollower` over our navmesh path query: `Compute(bot, goal)` stores
+the game's segment table (pos, length, distanceFromStart, forward, area) along the straight
+path (false when there is none or it is partial); length, start/end, first/last/next/prior
+segment, cursor moves, cursor data, position on path and closest position are polyline math.
+`Update` / `Chase` need a NextBot locomotion and `Draw` the client: stubs. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 
