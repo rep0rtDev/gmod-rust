@@ -931,6 +931,7 @@ pub struct Npc {
     pub move_speed: f32,
     pub run: bool,
     pub goal: Option<NpcPath>,
+    pub spawn_tick: u64,
 }
 
 /// Corners of a navigation path and the one the NPC is heading for.
@@ -939,7 +940,6 @@ pub struct NpcPath {
     pub points: Vec<Vec3>,
     pub idx: usize,
     pub partial: bool,
-    pub think_in: u8,
     pub braking: bool,
 }
 
@@ -956,7 +956,9 @@ pub struct NpcMoveDef {
 }
 
 pub const NPC_THINK_TICKS: u8 = 7;
-pub const NPC_FIRST_THINK_TICKS: u8 = 2;
+pub const NPC_THINK_PHASE: u64 = 3;
+const NPC_YAW_RATE: f32 = 150.0;
+const NPC_TURN_ACCEL: f32 = 0.89;
 const NPC_THINK_DT: f32 = NPC_THINK_TICKS as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
 const NPC_BRAKE_CURVE: f32 = 0.755;
 const NPC_MOVE_CITIZEN: NpcMoveDef = NpcMoveDef {
@@ -971,6 +973,16 @@ const NPC_MOVE_METROPOLICE: NpcMoveDef = NpcMoveDef {
     run: 184.56,
     run_accel: 369.2,
 };
+
+/// Angle difference folded into (-180, 180].
+fn wrap_deg(a: f32) -> f32 {
+    let r = a.rem_euclid(360.0);
+    if r > 180.0 {
+        r - 360.0
+    } else {
+        r
+    }
+}
 
 /// Largest per-think step whose braking staircase `u, u - a, u - 2a, ...` sums exactly to
 /// `dist`; with `n` steps left that is `n * u - a * n(n-1)/2 = dist` on `(n-1)a < u <= na`.
@@ -5267,6 +5279,7 @@ impl<'w> Server<'w> {
                 settle,
                 dead_at: None,
                 remove_at: None,
+                spawn_tick: self.tick_count,
                 move_speed: 0.0,
                 run: false,
                 goal: None,
@@ -5441,7 +5454,6 @@ impl<'w> Server<'w> {
                 points: path.points,
                 idx: 1,
                 partial,
-                think_in: NPC_FIRST_THINK_TICKS,
                 braking: false,
             });
         }
@@ -5455,12 +5467,14 @@ impl<'w> Server<'w> {
         }
     }
 
-    /// One tick of path following. The NPC only moves on its think (every NPC_THINK_TICKS,
-    /// the first NPC_FIRST_THINK_TICKS after the goal). The think's step is the trapezoid of
-    /// the speed ramping at the class accel toward the gait speed, capped by the braking
+    /// One tick of path following. The NPC only moves on its think: every NPC_THINK_TICKS,
+    /// NPC_THINK_PHASE ticks past its spawn tick. The think's step is the trapezoid of the
+    /// speed ramping at the class accel (scaled while the body still turns) toward the gait
+    /// speed, capped by the braking
     /// curve over the remaining path (the brake onset only) and by the staircase that arrives
     /// exactly, never braking harder than the accel per think; it is walked corner by corner, hull-swept
-    /// `step_height` above the feet and dropped to the floor, with the yaw facing the motion.
+    /// `step_height` above the feet and dropped to the floor; the yaw turns toward the motion
+    /// at NPC_YAW_RATE.
     fn tick_npc_move(&mut self) {
         let ids: Vec<u32> = self
             .npcs
@@ -5468,6 +5482,7 @@ impl<'w> Server<'w> {
             .filter(|(_, n)| n.goal.is_some() && n.dead_at.is_none())
             .map(|(id, _)| *id)
             .collect();
+        let now = self.tick_count;
         for id in ids {
             let Some(n) = self.npcs.get_mut(&id) else {
                 continue;
@@ -5475,11 +5490,9 @@ impl<'w> Server<'w> {
             let Some(goal) = n.goal.as_mut() else {
                 continue;
             };
-            if goal.think_in > 1 {
-                goal.think_in -= 1;
+            if (now - n.spawn_tick) % NPC_THINK_TICKS as u64 != NPC_THINK_PHASE {
                 continue;
             }
-            goal.think_in = NPC_THINK_TICKS;
             let braking = goal.braking;
             let points = goal.points.clone();
             let mut idx = goal.idx.min(points.len() - 1);
@@ -5489,12 +5502,20 @@ impl<'w> Server<'w> {
             } else {
                 (def.walk, def.walk_accel)
             };
-            let (pos, mins, maxs, v0) = (n.pos, n.mins, n.maxs, n.move_speed);
+            let (pos, mins, maxs, v0, yaw0) = (n.pos, n.mins, n.maxs, n.move_speed, n.angles.y);
             while idx + 1 < points.len()
                 && points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
             {
                 idx += 1;
             }
+            let head = points[idx].truncate() - pos.truncate();
+            let turning = head.length_squared() > 1e-6
+                && wrap_deg(head.y.atan2(head.x).to_degrees() - yaw0).abs() > 0.5;
+            let accel = if turning {
+                accel * NPC_TURN_ACCEL
+            } else {
+                accel
+            };
             let mut remaining = pos.truncate().distance(points[idx].truncate());
             for w in points[idx..].windows(2) {
                 remaining += w[0].truncate().distance(w[1].truncate());
@@ -5560,7 +5581,16 @@ impl<'w> Server<'w> {
                 .unwrap_or(reached - lift);
             if let Some(n) = self.npcs.get_mut(&id) {
                 n.pos = floor;
-                n.angles.y = dir.y.atan2(dir.x).to_degrees();
+                let max_turn = NPC_YAW_RATE * NPC_THINK_DT;
+                let turn = wrap_deg(dir.y.atan2(dir.x).to_degrees() - n.angles.y);
+                let yaw = n.angles.y + turn.clamp(-max_turn, max_turn);
+                n.angles.y = if yaw > 180.0 {
+                    yaw - 360.0
+                } else if yaw <= -180.0 {
+                    yaw + 360.0
+                } else {
+                    yaw
+                };
                 n.move_speed = if arrived { 0.0 } else { v1 };
                 if arrived {
                     n.goal = None;
@@ -5615,6 +5645,7 @@ impl<'w> Server<'w> {
                 settle: false,
                 dead_at: None,
                 remove_at: None,
+                spawn_tick: self.tick_count,
                 move_speed: 0.0,
                 run: false,
                 goal: None,

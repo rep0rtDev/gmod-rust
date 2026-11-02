@@ -4414,7 +4414,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
     // the probe's pre-roll: the bot stands still on the ground
     let idle = std::collections::BTreeMap::from([(player, gm_server::PlayerCmd::default())]);
     // the game probe switches the gait to run once the NPC is moving (after its first think)
-    let mut pending_npc_run: Option<(u32, u32)> = None;
+    let mut pending_npc_run: Option<(u32, Vec3)> = None;
     for _ in 0..20 {
         server.tick(&idle);
     }
@@ -4635,7 +4635,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 if let Some(&id) = server.npcs.keys().last() {
                     rec["started"] = json!(server.npc_goto(id, target, false));
                     if op.name.as_deref() == Some("run") {
-                        pending_npc_run = Some((id, 3));
+                        pending_npc_run = Some((id, server.npcs[&id].pos));
                     }
                 }
             }
@@ -4657,9 +4657,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }
         }
         rec["immediate"] = snapshot(&server);
-        let ticks = if op.op == "npcgoto" {
-            0
-        } else if matches!(op.op.as_str(), "wait" | "think") {
+        let ticks = if matches!(op.op.as_str(), "wait" | "think") {
             op.ticks.unwrap_or(3)
         } else {
             op.wait.unwrap_or(3)
@@ -4687,10 +4685,9 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 apply_click_settings(&mut server.sandbox, t, op.settings.as_ref());
                 server.tool_think(player, t);
             }
-            if let Some((id, left)) = pending_npc_run.as_mut() {
-                *left -= 1;
-                if *left == 0 {
-                    server.npc_set_run(*id, true);
+            if let Some((id, start)) = pending_npc_run {
+                if server.npcs.get(&id).is_some_and(|n| n.pos != start) {
+                    server.npc_set_run(id, true);
                     pending_npc_run = None;
                 }
             }

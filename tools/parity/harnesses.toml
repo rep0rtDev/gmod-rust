@@ -3983,3 +3983,59 @@ realm = "server"
 crates = ["gm-server", "gm-nav"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_citizen_p11"
+scenario = "server/npc_walk_citizen_p11"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_citizen_p13"
+scenario = "server/npc_walk_citizen_p13"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_citizen_turn90"
+scenario = "server/npc_walk_citizen_turn90"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+
+[[harness]]
+name = "server_npc_walk_citizen_p12"
+scenario = "server/npc_walk_citizen_p12"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_citizen_p14"
+scenario = "server/npc_walk_citizen_p14"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_citizen_p15"
+scenario = "server/npc_walk_citizen_p15"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+

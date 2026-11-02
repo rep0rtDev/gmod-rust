@@ -138,6 +138,7 @@ fn npc_walks_the_navmesh_to_a_goal() {
     server.tick(&idle);
     let from = server.npcs[&id].pos;
     let goal = from + Vec3::new(-400.0, 0.0, 0.0);
+    let goto_tick = server.tick_count();
     assert!(
         server.npc_goto(id, goal, false),
         "no path from {from} to {goal}"
@@ -197,7 +198,15 @@ fn npc_walks_the_navmesh_to_a_goal() {
         end.truncate().distance(goal.truncate()) < 0.01,
         "ended {end} for goal {goal}"
     );
-    // the game walks these 400 u in 373 ticks after the goal (server_npc_walk_citizen:
-    // first think 2 ticks in, then 53 thinks of 7)
-    assert_eq!(ticks, 373, "ticks vs the game's 373 for a straight walk");
+    // the game walks these 400 u in 54 thinks (server_npc_walk_citizen*): the first on the
+    // NPC's think grid after the goal, then 53 more every 7 ticks
+    let spawn_tick = server.npcs[&id].spawn_tick;
+    let first = (1..=7)
+        .find(|d| (goto_tick + d - spawn_tick) % 7 == gm_server::NPC_THINK_PHASE)
+        .unwrap() as i32;
+    assert_eq!(
+        ticks,
+        first + 53 * 7,
+        "ticks vs the game's grid for a straight walk"
+    );
 }

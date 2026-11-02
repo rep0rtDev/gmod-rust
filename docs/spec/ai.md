@@ -72,8 +72,11 @@ Own path following, one step per tick after the physics step and NPC settling:
   (`NPC_CORNER_REACH`); the final point is walked onto exactly and the goal is cleared in
   that same tick.
 - Cadence (measured per tick, `server_npc_walk_*`): the NPC only moves on its think,
-  every 7 ticks (`NPC_THINK_TICKS`), the first one 2 ticks after the goal is set
-  (`NPC_FIRST_THINK_TICKS`); between thinks the origin does not change.
+  every 7 ticks (`NPC_THINK_TICKS`) on a grid locked to its spawn tick: the ticks
+  `NPC_THINK_PHASE` = 3 past the spawn modulo 7. A goal set between ticks starts moving
+  on the first grid tick after it (1..7 ticks later; `server_npc_walk_citizen_p11`..`_p15`
+  shift the goal tick by one each and all land on the game's tick). Between thinks the
+  origin does not change.
 - Gait (`NpcMoveDef`, `npc_move_def(class)`), measured on gm_construct over a 400 u
   straight walk (one think = 0.105 s):
 
@@ -95,27 +98,34 @@ Own path following, one step per tick after the physics step and NPC settling:
     `D` (`brake_staircase`; the game's second braking step solves this exactly in every
     recording), moving at the step itself (no trapezoid), never shedding more than `A`
     per think, and the last step is the remainder, so the walk arrives on the game's tick
-    (citizen 373 ticks after the goal: the first think 2 ticks in, then 53 of 7).
+    (the citizen's 400 u take 54 thinks: the first on the grid, then 53 every 7 ticks).
 - `npc_goto(id, target, run)` picks the gait; `npc_set_run(id, run)` switches it from the
   next think on (the oracle probe forces `ACT_RUN` once the NPC moves; the runner mirrors
-  that by switching 3 ticks after the goal).
+  that by switching as soon as the NPC has moved).
 - Step: along the path in the XY plane (a step longer than the distance to the corner
   continues along the next segment); the hull is swept 18 u above the feet
   (`step_height`) with `MASK_PLAYERSOLID`, stops at the first solid, then is dropped onto
   the floor by the same 256 u box trace that places a spawned NPC. Z is therefore the
   floor's, not the mesh's (gm_construct: the ground west of spawn is 4 u lower and the
   NPC follows it).
-- Yaw faces the motion; pitch/roll untouched.
+- Yaw turns toward the motion at the think, 150 deg/s (`NPC_YAW_RATE`, 15.75 deg per
+  think: the game goes 180 -> 164.2 -> 148.5 -> 132.7 -> 117.0 -> 101.2 -> 90 for a goal
+  due north, `server_npc_walk_citizen_turn90`); the NPC walks along the path from the
+  first think whatever it faces, with the accel scaled by 0.89 (`NPC_TURN_ACCEL`) while
+  the body still turns (ramp 2.004 / 3.184 / 4.446 / 5.753 / 7.091 instead of 2.149 /
+  3.581 / 5.013 / 6.446 / 7.732; 2.7 u if ignored). Pitch/roll untouched.
 
-Harnesses `server_npc_walk_citizen` / `_citizen_run` / `_metrocop` / `_metrocop_run`
-(golden 261102, one scenario per srcds session, 1-tick waits): all four equal at 2 u.
+Harnesses `server_npc_walk_citizen` / `_citizen_run` / `_metrocop` / `_metrocop_run`,
+`_citizen_p11`..`_p15` (goal tick phase) and `_citizen_turn90` (golden 261102, one
+scenario per srcds session, 1-tick waits): all ten equal at 2 u. A `wait 17` of the probe
+lasted 18 ticks in one session (other waits exact), so that phase was not kept.
 Residuals inside the tolerance: the game's first braking step is gentler than the curve
 on the citizen run (0.8 u, it arrives one think after us), and the metrocop walk sheds
 0.06-0.3 u per think over four thinks before its brake onset (1.3 u).
 
 Test: `gm-dedicated/tests/npc_entity.rs::npc_walks_the_navmesh_to_a_goal` (step cap per
-think, yaw = motion within 1 deg, feet on the traced floor within 0.5 u, exact arrival,
-373 ticks like the game).
+think, yaw = motion within 1 deg, feet on the traced floor within 0.5 u, exact arrival, the game's
+think grid: first think after the goal + 53 x 7 ticks).
 
 ## Not yet
 
