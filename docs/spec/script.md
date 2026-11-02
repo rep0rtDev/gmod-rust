@@ -604,11 +604,34 @@ Done in `glua/server.luau`:
   `PlayerLoadout` (true skips the default), `PlayerSpawnProp`, `CanTool`, `PlayerSay` (`""`
   drops the line, a string replaces it).
 
+Done in `glua/classes.luau` and `glua/scripted.luau`:
+
+- `math.ease` (all 30 documented easings), `VMatrix` (`Matrix(table?)`, row-major 4x4:
+  translation / scale / angles / forward-right-up getters and setters, `Translate / Scale /
+  Rotate`, `Transpose`, `InvertTR / GetInverseTR` for rigid transforms, `Invert / GetInverse`
+  by Gauss-Jordan, `*` with a matrix or a point, `+ / -`, `Unpack / SetUnpacked / ToTable`),
+  `CEffectData` (`EffectData()` with every documented field pair) with `util.Effect` and
+  `effects.Register / Create` as inert data until the client realm draws them.
+- `scripted_ents.Register(ENT, class)` -> the host `entity.register` (Model / ThinkInterval /
+  UseType / PrintName / Category) with the documented `ENTITY` callbacks dispatched on a
+  per-entity instance table whose lookups fall through `ENT` (with `Base` inheritance and
+  `BaseClass`) to the `Entity` wrapper: `Initialize`, `Think` (a number returned via
+  `NextThink` keeps the own next-think op), `StartTouch / Touch / EndTouch(other)`,
+  `Use(activator, caller, USE_ON | USE_OFF, value)`, `OnRemove`, `OnTakeDamage(CTakeDamageInfo)`;
+  `Get / GetStored / GetList / GetSpawnable / GetType / GetMember / Alias / IsBasedOn /
+  OnLoaded`.
+- `weapons.Register(SWEP, class)` -> the host `weapon.register` (`Primary.ClipSize /
+  DefaultClip / Ammo / Automatic`, Slot / SlotPos / HoldType / ViewModel / WorldModel /
+  PrintName) with `PrimaryAttack / SecondaryAttack / Reload / Deploy / Holster / Think` on an
+  instance bound to the carrying player (`self.Owner`); `Get / GetStored / GetList /
+  IsBasedOn / OnLoaded`; `baseclass.Get / Set`.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`
 (a net round trip through the host transport, ConVar reads, concommand, damage info, the hook
-bridge for events and requests) and `glua_coverage`.
+bridge for events and requests), `glua_classes` (easings, a rigid matrix round trip, ENT / SWEP
+tables registering and dispatching) and `glua_coverage`.
 
 ## Not yet
 

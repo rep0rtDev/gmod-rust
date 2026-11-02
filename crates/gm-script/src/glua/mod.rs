@@ -23,6 +23,10 @@ const ENTITY: &str = include_str!("entity.luau");
 /// net, ConVar / cvars, concommand, file, CTakeDamageInfo, sound, undo / cleanup / constraint
 /// and the GM hook bridge from the own server events.
 const SERVER: &str = include_str!("server.luau");
+/// math.ease, VMatrix, CEffectData.
+const CLASSES: &str = include_str!("classes.luau");
+/// scripted_ents / weapons / baseclass: ENT and SWEP tables over the host scripted classes.
+const SCRIPTED: &str = include_str!("scripted.luau");
 
 /// Registers a class metatable under `__glua_classes[name]` so the coverage listing (and
 /// `FindMetaTable`) can reach it.
@@ -79,6 +83,8 @@ pub fn install(lua: &Lua, _shared: Arc<Shared>) -> Result<()> {
     lua.load(CORE).set_name("glua/core").exec()?;
     lua.load(ENTITY).set_name("glua/entity").exec()?;
     lua.load(SERVER).set_name("glua/server").exec()?;
+    lua.load(CLASSES).set_name("glua/classes").exec()?;
+    lua.load(SCRIPTED).set_name("glua/scripted").exec()?;
     let classes = classes(lua)?;
     g.set(
         "FindMetaTable",
