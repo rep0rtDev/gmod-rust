@@ -851,6 +851,10 @@ player's command is processed) for `Player:GetPreviousWeapon`. `Entity:AddEffect
 RemoveEffects / IsEffectActive` and the `EFlags` family keep a per-entity bitmask in the script
 layer; `EF_NODRAW` is the one flag with a server meaning and maps onto `SetNoDraw`.
 
++use on a vehicle and +use while seated ask the addon runtime first (`CanPlayerEnterVehicle`,
+`CanExitVehicle`); a `false` leaves the player where they are. Scripted `Player:EnterVehicle /
+ExitVehicle` are not asked, like the game.
+
 The model table carries each bone's bind pose relative to its parent; `Entity:GetBonePosition /
 GetBoneMatrix` compose it up the parent chain and through the entity's pose. The server has no
 animation layer, so these are the reference-pose bones, not the animated ones the game returns.

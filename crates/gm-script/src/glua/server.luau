@@ -647,6 +647,8 @@ local prev_move = {}
     end)
     events.on("player.property_request", function(p) if hook.Run("CanProperty", Player(p.player), p.property, Entity(p.entity)) == false then return false end end)
     events.on("player.pickup_weapon_request", function(p) if hook.Run("PlayerCanPickupWeapon", Player(p.player), __glua_classes.Weapon.__from(p.class, p.player)) == false then return false end end)
+    events.on("player.enter_vehicle_request", function(p) if hook.Run("CanPlayerEnterVehicle", Player(p.player), Entity(p.vehicle), 0) == false then return false end end)
+    events.on("player.exit_vehicle_request", function(p) if hook.Run("CanExitVehicle", Entity(p.vehicle), Player(p.player)) == false then return false end end)
     events.on("player.loadout", function(p) if hook.Run("PlayerLoadout", Player(p.player)) == true then return false end end)
     events.on("prop.spawn_request", function(p) if hook.Run("PlayerSpawnProp", Player(p.player), p.model) == false then return false end end)
     events.on("tool.before", function(p)

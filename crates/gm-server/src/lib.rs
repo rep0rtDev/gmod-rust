@@ -534,6 +534,10 @@ pub enum Request {
     PlayerPickup { player: u32, ent: u32 },
     /// `PlayerCanPickupWeapon`: the player walked into a weapon entity it does not carry.
     PickupWeapon { player: u32, class: String },
+    /// `CanPlayerEnterVehicle`: the player pressed +use on a vehicle.
+    EnterVehicle { player: u32, vehicle: u32 },
+    /// `CanExitVehicle`: the seated player pressed +use.
+    ExitVehicle { player: u32, vehicle: u32 },
     /// `CanProperty`: the player asked for a context-menu property on a prop.
     Property { player: u32, ent: u32, name: String },
     /// `PlayerSetModel` on (re)spawn with the model the player's choice translates to;
@@ -6114,6 +6118,34 @@ impl<'w> Server<'w> {
     /// `Player:ExitVehicle` (measured): a pod / chair puts the player 100 u to the vehicle's
     /// left and 12 u up facing that way (yaw + 90), a jeep 90 u behind and 11.5 u up facing
     /// away from it; the body then falls to the floor.
+    /// +use on a vehicle: the addon runtime may refuse (`CanPlayerEnterVehicle`); scripted
+    /// `Player:EnterVehicle` goes through [`Self::enter_vehicle`] unasked, like the game.
+    pub fn use_enter_vehicle(&mut self, player: u32, veh: u32) -> bool {
+        if self.ask(Request::EnterVehicle {
+            player,
+            vehicle: veh,
+        }) == Verdict::Cancel
+        {
+            return false;
+        }
+        self.enter_vehicle(player, veh)
+    }
+
+    /// +use while seated: the addon runtime may refuse (`CanExitVehicle`).
+    pub fn use_exit_vehicle(&mut self, player: u32) -> bool {
+        let Some(veh) = self.players.get(&player).and_then(|p| p.seat) else {
+            return false;
+        };
+        if self.ask(Request::ExitVehicle {
+            player,
+            vehicle: veh,
+        }) == Verdict::Cancel
+        {
+            return false;
+        }
+        self.exit_vehicle(player)
+    }
+
     pub fn exit_vehicle(&mut self, player: u32) -> bool {
         let Some(veh) = self.players.get(&player).and_then(|p| p.seat) else {
             return false;
@@ -9352,7 +9384,7 @@ impl<'w> Server<'w> {
             }
         }
         if use_pressed && self.players.get(&player).is_some_and(|p| p.seat.is_some()) {
-            self.exit_vehicle(player);
+            self.use_exit_vehicle(player);
         } else if use_pressed
             && self
                 .players
@@ -9375,7 +9407,7 @@ impl<'w> Server<'w> {
                     }
                     if self.vehicles.contains_key(&ent) {
                         if use_pressed {
-                            self.enter_vehicle(player, ent);
+                            self.use_enter_vehicle(player, ent);
                         }
                         return;
                     }

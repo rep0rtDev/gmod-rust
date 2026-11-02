@@ -87,6 +87,24 @@ fn chair_spawns_seats_and_releases_the_player() {
         "bullets do not push a vehicle: moved {}",
         (after - chair).length()
     );
+    let refusals = std::rc::Rc::new(std::cell::Cell::new(0u32));
+    let r2 = refusals.clone();
+    server.request_hook = Some(Box::new(move |_, req| match req {
+        gm_server::Request::EnterVehicle { player: 1, .. } if r2.get() == 0 => {
+            r2.set(1);
+            gm_server::Verdict::Cancel
+        }
+        _ => gm_server::Verdict::Allow,
+    }));
+    assert!(
+        !server.use_enter_vehicle(1, id),
+        "CanPlayerEnterVehicle refuses the first +use"
+    );
+    assert!(server.players[&1].seat.is_none());
+    assert!(server.use_enter_vehicle(1, id), "second +use is allowed");
+    assert_eq!(refusals.get(), 1);
+    assert!(server.use_exit_vehicle(1) && server.players[&1].seat.is_none());
+    server.request_hook = None;
     assert!(server.enter_vehicle(1, id));
     let seated = server.players[&1].state.origin;
     // measured: the body sits on `vehicle_feet_passenger0`, (0, -3, 19.5) from the chair's

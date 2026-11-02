@@ -876,6 +876,24 @@ impl Runtime {
                     gm_server::Verdict::Cancel
                 }
             }
+            gm_server::Request::EnterVehicle { player, vehicle } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("vehicle", *vehicle as i64));
+                if self.ask(server, "player.enter_vehicle_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
+            gm_server::Request::ExitVehicle { player, vehicle } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("vehicle", *vehicle as i64));
+                if self.ask(server, "player.exit_vehicle_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
             gm_server::Request::PhysgunPickup { player, ent } => {
                 p.ints.push(("player", *player as i64));
                 p.ints.push(("entity", *ent as i64));
