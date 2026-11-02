@@ -1864,6 +1864,18 @@ pub fn npc_weapon_shot(weapon: &str) -> Option<(&'static str, u8)> {
     }
 }
 
+/// The shot an NPC fires with `weapon`: the HL2 table above, else a scripted SWEP's ammo type
+/// (one pellet) so `NPC:Give("my_swep")` arms the NPC with the addon's ammo.
+pub fn npc_weapon_shot_in(weapon: &str, scripted: &[ScriptedWeapon]) -> Option<(String, u8)> {
+    if let Some((ammo, pellets)) = npc_weapon_shot(weapon) {
+        return Some((ammo.to_string(), pellets));
+    }
+    scripted
+        .iter()
+        .find(|w| w.class == weapon && !w.ammo.is_empty())
+        .map(|w| (w.ammo.clone(), 1))
+}
+
 /// A melee attack: damage per hit, 2D reach (u), swing length and the tick inside the swing
 /// the damage lands, and the speed the hit launches the player at (u/s, away from the NPC).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -5713,7 +5725,7 @@ impl<'w> Server<'w> {
                 .filter(|(id, n)| {
                     n.dead_at.is_none()
                         && npc_hit.is_none_or(|h| h.0 != **id)
-                        && npc_weapon_shot(&n.weapon).is_some()
+                        && npc_weapon_shot_in(&n.weapon, &self.scripted_weapons).is_some()
                         && segment_distance(eye, seg, n.pos + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT))
                             <= NPC_SUPPRESS_RADIUS
                 })
@@ -6335,7 +6347,7 @@ impl<'w> Server<'w> {
                 .iter()
                 .filter(|(_, n)| {
                     n.dead_at.is_none()
-                        && npc_weapon_shot(&n.weapon).is_some()
+                        && npc_weapon_shot_in(&n.weapon, &self.scripted_weapons).is_some()
                         && n.pos.distance(at) <= NPC_GRENADE_RANGE
                 })
                 .map(|(i, _)| *i)
@@ -7224,7 +7236,7 @@ impl<'w> Server<'w> {
     }
 
     pub fn set_npc_weapon(&mut self, id: u32, class: &str) -> bool {
-        if !class.is_empty() && npc_weapon_shot(class).is_none() {
+        if !class.is_empty() && npc_weapon_shot_in(class, &self.scripted_weapons).is_none() {
             return false;
         }
         let Some(n) = self.npcs.get_mut(&id) else {
@@ -9253,7 +9265,10 @@ impl<'w> Server<'w> {
         }
         let class_scale = if n.class == "npc_zombie" { 0.5 } else { 1.0 };
         n.health -= amount * weapons::npc_hitgroup_scale(group) * class_scale;
-        if n.health > 0.0 && n.target.is_some() && npc_weapon_shot(&n.weapon).is_some() {
+        if n.health > 0.0
+            && n.target.is_some()
+            && npc_weapon_shot_in(&n.weapon, &self.scripted_weapons).is_some()
+        {
             // measured (server_npc_flinch_soldier): no flinch animation; a hit inside a burst
             // ends it with the usual gap after the last shot, a hit in the gap delays the next
             // burst by one think
@@ -9873,7 +9888,8 @@ impl<'w> Server<'w> {
             self.npc_leap_think(id, now, l);
             return;
         }
-        let melee = npc_melee_moves(&n.class).filter(|_| npc_weapon_shot(&n.weapon).is_none());
+        let melee = npc_melee_moves(&n.class)
+            .filter(|_| npc_weapon_shot_in(&n.weapon, &self.scripted_weapons).is_none());
         if let Some((moves, repeat)) = melee {
             let mut m = moves[n.melee_move.min(moves.len() - 1)];
             if m.poison && (n.crabs == 0 || now < n.next_leap) {
@@ -9885,7 +9901,7 @@ impl<'w> Server<'w> {
             self.npc_melee_think(id, now, m);
             return;
         }
-        let Some((ammo, pellets)) = npc_weapon_shot(&n.weapon) else {
+        let Some((ammo, pellets)) = npc_weapon_shot_in(&n.weapon, &self.scripted_weapons) else {
             return;
         };
         // in combat and standing still the NPC fires from a crouch
@@ -10052,7 +10068,7 @@ impl<'w> Server<'w> {
         };
         let seed = (id as u64) ^ now.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         let aim = to.normalize();
-        let Some(dmg) = weapons::npc_shot_damage(ammo) else {
+        let Some(dmg) = weapons::npc_shot_damage(&ammo) else {
             return;
         };
         for k in 0..pellets {
@@ -14788,6 +14804,35 @@ pub fn parent_world(parent: (Vec3, Quat), local: (Vec3, Quat)) -> (Vec3, Quat) {
 
 #[cfg(test)]
 mod parent_tests {
+    #[test]
+    fn scripted_swep_arms_an_npc_with_its_ammo() {
+        assert_eq!(
+            super::npc_weapon_shot_in("weapon_pistol", &[]),
+            Some(("Pistol".to_string(), 1))
+        );
+        assert_eq!(super::npc_weapon_shot_in("my_swep", &[]), None);
+        let swep = super::ScriptedWeapon {
+            class: "my_swep".into(),
+            print_name: "My".into(),
+            slot: 2,
+            slot_pos: 0,
+            hold_type: "smg".into(),
+            view_model: String::new(),
+            world_model: String::new(),
+            clip_size: 30,
+            default_clip: 30,
+            ammo: "SMG1".into(),
+            automatic: true,
+            primary_delay: 0.1,
+            secondary_delay: 0.5,
+            reload_time: 1.4,
+        };
+        assert_eq!(
+            super::npc_weapon_shot_in("my_swep", std::slice::from_ref(&swep)),
+            Some(("SMG1".to_string(), 1))
+        );
+    }
+
     #[test]
     fn vehicle_tuning_overrides_the_spec() {
         let key = ["jeep", "Jeep", "airboat", "jalopy"]

@@ -754,6 +754,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   props by their collision hulls grown by the box's extent (the same approximation the server's
   own hull checks use); a start inside a prop is `startsolid` at fraction 0. Hit fields as
   `util.TraceLine`.
+- `NPC:Give("my_swep")` with a scripted SWEP arms the NPC: it fires the SWEP's ammo type (one
+  pellet, the measured NPC cadence / cone) through the same fire path as the HL2 weapons; the
+  WEAPON NPC callbacks (`GetNPCBulletSpread`, `GetNPCBurstSettings`, `GetNPCRestTimes`,
+  `NPCShoot_Primary/Secondary`) are not asked yet (no reply-style hook from the NPC fire path) and
+  stay stubs.
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.
