@@ -712,6 +712,10 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- Model data carries the bone of each PHY solid (solid order): `Entity:GetPhysicsObjectCount`
+  is the solid count (1 without a `.phy`), `TranslatePhysBoneToBone(i)` / `TranslateBoneToPhysBone(b)`
+  map between them (a bone without its own solid resolves through its parents, -1 if none).
+  `NPC:UpdateEnemyMemory(ent, pos)` takes the target only (our AI tracks the real position).
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.

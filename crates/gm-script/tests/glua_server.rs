@@ -711,6 +711,7 @@ fn oildrum_models() -> std::collections::BTreeMap<String, gm_server::ModelScript
                 "ValveBiped.Bip01_Head1".into(),
             ],
             bone_parents: vec![-1, 0],
+            phys_bones: vec!["ValveBiped.Bip01_Pelvis".into()],
             bone_bind: vec![
                 (Vec3::new(0.0, 0.0, 10.0), Vec3::new(0.0, 0.0, 0.0)),
                 (Vec3::new(5.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 0.0)),
@@ -2235,4 +2236,25 @@ fn npc_unreachable_memory_writes_an_ignore() {
     );
     let un: bool = rt.actors()[0].eval("return state.un").unwrap();
     assert!(!un, "nothing ignored in the test snapshot");
+}
+
+#[test]
+fn phys_bones_translate_between_bones_and_solids() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local e = Entity(5)
+             state.r = { e:GetPhysicsObjectCount(), e:TranslatePhysBoneToBone(0), e:TranslatePhysBoneToBone(1),
+                 e:TranslateBoneToPhysBone(1), e:TranslateBoneToPhysBone(0), e:TranslateBoneToPhysBone(7) }
+         end)",
+    );
+    let models = oildrum_models();
+    let mut snap = (*snapshot()).clone();
+    snap.models = gm_script::snapshot::ModelsRef(&models as *const _);
+    let snap = Arc::new(snap);
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let r: Vec<i32> = rt.actors()[0].eval("return state.r").unwrap();
+    // one solid on the pelvis: the head (child of the pelvis) resolves to it through its parent
+    assert_eq!(r, vec![1, 0, -1, 0, 0, -1]);
 }

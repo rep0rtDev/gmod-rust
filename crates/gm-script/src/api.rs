@@ -2992,6 +2992,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             t.set("skins", m.skins)?;
             t.set("bones", m.bones.clone())?;
             t.set("bone_parents", m.bone_parents.clone())?;
+            t.set("phys_bones", m.phys_bones.clone())?;
             let bb = lua.create_table()?;
             for (i, (pos, ang)) in m.bone_bind.iter().enumerate() {
                 let e = lua.create_table()?;

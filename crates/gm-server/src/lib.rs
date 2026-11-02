@@ -164,6 +164,8 @@ pub struct ModelScriptData {
     pub skins: u32,
     pub bones: Vec<String>,
     pub bone_parents: Vec<i32>,
+    /// Bone each PHY solid is attached to, in solid order (empty without a `.phy`).
+    pub phys_bones: Vec<String>,
     /// Bind pose of each bone relative to its parent: position and angles (`GetBonePosition`
     /// composes these up the chain; no animation layer on the server).
     pub bone_bind: Vec<(Vec3, Vec3)>,
@@ -290,6 +292,22 @@ impl ModelScriptData {
         read: impl Fn(&str) -> Option<Vec<u8>>,
     ) -> Self {
         let mut out = Self::from_mdl(mdl, data);
+        let name = mdl.header.name.trim_end_matches('\0');
+        let stem = name.strip_suffix(".mdl").unwrap_or(name);
+        let phy_paths = if stem.starts_with("models/") {
+            vec![format!("{stem}.phy")]
+        } else {
+            vec![format!("models/{stem}.phy"), format!("{stem}.phy")]
+        };
+        if let Some(phy) = phy_paths
+            .iter()
+            .find_map(|p| read(p))
+            .and_then(|b| gm_formats::phy::Phy::parse(&b).ok())
+        {
+            let mut props: Vec<_> = phy.props.iter().collect();
+            props.sort_by_key(|p| p.index);
+            out.phys_bones = props.iter().map(|p| p.name.clone()).collect();
+        }
         for inc in gm_formats::mdl::include_models(data, &mdl.header) {
             let Some(bytes) = read(&inc) else {
                 continue;
@@ -338,6 +356,7 @@ impl ModelScriptData {
             skins: mdl.skins.len() as u32,
             bones: mdl.bones.iter().map(|b| b.name.clone()).collect(),
             bone_parents: mdl.bones.iter().map(|b| b.parent).collect(),
+            phys_bones: Vec::new(),
             bone_bind: mdl
                 .bones
                 .iter()
