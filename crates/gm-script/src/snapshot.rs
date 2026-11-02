@@ -64,6 +64,9 @@ pub struct PlayerSnap {
     pub velocity: Vec3,
     pub view_angles: Vec3,
     pub held: Option<u32>,
+    /// The prop carried with +use, and the mover's water level (0 dry .. 3 eyes under).
+    pub carry: Option<u32>,
+    pub water_level: u8,
     pub alive: bool,
     pub health: i32,
     pub armor: i32,
@@ -485,6 +488,8 @@ impl Snapshot {
                             velocity: p.state.velocity,
                             view_angles: p.view_angles,
                             held: p.held.map(|h| h.0),
+                            carry: p.carry.map(|c| c.0),
+                            water_level: p.state.water_level,
                             alive: p.alive,
                             health: p.health,
                             armor: p.armor,

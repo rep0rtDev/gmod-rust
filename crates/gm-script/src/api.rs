@@ -562,6 +562,8 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("velocity", vec3_table(lua, p.velocity)?)?;
     t.set("view_angles", vec3_table(lua, p.view_angles)?)?;
     t.set("held", p.held)?;
+    t.set("carry", p.carry)?;
+    t.set("water_level", p.water_level)?;
     t.set("alive", p.alive)?;
     t.set("health", p.health)?;
     t.set("armor", p.armor)?;

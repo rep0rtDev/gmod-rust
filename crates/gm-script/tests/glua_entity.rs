@@ -104,6 +104,8 @@ fn snapshot() -> Arc<Snapshot> {
             velocity: Vec3::ZERO,
             view_angles: Vec3::new(0.0, 180.0, 0.0),
             held: None,
+            carry: Some(777),
+            water_level: 2,
             alive: true,
             health: 85,
             armor: 10,

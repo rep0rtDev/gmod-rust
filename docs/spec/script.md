@@ -924,7 +924,10 @@ under a point. Attributes, places, hiding spots, ladders, search lists and editi
 the game's segment table (pos, length, distanceFromStart, forward, area) along the straight
 path (false when there is none or it is partial); length, start/end, first/last/next/prior
 segment, cursor moves, cursor data, position on path and closest position are polyline math.
-`Update` / `Chase` need a NextBot locomotion and `Draw` the client: stubs. `GetPreferredCarryAngles` (the hook, else the scripted
+`Update` / `Chase` need a NextBot locomotion and `Draw` the client: stubs.
+`Entity:IsPlayerHolding` is true while any player holds the entity with the physgun or
+carries it with +use; `Entity:WaterLevel` is the mover's water level for players (0 dry,
+1 feet, 2 waist, 3 eyes) and 0 for everything else (props have no water state). `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

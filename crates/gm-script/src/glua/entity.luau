@@ -97,7 +97,14 @@ function ENT:CPPIGetOwner() return self:GetOwner() end
 function ENT:GetSkin() local s = snap(self.__id); return s and s.skin or 0 end
 function ENT:Health() local s = snap(self.__id); return s and s.health or 0 end
 function ENT:GetMaxHealth() local s = snap(self.__id); return s and s.max_health or 0 end
-function ENT:IsPlayerHolding() return false end
+function ENT:IsPlayerHolding()
+    local id = self.__id
+    if id == nil or id == 0 then return false end
+    for _, p in ipairs(world and world.players() or {}) do
+        if p.held == id or p.carry == id then return true end
+    end
+    return false
+end
 function ENT:GetBodygroup(part)
     local s = snap(self.__id)
     if not s or s.body == "" then return 0 end
@@ -1172,7 +1179,11 @@ function ENT:GetGroundEntity()
 end
 function ENT:SetGroundEntity(e) end
 function ENT:IsInWorld() local p = self:GetPos(); return math.abs(p.x) < 16384 and math.abs(p.y) < 16384 and math.abs(p.z) < 16384 end
-function ENT:WaterLevel() return 0 end
+function ENT:WaterLevel()
+    if not self:IsPlayer() then return 0 end
+    local p = psnap(self.__pid)
+    return p and p.water_level or 0
+end
 function ENT:GetMoveType() local s = snap(self.__id); if not s then return MOVETYPE_NONE end if s.frozen then return MOVETYPE_NONE end return MOVETYPE_VPHYSICS end
 function ENT:SetMoveType(t) if t == MOVETYPE_NONE then world.queue("freeze", self.__id, true) elseif t == MOVETYPE_VPHYSICS then world.queue("freeze", self.__id, false) end end
 function ENT:GetMoveCollide() return MOVECOLLIDE_DEFAULT end
@@ -1610,6 +1621,7 @@ end
 function PLY:GetCurrentViewOffset() if self:Crouching() then return self:GetViewOffsetDucked() end return self:GetViewOffset() end
 local function mv(self, f, d) local p = psnap(self.__pid); local v = p and p[f]; return v ~= nil and v or d end
 local function mvset(self, which, v) local n = tonumber(v); qwrite("player.move_param", self.__pid, { x = which, y = n or 0, z = n ~= nil and 1 or 0 }) end
+function PLY:WaterLevel() local p = psnap(self.__pid); return p and p.water_level or 0 end
 function PLY:GetWalkSpeed() return mv(self, "walk_speed", 200) end
 function PLY:GetRunSpeed() return mv(self, "run_speed", 400) end
 function PLY:GetJumpPower() return mv(self, "jump_power", 200) end

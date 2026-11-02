@@ -102,6 +102,8 @@ fn snapshot() -> Arc<Snapshot> {
             velocity: Vec3::ZERO,
             view_angles: Vec3::ZERO,
             held: None,
+            carry: Some(777),
+            water_level: 2,
             alive: true,
             health: 100,
             armor: 0,
@@ -1371,4 +1373,24 @@ fn path_follower_segments_and_cursor_follow_the_polyline() {
     assert_eq!(close, "50.000000 0.000000 0.000000");
     assert_eq!((ccur, clamped), (125.0, 150.0));
     assert_eq!(d2, "0 150");
+}
+
+#[test]
+fn held_props_and_water_level_come_from_the_player_snapshot() {
+    let mut rt = runtime(
+        "state = {}
+         events.on('tick.pre', function()
+             state.wl = Player(1):WaterLevel()
+             state.held = Entity(777):IsPlayerHolding()
+             state.other = Entity(778):IsPlayerHolding()
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let (wl, held, other): (i64, bool, bool) = rt.actors()[0]
+        .eval("return state.wl, state.held, state.other")
+        .unwrap();
+    assert_eq!((wl, held, other), (2, true, false));
 }
