@@ -212,3 +212,40 @@ fn pose_parameters_clamp_or_wrap_into_the_model_range_and_clear() {
     let counts = &snap.players[&1].counts;
     assert_eq!(counts.iter().find(|c| c.0 == "npcs").map(|c| c.1), Some(1));
 }
+
+#[test]
+fn sequence_movement_bone_props_and_frame_advance() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let model = "models/alyx.mdl";
+    let info = gm_dedicated::model_info(&mount, model).unwrap();
+    let moving = info
+        .script
+        .sequence_move
+        .iter()
+        .filter(|m| glam::Vec3::from_array(**m).length() > 1.0)
+        .count();
+    assert!(
+        moving > 5,
+        "alyx has walking sequences with root movement: {moving}"
+    );
+    assert_eq!(info.script.bone_props.len(), info.script.bones.len());
+    assert!(info.script.bone_props.iter().any(|(s, _)| !s.is_empty()));
+    server.register_model(model, info);
+    server.add_player(
+        1,
+        Vec3::new(823.235, -500.0, -143.0),
+        Vec3::new(20.0, 0.0, 0.0),
+    );
+    server.set_weapons(1, &["gmod_tool"]);
+    let id = server.spawn_npc(1, "npc_alyx", "").unwrap();
+    assert!(server.frame_advance(id, 0.5));
+    let c = server.anim(id).unwrap().cycle;
+    assert!(c > 0.0, "frame advance moved the cycle: {c}");
+    assert!(!server.frame_advance(999, 0.5));
+}

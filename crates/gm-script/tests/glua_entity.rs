@@ -699,3 +699,21 @@ fn map_version_sun_pvs_and_angular_velocity_read_the_snapshot() {
     assert_eq!((ver, nosun, pvs_ent, pvs_pos), (0, true, true, true));
     assert!(!av.is_empty());
 }
+
+#[test]
+fn frame_advance_and_sequence_movement_apis() {
+    let (rt, writes) = run("Entity(5):FrameAdvance(0.25)
+         state.r = { Entity(5):GetSequenceMoveDist(0), tostring(Entity(5):GetGroundSpeedVelocity()),
+                     Entity(5):GetBoneContents(0), Entity(5):GetBoneSurfaceProp(0), Entity(5):GetAnimTimeInterval() >= 0 }");
+    assert!(writes.iter().any(
+        |w| matches!(w, QueuedWrite::EntityFrameAdvance { ent: 5, dt } if (*dt - 0.25).abs() < 1e-6)
+    ));
+    let (dist, vel, contents, surface, dt_ok): (f32, String, i32, String, bool) =
+        rt.actors()[0].eval("return unpack(state.r)").unwrap();
+    // no model in this harness: zero movement, neutral bone props
+    assert_eq!(
+        (dist, contents, surface.as_str(), dt_ok),
+        (0.0, 0, "", true)
+    );
+    assert!(!vel.is_empty());
+}

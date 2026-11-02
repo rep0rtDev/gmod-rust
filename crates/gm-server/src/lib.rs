@@ -174,6 +174,10 @@ pub struct ModelScriptData {
     pub sequence_activity: Vec<(String, i32)>,
     /// Per sequence: `(fps, frames, anim flags)` of its first animation (0x1 = looping).
     pub sequence_anim: Vec<(f32, i32, i32)>,
+    /// Per sequence: root movement over its first animation (model units).
+    pub sequence_move: Vec<[f32; 3]>,
+    /// Per bone: surface property name and contents mask.
+    pub bone_props: Vec<(String, i32)>,
     /// Raw animations: `(name, fps, frames, flags)`.
     pub anims: Vec<(String, f32, i32, i32)>,
     pub hitboxes: u32,
@@ -308,6 +312,11 @@ impl ModelScriptData {
                         .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
                         .map_or((0.0, 0, 0), |a| (a.fps, a.frames, a.flags)),
                 );
+                out.sequence_move.push(
+                    anims
+                        .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
+                        .map_or([0.0; 3], |a| a.movement),
+                );
             }
         }
         out
@@ -355,6 +364,19 @@ impl ModelScriptData {
                         .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
                         .map_or((0.0, 0, 0), |a| (a.fps, a.frames, a.flags))
                 })
+                .collect(),
+            sequence_move: seqs
+                .iter()
+                .map(|q| {
+                    anims
+                        .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
+                        .map_or([0.0; 3], |a| a.movement)
+                })
+                .collect(),
+            bone_props: mdl
+                .bones
+                .iter()
+                .map(|b| (b.surface_prop.clone(), b.contents))
                 .collect(),
             anims: anims
                 .iter()
@@ -7468,6 +7490,56 @@ impl<'w> Server<'w> {
             .map(|p| p.model.clone())
     }
 
+    /// One animator step of `dt` seconds: the cycle moves by `rate * dt / duration`, loops wrap,
+    /// one-shots clamp at 1 (either marks finished); the gesture layer the same, an autokill
+    /// layer goes away at its end.
+    fn advance_anim(&self, model: &str, a: &mut EntAnim, dt: f32) {
+        if let Some((dur, looping)) = self.seq_duration(model, &a.sequence) {
+            a.cycle += a.rate * dt / dur;
+            if a.cycle >= 1.0 {
+                a.finished = true;
+                a.cycle = if looping {
+                    a.cycle.rem_euclid(1.0)
+                } else {
+                    1.0
+                };
+            }
+        }
+        if let Some(g) = a.gesture.as_mut() {
+            if let Some((dur, _)) = self.seq_duration(model, &g.sequence) {
+                g.cycle += g.rate * dt / dur;
+                if g.cycle >= 1.0 {
+                    g.finished = true;
+                    g.cycle = if g.looping {
+                        g.cycle.rem_euclid(1.0)
+                    } else {
+                        1.0
+                    };
+                }
+            }
+            if g.finished && g.autokill {
+                a.gesture = None;
+            }
+        }
+    }
+
+    /// `Entity:FrameAdvance(dt)`: steps the entity's animator by `dt` now (an NPC's base
+    /// sequence stays what its AI plays). False for an entity without a model.
+    pub fn frame_advance(&mut self, ent: u32, dt: f32) -> bool {
+        let Some(model) = self.anim_model(ent) else {
+            return false;
+        };
+        let mut a = self.anims.remove(&ent).unwrap_or_default();
+        if a.sequence.is_empty() {
+            if let Some(n) = self.npcs.get(&ent) {
+                a.sequence = n.sequence.clone();
+            }
+        }
+        self.advance_anim(&model, &mut a, dt);
+        self.anims.insert(ent, a);
+        true
+    }
+
     /// Advances every animator one tick: an NPC's sequence follows what its AI plays (a change
     /// restarts the cycle), the cycle moves by `rate * dt / duration`, loops wrap, one-shots
     /// clamp at 1, either marks the sequence finished; the gesture layer the same, an autokill
@@ -7503,33 +7575,7 @@ impl<'w> Server<'w> {
                     a.finished = false;
                 }
             }
-            if let Some((dur, looping)) = self.seq_duration(&model, &a.sequence) {
-                a.cycle += a.rate * dt / dur;
-                if a.cycle >= 1.0 {
-                    a.finished = true;
-                    a.cycle = if looping {
-                        a.cycle.rem_euclid(1.0)
-                    } else {
-                        1.0
-                    };
-                }
-            }
-            if let Some(g) = a.gesture.as_mut() {
-                if let Some((dur, _)) = self.seq_duration(&model, &g.sequence) {
-                    g.cycle += g.rate * dt / dur;
-                    if g.cycle >= 1.0 {
-                        g.finished = true;
-                        g.cycle = if g.looping {
-                            g.cycle.rem_euclid(1.0)
-                        } else {
-                            1.0
-                        };
-                    }
-                }
-                if g.finished && g.autokill {
-                    a.gesture = None;
-                }
-            }
+            self.advance_anim(&model, &mut a, dt);
             self.anims.insert(id, a);
         }
     }

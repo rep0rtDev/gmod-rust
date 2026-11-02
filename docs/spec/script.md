@@ -624,6 +624,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   `Entity:TestPVS(pos|ent)` asks the collision world's PVS (cluster visibility, true when there
   is no world), `Entity:GetLocalAngularVelocity` is the body's angular velocity (previously
   constants). `load_world` carries revision and sun to both servers like the spawn points.
+- Sequence movement: the model data carries each sequence's root movement (first animation) and
+  each bone's surface property / contents, so `Entity:GetSequenceMoveDist` / `GetSequenceMovement`
+  / `GetSequenceVelocity` / `GetSequenceGroundSpeed` / `GetSequenceMoveYaw` / `GetGroundSpeedVelocity`
+  and `GetBoneContents` / `GetBoneSurfaceProp` read the MDL; `Entity:FrameAdvance(dt)` steps the
+  server animator now (`Server::frame_advance`), `GetAnimTimeInterval` is the tick interval,
+  `SetAnimation(act)` picks the weighted sequence and resets to it.
 
 Done in `glua/server.luau`:
 

@@ -158,6 +158,11 @@ pub enum QueuedWrite {
     EntityResetSequence {
         ent: u32,
     },
+    /// `Entity:FrameAdvance(dt)`.
+    EntityFrameAdvance {
+        ent: u32,
+        dt: f32,
+    },
     /// `Entity:SetPoseParameter` / `ClearPoseParameters`.
     EntityPose {
         ent: u32,
@@ -1869,6 +1874,10 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     rate: f32_arg(&arg),
                 },
                 "ent.reset_sequence" => QueuedWrite::EntityResetSequence { ent },
+                "ent.frame_advance" => QueuedWrite::EntityFrameAdvance {
+                    ent,
+                    dt: f32_arg(&arg),
+                },
                 "ent.pose" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::EntityPose {
@@ -2502,6 +2511,19 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 sa.set(i + 1, e)?;
             }
             t.set("sequence_anim", sa)?;
+            let sm = lua.create_table()?;
+            for (i, mv) in m.sequence_move.iter().enumerate() {
+                sm.set(i + 1, vec3_table(lua, glam::Vec3::from_array(*mv))?)?;
+            }
+            t.set("sequence_move", sm)?;
+            let bp = lua.create_table()?;
+            for (i, (surface, contents)) in m.bone_props.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("surface", surface.as_str())?;
+                e.set("contents", *contents)?;
+                bp.set(i + 1, e)?;
+            }
+            t.set("bone_props", bp)?;
             let sact = lua.create_table()?;
             for (i, (act, weight)) in m.sequence_activity.iter().enumerate() {
                 let e = lua.create_table()?;
@@ -3202,6 +3224,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::EntityCycle { ent, cycle } => server.set_cycle(*ent, *cycle),
         QueuedWrite::EntityPlaybackRate { ent, rate } => server.set_playback_rate(*ent, *rate),
         QueuedWrite::EntityResetSequence { ent } => server.reset_sequence_info(*ent),
+        QueuedWrite::EntityFrameAdvance { ent, dt } => server.frame_advance(*ent, *dt),
         QueuedWrite::EntityPose { ent, name, value } => {
             server.set_pose_parameter(*ent, name, *value)
         }
