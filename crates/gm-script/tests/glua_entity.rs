@@ -123,6 +123,7 @@ fn snapshot() -> Arc<Snapshot> {
             punch: Vec3::ZERO,
             punch_vel: Vec3::ZERO,
             ladder: false,
+            suit: false,
             frags: 3,
             deaths: 1,
             max_armor: 150,

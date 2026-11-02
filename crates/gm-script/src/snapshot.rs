@@ -87,6 +87,7 @@ pub struct PlayerSnap {
     pub punch: Vec3,
     pub punch_vel: Vec3,
     pub ladder: bool,
+    pub suit: bool,
     pub frags: u32,
     pub deaths: u32,
     pub max_armor: i32,
@@ -488,6 +489,7 @@ impl Snapshot {
                             punch: p.state.punch,
                             punch_vel: p.state.punch_vel,
                             ladder: p.state.ladder != 0,
+                            suit: p.suit,
                         },
                     )
                 })

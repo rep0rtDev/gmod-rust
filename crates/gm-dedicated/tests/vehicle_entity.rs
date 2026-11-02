@@ -384,4 +384,12 @@ fn view_punch_pickup_object_step_sound_and_ladder_are_server_operations() {
     );
     assert!(server.exit_ladder(1));
     assert!(!server.view_punch(7, None, None, false), "no such player");
+    assert!(server.set_suit(1, true) && server.players[&1].suit);
+    assert!(server.set_last_hit_group(1, 3));
+    assert_eq!(server.last_hit_group(1), 3, "SetLastHitGroup reads back");
+    assert!(server.set_eye_angles(1, Vec3::new(10.0, 20.0, 0.0)));
+    assert_eq!(server.players[&1].view_angles, Vec3::new(10.0, 20.0, 0.0));
+    assert!(server.set_drop_weapon_on_death(1, true) && server.players[&1].drop_weapon_on_death);
+    server.spawn_player(1);
+    assert!(!server.players[&1].suit, "spawn clears the suit");
 }

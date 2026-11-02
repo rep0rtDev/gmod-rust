@@ -3023,6 +3023,16 @@ pub struct Player {
     prev_on_ground: bool,
     /// The water level last reported to addons (`OnEntityWaterLevelChanged`).
     prev_water_level: u8,
+    /// `Player:SetEyeAngles`: view angles applied in place of the next usercmd's.
+    eye_override: Option<Vec3>,
+    /// `Player:EquipSuit` / `RemoveSuit`: the HEV suit flag (cleared on spawn; data only, no
+    /// item pickups depend on it yet).
+    pub suit: bool,
+    /// `Player:SetLastHitGroup`: overrides `last_hit_group` until the next hit on anyone
+    /// (valid while the hit journal has this length).
+    hit_group_override: Option<(usize, u8)>,
+    /// `Player:ShouldDropWeapon`: the active weapon is dropped as a world weapon on death.
+    pub drop_weapon_on_death: bool,
     /// Footstep timer and foot alternation (measured rule in `gm_move::Footsteps`).
     steps: gm_move::Footsteps,
 }
@@ -3108,6 +3118,10 @@ impl Player {
             prev_vz: 0.0,
             prev_on_ground: true,
             prev_water_level: 0,
+            eye_override: None,
+            suit: false,
+            hit_group_override: None,
+            drop_weapon_on_death: false,
             steps: gm_move::Footsteps::default(),
         }
     }
@@ -3834,6 +3848,8 @@ impl<'w> Server<'w> {
         p.alive = true;
         p.health = p.max_health;
         p.armor = 0;
+        p.suit = false;
+        p.eye_override = None;
         p.ragdoll = None;
         p.death_tick = None;
         p.held = None;
@@ -5294,6 +5310,13 @@ impl<'w> Server<'w> {
     }
 
     pub fn kill_player(&mut self, id: u32) {
+        if self
+            .players
+            .get(&id)
+            .is_some_and(|p| p.alive && p.drop_weapon_on_death)
+        {
+            self.drop_weapon(id, None);
+        }
         let tick = self.tick_count;
         let Some(p) = self.players.get_mut(&id) else {
             return;
@@ -5731,6 +5754,45 @@ impl<'w> Server<'w> {
             return false;
         };
         p.state.ladder = 0;
+        true
+    }
+
+    /// `Player:SetEyeAngles`: the next usercmd the server processes for the player runs with
+    /// these view angles (the client's own angles return with the command after).
+    pub fn set_eye_angles(&mut self, id: u32, angles: Vec3) -> bool {
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        p.eye_override = Some(angles);
+        p.view_angles = angles;
+        true
+    }
+
+    /// `Player:EquipSuit` / `RemoveSuit`.
+    pub fn set_suit(&mut self, id: u32, on: bool) -> bool {
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        p.suit = on;
+        true
+    }
+
+    /// `Player:SetLastHitGroup`: read back by `last_hit_group` until the next hit lands.
+    pub fn set_last_hit_group(&mut self, id: u32, group: u8) -> bool {
+        let len = self.hits.len();
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        p.hit_group_override = Some((len, group));
+        true
+    }
+
+    /// `Player:ShouldDropWeapon`.
+    pub fn set_drop_weapon_on_death(&mut self, id: u32, on: bool) -> bool {
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        p.drop_weapon_on_death = on;
         true
     }
 
@@ -6221,6 +6283,11 @@ impl<'w> Server<'w> {
 
     /// `Player:LastHitGroup`: hit group of the last recorded hit on the player (0 = generic).
     pub fn last_hit_group(&self, player: u32) -> u8 {
+        if let Some((len, g)) = self.players.get(&player).and_then(|p| p.hit_group_override) {
+            if len == self.hits.len() {
+                return g;
+            }
+        }
         self.hits
             .iter()
             .rev()
@@ -9892,18 +9959,19 @@ impl<'w> Server<'w> {
     /// Moves one player by one usercmd outside the tick (catching up a usercmd backlog).
     pub fn move_player(&mut self, player: u32, pc: &PlayerCmd) {
         if let Some(p) = self.players.get_mut(&player) {
-            p.view_angles = pc.cmd.view_angles;
+            p.view_angles = p.eye_override.take().unwrap_or(pc.cmd.view_angles);
             let cmd = if p.locked {
                 gm_move::UserCmd {
                     buttons: 0,
                     forward_move: 0.0,
                     side_move: 0.0,
                     up_move: 0.0,
-                    ..pc.cmd
+                    view_angles: p.view_angles,
                 }
             } else {
                 gm_move::UserCmd {
                     buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
+                    view_angles: p.view_angles,
                     ..pc.cmd
                 }
             };
@@ -10093,9 +10161,10 @@ impl<'w> Server<'w> {
                 continue;
             }
             if let Some(pc) = cmds.get(id) {
-                p.view_angles = pc.cmd.view_angles;
+                p.view_angles = p.eye_override.take().unwrap_or(pc.cmd.view_angles);
                 let mut cmd = gm_move::UserCmd {
                     buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
+                    view_angles: p.view_angles,
                     ..pc.cmd
                 };
                 if p.driving.is_some() || p.seat.is_some() {

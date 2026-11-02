@@ -867,7 +867,12 @@ position and angles instead of the server's pick (we have no spawn-point entitie
 gm-move decays it), `GetViewPunchAngles` / `GetPunchAngle` / `GetViewPunchVelocity` read it from
 the snapshot; `PickupObject` carries an entity as +use would (no reach check, the pickup rules and
 `PlayerPickup` still apply), `PlayStepSound` plays one footstep through the footstep rule (right
-foot), `ExitLadder` lets go of the mover's ladder. `GetPreferredCarryAngles` (the hook, else the scripted
+foot), `ExitLadder` lets go of the mover's ladder. `SetEyeAngles` sets the view angles and runs the next usercmd the
+server processes with them (the client's own angles return with the command after; nothing is
+pushed to the client), `EquipSuit` / `RemoveSuit` / `IsSuitEquipped` keep the HEV suit flag
+(cleared on spawn, the loadout event equips it before `PlayerLoadout` runs; no item pickups depend on it yet),
+`SetLastHitGroup` overrides `LastHitGroup` until the next hit lands on anyone, `ShouldDropWeapon`
+drops the active weapon as a world weapon on death through the `DropWeapon` path. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

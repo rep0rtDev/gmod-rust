@@ -284,6 +284,26 @@ pub enum QueuedWrite {
     PlayerExitLadder {
         player: u32,
     },
+    /// `Player:SetEyeAngles`.
+    PlayerSetEyeAngles {
+        player: u32,
+        angles: Vec3,
+    },
+    /// `Player:EquipSuit` / `RemoveSuit`.
+    PlayerSetSuit {
+        player: u32,
+        on: bool,
+    },
+    /// `Player:SetLastHitGroup`.
+    PlayerSetLastHitGroup {
+        player: u32,
+        group: u8,
+    },
+    /// `Player:ShouldDropWeapon`.
+    PlayerShouldDropWeapon {
+        player: u32,
+        on: bool,
+    },
     /// `SetFrags` / `SetDeaths`: `None` keeps that counter.
     PlayerSetScore {
         player: u32,
@@ -527,6 +547,7 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("punch", vec3_table(lua, p.punch)?)?;
     t.set("punch_vel", vec3_table(lua, p.punch_vel)?)?;
     t.set("ladder", p.ladder)?;
+    t.set("suit", p.suit)?;
     t.set(
         "ammo",
         p.ammo
@@ -1548,6 +1569,26 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     },
                 },
                 "player.exit_ladder" => QueuedWrite::PlayerExitLadder { player: ent },
+                "player.set_eye_angles" => QueuedWrite::PlayerSetEyeAngles {
+                    player: ent,
+                    angles: value_vec3(&arg)?,
+                },
+                "player.set_suit" => QueuedWrite::PlayerSetSuit {
+                    player: ent,
+                    on: matches!(arg, Value::Boolean(true)),
+                },
+                "player.set_last_hit_group" => QueuedWrite::PlayerSetLastHitGroup {
+                    player: ent,
+                    group: match &arg {
+                        Value::Integer(i) => (*i).clamp(0, 255) as u8,
+                        Value::Number(n) => n.clamp(0.0, 255.0) as u8,
+                        _ => 0,
+                    },
+                },
+                "player.should_drop_weapon" => QueuedWrite::PlayerShouldDropWeapon {
+                    player: ent,
+                    on: matches!(arg, Value::Boolean(true)),
+                },
                 "player.set_flashlight" => QueuedWrite::PlayerSetFlashlight {
                     player: ent,
                     on: matches!(arg, Value::Boolean(true)),
@@ -2563,6 +2604,16 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::PlayerPickupObject { player, ent } => server.pickup_object(*player, *ent),
         QueuedWrite::PlayerStepSound { player, volume } => server.play_step_sound(*player, *volume),
         QueuedWrite::PlayerExitLadder { player } => server.exit_ladder(*player),
+        QueuedWrite::PlayerSetEyeAngles { player, angles } => {
+            server.set_eye_angles(*player, *angles)
+        }
+        QueuedWrite::PlayerSetSuit { player, on } => server.set_suit(*player, *on),
+        QueuedWrite::PlayerSetLastHitGroup { player, group } => {
+            server.set_last_hit_group(*player, *group)
+        }
+        QueuedWrite::PlayerShouldDropWeapon { player, on } => {
+            server.set_drop_weapon_on_death(*player, *on)
+        }
         QueuedWrite::PlayerSetScore {
             player,
             frags,

@@ -740,7 +740,7 @@ local prev_move = {}
         elseif p.kind == "vehicle" then hook.Run("PlayerSpawnedVehicle", ply, e)
         elseif p.kind == "weapon" then hook.Run("PlayerSpawnedSWEP", ply, e) end
     end)
-    events.on("player.loadout", function(p) if hook.Run("PlayerLoadout", Player(p.player)) == true then return false end end)
+    events.on("player.loadout", function(p) Player(p.player):EquipSuit(); if hook.Run("PlayerLoadout", Player(p.player)) == true then return false end end)
     events.on("prop.spawn_request", function(p) if hook.Run("PlayerSpawnProp", Player(p.player), p.model) == false then return false end end)
     events.on("tool.before", function(p)
         local ply = Player(p.player)
