@@ -60,7 +60,34 @@ Measured on the mesh (unit tests): a 16 u step is walkable, a 40 u ledge is not;
 corner next to a wall stays >= agent radius away from it; an open floor is one
 polygon set and a path across it has two points.
 
+## Locomotion (`gm-server`, `Server::npc_goto` / `tick_npc_move`)
+
+Own path following, one step per tick after the physics step and NPC settling:
+
+- `npc_goto(id, target)`: `find_path` from the NPC's feet with query half-extents
+  `(32, 32, 72)`; false without a mesh, for a dead NPC or when either end has no
+  polygon nearby. A partial path (target off the reachable mesh) is still taken and
+  ends at the closest reachable point (`NpcPath::partial`).
+- Corners: an intermediate corner counts as passed within 8 u horizontally
+  (`NPC_CORNER_REACH`); the final point is walked onto exactly (the last step is
+  shortened to the remaining distance) and the goal is cleared in that same tick, so a
+  400 u straight walk at 75 u/s takes exactly `ceil(400 / (75 * 0.015))` = 356 ticks.
+- Step: `speed * tick` toward the corner in the XY plane; the hull is swept 18 u above
+  the feet (`step_height`) with `MASK_PLAYERSOLID`, stops at the first solid, then is
+  dropped onto the floor by the same 256 u box trace that places a spawned NPC. Z is
+  therefore the floor's, not the mesh's (gm_construct: the ground west of spawn is 4 u
+  lower and the NPC follows it).
+- Yaw faces the motion; pitch/roll untouched.
+- `speed` per NPC: `NPC_WALK_SPEED` = 75 u/s placeholder. **Not measured yet**: the
+  game's per-class walk/run ground speeds come from the model's sequence motion; to
+  be recorded on srcds (citizen / metrocop / soldier / zombie, walk and run) and put
+  into `NpcDef`.
+
+Test: `gm-dedicated/tests/npc_entity.rs::npc_walks_the_navmesh_to_a_goal` (speed cap
+per tick, yaw = motion within 1 deg, feet on the traced floor within 0.5 u, exact
+arrival, exact tick count).
+
 ## Not yet
 
-Locomotion along the path, behaviour (idle / chase / combat), crowd avoidance,
+Per-class speeds (above), behaviour (idle / chase / combat), crowd avoidance,
 dynamic obstacles (props), off-mesh links (ladders, jumps).

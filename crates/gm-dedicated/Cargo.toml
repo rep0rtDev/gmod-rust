@@ -14,6 +14,7 @@ gm-move = { path = "../gm-move" }
 gm-physics = { path = "../gm-physics" }
 gm-sandbox = { path = "../gm-sandbox" }
 gm-server = { path = "../gm-server" }
+gm-nav = { path = "../gm-nav" }
 gm-net = { path = "../gm-net" }
 gm-script = { path = "../gm-script" }
 glam = { workspace = true }

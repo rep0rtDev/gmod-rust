@@ -927,7 +927,24 @@ pub struct Npc {
     pub dead_at: Option<u64>,
     /// The remover's `timer.Simple(1)`: the tick the entity goes after the click made it `MOVETYPE_NONE`.
     pub remove_at: Option<u64>,
+    /// Ground speed along a navigation path, u/s.
+    pub speed: f32,
+    pub goal: Option<NpcPath>,
 }
+
+/// Corners of a navigation path and the one the NPC is heading for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NpcPath {
+    pub points: Vec<Vec3>,
+    pub idx: usize,
+    pub partial: bool,
+}
+
+/// Placeholder until the per-class ground speeds are measured on the game.
+pub const NPC_WALK_SPEED: f32 = 75.0;
+/// An intermediate corner counts as passed within this horizontal distance; the final
+/// point is walked onto exactly.
+const NPC_CORNER_REACH: f32 = 8.0;
 
 /// Ticks a dead NPC stays on the server before it is removed (measured 66..106 for the
 /// metropolice, 76..96 for the headcrab); the corpse itself is the client's ragdoll.
@@ -2643,6 +2660,7 @@ pub struct Server<'w> {
     pub world_weapons: HashMap<u32, String>,
     /// NPCs spawned from the NPCs tab (`Spawn_NPC`), by sandbox id (foreign to the prop list).
     pub npcs: BTreeMap<u32, Npc>,
+    nav: Option<std::sync::Arc<gm_nav::NavMesh>>,
     /// Vehicles (`Spawn_Vehicle`): sandbox prop id -> seat state.
     pub vehicles: BTreeMap<u32, Vehicle>,
     /// Ticks that removed an entity since undo.lua last purged dead undo lists (every 16).
@@ -2769,6 +2787,7 @@ impl<'w> Server<'w> {
             sents: HashMap::new(),
             world_weapons: HashMap::new(),
             npcs: BTreeMap::new(),
+            nav: None,
             vehicles: BTreeMap::new(),
             undo_purge_ticks: 0,
             sent_player_touch: std::collections::HashSet::new(),
@@ -5198,6 +5217,8 @@ impl<'w> Server<'w> {
                 settle,
                 dead_at: None,
                 remove_at: None,
+                speed: NPC_WALK_SPEED,
+                goal: None,
             },
         );
         self.sandbox.add_count(player, "npcs", id);
@@ -5336,6 +5357,105 @@ impl<'w> Server<'w> {
     }
 
     /// Walkers that appeared above the floor stand on it the next tick.
+    /// Navigation mesh for NPC locomotion (built by the host from the map).
+    pub fn set_navmesh(&mut self, nav: std::sync::Arc<gm_nav::NavMesh>) {
+        self.nav = Some(nav);
+    }
+
+    pub fn navmesh(&self) -> Option<&gm_nav::NavMesh> {
+        self.nav.as_deref()
+    }
+
+    /// Send a live NPC walking to `target` along the navigation mesh. False when there is
+    /// no mesh, no such NPC, or no polygon near either end; a `partial` path (target off
+    /// the reachable mesh) still starts and ends at the closest reachable point.
+    pub fn npc_goto(&mut self, id: u32, target: Vec3) -> bool {
+        let Some(nav) = self.nav.as_deref() else {
+            return false;
+        };
+        let Some(n) = self.npcs.get(&id) else {
+            return false;
+        };
+        if n.dead_at.is_some() {
+            return false;
+        }
+        let extents = Vec3::new(32.0, 32.0, 72.0);
+        let Some(path) = nav.find_path(n.pos, target, extents) else {
+            return false;
+        };
+        let partial = path.partial;
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.goal = Some(NpcPath {
+                points: path.points,
+                idx: 1,
+                partial,
+            });
+        }
+        true
+    }
+
+    /// One tick of path following: head for the current corner at `speed`, hull-swept
+    /// `step_height` above the feet, then dropped to the floor; the yaw faces the motion.
+    fn tick_npc_move(&mut self) {
+        let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        let ids: Vec<u32> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| n.goal.is_some() && n.dead_at.is_none())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let Some(n) = self.npcs.get(&id) else {
+                continue;
+            };
+            let Some(goal) = n.goal.as_ref() else {
+                continue;
+            };
+            let (pos, mins, maxs, speed) = (n.pos, n.mins, n.maxs, n.speed);
+            let mut idx = goal.idx;
+            let last = goal.points.len() - 1;
+            while idx < last
+                && goal.points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
+            {
+                idx += 1;
+            }
+            if idx >= goal.points.len() {
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.goal = None;
+                }
+                continue;
+            }
+            let target = goal.points[idx].truncate();
+            let to = target - pos.truncate();
+            let dist = to.length();
+            let step = (speed * dt).min(dist);
+            let dir = to / dist;
+            let lift = Vec3::new(0.0, 0.0, 18.0);
+            let want = pos + (dir * step).extend(0.0);
+            let tr = self.collision.trace_box(
+                pos + lift,
+                want + lift,
+                mins,
+                maxs,
+                gm_collision::MASK_PLAYERSOLID,
+            );
+            let reached = if tr.start_solid { pos + lift } else { tr.end };
+            let floor = self
+                .npc_floor(reached, mins, maxs)
+                .unwrap_or(reached - lift);
+            let arrived = idx == last && floor.truncate().distance(target) < 1e-3;
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.pos = floor;
+                n.angles.y = dir.y.atan2(dir.x).to_degrees();
+                if arrived {
+                    n.goal = None;
+                } else if let Some(g) = n.goal.as_mut() {
+                    g.idx = idx;
+                }
+            }
+        }
+    }
+
     fn settle_npcs(&mut self) {
         let pending: Vec<(u32, Vec3, Vec3, Vec3)> = self
             .npcs
@@ -5379,6 +5499,8 @@ impl<'w> Server<'w> {
                 settle: false,
                 dead_at: None,
                 remove_at: None,
+                speed: NPC_WALK_SPEED,
+                goal: None,
             },
         );
         self.sandbox.add_count(owner, "npcs", id);
@@ -7197,6 +7319,7 @@ impl<'w> Server<'w> {
         self.sent_player_touches();
         self.weapon_pickups();
         self.settle_npcs();
+        self.tick_npc_move();
         self.remove_dead_npcs();
         self.ride_vehicles();
         // undo.lua counts ticks with removals (its EntityRemoved hook coalesces them through a

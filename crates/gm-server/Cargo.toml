@@ -10,6 +10,7 @@ gm-core = { path = "../gm-core" }
 gm-collision = { path = "../gm-collision" }
 gm-formats = { path = "../gm-formats" }
 gm-move = { path = "../gm-move" }
+gm-nav = { path = "../gm-nav" }
 gm-physics = { path = "../gm-physics" }
 gm-sandbox = { path = "../gm-sandbox" }
 glam = { workspace = true }

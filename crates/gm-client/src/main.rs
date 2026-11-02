@@ -4975,9 +4975,11 @@ fn main() -> Result<()> {
         collision,
         physics,
         world_body,
+        nav,
     } = gm_dedicated::load_world(&mount, &map)?;
     let collision: &'static gm_collision::World = Box::leak(Box::new(collision));
     let mut server = gm_server::Server::new(collision, physics, world_body);
+    server.set_navmesh(nav);
     // cfg/server.cfg: what the New Game page's Start Game set (gamemode settings, maxplayers)
     if let Ok(text) = std::fs::read_to_string(settings::home_dir().join("cfg").join("server.cfg")) {
         for line in text.lines() {

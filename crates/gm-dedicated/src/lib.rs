@@ -9,6 +9,7 @@ pub struct LoadedWorld {
     pub collision: gm_collision::World,
     pub physics: World,
     pub world_body: BodyHandle,
+    pub nav: std::sync::Arc<gm_nav::NavMesh>,
 }
 
 /// Default Jolt solver settings used by all harnesses (`tools/parity/runner` mirrors this).
@@ -41,10 +42,13 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
     if !disp_idx.is_empty() {
         physics.add_static_mesh(&disp_pos, &disp_idx, surface)?;
     }
+    let nav = gm_nav::NavMesh::build(&bsp, &gm_nav::NavParams::default())
+        .map_err(|e| anyhow::anyhow!("navmesh for {map}: {e}"))?;
     Ok(LoadedWorld {
         collision,
         physics,
         world_body,
+        nav: std::sync::Arc::new(nav),
     })
 }
 

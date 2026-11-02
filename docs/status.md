@@ -36,4 +36,4 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 
 ## AI / navigation
 
-- gm-nav: Recast/Detour navmesh from BSP brushes + displacements (tiled 2048 u, human hull params), path queries; gm_construct 5804 polys. No NPC locomotion or behaviour yet. See docs/spec/ai.md.
+- gm-nav: Recast/Detour navmesh from BSP brushes + displacements (tiled 2048 u, human hull params), path queries; gm_construct 5804 polys. NPC path following (`npc_goto`, corner 8 u, hull sweep + floor drop, yaw = motion) with a placeholder 75 u/s speed; class speeds not measured, no behaviour yet. See docs/spec/ai.md.
