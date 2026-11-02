@@ -955,16 +955,20 @@ fn antlion_alternates_swipe_and_pounce() {
     assert!((140..=200).contains(&period), "period {period}");
 }
 
-/// Poison zombie (server_npc_melee_poisonzombie): the thrown headcrab's bite leaves the
-/// player at 1 hp 187 ticks after the throw begins; the claw then lands 25.
+/// Poison zombie (server_npc_melee_poisonzombie / _long): the throw releases a real poison
+/// headcrab (NPC_CRAB_THROW_RANGE, NPC_POISON_CRABS of them, NPC_CRAB_THROW_COOLDOWN apart)
+/// whose bite leaves the player at 1 hp ~187 ticks after the throw begins; the claw follows.
 #[test]
 fn poison_zombie_throws_then_claws() {
     let world = combat_server!(world);
     let (mut server, idle, _start) = combat_server!(world, server);
     let id = server.spawn_npc(1, "npc_poisonzombie", "none").unwrap();
+    assert_eq!(server.npcs[&id].crabs, gm_server::NPC_POISON_CRABS);
     let mut events = Vec::new();
     let mut hp = server.players[&1].health;
     let mut throw_at = None;
+    let mut crab_at = None;
+    let mut claw_at = None;
     for tick in 0..700u64 {
         server.tick(&idle);
         let n = &server.npcs[&id];
@@ -976,20 +980,117 @@ fn poison_zombie_throws_then_claws() {
                     .distance(server.players[&1].state.origin.truncate()),
             ));
         }
+        if crab_at.is_none() && server.npcs.len() == 2 {
+            let (cid, crab) = server.npcs.iter().find(|(i, _)| **i != id).unwrap();
+            assert_eq!(crab.class, "npc_headcrab_black");
+            assert!(
+                crab.flight.is_some() && crab.thrown,
+                "crab {cid} not thrown"
+            );
+            assert_eq!(n.crabs, gm_server::NPC_POISON_CRABS - 1);
+            crab_at = Some(tick);
+        }
+        if claw_at.is_none() && throw_at.is_some() && n.melee_swing.is_some_and(|m| !m.poison) {
+            claw_at = Some(tick);
+        }
         let p = &server.players[&1];
         if p.health != hp {
             events.push((tick, p.health));
             hp = p.health;
         }
     }
-    eprintln!("throw {throw_at:?} events {events:?}");
+    eprintln!("throw {throw_at:?} crab {crab_at:?} claw {claw_at:?} events {events:?}");
     let (t0, d0) = throw_at.expect("never threw");
-    assert!(d0 <= 140.0 && d0 > 100.0, "threw from {d0}");
-    assert!(!events.is_empty());
+    assert!(
+        d0 <= gm_server::NPC_CRAB_THROW_RANGE && d0 > 170.0,
+        "threw from {d0}"
+    );
+    let crab = crab_at.expect("no crab");
+    assert!(
+        (148..=152).contains(&(crab - t0)),
+        "crab released {} after the throw",
+        crab - t0
+    );
     assert_eq!(events[0].1, 1, "the bite leaves 1 hp: {events:?}");
     assert!(
-        (180..=195).contains(&(events[0].0 - t0)),
+        (175..=200).contains(&(events[0].0 - t0)),
         "bite {} after the throw",
         events[0].0 - t0
     );
+    let claw = claw_at.expect("never clawed");
+    assert!(claw > t0 + 168, "claw {claw} before the throw ended");
+    assert!(
+        events.len() >= 2 && events[1].1 < 1,
+        "the claw after the bite: {events:?}"
+    );
+    // one crab per NPC_CRAB_THROW_COOLDOWN: no second throw inside the run
+    assert_eq!(server.npcs[&id].crabs, gm_server::NPC_POISON_CRABS - 1);
+    assert_eq!(server.npcs.len(), 2);
+}
+
+/// Antlion from afar (server_npc_run_antlion): runs at the measured ramp to 37.26 u per
+/// think, winds up 42 ticks inside the jump range, flies at 483 u/s to the player, stands
+/// 70 ticks where it lands and then starts its melee cycle.
+#[test]
+fn antlion_runs_and_jumps_from_afar() {
+    let world = combat_server!(world);
+    let (mut server, idle, _start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_antlion", "none").unwrap();
+    let far = Vec3::new(-100.0, -500.0, -143.0);
+    server.teleport_player(1, far);
+    let mut steps = Vec::new();
+    let mut last = server.npcs[&id].pos;
+    let mut wound_at = None;
+    let mut flew = 0u64;
+    let mut landed_at = None;
+    let mut land_dist = 0.0f32;
+    let mut first_hit = None;
+    let hp0 = server.players[&1].health;
+    for tick in 0..900u64 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        let d = n
+            .pos
+            .truncate()
+            .distance(server.players[&1].state.origin.truncate());
+        if n.flight.is_none() && landed_at.is_none() && n.pos != last {
+            steps.push((tick, (n.pos - last).truncate().length(), d));
+        }
+        if wound_at.is_none() && n.jump_at.is_some() {
+            wound_at = Some((tick, d));
+        }
+        if n.flight.is_some() {
+            flew += 1;
+        } else if flew > 0 && landed_at.is_none() {
+            landed_at = Some(tick);
+            land_dist = d;
+        }
+        if first_hit.is_none() && server.players[&1].health < hp0 {
+            first_hit = Some(tick);
+        }
+        last = n.pos;
+    }
+    let peak = steps.iter().map(|s| s.1).fold(0.0f32, f32::max);
+    eprintln!(
+        "steps {:?} peak {peak} wound {wound_at:?} flew {flew} landed {landed_at:?} at {land_dist} hit {first_hit:?}",
+        &steps[..steps.len().min(12)]
+    );
+    let ramp: Vec<f32> = steps.iter().take(4).map(|s| s.1).collect();
+    assert!(
+        ramp.len() == 4 && (ramp[1] - ramp[0] - 7.8).abs() < 0.3,
+        "ramp {ramp:?}"
+    );
+    assert!((peak - 37.26).abs() < 0.3, "top speed {peak} u/think");
+    let (t_wind, d_wind) = wound_at.expect("never wound up");
+    assert!((300.0..=600.0).contains(&d_wind), "wound up at {d_wind}");
+    let landed = landed_at.expect("never landed");
+    assert!(flew >= 50, "flew {flew} ticks");
+    assert!(land_dist <= 60.0, "landed {land_dist} u from the player");
+    let after_land = steps.iter().find(|s| s.0 > landed).map(|s| s.0 - landed);
+    assert!(
+        after_land.is_none_or(|t| t >= 63),
+        "moved {after_land:?} ticks after landing"
+    );
+    let hit = first_hit.expect("never hit");
+    assert!(hit > t_wind + 42 + flew, "hit {hit} before the jump ended");
 }

@@ -955,6 +955,13 @@ pub struct Npc {
     pub flight: Option<Vec3>,
     pub hung_until: u64,
     pub next_leap: u64,
+    /// The tick a wound-up jump (antlion) leaves the ground.
+    pub jump_at: Option<u64>,
+    /// In flight because it was thrown (a poison zombie's crab): the landing is a plain
+    /// landing, no rest or run-away.
+    pub thrown: bool,
+    /// Headcrabs left to throw (poison zombie).
+    pub crabs: u8,
     /// Cover: a hit asks for it, the point chosen, the tick the stay there ends, the earliest
     /// tick of the next cover run.
     pub cover_wanted: bool,
@@ -1124,7 +1131,65 @@ pub struct NpcLeap {
     pub hang_ticks: u64,
     pub retreat: f32,
     pub rest_ticks: u64,
+    /// The touch is a poison bite (NPC_POISON_DAMAGE on top, never below 1 hp).
+    pub poison: bool,
+    /// Ticks the NPC stands where it landed before its next decision (the antlion jump).
+    pub stand_ticks: u64,
 }
+
+/// A long jump that closes distance (the antlion's `fly_in`): wound up for `windup_ticks`
+/// standing still, then the `leap` arc to where the target stands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NpcJump {
+    pub leap: NpcLeap,
+    pub min_range: f32,
+    pub max_range: f32,
+    pub windup_ticks: u64,
+}
+
+/// Headcrabs a class carries to throw.
+pub fn npc_crabs(class: &str) -> u8 {
+    match class {
+        "npc_poisonzombie" => NPC_POISON_CRABS,
+        _ => 0,
+    }
+}
+
+/// Measured in server_npc_run_antlion (bot 1100 u away): the antlion ran to ~600 u, stood 42
+/// ticks, then flew 51.23 u per think (483 u/s) for 13 thinks, landing ~120 u PAST the
+/// player, then `jump_stop` 35 ticks + `turn_left` 35 ticks before its melee cycle. Ours
+/// lands on the player's position (the overshoot is left as a residual) and jumps again
+/// no sooner than NPC_JUMP_COOLDOWN (own value: one jump per approach in the recording).
+pub fn npc_jump(class: &str) -> Option<NpcJump> {
+    match class {
+        "npc_antlion" => Some(NpcJump {
+            leap: NpcLeap {
+                speed: 483.0,
+                aim_height: 0.0,
+                damage: 0.0,
+                punch: 0.0,
+                hang_ticks: 0,
+                retreat: 0.0,
+                rest_ticks: NPC_JUMP_COOLDOWN,
+                poison: false,
+                stand_ticks: 70,
+            },
+            min_range: 300.0,
+            max_range: 600.0,
+            windup_ticks: 42,
+        }),
+        _ => None,
+    }
+}
+
+pub const NPC_JUMP_COOLDOWN: u64 = 660;
+/// Poison zombie: three crabs on its back, thrown no closer together than this (one throw
+/// per 859 ticks seen in server_npc_melee_poisonzombie_long, the zombie busy in between).
+pub const NPC_POISON_CRABS: u8 = 3;
+pub const NPC_CRAB_THROW_COOLDOWN: u64 = 860;
+pub const NPC_CRAB_THROW_RANGE: f32 = 1000.0;
+/// The thrown crab lands this far short of the player and leaps from there.
+const NPC_CRAB_THROW_SHORT: f32 = 48.0;
 
 pub const NPC_LEAP_RANGE: f32 = 256.0;
 /// Cover and squads (our rules): a cover point lies within this of the NPC, is a navmesh
@@ -1152,6 +1217,8 @@ pub fn npc_leap(class: &str) -> Option<NpcLeap> {
             hang_ticks: 12,
             retreat: 150.0,
             rest_ticks: 238,
+            poison: class == "npc_headcrab_black",
+            stand_ticks: 0,
         }),
         _ => None,
     }
@@ -1207,13 +1274,15 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
             ..MELEE_PLAIN
         },
     ];
+    // the throw: `hit_tick` releases a real headcrab (throw_crab); `reach`/`start_range`
+    // are the throw range, gated by crabs left and NPC_CRAB_THROW_COOLDOWN
     const POISON: [NpcMelee; 2] = [
         NpcMelee {
             damage: 5.0,
-            reach: 160.0,
+            reach: NPC_CRAB_THROW_RANGE,
             swing_ticks: 168,
-            hit_tick: 187,
-            start_range: 140.0,
+            hit_tick: 150,
+            start_range: NPC_CRAB_THROW_RANGE,
             poison: true,
             ..MELEE_PLAIN
         },
@@ -1317,13 +1386,14 @@ const NPC_MOVE_HEADCRAB: NpcMoveDef = NpcMoveDef {
     run: 49.5,
     run_accel: 100.0,
 };
-/// Antlion run ramp measured in server_npc_melee_antlion (3.9, 11.7 u per think); its top
-/// speed never showed on the short approach and is a placeholder.
+/// Antlion run measured in server_npc_run_antlion (1100 u approach): 3.91, 11.7, 19.49,
+/// 27.32, 34.05, 36.15, 37.23 then 37.26 u per 7-tick think (0.105 s) = 354.9 u/s, 7.79 u
+/// per think² = 706 u/s²; the last two ramp steps are the game's soft cap again.
 const NPC_MOVE_ANTLION: NpcMoveDef = NpcMoveDef {
-    walk: 200.0,
-    walk_accel: 110.0,
-    run: 200.0,
-    run_accel: 110.0,
+    walk: 354.9,
+    walk_accel: 706.0,
+    run: 354.9,
+    run_accel: 706.0,
 };
 /// Poison zombie walk measured in server_npc_melee_poisonzombie (5.85 u per think).
 const NPC_MOVE_POISONZOMBIE: NpcMoveDef = NpcMoveDef {
@@ -5569,6 +5639,72 @@ impl<'w> Server<'w> {
     /// for walkers, facing the player (yaw + 180), with the class's health, hull and the given
     /// weapon when the list allows it ("none" or an unlisted class: unarmed). Counted and
     /// cleaned up as `npcs` (`sbox_maxnpcs`), undo "NPC" `#undo.generic.npc (<name>)`.
+    /// A fresh NPC of `def` at `pos`, nothing moving or targeted yet.
+    fn fresh_npc(
+        &self,
+        def: &NpcDef,
+        model: String,
+        pos: Vec3,
+        angles: Vec3,
+        weapon: String,
+        settle: bool,
+    ) -> Npc {
+        Npc {
+            key: def.key.to_string(),
+            class: def.class.to_string(),
+            model,
+            skin: def.skin,
+            pos,
+            angles,
+            mins: Vec3::from(def.mins),
+            maxs: Vec3::from(def.maxs),
+            health: def.health as f32,
+            max_health: def.health,
+            weapon,
+            blood: def.blood,
+            movetype: def.movetype,
+            solid: def.solid,
+            sequence: def.sequence,
+            settle,
+            dead_at: None,
+            remove_at: None,
+            next_goal: None,
+            chase: None,
+            target: None,
+            target_seen: 0,
+            burst_left: 0,
+            next_shot: 0,
+            shots: 0,
+            chase_reach: NPC_CHASE_REACH,
+            swing_until: 0,
+            melee_hit_at: None,
+            melee_hits_left: 0,
+            melee_move: 0,
+            melee_swing: None,
+            melee_dash: 0.0,
+            flight: None,
+            hung_until: 0,
+            next_leap: 0,
+            jump_at: None,
+            thrown: false,
+            crabs: npc_crabs(def.class),
+            cover_wanted: false,
+            cover_at: None,
+            cover_until: 0,
+            cover_cooldown: 0,
+            stuck: 0,
+            passive: false,
+            last_shot: 0,
+            rest_sequence: None,
+            spawn_tick: self.tick_count,
+            next_think: self.tick_count + NPC_THINK_PHASE,
+            think_interval: NPC_THINK_TICKS,
+            move_speed: 0.0,
+            run: false,
+            goal: None,
+        }
+    }
+
     pub fn spawn_npc(&mut self, player: u32, key: &str, weapon: &str) -> Option<u32> {
         if !self.players.get(&player).is_some_and(|p| p.alive) {
             return None;
@@ -5606,64 +5742,14 @@ impl<'w> Server<'w> {
         let armed = weapon != "none"
             && !weapon.is_empty()
             && (NPC_USABLE_WEAPONS.contains(&weapon) || def.weapon == weapon);
-        self.npcs.insert(
-            id,
-            Npc {
-                key: def.key.to_string(),
-                class: def.class.to_string(),
-                model,
-                skin: def.skin,
-                pos,
-                angles: Vec3::new(0.0, yaw + 180.0 + def.rotate_yaw, 0.0),
-                mins,
-                maxs,
-                health: def.health as f32,
-                max_health: def.health,
-                weapon: if armed {
-                    weapon.to_string()
-                } else {
-                    String::new()
-                },
-                blood: def.blood,
-                movetype: def.movetype,
-                solid: def.solid,
-                sequence: def.sequence,
-                settle,
-                dead_at: None,
-                remove_at: None,
-                next_goal: None,
-                chase: None,
-                target: None,
-                target_seen: 0,
-                burst_left: 0,
-                next_shot: 0,
-                shots: 0,
-                chase_reach: NPC_CHASE_REACH,
-                swing_until: 0,
-                melee_hit_at: None,
-                melee_hits_left: 0,
-                melee_move: 0,
-                melee_swing: None,
-                melee_dash: 0.0,
-                flight: None,
-                hung_until: 0,
-                next_leap: 0,
-                cover_wanted: false,
-                cover_at: None,
-                cover_until: 0,
-                cover_cooldown: 0,
-                stuck: 0,
-                passive: false,
-                last_shot: 0,
-                rest_sequence: None,
-                spawn_tick: self.tick_count,
-                next_think: self.tick_count + NPC_THINK_PHASE,
-                think_interval: NPC_THINK_TICKS,
-                move_speed: 0.0,
-                run: false,
-                goal: None,
-            },
-        );
+        let weapon = if armed {
+            weapon.to_string()
+        } else {
+            String::new()
+        };
+        let angles = Vec3::new(0.0, yaw + 180.0 + def.rotate_yaw, 0.0);
+        self.npcs
+            .insert(id, self.fresh_npc(&def, model, pos, angles, weapon, settle));
         self.sandbox.add_count(player, "npcs", id);
         self.sandbox.add_cleanup(player, "npcs", id);
         let name = format!("#{key}");
@@ -6246,8 +6332,14 @@ impl<'w> Server<'w> {
             return;
         }
         let melee = npc_melee_moves(&n.class).filter(|_| npc_weapon_shot(&n.weapon).is_none());
-        if let Some((moves, _)) = melee {
-            let m = moves[n.melee_move.min(moves.len() - 1)];
+        if let Some((moves, repeat)) = melee {
+            let mut m = moves[n.melee_move.min(moves.len() - 1)];
+            if m.poison && (n.crabs == 0 || now < n.next_leap) {
+                m = moves[repeat];
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.melee_move = repeat;
+                }
+            }
             self.npc_melee_think(id, now, m);
             return;
         }
@@ -6418,7 +6510,7 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
-        if now < n.swing_until {
+        if now < n.swing_until || n.jump_at.is_some() || n.flight.is_some() {
             return;
         }
         let eye = n.pos + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT);
@@ -6464,6 +6556,25 @@ impl<'w> Server<'w> {
         n.target = Some(player);
         n.target_seen = now;
         n.chase_reach = m.start_range.min(m.reach) - 3.0;
+        if let Some(j) = npc_jump(&n.class) {
+            if now >= n.next_leap
+                && n.flight.is_none()
+                && dist >= j.min_range
+                && dist <= j.max_range
+            {
+                n.chase = None;
+                n.goal = None;
+                n.next_goal = None;
+                n.move_speed = 0.0;
+                n.swing_until = now + j.windup_ticks;
+                n.jump_at = Some(now + j.windup_ticks);
+                let to = origin.truncate() - feet.truncate();
+                if to.length_squared() > 1e-6 {
+                    n.angles.y = to.y.atan2(to.x).to_degrees();
+                }
+                return;
+            }
+        }
         if dist <= m.start_range {
             n.chase = None;
             n.goal = None;
@@ -6663,6 +6774,103 @@ impl<'w> Server<'w> {
         n.angles.y = dir.y.atan2(dir.x).to_degrees();
     }
 
+    /// The poison on top of a poison headcrab's bite: NPC_POISON_DAMAGE, never below 1 hp.
+    fn poison_bite(&mut self, player: u32) {
+        let left = self.players.get(&player).map_or(0, |p| p.health);
+        let dose = NPC_POISON_DAMAGE.min((left - 1).max(0) as f32);
+        if dose > 0.0 {
+            self.damage_player(player, dose, weapons::DMG_POISON);
+        }
+    }
+
+    /// Puts an NPC on the arc from its feet to `land` (constant horizontal `speed`, the
+    /// vertical speed that meets `land` + `aim_height`), facing the way it flies.
+    fn launch_npc(&mut self, id: u32, land: Vec3, speed: f32, aim_height: f32) {
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
+        let to = (land - n.pos).truncate();
+        let dist = to.length();
+        let t = (dist / speed).max(1.0 / 66.0);
+        let dz = land.z + aim_height - n.pos.z;
+        let vz = NPC_GRAVITY * t * 0.5 + dz / t;
+        let dir = if dist > 1e-3 {
+            to / dist
+        } else {
+            glam::Vec2::X
+        };
+        n.flight = Some((dir * speed).extend(vz));
+        n.hung_until = 0;
+        n.goal = None;
+        n.next_goal = None;
+        n.chase = None;
+        n.move_speed = 0.0;
+        n.angles.y = dir.y.atan2(dir.x).to_degrees();
+    }
+
+    /// Wound-up jumps leave the ground on their tick, aimed at where the target stands now.
+    fn tick_npc_jumps(&mut self) {
+        let now = self.tick_count;
+        let due: Vec<(u32, u32)> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| n.dead_at.is_none() && n.jump_at == Some(now))
+            .filter_map(|(id, n)| Some((*id, n.target?)))
+            .collect();
+        for (id, player) in due {
+            let Some(n) = self.npcs.get_mut(&id) else {
+                continue;
+            };
+            n.jump_at = None;
+            let Some(j) = npc_jump(&n.class) else {
+                continue;
+            };
+            let Some(land) = self.players.get(&player).map(|p| p.state.origin) else {
+                continue;
+            };
+            self.launch_npc(id, land, j.leap.speed, j.leap.aim_height);
+        }
+    }
+
+    /// The poison zombie's throw: a real headcrab (the game's `npc_headcrab_poison`, our
+    /// `npc_headcrab_black` tables) leaves its back on an arc landing NPC_CRAB_THROW_SHORT u
+    /// short of `player`, already targeting them; from the floor it leaps like any headcrab
+    /// (a poison bite). One crab fewer, next throw after NPC_CRAB_THROW_COOLDOWN.
+    fn throw_crab(&mut self, zombie: u32, player: u32) {
+        let now = self.tick_count;
+        let (Some(z), Some(p), Some(def)) = (
+            self.npcs.get_mut(&zombie),
+            self.players.get(&player),
+            npc_def("npc_headcrab_black"),
+        ) else {
+            return;
+        };
+        if z.crabs == 0 {
+            return;
+        }
+        z.crabs -= 1;
+        z.next_leap = now + NPC_CRAB_THROW_COOLDOWN;
+        let to = (p.state.origin - z.pos).truncate();
+        let dir = to.normalize_or_zero();
+        let start = z.pos + (dir * 16.0).extend(60.0);
+        let land = p.state.origin - (dir * NPC_CRAB_THROW_SHORT.min(to.length() * 0.5)).extend(0.0);
+        let yaw = z.angles.y;
+        let id = self.sandbox.alloc_foreign();
+        let mut crab = self.fresh_npc(
+            def,
+            def.model.to_string(),
+            start,
+            Vec3::new(0.0, yaw, 0.0),
+            String::new(),
+            false,
+        );
+        crab.target = Some(player);
+        crab.target_seen = now;
+        crab.thrown = true;
+        self.npcs.insert(id, crab);
+        self.launch_npc(id, land, 380.0, 0.0);
+    }
+
     /// Airborne NPCs each tick: the arc under gravity, swept against the world; touching the
     /// target's hull lands the leap's damage and hangs the NPC on it before it drops; the
     /// floor ends the flight and starts the run-away, with the next leap after the rest.
@@ -6679,7 +6887,7 @@ impl<'w> Server<'w> {
             let Some(n) = self.npcs.get(&id) else {
                 continue;
             };
-            let Some(l) = npc_leap(&n.class) else {
+            let Some(l) = npc_leap(&n.class).or_else(|| npc_jump(&n.class).map(|j| j.leap)) else {
                 continue;
             };
             let (Some(mut vel), pos, mins, maxs, target) =
@@ -6709,7 +6917,7 @@ impl<'w> Server<'w> {
             }
             // touching the target's hull on the way: the hit
             let mut hit = None;
-            if n.hung_until == 0 {
+            if n.hung_until == 0 && l.damage > 0.0 {
                 if let Some(p) = target.and_then(|t| self.players.get(&t).filter(|p| p.alive)) {
                     let (pm, px) = self.mover.hull(p.state.ducked);
                     let lo = p.state.origin + pm - Vec3::new(maxs.x, maxs.y, maxs.z);
@@ -6732,6 +6940,9 @@ impl<'w> Server<'w> {
                     .truncate()
                     .normalize_or_zero();
                 if self.damage_player(player, l.damage, weapons::DMG_SLASH) > 0.0 {
+                    if l.poison {
+                        self.poison_bite(player);
+                    }
                     if let Some(p) = self.players.get_mut(&player) {
                         p.state.velocity -= (dir * l.punch).extend(0.0);
                     }
@@ -6750,13 +6961,20 @@ impl<'w> Server<'w> {
                     .map(|p| (floor - p.state.origin).truncate().normalize_or_zero())
                     .unwrap_or(glam::Vec2::X);
                 let goal = floor + (away * l.retreat).extend(0.0);
+                let mut thrown = false;
                 if let Some(n) = self.npcs.get_mut(&id) {
                     n.pos = floor;
                     n.flight = None;
                     n.hung_until = 0;
-                    n.next_leap = now + l.rest_ticks;
+                    thrown = std::mem::take(&mut n.thrown);
+                    if !thrown {
+                        n.next_leap = now + l.rest_ticks;
+                        n.swing_until = now + l.stand_ticks;
+                    }
                 }
-                self.npc_goto(id, goal, false);
+                if l.retreat > 0.0 && !thrown {
+                    self.npc_goto(id, goal, false);
+                }
                 continue;
             }
             if let Some(n) = self.npcs.get_mut(&id) {
@@ -6798,14 +7016,11 @@ impl<'w> Server<'w> {
             } else {
                 glam::Vec2::X
             };
+            if m.poison {
+                self.throw_crab(id, player);
+                continue;
+            }
             if self.damage_player(player, m.damage, weapons::DMG_SLASH) > 0.0 {
-                if m.poison {
-                    let left = self.players.get(&player).map_or(0, |p| p.health);
-                    let dose = NPC_POISON_DAMAGE.min((left - 1).max(0) as f32);
-                    if dose > 0.0 {
-                        self.damage_player(player, dose, weapons::DMG_POISON);
-                    }
-                }
                 if let Some(p) = self.players.get_mut(&player) {
                     p.state.velocity += dir.extend(0.0) * m.punch;
                 }
@@ -6958,6 +7173,9 @@ impl<'w> Server<'w> {
                 flight: None,
                 hung_until: 0,
                 next_leap: 0,
+                jump_at: None,
+                thrown: false,
+                crabs: npc_crabs(def.class),
                 cover_wanted: false,
                 cover_at: None,
                 cover_until: 0,
@@ -8792,6 +9010,7 @@ impl<'w> Server<'w> {
         self.settle_npcs();
         self.tick_npc_move();
         self.tick_npc_melee_hits();
+        self.tick_npc_jumps();
         self.tick_npc_flight();
         self.remove_dead_npcs();
         self.ride_vehicles();
