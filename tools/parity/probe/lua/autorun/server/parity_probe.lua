@@ -838,13 +838,18 @@ SCENARIOS.sandbox = function(scn, done)
 			cmd:SetSideMove(pressMove.side)
 		end
 	end)
-	-- damage taken by NPCs (`EntityTakeDamage`): amount, hitgroup, attacker, inflictor, health after
+	-- damage taken by NPCs and players (`EntityTakeDamage`): amount, hitgroup, attacker, inflictor, health after
 	PARITY_NPC_DAMAGE = {}
 	hook.Add("EntityTakeDamage", "parity_sandbox_npcdmg", function(ent, dmg)
-		if not ent:IsNPC() then return end
-		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { index = ent:EntIndex(), class = ent:GetClass(), amount = dmg:GetDamage(), types = dmg:GetDamageType(),
+		if not (ent:IsNPC() or ent:IsPlayer()) then return end
+		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { index = ent:EntIndex(), player = ent:IsPlayer() or nil, class = ent:GetClass(), amount = dmg:GetDamage(), types = dmg:GetDamageType(),
 			hitgroup = ent:LastHitGroup(), attacker = IsValid(dmg:GetAttacker()) and dmg:GetAttacker():GetClass() or "", inflictor = IsValid(dmg:GetInflictor()) and dmg:GetInflictor():GetClass() or "",
 			health = ent:Health(), tick = engine.TickCount(), force = vec(dmg:GetDamageForce()) }
+	end)
+	hook.Add("EntityFireBullets", "parity_sandbox_npcdmg", function(ent, data)
+		if not ent:IsNPC() then return end
+		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { shot = true, index = ent:EntIndex(), class = ent:GetClass(), tick = engine.TickCount(), num = data.Num, amount = data.Damage,
+			spread = { data.Spread.x, data.Spread.y, data.Spread.z }, src = vec(data.Src), dir = { data.Dir.x, data.Dir.y, data.Dir.z }, dist = data.Distance, ammo = data.AmmoType }
 	end)
 	hook.Add("ScaleNPCDamage", "parity_sandbox_npcdmg", function(npc, hitgroup, dmg)
 		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { scale = true, index = npc:EntIndex(), hitgroup = hitgroup, amount = dmg:GetDamage(), tick = engine.TickCount() }
@@ -976,6 +981,23 @@ SCENARIOS.toolgun = function(scn, done)
 	end
 	if not bot:Alive() then bot:Spawn() end
 	bot:SetHealth(100)
+	-- NPC/player damage and NPC shots for server-kind scenarios (same drained list as sandbox)
+	local function v3(v) return { v.x, v.y, v.z } end
+	PARITY_NPC_DAMAGE = {}
+	hook.Add("EntityTakeDamage", "parity_sandbox_npcdmg", function(ent, dmg)
+		if not (ent:IsNPC() or ent:IsPlayer()) then return end
+		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { index = ent:EntIndex(), player = ent:IsPlayer() or nil, class = ent:GetClass(), amount = dmg:GetDamage(), types = dmg:GetDamageType(),
+			hitgroup = ent:LastHitGroup(), attacker = IsValid(dmg:GetAttacker()) and dmg:GetAttacker():GetClass() or "", inflictor = IsValid(dmg:GetInflictor()) and dmg:GetInflictor():GetClass() or "",
+			health = ent:Health(), tick = engine.TickCount(), force = v3(dmg:GetDamageForce()) }
+	end)
+	hook.Add("EntityFireBullets", "parity_sandbox_npcdmg", function(ent, data)
+		if not ent:IsNPC() then return end
+		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { shot = true, index = ent:EntIndex(), class = ent:GetClass(), tick = engine.TickCount(), num = data.Num, amount = data.Damage,
+			spread = { data.Spread.x, data.Spread.y, data.Spread.z }, src = v3(data.Src), dir = { data.Dir.x, data.Dir.y, data.Dir.z }, dist = data.Distance, ammo = data.AmmoType }
+	end)
+	hook.Add("ScaleNPCDamage", "parity_sandbox_npcdmg", function(npc, hitgroup, dmg)
+		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { scale = true, index = npc:EntIndex(), hitgroup = hitgroup, amount = dmg:GetDamage(), tick = engine.TickCount() }
+	end)
 	bot:SetPos(Vector(scn.start[1], scn.start[2], scn.start[3]))
 	bot:SetLocalVelocity(Vector(0, 0, 0))
 	bot:StripWeapons()
@@ -1084,7 +1106,7 @@ SCENARIOS.toolgun = function(scn, done)
 			end
 		end
 		table.sort(out.world_weapons, function(a, b) return a.index < b.index end)
-		out.bot = { pos = vec(bot:GetPos()), ang = { bot:EyeAngles().p, bot:EyeAngles().y, bot:EyeAngles().r }, invehicle = bot:InVehicle(), movetype = bot:GetMoveType(), vehicle = IsValid(bot:GetVehicle()) and bot:GetVehicle():EntIndex() or -1 }
+		out.bot = { pos = vec(bot:GetPos()), ang = { bot:EyeAngles().p, bot:EyeAngles().y, bot:EyeAngles().r }, invehicle = bot:InVehicle(), movetype = bot:GetMoveType(), vehicle = IsValid(bot:GetVehicle()) and bot:GetVehicle():EntIndex() or -1, health = bot:Health(), alive = bot:Alive(), deaths = bot:Deaths() }
 		out.damage = PARITY_NPC_DAMAGE or {}
 		PARITY_NPC_DAMAGE = {}
 		out.ragdolls = {}
@@ -1322,6 +1344,11 @@ SCENARIOS.toolgun = function(scn, done)
 			bot:ExitVehicle()
 		elseif op.op == "concmd" then
 			RunConsoleCommand(op.cmd, tostring(op.value or ""))
+		elseif op.op == "lua" then
+			-- diagnostics: `code` runs with the bot as its argument, its return value lands in the row
+			local f = CompileString(op.code, "parity_op_lua", false)
+			local ok, r = pcall(f, bot)
+			rec.lua = { ok = ok, result = ok and r or tostring(r) }
 		elseif op.op == "firebullets" then
 			-- the bot's bullet (`Player:FireBullets`) at the first NPC's centre with the ammo's player damage cvar
 			local target

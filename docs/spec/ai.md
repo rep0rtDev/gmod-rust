@@ -172,3 +172,14 @@ player with monotonically growing steps, i.e. no halt).
 Gaits of the other classes (zombie, antlion, ...), idle / combat behaviour, crowd
 avoidance, dynamic obstacles (props), off-mesh links (ladders, jumps), addon API for
 `npc_goto` / `npc_chase`.
+
+## Combat: measured inputs (soldier, SMG1)
+
+Oracle recording `server_npc_fire_soldier` (gm_construct, `npc_combine_s` with `weapon_smg1` spawned 178 u east of a standing player, `ai_ignoreplayers 0`, `sbox_godmode 0`, 1200 ticks; `.local/oracle/npc_fire/`). Only the numbers below are taken from it; the behaviour itself (target choice, states, transitions) is our own and is not a port of the game's schedules.
+
+- The soldier enters combat on its first think after spawn (state 1 -> 3 at tick +28), crouches and never moves for the whole run.
+- Every shot is one `FireBullets` call: `Num 1`, `Damage 0` (the ammo's NPC damage, `sk_npc_dmg_smg1` = 3), `Spread 0` (the spread is already folded into `Dir`, |Dir| up to 1.008), source = the crouched shoot position (origin + 35 z), range = max trace length.
+- Cadence: one shot per NPC think (7 ticks), 5 shots per burst, 28 ticks between bursts (56-tick period, i.e. 3.6 s of `shootSMG1c` + `CrouchIdle`); the very first burst is 2 shots followed by a 21-tick gap. One 637-tick pause occurred mid-run, after which bursts were 2 shots long.
+- Accuracy: the shots inside a burst repeat the same direction; against the standing player at 178 u that direction passes ~15 u beside the body (the first shot of each burst goes ~50 u high). A straight `MASK_SHOT` trace from the shoot position to the player's centre does hit (hitbox 15, hitgroup 3), yet in 1200 ticks the player took no damage at all - the game's NPC aim at this range misses a motionless player systematically.
+
+Consequences for our combat model: fire cadence = 5 x 7 ticks on, 28 off; damage per hit = the ammo's NPC damage; aim offset is not copied (it is a hidden proficiency table, not a measurable law) - our soldier aims at the chest with a fixed cone and the hit rate is documented as a divergence.
