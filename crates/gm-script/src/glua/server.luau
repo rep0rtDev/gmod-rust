@@ -260,7 +260,7 @@ local function fkey(path) return "file:" .. string.lower(string.gsub(path, "\\",
 local function sget(k) if not storage then return nil end local ok, v = pcall(storage.get, k); if ok then return v end return nil end
 local function sset(k, v) if not storage then return false end local ok = pcall(storage.set, k, v); return ok end
 local function skeys() if not storage then return {} end local ok, v = pcall(storage.keys); if ok and type(v) == "table" then return v end return {} end
-function file.Write(path, content) return sset(fkey(path), tostring(content)) end
+function file.Write(path, content) sset(fkey(path) .. "#t", tostring(math.floor(__glua_unixtime()))); return sset(fkey(path), tostring(content)) end
 function file.Append(path, content) local cur = sget(fkey(path)) or ""; return sset(fkey(path), cur .. tostring(content)) end
 function file.Read(path, gamePath) local v = sget(fkey(path)); if v == nil then return nil end return tostring(v) end
 function file.Exists(path, gamePath)
@@ -276,7 +276,7 @@ function file.IsDir(path, gamePath)
     return false
 end
 function file.Size(path, gamePath) local v = sget(fkey(path)); return v and #tostring(v) or -1 end
-function file.Time(path, gamePath) return 0 end
+function file.Time(path, gamePath) return tonumber(sget(fkey(path) .. "#t")) or 0 end
 function file.Rename(from, to) local v = sget(fkey(from)); if v == nil then return false end sset(fkey(to), v); sset(fkey(from), nil); return true end
 function file.Find(pattern, gamePath, sorting)
     local files, dirs = {}, {}

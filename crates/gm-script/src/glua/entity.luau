@@ -1057,7 +1057,7 @@ function util.TableToKeyValues(t, root)
 end
 function util.Compress(s) return s end
 function util.Decompress(s) return s end
-function util.DateStamp() return "" end
+function util.DateStamp() return __glua_datestamp() end
 function util.GetModelInfo() return {} end
 function util.GetModelMeshes() return nil end
 function util.GetPlayerTrace(ply, dir)
@@ -1077,7 +1077,8 @@ function util.ParticleTracer() end
 function util.ParticleTracerEx() end
 function util.SpriteTrail() return NULL end
 function util.AimVector(viewAngles, fov, x, y, w, h) return viewAngles:Forward() end
-function util.TimerCycle() return 0 end
+local timer_cycle_at = nil
+function util.TimerCycle() local now = SysTime(); local d = timer_cycle_at and (now - timer_cycle_at) * 1000 or 0; timer_cycle_at = now; return d end
 function util.NiceFloat(f) return tostring(math.Round(f, 2)) end
 function util.FilterText(s) return s end
 function util.tobool(v) return tobool(v) end

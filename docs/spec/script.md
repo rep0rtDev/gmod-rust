@@ -616,6 +616,9 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   carry caps); `Weapon:GetSlot` / `GetSlotPos` / `GetMaxClip1/2` / `GetHoldType` / `GetPrintName`
   from the game weapon defs or the SWEP table;  `engine.GetAddons` lists the runtime's loaded addons, `GetGames` / `GetMountedContent` the
   mount providers. `Player:GetInfo` / `GetInfoNum` became stubs (no client cvars here).
+  `util.DateStamp` is the host's UTC clock (`YYYY-MM-DD HH-MM-SS`), `util.TimerCycle` the
+  milliseconds since its previous call, `file.Time` the unix time the addon store entry was
+  written (0 for none).
 
 Done in `glua/server.luau`:
 

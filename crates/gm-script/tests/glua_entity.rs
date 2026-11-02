@@ -667,3 +667,22 @@ fn ammo_table_network_string_pool_weapon_defs_and_addon_lists() {
     assert!(def);
     assert_eq!((n, title.as_str()), (1, "glua"));
 }
+
+#[test]
+fn date_stamp_and_timer_cycle_come_from_the_host_clock() {
+    let (rt, _) = run("local a = util.TimerCycle(); for i = 1, 1000 do end
+         state.r = { util.DateStamp(), a, util.TimerCycle() >= 0 }");
+    let (stamp, first, second): (String, f64, bool) =
+        rt.actors()[0].eval("return unpack(state.r)").unwrap();
+    assert!(
+        stamp.len() == 19 && &stamp[4..5] == "-" && &stamp[10..11] == " " && &stamp[13..14] == "-",
+        "{stamp}"
+    );
+    assert!(stamp.starts_with("20"), "{stamp}");
+    assert!(first == 0.0 && second);
+    assert_eq!(gm_script::glua::civil_from_unix(0), (1970, 1, 1, 0, 0, 0));
+    assert_eq!(
+        gm_script::glua::civil_from_unix(951_782_400),
+        (2000, 2, 29, 0, 0, 0)
+    );
+}
