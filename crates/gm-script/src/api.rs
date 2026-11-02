@@ -230,6 +230,20 @@ pub enum QueuedWrite {
         class: String,
     },
     /// `None` strips every weapon.
+    SetMass {
+        ent: u32,
+        mass: f32,
+    },
+    SetDamping {
+        ent: u32,
+        linear: f32,
+        angular: f32,
+    },
+    /// `PhysObj:Wake` (`asleep` false) / `Sleep` (true).
+    SetAsleep {
+        ent: u32,
+        asleep: bool,
+    },
     PlayerStripWeapon {
         player: u32,
         class: Option<String>,
@@ -479,6 +493,11 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
         t.set("npc_goal", vec3_table(lua, g)?)?;
     }
     t.set("velocity", vec3_table(lua, e.velocity)?)?;
+    t.set("ang_velocity", vec3_table(lua, e.ang_velocity)?)?;
+    t.set("mass", e.mass)?;
+    t.set("damping_linear", e.damping.0)?;
+    t.set("damping_angular", e.damping.1)?;
+    t.set("asleep", e.asleep)?;
     Ok(t)
 }
 
@@ -1250,6 +1269,26 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     player: ent,
                     class: str_arg(&arg)?,
                 },
+                "set_mass" => QueuedWrite::SetMass {
+                    ent,
+                    mass: match &arg {
+                        Value::Number(n) => *n as f32,
+                        Value::Integer(i) => *i as f32,
+                        _ => return Err(mlua::Error::runtime("set_mass needs a number")),
+                    },
+                },
+                "set_damping" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::SetDamping {
+                        ent,
+                        linear: t.get::<f32>("linear")?,
+                        angular: t.get::<f32>("angular")?,
+                    }
+                }
+                "set_asleep" => QueuedWrite::SetAsleep {
+                    ent,
+                    asleep: matches!(arg, Value::Boolean(true)),
+                },
                 "player.strip_weapon" => QueuedWrite::PlayerStripWeapon {
                     player: ent,
                     class: match &arg {
@@ -1991,6 +2030,31 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         }
         QueuedWrite::PlayerGiveWeapon { player, class } => server.give_weapon(*player, class),
         QueuedWrite::PlayerSelectWeapon { player, class } => server.select_weapon(*player, class),
+        QueuedWrite::SetMass { ent, mass } => match server.body_of(*ent) {
+            Some(body) => {
+                server.physics.set_mass(body, *mass);
+                true
+            }
+            None => false,
+        },
+        QueuedWrite::SetDamping {
+            ent,
+            linear,
+            angular,
+        } => match server.body_of(*ent) {
+            Some(body) => {
+                server.physics.set_damping(body, *linear, *angular);
+                true
+            }
+            None => false,
+        },
+        QueuedWrite::SetAsleep { ent, asleep } => match server.body_of(*ent) {
+            Some(body) => {
+                server.physics.set_asleep(body, *asleep);
+                true
+            }
+            None => false,
+        },
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())
         }

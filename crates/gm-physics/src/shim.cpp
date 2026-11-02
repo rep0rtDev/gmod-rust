@@ -360,6 +360,36 @@ float gmp_body_mass(void *system, unsigned int id) {
 	return inv > 0.0f ? 1.0f / inv : 0.0f;
 }
 
+// PhysObj:SetDamping / GetDamping: Jolt's per-body linear and angular damping
+void gmp_set_damping(void *system, unsigned int id, float lin, float ang) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), JPH::BodyID(id));
+	if (!lock.Succeeded()) return;
+	JPH::Body &b = lock.GetBody();
+	if (!b.IsDynamic()) return;
+	JPH::MotionProperties *mp = b.GetMotionProperties();
+	mp->SetLinearDamping(lin < 0.0f ? 0.0f : lin);
+	mp->SetAngularDamping(ang < 0.0f ? 0.0f : ang);
+}
+
+void gmp_body_damping(void *system, unsigned int id, float *out) {
+	out[0] = 0.0f;
+	out[1] = 0.0f;
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	JPH::BodyLockRead lock(sys->GetBodyLockInterface(), JPH::BodyID(id));
+	if (!lock.Succeeded()) return;
+	const JPH::Body &b = lock.GetBody();
+	if (!b.IsDynamic()) return;
+	out[0] = b.GetMotionProperties()->GetLinearDamping();
+	out[1] = b.GetMotionProperties()->GetAngularDamping();
+}
+
+// PhysObj:Wake
+void gmp_activate(void *system, unsigned int id) {
+	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);
+	sys->GetBodyInterface().ActivateBody(JPH::BodyID(id));
+}
+
 // world-space centre of mass of a body (the point a blast's impulse aims at)
 void gmp_center_of_mass(void *system, unsigned int id, float *out) {
 	auto *sys = reinterpret_cast<JPH::PhysicsSystem *>(system);

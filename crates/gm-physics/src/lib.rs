@@ -52,6 +52,9 @@ extern "C" {
     fn gmp_remove_constraint(system: *mut JPC_PhysicsSystem, constraint: *mut std::ffi::c_void);
     fn gmp_set_mass(system: *mut JPC_PhysicsSystem, id: u32, mass: f32);
     fn gmp_body_mass(system: *const JPC_PhysicsSystem, id: u32) -> f32;
+    fn gmp_set_damping(system: *mut JPC_PhysicsSystem, id: u32, lin: f32, ang: f32);
+    fn gmp_body_damping(system: *const JPC_PhysicsSystem, id: u32, out: *mut f32);
+    fn gmp_activate(system: *mut JPC_PhysicsSystem, id: u32);
     fn gmp_center_of_mass(system: *const JPC_PhysicsSystem, id: u32, out: *mut f32);
     fn gmp_add_impulse(system: *mut JPC_PhysicsSystem, id: u32, ix: f32, iy: f32, iz: f32);
     fn gmp_add_angular_impulse(system: *mut JPC_PhysicsSystem, id: u32, ix: f32, iy: f32, iz: f32);
@@ -1070,6 +1073,29 @@ impl World {
     /// Mass of a body (kg); 0 for a static or frozen one.
     pub fn mass(&self, body: BodyHandle) -> f32 {
         unsafe { gmp_body_mass(self.system.as_raw(), body.0) }
+    }
+
+    /// `PhysObj:SetDamping`: linear and angular damping of a dynamic body (Jolt units, 1/s).
+    pub fn set_damping(&mut self, body: BodyHandle, linear: f32, angular: f32) {
+        unsafe { gmp_set_damping(self.system.as_raw(), body.0, linear, angular) }
+    }
+
+    /// `(linear, angular)` damping of a body; zeros for a static or frozen one.
+    pub fn damping(&self, body: BodyHandle) -> (f32, f32) {
+        let mut out = [0.0f32; 2];
+        unsafe { gmp_body_damping(self.system.as_raw(), body.0, out.as_mut_ptr()) }
+        (out[0], out[1])
+    }
+
+    /// `PhysObj:Wake` / `Sleep`: activate or deactivate a body.
+    pub fn set_asleep(&mut self, body: BodyHandle, asleep: bool) {
+        unsafe {
+            if asleep {
+                gmp_deactivate(self.system.as_raw(), body.0)
+            } else {
+                gmp_activate(self.system.as_raw(), body.0)
+            }
+        }
     }
 
     /// Angular impulse about world axes (kg * u^2 * rad/s), waking the body.

@@ -5208,6 +5208,28 @@ impl<'w> Server<'w> {
     }
 
     /// Linear velocity of a prop's physics body (the pelvis body of a ragdoll); zero otherwise.
+    /// Angular velocity (deg/s, world axes), mass (kg), `(linear, angular)` damping and sleep
+    /// state of an entity's physics body for script snapshots; zeros when it has no body.
+    pub fn entity_phys(&self, id: u32) -> (Vec3, f32, (f32, f32), bool) {
+        let body = self.bodies.get(&id).copied().or_else(|| {
+            self.ragdoll_bodies
+                .get(&id)
+                .and_then(|r| r.bodies.first().copied())
+        });
+        match body {
+            Some(b) => {
+                let st = self.physics.state(b);
+                (
+                    st.angular_velocity,
+                    self.physics.mass(b),
+                    self.physics.damping(b),
+                    !st.active,
+                )
+            }
+            None => (Vec3::ZERO, 0.0, (0.0, 0.0), false),
+        }
+    }
+
     pub fn entity_velocity(&self, id: u32) -> Vec3 {
         if let Some(&b) = self.bodies.get(&id) {
             return self.physics.state(b).velocity;

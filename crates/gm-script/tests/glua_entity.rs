@@ -25,6 +25,10 @@ fn snapshot() -> Arc<Snapshot> {
             health: 0,
             max_health: 0,
             velocity: Vec3::new(1.0, 2.0, 3.0),
+            ang_velocity: Vec3::new(1.0, 2.0, 3.0),
+            mass: 40.0,
+            damping: (0.1, 0.2),
+            asleep: false,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -45,6 +49,10 @@ fn snapshot() -> Arc<Snapshot> {
             health: 50,
             max_health: 50,
             velocity: Vec3::ZERO,
+            ang_velocity: Vec3::new(1.0, 2.0, 3.0),
+            mass: 40.0,
+            damping: (0.1, 0.2),
+            asleep: false,
             npc_target: 1,
             npc_chase: 1,
             npc_goal: Some(Vec3::new(400.0, 0.0, 0.0)),
@@ -351,7 +359,7 @@ fn npc_and_datatable_methods() {
     assert_eq!(s(16), "true");
     assert_eq!(s(17), "72");
     assert_eq!(s(18), "200");
-    assert_eq!(s(19), "1");
+    assert_eq!(s(19), "0.025", "GetInvMass over the body mass of 40");
     assert!(
         writes
             .iter()

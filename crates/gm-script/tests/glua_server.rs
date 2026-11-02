@@ -23,6 +23,10 @@ fn snapshot() -> Arc<Snapshot> {
             health: 0,
             max_health: 0,
             velocity: Vec3::ZERO,
+            ang_velocity: Vec3::new(1.0, 2.0, 3.0),
+            mass: 40.0,
+            damping: (0.1, 0.2),
+            asleep: false,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -417,5 +421,46 @@ fn player_ammo_and_clips_over_the_inventory() {
     assert!(matches!(
         &writes[5],
         QueuedWrite::PlayerStripWeapon { class: None, .. }
+    ));
+}
+
+#[test]
+fn physobj_mass_angular_velocity_damping_over_the_body() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local ph = Entity(5):GetPhysicsObject()
+             local w = ph:GetAngleVelocity()
+             local l, a = ph:GetDamping()
+             local f, t = ph:CalculateForceOffset(Vector(0, 0, 10), Entity(5):GetPos() + Vector(2, 0, 0))
+             local al = ph:AlignAngles(Angle(0, 0, 0), Angle(0, 90, 0))
+             state.r = { ph:GetMass(), w.x, w.y, w.z, l, a, ph:IsAsleep() and 1 or 0, f.z, t.y, math.Round(al.y) }
+             ph:SetMass(80)
+             ph:SetDamping(0.5, 0.6)
+             ph:SetAngleVelocity(Vector(0, 0, 90))
+             ph:Sleep()
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!(r[..4], [40.0, 1.0, 2.0, 3.0]);
+    assert!((r[4] - 0.1).abs() < 1e-5 && (r[5] - 0.2).abs() < 1e-5);
+    assert_eq!(r[6..], [0.0, 10.0, -20.0, 90.0]);
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(matches!(&writes[0], QueuedWrite::SetMass { ent: 5, mass } if *mass == 80.0));
+    assert!(
+        matches!(&writes[1], QueuedWrite::SetDamping { ent: 5, linear, angular } if *linear == 0.5 && *angular == 0.6)
+    );
+    assert!(
+        matches!(&writes[2], QueuedWrite::SetVelocity { ent: 5, angular, .. } if angular.z == 90.0)
+    );
+    assert!(matches!(
+        &writes[3],
+        QueuedWrite::SetAsleep {
+            ent: 5,
+            asleep: true
+        }
     ));
 }

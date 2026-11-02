@@ -748,6 +748,15 @@ set_clip / strip_weapon` (`Server::set_ammo`, `set_clip`, `strip_weapon`; stripp
 weapon selects the first remaining one; counts clamp at zero). Reads see the state of the
 snapshot they run on, so a write shows up one tick later like every other queued write.
 
+PhysObj over the body: `EntitySnap.ang_velocity` (deg/s), `mass`, `damping` and `asleep` come
+from the Jolt body (`Server::entity_phys`); `PhysObj:GetMass / SetMass / GetAngleVelocity /
+SetAngleVelocity[Instantaneous] / AddAngleVelocity / GetDamping / GetSpeedDamping / GetRotDamping /
+SetDamping / IsAsleep / Wake / Sleep` write through `set_mass / set_velocity / set_damping /
+set_asleep` (`Physics::set_damping`, `set_asleep`; damping in Jolt's 1/s units, not Source's
+tuned table). `CalculateForceOffset`, `RotateAroundAxis` and `AlignAngles` are pure math over the
+body pose. `ApplyTorqueCenter`, `CalculateVelocityOffset`, inertia, buoyancy, drag coefficients,
+AABB / volume / mesh queries still have no body-side reader and stay stubs.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

@@ -180,15 +180,32 @@ function P:SetAngles(a) self.__ent:SetAngles(a) end
 function P:EnableMotion(on) qwrite("freeze", self.__ent.__id, not on) end
 function P:IsMotionEnabled() local s = snap(self.__ent.__id); return s ~= nil and not s.frozen end
 function P:IsMoveable() return self:IsMotionEnabled() end
-function P:IsAsleep() return false end
-function P:Wake() end
-function P:Sleep() end
+local function psn(self) return snap(self.__ent.__id) end
+function P:IsAsleep() local s = psn(self); return s and s.asleep or false end
+function P:Wake() qwrite("set_asleep", self.__ent.__id, false) end
+function P:Sleep() qwrite("set_asleep", self.__ent.__id, true) end
+function P:GetAngleVelocity() local s = psn(self); return s and Vector(s.ang_velocity.x, s.ang_velocity.y, s.ang_velocity.z) or Vector() end
+function P:SetAngleVelocity(w) local t = v3(self.__ent:GetVelocity()); t.angular = v3(w); qwrite("set_velocity", self.__ent.__id, t) end
+function P:SetAngleVelocityInstantaneous(w) self:SetAngleVelocity(w) end
+function P:AddAngleVelocity(w) self:SetAngleVelocity(self:GetAngleVelocity() + w) end
+function P:GetDamping() local s = psn(self); if not s then return 0, 0 end return s.damping_linear, s.damping_angular end
+function P:GetSpeedDamping() local l = self:GetDamping(); return l end
+function P:GetRotDamping() local _, a = self:GetDamping(); return a end
+function P:SetDamping(lin, ang) qwrite("set_damping", self.__ent.__id, { linear = lin, angular = ang }) end
+function P:CalculateForceOffset(f, pos) local r = pos - self:GetPos(); return f, r:Cross(f) end
+function P:RotateAroundAxis(axis, deg) local a = self:GetAngles(); a:RotateAroundAxis(axis, deg); self:SetAngles(a) end
+function P:AlignAngles(from, to)
+    local mf, mt, ms = Matrix(), Matrix(), Matrix()
+    mf:SetAngles(from); mt:SetAngles(to); ms:SetAngles(self:GetAngles())
+    mf:Invert()
+    return (mt * mf * ms):GetAngles()
+end
 function P:EnableGravity(on) qwrite("set_gravity", self.__ent.__id, on) end
 function P:EnableCollisions(on) qwrite("set_collide", self.__ent.__id, on) end
 function P:EnableDrag(on) end
 function P:GetEntity() return self.__ent end
-function P:GetMass() return 1 end
-function P:SetMass() end
+function P:GetMass() local s = psn(self); local m = s and s.mass or 0; if m <= 0 then return 1 end return m end
+function P:SetMass(m) qwrite("set_mass", self.__ent.__id, m) end
 function P:GetMassCenter() return Vector() end
 function P:ApplyForceCenter(f) self.__ent:SetVelocity(self.__ent:GetVelocity() + f / math.max(self:GetMass(), 1e-3) * FrameTime()) end
 function P:GetMaterial() return "" end
