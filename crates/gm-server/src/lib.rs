@@ -1930,21 +1930,21 @@ pub fn vehicle_script(key: &str) -> Option<VehicleScript> {
             add_gravity: 0.0,
             front: (10.0, 60.0, 4.0, 4.0),
             rear: (10.0, 60.0, 4.0, 4.0),
-            rest: 3.4,
+            rest: 4.41,
         },
         "Jalopy" => VehicleScript {
             mass: 1000.0,
             add_gravity: 0.5,
             front: (18.0, 40.0, 0.7, 9.0),
             rear: (19.5, 40.0, 0.7, 9.0),
-            rest: 3.7,
+            rest: 3.06,
         },
         "prop_vehicle_apc" => VehicleScript {
             mass: 1000.0,
             add_gravity: 0.5,
             front: (28.0, 40.0, 0.7, 9.0),
             rear: (28.0, 40.0, 0.7, 9.0),
-            rest: 3.7,
+            rest: 1.42,
         },
         _ => return None,
     })
@@ -4978,6 +4978,15 @@ impl<'w> Server<'w> {
             .collect();
         if let Some(&body) = self.bodies.get(&veh) {
             self.physics.set_mass(body, script.mass);
+        }
+        // measured `server_vehicle_settle`: a car whose hull clears the floor sits 1 u under
+        // the hit point in its spawn tick (the wheel bodies take the body down with them),
+        // the airboat's hull is on the floor and stays at it
+        let hull_min = self.models.get(&prop.model).map_or(0.0, |m| {
+            m.hulls.iter().flatten().fold(f32::MAX, |a, v| a.min(v.z))
+        });
+        if hull_min > 1.0 {
+            self.teleport_prop(veh, prop.pos - Vec3::new(0.0, 0.0, 1.0), prop.angles);
         }
         if let Some(v) = self.vehicles.get_mut(&veh) {
             v.wheels = wheels;
