@@ -50,6 +50,11 @@ fn snapshot() -> Arc<Snapshot> {
             blood: 0,
             npc_target_seen: 200,
             npc_target_first_seen: 0,
+            npc_stuck: 0,
+            npc_chase_reach: 0.0,
+            npc_move_speed: 0.0,
+            npc_next_goal: None,
+            npc_caps: 0,
             npc_enemy_damage: 0,
             npc_sight: 2048.0,
             friction: 0.6,
@@ -100,6 +105,11 @@ fn snapshot() -> Arc<Snapshot> {
             blood: 0,
             npc_target_seen: 200,
             npc_target_first_seen: 0,
+            npc_stuck: 0,
+            npc_chase_reach: 0.0,
+            npc_move_speed: 0.0,
+            npc_next_goal: None,
+            npc_caps: 0,
             npc_enemy_damage: 0,
             npc_sight: 2048.0,
             friction: 0.6,
@@ -716,4 +726,12 @@ fn frame_advance_and_sequence_movement_apis() {
         (0.0, 0, "", true)
     );
     assert!(!vel.is_empty());
+}
+
+#[test]
+fn npc_state_caps_and_flex_materials() {
+    let (rt, _) = run("state.r = { CAP_USE_WEAPONS, Entity(7):GetFlexBounds(0), Entity(7):GetFlexType(0), #Entity(7):GetMaterials() }");
+    let (cap, lo, kind, nmat): (u32, f32, String, i32) =
+        rt.actors()[0].eval("return unpack(state.r)").unwrap();
+    assert_eq!((cap, lo, kind.as_str(), nmat), (0x80000, 0.0, "", 0));
 }

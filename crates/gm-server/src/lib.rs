@@ -176,6 +176,10 @@ pub struct ModelScriptData {
     pub sequence_anim: Vec<(f32, i32, i32)>,
     /// Per sequence: root movement over its first animation (model units).
     pub sequence_move: Vec<[f32; 3]>,
+    /// Flex controllers: `(name, min, max, kind)`.
+    pub flex_info: Vec<(String, f32, f32, String)>,
+    /// Model materials as `dir/name` (first texture directory).
+    pub materials: Vec<String>,
     /// Per bone: surface property name and contents mask.
     pub bone_props: Vec<(String, i32)>,
     /// Raw animations: `(name, fps, frames, flags)`.
@@ -392,6 +396,19 @@ impl ModelScriptData {
                 .flex_controllers
                 .iter()
                 .map(|f| f.name.clone())
+                .collect(),
+            flex_info: mdl
+                .flex_controllers
+                .iter()
+                .map(|f| (f.name.clone(), f.min, f.max, f.kind.clone()))
+                .collect(),
+            materials: mdl
+                .textures
+                .iter()
+                .map(|t| {
+                    let dir = mdl.texture_dirs.first().map(String::as_str).unwrap_or("");
+                    format!("{}{}", dir.replace('\\', "/"), t.name).to_lowercase()
+                })
                 .collect(),
             mins: Vec3::from(mdl.header.hull_min),
             maxs: Vec3::from(mdl.header.hull_max),
@@ -7520,6 +7537,19 @@ impl<'w> Server<'w> {
             if g.finished && g.autokill {
                 a.gesture = None;
             }
+        }
+    }
+
+    /// `NPC:MarkTookDamageFromEnemy`: the NPC remembers being hurt by its enemy now (feeds the
+    /// cover / suppression logic the same way a real hit does). False for a non-NPC.
+    pub fn npc_mark_damaged(&mut self, ent: u32) -> bool {
+        let tick = self.tick_count;
+        match self.npcs.get_mut(&ent) {
+            Some(n) => {
+                n.last_enemy_damage = tick;
+                true
+            }
+            None => false,
         }
     }
 

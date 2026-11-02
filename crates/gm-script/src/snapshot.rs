@@ -54,6 +54,13 @@ pub struct EntitySnap {
     /// NPC: server tick its current target was last seen (0 = never / not an NPC).
     pub npc_target_seen: u64,
     pub npc_target_first_seen: u64,
+    /// NPC state for scripts: stuck counter, chase reach (arrival distance), move speed, the
+    /// next path point, and a `CAP_*` mask derived from what the class can do.
+    pub npc_stuck: u8,
+    pub npc_chase_reach: f32,
+    pub npc_move_speed: f32,
+    pub npc_next_goal: Option<Vec3>,
+    pub npc_caps: u32,
     pub npc_enemy_damage: u64,
     pub npc_sight: f32,
     /// Physics surface in use (script override or model PHY).
@@ -391,6 +398,11 @@ impl Snapshot {
                             blood: -1,
                             npc_target_seen: 0,
                             npc_target_first_seen: 0,
+                            npc_stuck: 0,
+                            npc_chase_reach: 0.0,
+                            npc_move_speed: 0.0,
+                            npc_next_goal: None,
+                            npc_caps: 0,
                             npc_enemy_damage: 0,
                             npc_sight: 0.0,
                             friction: 0.8,
@@ -509,6 +521,11 @@ impl Snapshot {
                             blood: -1,
                             npc_target_seen: 0,
                             npc_target_first_seen: 0,
+                            npc_stuck: 0,
+                            npc_chase_reach: 0.0,
+                            npc_move_speed: 0.0,
+                            npc_next_goal: None,
+                            npc_caps: 0,
                             npc_enemy_damage: 0,
                             npc_sight: 0.0,
                             friction: server.entity_surface(p.id).0,
@@ -566,6 +583,11 @@ impl Snapshot {
                             blood: n.blood,
                             npc_target_seen: n.target_seen,
                             npc_target_first_seen: n.target_first_seen,
+                            npc_stuck: n.stuck,
+                            npc_chase_reach: n.chase_reach,
+                            npc_move_speed: n.move_speed,
+                            npc_next_goal: n.next_goal,
+                            npc_caps: npc_caps(n),
                             npc_enemy_damage: n.last_enemy_damage,
                             npc_sight: n.sight,
                             friction: 0.8,
@@ -698,4 +720,24 @@ impl Snapshot {
                 .collect(),
         }
     }
+}
+
+/// `CAP_*` mask of an NPC from what our AI does with its class: ground movement when it has a
+/// move speed, flight for fliers, weapon use / ranged attack / aiming with a weapon, an innate
+/// melee attack for the melee classes.
+fn npc_caps(n: &gm_server::Npc) -> u32 {
+    let mut c = 0;
+    if n.move_speed > 0.0 {
+        c |= 0x1;
+    }
+    if n.flight.is_some() {
+        c |= 0x4;
+    }
+    if !n.weapon.is_empty() {
+        c |= 0x800 | 0x80000 | 0x4000000;
+    }
+    if gm_server::npc_melee(&n.class).is_some() {
+        c |= 0x20000;
+    }
+    c
 }

@@ -249,3 +249,37 @@ fn sequence_movement_bone_props_and_frame_advance() {
     assert!(c > 0.0, "frame advance moved the cycle: {c}");
     assert!(!server.frame_advance(999, 0.5));
 }
+
+#[test]
+fn flex_info_materials_and_npc_took_damage() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let model = "models/alyx.mdl";
+    let info = gm_dedicated::model_info(&mount, model).unwrap();
+    assert!(info.script.flex_info.iter().any(|(_, lo, hi, _)| hi > lo));
+    assert!(
+        info.script.materials.iter().any(|m| m.contains("alyx")),
+        "{:?}",
+        info.script.materials
+    );
+    server.register_model(model, info);
+    server.add_player(
+        1,
+        Vec3::new(823.235, -500.0, -143.0),
+        Vec3::new(20.0, 0.0, 0.0),
+    );
+    server.set_weapons(1, &["gmod_tool"]);
+    let id = server.spawn_npc(1, "npc_alyx", "").unwrap();
+    assert_eq!(server.npcs[&id].last_enemy_damage, 0);
+    for _ in 0..3 {
+        server.tick(&std::collections::BTreeMap::new());
+    }
+    assert!(server.npc_mark_damaged(id));
+    assert!(server.npcs[&id].last_enemy_damage > 0);
+    assert!(!server.npc_mark_damaged(999));
+}

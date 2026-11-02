@@ -163,6 +163,10 @@ pub enum QueuedWrite {
         ent: u32,
         dt: f32,
     },
+    /// `NPC:MarkTookDamageFromEnemy`.
+    NpcTookDamage {
+        ent: u32,
+    },
     /// `Entity:SetPoseParameter` / `ClearPoseParameters`.
     EntityPose {
         ent: u32,
@@ -891,6 +895,13 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("blood", e.blood)?;
     t.set("npc_target_seen", e.npc_target_seen)?;
     t.set("npc_target_first_seen", e.npc_target_first_seen)?;
+    t.set("npc_stuck", e.npc_stuck)?;
+    t.set("npc_chase_reach", e.npc_chase_reach)?;
+    t.set("npc_move_speed", e.npc_move_speed)?;
+    if let Some(g) = e.npc_next_goal {
+        t.set("npc_next_goal", vec3_table(lua, g)?)?;
+    }
+    t.set("npc_caps", e.npc_caps)?;
     t.set("npc_enemy_damage", e.npc_enemy_damage)?;
     t.set("npc_sight", e.npc_sight)?;
     t.set("friction", e.friction)?;
@@ -2516,6 +2527,17 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 sm.set(i + 1, vec3_table(lua, glam::Vec3::from_array(*mv))?)?;
             }
             t.set("sequence_move", sm)?;
+            let fi = lua.create_table()?;
+            for (i, (name, min, max, kind)) in m.flex_info.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("name", name.as_str())?;
+                e.set("min", *min)?;
+                e.set("max", *max)?;
+                e.set("kind", kind.as_str())?;
+                fi.set(i + 1, e)?;
+            }
+            t.set("flex_info", fi)?;
+            t.set("materials", m.materials.clone())?;
             let bp = lua.create_table()?;
             for (i, (surface, contents)) in m.bone_props.iter().enumerate() {
                 let e = lua.create_table()?;
@@ -3225,6 +3247,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::EntityPlaybackRate { ent, rate } => server.set_playback_rate(*ent, *rate),
         QueuedWrite::EntityResetSequence { ent } => server.reset_sequence_info(*ent),
         QueuedWrite::EntityFrameAdvance { ent, dt } => server.frame_advance(*ent, *dt),
+        QueuedWrite::NpcTookDamage { ent } => server.npc_mark_damaged(*ent),
         QueuedWrite::EntityPose { ent, name, value } => {
             server.set_pose_parameter(*ent, name, *value)
         }

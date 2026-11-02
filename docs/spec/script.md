@@ -630,6 +630,14 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   and `GetBoneContents` / `GetBoneSurfaceProp` read the MDL; `Entity:FrameAdvance(dt)` steps the
   server animator now (`Server::frame_advance`), `GetAnimTimeInterval` is the tick interval,
   `SetAnimation(act)` picks the weighted sequence and resets to it.
+- NPC state for scripts: the snapshot carries stuck counter, chase reach, move speed, next path
+  point and a `CAP_*` mask derived from the class (ground move / flight / weapon use + ranged
+  attack + aiming / innate melee), so `NPC:CapabilitiesGet` / `CapabilitiesHas`, `HasObstacles`,
+  `GetArrivalDistance`, `GetIdealMoveSpeed`, `GetMoveInterval`, `GetIdealYaw` / `IsFacingIdealYaw`
+  (towards the enemy, else the next path point, 15 deg tolerance), `GetTimeEnemyLastReacquired`
+  read it and `MarkTookDamageFromEnemy` stamps the NPC's last enemy damage (`npc_mark_damaged`).
+  `CapabilitiesAdd/Remove/Clear` stay stubs (the mask is what the AI does, not a setting).
+  `Entity:GetFlexBounds` / `GetFlexType` / `GetMaterials` read the MDL flex controllers / textures.
 
 Done in `glua/server.luau`:
 
