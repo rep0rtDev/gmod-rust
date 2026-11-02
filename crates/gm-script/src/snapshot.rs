@@ -280,6 +280,22 @@ impl Snapshot {
         gm_sandbox::trace_line(world, &self.props, start, end)
     }
 
+    /// `util.TraceHull`: the world and the props swept by a box.
+    pub fn trace_hull(
+        &self,
+        start: glam::Vec3,
+        end: glam::Vec3,
+        mins: glam::Vec3,
+        maxs: glam::Vec3,
+    ) -> Option<gm_sandbox::ToolHit> {
+        if self.world.0.is_null() {
+            return None;
+        }
+        // see WorldRef: valid while the snapshot is in use
+        let world = unsafe { &*self.world.0 };
+        gm_sandbox::trace_hull(world, &self.props, start, end, mins, maxs)
+    }
+
     fn nav(&self) -> Option<&gm_nav::NavMesh> {
         // see NavRef: valid while the snapshot is in use
         (!self.nav.0.is_null()).then(|| unsafe { &*self.nav.0 })

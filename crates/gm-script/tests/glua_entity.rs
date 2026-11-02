@@ -1276,3 +1276,15 @@ fn is_jump_legal_gates_the_gap_jump() {
     assert_eq!((asked, jumps), (2, 1), "{writes:?}");
     assert!(apex_z > 0.0);
 }
+
+#[test]
+fn util_trace_hull_without_a_world() {
+    let (rt, _) = run(
+        "local tr = util.TraceHull({ start = Vector(0, 0, 0), endpos = Vector(0, 0, -100), mins = Vector(-16, -16, 0), maxs = Vector(16, 16, 72) })
+         state.r = { tr.Hit, tostring(tr.HitPos), tr.Fraction }",
+    );
+    let (hit, pos, frac): (bool, String, f64) =
+        rt.actors()[0].eval("return unpack(state.r)").unwrap();
+    assert!(!hit, "no world in the test snapshot");
+    assert_eq!((pos.as_str(), frac), ("0.000000 0.000000 -100.000000", 1.0));
+}

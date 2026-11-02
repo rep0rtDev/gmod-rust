@@ -727,7 +727,7 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   (steering degrees, engine top speeds in mph, axle suspension constants to every wheel, wheel
   frictionScale). `GetPassengerSeatPoint` / `GetVehicleViewPosition` read the model's
   `vehicle_feet_passenger0` / `vehicle_driver_eyes` attachments, `CheckExitPoint(yaw, dist)` sweeps
-  the server's exit hull (32x32x72 from 11.4 u up). Stubs with a reason: `GetWheel` (raycast wheels
+  the server's exit hull (32x32x72 from 11.4 u up) with `util.TraceHull`. Stubs with a reason: `GetWheel` (raycast wheels
   have no bodies), `HasBrakePedal` / `SetHasBrakePedal` (no separate brake-pedal path in the drive
   model), camera / third-person (client), `SetVehicleClass` / `SetVehicleEntryAnim`, `GetAmmo`.
 - `PhysObj:GetInertia` is the body's rotation inertia (the PHY solid's per-unit inertia times the
@@ -749,7 +749,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   `Player:GetInfo` / `GetInfoNum` answer the client settings the server has: `cl_playermodel`
   (the game's table name of the worn model), `cl_playerskin`, `cl_playercolor` / `cl_weaponcolor`
   ("r g b"); other cvars are unknown ("" / the default). `Player:TraceHullAttack` sweeps
-  `util.TraceHull` (a line sweep here) and deals the damage to the entity it hits.
+  `util.TraceHull` and deals the damage to the entity it hits.
+- `util.TraceHull` is a real hull sweep: the world by `World::trace_box` (`MASK_SOLID`) and the
+  props by their collision hulls grown by the box's extent (the same approximation the server's
+  own hull checks use); a start inside a prop is `startsolid` at fraction 0. Hit fields as
+  `util.TraceLine`.
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.

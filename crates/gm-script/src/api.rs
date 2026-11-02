@@ -2865,6 +2865,35 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             Ok(t)
         })?,
     )?;
+    let sh = shared.clone();
+    phys.set(
+        "trace_hull",
+        lua.create_function(
+            move |lua, (start, end, mins, maxs): (Table, Table, Table, Table)| {
+                let snap = sh.snapshot.read().unwrap().clone();
+                let t = lua.create_table()?;
+                match snap.trace_hull(
+                    table_vec3(&start)?,
+                    table_vec3(&end)?,
+                    table_vec3(&mins)?,
+                    table_vec3(&maxs)?,
+                ) {
+                    Some(h) => {
+                        t.set("hit", true)?;
+                        t.set("pos", vec3_table(lua, h.pos)?)?;
+                        t.set("normal", vec3_table(lua, h.normal)?)?;
+                        t.set("ent", h.ent.unwrap_or(0))?;
+                        t.set("fraction", h.fraction)?;
+                    }
+                    None => {
+                        t.set("hit", false)?;
+                        t.set("fraction", 1.0)?;
+                    }
+                }
+                Ok(t)
+            },
+        )?,
+    )?;
     let nav = lua.create_table()?;
     let sh = shared.clone();
     nav.set(

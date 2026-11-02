@@ -926,7 +926,15 @@ function util.TraceLine(data)
     if data.output then for k, v in pairs(r) do data.output[k] = v end end
     return r
 end
-function util.TraceHull(data) return util.TraceLine(data) end
+-- the server's hull sweep: the world by the box, props by their hulls grown by the box's extent
+function util.TraceHull(data)
+    local start, endpos = data.start, data.endpos
+    local mins, maxs = data.mins or Vector(), data.maxs or Vector()
+    local tr = phys and phys.trace_hull and phys.trace_hull(v3(start), v3(endpos), v3(mins), v3(maxs)) or nil
+    local r = trace_result(tr, start, endpos, data.filter)
+    if data.output then for k, v in pairs(r) do data.output[k] = v end end
+    return r
+end
 function util.TraceEntity(data, ent) return util.TraceLine(data) end
 function util.QuickTrace(origin, dir, filter) return util.TraceLine({ start = origin, endpos = origin + dir, filter = filter }) end
 -- surfaceproperties: our index is the position in the sorted material list (the engine's is its load order)

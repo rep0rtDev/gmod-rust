@@ -975,6 +975,91 @@ fn ray_convex(start: Vec3, end: Vec3, planes: &[(Vec3, f32)]) -> Option<(f32, Ve
     (t_in <= t_out && normal != Vec3::ZERO).then_some((t_in, normal))
 }
 
+/// The props' hulls swept by an axis-aligned box (`mins` / `maxs` around the trace line): each
+/// hull's planes are pushed out by the box's extent along them (the server's hull checks use the
+/// same approximation); the nearest hit wins, a start inside is `startsolid` at fraction 0.
+pub fn sweep_hull_props(
+    props: &[PropBody],
+    start: Vec3,
+    end: Vec3,
+    mins: Vec3,
+    maxs: Vec3,
+) -> Option<ToolHit> {
+    let center = (mins + maxs) * 0.5;
+    let ext = (maxs - mins) * 0.5;
+    let (cs, ce) = (start + center, end + center);
+    let dir = (end - start).normalize_or_zero();
+    let mut best: Option<ToolHit> = None;
+    for p in props {
+        let rot = rotation(p.angles);
+        let inv = rot.inverse();
+        let (ls, le) = (inv * (cs - p.pos), inv * (ce - p.pos));
+        let (lx, ly, lz) = (inv * Vec3::X, inv * Vec3::Y, inv * Vec3::Z);
+        for hull in &p.hulls {
+            let grown: Vec<(Vec3, f32)> = hull
+                .iter()
+                .map(|&(n, d)| {
+                    let r =
+                        n.dot(lx).abs() * ext.x + n.dot(ly).abs() * ext.y + n.dot(lz).abs() * ext.z;
+                    (n, d + r)
+                })
+                .collect();
+            if grown.iter().all(|&(n, d)| n.dot(ls) - d <= 0.0) {
+                return Some(ToolHit {
+                    pos: start,
+                    normal: Vec3::ZERO,
+                    ent: Some(p.id),
+                    bone: p.bone,
+                    fraction: 0.0,
+                    start,
+                    dir,
+                });
+            }
+            if let Some((t, n)) = ray_convex(ls, le, &grown) {
+                if best.is_none_or(|b| t < b.fraction) {
+                    best = Some(ToolHit {
+                        pos: start + (end - start) * t,
+                        normal: rot * n,
+                        ent: Some(p.id),
+                        bone: p.bone,
+                        fraction: t,
+                        start,
+                        dir,
+                    });
+                }
+            }
+        }
+    }
+    best
+}
+
+/// A hull trace (`util.TraceHull`): the world swept by the box (`MASK_SOLID`) and the props by
+/// [`sweep_hull_props`]; the nearest hit wins. `None` entity is the world.
+pub fn trace_hull(
+    world: &World,
+    props: &[PropBody],
+    start: Vec3,
+    end: Vec3,
+    mins: Vec3,
+    maxs: Vec3,
+) -> Option<ToolHit> {
+    let dir = (end - start).normalize_or_zero();
+    let tr = world.trace_box(start, end, mins, maxs, MASK_SOLID);
+    let world_hit = tr.hit().then_some(ToolHit {
+        pos: tr.end,
+        normal: tr.normal,
+        ent: None,
+        bone: 0,
+        fraction: tr.fraction,
+        start,
+        dir,
+    });
+    match (world_hit, sweep_hull_props(props, start, end, mins, maxs)) {
+        (Some(w), Some(p)) => Some(if p.fraction < w.fraction { p } else { w }),
+        (w, p) => w.or(p),
+    }
+}
+
 /// A line trace against the world (brushes and displacements, `MASK_SOLID`) and the props'
 /// collision hulls; the nearest hit wins. `None` entity is the world.
 pub fn trace_line(world: &World, props: &[PropBody], start: Vec3, end: Vec3) -> Option<ToolHit> {
@@ -4937,5 +5022,45 @@ mod tests {
         assert!(sb.constraints().is_empty());
         sb.numpad(1, 37, false);
         assert!(sb.tick_controllers(0.015).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod hull_trace_tests {
+    use super::*;
+
+    fn box_prop(id: u32, pos: Vec3, half: f32) -> PropBody {
+        let planes = vec![
+            (Vec3::X, half),
+            (-Vec3::X, half),
+            (Vec3::Y, half),
+            (-Vec3::Y, half),
+            (Vec3::Z, half),
+            (-Vec3::Z, half),
+        ];
+        PropBody {
+            id,
+            bone: 0,
+            pos,
+            angles: Vec3::ZERO,
+            hulls: vec![planes],
+        }
+    }
+
+    #[test]
+    fn a_hull_sweep_hits_what_the_line_beside_the_prop_misses() {
+        let props = [box_prop(7, Vec3::ZERO, 8.0)];
+        let (start, end) = (Vec3::new(0.0, 20.0, -50.0), Vec3::new(0.0, 20.0, 50.0));
+        assert!(sweep_hull_props(&props, start, end, Vec3::ZERO, Vec3::ZERO).is_none());
+        let hit = sweep_hull_props(&props, start, end, Vec3::splat(-16.0), Vec3::splat(16.0))
+            .expect("the 32 u box reaches the prop");
+        assert_eq!(hit.ent, Some(7));
+        // sweeping up, the box's top face (+16) meets the prop's bottom (z = -8) with the box centre
+        // at z = -24 -> fraction 0.26
+        assert!((hit.pos.z + 24.0).abs() < 0.5, "{hit:?}");
+        assert!((hit.fraction - 0.26).abs() < 0.01, "{hit:?}");
+        let inside =
+            sweep_hull_props(&props, Vec3::ZERO, end, Vec3::splat(-1.0), Vec3::splat(1.0)).unwrap();
+        assert_eq!((inside.fraction, inside.ent), (0.0, Some(7)));
     }
 }
