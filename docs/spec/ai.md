@@ -69,25 +69,55 @@ Own path following, one step per tick after the physics step and NPC settling:
   polygon nearby. A partial path (target off the reachable mesh) is still taken and
   ends at the closest reachable point (`NpcPath::partial`).
 - Corners: an intermediate corner counts as passed within 8 u horizontally
-  (`NPC_CORNER_REACH`); the final point is walked onto exactly (the last step is
-  shortened to the remaining distance) and the goal is cleared in that same tick, so a
-  400 u straight walk at 75 u/s takes exactly `ceil(400 / (75 * 0.015))` = 356 ticks.
-- Step: `speed * tick` toward the corner in the XY plane; the hull is swept 18 u above
-  the feet (`step_height`) with `MASK_PLAYERSOLID`, stops at the first solid, then is
-  dropped onto the floor by the same 256 u box trace that places a spawned NPC. Z is
-  therefore the floor's, not the mesh's (gm_construct: the ground west of spawn is 4 u
-  lower and the NPC follows it).
-- Yaw faces the motion; pitch/roll untouched.
-- `speed` per NPC: `NPC_WALK_SPEED` = 75 u/s placeholder. **Not measured yet**: the
-  game's per-class walk/run ground speeds come from the model's sequence motion; to
-  be recorded on srcds (citizen / metrocop / soldier / zombie, walk and run) and put
-  into `NpcDef`.
+  (`NPC_CORNER_REACH`); the final point is walked onto exactly and the goal is cleared in
+  that same tick.
+- Cadence (measured per tick, `server_npc_walk_*`): the NPC only moves on its think,
+  every 7 ticks (`NPC_THINK_TICKS`), the first one 2 ticks after the goal is set
+  (`NPC_FIRST_THINK_TICKS`); between thinks the origin does not change.
+- Gait (`NpcMoveDef`, `npc_move_def(class)`), measured on gm_construct over a 400 u
+  straight walk (one think = 0.105 s):
 
-Test: `gm-dedicated/tests/npc_entity.rs::npc_walks_the_navmesh_to_a_goal` (speed cap
-per tick, yaw = motion within 1 deg, feet on the traced floor within 0.5 u, exact
-arrival, exact tick count).
+  | class | walk u/s | walk accel u/s^2 | run u/s | run accel u/s^2 |
+  |---|---|---|---|---|
+  | npc_citizen | 79.92 | 129.9 | 209.79 | 259.8 |
+  | npc_metropolice | 57.69 | 115.4 | 184.56 | 369.2 |
+
+  Every other class takes the citizen row until measured (the zombie recordings were
+  contaminated by its combat state even under `ai_ignoreplayers 1`).
+- Speed law per think (`u` the step in units, `s0` the previous speed per think, `A` the
+  accel per think squared, `D` the remaining path length):
+  - ramp: `u = (s0 + min(s0 + A, ideal)) / 2`, a trapezoid of the end-of-think speed
+    (citizen: 0.716, 2.149, 3.581 ...; switching to run mid-ramp continues from the walk
+    speed: 0.716, 2.864, 5.729 ...);
+  - brake onset: `u <= sqrt(2 * 0.755 * A * D)` (`NPC_BRAKE_CURVE`; citizen walk 8.199 and
+    metrocop run 18.106 exact, citizen run 20.78 vs the game's 21.58);
+  - from then on `u` is the largest step whose staircase `u, u - A, u - 2A, ...` sums to
+    `D` (`brake_staircase`; the game's second braking step solves this exactly in every
+    recording), moving at the step itself (no trapezoid), never shedding more than `A`
+    per think, and the last step is the remainder, so the walk arrives on the game's tick
+    (citizen 373 ticks after the goal: the first think 2 ticks in, then 53 of 7).
+- `npc_goto(id, target, run)` picks the gait; `npc_set_run(id, run)` switches it from the
+  next think on (the oracle probe forces `ACT_RUN` once the NPC moves; the runner mirrors
+  that by switching 3 ticks after the goal).
+- Step: along the path in the XY plane (a step longer than the distance to the corner
+  continues along the next segment); the hull is swept 18 u above the feet
+  (`step_height`) with `MASK_PLAYERSOLID`, stops at the first solid, then is dropped onto
+  the floor by the same 256 u box trace that places a spawned NPC. Z is therefore the
+  floor's, not the mesh's (gm_construct: the ground west of spawn is 4 u lower and the
+  NPC follows it).
+- Yaw faces the motion; pitch/roll untouched.
+
+Harnesses `server_npc_walk_citizen` / `_citizen_run` / `_metrocop` / `_metrocop_run`
+(golden 261102, one scenario per srcds session, 1-tick waits): all four equal at 2 u.
+Residuals inside the tolerance: the game's first braking step is gentler than the curve
+on the citizen run (0.8 u, it arrives one think after us), and the metrocop walk sheds
+0.06-0.3 u per think over four thinks before its brake onset (1.3 u).
+
+Test: `gm-dedicated/tests/npc_entity.rs::npc_walks_the_navmesh_to_a_goal` (step cap per
+think, yaw = motion within 1 deg, feet on the traced floor within 0.5 u, exact arrival,
+373 ticks like the game).
 
 ## Not yet
 
-Per-class speeds (above), behaviour (idle / chase / combat), crowd avoidance,
-dynamic obstacles (props), off-mesh links (ladders, jumps).
+Gaits of the other classes (zombie, soldier, ...), behaviour (idle / chase / combat),
+crowd avoidance, dynamic obstacles (props), off-mesh links (ladders, jumps).

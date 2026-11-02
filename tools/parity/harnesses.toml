@@ -396,7 +396,6 @@ crates = ["gm-sandbox", "gm-collision"]
 pos = 0.1
 ang = 0.1
 
-
 [[harness]]
 name = "toolgun_nocollide_axis_weldworld"
 scenario = "toolgun/nocollide_axis_weldworld"
@@ -1236,14 +1235,12 @@ compare = "damage"
 realm = "server"
 crates = ["gm-server"]
 
-
 [[harness]]
 name = "damage_fall_progressive"
 scenario = "damage/fall_progressive"
 compare = "damage"
 realm = "server"
 crates = ["gm-server"]
-
 
 [[harness]]
 name = "damage_hits"
@@ -1258,7 +1255,6 @@ scenario = "damage/fall_threshold"
 compare = "damage"
 realm = "server"
 crates = ["gm-server"]
-
 
 [[harness]]
 name = "damage_fall_armor"
@@ -1304,7 +1300,6 @@ crates = ["gm-move", "gm-collision"]
 pos = 0.05
 vel = 0.5
 
-
 [[harness]]
 name = "move_settle_disp3"
 scenario = "move/settle_disp3"
@@ -1314,7 +1309,6 @@ crates = ["gm-move", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
-
 
 [[harness]]
 name = "move_settle_brush"
@@ -1342,7 +1336,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "fire_pistol_hold"
 scenario = "fire/pistol_hold"
@@ -1350,7 +1343,6 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "fire_smg1_hold"
@@ -1360,7 +1352,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "fire_ar2_hold"
 scenario = "fire/ar2_hold"
@@ -1368,7 +1359,6 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "fire_ar2_alt"
@@ -1378,7 +1368,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "fire_crossbow_tap"
 scenario = "fire/crossbow_tap"
@@ -1386,7 +1375,6 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "fire_rpg_tap"
@@ -1396,7 +1384,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "fire_frag_tap"
 scenario = "fire/frag_tap"
@@ -1404,7 +1391,6 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "fire_frag_hold"
@@ -1414,7 +1400,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "fire_frag_hold2"
 scenario = "fire/frag_hold2"
@@ -1422,7 +1407,6 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "fire_frag_hold5"
@@ -1432,7 +1416,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "fire_frag_hold20"
 scenario = "fire/frag_hold20"
@@ -1440,7 +1423,6 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "fire_crowbar_hold"
@@ -1450,7 +1432,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "fire_physcannon_hold"
 scenario = "fire/physcannon_hold"
@@ -1458,7 +1439,6 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "fire_smg1_alt"
@@ -1468,7 +1448,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "fire_shotgun_alt"
 scenario = "fire/shotgun_alt"
@@ -1476,7 +1455,6 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "fire_shotgun_hold"
@@ -1486,7 +1464,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "fire_357_tap"
 scenario = "fire/357_tap"
@@ -1495,7 +1472,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "fire_pistol_empty"
 scenario = "fire/pistol_empty"
@@ -1503,7 +1479,6 @@ compare = "fire"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "fire_pistol_reload"
@@ -1521,7 +1496,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "hit_smg1"
 scenario = "hit/smg1"
@@ -1530,7 +1504,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "hit_357"
 scenario = "hit/357"
@@ -1538,7 +1511,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "hit_crowbar"
@@ -1550,7 +1522,6 @@ crates = ["gm-server"]
 # the game's 17.4 u/s push points 10 deg right of the aim (3.1 u/s sideways, unexplained)
 vel = 4.0
 
-
 [[harness]]
 name = "hit_crowbar_hold"
 scenario = "hit/crowbar_hold"
@@ -1561,7 +1532,6 @@ crates = ["gm-server"]
 # the game's 17.4 u/s push points 10 deg right of the aim (3.1 u/s sideways, unexplained)
 vel = 4.0
 
-
 [[harness]]
 name = "hit_crowbar_far"
 scenario = "hit/crowbar_far"
@@ -1569,7 +1539,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "hit_crowbar_head"
@@ -1579,7 +1548,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "hit_physcannon"
 scenario = "hit/physcannon"
@@ -1587,7 +1555,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "hit_physcannon_hold"
@@ -1597,7 +1564,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "hit_physcannon_alt"
 scenario = "hit/physcannon_alt"
@@ -1605,7 +1571,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "hit_pistol_nohurt"
@@ -1615,7 +1580,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "hit_rpg_nohurt"
 scenario = "hit/rpg_nohurt"
@@ -1624,7 +1588,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "hit_pistol_hurt_reset"
 scenario = "hit/pistol_hurt_reset"
@@ -1632,7 +1595,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "hit_smg1_grenade"
@@ -1644,7 +1606,6 @@ crates = ["gm-server"]
 # 98.19 measured against 98.18 computed: the hull point the game measured to is 0.03 u off
 damage = 0.02
 
-
 [[harness]]
 name = "hit_rpg_direct"
 scenario = "hit/rpg_direct"
@@ -1653,7 +1614,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "hit_rpg_floor20"
 scenario = "hit/rpg_floor20"
@@ -1661,7 +1621,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "hit_rpg_floor30"
@@ -1674,7 +1633,6 @@ crates = ["gm-server"]
 damage = 0.15
 vel = 2.0
 
-
 [[harness]]
 name = "hit_rpg_floor45"
 scenario = "hit/rpg_floor45"
@@ -1686,7 +1644,6 @@ crates = ["gm-server"]
 damage = 0.15
 vel = 2.0
 
-
 [[harness]]
 name = "hit_rpg_armor"
 scenario = "hit/rpg_armor"
@@ -1694,7 +1651,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "hit_rpg_dot50"
@@ -1707,8 +1663,6 @@ crates = ["gm-server"]
 damage = 0.15
 vel = 2.0
 
-
-
 [[harness]]
 name = "hit_rpg_dot100"
 scenario = "hit/rpg_dot100"
@@ -1720,8 +1674,6 @@ crates = ["gm-server"]
 damage = 0.15
 vel = 2.0
 
-
-
 [[harness]]
 name = "hit_rpg_dot150"
 scenario = "hit/rpg_dot150"
@@ -1729,8 +1681,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
-
 
 [[harness]]
 name = "hit_rpg_dot200"
@@ -1740,8 +1690,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
-
 [[harness]]
 name = "hit_rpg_dot300"
 scenario = "hit/rpg_dot300"
@@ -1749,8 +1697,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
-
 
 [[harness]]
 name = "hit_crossbow"
@@ -1760,7 +1706,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "hit_ball"
 scenario = "hit/ball"
@@ -1768,7 +1713,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "hit_shotgun"
@@ -1778,7 +1722,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 random = true
-
 
 [[harness]]
 name = "hit_pistol_armor"
@@ -1796,7 +1739,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "hit_pistol_stomach"
 scenario = "hit/pistol_stomach"
@@ -1804,7 +1746,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "hit_pistol_legs"
@@ -1814,7 +1755,6 @@ realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
 
-
 [[harness]]
 name = "hit_pistol_feet"
 scenario = "hit/pistol_feet"
@@ -1822,7 +1762,6 @@ compare = "hit"
 realm = "server"
 crates = ["gm-server"]
 [harness.tolerance]
-
 
 [[harness]]
 name = "hit_pistol_high"
@@ -3129,7 +3068,6 @@ crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
 
-
 [[harness]]
 name = "constraint_hydraulic_toggle"
 scenario = "constraint/hydraulic_toggle"
@@ -3529,7 +3467,6 @@ realm = "server"
 crates = ["gm-sandbox", "gm-collision"]
 [harness.tolerance]
 pos = 0.1
-
 
 [[harness]]
 name = "constraint_weld_pair_nocollide"
@@ -4010,3 +3947,39 @@ name = "server_stools_vehicle"
 scenario = "server/stools_vehicle"
 compare = "server"
 realm = "server"
+
+[[harness]]
+name = "server_npc_walk_citizen"
+scenario = "server/npc_walk_citizen"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_citizen_run"
+scenario = "server/npc_walk_citizen_run"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_metrocop_run"
+scenario = "server/npc_walk_metrocop_run"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_metrocop"
+scenario = "server/npc_walk_metrocop"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0

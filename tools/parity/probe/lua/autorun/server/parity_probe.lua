@@ -1272,6 +1272,27 @@ SCENARIOS.toolgun = function(scn, done)
 			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal) }
 			rec.bot_ang = { bot:GetAngles().p, bot:GetAngles().y, bot:GetAngles().r }
 			concommand.Run(bot, "gmod_spawnnpc", { op.class, op.weapon or "none" }, op.class)
+		elseif op.op == "npcgoto" then
+			-- the bot's latest NPC walks (SCHED_FORCED_GO) or runs (SCHED_FORCED_GO_RUN) to op.pos
+			local npc
+			for _, e in ipairs(ents.FindByClass("npc_*")) do
+				if e:GetCreator() == bot and (not IsValid(npc) or e:EntIndex() > npc:EntIndex()) then npc = e end
+			end
+			if IsValid(npc) then
+				local goal = Vector(op.pos[1], op.pos[2], op.pos[3])
+				if tonumber(op.value) then npc:SetNPCState(tonumber(op.value)) end
+				npc:SetLastPosition(goal)
+				npc:SetSchedule(SCHED_FORCED_GO)
+				if op.name == "run" then
+					-- SCHED_FORCED_GO_RUN never starts on a sandbox NPC (measured); force the run activity instead
+					hook.Add("Tick", "parity_npc_run", function()
+						if not IsValid(npc) then hook.Remove("Tick", "parity_npc_run") return end
+						if npc:IsMoving() then npc:SetMovementActivity(ACT_RUN) end
+					end)
+				end
+				rec.goal = vec(goal)
+				rec.npc = npc:EntIndex()
+			end
 		elseif op.op == "give" then
 			-- the bot gets and selects a weapon (`Give` + `SelectWeapon`) to shoot NPCs with
 			bot:Give(op.class)

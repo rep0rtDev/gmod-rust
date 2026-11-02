@@ -138,10 +138,15 @@ fn npc_walks_the_navmesh_to_a_goal() {
     server.tick(&idle);
     let from = server.npcs[&id].pos;
     let goal = from + Vec3::new(-400.0, 0.0, 0.0);
-    assert!(server.npc_goto(id, goal), "no path from {from} to {goal}");
+    assert!(
+        server.npc_goto(id, goal, false),
+        "no path from {from} to {goal}"
+    );
     let path = server.npcs[&id].goal.clone().unwrap();
     assert!(!path.partial, "partial path {path:?}");
-    let speed = server.npcs[&id].speed;
+    let step_max = gm_server::npc_move_def(&server.npcs[&id].class).walk
+        * gm_server::NPC_THINK_TICKS as f32
+        * gm_core::tick::DEFAULT_TICK_INTERVAL;
     let mut ticks = 0;
     let mut last = from;
     let (mut zmin, mut zmax) = (from.z, from.z);
@@ -151,8 +156,8 @@ fn npc_walks_the_navmesh_to_a_goal() {
         let n = &server.npcs[&id];
         let moved = n.pos.truncate() - last.truncate();
         assert!(
-            moved.length() <= speed * gm_core::tick::DEFAULT_TICK_INTERVAL + 0.01,
-            "tick {ticks}: moved {moved} > speed"
+            moved.length() <= step_max + 0.01,
+            "tick {ticks}: moved {moved} > one think at walk speed"
         );
         if moved.length() > 0.1 {
             let yaw = moved.y.atan2(moved.x).to_degrees();
@@ -192,9 +197,7 @@ fn npc_walks_the_navmesh_to_a_goal() {
         end.truncate().distance(goal.truncate()) < 0.01,
         "ended {end} for goal {goal}"
     );
-    let expect = (400.0 / speed / gm_core::tick::DEFAULT_TICK_INTERVAL).ceil() as i32;
-    assert!(
-        ticks == expect,
-        "{ticks} ticks vs {expect} for a straight walk"
-    );
+    // the game walks these 400 u in 373 ticks after the goal (server_npc_walk_citizen:
+    // first think 2 ticks in, then 53 thinks of 7)
+    assert_eq!(ticks, 373, "ticks vs the game's 373 for a straight walk");
 }

@@ -4319,6 +4319,11 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         physics.add_static_mesh(&disp_pos, &disp_idx, world_surface)?;
     }
     let mut server = gm_server::Server::new(&collision, physics, world_body);
+    if scn.ops.iter().any(|op| op.op == "npcgoto") {
+        let nav = gm_nav::NavMesh::build(&bsp, &gm_nav::NavParams::default())
+            .map_err(|e| anyhow::anyhow!("navmesh for {map}: {e}"))?;
+        server.set_navmesh(std::sync::Arc::new(nav));
+    }
     let loader_mount = gm_content::Mount::for_install(&inst)?;
     let loader: gm_server::ModelLoader =
         Box::new(move |m: &str| gm_dedicated::model_info(&loader_mount, m).ok());
@@ -4408,6 +4413,8 @@ fn run_server(scn: &Scenario) -> Result<Value> {
     };
     // the probe's pre-roll: the bot stands still on the ground
     let idle = std::collections::BTreeMap::from([(player, gm_server::PlayerCmd::default())]);
+    // the game probe switches the gait to run once the NPC is moving (after its first think)
+    let mut pending_npc_run: Option<(u32, u32)> = None;
     for _ in 0..20 {
         server.tick(&idle);
     }
@@ -4623,6 +4630,15 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 rec["class"] = json!(key);
                 server.spawn_npc(player, &key, op.weapon.as_deref().unwrap_or("none"));
             }
+            "npcgoto" => {
+                let target = Vec3::from(op.pos.unwrap_or_default());
+                if let Some(&id) = server.npcs.keys().last() {
+                    rec["started"] = json!(server.npc_goto(id, target, false));
+                    if op.name.as_deref() == Some("run") {
+                        pending_npc_run = Some((id, 3));
+                    }
+                }
+            }
             "press" => {}
             "undo" => server.undo(player),
             "cleanup" => server.cleanup(player),
@@ -4641,7 +4657,9 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }
         }
         rec["immediate"] = snapshot(&server);
-        let ticks = if matches!(op.op.as_str(), "wait" | "think") {
+        let ticks = if op.op == "npcgoto" {
+            0
+        } else if matches!(op.op.as_str(), "wait" | "think") {
             op.ticks.unwrap_or(3)
         } else {
             op.wait.unwrap_or(3)
@@ -4668,6 +4686,13 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             if let Some(t) = &think_tool {
                 apply_click_settings(&mut server.sandbox, t, op.settings.as_ref());
                 server.tool_think(player, t);
+            }
+            if let Some((id, left)) = pending_npc_run.as_mut() {
+                *left -= 1;
+                if *left == 0 {
+                    server.npc_set_run(*id, true);
+                    pending_npc_run = None;
+                }
             }
             match &held {
                 Some(h) if k < press_ticks => server.tick(h),

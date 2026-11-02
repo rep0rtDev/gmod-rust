@@ -928,7 +928,8 @@ pub struct Npc {
     /// The remover's `timer.Simple(1)`: the tick the entity goes after the click made it `MOVETYPE_NONE`.
     pub remove_at: Option<u64>,
     /// Ground speed along a navigation path, u/s.
-    pub speed: f32,
+    pub move_speed: f32,
+    pub run: bool,
     pub goal: Option<NpcPath>,
 }
 
@@ -938,10 +939,59 @@ pub struct NpcPath {
     pub points: Vec<Vec3>,
     pub idx: usize,
     pub partial: bool,
+    pub think_in: u8,
+    pub braking: bool,
 }
 
-/// Placeholder until the per-class ground speeds are measured on the game.
-pub const NPC_WALK_SPEED: f32 = 75.0;
+/// Ground locomotion per class as measured on the game (server_npc_walk_*): the NPC moves
+/// once per think, its speed ramps at `*_accel` (u/s^2) toward `walk`/`run` (u/s), starts
+/// braking under the curve sqrt(2 * NPC_BRAKE_CURVE * accel * remaining) and then sheds
+/// `accel` per think down a staircase that lands exactly on the goal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NpcMoveDef {
+    pub walk: f32,
+    pub walk_accel: f32,
+    pub run: f32,
+    pub run_accel: f32,
+}
+
+pub const NPC_THINK_TICKS: u8 = 7;
+pub const NPC_FIRST_THINK_TICKS: u8 = 2;
+const NPC_THINK_DT: f32 = NPC_THINK_TICKS as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
+const NPC_BRAKE_CURVE: f32 = 0.755;
+const NPC_MOVE_CITIZEN: NpcMoveDef = NpcMoveDef {
+    walk: 79.92,
+    walk_accel: 129.9,
+    run: 209.79,
+    run_accel: 259.8,
+};
+const NPC_MOVE_METROPOLICE: NpcMoveDef = NpcMoveDef {
+    walk: 57.69,
+    walk_accel: 115.4,
+    run: 184.56,
+    run_accel: 369.2,
+};
+
+/// Largest per-think step whose braking staircase `u, u - a, u - 2a, ...` sums exactly to
+/// `dist`; with `n` steps left that is `n * u - a * n(n-1)/2 = dist` on `(n-1)a < u <= na`.
+fn brake_staircase(dist: f32, a: f32) -> f32 {
+    let mut n = 1.0f32;
+    loop {
+        let u = (dist + 0.5 * a * n * (n - 1.0)) / n;
+        if u <= n * a || n >= 1024.0 {
+            return u;
+        }
+        n += 1.0;
+    }
+}
+
+/// Measured for citizens and metropolice; every other class walks like a citizen until measured.
+pub fn npc_move_def(class: &str) -> NpcMoveDef {
+    match class {
+        "npc_metropolice" => NPC_MOVE_METROPOLICE,
+        _ => NPC_MOVE_CITIZEN,
+    }
+}
 /// An intermediate corner counts as passed within this horizontal distance; the final
 /// point is walked onto exactly.
 const NPC_CORNER_REACH: f32 = 8.0;
@@ -5217,7 +5267,8 @@ impl<'w> Server<'w> {
                 settle,
                 dead_at: None,
                 remove_at: None,
-                speed: NPC_WALK_SPEED,
+                move_speed: 0.0,
+                run: false,
                 goal: None,
             },
         );
@@ -5369,7 +5420,7 @@ impl<'w> Server<'w> {
     /// Send a live NPC walking to `target` along the navigation mesh. False when there is
     /// no mesh, no such NPC, or no polygon near either end; a `partial` path (target off
     /// the reachable mesh) still starts and ends at the closest reachable point.
-    pub fn npc_goto(&mut self, id: u32, target: Vec3) -> bool {
+    pub fn npc_goto(&mut self, id: u32, target: Vec3, run: bool) -> bool {
         let Some(nav) = self.nav.as_deref() else {
             return false;
         };
@@ -5385,19 +5436,32 @@ impl<'w> Server<'w> {
         };
         let partial = path.partial;
         if let Some(n) = self.npcs.get_mut(&id) {
+            n.run = run;
             n.goal = Some(NpcPath {
                 points: path.points,
                 idx: 1,
                 partial,
+                think_in: NPC_FIRST_THINK_TICKS,
+                braking: false,
             });
         }
         true
     }
 
-    /// One tick of path following: head for the current corner at `speed`, hull-swept
-    /// `step_height` above the feet, then dropped to the floor; the yaw faces the motion.
+    /// Switches a moving NPC between its walk and run gait from the next think on.
+    pub fn npc_set_run(&mut self, id: u32, run: bool) {
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.run = run;
+        }
+    }
+
+    /// One tick of path following. The NPC only moves on its think (every NPC_THINK_TICKS,
+    /// the first NPC_FIRST_THINK_TICKS after the goal). The think's step is the trapezoid of
+    /// the speed ramping at the class accel toward the gait speed, capped by the braking
+    /// curve over the remaining path (the brake onset only) and by the staircase that arrives
+    /// exactly, never braking harder than the accel per think; it is walked corner by corner, hull-swept
+    /// `step_height` above the feet and dropped to the floor, with the yaw facing the motion.
     fn tick_npc_move(&mut self) {
-        let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
         let ids: Vec<u32> = self
             .npcs
             .iter()
@@ -5405,33 +5469,84 @@ impl<'w> Server<'w> {
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
-            let Some(n) = self.npcs.get(&id) else {
+            let Some(n) = self.npcs.get_mut(&id) else {
                 continue;
             };
-            let Some(goal) = n.goal.as_ref() else {
+            let Some(goal) = n.goal.as_mut() else {
                 continue;
             };
-            let (pos, mins, maxs, speed) = (n.pos, n.mins, n.maxs, n.speed);
-            let mut idx = goal.idx;
-            let last = goal.points.len() - 1;
-            while idx < last
-                && goal.points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
+            if goal.think_in > 1 {
+                goal.think_in -= 1;
+                continue;
+            }
+            goal.think_in = NPC_THINK_TICKS;
+            let braking = goal.braking;
+            let points = goal.points.clone();
+            let mut idx = goal.idx.min(points.len() - 1);
+            let def = npc_move_def(&n.class);
+            let (ideal, accel) = if n.run {
+                (def.run, def.run_accel)
+            } else {
+                (def.walk, def.walk_accel)
+            };
+            let (pos, mins, maxs, v0) = (n.pos, n.mins, n.maxs, n.move_speed);
+            while idx + 1 < points.len()
+                && points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
             {
                 idx += 1;
             }
-            if idx >= goal.points.len() {
-                if let Some(n) = self.npcs.get_mut(&id) {
-                    n.goal = None;
-                }
-                continue;
+            let mut remaining = pos.truncate().distance(points[idx].truncate());
+            for w in points[idx..].windows(2) {
+                remaining += w[0].truncate().distance(w[1].truncate());
             }
-            let target = goal.points[idx].truncate();
-            let to = target - pos.truncate();
-            let dist = to.length();
-            let step = (speed * dt).min(dist);
-            let dir = to / dist;
+            let s0 = v0 * NPC_THINK_DT;
+            let a = accel * NPC_THINK_DT * NPC_THINK_DT;
+            let ramp = 0.5 * (s0 + (s0 + a).min(ideal * NPC_THINK_DT));
+            let curve = if braking {
+                f32::INFINITY
+            } else {
+                (2.0 * NPC_BRAKE_CURVE * a * remaining).sqrt()
+            };
+            let floor = if braking { s0 - a } else { s0 - 0.5 * a };
+            let step = ramp
+                .min(curve)
+                .min(brake_staircase(remaining, a))
+                .max(floor)
+                .min(remaining);
+            let braking = braking || step < ramp;
+            // the ramp is a trapezoid of the end-of-think speed, braking moves at the step
+            let v1 = if braking {
+                step / NPC_THINK_DT
+            } else {
+                ((2.0 * step - s0) / NPC_THINK_DT).max(0.0)
+            };
+            let arrived = step >= remaining - 1e-3;
+            let mut at = pos.truncate();
+            let mut left = step;
+            let mut dir = glam::Vec2::X;
+            while left > 1e-4 && idx < points.len() {
+                let corner = points[idx].truncate();
+                let to = corner - at;
+                let d = to.length();
+                if d <= 1e-4 {
+                    idx += 1;
+                    continue;
+                }
+                dir = to / d;
+                if left >= d - 1e-4 {
+                    at = corner;
+                    left -= d;
+                    idx += 1;
+                } else {
+                    at += dir * left;
+                    left = 0.0;
+                }
+            }
+            if arrived {
+                at = points[points.len() - 1].truncate();
+            }
             let lift = Vec3::new(0.0, 0.0, 18.0);
-            let want = pos + (dir * step).extend(0.0);
+            let want = at.extend(pos.z);
             let tr = self.collision.trace_box(
                 pos + lift,
                 want + lift,
@@ -5443,14 +5558,15 @@ impl<'w> Server<'w> {
             let floor = self
                 .npc_floor(reached, mins, maxs)
                 .unwrap_or(reached - lift);
-            let arrived = idx == last && floor.truncate().distance(target) < 1e-3;
             if let Some(n) = self.npcs.get_mut(&id) {
                 n.pos = floor;
                 n.angles.y = dir.y.atan2(dir.x).to_degrees();
+                n.move_speed = if arrived { 0.0 } else { v1 };
                 if arrived {
                     n.goal = None;
                 } else if let Some(g) = n.goal.as_mut() {
-                    g.idx = idx;
+                    g.idx = idx.min(points.len() - 1);
+                    g.braking = braking;
                 }
             }
         }
@@ -5499,7 +5615,8 @@ impl<'w> Server<'w> {
                 settle: false,
                 dead_at: None,
                 remove_at: None,
-                speed: NPC_WALK_SPEED,
+                move_speed: 0.0,
+                run: false,
                 goal: None,
             },
         );
