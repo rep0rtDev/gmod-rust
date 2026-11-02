@@ -854,7 +854,8 @@ layer; `EF_NODRAW` is the one flag with a server meaning and maps onto `SetNoDra
 Player damage carries the hit behind it (attacker, hit group, position): `PlayerTraceAttack` may
 swallow a bullet hit, `ScalePlayerDamage` sees the real hit group, `OnDamagedByExplosion` follows
 blast damage. Every sandbox spawn under its limit asks `PlayerCheckLimit` (a `false` denies; a reached
-limit denies without asking, there is no `true` override) and every undo entry asks `CanCreateUndo`.
+limit denies without asking, there is no `true` override) and every undo entry asks `CanCreateUndo`. Every footstep asks `PlayerFootstep` (position, foot, sound, volume; `true`
+silences it).
 
 Every bullet shot asks `EntityFireBullets` (a `false` fires nothing) and reports
 `PostEntityFireBullets` after it resolved; a hit on an NPC runs `ScaleNPCDamage` / `EntityTakeDamage`

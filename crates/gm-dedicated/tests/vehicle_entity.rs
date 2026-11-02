@@ -257,5 +257,38 @@ fn fire_bullets_and_npc_damage_are_asked() {
         server.spawn_npc(1, "npc_zombie", "none").is_none(),
         "PlayerCheckLimit denies"
     );
+    let steps = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = steps.clone();
+    server.request_hook = Some(Box::new(move |_, req| match req {
+        gm_server::Request::Footstep { player: 1, .. } => {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            gm_server::Verdict::Cancel
+        }
+        _ => gm_server::Verdict::Allow,
+    }));
+    let walk = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            buttons: 1 << 3,
+            forward_move: 400.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let walking = std::collections::BTreeMap::from([(1, walk)]);
+    server.take_sounds();
+    for _ in 0..120 {
+        server.tick(&walking);
+    }
+    assert!(
+        steps.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "PlayerFootstep asked while walking"
+    );
+    assert!(
+        !server
+            .take_sounds()
+            .iter()
+            .any(|s| s.name.contains("step") || s.name.contains("Step")),
+        "a refused footstep stays silent"
+    );
     server.request_hook = None;
 }

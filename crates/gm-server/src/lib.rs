@@ -551,6 +551,14 @@ pub enum Request {
         current: u32,
         max: i32,
     },
+    /// `PlayerFootstep`: the player's foot (`right`) lands at `pos` and would voice `sound`.
+    Footstep {
+        player: u32,
+        pos: Vec3,
+        right: bool,
+        sound: String,
+        volume: f32,
+    },
     /// `CanCreateUndo`: an undo entry `name` / `text` is about to be recorded.
     CreateUndo {
         player: u32,
@@ -9968,7 +9976,7 @@ impl<'w> Server<'w> {
             self.resolve_melee(attacker, eye, forward);
         }
         self.drive_tick(cmds);
-        let mut steps: Vec<(Vec3, gm_move::Step, Option<String>)> = Vec::new();
+        let mut steps: Vec<(u32, Vec3, gm_move::Step, Option<String>)> = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -10018,6 +10026,7 @@ impl<'w> Server<'w> {
                         .and_then(|pr| self.models.get(&pr.model))
                         .map(|i| format!("surfaceprop:{}", i.surfaceprop));
                     steps.push((
+                        *id,
                         feet,
                         step,
                         (prev_level == 1)
@@ -10032,6 +10041,7 @@ impl<'w> Server<'w> {
                     gm_core::tick::DEFAULT_TICK_INTERVAL * 1000.0,
                 ) {
                     steps.push((
+                        *id,
                         p.state.origin,
                         step,
                         Some(gm_move::LADDER_MATERIAL.to_owned()),
@@ -10049,6 +10059,7 @@ impl<'w> Server<'w> {
                     }
                     if let Some(step) = p.steps.on_land(-prev_vz) {
                         steps.push((
+                            *id,
                             p.state.origin,
                             step,
                             (p.state.water_level == 1).then(|| gm_move::WADE_MATERIAL.to_owned()),
@@ -10057,8 +10068,8 @@ impl<'w> Server<'w> {
                 }
             }
         }
-        for (feet, step, material) in steps {
-            self.footstep(feet, step, material.as_deref());
+        for (id, feet, step, material) in steps {
+            self.footstep(id, feet, step, material.as_deref());
         }
         // entities after the players' moves: a projectile's hit or blast this tick pushes and
         // hurts a target that has already moved (its velocity shows the push raw)
@@ -11513,7 +11524,13 @@ impl<'w> Server<'w> {
     /// lands at 116 u/s and takes a second 188 u/s contact in the same tick plays 116).
     /// A footstep at `feet`: the wave set is the `stepleft`/`stepright` of the brush side under
     /// the feet (measured `move_step_*`: the server emits the surface's step wave, level 75).
-    fn footstep(&mut self, feet: Vec3, step: gm_move::Step, override_material: Option<&str>) {
+    fn footstep(
+        &mut self,
+        player: u32,
+        feet: Vec3,
+        step: gm_move::Step,
+        override_material: Option<&str>,
+    ) {
         let material = override_material
             .map(str::to_owned)
             .or_else(|| self.collision.ground_material(feet).map(str::to_owned));
@@ -11525,13 +11542,23 @@ impl<'w> Server<'w> {
                 .and_then(|f| f(material.as_deref()));
             self.step_sounds.insert(key.clone(), loaded);
         }
-        let Some(Some(sounds)) = self.step_sounds.get(&key) else {
-            return;
+        let name = match self.step_sounds.get(&key) {
+            Some(Some(sounds)) if step.right => Some(sounds.right.clone()),
+            Some(Some(sounds)) => Some(sounds.left.clone()),
+            _ => None,
         };
-        let name = if step.right {
-            &sounds.right
-        } else {
-            &sounds.left
+        if self.ask(Request::Footstep {
+            player,
+            pos: feet,
+            right: step.right,
+            sound: name.clone().unwrap_or_default(),
+            volume: step.volume,
+        }) == Verdict::Cancel
+        {
+            return;
+        }
+        let Some(name) = name else {
+            return;
         };
         self.sounds.push(WorldSound {
             name: name.clone(),

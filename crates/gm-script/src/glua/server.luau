@@ -678,6 +678,12 @@ local prev_move = {}
     events.on("sandbox.check_limit", function(p)
         if hook.Run("PlayerCheckLimit", Player(p.player), p.kind, p.current or 0, p.max or -1) == false then return false end
     end)
+    events.on("player.footstep", function(p)
+        local filter = RecipientFilter and RecipientFilter() or nil
+        if hook.Run("PlayerFootstep", Player(p.player), Vector(p.px, p.py, p.pz), p.right or 0, p.sound, p.volume or 1, filter) == true then
+            return false
+        end
+    end)
     events.on("undo.create_request", function(p)
         local tbl = { Owner = Player(p.player), Name = p.name, NiceName = p.text, Entities = {}, Functions = {} }
         if hook.Run("CanCreateUndo", Player(p.player), tbl) == false then return false end
