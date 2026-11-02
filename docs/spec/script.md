@@ -776,6 +776,9 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `ENTITY:PassesTriggerFilters(ent)` gates a scripted entity's `StartTouch` / `Touch` /
+  `EndTouch` (false hides that toucher); `ENTITY:GetPreferredCarryAngles(ent)` was already the
+  physgun carry-angle answer after `GM:GetPreferredCarryAngles`.
 - Client console lines the client does not know reach the server as console commands; the
   server asks the runtime first (`ServerHooks::player_command` -> `player.command` ->
   `concommand.Run(ply, cmd, args, argstr)`, any player) and only then the admin console (admins)

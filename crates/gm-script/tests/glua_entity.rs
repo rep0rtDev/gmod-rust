@@ -1369,3 +1369,41 @@ fn nextbot_callbacks_follow_the_mover_state() {
             .to_vec()
     );
 }
+
+#[test]
+fn passes_trigger_filters_gates_the_touch() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source: "local ENT = { Type = \"anim\", Base = \"base_anim\", Model = \"models/props_c17/oildrum001.mdl\" }
+            state.log = {}
+            function ENT:PassesTriggerFilters(e) return e:EntIndex() ~= 9 end
+            function ENT:StartTouch(e) state.log[#state.log + 1] = \"start\" .. e:EntIndex() end
+            function ENT:EndTouch(e) state.log[#state.log + 1] = \"end\" .. e:EntIndex() end
+            scripted_ents.Register(ENT, \"my_ent\")"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut ev = Payload::default();
+    ev.ints.push(("entity", 5));
+    ev.ints.push(("player", 0));
+    ev.ints.push(("other", 9));
+    ev.strs.push(("class", "my_ent".into()));
+    let a = rt.actors_mut();
+    a[0].dispatch(&snap, "entity.init", &ev, 7).unwrap();
+    a[0].dispatch(&snap, "entity.start_touch", &ev, 8).unwrap();
+    a[0].dispatch(&snap, "entity.end_touch", &ev, 9).unwrap();
+    ev.ints.retain(|(k, _)| *k != "other");
+    ev.ints.push(("other", 10));
+    a[0].dispatch(&snap, "entity.start_touch", &ev, 10).unwrap();
+    a[0].dispatch(&snap, "entity.end_touch", &ev, 11).unwrap();
+    let log: Vec<String> = rt.actors()[0].eval("return state.log").unwrap();
+    assert_eq!(log, ["start10", "end10"].map(String::from).to_vec());
+}

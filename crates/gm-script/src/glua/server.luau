@@ -833,6 +833,7 @@ local prev_move = {}
             return string.format("%.3f %.3f %.3f %.3f %.3f %.3f", pos.x, pos.y, pos.z, ang.p, ang.y, ang.r)
         end
     end)
+    -- @hook ENTITY:GetPreferredCarryAngles
     events.on("player.carry_angles", function(p)
         local ent = Entity(p.entity)
         local a = hook.Run("GetPreferredCarryAngles", ent)

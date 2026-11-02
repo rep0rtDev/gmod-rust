@@ -78,6 +78,11 @@ local function inherit(def, store)
     end
     return def
 end
+-- @hook ENTITY:PassesTriggerFilters
+-- a scripted entity's touch callbacks only see what its PassesTriggerFilters lets through
+local function passes_trigger(i, other)
+    return i.PassesTriggerFilters == nil or i:PassesTriggerFilters(other) ~= false
+end
 local function instance_for(store, defs, class, id, extra)
     local key = class .. ":" .. tostring(id)
     local inst = instances[key]
@@ -112,9 +117,9 @@ function scripted_ents.Register(ENT, class)
         init = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.SetupDataTables and not rawget(i, "__dt") then rawset(i, "__dt", true); i:SetupDataTables() end if i.Initialize then i:Initialize() end if i.UpdateTransmitState then local m = i:UpdateTransmitState(); if type(m) == "number" then world.queue("ent.transmit", p.entity, m) end end end,
         think = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if scripted_ents.__is_nextbot(ENT) then scripted_ents.__nextbot_think(i) end if scripted_ents.__is_ai(ENT) then scripted_ents.__state_change(i) if i.RunAI then i:RunAI() end end if i.Think then local r = i:Think(); local nt = rawget(i, "__next_think"); if nt then rawset(i, "__next_think", nil); return nt end return r end end,
         -- @hook NEXTBOT:OnContact
-        start_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.StartTouch then i:StartTouch(Entity(p.other)) end if scripted_ents.__is_nextbot(ENT) and i.OnContact then i:OnContact(Entity(p.other)) end end,
-        touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.Touch then i:Touch(Entity(p.other)) end end,
-        end_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.EndTouch then i:EndTouch(Entity(p.other)) end end,
+        start_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); local o = Entity(p.other); if i.StartTouch and passes_trigger(i, o) then i:StartTouch(o) end if scripted_ents.__is_nextbot(ENT) and i.OnContact then i:OnContact(Entity(p.other)) end end,
+        touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); local o = Entity(p.other); if i.Touch and passes_trigger(i, o) then i:Touch(o) end end,
+        end_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); local o = Entity(p.other); if i.EndTouch and passes_trigger(i, o) then i:EndTouch(o) end end,
         use = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.Use then i:Use(Player(p.player), Player(p.player), USE_ON, 1) end end,
         use_off = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.Use then i:Use(Player(p.player), Player(p.player), USE_OFF, 0) end end,
         remove = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.OnRemove then i:OnRemove() end by_id[p.entity] = nil; instances[class .. ":" .. tostring(p.entity)] = nil end,
