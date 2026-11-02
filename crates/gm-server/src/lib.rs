@@ -945,6 +945,7 @@ pub struct Npc {
     /// Melee: the tick the current swing ends and the tick its damage lands.
     pub swing_until: u64,
     pub melee_hit_at: Option<u64>,
+    pub melee_hits_left: u8,
     /// Set by an addon's `npc_target` clear: no target is picked until the next `npc_target`.
     pub passive: bool,
     /// Tick of the last shot (the shoot sequence runs 7 ticks past it) and the sequence to
@@ -1060,7 +1061,11 @@ pub struct NpcMelee {
     pub reach: f32,
     pub swing_ticks: u64,
     pub hit_tick: u64,
+    /// A second hit this many ticks after the first (the fast zombie's double claw).
+    pub hit_gap: Option<u64>,
     pub punch: f32,
+    /// Closes in at the run gait.
+    pub run: bool,
 }
 
 /// Measured on the game's zombie (server_npc_melee_zombie): attackE starts inside 55 u, lasts
@@ -1073,7 +1078,20 @@ pub fn npc_melee(class: &str) -> Option<NpcMelee> {
             reach: 55.0,
             swing_ticks: 84,
             hit_tick: 48,
+            hit_gap: None,
             punch: 325.0,
+            run: false,
+        }),
+        // server_npc_melee_fastzombie: runs in, stops at 46-50 u, `Melee` (35 ticks) claws at
+        // the swing's think and 14 ticks later for 3 each, then roars 98 ticks before running again
+        "npc_fastzombie" => Some(NpcMelee {
+            damage: 3.0,
+            reach: 52.0,
+            swing_ticks: 133,
+            hit_tick: 0,
+            hit_gap: Some(14),
+            punch: 60.0,
+            run: true,
         }),
         _ => None,
     }
@@ -1141,6 +1159,13 @@ const NPC_MOVE_COMBINE: NpcMoveDef = NpcMoveDef {
     run: 214.78,
     run_accel: 264.8,
 };
+/// Fast zombie measured in server_npc_melee_fastzombie: always runs, 21.37 u per think.
+const NPC_MOVE_FASTZOMBIE: NpcMoveDef = NpcMoveDef {
+    walk: 201.5,
+    walk_accel: 262.0,
+    run: 201.5,
+    run_accel: 262.0,
+};
 /// Zombie approach measured in server_npc_melee_zombie (4.73 u per think); it never runs.
 const NPC_MOVE_ZOMBIE: NpcMoveDef = NpcMoveDef {
     walk: 44.6,
@@ -1156,6 +1181,7 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
         "npc_metropolice" => NPC_MOVE_METROPOLICE,
         "npc_combine_s" => NPC_MOVE_COMBINE,
         "npc_zombie" | "npc_zombine" => NPC_MOVE_ZOMBIE,
+        "npc_fastzombie" => NPC_MOVE_FASTZOMBIE,
         _ => NPC_MOVE_CITIZEN,
     }
 }
@@ -5444,6 +5470,7 @@ impl<'w> Server<'w> {
                 chase_reach: NPC_CHASE_REACH,
                 swing_until: 0,
                 melee_hit_at: None,
+                melee_hits_left: 0,
                 passive: false,
                 last_shot: 0,
                 rest_sequence: None,
@@ -6119,7 +6146,7 @@ impl<'w> Server<'w> {
                         n.target = None;
                     }
                 } else if self.npcs.get(&id).is_some_and(|n| n.chase != Some(p)) {
-                    self.npc_chase(id, p, false);
+                    self.npc_chase(id, p, m.run);
                 }
             }
             return;
@@ -6138,12 +6165,13 @@ impl<'w> Server<'w> {
             n.move_speed = 0.0;
             n.swing_until = now + m.swing_ticks;
             n.melee_hit_at = Some(now + m.hit_tick);
+            n.melee_hits_left = if m.hit_gap.is_some() { 2 } else { 1 };
             let to = origin.truncate() - feet.truncate();
             if to.length_squared() > 1e-6 {
                 n.angles.y = to.y.atan2(to.x).to_degrees();
             }
         } else if n.chase != Some(player) {
-            self.npc_chase(id, player, false);
+            self.npc_chase(id, player, m.run);
         }
     }
 
@@ -6161,7 +6189,11 @@ impl<'w> Server<'w> {
             let Some(n) = self.npcs.get_mut(&id) else {
                 continue;
             };
-            n.melee_hit_at = None;
+            n.melee_hits_left = n.melee_hits_left.saturating_sub(1);
+            n.melee_hit_at = match (n.melee_hits_left, m.hit_gap) {
+                (1.., Some(gap)) => Some(now + gap),
+                _ => None,
+            };
             let feet = n.pos;
             let Some(p) = self.players.get(&player).filter(|p| p.alive) else {
                 continue;
@@ -6272,6 +6304,7 @@ impl<'w> Server<'w> {
                 chase_reach: NPC_CHASE_REACH,
                 swing_until: 0,
                 melee_hit_at: None,
+                melee_hits_left: 0,
                 passive: false,
                 last_shot: 0,
                 rest_sequence: None,

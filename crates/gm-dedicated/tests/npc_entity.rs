@@ -642,3 +642,54 @@ fn soldier_hit_mid_burst_ends_it_and_crouches() {
     server.tick(&idle);
     assert_eq!(server.npcs[&id].sequence, rest);
 }
+
+/// Fast zombie (server_npc_melee_fastzombie): runs in at its measured gait, stops inside
+/// 52 u and claws twice per swing, 14 ticks apart, 3 hp each; the next double hit comes
+/// after the 133-tick swing and a short run.
+#[test]
+fn fast_zombie_runs_in_and_claws_twice() {
+    let world = combat_server!(world);
+    let (mut server, idle, _start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_fastzombie", "none").unwrap();
+    let mut hits = Vec::new();
+    let mut steps = Vec::new();
+    let mut hp = server.players[&1].health;
+    let mut last = server.npcs[&id].pos;
+    for tick in 0..400u64 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        let s = n.pos.truncate().distance(last.truncate());
+        if s > 1e-4 {
+            steps.push(s);
+        }
+        last = n.pos;
+        let p = &server.players[&1];
+        if p.health != hp {
+            hits.push((tick, hp - p.health));
+            hp = p.health;
+        }
+    }
+    eprintln!("steps {:?}\nhits {hits:?}", &steps[..steps.len().min(10)]);
+    // the game peaks at 21.37 u/think and brakes in two steps; our brake onset curve starts
+    // a think earlier on this short run (peak 18.4) - the known softer-run-brake residual
+    assert!(
+        steps.iter().any(|s| *s > 18.0),
+        "never reached the run gait"
+    );
+    let ramp: Vec<f32> = steps.windows(2).take(5).map(|w| w[1] - w[0]).collect();
+    assert!(
+        ramp.iter().all(|d| (*d - 2.95).abs() < 0.15),
+        "ramp {ramp:?}"
+    );
+    assert!(hits.len() >= 4, "hits {hits:?}");
+    assert!(hits.iter().all(|(_, d)| *d == 3));
+    assert_eq!(hits[1].0 - hits[0].0, 14);
+    assert_eq!(hits[3].0 - hits[2].0, 14);
+    let period = hits[2].0 - hits[0].0;
+    assert!((140..=190).contains(&period), "period {period}");
+    let d = server.npcs[&id]
+        .pos
+        .truncate()
+        .distance(server.players[&1].state.origin.truncate());
+    assert!(d < 60.0, "ended {d} u away");
+}
