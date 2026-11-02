@@ -699,6 +699,13 @@ local prev_move = {}
             if t.Volume ~= p.volume then return t.Volume end
         end
     end)
+    events.on("player.select_spawn", function(p)
+        local r = hook.Run("PlayerSelectSpawn", Player(p.player), false)
+        if r ~= nil and r ~= NULL and IsValid(r) and r.GetPos then
+            local pos, ang = r:GetPos(), r:GetAngles()
+            return string.format("%.3f %.3f %.3f %.3f %.3f %.3f", pos.x, pos.y, pos.z, ang.p, ang.y, ang.r)
+        end
+    end)
     events.on("undo.create_request", function(p)
         local tbl = { Owner = Player(p.player), Name = p.name, NiceName = p.text, Entities = {}, Functions = {} }
         if hook.Run("CanCreateUndo", Player(p.player), tbl) == false then return false end

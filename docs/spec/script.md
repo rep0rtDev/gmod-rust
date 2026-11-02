@@ -858,7 +858,9 @@ limit denies without asking, there is no `true` override) and every undo entry a
 silences it). Every entity sound leaving the server asks `EntityEmitSound` with the game's
 sound table (`false` drops it; `true` applies a changed `SoundName` or `Volume`; pitch / level / DSP /
 channel are placeholders, our sounds carry none). `OnEntityWaterLevelChanged` follows a player's water level
-from the mover (0 dry, 1 feet, 2 waist, 3 eyes); props carry no water level, so only players report.
+from the mover (0 dry, 1 feet, 2 waist, 3 eyes); props carry no water level, so only players report. `PlayerSelectSpawn` may return any entity: the player spawns at its
+position and angles instead of the server's pick (we have no spawn-point entities, so
+`IsSpawnpointSuitable` stays a stub).
 
 Every bullet shot asks `EntityFireBullets` (a `false` fires nothing) and reports
 `PostEntityFireBullets` after it resolved; a hit on an NPC runs `ScaleNPCDamage` / `EntityTakeDamage`

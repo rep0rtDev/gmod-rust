@@ -574,6 +574,13 @@ pub enum Request {
         pos: Vec3,
         volume: f32,
     },
+    /// `PlayerSelectSpawn`: the player is about to spawn at the server's pick (`pos`, `angles`);
+    /// `Text("x y z pitch yaw roll")` spawns them there instead.
+    SelectSpawn {
+        player: u32,
+        pos: Vec3,
+        angles: Vec3,
+    },
     /// `CanCreateUndo`: an undo entry `name` / `text` is about to be recorded.
     CreateUndo {
         player: u32,
@@ -3788,12 +3795,25 @@ impl<'w> Server<'w> {
         Some(self.spawn_points[i].clone())
     }
 
-    /// `Player:Spawn`: full health, the loadout, a spawn point 1 u above its origin.
+    /// `Player:Spawn`: full health, the loadout, a spawn point 1 u above its origin; the addon
+    /// runtime may pick the point (`PlayerSelectSpawn`).
     pub fn spawn_player(&mut self, id: u32) {
         let spawn = self.pick_spawn();
         if !self.players.contains_key(&id) {
             return;
         }
+        let picked = spawn.clone().unwrap_or(SpawnPoint {
+            pos: Vec3::ZERO,
+            angles: Vec3::ZERO,
+        });
+        let spawn = match self.ask(Request::SelectSpawn {
+            player: id,
+            pos: picked.pos,
+            angles: picked.angles,
+        }) {
+            Verdict::Text(t) => parse_spawn_override(&t).or(spawn),
+            _ => spawn,
+        };
         self.game_events
             .push(GameEvent::PlayerSpawned { player: id });
         let Some(p) = self.players.get_mut(&id) else {
@@ -12060,4 +12080,19 @@ mod parent_tests {
         );
         assert!((gm_sandbox::angles_of(moved.1).y.abs() - 180.0).abs() < 1e-3);
     }
+}
+
+/// `PlayerSelectSpawn`'s answer: six floats, position then angles.
+fn parse_spawn_override(text: &str) -> Option<SpawnPoint> {
+    let v: Vec<f32> = text
+        .split_whitespace()
+        .map(|t| t.parse::<f32>().ok())
+        .collect::<Option<Vec<f32>>>()?;
+    if v.len() != 6 || v.iter().any(|f| !f.is_finite()) {
+        return None;
+    }
+    Some(SpawnPoint {
+        pos: Vec3::new(v[0], v[1], v[2]),
+        angles: Vec3::new(v[3], v[4], v[5]),
+    })
 }

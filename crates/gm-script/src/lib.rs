@@ -993,6 +993,24 @@ impl Runtime {
                 p.floats.push(("volume", *volume as f64));
                 self.ask_amount(server, "entity.emit_sound", p)
             }
+            gm_server::Request::SelectSpawn {
+                player,
+                pos,
+                angles,
+            } => {
+                p.ints.push(("player", *player as i64));
+                for (k, v) in [
+                    ("px", pos.x),
+                    ("py", pos.y),
+                    ("pz", pos.z),
+                    ("ax", angles.x),
+                    ("ay", angles.y),
+                    ("az", angles.z),
+                ] {
+                    p.floats.push((k, v as f64));
+                }
+                self.ask_text(server, "player.select_spawn", p)
+            }
             gm_server::Request::CreateUndo { player, name, text } => {
                 p.ints.push(("player", *player as i64));
                 p.strs.push(("name", name.clone()));

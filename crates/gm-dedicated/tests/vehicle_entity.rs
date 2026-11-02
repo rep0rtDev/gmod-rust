@@ -317,5 +317,38 @@ fn fire_bullets_and_npc_damage_are_asked() {
         .find(|s| s.name == "Zombie.Idle")
         .expect("the allowed sound leaves");
     assert!(idle.ent == npc && (idle.volume - 0.25).abs() < 1e-6);
+    server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::SelectSpawn { player: 1, .. } => {
+            gm_server::Verdict::Text("100 200 -143 0 90 0".to_owned())
+        }
+        _ => gm_server::Verdict::Allow,
+    }));
+    server.spawn_player(1);
+    let origin = server.players[&1].state.origin;
+    assert!(
+        (origin - Vec3::new(100.0, 200.0, -143.0 + gm_server::SPAWN_Z_OFFSET)).length() < 0.01,
+        "PlayerSelectSpawn placed the player: {origin:?}"
+    );
+    server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::SelectSpawn { .. } => gm_server::Verdict::Text("nowhere".to_owned()),
+        _ => gm_server::Verdict::Allow,
+    }));
+    server.spawn_player(1);
+    let after = server.players[&1].state.origin;
+    assert!(
+        after.is_finite() && (after - Vec3::new(100.0, 200.0, -142.0)).length() < 0.01,
+        "a malformed answer is ignored (no spawn points here, so the player stays): {after:?}"
+    );
+    server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::SelectSpawn { .. } => {
+            gm_server::Verdict::Text("300 400 -143 0 0 0".to_owned())
+        }
+        _ => gm_server::Verdict::Allow,
+    }));
+    server.spawn_player(1);
+    assert!(
+        (server.players[&1].state.origin - Vec3::new(300.0, 400.0, -142.0)).length() < 0.01,
+        "a second valid answer moves the player again"
+    );
     server.request_hook = None;
 }
