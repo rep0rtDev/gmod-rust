@@ -615,6 +615,9 @@ pub struct Shared {
     pub can_write: bool,
     /// Outgoing addon messages: (player or 0 for everyone / the server, name, payload).
     pub net_out: Mutex<Vec<(u32, String, Vec<u8>)>>,
+    /// This actor's addon and every addon loaded in the runtime (`engine.GetAddons`).
+    pub addon: String,
+    pub addons: Mutex<Vec<String>>,
     /// `draw.*` calls of the current `render.hud` dispatch (client realm).
     pub draws: Mutex<Vec<DrawCmd>>,
     /// The addon's store when it has the `storage` capability.
@@ -2398,6 +2401,29 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     g.set("surf", surf)?;
+    let sh = shared.clone();
+    g.set(
+        "__addons",
+        lua.create_function(move |_, ()| Ok(sh.addons.lock().unwrap().clone()))?,
+    )?;
+    g.set(
+        "__weapon_def",
+        lua.create_function(|lua, class: String| {
+            let Some(d) = gm_server::weapons::def(&class) else {
+                return Ok(Value::Nil);
+            };
+            let t = lua.create_table()?;
+            t.set("slot", d.slot)?;
+            t.set("slot_pos", d.slot_pos)?;
+            t.set("clip1", d.clip1)?;
+            t.set("clip2", d.clip2)?;
+            t.set("ammo1", d.ammo1)?;
+            t.set("ammo2", d.ammo2)?;
+            t.set("weight", d.weight)?;
+            t.set("hold_type", d.hold_type)?;
+            Ok(Value::Table(t))
+        })?,
+    )?;
     let sh = shared.clone();
     g.get::<Table>("game")?.set(
         "__start_spot",

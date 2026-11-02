@@ -74,6 +74,11 @@ pub struct Actor {
 }
 
 impl Actor {
+    /// The runtime's addon list for `engine.GetAddons`.
+    pub fn set_addons(&self, addons: Vec<String>) {
+        *self.shared.addons.lock().unwrap() = addons;
+    }
+
     pub fn new(
         id: u32,
         spec: ActorSpec,
@@ -87,6 +92,8 @@ impl Actor {
             prints: Mutex::new(Vec::new()),
             can_write: spec.config.can_write,
             net_out: Mutex::new(Vec::new()),
+            addon: spec.addon.clone(),
+            addons: Mutex::new(vec![spec.addon.clone()]),
             draws: Mutex::new(Vec::new()),
             store,
             sound_duration,

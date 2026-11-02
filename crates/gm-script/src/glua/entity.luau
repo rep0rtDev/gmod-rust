@@ -324,12 +324,19 @@ function VEH:GetOperatingParams()
     return { speed = v.speed, RPM = v.rpm or 0, gear = v.gear, steeringAngle = v.steer_angle,
         wheelsInContact = v.contacts, isTorqueBoosting = false }
 end
-function WEP:GetPrintName() return self:GetClass() end
-function WEP:GetMaxClip1() return -1 end
-function WEP:GetMaxClip2() return -1 end
-function WEP:GetHoldType() return "normal" end
-function WEP:GetSlot() return 0 end
-function WEP:GetSlotPos() return 0 end
+-- a game weapon's def (slot, clips, ammo, hold type) or the SWEP table of a scripted one
+local function wdef(self)
+    local class = self:GetClass()
+    local sw = weapons and weapons.GetStored and weapons.GetStored(class)
+    if sw then return { slot = sw.Slot or 0, slot_pos = sw.SlotPos or 10, clip1 = sw.Primary and sw.Primary.ClipSize or -1, clip2 = sw.Secondary and sw.Secondary.ClipSize or -1, hold_type = sw.HoldType or "normal", print_name = sw.PrintName } end
+    return __weapon_def(class)
+end
+function WEP:GetPrintName() local d = wdef(self); return d and d.print_name or self:GetClass() end
+function WEP:GetMaxClip1() local d = wdef(self); return d and d.clip1 or -1 end
+function WEP:GetMaxClip2() local d = wdef(self); return d and d.clip2 or -1 end
+function WEP:GetHoldType() local d = wdef(self); return d and d.hold_type or "normal" end
+function WEP:GetSlot() local d = wdef(self); return d and d.slot or 0 end
+function WEP:GetSlotPos() local d = wdef(self); return d and d.slot_pos or 0 end
 function WEP:IsCarriedByLocalPlayer() return false end
 function WEP:IsScripted() return false end
 function WEP:IsWeapon() return true end
@@ -553,8 +560,8 @@ function PLY:HasGodMode() return rawget(self, "__vars").__god == true end
 function PLY:SetModel(m) end
 function PLY:SetNoDraw() end
 function PLY:SetMaxHealth(h) rawget(self, "__vars").__max_health = h end
-function PLY:GetInfo(cvar) return "" end
-function PLY:GetInfoNum(cvar, default) return default end
+PLY.GetInfo = __glua_stub("Player:GetInfo")
+PLY.GetInfoNum = __glua_stub("Player:GetInfoNum")
 function PLY:SetPData(k, v) rawget(self, "__vars").__pdata = rawget(self, "__vars").__pdata or {}; rawget(self, "__vars").__pdata[k] = v return true end
 function PLY:GetPData(k, d) local pd = rawget(self, "__vars").__pdata; if pd and pd[k] ~= nil then return pd[k] end return d end
 function PLY:RemovePData(k) local pd = rawget(self, "__vars").__pdata; if pd then pd[k] = nil end return true end
@@ -694,12 +701,26 @@ function game.GetIPAddress() return "" end
 function game.GetWorld() return NULL end
 function game.GetGlobalState() return 0 end
 function game.GetSkillLevel() return tonumber(cvar and cvar.get and cvar.get("skill")) or 1 end
-function game.GetAmmoID(name) return 0 end
-function game.GetAmmoName(id) return nil end
-function game.GetAmmoMax() return 9999 end
-function game.GetAmmoTypes() return {} end
-function game.GetAmmoData() return nil end
-function game.AddAmmoType() end
+-- ammo types: the game's default table (wiki Default_Ammo_Types) plus what game.AddAmmoType adds
+local AMMO = { [1] = "AR2", [2] = "AR2AltFire", [3] = "Pistol", [4] = "SMG1", [5] = "357", [6] = "XBowBolt", [7] = "Buckshot", [8] = "RPG_Round", [9] = "SMG1_Grenade", [10] = "Grenade", [11] = "slam", [12] = "AlyxGun", [13] = "SniperRound", [14] = "SniperPenetratedRound", [15] = "Thumper", [16] = "Gravity", [17] = "Battery", [18] = "GaussEnergy", [19] = "CombineCannon", [20] = "AirboatGun", [21] = "StriderMinigun", [22] = "HelicopterGun", [23] = "9mmRound", [24] = "357Round", [25] = "BuckshotHL1", [26] = "XBowBoltHL1", [27] = "MP5_Grenade", [28] = "RPG_Rocket", [29] = "Uranium", [30] = "GrenadeHL1", [31] = "Hornet", [32] = "Snark", [33] = "TripMine", [34] = "Satchel", [35] = "12mmRound", [36] = "StriderMinigunDirect", [37] = "CombineHeavyCannon" }
+local AMMO_DATA = {}
+function game.GetAmmoTypes() local t = {}; for id, n in pairs(AMMO) do t[id] = n end return t end
+function game.GetAmmoID(name) name = string.lower(tostring(name)); for id, n in pairs(AMMO) do if string.lower(n) == name then return id end end return -1 end
+function game.GetAmmoName(id) return AMMO[tonumber(id) or -1] end
+function game.AddAmmoType(t)
+    if type(t) ~= "table" or type(t.name) ~= "string" then return end
+    local id = game.GetAmmoID(t.name)
+    if id < 0 then id = #AMMO + 1; AMMO[id] = t.name end
+    AMMO_DATA[id] = t
+end
+function game.GetAmmoData(id)
+    id = tonumber(id) or -1
+    local name = AMMO[id]; if not name then return nil end
+    local d = { id = id, name = name }
+    for k, v in pairs(AMMO_DATA[id] or {}) do d[k] = v end
+    return d
+end
+game.GetAmmoMax = __glua_stub("game.GetAmmoMax")
 function game.AddDecal() end
 function game.AddParticles() end
 function game.MountGMA() return false end
@@ -725,8 +746,17 @@ function engine.TickInterval() return game.interval and game.interval() or 0.015
 function engine.TickCount() return game.tick and game.tick() or 0 end
 function engine.ActiveGamemode() return "sandbox" end
 function engine.GetGamemodes() return { { name = "sandbox", title = "Sandbox" } } end
-function engine.GetAddons() return {} end
-function engine.GetGames() return {} end
+-- addons loaded in this runtime and the mounted content providers
+function engine.GetAddons()
+    local t = {}
+    for _, n in ipairs(__addons()) do t[#t + 1] = { title = n, file = n, downloaded = true, mounted = true, wsid = "0", models = 0, updated = 0, size = 0, tags = "", timeadded = 0 } end
+    return t
+end
+function engine.GetGames()
+    local t = {}
+    for _, l in ipairs(__mounted()) do t[#t + 1] = { title = l, folder = l, depot = 0, mounted = true, owned = true, installed = true } end
+    return t
+end
 function engine.GetUserContent() return {} end
 function engine.ServerFrameTime() return engine.TickInterval(), 0 end
 function engine.AbsoluteFrameTime() return engine.TickInterval() end
@@ -739,7 +769,7 @@ function engine.IsRecordingDemo() return false end
 function engine.LightStyle() end
 function engine.CloseServer() end
 function engine.SetMounted() end
-function engine.GetMountedContent() return {} end
+function engine.GetMountedContent() local t = {}; for _, l in ipairs(__mounted()) do t[#t + 1] = { title = l, folder = l, mounted = true } end for _, n in ipairs(__addons()) do t[#t + 1] = { title = n, folder = n, mounted = true } end return t end
 function engine.GetDemoPlaybackData() return nil end
 
 ------------------------------------------------------------------------ util (traces, json, misc)
@@ -1027,9 +1057,6 @@ function util.TableToKeyValues(t, root)
 end
 function util.Compress(s) return s end
 function util.Decompress(s) return s end
-function util.AddNetworkString(name) return 0 end
-function util.NetworkStringToID(name) return 0 end
-function util.NetworkIDToString(id) return nil end
 function util.DateStamp() return "" end
 function util.GetModelInfo() return {} end
 function util.GetModelMeshes() return nil end

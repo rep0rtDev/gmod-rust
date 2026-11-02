@@ -636,3 +636,34 @@ fn spawn_counts_and_surface_lookups_come_from_the_snapshot() {
     assert_eq!((idx, name.as_str(), nodata), (-1, "", true));
     assert!(!spot.is_empty());
 }
+
+#[test]
+fn ammo_table_network_string_pool_weapon_defs_and_addon_lists() {
+    let (rt, _) = run("game.AddAmmoType({ name = \"MyAmmo\", dmgtype = 2 })
+         local d = __weapon_def(\"weapon_pistol\")
+         local a, b = util.AddNetworkString(\"a\"), util.AddNetworkString(\"b\")
+         state.r = { game.GetAmmoID(\"ar2\"), game.GetAmmoName(3), game.GetAmmoID(\"MyAmmo\"), game.GetAmmoData(38).dmgtype,
+                     game.GetAmmoID(\"nope\"), a ~= b and tonumber(a) == util.NetworkStringToID(\"a\"),
+                     util.NetworkIDToString(util.NetworkStringToID(\"b\")), util.NetworkStringToID(\"zz\"),
+                     d ~= nil and type(d.slot) == \"number\" and d.ammo1 ~= \"\", #engine.GetAddons(), engine.GetAddons()[1].title }");
+    let (ar2, pistol, mine, dmg, nope, pooled, b, zz, def, n, title): (
+        i32,
+        String,
+        i32,
+        i32,
+        i32,
+        bool,
+        String,
+        i32,
+        bool,
+        i32,
+        String,
+    ) = rt.actors()[0].eval("return unpack(state.r)").unwrap();
+    assert_eq!(
+        (ar2, pistol.as_str(), mine, dmg, nope),
+        (1, "Pistol", 38, 2, -1)
+    );
+    assert!(pooled && b == "b" && zz == 0);
+    assert!(def);
+    assert_eq!((n, title.as_str()), (1, "glua"));
+}

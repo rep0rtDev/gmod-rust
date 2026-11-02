@@ -497,6 +497,13 @@ impl Runtime {
         let store = spec.config.can_storage.then(|| self.store_of(&spec.addon));
         let actor = Actor::new(id, spec, store, self.sound_duration.clone())?;
         self.actors.push(actor);
+        let mut addons: Vec<String> = self.actors.iter().map(|a| a.spec.addon.clone()).collect();
+        addons.dedup();
+        addons.sort();
+        addons.dedup();
+        for a in &self.actors {
+            a.set_addons(addons.clone());
+        }
         Ok(id as usize)
     }
 

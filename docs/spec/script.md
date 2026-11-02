@@ -610,6 +610,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   is the position in the sorted material list, data = friction / elasticity / density /
   dampening + the sound script names up the `base` chain; the engine's jump / speed factors and
   material letter are not in our table).
+- More constants replaced: `game.GetAmmoTypes` / `GetAmmoID` / `GetAmmoName` / `GetAmmoData` /
+  `AddAmmoType` over the game's default ammo table (wiki `Default_Ammo_Types`, 37 ids) plus
+  what scripts add (`GetAmmoData` carries the added table; `GetAmmoMax` is a stub: we have no
+  carry caps); `Weapon:GetSlot` / `GetSlotPos` / `GetMaxClip1/2` / `GetHoldType` / `GetPrintName`
+  from the game weapon defs or the SWEP table;  `engine.GetAddons` lists the runtime's loaded addons, `GetGames` / `GetMountedContent` the
+  mount providers. `Player:GetInfo` / `GetInfoNum` became stubs (no client cvars here).
 
 Done in `glua/server.luau`:
 
