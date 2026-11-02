@@ -383,6 +383,16 @@ pub enum QueuedWrite {
         min: f32,
         max: f32,
     },
+    /// `NPC:SetMaxLookDistance`.
+    NpcSight {
+        ent: u32,
+        dist: f32,
+    },
+    /// `NPC:PickupWeapon`: take world weapon `weapon`.
+    NpcPickupWeapon {
+        ent: u32,
+        weapon: u32,
+    },
     /// `Entity:SetBloodColor` (NPCs).
     SetBlood {
         ent: u32,
@@ -686,6 +696,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("npc_target_seen", e.npc_target_seen)?;
     t.set("npc_target_first_seen", e.npc_target_first_seen)?;
     t.set("npc_enemy_damage", e.npc_enemy_damage)?;
+    t.set("npc_sight", e.npc_sight)?;
     t.set("friction", e.friction)?;
     t.set("elasticity", e.elasticity)?;
     t.set("on_fire", e.on_fire)?;
@@ -1710,6 +1721,22 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         max: v.y.max(v.x),
                     }
                 }
+                "npc_sight" => QueuedWrite::NpcSight {
+                    ent,
+                    dist: match &arg {
+                        Value::Integer(i) => *i as f32,
+                        Value::Number(n) => *n as f32,
+                        _ => 0.0,
+                    },
+                },
+                "npc_pickup_weapon" => QueuedWrite::NpcPickupWeapon {
+                    ent,
+                    weapon: match &arg {
+                        Value::Integer(i) => (*i).max(0) as u32,
+                        Value::Number(n) => n.max(0.0) as u32,
+                        _ => 0,
+                    },
+                },
                 "entity.set_blood" => QueuedWrite::SetBlood {
                     ent,
                     blood: match &arg {
@@ -2685,6 +2712,8 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         } => server.set_entity_surface(*ent, *friction, *elasticity),
         QueuedWrite::NpcWeapon { ent, class } => server.set_npc_weapon(*ent, class),
         QueuedWrite::SetBlood { ent, blood } => server.set_blood(*ent, *blood),
+        QueuedWrite::NpcSight { ent, dist } => server.set_npc_sight(*ent, *dist),
+        QueuedWrite::NpcPickupWeapon { ent, weapon } => server.npc_pickup_weapon(*ent, *weapon),
         QueuedWrite::NpcWander { ent, min, max } => server.npc_wander_goal(*ent, *min, *max),
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())

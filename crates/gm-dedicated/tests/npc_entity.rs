@@ -1289,3 +1289,49 @@ fn npc_memory_and_wander_goals() {
     );
     assert!(!server.npc_wander_goal(99_999, 0.0, 100.0));
 }
+
+#[test]
+fn npc_look_distance_and_world_weapon_pickup() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    assert!(server.spawn_npc(1, "npc_bogus", "none").is_none());
+    assert!(server.sandbox.undos(1).is_empty());
+    let _hit = server.tool_hit(1).unwrap();
+    let id = server.spawn_npc(1, "npc_alyx", "weapon_alyxgun").unwrap();
+    assert_eq!(server.npc_sight(id), Some(2048.0));
+    assert!(server.set_npc_sight(id, 512.0));
+    assert_eq!(server.npc_sight(id), Some(512.0));
+    assert!(!server.set_npc_sight(99_999, 1.0));
+    assert!(!server.npc_pickup_weapon(id, 777), "no such world weapon");
+    server.world_weapons.insert(777, "weapon_smg1".into());
+    assert!(server.npc_pickup_weapon(id, 777));
+    assert!(
+        !server.world_weapons.contains_key(&777),
+        "the world weapon is gone"
+    );
+    server.world_weapons.insert(778, "weapon_bogus".into());
+    assert!(
+        !server.npc_pickup_weapon(id, 778),
+        "a class the NPC cannot carry stays"
+    );
+    assert!(server.world_weapons.contains_key(&778));
+}

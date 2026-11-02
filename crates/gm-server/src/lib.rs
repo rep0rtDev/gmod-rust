@@ -1149,6 +1149,8 @@ pub struct Npc {
     pub target_first_seen: u64,
     /// Tick of the last damage taken from the current target (`GetLastTimeTookDamageFromEnemy`).
     pub last_enemy_damage: u64,
+    /// `SetMaxLookDistance`: how far this NPC looks for a target (default `NPC_SIGHT_RANGE`).
+    pub sight: f32,
     pub burst_left: u8,
     pub next_shot: u64,
     pub shots: u32,
@@ -5928,6 +5930,36 @@ impl<'w> Server<'w> {
         self.npcs.get(&id).map(|n| n.blood)
     }
 
+    /// Script `NPC:SetMaxLookDistance`: the target search range of one NPC.
+    pub fn set_npc_sight(&mut self, id: u32, dist: f32) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) => {
+                n.sight = dist.max(0.0);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `NPC:GetMaxLookDistance`.
+    pub fn npc_sight(&self, id: u32) -> Option<f32> {
+        self.npcs.get(&id).map(|n| n.sight)
+    }
+
+    /// Script `NPC:PickupWeapon`: the NPC takes a world weapon (its class must be one it can
+    /// carry) and the world entity is removed, as on a player touch pickup.
+    pub fn npc_pickup_weapon(&mut self, id: u32, ent: u32) -> bool {
+        let Some(class) = self.world_weapons.get(&ent).cloned() else {
+            return false;
+        };
+        if !self.set_npc_weapon(id, &class) {
+            return false;
+        }
+        self.world_weapons.remove(&ent);
+        self.remove_prop(ent);
+        true
+    }
+
     pub fn set_npc_weapon(&mut self, id: u32, class: &str) -> bool {
         if !class.is_empty() && npc_weapon_shot(class).is_none() {
             return false;
@@ -6837,6 +6869,7 @@ impl<'w> Server<'w> {
             target_seen: 0,
             target_first_seen: 0,
             last_enemy_damage: 0,
+            sight: NPC_SIGHT_RANGE,
             burst_left: 0,
             next_shot: 0,
             shots: 0,
@@ -7598,11 +7631,12 @@ impl<'w> Server<'w> {
             NPC_EYE_HEIGHT
         };
         let eye = n.pos + Vec3::new(0.0, 0.0, eye_height);
+        let sight = n.sight;
         let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
             let pl = server.players.get(&p).filter(|pl| pl.alive)?;
             let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
-            if chest.distance(eye) > NPC_SIGHT_RANGE {
+            if chest.distance(eye) > sight {
                 return None;
             }
             let tr = server
@@ -7771,11 +7805,12 @@ impl<'w> Server<'w> {
             return;
         }
         let eye = n.pos + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT);
+        let sight = n.sight;
         let feet = n.pos;
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
             let pl = server.players.get(&p).filter(|pl| pl.alive)?;
             let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
-            if chest.distance(eye) > NPC_SIGHT_RANGE {
+            if chest.distance(eye) > sight {
                 return None;
             }
             let tr = server
@@ -8048,11 +8083,12 @@ impl<'w> Server<'w> {
             return;
         }
         let eye = n.pos + Vec3::new(0.0, 0.0, (n.maxs.z - 8.0).clamp(4.0, NPC_EYE_HEIGHT));
+        let sight = n.sight;
         let feet = n.pos;
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
             let pl = server.players.get(&p).filter(|pl| pl.alive)?;
             let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
-            if chest.distance(eye) > NPC_SIGHT_RANGE {
+            if chest.distance(eye) > sight {
                 return None;
             }
             let tr = server
@@ -8512,6 +8548,7 @@ impl<'w> Server<'w> {
                 target_seen: 0,
                 target_first_seen: 0,
                 last_enemy_damage: 0,
+                sight: NPC_SIGHT_RANGE,
                 burst_left: 0,
                 next_shot: 0,
                 shots: 0,

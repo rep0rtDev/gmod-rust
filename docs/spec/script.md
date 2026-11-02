@@ -877,7 +877,10 @@ game enum; players red, everything else `DONT_BLEED`), `SetBloodColor` changes i
 only. `NPC:GetEnemyFirstTimeSeen` is the tick the current target was first seen,
 `GetLastTimeTookDamageFromEnemy` the last damage taken from it (both reset when the target
 changes); `NavSetWanderGoal(min, max)` walks to a random navmesh vertex in that distance band,
-`NavSetRandomGoal(minDist, dir)` the same with `minDist..minDist+512` (the direction is ignored). `GetPreferredCarryAngles` (the hook, else the scripted
+`NavSetRandomGoal(minDist, dir)` the same with `minDist..minDist+512` (the direction is ignored).
+`NPC:GetMaxLookDistance` / `SetMaxLookDistance` is the NPC's own target search range
+(default 2048); `PickupWeapon(ent)` takes a world weapon of a class the NPC can carry and
+removes the world entity. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 
