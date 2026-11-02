@@ -234,7 +234,8 @@ function P:AlignAngles(from, to)
 end
 function P:EnableGravity(on) qwrite("set_gravity", self.__ent.__id, on) end
 function P:EnableCollisions(on) qwrite("set_collide", self.__ent.__id, on) end
-function P:EnableDrag(on) end
+function P:EnableDrag(on) qwrite("enable_drag", self.__ent.__id, { on = on ~= false }) end
+function P:IsDragEnabled() local s = psn(self); return s ~= nil and s.drag == true end
 function P:GetEntity() return self.__ent end
 function P:GetMass() local s = psn(self); local m = s and s.mass or 0; if m <= 0 then return 1 end return m end
 function P:SetMass(m) qwrite("set_mass", self.__ent.__id, m) end
@@ -1844,7 +1845,7 @@ function PHYS:IsGravityEnabled() local g = rawget(self.__ent, "__pgravity"); if 
 function PHYS:IsCollisionEnabled() local c = rawget(self.__ent, "__pcollide"); if c == nil then return true end return c end
 function PHYS:GetName() return self.__ent:GetClass() end
 function PHYS:OutputDebugInfo() print(string.format("PhysObj[%d] mass %.2f pos %s vel %s", self.__ent:EntIndex(), self:GetMass(), tostring(self:GetPos()), tostring(self:GetVelocity()))) end
-for _, name in ipairs({ "AddAngleVelocity", "AddGameFlag", "AlignAngles", "ApplyTorqueCenter", "CalculateForceOffset", "CalculateVelocityOffset", "ClearGameFlag", "ComputeShadowControl", "GetAngleVelocity", "GetBuoyancyRatio", "GetContents", "GetDamping", "GetFrictionSnapshot", "GetRotDamping", "GetShadowAngles", "GetShadowPos", "GetSpeedDamping", "GetStress", "HasGameFlag", "IsDragEnabled", "IsPenetrating", "RecheckCollisionFilter", "RotateAroundAxis", "SetAngleDragCoefficient", "SetAngleVelocity", "SetAngleVelocityInstantaneous", "SetBuoyancyRatio", "SetContents", "SetDamping", "SetDragCoefficient", "SetInertia", "UpdateShadow" }) do
+for _, name in ipairs({ "AddAngleVelocity", "AddGameFlag", "AlignAngles", "ApplyTorqueCenter", "CalculateForceOffset", "CalculateVelocityOffset", "ClearGameFlag", "ComputeShadowControl", "GetAngleVelocity", "GetBuoyancyRatio", "GetContents", "GetDamping", "GetFrictionSnapshot", "GetRotDamping", "GetShadowAngles", "GetShadowPos", "GetSpeedDamping", "GetStress", "HasGameFlag", "IsPenetrating", "RecheckCollisionFilter", "RotateAroundAxis", "SetAngleDragCoefficient", "SetAngleVelocity", "SetAngleVelocityInstantaneous", "SetBuoyancyRatio", "SetContents", "SetDamping", "SetDragCoefficient", "SetInertia", "UpdateShadow" }) do
     if PHYS[name] == nil then PHYS[name] = stub("PhysObj:" .. name) end
 end
 

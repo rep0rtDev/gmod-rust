@@ -3714,7 +3714,7 @@
 {"address":"PhysObj:HasGameFlag","kind":"classfunc","parent":"PhysObj","name":"HasGameFlag","realms":["client","server"],"args":[{"name":"flags","type":"number"}],"rets":[{"name":"","type":"boolean"}],"status":"stub"},
 {"address":"PhysObj:IsAsleep","kind":"classfunc","parent":"PhysObj","name":"IsAsleep","realms":["client","server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
 {"address":"PhysObj:IsCollisionEnabled","kind":"classfunc","parent":"PhysObj","name":"IsCollisionEnabled","realms":["client","server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
-{"address":"PhysObj:IsDragEnabled","kind":"classfunc","parent":"PhysObj","name":"IsDragEnabled","realms":["client","server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"stub"},
+{"address":"PhysObj:IsDragEnabled","kind":"classfunc","parent":"PhysObj","name":"IsDragEnabled","realms":["client","server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
 {"address":"PhysObj:IsGravityEnabled","kind":"classfunc","parent":"PhysObj","name":"IsGravityEnabled","realms":["client","server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
 {"address":"PhysObj:IsMotionEnabled","kind":"classfunc","parent":"PhysObj","name":"IsMotionEnabled","realms":["client","server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
 {"address":"PhysObj:IsMoveable","kind":"classfunc","parent":"PhysObj","name":"IsMoveable","realms":["client","server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},

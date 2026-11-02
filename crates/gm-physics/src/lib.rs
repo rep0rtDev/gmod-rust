@@ -448,6 +448,8 @@ struct Drag {
     areas: Vec3,
     /// Angular drag per body axis (1/rad): `dw_i = -ang_i * w_i |w_i| dt`, see `angular_drag_factors`.
     ang: Vec3,
+    /// `PhysObj:EnableDrag(false)`: kept, not applied.
+    disabled: bool,
 }
 
 /// An explicit `phys_spring`: integrated as an impulse per tick like the game's (a Jolt soft
@@ -800,6 +802,7 @@ impl World {
             }
             self.drags.push(Drag {
                 body: id,
+                disabled: false,
                 areas: Self::drag_factors(desc.hulls, desc.mass, desc.drag_axis_areas),
                 ang: Self::angular_drag_factors(
                     desc.hulls,
@@ -918,7 +921,19 @@ impl World {
 
     /// Stop applying air drag to a body (the game's `PhysObj:EnableDrag(false)`).
     pub fn disable_drag(&mut self, body: BodyHandle) {
-        self.drags.retain(|d| d.body != body.0);
+        self.set_drag(body, false);
+    }
+
+    /// `PhysObj:EnableDrag`: air drag on or off for a body that has a drag description.
+    pub fn set_drag(&mut self, body: BodyHandle, on: bool) {
+        for d in self.drags.iter_mut().filter(|d| d.body == body.0) {
+            d.disabled = !on;
+        }
+    }
+
+    /// `PhysObj:IsDragEnabled`: the body has a drag description and it is applied.
+    pub fn drag_enabled(&self, body: BodyHandle) -> bool {
+        self.drags.iter().any(|d| d.body == body.0 && !d.disabled)
     }
 
     /// Weld: the two bodies keep their current relative pose.
@@ -1558,7 +1573,8 @@ impl World {
         unsafe {
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
             for d in &self.drags {
-                if !JPC_BodyInterface_IsActive(bi, d.body)
+                if d.disabled
+                    || !JPC_BodyInterface_IsActive(bi, d.body)
                     || self.held.contains(&d.body)
                     || self.frozen.contains(&d.body)
                 {

@@ -24,6 +24,8 @@ pub struct EntitySnap {
     pub mass: f32,
     pub damping: (f32, f32),
     pub asleep: bool,
+    /// `PhysObj:IsDragEnabled`.
+    pub drag: bool,
     /// `Entity:GetParent`: 0 when not parented.
     pub parent: u32,
     /// Render state: `Entity:SetColor` rgba, `SetMaterial` override, `RENDERMODE_*`, `kRenderFx*`.
@@ -379,6 +381,7 @@ impl Snapshot {
                             mass: 0.0,
                             damping: (0.0, 0.0),
                             asleep: false,
+                            drag: false,
                             parent: 0,
                             color: e.color,
                             material: e.material.clone(),
@@ -503,6 +506,7 @@ impl Snapshot {
                             mass: phys.1,
                             damping: phys.2,
                             asleep: phys.3,
+                            drag: server.entity_drag(p.id),
                             parent: server.entity_parent(p.id),
                             color: p.color,
                             material: p.material.clone(),
@@ -575,6 +579,7 @@ impl Snapshot {
                             mass: 0.0,
                             damping: (0.0, 0.0),
                             asleep: false,
+                            drag: false,
                             parent: 0,
                             color: [255; 4],
                             material: String::new(),

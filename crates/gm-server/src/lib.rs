@@ -6609,6 +6609,13 @@ impl<'w> Server<'w> {
     /// Linear velocity of a prop's physics body (the pelvis body of a ragdoll); zero otherwise.
     /// Angular velocity (deg/s, world axes), mass (kg), `(linear, angular)` damping and sleep
     /// state of an entity's physics body for script snapshots; zeros when it has no body.
+    /// `PhysObj:IsDragEnabled` of an entity's body (false without a body).
+    pub fn entity_drag(&self, id: u32) -> bool {
+        self.bodies
+            .get(&id)
+            .is_some_and(|b| self.physics.drag_enabled(*b))
+    }
+
     pub fn entity_phys(&self, id: u32) -> (Vec3, f32, (f32, f32), bool) {
         let body = self.bodies.get(&id).copied().or_else(|| {
             self.ragdoll_bodies

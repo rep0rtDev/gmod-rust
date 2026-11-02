@@ -323,6 +323,11 @@ pub enum QueuedWrite {
         linear: f32,
         angular: f32,
     },
+    /// `PhysObj:EnableDrag`: air drag on or off for the entity's body.
+    EnableDrag {
+        ent: u32,
+        on: bool,
+    },
     /// `PhysObj:Wake` (`asleep` false) / `Sleep` (true).
     SetAsleep {
         ent: u32,
@@ -983,6 +988,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("damping_linear", e.damping.0)?;
     t.set("damping_angular", e.damping.1)?;
     t.set("asleep", e.asleep)?;
+    t.set("drag", e.drag)?;
     t.set("parent", e.parent)?;
     let color = lua.create_table()?;
     color.set("r", e.color[0])?;
@@ -2047,6 +2053,13 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         ent,
                         linear: t.get::<f32>("linear")?,
                         angular: t.get::<f32>("angular")?,
+                    }
+                }
+                "enable_drag" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::EnableDrag {
+                        ent,
+                        on: t.get::<Option<bool>>("on")?.unwrap_or(true),
                     }
                 }
                 "set_asleep" => QueuedWrite::SetAsleep {
@@ -3731,6 +3744,13 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         } => match server.body_of(*ent) {
             Some(body) => {
                 server.physics.set_damping(body, *linear, *angular);
+                true
+            }
+            None => false,
+        },
+        QueuedWrite::EnableDrag { ent, on } => match server.body_of(*ent) {
+            Some(body) => {
+                server.physics.set_drag(body, *on);
                 true
             }
             None => false,

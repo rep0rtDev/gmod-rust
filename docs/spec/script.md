@@ -712,6 +712,10 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `PhysObj:EnableDrag(on)` switches the body's measured air drag (the physics keeps the drag
+  description and skips it while off, so it can come back); `IsDragEnabled` reads the flag from
+  the snapshot. `SetDragCoefficient` / `SetAngleDragCoefficient` stay stubs: our drag comes from
+  the hull's face areas, not a coefficient.
 - `CNavArea:AddToOpenList` / `PopOpenList` / `IsOpen` / `IsOpenListEmpty` / `UpdateOnOpenList`,
   `AddToClosedList` / `RemoveFromClosedList` / `IsClosed`, `Set/GetCostSoFar`, `Set/GetTotalCost`,
   `SetParent` / `GetParent` / `GetParentHow` and `ClearSearchLists` are the A* scratch state of
