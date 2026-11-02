@@ -766,6 +766,12 @@ queue `set_parent`, and `Get/SetLocalPos`, `Get/SetLocalAngles` are parent-relat
 parented (world otherwise). Bone / attachment parenting (`SetParentPhysNum`, `FollowBone`,
 `GetParentAttachment`) has no model-side anchor yet and stays a stub.
 
+Render state: `EntitySnap.color / material / render_mode / render_fx` are the prop's own fields
+(the ones the colour and material stools set and the client receives); `Entity:GetColor /
+SetColor / Get/SetColor4Part / Get/SetMaterial / Get/SetRenderMode / Get/SetRenderFX` write
+through one `set_render` write per part (`Server::set_prop_render` keeps the untouched parts).
+Sub-materials (`SetSubMaterial`, `GetMaterials`) need per-mesh material lists and stay stubs.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

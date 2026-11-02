@@ -28,6 +28,10 @@ fn snapshot() -> Arc<Snapshot> {
             damping: (0.1, 0.2),
             asleep: false,
             parent: 0,
+            color: [10, 20, 30, 40],
+            material: "models/debug/debugwhite".into(),
+            render_mode: 1,
+            render_fx: 0,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -53,6 +57,10 @@ fn snapshot() -> Arc<Snapshot> {
             damping: (0.1, 0.2),
             asleep: false,
             parent: 5,
+            color: [10, 20, 30, 40],
+            material: "models/debug/debugwhite".into(),
+            render_mode: 1,
+            render_fx: 0,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -530,4 +538,51 @@ fn parenting_reads_the_link_and_queues_set_parent() {
         "local pos of a parented child is parent-relative: {:?}",
         writes[2]
     );
+}
+
+#[test]
+fn render_state_reads_the_prop_and_queues_parts() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local e = Entity(5)
+             local c = e:GetColor()
+             state.r = { c.r, c.g, c.b, c.a, e:GetMaterial(), e:GetRenderMode(), e:GetRenderFX() }
+             e:SetColor(Color(1, 2, 3, 4))
+             e:SetMaterial('models/wireframe')
+             e:SetRenderMode(RENDERMODE_TRANSALPHA or 4)
+             e:SetRenderFX(kRenderFxPulseSlow or 1)
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<String> = rt.actors()[0]
+        .eval("local o = {} for i, v in ipairs(state.r) do o[i] = tostring(v) end return o")
+        .unwrap();
+    assert_eq!(
+        r,
+        ["10", "20", "30", "40", "models/debug/debugwhite", "1", "0"]
+    );
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(matches!(
+        &writes[0],
+        QueuedWrite::SetRender {
+            ent: 5,
+            color: Some([1, 2, 3, 4]),
+            material: None,
+            ..
+        }
+    ));
+    assert!(
+        matches!(&writes[1], QueuedWrite::SetRender { material: Some(m), color: None, .. } if m == "models/wireframe")
+    );
+    assert!(matches!(
+        &writes[2],
+        QueuedWrite::SetRender { mode: Some(4), .. }
+    ));
+    assert!(matches!(
+        &writes[3],
+        QueuedWrite::SetRender { fx: Some(1), .. }
+    ));
 }

@@ -249,6 +249,14 @@ pub enum QueuedWrite {
         ent: u32,
         parent: Option<u32>,
     },
+    /// Render state parts to replace (`SetColor` / `SetMaterial` / `SetRenderMode` / `SetRenderFX`).
+    SetRender {
+        ent: u32,
+        material: Option<String>,
+        color: Option<[u8; 4]>,
+        mode: Option<u8>,
+        fx: Option<u8>,
+    },
     PlayerStripWeapon {
         player: u32,
         class: Option<String>,
@@ -504,6 +512,15 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("damping_angular", e.damping.1)?;
     t.set("asleep", e.asleep)?;
     t.set("parent", e.parent)?;
+    let color = lua.create_table()?;
+    color.set("r", e.color[0])?;
+    color.set("g", e.color[1])?;
+    color.set("b", e.color[2])?;
+    color.set("a", e.color[3])?;
+    t.set("color", color)?;
+    t.set("material", e.material.as_str())?;
+    t.set("render_mode", e.render_mode)?;
+    t.set("render_fx", e.render_fx)?;
     Ok(t)
 }
 
@@ -1304,6 +1321,41 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         _ => return Err(mlua::Error::runtime("set_parent needs an entity id")),
                     },
                 },
+                "set_color" => {
+                    let t = table_arg(&arg)?;
+                    let c = |k: &str, d: u8| -> mlua::Result<u8> {
+                        Ok(t.get::<Option<f64>>(k)?
+                            .map_or(d, |v| v.clamp(0.0, 255.0) as u8))
+                    };
+                    QueuedWrite::SetRender {
+                        ent,
+                        material: None,
+                        color: Some([c("r", 255)?, c("g", 255)?, c("b", 255)?, c("a", 255)?]),
+                        mode: None,
+                        fx: None,
+                    }
+                }
+                "set_material" => QueuedWrite::SetRender {
+                    ent,
+                    material: Some(str_arg(&arg)?),
+                    color: None,
+                    mode: None,
+                    fx: None,
+                },
+                "set_render_mode" => QueuedWrite::SetRender {
+                    ent,
+                    material: None,
+                    color: None,
+                    mode: Some(int_arg(&arg)?.clamp(0, 9) as u8),
+                    fx: None,
+                },
+                "set_render_fx" => QueuedWrite::SetRender {
+                    ent,
+                    material: None,
+                    color: None,
+                    mode: None,
+                    fx: Some(int_arg(&arg)?.clamp(0, 255) as u8),
+                },
                 "player.strip_weapon" => QueuedWrite::PlayerStripWeapon {
                     player: ent,
                     class: match &arg {
@@ -2071,6 +2123,13 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             None => false,
         },
         QueuedWrite::SetParent { ent, parent } => server.set_parent(*ent, *parent),
+        QueuedWrite::SetRender {
+            ent,
+            material,
+            color,
+            mode,
+            fx,
+        } => server.set_prop_render(*ent, material.as_deref(), *color, *mode, *fx),
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())
         }

@@ -1264,6 +1264,17 @@ function ENT:GetEFlags() return 0 end
 function ENT:IsEFlagSet(f) return false end
 function ENT:GetBloodColor() return self:IsPlayer() and BLOOD_COLOR_RED or (self:IsNPC() and BLOOD_COLOR_YELLOW or DONT_BLEED) end
 function ENT:GetMaterialType() return MAT_DEFAULT end
+-- Render state over the prop's own fields (networked to clients like the colour / material stools).
+function ENT:GetColor() local s = snap(self.__id); if s and s.color then return Color(s.color.r, s.color.g, s.color.b, s.color.a) end return Color(255, 255, 255, 255) end
+function ENT:SetColor(c) c = c or Color(255, 255, 255, 255); qwrite("set_color", self.__id, { r = c.r, g = c.g, b = c.b, a = c.a }) end
+function ENT:GetColor4Part() local c = self:GetColor(); return c.r, c.g, c.b, c.a end
+function ENT:SetColor4Part(r, g, b, a) qwrite("set_color", self.__id, { r = r, g = g, b = b, a = a }) end
+function ENT:GetMaterial() local s = snap(self.__id); return s and s.material or "" end
+function ENT:SetMaterial(m) qwrite("set_material", self.__id, m or "") end
+function ENT:GetRenderMode() local s = snap(self.__id); return s and s.render_mode or 0 end
+function ENT:SetRenderMode(m) qwrite("set_render_mode", self.__id, m) end
+function ENT:GetRenderFX() local s = snap(self.__id); return s and s.render_fx or 0 end
+function ENT:SetRenderFX(f) qwrite("set_render_fx", self.__id, f) end
 function ENT:GetModelContents() return CONTENTS_SOLID end
 function ENT:SkinCount() return 1 end
 function ENT:GetSubModels() return {} end

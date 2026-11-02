@@ -5272,6 +5272,29 @@ impl<'w> Server<'w> {
         true
     }
 
+    /// Script `SetColor` / `SetMaterial` / `SetRenderMode` / `SetRenderFX`: each `Some` replaces
+    /// that part of the prop's render state, the rest is kept.
+    pub fn set_prop_render(
+        &mut self,
+        id: u32,
+        material: Option<&str>,
+        color: Option<[u8; 4]>,
+        mode: Option<u8>,
+        fx: Option<u8>,
+    ) -> bool {
+        let Some(p) = self.sandbox.props().iter().find(|p| p.id == id) else {
+            return false;
+        };
+        let (m, c, mo, f) = (
+            material.map_or_else(|| p.material.clone(), |m| m.to_string()),
+            color.unwrap_or(p.color),
+            mode.unwrap_or(p.render_mode),
+            fx.unwrap_or(p.render_fx),
+        );
+        self.sandbox.set_render(id, &m, c, mo, f);
+        true
+    }
+
     pub fn entity_parent(&self, id: u32) -> u32 {
         self.parents.get(&id).map_or(0, |l| l.parent)
     }
