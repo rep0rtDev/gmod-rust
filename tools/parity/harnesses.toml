@@ -3948,3 +3948,9 @@ name = "server_vehicle_settle"
 scenario = "server/vehicle_settle"
 compare = "server"
 realm = "server"
+
+[[harness]]
+name = "server_npc_drop"
+scenario = "server/npc_drop"
+compare = "server"
+realm = "server"

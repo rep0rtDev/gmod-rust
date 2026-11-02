@@ -5224,17 +5224,59 @@ impl<'w> Server<'w> {
         if n.health <= 0.0 {
             n.dead_at = Some(tick);
             n.movetype = 0;
-            // the weapon leaves the dead hands (the game drops it)
-            n.weapon.clear();
+            // the weapon leaves the dead hands: the game drops it as a world entity
+            let dropped = std::mem::take(&mut n.weapon);
             let (key, class) = (n.key.clone(), n.class.clone());
+            let (pos, yaw) = (n.pos, n.angles.y);
             self.game_events.push(GameEvent::NpcKilled {
                 npc: id,
                 attacker,
                 key,
                 class,
             });
+            if !dropped.is_empty() {
+                self.drop_npc_weapon(attacker, &dropped, pos, yaw);
+            }
         }
         true
+    }
+
+    /// Measured `server_npc_drop`: on the death tick the NPC's weapon becomes an ownerless
+    /// `weapon_*` entity (VPhysics) at the hand, thrown forward at 107..151 u/s and 44..110 u/s
+    /// down, tumbling, asleep some 10 ticks later; it survives cleanup and has no undo. The
+    /// hand comes from the death pose, which we do not animate: the drop starts 24 u over the
+    /// feet (the game's 20..46) with the middle of the measured throw.
+    fn drop_npc_weapon(&mut self, owner: u32, class: &str, pos: Vec3, yaw: f32) {
+        let model = match self.scripted_weapons.iter().find(|w| w.class == class) {
+            Some(sw) => sw.world_model.clone(),
+            None => match hl2_world_model(class) {
+                Some(m) => m.to_string(),
+                None => return,
+            },
+        };
+        if model.is_empty() {
+            return;
+        }
+        if !self.models.contains_key(&model) {
+            let Some(loaded) = self.model_loader.as_mut().and_then(|f| f(&model)) else {
+                return;
+            };
+            self.register_model(&model, loaded);
+        }
+        let fwd = gm_sandbox::rotation(Vec3::new(0.0, yaw, 0.0)) * Vec3::X;
+        let id = self.sandbox.restore_prop(
+            owner,
+            &model,
+            pos + Vec3::new(0.0, 0.0, 24.0),
+            Vec3::new(0.0, yaw, 0.0),
+            false,
+        );
+        self.sync_physics();
+        if let Some(&body) = self.bodies.get(&id) {
+            self.physics
+                .set_velocity(body, fwd * 130.0 + Vec3::new(0.0, 0.0, -70.0), Vec3::ZERO);
+        }
+        self.world_weapons.insert(id, class.to_string());
     }
 
     /// Bodies whose corpse time ran out leave the world (undo / cleanup entries go dead).

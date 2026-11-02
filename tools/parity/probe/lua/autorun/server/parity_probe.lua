@@ -820,11 +820,16 @@ SCENARIOS.sandbox = function(scn, done)
 	-- a fresh bot wanders a few frames: pin it at `start` for the run
 	local pin = Vector(scn.start[1], scn.start[2], scn.start[3])
 	-- `press`: buttons the bot holds down until a tick (IN_USE pickup)
-	local pressButtons, pressUntil = 0, -1
+	local pressButtons, pressUntil, pressMove = 0, -1, { forward = 0, side = 0 }
 	hook.Add("StartCommand", "parity_sandbox_press", function(ply, cmd)
 		if ply ~= bot then return end
 		cmd:ClearButtons()
-		if engine.TickCount() <= pressUntil then cmd:SetButtons(pressButtons) end
+		cmd:ClearMovement()
+		if engine.TickCount() <= pressUntil then
+			cmd:SetButtons(pressButtons)
+			cmd:SetForwardMove(pressMove.forward)
+			cmd:SetSideMove(pressMove.side)
+		end
 	end)
 	-- damage taken by NPCs (`EntityTakeDamage`): amount, hitgroup, attacker, inflictor, health after
 	PARITY_NPC_DAMAGE = {}
@@ -1055,12 +1060,23 @@ SCENARIOS.toolgun = function(scn, done)
 					mass = IsValid(ph) and ph:GetMass() or -1, asleep = IsValid(ph) and ph:IsAsleep() or false, vel = IsValid(ph) and vec(ph:GetVelocity()) or nil,
 					driver = IsValid(d) and d:EntIndex() or -1, script = e:GetKeyValues().vehiclescript or e:GetInternalVariable("m_vehicleScript") or "", colgroup = e:GetCollisionGroup(),
 					bodygroups = e:GetBodyGroups() and #e:GetBodyGroups() or 0, skin = e:GetSkin(),
+					throttle = e.GetThrottle and e:GetThrottle() or nil, steering = e.GetSteering and e:GetSteering() or nil, speed = e.GetSpeed and e:GetSpeed() or nil, rpm = e.GetRPM and e:GetRPM() or nil,
 					wheels = (function() local w = {} for _, n in ipairs({ "wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr" }) do local i = e:LookupAttachment(n) if i and i > 0 then local at = e:GetAttachment(i) local tr = util.TraceLine({ start = at.Pos, endpos = at.Pos - Vector(0, 0, 400), filter = { e, bot } }) w[n] = { pos = vec(at.Pos), ground = tr.Hit and tr.HitPos.z or nil } end end return w end)(),
 					seat = (function() local i = e:LookupAttachment("vehicle_feet_passenger0") if i and i > 0 then local at = e:GetAttachment(i) return { pos = vec(at.Pos), ang = { at.Ang.p, at.Ang.y, at.Ang.r } } end return nil end)(),
 					exit1 = (function() local i = e:LookupAttachment("exit1") if i and i > 0 then local at = e:GetAttachment(i) return { pos = vec(at.Pos), ang = { at.Ang.p, at.Ang.y, at.Ang.r } } end return nil end)() }
 			end
 		end
 		table.sort(out.vehicles, function(a, b) return a.index < b.index end)
+		-- weapon entities lying in the world (no owner): what an NPC drops on death
+		out.world_weapons = {}
+		for _, e in ipairs(ents.GetAll()) do
+			if e:IsWeapon() and not IsValid(e:GetOwner()) then
+				local a = e:GetAngles()
+				local ph = e:GetPhysicsObject()
+				out.world_weapons[#out.world_weapons + 1] = { index = e:EntIndex(), class = e:GetClass(), pos = vec(e:GetPos()), ang = { a.p, a.y, a.r }, movetype = e:GetMoveType(), solid = e:GetSolid(), asleep = IsValid(ph) and ph:IsAsleep() or nil, vel = IsValid(ph) and vec(ph:GetVelocity()) or nil, clip = e.Clip1 and e:Clip1() or nil }
+			end
+		end
+		table.sort(out.world_weapons, function(a, b) return a.index < b.index end)
 		out.bot = { pos = vec(bot:GetPos()), ang = { bot:EyeAngles().p, bot:EyeAngles().y, bot:EyeAngles().r }, invehicle = bot:InVehicle(), movetype = bot:GetMoveType(), vehicle = IsValid(bot:GetVehicle()) and bot:GetVehicle():EntIndex() or -1 }
 		out.damage = PARITY_NPC_DAMAGE or {}
 		PARITY_NPC_DAMAGE = {}
@@ -1265,7 +1281,12 @@ SCENARIOS.toolgun = function(scn, done)
 		elseif op.op == "enter" then
 			-- the bot takes the (first / matching) vehicle's seat like +use would
 			for _, e in ipairs(ents.GetAll()) do
-				if e:IsVehicle() and (not op.class or e.VehicleName == op.class) then bot:EnterVehicle(e) break end
+				if e:IsVehicle() and (not op.class or e.VehicleName == op.class) then
+					-- the entry animation locks the controls until it ends; a bot never ends it
+					if op.noanim then e:SetVehicleEntryAnim(false) end
+					bot:EnterVehicle(e)
+					break
+				end
 			end
 		elseif op.op == "exit" then
 			-- optional view angles before the exit (does the engine pick the exit side by the view?)
@@ -1282,9 +1303,29 @@ SCENARIOS.toolgun = function(scn, done)
 			local dmg = op.damage or GetConVar(op.cvar or ("sk_plr_dmg_" .. string.lower(op.ammo or "pistol"))):GetFloat()
 			rec.shot = { from = vec(eye), dir = vec(dir), damage = dmg, target = target and target:EntIndex() or -1, tpos = target and vec(target:WorldSpaceCenter()) or nil }
 			bot:FireBullets({ Num = op.num or 1, Src = eye, Dir = dir, Spread = Vector(0, 0, 0), Tracer = 0, Force = op.force or 1, Damage = dmg, AmmoType = op.ammo or "Pistol" })
+		elseif op.op == "drive" then
+			-- the bot's usercmd never reaches the vehicle, so the controls are set through the
+			-- Vehicle API every tick for `ticks` ticks (throttle -1..1, steer -1..1, handbrake)
+			DRIVE = { until_tick = engine.TickCount() + (op.ticks or 1), throttle = op.throttle or 0, steer = op.steer or 0, handbrake = op.handbrake or false }
+			hook.Add("Think", "parity_drive", function()
+				if not DRIVE or engine.TickCount() > DRIVE.until_tick then hook.Remove("Think", "parity_drive") return end
+				for _, e in ipairs(ents.GetAll()) do
+					if e:IsVehicle() and e.SetThrottle then
+						if e.StartEngine then e:StartEngine(true) end
+						e:SetThrottle(DRIVE.throttle)
+						e:SetSteering(DRIVE.steer, 0)
+						e:SetHandbrake(DRIVE.handbrake)
+					end
+				end
+			end)
 		elseif op.op == "press" then
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
-			pressButtons = op.buttons == "use" and IN_USE or (op.buttons == "attack" and IN_ATTACK or 0)
+			-- a name or a list of names: "use" / "attack" / the driving keys (forward, back,
+			-- moveleft, moveright, jump = handbrake, speed = boost)
+			local names = { use = IN_USE, attack = IN_ATTACK, forward = IN_FORWARD, back = IN_BACK, moveleft = IN_MOVELEFT, moveright = IN_MOVERIGHT, jump = IN_JUMP, speed = IN_SPEED }
+			pressButtons = 0
+			for _, b in ipairs(type(op.buttons) == "table" and op.buttons or { op.buttons }) do pressButtons = bit.bor(pressButtons, names[b] or 0) end
+			pressMove = { forward = op.forward or 0, side = op.side or 0 }
 			pressUntil = engine.TickCount() + (op.ticks or 1)
 			rec.active = IsValid(bot:GetActiveWeapon()) and { class = bot:GetActiveWeapon():GetClass(), next = bot:GetActiveWeapon():GetNextPrimaryFire() - CurTime() } or nil
 		elseif op.op == "teleport" then
