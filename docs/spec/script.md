@@ -872,7 +872,9 @@ server processes with them (the client's own angles return with the command afte
 pushed to the client), `EquipSuit` / `RemoveSuit` / `IsSuitEquipped` keep the HEV suit flag
 (cleared on spawn, the loadout event equips it before `PlayerLoadout` runs; no item pickups depend on it yet),
 `SetLastHitGroup` overrides `LastHitGroup` until the next hit lands on anyone, `ShouldDropWeapon`
-drops the active weapon as a world weapon on death through the `DropWeapon` path. `GetPreferredCarryAngles` (the hook, else the scripted
+drops the active weapon as a world weapon on death through the `DropWeapon` path. `Entity:GetBloodColor` reads the NPC's blood colour (the class table's value in the
+game enum; players red, everything else `DONT_BLEED`), `SetBloodColor` changes it on NPCs
+only. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

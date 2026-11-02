@@ -2007,7 +2007,7 @@
 {"address":"Entity:SetAnimTime","kind":"classfunc","parent":"Entity","name":"SetAnimTime","realms":["client"],"args":[{"name":"time","type":"number"}],"rets":[],"status":"missing"},
 {"address":"Entity:SetAnimation","kind":"classfunc","parent":"Entity","name":"SetAnimation","realms":["client","server"],"args":[{"name":"playerAnim","type":"number"}],"rets":[],"status":"stub"},
 {"address":"Entity:SetAttachment","kind":"classfunc","parent":"Entity","name":"SetAttachment","realms":["client","server"],"args":[{"name":"ent","type":"Entity"},{"name":"attachment","type":"number"}],"rets":[],"status":"stub"},
-{"address":"Entity:SetBloodColor","kind":"classfunc","parent":"Entity","name":"SetBloodColor","realms":["server"],"args":[{"name":"bloodColor","type":"number{BLOOD_COLOR}"}],"rets":[],"status":"stub"},
+{"address":"Entity:SetBloodColor","kind":"classfunc","parent":"Entity","name":"SetBloodColor","realms":["server"],"args":[{"name":"bloodColor","type":"number{BLOOD_COLOR}"}],"rets":[],"status":"implemented"},
 {"address":"Entity:SetBodyGroups","kind":"classfunc","parent":"Entity","name":"SetBodyGroups","realms":["client","server"],"args":[{"name":"subModelIds","type":"string"}],"rets":[],"status":"implemented"},
 {"address":"Entity:SetBodygroup","kind":"classfunc","parent":"Entity","name":"SetBodygroup","realms":["client","server"],"args":[{"name":"bodyGroupId","type":"number"},{"name":"subModelId","type":"number"}],"rets":[],"status":"implemented"},
 {"address":"Entity:SetBoneController","kind":"classfunc","parent":"Entity","name":"SetBoneController","realms":["client","server"],"args":[{"name":"boneControllerID","type":"number"},{"name":"value","type":"number"}],"rets":[],"status":"stub"},

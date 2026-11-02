@@ -40,6 +40,8 @@ pub struct EntitySnap {
     pub eye_target: Option<Vec3>,
     /// NPC weapon class, empty for none / non-NPCs.
     pub weapon: String,
+    /// `GetBloodColor`: the NPC table's blood colour (game enum), -1 for anything else.
+    pub blood: i8,
     /// NPC: server tick its current target was last seen (0 = never / not an NPC).
     pub npc_target_seen: u64,
     /// Physics surface in use (script override or model PHY).
@@ -283,6 +285,7 @@ impl Snapshot {
                             flex: e.flex.as_ref().map(|f| (f.weights.clone(), f.scale)),
                             eye_target: e.eye_target,
                             weapon: String::new(),
+                            blood: -1,
                             npc_target_seen: 0,
                             friction: 0.8,
                             elasticity: 0.25,
@@ -380,6 +383,7 @@ impl Snapshot {
                             flex: server.flex_state(p.id),
                             eye_target: server.eye_target(p.id),
                             weapon: String::new(),
+                            blood: -1,
                             npc_target_seen: 0,
                             friction: server.entity_surface(p.id).0,
                             elasticity: server.entity_surface(p.id).1,
@@ -421,6 +425,7 @@ impl Snapshot {
                             flex: None,
                             eye_target: None,
                             weapon: n.weapon.clone(),
+                            blood: n.blood,
                             npc_target_seen: n.target_seen,
                             friction: 0.8,
                             elasticity: 0.25,

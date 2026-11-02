@@ -377,6 +377,11 @@ pub enum QueuedWrite {
         ent: u32,
         class: String,
     },
+    /// `Entity:SetBloodColor` (NPCs).
+    SetBlood {
+        ent: u32,
+        blood: i8,
+    },
     PlayerStripWeapon {
         player: u32,
         class: Option<String>,
@@ -671,6 +676,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("render_fx", e.render_fx)?;
     t.set("sequence", e.sequence.as_str())?;
     t.set("weapon", e.weapon.as_str())?;
+    t.set("blood", e.blood)?;
     t.set("npc_target_seen", e.npc_target_seen)?;
     t.set("friction", e.friction)?;
     t.set("elasticity", e.elasticity)?;
@@ -1688,6 +1694,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     player: ent,
                     text: str_arg(&arg)?,
                 },
+                "entity.set_blood" => QueuedWrite::SetBlood {
+                    ent,
+                    blood: match &arg {
+                        Value::Integer(i) => (*i).clamp(-1, 127) as i8,
+                        Value::Number(n) => n.clamp(-1.0, 127.0) as i8,
+                        _ => -1,
+                    },
+                },
                 "npc_weapon" => QueuedWrite::NpcWeapon {
                     ent,
                     class: str_arg(&arg)?,
@@ -2654,6 +2668,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             elasticity,
         } => server.set_entity_surface(*ent, *friction, *elasticity),
         QueuedWrite::NpcWeapon { ent, class } => server.set_npc_weapon(*ent, class),
+        QueuedWrite::SetBlood { ent, blood } => server.set_blood(*ent, *blood),
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())
         }

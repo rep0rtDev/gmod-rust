@@ -5907,6 +5907,23 @@ impl<'w> Server<'w> {
 
     /// Script `NPC:Give` / `SelectWeapon` / `DropWeapon` (empty class): the NPC's weapon table
     /// entry; unknown weapon classes are refused.
+    /// Script `Entity:SetBloodColor`: NPCs carry their blood colour (the class table's by
+    /// default); props and players have none to change.
+    pub fn set_blood(&mut self, id: u32, blood: i8) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) => {
+                n.blood = blood;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `Entity:GetBloodColor` of an NPC (game enum, -1 none).
+    pub fn blood_color(&self, id: u32) -> Option<i8> {
+        self.npcs.get(&id).map(|n| n.blood)
+    }
+
     pub fn set_npc_weapon(&mut self, id: u32, class: &str) -> bool {
         if !class.is_empty() && npc_weapon_shot(class).is_none() {
             return false;

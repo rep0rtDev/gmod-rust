@@ -1214,3 +1214,37 @@ fn soldier_takes_cover_from_a_live_grenade() {
     eprintln!("cover after {covered:?}");
     assert!(covered.is_some(), "never ran for cover");
 }
+
+#[test]
+fn blood_colour_comes_from_the_npc_table_and_scripts_can_change_it() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    assert!(server.spawn_npc(1, "npc_bogus", "none").is_none());
+    assert!(server.sandbox.undos(1).is_empty());
+    let _hit = server.tool_hit(1).unwrap();
+    let id = server.spawn_npc(1, "npc_alyx", "weapon_alyxgun").unwrap();
+    assert_eq!(server.blood_color(id), Some(0), "alyx bleeds red");
+    assert!(server.set_blood(id, 2));
+    assert_eq!(server.blood_color(id), Some(2));
+    assert!(!server.set_blood(99_999, 1), "no such NPC");
+    assert_eq!(server.blood_color(99_999), None);
+}
