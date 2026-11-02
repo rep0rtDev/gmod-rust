@@ -776,6 +776,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- Client console lines the client does not know reach the server as console commands; the
+  server asks the runtime first (`ServerHooks::player_command` -> `player.command` ->
+  `concommand.Run(ply, cmd, args, argstr)`, any player) and only then the admin console (admins)
+  or "Console denied". `AddConsoleCommand(name, help, flags)` records the help / flags the
+  registry reports (`concommand.Add` calls it, as in the game).
 - `CreatePhysCollideBox(mins, maxs)` and `CreatePhysCollidesFromModel(model)` (one per PHY
   solid, from the server's model hull planes) build `PhysCollide`s; `PhysCollide:TraceBox(origin,
   angles, start, end, mins, maxs)` sweeps the box against the hulls posed there through the same

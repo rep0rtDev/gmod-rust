@@ -2690,3 +2690,31 @@ fn phys_collide_box_trace_and_npc_class() {
         .unwrap();
     assert_eq!((valid, cls, cls2, again), (false, 26.0, 27.0, 26.0));
 }
+
+#[test]
+fn client_console_line_runs_a_script_command() {
+    let mut rt = runtime(
+        "concommand.Add('my_cmd', function(ply, cmd, args, str) state.got = cmd .. '|' .. (args[2] or '') .. '|' .. str .. '|' .. tostring(ply:IsValid()) end, nil, 'does things')
+         state.help = select(3, concommand.GetTable()).my_cmd",
+    );
+    let mut p = Payload::default();
+    p.ints.push(("player", 1));
+    p.strs.push(("cmd", "my_cmd".into()));
+    p.strs.push(("args", "a b".into()));
+    let reply = rt.actors_mut()[0]
+        .dispatch_reply(&snapshot(), "player.command", &p, 3)
+        .unwrap();
+    assert!(format!("{reply:?}").contains("\"1\""), "{reply:?}");
+    let (got, help): (String, String) =
+        rt.actors()[0].eval("return state.got, state.help").unwrap();
+    assert_eq!(
+        (got.as_str(), help.as_str()),
+        ("my_cmd|b|a b|true", "does things")
+    );
+    p.strs.retain(|(k, _)| *k != "cmd");
+    p.strs.push(("cmd", "unknown_cmd".into()));
+    let reply = rt.actors_mut()[0]
+        .dispatch_reply(&snapshot(), "player.command", &p, 4)
+        .unwrap();
+    assert!(!format!("{reply:?}").contains("\"1\""), "{reply:?}");
+}

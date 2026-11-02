@@ -901,11 +901,7 @@ impl ServerNet {
                         slot.pending_events.push(msg);
                     }
                     Command::Console { line } => {
-                        if self.admins.contains(&slot.player) {
-                            console.push((slot.player, line));
-                        } else {
-                            slot.pending_events.push("Console denied".to_string());
-                        }
+                        console.push((slot.player, line));
                     }
                     Command::Noclip { on } => {
                         if !server.set_noclip(slot.player, on) {
@@ -960,7 +956,23 @@ impl ServerNet {
             self.kick(server, player, if ban { "banned" } else { "kicked" }, ban);
         }
         for (player, line) in console {
-            let replies = self.console(server, player, &line);
+            // script commands first (any player), then the admin console
+            let mut words = line.split_whitespace().map(str::to_owned);
+            let cmd = words.next().unwrap_or_default();
+            let args: Vec<String> = words.collect();
+            let taken = !cmd.is_empty()
+                && match self.hooks.as_mut() {
+                    Some(h) => h.player_command(server, player, &cmd, &args),
+                    None => false,
+                };
+            if taken {
+                continue;
+            }
+            let replies = if self.admins.contains(&player) {
+                self.console(server, player, &line)
+            } else {
+                vec!["Console denied".to_string()]
+            };
             if let Some(slot) = self.clients.values_mut().find(|s| s.player == player) {
                 slot.pending_events.extend(replies);
             }

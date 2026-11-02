@@ -194,7 +194,7 @@ function IsMounted(name)
     return false
 end
 function SoundDuration(name) return __sound_duration(tostring(name or "")) or 0 end
-for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "SentenceDuration", "SetPhysConstraintSystem", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
+for _, n in ipairs({ "AddOriginToPVS", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "SentenceDuration", "SetPhysConstraintSystem", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
 
 
 -- Tool: the tool gun's per-mode state object (ghost entities need the client realm).

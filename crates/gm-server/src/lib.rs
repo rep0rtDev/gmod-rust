@@ -1484,6 +1484,17 @@ pub trait ServerHooks {
     ) -> Option<String> {
         Some(text.to_owned())
     }
+    /// A console line a client typed that the client did not know (`concommand.Add` commands):
+    /// true when a script command took it.
+    fn player_command(
+        &mut self,
+        _server: &mut Server<'_>,
+        _player: u32,
+        _cmd: &str,
+        _args: &[String],
+    ) -> bool {
+        false
+    }
     /// An addon message from a client's actor (`net.send` on the client).
     fn net_message(&mut self, _server: &mut Server<'_>, _player: u32, _name: &str, _data: &[u8]) {}
     /// Addon messages queued by server actors: (player or 0 for everyone, name, payload).

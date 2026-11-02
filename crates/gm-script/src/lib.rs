@@ -757,6 +757,41 @@ impl Runtime {
 
     /// `player.chat {player, text}` before the line goes out: `false` drops it, a string replaces
     /// it (later actors see the replacement), anything else passes it on.
+    /// A client's console line for `concommand.Add` commands (`player.command`): true when a
+    /// script command took it.
+    pub fn player_command(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        cmd: &str,
+        args: &[String],
+    ) -> bool {
+        let mut p = api::Payload::default();
+        p.ints.push(("player", player as i64));
+        p.strs.push(("cmd", cmd.to_string()));
+        p.strs.push(("args", args.join(" ")));
+        let snap = self.snapshot(server);
+        let mut order: Vec<usize> = (0..self.actors.len()).collect();
+        order.sort_by_key(|&i| (self.actors[i].priority(), i));
+        let mut taken = false;
+        for i in order {
+            let a = &mut self.actors[i];
+            if !a.may_run(self.tick) {
+                continue;
+            }
+            match a.dispatch_reply(&snap, "player.command", &p, self.tick) {
+                Ok(Reply::Text(t)) if t == "1" => {
+                    taken = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+            }
+        }
+        self.serial(server);
+        taken
+    }
+
     pub fn player_chat(
         &mut self,
         server: &mut Server<'_>,
@@ -1700,6 +1735,15 @@ impl gm_server::ServerHooks for Runtime {
     fn player_chat(&mut self, server: &mut Server<'_>, player: u32, text: &str) -> Option<String> {
         Runtime::player_chat(self, server, player, text)
     }
+    fn player_command(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        cmd: &str,
+        args: &[String],
+    ) -> bool {
+        Runtime::player_command(self, server, player, cmd, args)
+    }
     fn tool_before(
         &mut self,
         server: &mut Server<'_>,
@@ -1847,6 +1891,18 @@ impl gm_server::ServerHooks for SharedRuntime {
     }
     fn player_chat(&mut self, server: &mut Server<'_>, player: u32, text: &str) -> Option<String> {
         self.0.lock().unwrap().player_chat(server, player, text)
+    }
+    fn player_command(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        cmd: &str,
+        args: &[String],
+    ) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .player_command(server, player, cmd, args)
     }
     fn tool_before(
         &mut self,

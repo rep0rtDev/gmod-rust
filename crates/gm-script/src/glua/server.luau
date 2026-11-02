@@ -226,8 +226,12 @@ if events then events.on("cvar.changed", function(p) cvars.OnConVarChanged(p.nam
 ------------------------------------------------------------------------ concommand
 concommand = {}
 local commands = {}
-local completes, helpsc = {}, {}
-function concommand.Add(name, fn, autocomplete, help, flags) name = string.lower(name); commands[name] = fn; completes[name] = autocomplete; helpsc[name] = help end
+local completes, helpsc, flagsc = {}, {}, {}
+-- the engine-side registration of a command name (the game does it inside concommand.Add):
+-- help text and flags the console reports; the client's unknown lines reach the server as
+-- console commands and `player.command` runs them
+function AddConsoleCommand(name, help, flags) name = string.lower(name); helpsc[name] = help or helpsc[name]; flagsc[name] = flags or flagsc[name] or 0 end
+function concommand.Add(name, fn, autocomplete, help, flags) name = string.lower(name); commands[name] = fn; completes[name] = autocomplete; AddConsoleCommand(name, help, flags) end
 function concommand.Remove(name) name = string.lower(name); commands[name] = nil; completes[name] = nil; helpsc[name] = nil end
 function concommand.GetTable() return commands, completes, helpsc end
 function concommand.Run(ply, cmd, args, argstr)
@@ -903,6 +907,12 @@ local prev_move = {}
             local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(tr.Entity:EntIndex())
             if si and si.CanTool and si:CanTool(ply, tr, p.tool, nil, button) == false then return false end
         end
+    end)
+    -- a client's console line the client did not know: a concommand.Add command takes it
+    events.on("player.command", function(p)
+        local args = {}
+        if p.args and p.args ~= "" then args = string.Explode(" ", p.args) end
+        if concommand.Run(Player(p.player), p.cmd, args, p.args or "") then return "1" end
     end)
     events.on("player.chat", function(p)
         local r = hook.Run("PlayerSay", Player(p.player), p.text, false)
