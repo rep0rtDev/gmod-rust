@@ -1888,3 +1888,47 @@ fn rope_constraint_write_carries_its_kind() {
     let kind: String = rt.actors()[0].eval("return state.kind").unwrap();
     assert_eq!(kind, "Rope");
 }
+
+#[test]
+fn hydraulic_constraint_write_builds_its_controller() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            constraint.Hydraulic(Entity(5), Entity(6), 0, 0, Vector(), Vector(), 60, 100, 3, 37, false, 64, \"cable/rope\", true) end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    let Some(QueuedWrite::Constrain { kind, .. }) = writes
+        .iter()
+        .find(|w| matches!(w, QueuedWrite::Constrain { .. }))
+    else {
+        panic!("{writes:?}")
+    };
+    let gm_sandbox::ConstraintKind::Hydraulic {
+        key,
+        toggle,
+        length2,
+        controller,
+        ..
+    } = kind
+    else {
+        panic!("{kind:?}")
+    };
+    assert_eq!((*key, *toggle, *length2), (37, true, 100.0));
+    assert_eq!(
+        (controller.length, controller.max, controller.toggle),
+        (60.0, Some(100.0), true)
+    );
+}

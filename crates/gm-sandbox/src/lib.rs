@@ -1723,12 +1723,67 @@ impl Sandbox {
         owner: u32,
         ent1: Option<u32>,
         ent2: Option<u32>,
-        kind: ConstraintKind,
+        mut kind: ConstraintKind,
     ) -> Option<u32> {
         if ent1 == ent2 {
             return None;
         }
-        Some(self.restore_constraint(owner, ent1, ent2, kind))
+        let id = self.next_id;
+        let (m1, m2) = (self.mass_of(ent1), self.mass_of(ent2));
+        let mut binds: Vec<(i32, NumpadBind)> = Vec::new();
+        match &mut kind {
+            ConstraintKind::Hydraulic {
+                constant,
+                damping,
+                fixed,
+                key,
+                toggle,
+                ..
+            } => {
+                (*constant, *damping) = elastic_consts(m1, m2, *fixed);
+                binds.push((
+                    *key,
+                    if *toggle {
+                        NumpadBind::HydraulicToggle(id)
+                    } else {
+                        NumpadBind::HydraulicDir(id)
+                    },
+                ));
+            }
+            ConstraintKind::Winch {
+                constant,
+                damping,
+                fwd_key,
+                bwd_key,
+                toggle,
+                ..
+            } => {
+                (*constant, *damping) = elastic_consts(m1, m2, false);
+                if *toggle {
+                    binds.push((*fwd_key, NumpadBind::WinchToggle(id, 1)));
+                    binds.push((*bwd_key, NumpadBind::WinchToggle(id, -1)));
+                } else {
+                    binds.push((*fwd_key, NumpadBind::WinchDir(id, 1)));
+                    binds.push((*bwd_key, NumpadBind::WinchDir(id, -1)));
+                }
+            }
+            ConstraintKind::Muscle {
+                constant,
+                damping,
+                fixed,
+                key,
+                ..
+            } => {
+                (*constant, *damping) = elastic_consts(m1, m2, *fixed);
+                binds.push((*key, NumpadBind::MuscleToggle(id)));
+            }
+            _ => {}
+        }
+        let id = self.restore_constraint(owner, ent1, ent2, kind);
+        for (key, bind) in binds {
+            self.numpad.entry((owner, key)).or_default().push(bind);
+        }
+        Some(id)
     }
 
     /// A constraint record straight from a save (no limits, undo entry or duplicate check).
@@ -4415,6 +4470,49 @@ impl Sandbox {
 
 #[cfg(test)]
 mod tests {
+    /// `constraint.Hydraulic` from a script: the elastic constants come from the lighter body
+    /// and the numpad key drives the controller like a stool's.
+    #[test]
+    fn script_constrain_binds_the_keys() {
+        use super::*;
+        let mut sb = Sandbox::new(Limits::default());
+        let crate_ = "models/props_junk/wood_crate001a.mdl";
+        let a = sb.restore_prop(1, crate_, Vec3::ZERO, Vec3::ZERO, false);
+        sb.set_mass(a, 30.0);
+        let kind = ConstraintKind::Hydraulic {
+            lpos1: Vec3::ZERO,
+            lpos2: Vec3::new(0.0, 0.0, 60.0),
+            length1: 60.0,
+            length2: 100.0,
+            width: 3.0,
+            material: "cable/rope".into(),
+            key: 37,
+            fixed: false,
+            speed: 64.0,
+            toggle: false,
+            constant: 0.0,
+            damping: 0.0,
+            controller: LengthController::new(60.0, 60.0, Some(100.0), 64.0, 64.0, false),
+        };
+        assert!(sb.constrain(1, Some(a), Some(a), kind.clone()).is_none());
+        let id = sb.constrain(1, Some(a), None, kind).unwrap();
+        let ConstraintKind::Hydraulic {
+            constant, damping, ..
+        } = &sb.constraints()[0].kind
+        else {
+            panic!()
+        };
+        assert_eq!(
+            (*constant, *damping),
+            elastic_consts(Some(30.0), None, false)
+        );
+        assert!(sb
+            .numpad_binds(1)
+            .contains(&(37, NumpadBind::HydraulicDir(id))));
+        sb.numpad(1, 37, true);
+        assert_eq!(sb.constraints()[0].kind.controller().unwrap().direction, 1);
+    }
+
     use super::*;
 
     #[test]

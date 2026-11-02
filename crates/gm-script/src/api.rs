@@ -1844,6 +1844,80 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                             length: num("length", 0.0)?,
                             stretchonly: flag("stretchonly")?,
                         },
+                        Some("Hydraulic") => {
+                            let (l1, l2) = (num("length1", 0.0)?, num("length2", 0.0)?);
+                            let (speed, toggle) = (num("speed", 64.0)?, flag("toggle")?);
+                            K::Hydraulic {
+                                lpos1: v3("lpos1")?,
+                                lpos2: v3("lpos2")?,
+                                length1: l1,
+                                length2: l2,
+                                width: num("width", 3.0)?,
+                                material: text("material", "cable/rope")?,
+                                key: num("key", -1.0)? as i32,
+                                fixed: flag("fixed")?,
+                                speed,
+                                toggle,
+                                constant: 0.0,
+                                damping: 0.0,
+                                controller: gm_sandbox::LengthController::new(
+                                    l1,
+                                    l1.min(l2),
+                                    Some(l1.max(l2)),
+                                    speed,
+                                    speed,
+                                    toggle,
+                                ),
+                            }
+                        }
+                        Some("Winch") => {
+                            let (fwd, bwd) = (num("fwd_speed", 64.0)?, num("bwd_speed", 64.0)?);
+                            let toggle = flag("toggle")?;
+                            K::Winch {
+                                lpos1: v3("lpos1")?,
+                                lpos2: v3("lpos2")?,
+                                width: num("width", 3.0)?,
+                                material: text("material", "cable/rope")?,
+                                fwd_key: num("fwd_key", -1.0)? as i32,
+                                bwd_key: num("bwd_key", -1.0)? as i32,
+                                fwd_speed: fwd,
+                                bwd_speed: bwd,
+                                toggle,
+                                constant: 0.0,
+                                damping: 0.0,
+                                controller: gm_sandbox::LengthController::new(
+                                    num("length", 0.0)?,
+                                    1.0,
+                                    None,
+                                    fwd,
+                                    bwd,
+                                    toggle,
+                                ),
+                            }
+                        }
+                        Some("Muscle") => {
+                            let (l1, l2) = (num("length1", 0.0)?, num("length2", 0.0)?);
+                            let (period, amplitude) = (num("period", 1.0)?, num("amplitude", 0.0)?);
+                            let starton = flag("starton")?;
+                            K::Muscle {
+                                lpos1: v3("lpos1")?,
+                                lpos2: v3("lpos2")?,
+                                length1: l1,
+                                length2: l2,
+                                width: num("width", 3.0)?,
+                                material: text("material", "cable/rope")?,
+                                key: num("key", -1.0)? as i32,
+                                fixed: flag("fixed")?,
+                                period,
+                                amplitude,
+                                starton,
+                                constant: 0.0,
+                                damping: 0.0,
+                                controller: gm_sandbox::LengthController::muscle(
+                                    l1, l1, l2, period, amplitude, starton,
+                                ),
+                            }
+                        }
                         _ => return Err(mlua::Error::runtime("unknown constraint kind")),
                     };
                     QueuedWrite::Constrain {
@@ -3466,6 +3540,9 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
                 K::Ballsocket { .. } => "ballsocket",
                 K::Slider { .. } => "slider",
                 K::Elastic { .. } => "elastic",
+                K::Hydraulic { .. } => "hydraulic",
+                K::Winch { .. } => "winch",
+                K::Muscle { .. } => "muscle",
                 _ => "constraint",
             };
             let made = server

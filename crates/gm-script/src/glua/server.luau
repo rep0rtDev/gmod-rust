@@ -548,7 +548,21 @@ function constraint.Elastic(ent1, ent2, bone1, bone2, lpos1, lpos2, constant, da
     cqueue("Elastic", ent1, ent2, { lpos1 = l1, lpos2 = l2, constant = constant or 0, damping = damping or 0, rdamping = rdamping or 0, width = width or 0, material = material or "cable/cable", length = len, stretchonly = stretchonly == true or stretchonly == 1 })
     return remember("Elastic", ent1, ent2, { constant = constant, damping = damping, rdamping = rdamping, material = material, width = width, stretchonly = stretchonly }), nil
 end
-for _, kind in ipairs({ "AdvBallsocket", "Hydraulic", "Keepupright", "Motor", "Muscle", "Pulley", "Winch" }) do
+function constraint.Hydraulic(ent1, ent2, bone1, bone2, lpos1, lpos2, length1, length2, width, key, fixed, speed, material, toggle, color)
+    cqueue("Hydraulic", ent1, ent2, { lpos1 = cvec(lpos1), lpos2 = cvec(lpos2), length1 = length1 or 0, length2 = length2 or 0, width = width or 0, key = key or -1, fixed = (fixed or 0) ~= 0 and fixed ~= false, speed = speed or 64, material = material or "cable/rope", toggle = toggle == true or toggle == 1 })
+    return remember("Hydraulic", ent1, ent2, { Length1 = length1, Length2 = length2, width = width, key = key, fixed = fixed, speed = speed, material = material, toggle = toggle }), nil, nil
+end
+function constraint.Winch(ent1, ent2, bone1, bone2, lpos1, lpos2, width, fwd_bind, bwd_bind, fwd_speed, bwd_speed, material, toggle, color)
+    local l1, l2 = cvec(lpos1), cvec(lpos2)
+    local len = (cworld(ent1, Vector(l1.x, l1.y, l1.z)) - cworld(ent2, Vector(l2.x, l2.y, l2.z))):Length()
+    cqueue("Winch", ent1, ent2, { lpos1 = l1, lpos2 = l2, width = width or 0, fwd_key = fwd_bind or -1, bwd_key = bwd_bind or -1, fwd_speed = fwd_speed or 64, bwd_speed = bwd_speed or 64, material = material or "cable/rope", toggle = toggle == true or toggle == 1, length = len })
+    return remember("Winch", ent1, ent2, { width = width, fwd_bind = fwd_bind, bwd_bind = bwd_bind, fwd_speed = fwd_speed, bwd_speed = bwd_speed, material = material, toggle = toggle }), nil, nil
+end
+function constraint.Muscle(ent1, ent2, bone1, bone2, lpos1, lpos2, length1, length2, width, key, fixed, period, amplitude, starton, material, color)
+    cqueue("Muscle", ent1, ent2, { lpos1 = cvec(lpos1), lpos2 = cvec(lpos2), length1 = length1 or 0, length2 = length2 or 0, width = width or 0, key = key or -1, fixed = (fixed or 0) ~= 0 and fixed ~= false, period = period or 1, amplitude = amplitude or 0, starton = starton == true or starton == 1, material = material or "cable/rope" })
+    return remember("Muscle", ent1, ent2, { Length1 = length1, Length2 = length2, width = width, key = key, fixed = fixed, period = period, amplitude = amplitude, starton = starton, material = material }), nil, nil
+end
+for _, kind in ipairs({ "AdvBallsocket", "Keepupright", "Motor", "Pulley" }) do
     constraint[kind] = stub("constraint." .. kind)
 end
 
