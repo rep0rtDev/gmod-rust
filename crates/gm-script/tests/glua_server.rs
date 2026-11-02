@@ -586,3 +586,73 @@ fn render_state_reads_the_prop_and_queues_parts() {
         QueuedWrite::SetRender { fx: Some(1), .. }
     ));
 }
+
+#[test]
+fn model_data_comes_from_the_server_tables() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local e = Entity(5)
+             local bg = e:GetBodyGroups()
+             local mn, mx = e:GetModelBounds()
+             local at = e:GetAttachment(e:LookupAttachment('eyes'))
+             state.r = { e:GetNumBodyGroups(), bg[2].name, e:GetBodygroupCount(1), e:FindBodygroupByName('hat'), e:SkinCount(), e:GetBoneCount(),
+                 e:GetBoneName(1), e:LookupBone('ValveBiped.Bip01_Head1'), e:GetBoneParent(1), e:GetSequenceCount(), e:LookupSequence('idle'),
+                 e:GetSequenceList()[1], e:GetHitBoxCount(0), e:GetFlexNum(), e:GetFlexName(0), mn.z, mx.z, math.Round(e:GetModelRadius(), 3), at.Pos.z, tostring(Entity(6):GetBoneCount()) }
+         end)",
+    );
+    let mut models = std::collections::BTreeMap::new();
+    models.insert(
+        "models/props_c17/oildrum001.mdl".to_string(),
+        gm_server::ModelScriptData {
+            body_groups: vec![("body".into(), 1), ("hat".into(), 3)],
+            skins: 2,
+            bones: vec![
+                "ValveBiped.Bip01_Pelvis".into(),
+                "ValveBiped.Bip01_Head1".into(),
+            ],
+            bone_parents: vec![-1, 0],
+            sequences: vec!["ragdoll".into(), "idle".into()],
+            hitboxes: 4,
+            hitbox_sets: 1,
+            flexes: vec!["smile".into()],
+            mins: Vec3::new(-8.0, -8.0, 0.0),
+            maxs: Vec3::new(8.0, 8.0, 40.0),
+            attachments: vec![("eyes".into(), 1, Vec3::new(0.0, 0.0, 36.0), Vec3::X)],
+        },
+    );
+    let mut snap = (*snapshot()).clone();
+    snap.models = gm_script::snapshot::ModelsRef(&models as *const _);
+    let snap = Arc::new(snap);
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<String> = rt.actors()[0]
+        .eval("local o = {} for i, v in ipairs(state.r) do o[i] = tostring(v) end return o")
+        .unwrap();
+    assert_eq!(
+        r,
+        [
+            "2",
+            "hat",
+            "3",
+            "1",
+            "2",
+            "2",
+            "ValveBiped.Bip01_Head1",
+            "1",
+            "0",
+            "2",
+            "1",
+            "idle",
+            "4",
+            "1",
+            "smile",
+            "0",
+            "40",
+            "22.978",
+            "36",
+            "2"
+        ],
+        "entity 6 shares entity 5's model"
+    );
+}

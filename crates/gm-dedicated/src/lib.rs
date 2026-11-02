@@ -278,6 +278,7 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
         }
     });
     Ok(gm_server::ModelInfo {
+        script: gm_server::ModelScriptData::from_mdl(&mdl, &mdl_data),
         attachments: model_attachments(
             &mdl,
             sequence_frame0(mount, model, &mdl_data, &mdl, None).as_deref(),

@@ -1264,6 +1264,34 @@ function ENT:GetEFlags() return 0 end
 function ENT:IsEFlagSet(f) return false end
 function ENT:GetBloodColor() return self:IsPlayer() and BLOOD_COLOR_RED or (self:IsNPC() and BLOOD_COLOR_YELLOW or DONT_BLEED) end
 function ENT:GetMaterialType() return MAT_DEFAULT end
+-- Model data from the server's MDL tables (host `model.info`), cached per model name.
+local model_cache = {}
+local function minfo(self) local name = self:GetModel(); if not name or name == "" then return nil end local m = model_cache[name]; if m == nil then m = model.info(name) or false; model_cache[name] = m end return m or nil end
+function ENT:GetBodyGroups() local m = minfo(self); local out = {}; if m then for i, b in ipairs(m.bodygroups) do out[i] = { id = i - 1, name = b.name, num = b.num, submodels = {} } for k = 0, b.num - 1 do out[i].submodels[k] = tostring(k) end end end return out end
+function ENT:GetNumBodyGroups() local m = minfo(self); return m and #m.bodygroups or 0 end
+function ENT:GetBodygroupCount(id) local m = minfo(self); local b = m and m.bodygroups[(id or 0) + 1]; return b and b.num or 0 end
+function ENT:GetBodygroupName(id) local m = minfo(self); local b = m and m.bodygroups[(id or 0) + 1]; return b and b.name or "" end
+function ENT:FindBodygroupByName(name) local m = minfo(self); if m then for i, b in ipairs(m.bodygroups) do if string.lower(b.name) == string.lower(name) then return i - 1 end end end return -1 end
+function ENT:SkinCount() local m = minfo(self); return m and m.skins or 0 end
+function ENT:GetBoneCount() local m = minfo(self); return m and #m.bones or -1 end
+function ENT:GetBoneName(i) local m = minfo(self); return m and m.bones[(i or 0) + 1] or "__INVALIDBONE__" end
+function ENT:LookupBone(name) local m = minfo(self); if m then for i, b in ipairs(m.bones) do if b == name then return i - 1 end end end return nil end
+function ENT:GetBoneParent(i) local m = minfo(self); local p = m and m.bone_parents[(i or 0) + 1]; return p or -1 end
+function ENT:GetSequenceCount() local m = minfo(self); return m and #m.sequences or 0 end
+function ENT:GetSequenceName(i) local m = minfo(self); return m and m.sequences[(i or 0) + 1] or "Unknown" end
+function ENT:LookupSequence(name) local m = minfo(self); if m then for i, q in ipairs(m.sequences) do if q == name then return i - 1, 0 end end end return -1, 0 end
+function ENT:GetSequenceList() local m = minfo(self); local out = {}; if m then for i, q in ipairs(m.sequences) do out[i - 1] = q end end return out end
+function ENT:GetHitBoxCount(set) local m = minfo(self); return m and m.hitboxes or 0 end
+function ENT:GetHitboxSetCount() local m = minfo(self); return m and m.hitbox_sets or 0 end
+function ENT:GetFlexNum() local m = minfo(self); return m and #m.flexes or 0 end
+function ENT:GetFlexName(i) local m = minfo(self); return m and m.flexes[(i or 0) + 1] or "" end
+function ENT:GetFlexIDByName(name) local m = minfo(self); if m then for i, f in ipairs(m.flexes) do if f == name then return i - 1 end end end return nil end
+function ENT:GetModelBounds() local m = minfo(self); if not m then return Vector(), Vector() end return Vector(m.mins.x, m.mins.y, m.mins.z), Vector(m.maxs.x, m.maxs.y, m.maxs.z) end
+function ENT:GetModelRenderBounds() return self:GetModelBounds() end
+function ENT:GetModelRadius() local mn, mx = self:GetModelBounds(); return (mx - mn):Length() / 2 end
+function ENT:GetAttachments() local m = minfo(self); local out = {}; if m then for i, a in ipairs(m.attachments) do out[i] = { id = i, name = a.name } end end return out end
+function ENT:LookupAttachment(name) local m = minfo(self); if m then for i, a in ipairs(m.attachments) do if a.name == name then return i end end end return 0 end
+function ENT:GetAttachment(id) local m = minfo(self); local a = m and m.attachments[id]; if not a then return nil end local pos, ang = LocalToWorld(Vector(a.pos.x, a.pos.y, a.pos.z), Vector(a.forward.x, a.forward.y, a.forward.z):Angle(), self:GetPos(), self:GetAngles()); return { Pos = pos, Ang = ang } end
 -- Render state over the prop's own fields (networked to clients like the colour / material stools).
 function ENT:GetColor() local s = snap(self.__id); if s and s.color then return Color(s.color.r, s.color.g, s.color.b, s.color.a) end return Color(255, 255, 255, 255) end
 function ENT:SetColor(c) c = c or Color(255, 255, 255, 255); qwrite("set_color", self.__id, { r = c.r, g = c.g, b = c.b, a = c.a }) end
@@ -1276,7 +1304,6 @@ function ENT:SetRenderMode(m) qwrite("set_render_mode", self.__id, m) end
 function ENT:GetRenderFX() local s = snap(self.__id); return s and s.render_fx or 0 end
 function ENT:SetRenderFX(f) qwrite("set_render_fx", self.__id, f) end
 function ENT:GetModelContents() return CONTENTS_SOLID end
-function ENT:SkinCount() return 1 end
 function ENT:GetSubModels() return {} end
 function ENT:Weapon_SetActivity(a, d) end
 function ENT:Weapon_TranslateActivity(a) return a end

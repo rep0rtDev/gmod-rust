@@ -153,8 +153,69 @@ pub struct BonePose {
     pub frozen: bool,
 }
 
+/// Model data the script layer reads (`Entity:GetBodyGroups`, `LookupBone`, `GetAttachments`,
+/// `GetSequenceList`, `GetFlexNum`, `GetModelBounds`): names and counts straight from the MDL.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ModelScriptData {
+    /// `(name, number of sub-models)` per body part, in MDL order.
+    pub body_groups: Vec<(String, u32)>,
+    pub skins: u32,
+    pub bones: Vec<String>,
+    pub bone_parents: Vec<i32>,
+    pub sequences: Vec<String>,
+    pub hitboxes: u32,
+    pub hitbox_sets: u32,
+    pub flexes: Vec<String>,
+    pub mins: Vec3,
+    pub maxs: Vec3,
+    /// `(name, bone, local position, forward)`.
+    pub attachments: Vec<(String, i32, Vec3, Vec3)>,
+}
+
+impl ModelScriptData {
+    pub fn from_mdl(mdl: &gm_formats::mdl::Mdl, data: &[u8]) -> Self {
+        ModelScriptData {
+            body_groups: mdl
+                .body_parts
+                .iter()
+                .map(|b| (b.name.clone(), b.models.len() as u32))
+                .collect(),
+            skins: mdl.skins.len() as u32,
+            bones: mdl.bones.iter().map(|b| b.name.clone()).collect(),
+            bone_parents: mdl.bones.iter().map(|b| b.parent).collect(),
+            sequences: gm_formats::mdl::sequences(data, &mdl.header)
+                .into_iter()
+                .map(|q| q.name)
+                .collect(),
+            hitboxes: gm_formats::mdl::hitboxes(data, &mdl.header).len() as u32,
+            hitbox_sets: mdl.header.hitbox_set_count.max(0) as u32,
+            flexes: mdl
+                .flex_controllers
+                .iter()
+                .map(|f| f.name.clone())
+                .collect(),
+            mins: Vec3::from(mdl.header.hull_min),
+            maxs: Vec3::from(mdl.header.hull_max),
+            attachments: mdl
+                .attachments
+                .iter()
+                .map(|a| {
+                    let p = a.position();
+                    (
+                        a.name.clone(),
+                        a.bone,
+                        Vec3::from(p),
+                        Vec3::new(a.local[0][0], a.local[1][0], a.local[2][0]),
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ModelInfo {
+    pub script: ModelScriptData,
     pub bounds: ModelBounds,
     /// PHY convexes in the entity frame (Source units).
     pub hulls: Vec<Vec<Vec3>>,
@@ -3114,6 +3175,8 @@ pub struct Server<'w> {
     /// NoCollide pairs by sandbox constraint id.
     nocollides: BTreeMap<u32, (BodyHandle, BodyHandle)>,
     pub models: BTreeMap<String, ModelInfo>,
+    /// Script-facing model data per model name (the snapshot points at this map).
+    pub model_scripts: BTreeMap<String, ModelScriptData>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
     sounds: Vec<WorldSound>,
     /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
@@ -3261,6 +3324,7 @@ impl<'w> Server<'w> {
             constraints: BTreeMap::new(),
             nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
+            model_scripts: BTreeMap::new(),
             sounds: Vec::new(),
             scrapes: BTreeMap::new(),
             thruster_loops: BTreeSet::new(),
@@ -4967,6 +5031,8 @@ impl<'w> Server<'w> {
     pub fn register_model(&mut self, name: &str, info: ModelInfo) {
         self.hull_planes
             .insert(name.to_string(), info.hull_planes.clone());
+        self.model_scripts
+            .insert(name.to_string(), info.script.clone());
         self.models.insert(name.to_string(), info);
     }
 

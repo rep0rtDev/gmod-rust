@@ -83,6 +83,19 @@ pub struct NavRef(pub *const gm_nav::NavMesh);
 unsafe impl Send for NavRef {}
 unsafe impl Sync for NavRef {}
 
+/// The server's `model_scripts` map, same lifetime rule as `WorldRef`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModelsRef(pub *const std::collections::BTreeMap<String, gm_server::ModelScriptData>);
+
+unsafe impl Send for ModelsRef {}
+unsafe impl Sync for ModelsRef {}
+
+impl Default for ModelsRef {
+    fn default() -> Self {
+        ModelsRef(std::ptr::null())
+    }
+}
+
 impl Default for NavRef {
     fn default() -> Self {
         NavRef(std::ptr::null())
@@ -94,6 +107,7 @@ pub struct Snapshot {
     pub tick: u64,
     pub world: WorldRef,
     pub nav: NavRef,
+    pub models: ModelsRef,
     /// Prop collision hulls for `phys.trace`.
     pub props: Vec<gm_sandbox::PropBody>,
     pub entities: BTreeMap<u32, EntitySnap>,
@@ -118,6 +132,13 @@ impl Snapshot {
     fn nav(&self) -> Option<&gm_nav::NavMesh> {
         // see NavRef: valid while the snapshot is in use
         (!self.nav.0.is_null()).then(|| unsafe { &*self.nav.0 })
+    }
+
+    /// `Entity:GetBodyGroups` and friends: the model's script data when the server loaded it.
+    pub fn model_info(&self, name: &str) -> Option<&gm_server::ModelScriptData> {
+        (!self.models.0.is_null())
+            .then(|| unsafe { &*self.models.0 })
+            .and_then(|m| m.get(name))
     }
 
     pub fn nav_loaded(&self) -> bool {
@@ -163,6 +184,7 @@ impl Snapshot {
             tick: world.tick as u64,
             world: world_ref,
             nav: NavRef::default(),
+            models: ModelsRef::default(),
             props,
             entities: world
                 .entities
@@ -240,6 +262,7 @@ impl Snapshot {
         Snapshot {
             tick,
             world: WorldRef(server.collision as *const _),
+            models: ModelsRef(&server.model_scripts as *const _),
             nav: NavRef(server.navmesh().map_or(std::ptr::null(), |n| n as *const _)),
             props: server.trace_bodies(),
             entities: server

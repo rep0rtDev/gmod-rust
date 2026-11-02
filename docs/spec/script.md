@@ -772,6 +772,19 @@ SetColor / Get/SetColor4Part / Get/SetMaterial / Get/SetRenderMode / Get/SetRend
 through one `set_render` write per part (`Server::set_prop_render` keeps the untouched parts).
 Sub-materials (`SetSubMaterial`, `GetMaterials`) need per-mesh material lists and stay stubs.
 
+Model data: `ModelScriptData` (body groups with sub-model counts, skin families, bone names and
+parents, sequence names, hitbox / hitbox-set counts, flex controller names, hull bounds,
+attachments with bone / local pos / forward) is filled from the MDL when the server registers a
+model and the snapshot points at the map (`ModelsRef`); the host `model.info(name)` serves it to
+`Entity:GetBodyGroups / GetNumBodyGroups / GetBodygroupCount / GetBodygroupName /
+FindBodygroupByName / SkinCount / GetBoneCount / GetBoneName / LookupBone / GetBoneParent /
+GetSequenceCount / GetSequenceName / LookupSequence / GetSequenceList / GetHitBoxCount /
+GetHitboxSetCount / GetFlexNum / GetFlexName / GetFlexIDByName / GetModelBounds /
+GetModelRenderBounds / GetModelRadius / GetAttachments / LookupAttachment / GetAttachment`
+(attachment pose = local pos / forward through the entity's pose; bone-relative animation is not
+applied). Bone matrices / positions, sequence durations, flex weights and bodygroup/skin writes
+on anything but a prop keep needing the animation layer and stay stubs.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

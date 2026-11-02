@@ -1632,6 +1632,47 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     g.set("nav", nav)?;
+    let model = lua.create_table()?;
+    let sh = shared.clone();
+    model.set(
+        "info",
+        lua.create_function(move |lua, name: String| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            let Some(m) = snap.model_info(&name) else {
+                return Ok(Value::Nil);
+            };
+            let t = lua.create_table()?;
+            let bg = lua.create_table()?;
+            for (i, (n, c)) in m.body_groups.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("name", n.as_str())?;
+                e.set("num", *c)?;
+                bg.set(i + 1, e)?;
+            }
+            t.set("bodygroups", bg)?;
+            t.set("skins", m.skins)?;
+            t.set("bones", m.bones.clone())?;
+            t.set("bone_parents", m.bone_parents.clone())?;
+            t.set("sequences", m.sequences.clone())?;
+            t.set("hitboxes", m.hitboxes)?;
+            t.set("hitbox_sets", m.hitbox_sets)?;
+            t.set("flexes", m.flexes.clone())?;
+            t.set("mins", vec3_table(lua, m.mins)?)?;
+            t.set("maxs", vec3_table(lua, m.maxs)?)?;
+            let at = lua.create_table()?;
+            for (i, (n, b, p, f)) in m.attachments.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("name", n.as_str())?;
+                e.set("bone", *b)?;
+                e.set("pos", vec3_table(lua, *p)?)?;
+                e.set("forward", vec3_table(lua, *f)?)?;
+                at.set(i + 1, e)?;
+            }
+            t.set("attachments", at)?;
+            Ok(Value::Table(t))
+        })?,
+    )?;
+    g.set("model", model)?;
     g.set("phys", phys)?;
     lua.load(PRELUDE).set_name("prelude").exec()?;
     Ok(())
