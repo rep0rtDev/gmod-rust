@@ -18,6 +18,8 @@ pub const MAX_CHAT_CHARS: usize = 127;
 pub struct ClientSlot {
     pub player: u32,
     pub name: String,
+    /// Transport name of the peer (`Player:IPAddress`).
+    pub addr: String,
     channel: Channel,
     /// usercmds by tick, waiting to be run
     cmds: BTreeMap<u32, PlayerCmd>,
@@ -276,10 +278,14 @@ impl ServerNet {
                         eph: crate::crypto::Ephemeral::generate(),
                         crypto: None,
                         last_heard: self.tick,
+                        addr: String::new(),
                         closing: false,
                     },
                 );
                 server.add_player(player, self.spawn_origin, Vec3::ZERO);
+                if let Some(c) = self.clients.get_mut(&from) {
+                    c.addr = transport.peer_name(from);
+                }
             }
             let open = self.clients.values().filter(|c| !c.closing).count();
             let slot = self.clients.get_mut(&from).unwrap();
@@ -294,6 +300,7 @@ impl ServerNet {
                 }
                 _ => continue,
             };
+            slot.channel.now = self.tick;
             let Ok(msgs) = slot.channel.receive(&body) else {
                 continue;
             };
@@ -626,6 +633,21 @@ impl ServerNet {
     }
 
     pub fn tick(&mut self, server: &mut Server<'_>) {
+        for slot in self.clients.values().filter(|c| !c.closing) {
+            let since = self.tick.saturating_sub(slot.last_heard);
+            server.set_connection(
+                slot.player,
+                gm_server::ConnInfo {
+                    ping_ms: slot
+                        .channel
+                        .rtt_ticks
+                        .map_or(0.0, |t| t * 1000.0 * gm_core::tick::DEFAULT_TICK_INTERVAL),
+                    loss_pct: slot.channel.loss_pct(),
+                    timeout_secs: since as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL,
+                    addr: slot.addr.clone(),
+                },
+            );
+        }
         // timeouts and closed connections
         let timeout = self.timeout_ticks;
         let tick = self.tick;
@@ -1385,6 +1407,7 @@ impl ServerNet {
                 }
             }
             if !unreliable.is_empty() || slot.channel.pending_reliable() > 0 {
+                slot.channel.now = self.tick;
                 for packet in slot.channel.build_burst(&unreliable) {
                     let packet = match &mut slot.crypto {
                         Some(c) if c.peer_sealed => c.seal(&packet),

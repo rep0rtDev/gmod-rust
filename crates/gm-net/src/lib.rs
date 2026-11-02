@@ -355,4 +355,27 @@ mod tests {
             a.receive(&b.build(&[])).unwrap();
         }
     }
+    #[test]
+    fn channels_measure_rtt_from_acks_and_loss_from_sequence_gaps() {
+        let (mut a, mut b) = (
+            crate::channel::Channel::default(),
+            crate::channel::Channel::default(),
+        );
+        // sequence 0 is only acked through the bits of a later packet, so send two
+        a.now = 10;
+        let p0 = a.build(&[]);
+        let p1 = a.build(&[]);
+        b.now = 12;
+        b.receive(&p0).unwrap();
+        b.receive(&p1).unwrap();
+        let reply = b.build(&[]);
+        a.now = 16;
+        a.receive(&reply).unwrap();
+        assert_eq!(a.rtt_ticks, Some(6.0), "acked 6 ticks after it was sent");
+        let _dropped = a.build(&[]);
+        let p3 = a.build(&[]);
+        b.receive(&p3).unwrap();
+        assert_eq!(b.lost, 1);
+        assert!((b.loss_pct() - 25.0).abs() < 0.01, "{}", b.loss_pct());
+    }
 }

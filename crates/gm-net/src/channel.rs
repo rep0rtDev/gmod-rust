@@ -82,6 +82,13 @@ pub struct Channel {
     /// fragments of the reliable message being reassembled
     partial: Vec<u8>,
     pub stats: Stats,
+    /// Caller's tick when building / receiving: send times per sequence give the ack-based RTT.
+    pub now: u32,
+    sent_at: BTreeMap<u16, u32>,
+    /// Smoothed round trip in ticks (`None` until the first ack).
+    pub rtt_ticks: Option<f32>,
+    /// Remote sequences skipped (never seen before a newer one): packets lost on the way in.
+    pub lost: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -154,6 +161,11 @@ impl Channel {
     fn build_skipping(&mut self, unreliable: &[Vec<u8>], skip: &mut BTreeSet<u64>) -> Vec<u8> {
         let seq = self.local_seq;
         self.local_seq = self.local_seq.wrapping_add(1);
+        self.sent_at.insert(seq, self.now);
+        if self.sent_at.len() > 128 {
+            let oldest = *self.sent_at.keys().next().unwrap();
+            self.sent_at.remove(&oldest);
+        }
         let (ack, ack_bits) = self.ack_fields();
         let mut w = Writer::default();
         Header { seq, ack, ack_bits }.write(&mut w);
@@ -197,7 +209,13 @@ impl Channel {
         self.stats.bytes_received += packet.len() as u64;
         match self.remote_seq {
             None => self.remote_seq = Some(h.seq),
-            Some(cur) if seq_newer(h.seq, cur) => self.remote_seq = Some(h.seq),
+            Some(cur) if seq_newer(h.seq, cur) => {
+                let gap = h.seq.wrapping_sub(cur);
+                if gap > 1 {
+                    self.lost += u64::from(gap - 1);
+                }
+                self.remote_seq = Some(h.seq);
+            }
             _ => {}
         }
         self.received.insert(h.seq);
@@ -215,6 +233,12 @@ impl Channel {
                 if h.ack_bits & (1 << i) != 0 {
                     acked.push(h.ack.wrapping_sub(i + 1));
                 }
+            }
+        }
+        for s in &acked {
+            if let Some(t) = self.sent_at.remove(s) {
+                let r = self.now.saturating_sub(t) as f32;
+                self.rtt_ticks = Some(self.rtt_ticks.map_or(r, |o| o * 0.875 + r * 0.125));
             }
         }
         self.pending
@@ -247,6 +271,16 @@ impl Channel {
     }
 
     /// Reliable messages (fragments) queued and not yet acked.
+    /// Incoming packets lost, in percent of those that should have arrived.
+    pub fn loss_pct(&self) -> f32 {
+        let total = self.lost + self.stats.packets_received;
+        if total == 0 {
+            0.0
+        } else {
+            self.lost as f32 * 100.0 / total as f32
+        }
+    }
+
     pub fn pending_reliable(&self) -> usize {
         self.pending.len()
     }

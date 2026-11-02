@@ -1444,6 +1444,17 @@ const NPC_YAW_RATE: f32 = 150.0;
 /// `sk_npc_dmg_*`); target choice, sight range, aim cone and loss handling are our own rules.
 pub const NPC_SIGHT_RANGE: f32 = 2048.0;
 
+/// What the network layer knows about a player's connection (`Player:Ping` / `PacketLoss` /
+/// `GetTimeoutSeconds` / `IPAddress`), refreshed every tick.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ConnInfo {
+    pub ping_ms: f32,
+    pub loss_pct: f32,
+    /// Seconds since the last packet from the player.
+    pub timeout_secs: f32,
+    pub addr: String,
+}
+
 /// Per-player movement tunables set by scripts (`Player:SetWalkSpeed` and friends); `None`
 /// keeps the server's `MoveConfig` value. Swapped into the mover around that player's move.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -3362,6 +3373,8 @@ pub struct Player {
     pub drop_weapon_on_death: bool,
     /// Script movement tunables of this player.
     pub move_override: MoveOverride,
+    /// Connection statistics from the network layer.
+    pub conn: ConnInfo,
     /// Footstep timer and foot alternation (measured rule in `gm_move::Footsteps`).
     steps: gm_move::Footsteps,
 }
@@ -3456,6 +3469,7 @@ impl Player {
             hit_group_override: None,
             drop_weapon_on_death: false,
             move_override: MoveOverride::default(),
+            conn: ConnInfo::default(),
             steps: gm_move::Footsteps::default(),
         }
     }
@@ -6105,6 +6119,17 @@ impl<'w> Server<'w> {
 
     /// `Player:SetEyeAngles`: the next usercmd the server processes for the player runs with
     /// these view angles (the client's own angles return with the command after).
+    /// The network layer's view of a player's connection this tick.
+    pub fn set_connection(&mut self, id: u32, info: ConnInfo) -> bool {
+        match self.players.get_mut(&id) {
+            Some(p) => {
+                p.conn = info;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Script `Player:SetWalkSpeed` family: see [`MoveOverride::set`].
     pub fn set_move_param(&mut self, id: u32, which: u8, value: Option<f32>) -> bool {
         match self.players.get_mut(&id) {

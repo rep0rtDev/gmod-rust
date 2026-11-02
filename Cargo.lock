@@ -1481,6 +1481,7 @@ dependencies = [
  "gm-collision",
  "gm-core",
  "gm-move",
+ "gm-nav",
  "gm-net",
  "gm-sandbox",
  "gm-server",

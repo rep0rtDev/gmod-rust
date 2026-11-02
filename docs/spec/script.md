@@ -931,7 +931,11 @@ carries it with +use; `Entity:WaterLevel` is the mover's water level for players
 A Player object answers every Entity method: its own methods first, then the Entity
 method (those read the entity snapshot, which a player has none of: parent NULL, no children,
 model scale 1 and so on), then its NW vars; before this only a whitelist of Entity methods
-existed on players. `GetPreferredCarryAngles` (the hook, else the scripted
+existed on players.
+`Player:Ping` (smoothed ack round trip of our channel, ms), `PacketLoss` (incoming sequence
+gaps in percent), `GetTimeoutSeconds` / `IsTimingOut` (seconds since the last packet; timing
+out past 1 s) and `IPAddress` (the transport's peer name, `loopback` when it has none) come
+from the network layer's per-tick connection record. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

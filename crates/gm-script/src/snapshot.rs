@@ -67,6 +67,11 @@ pub struct PlayerSnap {
     /// The prop carried with +use, and the mover's water level (0 dry .. 3 eyes under).
     pub carry: Option<u32>,
     pub water_level: u8,
+    /// Connection: ping in ms, loss in percent, seconds since the last packet, peer address.
+    pub ping: f32,
+    pub loss: f32,
+    pub timeout: f32,
+    pub addr: String,
     pub alive: bool,
     pub health: i32,
     pub armor: i32,
@@ -490,6 +495,10 @@ impl Snapshot {
                             held: p.held.map(|h| h.0),
                             carry: p.carry.map(|c| c.0),
                             water_level: p.state.water_level,
+                            ping: p.conn.ping_ms,
+                            loss: p.conn.loss_pct,
+                            timeout: p.conn.timeout_secs,
+                            addr: p.conn.addr.clone(),
                             alive: p.alive,
                             health: p.health,
                             armor: p.armor,

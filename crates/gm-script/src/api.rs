@@ -564,6 +564,10 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("held", p.held)?;
     t.set("carry", p.carry)?;
     t.set("water_level", p.water_level)?;
+    t.set("ping", p.ping)?;
+    t.set("loss", p.loss)?;
+    t.set("timeout", p.timeout)?;
+    t.set("addr", p.addr.clone())?;
     t.set("alive", p.alive)?;
     t.set("health", p.health)?;
     t.set("armor", p.armor)?;

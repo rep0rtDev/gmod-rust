@@ -104,6 +104,10 @@ fn snapshot() -> Arc<Snapshot> {
             held: None,
             carry: Some(777),
             water_level: 2,
+            ping: 30.0,
+            loss: 2.5,
+            timeout: 0.5,
+            addr: "127.0.0.1:27005".into(),
             alive: true,
             health: 100,
             armor: 0,
@@ -1381,6 +1385,7 @@ fn held_props_and_water_level_come_from_the_player_snapshot() {
         "state = {}
          events.on('tick.pre', function()
              state.wl = Player(1):WaterLevel()
+             state.conn = Player(1):Ping() .. ' ' .. Player(1):PacketLoss() .. ' ' .. Player(1):GetTimeoutSeconds() .. ' ' .. tostring(Player(1):IsTimingOut()) .. ' ' .. Player(1):IPAddress()
              state.held = Entity(777):IsPlayerHolding()
              state.other = Entity(778):IsPlayerHolding()
          end)",
@@ -1393,6 +1398,8 @@ fn held_props_and_water_level_come_from_the_player_snapshot() {
         .eval("return state.wl, state.held, state.other")
         .unwrap();
     assert_eq!((wl, held, other), (2, true, false));
+    let conn: String = rt.actors()[0].eval("return state.conn").unwrap();
+    assert_eq!(conn, "30 2.5 0.5 false 127.0.0.1:27005");
 }
 
 #[test]
