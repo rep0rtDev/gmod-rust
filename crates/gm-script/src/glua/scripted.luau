@@ -498,7 +498,21 @@ events.on("tick.pre", function()
         end
     end
     -- @hook WEAPON:Tick
+    -- @hook WEAPON:FreezeMovement
+    -- FreezeMovement true pins the owner's walk / run / jump / crouch speeds at 0 through the
+    -- per-player move overrides; false (or the weapon going away) clears them
     for i in pairs(wep_live) do
         if i.Tick then i:Tick() end
+        local fr = i.FreezeMovement ~= nil and i:FreezeMovement() == true
+        if fr ~= (rawget(i, "__frozen") == true) then
+            rawset(i, "__frozen", fr)
+            -- the carrying player: the Owner the attack path set, else the wrapper's owner id
+            local o = rawget(i, "Owner")
+            if o == nil and i.__owner then o = Player(i.__owner) end
+            if o and o.SetWalkSpeed then
+                local v = fr and 0 or nil
+                o:SetWalkSpeed(v) o:SetRunSpeed(v) o:SetJumpPower(v) o:SetCrouchedWalkSpeed(v)
+            end
+        end
     end
 end)

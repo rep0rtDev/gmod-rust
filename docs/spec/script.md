@@ -776,6 +776,10 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `WEAPON:FreezeMovement()` is polled every tick for each carried scripted weapon: true pins the
+  owner's walk / run / jump / crouched speeds at 0 through the per-player move overrides, false
+  clears them (the player's own SetWalkSpeed etc. are overwritten while frozen). An NPC's
+  scripted SWEP whose `WEAPON:GetCapabilities()` lacks `CAP_WEAPON_RANGE_ATTACK1` is never fired.
 - `ENTITY:PassesTriggerFilters(ent)` gates a scripted entity's `StartTouch` / `Touch` /
   `EndTouch` (false hides that toucher); `ENTITY:GetPreferredCarryAngles(ent)` was already the
   physgun carry-angle answer after `GM:GetPreferredCarryAngles`.

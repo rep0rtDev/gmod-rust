@@ -2718,3 +2718,66 @@ fn client_console_line_runs_a_script_command() {
         .unwrap();
     assert!(!format!("{reply:?}").contains("\"1\""), "{reply:?}");
 }
+
+#[test]
+fn swep_freeze_movement_pins_the_owner() {
+    let mut rt = runtime(
+        "state.freeze = true
+         weapons.Register({ Base = 'weapon_base', Primary = { Ammo = 'SMG1', ClipSize = 30, DefaultClip = 30 }, Secondary = {},
+             FreezeMovement = function(self) return state.freeze end,
+             GetCapabilities = function(self) return 0 end }, 'cap_swep')
+         local w = weapons.__ensure('cap_swep', 1)
+         rawset(w, 'Owner', Player(1))
+         weapons.__live(w, true)",
+    );
+    rt.actors_mut()[0]
+        .dispatch(&snapshot(), "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let text = format!(
+        "{:?}",
+        rt.drain_writes()
+            .into_iter()
+            .map(|w| w.3)
+            .collect::<Vec<_>>()
+    );
+    for which in [0, 1, 2, 4] {
+        let want = format!("PlayerMoveParam {{ player: 1, which: {which}, value: Some(0.0) }}");
+        assert!(text.contains(&want), "{want} in {text}");
+    }
+    rt.actors_mut()[0]
+        .dispatch(&snapshot(), "tick.pre", &Payload::default(), 4)
+        .unwrap();
+    assert!(!format!("{:?}", rt.drain_writes()).contains("PlayerMoveParam"));
+    rt.actors()[0].eval::<()>("state.freeze = false").unwrap();
+    rt.actors_mut()[0]
+        .dispatch(&snapshot(), "tick.pre", &Payload::default(), 5)
+        .unwrap();
+    let text = format!(
+        "{:?}",
+        rt.drain_writes()
+            .into_iter()
+            .map(|w| w.3)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        text.contains("PlayerMoveParam { player: 1, which: 0, value: None }"),
+        "{text}"
+    );
+    let mut p = Payload::default();
+    p.ints.push(("npc", 5));
+    p.strs.push(("weapon", "cap_swep".into()));
+    for (k, v) in [
+        ("x", 0.0),
+        ("y", 0.0),
+        ("z", 64.0),
+        ("dx", 1.0),
+        ("dy", 0.0),
+        ("dz", 0.0),
+    ] {
+        p.floats.push((k, v));
+    }
+    let reply = rt.actors_mut()[0]
+        .dispatch_reply(&snapshot(), "npc.shoot_params", &p, 6)
+        .unwrap();
+    assert!(format!("{reply:?}").contains("fired"), "{reply:?}");
+}

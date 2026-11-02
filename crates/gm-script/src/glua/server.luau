@@ -711,6 +711,9 @@ local prev_move = {}
         if not w then return end
         local spread = w.GetNPCBulletSpread and tonumber(w:GetNPCBulletSpread(WEAPON_PROFICIENCY_AVERAGE or 2))
         local fired = false
+        -- @hook WEAPON:GetCapabilities
+        -- a SWEP without the range-attack capability is never fired by the NPC
+        if w.GetCapabilities and bit.band(tonumber(w:GetCapabilities()) or 0, CAP_WEAPON_RANGE_ATTACK1 or 2048) == 0 then return "-1,fired" end
         if w.NPCShoot_Primary then
             fired = w:NPCShoot_Primary(Vector(p.x, p.y, p.z), Vector(p.dx, p.dy, p.dz)) ~= false
         end
