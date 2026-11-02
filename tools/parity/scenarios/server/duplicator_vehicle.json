@@ -1,0 +1,149 @@
+{
+ "name": "server_duplicator_vehicle",
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -321.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "ops": [
+  {
+   "op": "spawnvehicle",
+   "class": "Chair_Wood",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    941.7,
+    -321.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 37.0,
+   "yaw": 0.0,
+   "wait": 10
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "pitch": 40.0,
+   "yaw": 40.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 30
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "pitch": 40.0,
+   "yaw": -40.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 30
+  },
+  {
+   "op": "enter"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "exit"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -321.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Jeep",
+   "pitch": 20.0,
+   "yaw": 90.0
+  },
+  {
+   "op": "wait",
+   "ticks": 40
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 15.0,
+   "yaw": 90.0,
+   "wait": 10
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "pitch": 25.0,
+   "yaw": 150.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 40
+  },
+  {
+   "op": "undo"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  }
+ ]
+}

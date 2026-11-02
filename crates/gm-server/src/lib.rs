@@ -5580,15 +5580,44 @@ impl<'w> Server<'w> {
         let Some(root) = hit.ent else {
             return false;
         };
-        if self.npcs.contains_key(&root) {
-            // measured `server_duplicator_npc`: the game's duplicator refuses an NPC (left
-            // click false, nothing on the clipboard)
-            return false;
+        // measured `server_duplicator_npc` / `server_duplicator_vehicle`: the right click copies
+        // whatever entity the trace hits (an NPC, a vehicle, a prop group) into the player's
+        // clipboard with `duplicator.SetLocalPos(HitPos)` / `SetLocalAng(0, eye yaw, 0)`: local
+        // positions relative to the hit point in the copier's yaw frame.
+        let yaw = self.eye(player).map_or(0.0, |(_, a)| a.y);
+        let unrot = gm_sandbox::rotation(Vec3::new(0.0, -yaw, 0.0));
+        if let Some(n) = self.npcs.get(&root).filter(|n| n.dead_at.is_none()) {
+            let local = unrot * (n.pos - hit.pos);
+            let npc = save::SavedNpc {
+                key: n.key.clone(),
+                class: n.class.clone(),
+                model: n.model.clone(),
+                pos: local.to_array(),
+                angles: [n.angles.x, n.angles.y - yaw, n.angles.z],
+                health: n.health,
+                weapon: n.weapon.clone(),
+                skin: n.skin,
+            };
+            self.clipboards.insert(
+                player,
+                save::Save {
+                    format: 1,
+                    map: String::new(),
+                    props: Vec::new(),
+                    constraints: Vec::new(),
+                    devices: Vec::new(),
+                    npcs: vec![npc],
+                    dupe_yaw: yaw,
+                    dupe_mins: (local + n.mins).to_array(),
+                    dupe_maxs: (local + n.maxs).to_array(),
+                },
+            );
+            return true;
         }
         let props = self.sandbox.props();
-        let Some(anchor) = props.iter().find(|p| p.id == root) else {
+        if !props.iter().any(|p| p.id == root) {
             return false;
-        };
+        }
         let cons = self.sandbox.constraints();
         let mut group = vec![root];
         let mut i = 0;
@@ -5607,12 +5636,27 @@ impl<'w> Server<'w> {
             }
             i += 1;
         }
-        let anchor_pos = anchor.pos;
         let index = |e: Option<u32>| e.and_then(|id| group.iter().position(|g| *g == id));
+        let mut mins = Vec3::splat(f32::MAX);
+        let mut maxs = Vec3::splat(f32::MIN);
         let saved: Vec<save::SavedProp> = group
             .iter()
             .filter_map(|id| props.iter().find(|p| p.id == *id))
-            .map(|p| self.saved_prop(p, anchor_pos))
+            .map(|p| {
+                let mut sp = self.saved_prop(p, hit.pos);
+                let local = unrot * Vec3::from(sp.pos);
+                sp.pos = local.to_array();
+                sp.angles[1] -= yaw;
+                // `OBBMins/Maxs`: the MDL hull box (the buggy's reaches its wheels at z 0.8
+                // where its PHY starts at 10.7)
+                let (bmin, bmax) = self
+                    .models
+                    .get(&p.model)
+                    .map_or((Vec3::ZERO, Vec3::ZERO), |m| (m.bounds.min, m.bounds.max));
+                mins = mins.min(local + bmin);
+                maxs = maxs.max(local + bmax);
+                sp
+            })
             .collect();
         let constraints = cons
             .iter()
@@ -5637,11 +5681,61 @@ impl<'w> Server<'w> {
                 props: saved,
                 constraints,
                 devices: Vec::new(),
-                // dupes carry props only; NPCs ride along in saves
                 npcs: Vec::new(),
+                dupe_yaw: yaw,
+                dupe_mins: mins.to_array(),
+                dupe_maxs: maxs.to_array(),
             },
         );
         true
+    }
+
+    /// `TryFixDupePosition`: four `fixupDupePos` passes (the box's x extent, y extent, then
+    /// the two diagonals, all flat) - a line trace from the centre to each end; both ends
+    /// blocked leaves the centre, one blocked end pulls the centre back by the overshoot.
+    fn fix_dupe_position(&self, mut pos: Vec3, rot: Quat, mins: Vec3, maxs: Vec3) -> Vec3 {
+        let bodies = self.prop_bodies();
+        let passes = [
+            (Vec3::new(mins.x, 0.0, 0.0), Vec3::new(maxs.x, 0.0, 0.0)),
+            (Vec3::new(0.0, mins.y, 0.0), Vec3::new(0.0, maxs.y, 0.0)),
+            (
+                Vec3::new(mins.x, mins.y, 0.0),
+                Vec3::new(maxs.x, maxs.y, 0.0),
+            ),
+            (
+                Vec3::new(maxs.x, mins.y, 0.0),
+                Vec3::new(mins.x, maxs.y, 0.0),
+            ),
+        ];
+        for (mn, mx) in passes {
+            let end_d = pos + rot * mn;
+            let end_u = pos + rot * mx;
+            let down = gm_sandbox::trace_line(self.collision, &bodies, pos, end_d);
+            let up = gm_sandbox::trace_line(self.collision, &bodies, pos, end_u);
+            match (down, up) {
+                (Some(_), Some(_)) => {}
+                (Some(d), None) => pos += d.pos - end_d,
+                (None, Some(u)) => pos += u.pos - end_u,
+                (None, None) => {}
+            }
+        }
+        pos
+    }
+
+    /// The model's collision box (all PHY hull vertices).
+    pub fn model_box(&self, model: &str) -> (Vec3, Vec3) {
+        let verts: Vec<Vec3> = self
+            .models
+            .get(model)
+            .map(|m| m.hulls.concat())
+            .unwrap_or_default();
+        if verts.is_empty() {
+            return (Vec3::ZERO, Vec3::ZERO);
+        }
+        (
+            verts.iter().fold(Vec3::splat(f32::MAX), |a, v| a.min(*v)),
+            verts.iter().fold(Vec3::splat(f32::MIN), |a, v| a.max(*v)),
+        )
     }
 
     /// Duplicator right click: the clipboard group at the hit point (the copied prop's origin on
@@ -5655,8 +5749,42 @@ impl<'w> Server<'w> {
         let Some(clip) = self.clipboards.get(&player).cloned() else {
             return false;
         };
-        if clip.props.is_empty() {
+        if clip.props.is_empty() && clip.npcs.is_empty() {
             return false;
+        }
+        // `GeneratePastePosition`: the dupe's box flush on the hit point (its top against a
+        // ceiling), turned to the paster's eye yaw (`SpawnAngle`, no pitch / roll)
+        let yaw = self.eye(player).map_or(0.0, |(_, a)| a.y);
+        let rot = gm_sandbox::rotation(Vec3::new(0.0, yaw, 0.0));
+        let mut centre = hit.pos;
+        centre.z -= if hit.normal.dot(-Vec3::Z) > 0.7 {
+            clip.dupe_maxs[2]
+        } else {
+            clip.dupe_mins[2]
+        };
+        centre = self.fix_dupe_position(
+            centre,
+            rot,
+            Vec3::from(clip.dupe_mins),
+            Vec3::from(clip.dupe_maxs),
+        );
+        let hit = &ToolHit {
+            pos: centre,
+            ..*hit
+        };
+        let mut made: Vec<u32> = Vec::new();
+        for n in &clip.npcs {
+            if !self.sandbox.check_limit(player, "npcs", &mut Vec::new()) {
+                break;
+            }
+            let placed = save::SavedNpc {
+                pos: (rot * Vec3::from(n.pos)).to_array(),
+                angles: [n.angles[0], n.angles[1] + yaw, n.angles[2]],
+                ..n.clone()
+            };
+            if let Some(id) = self.restore_npc(player, &placed, centre) {
+                made.push(id);
+            }
         }
         let mut ids: Vec<Option<u32>> = Vec::new();
         for p in &clip.props {
@@ -5675,8 +5803,8 @@ impl<'w> Server<'w> {
             let id = self.sandbox.restore_prop(
                 player,
                 &p.model,
-                hit.pos + Vec3::from(p.pos),
-                Vec3::from(p.angles),
+                hit.pos + rot * Vec3::from(p.pos),
+                Vec3::new(p.angles[0], p.angles[1] + yaw, p.angles[2]),
                 p.frozen,
             );
             let health = self.models.get(&p.model).map_or(0, |m| m.prop_data.health);
@@ -5698,10 +5826,10 @@ impl<'w> Server<'w> {
             self.sandbox.add_cleanup(player, "props", id);
             ids.push(Some(id));
         }
-        if ids.is_empty() {
+        if ids.is_empty() && made.is_empty() {
             return false;
         }
-        let mut made: Vec<u32> = ids.iter().flatten().copied().collect();
+        made.extend(ids.iter().flatten().copied());
         for c in &clip.constraints {
             let ent = |i: Option<usize>| match i {
                 None => Some(None),
@@ -5888,10 +6016,12 @@ impl<'w> Server<'w> {
             return ToolClick::Done(!right && self.creator_click(player));
         }
         if tool == "duplicator" {
+            // the game's duplicator.lua: the left click pastes `CurrentDupe` (false without
+            // one), the right click copies the entity under the trace (false on the world)
             let ret = if right {
-                self.duplicator_paste(player, &hit, &mut events)
-            } else {
                 self.duplicator_copy(player, &hit)
+            } else {
+                self.duplicator_paste(player, &hit, &mut events)
             };
             self.events.extend(events);
             self.sync_physics();

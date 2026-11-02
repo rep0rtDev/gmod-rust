@@ -4483,6 +4483,13 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             "click" => {
                 let tool = op.tool.clone().unwrap_or_default();
                 apply_click_settings(&mut server.sandbox, &tool, op.settings.as_ref());
+                if let Some(h) = server.tool_hit(player) {
+                    rec["trace"] = json!({
+                        "pos": [h.pos.x, h.pos.y, h.pos.z],
+                        "normal": [h.normal.x, h.normal.y, h.normal.z],
+                        "ent": h.ent,
+                    });
+                }
                 let ret = match op.button.as_deref() {
                     Some("reload") => {
                         let hit = server.tool_hit(player);
@@ -5772,7 +5779,7 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                 println!("  op {i}: {} vehicles vs {}", tv.len(), ov.len());
                 ok = false;
             }
-            for (a, b) in tv.iter().zip(&ov) {
+            for (a, b) in pair_by_pos(&tv, &ov) {
                 let dp = (v3(&a["pos"]) - v3(&b["pos"])).length();
                 let da = gm_sandbox::rotation(v3(&a["ang"]))
                     .angle_between(gm_sandbox::rotation(v3(&b["ang"])))
@@ -5814,7 +5821,7 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                 println!("  op {i}: {} npcs vs {}", tn.len(), on.len());
                 ok = false;
             }
-            for (a, b) in tn.iter().zip(&on) {
+            for (a, b) in pair_by_pos(&tn, &on) {
                 let dp = (v3(&a["pos"]) - v3(&b["pos"])).length();
                 let da = gm_sandbox::rotation(v3(&a["ang"]))
                     .angle_between(gm_sandbox::rotation(v3(&b["ang"])))
@@ -5999,6 +6006,30 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     ok
 }
 
+/// The game lists entities by entity index (a pasted copy reuses a freed low index and comes
+/// before the original); ours by creation. Pair each of theirs with the closest unpaired one of
+/// ours instead of by position in the list.
+fn pair_by_pos<'a>(theirs: &'a [Value], ours: &'a [Value]) -> Vec<(&'a Value, &'a Value)> {
+    let v3 = |v: &Value| {
+        let f = |i: usize| v[i].as_f64().unwrap_or(0.0) as f32;
+        glam::Vec3::new(f(0), f(1), f(2))
+    };
+    let mut free: Vec<usize> = (0..ours.len()).collect();
+    let mut out = Vec::new();
+    for a in theirs {
+        let pa = v3(&a["pos"]);
+        let Some((k, _)) = free
+            .iter()
+            .enumerate()
+            .map(|(k, &j)| (k, (v3(&ours[j]["pos"]) - pa).length()))
+            .min_by(|x, y| x.1.total_cmp(&y.1))
+        else {
+            break;
+        };
+        out.push((a, &ours[free.remove(k)]));
+    }
+    out
+}
 fn run_toolgun(scn: &Scenario) -> Result<Value> {
     use glam::Vec3;
     use gm_sandbox::{ConstraintKind, Event, Limits, PropBody, Sandbox};

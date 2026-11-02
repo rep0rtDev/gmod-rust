@@ -2672,8 +2672,8 @@ fn the_duplicator_copies_a_welded_pair_and_pastes_it_at_the_aim() {
         .weld(1, Some(a), Some(b), 0.0, false)
         .is_some());
     server.sync_after_script();
-    // copy: aim at the lower crate
-    let gm_server::ToolClick::Done(ok) = server.tool_click_full(1, "duplicator", false) else {
+    // copy (the right click, as in the game's duplicator.lua): aim at the lower crate
+    let gm_server::ToolClick::Done(ok) = server.tool_click_full(1, "duplicator", true) else {
         panic!("duplicator is a Rust stool");
     };
     assert!(ok, "the crate under the crosshair was copied");
@@ -2682,7 +2682,8 @@ fn the_duplicator_copies_a_welded_pair_and_pastes_it_at_the_aim() {
     // paste: aim at the floor 300 u to the side
     server.teleport_player(1, spawn + glam::Vec3::new(0.0, 300.0, 0.0));
     let before = server.sandbox.props().len();
-    let gm_server::ToolClick::Done(ok) = server.tool_click_full(1, "duplicator", true) else {
+    // paste is the left click
+    let gm_server::ToolClick::Done(ok) = server.tool_click_full(1, "duplicator", false) else {
         panic!("duplicator is a Rust stool");
     };
     assert!(ok);

@@ -24,14 +24,14 @@
   {
    "op": "click",
    "tool": "duplicator",
-   "pitch": 20.0,
+   "button": "right",
+   "pitch": 17.0,
    "yaw": 0.0,
    "wait": 10
   },
   {
    "op": "click",
    "tool": "duplicator",
-   "button": "right",
    "pitch": 25.0,
    "yaw": 40.0,
    "wait": 10
@@ -43,7 +43,6 @@
   {
    "op": "click",
    "tool": "duplicator",
-   "button": "right",
    "pitch": 25.0,
    "yaw": -40.0,
    "wait": 10
@@ -53,15 +52,14 @@
    "ticks": 30
   },
   {
-   "op": "undo",
-   "wait": 10
+   "op": "undo"
   },
   {
    "op": "wait",
    "ticks": 5
   },
   {
-   "op": "cleanup"
+   "op": "undo"
   },
   {
    "op": "wait",

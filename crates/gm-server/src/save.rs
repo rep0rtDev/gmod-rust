@@ -19,6 +19,14 @@ pub struct Save {
     pub devices: Vec<SavedDevice>,
     #[serde(default)]
     pub npcs: Vec<SavedNpc>,
+    /// Duplicator clipboards only: the copier's eye yaw (the dupe's local frame) and the dupe's
+    /// box (entity local positions + their model boxes), pasted flush on the hit point.
+    #[serde(default)]
+    pub dupe_yaw: f32,
+    #[serde(default)]
+    pub dupe_mins: [f32; 3],
+    #[serde(default)]
+    pub dupe_maxs: [f32; 3],
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1214,6 +1222,9 @@ impl Server<'_> {
         let props = self.sandbox.props();
         let index = |e: Option<u32>| e.and_then(|id| props.iter().position(|p| p.id == id));
         Save {
+            dupe_yaw: 0.0,
+            dupe_mins: [0.0; 3],
+            dupe_maxs: [0.0; 3],
             format: 1,
             map: map.to_string(),
             props: props
