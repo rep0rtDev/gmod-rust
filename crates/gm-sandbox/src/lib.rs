@@ -1786,6 +1786,77 @@ impl Sandbox {
         Some(id)
     }
 
+    /// `constraint.Motor` from a script: the stool's pair of an `Axis` constraint (from `lpos1`
+    /// of `ent1` towards `axis_point`, both in its frame) and a motor device on it, with the
+    /// two numpad keys bound under the owner. `(motor id, axis id)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn motor(
+        &mut self,
+        owner: u32,
+        ent1: u32,
+        ent2: Option<u32>,
+        lpos1: Vec3,
+        lpos2: Vec3,
+        axis_point: Vec3,
+        friction: f32,
+        torque: f32,
+        forcetime: f32,
+        nocollide: bool,
+        toggle: bool,
+        forcelimit: f32,
+        key_f: i32,
+        key_r: i32,
+        direction: f32,
+    ) -> Option<(u32, u32)> {
+        if ent2 == Some(ent1) {
+            return None;
+        }
+        let axis_id = self.next_id;
+        self.next_id += 1;
+        self.constraints.push(Constraint {
+            id: axis_id,
+            owner,
+            ent1: Some(ent1),
+            ent2,
+            kind: ConstraintKind::Axis {
+                lpos1,
+                lpos2,
+                local_axis: axis_point,
+                forcelimit,
+                torquelimit: 0.0,
+                friction,
+                nocollide,
+            },
+        });
+        let motor_id = self.next_id;
+        self.next_id += 1;
+        self.devices.insert(
+            motor_id,
+            Device::Motor {
+                ent: ent1,
+                axis: axis_id,
+                torque,
+                friction,
+                forcetime,
+                scale: 0.0,
+                toggle,
+                is_on: false,
+                direction: if direction < 0.0 { -1.0 } else { 1.0 },
+                key_f,
+                key_r,
+                local_axis: (axis_point - lpos1).normalize_or_zero(),
+                applied: 0.0,
+            },
+        );
+        for (key, bind) in [
+            (key_f, NumpadBind::Motor(motor_id, 1.0)),
+            (key_r, NumpadBind::Motor(motor_id, -1.0)),
+        ] {
+            self.numpad.entry((owner, key)).or_default().push(bind);
+        }
+        Some((motor_id, axis_id))
+    }
+
     /// A constraint record straight from a save (no limits, undo entry or duplicate check).
     pub fn restore_constraint(
         &mut self,
@@ -4470,6 +4541,70 @@ impl Sandbox {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn script_motor_is_an_axis_plus_a_device() {
+        use super::*;
+        let mut sb = Sandbox::new(Limits::default());
+        let a = sb.restore_prop(
+            1,
+            "models/props_junk/wood_crate001a.mdl",
+            Vec3::ZERO,
+            Vec3::ZERO,
+            false,
+        );
+        assert!(sb
+            .motor(
+                1,
+                a,
+                Some(a),
+                Vec3::ZERO,
+                Vec3::ZERO,
+                Vec3::Z,
+                0.0,
+                100.0,
+                0.0,
+                false,
+                false,
+                0.0,
+                1,
+                2,
+                1.0
+            )
+            .is_none());
+        let (motor, axis) = sb
+            .motor(
+                1,
+                a,
+                None,
+                Vec3::ZERO,
+                Vec3::ZERO,
+                Vec3::Z,
+                0.0,
+                100.0,
+                0.0,
+                false,
+                false,
+                0.0,
+                1,
+                2,
+                1.0,
+            )
+            .unwrap();
+        assert!(
+            matches!(sb.constraints()[0].kind, ConstraintKind::Axis { local_axis, .. } if local_axis == Vec3::Z)
+        );
+        assert_eq!(sb.constraints()[0].id, axis);
+        assert!(
+            matches!(sb.devices.get(&motor), Some(Device::Motor { axis: ax, torque, .. }) if *ax == axis && *torque == 100.0)
+        );
+        assert!(sb
+            .numpad_binds(1)
+            .contains(&(1, NumpadBind::Motor(motor, 1.0))));
+        assert!(sb
+            .numpad_binds(1)
+            .contains(&(2, NumpadBind::Motor(motor, -1.0))));
+    }
+
     /// `constraint.Hydraulic` from a script: the elastic constants come from the lighter body
     /// and the numpad key drives the controller like a stool's.
     #[test]

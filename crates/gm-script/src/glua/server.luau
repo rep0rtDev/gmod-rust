@@ -562,7 +562,26 @@ function constraint.Muscle(ent1, ent2, bone1, bone2, lpos1, lpos2, length1, leng
     cqueue("Muscle", ent1, ent2, { lpos1 = cvec(lpos1), lpos2 = cvec(lpos2), length1 = length1 or 0, length2 = length2 or 0, width = width or 0, key = key or -1, fixed = (fixed or 0) ~= 0 and fixed ~= false, period = period or 1, amplitude = amplitude or 0, starton = starton == true or starton == 1, material = material or "cable/rope" })
     return remember("Muscle", ent1, ent2, { Length1 = length1, Length2 = length2, width = width, key = key, fixed = fixed, period = period, amplitude = amplitude, starton = starton, material = material }), nil, nil
 end
-for _, kind in ipairs({ "AdvBallsocket", "Keepupright", "Motor", "Pulley" }) do
+function constraint.Pulley(ent1, ent4, bone1, bone4, lpos1, lpos4, wpos2, wpos3, forcelimit, rigid, width, material, color)
+    local l4, w3 = cvec(lpos4), cvec(wpos3)
+    local addlength = (Vector(w3.x, w3.y, w3.z) - cworld(ent4, Vector(l4.x, l4.y, l4.z))):Length()
+    cqueue("Pulley", ent1, ent4, { lpos1 = cvec(lpos1), lpos4 = l4, wpos2 = cvec(wpos2), wpos3 = w3, forcelimit = forcelimit or 0, rigid = rigid == true or rigid == 1, width = width or 0, material = material or "cable/rope", addlength = addlength })
+    return remember("Pulley", ent1, ent4, { forcelimit = forcelimit, rigid = rigid, width = width, material = material }), nil, nil, nil
+end
+function constraint.Motor(ent1, ent2, bone1, bone2, lpos1, lpos2, friction, torque, forcetime, nocollide, toggle, pl, forcelimit, numpadkey_fwd, numpadkey_bwd, direction, localaxis)
+    local l1 = cvec(lpos1)
+    local axis = cvec(localaxis)
+    if axis.x == 0 and axis.y == 0 and axis.z == 0 then
+        -- no axis given: towards the second attachment, in the first entity's frame
+        local w2 = cworld(ent2, Vector(cvec(lpos2).x, cvec(lpos2).y, cvec(lpos2).z))
+        local d = IsValid(ent1) and ent1.WorldToLocal and ent1:WorldToLocal(w2) or w2
+        axis = { x = d.x - l1.x, y = d.y - l1.y, z = d.z - l1.z }
+    end
+    local owner = IsValid(pl) and pl or (IsValid(ent1) and ent1:GetOwner())
+    world.queue("motor", IsValid(ent1) and ent1:EntIndex() or 0, { ent2 = IsValid(ent2) and ent2:EntIndex() or 0, owner = IsValid(owner) and owner:UserID() or 0, lpos1 = l1, lpos2 = cvec(lpos2), axis_point = { x = l1.x + axis.x, y = l1.y + axis.y, z = l1.z + axis.z }, friction = friction or 0, torque = torque or 0, forcetime = forcetime or 0, nocollide = (nocollide or 0) ~= 0 and nocollide ~= false, toggle = toggle == true or toggle == 1, forcelimit = forcelimit or 0, key_f = numpadkey_fwd or -1, key_r = numpadkey_bwd or -1, direction = direction or 1 })
+    return remember("Motor", ent1, ent2, { friction = friction, torque = torque, forcetime = forcetime, nocollide = nocollide, toggle = toggle, forcelimit = forcelimit, numpadkey_fwd = numpadkey_fwd, numpadkey_bwd = numpadkey_bwd, direction = direction }), remember("Axis", ent1, ent2, { friction = friction, forcelimit = forcelimit, nocollide = nocollide })
+end
+for _, kind in ipairs({ "AdvBallsocket", "Keepupright" }) do
     constraint[kind] = stub("constraint." .. kind)
 end
 

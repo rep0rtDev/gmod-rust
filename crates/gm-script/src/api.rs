@@ -265,6 +265,25 @@ pub enum QueuedWrite {
         owner: u32,
         kind: gm_sandbox::ConstraintKind,
     },
+    /// `constraint.Motor`: an axis from `lpos1` of `ent` towards `axis_point` (its frame) plus
+    /// a motor device driven by the two numpad keys.
+    Motor {
+        ent: u32,
+        ent2: u32,
+        owner: u32,
+        lpos1: Vec3,
+        lpos2: Vec3,
+        axis_point: Vec3,
+        friction: f32,
+        torque: f32,
+        forcetime: f32,
+        nocollide: bool,
+        toggle: bool,
+        forcelimit: f32,
+        key_f: i32,
+        key_r: i32,
+        direction: f32,
+    },
     PlayerTeleport {
         player: u32,
         pos: Vec3,
@@ -1844,6 +1863,17 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                             length: num("length", 0.0)?,
                             stretchonly: flag("stretchonly")?,
                         },
+                        Some("Pulley") => K::Pulley {
+                            lpos1: v3("lpos1")?,
+                            lpos4: v3("lpos4")?,
+                            wpos2: v3("wpos2")?,
+                            wpos3: v3("wpos3")?,
+                            forcelimit: num("forcelimit", 0.0)?,
+                            rigid: flag("rigid")?,
+                            width: num("width", 2.0)?,
+                            material: text("material", "cable/rope")?,
+                            addlength: num("addlength", 0.0)?,
+                        },
                         Some("Hydraulic") => {
                             let (l1, l2) = (num("length1", 0.0)?, num("length2", 0.0)?);
                             let (speed, toggle) = (num("speed", 64.0)?, flag("toggle")?);
@@ -1925,6 +1955,39 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
                         owner: t.get::<Option<u32>>("owner")?.unwrap_or(0),
                         kind,
+                    }
+                }
+                "motor" => {
+                    let t = table_arg(&arg)?;
+                    let v3 = |n: &str| -> Result<Vec3> {
+                        Ok(match t.get::<Option<Table>>(n)? {
+                            Some(v) => Vec3::new(
+                                v.get::<Option<f32>>("x")?.unwrap_or(0.0),
+                                v.get::<Option<f32>>("y")?.unwrap_or(0.0),
+                                v.get::<Option<f32>>("z")?.unwrap_or(0.0),
+                            ),
+                            None => Vec3::ZERO,
+                        })
+                    };
+                    let num = |n: &str, d: f32| -> Result<f32> {
+                        Ok(t.get::<Option<f32>>(n)?.unwrap_or(d))
+                    };
+                    QueuedWrite::Motor {
+                        ent,
+                        ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
+                        owner: t.get::<Option<u32>>("owner")?.unwrap_or(0),
+                        lpos1: v3("lpos1")?,
+                        lpos2: v3("lpos2")?,
+                        axis_point: v3("axis_point")?,
+                        friction: num("friction", 0.0)?,
+                        torque: num("torque", 0.0)?,
+                        forcetime: num("forcetime", 0.0)?,
+                        nocollide: t.get::<Option<bool>>("nocollide")?.unwrap_or(false),
+                        toggle: t.get::<Option<bool>>("toggle")?.unwrap_or(false),
+                        forcelimit: num("forcelimit", 0.0)?,
+                        key_f: num("key_f", -1.0)? as i32,
+                        key_r: num("key_r", -1.0)? as i32,
+                        direction: num("direction", 1.0)?,
                     }
                 }
                 "undo.push" => {
@@ -3543,6 +3606,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
                 K::Hydraulic { .. } => "hydraulic",
                 K::Winch { .. } => "winch",
                 K::Muscle { .. } => "muscle",
+                K::Pulley { .. } => "pulley",
                 _ => "constraint",
             };
             let made = server
@@ -3550,6 +3614,64 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
                 .constrain(*owner, world(*ent), world(*ent2), kind.clone());
             if let Some(id) = made {
                 own_constraint(server, *owner, tool, id);
+                server.sync_after_script();
+            }
+            made.is_some()
+        }
+        QueuedWrite::Motor {
+            ent,
+            ent2,
+            owner,
+            lpos1,
+            lpos2,
+            axis_point,
+            friction,
+            torque,
+            forcetime,
+            nocollide,
+            toggle,
+            forcelimit,
+            key_f,
+            key_r,
+            direction,
+        } => {
+            if *ent == 0 || !exists(server, *ent) || (*ent2 != 0 && !exists(server, *ent2)) {
+                return false;
+            }
+            if !owner_may_constrain(server, *owner) {
+                return false;
+            }
+            let ent2 = if *ent2 == 0 { None } else { Some(*ent2) };
+            let made = server.sandbox.motor(
+                *owner,
+                *ent,
+                ent2,
+                *lpos1,
+                *lpos2,
+                *axis_point,
+                *friction,
+                *torque,
+                *forcetime,
+                *nocollide,
+                *toggle,
+                *forcelimit,
+                *key_f,
+                *key_r,
+                *direction,
+            );
+            if let Some((motor, axis)) = made {
+                if *owner != 0 {
+                    server.sandbox.push_undo(
+                        *owner,
+                        "motor",
+                        "#tool.motor.name".into(),
+                        Some("Undone #tool.motor.name".into()),
+                        vec![motor, axis],
+                    );
+                    server.sandbox.add_count(*owner, "constraints", motor);
+                    server.sandbox.add_cleanup(*owner, "constraints", motor);
+                    server.sandbox.add_cleanup(*owner, "constraints", axis);
+                }
                 server.sync_after_script();
             }
             made.is_some()

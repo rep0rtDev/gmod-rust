@@ -1932,3 +1932,33 @@ fn hydraulic_constraint_write_builds_its_controller() {
         (60.0, Some(100.0), true)
     );
 }
+
+#[test]
+fn pulley_and_motor_writes() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            constraint.Pulley(Entity(5), Entity(6), 0, 0, Vector(), Vector(), Vector(0, 0, 100), Vector(50, 0, 100), 0, false, 2, \"cable/rope\")
+            constraint.Motor(Entity(5), Entity(6), 0, 0, Vector(), Vector(), 0, 500, 0, false, true, nil, 0, 7, 8, 1, Vector(0, 0, 1)) end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(writes.iter().any(|w| matches!(w,
+        QueuedWrite::Constrain { ent: 5, ent2: 6, kind: gm_sandbox::ConstraintKind::Pulley { wpos3, .. }, .. }
+            if *wpos3 == Vec3::new(50.0, 0.0, 100.0))), "{writes:?}");
+    assert!(writes.iter().any(|w| matches!(w,
+        QueuedWrite::Motor { ent: 5, ent2: 6, axis_point, torque, toggle: true, key_f: 7, key_r: 8, .. }
+            if *axis_point == Vec3::Z && *torque == 500.0)), "{writes:?}");
+}

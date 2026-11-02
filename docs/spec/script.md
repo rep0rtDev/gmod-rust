@@ -717,8 +717,10 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   the record joins the sandbox table like a stool's and the physics sync builds the joint from
   it (limits, undo and cleanup under the owner as for `Weld`). `constraint.Hydraulic` / `Winch` / `Muscle` go the same way with their
   length controller built from the arguments; the elastic constants come from the lighter body as
-  for the stools and the numpad keys are bound under the owner. `Motor` / `AdvBallsocket` /
-  `Keepupright` / `Pulley` stay stubs.
+  for the stools and the numpad keys are bound under the owner. `constraint.Pulley` is a kind of its own
+  (the second rope length measured now); `constraint.Motor` is the stool's pair of an axis (from
+  `LPos1` towards `LocalAxis`, or towards the second attachment when none) and a motor device on
+  the two numpad keys. `AdvBallsocket` / `Keepupright` stay stubs.
 - `Player:SprintEnable` / `SprintDisable` gate the sprint button in the mover (the speed cap stays
   at walk speed while disabled), `Player:SetLadderClimbSpeed` sets the climb and mount speed
   (jumping off keeps the measured 200 u/s), `Player:SetLaggedMovementValue` scales the movement
