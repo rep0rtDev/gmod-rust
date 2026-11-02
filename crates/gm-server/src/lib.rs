@@ -553,6 +553,62 @@ pub struct WorldSound {
 
 /// Game events of this tick for the addon runtime (`ServerHooks::game_events`), drained by the
 /// network layer after the tick.
+/// `CLuaLocomotion`: the ground mover of a scripted NextBot (units/s, u/s^2, Source units).
+#[derive(Clone, Debug, PartialEq)]
+pub struct NextBot {
+    pub desired_speed: f32,
+    pub accel: f32,
+    pub decel: f32,
+    pub step_height: f32,
+    pub jump_height: f32,
+    pub max_yaw_rate: f32,
+    pub gravity: f32,
+    /// `Approach` target for this tick (consumed by the tick).
+    pub goal: Option<Vec3>,
+    /// `FaceTowards` target for this tick (consumed by the tick).
+    pub face: Option<Vec3>,
+    pub velocity: Vec3,
+    pub on_ground: bool,
+    pub stuck: u8,
+}
+
+impl Default for NextBot {
+    fn default() -> Self {
+        Self {
+            desired_speed: 0.0,
+            accel: 400.0,
+            decel: 400.0,
+            step_height: 18.0,
+            jump_height: 58.0,
+            max_yaw_rate: 180.0,
+            gravity: 600.0,
+            goal: None,
+            face: None,
+            velocity: Vec3::ZERO,
+            on_ground: false,
+            stuck: 0,
+        }
+    }
+}
+
+/// A `CLuaLocomotion` call from a script.
+#[derive(Clone, Debug, PartialEq)]
+pub enum NextBotOp {
+    Approach { pos: Vec3 },
+    Face { pos: Vec3 },
+    DesiredSpeed(f32),
+    Accel(f32),
+    Decel(f32),
+    StepHeight(f32),
+    JumpHeight(f32),
+    MaxYawRate(f32),
+    Gravity(f32),
+    Jump,
+    JumpAcrossGap { pos: Vec3 },
+    ClearStuck,
+    SetVelocity(Vec3),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum GameEvent {
     /// `spawn_player`: the first spawn and every respawn.
@@ -4244,6 +4300,8 @@ pub struct Server<'w> {
     /// Players' gesture layers (`Player:AnimRestartGesture`): the base sequence is the
     /// client's, only the gesture runs here. Keyed by player id (separate from entity ids).
     pub player_anims: BTreeMap<u32, EntAnim>,
+    /// Scripted NextBots (`CLuaLocomotion`): a ground mover per scripted entity, keyed by entity.
+    pub nextbots: BTreeMap<u32, NextBot>,
     spawn_rng: u64,
     tick_count: u64,
     /// `mp_falldamage`: progressive fall damage instead of the flat 10.
@@ -4398,6 +4456,7 @@ impl<'w> Server<'w> {
             notices: Vec::new(),
             pending_bans: Vec::new(),
             player_anims: BTreeMap::new(),
+            nextbots: BTreeMap::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
             fall_damage_progressive: false,
@@ -7653,6 +7712,188 @@ impl<'w> Server<'w> {
             if a.gesture.is_some() {
                 self.player_anims.insert(id, a);
             }
+        }
+    }
+
+    /// `CLuaLocomotion` state of a scripted NextBot entity, created on first use.
+    pub fn nextbot_ensure(&mut self, ent: u32) -> bool {
+        if !self.sents.contains_key(&ent) {
+            return false;
+        }
+        if !self.nextbots.contains_key(&ent) {
+            self.sandbox.set_frozen(ent, true);
+            self.sync_physics();
+            self.nextbots.insert(ent, NextBot::default());
+        }
+        true
+    }
+
+    pub fn nextbot(&self, ent: u32) -> Option<&NextBot> {
+        self.nextbots.get(&ent)
+    }
+
+    /// A `CLuaLocomotion` op from a script; false for a non-NextBot.
+    pub fn nextbot_op(&mut self, ent: u32, op: NextBotOp) -> bool {
+        if !self.nextbot_ensure(ent) {
+            return false;
+        }
+        let Some(b) = self.nextbots.get_mut(&ent) else {
+            return false;
+        };
+        match op {
+            NextBotOp::Approach { pos } => b.goal = Some(pos),
+            NextBotOp::Face { pos } => b.face = Some(pos),
+            NextBotOp::DesiredSpeed(v) => b.desired_speed = v.max(0.0),
+            NextBotOp::Accel(v) => b.accel = v.max(0.0),
+            NextBotOp::Decel(v) => b.decel = v.max(0.0),
+            NextBotOp::StepHeight(v) => b.step_height = v.max(0.0),
+            NextBotOp::JumpHeight(v) => b.jump_height = v.max(0.0),
+            NextBotOp::MaxYawRate(v) => b.max_yaw_rate = v.max(0.0),
+            NextBotOp::Gravity(v) => b.gravity = v,
+            NextBotOp::Jump => {
+                if b.on_ground {
+                    b.velocity.z = (2.0 * b.gravity.max(1.0) * b.jump_height).sqrt();
+                    b.on_ground = false;
+                }
+            }
+            NextBotOp::JumpAcrossGap { pos } => {
+                if b.on_ground {
+                    b.velocity.z = (2.0 * b.gravity.max(1.0) * b.jump_height).sqrt();
+                    b.on_ground = false;
+                    b.goal = Some(pos);
+                }
+            }
+            NextBotOp::ClearStuck => b.stuck = 0,
+            NextBotOp::SetVelocity(v) => b.velocity = v,
+        }
+        true
+    }
+
+    /// One hull step of a mover: lifted by the step height, swept against the world, slid along
+    /// a blocking wall, then dropped onto the floor. `(floor position, on ground, blocked)`.
+    fn hull_step(
+        &self,
+        pos: Vec3,
+        mins: Vec3,
+        maxs: Vec3,
+        want: Vec3,
+        step: f32,
+    ) -> (Vec3, bool, bool) {
+        let lift = Vec3::new(0.0, 0.0, step);
+        let mut tr = self.collision.trace_box(
+            pos + lift,
+            want + lift,
+            mins,
+            maxs,
+            gm_collision::MASK_PLAYERSOLID,
+        );
+        let mut blocked = false;
+        if tr.fraction < 0.999 && !tr.start_solid {
+            blocked = true;
+            let rest = want + lift - tr.end;
+            let slide = rest - tr.normal * rest.dot(tr.normal);
+            if slide.length_squared() > 1e-6 {
+                let ts = self.collision.trace_box(
+                    tr.end,
+                    tr.end + slide,
+                    mins,
+                    maxs,
+                    gm_collision::MASK_PLAYERSOLID,
+                );
+                if !ts.start_solid {
+                    tr.end = ts.end;
+                }
+            }
+        }
+        let reached = if tr.start_solid { pos + lift } else { tr.end };
+        match self.npc_floor(reached, mins, maxs) {
+            Some(floor) if floor.z >= want.z - step => (floor, true, blocked),
+            _ => (reached - lift, false, blocked),
+        }
+    }
+
+    /// Scripted NextBots move: the xy velocity ramps toward the approach goal at the desired
+    /// speed (accel / decel), gravity pulls an airborne bot, the hull steps over the world like
+    /// an NPC's, the body turns toward the face target (else the goal) at the yaw rate, a bot
+    /// that barely moves while trying counts as stuck. Gone entities drop their state.
+    fn tick_nextbots(&mut self) {
+        let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        let ids: Vec<u32> = self.nextbots.keys().copied().collect();
+        for id in ids {
+            let Some(prop) = self.sandbox.props().iter().find(|p| p.id == id).cloned() else {
+                self.nextbots.remove(&id);
+                continue;
+            };
+            let mut b = self.nextbots.remove(&id).unwrap_or_default();
+            let (mins, maxs) = self
+                .collision_bounds(id)
+                .filter(|(mn, mx)| mx.x > mn.x && mx.z > mn.z)
+                .unwrap_or((Vec3::new(-16.0, -16.0, 0.0), Vec3::new(16.0, 16.0, 72.0)));
+            let pos = prop.pos;
+            let goal = b.goal.take();
+            let want_xy = match goal {
+                Some(g) if b.desired_speed > 0.0 => {
+                    let d = (g - pos).truncate();
+                    if d.length() > 1.0 {
+                        d.normalize() * b.desired_speed
+                    } else {
+                        glam::Vec2::ZERO
+                    }
+                }
+                _ => glam::Vec2::ZERO,
+            };
+            let cur = b.velocity.truncate();
+            let diff = want_xy - cur;
+            let rate = if want_xy.length() > cur.length() {
+                b.accel
+            } else {
+                b.decel
+            };
+            let next_xy = if diff.length() <= rate * dt {
+                want_xy
+            } else {
+                cur + diff.normalize() * rate * dt
+            };
+            b.velocity.x = next_xy.x;
+            b.velocity.y = next_xy.y;
+            if !b.on_ground {
+                b.velocity.z -= b.gravity * dt;
+            } else {
+                b.velocity.z = 0.0;
+            }
+            let want = pos + b.velocity * dt;
+            let (floor, on_ground, blocked) = self.hull_step(pos, mins, maxs, want, b.step_height);
+            let new_pos = if on_ground {
+                floor
+            } else {
+                Vec3::new(floor.x, floor.y, want.z.max(floor.z))
+            };
+            if on_ground && b.velocity.z <= 0.0 {
+                b.velocity.z = 0.0;
+            }
+            b.on_ground = on_ground || (b.velocity.z <= 0.0 && (new_pos.z - floor.z).abs() < 0.5);
+            let intended = want_xy.length() * dt;
+            let moved = (new_pos - pos).truncate().length();
+            b.stuck = if intended > 1.0 && moved < intended * 0.1 {
+                b.stuck.saturating_add(1)
+            } else {
+                0
+            };
+            let target = b.face.or(goal);
+            let mut yaw = prop.angles.y;
+            if let Some(t) = target {
+                let d = (t - new_pos).truncate();
+                if d.length_squared() > 1e-6 {
+                    let want_yaw = d.y.atan2(d.x).to_degrees();
+                    let delta = wrap_deg(want_yaw - yaw);
+                    let max = b.max_yaw_rate * dt;
+                    yaw += delta.clamp(-max, max);
+                }
+            }
+            b.face = None;
+            let _ = blocked;
+            self.teleport_prop(id, new_pos, Vec3::new(prop.angles.x, yaw, prop.angles.z));
+            self.nextbots.insert(id, b);
         }
     }
 
@@ -12171,6 +12412,7 @@ impl<'w> Server<'w> {
         self.tick_vehicles();
         self.tick_anims();
         self.tick_player_anims();
+        self.tick_nextbots();
         // winch controllers think before the physics step, like any entity's Think
         for (id, len) in self
             .sandbox

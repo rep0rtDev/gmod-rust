@@ -358,3 +358,81 @@ fn strip_weapon_reports_weapon_removed() {
     assert!(server.game_events.iter().any(|e| matches!(e, gm_server::GameEvent::WeaponRemoved { player: 1, class } if class == "weapon_pistol")));
     assert!(!server.strip_weapon(1, Some("weapon_pistol")));
 }
+
+#[test]
+fn nextbot_mover_approaches_a_point() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let model = "models/props_c17/oildrum001.mdl";
+    server.register_model(model, gm_dedicated::model_info(&mount, model).unwrap());
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.register_entity(gm_server::ScriptedEntity {
+        class: "my_bot".into(),
+        model: model.into(),
+        print_name: None,
+        category: None,
+        think: None,
+        use_type: gm_server::UseType::Simple,
+    });
+    let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
+    let origin = start + Vec3::new(80.0, 0.0, 8.0);
+    let bot = server
+        .script_spawn_entity(1, "my_bot", origin, Vec3::ZERO, true, None)
+        .unwrap();
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let p0 = server
+        .sandbox
+        .props()
+        .iter()
+        .find(|p| p.id == bot)
+        .unwrap()
+        .pos;
+    assert!(server.nextbot_op(bot, gm_server::NextBotOp::DesiredSpeed(100.0)));
+    let (mins, maxs) = (Vec3::new(-16.0, -16.0, 0.0), Vec3::new(16.0, 16.0, 72.0));
+    let lift = Vec3::new(0.0, 0.0, 18.0);
+    let dir = [Vec3::X, Vec3::NEG_X, Vec3::Y, Vec3::NEG_Y]
+        .into_iter()
+        .find(|d| {
+            let tr = world.collision.trace_box(
+                p0 + lift,
+                p0 + lift + *d * 320.0,
+                mins,
+                maxs,
+                gm_collision::MASK_PLAYERSOLID,
+            );
+            tr.fraction > 0.999 && !tr.start_solid
+        })
+        .expect("an open direction");
+    let goal = p0 + dir * 300.0;
+    for _ in 0..133 {
+        server.nextbot_op(bot, gm_server::NextBotOp::Approach { pos: goal });
+        server.tick(&idle);
+    }
+    let p1 = server
+        .sandbox
+        .props()
+        .iter()
+        .find(|p| p.id == bot)
+        .unwrap()
+        .pos;
+    let nb = server.nextbot(bot).unwrap();
+    eprintln!("bot {p0:?} -> {p1:?} nb {nb:?}");
+    let along = (p1 - p0).dot(dir);
+    let side = ((p1 - p0) - dir * along).truncate().length();
+    assert!(
+        along > 120.0 && along < 220.0,
+        "{p0:?} -> {p1:?} along {dir:?}"
+    );
+    assert!(side < 5.0, "{p0:?} -> {p1:?}");
+    assert!(nb.on_ground, "{nb:?}");
+    assert_eq!(nb.stuck, 0);
+    assert!(!server.nextbot_op(999, gm_server::NextBotOp::Jump));
+}

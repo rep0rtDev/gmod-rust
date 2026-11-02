@@ -55,6 +55,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_move_speed: 0.0,
             npc_next_goal: None,
             npc_caps: 0,
+            nextbot: None,
             npc_enemy_damage: 0,
             npc_sight: 2048.0,
             friction: 0.6,
@@ -110,6 +111,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_move_speed: 0.0,
             npc_next_goal: None,
             npc_caps: 0,
+            nextbot: None,
             npc_enemy_damage: 0,
             npc_sight: 2048.0,
             friction: 0.6,
@@ -901,4 +903,65 @@ fn npc_took_damage_queues_a_write() {
     assert!(writes
         .iter()
         .any(|w| matches!(w, QueuedWrite::NpcTookDamage { ent: 9 })));
+}
+
+#[test]
+fn nextbot_behaviour_coroutine_and_loco_writes() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source: "local ENT = { Base = \"base_nextbot\", Type = \"nextbot\", Model = \"models/props_c17/oildrum001.mdl\" }
+            function ENT:RunBehaviour()
+                state.steps = 1
+                self.loco:SetDesiredSpeed(100)
+                self.loco:Approach(Vector(100, 0, 0), 1)
+                coroutine.yield()
+                state.steps = 2
+                self.loco:Jump()
+            end
+            scripted_ents.Register(ENT, \"my_bot\")"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut ev = Payload::default();
+    ev.ints.push(("entity", 5));
+    ev.ints.push(("player", 0));
+    ev.ints.push(("other", 0));
+    ev.floats.push(("amount", 0.0));
+    ev.strs.push(("class", "my_bot".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.init", &ev, 7)
+        .unwrap();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.think", &ev, 8)
+        .unwrap();
+    let steps: i32 = rt.actors()[0].eval("return state.steps").unwrap();
+    assert_eq!(steps, 1);
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(writes.iter().any(|w| matches!(w, QueuedWrite::NextBot { ent: 5, op: gm_server::NextBotOp::DesiredSpeed(s) } if *s == 100.0)));
+    assert!(writes.iter().any(|w| matches!(w, QueuedWrite::NextBot { ent: 5, op: gm_server::NextBotOp::Approach { pos } } if pos.x == 100.0)));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.think", &ev, 9)
+        .unwrap();
+    let steps: i32 = rt.actors()[0].eval("return state.steps").unwrap();
+    assert_eq!(steps, 2);
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(writes.iter().any(|w| matches!(
+        w,
+        QueuedWrite::NextBot {
+            ent: 5,
+            op: gm_server::NextBotOp::Jump
+        }
+    )));
+    let is_bot: bool = rt.actors()[0]
+        .eval("return scripted_ents.__instance(5):IsNextBot()")
+        .unwrap();
+    assert!(is_bot);
 }

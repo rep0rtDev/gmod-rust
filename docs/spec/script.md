@@ -669,6 +669,20 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   when a weapon leaves the inventory (`weapon.remove` from `strip_weapon`; the instance stays for a
   re-equip); `OnCleanup(kind)` fires per cleaned-up kind (`sandbox.cleanup` from the sandbox's
   cleanup events).
+- NextBots: a scripted entity with `Base = "base_nextbot"` (or `Type = "nextbot"`) gets a server
+  ground mover (`Server::nextbots`, `NextBot`): each tick the xy velocity ramps toward the
+  `Approach` goal at the desired speed (accel / decel), gravity pulls an airborne bot, the hull
+  steps over the world like an NPC's (`hull_step`: step-height lift, box sweep, wall slide, floor
+  snap), the body turns toward the `FaceTowards` target (else the goal) at the max yaw rate, and a
+  bot that moves < 10 % of its intent for 3 ticks is stuck. The entity's prop stays frozen and is
+  teleported by the mover. `CLuaLocomotion` (`self.loco`) maps onto it (Approach / FaceTowards /
+  speeds / step & jump heights / yaw rate / gravity / Jump / JumpAcrossGap / velocity / IsOnGround
+  / IsStuck / ClearStuck; avoid / climb / gaps flags are kept but not used by the mover),
+  `ENT:RunBehaviour` runs as a coroutine resumed on every think (`coroutine.yield()` waits a
+  tick; `BehaveStart` / `BehaveUpdate` around it), `NextBot:MoveToPos(pos, {tolerance, lookahead,
+  maxage, repath})` drives a `PathFollower` to the goal, `PathFollower:Update(bot)` approaches the
+  current goal and advances the cursor on arrival, `Chase(bot, ent)` recomputes when the target
+  moved > 30 u. No navmesh-area awareness yet (`IsAreaTraversable` true, ground normal up).
 
 Done in `glua/server.luau`:
 

@@ -61,6 +61,8 @@ pub struct EntitySnap {
     pub npc_move_speed: f32,
     pub npc_next_goal: Option<Vec3>,
     pub npc_caps: u32,
+    /// `CLuaLocomotion` state of a scripted NextBot.
+    pub nextbot: Option<gm_server::NextBot>,
     pub npc_enemy_damage: u64,
     pub npc_sight: f32,
     /// Physics surface in use (script override or model PHY).
@@ -403,6 +405,7 @@ impl Snapshot {
                             npc_move_speed: 0.0,
                             npc_next_goal: None,
                             npc_caps: 0,
+                            nextbot: None,
                             npc_enemy_damage: 0,
                             npc_sight: 0.0,
                             friction: 0.8,
@@ -526,6 +529,7 @@ impl Snapshot {
                             npc_move_speed: 0.0,
                             npc_next_goal: None,
                             npc_caps: 0,
+                            nextbot: server.nextbot(p.id).cloned(),
                             npc_enemy_damage: 0,
                             npc_sight: 0.0,
                             friction: server.entity_surface(p.id).0,
@@ -588,6 +592,7 @@ impl Snapshot {
                             npc_move_speed: n.move_speed,
                             npc_next_goal: n.next_goal,
                             npc_caps: npc_caps(n),
+                            nextbot: None,
                             npc_enemy_damage: n.last_enemy_damage,
                             npc_sight: n.sight,
                             friction: 0.8,

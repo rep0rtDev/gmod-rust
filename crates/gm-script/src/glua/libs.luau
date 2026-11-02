@@ -280,7 +280,7 @@ for _, n in ipairs({ "CreateConstraintFromTable", "DoBoneManipulator", "DoFlex",
 
 -- Classes the own server has no object for yet: every documented method is a stub.
 for _, cls in ipairs({ "CUserCmd", "CMoveData", "CNavLadder", "PathFollower", "CLuaLocomotion" }) do
-    local T = {}
+    local T = __glua_classes[cls] or {}
     T.__index = T
     __glua_classes[cls] = T
 end
@@ -459,9 +459,35 @@ do
     function PF:NextSegment() local segs = self.segs or {}; return segs[math.min(seg_at(self, self.cursor or 0) + 1, #segs)] end
     function PF:PriorSegment() local segs = self.segs or {}; return segs[math.max(seg_at(self, self.cursor or 0) - 1, 1)] end
 end
+local PF = __glua_classes.PathFollower
+-- Update: drive the bot's locomotion toward the current goal, advancing the cursor as segments
+-- are reached (goal tolerance); Chase: recompute toward a moving entity, then Update
+function PF:Update(bot)
+    if not bot or not bot.loco or #self.segs == 0 then return end
+    local pos = bot:GetPos()
+    local goal = self:GetCurrentGoal()
+    if not goal then return end
+    local tol = self.tolerance or 20
+    while goal and pos:Distance(Vector(goal.pos.x, goal.pos.y, pos.z)) <= tol do
+        self.cursor = math.min((self.cursor or 0) + (goal.length or tol), self:GetLength())
+        if self.cursor >= self:GetLength() then self.segs = {} return end
+        goal = self:GetCurrentGoal()
+    end
+    if goal then bot.loco:Approach(goal.pos, 1); bot.loco:FaceTowards(goal.pos) end
+end
+function PF:Chase(bot, ent)
+    if not IsValid(ent) then return end
+    local target = ent:GetPos()
+    local last = rawget(self, "__chase_target")
+    if not last or last:Distance(target) > 30 or #self.segs == 0 then
+        rawset(self, "__chase_target", target)
+        self:Compute(bot, target)
+    end
+    self:Update(bot)
+end
 function Path(kind) return setmetatable({ kind = kind or "Follow", segs = {}, length = 0, cursor = 0 }, __glua_classes.PathFollower) end
-for _, n in ipairs({ "Chase", "Compute", "Draw", "FirstSegment", "GetAge", "GetAllSegments", "GetClosestPosition", "GetCurrentGoal", "GetCursorData", "GetCursorPosition", "GetEnd", "GetGoalTolerance", "GetHindrance", "GetLength", "GetMinLookAheadDistance", "GetPositionOnPath", "GetStart", "Invalidate", "IsValid", "LastSegment", "MoveCursor", "MoveCursorTo", "MoveCursorToClosestPosition", "MoveCursorToEnd", "MoveCursorToStart", "NextSegment", "PriorSegment", "ResetAge", "SetGoalTolerance", "SetMinLookAheadDistance", "Update" }) do if __glua_classes.PathFollower[n] == nil then __glua_classes.PathFollower[n] = stub("PathFollower:" .. n) end end
-for _, n in ipairs({ "Approach", "ClearStuck", "FaceTowards", "GetAcceleration", "GetAvoidAllowed", "GetClimbAllowed", "GetCurrentAcceleration", "GetDeathDropHeight", "GetDeceleration", "GetDesiredSpeed", "GetGravity", "GetGroundMotionVector", "GetGroundNormal", "GetJumpGapsAllowed", "GetJumpHeight", "GetMaxJumpHeight", "GetMaxYawRate", "GetNextBot", "GetStepHeight", "GetVelocity", "IsAreaTraversable", "IsAttemptingToMove", "IsClimbingOrJumping", "IsOnGround", "IsStuck", "IsUsingLadder", "Jump", "JumpAcrossGap", "SetAcceleration", "SetAvoidAllowed", "SetClimbAllowed", "SetDeathDropHeight", "SetDeceleration", "SetDesiredSpeed", "SetGravity", "SetJumpGapsAllowed", "SetJumpHeight", "SetMaxYawRate", "SetStepHeight", "SetVelocity" }) do if __glua_classes.CLuaLocomotion[n] == nil then __glua_classes.CLuaLocomotion[n] = stub("CLuaLocomotion:" .. n) end end
+for _, n in ipairs({ "Compute", "Draw", "FirstSegment", "GetAge", "GetAllSegments", "GetClosestPosition", "GetCurrentGoal", "GetCursorData", "GetCursorPosition", "GetEnd", "GetGoalTolerance", "GetHindrance", "GetLength", "GetMinLookAheadDistance", "GetPositionOnPath", "GetStart", "Invalidate", "IsValid", "LastSegment", "MoveCursor", "MoveCursorTo", "MoveCursorToClosestPosition", "MoveCursorToEnd", "MoveCursorToStart", "NextSegment", "PriorSegment", "ResetAge", "SetGoalTolerance", "SetMinLookAheadDistance"}) do if __glua_classes.PathFollower[n] == nil then __glua_classes.PathFollower[n] = stub("PathFollower:" .. n) end end
+for _, n in ipairs({ "GetCurrentAcceleration", "GetNextBot", "IsUsingLadder"}) do if __glua_classes.CLuaLocomotion[n] == nil then __glua_classes.CLuaLocomotion[n] = stub("CLuaLocomotion:" .. n) end end
 drive = drive or {}
 for _, n in ipairs({ "CalcView", "CreateMove", "DestroyMethod", "End", "FinishMove", "GetMethod", "Move", "PlayerStartDriving", "PlayerStopDriving", "Register", "Start", "StartMove" }) do if drive[n] == nil then drive[n] = stub("drive." .. n) end end
 
@@ -698,7 +724,7 @@ for _, n in ipairs({ "EndBlock", "StartBlock", "WriteAngle", "WriteBool", "Write
 __glua_classes["ITexture"] = __glua_classes["ITexture"] or {}
 for _, n in ipairs({ "Download", "GetColor", "GetMappingHeight", "GetMappingWidth", "GetName", "GetNumAnimationFrames", "Height", "IsError", "IsErrorTexture", "Width" }) do if __glua_classes["ITexture"][n] == nil then __glua_classes["ITexture"][n] = stub("ITexture:" .. n) end end
 __glua_classes["NextBot"] = __glua_classes["NextBot"] or {}
-for _, n in ipairs({ "BecomeRagdoll", "BodyMoveXY", "ClearLastKnownArea", "FindSpot", "FindSpots", "GetActivity", "GetFOV", "GetLastKnownArea", "GetMaxVisionRange", "GetRangeSquaredTo", "GetRangeTo", "GetSolidMask", "HandleStuck", "IsAbleToSee", "MoveToPos", "PlaySequenceAndWait", "SetFOV", "SetMaxVisionRange", "SetSolidMask", "StartActivity" }) do if __glua_classes["NextBot"][n] == nil then __glua_classes["NextBot"][n] = stub("NextBot:" .. n) end end
+for _, n in ipairs({ "BecomeRagdoll", "BodyMoveXY", "ClearLastKnownArea", "FindSpot", "FindSpots", "GetActivity", "GetFOV", "GetLastKnownArea", "GetMaxVisionRange", "GetSolidMask", "IsAbleToSee", "PlaySequenceAndWait", "SetFOV", "SetMaxVisionRange", "SetSolidMask", "StartActivity" }) do if __glua_classes["NextBot"][n] == nil then __glua_classes["NextBot"][n] = stub("NextBot:" .. n) end end
 __glua_classes["PhysCollide"] = __glua_classes["PhysCollide"] or {}
 for _, n in ipairs({ "Destroy", "IsValid", "TraceBox" }) do if __glua_classes["PhysCollide"][n] == nil then __glua_classes["PhysCollide"][n] = stub("PhysCollide:" .. n) end end
 __glua_classes["Schedule"] = __glua_classes["Schedule"] or {}

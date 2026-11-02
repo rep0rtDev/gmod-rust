@@ -83,6 +83,9 @@ local function instance_for(store, defs, class, id, extra)
     local inst = instances[key]
     if inst then return inst end
     local def = inherit(defs[class], defs)
+    if extra == nil and scripted_ents.__is_nextbot and scripted_ents.__is_nextbot(defs[class]) then
+        for k, v in pairs(scripted_ents.__nextbot_methods) do if def[k] == nil then def[k] = v end end
+    end
     local wrapper = extra or Entity(id)
     inst = setmetatable({}, { __index = function(_, k)
         local v = def[k]
@@ -104,7 +107,7 @@ function scripted_ents.Register(ENT, class)
         model = ENT.Model, think_interval = ENT.ThinkInterval, use_type = ENT.UseType,
         print_name = ENT.PrintName, category = ENT.Category,
         init = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.SetupDataTables and not rawget(i, "__dt") then rawset(i, "__dt", true); i:SetupDataTables() end if i.Initialize then i:Initialize() end if i.SpawnFunction == nil then end end,
-        think = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.Think then local r = i:Think(); local nt = rawget(i, "__next_think"); if nt then rawset(i, "__next_think", nil); return nt end return r end end,
+        think = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if scripted_ents.__is_nextbot(ENT) then scripted_ents.__nextbot_think(i) end if i.Think then local r = i:Think(); local nt = rawget(i, "__next_think"); if nt then rawset(i, "__next_think", nil); return nt end return r end end,
         start_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.StartTouch then i:StartTouch(Entity(p.other)) end end,
         touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.Touch then i:Touch(Entity(p.other)) end end,
         end_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.EndTouch then i:EndTouch(Entity(p.other)) end end,
@@ -206,3 +209,99 @@ events.on("weapon.remove", function(p)
     local i = weapons.__ensure(p.class, p.player)
     if i and i.OnRemove then i:OnRemove() end
 end)
+
+-- @hook NEXTBOT:RunBehaviour
+-- @hook NEXTBOT:BehaveStart
+-- @hook NEXTBOT:BehaveUpdate
+-- NextBots: a scripted entity with Base "base_nextbot" (or Type "nextbot") gets `self.loco`, a
+-- CLuaLocomotion over the server's ground mover (nextbot.* writes, state from the snapshot), and
+-- RunBehaviour runs as a coroutine resumed on every think (coroutine.yield() waits a tick).
+__glua_classes.CLuaLocomotion = __glua_classes.CLuaLocomotion or {}
+local LOCO = __glua_classes.CLuaLocomotion
+LOCO.__index = LOCO
+local function loco_state(self) local sn = world and world.get(self.__id); return sn and sn.nextbot end
+local function lv(self, k, d) local st = loco_state(self); local v = st and st[k]; if v == nil then return d end return v end
+local function lq(self, op, v) world.queue(op, self.__id, v) end
+local function v3(v) return { x = v.x, y = v.y, z = v.z } end
+function LOCO:Approach(pos, goalweight) lq(self, "nextbot.approach", v3(pos)) end
+function LOCO:FaceTowards(pos) lq(self, "nextbot.face", v3(pos)) end
+function LOCO:SetDesiredSpeed(v) lq(self, "nextbot.speed", tonumber(v) or 0) end
+function LOCO:GetDesiredSpeed() return lv(self, "desired_speed", 0) end
+function LOCO:SetAcceleration(v) lq(self, "nextbot.accel", tonumber(v) or 0) end
+function LOCO:GetAcceleration() return lv(self, "accel", 400) end
+function LOCO:SetDeceleration(v) lq(self, "nextbot.decel", tonumber(v) or 0) end
+function LOCO:GetDeceleration() return lv(self, "decel", 400) end
+function LOCO:SetStepHeight(v) lq(self, "nextbot.step", tonumber(v) or 0) end
+function LOCO:GetStepHeight() return lv(self, "step_height", 18) end
+function LOCO:SetJumpHeight(v) lq(self, "nextbot.jump_height", tonumber(v) or 0) end
+function LOCO:GetJumpHeight() return lv(self, "jump_height", 58) end
+function LOCO:GetMaxJumpHeight() return self:GetJumpHeight() end
+function LOCO:SetMaxYawRate(v) lq(self, "nextbot.yaw_rate", tonumber(v) or 0) end
+function LOCO:GetMaxYawRate() return lv(self, "max_yaw_rate", 180) end
+function LOCO:SetGravity(v) lq(self, "nextbot.gravity", tonumber(v) or 0) end
+function LOCO:GetGravity() return lv(self, "gravity", 600) end
+function LOCO:Jump() lq(self, "nextbot.jump", nil) end
+function LOCO:JumpAcrossGap(pos, normal) lq(self, "nextbot.jump_gap", v3(pos)) end
+function LOCO:ClearStuck() lq(self, "nextbot.clear_stuck", nil) end
+function LOCO:SetVelocity(v) lq(self, "nextbot.velocity", v3(v)) end
+function LOCO:GetVelocity() local st = loco_state(self); local v = st and st.velocity; return v and Vector(v.x, v.y, v.z) or Vector() end
+function LOCO:GetGroundSpeed() return self:GetVelocity():Length2D() end
+function LOCO:GetGroundMotionVector() local v = self:GetVelocity(); v.z = 0; if v:Length() > 0 then v:Normalize() end return v end
+function LOCO:IsOnGround() return lv(self, "on_ground", false) end
+function LOCO:IsStuck() return lv(self, "stuck", 0) >= 3 end
+function LOCO:IsAttemptingToMove() return self:GetDesiredSpeed() > 0 and self:GetVelocity():Length2D() > 0.5 end
+function LOCO:IsClimbingOrJumping() return not self:IsOnGround() end
+function LOCO:IsAreaTraversable(area) return true end
+function LOCO:GetGroundNormal() return Vector(0, 0, 1) end
+function LOCO:GetDeathDropHeight() return rawget(self, "__death_drop") or 200 end
+function LOCO:SetDeathDropHeight(h) rawset(self, "__death_drop", tonumber(h) or 200) end
+function LOCO:GetAvoidAllowed() return rawget(self, "__avoid") ~= false end
+function LOCO:SetAvoidAllowed(b) rawset(self, "__avoid", b ~= false) end
+function LOCO:GetClimbAllowed() return rawget(self, "__climb") ~= false end
+function LOCO:SetClimbAllowed(b) rawset(self, "__climb", b ~= false) end
+function LOCO:GetJumpGapsAllowed() return rawget(self, "__gaps") ~= false end
+function LOCO:SetJumpGapsAllowed(b) rawset(self, "__gaps", b ~= false) end
+scripted_ents.__is_nextbot = function(ENT) return ENT and (ENT.Base == "base_nextbot" or ENT.Type == "nextbot") end
+-- the coroutine behaviour: created on the first think, resumed every think until it ends
+function scripted_ents.__nextbot_think(i)
+    if not rawget(i, "loco") then rawset(i, "loco", setmetatable({ __id = i.Entity.__id }, LOCO)) end
+    local co = rawget(i, "__behaviour")
+    if co == nil and i.RunBehaviour then
+        co = coroutine.create(function() i:RunBehaviour() end)
+        rawset(i, "__behaviour", co)
+        if i.BehaveStart then i:BehaveStart() end
+    end
+    if i.BehaveUpdate then i:BehaveUpdate(engine.TickInterval()) end
+    if co and coroutine.status(co) == "suspended" then
+        local ok, err = coroutine.resume(co)
+        if not ok then ErrorNoHalt(tostring(err) .. "\n") end
+    end
+    return 0
+end
+__glua_classes.NextBot = __glua_classes.NextBot or {}
+local NB = __glua_classes.NextBot
+function NB:MoveToPos(pos, options)
+    options = options or {}
+    local path = Path("Follow")
+    path:SetMinLookAheadDistance(options.lookahead or 300)
+    path:SetGoalTolerance(options.tolerance or 20)
+    path:Compute(self, pos)
+    if not path:IsValid() then return "failed" end
+    while path:IsValid() do
+        path:Update(self)
+        if options.draw then path:Draw() end
+        if self.loco:IsStuck() then
+            self:HandleStuck()
+            return "stuck"
+        end
+        if options.maxage and path:GetAge() > options.maxage then path:Compute(self, pos) end
+        if options.repath and path:GetAge() > options.repath then path:Compute(self, pos) end
+        coroutine.yield()
+    end
+    return "ok"
+end
+function NB:HandleStuck() self.loco:ClearStuck() end
+function NB:GetRangeTo(pos) if type(pos) == "table" and pos.GetPos then pos = pos:GetPos() end return self:GetPos():Distance(pos) end
+function NB:GetRangeSquaredTo(pos) local d = self:GetRangeTo(pos); return d * d end
+function NB:IsNextBot() return true end
+scripted_ents.__nextbot_methods = NB

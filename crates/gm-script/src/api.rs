@@ -375,6 +375,11 @@ pub enum QueuedWrite {
         frags: Option<u32>,
         deaths: Option<u32>,
     },
+    /// `CLuaLocomotion` ops on a scripted NextBot.
+    NextBot {
+        ent: u32,
+        op: gm_server::NextBotOp,
+    },
     /// `Player:AnimRestartGesture(slot, act, autokill)`.
     PlayerGestureAct {
         player: u32,
@@ -775,6 +780,15 @@ pub enum GestureOp {
 }
 
 /// A field of a table argument (`nil` / not a table -> `None`).
+/// A `{x, y, z}` table argument (missing fields are 0).
+fn tbl_vec3(v: &Value) -> Result<glam::Vec3> {
+    Ok(glam::Vec3::new(
+        tbl_field::<f32>(v, "x")?.unwrap_or(0.0),
+        tbl_field::<f32>(v, "y")?.unwrap_or(0.0),
+        tbl_field::<f32>(v, "z")?.unwrap_or(0.0),
+    ))
+}
+
 fn tbl_field<T: mlua::FromLua>(v: &Value, key: &str) -> Result<Option<T>> {
     match v {
         Value::Table(t) => t.get::<Option<T>>(key),
@@ -935,6 +949,20 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
         t.set("npc_next_goal", vec3_table(lua, g)?)?;
     }
     t.set("npc_caps", e.npc_caps)?;
+    if let Some(nb) = &e.nextbot {
+        let n = lua.create_table()?;
+        n.set("desired_speed", nb.desired_speed)?;
+        n.set("accel", nb.accel)?;
+        n.set("decel", nb.decel)?;
+        n.set("step_height", nb.step_height)?;
+        n.set("jump_height", nb.jump_height)?;
+        n.set("max_yaw_rate", nb.max_yaw_rate)?;
+        n.set("gravity", nb.gravity)?;
+        n.set("on_ground", nb.on_ground)?;
+        n.set("stuck", nb.stuck)?;
+        n.set("velocity", vec3_table(lua, nb.velocity)?)?;
+        t.set("nextbot", n)?;
+    }
     t.set("npc_enemy_damage", e.npc_enemy_damage)?;
     t.set("npc_sight", e.npc_sight)?;
     t.set("friction", e.friction)?;
@@ -1939,6 +1967,64 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     dt: f32_arg(&arg),
                 },
                 "npc.took_damage" => QueuedWrite::NpcTookDamage { ent },
+                "nextbot.approach" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::Approach {
+                        pos: tbl_vec3(&arg)?,
+                    },
+                },
+                "nextbot.face" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::Face {
+                        pos: tbl_vec3(&arg)?,
+                    },
+                },
+                "nextbot.jump_gap" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::JumpAcrossGap {
+                        pos: tbl_vec3(&arg)?,
+                    },
+                },
+                "nextbot.velocity" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::SetVelocity(tbl_vec3(&arg)?),
+                },
+                "nextbot.speed" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::DesiredSpeed(f32_arg(&arg)),
+                },
+                "nextbot.accel" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::Accel(f32_arg(&arg)),
+                },
+                "nextbot.decel" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::Decel(f32_arg(&arg)),
+                },
+                "nextbot.step" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::StepHeight(f32_arg(&arg)),
+                },
+                "nextbot.jump_height" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::JumpHeight(f32_arg(&arg)),
+                },
+                "nextbot.yaw_rate" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::MaxYawRate(f32_arg(&arg)),
+                },
+                "nextbot.gravity" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::Gravity(f32_arg(&arg)),
+                },
+                "nextbot.jump" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::Jump,
+                },
+                "nextbot.clear_stuck" => QueuedWrite::NextBot {
+                    ent,
+                    op: gm_server::NextBotOp::ClearStuck,
+                },
                 "ent.pose" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::EntityPose {
@@ -3317,6 +3403,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::EntityResetSequence { ent } => server.reset_sequence_info(*ent),
         QueuedWrite::EntityFrameAdvance { ent, dt } => server.frame_advance(*ent, *dt),
         QueuedWrite::NpcTookDamage { ent } => server.npc_mark_damaged(*ent),
+        QueuedWrite::NextBot { ent, op } => server.nextbot_op(*ent, op.clone()),
         QueuedWrite::EntityPose { ent, name, value } => {
             server.set_pose_parameter(*ent, name, *value)
         }
