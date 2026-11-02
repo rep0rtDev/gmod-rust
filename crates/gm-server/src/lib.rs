@@ -1590,6 +1590,8 @@ pub struct Npc {
     pub shots: u32,
     /// How close a chase brings the NPC to its player (NPC_CHASE_REACH, or the melee reach).
     pub chase_reach: f32,
+    /// Script override of the turn rate (deg/s); `None` = the measured class rate.
+    pub max_yaw: Option<f32>,
     /// Melee: the tick the current swing ends and the tick its damage lands.
     pub swing_until: u64,
     pub melee_hit_at: Option<u64>,
@@ -8942,6 +8944,7 @@ impl<'w> Server<'w> {
             next_shot: 0,
             shots: 0,
             chase_reach: NPC_CHASE_REACH,
+            max_yaw: None,
             swing_until: 0,
             melee_hit_at: None,
             melee_hits_left: 0,
@@ -9328,6 +9331,17 @@ impl<'w> Server<'w> {
     /// loss rules of `npc_combat_think` then apply as usual). `None`: drop the target, stop,
     /// and stay passive until the next `npc_target`. False for a dead NPC or unknown player.
     /// `NPC:SetArrivalDistance`: the chase stop distance of a living NPC (clamped at 0).
+    /// `NPC:SetMaxYawSpeed`: turn-rate override in deg/s; `<= 0` or non-finite restores the class rate.
+    pub fn npc_set_max_yaw(&mut self, id: u32, rate: f32) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) if n.dead_at.is_none() => {
+                n.max_yaw = (rate.is_finite() && rate > 0.0).then_some(rate);
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn npc_set_arrival(&mut self, id: u32, dist: f32) -> bool {
         match self.npcs.get_mut(&id) {
             Some(n) if n.dead_at.is_none() => {
@@ -9474,6 +9488,7 @@ impl<'w> Server<'w> {
             let halt = goal.halt;
             let points = goal.points.clone();
             let next_goal = n.next_goal;
+            let max_yaw = n.max_yaw;
             let mut idx = goal.idx.min(points.len() - 1);
             let def = npc_move_def(&n.class);
             let (ideal, accel) = if n.run {
@@ -9626,9 +9641,9 @@ impl<'w> Server<'w> {
             let (face, rate) = match next_goal.filter(|_| halt) {
                 Some(g) if g.truncate().distance_squared(floor.truncate()) > 1e-6 => (
                     (g.truncate() - floor.truncate()).normalize(),
-                    NPC_YAW_RATE + NPC_YAW_RATE_PER_SPEED * v0,
+                    max_yaw.unwrap_or(NPC_YAW_RATE + NPC_YAW_RATE_PER_SPEED * v0),
                 ),
-                _ => (dir, NPC_YAW_RATE),
+                _ => (dir, max_yaw.unwrap_or(NPC_YAW_RATE)),
             };
             let mut swap = None;
             if let Some(n) = self.npcs.get_mut(&id) {
@@ -9842,7 +9857,7 @@ impl<'w> Server<'w> {
         let want = to.y.atan2(to.x).to_degrees();
         let err = wrap_deg(want - n.angles.y);
         if n.goal.is_none() {
-            let max_turn = NPC_YAW_RATE * dt;
+            let max_turn = n.max_yaw.unwrap_or(NPC_YAW_RATE) * dt;
             n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
         }
         if n.goal.is_none() {
@@ -10650,6 +10665,7 @@ impl<'w> Server<'w> {
                 next_shot: 0,
                 shots: 0,
                 chase_reach: NPC_CHASE_REACH,
+                max_yaw: None,
                 swing_until: 0,
                 melee_hit_at: None,
                 melee_hits_left: 0,

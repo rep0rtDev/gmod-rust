@@ -1816,6 +1816,10 @@ function NPC:GetTimeEnemyLastReacquired() local s = snap(self.__id); local t = s
 function NPC:HasObstacles() local s = snap(self.__id); return (s and s.npc_stuck or 0) > 0 end
 function NPC:GetArrivalDistance() local s = snap(self.__id); return s and s.npc_chase_reach or 0 end
 function NPC:SetArrivalDistance(d) qwrite("npc_arrival", self.__id, { dist = tonumber(d) or 0 }) end
+-- ENTITY:SetMaxYawSpeed of scripted NPCs: turn-rate override (deg/s) on the server AI; 0 restores
+-- the measured class rate (150 deg/s + 0.267 per u/s while halting toward a new goal)
+-- @hook ENTITY:SetMaxYawSpeed
+function ENT:SetMaxYawSpeed(r) qwrite("npc_max_yaw", self.__id, { rate = tonumber(r) or 0 }) end
 function NPC:GetIdealMoveSpeed() local s = snap(self.__id); return s and s.npc_move_speed or 0 end
 function NPC:GetMoveInterval() return FrameTime() end
 function NPC:GetIdealYaw()

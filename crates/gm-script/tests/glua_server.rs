@@ -54,6 +54,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_target_first_seen: 0,
             npc_stuck: 0,
             npc_chase_reach: 0.0,
+            npc_max_yaw: 0.0,
             npc_ignore: Vec::new(),
             npc_move_speed: 0.0,
             npc_next_goal: None,
@@ -114,6 +115,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_target_first_seen: 0,
             npc_stuck: 0,
             npc_chase_reach: 0.0,
+            npc_max_yaw: 0.0,
             npc_ignore: Vec::new(),
             npc_move_speed: 0.0,
             npc_next_goal: None,
@@ -2257,4 +2259,34 @@ fn phys_bones_translate_between_bones_and_solids() {
     let r: Vec<i32> = rt.actors()[0].eval("return state.r").unwrap();
     // one solid on the pelvis: the head (child of the pelvis) resolves to it through its parent
     assert_eq!(r, vec![1, 0, -1, 0, 0, -1]);
+}
+
+#[test]
+fn npc_max_yaw_write() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            local n = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.NPC }, __glua_classes.Entity)
+            n:SetMaxYawSpeed(48) end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(
+        writes
+            .iter()
+            .any(|w| matches!(w, QueuedWrite::NpcMaxYaw { ent: 5, rate } if *rate == 48.0)),
+        "{writes:?}"
+    );
 }

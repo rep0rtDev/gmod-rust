@@ -64,6 +64,8 @@ pub struct EntitySnap {
     /// next path point, and a `CAP_*` mask derived from what the class can do.
     pub npc_stuck: u8,
     pub npc_chase_reach: f32,
+    /// NPC: script turn-rate override (deg/s), 0 = class rate.
+    pub npc_max_yaw: f32,
     /// NPC: players it still ignores as targets (`IgnoreEnemyUntil` / `RememberUnreachable`).
     pub npc_ignore: Vec<u32>,
     pub npc_move_speed: f32,
@@ -418,6 +420,7 @@ impl Snapshot {
                             npc_target_first_seen: 0,
                             npc_stuck: 0,
                             npc_chase_reach: 0.0,
+                            npc_max_yaw: 0.0,
                             npc_ignore: Vec::new(),
                             npc_move_speed: 0.0,
                             npc_next_goal: None,
@@ -547,6 +550,7 @@ impl Snapshot {
                             npc_target_first_seen: 0,
                             npc_stuck: 0,
                             npc_chase_reach: 0.0,
+                            npc_max_yaw: 0.0,
                             npc_ignore: Vec::new(),
                             npc_move_speed: 0.0,
                             npc_next_goal: None,
@@ -614,6 +618,7 @@ impl Snapshot {
                             npc_target_first_seen: n.target_first_seen,
                             npc_stuck: n.stuck,
                             npc_chase_reach: n.chase_reach,
+                            npc_max_yaw: n.max_yaw.unwrap_or(0.0),
                             npc_ignore: n
                                 .ignore
                                 .iter()

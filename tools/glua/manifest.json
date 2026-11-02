@@ -1612,7 +1612,7 @@
 {"address":"ENTITY:ScheduleFinished","kind":"hook","parent":"ENTITY","name":"ScheduleFinished","realms":["server"],"args":[],"rets":[],"status":"implemented"},
 {"address":"ENTITY:SelectSchedule","kind":"hook","parent":"ENTITY","name":"SelectSchedule","realms":["server"],"args":[],"rets":[],"status":"implemented"},
 {"address":"ENTITY:SetAutomaticFrameAdvance","kind":"hook","parent":"ENTITY","name":"SetAutomaticFrameAdvance","realms":["client","server"],"args":[{"name":"enable","type":"boolean"}],"rets":[],"status":"stub"},
-{"address":"ENTITY:SetMaxYawSpeed","kind":"classfunc","parent":"ENTITY","name":"SetMaxYawSpeed","realms":["server"],"args":[{"name":"maxyaw","type":"number"}],"rets":[],"status":"stub"},
+{"address":"ENTITY:SetMaxYawSpeed","kind":"classfunc","parent":"ENTITY","name":"SetMaxYawSpeed","realms":["server"],"args":[{"name":"maxyaw","type":"number"}],"rets":[],"status":"implemented"},
 {"address":"ENTITY:SetNPCClass","kind":"classfunc","parent":"ENTITY","name":"SetNPCClass","realms":["server"],"args":[{"name":"classification","type":"number"}],"rets":[],"status":"stub"},
 {"address":"ENTITY:SetTask","kind":"hook","parent":"ENTITY","name":"SetTask","realms":["server"],"args":[{"name":"task","type":"table"}],"rets":[],"status":"implemented"},
 {"address":"ENTITY:SetupDataTables","kind":"hook","parent":"ENTITY","name":"SetupDataTables","realms":["client","server"],"args":[],"rets":[],"status":"implemented"},

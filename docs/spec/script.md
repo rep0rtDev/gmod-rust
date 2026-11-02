@@ -716,6 +716,9 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   is the solid count (1 without a `.phy`), `TranslatePhysBoneToBone(i)` / `TranslateBoneToPhysBone(b)`
   map between them (a bone without its own solid resolves through its parents, -1 if none).
   `NPC:UpdateEnemyMemory(ent, pos)` takes the target only (our AI tracks the real position).
+- `ENTITY:SetMaxYawSpeed(deg/s)` on an NPC overrides the turn rate the AI uses while turning
+  in place and while halting toward a new goal (0 / non-positive restores the measured class
+  rate: 150 deg/s, +0.267 per u/s of speed while halting); the snapshot carries it as `npc_max_yaw`.
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.

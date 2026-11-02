@@ -114,6 +114,10 @@ pub enum QueuedWrite {
     /// `npc_target`: `{player}` engages that player, no value drops the target and keeps the
     /// NPC passive until the next `npc_target`.
     /// `NPC:SetArrivalDistance`: how close the chase mover gets before it stops.
+    NpcMaxYaw {
+        ent: u32,
+        rate: f32,
+    },
     NpcArrival {
         ent: u32,
         dist: f32,
@@ -1036,6 +1040,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("npc_target_first_seen", e.npc_target_first_seen)?;
     t.set("npc_stuck", e.npc_stuck)?;
     t.set("npc_chase_reach", e.npc_chase_reach)?;
+    t.set("npc_max_yaw", e.npc_max_yaw)?;
     t.set("npc_move_speed", e.npc_move_speed)?;
     if let Some(g) = e.npc_next_goal {
         t.set("npc_next_goal", vec3_table(lua, g)?)?;
@@ -1586,6 +1591,13 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     }
                 }
                 "npc_stop" => QueuedWrite::NpcStop { ent },
+                "npc_max_yaw" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NpcMaxYaw {
+                        ent,
+                        rate: t.get::<Option<f32>>("rate")?.unwrap_or(0.0),
+                    }
+                }
                 "npc_arrival" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::NpcArrival {
@@ -3496,6 +3508,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::Remove { ent } => server.remove_prop(*ent),
         QueuedWrite::NpcGoto { ent, pos, run } => server.npc_goto(*ent, *pos, *run),
         QueuedWrite::NpcChase { ent, player, run } => server.npc_chase(*ent, *player, *run),
+        QueuedWrite::NpcMaxYaw { ent, rate } => server.npc_set_max_yaw(*ent, *rate),
         QueuedWrite::NpcArrival { ent, dist } => server.npc_set_arrival(*ent, *dist),
         QueuedWrite::NpcTarget { ent, player } => server.npc_target(*ent, *player),
         QueuedWrite::NpcStop { ent } => {
