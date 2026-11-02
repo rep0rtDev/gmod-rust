@@ -13,9 +13,10 @@ C++ library linked in; the wrapper is ours).
 Inputs (Source units, Z up; rotated `(x, y, z) -> (x, z, -y)` for Recast's Y up and
 back on output; the rotation is proper so winding survives):
 
-- every brush whose contents intersect `SOLID | MOVEABLE | WINDOW | GRATE |
+- every world-model brush (model 0's leaves; brush entities keep their own models and
+  are left out) whose contents intersect `SOLID | MOVEABLE | WINDOW | GRATE |
   MONSTERCLIP` (the solid part of `MASK_NPCSOLID`; `PLAYERCLIP` is not solid to NPCs),
-  world and brush entities alike, as outward-wound polygons from the side planes
+  as outward-wound polygons from the side planes
   (`brush_polygons`: each plane's huge quad clipped by the others; bevel sides give
   no polygon);
 - sides whose texinfo has `SURF_SKY | SURF_SKY2D` are dropped (skybox shell);
@@ -135,8 +136,12 @@ was not kept. `_citizen_corner` / `_corner_seen` (1300 u to (-300, -300) round t
 building) are red by construction: the game walks its node graph (175 -> 180 -> 147 ->
 140 -> 136 -> 168 deg legs with a ~1 u brake dip at a mid-leg node), ours string-pulls the
 Detour mesh and leaves south-about instead of north-about, so the routes part at the first
-step; they stay as recordings of the 13-tick regime. Open: check why Detour prefers the
-southern route (the northern passage may be pinched below the agent radius on our mesh).
+step; they stay as recordings of the 13-tick regime. Chasing why Detour first went
+south-about found a mesh bug: `world_geometry` took every brush of the BSP, including the
+brush entities' own models, and gm_construct has two 8 u NODRAW `CONTENTS_SOLID` slabs
+through the map centre (x = -4..4, y = -968..968, z = -204..204) that walled the mesh in
+two. Only the world model's brushes (model 0's leaves) are meshed now; the route is the
+straight 1317 u diagonal, the game's node-graph legs total about 1300 u.
 In `_corner_seen` the probe's `spawnnpc` yaw only turned the bot's eyes, so the game's NPC
 spawned facing the bot's body (yaw 180) while ours faces the eye yaw: a probe artifact.
 Residuals inside the tolerance: the game's first braking step is gentler than the curve

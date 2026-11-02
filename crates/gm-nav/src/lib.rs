@@ -70,6 +70,40 @@ const NPC_SOLID: i32 = contents::SOLID
     | contents::GRATE
     | contents::MONSTERCLIP;
 
+/// Brushes of the world model (reachable from model 0's head node). Brush entities (doors,
+/// func_brush, ...) carry their own models and are not part of the static mesh: gm_construct
+/// has two 8 u NODRAW slabs through the map centre that would otherwise wall it in two.
+fn world_brushes(bsp: &Bsp<'_>) -> Vec<bool> {
+    let mut world = vec![false; bsp.brushes.len()];
+    let Some(model) = bsp.models.first() else {
+        return world;
+    };
+    let mut stack = vec![model.head_node];
+    while let Some(node) = stack.pop() {
+        if node >= 0 {
+            if let Some(n) = bsp.nodes.get(node as usize) {
+                stack.extend(n.children);
+            }
+            continue;
+        }
+        let Some(leaf) = bsp.leafs.get((-1 - node) as usize) else {
+            continue;
+        };
+        let first = leaf.first_leaf_brush as usize;
+        for &b in bsp
+            .leaf_brushes
+            .iter()
+            .skip(first)
+            .take(leaf.num_leaf_brushes as usize)
+        {
+            if let Some(w) = world.get_mut(b as usize) {
+                *w = true;
+            }
+        }
+    }
+    world
+}
+
 /// Solid brush faces and displacement triangles of the whole map (world and brush
 /// entities alike: doors and func_brush stand where the map put them). Sky faces are
 /// left out: the skybox shell is unreachable.
@@ -77,8 +111,9 @@ pub fn world_geometry(bsp: &Bsp<'_>) -> Geometry {
     let mut g = Geometry::default();
     let mut planes = Vec::new();
     let mut sky = Vec::new();
-    for brush in &bsp.brushes {
-        if brush.contents & NPC_SOLID == 0 {
+    let world = world_brushes(bsp);
+    for (bi, brush) in bsp.brushes.iter().enumerate() {
+        if brush.contents & NPC_SOLID == 0 || !world.get(bi).copied().unwrap_or(false) {
             continue;
         }
         planes.clear();
