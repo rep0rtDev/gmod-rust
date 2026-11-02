@@ -1151,6 +1151,8 @@ pub struct Npc {
     pub last_enemy_damage: u64,
     /// `SetMaxLookDistance`: how far this NPC looks for a target (default `NPC_SIGHT_RANGE`).
     pub sight: f32,
+    /// `IgnoreEnemyUntil`: players this NPC does not target until the tick.
+    pub ignore: Vec<(u32, u64)>,
     pub burst_left: u8,
     pub next_shot: u64,
     pub shots: u32,
@@ -5930,6 +5932,33 @@ impl<'w> Server<'w> {
         self.npcs.get(&id).map(|n| n.blood)
     }
 
+    /// Whether NPC `id` ignores player `p` at `now` (`IgnoreEnemyUntil`).
+    pub fn npc_ignores(&self, id: u32, p: u32, now: u64) -> bool {
+        self.npcs
+            .get(&id)
+            .is_some_and(|n| n.ignore.iter().any(|(pl, t)| *pl == p && *t > now))
+    }
+
+    /// Script `NPC:IgnoreEnemyUntil`: the NPC drops `player` as its target and does not pick
+    /// it again before tick `until`.
+    pub fn npc_ignore_until(&mut self, id: u32, player: u32, until: u64) -> bool {
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        n.ignore.retain(|(pl, _)| *pl != player);
+        n.ignore.push((player, until));
+        if n.target == Some(player) {
+            n.target = None;
+            n.chase = None;
+        }
+        true
+    }
+
+    /// The player an NPC currently targets.
+    pub fn npc_current_target(&self, id: u32) -> Option<u32> {
+        self.npcs.get(&id).and_then(|n| n.target)
+    }
+
     /// Script `NPC:SetMaxLookDistance`: the target search range of one NPC.
     pub fn set_npc_sight(&mut self, id: u32, dist: f32) -> bool {
         match self.npcs.get_mut(&id) {
@@ -6870,6 +6899,7 @@ impl<'w> Server<'w> {
             target_first_seen: 0,
             last_enemy_damage: 0,
             sight: NPC_SIGHT_RANGE,
+            ignore: Vec::new(),
             burst_left: 0,
             next_shot: 0,
             shots: 0,
@@ -7634,6 +7664,9 @@ impl<'w> Server<'w> {
         let sight = n.sight;
         let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
+            if server.npc_ignores(id, p, now) {
+                return None;
+            }
             let pl = server.players.get(&p).filter(|pl| pl.alive)?;
             let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
             if chest.distance(eye) > sight {
@@ -7808,6 +7841,9 @@ impl<'w> Server<'w> {
         let sight = n.sight;
         let feet = n.pos;
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
+            if server.npc_ignores(id, p, now) {
+                return None;
+            }
             let pl = server.players.get(&p).filter(|pl| pl.alive)?;
             let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
             if chest.distance(eye) > sight {
@@ -8086,6 +8122,9 @@ impl<'w> Server<'w> {
         let sight = n.sight;
         let feet = n.pos;
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
+            if server.npc_ignores(id, p, now) {
+                return None;
+            }
             let pl = server.players.get(&p).filter(|pl| pl.alive)?;
             let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
             if chest.distance(eye) > sight {
@@ -8549,6 +8588,7 @@ impl<'w> Server<'w> {
                 target_first_seen: 0,
                 last_enemy_damage: 0,
                 sight: NPC_SIGHT_RANGE,
+                ignore: Vec::new(),
                 burst_left: 0,
                 next_shot: 0,
                 shots: 0,

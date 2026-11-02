@@ -3177,7 +3177,7 @@
 {"address":"NPC:HasEnemyMemory","kind":"classfunc","parent":"NPC","name":"HasEnemyMemory","realms":["server"],"args":[{"name":"enemy","type":"Entity","default":"GetEnemy()"}],"rets":[{"name":"eluded","type":"boolean"}],"status":"implemented"},
 {"address":"NPC:HasObstacles","kind":"classfunc","parent":"NPC","name":"HasObstacles","realms":["server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"stub"},
 {"address":"NPC:IdleSound","kind":"classfunc","parent":"NPC","name":"IdleSound","realms":["server"],"args":[],"rets":[],"status":"stub"},
-{"address":"NPC:IgnoreEnemyUntil","kind":"classfunc","parent":"NPC","name":"IgnoreEnemyUntil","realms":["server"],"args":[{"name":"enemy","type":"Entity"},{"name":"until","type":"number"}],"rets":[],"status":"stub"},
+{"address":"NPC:IgnoreEnemyUntil","kind":"classfunc","parent":"NPC","name":"IgnoreEnemyUntil","realms":["server"],"args":[{"name":"enemy","type":"Entity"},{"name":"until","type":"number"}],"rets":[],"status":"implemented"},
 {"address":"NPC:IsCrouching","kind":"classfunc","parent":"NPC","name":"IsCrouching","realms":["server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
 {"address":"NPC:IsCurWaypointGoal","kind":"classfunc","parent":"NPC","name":"IsCurWaypointGoal","realms":["server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
 {"address":"NPC:IsCurrentSchedule","kind":"classfunc","parent":"NPC","name":"IsCurrentSchedule","realms":["server"],"args":[{"name":"schedule","type":"number"}],"rets":[{"name":"","type":"boolean"}],"status":"stub"},

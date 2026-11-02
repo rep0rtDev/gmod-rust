@@ -393,6 +393,12 @@ pub enum QueuedWrite {
         ent: u32,
         weapon: u32,
     },
+    /// `NPC:IgnoreEnemyUntil`: skip `player` as a target before tick `until`.
+    NpcIgnore {
+        ent: u32,
+        player: u32,
+        until: u64,
+    },
     /// `Entity:SetBloodColor` (NPCs).
     SetBlood {
         ent: u32,
@@ -1737,6 +1743,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         _ => 0,
                     },
                 },
+                "npc_ignore" => {
+                    let v = value_vec3(&arg)?;
+                    QueuedWrite::NpcIgnore {
+                        ent,
+                        player: v.x.max(0.0) as u32,
+                        until: v.y.max(0.0) as u64,
+                    }
+                }
                 "entity.set_blood" => QueuedWrite::SetBlood {
                     ent,
                     blood: match &arg {
@@ -2712,6 +2726,9 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         } => server.set_entity_surface(*ent, *friction, *elasticity),
         QueuedWrite::NpcWeapon { ent, class } => server.set_npc_weapon(*ent, class),
         QueuedWrite::SetBlood { ent, blood } => server.set_blood(*ent, *blood),
+        QueuedWrite::NpcIgnore { ent, player, until } => {
+            server.npc_ignore_until(*ent, *player, *until)
+        }
         QueuedWrite::NpcSight { ent, dist } => server.set_npc_sight(*ent, *dist),
         QueuedWrite::NpcPickupWeapon { ent, weapon } => server.npc_pickup_weapon(*ent, *weapon),
         QueuedWrite::NpcWander { ent, min, max } => server.npc_wander_goal(*ent, *min, *max),

@@ -1335,3 +1335,47 @@ fn npc_look_distance_and_world_weapon_pickup() {
     );
     assert!(server.world_weapons.contains_key(&778));
 }
+
+#[test]
+fn npc_ignores_a_player_until_the_tick() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    assert!(server.spawn_npc(1, "npc_bogus", "none").is_none());
+    assert!(server.sandbox.undos(1).is_empty());
+    let _hit = server.tool_hit(1).unwrap();
+    let id = server.spawn_npc(1, "npc_alyx", "weapon_alyxgun").unwrap();
+    assert!(server.npc_target(id, Some(1)));
+    assert_eq!(server.npc_current_target(id), Some(1));
+    assert!(server.npc_ignore_until(id, 1, 1_000_000));
+    assert_eq!(
+        server.npc_current_target(id),
+        None,
+        "the ignored target is dropped"
+    );
+    assert!(server.npc_ignores(id, 1, 999_999));
+    assert!(
+        !server.npc_ignores(id, 1, 1_000_000),
+        "the ignore expires at the tick"
+    );
+    assert!(!server.npc_ignores(id, 2, 0));
+    assert!(!server.npc_ignore_until(99_999, 1, 1));
+}
