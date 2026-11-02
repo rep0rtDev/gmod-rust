@@ -209,7 +209,12 @@ No oracle here - the game's squad slots and hint-node cover are not measurable f
 
 Locomotion fixes that fell out of the cover run: a path corner within `NPC_CORNER_REACH` (8 u) is passed only when the hull can already sweep to the next corner (cutting it against a wall end jams: the mesh keeps 16 u, the box hull 13); a think-step sweep blocked after passing a corner is retried to the corner itself; the remainder of a blocked step slides along the hit plane (the box hull's 18.4 u half-diagonal reaches past the mesh's 16 u margin at wall ends); a body that covers less than a tenth of its step three thinks running gives the path up (`Npc::stuck`).
 
-Pending: antlions and the poison zombie (unmeasured), combat sequences of other armed classes, cover from grenades / suppressing fire, squad formations.
+Measured, not yet modelled (scenarios `server/npc_melee_antlion`, `server/npc_melee_poisonzombie`):
+
+- Antlion: hull 16 x 16 x 64, eyes +24, 30 hp. Combat at +28, one think of `run_all`, a 66 u ground lunge (`pounce2`: 41.4 / 21.5 / 3.3 u per think), two more run thinks, then at ~93 u `attack3` (98 ticks) whose swipe lands at +34 for 5 DMG_SLASH with a 7490 force (the player is thrown ~30 u) - the swipe reaches ~100 u; then `pounce` (63 ticks): an 84 u lunge (11.9 / 40.9 / 31.6 u per think) hitting at 38 u at +34 for 5 (force 7460, 773 up), a 21 u recoil, 7 ticks of run, and `attack3` again; swipe and pounce alternate on a 168-tick period (swipe hits 459 / 627 / 795, pounce hits 557 / 725 / 893).
+- Poison zombie: hull 13 x 13 x 72, eyes +64, 175 hp. Walks at 5.85 u per think (55.2 u/s, 104 u/s^2 ramp); at ~140 u stops for `headcrab2Leap` (168 ticks) and throws a poison headcrab (a separate `npc_headcrab_poison` entity) that bites the player 187 ticks after the throw began for 5 DMG_SLASH plus 94 DMG_POISON (0x20000, no force) - the game's poison bite leaves the player at 1 hp; then walks on and from ~66 u plays `melee_02` (98 ticks) with the claw landing at +62 for 25 DMG_SLASH (force 7500). One throw in 600 ticks; the throw cadence is unmeasured.
+
+Pending: the antlion's swipe / pounce pair and the poison zombie's claw and headcrab throw (laws above), combat sequences of other armed classes, cover from grenades / suppressing fire, squad formations.
 
 ## Melee: measured inputs and our model
 
