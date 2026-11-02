@@ -555,6 +555,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   `Get/SetGlobal*` (actor-local), `SERVER / CLIENT`, `include / AddCSLuaFile` (inert: packages
   carry their files), and the enums these use (`TYPE_*`, `DMG_*`, `SOLID_*`,
   `COLLISION_GROUP_*`, `CONTENTS_*`, `ACT_*` movement, `HITGROUP_*`, `MOVETYPE_*`, `FORCE_*`).
+- `ENT:PhysicsInit(solid)` / `PhysicsInitBox(mins, maxs)` / `PhysicsInitSphere(r)` /
+  `PhysicsInitStatic` / `PhysicsInitShadow` / `PhysicsDestroy` choose a scripted entity's body: a
+  box or icosphere hull of its own (the model's mass), the model's hulls frozen in place, or no
+  body (`SOLID_NONE`, `PhysicsDestroy`). Before `Spawn` the shape rides with the spawn; on a live
+  entity the body is dropped and rebuilt on the next tick. `PhysWake` wakes the body.
+  `PhysicsInitConvex / MultiConvex` (hulls from points) and `PhysicsFromMesh` stay stubs.
 
 Done in `glua/server.luau`:
 

@@ -131,6 +131,13 @@ pub enum QueuedWrite {
         angles: Vec3,
         frozen: bool,
         tag: String,
+        /// `ENT:PhysicsInit*` called before `Spawn`.
+        physics: Option<gm_server::PhysShape>,
+    },
+    /// `ENT:PhysicsInit*` / `PhysicsDestroy` on a live scripted entity.
+    EntityPhysics {
+        ent: u32,
+        shape: gm_server::PhysShape,
     },
     SetSkin {
         ent: u32,
@@ -675,6 +682,23 @@ fn cvar_string(v: &Value) -> Result<String> {
             other.type_name()
         ))),
     }
+}
+
+/// `{ kind = "model" | "box" | "sphere" | "static" | "none", mins, maxs, radius }`.
+fn phys_shape(t: &Table) -> Result<gm_server::PhysShape> {
+    let kind: String = t.get::<Option<String>>("kind")?.unwrap_or_default();
+    Ok(match kind.as_str() {
+        "box" => gm_server::PhysShape::Box {
+            mins: table_vec3(&t.get::<Table>("mins")?)?,
+            maxs: table_vec3(&t.get::<Table>("maxs")?)?,
+        },
+        "sphere" => gm_server::PhysShape::Sphere {
+            radius: t.get::<Option<f32>>("radius")?.unwrap_or(1.0),
+        },
+        "static" => gm_server::PhysShape::Static,
+        "none" => gm_server::PhysShape::None,
+        _ => gm_server::PhysShape::Model,
+    })
 }
 
 fn int_arg(v: &Value) -> Result<i32> {
@@ -1451,6 +1475,10 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         },
                         frozen: t.get::<Option<bool>>("frozen")?.unwrap_or(false),
                         tag: t.get::<Option<String>>("tag")?.unwrap_or_default(),
+                        physics: t
+                            .get::<Option<Table>>("physics")?
+                            .map(|p| phys_shape(&p))
+                            .transpose()?,
                     }
                 }
                 "set_skin" => QueuedWrite::SetSkin {
@@ -1718,6 +1746,10 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         Value::Integer(i) => *i as f32,
                         _ => 0.0,
                     },
+                },
+                "ent.physics" => QueuedWrite::EntityPhysics {
+                    ent,
+                    shape: phys_shape(&table_arg(&arg)?)?,
                 },
                 "vehicle.engine" => QueuedWrite::VehicleEngine {
                     ent,
@@ -2708,8 +2740,11 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             angles,
             frozen,
             tag,
+            physics,
         } => match match class {
-            Some(c) => server.script_spawn_entity(*owner, c, *pos, *angles, *frozen),
+            Some(c) => {
+                server.script_spawn_entity(*owner, c, *pos, *angles, *frozen, physics.clone())
+            }
             None => server.script_spawn_prop(*owner, model, *pos, *angles, *frozen),
         } {
             Some(ent) => {
@@ -2895,6 +2930,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             handbrake,
         } => server.set_vehicle_controls(*ent, *throttle, *steer, *handbrake),
         QueuedWrite::VehicleBoost { ent, boost } => server.set_vehicle_boost(*ent, *boost),
+        QueuedWrite::EntityPhysics { ent, shape } => server.set_script_shape(*ent, shape.clone()),
         QueuedWrite::VehicleEngine { ent, on } => server.set_vehicle_engine(*ent, *on),
         QueuedWrite::PlayerVehicle { player, vehicle } => match vehicle {
             Some(v) => server.enter_vehicle(*player, *v),

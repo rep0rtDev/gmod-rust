@@ -456,3 +456,46 @@ fn npc_and_datatable_methods() {
     let removed: String = rt.actors()[0].eval("return state.removed").unwrap();
     assert_eq!(removed, "gone5");
 }
+
+#[test]
+fn physics_init_shapes_travel_with_the_spawn_or_rebuild_the_body() {
+    let (_, writes) = run("local e = ents.Create(\"prop_physics\")
+         e:SetModel(\"models/props_junk/wood_crate001a.mdl\")
+         e:PhysicsInitBox(Vector(-8, -8, -8), Vector(8, 8, 8))
+         e:Spawn()
+         Entity(7):PhysicsInitSphere(12)
+         Entity(7):PhysicsDestroy()
+         Entity(7):PhysicsInit(SOLID_VPHYSICS)
+         Entity(7):PhysWake()");
+    assert!(
+        matches!(&writes[0], QueuedWrite::Spawn { physics: Some(gm_server::PhysShape::Box { mins, maxs }), .. }
+            if *mins == Vec3::splat(-8.0) && *maxs == Vec3::splat(8.0)),
+        "{:?}",
+        writes[0]
+    );
+    assert!(matches!(
+        &writes[1],
+        QueuedWrite::EntityPhysics { ent: 7, shape: gm_server::PhysShape::Sphere { radius } } if *radius == 12.0
+    ));
+    assert!(matches!(
+        &writes[2],
+        QueuedWrite::EntityPhysics {
+            ent: 7,
+            shape: gm_server::PhysShape::None
+        }
+    ));
+    assert!(matches!(
+        &writes[3],
+        QueuedWrite::EntityPhysics {
+            ent: 7,
+            shape: gm_server::PhysShape::Model
+        }
+    ));
+    assert!(matches!(
+        &writes[4],
+        QueuedWrite::SetAsleep {
+            ent: 7,
+            asleep: false
+        }
+    ));
+}

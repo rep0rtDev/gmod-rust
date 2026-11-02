@@ -2984,6 +2984,71 @@ pub struct VehicleScript {
 
 /// `vehiclescript` of the spawnmenu's cars (`base_vehicles.lua`): jeep_test, airboat, jalopy,
 /// apc_gmod.
+/// `ENT:PhysicsInit*` of a scripted entity: what its body is made of instead of the model's PHY.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PhysShape {
+    /// `PhysicsInit(SOLID_VPHYSICS)`: the model's hulls.
+    Model,
+    /// `PhysicsInitBox(mins, maxs)`: one box hull, body local.
+    Box { mins: Vec3, maxs: Vec3 },
+    /// `PhysicsInitSphere(radius)`: an icosphere hull.
+    Sphere { radius: f32 },
+    /// `PhysicsInitStatic`: the model's hulls, frozen in place.
+    Static,
+    /// `PhysicsInit(SOLID_NONE)` / `PhysicsDestroy`: no body at all.
+    None,
+}
+
+impl PhysShape {
+    /// The hulls a shape replaces the model's with (`None` keeps the model's).
+    pub fn hulls(&self) -> Option<Vec<Vec<Vec3>>> {
+        match self {
+            PhysShape::Box { mins, maxs } => Some(vec![(0..8)
+                .map(|i| {
+                    Vec3::new(
+                        if i & 1 == 0 { mins.x } else { maxs.x },
+                        if i & 2 == 0 { mins.y } else { maxs.y },
+                        if i & 4 == 0 { mins.z } else { maxs.z },
+                    )
+                })
+                .collect()]),
+            PhysShape::Sphere { radius } => {
+                let t = (1.0 + 5f32.sqrt()) / 2.0;
+                let base = [
+                    (-1.0, t, 0.0),
+                    (1.0, t, 0.0),
+                    (-1.0, -t, 0.0),
+                    (1.0, -t, 0.0),
+                    (0.0, -1.0, t),
+                    (0.0, 1.0, t),
+                    (0.0, -1.0, -t),
+                    (0.0, 1.0, -t),
+                    (t, 0.0, -1.0),
+                    (t, 0.0, 1.0),
+                    (-t, 0.0, -1.0),
+                    (-t, 0.0, 1.0),
+                ];
+                Some(vec![base
+                    .iter()
+                    .map(|&(x, y, z)| Vec3::new(x, y, z).normalize() * *radius)
+                    .collect()])
+            }
+            _ => None,
+        }
+    }
+
+    pub fn volume(&self) -> Option<f32> {
+        match self {
+            PhysShape::Box { mins, maxs } => {
+                let d = *maxs - *mins;
+                Some((d.x * d.y * d.z).abs())
+            }
+            PhysShape::Sphere { radius } => Some(4.0 / 3.0 * std::f32::consts::PI * radius.powi(3)),
+            _ => None,
+        }
+    }
+}
+
 /// Driver inputs of a vehicle (`Vehicle:SetThrottle` / `SetSteering` / `SetHandbrake`, the
 /// engine switch) and what the drive law made of them on the last tick, for scripts.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -3952,6 +4017,9 @@ pub struct Server<'w> {
     pub mounted: Vec<String>,
     /// `Entity:SetFriction / SetElasticity` overrides of the model surface, per prop.
     pub surface_overrides: BTreeMap<u32, (f32, f32)>,
+    /// Physics shapes scripted entities asked for (`ENT:PhysicsInit*`), consulted when their
+    /// body is built instead of the model's PHY hulls.
+    pub script_shapes: BTreeMap<u32, PhysShape>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
     sounds: Vec<WorldSound>,
     /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
@@ -4104,6 +4172,7 @@ impl<'w> Server<'w> {
             move_hooks: false,
             mounted: Vec::new(),
             surface_overrides: BTreeMap::new(),
+            script_shapes: BTreeMap::new(),
             sounds: Vec::new(),
             scrapes: BTreeMap::new(),
             thruster_loops: BTreeSet::new(),
@@ -4861,6 +4930,7 @@ impl<'w> Server<'w> {
         pos: Vec3,
         angles: Vec3,
         frozen: bool,
+        shape: Option<PhysShape>,
     ) -> Option<u32> {
         let def = self
             .scripted_entities
@@ -4868,6 +4938,9 @@ impl<'w> Server<'w> {
             .find(|e| e.class == class)?
             .clone();
         let ent = self.spawn_counted(owner, &def.model, pos, angles, frozen, "sents")?;
+        if let Some(shape) = shape {
+            self.set_script_shape(ent, shape);
+        }
         self.sents.insert(
             ent,
             SentState {
@@ -6805,7 +6878,7 @@ impl<'w> Server<'w> {
         let hit = self.tool_hit(player)?;
         let pos = hit.pos + hit.normal * 16.0;
         // counted / cleaned up as a sent only (`sbox_maxsents`), never as a prop
-        let id = self.script_spawn_entity(player, class, pos, Vec3::ZERO, false)?;
+        let id = self.script_spawn_entity(player, class, pos, Vec3::ZERO, false, None)?;
         let name = def.print_name.clone().unwrap_or_else(|| class.to_string());
         self.push_undo(
             player,
@@ -7249,6 +7322,28 @@ impl<'w> Server<'w> {
             return false;
         };
         v.controls.boost = boost.clamp(0.0, 1.0);
+        true
+    }
+
+    /// Whether an entity has a physics body right now (none for `SOLID_NONE` script shapes).
+    pub fn has_body(&self, ent: u32) -> bool {
+        self.bodies.contains_key(&ent)
+    }
+
+    /// `ENT:PhysicsInit*` / `PhysicsDestroy` on a live scripted entity: the body is dropped and
+    /// rebuilt with the shape on the next tick. False for an unknown entity.
+    pub fn set_script_shape(&mut self, ent: u32, shape: PhysShape) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == ent) {
+            return false;
+        }
+        if let Some(body) = self.bodies.remove(&ent) {
+            self.physics.remove_body(body);
+        }
+        if shape == PhysShape::Static {
+            self.sandbox.set_frozen(ent, true);
+        }
+        self.script_shapes.insert(ent, shape);
+        self.sync_physics();
         true
     }
 
@@ -10466,10 +10561,22 @@ impl<'w> Server<'w> {
                         self.spawn_ragdoll_bodies(p, &rd);
                         continue;
                     }
+                    let shape = self.script_shapes.get(&p.id).cloned();
+                    if matches!(shape, Some(PhysShape::None)) {
+                        continue;
+                    }
+                    let own_hulls = shape.as_ref().and_then(|sh| sh.hulls());
+                    let hulls: &[Vec<Vec3>] = own_hulls.as_deref().unwrap_or(&info.hulls);
+                    let volume = shape
+                        .as_ref()
+                        .and_then(|sh| sh.volume())
+                        .unwrap_or(info.volume);
+                    // a scripted shape keeps the model's mass (the game's PhysicsInitBox does)
+                    let own_shape = own_hulls.is_some();
                     let Ok(body) = self.physics.add_prop(&PropDesc {
-                        hulls: &info.hulls,
+                        hulls,
                         mass: info.mass,
-                        volume: info.volume,
+                        volume,
                         position: p.pos,
                         angles: (p.angles.x, p.angles.y, p.angles.z),
                         velocity: Vec3::ZERO,
@@ -10478,12 +10585,16 @@ impl<'w> Server<'w> {
                         linear_damping: info.linear_damping,
                         angular_damping: info.angular_damping,
                         drag_axis_areas: info.drag_axis_areas,
-                        inertia: info.inertia,
-                        mass_center: Some(info.mass_center),
+                        inertia: if own_shape { None } else { info.inertia },
+                        mass_center: if own_shape {
+                            None
+                        } else {
+                            Some(info.mass_center)
+                        },
                     }) else {
                         continue;
                     };
-                    if p.frozen {
+                    if p.frozen || matches!(shape, Some(PhysShape::Static)) {
                         self.physics.freeze(body);
                     }
                     if matches!(
@@ -10513,8 +10624,10 @@ impl<'w> Server<'w> {
                         self.physics
                             .teleport(body, p.pos, gm_sandbox::rotation(p.angles));
                     }
-                    if p.frozen != self.physics.is_frozen(body) {
-                        if p.frozen {
+                    let want = p.frozen
+                        || matches!(self.script_shapes.get(&p.id), Some(PhysShape::Static));
+                    if want != self.physics.is_frozen(body) {
+                        if want {
                             self.physics.freeze(body);
                         } else {
                             self.physics.unfreeze(body);
