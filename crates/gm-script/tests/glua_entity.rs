@@ -765,3 +765,46 @@ fn player_gestures_queue_writes() {
         .iter()
         .any(|w| matches!(w, QueuedWrite::PlayerGestureReset { player: 1 })));
 }
+
+#[test]
+fn physics_collide_reaches_the_scripted_entity() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source: "local ENT = { Type = \"anim\", Model = \"models/props_c17/oildrum001.mdl\" }
+            function ENT:PhysicsCollide(data, phys)
+                state.hit = { data.Speed, data.HitPos.z, data.HitEntity:EntIndex(), data.HitNormal:Length(), phys ~= nil }
+            end
+            scripted_ents.Register(ENT, \"my_ent\")"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut init = Payload::default();
+    init.ints.push(("entity", 5));
+    init.ints.push(("player", 0));
+    init.ints.push(("other", 0));
+    init.floats.push(("amount", 0.0));
+    init.strs.push(("class", "my_ent".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.init", &init, 7)
+        .unwrap();
+    let mut hit = Payload::default();
+    hit.ints.push(("entity", 5));
+    hit.ints.push(("other", 0));
+    hit.vecs.push(("pos", glam::Vec3::new(1.0, 2.0, 3.0)));
+    hit.floats.push(("speed", 320.0));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.collide", &hit, 8)
+        .unwrap();
+    let (speed, z, other, nlen, has_phys): (f32, f32, i32, f32, bool) =
+        rt.actors()[0].eval("return unpack(state.hit)").unwrap();
+    assert_eq!((speed, z, other, has_phys), (320.0, 3.0, 0, true));
+    assert!((nlen - 1.0).abs() < 1e-4);
+}

@@ -654,6 +654,13 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   swim, die, flinch, spawn events are main-sequence business of the client pose: no-op).
   `DoAttackEvent` / `DoSecondaryAttack` / `DoReloadEvent` / `DoCustomAnimEvent` wrap it. Slot ids
   are accepted and not kept (one layer). `AnimRestartMainSequence` stays a stub.
+- `ENTITY:PhysicsCollide(data, phys)` fires from the physics impacts the server already reports
+  (`entity.collide`: contact point, approach speed, other entity or the world). `CollisionData`
+  carries HitPos / Speed / HitSpeed / HitEntity / HitObject / PhysObject / DeltaTime; HitNormal is
+  approximated from the hit point towards the entity centre and the Our/Their velocities are the
+  snapshot's (old == new): per-contact normals are not reported yet. Stale stub names dropped from
+  the GM / SANDBOX lists for hooks that are fired (SetupMove / Move / FinishMove / ScaleNPCDamage,
+  PlayerSpawn* / PlayerSpawned* / CanTool).
 
 Done in `glua/server.luau`:
 

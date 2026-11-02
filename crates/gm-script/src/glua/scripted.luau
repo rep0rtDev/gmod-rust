@@ -172,3 +172,23 @@ end
 function weapons.OnLoaded() for _, d in pairs(wep_defs) do if d.OnLoaded then d:OnLoaded() end end end
 USE_OFF, USE_ON, USE_SET, USE_TOGGLE = 0, 1, 2, 3
 SIMPLE_USE, CONTINUOUS_USE, ONOFF_USE, DIRECTIONAL_USE = 0, 1, 2, 3
+
+-- @hook ENTITY:PhysicsCollide
+-- a physics impact on a scripted entity (`ENTITY:PhysicsCollide`): the server reports the contact
+-- point and approach speed; the normal is approximated from the hit point towards the entity
+-- centre and the velocities are the snapshot's (old == new) - no per-contact normals yet
+events.on("entity.collide", function(p)
+    local i = by_id[p.entity]
+    if not i or not i.PhysicsCollide then return end
+    local e = Entity(p.entity)
+    local other = p.other ~= 0 and Entity(p.other) or game.GetWorld()
+    local hit = Vector(p.pos.x, p.pos.y, p.pos.z)
+    local n = e:GetPos() - hit
+    if n:Length() > 0.001 then n:Normalize() else n = Vector(0, 0, 1) end
+    local ov, tv = e:GetVelocity(), other:GetVelocity()
+    i:PhysicsCollide({
+        HitPos = hit, HitNormal = n, HitEntity = other, HitObject = other:GetPhysicsObject(),
+        PhysObject = e:GetPhysicsObject(), Speed = p.speed, HitSpeed = p.speed, DeltaTime = FrameTime(),
+        OurOldVelocity = ov, OurNewVelocity = ov, TheirOldVelocity = tv, TheirNewVelocity = tv,
+    }, e:GetPhysicsObject())
+end)
