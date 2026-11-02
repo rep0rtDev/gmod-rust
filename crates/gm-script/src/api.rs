@@ -429,6 +429,11 @@ pub enum QueuedWrite {
         ent: u32,
         mode: u8,
     },
+    /// `Entity:SetTransmitWithParent(on)`.
+    TransmitWithParent {
+        ent: u32,
+        on: bool,
+    },
     /// `Entity:SetPreventTransmit(ply, stop)`.
     PreventTransmit {
         ent: u32,
@@ -1074,6 +1079,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("npc_caps", e.npc_caps)?;
     t.set("model_scale", e.model_scale)?;
     t.set("transmit_block", e.transmit_block.clone())?;
+    t.set("transmit_with_parent", e.transmit_with_parent)?;
     if let Some(nb) = &e.nextbot {
         let n = lua.create_table()?;
         n.set("desired_speed", nb.desired_speed)?;
@@ -2343,6 +2349,10 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 "ent.transmit" => QueuedWrite::TransmitMode {
                     ent,
                     mode: f32_arg(&arg).clamp(0.0, 255.0) as u8,
+                },
+                "ent.transmit_with_parent" => QueuedWrite::TransmitWithParent {
+                    ent,
+                    on: matches!(arg, Value::Boolean(true)),
                 },
                 "ent.prevent_transmit" => QueuedWrite::PreventTransmit {
                     ent,
@@ -4016,6 +4026,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             prevent,
         } => server.set_prevent_transmit(*ent, *player, *prevent),
         QueuedWrite::TransmitMode { ent, mode } => server.set_transmit_mode(*ent, *mode),
+        QueuedWrite::TransmitWithParent { ent, on } => server.set_transmit_with_parent(*ent, *on),
         QueuedWrite::SentTrigger { ent, on } => server.set_sent_trigger(*ent, *on),
         QueuedWrite::SentTriggerBounds { ent, on, pad } => {
             server.set_sent_trigger_bounds(*ent, *on, *pad)

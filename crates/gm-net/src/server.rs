@@ -1325,10 +1325,22 @@ impl ServerNet {
                     None => true,
                 };
                 let near_ent = |e: &EntityState| {
-                    !server.transmit_prevented(e.id, slot.player)
-                        && server
-                            .transmit_override(e.id)
-                            .unwrap_or_else(|| near(e.pos, clusters.get(&e.id).copied()))
+                    if server.transmit_prevented(e.id, slot.player) {
+                        return false;
+                    }
+                    if let Some(o) = server.transmit_override(e.id) {
+                        return o;
+                    }
+                    // `SetTransmitWithParent`: a parented child follows its parent's interest
+                    let parent = server.entity_parent(e.id);
+                    if parent != 0 && server.transmit_with_parent(e.id) {
+                        if let Some(p) = world.get(&parent) {
+                            return server
+                                .transmit_override(p.id)
+                                .unwrap_or_else(|| near(p.pos, clusters.get(&p.id).copied()));
+                        }
+                    }
+                    near(e.pos, clusters.get(&e.id).copied())
                 };
                 let tick = self.tick;
                 let age =

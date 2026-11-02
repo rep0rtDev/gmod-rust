@@ -37,6 +37,7 @@ fn snapshot() -> Arc<Snapshot> {
             render_fx: 0,
             model_scale: 1.0,
             transmit_block: Vec::new(),
+            transmit_with_parent: false,
             sequence: "idle".into(),
             cycle: 0.0,
             playback_rate: 1.0,
@@ -99,6 +100,7 @@ fn snapshot() -> Arc<Snapshot> {
             render_fx: 0,
             model_scale: 1.0,
             transmit_block: Vec::new(),
+            transmit_with_parent: false,
             sequence: "idle".into(),
             cycle: 0.0,
             playback_rate: 1.0,
@@ -2348,4 +2350,22 @@ fn phys_inertia_write_and_torque() {
         .eval("return { state.ang.x, state.ang.y, state.ang.z }")
         .unwrap();
     assert_eq!(ang, vec![0.0, -10.0, 0.0]);
+}
+
+#[test]
+fn transmit_with_parent_write_and_readback() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local e = Entity(5)
+             state.before = e:GetTransmitWithParent()
+             e:SetTransmitWithParent(true)
+         end)",
+    );
+    rt.actors_mut()[0]
+        .dispatch(&snapshot(), "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let before: bool = rt.actors()[0].eval("return state.before").unwrap();
+    let d = format!("{:?}", rt.drain_writes());
+    assert!(!before);
+    assert!(d.contains("TransmitWithParent { ent: 5, on: true }"), "{d}");
 }

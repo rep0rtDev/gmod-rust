@@ -4438,6 +4438,8 @@ pub struct Server<'w> {
     /// `ENTITY:UpdateTransmitState` per entity: `TRANSMIT_ALWAYS` (0) / `TRANSMIT_NEVER` (1);
     /// absent = PVS.
     pub transmit_mode: BTreeMap<u32, u8>,
+    /// `Entity:SetTransmitWithParent`: parented children whose network interest follows the parent.
+    pub transmit_with_parent: BTreeSet<u32>,
     spawn_rng: u64,
     tick_count: u64,
     /// `mp_falldamage`: progressive fall damage instead of the flat 10.
@@ -4596,6 +4598,7 @@ impl<'w> Server<'w> {
             model_scales: BTreeMap::new(),
             prevent_transmit: BTreeSet::new(),
             transmit_mode: BTreeMap::new(),
+            transmit_with_parent: BTreeSet::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
             fall_damage_progressive: false,
@@ -6949,6 +6952,21 @@ impl<'w> Server<'w> {
     /// `Some(true)`: always sent, `Some(false)`: never, `None`: by interest / PVS.
     pub fn transmit_override(&self, ent: u32) -> Option<bool> {
         self.transmit_mode.get(&ent).map(|m| *m == 0)
+    }
+
+    /// `Entity:SetTransmitWithParent(on)`: the network interest test of this entity follows its
+    /// parent's while it is parented (its own radius / PVS otherwise).
+    pub fn set_transmit_with_parent(&mut self, ent: u32, on: bool) -> bool {
+        if on {
+            self.transmit_with_parent.insert(ent);
+        } else {
+            self.transmit_with_parent.remove(&ent);
+        }
+        true
+    }
+
+    pub fn transmit_with_parent(&self, ent: u32) -> bool {
+        self.transmit_with_parent.contains(&ent)
     }
 
     /// `Entity:SetPreventTransmit(ply, stop)` on a prop.

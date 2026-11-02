@@ -737,6 +737,13 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   not rotated - documented); `GetSpeedDamping` / `GetRotDamping` read the body damping.
   Stubs with a reason: buoyancy, contents, drag coefficients, game flags, shadow control, stress,
   penetration, friction snapshot (no such state in the physics layer).
+- `Entity:SetTransmitWithParent(on)`: while the entity is parented, the network interest test
+  (radius + PVS) is run on its parent instead of itself (`SetPreventTransmit` and the
+  `UpdateTransmitState` override of the child still win); `GetTransmitWithParent` reads the flag.
+  `SetModelName` / `SetWeaponModel` are `SetModel` (no precache step; a carried weapon's view
+  model is not an entity here). The rest of the Entity remainder (bone followers, brush planes,
+  gibs, motion controllers, ragdoll build, IK, lighting origin, scenes, flags) has no server
+  state and stays stub.
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.
