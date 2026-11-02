@@ -294,6 +294,12 @@ pub enum QueuedWrite {
         player: u32,
         on: bool,
     },
+    /// `Player:SetWalkSpeed` family: movement tunable `which`, `None` clears it.
+    PlayerMoveParam {
+        player: u32,
+        which: u8,
+        value: Option<f32>,
+    },
     /// `Player:SetLastHitGroup`.
     PlayerSetLastHitGroup {
         player: u32,
@@ -575,6 +581,14 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("punch_vel", vec3_table(lua, p.punch_vel)?)?;
     t.set("ladder", p.ladder)?;
     t.set("suit", p.suit)?;
+    t.set("walk_speed", p.walk_speed)?;
+    t.set("run_speed", p.run_speed)?;
+    t.set("jump_power", p.jump_power)?;
+    t.set("step_size", p.step_size)?;
+    t.set("crouched_walk_speed", p.crouched_walk_speed)?;
+    t.set("duck_time", p.duck_time)?;
+    t.set("unduck_time", p.unduck_time)?;
+    t.set("max_velocity", p.max_velocity)?;
     t.set(
         "ammo",
         p.ammo
@@ -1604,6 +1618,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     player: ent,
                     angles: value_vec3(&arg)?,
                 },
+                "player.move_param" => {
+                    let v = value_vec3(&arg)?;
+                    QueuedWrite::PlayerMoveParam {
+                        player: ent,
+                        which: v.x.clamp(0.0, 255.0) as u8,
+                        value: (v.z > 0.5).then_some(v.y),
+                    }
+                }
                 "player.set_suit" => QueuedWrite::PlayerSetSuit {
                     player: ent,
                     on: matches!(arg, Value::Boolean(true)),
@@ -2679,6 +2701,11 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             server.set_eye_angles(*player, *angles)
         }
         QueuedWrite::PlayerSetSuit { player, on } => server.set_suit(*player, *on),
+        QueuedWrite::PlayerMoveParam {
+            player,
+            which,
+            value,
+        } => server.set_move_param(*player, *which, *value),
         QueuedWrite::PlayerSetLastHitGroup { player, group } => {
             server.set_last_hit_group(*player, *group)
         }

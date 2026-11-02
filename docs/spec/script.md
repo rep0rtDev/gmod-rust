@@ -882,7 +882,12 @@ changes); `NavSetWanderGoal(min, max)` walks to a random navmesh vertex in that 
 (default 2048); `PickupWeapon(ent)` takes a world weapon of a class the NPC can carry and
 removes the world entity. `NPC:IgnoreEnemyUntil(ply, time)` drops that player as the target and
 keeps every target search from picking it before `time`; `GetNPCState` is derived from our
-state: dead `NPC_STATE_DEAD`, a target `COMBAT`, a goal `ALERT`, else `IDLE`. `GetPreferredCarryAngles` (the hook, else the scripted
+state: dead `NPC_STATE_DEAD`, a target `COMBAT`, a goal `ALERT`, else `IDLE`.
+`Player:SetWalkSpeed/SetRunSpeed/SetJumpPower/SetStepSize/SetCrouchedWalkSpeed/SetDuckSpeed/
+SetUnDuckSpeed/SetMaxSpeed` are per-player overrides of the server's movement tunables,
+swapped into the mover for that player's moves only (the snapshot carries the effective
+values the getters read; `SetMaxSpeed` sets the velocity cap, `SetSlowWalkSpeed` /
+`SetLadderClimbSpeed` stay stubs: our mover has neither). `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

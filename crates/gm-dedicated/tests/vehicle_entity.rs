@@ -393,3 +393,42 @@ fn view_punch_pickup_object_step_sound_and_ladder_are_server_operations() {
     server.spawn_player(1);
     assert!(!server.players[&1].suit, "spawn clears the suit");
 }
+
+#[test]
+fn script_move_overrides_apply_to_one_player() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    for m in ["models/nova/chair_wood01.mdl", "models/buggy.mdl"] {
+        match gm_dedicated::model_info(&mount, m) {
+            Ok(info) => {
+                eprintln!("{m}: {} attachments", info.attachments.len());
+                server.register_model(m, info);
+            }
+            Err(e) => panic!("{m}: {e}"),
+        }
+    }
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    let base = *server.move_cfg();
+    assert_eq!(server.move_config_of(1), Some(base));
+    assert!(server.set_move_param(1, 0, Some(100.0)));
+    assert!(server.set_move_param(1, 2, Some(300.0)));
+    let mc = server.move_config_of(1).unwrap();
+    assert_eq!(
+        (mc.walk_speed, mc.jump_power, mc.run_speed),
+        (100.0, 300.0, base.run_speed)
+    );
+    assert_eq!(*server.move_cfg(), base, "the server config is untouched");
+    assert!(server.set_move_param(1, 0, None));
+    assert_eq!(
+        server.move_config_of(1).unwrap().walk_speed,
+        base.walk_speed
+    );
+    assert!(!server.set_move_param(1, 9, Some(1.0)), "unknown field");
+    assert!(!server.set_move_param(99_999, 0, Some(1.0)));
+}

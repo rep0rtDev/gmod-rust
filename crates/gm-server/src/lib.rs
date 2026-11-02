@@ -1233,6 +1233,73 @@ const NPC_YAW_RATE: f32 = 150.0;
 /// (server_npc_fire_soldier: one shot per 7-tick think, 5 per burst, 28 ticks between bursts,
 /// `sk_npc_dmg_*`); target choice, sight range, aim cone and loss handling are our own rules.
 pub const NPC_SIGHT_RANGE: f32 = 2048.0;
+
+/// Per-player movement tunables set by scripts (`Player:SetWalkSpeed` and friends); `None`
+/// keeps the server's `MoveConfig` value. Swapped into the mover around that player's move.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MoveOverride {
+    pub walk_speed: Option<f32>,
+    pub run_speed: Option<f32>,
+    pub jump_power: Option<f32>,
+    pub step_size: Option<f32>,
+    pub crouched_walk_speed: Option<f32>,
+    pub duck_time: Option<f32>,
+    pub unduck_time: Option<f32>,
+    pub max_velocity: Option<f32>,
+}
+
+impl MoveOverride {
+    pub fn apply(&self, cfg: &mut gm_move::MoveConfig) {
+        if let Some(v) = self.walk_speed {
+            cfg.walk_speed = v;
+        }
+        if let Some(v) = self.run_speed {
+            cfg.run_speed = v;
+        }
+        if let Some(v) = self.jump_power {
+            cfg.jump_power = v;
+        }
+        if let Some(v) = self.step_size {
+            cfg.step_size = v;
+        }
+        if let Some(v) = self.crouched_walk_speed {
+            cfg.crouched_walk_speed = v;
+        }
+        if let Some(v) = self.duck_time {
+            cfg.duck_time = v;
+        }
+        if let Some(v) = self.unduck_time {
+            cfg.unduck_time = v;
+        }
+        if let Some(v) = self.max_velocity {
+            cfg.max_velocity = v;
+        }
+    }
+
+    pub fn effective(&self, cfg: &gm_move::MoveConfig) -> gm_move::MoveConfig {
+        let mut c = *cfg;
+        self.apply(&mut c);
+        c
+    }
+
+    /// Field `which` (0 walk, 1 run, 2 jump, 3 step, 4 crouched walk, 5 duck time, 6 unduck
+    /// time, 7 max velocity); `None` clears it.
+    pub fn set(&mut self, which: u8, value: Option<f32>) -> bool {
+        let v = value.filter(|v| v.is_finite()).map(|v| v.max(0.0));
+        match which {
+            0 => self.walk_speed = v,
+            1 => self.run_speed = v,
+            2 => self.jump_power = v,
+            3 => self.step_size = v,
+            4 => self.crouched_walk_speed = v,
+            5 => self.duck_time = v,
+            6 => self.unduck_time = v,
+            7 => self.max_velocity = v,
+            _ => return false,
+        }
+        true
+    }
+}
 pub const NPC_BURST_SHOTS: u8 = 5;
 pub const NPC_BURST_GAP_TICKS: u64 = 28;
 /// Ticks without line of sight after which the target is dropped (5 s).
@@ -3041,6 +3108,8 @@ pub struct Player {
     hit_group_override: Option<(usize, u8)>,
     /// `Player:ShouldDropWeapon`: the active weapon is dropped as a world weapon on death.
     pub drop_weapon_on_death: bool,
+    /// Script movement tunables of this player.
+    pub move_override: MoveOverride,
     /// Footstep timer and foot alternation (measured rule in `gm_move::Footsteps`).
     steps: gm_move::Footsteps,
 }
@@ -3130,6 +3199,7 @@ impl Player {
             suit: false,
             hit_group_override: None,
             drop_weapon_on_death: false,
+            move_override: MoveOverride::default(),
             steps: gm_move::Footsteps::default(),
         }
     }
@@ -5767,6 +5837,26 @@ impl<'w> Server<'w> {
 
     /// `Player:SetEyeAngles`: the next usercmd the server processes for the player runs with
     /// these view angles (the client's own angles return with the command after).
+    /// Script `Player:SetWalkSpeed` family: see [`MoveOverride::set`].
+    pub fn set_move_param(&mut self, id: u32, which: u8, value: Option<f32>) -> bool {
+        match self.players.get_mut(&id) {
+            Some(p) => p.move_override.set(which, value),
+            None => false,
+        }
+    }
+
+    /// The server's movement tunables.
+    pub fn move_cfg(&self) -> &gm_move::MoveConfig {
+        &self.mover.cfg
+    }
+
+    /// The movement tunables a player actually moves with (server config plus overrides).
+    pub fn move_config_of(&self, id: u32) -> Option<gm_move::MoveConfig> {
+        self.players
+            .get(&id)
+            .map(|p| p.move_override.effective(&self.mover.cfg))
+    }
+
     pub fn set_eye_angles(&mut self, id: u32, angles: Vec3) -> bool {
         let Some(p) = self.players.get_mut(&id) else {
             return false;
@@ -10162,7 +10252,10 @@ impl<'w> Server<'w> {
                     ..pc.cmd
                 }
             };
+            let saved_cfg = self.mover.cfg;
+            p.move_override.apply(&mut self.mover.cfg);
             self.mover.tick(&mut p.state, &cmd);
+            self.mover.cfg = saved_cfg;
         }
     }
 
@@ -10371,7 +10464,10 @@ impl<'w> Server<'w> {
                     self.mover.step_max_speed(&cmd),
                     gm_core::tick::DEFAULT_TICK_INTERVAL * 1000.0,
                 );
+                let saved_cfg = self.mover.cfg;
+                p.move_override.apply(&mut self.mover.cfg);
                 self.mover.tick(&mut p.state, &cmd);
+                self.mover.cfg = saved_cfg;
                 p.prev_vz = prev_vz;
                 p.prev_on_ground = !was_airborne;
                 if let Some(name) = p.steps.water_sound(prev_level, &p.state, &cmd) {

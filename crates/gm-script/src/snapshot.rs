@@ -93,6 +93,15 @@ pub struct PlayerSnap {
     pub punch_vel: Vec3,
     pub ladder: bool,
     pub suit: bool,
+    /// Movement tunables the player moves with (`GetWalkSpeed` and friends).
+    pub walk_speed: f32,
+    pub run_speed: f32,
+    pub jump_power: f32,
+    pub step_size: f32,
+    pub crouched_walk_speed: f32,
+    pub duck_time: f32,
+    pub unduck_time: f32,
+    pub max_velocity: f32,
     pub frags: u32,
     pub deaths: u32,
     pub max_armor: i32,
@@ -507,6 +516,17 @@ impl Snapshot {
                             punch_vel: p.state.punch_vel,
                             ladder: p.state.ladder != 0,
                             suit: p.suit,
+                            walk_speed: p.move_override.effective(server.move_cfg()).walk_speed,
+                            run_speed: p.move_override.effective(server.move_cfg()).run_speed,
+                            jump_power: p.move_override.effective(server.move_cfg()).jump_power,
+                            step_size: p.move_override.effective(server.move_cfg()).step_size,
+                            crouched_walk_speed: p
+                                .move_override
+                                .effective(server.move_cfg())
+                                .crouched_walk_speed,
+                            duck_time: p.move_override.effective(server.move_cfg()).duck_time,
+                            unduck_time: p.move_override.effective(server.move_cfg()).unduck_time,
+                            max_velocity: p.move_override.effective(server.move_cfg()).max_velocity,
                         },
                     )
                 })
