@@ -760,6 +760,9 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("ladder", p.ladder)?;
     t.set("suit", p.suit)?;
     t.set("walk_speed", p.walk_speed)?;
+    t.set("ladder_speed", p.ladder_speed)?;
+    t.set("lagged_movement", p.lagged_movement)?;
+    t.set("sprint_enabled", p.sprint_enabled)?;
     t.set("run_speed", p.run_speed)?;
     t.set("jump_power", p.jump_power)?;
     t.set("step_size", p.step_size)?;

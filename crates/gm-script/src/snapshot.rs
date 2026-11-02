@@ -135,6 +135,9 @@ pub struct PlayerSnap {
     pub suit: bool,
     /// Movement tunables the player moves with (`GetWalkSpeed` and friends).
     pub walk_speed: f32,
+    pub ladder_speed: f32,
+    pub lagged_movement: f32,
+    pub sprint_enabled: bool,
     pub run_speed: f32,
     pub jump_power: f32,
     pub step_size: f32,
@@ -711,6 +714,15 @@ impl Snapshot {
                             ladder: p.state.ladder != 0,
                             suit: p.suit,
                             walk_speed: p.move_override.effective(server.move_cfg()).walk_speed,
+                            ladder_speed: p.move_override.effective(server.move_cfg()).ladder_speed,
+                            lagged_movement: p
+                                .move_override
+                                .effective(server.move_cfg())
+                                .time_scale,
+                            sprint_enabled: p
+                                .move_override
+                                .effective(server.move_cfg())
+                                .sprint_enabled,
                             run_speed: p.move_override.effective(server.move_cfg()).run_speed,
                             jump_power: p.move_override.effective(server.move_cfg()).jump_power,
                             step_size: p.move_override.effective(server.move_cfg()).step_size,

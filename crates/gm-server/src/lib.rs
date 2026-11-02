@@ -1663,6 +1663,9 @@ pub struct MoveOverride {
     pub hull_half: Option<f32>,
     pub stand_height: Option<f32>,
     pub duck_height: Option<f32>,
+    pub ladder_speed: Option<f32>,
+    pub time_scale: Option<f32>,
+    pub sprint_enabled: Option<bool>,
 }
 
 impl MoveOverride {
@@ -1706,6 +1709,15 @@ impl MoveOverride {
         if let Some(v) = self.duck_height {
             cfg.duck_height = v;
         }
+        if let Some(v) = self.ladder_speed {
+            cfg.ladder_speed = v;
+        }
+        if let Some(v) = self.time_scale {
+            cfg.time_scale = v;
+        }
+        if let Some(v) = self.sprint_enabled {
+            cfg.sprint_enabled = v;
+        }
     }
 
     /// This player's hull (`Player:SetHull` / `SetHullDuck` over the server config).
@@ -1726,7 +1738,8 @@ impl MoveOverride {
 
     /// Field `which` (0 walk, 1 run, 2 jump, 3 step, 4 crouched walk, 5 duck time, 6 unduck
     /// time, 7 max velocity, 8 standing eye, 9 ducked eye, 10 hull half width, 11 standing
-    /// height, 12 ducked height); `None` clears it.
+    /// height, 12 ducked height, 13 ladder climb speed, 14 lagged movement scale, 15 sprint
+    /// enabled as 0 / 1); `None` clears it.
     pub fn set(&mut self, which: u8, value: Option<f32>) -> bool {
         let v = value.filter(|v| v.is_finite()).map(|v| v.max(0.0));
         match which {
@@ -1743,6 +1756,9 @@ impl MoveOverride {
             10 => self.hull_half = v,
             11 => self.stand_height = v,
             12 => self.duck_height = v,
+            13 => self.ladder_speed = v,
+            14 => self.time_scale = v,
+            15 => self.sprint_enabled = value.map(|v| v > 0.5),
             _ => return false,
         }
         true

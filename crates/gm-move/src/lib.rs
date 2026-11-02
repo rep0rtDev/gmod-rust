@@ -50,6 +50,12 @@ pub struct MoveConfig {
     /// (settling at 63 u/s) are not; every value from 1.1 to 1.3 reproduces all recordings.
     pub ground_probe: f32,
     pub tick_interval: f32,
+    /// `Player:SprintEnable` / `SprintDisable`: whether the sprint button raises the speed cap.
+    pub sprint_enabled: bool,
+    /// `Player:SetLadderClimbSpeed`: climb and mount speed (jumping off keeps `LADDER_SPEED`).
+    pub ladder_speed: f32,
+    /// `Player:SetLaggedMovementValue`: the movement frame time is scaled by this.
+    pub time_scale: f32,
     /// `sv_rollangle` / `sv_rollspeed`: view roll from the sideways speed; GMod ships 0 / 200.
     pub roll_angle: f32,
     pub roll_speed: f32,
@@ -80,6 +86,9 @@ impl Default for MoveConfig {
             ground_normal_z: 0.7,
             ground_probe: 1.2,
             tick_interval: gm_core::tick::DEFAULT_TICK_INTERVAL,
+            sprint_enabled: true,
+            ladder_speed: LADDER_SPEED,
+            time_scale: 1.0,
             roll_angle: 0.0,
             roll_speed: 200.0,
         }
@@ -361,7 +370,7 @@ impl<'a> Mover<'a> {
     }
 
     fn tick_move(&self, st: &mut PlayerState, cmd: &UserCmd) {
-        let dt = self.cfg.tick_interval;
+        let dt = self.cfg.tick_interval * self.cfg.time_scale;
         match st.move_type {
             MoveType::Noclip => {
                 self.noclip(st, cmd, dt);
@@ -518,7 +527,7 @@ impl<'a> Mover<'a> {
             return;
         };
         let to = l.bottom.truncate() - st.origin.truncate();
-        let step = LADDER_SPEED * dt;
+        let step = self.cfg.ladder_speed * dt;
         st.velocity = Vec3::ZERO;
         if to.length() <= step {
             st.origin.x = l.bottom.x;
@@ -562,9 +571,9 @@ impl<'a> Mover<'a> {
             return;
         };
         let speed = if wish.z < -LADDER_DOWN_SLOPE {
-            -LADDER_SPEED
+            -self.cfg.ladder_speed
         } else {
-            LADDER_SPEED
+            self.cfg.ladder_speed
         };
         st.velocity = dir * speed;
         let end = st.origin + st.velocity * dt;
@@ -855,7 +864,7 @@ impl<'a> Mover<'a> {
         st.on_ground = false;
         st.velocity.z = self.cfg.jump_power;
         // the jump finishes the current tick's gravity itself, on top of the air move's halves
-        st.velocity.z -= self.cfg.gravity * self.cfg.tick_interval * 0.5;
+        st.velocity.z -= self.cfg.gravity * self.cfg.tick_interval * self.cfg.time_scale * 0.5;
         st.boost_pending = true;
         // the move the boost sees is the command's, scaled down to max speed like the move
         // itself (forward 10000 on a standing walker jumps with a 100 u/s boost, not 300)
@@ -895,7 +904,7 @@ impl<'a> Mover<'a> {
     /// The player's max speed as the footstep timer sees it (`GetMaxSpeed`): run or walk
     /// speed by the sprint button; crouching does not lower it (measured `move_step_duck`).
     pub fn step_max_speed(&self, cmd: &UserCmd) -> f32 {
-        if cmd.buttons & buttons::SPEED != 0 {
+        if cmd.buttons & buttons::SPEED != 0 && self.cfg.sprint_enabled {
             self.cfg.run_speed
         } else {
             self.cfg.walk_speed
@@ -905,7 +914,7 @@ impl<'a> Mover<'a> {
     fn max_speed(&self, st: &PlayerState, cmd: &UserCmd) -> f32 {
         if st.ducked_at_tick_start {
             self.cfg.walk_speed * self.cfg.crouched_walk_speed
-        } else if cmd.buttons & buttons::SPEED != 0 {
+        } else if cmd.buttons & buttons::SPEED != 0 && self.cfg.sprint_enabled {
             self.cfg.run_speed
         } else {
             self.cfg.walk_speed
@@ -1775,6 +1784,73 @@ mod tests {
             assert!(ticks < 200);
         }
         assert!(ticks > 5, "stopped in {ticks} ticks");
+    }
+
+    #[test]
+    fn sprint_disabled_keeps_the_walk_cap() {
+        let w = flat_world();
+        let run = |enabled: bool| {
+            let cfg = MoveConfig {
+                sprint_enabled: enabled,
+                ..Default::default()
+            };
+            let m = Mover::new(cfg, &w);
+            let mut st = PlayerState {
+                origin: Vec3::new(0.0, 0.0, 1.0),
+                ..Default::default()
+            };
+            m.tick(&mut st, &UserCmd::default());
+            let cmd = UserCmd {
+                buttons: buttons::FORWARD | buttons::SPEED,
+                forward_move: 10000.0,
+                view_angles: Vec3::new(0.0, 90.0, 0.0),
+                ..Default::default()
+            };
+            for _ in 0..200 {
+                m.tick(&mut st, &cmd);
+            }
+            st.velocity.truncate().length()
+        };
+        let (on, off) = (run(true), run(false));
+        assert!(on > 200.0, "{on}");
+        assert!(off <= 200.0 && off > 100.0, "{off}");
+    }
+
+    #[test]
+    fn lagged_movement_halves_the_jump() {
+        let w = flat_world();
+        let apex = |scale: f32| {
+            let cfg = MoveConfig {
+                time_scale: scale,
+                ..Default::default()
+            };
+            let m = Mover::new(cfg, &w);
+            let mut st = PlayerState {
+                origin: Vec3::new(0.0, 0.0, 1.0),
+                ..Default::default()
+            };
+            m.tick(&mut st, &UserCmd::default());
+            let z0 = st.origin.z;
+            m.tick(
+                &mut st,
+                &UserCmd {
+                    buttons: buttons::JUMP,
+                    ..Default::default()
+                },
+            );
+            let (mut apex, mut ticks) = (z0, 0);
+            while !st.on_ground {
+                m.tick(&mut st, &UserCmd::default());
+                apex = apex.max(st.origin.z);
+                ticks += 1;
+                assert!(ticks < 400);
+            }
+            (apex - z0, ticks)
+        };
+        let (full, t1) = apex(1.0);
+        let (half, t2) = apex(0.5);
+        assert!((full - half).abs() < 2.0, "{full} vs {half}");
+        assert!(t2 > t1 * 3 / 2, "{t1} -> {t2}");
     }
 
     #[test]

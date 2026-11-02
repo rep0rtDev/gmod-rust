@@ -712,6 +712,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `Player:SprintEnable` / `SprintDisable` gate the sprint button in the mover (the speed cap stays
+  at walk speed while disabled), `Player:SetLadderClimbSpeed` sets the climb and mount speed
+  (jumping off keeps the measured 200 u/s), `Player:SetLaggedMovementValue` scales the movement
+  frame time like the game (half = a jump twice as long). Per-player, readable back through the
+  snapshot. `SetSlowWalkSpeed` / `SetCanWalk` stay stubs: the mover has no +walk behaviour yet
+  (unmeasured).
 - `WEAPON:Tick()` runs every server tick on every carried scripted weapon; `WEAPON:EquipAmmo(ply)`
   when the player walks into a weapon of a class he already carries (the entity is gone, the
   inventory unchanged, as measured); `WEAPON:OnReloaded()` right after `DefaultReload` refilled

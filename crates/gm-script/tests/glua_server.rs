@@ -175,6 +175,9 @@ fn snapshot() -> Arc<Snapshot> {
             ladder: false,
             suit: false,
             walk_speed: 200.0,
+            ladder_speed: 200.0,
+            lagged_movement: 1.0,
+            sprint_enabled: true,
             run_speed: 400.0,
             jump_power: 200.0,
             step_size: 18.0,
@@ -1791,4 +1794,48 @@ fn weapon_tick_and_equip_ammo() {
         .unwrap();
     let (ticks, equip): (i32, i32) = a.eval("return state.ticks, state.equip").unwrap();
     assert_eq!((ticks, equip), (2, 1));
+}
+
+#[test]
+fn sprint_and_ladder_writes_go_to_the_move_params() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            local p = Player(1); p:SprintDisable(); p:SetLadderClimbSpeed(50); p:SetLaggedMovementValue(0.5)
+            state.ladder, state.lag, state.sprint = p:GetLadderClimbSpeed(), p:GetLaggedMovementValue(), p:IsSprintEnabled() end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    let params: Vec<(u8, Option<f32>)> = writes
+        .iter()
+        .filter_map(|w| match w {
+            QueuedWrite::PlayerMoveParam {
+                player: 1,
+                which,
+                value,
+            } => Some((*which, *value)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        params,
+        vec![(15, Some(0.0)), (13, Some(50.0)), (14, Some(0.5))],
+        "{writes:?}"
+    );
+    let (ladder, lag, sprint): (f32, f32, bool) = rt.actors()[0]
+        .eval("return state.ladder, state.lag, state.sprint")
+        .unwrap();
+    assert_eq!((ladder, lag, sprint), (200.0, 1.0, true));
 }
