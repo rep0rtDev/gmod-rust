@@ -492,6 +492,7 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("body", p.body.as_str())?;
     t.set("weapons", p.weapons.clone())?;
     t.set("active_weapon", p.active_weapon.as_str())?;
+    t.set("previous_weapon", p.previous_weapon.as_str())?;
     t.set("buttons", p.buttons)?;
     t.set("buttons_last", p.buttons_last)?;
     t.set("on_ground", p.on_ground)?;

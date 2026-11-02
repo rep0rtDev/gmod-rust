@@ -70,6 +70,7 @@ pub struct PlayerSnap {
     pub body: String,
     pub weapons: Vec<String>,
     pub active_weapon: String,
+    pub previous_weapon: String,
     /// Reserve ammo per ammo type and `(class, clip1, clip2)` per carried weapon.
     pub ammo: Vec<(String, i32)>,
     pub clips: Vec<(String, i32, i32)>,
@@ -307,6 +308,7 @@ impl Snapshot {
                             max_health: 100,
                             identity: None,
                             weapons: gm_net::msg::weapon_names(p.weapons, &classes),
+                            previous_weapon: String::new(),
                             active_weapon: classes
                                 .get(p.active as usize)
                                 .cloned()
@@ -450,6 +452,7 @@ impl Snapshot {
                             body: p.body.clone(),
                             weapons: p.weapons.clone(),
                             active_weapon: p.active_weapon.clone(),
+                            previous_weapon: p.previous_weapon.clone(),
                             frags: p.frags,
                             deaths: p.deaths,
                             max_armor: p.max_armor,

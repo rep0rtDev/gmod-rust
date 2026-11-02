@@ -104,6 +104,7 @@ fn snapshot() -> Arc<Snapshot> {
             body: String::new(),
             weapons: vec!["weapon_pistol".into(), "weapon_smg1".into()],
             active_weapon: String::new(),
+            previous_weapon: "weapon_smg1".into(),
             ammo: vec![("Pistol".into(), 20), ("SMG1".into(), 45)],
             clips: vec![
                 ("weapon_pistol".into(), 18, 0),
@@ -1180,4 +1181,29 @@ fn hitboxes_child_bones_timer_and_sha256() {
         h,
         "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
+}
+
+#[test]
+fn previous_weapon_effects_and_eflags() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local e = Entity(5)
+             e:AddEffects(EF_NODRAW)
+             e:AddEFlags(EFL_DORMANT)
+             local a, b = e:IsEffectActive(EF_NODRAW) and 1 or 0, e:GetEffects()
+             e:RemoveEffects(EF_NODRAW)
+             state.r = { a, b, e:GetEffects(), e:IsEFlagSet(EFL_DORMANT) and 1 or 0, e:IsEFlagSet(EFL_KILLME) and 1 or 0 }
+             state.w = Player(1):GetPreviousWeapon():GetClass()
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    let w: String = rt.actors()[0].eval("return state.w").unwrap();
+    assert_eq!(r, vec![1.0, 32.0, 0.0, 1.0, 0.0]);
+    assert_eq!(w, "weapon_smg1");
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert_eq!(writes.len(), 2, "{writes:?}");
 }

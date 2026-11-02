@@ -2881,6 +2881,9 @@ pub struct Player {
     /// Weapon classes carried, sorted (`Player:GetWeapons`).
     pub weapons: Vec<String>,
     pub active_weapon: String,
+    /// Weapon that was active before the current one (`Player:GetPreviousWeapon`).
+    pub previous_weapon: String,
+    last_active_weapon: String,
     pub inventory: weapons::Inventory,
     pub deaths: u32,
     pub frags: u32,
@@ -2965,6 +2968,8 @@ impl Player {
             wanted_body: String::new(),
             weapons: LOADOUT.iter().map(|w| w.to_string()).collect(),
             active_weapon: SPAWN_WEAPON.to_string(),
+            previous_weapon: String::new(),
+            last_active_weapon: String::new(),
             inventory: {
                 let mut inv = weapons::Inventory::default();
                 inv.give_loadout();
@@ -9622,6 +9627,10 @@ impl<'w> Server<'w> {
             p.prev_buttons = pc.cmd.buttons;
             p.buttons_last = p.buttons;
             p.buttons = pc.cmd.buttons;
+            if p.active_weapon != p.last_active_weapon {
+                p.previous_weapon =
+                    std::mem::replace(&mut p.last_active_weapon, p.active_weapon.clone());
+            }
             if changed == 0 {
                 continue;
             }

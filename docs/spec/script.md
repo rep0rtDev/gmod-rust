@@ -846,6 +846,11 @@ Player snapshot also carries `joined_tick` (`TimeConnected` = ticks since x inte
 `last_hitgroup` (last recorded hit on the player); entity snapshot carries `on_fire`
 (`IsOnFire`). `Entity:ForcePlayerDrop` makes every holder let go (`Server::force_player_drop`).
 
+The server remembers the weapon a player had active before the current one (updated as the
+player's command is processed) for `Player:GetPreviousWeapon`. `Entity:AddEffects / GetEffects /
+RemoveEffects / IsEffectActive` and the `EFlags` family keep a per-entity bitmask in the script
+layer; `EF_NODRAW` is the one flag with a server meaning and maps onto `SetNoDraw`.
+
 The model table also carries the default hit box set (bone, hit group, mins, maxs per box) for
 `Entity:GetHitBoxBone / GetHitBoxHitGroup / GetHitBoxBounds` (set argument ignored: one set);
 `GetChildBones` walks the bone parents. `util.SHA256` hashes on the host, `util.Timer` is a
