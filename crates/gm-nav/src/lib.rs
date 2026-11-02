@@ -231,6 +231,7 @@ pub struct NavMesh {
     poly_count: usize,
     /// Polygon mesh vertices in Source coordinates (for debugging and tests).
     verts: Vec<Vec3>,
+    polys: Vec<NavPoly>,
     params: NavParams,
 }
 
@@ -321,7 +322,15 @@ impl TileConfig {
     }
 }
 
-type TileData = (*mut c_uchar, c_int, Vec<Vec3>, usize);
+type TileData = (*mut c_uchar, c_int, Vec<Vec3>, Vec<NavPoly>);
+
+/// One polygon of the mesh: corner indices into [`NavMesh::vertices`] and, per edge, the
+/// polygon across it (`None` on an outer or tile-border edge).
+#[derive(Clone, Debug, PartialEq)]
+pub struct NavPoly {
+    pub verts: Vec<u32>,
+    pub neis: Vec<Option<u32>>,
+}
 
 /// Recast pipeline for one tile: heightfield -> regions -> contours -> polygon mesh ->
 /// Detour tile data. `None` when the tile has no walkable polygon.
@@ -440,6 +449,19 @@ fn build_tile(
             *pm.flags.add(i) = if walkable { WALKABLE_FLAG } else { 0 };
         }
     }
+    let nvp = pm.nvp as usize;
+    let mut polys = Vec::with_capacity(pm.npolys as usize);
+    for i in 0..pm.npolys as usize {
+        let q = unsafe { std::slice::from_raw_parts(pm.polys.add(i * 2 * nvp), 2 * nvp) };
+        let n = q[..nvp].iter().take_while(|&&v| v != 0xffff).count();
+        polys.push(NavPoly {
+            verts: q[..n].iter().map(|&v| u32::from(v)).collect(),
+            neis: q[nvp..nvp + n]
+                .iter()
+                .map(|&v| (v != 0xffff && v & 0x8000 == 0).then_some(u32::from(v)))
+                .collect(),
+        });
+    }
     let mut cp: rc::dtNavMeshCreateParams = unsafe { MaybeUninit::zeroed().assume_init() };
     cp.verts = pm.verts;
     cp.vertCount = pm.nverts;
@@ -471,7 +493,7 @@ fn build_tile(
             return Err("dtCreateNavMeshData failed".into());
         }
     }
-    Ok(Some((data, size, mesh_verts, pm.npolys as usize)))
+    Ok(Some((data, size, mesh_verts, polys)))
 }
 
 impl NavMesh {
@@ -518,6 +540,7 @@ impl NavMesh {
         let ctx = Ctx(unsafe { rc::CreateContext(false) });
         let mut poly_count = 0;
         let mut mesh_verts = Vec::new();
+        let mut polys: Vec<NavPoly> = Vec::new();
         let mut tile_tris: Vec<c_int> = Vec::new();
         for ty in 0..tiles_y {
             for tx in 0..tiles_x {
@@ -549,7 +572,7 @@ impl NavMesh {
                 if tile_tris.is_empty() {
                     continue;
                 }
-                let Some((data, size, tverts, npolys)) =
+                let Some((data, size, tverts, tpolys)) =
                     build_tile(&ctx, &cfg, p, &verts, &tile_tris, tmin, tmax, tx, ty)?
                 else {
                     continue;
@@ -565,7 +588,12 @@ impl NavMesh {
                     }
                     return Err(format!("dtNavMesh::addTile({tx}, {ty}) failed: {st:#x}"));
                 }
-                poly_count += npolys;
+                poly_count += tpolys.len();
+                let (vbase, pbase) = (mesh_verts.len() as u32, polys.len() as u32);
+                polys.extend(tpolys.into_iter().map(|q| NavPoly {
+                    verts: q.verts.iter().map(|v| v + vbase).collect(),
+                    neis: q.neis.iter().map(|n| n.map(|n| n + pbase)).collect(),
+                }));
                 mesh_verts.extend(tverts);
             }
         }
@@ -592,6 +620,7 @@ impl NavMesh {
             filter,
             poly_count,
             verts: mesh_verts,
+            polys,
             params: *p,
         })
     }
@@ -605,6 +634,11 @@ impl NavMesh {
     }
 
     /// Polygon mesh vertices (Source coordinates).
+    /// The polygons of the mesh (the script `CNavArea`s).
+    pub fn polys(&self) -> &[NavPoly] {
+        &self.polys
+    }
+
     pub fn vertices(&self) -> &[Vec3] {
         &self.verts
     }

@@ -913,7 +913,13 @@ the player). Constraint / final-velocity / abs-move-angle fields have no mover i
 `CompileString(code, name, handleError)` / `RunString` / `RunStringEx` compile a chunk from
 a string in the actor's own sandbox (same globals, no file or process access; a failed
 compile returns the error text when `handleError` is false, else raises / `ErrorNoHalt`s).
-`CompileFile` and `include` stay stubs: actors do not see files. `GetPreferredCarryAngles` (the hook, else the scripted
+`CompileFile` and `include` stay stubs: actors do not see files.
+A `CNavArea` is one polygon of our Recast mesh (ID = index; the mesh keeps each polygon's
+corners and the polygon across every edge): centre, corners, extent, `Contains` / `GetZ` /
+`GetClosestPointOnArea` from the polygon, `GetRandomPoint` uniform over its fan, neighbours
+and sides (NORTH -y, EAST +x, SOUTH +y, WEST -x by the dominant axis between centres),
+incoming connections, overlap and corner visibility; `navmesh.GetNavArea` finds the polygon
+under a point. Attributes, places, hiding spots, ladders, search lists and editing stay stubs. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

@@ -40,3 +40,35 @@ fn construct_navmesh_paths_across_the_open_ground() {
     assert!(path.points.first().unwrap().distance(a) < 8.0);
     assert!(path.points.last().unwrap().distance(b) < 8.0);
 }
+
+#[test]
+fn construct_polygons_are_closed_and_their_adjacency_is_symmetric() {
+    let Some(data) = load_construct() else {
+        return;
+    };
+    let bsp = gm_formats::bsp::Bsp::parse(&data).unwrap();
+    let nav = NavMesh::build(&bsp, &NavParams::default()).unwrap();
+    let polys = nav.polys();
+    assert_eq!(polys.len(), nav.poly_count());
+    let nverts = nav.vertices().len() as u32;
+    let mut links = 0;
+    for (i, p) in polys.iter().enumerate() {
+        assert!(
+            p.verts.len() >= 3 && p.verts.len() == p.neis.len(),
+            "poly {i}"
+        );
+        assert!(p.verts.iter().all(|&v| v < nverts));
+        for n in p.neis.iter().flatten() {
+            links += 1;
+            assert!(
+                polys[*n as usize].neis.contains(&Some(i as u32)),
+                "poly {i} -> {n} is not mirrored"
+            );
+        }
+    }
+    assert!(
+        links > polys.len(),
+        "{links} links over {} polygons",
+        polys.len()
+    );
+}

@@ -870,14 +870,15 @@ function GM:PreRegisterSENT(ent, class) return true end
 function GM:PreRegisterSWEP(swep, class) return true end
 
 
--- navmesh / CNavArea over the own Recast mesh. A "nav area" is a point snapped onto the mesh
--- with the index of the nearest mesh vertex as its ID (the mesh has polygons, not the game's
--- rectangular areas: sizes, corners, adjacency, attributes and ladders are stubs).
+-- navmesh / CNavArea over the own Recast mesh: a nav area is one polygon of the mesh (ID = its
+-- index): corners, centre, extent, neighbours across shared edges, random / closest points and
+-- heights come from the polygon. The game's rectangular-area attributes, places, hiding spots,
+-- ladders, search lists and the editing API have no counterpart here (stubs).
 local NAVAREA = {}
 NAVAREA.__index = NAVAREA
 NAVAREA.__eq = function(a, b) return a.__id == b.__id end
 NAVAREA.__tostring = function(a) return "CNavArea [" .. a.__id .. "]" end
-local nav_verts
+local nav_verts, nav_polys, nav_areas
 local function nvec(t) return Vector(t.x, t.y, t.z) end
 local function nav_vertices()
     if nav_verts then return nav_verts end
@@ -887,36 +888,156 @@ local function nav_vertices()
     for i, v in ipairs(raw) do nav_verts[i] = nvec(v) end
     return nav_verts
 end
-local function area_of(center, id)
-    if not id then
-        local best = math.huge
-        id = 0
-        for i, v in ipairs(nav_vertices()) do
-            local d = v:DistToSqr(center)
-            if d < best then best, id = d, i end
+local function polys()
+    if nav_polys then return nav_polys end
+    local raw = nav.polys()
+    if #raw == 0 then return raw end
+    local verts = nav_vertices()
+    nav_polys, nav_areas = {}, {}
+    for i, p in ipairs(raw) do
+        local corners, c = {}, Vector(0, 0, 0)
+        local lo = Vector(math.huge, math.huge, math.huge)
+        local hi = Vector(-math.huge, -math.huge, -math.huge)
+        for k, vi in ipairs(p.v) do
+            local v = verts[vi]
+            corners[k] = v
+            c = c + v
+            lo.x, lo.y, lo.z = math.min(lo.x, v.x), math.min(lo.y, v.y), math.min(lo.z, v.z)
+            hi.x, hi.y, hi.z = math.max(hi.x, v.x), math.max(hi.y, v.y), math.max(hi.z, v.z)
+        end
+        nav_polys[i] = { corners = corners, center = c / #corners, neis = p.n, lo = lo, hi = hi }
+    end
+    return nav_polys
+end
+local function area_of(id)
+    local p = polys()[id]
+    if not p then return NULL end
+    nav_areas[id] = nav_areas[id] or setmetatable({ __id = id, __center = p.center }, NAVAREA)
+    return nav_areas[id]
+end
+local function inside2d(p, pos)
+    local cs = p.corners
+    local n, sign = #cs, nil
+    for i = 1, n do
+        local a, b = cs[i], cs[i % n + 1]
+        local cr = (b.x - a.x) * (pos.y - a.y) - (b.y - a.y) * (pos.x - a.x)
+        if math.abs(cr) > 1e-6 then
+            local s = cr > 0
+            if sign == nil then sign = s elseif sign ~= s then return false end
         end
     end
-    return setmetatable({ __center = center, __id = id }, NAVAREA)
+    return true
+end
+local function poly_z(p, pos)
+    local cs = p.corners
+    for i = 2, #cs - 1 do
+        local a, v0, v1 = cs[1], cs[i] - cs[1], cs[i + 1] - cs[1]
+        local v2x, v2y = pos.x - a.x, pos.y - a.y
+        local d00, d01, d11 = v0.x * v0.x + v0.y * v0.y, v0.x * v1.x + v0.y * v1.y, v1.x * v1.x + v1.y * v1.y
+        local d20, d21 = v2x * v0.x + v2y * v0.y, v2x * v1.x + v2y * v1.y
+        local den = d00 * d11 - d01 * d01
+        if math.abs(den) > 1e-9 then
+            local v = (d11 * d20 - d01 * d21) / den
+            local w = (d00 * d21 - d01 * d20) / den
+            if v >= -1e-4 and w >= -1e-4 and v + w <= 1 + 1e-4 then return a.z + v0.z * v + v1.z * w end
+        end
+    end
+    return p.center.z
+end
+local function closest_on_segment(a, b, pos)
+    local ab = b - a
+    local l2 = ab:LengthSqr()
+    if l2 < 1e-9 then return a end
+    return a + ab * math.max(0, math.min(1, (pos - a):Dot(ab) / l2))
+end
+local function poly_at(pos, maxdz)
+    local best, bd = nil, maxdz or 72
+    for i, p in ipairs(polys()) do
+        if pos.x >= p.lo.x - 1 and pos.x <= p.hi.x + 1 and pos.y >= p.lo.y - 1 and pos.y <= p.hi.y + 1 and inside2d(p, pos) then
+            local dz = math.abs(poly_z(p, pos) - pos.z)
+            if dz <= bd then best, bd = i, dz end
+        end
+    end
+    return best
+end
+local function nearest_poly(pos)
+    local best, bd = nil, math.huge
+    for i, p in ipairs(polys()) do
+        local d = p.center:DistToSqr(pos)
+        if d < bd then best, bd = i, d end
+    end
+    return best
+end
+local function P(self) return polys()[self.__id] or { corners = {}, center = self.__center, neis = {}, lo = self.__center, hi = self.__center } end
+local function side_of(from, to)
+    -- NORTH -y, EAST +x, SOUTH +y, WEST -x: the dominant axis of the offset
+    local d = to - from
+    if math.abs(d.x) > math.abs(d.y) then return d.x > 0 and EAST or WEST end
+    return d.y > 0 and SOUTH or NORTH
 end
 function NAVAREA:GetCenter() return self.__center end
 function NAVAREA:GetID() return self.__id end
-function NAVAREA:IsValid() return self.__id ~= 0 end
+function NAVAREA:IsValid() return polys()[self.__id] ~= nil end
+function NAVAREA:GetCorner(i) local cs = P(self).corners; return cs[math.max(1, math.min(#cs, math.floor(tonumber(i) or 0) + 1))] or self.__center end
+function NAVAREA:GetSizeX() local p = P(self); return p.hi.x - p.lo.x end
+function NAVAREA:GetSizeY() local p = P(self); return p.hi.y - p.lo.y end
+function NAVAREA:GetExtentInfo() local p = P(self); return { lo = Vector(p.lo.x, p.lo.y, p.lo.z), hi = Vector(p.hi.x, p.hi.y, p.hi.z), SizeX = p.hi.x - p.lo.x, SizeY = p.hi.y - p.lo.y } end
+function NAVAREA:IsFlat() local p = P(self); return p.hi.z - p.lo.z < 1 end
+function NAVAREA:IsRoughlySquare() local p = P(self); local x, y = p.hi.x - p.lo.x, p.hi.y - p.lo.y; return x > 0 and y > 0 and math.max(x, y) / math.min(x, y) < 1.5 end
+function NAVAREA:Contains(pos) local p = P(self); return #p.corners >= 3 and inside2d(p, pos) and math.abs(poly_z(p, pos) - pos.z) <= 72 end
+function NAVAREA:GetZ(pos) return poly_z(P(self), pos) end
 function NAVAREA:GetClosestPointOnArea(pos)
-    local r = nav.nearest(pos, { x = 64, y = 64, z = 128 })
-    return r and nvec(r) or self.__center
+    local p = P(self)
+    if #p.corners >= 3 and inside2d(p, pos) then return Vector(pos.x, pos.y, poly_z(p, pos)) end
+    local best, bd, cs = p.center, math.huge, p.corners
+    for i = 1, #cs do
+        local q = closest_on_segment(cs[i], cs[i % #cs + 1], pos)
+        local d = q:DistToSqr(pos)
+        if d < bd then best, bd = q, d end
+    end
+    return best
 end
-function NAVAREA:GetZ(pos)
-    local r = nav.nearest({ x = pos.x, y = pos.y, z = self.__center.z }, { x = 1, y = 1, z = 1e5 })
-    return r and r.z or self.__center.z
+function NAVAREA:GetRandomPoint()
+    local cs = P(self).corners
+    local n = #cs
+    if n < 3 then return self.__center end
+    local areas, total = {}, 0
+    for i = 2, n - 1 do local a = (cs[i] - cs[1]):Cross(cs[i + 1] - cs[1]):Length() / 2; areas[i] = a; total = total + a end
+    local r, i = math.random() * total, 2
+    while i < n - 1 and r > areas[i] do r = r - areas[i]; i = i + 1 end
+    local u, v = math.random(), math.random()
+    if u + v > 1 then u, v = 1 - u, 1 - v end
+    return cs[1] + (cs[i] - cs[1]) * u + (cs[i + 1] - cs[1]) * v
 end
-function NAVAREA:Contains(pos)
-    local r = nav.nearest(pos, { x = 1, y = 1, z = 72 })
-    return r ~= nil
+function NAVAREA:ComputeDirection(pos) return side_of(self.__center, pos) end
+function NAVAREA:GetAdjacentAreas() local out = {}; for _, n in ipairs(P(self).neis) do if n ~= 0 then out[#out + 1] = area_of(n) end end return out end
+function NAVAREA:GetAdjacentCount() return #self:GetAdjacentAreas() end
+function NAVAREA:GetAdjacentAreasAtSide(dir) local out = {}; for _, a in ipairs(self:GetAdjacentAreas()) do if side_of(self.__center, a.__center) == dir then out[#out + 1] = a end end return out end
+function NAVAREA:GetAdjacentCountAtSide(dir) return #self:GetAdjacentAreasAtSide(dir) end
+function NAVAREA:GetRandomAdjacentAreaAtSide(dir) local t = self:GetAdjacentAreasAtSide(dir); if #t == 0 then return NULL end return t[math.random(#t)] end
+function NAVAREA:IsConnected(other) if not other or not other.__id then return false end for _, n in ipairs(P(self).neis) do if n == other.__id then return true end end return false end
+function NAVAREA:IsConnectedAtSide(other, dir) return self:IsConnected(other) and side_of(self.__center, other.__center) == dir end
+function NAVAREA:GetAdjacentAreaDistances(dir) local out = {}; for _, a in ipairs(dir and self:GetAdjacentAreasAtSide(dir) or self:GetAdjacentAreas()) do out[#out + 1] = a.__center:Distance(self.__center) end return out end
+function NAVAREA:GetIncomingConnections(dir)
+    local out = {}
+    for i, p in ipairs(polys()) do
+        if i ~= self.__id then
+            for _, n in ipairs(p.neis) do
+                if n == self.__id and (dir == nil or side_of(p.center, self.__center) == dir) then out[#out + 1] = area_of(i); break end
+            end
+        end
+    end
+    return out
 end
-function NAVAREA:IsVisible(pos)
-    return not util.TraceLine({ start = self.__center + Vector(0, 0, 36), endpos = pos }).Hit
-end
+function NAVAREA:GetIncomingConnectionsAtSide(dir) return self:GetIncomingConnections(dir) end
+function NAVAREA:IsOverlapping(pos, tol) tol = tol or 0; local p = P(self); return pos.x >= p.lo.x - tol and pos.x <= p.hi.x + tol and pos.y >= p.lo.y - tol and pos.y <= p.hi.y + tol end
+function NAVAREA:IsOverlappingArea(other, tol) tol = tol or 0; local a, b = P(self), P(other); return a.lo.x - tol <= b.hi.x and b.lo.x - tol <= a.hi.x and a.lo.y - tol <= b.hi.y and b.lo.y - tol <= a.hi.y end
+local function sees(from, pos) return not util.TraceLine({ start = from + Vector(0, 0, 36), endpos = pos }).Hit end
+function NAVAREA:IsVisible(pos) return sees(self.__center, pos) end
+function NAVAREA:IsCompletelyVisible(pos) if not sees(self.__center, pos) then return false end for _, c in ipairs(P(self).corners) do if not sees(c, pos) then return false end end return true end
+function NAVAREA:IsPartiallyVisible(pos) if sees(self.__center, pos) then return true end for _, c in ipairs(P(self).corners) do if sees(c, pos) then return true end end return false end
 function NAVAREA:ComputeGroundHeightChange(other) return other.__center.z - self.__center.z end
+function NAVAREA:ComputeAdjacentConnectionHeightChange(other) return other.__center.z - self.__center.z end
 for _, name in ipairs({ "AddAttributes", "AddHidingSpot", "AddToClosedList", "AddToOpenList", "ClearSearchLists", "ComputeAdjacentConnectionHeightChange", "ComputeDirection", "ConnectTo", "Disconnect", "Draw", "DrawSpots", "GetAdjacentAreaDistances", "GetAdjacentAreas", "GetAdjacentAreasAtSide", "GetAdjacentCount", "GetAdjacentCountAtSide", "GetAttributes", "GetCorner", "GetCostSoFar", "GetExposedSpots", "GetExtentInfo", "GetHidingSpots", "GetIncomingConnectionDistances", "GetIncomingConnections", "GetIncomingConnectionsAtSide", "GetLadders", "GetLaddersAtSide", "GetLightIntensity", "GetParent", "GetParentHow", "GetPlace", "GetRandomAdjacentAreaAtSide", "GetRandomPoint", "GetSizeX", "GetSizeY", "GetSpotEncounters", "GetTotalCost", "GetVisibleAreas", "HasAttributes", "IsBlocked", "IsClosed", "IsCompletelyVisible", "IsConnected", "IsConnectedAtSide", "IsCoplanar", "IsDamaging", "IsFlat", "IsOpen", "IsOpenListEmpty", "IsOverlapping", "IsOverlappingArea", "IsPartiallyVisible", "IsPotentiallyVisible", "IsRoughlySquare", "IsUnderwater", "MarkAsBlocked", "MarkAsDamaging", "MarkAsUnblocked", "PlaceOnGround", "PopOpenList", "Remove", "RemoveAttributes", "RemoveFromClosedList", "SetAttributes", "SetCorner", "SetCostSoFar", "SetParent", "SetPlace", "SetTotalCost", "UpdateOnOpenList" }) do
     if NAVAREA[name] == nil then NAVAREA[name] = stub("CNavArea:" .. name) end
 end
@@ -929,7 +1050,12 @@ function navmesh.GetNearestNavArea(pos, anyZ, maxDist, checkLOS, checkGround, te
     local d = maxDist or 10000
     local r = nav.nearest(pos, { x = d, y = d, z = anyZ and 1e5 or d })
     if not r then return NULL end
-    return area_of(nvec(r))
+    local q = nvec(r)
+    return area_of(poly_at(q, 72) or nearest_poly(q) or 0)
+end
+function navmesh.GetNavArea(pos, beneathLimit)
+    local id = poly_at(pos, beneathLimit or 120)
+    return id and area_of(id) or NULL
 end
 function navmesh.GetGroundHeight(pos)
     local r = nav.nearest(pos, { x = 1, y = 1, z = 1e5 })
@@ -938,31 +1064,28 @@ function navmesh.GetGroundHeight(pos)
 end
 function navmesh.Find(pos, radius, stepHeight, dropHeight)
     local out, r2 = {}, radius * radius
-    for i, v in ipairs(nav_vertices()) do
-        local dz = v.z - pos.z
-        if (v.x - pos.x) ^ 2 + (v.y - pos.y) ^ 2 <= r2 and dz <= (stepHeight or 18) and -dz <= (dropHeight or 1e9) then
-            out[#out + 1] = area_of(v, i)
+    for i, p in ipairs(polys()) do
+        local c = p.center
+        local dz = c.z - pos.z
+        if (c.x - pos.x) ^ 2 + (c.y - pos.y) ^ 2 <= r2 and dz <= (stepHeight or 18) and -dz <= (dropHeight or 1e9) then
+            out[#out + 1] = area_of(i)
         end
     end
     return out
 end
 function navmesh.FindInBox(mins, maxs)
     local out = {}
-    for i, v in ipairs(nav_vertices()) do
-        if v:WithinAABox(mins, maxs) then out[#out + 1] = area_of(v, i) end
+    for i, p in ipairs(polys()) do
+        if p.center:WithinAABox(mins, maxs) then out[#out + 1] = area_of(i) end
     end
     return out
 end
 function navmesh.GetAllNavAreas()
     local out = {}
-    for i, v in ipairs(nav_vertices()) do out[i] = area_of(v, i) end
+    for i = 1, #polys() do out[i] = area_of(i) end
     return out
 end
-function navmesh.GetNavAreaByID(id)
-    local v = nav_vertices()[id]
-    if not v then return NULL end
-    return area_of(v, id)
-end
+function navmesh.GetNavAreaByID(id) return area_of(math.floor(tonumber(id) or 0)) end
 for _, name in ipairs({ "AddWalkableSeed", "BeginGeneration", "ClearWalkableSeeds", "CreateNavArea", "CreateNavLadder", "GetBlockedAreas", "GetEditCursorPosition", "GetMarkedArea", "GetMarkedLadder", "GetNavArea", "GetNavLadderByID", "GetPlayerSpawnName", "IsGenerating", "Load", "Reset", "Save", "SetMarkedArea", "SetMarkedLadder", "SetPlayerSpawnName" }) do
     if navmesh[name] == nil then navmesh[name] = stub("navmesh." .. name) end
 end

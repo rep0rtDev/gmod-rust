@@ -232,6 +232,10 @@ impl Snapshot {
         self.nav().map_or(0, |n| n.poly_count())
     }
 
+    pub fn nav_polys(&self) -> &[gm_nav::NavPoly] {
+        self.nav().map_or(&[], |n| n.polys())
+    }
+
     pub fn nav_vertices(&self) -> &[glam::Vec3] {
         self.nav().map_or(&[], |n| n.vertices())
     }

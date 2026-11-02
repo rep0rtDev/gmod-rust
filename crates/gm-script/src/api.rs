@@ -2067,6 +2067,27 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
     )?;
     let sh = shared.clone();
     nav.set(
+        "polys",
+        lua.create_function(move |lua, ()| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            let t = lua.create_table()?;
+            for (i, p) in snap.nav_polys().iter().enumerate() {
+                let pt = lua.create_table()?;
+                pt.set("v", p.verts.iter().map(|v| v + 1).collect::<Vec<u32>>())?;
+                pt.set(
+                    "n",
+                    p.neis
+                        .iter()
+                        .map(|n| n.map_or(0, |n| n + 1))
+                        .collect::<Vec<u32>>(),
+                )?;
+                t.set(i + 1, pt)?;
+            }
+            Ok(t)
+        })?,
+    )?;
+    let sh = shared.clone();
+    nav.set(
         "nearest",
         lua.create_function(move |lua, (pos, ext): (Table, Option<Table>)| {
             let snap = sh.snapshot.read().unwrap().clone();
