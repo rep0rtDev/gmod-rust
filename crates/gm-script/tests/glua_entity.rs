@@ -1116,3 +1116,50 @@ fn scripted_npc_schedule_runs_task_by_task() {
         .unwrap();
     assert_eq!((log.as_str(), done), ("A7aB", true));
 }
+
+#[test]
+fn transmit_state_physics_update_and_movement_callbacks() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source:
+            "local ENT = { Base = \"base_nextbot\", Model = \"models/props_c17/oildrum001.mdl\" }
+            function ENT:UpdateTransmitState() return TRANSMIT_ALWAYS end
+            function ENT:PhysicsUpdate(phys) state.phys = (state.phys or 0) + 1 end
+            function ENT:OnMovementFailed() state.failed = true end
+            function ENT:RunBehaviour() self:MoveToPos(Vector(500, 0, 0)) end
+            scripted_ents.Register(ENT, \"my_bot3\")"
+                .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut ev = Payload::default();
+    ev.ints.push(("entity", 5));
+    ev.ints.push(("player", 0));
+    ev.ints.push(("other", 0));
+    ev.floats.push(("amount", 0.0));
+    ev.strs.push(("class", "my_bot3".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.init", &ev, 7)
+        .unwrap();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 8)
+        .unwrap();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.think", &ev, 9)
+        .unwrap();
+    let (phys, failed): (i32, bool) = rt.actors()[0]
+        .eval("return state.phys, state.failed == true")
+        .unwrap();
+    assert_eq!((phys, failed), (1, true));
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(writes
+        .iter()
+        .any(|w| matches!(w, QueuedWrite::TransmitMode { ent: 5, mode: 0 })));
+}

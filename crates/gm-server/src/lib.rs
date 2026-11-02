@@ -4314,6 +4314,9 @@ pub struct Server<'w> {
     pub model_scales: BTreeMap<u32, f32>,
     /// `Entity:SetPreventTransmit`: (entity, player) pairs the network layer must not send.
     pub prevent_transmit: BTreeSet<(u32, u32)>,
+    /// `ENTITY:UpdateTransmitState` per entity: `TRANSMIT_ALWAYS` (0) / `TRANSMIT_NEVER` (1);
+    /// absent = PVS.
+    pub transmit_mode: BTreeMap<u32, u8>,
     spawn_rng: u64,
     tick_count: u64,
     /// `mp_falldamage`: progressive fall damage instead of the flat 10.
@@ -4471,6 +4474,7 @@ impl<'w> Server<'w> {
             nextbots: BTreeMap::new(),
             model_scales: BTreeMap::new(),
             prevent_transmit: BTreeSet::new(),
+            transmit_mode: BTreeMap::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
             fall_damage_progressive: false,
@@ -6800,6 +6804,24 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// `ENTITY:UpdateTransmitState` result on a prop: 0 always, 1 never, anything else PVS.
+    pub fn set_transmit_mode(&mut self, ent: u32, mode: u8) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == ent) {
+            return false;
+        }
+        if mode <= 1 {
+            self.transmit_mode.insert(ent, mode);
+        } else {
+            self.transmit_mode.remove(&ent);
+        }
+        true
+    }
+
+    /// `Some(true)`: always sent, `Some(false)`: never, `None`: by interest / PVS.
+    pub fn transmit_override(&self, ent: u32) -> Option<bool> {
+        self.transmit_mode.get(&ent).map(|m| *m == 0)
+    }
+
     /// `Entity:SetPreventTransmit(ply, stop)` on a prop.
     pub fn set_prevent_transmit(&mut self, ent: u32, player: u32, prevent: bool) -> bool {
         if !self.sandbox.props().iter().any(|p| p.id == ent) {
@@ -8383,6 +8405,7 @@ impl<'w> Server<'w> {
         }
         self.model_scales.remove(&ent);
         self.prevent_transmit.retain(|(e, _)| *e != ent);
+        self.transmit_mode.remove(&ent);
         if let Some(body) = self.bodies.remove(&ent) {
             self.physics.remove_body(body);
         }

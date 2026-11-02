@@ -700,6 +700,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   `TASKSTATUS_*` complete the classes. Engine tasks (`EngTask`) have no backend here and
   complete at once; `StartEngineSchedule` / `StartEngineTask` / `RunEngineTask` and the
   `NPC:SetSchedule` family on engine NPCs stay stubs (our AI is not schedule-based).
+- `ENTITY:UpdateTransmitState` is asked once after `Initialize`; `TRANSMIT_ALWAYS` / `TRANSMIT_NEVER`
+  become a per-entity override (`Server::transmit_mode`) the network interest test honours
+  (always sent / never sent, `SetPreventTransmit` still wins), `TRANSMIT_PVS` (default) keeps the
+  radius + PVS test. `ENTITY:PhysicsUpdate(phys)` runs every server tick on the scripted entities
+  that define it (not per physics sub-step). `NextBot:MoveToPos` calls `OnMovementComplete` on
+  arrival and `OnMovementFailed` when the path is invalid or the bot is stuck.
 - NextBots: a scripted entity with `Base = "base_nextbot"` (or `Type = "nextbot"`) gets a server
   ground mover (`Server::nextbots`, `NextBot`): each tick the xy velocity ramps toward the
   `Approach` goal at the desired speed (accel / decel), gravity pulls an airborne bot, the hull

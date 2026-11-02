@@ -109,7 +109,7 @@ function scripted_ents.Register(ENT, class)
     entity.register(class, {
         model = ENT.Model, think_interval = ENT.ThinkInterval, use_type = ENT.UseType,
         print_name = ENT.PrintName, category = ENT.Category,
-        init = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.SetupDataTables and not rawget(i, "__dt") then rawset(i, "__dt", true); i:SetupDataTables() end if i.Initialize then i:Initialize() end if i.SpawnFunction == nil then end end,
+        init = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.SetupDataTables and not rawget(i, "__dt") then rawset(i, "__dt", true); i:SetupDataTables() end if i.Initialize then i:Initialize() end if i.UpdateTransmitState then local m = i:UpdateTransmitState(); if type(m) == "number" then world.queue("ent.transmit", p.entity, m) end end end,
         think = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if scripted_ents.__is_nextbot(ENT) then scripted_ents.__nextbot_think(i) end if scripted_ents.__is_ai(ENT) and i.RunAI then i:RunAI() end if i.Think then local r = i:Think(); local nt = rawget(i, "__next_think"); if nt then rawset(i, "__next_think", nil); return nt end return r end end,
         start_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.StartTouch then i:StartTouch(Entity(p.other)) end end,
         touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.Touch then i:Touch(Entity(p.other)) end end,
@@ -293,18 +293,20 @@ function NB:MoveToPos(pos, options)
     path:SetMinLookAheadDistance(options.lookahead or 300)
     path:SetGoalTolerance(options.tolerance or 20)
     path:Compute(self, pos)
-    if not path:IsValid() then return "failed" end
+    if not path:IsValid() then if self.OnMovementFailed then self:OnMovementFailed() end return "failed" end
     while path:IsValid() do
         path:Update(self)
         if options.draw then path:Draw() end
         if self.loco:IsStuck() then
             self:HandleStuck()
+            if self.OnMovementFailed then self:OnMovementFailed() end
             return "stuck"
         end
         if options.maxage and path:GetAge() > options.maxage then path:Compute(self, pos) end
         if options.repath and path:GetAge() > options.repath then path:Compute(self, pos) end
         coroutine.yield()
     end
+    if self.OnMovementComplete then self:OnMovementComplete() end
     return "ok"
 end
 function NB:HandleStuck() self.loco:ClearStuck() end
@@ -400,3 +402,14 @@ function AIM:RunAI()
 end
 scripted_ents.__is_ai = function(ENT) return ENT ~= nil and ENT.Type == "ai" end
 scripted_ents.__ai_methods = AIM
+
+-- @hook ENTITY:OnMovementComplete
+-- @hook ENTITY:OnMovementFailed
+-- @hook ENTITY:UpdateTransmitState
+-- @hook ENTITY:PhysicsUpdate
+-- PhysicsUpdate(phys) every server tick on the scripted entities that define it
+events.on("tick.pre", function()
+    for id, i in pairs(by_id) do
+        if i.PhysicsUpdate then i:PhysicsUpdate(i.Entity:GetPhysicsObject()) end
+    end
+end)

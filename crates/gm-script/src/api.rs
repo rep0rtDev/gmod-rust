@@ -375,6 +375,11 @@ pub enum QueuedWrite {
         frags: Option<u32>,
         deaths: Option<u32>,
     },
+    /// `ENTITY:UpdateTransmitState` result (`TRANSMIT_*`).
+    TransmitMode {
+        ent: u32,
+        mode: u8,
+    },
     /// `Entity:SetPreventTransmit(ply, stop)`.
     PreventTransmit {
         ent: u32,
@@ -2012,6 +2017,10 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     dt: f32_arg(&arg),
                 },
                 "npc.took_damage" => QueuedWrite::NpcTookDamage { ent },
+                "ent.transmit" => QueuedWrite::TransmitMode {
+                    ent,
+                    mode: f32_arg(&arg).clamp(0.0, 255.0) as u8,
+                },
                 "ent.prevent_transmit" => QueuedWrite::PreventTransmit {
                     ent,
                     player: tbl_field::<u32>(&arg, "player")?.unwrap_or(0),
@@ -3533,6 +3542,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             player,
             prevent,
         } => server.set_prevent_transmit(*ent, *player, *prevent),
+        QueuedWrite::TransmitMode { ent, mode } => server.set_transmit_mode(*ent, *mode),
         QueuedWrite::SentTrigger { ent, on } => server.set_sent_trigger(*ent, *on),
         QueuedWrite::SentTriggerBounds { ent, on, pad } => {
             server.set_sent_trigger_bounds(*ent, *on, *pad)

@@ -504,4 +504,11 @@ fn prevent_transmit_and_trigger_state() {
     assert!(server.set_sent_trigger_bounds(ent, true, 8.0));
     assert_eq!(server.sents[&ent].trigger_pad, Some(8.0));
     assert!(!server.set_sent_trigger(999, true));
+    assert_eq!(server.transmit_override(ent), None);
+    assert!(server.set_transmit_mode(ent, 0));
+    assert_eq!(server.transmit_override(ent), Some(true));
+    assert!(server.set_transmit_mode(ent, 1));
+    assert_eq!(server.transmit_override(ent), Some(false));
+    assert!(server.set_transmit_mode(ent, 2));
+    assert_eq!(server.transmit_override(ent), None);
 }

@@ -1311,8 +1311,10 @@ impl ServerNet {
                     None => true,
                 };
                 let near_ent = |e: &EntityState| {
-                    near(e.pos, clusters.get(&e.id).copied())
-                        && !server.transmit_prevented(e.id, slot.player)
+                    !server.transmit_prevented(e.id, slot.player)
+                        && server
+                            .transmit_override(e.id)
+                            .unwrap_or_else(|| near(e.pos, clusters.get(&e.id).copied()))
                 };
                 let tick = self.tick;
                 let age =
