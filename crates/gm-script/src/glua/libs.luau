@@ -133,7 +133,11 @@ function util.LocalToWorld(ent, lpos, bone) return ent:LocalToWorld(lpos) end
 function util.SharedRandom(name, lo, hi, add) local seed = util.CRC(name .. tostring(math.floor(CurTime() * 100)) .. tostring(add or 0)); return lo + (tonumber(seed) % 10000) / 10000 * (hi - lo) end
 function util.KeyValuesToTablePreserveOrder(kv, usesEscapes, preserveKeyCase) local t = util.KeyValuesToTable(kv, usesEscapes, preserveKeyCase); local out = {}; for k, v in pairs(t) do out[#out + 1] = { Key = k, Value = v } end return out end
 function util.TraceEntityHull(data, ent) local mins, maxs = ent:OBBMins(), ent:OBBMaxs(); data.mins, data.maxs = mins, maxs; return util.TraceHull(data) end
-for _, n in ipairs({ "GetActivityIDByName", "GetActivityNameByID", "GetAnimEventIDByName", "GetAnimEventNameByID", "GetUserGroups", "SHA1", }) do if util[n] == nil then util[n] = stub("util." .. n) end end
+function util.GetActivityIDByName(name) local v = _G[tostring(name)]; if type(v) == "number" and tostring(name):sub(1, 4) == "ACT_" then return v end return -1 end
+local ACT_NAMES = {}
+for k, v in pairs(_G) do if type(k) == "string" and k:sub(1, 4) == "ACT_" and type(v) == "number" then ACT_NAMES[v] = k end end
+function util.GetActivityNameByID(id) return ACT_NAMES[tonumber(id) or -2] or "" end
+for _, n in ipairs({ "GetAnimEventIDByName", "GetAnimEventNameByID", "GetUserGroups", "SHA1", }) do if util[n] == nil then util[n] = stub("util." .. n) end end
 
 function VectorRand(lo, hi) lo, hi = lo or -1, hi or 1; return Vector(math.Rand(lo, hi), math.Rand(lo, hi), math.Rand(lo, hi)) end
 function AngleRand(lo, hi) lo, hi = lo or -90, hi or 90; return Angle(math.Rand(lo, hi), math.Rand(math.max(lo, -180), math.min(hi, 180)), math.Rand(lo, hi)) end

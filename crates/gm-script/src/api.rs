@@ -2368,6 +2368,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 sa.set(i + 1, e)?;
             }
             t.set("sequence_anim", sa)?;
+            let sact = lua.create_table()?;
+            for (i, (act, weight)) in m.sequence_activity.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("name", act.as_str())?;
+                e.set("weight", *weight)?;
+                sact.set(i + 1, e)?;
+            }
+            t.set("sequence_activity", sact)?;
             let pp = lua.create_table()?;
             for (i, (name, start, end, wrap)) in m.pose_params.iter().enumerate() {
                 let e = lua.create_table()?;

@@ -138,6 +138,14 @@ fn pose_parameters_clamp_or_wrap_into_the_model_range_and_clear() {
     }
     let id = server.spawn_npc(1, "npc_alyx", "none").unwrap();
     let params = server.models[model].script.pose_params.clone();
+    let acts = &server.models[model].script.sequence_activity;
+    assert_eq!(acts.len(), server.models[model].script.sequences.len());
+    let tagged = acts.iter().filter(|a| a.0.starts_with("ACT_")).count();
+    assert!(tagged > 50, "alyx's sequences carry activities: {tagged}");
+    assert!(
+        acts.iter().any(|a| a.0 == "ACT_IDLE" && a.1 >= 1),
+        "an idle activity with weight"
+    );
     assert!(!params.is_empty(), "alyx has pose parameters");
     let (name, lo, hi, wrap) = params
         .iter()

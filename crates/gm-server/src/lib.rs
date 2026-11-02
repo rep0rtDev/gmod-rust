@@ -168,6 +168,8 @@ pub struct ModelScriptData {
     /// Pose parameters: `(name, start, end, loop range)`; a loop range > 0 wraps (angles).
     pub pose_params: Vec<(String, f32, f32, f32)>,
     pub sequences: Vec<String>,
+    /// Per sequence: its activity name (`ACT_*`, empty for none) and selection weight.
+    pub sequence_activity: Vec<(String, i32)>,
     /// Per sequence: `(fps, frames, anim flags)` of its first animation (0x1 = looping).
     pub sequence_anim: Vec<(f32, i32, i32)>,
     /// Raw animations: `(name, fps, frames, flags)`.
@@ -297,6 +299,8 @@ impl ModelScriptData {
                     continue;
                 }
                 out.sequences.push(q.name.clone());
+                out.sequence_activity
+                    .push((q.activity_name.clone(), q.act_weight));
                 out.sequence_anim.push(
                     anims
                         .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
@@ -338,6 +342,10 @@ impl ModelScriptData {
                 .map(|p| (p.name, p.start, p.end, p.loop_range))
                 .collect(),
             sequences: seqs.iter().map(|q| q.name.clone()).collect(),
+            sequence_activity: seqs
+                .iter()
+                .map(|q| (q.activity_name.clone(), q.act_weight))
+                .collect(),
             sequence_anim: seqs
                 .iter()
                 .map(|q| {

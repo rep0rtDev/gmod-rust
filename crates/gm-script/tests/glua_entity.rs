@@ -559,3 +559,33 @@ fn pose_parameter_writes_carry_name_and_value() {
         QueuedWrite::EntityPoseClear { ent: 7 }
     ));
 }
+
+#[test]
+fn activity_enum_round_trips_and_gestures_by_activity_need_a_tagged_sequence() {
+    let (rt, writes) = run("state.r = {
+            ACT_RESET, ACT_IDLE, ACT_GMOD_SHOWOFF_DUCK_02, ACT_INVALID,
+            util.GetActivityIDByName(\"ACT_WALK\"), util.GetActivityIDByName(\"nope\"),
+            util.GetActivityNameByID(ACT_RUN), util.GetActivityNameByID(123456),
+            Entity(7):SelectWeightedSequence(ACT_IDLE), Entity(7):AddGesture(ACT_IDLE),
+            Entity(7):IsPlayingGesture(ACT_IDLE),
+         }");
+    let (reset, idle, duck, invalid, walk, nope, run_name, none, sel, add, playing): (
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        String,
+        String,
+        i32,
+        i32,
+        bool,
+    ) = rt.actors()[0].eval("return unpack(state.r)").unwrap();
+    assert_eq!((reset, idle, duck, invalid), (0, 1, 2044, -1));
+    assert_eq!((walk, nope), (6, -1));
+    assert_eq!((run_name.as_str(), none.as_str()), ("ACT_RUN", ""));
+    // no model data in this harness: nothing tagged, nothing queued
+    assert_eq!((sel, add, playing), (-1, -1, false));
+    assert!(writes.is_empty());
+}

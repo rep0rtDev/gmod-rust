@@ -344,6 +344,9 @@ pub fn hitboxes(data: &[u8], header: &Header) -> Vec<HitBox> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sequence {
     pub name: String,
+    /// Activity the sequence is tagged with (`ACT_*`, empty for none) and its selection weight.
+    pub activity_name: String,
+    pub act_weight: i32,
     pub anim: i16,
     pub autolayers: Vec<AutoLayer>,
     /// Blend grid: `group_size[0]` columns by `group_size[1]` rows of animation indices, row
@@ -576,6 +579,11 @@ pub fn sequences(data: &[u8], header: &Header) -> Vec<Sequence> {
         let bbmax = [f(o + 44), f(o + 48), f(o + 52)];
         out.push(Sequence {
             name,
+            activity_name: i32_at(data, o + 8)
+                .filter(|off| *off > 0)
+                .and_then(|off| name_at(data, o + off as usize))
+                .unwrap_or_default(),
+            act_weight: i32_at(data, o + 20).unwrap_or(0),
             bbmin,
             bbmax,
             anim,

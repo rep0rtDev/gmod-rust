@@ -20,6 +20,8 @@ const CORE: &str = include_str!("core.luau");
 /// Entity / Player / NPC / Vehicle / Weapon / PhysObj, ents / player / game / engine / util and
 /// the entity globals over the host snapshot and write queue.
 const ENTITY: &str = include_str!("entity.luau");
+/// `Enums/ACT` from the wiki: every activity id (models tag their sequences with the names).
+const ACT: &str = include_str!("act.luau");
 /// net, ConVar / cvars, concommand, file, CTakeDamageInfo, sound, undo / cleanup / constraint
 /// and the GM hook bridge from the own server events.
 const SERVER: &str = include_str!("server.luau");
@@ -82,6 +84,7 @@ pub fn install(lua: &Lua, _shared: Arc<Shared>) -> Result<()> {
         lua.create_function(|lua, address: String| stub(lua, &address))?,
     )?;
     lua.load(CORE).set_name("glua/core").exec()?;
+    lua.load(ACT).set_name("glua/act").exec()?;
     lua.load(ENTITY).set_name("glua/entity").exec()?;
     lua.load(SERVER).set_name("glua/server").exec()?;
     lua.load(CLASSES).set_name("glua/classes").exec()?;
@@ -129,7 +132,7 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
     // Hooks are not Lua values: a GM hook counts as present when a bridge raises it
     // (`hook.Run("Name"`), a scripted ENTITY / WEAPON callback when the dispatcher that calls it
     // is annotated `-- @hook CLASS:Name`.
-    for src in [CORE, ENTITY, SERVER, CLASSES, SCRIPTED, LIBS] {
+    for src in [CORE, ACT, ENTITY, SERVER, CLASSES, SCRIPTED, LIBS] {
         for (marker, prefix) in [("hook.Run(\"", "GM:"), ("@hook ", "")] {
             let mut rest = src;
             while let Some(i) = rest.find(marker) {

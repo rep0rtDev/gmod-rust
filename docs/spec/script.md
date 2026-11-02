@@ -586,6 +586,15 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model lacks is refused), `GetPoseParameter` reads it back, `ClearPoseParameters` drops them
   all. Snapshots carry the set values by name and the client drives the model's blend grids with
   them (NPCs and scripted entities; players keep their movement-derived parameters).
+- Activities: the full `ACT_*` enum (wiki `Enums/ACT`, 1596 ids) is defined, and the model data
+  carries the activity name and weight each sequence is tagged with in the MDL (include models
+  merged). `Entity:GetSequenceActivity` / `GetSequenceActivityName` read it,
+  `SelectWeightedSequence(act)` picks among the sequences tagged with the activity by weight
+  (`SelectWeightedSequenceSeeded` deterministically, -1 when none), `AddGesture(act)` /
+  `FindGestureLayer` / `IsPlayingGesture` / `RemoveGesture` / `RestartGesture` go through that
+  selection onto the gesture layer; `util.GetActivityIDByName` / `GetActivityNameByID` map the
+  enum. NPC / Player / Weapon activity state (`SetActivity`, `GetIdealActivity`, ...) stays
+  stubbed: our AI has no activity machine.
 
 Done in `glua/server.luau`:
 
