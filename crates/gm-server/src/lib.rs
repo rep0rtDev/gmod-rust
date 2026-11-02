@@ -2859,6 +2859,8 @@ pub struct Player {
     pub weapon_color: Vec3,
     /// `Player:Lock`: commands are ignored, the player stands still.
     pub locked: bool,
+    /// Tick the player was added on (`Player:TimeConnected`).
+    pub joined_tick: u64,
     pub max_health: i32,
     pub model: String,
     /// The player's model choice (`cl_playermodel`), applied on the next spawn.
@@ -2947,6 +2949,7 @@ impl Player {
             player_color: Vec3::new(0.24, 0.34, 0.41),
             weapon_color: Vec3::new(0.3, 1.0, 0.25),
             locked: false,
+            joined_tick: 0,
             max_health: PLAYER_HEALTH,
             model: PLAYER_MODEL.to_string(),
             wanted_model: String::new(),
@@ -5094,6 +5097,9 @@ impl<'w> Server<'w> {
 
     pub fn add_player(&mut self, id: u32, origin: Vec3, view_angles: Vec3) {
         self.players.insert(id, Player::new(origin, view_angles));
+        if let Some(p) = self.players.get_mut(&id) {
+            p.joined_tick = self.tick_count;
+        }
         if self.request_hook.is_some() {
             self.give_loadout(id);
         }
@@ -5868,6 +5874,28 @@ impl<'w> Server<'w> {
             }
             None => false,
         }
+    }
+
+    /// Script `Entity:ForcePlayerDrop`: every player holding the prop lets go of it.
+    pub fn force_player_drop(&mut self, ent: u32) -> bool {
+        let mut any = false;
+        for p in self.players.values_mut() {
+            if p.held.as_ref().is_some_and(|(h, _)| *h == ent) {
+                p.held = None;
+                any = true;
+            }
+        }
+        any
+    }
+
+    /// `Player:LastHitGroup`: hit group of the last recorded hit on the player (0 = generic).
+    pub fn last_hit_group(&self, player: u32) -> u8 {
+        self.hits
+            .iter()
+            .rev()
+            .find(|h| h.target == player)
+            .and_then(|h| h.hitgroup)
+            .unwrap_or(0)
     }
 
     pub fn set_locked(&mut self, player: u32, locked: bool) -> bool {

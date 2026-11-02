@@ -386,6 +386,8 @@ function PLY:EnterVehicle(v) if IsValid(v) then qwrite("player.vehicle", self.__
 function PLY:ExitVehicle() qwrite("player.vehicle", self.__pid, nil) end
 function PLY:IsFrozen() local p = psnap(self.__pid); return p ~= nil and p.locked == true end
 function PLY:Lock() qwrite("player.lock", self.__pid, true) end
+function PLY:TimeConnected() local p = psnap(self.__pid); if not p then return 0 end return math.max(0, engine.TickCount() - p.joined_tick) * engine.TickInterval() end
+function PLY:LastHitGroup() local p = psnap(self.__pid); return p and p.last_hitgroup or 0 end
 function PLY:UnLock() qwrite("player.lock", self.__pid, false) end
 function PLY:IsOnGround() local p = psnap(self.__pid); return p ~= nil and p.on_ground == true end
 function PLY:OnGround() return self:IsOnGround() end
@@ -1346,6 +1348,15 @@ function ENT:GetModelScale() return 1 end
 function ENT:GetFriction() local sn = snap(self.__id); if sn and sn.friction then return sn.friction end local m = minfo(self); return m and m.friction or 0 end
 function ENT:GetElasticity() local sn = snap(self.__id); if sn and sn.elasticity then return sn.elasticity end local m = minfo(self); return m and m.elasticity or 0 end
 function ENT:SetFriction(f) qwrite("set_surface", self.__id, { friction = f }) end
+function ENT:IsOnFire() local sn = snap(self.__id); return sn ~= nil and sn.on_fire == true end
+function ENT:ForcePlayerDrop() qwrite("force_drop", self.__id, nil) end
+function ENT:PhysWake() qwrite("set_asleep", self.__id, false) end
+function ENT:SetBodyGroups(str)
+    for i = 1, #tostring(str) do
+        local v = tonumber(string.sub(str, i, i)) or 0
+        self:SetBodygroup(i - 1, v)
+    end
+end
 function ENT:SetElasticity(e) qwrite("set_surface", self.__id, { elasticity = e }) end
 function ENT:GetRotatedAABB(mins, maxs)
     local a = self:GetAngles()

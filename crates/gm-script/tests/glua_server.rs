@@ -41,6 +41,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_target_seen: 200,
             friction: 0.6,
             elasticity: 0.1,
+            on_fire: true,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -79,6 +80,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_target_seen: 200,
             friction: 0.6,
             elasticity: 0.1,
+            on_fire: true,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -122,6 +124,8 @@ fn snapshot() -> Arc<Snapshot> {
             player_color: Vec3::new(0.5, 0.25, 1.0),
             weapon_color: Vec3::new(1.0, 0.0, 0.0),
             locked: true,
+            joined_tick: 40,
+            last_hitgroup: 1,
         },
     );
     Arc::new(s)
@@ -1028,4 +1032,34 @@ fn lock_and_surface_writes() {
     assert!(
         matches!(&writes[3], QueuedWrite::SetSurface { ent: 5, friction: None, elasticity: Some(e) } if *e == 0.9)
     );
+}
+
+#[test]
+fn connected_time_hitgroup_fire_and_drop() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local p, e = Player(1), Entity(5)
+             state.r = { math.Round(p:TimeConnected(), 3), p:LastHitGroup(), e:IsOnFire() and 1 or 0 }
+             e:ForcePlayerDrop()
+             e:PhysWake()
+             e:SetBodyGroups('12')
+         end)",
+    );
+    let mut snap = snapshot();
+    Arc::get_mut(&mut snap).unwrap().tick = 100;
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 100)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!(r, vec![0.9, 1.0, 1.0]);
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(matches!(&writes[0], QueuedWrite::ForceDrop { ent: 5 }));
+    assert!(matches!(
+        &writes[1],
+        QueuedWrite::SetAsleep {
+            ent: 5,
+            asleep: false
+        }
+    ));
+    assert_eq!(writes.len(), 4);
 }

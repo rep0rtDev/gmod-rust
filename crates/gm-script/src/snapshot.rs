@@ -45,6 +45,7 @@ pub struct EntitySnap {
     /// Physics surface in use (script override or model PHY).
     pub friction: f32,
     pub elasticity: f32,
+    pub on_fire: bool,
     /// NPC only: the player it has as target / chases, and the end of its current path.
     pub npc_target: u32,
     pub npc_chase: u32,
@@ -89,6 +90,8 @@ pub struct PlayerSnap {
     pub player_color: Vec3,
     pub weapon_color: Vec3,
     pub locked: bool,
+    pub joined_tick: u64,
+    pub last_hitgroup: u8,
 }
 
 /// The server's collision world for traces during a dispatch. The snapshot only lives while the
@@ -278,6 +281,7 @@ impl Snapshot {
                             npc_target_seen: 0,
                             friction: 0.8,
                             elasticity: 0.25,
+                            on_fire: false,
                             npc_target: 0,
                             npc_chase: 0,
                             npc_goal: None,
@@ -373,6 +377,7 @@ impl Snapshot {
                             npc_target_seen: 0,
                             friction: server.entity_surface(p.id).0,
                             elasticity: server.entity_surface(p.id).1,
+                            on_fire: p.fire.is_some(),
                             npc_target: 0,
                             npc_chase: 0,
                             npc_goal: None,
@@ -413,6 +418,7 @@ impl Snapshot {
                             npc_target_seen: n.target_seen,
                             friction: 0.8,
                             elasticity: 0.25,
+                            on_fire: false,
                             npc_target: n.target.unwrap_or(0),
                             npc_chase: n.chase.unwrap_or(0),
                             npc_goal: n.goal.as_ref().and_then(|g| g.points.last().copied()),
@@ -451,6 +457,8 @@ impl Snapshot {
                             player_color: p.player_color,
                             weapon_color: p.weapon_color,
                             locked: p.locked,
+                            joined_tick: p.joined_tick,
+                            last_hitgroup: server.last_hit_group(*id),
                             ammo: p
                                 .inventory
                                 .ammo

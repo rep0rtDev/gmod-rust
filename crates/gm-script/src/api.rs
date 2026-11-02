@@ -309,6 +309,9 @@ pub enum QueuedWrite {
         body: Option<Vec3>,
         weapon: Option<Vec3>,
     },
+    ForceDrop {
+        ent: u32,
+    },
     PlayerLock {
         player: u32,
         locked: bool,
@@ -525,6 +528,8 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("player_color", vec3_table(lua, p.player_color)?)?;
     t.set("weapon_color", vec3_table(lua, p.weapon_color)?)?;
     t.set("locked", p.locked)?;
+    t.set("joined_tick", p.joined_tick)?;
+    t.set("last_hitgroup", p.last_hitgroup)?;
     Ok(t)
 }
 
@@ -613,6 +618,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("npc_target_seen", e.npc_target_seen)?;
     t.set("friction", e.friction)?;
     t.set("elasticity", e.elasticity)?;
+    t.set("on_fire", e.on_fire)?;
     let bs = lua.create_table()?;
     for (b, v) in &e.bone_scales {
         bs.set(*b, vec3_table(lua, *v)?)?;
@@ -1543,6 +1549,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                             .transpose()?,
                     }
                 }
+                "force_drop" => QueuedWrite::ForceDrop { ent },
                 "player.lock" => QueuedWrite::PlayerLock {
                     player: ent,
                     locked: matches!(arg, Value::Boolean(true)),
@@ -2471,6 +2478,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         } => server.set_player_colors(*player, *body, *weapon),
         QueuedWrite::PlayerMaxArmor { player, max } => server.set_max_armor(*player, *max),
         QueuedWrite::PlayerLock { player, locked } => server.set_locked(*player, *locked),
+        QueuedWrite::ForceDrop { ent } => server.force_player_drop(*ent),
         QueuedWrite::SetSurface {
             ent,
             friction,

@@ -43,6 +43,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_target_seen: 200,
             friction: 0.6,
             elasticity: 0.1,
+            on_fire: true,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -81,6 +82,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_target_seen: 200,
             friction: 0.6,
             elasticity: 0.1,
+            on_fire: true,
             npc_target: 1,
             npc_chase: 1,
             npc_goal: Some(Vec3::new(400.0, 0.0, 0.0)),
@@ -124,6 +126,8 @@ fn snapshot() -> Arc<Snapshot> {
             player_color: Vec3::new(0.5, 0.25, 1.0),
             weapon_color: Vec3::new(1.0, 0.0, 0.0),
             locked: true,
+            joined_tick: 40,
+            last_hitgroup: 1,
         },
     );
     Arc::new(s)
