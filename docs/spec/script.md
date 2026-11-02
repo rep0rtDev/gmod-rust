@@ -704,6 +704,20 @@ GetNearestNavArea / GetGroundHeight / Find / FindInBox / GetAllNavAreas / GetNav
 ComputeGroundHeightChange`. The mesh has polygons, not the game's rectangular areas, so sizes,
 corners, adjacency, attributes, hiding spots, ladders and the editing API are stubs.
 
+Libraries without an engine object behind them (`glua/libs.luau`): `team`, `list`, `numpad`
+(registry + Activate/Deactivate/Toggle; `FromButton` needs raw key input and is a stub),
+`player_manager` (model/hands/class registries, `RunClass` walks `Base`), `system`, `umsg` and
+`SendUserMessage` over `net`, `physenv` reads (`sv_gravity`; setters are stubs), the `game`
+ammo reads, geometry helpers in `util` (ray/sphere, ray/triangle, box/box, `SharedRandom`),
+remaining globals (`LocalToWorld` / `WorldToLocal` via VMatrix, `OrderVectors`, `HexToColor`,
+`SafeRemoveEntity[Delayed]`, `TimedSin/Cos`, `STNDRD`, `SQLStr`, `IsEnemy/FriendEntityName`,
+`IsUselessModel`), the `Tool` state object (objects, stage, operation, mode convars; ghost
+entities are client-side stubs) and `duplicator` (class / modifier / constraint registries,
+`Copy` / `CopyEnts` / `Paste` / `CreateEntityFromTable` over `ents.Create`). `CUserCmd`,
+`CMoveData`, `CNavLadder`, `PathFollower`, `CLuaLocomotion` and `drive` exist as all-stub
+classes until the server has the objects. The documented `KEY_` enum is defined. The presence
+scan also lists one nested table level (`math.ease.*`).
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

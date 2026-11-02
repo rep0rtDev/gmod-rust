@@ -8,6 +8,26 @@ use std::sync::Arc;
 fn snapshot() -> Arc<Snapshot> {
     let mut s = Snapshot::default();
     s.cvars.insert("sv_gravity".into(), "600".into());
+    s.entities.insert(
+        5,
+        gm_script::snapshot::EntitySnap {
+            id: 5,
+            model: "models/props_c17/oildrum001.mdl".into(),
+            pos: Vec3::new(0.0, 0.0, 0.0),
+            angles: Vec3::ZERO,
+            frozen: false,
+            skin: 0,
+            body: String::new(),
+            owner: 1,
+            class: "prop_physics".into(),
+            health: 0,
+            max_health: 0,
+            velocity: Vec3::ZERO,
+            npc_target: 0,
+            npc_chase: 0,
+            npc_goal: None,
+        },
+    );
     s.players.insert(
         1,
         PlayerSnap {
@@ -260,4 +280,59 @@ fn navmesh_over_a_flat_recast_mesh() {
         .unwrap();
     let loaded: bool = a.eval("return navmesh.IsLoaded()").unwrap();
     assert!(!loaded);
+}
+
+#[test]
+fn libs_team_list_numpad_duplicator() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             team.SetUp(1, 'Red', Color(255, 0, 0))
+             Player(1):SetTeam(1)
+             list.Set('Desktop Widgets', 'clock', { x = 1 })
+             numpad.Register('Toggle', function(ply, ent, on) state.np = (state.np or '') .. ent .. tostring(on) end)
+             local id = numpad.OnDown(Player(1), KEY_PAD_1, 'Toggle', 'door', true)
+             numpad.OnUp(Player(1), KEY_PAD_1, 'Toggle', 'door', false)
+             numpad.Activate(Player(1), KEY_PAD_1)
+             numpad.Deactivate(Player(1), KEY_PAD_1)
+             numpad.Remove(id)
+             numpad.Activate(Player(1), KEY_PAD_1)
+             duplicator.StoreEntityModifier(Entity(5), 'colour', { r = 1 })
+             local dupe = duplicator.Copy(Entity(5))
+             local hit, far = util.IntersectRayWithSphere(Vector(-10, 0, 0), Vector(1, 0, 0), Vector(0, 0, 0), 2)
+             player_manager.AddValidModel('kleiner', 'models/player/kleiner.mdl')
+             state.r = {
+                 team.GetName(1), team.NumPlayers(1), team.GetPlayers(1)[1]:UserID(), list.Get('Desktop Widgets').clock.x,
+                 state.np, dupe.Entities[5].Class, dupe.Entities[5].EntityMods.colour.r, hit, far,
+                 player_manager.TranslatePlayerModel('kleiner'), math.ease.InQuad(0.5), HexToColor('#ff0080').g, STNDRD(22),
+                 system.IsLinux(), CUserCmd ~= nil, Tool ~= nil,
+             }
+         end)",
+    );
+    let snap = snapshot();
+    let a = &mut rt.actors_mut()[0];
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<String> = a.eval("return { tostring(state.r[1]), tostring(state.r[2]), tostring(state.r[3]), tostring(state.r[4]), tostring(state.r[5]), tostring(state.r[6]), tostring(state.r[7]), tostring(state.r[8]), tostring(state.r[9]), tostring(state.r[10]), tostring(state.r[11]), tostring(state.r[12]), tostring(state.r[13]), tostring(state.r[14]) }").unwrap();
+    assert_eq!(
+        r,
+        vec![
+            "Red",
+            "1",
+            "1",
+            "1",
+            "doortruedoorfalse",
+            "prop_physics",
+            "1",
+            "8",
+            "12",
+            "models/player/kleiner.mdl",
+            "0.25",
+            "0",
+            "nd",
+            "true"
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>()
+    );
 }

@@ -1,0 +1,370 @@
+-- Shared / server libraries without an engine object behind them: pure-Lua state (team, list,
+-- numpad, player_manager, duplicator registries, Tool state), thin wrappers over what the host
+-- has (umsg over net, physenv over cvars), honest stubs for the rest (lists come from the manifest).
+local stub = __glua_stub
+
+team = team or {}
+local teams, team_scores, team_spawns = {}, {}, {}
+TEAM_CONNECTING, TEAM_UNASSIGNED, TEAM_SPECTATOR = 0, 1001, 1002
+function team.SetUp(id, name, color, joinable) teams[id] = { Name = name, Color = color or Color(255, 255, 255), Joinable = joinable ~= false, Class = {} }; team_scores[id] = team_scores[id] or 0 end
+function team.Valid(id) return teams[id] ~= nil end
+function team.GetName(id) return teams[id] and teams[id].Name or "" end
+function team.GetColor(id) return teams[id] and teams[id].Color or Color(255, 255, 255) end
+function team.SetColor(id, c) if teams[id] then teams[id].Color = c end end
+function team.Joinable(id) return teams[id] ~= nil and teams[id].Joinable end
+function team.GetAllTeams() return teams end
+function team.GetScore(id) return team_scores[id] or 0 end
+function team.SetScore(id, s) team_scores[id] = s end
+function team.AddScore(id, s) team_scores[id] = (team_scores[id] or 0) + s end
+function team.GetClass(id) return teams[id] and teams[id].Class or {} end
+function team.SetClass(id, c) if teams[id] then teams[id].Class = c end end
+function team.GetSpawnPoint(id) return team_spawns[id] or {} end
+function team.GetSpawnPoints(id) local out = {}; for _, cls in ipairs(team_spawns[id] or {}) do for _, e in ipairs(ents.FindByClass(cls)) do out[#out + 1] = e end end return out end
+function team.SetSpawnPoint(id, cls) team_spawns[id] = istable(cls) and cls or { cls } end
+function team.GetPlayers(id) local out = {}; for _, p in ipairs(player.GetAll()) do if p:Team() == id then out[#out + 1] = p end end return out end
+function team.NumPlayers(id) return #team.GetPlayers(id) end
+function team.TotalFrags(id) local n = 0; for _, p in ipairs(team.GetPlayers(id)) do n = n + p:Frags() end return n end
+function team.TotalDeaths(id) local n = 0; for _, p in ipairs(team.GetPlayers(id)) do n = n + p:Deaths() end return n end
+function team.BestAutoJoinTeam() local best, bn = TEAM_UNASSIGNED, math.huge; for id, t in pairs(teams) do if t.Joinable and id > 0 and id < 1000 then local n = team.NumPlayers(id); if n < bn then best, bn = id, n end end end return best end
+
+list = list or {}
+local lists = {}
+function list.Set(name, key, value) lists[name] = lists[name] or {}; lists[name][key] = value end
+function list.Add(name, value) lists[name] = lists[name] or {}; local t = lists[name]; t[#t + 1] = value; return #t end
+function list.Get(name) return table.Copy(lists[name] or {}) end
+function list.GetForEdit(name, dontCreate) if not lists[name] and not dontCreate then lists[name] = {} end return lists[name] end
+function list.GetTable() local out = {}; for k in pairs(lists) do out[#out + 1] = k end return out end
+function list.Contains(name, value) for _, v in pairs(lists[name] or {}) do if v == value then return true end end return false end
+function list.HasEntry(name, key) return lists[name] ~= nil and lists[name][key] ~= nil end
+function list.GetEntry(name, key) return lists[name] and lists[name][key] end
+function list.RemoveEntry(name, key) if lists[name] then lists[name][key] = nil end end
+
+numpad = numpad or {}
+local numpad_fns, numpad_binds, numpad_id = {}, {}, 0
+function numpad.Register(name, fn) numpad_fns[name] = fn end
+local function numpad_bind(ply, key, name, kind, ...) numpad_id = numpad_id + 1; local uid = IsValid(ply) and ply:UserID() or 0; numpad_binds[uid] = numpad_binds[uid] or {}; numpad_binds[uid][key] = numpad_binds[uid][key] or {}; numpad_binds[uid][key][numpad_id] = { kind = kind, name = name, args = { ... } }; return numpad_id end
+function numpad.OnDown(ply, key, name, ...) return numpad_bind(ply, key, name, "down", ...) end
+function numpad.OnUp(ply, key, name, ...) return numpad_bind(ply, key, name, "up", ...) end
+function numpad.Remove(id) for _, keys in pairs(numpad_binds) do for _, t in pairs(keys) do t[id] = nil end end end
+local function numpad_fire(ply, key, kind) local uid = IsValid(ply) and ply:UserID() or 0; local t = numpad_binds[uid] and numpad_binds[uid][key]; if not t then return end for _, b in pairs(t) do if b.kind == kind and numpad_fns[b.name] then numpad_fns[b.name](ply, unpack(b.args)) end end end
+function numpad.Activate(ply, key, isButton) numpad_fire(ply, key, "down") end
+function numpad.Deactivate(ply, key, isButton) numpad_fire(ply, key, "up") end
+function numpad.Toggle(ply, key) local uid = IsValid(ply) and ply:UserID() or 0; local st = numpad_binds["toggle" .. uid] or {}; numpad_binds["toggle" .. uid] = st; if st[key] then st[key] = nil; numpad_fire(ply, key, "up") else st[key] = true; numpad_fire(ply, key, "down") end end
+numpad.FromButton = stub("numpad.FromButton")
+
+player_manager = player_manager or {}
+local pm_models, pm_hands, pm_classes, pm_player_class = {}, {}, {}, {}
+function player_manager.AddValidModel(name, model) pm_models[name] = model end
+function player_manager.RemoveValidModel(name) pm_models[name] = nil end
+function player_manager.AllValidModels() return pm_models end
+function player_manager.GetAllPlayerModels() local out = {}; for _, m in pairs(pm_models) do out[#out + 1] = m end return out end
+function player_manager.TranslatePlayerModel(name) return pm_models[name] or pm_models[string.lower(name or "")] or "models/player/kleiner.mdl" end
+function player_manager.TranslateToPlayerModelName(model) for n, m in pairs(pm_models) do if m == model then return n end end return "kleiner" end
+function player_manager.AddValidHands(name, model, skin, body, matchBodySkin) pm_hands[name] = { model = model, skin = skin or 0, body = body or "0000000", matchBodySkin = matchBodySkin == true } end
+function player_manager.TranslatePlayerHands(name) return pm_hands[name] or { model = "models/weapons/c_arms_citizen.mdl", skin = 0, body = "0000000" } end
+function player_manager.RegisterClass(name, tbl, base) tbl.Base = base; tbl.ClassName = name; pm_classes[name] = tbl end
+function player_manager.GetPlayerClasses() return pm_classes end
+function player_manager.SetPlayerClass(ply, name) pm_player_class[ply:UserID()] = name; ply:SetNWString("__pm_class", name) end
+function player_manager.GetPlayerClass(ply) return pm_player_class[ply:UserID()] end
+function player_manager.ClearPlayerClass(ply) pm_player_class[ply:UserID()] = nil end
+function player_manager.GetPlayerClassTable(ply) local n = pm_player_class[ply:UserID()]; return n and pm_classes[n] or nil end
+function player_manager.RunClass(ply, fn, ...) local c = player_manager.GetPlayerClassTable(ply); while c do if c[fn] then return c[fn](c, ply, ...) end c = c.Base and pm_classes[c.Base] or nil end end
+function player_manager.OnPlayerSpawn(ply, transition) player_manager.RunClass(ply, "Spawn"); if not transition then player_manager.RunClass(ply, "Loadout") end end
+
+system = system or {}
+function system.IsLinux() return true end
+function system.IsWindows() return false end
+function system.IsOSX() return false end
+function system.HasFocus() return true end
+function system.UpTime() return RealTime() end
+function system.AppTime() return RealTime() end
+function system.SteamTime() return os.time() end
+function system.GetCountry() return "RU" end
+function system.BatteryPower() return 255 end
+
+umsg = umsg or {}
+local umsg_filter
+function umsg.Start(name, filter) umsg_filter = filter; net.Start(name) end
+function umsg.End() if umsg_filter == nil then net.Broadcast() elseif IsEntity(umsg_filter) then net.Send(umsg_filter) else net.Send(umsg_filter) end umsg_filter = nil end
+function umsg.Angle(a) net.WriteAngle(a) end
+function umsg.Bool(b) net.WriteBool(b) end
+function umsg.Char(c) net.WriteInt(c, 8) end
+function umsg.Entity(e) net.WriteEntity(e) end
+function umsg.Float(f) net.WriteFloat(f) end
+function umsg.Long(l) net.WriteInt(l, 32) end
+function umsg.Short(s) net.WriteInt(s, 16) end
+function umsg.String(s) net.WriteString(s) end
+function umsg.Vector(v) net.WriteVector(v) end
+function umsg.VectorNormal(v) net.WriteNormal(v) end
+function umsg.PoolString(s) end
+function SendUserMessage(name, filter, ...) umsg.Start(name, filter); for _, v in ipairs({ ... }) do if isbool(v) then umsg.Bool(v) elseif isnumber(v) then umsg.Float(v) elseif isstring(v) then umsg.String(v) elseif isvector(v) then umsg.Vector(v) elseif isangle(v) then umsg.Angle(v) elseif IsEntity(v) then umsg.Entity(v) end end umsg.End() end
+
+physenv = physenv or {}
+function physenv.GetGravity() return Vector(0, 0, -(GetConVar("sv_gravity") and GetConVar("sv_gravity"):GetFloat() or 600)) end
+function physenv.GetTimeScale() return 1 end
+function physenv.GetPhysicsPaused() return false end
+function physenv.GetAirDensity() return 2 end
+function physenv.GetLastSimulationTime() return engine.TickInterval() end
+for _, n in ipairs({ "AddSurfaceData", "GetPerformanceSettings", "SetAirDensity", "SetGravity", "SetPerformanceSettings", "SetPhysicsPaused", "SetTimeScale" }) do if physenv[n] == nil then physenv[n] = stub("physenv." .. n) end end
+
+function game.GetAmmoDamageType(id) local d = game.GetAmmoData and game.GetAmmoData(id); return d and d.dmgtype or DMG_BULLET end
+function game.GetAmmoForce(id) local d = game.GetAmmoData and game.GetAmmoData(id); return d and d.force or 1000 end
+function game.GetAmmoNPCDamage(id) local d = game.GetAmmoData and game.GetAmmoData(id); return d and d.npcdmg or 0 end
+function game.GetAmmoPlayerDamage(id) local d = game.GetAmmoData and game.GetAmmoData(id); return d and d.plydmg or 0 end
+for _, n in ipairs({ "Get3DSkyboxInfo", "GetMapChangeCount", "GetWindSpeed", "MapLoadType" }) do if game[n] == nil then game[n] = stub("game." .. n) end end
+
+function util.IntersectRayWithSphere(o, d, c, r)
+    local m = o - c; local b = m:Dot(d); local cc = m:Dot(m) - r * r
+    if cc > 0 and b > 0 then return nil end
+    local disc = b * b - cc; if disc < 0 then return nil end
+    local s = math.sqrt(disc); local len = d:Length()
+    return math.max(0, (-b - s) / len), (-b + s) / len
+end
+function util.IntersectRayWithTriangle(o, d, a, b, c)
+    local e1, e2 = b - a, c - a; local p = d:Cross(e2); local det = e1:Dot(p)
+    if math.abs(det) < 1e-8 then return nil end
+    local inv = 1 / det; local t = o - a; local u = t:Dot(p) * inv; if u < 0 or u > 1 then return nil end
+    local q = t:Cross(e1); local v = d:Dot(q) * inv; if v < 0 or u + v > 1 then return nil end
+    local dist = e2:Dot(q) * inv; if dist < 0 then return nil end
+    return dist
+end
+function util.IsBoxIntersectingBox(a1, a2, b1, b2) return a1.x <= b2.x and a2.x >= b1.x and a1.y <= b2.y and a2.y >= b1.y and a1.z <= b2.z and a2.z >= b1.z end
+function util.LocalToWorld(ent, lpos, bone) return ent:LocalToWorld(lpos) end
+function util.SharedRandom(name, lo, hi, add) local seed = util.CRC(name .. tostring(math.floor(CurTime() * 100)) .. tostring(add or 0)); return lo + (tonumber(seed) % 10000) / 10000 * (hi - lo) end
+function util.KeyValuesToTablePreserveOrder(kv, usesEscapes, preserveKeyCase) local t = util.KeyValuesToTable(kv, usesEscapes, preserveKeyCase); local out = {}; for k, v in pairs(t) do out[#out + 1] = { Key = k, Value = v } end return out end
+function util.TraceEntityHull(data, ent) local mins, maxs = ent:OBBMins(), ent:OBBMaxs(); data.mins, data.maxs = mins, maxs; return util.TraceHull(data) end
+for _, n in ipairs({ "GetActivityIDByName", "GetActivityNameByID", "GetAnimEventIDByName", "GetAnimEventNameByID", "GetUserGroups", "SHA1", "SHA256", "Timer" }) do if util[n] == nil then util[n] = stub("util." .. n) end end
+
+function VectorRand(lo, hi) lo, hi = lo or -1, hi or 1; return Vector(math.Rand(lo, hi), math.Rand(lo, hi), math.Rand(lo, hi)) end
+function AngleRand(lo, hi) lo, hi = lo or -90, hi or 90; return Angle(math.Rand(lo, hi), math.Rand(math.max(lo, -180), math.min(hi, 180)), math.Rand(lo, hi)) end
+function LocalToWorld(lpos, lang, pos, ang) local m = Matrix(); m:SetTranslation(pos); m:SetAngles(ang); local p = m * lpos; local a = Angle(lang.p, lang.y, lang.r); local out = ang + a; return p, out end
+function WorldToLocal(wpos, wang, pos, ang) local m = Matrix(); m:SetTranslation(pos); m:SetAngles(ang); m:InvertTR(); return m * wpos, wang - ang end
+function OrderVectors(a, b) local mn = Vector(math.min(a.x, b.x), math.min(a.y, b.y), math.min(a.z, b.z)); local mx = Vector(math.max(a.x, b.x), math.max(a.y, b.y), math.max(a.z, b.z)); a.x, a.y, a.z, b.x, b.y, b.z = mn.x, mn.y, mn.z, mx.x, mx.y, mx.z end
+function HexToColor(hex) hex = hex:gsub("#", ""); return Color(tonumber(hex:sub(1, 2), 16) or 0, tonumber(hex:sub(3, 4), 16) or 0, tonumber(hex:sub(5, 6), 16) or 0, tonumber(hex:sub(7, 8), 16) or 255) end
+function HWBToColor(h, w, b) return HSVToColor(h, 1 - w / math.max(1e-6, 1 - b), 1 - b) end
+function SafeRemoveEntity(e) if IsValid(e) and not (e.IsPlayer and e:IsPlayer()) then e:Remove() end end
+function SafeRemoveEntityDelayed(e, delay) timer.Simple(delay, function() SafeRemoveEntity(e) end) end
+function IsTableOfEntitiesValid(t) if not istable(t) or next(t) == nil then return false end for _, e in pairs(t) do if not IsValid(e) then return false end end return true end
+function Error(...) error(table.concat({ ... }, ""), 2) end
+function ServerLog(s) print(s) end
+function FrameNumber() return engine.TickCount() end
+function TimedSin(freq, origin, max, offset) return math.sin(freq * CurTime() * 2 * math.pi + offset) * (max - origin) / 2 + (max + origin) / 2 end
+function TimedCos(freq, origin, max, offset) return math.cos(freq * CurTime() * 2 * math.pi + offset) * (max - origin) / 2 + (max + origin) / 2 end
+function STNDRD(n) if n % 100 >= 11 and n % 100 <= 13 then return "th" end return ({ "st", "nd", "rd" })[n % 10] or "th" end
+function SQLStr(s, noQuotes) local e = tostring(s):gsub("'", "''"); return noQuotes and e or ("'" .. e .. "'") end
+function Model(path) return path end
+function Sound(path) return path end
+function RegisterMetaTable(name, tbl) __glua_classes[name] = tbl end
+function IsEnemyEntityName(c) return ({ npc_zombie = true, npc_fastzombie = true, npc_poisonzombie = true, npc_headcrab = true, npc_headcrab_fast = true, npc_headcrab_poison = true, npc_antlion = true, npc_antlionguard = true, npc_combine_s = true, npc_metropolice = true, npc_manhack = true, npc_hunter = true, npc_strider = true, npc_barnacle = true, npc_zombine = true })[c] == true end
+function IsFriendEntityName(c) return ({ npc_citizen = true, npc_alyx = true, npc_barney = true, npc_kleiner = true, npc_eli = true, npc_mossman = true, npc_monk = true, npc_vortigaunt = true, npc_dog = true, npc_magnusson = true })[c] == true end
+function IsUselessModel(m) m = string.lower(m or ""); return m:find("_gesture") ~= nil or m:find("_anim") ~= nil or m:find("_gestures") ~= nil or m:find("_postures") ~= nil or m:find("_shared") ~= nil or m:find("_ss") ~= nil or m:find("_arms") ~= nil or m:find("_animations") ~= nil end
+UTIL_IsUselessModel = IsUselessModel
+BRANCH = "x86-64"
+for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CompileString", "CreatePhysCollideBox", "CreatePhysCollidesFromModel", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "DropEntityIfHeld", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "IsMounted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "Path", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "RunString", "RunStringEx", "SentenceDuration", "SetPhysConstraintSystem", "SoundDuration", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
+
+
+-- Tool: the tool gun's per-mode state object (ghost entities need the client realm).
+local TOOL = {}
+TOOL.__index = TOOL
+function TOOL:Create() return setmetatable({ Mode = nil, SWEP = nil, Owner = nil, ClientConVar = {}, ServerConVar = {}, Objects = {}, Stage = 0, Operation = 0, Message = "start", LastMessage = 0, AllowedCVar = 0 }, TOOL) end
+function TOOL:GetMode() return self.Mode end
+function TOOL:GetOwner() return self.Owner or (self.SWEP and self.SWEP.Owner) or NULL end
+function TOOL:GetSWEP() return self.SWEP end
+function TOOL:GetWeapon() return self.SWEP end
+function TOOL:GetStage() return self.Stage end
+function TOOL:SetStage(s) self.Stage = s end
+function TOOL:GetOperation() return self.Operation end
+function TOOL:SetOperation(o) self.Operation = o end
+function TOOL:GetHelpText() return "#tool." .. tostring(self.Mode) .. "." .. tostring(self.Stage) end
+function TOOL:Allowed() local cv = GetConVar("toolmode_allow_" .. tostring(self.Mode)); return cv == nil or cv:GetBool() end
+function TOOL:NumObjects() return #self.Objects end
+function TOOL:ClearObjects() self.Objects = {} end
+function TOOL:SetObject(i, ent, pos, phys, bone, norm) self.Objects[i] = { Ent = ent, Pos = pos, Phys = phys, Bone = bone, Normal = norm } end
+function TOOL:GetEnt(i) return self.Objects[i] and self.Objects[i].Ent or NULL end
+function TOOL:GetPos(i) local o = self.Objects[i]; if not o then return Vector() end return IsValid(o.Ent) and o.Ent:LocalToWorld(o.Pos) or o.Pos end
+function TOOL:GetLocalPos(i) return self.Objects[i] and self.Objects[i].Pos or Vector() end
+function TOOL:GetPhys(i) return self.Objects[i] and self.Objects[i].Phys end
+function TOOL:GetBone(i) return self.Objects[i] and self.Objects[i].Bone or 0 end
+function TOOL:GetNormal(i) return self.Objects[i] and self.Objects[i].Normal or Vector(0, 0, 1) end
+function TOOL:CheckObjects() for _, o in pairs(self.Objects) do if not IsValid(o.Ent) then self:ClearObjects() return end end end
+function TOOL:GetClientInfo(prop) local cv = GetConVar(tostring(self.Mode) .. "_" .. prop); return cv and cv:GetString() or "" end
+function TOOL:GetClientNumber(prop, default) local cv = GetConVar(tostring(self.Mode) .. "_" .. prop); return cv and cv:GetFloat() or default or 0 end
+function TOOL:GetClientBool(prop, default) local cv = GetConVar(tostring(self.Mode) .. "_" .. prop); if cv then return cv:GetBool() end return default == true end
+function TOOL:GetServerInfo(prop) local cv = GetConVar(tostring(self.Mode) .. "_" .. prop); return cv and cv:GetString() or "" end
+function TOOL:BuildConVarList() local out = {}; local m = tostring(self.Mode) .. "_"; for k, v in pairs(self.ClientConVar) do out[m .. k] = v end return out end
+function TOOL:CreateConVars() for k, v in pairs(self.ClientConVar) do CreateConVar(tostring(self.Mode) .. "_" .. k, v, FCVAR_REPLICATED) end end
+for _, n in ipairs({ "MakeGhostEntity", "ReleaseGhostEntity", "StartGhostEntity", "UpdateData", "UpdateGhostEntity" }) do if TOOL[n] == nil then TOOL[n] = stub("Tool:" .. n) end end
+__glua_classes.Tool = TOOL
+ToolObj = TOOL
+
+duplicator = duplicator or {}
+duplicator.EntityClasses, duplicator.EntityModifiers, duplicator.BoneModifiers, duplicator.ConstraintType = {}, {}, {}, {}
+local dup_allowed, dup_local_pos, dup_local_ang = {}, nil, nil
+function duplicator.RegisterEntityClass(cls, fn, ...) duplicator.EntityClasses[cls] = { Func = fn, Args = { ... } } end
+function duplicator.FindEntityClass(cls) return duplicator.EntityClasses[cls] end
+function duplicator.RegisterEntityModifier(name, fn) duplicator.EntityModifiers[name] = fn end
+function duplicator.RegisterBoneModifier(name, fn) duplicator.BoneModifiers[name] = fn end
+function duplicator.RegisterConstraint(name, fn, ...) duplicator.ConstraintType[name] = { Func = fn, Args = { ... } } end
+function duplicator.Allow(cls) dup_allowed[cls] = true end
+function duplicator.Disallow(cls) dup_allowed[cls] = nil end
+function duplicator.IsAllowed(cls) return dup_allowed[cls] == true end
+function duplicator.StoreEntityModifier(ent, name, data) local t = rawget(ent, "__vars"); t.EntityMods = t.EntityMods or {}; t.EntityMods[name] = table.Copy(data) end
+function duplicator.ClearEntityModifier(ent, name) local t = rawget(ent, "__vars"); if t.EntityMods then t.EntityMods[name] = nil end end
+function duplicator.StoreBoneModifier(ent, bone, name, data) local t = rawget(ent, "__vars"); t.BoneMods = t.BoneMods or {}; t.BoneMods[bone] = t.BoneMods[bone] or {}; t.BoneMods[bone][name] = table.Copy(data) end
+function duplicator.SetLocalPos(p) dup_local_pos = p end
+function duplicator.SetLocalAng(a) dup_local_ang = a end
+function duplicator.CopyEntTable(ent)
+    if not IsValid(ent) or ent:IsPlayer() then return nil end
+    local v = rawget(ent, "__vars") or {}
+    local t = { Class = ent:GetClass(), Pos = ent:GetPos(), Angle = ent:GetAngles(), Model = ent:GetModel(), Skin = ent:GetSkin(), Name = ent:GetName(), EntityMods = table.Copy(v.EntityMods or {}), BoneMods = table.Copy(v.BoneMods or {}), PhysicsObjects = { [0] = { Pos = ent:GetPos(), Angle = ent:GetAngles(), Frozen = ent:GetMoveType() == MOVETYPE_NONE } } }
+    if dup_local_pos then t.Pos = t.Pos - dup_local_pos end
+    return t
+end
+function duplicator.CopyEnts(ents_) local out = { Entities = {}, Constraints = {}, Mins = Vector(math.huge, math.huge, math.huge), Maxs = Vector(-math.huge, -math.huge, -math.huge) }
+    for _, e in ipairs(ents_) do local t = duplicator.CopyEntTable(e); if t then out.Entities[e:EntIndex()] = t; OrderVectors(out.Mins, t.Pos) end end
+    duplicator.WorkoutSize(out) return out end
+function duplicator.Copy(ent, tbl) tbl = tbl or { Entities = {}, Constraints = {} }; local t = duplicator.CopyEntTable(ent); if t then tbl.Entities[ent:EntIndex()] = t end; duplicator.WorkoutSize(tbl); return tbl end
+function duplicator.WorkoutSize(tbl) local mn, mx = Vector(math.huge, math.huge, math.huge), Vector(-math.huge, -math.huge, -math.huge)
+    for _, e in pairs(tbl.Entities or {}) do local p = e.Pos; mn.x, mn.y, mn.z = math.min(mn.x, p.x), math.min(mn.y, p.y), math.min(mn.z, p.z); mx.x, mx.y, mx.z = math.max(mx.x, p.x), math.max(mx.y, p.y), math.max(mx.z, p.z) end
+    tbl.Mins, tbl.Maxs = mn, mx end
+function duplicator.CreateEntityFromTable(ply, data)
+    local reg = duplicator.EntityClasses[data.Class]
+    if reg then local args = {}; for i, k in ipairs(reg.Args) do args[i] = k == "Data" and data or data[k] end return reg.Func(ply, unpack(args)) end
+    local e = ents.Create(data.Class); if not IsValid(e) then return NULL end
+    if data.Model then e:SetModel(data.Model) end; e:SetPos(data.Pos); e:SetAngles(data.Angle); if data.Skin then e:SetSkin(data.Skin) end; e:Spawn()
+    return e
+end
+function duplicator.ApplyEntityModifiers(ply, ent) for name, data in pairs((rawget(ent, "__vars") or {}).EntityMods or {}) do if duplicator.EntityModifiers[name] then duplicator.EntityModifiers[name](ply, ent, data) end end end
+function duplicator.ApplyBoneModifiers(ply, ent) for bone, mods in pairs((rawget(ent, "__vars") or {}).BoneMods or {}) do for name, data in pairs(mods) do if duplicator.BoneModifiers[name] then duplicator.BoneModifiers[name](ply, ent, bone, ent:GetPhysicsObject(), data) end end end end
+function duplicator.GenericDuplicatorFunction(ply, data) local e = ents.Create(data.Class); if not IsValid(e) then return NULL end; duplicator.DoGeneric(e, data); e:Spawn(); return e end
+function duplicator.DoGeneric(ent, data) if data.Model then ent:SetModel(data.Model) end; if data.Pos then ent:SetPos(data.Pos) end; if data.Angle then ent:SetAngles(data.Angle) end; if data.Skin then ent:SetSkin(data.Skin) end; if data.Name then ent:SetName(data.Name) end; if data.EntityMods then rawget(ent, "__vars").EntityMods = table.Copy(data.EntityMods) end end
+function duplicator.DoGenericPhysics(ent, ply, data) local p = data.PhysicsObjects and data.PhysicsObjects[0]; if p then ent:SetPos(p.Pos); ent:SetAngles(p.Angle); if p.Frozen then ent:SetMoveType(MOVETYPE_NONE) end end end
+function duplicator.Paste(ply, entities, constraints) local created = {}
+    for id, data in pairs(entities) do local d = table.Copy(data); if dup_local_pos then d.Pos = d.Pos + dup_local_pos end; local e = duplicator.CreateEntityFromTable(ply, d); if IsValid(e) then created[id] = e; duplicator.ApplyEntityModifiers(ply, e) end end
+    return created, {} end
+for _, n in ipairs({ "CreateConstraintFromTable", "DoBoneManipulator", "DoFlex", "FigureOutRequiredAddons", "GetAllConstrainedEntitiesAndConstraints", "RemoveMapCreatedEntities" }) do if duplicator[n] == nil then duplicator[n] = stub("duplicator." .. n) end end
+
+-- Classes the own server has no object for yet: every documented method is a stub.
+for _, cls in ipairs({ "CUserCmd", "CMoveData", "CNavLadder", "PathFollower", "CLuaLocomotion" }) do
+    local T = {}
+    T.__index = T
+    __glua_classes[cls] = T
+end
+for _, n in ipairs({ "AddKey", "ClearButtons", "ClearMovement", "CommandNumber", "GetButtons", "GetForwardMove", "GetImpulse", "GetMouseWheel", "GetMouseX", "GetMouseY", "GetSideMove", "GetUpMove", "GetViewAngles", "IsForced", "KeyDown", "RemoveKey", "SelectWeapon", "SetButtons", "SetForwardMove", "SetImpulse", "SetMouseWheel", "SetMouseX", "SetMouseY", "SetSideMove", "SetUpMove", "SetViewAngles", "TickCount" }) do if __glua_classes.CUserCmd[n] == nil then __glua_classes.CUserCmd[n] = stub("CUserCmd:" .. n) end end
+for _, n in ipairs({ "AddKey", "GetAbsMoveAngles", "GetAngles", "GetButtons", "GetConstraintCenter", "GetConstraintRadius", "GetConstraintSpeedScale", "GetConstraintWidth", "GetFinalIdealVelocity", "GetFinalJumpVelocity", "GetFinalStepHeight", "GetForwardSpeed", "GetImpulseCommand", "GetMaxClientSpeed", "GetMaxSpeed", "GetMoveAngles", "GetOldAngles", "GetOldButtons", "GetOrigin", "GetSideSpeed", "GetUpSpeed", "GetVelocity", "KeyDown", "KeyPressed", "KeyReleased", "KeyWasDown", "RemoveKey", "SetAbsMoveAngles", "SetAngles", "SetButtons", "SetConstraintCenter", "SetConstraintRadius", "SetConstraintSpeedScale", "SetConstraintWidth", "SetFinalIdealVelocity", "SetFinalJumpVelocity", "SetFinalStepHeight", "SetForwardSpeed", "SetImpulseCommand", "SetMaxClientSpeed", "SetMaxSpeed", "SetMoveAngles", "SetOldAngles", "SetOldButtons", "SetOrigin", "SetSideSpeed", "SetUpSpeed", "SetVelocity" }) do if __glua_classes.CMoveData[n] == nil then __glua_classes.CMoveData[n] = stub("CMoveData:" .. n) end end
+for _, n in ipairs({ "ConnectTo", "Disconnect", "GetBottom", "GetBottomArea", "GetID", "GetLength", "GetNormal", "GetPosAtHeight", "GetTop", "GetTopBehindArea", "GetTopForwardArea", "GetTopLeftArea", "GetTopRightArea", "GetWidth", "IsConnectedAtSide", "IsValid", "Remove", "SetBottomArea", "SetTopBehindArea", "SetTopForwardArea", "SetTopLeftArea", "SetTopRightArea" }) do if __glua_classes.CNavLadder[n] == nil then __glua_classes.CNavLadder[n] = stub("CNavLadder:" .. n) end end
+for _, n in ipairs({ "Chase", "Compute", "Draw", "FirstSegment", "GetAge", "GetAllSegments", "GetClosestPosition", "GetCurrentGoal", "GetCursorData", "GetCursorPosition", "GetEnd", "GetGoalTolerance", "GetHindrance", "GetLength", "GetMinLookAheadDistance", "GetPositionOnPath", "GetStart", "Invalidate", "IsValid", "LastSegment", "MoveCursor", "MoveCursorTo", "MoveCursorToClosestPosition", "MoveCursorToEnd", "MoveCursorToStart", "NextSegment", "PriorSegment", "ResetAge", "SetGoalTolerance", "SetMinLookAheadDistance", "Update" }) do if __glua_classes.PathFollower[n] == nil then __glua_classes.PathFollower[n] = stub("PathFollower:" .. n) end end
+for _, n in ipairs({ "Approach", "ClearStuck", "FaceTowards", "GetAcceleration", "GetAvoidAllowed", "GetClimbAllowed", "GetCurrentAcceleration", "GetDeathDropHeight", "GetDeceleration", "GetDesiredSpeed", "GetGravity", "GetGroundMotionVector", "GetGroundNormal", "GetJumpGapsAllowed", "GetJumpHeight", "GetMaxJumpHeight", "GetMaxYawRate", "GetNextBot", "GetStepHeight", "GetVelocity", "IsAreaTraversable", "IsAttemptingToMove", "IsClimbingOrJumping", "IsOnGround", "IsStuck", "IsUsingLadder", "Jump", "JumpAcrossGap", "SetAcceleration", "SetAvoidAllowed", "SetClimbAllowed", "SetDeathDropHeight", "SetDeceleration", "SetDesiredSpeed", "SetGravity", "SetJumpGapsAllowed", "SetJumpHeight", "SetMaxYawRate", "SetStepHeight", "SetVelocity" }) do if __glua_classes.CLuaLocomotion[n] == nil then __glua_classes.CLuaLocomotion[n] = stub("CLuaLocomotion:" .. n) end end
+drive = drive or {}
+for _, n in ipairs({ "CalcView", "CreateMove", "DestroyMethod", "End", "FinishMove", "GetMethod", "Move", "PlayerStartDriving", "PlayerStopDriving", "Register", "Start", "StartMove" }) do if drive[n] == nil then drive[n] = stub("drive." .. n) end end
+
+-- KEY_ enum (documented button codes; the numpad library keys on them)
+KEY_NONE = 0
+KEY_0 = 1
+KEY_1 = 2
+KEY_2 = 3
+KEY_3 = 4
+KEY_4 = 5
+KEY_5 = 6
+KEY_6 = 7
+KEY_7 = 8
+KEY_8 = 9
+KEY_9 = 10
+KEY_A = 11
+KEY_B = 12
+KEY_C = 13
+KEY_D = 14
+KEY_E = 15
+KEY_F = 16
+KEY_G = 17
+KEY_H = 18
+KEY_I = 19
+KEY_J = 20
+KEY_K = 21
+KEY_L = 22
+KEY_M = 23
+KEY_N = 24
+KEY_O = 25
+KEY_P = 26
+KEY_Q = 27
+KEY_R = 28
+KEY_S = 29
+KEY_T = 30
+KEY_U = 31
+KEY_V = 32
+KEY_W = 33
+KEY_X = 34
+KEY_Y = 35
+KEY_Z = 36
+KEY_PAD_0 = 37
+KEY_PAD_1 = 38
+KEY_PAD_2 = 39
+KEY_PAD_3 = 40
+KEY_PAD_4 = 41
+KEY_PAD_5 = 42
+KEY_PAD_6 = 43
+KEY_PAD_7 = 44
+KEY_PAD_8 = 45
+KEY_PAD_9 = 46
+KEY_PAD_DIVIDE = 47
+KEY_PAD_MULTIPLY = 48
+KEY_PAD_MINUS = 49
+KEY_PAD_PLUS = 50
+KEY_PAD_ENTER = 51
+KEY_PAD_DECIMAL = 52
+KEY_LBRACKET = 53
+KEY_RBRACKET = 54
+KEY_SEMICOLON = 55
+KEY_APOSTROPHE = 56
+KEY_BACKQUOTE = 57
+KEY_COMMA = 58
+KEY_PERIOD = 59
+KEY_SLASH = 60
+KEY_BACKSLASH = 61
+KEY_MINUS = 62
+KEY_EQUAL = 63
+KEY_ENTER = 64
+KEY_SPACE = 65
+KEY_BACKSPACE = 66
+KEY_TAB = 67
+KEY_CAPSLOCK = 68
+KEY_NUMLOCK = 69
+KEY_ESCAPE = 70
+KEY_SCROLLLOCK = 71
+KEY_INSERT = 72
+KEY_DELETE = 73
+KEY_HOME = 74
+KEY_END = 75
+KEY_PAGEUP = 76
+KEY_PAGEDOWN = 77
+KEY_BREAK = 78
+KEY_LSHIFT = 79
+KEY_RSHIFT = 80
+KEY_LALT = 81
+KEY_RALT = 82
+KEY_LCONTROL = 83
+KEY_RCONTROL = 84
+KEY_LWIN = 85
+KEY_RWIN = 86
+KEY_APP = 87
+KEY_UP = 88
+KEY_LEFT = 89
+KEY_DOWN = 90
+KEY_RIGHT = 91
+KEY_F1 = 92
+KEY_F2 = 93
+KEY_F3 = 94
+KEY_F4 = 95
+KEY_F5 = 96
+KEY_F6 = 97
+KEY_F7 = 98
+KEY_F8 = 99
+KEY_F9 = 100
+KEY_F10 = 101
+KEY_F11 = 102
+KEY_F12 = 103
+KEY_CAPSLOCKTOGGLE = 104
+KEY_NUMLOCKTOGGLE = 105
+KEY_SCROLLLOCKTOGGLE = 106
+KEY_LAST = KEY_SCROLLLOCKTOGGLE
+KEY_COUNT = KEY_LAST + 1

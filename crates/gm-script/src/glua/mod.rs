@@ -27,6 +27,7 @@ const SERVER: &str = include_str!("server.luau");
 const CLASSES: &str = include_str!("classes.luau");
 /// scripted_ents / weapons / baseclass: ENT and SWEP tables over the host scripted classes.
 const SCRIPTED: &str = include_str!("scripted.luau");
+const LIBS: &str = include_str!("libs.luau");
 
 /// Registers a class metatable under `__glua_classes[name]` so the coverage listing (and
 /// `FindMetaTable`) can reach it.
@@ -85,6 +86,7 @@ pub fn install(lua: &Lua, _shared: Arc<Shared>) -> Result<()> {
     lua.load(SERVER).set_name("glua/server").exec()?;
     lua.load(CLASSES).set_name("glua/classes").exec()?;
     lua.load(SCRIPTED).set_name("glua/scripted").exec()?;
+    lua.load(LIBS).set_name("glua/libs").exec()?;
     let classes = classes(lua)?;
     g.set(
         "FindMetaTable",
@@ -106,8 +108,18 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
             Value::Table(t) if !name.starts_with("__glua") => {
                 for inner in t.pairs::<String, Value>() {
                     let (k, iv) = inner?;
-                    if !matches!(iv, Value::Nil | Value::Table(_)) {
-                        present.push(format!("{name}.{k}"));
+                    match iv {
+                        Value::Nil => {}
+                        // one nested level: `math.ease.InBack`
+                        Value::Table(inner_t) => {
+                            for p in inner_t.pairs::<String, Value>() {
+                                let (k2, v2) = p?;
+                                if matches!(v2, Value::Function(_)) {
+                                    present.push(format!("{name}.{k}.{k2}"));
+                                }
+                            }
+                        }
+                        _ => present.push(format!("{name}.{k}")),
                     }
                 }
             }
@@ -117,7 +129,7 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
     // Hooks are not Lua values: a GM hook counts as present when a bridge raises it
     // (`hook.Run("Name"`), a scripted ENTITY / WEAPON callback when the dispatcher that calls it
     // is annotated `-- @hook CLASS:Name`.
-    for src in [CORE, ENTITY, SERVER, CLASSES, SCRIPTED] {
+    for src in [CORE, ENTITY, SERVER, CLASSES, SCRIPTED, LIBS] {
         for (marker, prefix) in [("hook.Run(\"", "GM:"), ("@hook ", "")] {
             let mut rest = src;
             while let Some(i) = rest.find(marker) {
