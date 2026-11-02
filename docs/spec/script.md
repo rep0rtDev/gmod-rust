@@ -686,7 +686,9 @@ The rest of `Player`, `PhysObj`, `Weapon` and `Vehicle` (end of `glua/entity.lua
   deg/s. The airboat's fan is measured the same way (`server_airboat_drive`): `a = 260 - 1.1 v` forward
   (terminal 235 u/s), `187 - 1.87 |v|` in reverse, a 60 deg cone at every speed, sliding tyres
   that stop a coasting boat at 3.7 u/s per tick and let it slide through a turn; RPM reads 0.
-  Jalopy and APC share the jeep's law until measured.
+  The jalopy (`server_jalopy_drive`) is the jeep's law pulling harder (+6.6 u/s per tick) and
+  turning a little slower (60 deg/s at 18 deg); the APC cannot be spawned in the game's spawnmenu
+  (`bad_vehicle`) and keeps the jeep's law.
   `SetMaxThrottle / SetMaxReverseThrottle / SetBoost / SetSpringLength / SetWheelFriction /
   SetSteeringDegrees / SetVehicleParams` stay stubs (no such inputs on our wheels).
 

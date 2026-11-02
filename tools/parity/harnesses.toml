@@ -3907,6 +3907,18 @@ compare = "server"
 realm = "server"
 
 [[harness]]
+name = "server_jalopy_drive"
+scenario = "server/jalopy_drive"
+compare = "server"
+realm = "server"
+crates = ["gm-server"]
+# like the jeep: the turn builds up faster, ~5 deg of yaw drift through brake and reverse
+[harness.tolerance]
+pos = 120.0
+speed = 60.0
+ang = 20.0
+
+[[harness]]
 name = "server_airboat_drive"
 scenario = "server/airboat_drive"
 compare = "server"

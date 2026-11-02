@@ -3060,7 +3060,8 @@ pub const JEEP_DRIVE: DriveSpec = DriveSpec {
     max_fwd: 35.0 * MPH,
     max_rev: 14.0 * MPH,
     creep_fwd: 16.0,
-    creep_rev: 35.0,
+    // measured 35 u/s^2; ours gets 25, the tyre hold adds the rest
+    creep_rev: 25.0,
     coast: 67.0,
     brake: 790.0,
     deg_slow: 50.0,
@@ -3074,6 +3075,18 @@ pub const JEEP_DRIVE: DriveSpec = DriveSpec {
     shift_up_rpm: 3800.0,
     shift_down_rpm: 1600.0,
     wheel_radius: 20.3,
+};
+
+/// Measured (`server_jalopy_drive`): the jalopy's script is the jeep's with lighter wheels, and it
+/// pulls harder: +6.6 u/s per tick (395 u/s after 59 ticks), the same 35 mph plateau, 18 deg of
+/// steering at 619 u/s turns 60 deg/s (radius 591 u), reverse -6.7 u/s per tick to 14 mph then
+/// +0.6 u/s per tick; RPM = 7.07 x speed in first gear.
+pub const JALOPY_DRIVE: DriveSpec = DriveSpec {
+    accel: 440.0,
+    accel_rev: 440.0,
+    turn_len: 192.0,
+    wheel_radius: 19.7,
+    ..JEEP_DRIVE
 };
 
 /// Measured (`server_airboat_drive`, on dry ground): the fan's speed follows
@@ -3106,11 +3119,12 @@ pub const AIRBOAT_DRIVE: DriveSpec = DriveSpec {
     wheel_radius: 10.0,
 };
 
-/// The drive law of a vehicle key; the jeep's and the airboat's are measured, the jalopy and
-/// the APC share the jeep's until measured (same engine family in their scripts).
+/// The drive law of a vehicle key: the jeep's, the jalopy's and the airboat's are measured; the
+/// APC cannot be spawned in the game's spawnmenu (`bad_vehicle`), so it keeps the jeep's.
 pub fn drive_spec(key: &str) -> Option<DriveSpec> {
     match key {
-        "Jeep" | "Jalopy" | "APC" => Some(JEEP_DRIVE),
+        "Jeep" | "APC" => Some(JEEP_DRIVE),
+        "Jalopy" => Some(JALOPY_DRIVE),
         "Airboat" => Some(AIRBOAT_DRIVE),
         _ => None,
     }
