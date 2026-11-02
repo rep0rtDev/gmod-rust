@@ -1379,6 +1379,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gm-nav"
+version = "0.1.0"
+dependencies = [
+ "glam 0.29.3",
+ "gm-content",
+ "gm-formats",
+ "recastnavigation-sys",
+]
+
+[[package]]
 name = "gm-net"
 version = "0.1.0"
 dependencies = [
@@ -2756,6 +2766,19 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "objc2-quartz-core 0.3.2",
+]
+
+[[package]]
+name = "recastnavigation-sys"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0fe62a580b3da03673e84849beb8c93ec8e7d1667da3f2eb46508b23b40a1af"
+dependencies = [
+ "bindgen 0.69.5",
+ "cc",
+ "cmake",
+ "pkg-config",
+ "static_assertions",
 ]
 
 [[package]]

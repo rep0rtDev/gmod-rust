@@ -1,0 +1,14 @@
+[package]
+name = "gm-nav"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Navigation mesh (Recast/Detour) built from BSP brushes and displacements; path queries"
+
+[dependencies]
+gm-formats = { path = "../gm-formats" }
+glam = { workspace = true }
+recastnavigation-sys = { version = "1.0.3", features = ["recast", "detour"] }
+
+[dev-dependencies]
+gm-content = { path = "../gm-content" }
