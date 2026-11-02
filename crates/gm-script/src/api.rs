@@ -1986,6 +1986,21 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     lua.globals().set("storage", storage)?;
+    // `CompileString` / `RunString`: a chunk from a string, compiled in this VM's sandbox
+    // (no file access; `include` / `CompileFile` are not this).
+    lua.globals().set(
+        "__compile",
+        lua.create_function(|lua, (src, name): (mlua::LuaString, Option<String>)| {
+            let src = String::from_utf8_lossy(&src.as_bytes()).into_owned();
+            let chunk = lua
+                .load(src)
+                .set_name(name.unwrap_or_else(|| "RunString".into()));
+            match chunk.into_function() {
+                Ok(f) => Ok((Value::Function(f), Value::Nil)),
+                Err(e) => Ok((Value::Nil, Value::String(lua.create_string(e.to_string())?))),
+            }
+        })?,
+    )?;
     lua.globals().set(
         "__sha256",
         lua.create_function(|_, s: mlua::LuaString| {

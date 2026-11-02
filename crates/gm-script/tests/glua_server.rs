@@ -1297,3 +1297,34 @@ fn team_spawn_points_pick_the_players_spawn() {
     );
     assert_eq!(&r[1..], ["true", "true"], "{r:?}");
 }
+
+#[test]
+fn run_string_and_compile_string_compile_chunks_in_the_sandbox() {
+    let rt = runtime(
+        "state = {}\n\
+         state.ok = RunString('state.x = 5', 'one')\n\
+         state.cs = CompileString('return 7 * 6', 'two')()\n\
+         state.bad = RunString('x = = 1', 'three', false)\n\
+         state.badc = CompileString('return (', 'four', false)\n\
+         state.runtime_err = RunString('error(\"boom\")', 'five', false)\n\
+         state.no_io = RunString('state.io = io', 'six')\n",
+    );
+    let a = &rt.actors()[0];
+    let (ok, x, cs): (Option<String>, i64, i64) =
+        a.eval("return state.ok, state.x, state.cs").unwrap();
+    assert_eq!((ok, x, cs), (None, 5, 42));
+    let (bad, badc, rt_err, io): (String, String, String, Option<bool>) = a
+        .eval("return state.bad, state.badc, state.runtime_err, state.io ~= nil")
+        .unwrap();
+    assert!(
+        bad.contains("three"),
+        "the identifier names the chunk: {bad}"
+    );
+    assert!(!badc.is_empty());
+    assert!(rt_err.contains("boom"));
+    assert_eq!(
+        io,
+        Some(false),
+        "the sandbox globals apply to compiled chunks"
+    );
+}

@@ -909,7 +909,11 @@ step of every player command once an addon listens to any of them: `mv` is a `CM
 of origin, velocity, angles, buttons (and the previous command's), forward/side/up move and
 the command's ground speed cap; what the hooks change in it is written back (`SetMaxSpeed`
 caps walk and run for that step), `Move` returning `true` skips the mover (the hook moved
-the player). Constraint / final-velocity / abs-move-angle fields have no mover input: stubs. `GetPreferredCarryAngles` (the hook, else the scripted
+the player). Constraint / final-velocity / abs-move-angle fields have no mover input: stubs.
+`CompileString(code, name, handleError)` / `RunString` / `RunStringEx` compile a chunk from
+a string in the actor's own sandbox (same globals, no file or process access; a failed
+compile returns the error text when `handleError` is false, else raises / `ErrorNoHalt`s).
+`CompileFile` and `include` stay stubs: actors do not see files. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

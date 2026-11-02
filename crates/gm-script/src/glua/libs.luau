@@ -160,7 +160,26 @@ function IsFriendEntityName(c) return ({ npc_citizen = true, npc_alyx = true, np
 function IsUselessModel(m) m = string.lower(m or ""); return m:find("_gesture") ~= nil or m:find("_anim") ~= nil or m:find("_gestures") ~= nil or m:find("_postures") ~= nil or m:find("_shared") ~= nil or m:find("_ss") ~= nil or m:find("_arms") ~= nil or m:find("_animations") ~= nil end
 UTIL_IsUselessModel = IsUselessModel
 BRANCH = "x86-64"
-for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CompileString", "CreatePhysCollideBox", "CreatePhysCollidesFromModel", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "IsMounted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "Path", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "RunString", "RunStringEx", "SentenceDuration", "SetPhysConstraintSystem", "SoundDuration", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
+-- Chunks from strings, compiled in this VM's sandbox (the game's RunString / CompileString;
+-- CompileFile and include need files the actor does not have).
+function CompileString(code, identifier, handleError)
+    local fn, err = __compile(tostring(code), tostring(identifier or "CompileString"))
+    if fn then return fn end
+    if handleError == false then return err end
+    error(err, 2)
+end
+function RunString(code, identifier, handleError)
+    local fn, err = __compile(tostring(code), tostring(identifier or "RunString"))
+    if fn then
+        local ok, e = pcall(fn)
+        if ok then return nil end
+        err = tostring(e)
+    end
+    if handleError ~= false then ErrorNoHalt(err .. "\n") end
+    return err
+end
+RunStringEx = RunString
+for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CreatePhysCollideBox", "CreatePhysCollidesFromModel", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "IsMounted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "Path", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "SentenceDuration", "SetPhysConstraintSystem", "SoundDuration", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
 
 
 -- Tool: the tool gun's per-mode state object (ghost entities need the client realm).
