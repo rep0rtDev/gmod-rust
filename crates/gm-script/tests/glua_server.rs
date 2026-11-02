@@ -1238,3 +1238,31 @@ fn bind_pose_bone_positions() {
     );
     assert_eq!(r[3], 1.0);
 }
+
+#[test]
+fn team_spawn_points_pick_the_players_spawn() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             team.SetUp(1, 'Red', Color(255, 0, 0))
+             Player(1):SetTeam(1)
+             team.SetSpawnPoint(1, Entity(5):GetClass())
+             local a = hook.Run('PlayerSelectSpawn', Player(1), false)
+             hook.Add('IsSpawnpointSuitable', 't', function() return false end)
+             local b = hook.Run('PlayerSelectSpawn', Player(1), false)
+             hook.Remove('IsSpawnpointSuitable', 't')
+             team.SetSpawnPoint(1, 'no_such_class')
+             local c = hook.Run('PlayerSelectSpawn', Player(1), false)
+             state.r = { tostring(a), tostring(b == NULL), tostring(c == NULL) }
+         end)",
+    );
+    let snap = snapshot();
+    let a = &mut rt.actors_mut()[0];
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<String> = a.eval("return state.r").unwrap();
+    assert!(
+        r[0].starts_with("Entity [") && r[0].ends_with("[prop_physics]"),
+        "one of the team's spawn entities: {r:?}"
+    );
+    assert_eq!(&r[1..], ["true", "true"], "{r:?}");
+}

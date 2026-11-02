@@ -860,7 +860,9 @@ sound table (`false` drops it; `true` applies a changed `SoundName` or `Volume`;
 channel are placeholders, our sounds carry none). `OnEntityWaterLevelChanged` follows a player's water level
 from the mover (0 dry, 1 feet, 2 waist, 3 eyes); props carry no water level, so only players report. `PlayerSelectSpawn` may return any entity: the player spawns at its
 position and angles instead of the server's pick (we have no spawn-point entities, so
-`IsSpawnpointSuitable` stays a stub). `GetPreferredCarryAngles` (the hook, else the scripted
+`IsSpawnpointSuitable` is asked only about team spawn entities): the default
+`PlayerSelectSpawn` hands a player whose team has spawn classes (`team.SetSpawnPoint`) to
+`PlayerSelectTeamSpawn`, which picks a random spawn entity `IsSpawnpointSuitable` accepts. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

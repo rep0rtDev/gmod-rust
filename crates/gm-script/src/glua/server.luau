@@ -798,8 +798,26 @@ function GM:GetPreferredCarryAngles(ent) return nil end
 function GM:EntityKeyValue(ent, key, value) return nil end
 function GM:EntityNetworkedVarChanged(ent, name, old, new) end
 function GM:AcceptInput(ent, input, activator, caller, value) return false end
-function GM:PlayerSelectSpawn(ply, transition) return NULL end
-function GM:PlayerSelectTeamSpawn(team, ply) return NULL end
+function GM:PlayerSelectSpawn(ply, transition)
+    if not (team and team.GetSpawnPoints) then return NULL end
+    local spawns = team.GetSpawnPoints(ply:Team())
+    if spawns == nil or #spawns == 0 then return NULL end
+    local r = hook.Run("PlayerSelectTeamSpawn", ply:Team(), ply)
+    if r == nil then return NULL end
+    return r
+end
+function GM:PlayerSelectTeamSpawn(teamid, ply)
+    local spawns = team.GetSpawnPoints(teamid) or {}
+    local ok = {}
+    for _, e in ipairs(spawns) do
+        if IsValid(e) and hook.Run("IsSpawnpointSuitable", ply, e, false) ~= false then ok[#ok + 1] = e end
+    end
+    if #ok > 0 then return ok[math.random(#ok)] end
+    for _, e in ipairs(spawns) do
+        if IsValid(e) and hook.Run("IsSpawnpointSuitable", ply, e, true) ~= false then return e end
+    end
+    return NULL
+end
 function GM:PlayerSpawnAsSpectator(ply) ply:Spectate(OBS_MODE_ROAMING or 5) end
 function GM:PlayerSetHandsModel(ply, ent) end
 function GM:SetPlayerSpeed(ply, walk, run) ply:SetWalkSpeed(walk); ply:SetRunSpeed(run) end
