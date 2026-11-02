@@ -1145,6 +1145,10 @@ pub struct Npc {
     /// current burst, the tick of the next shot and the shots fired so far (see `npc_combat_think`).
     pub target: Option<u32>,
     pub target_seen: u64,
+    /// Tick the current target was first seen (`GetEnemyFirstTimeSeen`), 0 for never.
+    pub target_first_seen: u64,
+    /// Tick of the last damage taken from the current target (`GetLastTimeTookDamageFromEnemy`).
+    pub last_enemy_damage: u64,
     pub burst_left: u8,
     pub next_shot: u64,
     pub shots: u32,
@@ -6831,6 +6835,8 @@ impl<'w> Server<'w> {
             chase: None,
             target: None,
             target_seen: 0,
+            target_first_seen: 0,
+            last_enemy_damage: 0,
             burst_left: 0,
             next_shot: 0,
             shots: 0,
@@ -6972,6 +6978,9 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get_mut(&id) else {
             return false;
         };
+        if n.target == Some(attacker) {
+            n.last_enemy_damage = tick;
+        }
         if n.dead_at.is_some() {
             return false;
         }
@@ -7105,6 +7114,43 @@ impl<'w> Server<'w> {
     /// Send a live NPC walking to `target` along the navigation mesh. False when there is
     /// no mesh, no such NPC, or no polygon near either end; a `partial` path (target off
     /// the reachable mesh) still starts and ends at the closest reachable point.
+    /// Script `NPC:NavSetWanderGoal` / `NavSetRandomGoal`: walks to a random navmesh vertex
+    /// between `min` and `max` units away (a deterministic xorshift over the tick and the NPC).
+    pub fn npc_wander_goal(&mut self, id: u32, min: f32, max: f32) -> bool {
+        let Some(nav) = self.nav.as_deref() else {
+            return false;
+        };
+        let Some(n) = self.npcs.get(&id) else {
+            return false;
+        };
+        let pos = n.pos;
+        let verts: Vec<Vec3> = nav
+            .vertices()
+            .iter()
+            .copied()
+            .filter(|v| {
+                let d = (*v - pos).length();
+                d >= min && d <= max
+            })
+            .collect();
+        if verts.is_empty() {
+            return false;
+        }
+        let mut x = (self.tick_count << 16) ^ u64::from(id) ^ 0x9E37_79B9_7F4A_7C15;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        let target = verts[(x % verts.len() as u64) as usize];
+        self.npc_goto(id, target, false)
+    }
+
+    /// `GetEnemyFirstTimeSeen` / `GetLastTimeTookDamageFromEnemy` ticks of an NPC.
+    pub fn npc_memory(&self, id: u32) -> Option<(u64, u64)> {
+        self.npcs
+            .get(&id)
+            .map(|n| (n.target_first_seen, n.last_enemy_damage))
+    }
+
     pub fn npc_goto(&mut self, id: u32, target: Vec3, run: bool) -> bool {
         let Some(nav) = self.nav.as_deref() else {
             return false;
@@ -7189,11 +7235,18 @@ impl<'w> Server<'w> {
         match player {
             Some(p) => {
                 if n.target != Some(p) {
+                    if n.target != Some(p) {
+                        n.target_first_seen = 0;
+                        n.last_enemy_damage = 0;
+                    }
                     n.target = Some(p);
                     n.burst_left = NPC_BURST_SHOTS;
                     n.next_shot = now + n.think_interval as u64;
                 }
                 n.target_seen = now;
+                if n.target_first_seen == 0 {
+                    n.target_first_seen = now;
+                }
                 n.passive = false;
                 true
             }
@@ -7578,6 +7631,9 @@ impl<'w> Server<'w> {
                     if let Some(n) = self.npcs.get_mut(&id) {
                         n.cover_until = now + NPC_COVER_TICKS;
                         n.target_seen = now;
+                        if n.target_first_seen == 0 {
+                            n.target_first_seen = now;
+                        }
                     }
                     return;
                 }
@@ -7588,6 +7644,9 @@ impl<'w> Server<'w> {
                     n.cover_at = None;
                     n.cover_until = 0;
                     n.target_seen = now;
+                    if n.target_first_seen == 0 {
+                        n.target_first_seen = now;
+                    }
                 }
                 return;
             }
@@ -7616,12 +7675,19 @@ impl<'w> Server<'w> {
             return;
         };
         if n.target != Some(player) {
+            if n.target != Some(player) {
+                n.target_first_seen = 0;
+                n.last_enemy_damage = 0;
+            }
             n.target = Some(player);
             n.burst_left = NPC_BURST_SHOTS;
             // the game opens fire one think after it enters combat
             n.next_shot = now + n.think_interval as u64;
         }
         n.target_seen = now;
+        if n.target_first_seen == 0 {
+            n.target_first_seen = now;
+        }
         if n.chase == Some(player) {
             n.chase = None;
             n.goal = None;
@@ -7744,8 +7810,15 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
+        if n.target != Some(player) {
+            n.target_first_seen = 0;
+            n.last_enemy_damage = 0;
+        }
         n.target = Some(player);
         n.target_seen = now;
+        if n.target_first_seen == 0 {
+            n.target_first_seen = now;
+        }
         n.chase_reach = m.start_range.min(m.reach) - 3.0;
         if let Some(j) = npc_jump(&n.class) {
             if now >= n.next_leap
@@ -7875,6 +7948,10 @@ impl<'w> Server<'w> {
             return;
         }
         if n.target.is_none() && alive {
+            if n.target != Some(by) {
+                n.target_first_seen = 0;
+                n.last_enemy_damage = 0;
+            }
             n.target = Some(by);
             n.target_seen = tick;
         }
@@ -7945,8 +8022,15 @@ impl<'w> Server<'w> {
                     })
             });
             if let (Some(p), Some(n)) = (shared, self.npcs.get_mut(&id)) {
+                if n.target != Some(p) {
+                    n.target_first_seen = 0;
+                    n.last_enemy_damage = 0;
+                }
                 n.target = Some(p);
                 n.target_seen = now;
+                if n.target_first_seen == 0 {
+                    n.target_first_seen = now;
+                }
                 n.burst_left = NPC_BURST_SHOTS;
                 n.next_shot = now + n.think_interval as u64;
             }
@@ -8004,8 +8088,15 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
+        if n.target != Some(player) {
+            n.target_first_seen = 0;
+            n.last_enemy_damage = 0;
+        }
         n.target = Some(player);
         n.target_seen = now;
+        if n.target_first_seen == 0 {
+            n.target_first_seen = now;
+        }
         if now < n.next_leap {
             return;
         }
@@ -8419,6 +8510,8 @@ impl<'w> Server<'w> {
                 chase: None,
                 target: None,
                 target_seen: 0,
+                target_first_seen: 0,
+                last_enemy_damage: 0,
                 burst_left: 0,
                 next_shot: 0,
                 shots: 0,

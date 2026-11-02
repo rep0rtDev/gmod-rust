@@ -874,7 +874,10 @@ pushed to the client), `EquipSuit` / `RemoveSuit` / `IsSuitEquipped` keep the HE
 `SetLastHitGroup` overrides `LastHitGroup` until the next hit lands on anyone, `ShouldDropWeapon`
 drops the active weapon as a world weapon on death through the `DropWeapon` path. `Entity:GetBloodColor` reads the NPC's blood colour (the class table's value in the
 game enum; players red, everything else `DONT_BLEED`), `SetBloodColor` changes it on NPCs
-only. `GetPreferredCarryAngles` (the hook, else the scripted
+only. `NPC:GetEnemyFirstTimeSeen` is the tick the current target was first seen,
+`GetLastTimeTookDamageFromEnemy` the last damage taken from it (both reset when the target
+changes); `NavSetWanderGoal(min, max)` walks to a random navmesh vertex in that distance band,
+`NavSetRandomGoal(minDist, dir)` the same with `minDist..minDist+512` (the direction is ignored). `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

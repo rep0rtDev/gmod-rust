@@ -1248,3 +1248,44 @@ fn blood_colour_comes_from_the_npc_table_and_scripts_can_change_it() {
     assert!(!server.set_blood(99_999, 1), "no such NPC");
     assert_eq!(server.blood_color(99_999), None);
 }
+
+#[test]
+fn npc_memory_and_wander_goals() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    assert!(server.spawn_npc(1, "npc_bogus", "none").is_none());
+    assert!(server.sandbox.undos(1).is_empty());
+    let _hit = server.tool_hit(1).unwrap();
+    let id = server.spawn_npc(1, "npc_alyx", "weapon_alyxgun").unwrap();
+    assert_eq!(server.npc_memory(id), Some((0, 0)));
+    assert!(server.npc_target(id, Some(1)));
+    assert!(server.damage_npc(id, 1, 1.0, 0));
+    let (_, hurt) = server.npc_memory(id).unwrap();
+    assert!(hurt > 0, "damage from the target is remembered: {hurt}");
+    let wandered = server.npc_wander_goal(id, 64.0, 4096.0);
+    assert_eq!(
+        wandered,
+        server.navmesh().is_some(),
+        "a goal only with a navmesh"
+    );
+    assert!(!server.npc_wander_goal(99_999, 0.0, 100.0));
+}

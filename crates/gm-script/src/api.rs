@@ -377,6 +377,12 @@ pub enum QueuedWrite {
         ent: u32,
         class: String,
     },
+    /// `NPC:NavSetWanderGoal`: a random navmesh goal `min..max` away.
+    NpcWander {
+        ent: u32,
+        min: f32,
+        max: f32,
+    },
     /// `Entity:SetBloodColor` (NPCs).
     SetBlood {
         ent: u32,
@@ -678,6 +684,8 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("weapon", e.weapon.as_str())?;
     t.set("blood", e.blood)?;
     t.set("npc_target_seen", e.npc_target_seen)?;
+    t.set("npc_target_first_seen", e.npc_target_first_seen)?;
+    t.set("npc_enemy_damage", e.npc_enemy_damage)?;
     t.set("friction", e.friction)?;
     t.set("elasticity", e.elasticity)?;
     t.set("on_fire", e.on_fire)?;
@@ -1694,6 +1702,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     player: ent,
                     text: str_arg(&arg)?,
                 },
+                "npc_wander" => {
+                    let v = value_vec3(&arg)?;
+                    QueuedWrite::NpcWander {
+                        ent,
+                        min: v.x.max(0.0),
+                        max: v.y.max(v.x),
+                    }
+                }
                 "entity.set_blood" => QueuedWrite::SetBlood {
                     ent,
                     blood: match &arg {
@@ -2669,6 +2685,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         } => server.set_entity_surface(*ent, *friction, *elasticity),
         QueuedWrite::NpcWeapon { ent, class } => server.set_npc_weapon(*ent, class),
         QueuedWrite::SetBlood { ent, blood } => server.set_blood(*ent, *blood),
+        QueuedWrite::NpcWander { ent, min, max } => server.npc_wander_goal(*ent, *min, *max),
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())
         }
