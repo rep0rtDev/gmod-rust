@@ -167,6 +167,12 @@ pub enum QueuedWrite {
     EntityPoseClear {
         ent: u32,
     },
+    /// `Entity:SetCollisionBounds`.
+    EntityBounds {
+        ent: u32,
+        mins: glam::Vec3,
+        maxs: glam::Vec3,
+    },
     /// `Entity:AddGestureSequence` / `SetLayer*` / `RemoveLayer` on the gesture layer.
     EntityGesture {
         ent: u32,
@@ -854,6 +860,8 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
         pose.set(n.as_str(), *v)?;
     }
     t.set("pose", pose)?;
+    t.set("mins", vec3_table(lua, e.mins)?)?;
+    t.set("maxs", vec3_table(lua, e.maxs)?)?;
     if let Some(g) = &e.gesture {
         let gt = lua.create_table()?;
         gt.set("sequence", g.sequence.as_str())?;
@@ -1862,6 +1870,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     }
                 }
                 "ent.pose_clear" => QueuedWrite::EntityPoseClear { ent },
+                "ent.bounds" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::EntityBounds {
+                        ent,
+                        mins: table_vec3(&t.get::<Table>("mins")?)?,
+                        maxs: table_vec3(&t.get::<Table>("maxs")?)?,
+                    }
+                }
                 "ent.gesture" => QueuedWrite::EntityGesture {
                     ent,
                     op: gesture_op(&table_arg(&arg)?)?,
@@ -3072,6 +3088,9 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             server.set_pose_parameter(*ent, name, *value)
         }
         QueuedWrite::EntityPoseClear { ent } => server.clear_pose_parameters(*ent),
+        QueuedWrite::EntityBounds { ent, mins, maxs } => {
+            server.set_collision_bounds(*ent, *mins, *maxs)
+        }
         QueuedWrite::EntityGesture { ent, op } => match op {
             GestureOp::Add { sequence, autokill } => server.add_gesture(*ent, sequence, *autokill),
             GestureOp::Remove => server.remove_gesture(*ent),

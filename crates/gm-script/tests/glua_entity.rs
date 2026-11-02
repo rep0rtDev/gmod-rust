@@ -40,6 +40,8 @@ fn snapshot() -> Arc<Snapshot> {
             sequence_finished: false,
             gesture: None,
             pose: Vec::new(),
+            mins: glam::Vec3::ZERO,
+            maxs: glam::Vec3::ZERO,
             bone_scales: vec![(1, Vec3::new(2.0, 2.0, 2.0))],
             bone_angles: vec![],
             flex: Some((vec![0.5], 1.0)),
@@ -88,6 +90,8 @@ fn snapshot() -> Arc<Snapshot> {
             sequence_finished: false,
             gesture: None,
             pose: Vec::new(),
+            mins: glam::Vec3::ZERO,
+            maxs: glam::Vec3::ZERO,
             bone_scales: vec![(1, Vec3::new(2.0, 2.0, 2.0))],
             bone_angles: vec![],
             flex: Some((vec![0.5], 1.0)),
@@ -588,4 +592,24 @@ fn activity_enum_round_trips_and_gestures_by_activity_need_a_tagged_sequence() {
     // no model data in this harness: nothing tagged, nothing queued
     assert_eq!((sel, add, playing), (-1, -1, false));
     assert!(writes.is_empty());
+}
+
+#[test]
+fn collision_bounds_write_carries_both_corners_sorted_by_the_server() {
+    let (rt, writes) = run("Entity(7):SetCollisionBounds(Vector(-1, -2, -3), Vector(1, 2, 3))
+         Entity(7):SetCollisionBoundsWS(Entity(7):GetPos() + Vector(-5, -5, 0), Entity(7):GetPos() + Vector(5, 5, 10))
+         local mn, mx = Entity(5):GetCollisionBounds()
+         state.r = { tostring(mn), tostring(mx), tostring(Entity(5):OBBCenter()) }");
+    assert!(
+        matches!(&writes[0], QueuedWrite::EntityBounds { ent: 7, mins, maxs }
+        if *mins == glam::Vec3::new(-1.0, -2.0, -3.0) && *maxs == glam::Vec3::new(1.0, 2.0, 3.0))
+    );
+    assert!(
+        matches!(&writes[1], QueuedWrite::EntityBounds { ent: 7, mins, maxs }
+        if *mins == glam::Vec3::new(-5.0, -5.0, 0.0) && *maxs == glam::Vec3::new(5.0, 5.0, 10.0))
+    );
+    // zero bounds in the snapshot fall back to the model box (none here): still two vectors
+    let (mn, mx, c): (String, String, String) =
+        rt.actors()[0].eval("return unpack(state.r)").unwrap();
+    assert!(!mn.is_empty() && !mx.is_empty() && !c.is_empty());
 }

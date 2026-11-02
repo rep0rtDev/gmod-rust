@@ -174,4 +174,16 @@ fn pose_parameters_clamp_or_wrap_into_the_model_range_and_clear() {
     assert!(server.clear_pose_parameters(id));
     assert!(server.pose_parameters(id).is_none());
     assert!(!server.clear_pose_parameters(9999));
+
+    // collision bounds: the NPC's hull, settable (sorted), unknown entity refused
+    let hull = (server.npcs[&id].mins, server.npcs[&id].maxs);
+    assert_eq!(server.collision_bounds(id), Some(hull));
+    assert!(hull.1.z > 60.0, "alyx stands {hull:?}");
+    assert!(server.set_collision_bounds(id, Vec3::new(4.0, 4.0, 30.0), Vec3::new(-4.0, -4.0, 0.0)));
+    assert_eq!(
+        server.collision_bounds(id),
+        Some((Vec3::new(-4.0, -4.0, 0.0), Vec3::new(4.0, 4.0, 30.0)))
+    );
+    assert_eq!(server.npcs[&id].maxs.z, 30.0, "the hull itself moved");
+    assert!(!server.set_collision_bounds(9999, Vec3::ZERO, Vec3::ONE));
 }

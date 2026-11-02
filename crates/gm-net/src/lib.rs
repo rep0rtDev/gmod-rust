@@ -130,6 +130,8 @@ mod tests {
                 sequence_finished: false,
                 gesture: None,
                 pose: Vec::new(),
+                mins: glam::Vec3::ZERO,
+                maxs: glam::Vec3::ZERO,
             }],
             removed: vec![1],
             own: OwnSandbox {

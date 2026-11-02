@@ -4125,6 +4125,9 @@ pub struct Server<'w> {
     pub anims: BTreeMap<u32, EntAnim>,
     /// Pose parameter values scripts set (`Entity:SetPoseParameter`), by entity then name.
     pub poses: BTreeMap<u32, BTreeMap<String, f32>>,
+    /// `Entity:SetCollisionBounds` on a prop: readback only, its body stays the PHY (an NPC's
+    /// call changes its hull in `npcs` instead).
+    pub bounds_override: BTreeMap<u32, (Vec3, Vec3)>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
     sounds: Vec<WorldSound>,
     /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
@@ -4280,6 +4283,7 @@ impl<'w> Server<'w> {
             script_shapes: BTreeMap::new(),
             anims: BTreeMap::new(),
             poses: BTreeMap::new(),
+            bounds_override: BTreeMap::new(),
             sounds: Vec::new(),
             scrapes: BTreeMap::new(),
             thruster_loops: BTreeSet::new(),
@@ -7478,6 +7482,7 @@ impl<'w> Server<'w> {
             .chain(self.sandbox.props().iter().map(|p| p.id))
             .collect();
         self.poses.retain(|id, _| all.contains(id));
+        self.bounds_override.retain(|id, _| all.contains(id));
         for (id, model, base) in live {
             let mut a = self.anims.remove(&id).unwrap_or_default();
             if let Some(base) = base {
@@ -7685,6 +7690,35 @@ impl<'w> Server<'w> {
             return false;
         }
         self.poses.remove(&ent);
+        true
+    }
+
+    /// `Entity:GetCollisionBounds`: an NPC's hull, a prop's model collision bounds (the MDL hull
+    /// box widened to its PHY points) or the override a script set.
+    pub fn collision_bounds(&self, ent: u32) -> Option<(Vec3, Vec3)> {
+        if let Some(b) = self.bounds_override.get(&ent) {
+            return Some(*b);
+        }
+        if let Some(n) = self.npcs.get(&ent) {
+            return Some((n.mins, n.maxs));
+        }
+        let p = self.sandbox.props().iter().find(|p| p.id == ent)?;
+        let b = &self.models.get(&p.model)?.bounds;
+        Some((b.min, b.max))
+    }
+
+    /// `Entity:SetCollisionBounds`: an NPC's hull (its hit tests use it), a prop's readback.
+    pub fn set_collision_bounds(&mut self, ent: u32, mins: Vec3, maxs: Vec3) -> bool {
+        let (mins, maxs) = (mins.min(maxs), mins.max(maxs));
+        if let Some(n) = self.npcs.get_mut(&ent) {
+            n.mins = mins;
+            n.maxs = maxs;
+            return true;
+        }
+        if !self.sandbox.props().iter().any(|p| p.id == ent) {
+            return false;
+        }
+        self.bounds_override.insert(ent, (mins, maxs));
         true
     }
 

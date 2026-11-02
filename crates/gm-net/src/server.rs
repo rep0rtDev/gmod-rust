@@ -1022,6 +1022,12 @@ impl ServerNet {
                     sequence_finished: server.anim(*id).is_some_and(|a| a.finished),
                     gesture: gesture_state(server.anim(*id)),
                     pose: pose_list(server.pose_parameters(*id)),
+                    mins: server
+                        .collision_bounds(*id)
+                        .map_or(glam::Vec3::ZERO, |b| b.0),
+                    maxs: server
+                        .collision_bounds(*id)
+                        .map_or(glam::Vec3::ZERO, |b| b.1),
                 },
             );
         }
@@ -1097,6 +1103,12 @@ impl ServerNet {
                     sequence_finished: server.anim(p.id).is_some_and(|a| a.finished),
                     gesture: gesture_state(server.anim(p.id)),
                     pose: pose_list(server.pose_parameters(p.id)),
+                    mins: server
+                        .collision_bounds(p.id)
+                        .map_or(glam::Vec3::ZERO, |b| b.0),
+                    maxs: server
+                        .collision_bounds(p.id)
+                        .map_or(glam::Vec3::ZERO, |b| b.1),
                 },
             );
         }

@@ -595,6 +595,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   selection onto the gesture layer; `util.GetActivityIDByName` / `GetActivityNameByID` map the
   enum. NPC / Player / Weapon activity state (`SetActivity`, `GetIdealActivity`, ...) stays
   stubbed: our AI has no activity machine.
+- Collision bounds: snapshots carry each entity's box (an NPC's hull, a prop's MDL hull box
+  widened to its PHY points); `Entity:GetCollisionBounds` / `OBBMins` / `OBBMaxs` / `OBBCenter` /
+  `WorldSpaceAABB` / `GetSurroundingBounds` read it (previously constant zeros / the view box).
+  `SetCollisionBounds` (`WS` subtracts the position) changes an NPC's hull, which its hit tests
+  use; on a prop it is readback only, the body stays the PHY. `SetSurroundingBounds(Type)` stay
+  stubs.
 
 Done in `glua/server.luau`:
 

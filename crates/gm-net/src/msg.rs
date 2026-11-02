@@ -197,6 +197,9 @@ pub struct EntityState {
     pub gesture: Option<GestureState>,
     /// Pose parameter values a script set, by name (`Entity:SetPoseParameter`).
     pub pose: Vec<(String, f32)>,
+    /// Collision bounds (`Entity:GetCollisionBounds`): an NPC's hull, a prop's model box.
+    pub mins: Vec3,
+    pub maxs: Vec3,
 }
 
 /// A gesture layer on the wire (the server's `GestureLayer`).
@@ -489,7 +492,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 10;
+pub const PROTOCOL: u16 = 11;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1044,6 +1047,11 @@ impl ServerMsg {
                         w.str(n);
                         w.f32(*v);
                     }
+                    for v in [e.mins, e.maxs] {
+                        w.f32(v.x);
+                        w.f32(v.y);
+                        w.f32(v.z);
+                    }
                 }
                 w.varint(removed.len() as u64);
                 for id in removed {
@@ -1378,6 +1386,8 @@ impl ServerMsg {
                             }
                             v
                         },
+                        mins: Vec3::new(r.f32()?, r.f32()?, r.f32()?),
+                        maxs: Vec3::new(r.f32()?, r.f32()?, r.f32()?),
                     });
                 }
                 let n = r.varint()? as usize;
