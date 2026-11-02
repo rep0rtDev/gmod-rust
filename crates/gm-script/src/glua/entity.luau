@@ -224,7 +224,10 @@ function NPC:NavSetGoalTarget(ent) if ent.IsPlayer and ent:IsPlayer() then qwrit
 function NPC:ClearGoal() qwrite("npc_stop", self.__id, nil) end
 function NPC:StopMoving() qwrite("npc_stop", self.__id, nil) end
 function NPC:SetMovementActivity(act) rawget(self, "__vars").__run = act == ACT_RUN end
-function NPC:GetActiveWeapon() local s = snap(self.__id); return s and WEP.__from(s.class) or NULL end
+function NPC:GetActiveWeapon() local s = snap(self.__id); if s and s.weapon and s.weapon ~= "" then return WEP.__from(s.weapon, self.__id) end return NULL end
+function NPC:Give(class) qwrite("npc_weapon", self.__id, class) return WEP.__from(class, self.__id) end
+function NPC:SelectWeapon(class) qwrite("npc_weapon", self.__id, class) end
+function NPC:DropWeapon() qwrite("npc_weapon", self.__id, "") end
 function NPC:GetNPCState() return 0 end
 function NPC:IsMoving() local s = snap(self.__id); return s ~= nil and (s.velocity.x ~= 0 or s.velocity.y ~= 0) end
 function VEH:GetDriver() return NULL end
@@ -351,6 +354,7 @@ function PLY:SetFrags(n) qwrite("player.set_frags", self.__pid, math.floor(n)) e
 function PLY:SetDeaths(n) qwrite("player.set_deaths", self.__pid, math.floor(n)) end
 function PLY:AddFrags(n) self:SetFrags(self:Frags() + math.floor(n)) end
 function PLY:AddDeaths(n) self:SetDeaths(self:Deaths() + math.floor(n)) end
+function PLY:Say(text, team) qwrite("player.say", self.__pid, tostring(text)) end
 function PLY:Kick(reason) qwrite("player.kick", self.__pid, reason or "") end
 function PLY:EnterVehicle(v) if IsValid(v) then qwrite("player.vehicle", self.__pid, v:EntIndex()) end end
 function PLY:ExitVehicle() qwrite("player.vehicle", self.__pid, nil) end

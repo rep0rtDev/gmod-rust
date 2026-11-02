@@ -922,6 +922,15 @@ impl ServerNet {
                 slot.pending_events.extend(replies);
             }
         }
+        for (player, text) in std::mem::take(&mut server.pending_chat) {
+            let name = self
+                .clients
+                .values()
+                .find(|c| c.player == player)
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
+            chats.push((player, name, text));
+        }
         for (player, name, text) in chats {
             let text = match self.hooks.as_mut() {
                 Some(h) => h.player_chat(server, player, &text),

@@ -37,6 +37,7 @@ fn snapshot() -> Arc<Snapshot> {
             bone_angles: vec![],
             flex: Some((vec![0.5], 1.0)),
             eye_target: None,
+            weapon: "weapon_smg1".into(),
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -71,6 +72,7 @@ fn snapshot() -> Arc<Snapshot> {
             bone_angles: vec![],
             flex: Some((vec![0.5], 1.0)),
             eye_target: None,
+            weapon: "weapon_smg1".into(),
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -822,4 +824,29 @@ fn poser_state_reads_and_writes() {
         &writes[5],
         QueuedWrite::SetEyeTarget { target: None, .. }
     ));
+}
+
+#[test]
+fn say_and_npc_weapon_queue_writes() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             Player(1):Say('hello')
+             local n = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.NPC }, __glua_classes.Entity)
+             state.w = n:GetActiveWeapon():GetClass()
+             n:Give('weapon_ar2')
+             n:DropWeapon()
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let w: String = rt.actors()[0].eval("return state.w").unwrap();
+    assert_eq!(w, "weapon_smg1");
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(matches!(&writes[0], QueuedWrite::PlayerSay { player: 1, text } if text == "hello"));
+    assert!(
+        matches!(&writes[1], QueuedWrite::NpcWeapon { ent: 5, class } if class == "weapon_ar2")
+    );
+    assert!(matches!(&writes[2], QueuedWrite::NpcWeapon { ent: 5, class } if class.is_empty()));
 }

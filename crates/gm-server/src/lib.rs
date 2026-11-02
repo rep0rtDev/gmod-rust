@@ -3198,6 +3198,8 @@ pub struct Server<'w> {
     /// NoCollide pairs by sandbox constraint id.
     nocollides: BTreeMap<u32, (BodyHandle, BodyHandle)>,
     pub models: BTreeMap<String, ModelInfo>,
+    /// `Player:Say` lines waiting for the net layer to run them through chat like typed ones.
+    pub pending_chat: Vec<(u32, String)>,
     /// Script-facing model data per model name (the snapshot points at this map).
     pub model_scripts: BTreeMap<String, ModelScriptData>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
@@ -3347,6 +3349,7 @@ impl<'w> Server<'w> {
             constraints: BTreeMap::new(),
             nocollides: BTreeMap::new(),
             models: BTreeMap::new(),
+            pending_chat: Vec::new(),
             model_scripts: BTreeMap::new(),
             sounds: Vec::new(),
             scrapes: BTreeMap::new(),
@@ -5482,6 +5485,31 @@ impl<'w> Server<'w> {
             }
         }
         true
+    }
+
+    /// Script `Player:Say`: queued for the net layer, which treats it exactly like a typed line
+    /// (`player.chat` hook, then broadcast).
+    pub fn say(&mut self, player: u32, text: &str) -> bool {
+        if !self.players.contains_key(&player) || text.trim().is_empty() {
+            return false;
+        }
+        self.pending_chat.push((player, text.to_string()));
+        true
+    }
+
+    /// Script `NPC:Give` / `SelectWeapon` / `DropWeapon` (empty class): the NPC's weapon table
+    /// entry; unknown weapon classes are refused.
+    pub fn set_npc_weapon(&mut self, id: u32, class: &str) -> bool {
+        if !class.is_empty() && npc_weapon_shot(class).is_none() {
+            return false;
+        }
+        match self.npcs.get_mut(&id) {
+            Some(n) => {
+                n.weapon = class.to_string();
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn entity_parent(&self, id: u32) -> u32 {

@@ -292,6 +292,15 @@ pub enum QueuedWrite {
         ent: u32,
         target: Option<Vec3>,
     },
+    PlayerSay {
+        player: u32,
+        text: String,
+    },
+    /// `NPC:Give` / `SelectWeapon`; empty class drops the weapon.
+    NpcWeapon {
+        ent: u32,
+        class: String,
+    },
     PlayerStripWeapon {
         player: u32,
         class: Option<String>,
@@ -565,6 +574,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("render_mode", e.render_mode)?;
     t.set("render_fx", e.render_fx)?;
     t.set("sequence", e.sequence.as_str())?;
+    t.set("weapon", e.weapon.as_str())?;
     let bs = lua.create_table()?;
     for (b, v) in &e.bone_scales {
         bs.set(*b, vec3_table(lua, *v)?)?;
@@ -1469,6 +1479,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         _ => Some(table_vec3(&table_arg(&arg)?)?),
                     },
                 },
+                "player.say" => QueuedWrite::PlayerSay {
+                    player: ent,
+                    text: str_arg(&arg)?,
+                },
+                "npc_weapon" => QueuedWrite::NpcWeapon {
+                    ent,
+                    class: str_arg(&arg)?,
+                },
                 "player.strip_weapon" => QueuedWrite::PlayerStripWeapon {
                     player: ent,
                     class: match &arg {
@@ -2326,6 +2344,8 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             server.set_flex(*ent, id.map(|i| i as usize), *value)
         }
         QueuedWrite::SetEyeTarget { ent, target } => server.set_script_eye_target(*ent, *target),
+        QueuedWrite::PlayerSay { player, text } => server.say(*player, text),
+        QueuedWrite::NpcWeapon { ent, class } => server.set_npc_weapon(*ent, class),
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())
         }

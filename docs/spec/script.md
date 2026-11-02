@@ -814,6 +814,12 @@ GetFlexScale / HasFlexManipulatior / SetEyeTarget / GetEyeTarget` read them and 
 Bone position offsets and jiggle have no storage and stay stubs; `Player:Say` waits for a
 server-side chat injection (chat lives in the net layer).
 
+`Player:Say` queues the line on `Server::pending_chat`; the net layer drains it with the typed
+chat of the same tick, so it goes through the `player.chat` hook and the broadcast exactly like
+a typed line. `EntitySnap.weapon` is the NPC's weapon class; `NPC:GetActiveWeapon` reads it and
+`NPC:Give / SelectWeapon / DropWeapon` write `npc_weapon` (`Server::set_npc_weapon`, only classes
+in the NPC weapon table).
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`
