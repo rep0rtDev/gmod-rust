@@ -1879,6 +1879,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             t.set("skins", m.skins)?;
             t.set("bones", m.bones.clone())?;
             t.set("bone_parents", m.bone_parents.clone())?;
+            let bb = lua.create_table()?;
+            for (i, (pos, ang)) in m.bone_bind.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("pos", vec3_table(lua, *pos)?)?;
+                e.set("ang", vec3_table(lua, *ang)?)?;
+                bb.set(i + 1, e)?;
+            }
+            t.set("bone_bind", bb)?;
             t.set("sequences", m.sequences.clone())?;
             let sa = lua.create_table()?;
             for (i, (fps, frames, flags)) in m.sequence_anim.iter().enumerate() {

@@ -635,6 +635,10 @@ fn oildrum_models() -> std::collections::BTreeMap<String, gm_server::ModelScript
                 "ValveBiped.Bip01_Head1".into(),
             ],
             bone_parents: vec![-1, 0],
+            bone_bind: vec![
+                (Vec3::new(0.0, 0.0, 10.0), Vec3::new(0.0, 0.0, 0.0)),
+                (Vec3::new(5.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 0.0)),
+            ],
             sequences: vec!["ragdoll".into(), "idle".into()],
             hitboxes: 4,
             hitbox_sets: 1,
@@ -1206,4 +1210,31 @@ fn previous_weapon_effects_and_eflags() {
     assert_eq!(w, "weapon_smg1");
     let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
     assert_eq!(writes.len(), 2, "{writes:?}");
+}
+
+#[test]
+fn bind_pose_bone_positions() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local e = Entity(5)
+             local p0 = e:GetBonePosition(0)
+             local p1, a1 = e:GetBonePosition(1)
+             local m = e:GetBoneMatrix(1)
+             state.r = { p0:Distance(e:GetPos()), p0:Distance(p1), m:GetTranslation():Distance(p1),
+                         e:GetBonePosition(99) == nil and 1 or 0 }
+         end)",
+    );
+    let models = oildrum_models();
+    let mut snap = (*snapshot()).clone();
+    snap.models = gm_script::snapshot::ModelsRef(&models as *const _);
+    let snap = Arc::new(snap);
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert!(
+        (r[0] - 10.0).abs() < 1e-3 && (r[1] - 5.000000).abs() < 1e-3 && r[2] < 1e-3,
+        "{r:?}"
+    );
+    assert_eq!(r[3], 1.0);
 }

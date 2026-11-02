@@ -851,6 +851,10 @@ player's command is processed) for `Player:GetPreviousWeapon`. `Entity:AddEffect
 RemoveEffects / IsEffectActive` and the `EFlags` family keep a per-entity bitmask in the script
 layer; `EF_NODRAW` is the one flag with a server meaning and maps onto `SetNoDraw`.
 
+The model table carries each bone's bind pose relative to its parent; `Entity:GetBonePosition /
+GetBoneMatrix` compose it up the parent chain and through the entity's pose. The server has no
+animation layer, so these are the reference-pose bones, not the animated ones the game returns.
+
 The model table also carries the default hit box set (bone, hit group, mins, maxs per box) for
 `Entity:GetHitBoxBone / GetHitBoxHitGroup / GetHitBoxBounds` (set argument ignored: one set);
 `GetChildBones` walks the bone parents. `util.SHA256` hashes on the host, `util.Timer` is a

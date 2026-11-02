@@ -162,6 +162,9 @@ pub struct ModelScriptData {
     pub skins: u32,
     pub bones: Vec<String>,
     pub bone_parents: Vec<i32>,
+    /// Bind pose of each bone relative to its parent: position and angles (`GetBonePosition`
+    /// composes these up the chain; no animation layer on the server).
+    pub bone_bind: Vec<(Vec3, Vec3)>,
     pub sequences: Vec<String>,
     /// Per sequence: `(fps, frames, anim flags)` of its first animation (0x1 = looping).
     pub sequence_anim: Vec<(f32, i32, i32)>,
@@ -194,6 +197,20 @@ impl ModelScriptData {
             skins: mdl.skins.len() as u32,
             bones: mdl.bones.iter().map(|b| b.name.clone()).collect(),
             bone_parents: mdl.bones.iter().map(|b| b.parent).collect(),
+            bone_bind: mdl
+                .bones
+                .iter()
+                .map(|b| {
+                    (
+                        Vec3::from(b.pos),
+                        Vec3::new(
+                            b.rot[1].to_degrees(),
+                            b.rot[2].to_degrees(),
+                            b.rot[0].to_degrees(),
+                        ),
+                    )
+                })
+                .collect(),
             sequences: seqs.iter().map(|q| q.name.clone()).collect(),
             sequence_anim: seqs
                 .iter()
