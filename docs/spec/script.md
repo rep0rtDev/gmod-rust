@@ -744,6 +744,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model is not an entity here). The rest of the Entity remainder (bone followers, brush planes,
   gibs, motion controllers, ragdoll build, IK, lighting origin, scenes, flags) has no server
   state and stays stub.
+- `Player:StartSprinting` / `StopSprinting` make the mover treat the sprint button as held
+  (`SprintDisable` still wins); `StartWalking` / `StopWalking` stay stubs (no `+walk` path).
+  `Player:GetInfo` / `GetInfoNum` answer the client settings the server has: `cl_playermodel`
+  (the game's table name of the worn model), `cl_playerskin`, `cl_playercolor` / `cl_weaponcolor`
+  ("r g b"); other cvars are unknown ("" / the default). `Player:TraceHullAttack` sweeps
+  `util.TraceHull` (a line sweep here) and deals the damage to the entity it hits.
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.

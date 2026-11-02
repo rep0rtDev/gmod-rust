@@ -1699,6 +1699,7 @@ pub struct MoveOverride {
     pub ladder_speed: Option<f32>,
     pub time_scale: Option<f32>,
     pub sprint_enabled: Option<bool>,
+    pub force_sprint: Option<bool>,
 }
 
 impl MoveOverride {
@@ -1751,6 +1752,9 @@ impl MoveOverride {
         if let Some(v) = self.sprint_enabled {
             cfg.sprint_enabled = v;
         }
+        if let Some(v) = self.force_sprint {
+            cfg.force_sprint = v;
+        }
     }
 
     /// This player's hull (`Player:SetHull` / `SetHullDuck` over the server config).
@@ -1792,6 +1796,7 @@ impl MoveOverride {
             13 => self.ladder_speed = v,
             14 => self.time_scale = v,
             15 => self.sprint_enabled = value.map(|v| v > 0.5),
+            16 => self.force_sprint = value.map(|v| v > 0.5),
             _ => return false,
         }
         true

@@ -52,6 +52,8 @@ pub struct MoveConfig {
     pub tick_interval: f32,
     /// `Player:SprintEnable` / `SprintDisable`: whether the sprint button raises the speed cap.
     pub sprint_enabled: bool,
+    /// `Player:StartSprinting`: the sprint button counts as held.
+    pub force_sprint: bool,
     /// `Player:SetLadderClimbSpeed`: climb and mount speed (jumping off keeps `LADDER_SPEED`).
     pub ladder_speed: f32,
     /// `Player:SetLaggedMovementValue`: the movement frame time is scaled by this.
@@ -87,6 +89,7 @@ impl Default for MoveConfig {
             ground_probe: 1.2,
             tick_interval: gm_core::tick::DEFAULT_TICK_INTERVAL,
             sprint_enabled: true,
+            force_sprint: false,
             ladder_speed: LADDER_SPEED,
             time_scale: 1.0,
             roll_angle: 0.0,
@@ -904,7 +907,7 @@ impl<'a> Mover<'a> {
     /// The player's max speed as the footstep timer sees it (`GetMaxSpeed`): run or walk
     /// speed by the sprint button; crouching does not lower it (measured `move_step_duck`).
     pub fn step_max_speed(&self, cmd: &UserCmd) -> f32 {
-        if cmd.buttons & buttons::SPEED != 0 && self.cfg.sprint_enabled {
+        if (cmd.buttons & buttons::SPEED != 0 || self.cfg.force_sprint) && self.cfg.sprint_enabled {
             self.cfg.run_speed
         } else {
             self.cfg.walk_speed
@@ -914,7 +917,9 @@ impl<'a> Mover<'a> {
     fn max_speed(&self, st: &PlayerState, cmd: &UserCmd) -> f32 {
         if st.ducked_at_tick_start {
             self.cfg.walk_speed * self.cfg.crouched_walk_speed
-        } else if cmd.buttons & buttons::SPEED != 0 && self.cfg.sprint_enabled {
+        } else if (cmd.buttons & buttons::SPEED != 0 || self.cfg.force_sprint)
+            && self.cfg.sprint_enabled
+        {
             self.cfg.run_speed
         } else {
             self.cfg.walk_speed
@@ -1784,6 +1789,35 @@ mod tests {
             assert!(ticks < 200);
         }
         assert!(ticks > 5, "stopped in {ticks} ticks");
+    }
+
+    #[test]
+    fn forced_sprint_raises_the_cap_without_the_button() {
+        let w = flat_world();
+        let run = |force: bool| {
+            let cfg = MoveConfig {
+                force_sprint: force,
+                ..Default::default()
+            };
+            let m = Mover::new(cfg, &w);
+            let mut st = PlayerState {
+                origin: Vec3::new(0.0, 0.0, 1.0),
+                ..Default::default()
+            };
+            m.tick(&mut st, &UserCmd::default());
+            let cmd = UserCmd {
+                buttons: buttons::FORWARD,
+                forward_move: 10000.0,
+                view_angles: Vec3::new(0.0, 90.0, 0.0),
+                ..Default::default()
+            };
+            for _ in 0..200 {
+                m.tick(&mut st, &cmd);
+            }
+            st.velocity.truncate().length()
+        };
+        let (walk, sprint) = (run(false), run(true));
+        assert!(sprint > walk + 50.0, "walk {walk} forced sprint {sprint}");
     }
 
     #[test]

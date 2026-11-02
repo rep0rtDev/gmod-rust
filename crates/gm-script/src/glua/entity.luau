@@ -493,6 +493,19 @@ function PLY:SteamID() local p = psnap(self.__pid); return p and p.identity or "
 PLY.SteamID64 = PLY.SteamID
 function PLY:GetClass() return "player" end
 function PLY:GetModel() local p = psnap(self.__pid); return p and p.model or "" end
+-- client settings the server knows (the ones the client sends): model choice by the game's table
+-- name, skin, colours as "r g b"; anything else is unknown ("" / default)
+local function color_cvar(c) return c and string.format("%.2f %.2f %.2f", c.x, c.y, c.z) or "" end
+function PLY:GetInfo(cvar)
+    local p = psnap(self.__pid)
+    if not p then return "" end
+    if cvar == "cl_playermodel" then return player_manager.TranslateToPlayerModelName(p.model) or "" end
+    if cvar == "cl_playerskin" then return tostring(p.skin or 0) end
+    if cvar == "cl_playercolor" then return color_cvar(p.player_color) end
+    if cvar == "cl_weaponcolor" then return color_cvar(p.weapon_color) end
+    return ""
+end
+function PLY:GetInfoNum(cvar, default) local v = tonumber(self:GetInfo(cvar)); if v == nil then return default end return v end
 function PLY:GetSkin() local p = psnap(self.__pid); return p and p.skin or 0 end
 function PLY:GetPos() local p = psnap(self.__pid); return p and Vector(p.origin.x, p.origin.y, p.origin.z) or Vector() end
 function PLY:GetVelocity() local p = psnap(self.__pid); return p and Vector(p.velocity.x, p.velocity.y, p.velocity.z) or Vector() end
@@ -671,8 +684,6 @@ function PLY:HasGodMode() return rawget(self, "__vars").__god == true end
 function PLY:SetModel(m) end
 function PLY:SetNoDraw() end
 function PLY:SetMaxHealth(h) rawget(self, "__vars").__max_health = h end
-PLY.GetInfo = __glua_stub("Player:GetInfo")
-PLY.GetInfoNum = __glua_stub("Player:GetInfoNum")
 function PLY:SetPData(k, v) rawget(self, "__vars").__pdata = rawget(self, "__vars").__pdata or {}; rawget(self, "__vars").__pdata[k] = v return true end
 function PLY:GetPData(k, d) local pd = rawget(self, "__vars").__pdata; if pd and pd[k] ~= nil then return pd[k] end return d end
 function PLY:RemovePData(k) local pd = rawget(self, "__vars").__pdata; if pd then pd[k] = nil end return true end
@@ -1454,6 +1465,24 @@ function ENT:TakeDamageInfo(d)
     if not s then return end
     world.queue("set_health", self.__id, math.max(0, s.health - d:GetDamage()))
 end
+-- a melee-style hull attack from the player: the hull sweep hits one entity, which takes the damage
+-- (util.TraceHull is a line sweep here - documented)
+function PLY:TraceHullAttack(start, endpos, mins, maxs, dmg, dmgtype, force, quick)
+    local tr = util.TraceHull({ start = start, endpos = endpos, mins = mins, maxs = maxs, filter = self })
+    local e = tr and tr.Entity
+    if IsValid(e) then
+        local d = DamageInfo()
+        d:SetDamage(tonumber(dmg) or 0)
+        d:SetDamageType(dmgtype or DMG_CLUB)
+        d:SetAttacker(self)
+        d:SetInflictor(self)
+        if force then d:SetDamageForce((endpos - start):GetNormalized() * (tonumber(force) or 0)) end
+        d:SetDamagePosition(tr.HitPos)
+        e:TakeDamageInfo(d)
+        return e
+    end
+    return NULL
+end
 function ENT:DispatchTraceAttack(d, tr, dir) self:TakeDamageInfo(d) end
 function ENT:TakePhysicsDamage(d) self:TakeDamageInfo(d) end
 function ENT:PassesDamageFilter(d) return true end
@@ -2049,6 +2078,9 @@ function PLY:GetLaggedMovementValue() return mv(self, "lagged_movement", 1) end
 function PLY:SetLaggedMovementValue(v) mvset(self, 14, v) end
 function PLY:SprintEnable() mvset(self, 15, 1) end
 function PLY:SprintDisable() mvset(self, 15, 0) end
+-- the sprint button counts as held in the mover until StopSprinting (+walk has no mover path: Start/StopWalking stay stubs)
+function PLY:StartSprinting() mvset(self, 16, 1) end
+function PLY:StopSprinting() mvset(self, 16, 0) end
 function PLY:IsSprintEnabled() return mv(self, "sprint_enabled", true) end
 function PLY:GetDrivingEntity() return NULL end
 function PLY:IsDrivingEntity() return false end
@@ -2092,7 +2124,7 @@ function PLY:GetCurrentCommand()
         tick = p and p.cmd_tick or 0,
     }, __glua_classes.CUserCmd)
 end
-for _, name in ipairs({ "SetSlowWalkSpeed",  "AddPlayerOption", "AddVCDSequenceToGestureSlot", "AllowFlashlight", "AllowImmediateDecalPainting", "AnimRestartMainSequence", "CanUseFlashlight", "CreateRagdoll", "CrosshairDisable", "CrosshairEnable", "DetonateTripmines", "DisableWorldClicking", "DrawViewModel", "DrawWorldModel", "DropNamedWeapon", "DropObject", "DropWeapon", "EnterVehicle", "ExitVehicle", "Flashlight", "FlashlightIsOn", "GetActivity", "GetAllowFullRotation", "GetAllowWeaponsInVehicle", "GetAmmo", "GetAmmoCount", "GetAvoidPlayers", "GetCanWalk", "GetCanZoom", "GetClassID", "GetEntityInUse", "GetFlashlightColor", "GetFriendStatus", "GetHands", "GetHoveredWidget", "GetNoCollideWithTeammates", "GetObserverTarget", "GetPlayerColor", "GetPlayerInfo", "GetPreferredCarryAngles", "GetPressedWidget", "GetRagdollEntity", "GetRenderAngles", "GetSuitPower", "GetUseEntity", "GetViewModel", "GetVoiceVolumeScale", "GetWeaponColor", "GiveAmmo", "IsMuted", "IsPlayingTaunt", "IsVoiceAudible", "IsWalking", "IsWorldClickingDisabled", "KeyDownLast", "KeyPressed", "KeyReleased", "Kick", "LagCompensation", "LastHitGroup", "Lock", "UnLock", "MotionSensorPos", "RemoveAllAmmo", "RemoveAmmo", "Say", "SetActivity", "SetAllowFullRotation", "SetAllowWeaponsInVehicle", "SetAmmo", "SetAvoidPlayers", "SetCanWalk", "SetCanZoom", "SetClassID", "SetCurrentViewOffset", "SetDSP", "SetDeaths", "SetDrivingEntity", "SetFlashlightColor", "SetFrags", "SetHands", "SetHoveredWidget", "SetMaxArmor", "SetMuted", "SetNoCollideWithTeammates", "SetNoTarget", "SetObserverMode", "SetPlayerColor", "SetPressedWidget", "SetRenderAngles", "SetSlowWalkSpeed", "SetSuitPower", "SetSuppressPickupNotices", "SetViewEntity", "SetVoiceVolumeScale", "SetWeaponColor", "SetupHands", "ShouldDrawLocalPlayer", "ShowProfile", "SimulateGravGunDrop", "SimulateGravGunPickup", "Spectate", "SpectateEntity", "SprayDecal", "StartSprinting", "StartWalking", "StopSprinting", "StopWalking", "StopZooming", "StripAmmo", "SuppressHint", "TimeConnected", "TraceHullAttack", "TranslateWeaponActivity", "UnSpectate", "VoiceVolume" }) do
+for _, name in ipairs({ "SetSlowWalkSpeed",  "AddPlayerOption", "AddVCDSequenceToGestureSlot", "AllowFlashlight", "AllowImmediateDecalPainting", "AnimRestartMainSequence", "CanUseFlashlight", "CreateRagdoll", "CrosshairDisable", "CrosshairEnable", "DetonateTripmines", "DisableWorldClicking", "DrawViewModel", "DrawWorldModel", "DropNamedWeapon", "DropObject", "DropWeapon", "EnterVehicle", "ExitVehicle", "Flashlight", "FlashlightIsOn", "GetActivity", "GetAllowFullRotation", "GetAllowWeaponsInVehicle", "GetAmmo", "GetAmmoCount", "GetAvoidPlayers", "GetCanWalk", "GetCanZoom", "GetClassID", "GetEntityInUse", "GetFlashlightColor", "GetFriendStatus", "GetHands", "GetHoveredWidget", "GetNoCollideWithTeammates", "GetObserverTarget", "GetPlayerColor", "GetPlayerInfo", "GetPreferredCarryAngles", "GetPressedWidget", "GetRagdollEntity", "GetRenderAngles", "GetSuitPower", "GetUseEntity", "GetViewModel", "GetVoiceVolumeScale", "GetWeaponColor", "GiveAmmo", "IsMuted", "IsPlayingTaunt", "IsVoiceAudible", "IsWalking", "IsWorldClickingDisabled", "KeyDownLast", "KeyPressed", "KeyReleased", "Kick", "LagCompensation", "LastHitGroup", "Lock", "UnLock", "MotionSensorPos", "RemoveAllAmmo", "RemoveAmmo", "Say", "SetActivity", "SetAllowFullRotation", "SetAllowWeaponsInVehicle", "SetAmmo", "SetAvoidPlayers", "SetCanWalk", "SetCanZoom", "SetClassID", "SetCurrentViewOffset", "SetDSP", "SetDeaths", "SetDrivingEntity", "SetFlashlightColor", "SetFrags", "SetHands", "SetHoveredWidget", "SetMaxArmor", "SetMuted", "SetNoCollideWithTeammates", "SetNoTarget", "SetObserverMode", "SetPlayerColor", "SetPressedWidget", "SetRenderAngles", "SetSlowWalkSpeed", "SetSuitPower", "SetSuppressPickupNotices", "SetViewEntity", "SetVoiceVolumeScale", "SetWeaponColor", "SetupHands", "ShouldDrawLocalPlayer", "ShowProfile", "SimulateGravGunDrop", "SimulateGravGunPickup", "Spectate", "SpectateEntity", "SprayDecal", "StartWalking", "StopWalking", "StopZooming", "StripAmmo", "SuppressHint", "TimeConnected", "TranslateWeaponActivity", "UnSpectate", "VoiceVolume" }) do
     if PLY[name] == nil then PLY[name] = stub("Player:" .. name) end
 end
 

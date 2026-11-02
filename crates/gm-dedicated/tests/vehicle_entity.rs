@@ -446,7 +446,12 @@ fn script_move_overrides_apply_to_one_player() {
         (mc.ladder_speed, mc.time_scale, mc.sprint_enabled),
         (50.0, 0.5, false)
     );
-    assert!(!server.set_move_param(1, 16, Some(1.0)), "unknown field");
+    assert!(server.set_move_param(1, 16, Some(1.0)));
+    assert!(
+        server.move_config_of(1).unwrap().force_sprint,
+        "StartSprinting holds the sprint button for this player"
+    );
+    assert!(!server.set_move_param(1, 17, Some(1.0)), "unknown field");
     assert!(!server.set_move_param(99_999, 0, Some(1.0)));
 }
 

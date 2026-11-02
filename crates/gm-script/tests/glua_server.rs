@@ -2369,3 +2369,30 @@ fn transmit_with_parent_write_and_readback() {
     assert!(!before);
     assert!(d.contains("TransmitWithParent { ent: 5, on: true }"), "{d}");
 }
+
+#[test]
+fn player_sprint_force_and_info() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local p = Player(1)
+             p:StartSprinting()
+             state.skin = p:GetInfo('cl_playerskin')
+             state.num = p:GetInfoNum('cl_playerskin', 7)
+             state.unknown = p:GetInfoNum('cl_nothing', 7)
+             state.model = p:GetInfo('cl_playermodel')
+         end)",
+    );
+    rt.actors_mut()[0]
+        .dispatch(&snapshot(), "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let (skin, num, unknown, model): (String, f64, f64, String) = rt.actors()[0]
+        .eval("return state.skin, state.num, state.unknown, state.model")
+        .unwrap();
+    assert_eq!((skin.as_str(), num, unknown), ("0", 0.0, 7.0));
+    assert!(model.is_empty() || !model.contains('/'), "{model}");
+    let d = format!("{:?}", rt.drain_writes());
+    assert!(
+        d.contains("PlayerMoveParam { player: 1, which: 16, value: Some(1.0) }"),
+        "{d}"
+    );
+}
