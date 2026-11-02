@@ -123,6 +123,10 @@ pub enum QueuedWrite {
         yaw: Option<f32>,
         update: bool,
     },
+    NpcViewOffset {
+        ent: u32,
+        offset: Option<Vec3>,
+    },
     NpcMoveYawLocked {
         ent: u32,
         on: bool,
@@ -1097,6 +1101,9 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
         t.set("npc_ideal_yaw", y)?;
     }
     t.set("npc_move_yaw_locked", e.npc_move_yaw_locked)?;
+    if let Some(v) = e.npc_view_offset {
+        t.set("npc_view_offset", vec3_table(lua, v)?)?;
+    }
     t.set("npc_move_speed", e.npc_move_speed)?;
     if let Some(g) = e.npc_next_goal {
         t.set("npc_next_goal", vec3_table(lua, g)?)?;
@@ -1662,6 +1669,18 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         yaw: t.get::<Option<f32>>("yaw")?,
                         update: t.get::<Option<bool>>("update")?.unwrap_or(false),
                     }
+                }
+                "npc_view_offset" => {
+                    let t = table_arg(&arg)?;
+                    let offset = match t.get::<Option<f32>>("x")? {
+                        Some(x) => Some(Vec3::new(
+                            x,
+                            t.get::<Option<f32>>("y")?.unwrap_or(0.0),
+                            t.get::<Option<f32>>("z")?.unwrap_or(0.0),
+                        )),
+                        None => None,
+                    };
+                    QueuedWrite::NpcViewOffset { ent, offset }
                 }
                 "npc_move_yaw_locked" => {
                     let t = table_arg(&arg)?;
@@ -3683,6 +3702,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::NpcIdealYaw { ent, yaw, update } => {
             server.npc_set_ideal_yaw(*ent, *yaw, *update)
         }
+        QueuedWrite::NpcViewOffset { ent, offset } => server.npc_set_view_offset(*ent, *offset),
         QueuedWrite::NpcMoveYawLocked { ent, on } => server.npc_set_move_yaw_locked(*ent, *on),
         QueuedWrite::NpcMoveInterval { ent, seconds } => {
             server.npc_set_move_interval(*ent, *seconds)

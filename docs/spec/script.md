@@ -776,6 +776,9 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `NPC:SetViewOffset(v)` moves the NPC's eye (sight checks, melee reach origin, standing aim
+  origin; the crouched aim keeps the measured 40 u); nil restores the measured 64 u.
+  `GetViewOffset` reads it back (was a constant 66).
 - `NPC:SetIdealYaw(yaw)` stores the yaw an idle NPC (no path, no chase, no enemy) turns to at
   its yaw rate each think; `UpdateYaw()` turns one think's worth now, `SetIdealYawAndUpdate`
   both; `GetIdealYaw` returns the stored one (else the derived enemy / path yaw).

@@ -1658,6 +1658,8 @@ pub struct Npc {
     pub ideal_yaw: Option<f32>,
     /// `NPC:SetMoveYawLocked`: movement no longer turns the body.
     pub move_yaw_locked: bool,
+    /// `NPC:SetViewOffset`: the eye position relative to the feet (None: the measured 64 u).
+    pub view_offset: Option<Vec3>,
 }
 
 /// Corners of a navigation path and the one the NPC is heading for.
@@ -9151,6 +9153,7 @@ impl<'w> Server<'w> {
             force_crouch: None,
             ideal_yaw: None,
             move_yaw_locked: false,
+            view_offset: None,
             swing_until: 0,
             melee_hit_at: None,
             melee_hits_left: 0,
@@ -9567,6 +9570,17 @@ impl<'w> Server<'w> {
                         n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
                     }
                 }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `NPC:SetViewOffset(v)`: the standing eye offset (None restores the measured one).
+    pub fn npc_set_view_offset(&mut self, id: u32, offset: Option<Vec3>) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) if n.dead_at.is_none() => {
+                n.view_offset = offset.filter(|v| v.is_finite());
                 true
             }
             _ => false,
@@ -10030,7 +10044,10 @@ impl<'w> Server<'w> {
         } else {
             NPC_EYE_HEIGHT
         };
-        let eye = n.pos + Vec3::new(0.0, 0.0, eye_height);
+        let eye = n.pos
+            + n.view_offset
+                .filter(|_| !crouched)
+                .unwrap_or(Vec3::new(0.0, 0.0, eye_height));
         let sight = n.sight;
         let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
@@ -10227,7 +10244,7 @@ impl<'w> Server<'w> {
         if now < n.swing_until || n.jump_at.is_some() || n.flight.is_some() {
             return;
         }
-        let eye = n.pos + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT);
+        let eye = n.pos + n.view_offset.unwrap_or(Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT));
         let sight = n.sight;
         let feet = n.pos;
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
@@ -10508,7 +10525,12 @@ impl<'w> Server<'w> {
         if n.flight.is_some() {
             return;
         }
-        let eye = n.pos + Vec3::new(0.0, 0.0, (n.maxs.z - 8.0).clamp(4.0, NPC_EYE_HEIGHT));
+        let eye = n.pos
+            + n.view_offset.unwrap_or(Vec3::new(
+                0.0,
+                0.0,
+                (n.maxs.z - 8.0).clamp(4.0, NPC_EYE_HEIGHT),
+            ));
         let sight = n.sight;
         let feet = n.pos;
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
@@ -10992,6 +11014,7 @@ impl<'w> Server<'w> {
                 force_crouch: None,
                 ideal_yaw: None,
                 move_yaw_locked: false,
+                view_offset: None,
                 swing_until: 0,
                 melee_hit_at: None,
                 melee_hits_left: 0,
