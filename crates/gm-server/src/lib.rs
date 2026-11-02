@@ -933,6 +933,13 @@ pub struct Npc {
     pub goal: Option<NpcPath>,
     pub next_goal: Option<Vec3>,
     pub chase: Option<u32>,
+    /// Combat: the player this NPC is engaging, the last tick it saw them, shots left in the
+    /// current burst, the tick of the next shot and the shots fired so far (see `npc_combat_think`).
+    pub target: Option<u32>,
+    pub target_seen: u64,
+    pub burst_left: u8,
+    pub next_shot: u64,
+    pub shots: u32,
     pub spawn_tick: u64,
     pub next_think: u64,
     pub think_interval: u8,
@@ -968,6 +975,59 @@ pub const NPC_THINK_TICKS_FAR: u8 = 13;
 pub const NPC_CHASE_REACH: f32 = 64.0;
 const NPC_CHASE_REPATH: f32 = 16.0;
 const NPC_YAW_RATE: f32 = 150.0;
+/// Our combat model. Only the fire cadence and the per-hit damage come from the game
+/// (server_npc_fire_soldier: one shot per 7-tick think, 5 per burst, 28 ticks between bursts,
+/// `sk_npc_dmg_*`); target choice, sight range, aim cone and loss handling are our own rules.
+pub const NPC_SIGHT_RANGE: f32 = 2048.0;
+pub const NPC_BURST_SHOTS: u8 = 5;
+pub const NPC_BURST_GAP_TICKS: u64 = 28;
+/// Ticks without line of sight after which the target is dropped (5 s).
+pub const NPC_TARGET_LOSE_TICKS: u64 = 330;
+/// Half-angle of the aim cone, degrees (the game's soldier passes ~15 u beside a player at 178 u).
+pub const NPC_AIM_CONE_DEG: f32 = 5.0;
+/// The NPC fires once its body yaw is within this many degrees of the target.
+const NPC_FIRE_FACING_DEG: f32 = 15.0;
+const NPC_EYE_HEIGHT: f32 = 64.0;
+const NPC_CHEST_HEIGHT: f32 = 36.0;
+
+/// Classes that engage players on sight.
+pub fn npc_hostile(class: &str) -> bool {
+    matches!(
+        class,
+        "npc_combine_s"
+            | "npc_metropolice"
+            | "npc_zombie"
+            | "npc_fastzombie"
+            | "npc_poisonzombie"
+            | "npc_zombine"
+            | "npc_headcrab"
+            | "npc_headcrab_fast"
+            | "npc_headcrab_black"
+            | "npc_antlion"
+            | "npc_antlionguard"
+            | "npc_stalker"
+            | "npc_hunter"
+            | "npc_manhack"
+            | "npc_turret_floor"
+            | "npc_strider"
+            | "npc_combinegunship"
+            | "npc_helicopter"
+            | "npc_barnacle"
+            | "npc_rollermine"
+    )
+}
+
+/// Hitscan weapon an NPC fires: (ammo, pellets per shot). Melee and projectile weapons give None.
+pub fn npc_weapon_shot(weapon: &str) -> Option<(&'static str, u8)> {
+    match weapon {
+        "weapon_pistol" => Some(("Pistol", 1)),
+        "weapon_smg1" => Some(("SMG1", 1)),
+        "weapon_ar2" => Some(("AR2", 1)),
+        "weapon_shotgun" => Some(("Buckshot", 7)),
+        "weapon_357" => Some(("357", 1)),
+        _ => None,
+    }
+}
 const NPC_YAW_RATE_PER_SPEED: f32 = 0.267;
 const NPC_TURN_ACCEL: f32 = 0.89;
 const NPC_BRAKE_CURVE: f32 = 0.755;
@@ -985,6 +1045,24 @@ const NPC_MOVE_METROPOLICE: NpcMoveDef = NpcMoveDef {
 };
 
 /// Angle difference folded into (-180, 180].
+/// A unit vector inside the cone of `half_deg` around `axis`, picked by a small hash of `seed`.
+fn cone_dir(axis: Vec3, half_deg: f32, seed: u64) -> Vec3 {
+    let mut x = seed ^ 0xD1B5_4A32_D192_ED03;
+    let mut next = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        (x >> 11) as f32 / (1u64 << 53) as f32
+    };
+    let (u, v) = (next(), next());
+    let ang = half_deg.to_radians() * u.sqrt();
+    let phi = v * std::f32::consts::TAU;
+    let up = if axis.z.abs() < 0.9 { Vec3::Z } else { Vec3::X };
+    let right = axis.cross(up).normalize();
+    let fwd_up = right.cross(axis);
+    (axis * ang.cos() + (right * phi.cos() + fwd_up * phi.sin()) * ang.sin()).normalize()
+}
+
 fn wrap_deg(a: f32) -> f32 {
     let r = a.rem_euclid(360.0);
     if r > 180.0 {
@@ -5300,6 +5378,11 @@ impl<'w> Server<'w> {
                 remove_at: None,
                 next_goal: None,
                 chase: None,
+                target: None,
+                target_seen: 0,
+                burst_left: 0,
+                next_shot: 0,
+                shots: 0,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,
@@ -5553,6 +5636,7 @@ impl<'w> Server<'w> {
             .keys()
             .filter_map(|&p| self.eye(p).map(|e| self.collision.cluster_at(e.0)))
             .collect();
+        let mut thought = Vec::new();
         for id in ids {
             let Some(n) = self.npcs.get_mut(&id) else {
                 continue;
@@ -5570,6 +5654,7 @@ impl<'w> Server<'w> {
                 NPC_THINK_TICKS
             };
             n.next_think = now + n.think_interval as u64;
+            thought.push(id);
             if let Some(p) = n.chase {
                 match self.players.get(&p).map(|pl| pl.state.origin) {
                     Some(target) => {
@@ -5737,6 +5822,146 @@ impl<'w> Server<'w> {
                 self.npc_goto(id, target, run);
             }
         }
+        for id in thought {
+            self.npc_combat_think(id, now);
+        }
+    }
+
+    /// One combat decision per think, after the body moved. A hostile NPC with a hitscan
+    /// weapon engages the nearest player it can see within `NPC_SIGHT_RANGE`: standing still
+    /// it turns to face them at `NPC_YAW_RATE`, and once facing it fires `NPC_BURST_SHOTS`
+    /// shots one per think with `NPC_BURST_GAP_TICKS` between bursts. Losing sight sends it
+    /// chasing the player's last position; `NPC_TARGET_LOSE_TICKS` without sight drops the
+    /// target. A chase/goto issued by an addon is left alone while the target is visible.
+    fn npc_combat_think(&mut self, id: u32, now: u64) {
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        if n.dead_at.is_some() || !npc_hostile(&n.class) {
+            return;
+        }
+        let Some((ammo, pellets)) = npc_weapon_shot(&n.weapon) else {
+            return;
+        };
+        let eye = n.pos + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT);
+        let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
+        let sees = |server: &Self, p: u32| -> Option<Vec3> {
+            let pl = server.players.get(&p).filter(|pl| pl.alive)?;
+            let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
+            if chest.distance(eye) > NPC_SIGHT_RANGE {
+                return None;
+            }
+            let tr = server
+                .collision
+                .trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
+            (tr.fraction >= 1.0 && !tr.start_solid).then_some(chest)
+        };
+        // keep the current target while visible, otherwise the nearest visible player
+        let mut target = n.target.and_then(|p| sees(self, p).map(|c| (p, c)));
+        if target.is_none() {
+            let mut ids: Vec<u32> = self.players.keys().copied().collect();
+            ids.sort_unstable();
+            target = ids
+                .into_iter()
+                .filter_map(|p| sees(self, p).map(|c| (p, c)))
+                .min_by(|a, b| a.1.distance(eye).total_cmp(&b.1.distance(eye)));
+        }
+        let Some((player, chest)) = target else {
+            let (old, seen) = (n.target, n.target_seen);
+            if let Some(p) = old {
+                if now.saturating_sub(seen) > NPC_TARGET_LOSE_TICKS {
+                    self.npc_stop(id);
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.target = None;
+                        n.burst_left = 0;
+                    }
+                } else if self.npcs.get(&id).is_some_and(|n| n.chase != Some(p)) {
+                    self.npc_chase(id, p, true);
+                }
+            }
+            return;
+        };
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
+        if n.target != Some(player) {
+            n.target = Some(player);
+            n.burst_left = NPC_BURST_SHOTS;
+            // the game opens fire one think after it enters combat
+            n.next_shot = now + n.think_interval as u64;
+        }
+        n.target_seen = now;
+        if n.chase == Some(player) {
+            n.chase = None;
+            n.goal = None;
+            n.next_goal = None;
+            n.move_speed = 0.0;
+        }
+        let to = chest - eye;
+        let want = to.y.atan2(to.x).to_degrees();
+        let err = wrap_deg(want - n.angles.y);
+        if n.goal.is_none() {
+            let max_turn = NPC_YAW_RATE * dt;
+            n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
+        }
+        if err.abs() > NPC_FIRE_FACING_DEG || now < n.next_shot {
+            return;
+        }
+        if n.burst_left == 0 {
+            n.burst_left = NPC_BURST_SHOTS;
+        }
+        n.burst_left -= 1;
+        n.shots += 1;
+        n.next_shot = if n.burst_left == 0 {
+            now + NPC_BURST_GAP_TICKS
+        } else {
+            now + n.think_interval as u64
+        };
+        let seed = (id as u64) ^ now.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let aim = to.normalize();
+        let Some(dmg) = weapons::npc_shot_damage(ammo) else {
+            return;
+        };
+        for k in 0..pellets {
+            let dir = cone_dir(aim, NPC_AIM_CONE_DEG, seed.wrapping_add(k as u64 * 7919));
+            self.npc_fire_bullet(id, eye, dir, dmg);
+        }
+    }
+
+    /// One hitscan bullet from an NPC: the nearest of the world, a prop and a player hull on
+    /// the ray takes it; a player takes `dmg` as DMG_BULLET through the damage hooks.
+    /// NPCs do not hit each other.
+    fn npc_fire_bullet(&mut self, shooter: u32, eye: Vec3, dir: Vec3, dmg: f32) {
+        const MAX_TRACE: f32 = 56755.84;
+        let end = eye + dir * MAX_TRACE;
+        let world = self
+            .collision
+            .trace_ray(eye, end, gm_collision::MASK_PLAYERSOLID)
+            .fraction;
+        let prop = gm_sandbox::trace_line(self.collision, &self.prop_bodies(), eye, end)
+            .filter(|h| h.ent.is_some())
+            .map_or(1.0, |h| h.fraction);
+        let d = end - eye;
+        let mut best: Option<(u32, f32)> = None;
+        for (pid, p) in &self.players {
+            if !p.alive {
+                continue;
+            }
+            let (mins, maxs) = self.mover.hull(p.state.ducked);
+            let lo = p.state.origin + mins;
+            let hi = p.state.origin + maxs;
+            if let Some(t) = ray_box(eye, d, lo, hi) {
+                if best.is_none_or(|b| t < b.1) {
+                    best = Some((*pid, t));
+                }
+            }
+        }
+        let _ = shooter;
+        if let Some((pid, t)) = best {
+            if t < world && t < prop {
+                self.damage_player(pid, dmg, weapons::DMG_BULLET);
+            }
+        }
     }
 
     fn settle_npcs(&mut self) {
@@ -5784,6 +6009,11 @@ impl<'w> Server<'w> {
                 remove_at: None,
                 next_goal: None,
                 chase: None,
+                target: None,
+                target_seen: 0,
+                burst_left: 0,
+                next_shot: 0,
+                shots: 0,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,

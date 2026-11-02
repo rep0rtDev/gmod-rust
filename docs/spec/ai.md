@@ -183,3 +183,17 @@ Oracle recording `server_npc_fire_soldier` (gm_construct, `npc_combine_s` with `
 - Accuracy: the shots inside a burst repeat the same direction; against the standing player at 178 u that direction passes ~15 u beside the body (the first shot of each burst goes ~50 u high). A straight `MASK_SHOT` trace from the shoot position to the player's centre does hit (hitbox 15, hitgroup 3), yet in 1200 ticks the player took no damage at all - the game's NPC aim at this range misses a motionless player systematically.
 
 Consequences for our combat model: fire cadence = 5 x 7 ticks on, 28 off; damage per hit = the ammo's NPC damage; aim offset is not copied (it is a hidden proficiency table, not a measurable law) - our soldier aims at the chest with a fixed cone and the hit rate is documented as a divergence.
+
+## Combat: our model
+
+Implemented in `Server::npc_combat_think`, run once per NPC think right after the body moved. It is our own state machine; only the cadence and the per-hit damage above come from the game.
+
+- Who: classes in `npc_hostile` (combine, metropolice, zombies, headcrabs, antlions, hunters, turrets, ...) that hold a hitscan weapon (`npc_weapon_shot`: pistol / SMG1 / AR2 / shotgun 7 pellets / .357). Melee and projectile NPCs do not engage yet.
+- Target: the current target while visible, otherwise the nearest alive player within `NPC_SIGHT_RANGE` (2048 u) whose chest (origin + 36) is on an unobstructed `MASK_PLAYERSOLID` ray from the NPC's eye (origin + 64). Lowest player id breaks ties.
+- Facing: standing still the NPC turns toward the target at `NPC_YAW_RATE` (150 deg/s per think); while walking a path the motion owns the yaw. Fire starts once the yaw is within 15 deg of the target.
+- Fire: one shot per think, `NPC_BURST_SHOTS` = 5 per burst, `NPC_BURST_GAP_TICKS` = 28 between bursts; the first shot comes one think after the target is acquired (the game also opens fire one think after entering combat). Each pellet leaves the eye toward the chest inside a 5 deg cone (`NPC_AIM_CONE_DEG`, a hash of NPC id and tick, deterministic) and the nearest of the world, a prop and a player hull on the ray takes it; a player takes `weapons::npc_shot_damage` (3; .357 15) as DMG_BULLET through the normal damage hooks. NPCs do not hit each other.
+- Lost sight: the NPC runs after the player (`npc_chase`, run gait) until the player is seen again, which ends the chase and resumes fire; after `NPC_TARGET_LOSE_TICKS` (330) without sight the target is dropped and the NPC stops. A chase or goto issued by an addon is not overridden while the target stays in view.
+
+Tests (`gm-dedicated/tests/npc_entity.rs`): `armed_soldier_fires_bursts_at_a_visible_player` - a soldier with an SMG1 178 u from a standing player fires 27 shots in 300 ticks with gaps 7/7/7/7/28, the player goes 100 -> 19 (every shot hits the 32 u hull from that range; the game's soldier hit nothing in 1200 ticks - the aim offset of its proficiency table is a documented divergence, our model is deliberately more lethal at short range). `soldier_chases_a_target_out_of_sight_then_gives_up` - a hidden navmesh spot 1120 u away makes the soldier chase without firing, a return to view re-engages, a player beyond sight range is dropped after 335 ticks with chase and goal cleared.
+
+Pending: melee attacks (zombies, headcrabs, antlions), the game's crouch-to-fire pose, hit reactions / flinch, squads, cover, and an addon API to set or clear the target.

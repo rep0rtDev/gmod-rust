@@ -278,3 +278,184 @@ fn npc_chases_a_moving_player() {
     }
     assert!(server.npcs[&id].chase == Some(1));
 }
+
+/// gm_construct, the player at the spawn hub looking 20 deg down: the NPC lands 178 u ahead.
+/// `$world` is bound in the caller's scope so the server may borrow it.
+macro_rules! combat_server {
+    ($world:ident) => {{
+        let Some(inst) = gm_content::find_install() else {
+            eprintln!("skipped: no Garry's Mod install");
+            return;
+        };
+        let mount = gm_content::Mount::for_install(&inst).unwrap();
+        gm_dedicated::load_world(&mount, "gm_construct").unwrap()
+    }};
+    ($world:ident, server) => {{
+        let mut server =
+            gm_server::Server::new(&$world.collision, $world.physics, $world.world_body);
+        server.set_navmesh($world.nav.clone());
+        let start = Vec3::new(823.235, -500.0, -143.0);
+        server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+        server.set_weapons(1, &["gmod_tool"]);
+        let look = gm_server::PlayerCmd {
+            cmd: gm_move::UserCmd {
+                view_angles: Vec3::new(20.0, 0.0, 0.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let idle = std::collections::BTreeMap::from([(1, look)]);
+        for _ in 0..20 {
+            server.tick(&idle);
+        }
+        (server, idle, start)
+    }};
+}
+
+/// Our combat model: a hostile NPC with a hitscan weapon fires at a visible player one shot
+/// per think, NPC_BURST_SHOTS per burst, NPC_BURST_GAP_TICKS between bursts; every hit takes
+/// the ammo's NPC damage off the player.
+#[test]
+fn armed_soldier_fires_bursts_at_a_visible_player() {
+    let world = combat_server!(world);
+    let (mut server, idle, start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    let hp0 = server.players[&1].health;
+    let mut shots = Vec::new();
+    let mut last = server.npcs[&id].shots;
+    for tick in 0..300u64 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if n.shots != last {
+            shots.push(tick);
+            last = n.shots;
+        }
+    }
+    let n = &server.npcs[&id];
+    assert_eq!(n.target, Some(1));
+    assert!(n.goal.is_none(), "stood still while the player is in sight");
+    let gaps: Vec<u64> = shots.windows(2).map(|w| w[1] - w[0]).collect();
+    eprintln!("shots at {shots:?}\ngaps {gaps:?}");
+    assert!(
+        server.players[&1].alive,
+        "the player died inside the window"
+    );
+    assert!(shots.len() >= 20, "only {} shots in 300 ticks", shots.len());
+    let burst = gm_server::NPC_BURST_SHOTS as usize;
+    for (i, g) in gaps.iter().enumerate() {
+        let expect = if (i + 1) % burst == 0 {
+            gm_server::NPC_BURST_GAP_TICKS
+        } else {
+            7
+        };
+        assert_eq!(*g, expect, "gap {i} of {gaps:?}");
+    }
+    // the player stands 178 u away inside the aim cone: most shots land, 3 hp each
+    let hp = server.players[&1].health;
+    let lost = hp0 - hp;
+    eprintln!("player {hp0} -> {hp} after {} shots", shots.len());
+    assert!(lost > 0 && lost % 3 == 0, "lost {lost} hp");
+    assert!(
+        lost as usize >= shots.len() * 3 / 2,
+        "only {lost} hp off {} shots",
+        shots.len()
+    );
+    // facing: the soldier spawned looking at the player, yaw stays on them
+    let to = start - server.npcs[&id].pos;
+    let want = to.y.atan2(to.x).to_degrees();
+    let yaw = server.npcs[&id].angles.y;
+    assert!((want - yaw).abs() < 1.0, "yaw {yaw} vs {want}");
+}
+
+/// Losing sight of the target sends the NPC after the player's position; sight regained
+/// stops the chase, and the target is dropped after NPC_TARGET_LOSE_TICKS unseen.
+#[test]
+fn soldier_chases_a_target_out_of_sight_then_gives_up() {
+    let world = combat_server!(world);
+    let (mut server, idle, start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    for _ in 0..30 {
+        server.tick(&idle);
+    }
+    assert_eq!(server.npcs[&id].target, Some(1));
+    // a reachable spot on the navmesh the soldier's eye cannot see
+    let extents = Vec3::new(32.0, 32.0, 72.0);
+    let npc_pos = server.npcs[&id].pos;
+    let eye = npc_pos + Vec3::new(0.0, 0.0, 64.0);
+    let mut hidden = None;
+    'scan: for gx in -8..=8 {
+        for gy in -8..=8 {
+            let cand = Vec3::new(gx as f32 * 192.0, gy as f32 * 192.0, -143.0);
+            let Some(p) = world.nav.nearest(cand, extents) else {
+                continue;
+            };
+            let d = p.distance(npc_pos);
+            if p.distance(cand) > 64.0 || !(300.0..1500.0).contains(&d) {
+                continue;
+            }
+            let chest = p + Vec3::new(0.0, 0.0, 36.0);
+            let tr = world
+                .collision
+                .trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
+            if tr.fraction < 1.0 && world.nav.find_path(npc_pos, p, extents).is_some() {
+                hidden = Some(p);
+                break 'scan;
+            }
+        }
+    }
+    let hidden = hidden.expect("no hidden navmesh spot within 1500 u");
+    eprintln!(
+        "hidden spot {hidden} ({:.0} u away)",
+        hidden.distance(npc_pos)
+    );
+    server.teleport_player(1, hidden);
+    let mut chasing = None;
+    for t in 0..40 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if n.chase == Some(1) && n.goal.is_some() {
+            chasing = Some(t);
+            break;
+        }
+    }
+    assert!(chasing.is_some(), "never chased the hidden player");
+    let shots = server.npcs[&id].shots;
+    for _ in 0..21 {
+        server.tick(&idle);
+    }
+    assert_eq!(server.npcs[&id].shots, shots, "fired without sight");
+    assert!(server.npcs[&id].move_speed > 0.0, "did not move");
+    // the player comes back into view: the chase ends and fire resumes
+    server.teleport_player(1, start);
+    let mut seen = false;
+    for _ in 0..60 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if n.chase.is_none() && n.shots > shots {
+            seen = true;
+            break;
+        }
+    }
+    assert!(seen, "did not re-engage");
+    // out of sight for good: after NPC_TARGET_LOSE_TICKS the target is dropped
+    let far = Vec3::new(-2500.0, 2500.0, -143.0);
+    server.teleport_player(1, far);
+    let seen_at = server.npcs[&id].target_seen;
+    let mut dropped = None;
+    for t in 0..(gm_server::NPC_TARGET_LOSE_TICKS + 40) {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if n.target.is_none() {
+            dropped = Some(t);
+            break;
+        }
+        assert_eq!(n.target_seen, seen_at, "saw the player at {far}");
+    }
+    let n = &server.npcs[&id];
+    eprintln!(
+        "dropped after {dropped:?} ticks: chase {:?} at {}",
+        n.chase, n.pos
+    );
+    assert!(dropped.is_some_and(|t| t >= gm_server::NPC_TARGET_LOSE_TICKS));
+    assert!(n.chase.is_none() && n.goal.is_none());
+}

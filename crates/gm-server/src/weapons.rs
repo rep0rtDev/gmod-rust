@@ -964,6 +964,15 @@ impl Inventory {
 /// `None` until recorded.
 /// Damage of a player's bullet to an NPC (`sk_plr_dmg_<ammo>`, measured `server_npc_damage`):
 /// the single-player table, not the player-vs-player one.
+/// Damage of an NPC's bullet to a player (`sk_npc_dmg_<ammo>` defaults).
+pub fn npc_shot_damage(ammo: &str) -> Option<f32> {
+    match ammo {
+        "Pistol" | "SMG1" | "AR2" | "Buckshot" => Some(3.0),
+        "357" => Some(15.0),
+        _ => None,
+    }
+}
+
 pub fn npc_bullet_damage(ammo: &str) -> Option<f32> {
     match ammo {
         "Pistol" => Some(5.0),
