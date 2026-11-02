@@ -9308,6 +9308,21 @@ impl<'w> Server<'w> {
     /// Addon control of the combat target. `Some(player)`: engage that player (the sight and
     /// loss rules of `npc_combat_think` then apply as usual). `None`: drop the target, stop,
     /// and stay passive until the next `npc_target`. False for a dead NPC or unknown player.
+    /// `NPC:SetArrivalDistance`: the chase stop distance of a living NPC (clamped at 0).
+    pub fn npc_set_arrival(&mut self, id: u32, dist: f32) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) if n.dead_at.is_none() => {
+                n.chase_reach = if dist.is_finite() {
+                    dist.max(0.0)
+                } else {
+                    n.chase_reach
+                };
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn npc_target(&mut self, id: u32, player: Option<u32>) -> bool {
         if let Some(p) = player {
             if !self.players.get(&p).is_some_and(|pl| pl.alive) {

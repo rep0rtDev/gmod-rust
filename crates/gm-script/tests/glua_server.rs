@@ -2080,3 +2080,33 @@ fn glua_stool_handles_unknown_tool_clicks() {
         a.eval("return state.z, state.owner, state.world").unwrap();
     assert_eq!((z, owner, world), (7.0, 1, true));
 }
+
+#[test]
+fn npc_arrival_distance_write() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            local n = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.NPC }, __glua_classes.Entity)
+            n:SetArrivalDistance(48) end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(
+        writes
+            .iter()
+            .any(|w| matches!(w, QueuedWrite::NpcArrival { ent: 5, dist } if *dist == 48.0)),
+        "{writes:?}"
+    );
+}

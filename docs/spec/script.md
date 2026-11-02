@@ -712,6 +712,9 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `NPC:SetArrivalDistance(d)` sets the chase stop distance the mover uses (read back as
+  `GetArrivalDistance`). `http.Fetch` / `Post` stay stubs: the host HTTP is a plain-text
+  registry fetcher without TLS, not a general client.
 - Scripted stools in GLua: a `TOOL` instance (`ToolObj:Create()`) registers under its `Mode` the
   moment the addon assigns it (addons are manifest actors, there is no `stools/<mode>.lua`
   loader, so `TOOL.Mode` is required); a gmod_tool click on a mode no Rust stool owns reaches

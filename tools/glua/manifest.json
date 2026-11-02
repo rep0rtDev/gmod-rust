@@ -3222,7 +3222,7 @@
 {"address":"NPC:SetActivity","kind":"classfunc","parent":"NPC","name":"SetActivity","realms":["server"],"args":[{"name":"act","type":"number"}],"rets":[],"status":"stub"},
 {"address":"NPC:SetArrivalActivity","kind":"classfunc","parent":"NPC","name":"SetArrivalActivity","realms":["server"],"args":[{"name":"act","type":"number"}],"rets":[],"status":"stub"},
 {"address":"NPC:SetArrivalDirection","kind":"classfunc","parent":"NPC","name":"SetArrivalDirection","realms":["server"],"args":[{"name":"dir","type":"Vector"}],"rets":[],"status":"stub"},
-{"address":"NPC:SetArrivalDistance","kind":"classfunc","parent":"NPC","name":"SetArrivalDistance","realms":["server"],"args":[{"name":"dist","type":"number"}],"rets":[],"status":"stub"},
+{"address":"NPC:SetArrivalDistance","kind":"classfunc","parent":"NPC","name":"SetArrivalDistance","realms":["server"],"args":[{"name":"dist","type":"number"}],"rets":[],"status":"implemented"},
 {"address":"NPC:SetArrivalSequence","kind":"classfunc","parent":"NPC","name":"SetArrivalSequence","realms":["server"],"args":[{"name":"seq","type":"number"}],"rets":[],"status":"stub"},
 {"address":"NPC:SetArrivalSpeed","kind":"classfunc","parent":"NPC","name":"SetArrivalSpeed","realms":["server"],"args":[{"name":"speed","type":"number"}],"rets":[],"status":"stub"},
 {"address":"NPC:SetCondition","kind":"classfunc","parent":"NPC","name":"SetCondition","realms":["server"],"args":[{"name":"condition","type":"number{COND}"}],"rets":[],"status":"stub"},

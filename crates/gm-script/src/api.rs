@@ -113,6 +113,11 @@ pub enum QueuedWrite {
     },
     /// `npc_target`: `{player}` engages that player, no value drops the target and keeps the
     /// NPC passive until the next `npc_target`.
+    /// `NPC:SetArrivalDistance`: how close the chase mover gets before it stops.
+    NpcArrival {
+        ent: u32,
+        dist: f32,
+    },
     NpcTarget {
         ent: u32,
         player: Option<u32>,
@@ -1581,6 +1586,13 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     }
                 }
                 "npc_stop" => QueuedWrite::NpcStop { ent },
+                "npc_arrival" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NpcArrival {
+                        ent,
+                        dist: t.get::<Option<f32>>("dist")?.unwrap_or(0.0),
+                    }
+                }
                 "npc_target" => QueuedWrite::NpcTarget {
                     ent,
                     player: match &arg {
@@ -3483,6 +3495,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::Remove { ent } => server.remove_prop(*ent),
         QueuedWrite::NpcGoto { ent, pos, run } => server.npc_goto(*ent, *pos, *run),
         QueuedWrite::NpcChase { ent, player, run } => server.npc_chase(*ent, *player, *run),
+        QueuedWrite::NpcArrival { ent, dist } => server.npc_set_arrival(*ent, *dist),
         QueuedWrite::NpcTarget { ent, player } => server.npc_target(*ent, *player),
         QueuedWrite::NpcStop { ent } => {
             if !server.npcs.contains_key(ent) {
