@@ -331,12 +331,33 @@ end
 function PLY:HasWeapon(class) local p = psnap(self.__pid); if not p then return false end for _, c in ipairs(p.weapons) do if c == class then return true end end return false end
 function PLY:GetWeapon(class) if self:HasWeapon(class) then return WEP.__from(class, self.__pid) end return NULL end
 function PLY:GetActiveWeapon() local p = psnap(self.__pid); if p and p.active_weapon ~= "" then return WEP.__from(p.active_weapon, self.__pid) end return NULL end
-function PLY:KeyDown() return false end
-function PLY:InVehicle() return false end
-function PLY:GetVehicle() return NULL end
+-- Buttons of the command the server processed this tick (and the one before, for edges).
+function PLY:KeyDown(k) local p = psnap(self.__pid); return p ~= nil and bit.band(p.buttons or 0, k) ~= 0 end
+function PLY:KeyDownLast(k) local p = psnap(self.__pid); return p ~= nil and bit.band(p.buttons_last or 0, k) ~= 0 end
+function PLY:KeyPressed(k) return self:KeyDown(k) and not self:KeyDownLast(k) end
+function PLY:KeyReleased(k) return self:KeyDownLast(k) and not self:KeyDown(k) end
+function PLY:IsWalking() return self:KeyDown(IN_WALK) end
+function PLY:InVehicle() local p = psnap(self.__pid); return p ~= nil and (p.vehicle or 0) ~= 0 end
+function PLY:GetVehicle() local p = psnap(self.__pid); if p and (p.vehicle or 0) ~= 0 then return Entity(p.vehicle) end return NULL end
+function PLY:GetDrivingEntity() local p = psnap(self.__pid); if p and (p.driving or 0) ~= 0 then return Entity(p.driving) end return NULL end
+function PLY:IsDrivingEntity() local p = psnap(self.__pid); return p ~= nil and (p.driving or 0) ~= 0 end
+function PLY:GetUseEntity() local p = psnap(self.__pid); if p and (p.use_target or 0) ~= 0 then return Entity(p.use_target) end return NULL end
+function PLY:GetEntityInUse() return self:GetUseEntity() end
+function PLY:FlashlightIsOn() local p = psnap(self.__pid); return p ~= nil and p.flashlight == true end
+function PLY:Flashlight(on) if on and not self:CanUseFlashlight() then return end qwrite("player.set_flashlight", self.__pid, on == true) end
+function PLY:AllowFlashlight(allow) rawset(self, "__flashlight_allowed", allow ~= false) end
+function PLY:CanUseFlashlight() local a = rawget(self, "__flashlight_allowed"); return a ~= false end
+function PLY:SetFrags(n) qwrite("player.set_frags", self.__pid, math.floor(n)) end
+function PLY:SetDeaths(n) qwrite("player.set_deaths", self.__pid, math.floor(n)) end
+function PLY:AddFrags(n) self:SetFrags(self:Frags() + math.floor(n)) end
+function PLY:AddDeaths(n) self:SetDeaths(self:Deaths() + math.floor(n)) end
+function PLY:Kick(reason) qwrite("player.kick", self.__pid, reason or "") end
+function PLY:EnterVehicle(v) if IsValid(v) then qwrite("player.vehicle", self.__pid, v:EntIndex()) end end
+function PLY:ExitVehicle() qwrite("player.vehicle", self.__pid, nil) end
 function PLY:IsFrozen() return false end
-function PLY:IsOnGround() return true end
-function PLY:Crouching() return false end
+function PLY:IsOnGround() local p = psnap(self.__pid); return p ~= nil and p.on_ground == true end
+function PLY:OnGround() return self:IsOnGround() end
+function PLY:Crouching() local p = psnap(self.__pid); return p ~= nil and p.ducked == true end
 function PLY:IsSprinting() return false end
 function PLY:IsTyping() return false end
 function PLY:IsSpeaking() return false end
@@ -410,9 +431,7 @@ function PLY:GetWalkSpeed() return 200 end
 function PLY:GetRunSpeed() return 400 end
 function PLY:GetJumpPower() return 200 end
 function PLY:GetGravity() return 1 end
-function PLY:SetWalkSpeed() end
-function PLY:SetRunSpeed() end
-function PLY:SetJumpPower() end
+-- movement tunables are one MoveConfig for the whole server: per-player speed writes stay stubs
 function PLY:SetGravity() end
 function PLY:SetDuckSpeed() end
 
@@ -1453,7 +1472,7 @@ end
 local uid_tables = {}
 function PLY:UniqueIDTable(key) uid_tables[self.__pid] = uid_tables[self.__pid] or {}; local t = uid_tables[self.__pid]; t[key] = t[key] or {}; return t[key] end
 function PLY:DebugInfo() return string.format("%s [%d] %s hp %d", self:Nick(), self:UserID(), tostring(self:GetPos()), self:Health()) end
-for _, name in ipairs({ "AddDeaths", "AddFrags", "AddPlayerOption", "AddVCDSequenceToGestureSlot", "AllowFlashlight", "AllowImmediateDecalPainting", "AnimResetGestureSlot", "AnimRestartGesture", "AnimRestartMainSequence", "AnimSetGestureSequence", "AnimSetGestureWeight", "Ban", "CanUseFlashlight", "CreateRagdoll", "CrosshairDisable", "CrosshairEnable", "DetonateTripmines", "DisableWorldClicking", "DoAnimationEvent", "DoAttackEvent", "DoCustomAnimEvent", "DoReloadEvent", "DoSecondaryAttack", "DrawViewModel", "DrawWorldModel", "DropNamedWeapon", "DropObject", "DropWeapon", "EnterVehicle", "EquipSuit", "ExitLadder", "ExitVehicle", "Flashlight", "FlashlightIsOn", "GetActivity", "GetAllowFullRotation", "GetAllowWeaponsInVehicle", "GetAmmo", "GetAmmoCount", "GetAvoidPlayers", "GetCanWalk", "GetCanZoom", "GetClassID", "GetCurrentCommand", "GetEntityInUse", "GetFlashlightColor", "GetFriendStatus", "GetHands", "GetHoveredWidget", "GetNoCollideWithTeammates", "GetObserverTarget", "GetPlayerColor", "GetPlayerInfo", "GetPreferredCarryAngles", "GetPressedWidget", "GetPreviousWeapon", "GetPunchAngle", "GetRagdollEntity", "GetRenderAngles", "GetSuitPower", "GetTimeoutSeconds", "GetUnDuckSpeed", "GetUseEntity", "GetViewModel", "GetViewPunchAngles", "GetViewPunchVelocity", "GetVoiceVolumeScale", "GetWeaponColor", "GiveAmmo", "IPAddress", "IsMuted", "IsPlayingTaunt", "IsSuitEquipped", "IsTimingOut", "IsVoiceAudible", "IsWalking", "IsWorldClickingDisabled", "KeyDownLast", "KeyPressed", "KeyReleased", "Kick", "LagCompensation", "LastHitGroup", "LimitHit", "LocalEyeAngles", "Lock", "UnLock", "MotionSensorPos", "PacketLoss", "PickupObject", "PlayStepSound", "RemoveAllAmmo", "RemoveAllItems", "RemoveAmmo", "RemoveSuit", "ResetHull", "Say", "ScreenFade", "SendHint", "SetActivity", "SetAllowFullRotation", "SetAllowWeaponsInVehicle", "SetAmmo", "SetAvoidPlayers", "SetCanWalk", "SetCanZoom", "SetClassID", "SetCrouchedWalkSpeed", "SetCurrentViewOffset", "SetDSP", "SetDeaths", "SetDrivingEntity", "SetEyeAngles", "SetFOV", "SetFlashlightColor", "SetFrags", "SetHands", "SetHoveredWidget", "SetHull", "SetHullDuck", "SetLadderClimbSpeed", "SetLaggedMovementValue", "SetLastHitGroup", "SetMaxArmor", "SetMaxSpeed", "SetMuted", "SetNoCollideWithTeammates", "SetNoTarget", "SetObserverMode", "SetPlayerColor", "SetPressedWidget", "SetRenderAngles", "SetSlowWalkSpeed", "SetStepSize", "SetSuitPower", "SetSuppressPickupNotices", "SetUnDuckSpeed", "SetViewEntity", "SetViewOffset", "SetViewOffsetDucked", "SetViewPunchAngles", "SetViewPunchVelocity", "SetVoiceVolumeScale", "SetWeaponColor", "SetupHands", "ShouldDrawLocalPlayer", "ShouldDropWeapon", "ShowProfile", "SimulateGravGunDrop", "SimulateGravGunPickup", "Spectate", "SpectateEntity", "SprayDecal", "SprintDisable", "SprintEnable", "StartSprinting", "StartWalking", "StopSprinting", "StopWalking", "StopZooming", "StripAmmo", "SuppressHint", "TimeConnected", "TraceHullAttack", "TranslateWeaponActivity", "UnSpectate", "ViewPunch", "ViewPunchReset", "VoiceVolume" }) do
+for _, name in ipairs({ "SetWalkSpeed", "SetRunSpeed", "SetJumpPower", "SetMaxSpeed", "SetSlowWalkSpeed", "SetDuckSpeed", "SetUnDuckSpeed", "SetStepSize",  "AddPlayerOption", "AddVCDSequenceToGestureSlot", "AllowFlashlight", "AllowImmediateDecalPainting", "AnimResetGestureSlot", "AnimRestartGesture", "AnimRestartMainSequence", "AnimSetGestureSequence", "AnimSetGestureWeight", "Ban", "CanUseFlashlight", "CreateRagdoll", "CrosshairDisable", "CrosshairEnable", "DetonateTripmines", "DisableWorldClicking", "DoAnimationEvent", "DoAttackEvent", "DoCustomAnimEvent", "DoReloadEvent", "DoSecondaryAttack", "DrawViewModel", "DrawWorldModel", "DropNamedWeapon", "DropObject", "DropWeapon", "EnterVehicle", "EquipSuit", "ExitLadder", "ExitVehicle", "Flashlight", "FlashlightIsOn", "GetActivity", "GetAllowFullRotation", "GetAllowWeaponsInVehicle", "GetAmmo", "GetAmmoCount", "GetAvoidPlayers", "GetCanWalk", "GetCanZoom", "GetClassID", "GetCurrentCommand", "GetEntityInUse", "GetFlashlightColor", "GetFriendStatus", "GetHands", "GetHoveredWidget", "GetNoCollideWithTeammates", "GetObserverTarget", "GetPlayerColor", "GetPlayerInfo", "GetPreferredCarryAngles", "GetPressedWidget", "GetPreviousWeapon", "GetPunchAngle", "GetRagdollEntity", "GetRenderAngles", "GetSuitPower", "GetTimeoutSeconds", "GetUnDuckSpeed", "GetUseEntity", "GetViewModel", "GetViewPunchAngles", "GetViewPunchVelocity", "GetVoiceVolumeScale", "GetWeaponColor", "GiveAmmo", "IPAddress", "IsMuted", "IsPlayingTaunt", "IsSuitEquipped", "IsTimingOut", "IsVoiceAudible", "IsWalking", "IsWorldClickingDisabled", "KeyDownLast", "KeyPressed", "KeyReleased", "Kick", "LagCompensation", "LastHitGroup", "LimitHit", "LocalEyeAngles", "Lock", "UnLock", "MotionSensorPos", "PacketLoss", "PickupObject", "PlayStepSound", "RemoveAllAmmo", "RemoveAllItems", "RemoveAmmo", "RemoveSuit", "ResetHull", "Say", "ScreenFade", "SendHint", "SetActivity", "SetAllowFullRotation", "SetAllowWeaponsInVehicle", "SetAmmo", "SetAvoidPlayers", "SetCanWalk", "SetCanZoom", "SetClassID", "SetCrouchedWalkSpeed", "SetCurrentViewOffset", "SetDSP", "SetDeaths", "SetDrivingEntity", "SetEyeAngles", "SetFOV", "SetFlashlightColor", "SetFrags", "SetHands", "SetHoveredWidget", "SetHull", "SetHullDuck", "SetLadderClimbSpeed", "SetLaggedMovementValue", "SetLastHitGroup", "SetMaxArmor", "SetMaxSpeed", "SetMuted", "SetNoCollideWithTeammates", "SetNoTarget", "SetObserverMode", "SetPlayerColor", "SetPressedWidget", "SetRenderAngles", "SetSlowWalkSpeed", "SetStepSize", "SetSuitPower", "SetSuppressPickupNotices", "SetUnDuckSpeed", "SetViewEntity", "SetViewOffset", "SetViewOffsetDucked", "SetViewPunchAngles", "SetViewPunchVelocity", "SetVoiceVolumeScale", "SetWeaponColor", "SetupHands", "ShouldDrawLocalPlayer", "ShouldDropWeapon", "ShowProfile", "SimulateGravGunDrop", "SimulateGravGunPickup", "Spectate", "SpectateEntity", "SprayDecal", "SprintDisable", "SprintEnable", "StartSprinting", "StartWalking", "StopSprinting", "StopWalking", "StopZooming", "StripAmmo", "SuppressHint", "TimeConnected", "TraceHullAttack", "TranslateWeaponActivity", "UnSpectate", "ViewPunch", "ViewPunchReset", "VoiceVolume" }) do
     if PLY[name] == nil then PLY[name] = stub("Player:" .. name) end
 end
 

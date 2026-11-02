@@ -2816,6 +2816,11 @@ pub struct Player {
     pub swep: BTreeMap<String, SwepState>,
     /// Buttons of the last command, for the `KeyPress` / `KeyRelease` edges.
     pub prev_buttons: u32,
+    /// Buttons of the command processed this tick and the one before (`KeyPressed`).
+    pub buttons: u32,
+    pub buttons_last: u32,
+    /// `Player:Flashlight` state (a script toggle; no client impulse yet).
+    pub flashlight: bool,
     /// `IN_USE` was down in the last command (a use fires on the press, not the hold).
     pub use_down: bool,
     /// The `ONOFF_USE` entity the held E is on, for its `use_off` on the release.
@@ -2898,6 +2903,9 @@ impl Player {
             seat: None,
             swep: BTreeMap::new(),
             prev_buttons: 0,
+            buttons: 0,
+            buttons_last: 0,
+            flashlight: false,
             carry: None,
             use_down: false,
             use_target: None,
@@ -5359,6 +5367,32 @@ impl<'w> Server<'w> {
         );
         self.sandbox.set_render(id, &m, c, mo, f);
         true
+    }
+
+    /// Script `Player:Flashlight` / `SetFrags` / `SetDeaths`.
+    pub fn set_player_flashlight(&mut self, id: u32, on: bool) -> bool {
+        match self.players.get_mut(&id) {
+            Some(p) => {
+                p.flashlight = on;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn set_player_score(&mut self, id: u32, frags: Option<u32>, deaths: Option<u32>) -> bool {
+        match self.players.get_mut(&id) {
+            Some(p) => {
+                if let Some(f) = frags {
+                    p.frags = f;
+                }
+                if let Some(d) = deaths {
+                    p.deaths = d;
+                }
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn entity_parent(&self, id: u32) -> u32 {
@@ -9257,6 +9291,8 @@ impl<'w> Server<'w> {
             };
             let changed = p.prev_buttons ^ pc.cmd.buttons;
             p.prev_buttons = pc.cmd.buttons;
+            p.buttons_last = p.buttons;
+            p.buttons = pc.cmd.buttons;
             if changed == 0 {
                 continue;
             }

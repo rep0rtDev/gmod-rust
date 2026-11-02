@@ -257,6 +257,24 @@ pub enum QueuedWrite {
         mode: Option<u8>,
         fx: Option<u8>,
     },
+    PlayerSetFlashlight {
+        player: u32,
+        on: bool,
+    },
+    /// `SetFrags` / `SetDeaths`: `None` keeps that counter.
+    PlayerSetScore {
+        player: u32,
+        frags: Option<u32>,
+        deaths: Option<u32>,
+    },
+    PlayerKick {
+        player: u32,
+    },
+    /// `EnterVehicle(ent)` / `ExitVehicle` (`None`).
+    PlayerVehicle {
+        player: u32,
+        vehicle: Option<u32>,
+    },
     PlayerStripWeapon {
         player: u32,
         class: Option<String>,
@@ -415,6 +433,14 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("body", p.body.as_str())?;
     t.set("weapons", p.weapons.clone())?;
     t.set("active_weapon", p.active_weapon.as_str())?;
+    t.set("buttons", p.buttons)?;
+    t.set("buttons_last", p.buttons_last)?;
+    t.set("on_ground", p.on_ground)?;
+    t.set("ducked", p.ducked)?;
+    t.set("vehicle", p.vehicle)?;
+    t.set("driving", p.driving)?;
+    t.set("use_target", p.use_target)?;
+    t.set("flashlight", p.flashlight)?;
     t.set(
         "ammo",
         p.ammo
@@ -1356,6 +1382,28 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     mode: None,
                     fx: Some(int_arg(&arg)?.clamp(0, 255) as u8),
                 },
+                "player.set_flashlight" => QueuedWrite::PlayerSetFlashlight {
+                    player: ent,
+                    on: matches!(arg, Value::Boolean(true)),
+                },
+                "player.set_frags" => QueuedWrite::PlayerSetScore {
+                    player: ent,
+                    frags: Some(int_arg(&arg)?.max(0) as u32),
+                    deaths: None,
+                },
+                "player.set_deaths" => QueuedWrite::PlayerSetScore {
+                    player: ent,
+                    frags: None,
+                    deaths: Some(int_arg(&arg)?.max(0) as u32),
+                },
+                "player.kick" => QueuedWrite::PlayerKick { player: ent },
+                "player.vehicle" => QueuedWrite::PlayerVehicle {
+                    player: ent,
+                    vehicle: match &arg {
+                        Value::Nil => None,
+                        _ => Some(int_arg(&arg)?.max(0) as u32),
+                    },
+                },
                 "player.strip_weapon" => QueuedWrite::PlayerStripWeapon {
                     player: ent,
                     class: match &arg {
@@ -2171,6 +2219,19 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             mode,
             fx,
         } => server.set_prop_render(*ent, material.as_deref(), *color, *mode, *fx),
+        QueuedWrite::PlayerSetFlashlight { player, on } => {
+            server.set_player_flashlight(*player, *on)
+        }
+        QueuedWrite::PlayerSetScore {
+            player,
+            frags,
+            deaths,
+        } => server.set_player_score(*player, *frags, *deaths),
+        QueuedWrite::PlayerKick { player } => server.remove_player(*player),
+        QueuedWrite::PlayerVehicle { player, vehicle } => match vehicle {
+            Some(v) => server.enter_vehicle(*player, *v),
+            None => server.exit_vehicle(*player),
+        },
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())
         }

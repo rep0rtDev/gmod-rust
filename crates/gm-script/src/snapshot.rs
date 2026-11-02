@@ -58,6 +58,16 @@ pub struct PlayerSnap {
     /// Reserve ammo per ammo type and `(class, clip1, clip2)` per carried weapon.
     pub ammo: Vec<(String, i32)>,
     pub clips: Vec<(String, i32, i32)>,
+    /// Mover state: buttons of this and the previous processed command, ground / duck flags.
+    pub buttons: u32,
+    pub buttons_last: u32,
+    pub on_ground: bool,
+    pub ducked: bool,
+    /// Vehicle seat / driven prop / `+use` target entity, 0 for none.
+    pub vehicle: u32,
+    pub driving: u32,
+    pub use_target: u32,
+    pub flashlight: bool,
     pub frags: u32,
     pub deaths: u32,
 }
@@ -371,6 +381,14 @@ impl Snapshot {
                                 .iter()
                                 .map(|(k, v)| (k.clone(), v[0], v[1]))
                                 .collect(),
+                            buttons: p.buttons,
+                            buttons_last: p.buttons_last,
+                            on_ground: p.state.on_ground,
+                            ducked: p.state.ducked,
+                            vehicle: p.seat.unwrap_or(0),
+                            driving: p.driving.map_or(0, |d| d.prop),
+                            use_target: p.use_target.unwrap_or(0),
+                            flashlight: p.flashlight,
                         },
                     )
                 })

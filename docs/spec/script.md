@@ -785,6 +785,16 @@ GetModelRenderBounds / GetModelRadius / GetAttachments / LookupAttachment / GetA
 applied). Bone matrices / positions, sequence durations, flex weights and bodygroup/skin writes
 on anything but a prop keep needing the animation layer and stay stubs.
 
+Player mover state: `PlayerSnap.buttons / buttons_last` (the command processed this tick and the
+one before), `on_ground`, `ducked`, `vehicle` (seat), `driving` (driven prop), `use_target`,
+`flashlight`; `Player:KeyDown / KeyDownLast / KeyPressed / KeyReleased / IsWalking / IsOnGround /
+Crouching / InVehicle / GetVehicle / GetDrivingEntity / GetUseEntity / FlashlightIsOn` read them,
+`Flashlight / SetFrags / SetDeaths / AddFrags / AddDeaths / Kick / EnterVehicle / ExitVehicle`
+write through `player.set_flashlight / set_frags / set_deaths / kick / vehicle` (`remove_player`,
+`enter_vehicle`, `exit_vehicle`). The flashlight is a server flag only (no client impulse or
+light yet). Movement tunables are one `MoveConfig` for the whole server, so per-player speed
+setters (`SetWalkSpeed`, `SetRunSpeed`, `SetJumpPower`, ...) are stubs rather than silent no-ops.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

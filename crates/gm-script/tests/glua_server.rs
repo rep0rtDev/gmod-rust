@@ -89,6 +89,14 @@ fn snapshot() -> Arc<Snapshot> {
                 ("weapon_pistol".into(), 18, 0),
                 ("weapon_smg1".into(), 45, 1),
             ],
+            buttons: 1 | 4,
+            buttons_last: 4,
+            on_ground: true,
+            ducked: true,
+            vehicle: 0,
+            driving: 0,
+            use_target: 5,
+            flashlight: true,
             frags: 0,
             deaths: 0,
         },
@@ -655,4 +663,61 @@ fn model_data_comes_from_the_server_tables() {
         ],
         "entity 6 shares entity 5's model"
     );
+}
+
+#[test]
+fn player_mover_state_and_ops() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local ply = Player(1)
+             state.r = { ply:KeyDown(IN_ATTACK), ply:KeyPressed(IN_ATTACK), ply:KeyPressed(IN_DUCK), ply:KeyDown(IN_DUCK), ply:KeyReleased(IN_JUMP),
+                 ply:IsOnGround(), ply:Crouching(), ply:InVehicle(), ply:FlashlightIsOn(), ply:GetUseEntity():EntIndex() == 5, ply:IsWalking() }
+             ply:Flashlight(false)
+             ply:SetFrags(3)
+             ply:AddDeaths(2)
+             ply:EnterVehicle(Entity(5))
+             ply:ExitVehicle()
+             ply:Kick('bye')
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<bool> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!(
+        r,
+        vec![true, true, false, true, false, true, true, false, true, true, false]
+    );
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(matches!(
+        &writes[0],
+        QueuedWrite::PlayerSetFlashlight {
+            player: 1,
+            on: false
+        }
+    ));
+    assert!(matches!(
+        &writes[1],
+        QueuedWrite::PlayerSetScore {
+            frags: Some(3),
+            deaths: None,
+            ..
+        }
+    ));
+    assert!(
+        matches!(&writes[2], QueuedWrite::PlayerSetScore { frags: None, deaths: Some(d), .. } if *d == snap.players[&1].deaths + 2)
+    );
+    assert!(matches!(
+        &writes[3],
+        QueuedWrite::PlayerVehicle {
+            vehicle: Some(5),
+            ..
+        }
+    ));
+    assert!(matches!(
+        &writes[4],
+        QueuedWrite::PlayerVehicle { vehicle: None, .. }
+    ));
+    assert!(matches!(&writes[5], QueuedWrite::PlayerKick { player: 1 }));
 }
