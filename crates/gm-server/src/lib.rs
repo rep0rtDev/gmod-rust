@@ -604,6 +604,8 @@ pub enum Request {
     EnterVehicle { player: u32, vehicle: u32 },
     /// `CanExitVehicle`: the seated player pressed +use.
     ExitVehicle { player: u32, vehicle: u32 },
+    /// `PlayerSwitchFlashlight`: the player fired `impulse 100`; `on` is the state it asks for.
+    SwitchFlashlight { player: u32, on: bool },
     /// `ScaleNPCDamage`: a hit on an NPC is about to take `amount` off it (`Amount` replaces it).
     NpcDamage {
         npc: u32,
@@ -3389,6 +3391,8 @@ pub struct PlayerCmd {
     pub physgun: bool,
     pub mouse_x: f32,
     pub mouse_y: f32,
+    /// Console `impulse N` of this command: 100 toggles the flashlight (`PlayerSwitchFlashlight`).
+    pub impulse: u8,
 }
 
 /// One bullet (or pellet group) that hit a player this tick.
@@ -10276,7 +10280,28 @@ impl<'w> Server<'w> {
     }
 
     /// Moves one player by one usercmd outside the tick (catching up a usercmd backlog).
+    /// `impulse 100` from the player's command: the addon runtime may refuse
+    /// (`PlayerSwitchFlashlight`); a dead player has no flashlight. Script `Player:Flashlight`
+    /// does not ask, as in the game.
+    pub fn use_flashlight(&mut self, player: u32) -> bool {
+        let Some(on) = self
+            .players
+            .get(&player)
+            .filter(|p| p.alive)
+            .map(|p| !p.flashlight)
+        else {
+            return false;
+        };
+        if self.ask(Request::SwitchFlashlight { player, on }) == Verdict::Cancel {
+            return false;
+        }
+        self.set_player_flashlight(player, on)
+    }
+
     pub fn move_player(&mut self, player: u32, pc: &PlayerCmd) {
+        if pc.impulse == 100 {
+            self.use_flashlight(player);
+        }
         if let Some(p) = self.players.get_mut(&player) {
             p.view_angles = p.eye_override.take().unwrap_or(pc.cmd.view_angles);
             let cmd = if p.locked {

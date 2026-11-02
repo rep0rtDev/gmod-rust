@@ -759,6 +759,8 @@ struct App {
     /// `tool <name> <key> <value>`: sent with every click of that tool (`ctx.settings`).
     tool_settings: BTreeMap<String, BTreeMap<String, String>>,
     noclip: bool,
+    /// `impulse N` fired by a bind, sent with the next command.
+    impulse: u8,
     /// One-shot viewmodel sequence playing (draw, fire) and when it started.
     vm_anim: Option<(&'static str, Instant)>,
     /// `PlayerSnap::vm_serial` of the last server viewmodel event played.
@@ -2793,6 +2795,7 @@ impl App {
                     let n = cmd.as_bytes()[4] - b'1';
                     self.wsel_slot(n);
                 }
+                "impulse 100" => self.impulse = 100,
                 "invnext" => self.wsel_step(1),
                 "invprev" => self.wsel_step(-1),
                 "+menu" => self.open_menu(),
@@ -2922,7 +2925,8 @@ impl App {
         self.last = now;
         let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
         while self.acc >= dt {
-            let cmd = self.cmd();
+            let mut cmd = self.cmd();
+            cmd.impulse = std::mem::take(&mut self.impulse);
             self.sim.tick(cmd);
             let keys = std::mem::take(&mut self.pending_input);
             self.sim.script.client_input(&self.sim.client.world, &keys);
@@ -5109,6 +5113,7 @@ fn main() -> Result<()> {
         tool: "weld".to_string(),
         tool_settings: BTreeMap::new(),
         noclip: false,
+        impulse: 0,
         vm_anim: None,
         vm_serial_seen: 0,
         weapon_synced: false,

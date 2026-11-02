@@ -2099,6 +2099,7 @@ fn lag_compensation_hits_the_target_where_the_shooter_saw_it() {
         physgun: false,
         mouse_x: 0.0,
         mouse_y: 0.0,
+        impulse: 0,
     };
     // settle on the ground, then the target runs along +y (its left) at full speed
     for _ in 0..30 {

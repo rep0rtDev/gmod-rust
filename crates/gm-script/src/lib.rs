@@ -903,6 +903,15 @@ impl Runtime {
                     gm_server::Verdict::Cancel
                 }
             }
+            gm_server::Request::SwitchFlashlight { player, on } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("on", i64::from(*on)));
+                if self.ask(server, "player.switch_flashlight_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
             gm_server::Request::NpcDamage {
                 npc,
                 attacker,

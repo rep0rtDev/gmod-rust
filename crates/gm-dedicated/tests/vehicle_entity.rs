@@ -441,3 +441,50 @@ fn script_move_overrides_apply_to_one_player() {
     assert!(!server.set_move_param(1, 13, Some(1.0)), "unknown field");
     assert!(!server.set_move_param(99_999, 0, Some(1.0)));
 }
+
+#[test]
+fn impulse_100_asks_player_switch_flashlight() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    for m in ["models/nova/chair_wood01.mdl", "models/buggy.mdl"] {
+        match gm_dedicated::model_info(&mount, m) {
+            Ok(info) => {
+                eprintln!("{m}: {} attachments", info.attachments.len());
+                server.register_model(m, info);
+            }
+            Err(e) => panic!("{m}: {e}"),
+        }
+    }
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    assert!(!server.players[&1].flashlight);
+    assert!(server.use_flashlight(1));
+    assert!(server.players[&1].flashlight, "impulse 100 turns it on");
+    server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::SwitchFlashlight { on: false, .. } => gm_server::Verdict::Cancel,
+        _ => gm_server::Verdict::Allow,
+    }));
+    assert!(!server.use_flashlight(1), "PlayerSwitchFlashlight refuses");
+    assert!(server.players[&1].flashlight);
+    assert!(
+        server.set_player_flashlight(1, false),
+        "script toggle does not ask"
+    );
+    assert!(!server.players[&1].flashlight);
+    server.request_hook = None;
+    assert!(!server.use_flashlight(99_999));
+    let cmd = gm_server::PlayerCmd {
+        impulse: 100,
+        ..Default::default()
+    };
+    server.move_player(1, &cmd);
+    assert!(
+        server.players[&1].flashlight,
+        "the command's impulse toggles"
+    );
+}

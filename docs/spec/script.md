@@ -890,7 +890,11 @@ values the getters read; `SetMaxSpeed` sets the velocity cap, `SetSlowWalkSpeed`
 `SetLadderClimbSpeed` stay stubs: our mover has neither). `SetViewOffset` / `SetViewOffsetDucked` (the z
 component) and `SetHull` / `SetHullDuck` (half width from `maxs.x`, height from `maxs.z`;
 `ResetHull` clears) are overrides of the same kind: the player's own hull is used for its
-movement, hit tests and eye position. `GetPreferredCarryAngles` (the hook, else the scripted
+movement, hit tests and eye position.
+`impulse 100` travels in the command (protocol 8, `NetCmd.impulse`; the `f` bind of the
+game's `kb_def.lst`) and asks `PlayerSwitchFlashlight(ply, on)` before toggling the server
+flag; `Player:Flashlight` does not ask, as in the game. The flag is server state only until
+the client light exists. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

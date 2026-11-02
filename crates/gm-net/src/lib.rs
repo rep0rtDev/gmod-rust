@@ -45,6 +45,7 @@ mod tests {
                     mouse_x: 3.0,
                     mouse_y: -2.0,
                     weapon: 1,
+                    impulse: 0,
                     seen_tick: 0,
                 }],
             },
@@ -193,8 +194,8 @@ mod tests {
         let m = ClientMsg::Cmds { cmds: cmds.clone() };
         let mut w = Writer::default();
         m.write(&mut w);
-        // 1 type + 1 count + 4 first tick + first cmd (1 + 1 + 12 + 4) + 7 * (1 + 12)
-        assert_eq!(w.buf.len(), 6 + 18 + 7 * 13, "{} bytes", w.buf.len());
+        // 1 type + 1 count + 4 first tick + first cmd (2 mask + 1 + 12 + 4) + 7 * (2 + 12)
+        assert_eq!(w.buf.len(), 6 + 19 + 7 * 14, "{} bytes", w.buf.len());
         assert_eq!(ClientMsg::read(&mut Reader::new(&w.buf)).unwrap(), m);
     }
 

@@ -2615,6 +2615,7 @@ fn run_physgun_ragdoll(scn: &Scenario) -> Result<Value> {
                 physgun: true,
                 mouse_x: mx,
                 mouse_y: my,
+                impulse: 0,
             },
         );
         m
@@ -4776,6 +4777,7 @@ fn run_server_segments(
                     physgun: true,
                     mouse_x: sg.mouse_x,
                     mouse_y: sg.mouse_y,
+                    impulse: 0,
                 },
             )]);
             server.tick(&cmds);
