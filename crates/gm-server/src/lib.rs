@@ -581,6 +581,9 @@ pub enum Request {
         pos: Vec3,
         angles: Vec3,
     },
+    /// `GetPreferredCarryAngles`: the player is about to carry `ent` with +use; `Text("pitch yaw
+    /// roll")` holds it at those angles in the player's yaw frame instead of as it lies.
+    CarryAngles { player: u32, ent: u32 },
     /// `CanCreateUndo`: an undo entry `name` / `text` is about to be recorded.
     CreateUndo {
         player: u32,
@@ -5486,7 +5489,14 @@ impl<'w> Server<'w> {
         if self.ask(Request::PlayerPickup { player, ent }) == Verdict::Cancel {
             return;
         }
-        let carry = gm_physics::pickup::Carry::new(self.physics.state(b).rotation, yaw);
+        let mut body_rot = self.physics.state(b).rotation;
+        if let Verdict::Text(t) = self.ask(Request::CarryAngles { player, ent }) {
+            if let Some([pitch, yaw_a, roll]) = parse_floats::<3>(&t) {
+                body_rot = glam::Quat::from_rotation_z(yaw.to_radians())
+                    * gm_physics::quat_from_angles(pitch, yaw_a, roll);
+            }
+        }
+        let carry = gm_physics::pickup::Carry::new(body_rot, yaw);
         if let Some(p) = self.players.get_mut(&player) {
             p.carry = Some((ent, carry));
         }
@@ -12084,15 +12094,18 @@ mod parent_tests {
 
 /// `PlayerSelectSpawn`'s answer: six floats, position then angles.
 fn parse_spawn_override(text: &str) -> Option<SpawnPoint> {
-    let v: Vec<f32> = text
-        .split_whitespace()
-        .map(|t| t.parse::<f32>().ok())
-        .collect::<Option<Vec<f32>>>()?;
-    if v.len() != 6 || v.iter().any(|f| !f.is_finite()) {
-        return None;
-    }
+    let v = parse_floats::<6>(text)?;
     Some(SpawnPoint {
         pos: Vec3::new(v[0], v[1], v[2]),
         angles: Vec3::new(v[3], v[4], v[5]),
     })
+}
+
+/// Exactly `N` finite floats separated by whitespace (the addon runtime's text answers).
+fn parse_floats<const N: usize>(text: &str) -> Option<[f32; N]> {
+    let v: Vec<f32> = text
+        .split_whitespace()
+        .map(|t| t.parse::<f32>().ok().filter(|f| f.is_finite()))
+        .collect::<Option<Vec<f32>>>()?;
+    v.try_into().ok()
 }

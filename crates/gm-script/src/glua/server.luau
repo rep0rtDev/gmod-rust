@@ -706,6 +706,15 @@ local prev_move = {}
             return string.format("%.3f %.3f %.3f %.3f %.3f %.3f", pos.x, pos.y, pos.z, ang.p, ang.y, ang.r)
         end
     end)
+    events.on("player.carry_angles", function(p)
+        local ent = Entity(p.entity)
+        local a = hook.Run("GetPreferredCarryAngles", ent)
+        if a == nil and scripted_ents and scripted_ents.Get then
+            local t = scripted_ents.Get(ent:GetClass())
+            if t and t.GetPreferredCarryAngles then a = t.GetPreferredCarryAngles(ent) end
+        end
+        if a ~= nil and a.p ~= nil then return string.format("%.3f %.3f %.3f", a.p, a.y, a.r) end
+    end)
     events.on("undo.create_request", function(p)
         local tbl = { Owner = Player(p.player), Name = p.name, NiceName = p.text, Entities = {}, Functions = {} }
         if hook.Run("CanCreateUndo", Player(p.player), tbl) == false then return false end

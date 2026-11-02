@@ -3514,6 +3514,7 @@ fn player_use_is_asked_on_the_press_within_reach_and_player_used_follows() {
                 state.used += 1
                 state.last = e.entity
             end)
+            events.on('player.carry_angles', function(e) return '0 90 0' end)
             events.on('tick.post', function()
                 if game.tick() % 10 == 0 then
                     for _, pl in ipairs(world.players()) do
@@ -3640,6 +3641,17 @@ fn player_use_is_asked_on_the_press_within_reach_and_player_used_follows() {
             .count(),
         1,
         "the press picked the crate up once, the held ticks did not drop or re-pick it"
+    );
+    let (_, carry) = server
+        .players
+        .values()
+        .find_map(|p| p.carry.as_ref())
+        .unwrap();
+    let rel = glam::Quat::from_rotation_z(carry.yaw.to_radians()).inverse() * carry.rotation;
+    let turned = glam::Quat::from_rotation_z(90f32.to_radians());
+    assert!(
+        rel.dot(turned).abs() > 0.999,
+        "GetPreferredCarryAngles holds the crate turned 90 in the view frame: {rel:?}"
     );
 }
 

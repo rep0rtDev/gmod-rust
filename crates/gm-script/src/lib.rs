@@ -1011,6 +1011,11 @@ impl Runtime {
                 }
                 self.ask_text(server, "player.select_spawn", p)
             }
+            gm_server::Request::CarryAngles { player, ent } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("entity", *ent as i64));
+                self.ask_text(server, "player.carry_angles", p)
+            }
             gm_server::Request::CreateUndo { player, name, text } => {
                 p.ints.push(("player", *player as i64));
                 p.strs.push(("name", name.clone()));
