@@ -199,3 +199,10 @@ events.on("weapon.drop", function(p)
     local i = weapons.__ensure(p.class, p.player)
     if i and i.OnDrop then i:OnDrop() end
 end)
+
+-- @hook WEAPON:OnRemove
+-- the weapon left the player's inventory (strip, death); the instance stays for a re-equip
+events.on("weapon.remove", function(p)
+    local i = weapons.__ensure(p.class, p.player)
+    if i and i.OnRemove then i:OnRemove() end
+end)

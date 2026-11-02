@@ -1064,6 +1064,11 @@ impl Runtime {
                 }
                 self.ask_text(server, "player.select_spawn", p)
             }
+            gm_server::Request::FindUse { player, default } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("entity", *default as i64));
+                self.ask_text(server, "player.find_use", p)
+            }
             gm_server::Request::CarryAngles { player, ent } => {
                 p.ints.push(("player", *player as i64));
                 p.ints.push(("entity", *ent as i64));
@@ -1496,6 +1501,16 @@ impl Runtime {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("count", count as i64));
                     "player.unfroze"
+                }
+                E::WeaponRemoved { player, class } => {
+                    p.ints.push(("player", player as i64));
+                    p.strs.push(("class", class));
+                    "weapon.remove"
+                }
+                E::Cleanup { player, kind } => {
+                    p.ints.push(("player", player as i64));
+                    p.strs.push(("kind", kind));
+                    "sandbox.cleanup"
                 }
                 E::WeaponDrop { player, class, ent } => {
                     p.ints.push(("player", player as i64));

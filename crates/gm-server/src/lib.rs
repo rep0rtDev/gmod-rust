@@ -675,6 +675,16 @@ pub enum GameEvent {
         npc: u32,
         ent: u32,
     },
+    /// A weapon left a player's inventory (`WEAPON:OnRemove`).
+    WeaponRemoved {
+        player: u32,
+        class: String,
+    },
+    /// A cleanup removed everything of `kind` for the player (`OnCleanup`).
+    Cleanup {
+        player: u32,
+        kind: String,
+    },
     Weapon {
         player: u32,
         class: String,
@@ -769,6 +779,12 @@ pub enum Request {
     },
     /// `PlayerSelectSpawn`: the player is about to spawn at the server's pick (`pos`, `angles`);
     /// `Text("x y z pitch yaw roll")` spawns them there instead.
+    /// `FindUseEntity`: what +use is about to act on (`default`, 0 for nothing); `Text` with an
+    /// entity id replaces it.
+    FindUse {
+        player: u32,
+        default: u32,
+    },
     SelectSpawn {
         player: u32,
         pos: Vec3,
@@ -4990,6 +5006,7 @@ impl<'w> Server<'w> {
             return false;
         };
         let before = p.weapons.len();
+        let had = p.weapons.clone();
         match class {
             Some(c) => {
                 p.weapons.retain(|w| w != c);
@@ -5009,6 +5026,11 @@ impl<'w> Server<'w> {
             if !next.is_empty() {
                 p.inventory.select(&next);
             }
+        }
+        let removed: Vec<String> = had.into_iter().filter(|w| !p.weapons.contains(w)).collect();
+        for class in removed {
+            self.game_events
+                .push(GameEvent::WeaponRemoved { player: id, class });
         }
         true
     }
@@ -6260,6 +6282,25 @@ impl<'w> Server<'w> {
 
     /// `FindUseEntity`: the prop under the view line within reach, else the first one a 16 u
     /// box finds in 72 u sweeps tilted down from the view (props at the feet).
+    /// `FindUseEntity`: the gamemode may replace (or pick) what +use acts on; an id that is
+    /// not a live prop / NPC / vehicle falls back to nothing.
+    fn find_use_target(&mut self, player: u32, eye: Vec3, view: Vec3) -> Option<u32> {
+        let found = self.find_use_entity(player, eye, view);
+        match self.ask(Request::FindUse {
+            player,
+            default: found.unwrap_or(0),
+        }) {
+            Verdict::Text(t) => {
+                let ent = t.trim().parse::<u32>().ok()?;
+                let live = self.sandbox.props().iter().any(|p| p.id == ent)
+                    || self.npcs.contains_key(&ent)
+                    || self.vehicles.contains_key(&ent);
+                (ent != 0 && live).then_some(ent)
+            }
+            _ => found,
+        }
+    }
+
     fn find_use_entity(&self, player: u32, eye: Vec3, view: Vec3) -> Option<u32> {
         use gm_physics::pickup::{
             box_sweep_convex, sweep_dirs, view_vectors, within_use_reach, world_convex, SWEEP_HALF,
@@ -11161,6 +11202,14 @@ impl<'w> Server<'w> {
     pub fn cleanup(&mut self, player: u32) {
         let mut events = Vec::new();
         self.sandbox.cleanup(player, &mut events);
+        for e in &events {
+            if let Event::Cleanup { kind } = e {
+                self.game_events.push(GameEvent::Cleanup {
+                    player,
+                    kind: kind.clone(),
+                });
+            }
+        }
         self.events.extend(events);
         self.prune_npcs();
         self.sync_physics();
@@ -11555,7 +11604,7 @@ impl<'w> Server<'w> {
         } else if use_alive {
             if use_pressed && self.players.get(&player).is_some_and(|p| p.carry.is_some()) {
                 self.drop_carry(player);
-            } else if let Some(ent) = self.find_use_entity(player, eye, view) {
+            } else if let Some(ent) = self.find_use_target(player, eye, view) {
                 if self.ask(Request::PlayerUse { player, ent }) != Verdict::Cancel {
                     self.game_events.push(GameEvent::Use { player, ent });
                     if use_pressed && self.sandbox.button_use(ent, player, true) {

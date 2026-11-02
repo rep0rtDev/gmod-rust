@@ -337,3 +337,24 @@ fn player_gesture_layer_runs_and_autokills() {
     assert!(server.player_remove_gesture(1));
     assert!(!server.player_remove_gesture(1));
 }
+
+#[test]
+fn strip_weapon_reports_weapon_removed() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.add_player(
+        1,
+        Vec3::new(823.235, -500.0, -143.0),
+        Vec3::new(20.0, 0.0, 0.0),
+    );
+    server.set_weapons(1, &["weapon_pistol", "weapon_smg1"]);
+    server.game_events.clear();
+    assert!(server.strip_weapon(1, Some("weapon_pistol")));
+    assert!(server.game_events.iter().any(|e| matches!(e, gm_server::GameEvent::WeaponRemoved { player: 1, class } if class == "weapon_pistol")));
+    assert!(!server.strip_weapon(1, Some("weapon_pistol")));
+}

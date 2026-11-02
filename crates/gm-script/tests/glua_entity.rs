@@ -848,3 +848,49 @@ fn weapon_drop_and_npc_drop_reach_scripts() {
         .unwrap();
     assert_eq!((dropped, npc, item), (1, 9, 5));
 }
+
+#[test]
+fn weapon_remove_cleanup_and_find_use_reach_scripts() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source: "local SWEP = { Base = \"weapon_base\", PrintName = \"My Wep\", Primary = {}, Secondary = {},
+                          WorldModel = \"models/weapons/w_pistol.mdl\", ViewModel = \"models/weapons/c_pistol.mdl\" }
+            function SWEP:OnRemove() state.removed = (state.removed or 0) + 1 end
+            weapons.Register(SWEP, \"my_wep\")
+            weapons.__ensure(\"my_wep\", 1)
+            hook.Add(\"OnCleanup\", \"t\", function(kind) state.cleaned = kind end)
+            hook.Add(\"FindUseEntity\", \"t\", function(ply, default) state.use_default = default:EntIndex(); return Entity(9) end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut rm = Payload::default();
+    rm.ints.push(("player", 1));
+    rm.strs.push(("class", "my_wep".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "weapon.remove", &rm, 7)
+        .unwrap();
+    let mut cl = Payload::default();
+    cl.ints.push(("player", 1));
+    cl.strs.push(("kind", "props".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "sandbox.cleanup", &cl, 8)
+        .unwrap();
+    let mut fu = Payload::default();
+    fu.ints.push(("player", 1));
+    fu.ints.push(("entity", 5));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "player.find_use", &fu, 9)
+        .unwrap();
+    let (removed, cleaned, dflt): (i32, String, i32) = rt.actors()[0]
+        .eval("return state.removed, state.cleaned, state.use_default")
+        .unwrap();
+    assert_eq!((removed, cleaned.as_str(), dflt), (1, "props", 5));
+}

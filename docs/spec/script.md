@@ -664,6 +664,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
 - `WEAPON:OnDrop` fires when a player drops a scripted weapon (`weapon.drop`: player, class and
   the world entity it became) and `GM:OnNPCDropItem(npc, item)` when a dying NPC drops its weapon
   (`npc.drop`), both from the server's drop paths.
+- `GM:FindUseEntity(ply, default)` is asked before +use acts (`Request::FindUse`, answered with an
+  entity id; one that is not a live prop / NPC / vehicle means nothing); `WEAPON:OnRemove` fires
+  when a weapon leaves the inventory (`weapon.remove` from `strip_weapon`; the instance stays for a
+  re-equip); `OnCleanup(kind)` fires per cleaned-up kind (`sandbox.cleanup` from the sandbox's
+  cleanup events).
 
 Done in `glua/server.luau`:
 
