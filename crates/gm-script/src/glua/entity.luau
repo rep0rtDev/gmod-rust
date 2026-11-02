@@ -369,8 +369,16 @@ function PLY:SetFrags(n) qwrite("player.set_frags", self.__pid, math.floor(n)) e
 function PLY:SetDeaths(n) qwrite("player.set_deaths", self.__pid, math.floor(n)) end
 function PLY:AddFrags(n) self:SetFrags(self:Frags() + math.floor(n)) end
 function PLY:AddDeaths(n) self:SetDeaths(self:Deaths() + math.floor(n)) end
-function PLY:DropWeapon(w) qwrite("player.drop_weapon", self.__pid, (w and w ~= NULL) and w:GetClass() or nil) end
-function PLY:DropNamedWeapon(class) qwrite("player.drop_weapon", self.__pid, class) end
+function PLY:DropWeapon(w)
+    local wep = (w and w ~= NULL) and w or self:GetActiveWeapon()
+    qwrite("player.drop_weapon", self.__pid, (w and w ~= NULL) and w:GetClass() or nil)
+    if wep and wep ~= NULL then hook.Run("PlayerDroppedWeapon", self, wep) end
+end
+function PLY:DropNamedWeapon(class)
+    qwrite("player.drop_weapon", self.__pid, class)
+    local wep = self:GetWeapon(class)
+    if wep and wep ~= NULL then hook.Run("PlayerDroppedWeapon", self, wep) end
+end
 function PLY:DropObject() qwrite("player.drop_object", self.__pid, true) end
 function PLY:GetNoTarget() local p = psnap(self.__pid); return p ~= nil and p.no_target == true end
 function PLY:SetNoTarget(on) qwrite("player.no_target", self.__pid, on == true) end

@@ -538,6 +538,7 @@ local function in_key(name) return _G[name] or 0 end
 if events then
     local initialized = false
 local seen_players = {}
+local prev_move = {}
     events.on("tick.pre", function()
         if not initialized then
             initialized = true
@@ -551,8 +552,9 @@ local seen_players = {}
         local hooks = hook.GetTable()
         local function wanted(name) return hooks[name] ~= nil and next(hooks[name]) ~= nil end
         local per_tick = wanted("PlayerTick") or wanted("PlayerPostThink")
+        local deltas = wanted("OnPlayerJump") or wanted("OnPlayerHitGround") or wanted("PlayerAmmoChanged")
         local first_sight = wanted("PlayerConnect") or wanted("PlayerAuthed") or wanted("NetworkIDValidated") or wanted("PlayerInitialSpawn") or wanted("PlayerSetModel")
-        if not (per_tick or first_sight) then return end
+        if not (per_tick or first_sight or deltas) then return end
         for _, ply in ipairs(player.GetAll()) do
             if first_sight and not seen_players[ply:UserID()] then
                 seen_players[ply:UserID()] = true
@@ -565,6 +567,22 @@ local seen_players = {}
             if per_tick then
                 hook.Run("PlayerTick", ply, nil)
                 hook.Run("PlayerPostThink", ply)
+            end
+            if deltas then
+                local uid = ply:UserID()
+                local pm = prev_move[uid]
+                local on_ground, vel, ammo = ply:IsOnGround(), ply:GetVelocity(), ply:GetAmmo() or {}
+                if pm then
+                    if pm.on_ground and ply:KeyPressed(IN_JUMP) then hook.Run("OnPlayerJump", ply, vel:Length2D()) end
+                    if on_ground and not pm.on_ground then hook.Run("OnPlayerHitGround", ply, false, false, -pm.vel.z) end
+                    for id, n in pairs(ammo) do
+                        if (pm.ammo[id] or 0) ~= n then hook.Run("PlayerAmmoChanged", ply, id, pm.ammo[id] or 0, n) end
+                    end
+                    for id, n in pairs(pm.ammo) do
+                        if ammo[id] == nil and n ~= 0 then hook.Run("PlayerAmmoChanged", ply, id, n, 0) end
+                    end
+                end
+                prev_move[uid] = { on_ground = on_ground, vel = vel, ammo = ammo }
             end
         end
     end, -1e9 + 1)

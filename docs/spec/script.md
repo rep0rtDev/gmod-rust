@@ -846,6 +846,12 @@ Player snapshot also carries `joined_tick` (`TimeConnected` = ticks since x inte
 `last_hitgroup` (last recorded hit on the player); entity snapshot carries `on_fire`
 (`IsOnFire`). `Entity:ForcePlayerDrop` makes every holder let go (`Server::force_player_drop`).
 
+Per-player delta hooks (only when something is subscribed, like `PlayerTick`): the bridge
+keeps the previous tick's `on_ground` / velocity / ammo per player and raises
+`OnPlayerHitGround` (speed = the fall speed), `OnPlayerJump` (`IN_JUMP` pressed while on the
+ground) and `PlayerAmmoChanged`. `PlayerDroppedWeapon` is raised from `Player:DropWeapon`.
+`PlayerButtonDown / Up` stay stubs: they take raw key codes and we only carry `IN_` flags.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

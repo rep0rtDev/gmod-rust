@@ -1063,3 +1063,51 @@ fn connected_time_hitgroup_fire_and_drop() {
     ));
     assert_eq!(writes.len(), 4);
 }
+
+#[test]
+fn player_delta_hooks_fire_on_landing_jump_and_ammo() {
+    let mut rt = runtime(
+        "state.log = {}
+         hook.Add('OnPlayerHitGround', 't', function(p, w, f, s) table.insert(state.log, 'ground:' .. s) end)
+         hook.Add('OnPlayerJump', 't', function(p, s) table.insert(state.log, 'jump') end)
+         hook.Add('PlayerAmmoChanged', 't', function(p, id, old, new) table.insert(state.log, 'ammo:' .. tostring(id) .. ':' .. old .. ':' .. new) end)",
+    );
+    let mut s1 = snapshot();
+    {
+        let p = Arc::get_mut(&mut s1).unwrap().players.get_mut(&1).unwrap();
+        p.on_ground = false;
+        p.velocity = Vec3::new(0.0, 0.0, -300.0);
+        p.buttons = 0;
+        p.buttons_last = 0;
+    }
+    rt.actors_mut()[0]
+        .dispatch(&s1, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let mut s2 = snapshot();
+    {
+        let p = Arc::get_mut(&mut s2).unwrap().players.get_mut(&1).unwrap();
+        p.on_ground = true;
+        p.buttons = 0;
+        p.buttons_last = 0;
+        p.ammo.push(("Pistol".into(), 99));
+    }
+    rt.actors_mut()[0]
+        .dispatch(&s2, "tick.pre", &Payload::default(), 2)
+        .unwrap();
+    let mut s3 = snapshot();
+    {
+        let p = Arc::get_mut(&mut s3).unwrap().players.get_mut(&1).unwrap();
+        p.on_ground = true;
+        p.buttons = 2; // IN_JUMP (glua enum)
+        p.buttons_last = 0;
+        p.ammo.push(("Pistol".into(), 99));
+    }
+    rt.actors_mut()[0]
+        .dispatch(&s3, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let log: Vec<String> = rt.actors()[0].eval("return state.log").unwrap();
+    let joined = log.join(" ");
+    assert!(joined.contains("ground:300"), "{joined}");
+    assert!(joined.contains(":99"), "{joined}");
+    assert!(log.last().is_some_and(|l| l == "jump"), "{joined}");
+}
