@@ -225,6 +225,7 @@ function NPC:ClearGoal() qwrite("npc_stop", self.__id, nil) end
 function NPC:StopMoving() qwrite("npc_stop", self.__id, nil) end
 function NPC:SetMovementActivity(act) rawget(self, "__vars").__run = act == ACT_RUN end
 function NPC:GetActiveWeapon() local s = snap(self.__id); if s and s.weapon and s.weapon ~= "" then return WEP.__from(s.weapon, self.__id) end return NULL end
+function NPC:GetEnemyLastTimeSeen() local s = snap(self.__id); local t = s and s.npc_target_seen or 0; if t == 0 then return 0 end return t * engine.TickInterval() end
 function NPC:Give(class) qwrite("npc_weapon", self.__id, class) return WEP.__from(class, self.__id) end
 function NPC:SelectWeapon(class) qwrite("npc_weapon", self.__id, class) end
 function NPC:DropWeapon() qwrite("npc_weapon", self.__id, "") end
@@ -1329,6 +1330,8 @@ function ENT:OBBMaxs() local _, mx = self:GetModelBounds(); return mx end
 function ENT:OBBCenter() local mn, mx = self:GetModelBounds(); return (mn + mx) / 2 end
 function ENT:BoundingRadius() return self:GetModelRadius() end
 function ENT:GetModelScale() return 1 end
+function ENT:GetFriction() local m = minfo(self); return m and m.friction or 0 end
+function ENT:GetElasticity() local m = minfo(self); return m and m.elasticity or 0 end
 function ENT:GetRotatedAABB(mins, maxs)
     local a = self:GetAngles()
     local lo, hi = Vector(math.huge, math.huge, math.huge), Vector(-math.huge, -math.huge, -math.huge)

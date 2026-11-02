@@ -40,6 +40,8 @@ pub struct EntitySnap {
     pub eye_target: Option<Vec3>,
     /// NPC weapon class, empty for none / non-NPCs.
     pub weapon: String,
+    /// NPC: server tick its current target was last seen (0 = never / not an NPC).
+    pub npc_target_seen: u64,
     /// NPC only: the player it has as target / chases, and the end of its current path.
     pub npc_target: u32,
     pub npc_chase: u32,
@@ -265,6 +267,7 @@ impl Snapshot {
                             flex: e.flex.as_ref().map(|f| (f.weights.clone(), f.scale)),
                             eye_target: e.eye_target,
                             weapon: String::new(),
+                            npc_target_seen: 0,
                             npc_target: 0,
                             npc_chase: 0,
                             npc_goal: None,
@@ -357,6 +360,7 @@ impl Snapshot {
                             flex: server.flex_state(p.id),
                             eye_target: server.eye_target(p.id),
                             weapon: String::new(),
+                            npc_target_seen: 0,
                             npc_target: 0,
                             npc_chase: 0,
                             npc_goal: None,
@@ -394,6 +398,7 @@ impl Snapshot {
                             flex: None,
                             eye_target: None,
                             weapon: n.weapon.clone(),
+                            npc_target_seen: n.target_seen,
                             npc_target: n.target.unwrap_or(0),
                             npc_chase: n.chase.unwrap_or(0),
                             npc_goal: n.goal.as_ref().and_then(|g| g.points.last().copied()),

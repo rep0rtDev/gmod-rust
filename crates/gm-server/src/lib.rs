@@ -172,6 +172,9 @@ pub struct ModelScriptData {
     pub flexes: Vec<String>,
     pub mins: Vec3,
     pub maxs: Vec3,
+    /// Surface properties of the physics hull (`PhysObj:GetMaterial` family), set on register.
+    pub friction: f32,
+    pub elasticity: f32,
     /// `(name, bone, local position, forward)`.
     pub attachments: Vec<(String, i32, Vec3, Vec3)>,
 }
@@ -211,6 +214,8 @@ impl ModelScriptData {
                 .collect(),
             mins: Vec3::from(mdl.header.hull_min),
             maxs: Vec3::from(mdl.header.hull_max),
+            friction: 0.0,
+            elasticity: 0.0,
             attachments: mdl
                 .attachments
                 .iter()
@@ -5057,8 +5062,10 @@ impl<'w> Server<'w> {
     pub fn register_model(&mut self, name: &str, info: ModelInfo) {
         self.hull_planes
             .insert(name.to_string(), info.hull_planes.clone());
-        self.model_scripts
-            .insert(name.to_string(), info.script.clone());
+        let mut script = info.script.clone();
+        script.friction = info.surface.friction;
+        script.elasticity = info.surface.elasticity;
+        self.model_scripts.insert(name.to_string(), script);
         self.models.insert(name.to_string(), info);
     }
 

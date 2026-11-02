@@ -827,6 +827,10 @@ GetWheelTotalHeight / GetSpringLength / IsEngineEnabled` read it. Throttle / ste
 handbrake come from the driver's command every tick and have no script override, so the vehicle
 `Set*` family stays stubs.
 
+`EntitySnap.npc_target_seen` is the tick an NPC last saw its target (`NPC:GetEnemyLastTimeSeen`
+= tick x tick interval); `ModelScriptData.friction / elasticity` are the PHY surface of the
+registered model (`Entity:GetFriction / GetElasticity`).
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

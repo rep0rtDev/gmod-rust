@@ -575,6 +575,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("render_fx", e.render_fx)?;
     t.set("sequence", e.sequence.as_str())?;
     t.set("weapon", e.weapon.as_str())?;
+    t.set("npc_target_seen", e.npc_target_seen)?;
     let bs = lua.create_table()?;
     for (b, v) in &e.bone_scales {
         bs.set(*b, vec3_table(lua, *v)?)?;
@@ -1809,6 +1810,8 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             t.set("flexes", m.flexes.clone())?;
             t.set("mins", vec3_table(lua, m.mins)?)?;
             t.set("maxs", vec3_table(lua, m.maxs)?)?;
+            t.set("friction", m.friction)?;
+            t.set("elasticity", m.elasticity)?;
             let at = lua.create_table()?;
             for (i, (n, b, p, f)) in m.attachments.iter().enumerate() {
                 let e = lua.create_table()?;

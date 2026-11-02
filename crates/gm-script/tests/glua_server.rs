@@ -38,6 +38,7 @@ fn snapshot() -> Arc<Snapshot> {
             flex: Some((vec![0.5], 1.0)),
             eye_target: None,
             weapon: "weapon_smg1".into(),
+            npc_target_seen: 200,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -73,6 +74,7 @@ fn snapshot() -> Arc<Snapshot> {
             flex: Some((vec![0.5], 1.0)),
             eye_target: None,
             weapon: "weapon_smg1".into(),
+            npc_target_seen: 200,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -642,6 +644,8 @@ fn model_data_comes_from_the_server_tables() {
             ],
             mins: Vec3::new(-8.0, -8.0, 0.0),
             maxs: Vec3::new(8.0, 8.0, 40.0),
+            friction: 0.0,
+            elasticity: 0.0,
             attachments: vec![("eyes".into(), 1, Vec3::new(0.0, 0.0, 36.0), Vec3::X)],
         },
     );
@@ -899,4 +903,31 @@ fn vehicle_record_reads_the_server_table() {
         .unwrap();
     let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
     assert_eq!(r, vec![1.0, 2.0, -8.0, 40.0, 800.0, 120.0, 1.0]);
+}
+
+#[test]
+fn enemy_seen_tick_and_surface_reads() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local n = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.NPC }, __glua_classes.Entity)
+             state.r = { math.Round(n:GetEnemyLastTimeSeen(), 3), Entity(5):GetFriction(), Entity(5):GetElasticity() }
+         end)",
+    );
+    let mut models = std::collections::BTreeMap::new();
+    models.insert(
+        "models/props_c17/oildrum001.mdl".to_string(),
+        gm_server::ModelScriptData {
+            friction: 0.8,
+            elasticity: 0.25,
+            ..Default::default()
+        },
+    );
+    let mut snap = (*snapshot()).clone();
+    snap.models = gm_script::snapshot::ModelsRef(&models as *const _);
+    let snap = Arc::new(snap);
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!(r, vec![3.0, 0.800000011920929, 0.25]);
 }
