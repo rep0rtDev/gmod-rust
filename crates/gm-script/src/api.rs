@@ -80,6 +80,8 @@ pub enum QueuedWrite {
         name: String,
         pos: Vec3,
         volume: f32,
+        /// Non-zero: the sound belongs to this entity (`Entity:EmitSound`).
+        ent: u32,
     },
     /// `spawnmenu.add`: models under a spawn menu category for every client.
     SpawnList {
@@ -1208,6 +1210,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         name: t.get("name")?,
                         pos: table_vec3(&pos)?,
                         volume: t.get::<Option<f32>>("volume")?.unwrap_or(1.0),
+                        ent: t.get::<Option<u32>>("ent")?.unwrap_or(0),
                     }
                 }
                 "set_velocity" => {
@@ -2294,8 +2297,15 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             server.npc_stop(*ent);
             true
         }
-        QueuedWrite::Sound { name, pos, volume } => {
-            server.play_sound(name.clone(), *pos, *volume);
+        QueuedWrite::Sound {
+            name,
+            pos,
+            volume,
+            ent,
+        } => {
+            if *ent == 0 || !server.emit_sound(*ent, name.clone(), *volume) {
+                server.play_sound(name.clone(), *pos, *volume);
+            }
             true
         }
         QueuedWrite::SpawnList { category, models } => {

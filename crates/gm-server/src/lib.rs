@@ -559,6 +559,14 @@ pub enum Request {
         sound: String,
         volume: f32,
     },
+    /// `EntityEmitSound`: a sound of entity `ent` leaves the server this tick (`Cancel` drops
+    /// it, `Amount` replaces the volume, `Text` the sound name).
+    EmitSound {
+        ent: u32,
+        name: String,
+        pos: Vec3,
+        volume: f32,
+    },
     /// `CanCreateUndo`: an undo entry `name` / `text` is about to be recorded.
     CreateUndo {
         player: u32,
@@ -896,9 +904,9 @@ impl ToolSettingKind {
 pub enum Verdict {
     Allow,
     Cancel,
-    /// `PlayerDamage` only: deal this amount instead.
+    /// `PlayerDamage` / `NpcDamage`: deal this amount instead; `EmitSound`: this volume.
     Amount(f32),
-    /// `SetModel` only: use this model path instead.
+    /// `SetModel`: use this model path instead; `EmitSound`: this sound name.
     Text(String),
 }
 
@@ -11505,6 +11513,26 @@ impl<'w> Server<'w> {
         self.tool_schemas_version += 1;
     }
 
+    /// `Entity:EmitSound`: a sound of entity `ent` (player or world entity) at its origin, asked
+    /// of addons like every entity sound (`EntityEmitSound`) when it leaves the server.
+    pub fn emit_sound(&mut self, ent: u32, name: String, volume: f32) -> bool {
+        let pos = if let Some(p) = self.players.get(&ent) {
+            p.state.origin
+        } else if let Some((pos, _)) = self.entity_pose(ent) {
+            pos
+        } else {
+            return false;
+        };
+        self.sounds.push(WorldSound {
+            name,
+            pos,
+            volume: volume.clamp(0.0, 1.0),
+            ent,
+            ..Default::default()
+        });
+        true
+    }
+
     pub fn play_sound(&mut self, name: String, pos: Vec3, volume: f32) {
         self.sounds.push(WorldSound {
             name,
@@ -11516,7 +11544,25 @@ impl<'w> Server<'w> {
 
     /// The world sounds of the last tick.
     pub fn take_sounds(&mut self) -> Vec<WorldSound> {
-        std::mem::take(&mut self.sounds)
+        let sounds = std::mem::take(&mut self.sounds);
+        let mut out = Vec::with_capacity(sounds.len());
+        for mut s in sounds {
+            if s.ent != 0 && !s.stop {
+                match self.ask(Request::EmitSound {
+                    ent: s.ent,
+                    name: s.name.clone(),
+                    pos: s.pos,
+                    volume: s.volume,
+                }) {
+                    Verdict::Cancel => continue,
+                    Verdict::Amount(v) => s.volume = v.clamp(0.0, 1.0),
+                    Verdict::Text(n) => s.name = n,
+                    Verdict::Allow => {}
+                }
+            }
+            out.push(s);
+        }
+        out
     }
 
     /// Prop impact sounds of this tick's physics step: the impacting prop's own `impacthard`

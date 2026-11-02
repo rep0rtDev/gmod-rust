@@ -403,17 +403,18 @@ function sound.GetProperties(name) return sound_table[name] end
 function sound.GetLoopingSounds() return {} end
 function sound.Generate() end
 function sound.EmitHint() end
-function sound.Play(name, pos, level, pitch, volume)
+function sound.Play(name, pos, level, pitch, volume, ent)
     local s = sound_table[name]
     local file_ = name
     if s and s.sound then file_ = type(s.sound) == "table" and s.sound[math.random(#s.sound)] or s.sound end
-    world.queue("sound.play", 0, { name = file_, pos = { x = pos.x, y = pos.y, z = pos.z }, volume = volume or (s and s.volume) or 1 })
+    world.queue("sound.play", 0, { name = file_, pos = { x = pos.x, y = pos.y, z = pos.z }, volume = volume or (s and s.volume) or 1,
+        ent = ent or 0 })
 end
 function sound.PlayFile(path, flags, cb) if cb then cb(nil, 20, "BASS_ERROR_NOTAVAIL") end end
 function sound.PlayURL(url, flags, cb) if cb then cb(nil, 20, "BASS_ERROR_NOTAVAIL") end end
-function EmitSound(name, pos, ent, channel, volume, level, flags, pitch) sound.Play(name, pos, level, pitch, volume) end
+function EmitSound(name, pos, ent, channel, volume, level, flags, pitch) sound.Play(name, pos, level, pitch, volume, ent or 0) end
 local ENTm = __glua_classes.Entity
-function ENTm:EmitSound(name, level, pitch, volume) sound.Play(name, self:GetPos(), level, pitch, volume) end
+function ENTm:EmitSound(name, level, pitch, volume) sound.Play(name, self:GetPos(), level, pitch, volume, self:EntIndex()) end
 function ENTm:StopSound(name) end
 __glua_classes.Player.EmitSound = ENTm.EmitSound
 __glua_classes.Player.StopSound = ENTm.StopSound
@@ -682,6 +683,19 @@ local prev_move = {}
         local filter = RecipientFilter and RecipientFilter() or nil
         if hook.Run("PlayerFootstep", Player(p.player), Vector(p.px, p.py, p.pz), p.right or 0, p.sound, p.volume or 1, filter) == true then
             return false
+        end
+    end)
+    events.on("entity.emit_sound", function(p)
+        local t = {
+            SoundName = p.name, OriginalSoundName = p.name, Entity = Entity(p.entity),
+            Pos = Vector(p.px, p.py, p.pz), Volume = p.volume or 1, Pitch = 100,
+            SoundLevel = 75, DSP = 0, Channel = CHAN_AUTO or 0, Flags = 0,
+        }
+        local r = hook.Run("EntityEmitSound", t)
+        if r == false then return false end
+        if r == true then
+            if t.SoundName ~= p.name then return t.SoundName end
+            if t.Volume ~= p.volume then return t.Volume end
         end
     end)
     events.on("undo.create_request", function(p)

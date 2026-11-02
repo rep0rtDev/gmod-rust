@@ -290,5 +290,32 @@ fn fire_bullets_and_npc_damage_are_asked() {
             .any(|s| s.name.contains("step") || s.name.contains("Step")),
         "a refused footstep stays silent"
     );
+    let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = asked.clone();
+    server.request_hook = Some(Box::new(move |_, req| match req {
+        gm_server::Request::EmitSound { name, .. } if name == "Zombie.Pain" => {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            gm_server::Verdict::Cancel
+        }
+        gm_server::Request::EmitSound { name, .. } if name == "Zombie.Idle" => {
+            gm_server::Verdict::Amount(0.25)
+        }
+        _ => gm_server::Verdict::Allow,
+    }));
+    server.take_sounds();
+    assert!(server.emit_sound(npc, "Zombie.Pain".to_owned(), 1.0));
+    assert!(server.emit_sound(npc, "Zombie.Idle".to_owned(), 1.0));
+    assert!(!server.emit_sound(9999, "Zombie.Idle".to_owned(), 1.0));
+    let sounds = server.take_sounds();
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(
+        !sounds.iter().any(|s| s.name == "Zombie.Pain"),
+        "EntityEmitSound false drops the sound"
+    );
+    let idle = sounds
+        .iter()
+        .find(|s| s.name == "Zombie.Idle")
+        .expect("the allowed sound leaves");
+    assert!(idle.ent == npc && (idle.volume - 0.25).abs() < 1e-6);
     server.request_hook = None;
 }

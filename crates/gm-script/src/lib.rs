@@ -698,7 +698,8 @@ impl Runtime {
                     break;
                 }
                 Ok(Reply::Number(n)) => verdict = gm_server::Verdict::Amount(n as f32),
-                Ok(Reply::Pass | Reply::Text(_)) => {}
+                Ok(Reply::Text(t)) => verdict = gm_server::Verdict::Text(t),
+                Ok(Reply::Pass) => {}
                 Err(e) => self.log.push(format!("[{}] {e}", a.label())),
             }
         }
@@ -977,6 +978,20 @@ impl Runtime {
                 } else {
                     gm_server::Verdict::Cancel
                 }
+            }
+            gm_server::Request::EmitSound {
+                ent,
+                name,
+                pos,
+                volume,
+            } => {
+                p.ints.push(("entity", *ent as i64));
+                p.strs.push(("name", name.clone()));
+                for (k, v) in [("px", pos.x), ("py", pos.y), ("pz", pos.z)] {
+                    p.floats.push((k, v as f64));
+                }
+                p.floats.push(("volume", *volume as f64));
+                self.ask_amount(server, "entity.emit_sound", p)
             }
             gm_server::Request::CreateUndo { player, name, text } => {
                 p.ints.push(("player", *player as i64));
