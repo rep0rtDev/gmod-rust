@@ -213,3 +213,51 @@ fn gm_hooks_bridge_more_events_and_defaults() {
     let reg: Vec<bool> = a.eval("return state.reg").unwrap();
     assert_eq!(reg, vec![true, true]);
 }
+
+#[test]
+fn navmesh_over_a_flat_recast_mesh() {
+    let mut g = gm_nav::Geometry::default();
+    let sq = [
+        Vec3::new(-1024.0, -1024.0, 0.0),
+        Vec3::new(1024.0, -1024.0, 0.0),
+        Vec3::new(1024.0, 1024.0, 0.0),
+        Vec3::new(-1024.0, 1024.0, 0.0),
+    ];
+    g.push_polygon(&sq);
+    let mut rev = sq;
+    rev.reverse();
+    g.push_polygon(&rev);
+    g.mins = Vec3::new(-1024.0, -1024.0, -8.0);
+    g.maxs = Vec3::new(1024.0, 1024.0, 8.0);
+    let mesh = gm_nav::NavMesh::from_geometry(&g, &gm_nav::NavParams::default()).unwrap();
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             if not navmesh.IsLoaded() then return end
+             local a = navmesh.GetNearestNavArea(Vector(100, 100, 40))
+             local found = navmesh.Find(Vector(1000, 1000, 0), 300, 18, 100)
+             local gz = navmesh.GetGroundHeight(Vector(500, 500, 900))
+             state.z = { a:GetCenter().z, a:GetZ(Vector(300, 300, 500)), gz }
+             state.r = {
+                 navmesh.IsLoaded(), navmesh.GetNavAreaCount() > 0, a:IsValid(), math.abs(a:GetCenter().z) <= 8,
+                 math.abs(a:GetZ(Vector(300, 300, 500))) <= 8, #found > 0, found[1]:GetID() == navmesh.GetNavAreaByID(found[1]:GetID()):GetID(),
+                 math.abs(gz) <= 8, a:Contains(a:GetCenter()), navmesh.GetNearestNavArea(Vector(5000, 5000, 0), false, 100) == NULL,
+                 #navmesh.GetAllNavAreas() == #navmesh.FindInBox(Vector(-2000, -2000, -10), Vector(2000, 2000, 10)),
+             }
+         end)",
+    );
+    let mut snap = (*snapshot()).clone();
+    snap.nav = gm_script::snapshot::NavRef(&mesh as *const _);
+    let snap = Arc::new(snap);
+    let a = &mut rt.actors_mut()[0];
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let z: Vec<f32> = a.eval("return state.z").unwrap();
+    let r: Vec<bool> = a.eval("return state.r").unwrap();
+    // the mesh surface sits one voxel (cell_height 4) above the geometry
+    assert_eq!(r, vec![true; 11], "{r:?} z {z:?}");
+    let empty = snapshot();
+    a.dispatch(&empty, "tick.pre", &Payload::default(), 2)
+        .unwrap();
+    let loaded: bool = a.eval("return navmesh.IsLoaded()").unwrap();
+    assert!(!loaded);
+}

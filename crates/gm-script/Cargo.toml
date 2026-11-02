@@ -12,6 +12,7 @@ gm-move = { path = "../gm-move" }
 gm-net = { path = "../gm-net" }
 gm-sandbox = { path = "../gm-sandbox" }
 gm-server = { path = "../gm-server" }
+gm-nav = { path = "../gm-nav" }
 mlua = { workspace = true }
 glam = { workspace = true }
 thiserror = { workspace = true }

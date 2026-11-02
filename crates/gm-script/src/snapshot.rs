@@ -61,10 +61,24 @@ impl Default for WorldRef {
     }
 }
 
+/// The server's navmesh, if one was built; same lifetime rule as `WorldRef`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NavRef(pub *const gm_nav::NavMesh);
+
+unsafe impl Send for NavRef {}
+unsafe impl Sync for NavRef {}
+
+impl Default for NavRef {
+    fn default() -> Self {
+        NavRef(std::ptr::null())
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub tick: u64,
     pub world: WorldRef,
+    pub nav: NavRef,
     /// Prop collision hulls for `phys.trace`.
     pub props: Vec<gm_sandbox::PropBody>,
     pub entities: BTreeMap<u32, EntitySnap>,
@@ -86,6 +100,36 @@ impl Snapshot {
         gm_sandbox::trace_line(world, &self.props, start, end)
     }
 
+    fn nav(&self) -> Option<&gm_nav::NavMesh> {
+        // see NavRef: valid while the snapshot is in use
+        (!self.nav.0.is_null()).then(|| unsafe { &*self.nav.0 })
+    }
+
+    pub fn nav_loaded(&self) -> bool {
+        self.nav().is_some()
+    }
+
+    pub fn nav_poly_count(&self) -> usize {
+        self.nav().map_or(0, |n| n.poly_count())
+    }
+
+    pub fn nav_vertices(&self) -> &[glam::Vec3] {
+        self.nav().map_or(&[], |n| n.vertices())
+    }
+
+    pub fn nav_nearest(&self, pos: glam::Vec3, extents: glam::Vec3) -> Option<glam::Vec3> {
+        self.nav().and_then(|n| n.nearest(pos, extents))
+    }
+
+    pub fn nav_path(
+        &self,
+        a: glam::Vec3,
+        b: glam::Vec3,
+        extents: glam::Vec3,
+    ) -> Option<gm_nav::Path> {
+        self.nav().and_then(|n| n.find_path(a, b, extents))
+    }
+
     /// The client realm's view: what the client assembled from snapshots (no world ref, so
     /// `phys.trace` misses; no prop hulls).
     pub fn of_client(world: &gm_net::ClientWorld) -> Self {
@@ -103,6 +147,7 @@ impl Snapshot {
         Snapshot {
             tick: world.tick as u64,
             world: world_ref,
+            nav: NavRef::default(),
             props,
             entities: world
                 .entities
@@ -171,6 +216,7 @@ impl Snapshot {
         Snapshot {
             tick,
             world: WorldRef(server.collision as *const _),
+            nav: NavRef(server.navmesh().map_or(std::ptr::null(), |n| n as *const _)),
             props: server.trace_bodies(),
             entities: server
                 .sandbox

@@ -695,6 +695,15 @@ server yet (animation events, footsteps, voice, water level, ammo changes, `Shou
 `SetupMove / Move / FinishMove`, `StartCommand`) have only the default and are therefore
 listed as `stub`, never as implemented.
 
+`navmesh` / `CNavArea` over the own Recast mesh: the snapshot carries a `NavRef` to the server's
+`gm_nav::NavMesh` (same lifetime rule as `WorldRef`) and the host exposes `nav.loaded /
+poly_count / vertices / nearest / path`. A "nav area" is a point snapped onto the mesh whose ID
+is the index of the nearest mesh vertex; real: `navmesh.IsLoaded / GetNavAreaCount /
+GetNearestNavArea / GetGroundHeight / Find / FindInBox / GetAllNavAreas / GetNavAreaByID`,
+`CNavArea:GetCenter / GetID / IsValid / GetClosestPointOnArea / GetZ / Contains / IsVisible /
+ComputeGroundHeightChange`. The mesh has polygons, not the game's rectangular areas, so sizes,
+corners, adjacency, attributes, hiding spots, ladders and the editing API are stubs.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

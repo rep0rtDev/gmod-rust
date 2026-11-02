@@ -712,3 +712,104 @@ function GM:Saved() end
 function GM:Restored() end
 function GM:PreRegisterSENT(ent, class) return true end
 function GM:PreRegisterSWEP(swep, class) return true end
+
+
+-- navmesh / CNavArea over the own Recast mesh. A "nav area" is a point snapped onto the mesh
+-- with the index of the nearest mesh vertex as its ID (the mesh has polygons, not the game's
+-- rectangular areas: sizes, corners, adjacency, attributes and ladders are stubs).
+local NAVAREA = {}
+NAVAREA.__index = NAVAREA
+NAVAREA.__eq = function(a, b) return a.__id == b.__id end
+NAVAREA.__tostring = function(a) return "CNavArea [" .. a.__id .. "]" end
+local nav_verts
+local function nvec(t) return Vector(t.x, t.y, t.z) end
+local function nav_vertices()
+    if nav_verts then return nav_verts end
+    local raw = nav.vertices()
+    if #raw == 0 then return raw end
+    nav_verts = {}
+    for i, v in ipairs(raw) do nav_verts[i] = nvec(v) end
+    return nav_verts
+end
+local function area_of(center, id)
+    if not id then
+        local best = math.huge
+        id = 0
+        for i, v in ipairs(nav_vertices()) do
+            local d = v:DistToSqr(center)
+            if d < best then best, id = d, i end
+        end
+    end
+    return setmetatable({ __center = center, __id = id }, NAVAREA)
+end
+function NAVAREA:GetCenter() return self.__center end
+function NAVAREA:GetID() return self.__id end
+function NAVAREA:IsValid() return self.__id ~= 0 end
+function NAVAREA:GetClosestPointOnArea(pos)
+    local r = nav.nearest(pos, { x = 64, y = 64, z = 128 })
+    return r and nvec(r) or self.__center
+end
+function NAVAREA:GetZ(pos)
+    local r = nav.nearest({ x = pos.x, y = pos.y, z = self.__center.z }, { x = 1, y = 1, z = 1e5 })
+    return r and r.z or self.__center.z
+end
+function NAVAREA:Contains(pos)
+    local r = nav.nearest(pos, { x = 1, y = 1, z = 72 })
+    return r ~= nil
+end
+function NAVAREA:IsVisible(pos)
+    return not util.TraceLine({ start = self.__center + Vector(0, 0, 36), endpos = pos }).Hit
+end
+function NAVAREA:ComputeGroundHeightChange(other) return other.__center.z - self.__center.z end
+for _, name in ipairs({ "AddAttributes", "AddHidingSpot", "AddToClosedList", "AddToOpenList", "ClearSearchLists", "ComputeAdjacentConnectionHeightChange", "ComputeDirection", "ConnectTo", "Disconnect", "Draw", "DrawSpots", "GetAdjacentAreaDistances", "GetAdjacentAreas", "GetAdjacentAreasAtSide", "GetAdjacentCount", "GetAdjacentCountAtSide", "GetAttributes", "GetCorner", "GetCostSoFar", "GetExposedSpots", "GetExtentInfo", "GetHidingSpots", "GetIncomingConnectionDistances", "GetIncomingConnections", "GetIncomingConnectionsAtSide", "GetLadders", "GetLaddersAtSide", "GetLightIntensity", "GetParent", "GetParentHow", "GetPlace", "GetRandomAdjacentAreaAtSide", "GetRandomPoint", "GetSizeX", "GetSizeY", "GetSpotEncounters", "GetTotalCost", "GetVisibleAreas", "HasAttributes", "IsBlocked", "IsClosed", "IsCompletelyVisible", "IsConnected", "IsConnectedAtSide", "IsCoplanar", "IsDamaging", "IsFlat", "IsOpen", "IsOpenListEmpty", "IsOverlapping", "IsOverlappingArea", "IsPartiallyVisible", "IsPotentiallyVisible", "IsRoughlySquare", "IsUnderwater", "MarkAsBlocked", "MarkAsDamaging", "MarkAsUnblocked", "PlaceOnGround", "PopOpenList", "Remove", "RemoveAttributes", "RemoveFromClosedList", "SetAttributes", "SetCorner", "SetCostSoFar", "SetParent", "SetPlace", "SetTotalCost", "UpdateOnOpenList" }) do
+    if NAVAREA[name] == nil then NAVAREA[name] = stub("CNavArea:" .. name) end
+end
+__glua_classes.CNavArea = NAVAREA
+
+navmesh = navmesh or {}
+function navmesh.IsLoaded() return nav.loaded() end
+function navmesh.GetNavAreaCount() return nav.poly_count() end
+function navmesh.GetNearestNavArea(pos, anyZ, maxDist, checkLOS, checkGround, team)
+    local d = maxDist or 10000
+    local r = nav.nearest(pos, { x = d, y = d, z = anyZ and 1e5 or d })
+    if not r then return NULL end
+    return area_of(nvec(r))
+end
+function navmesh.GetGroundHeight(pos)
+    local r = nav.nearest(pos, { x = 1, y = 1, z = 1e5 })
+    if not r then return false end
+    return r.z, Vector(0, 0, 1)
+end
+function navmesh.Find(pos, radius, stepHeight, dropHeight)
+    local out, r2 = {}, radius * radius
+    for i, v in ipairs(nav_vertices()) do
+        local dz = v.z - pos.z
+        if (v.x - pos.x) ^ 2 + (v.y - pos.y) ^ 2 <= r2 and dz <= (stepHeight or 18) and -dz <= (dropHeight or 1e9) then
+            out[#out + 1] = area_of(v, i)
+        end
+    end
+    return out
+end
+function navmesh.FindInBox(mins, maxs)
+    local out = {}
+    for i, v in ipairs(nav_vertices()) do
+        if v:WithinAABox(mins, maxs) then out[#out + 1] = area_of(v, i) end
+    end
+    return out
+end
+function navmesh.GetAllNavAreas()
+    local out = {}
+    for i, v in ipairs(nav_vertices()) do out[i] = area_of(v, i) end
+    return out
+end
+function navmesh.GetNavAreaByID(id)
+    local v = nav_vertices()[id]
+    if not v then return NULL end
+    return area_of(v, id)
+end
+for _, name in ipairs({ "AddWalkableSeed", "BeginGeneration", "ClearWalkableSeeds", "CreateNavArea", "CreateNavLadder", "GetBlockedAreas", "GetEditCursorPosition", "GetMarkedArea", "GetMarkedLadder", "GetNavArea", "GetNavLadderByID", "GetPlayerSpawnName", "IsGenerating", "Load", "Reset", "Save", "SetMarkedArea", "SetMarkedLadder", "SetPlayerSpawnName" }) do
+    if navmesh[name] == nil then navmesh[name] = stub("navmesh." .. name) end
+end
+NAV_MESH_INVALID, NAV_MESH_CROUCH, NAV_MESH_JUMP, NAV_MESH_PRECISE, NAV_MESH_NO_JUMP, NAV_MESH_STOP, NAV_MESH_RUN, NAV_MESH_WALK, NAV_MESH_AVOID, NAV_MESH_TRANSIENT, NAV_MESH_DONT_HIDE, NAV_MESH_STAND, NAV_MESH_NO_HOSTAGES, NAV_MESH_STAIRS, NAV_MESH_NO_MERGE, NAV_MESH_OBSTACLE_TOP, NAV_MESH_CLIFF = 0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768
+NAV_MESH_FUNC_COST, NAV_MESH_HAS_ELEVATOR, NAV_MESH_NAV_BLOCKER = 536870912, 1073741824, -2147483648
+NORTH, EAST, SOUTH, WEST = 0, 1, 2, 3

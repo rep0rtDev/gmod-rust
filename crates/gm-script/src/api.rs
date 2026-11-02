@@ -1404,6 +1404,64 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             Ok(t)
         })?,
     )?;
+    let nav = lua.create_table()?;
+    let sh = shared.clone();
+    nav.set(
+        "loaded",
+        lua.create_function(move |_, ()| Ok(sh.snapshot.read().unwrap().nav_loaded()))?,
+    )?;
+    let sh = shared.clone();
+    nav.set(
+        "poly_count",
+        lua.create_function(move |_, ()| Ok(sh.snapshot.read().unwrap().nav_poly_count()))?,
+    )?;
+    let sh = shared.clone();
+    nav.set(
+        "vertices",
+        lua.create_function(move |lua, ()| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            let t = lua.create_table()?;
+            for (i, v) in snap.nav_vertices().iter().enumerate() {
+                t.set(i + 1, vec3_table(lua, *v)?)?;
+            }
+            Ok(t)
+        })?,
+    )?;
+    let sh = shared.clone();
+    nav.set(
+        "nearest",
+        lua.create_function(move |lua, (pos, ext): (Table, Option<Table>)| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            let ext = ext.map_or(Ok(Vec3::new(64.0, 64.0, 128.0)), |e| table_vec3(&e))?;
+            match snap.nav_nearest(table_vec3(&pos)?, ext) {
+                Some(p) => Ok(Value::Table(vec3_table(lua, p)?)),
+                None => Ok(Value::Nil),
+            }
+        })?,
+    )?;
+    let sh = shared.clone();
+    nav.set(
+        "path",
+        lua.create_function(move |lua, (a, b, ext): (Table, Table, Option<Table>)| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            let ext = ext.map_or(Ok(Vec3::new(64.0, 64.0, 128.0)), |e| table_vec3(&e))?;
+            let t = lua.create_table()?;
+            match snap.nav_path(table_vec3(&a)?, table_vec3(&b)?, ext) {
+                Some(path) => {
+                    let pts = lua.create_table()?;
+                    for (i, p) in path.points.iter().enumerate() {
+                        pts.set(i + 1, vec3_table(lua, *p)?)?;
+                    }
+                    t.set("points", pts)?;
+                    t.set("partial", path.partial)?;
+                    t.set("ok", true)?;
+                }
+                None => t.set("ok", false)?,
+            }
+            Ok(t)
+        })?,
+    )?;
+    g.set("nav", nav)?;
     g.set("phys", phys)?;
     lua.load(PRELUDE).set_name("prelude").exec()?;
     Ok(())
