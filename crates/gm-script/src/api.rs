@@ -1823,6 +1823,38 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     g.set("model", model)?;
+    let vehicle = lua.create_table()?;
+    let sh = shared.clone();
+    vehicle.set(
+        "info",
+        lua.create_function(move |lua, id: u32| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            let Some(v) = snap.vehicle_info(id) else {
+                return Ok(Value::Nil);
+            };
+            let t = lua.create_table()?;
+            t.set("key", v.key.as_str())?;
+            t.set("class", v.class.as_str())?;
+            t.set("mass", v.mass)?;
+            t.set("add_gravity", v.add_gravity)?;
+            t.set("driver", v.driver.unwrap_or(0))?;
+            t.set("health", v.health)?;
+            t.set("max_health", v.max_health)?;
+            let ws = lua.create_table()?;
+            for (i, w) in v.wheels.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("hub", vec3_table(lua, w.hub)?)?;
+                e.set("radius", w.radius)?;
+                e.set("spring", w.spring)?;
+                e.set("damping", w.damping)?;
+                e.set("damping_compression", w.damping_compression)?;
+                ws.set(i + 1, e)?;
+            }
+            t.set("wheels", ws)?;
+            Ok(Value::Table(t))
+        })?,
+    )?;
+    g.set("vehicle", vehicle)?;
     g.set("phys", phys)?;
     lua.load(PRELUDE).set_name("prelude").exec()?;
     Ok(())

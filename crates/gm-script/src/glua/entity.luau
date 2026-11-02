@@ -230,7 +230,21 @@ function NPC:SelectWeapon(class) qwrite("npc_weapon", self.__id, class) end
 function NPC:DropWeapon() qwrite("npc_weapon", self.__id, "") end
 function NPC:GetNPCState() return 0 end
 function NPC:IsMoving() local s = snap(self.__id); return s ~= nil and (s.velocity.x ~= 0 or s.velocity.y ~= 0) end
-function VEH:GetDriver() return NULL end
+-- Vehicle record from the server (host `vehicle.info`): driver, mass, wheels.
+local function vinfo(self) return vehicle.info(self.__id) end
+function VEH:GetDriver() local v = vinfo(self); if v and v.driver ~= 0 then return Player(v.driver) end return NULL end
+function VEH:GetVehicleParams()
+    local v = vinfo(self); if not v then return nil end
+    local wheels = {}
+    for i, w in ipairs(v.wheels) do wheels[i] = { hub = Vector(w.hub.x, w.hub.y, w.hub.z), radius = w.radius, springConstant = w.spring, springDamping = w.damping, springDampingCompression = w.damping_compression } end
+    return { wheelsPerAxle = 2, axleCount = math.ceil(#v.wheels / 2), body = { massOverride = v.mass, addGravity = v.add_gravity }, wheels = wheels, axles = {} }
+end
+function VEH:GetWheelCount() local v = vinfo(self); return v and #v.wheels or 0 end
+function VEH:GetWheelBaseHeight(i) local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]; return w and (w.hub.z - w.radius) or 0 end
+function VEH:GetWheelTotalHeight(i) local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]; return w and (w.radius * 2) or 0 end
+function VEH:GetSpringLength(i) local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]; return w and w.radius or 0 end
+function VEH:IsEngineEnabled() local v = vinfo(self); return v ~= nil and v.driver ~= 0 end
+function VEH:IsEngineStarted() return self:IsEngineEnabled() end
 function VEH:GetVehicleClass() return self:GetClass() end
 function VEH:IsEngineEnabled() return true end
 function VEH:GetThrottle() return 0 end
@@ -1552,7 +1566,6 @@ function VEH:GetHLSpeed() return self:GetVelocity():Length() end
 function VEH:GetPassenger(i) if (i or 0) == 0 then return self:GetDriver() end return NULL end
 function VEH:IsValidVehicle() return self:IsValid() end
 function VEH:IsEngineStarted() return IsValid(self:GetDriver()) end
-function VEH:GetWheelCount() return veh_wheels[self:GetClass()] or 0 end
 function VEH:HasBoost() return veh_boost[self:GetClass()] == true end
 function VEH:IsBoosting() return false end
 function VEH:BoostTimeLeft() return 0 end

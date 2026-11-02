@@ -820,6 +820,13 @@ a typed line. `EntitySnap.weapon` is the NPC's weapon class; `NPC:GetActiveWeapo
 `NPC:Give / SelectWeapon / DropWeapon` write `npc_weapon` (`Server::set_npc_weapon`, only classes
 in the NPC weapon table).
 
+Vehicle record: the snapshot points at the server's `vehicles` map (`VehiclesRef`), the host
+`vehicle.info(id)` serves driver / mass / add_gravity / health / wheels (hub, radius, spring,
+damping); `Vehicle:GetDriver / GetVehicleParams / GetWheelCount / GetWheelBaseHeight /
+GetWheelTotalHeight / GetSpringLength / IsEngineEnabled` read it. Throttle / steering /
+handbrake come from the driver's command every tick and have no script override, so the vehicle
+`Set*` family stays stubs.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

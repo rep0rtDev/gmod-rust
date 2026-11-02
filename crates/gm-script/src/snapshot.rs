@@ -115,6 +115,19 @@ impl Default for ModelsRef {
     }
 }
 
+/// The server's `vehicles` map, same lifetime rule as `WorldRef`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VehiclesRef(pub *const std::collections::BTreeMap<u32, gm_server::Vehicle>);
+
+unsafe impl Send for VehiclesRef {}
+unsafe impl Sync for VehiclesRef {}
+
+impl Default for VehiclesRef {
+    fn default() -> Self {
+        VehiclesRef(std::ptr::null())
+    }
+}
+
 impl Default for NavRef {
     fn default() -> Self {
         NavRef(std::ptr::null())
@@ -127,6 +140,7 @@ pub struct Snapshot {
     pub world: WorldRef,
     pub nav: NavRef,
     pub models: ModelsRef,
+    pub vehicles: VehiclesRef,
     /// Prop collision hulls for `phys.trace`.
     pub props: Vec<gm_sandbox::PropBody>,
     pub entities: BTreeMap<u32, EntitySnap>,
@@ -158,6 +172,13 @@ impl Snapshot {
         (!self.models.0.is_null())
             .then(|| unsafe { &*self.models.0 })
             .and_then(|m| m.get(name))
+    }
+
+    /// `Vehicle:GetVehicleParams` and friends: the server's vehicle record.
+    pub fn vehicle_info(&self, id: u32) -> Option<&gm_server::Vehicle> {
+        (!self.vehicles.0.is_null())
+            .then(|| unsafe { &*self.vehicles.0 })
+            .and_then(|m| m.get(&id))
     }
 
     pub fn nav_loaded(&self) -> bool {
@@ -204,6 +225,7 @@ impl Snapshot {
             world: world_ref,
             nav: NavRef::default(),
             models: ModelsRef::default(),
+            vehicles: VehiclesRef::default(),
             props,
             entities: world
                 .entities
@@ -288,6 +310,7 @@ impl Snapshot {
             tick,
             world: WorldRef(server.collision as *const _),
             models: ModelsRef(&server.model_scripts as *const _),
+            vehicles: VehiclesRef(&server.vehicles as *const _),
             nav: NavRef(server.navmesh().map_or(std::ptr::null(), |n| n as *const _)),
             props: server.trace_bodies(),
             entities: server

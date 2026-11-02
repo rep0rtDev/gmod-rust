@@ -850,3 +850,53 @@ fn say_and_npc_weapon_queue_writes() {
     );
     assert!(matches!(&writes[2], QueuedWrite::NpcWeapon { ent: 5, class } if class.is_empty()));
 }
+
+#[test]
+fn vehicle_record_reads_the_server_table() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local v = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.Vehicle }, __glua_classes.Entity)
+             local p = v:GetVehicleParams()
+             state.r = { v:GetDriver():UserID(), v:GetWheelCount(), v:GetWheelBaseHeight(0), v:GetWheelTotalHeight(1), p.body.massOverride, p.wheels[2].springConstant, v:IsEngineEnabled() and 1 or 0 }
+         end)",
+    );
+    let mut vehicles: std::collections::BTreeMap<u32, gm_server::Vehicle> =
+        std::collections::BTreeMap::new();
+    vehicles.insert(
+        5,
+        gm_server::Vehicle {
+            key: "Jeep".into(),
+            class: "prop_vehicle_jeep".into(),
+            model: "models/buggy.mdl".into(),
+            health: 100,
+            max_health: 100,
+            driver: Some(1),
+            wheels: vec![
+                gm_server::Wheel {
+                    hub: Vec3::new(40.0, 30.0, 10.0),
+                    radius: 18.0,
+                    spring: 100.0,
+                    damping: 2.0,
+                    damping_compression: 3.0,
+                },
+                gm_server::Wheel {
+                    hub: Vec3::new(-40.0, 30.0, 10.0),
+                    radius: 20.0,
+                    spring: 120.0,
+                    damping: 2.0,
+                    damping_compression: 3.0,
+                },
+            ],
+            add_gravity: 1.0,
+            mass: 800.0,
+        },
+    );
+    let mut snap = (*snapshot()).clone();
+    snap.vehicles = gm_script::snapshot::VehiclesRef(&vehicles as *const _);
+    let snap = Arc::new(snap);
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!(r, vec![1.0, 2.0, -8.0, 40.0, 800.0, 120.0, 1.0]);
+}
