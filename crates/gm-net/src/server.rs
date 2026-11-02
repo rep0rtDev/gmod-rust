@@ -838,7 +838,16 @@ impl ServerNet {
                         }
                         if reload {
                             let hit = server.tool_hit(slot.player);
-                            server.sandbox.tool_reload(slot.player, &tool, hit.as_ref());
+                            let ext = hit
+                                .as_ref()
+                                .and_then(|h| server.tool_reload_ext(slot.player, &tool, h));
+                            if ext.is_none()
+                                && !server.sandbox.tool_reload(slot.player, &tool, hit.as_ref())
+                            {
+                                if let (Some(h), Some(hooks)) = (&hit, self.hooks.as_mut()) {
+                                    hooks.tool_reload(server, slot.player, &tool, h, &settings);
+                                }
+                            }
                         } else if let Some(hit) = server.tool_hit(slot.player) {
                             let allowed = self.hooks.as_mut().is_none_or(|h| {
                                 h.tool_before(server, slot.player, &tool, right, &hit)

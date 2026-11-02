@@ -1392,6 +1392,18 @@ pub trait ServerHooks {
     ) -> bool {
         false
     }
+    /// A gmod_tool reload on a mode no Rust stool owns (`TOOL:Reload`); true when a script did
+    /// something.
+    fn tool_reload(
+        &mut self,
+        _server: &mut Server<'_>,
+        _player: u32,
+        _tool: &str,
+        _hit: &ToolHit,
+        _settings: &[(String, String)],
+    ) -> bool {
+        false
+    }
     /// Admin command: hot reload of a loaded addon by id.
     fn reload_addon(&mut self, _addon: &str) -> Result<String, String> {
         Err("no addon runtime".into())

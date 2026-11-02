@@ -245,6 +245,7 @@ local function tool_trace(ctx)
 end
 -- @hook TOOL:LeftClick
 -- @hook TOOL:RightClick
+-- @hook TOOL:Reload
 local native_has_tool, native_tool = __has_tool, __tool
 function __has_tool(name) return native_has_tool(name) or glua_tools[name] ~= nil end
 function __tool(name, button, ctx)
@@ -654,7 +655,7 @@ for _, n in ipairs({ "AddDeathNotice", "AdjustMouseSensitivity", "CalcMainActivi
 for _, n in ipairs({ "BehaveStart", "BehaveUpdate", "BodyUpdate", "OnContact", "OnEntitySight", "OnEntitySightLost", "OnIgnite", "OnInjured", "OnKilled", "OnLandOnGround", "OnLeaveGround", "OnNavAreaChanged", "OnOtherKilled", "OnStuck", "OnTraceAttack", "OnUnStuck", "RunBehaviour" }) do stub("NEXTBOT:" .. n) end
 for _, n in ipairs({ "FinishMove", "GetHandsModel", "Move", "PostDrawViewModel", "PreDrawViewModel", "SetupDataTables", "StartMove", "ViewModelChanged" }) do stub("PLAYER:" .. n) end
 for _, n in ipairs({ "AddGamemodeToolMenuCategories", "AddGamemodeToolMenuTabs", "AddToolMenuCategories", "AddToolMenuTabs", "CanArmDupe", "CanDrive", "ContentSidebarSelection", "ContextMenuClosed", "ContextMenuCreated", "ContextMenuEnabled", "ContextMenuOpen", "ContextMenuOpened", "ContextMenuShowTool", "OnRevertSpawnlist", "OnSaveSpawnlist", "OpenToolbox", "PaintNotes", "PaintWorldTips", "PersistenceLoad", "PersistenceSave", "PlayerSpawnEffect", "PlayerSpawnObject", "PlayerSpawnedEffect", "PopulateContent", "PopulateEntities", "PopulateNPCs", "PopulatePropMenu", "PopulateToolMenu", "PopulateVehicles", "PopulateWeapons", "PostReloadToolsMenu", "PreRegisterTOOL", "PreReloadToolsMenu", "SpawnMenuEnabled", "SpawnMenuOpen", "SpawnMenuOpened", "SpawnlistContentChanged", "SpawnlistOpenGenericMenu", "SpawnmenuIconMenuOpen" }) do stub("SANDBOX:" .. n) end
-for _, n in ipairs({ "BuildCPanel", "Deploy", "DrawHUD", "DrawToolScreen", "FreezeMovement", "Holster", "Reload", "Think" }) do stub("TOOL:" .. n) end
+for _, n in ipairs({ "BuildCPanel", "Deploy", "DrawHUD", "DrawToolScreen", "FreezeMovement", "Holster", "Think" }) do stub("TOOL:" .. n) end
 for _, n in ipairs({ "AcceptInput", "AdjustMouseSensitivity", "CalcView", "CalcViewModelView", "CustomAmmoDisplay", "DoDrawCrosshair", "DoImpactEffect", "DrawHUD", "DrawHUDBackground", "DrawWeaponSelection", "DrawWorldModel", "DrawWorldModelTranslucent", "FireAnimationEvent", "FreezeMovement", "GetCapabilities", "GetNPCBulletSpread", "GetNPCBurstSettings", "GetNPCRestTimes", "GetTracerOrigin", "GetViewModelPosition", "HUDShouldDraw", "KeyValue", "NPCShoot_Primary", "NPCShoot_Secondary", "OnRestore", "PostDrawViewModel", "PreDrawViewModel", "PrintWeaponInfo", "RenderScreen", "ShootEffects", "ShouldDrawViewModel", "TranslateActivity", "TranslateFOV", "ViewModelDrawn" }) do stub("WEAPON:" .. n) end
 
 

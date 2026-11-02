@@ -1247,6 +1247,29 @@ impl Runtime {
         right: bool,
         settings: &[(String, String)],
     ) -> bool {
+        let button = if right { "right" } else { "left" };
+        self.tool_button(server, player, tool, hit, button, settings)
+    }
+    /// `TOOL:Reload` of a scripted stool.
+    pub fn tool_reload(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        hit: &gm_sandbox::ToolHit,
+        settings: &[(String, String)],
+    ) -> bool {
+        self.tool_button(server, player, tool, hit, "reload", settings)
+    }
+    fn tool_button(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        hit: &gm_sandbox::ToolHit,
+        button: &str,
+        settings: &[(String, String)],
+    ) -> bool {
         let snap = self.snapshot(server);
         let mut order: Vec<usize> = (0..self.actors.len()).collect();
         order.sort_by_key(|&i| (self.actors[i].priority(), i));
@@ -1267,7 +1290,6 @@ impl Runtime {
                 )
             })
             .collect();
-        let button = if right { "right" } else { "left" };
         for i in order {
             if !self.actors[i].has_tool(tool) {
                 continue;
@@ -1699,6 +1721,16 @@ impl gm_server::ServerHooks for Runtime {
     ) -> bool {
         Runtime::tool_click(self, server, player, tool, hit, right, settings)
     }
+    fn tool_reload(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        hit: &gm_sandbox::ToolHit,
+        settings: &[(String, String)],
+    ) -> bool {
+        Runtime::tool_reload(self, server, player, tool, hit, settings)
+    }
     fn reload_addon(&mut self, addon: &str) -> Result<String, String> {
         let before = self.actors.len();
         let m = Runtime::reload_addon_by_id(self, addon).map_err(|e| e.to_string())?;
@@ -1771,6 +1803,19 @@ impl gm_server::ServerHooks for SharedRuntime {
             .lock()
             .unwrap()
             .tool_click(server, player, tool, hit, right, settings)
+    }
+    fn tool_reload(
+        &mut self,
+        server: &mut Server<'_>,
+        player: u32,
+        tool: &str,
+        hit: &gm_sandbox::ToolHit,
+        settings: &[(String, String)],
+    ) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .tool_reload(server, player, tool, hit, settings)
     }
     fn reload_addon(&mut self, addon: &str) -> Result<String, String> {
         gm_server::ServerHooks::reload_addon(&mut *self.0.lock().unwrap(), addon)

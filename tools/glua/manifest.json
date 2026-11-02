@@ -4229,7 +4229,7 @@
 {"address":"TOOL:FreezeMovement","kind":"hook","parent":"TOOL","name":"FreezeMovement","realms":["client"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"stub"},
 {"address":"TOOL:Holster","kind":"hook","parent":"TOOL","name":"Holster","realms":["client","server"],"args":[],"rets":[],"status":"stub"},
 {"address":"TOOL:LeftClick","kind":"hook","parent":"TOOL","name":"LeftClick","realms":["client","server"],"args":[{"name":"tr","type":"table"}],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
-{"address":"TOOL:Reload","kind":"hook","parent":"TOOL","name":"Reload","realms":["client","server"],"args":[{"name":"tr","type":"table"}],"rets":[{"name":"","type":"boolean"}],"status":"stub"},
+{"address":"TOOL:Reload","kind":"hook","parent":"TOOL","name":"Reload","realms":["client","server"],"args":[{"name":"tr","type":"table"}],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
 {"address":"TOOL:RightClick","kind":"hook","parent":"TOOL","name":"RightClick","realms":["client","server"],"args":[{"name":"tr","type":"table"}],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
 {"address":"TOOL:Think","kind":"hook","parent":"TOOL","name":"Think","realms":["client","server"],"args":[],"rets":[],"status":"stub"},
 {"address":"Task:Init","kind":"classfunc","parent":"Task","name":"Init","realms":["server"],"args":[],"rets":[],"status":"implemented"},

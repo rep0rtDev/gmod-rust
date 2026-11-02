@@ -2053,7 +2053,8 @@ fn glua_stool_handles_unknown_tool_clicks() {
         source: "TOOL = ToolObj:Create()
             TOOL.Mode = \"mytool\"
             function TOOL:LeftClick(tr) state.z, state.owner, state.world = tr.HitPos.z, self:GetOwner():EntIndex(), tr.HitWorld; return true end
-            function TOOL:RightClick(tr) return false end"
+            function TOOL:RightClick(tr) return false end
+            function TOOL:Reload(tr) state.reloaded = true; return true end"
             .into(),
         config: ActorConfig {
             cpu_budget: std::time::Duration::from_millis(50),
@@ -2073,6 +2074,8 @@ fn glua_stool_handles_unknown_tool_clicks() {
     assert_eq!(ops, vec![gm_script::api::ToolOp::Done]);
     let ops = a.dispatch_tool(&snap, "mytool", "right", &p).unwrap();
     assert!(ops.is_empty());
+    let ops = a.dispatch_tool(&snap, "mytool", "reload", &p).unwrap();
+    assert_eq!(ops, vec![gm_script::api::ToolOp::Done]);
     let (z, owner, world): (f32, i32, bool) =
         a.eval("return state.z, state.owner, state.world").unwrap();
     assert_eq!((z, owner, world), (7.0, 1, true));
