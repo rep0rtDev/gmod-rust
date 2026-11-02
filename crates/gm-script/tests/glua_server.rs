@@ -1415,6 +1415,7 @@ fn a_player_answers_every_entity_method() {
              state.holding = p:IsPlayerHolding()
              state.idx = p:EntIndex()
              state.cls = p:GetClass()
+             state.eq = tostring(NULL == p) .. tostring(p == NULL) .. tostring(p == Player(1)) .. tostring(Entity(777) == p) .. tostring(p == Entity(777))
          end)",
     );
     let snap = snapshot();
@@ -1432,4 +1433,9 @@ fn a_player_answers_every_entity_method() {
         .eval("return state.blood, state.holding, state.idx, state.cls")
         .unwrap();
     assert_eq!((blood, holding, idx, cls.as_str()), (0, false, 1, "player"));
+    let eq: String = a.eval("return state.eq").unwrap();
+    assert_eq!(
+        eq, "falsefalsetruefalsefalse",
+        "a player equals only itself"
+    );
 }

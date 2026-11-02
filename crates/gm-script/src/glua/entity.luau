@@ -25,6 +25,8 @@ ENT.__tostring = function(self)
     return "Entity [" .. self:EntIndex() .. "][" .. self:GetClass() .. "]"
 end
 ENT.__eq = function(a, b)
+    local pa, pb = rawget(a, "__pid"), rawget(b, "__pid")
+    if pa ~= nil or pb ~= nil then return pa == pb end
     local id = rawget(a, "__id")
     if id == nil or id ~= rawget(b, "__id") then return false end
     if id ~= 0 then return true end
