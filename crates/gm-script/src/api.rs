@@ -300,6 +300,10 @@ pub enum QueuedWrite {
         which: u8,
         value: Option<f32>,
     },
+    /// Some addon listens to the move hooks (`Server::move_hooks`).
+    MoveHooks {
+        on: bool,
+    },
     /// `Player:SetLastHitGroup`.
     PlayerSetLastHitGroup {
         player: u32,
@@ -1628,6 +1632,9 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     player: ent,
                     angles: value_vec3(&arg)?,
                 },
+                "move_hooks" => QueuedWrite::MoveHooks {
+                    on: matches!(arg, Value::Boolean(true)),
+                },
                 "player.move_param" => {
                     let v = value_vec3(&arg)?;
                     QueuedWrite::PlayerMoveParam {
@@ -2733,6 +2740,10 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             which,
             value,
         } => server.set_move_param(*player, *which, *value),
+        QueuedWrite::MoveHooks { on } => {
+            server.move_hooks = *on;
+            true
+        }
         QueuedWrite::PlayerSetLastHitGroup { player, group } => {
             server.set_last_hit_group(*player, *group)
         }

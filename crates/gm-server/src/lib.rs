@@ -673,7 +673,10 @@ pub enum Request {
     },
     /// `GetPreferredCarryAngles`: the player is about to carry `ent` with +use; `Text("pitch yaw
     /// roll")` holds it at those angles in the player's yaw frame instead of as it lies.
-    CarryAngles { player: u32, ent: u32 },
+    CarryAngles {
+        player: u32,
+        ent: u32,
+    },
     /// `CanCreateUndo`: an undo entry `name` / `text` is about to be recorded.
     CreateUndo {
         player: u32,
@@ -681,21 +684,57 @@ pub enum Request {
         text: String,
     },
     /// The physgun's trace found an unfrozen prop while attack is pressed.
-    PhysgunPickup { player: u32, ent: u32 },
+    PhysgunPickup {
+        player: u32,
+        ent: u32,
+    },
     /// A +use press (the edge, not the hold) whose trace from the eyes found a prop within
     /// `PLAYER_USE_RADIUS`.
-    PlayerUse { player: u32, ent: u32 },
+    PlayerUse {
+        player: u32,
+        ent: u32,
+    },
     /// `AllowPlayerPickup`: the used prop is light enough (`gm_physics::pickup::MAX_MASS`,
     /// `MAX_SIZE`) and would be carried.
-    PlayerPickup { player: u32, ent: u32 },
+    PlayerPickup {
+        player: u32,
+        ent: u32,
+    },
     /// `PlayerCanPickupWeapon`: the player walked into a weapon entity it does not carry.
-    PickupWeapon { player: u32, class: String },
+    PickupWeapon {
+        player: u32,
+        class: String,
+    },
     /// `CanPlayerEnterVehicle`: the player pressed +use on a vehicle.
-    EnterVehicle { player: u32, vehicle: u32 },
+    EnterVehicle {
+        player: u32,
+        vehicle: u32,
+    },
     /// `CanExitVehicle`: the seated player pressed +use.
-    ExitVehicle { player: u32, vehicle: u32 },
+    ExitVehicle {
+        player: u32,
+        vehicle: u32,
+    },
     /// `PlayerSwitchFlashlight`: the player fired `impulse 100`; `on` is the state it asks for.
-    SwitchFlashlight { player: u32, on: bool },
+    SwitchFlashlight {
+        player: u32,
+        on: bool,
+    },
+    /// `SetupMove` / `Move` / `FinishMove` around the player's move this tick. A `Text`
+    /// verdict ([`MoveData::to_text`]) writes origin / velocity / buttons / moves / angles /
+    /// max speed back; `Cancel` on `Move` means the hook moved the player itself.
+    SetupMove {
+        player: u32,
+        data: MoveData,
+    },
+    Move {
+        player: u32,
+        data: MoveData,
+    },
+    FinishMove {
+        player: u32,
+        data: MoveData,
+    },
     /// `ScaleNPCDamage`: a hit on an NPC is about to take `amount` off it (`Amount` replaces it).
     NpcDamage {
         npc: u32,
@@ -714,9 +753,13 @@ pub enum Request {
     },
     /// `PlayerDeathThink`: the dead player's respawn is due; `Cancel` keeps them dead for now
     /// (asked again next tick).
-    Respawn { player: u32 },
+    Respawn {
+        player: u32,
+    },
     /// `CanPlayerSuicide`: the player typed `kill`.
-    Suicide { player: u32 },
+    Suicide {
+        player: u32,
+    },
     /// `PlayerSwitchWeapon`: the player's own weapon selection, from `from` to `to`.
     SwitchWeapon {
         player: u32,
@@ -731,17 +774,32 @@ pub enum Request {
         name: String,
     },
     /// `CanProperty`: the player asked for a context-menu property on a prop.
-    Property { player: u32, ent: u32, name: String },
+    Property {
+        player: u32,
+        ent: u32,
+        name: String,
+    },
     /// `PlayerSetModel` on (re)spawn with the model the player's choice translates to;
     /// `Text` replaces it.
-    SetModel { player: u32, model: String },
+    SetModel {
+        player: u32,
+        model: String,
+    },
     /// `PlayerLoadout`: the player (re)spawned with an empty inventory; `Cancel` skips the
     /// default loadout (the hook gives its own with `player.give_weapon`).
-    Loadout { player: u32 },
+    Loadout {
+        player: u32,
+    },
     /// `CanUndo`: the player asked to undo this entry.
-    Undo { player: u32, name: String },
+    Undo {
+        player: u32,
+        name: String,
+    },
     /// `CanPlayerUnfreeze`: the physgun's reload is about to unfreeze this prop of the player.
-    Unfreeze { player: u32, ent: u32 },
+    Unfreeze {
+        player: u32,
+        ent: u32,
+    },
     /// `GetFallDamage`: landing at `speed` is about to deal `amount`; `Amount` replaces it.
     FallDamage {
         player: u32,
@@ -1021,6 +1079,66 @@ pub enum Verdict {
 
 /// Answers `Request`s; the server lets go of the hook while it runs, so the hook may use the
 /// server (its own writes are not asked again).
+/// The move of one player command as the `CMoveData` hooks see it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MoveData {
+    pub origin: Vec3,
+    pub velocity: Vec3,
+    /// View angles the move steers by.
+    pub angles: Vec3,
+    pub buttons: u32,
+    /// Buttons of the previous command (`GetOldButtons`).
+    pub old_buttons: u32,
+    /// Forward / side / up move.
+    pub moves: Vec3,
+    /// Ground speed cap of this command (walk or run speed).
+    pub max_speed: f32,
+}
+
+impl MoveData {
+    /// The write-back text: origin, velocity, buttons, moves, angles, max speed.
+    pub fn to_text(&self) -> String {
+        let (o, v, m, a) = (self.origin, self.velocity, self.moves, self.angles);
+        format!(
+            "{} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+            o.x,
+            o.y,
+            o.z,
+            v.x,
+            v.y,
+            v.z,
+            self.buttons,
+            m.x,
+            m.y,
+            m.z,
+            a.x,
+            a.y,
+            a.z,
+            self.max_speed
+        )
+    }
+
+    /// `self` with the fields of a write-back text applied (`None` for a malformed text).
+    pub fn parse(&self, text: &str) -> Option<MoveData> {
+        let f: Vec<f32> = text
+            .split_whitespace()
+            .map(|t| t.parse::<f32>().ok())
+            .collect::<Option<Vec<f32>>>()?;
+        if f.len() != 14 || f.iter().any(|v| !v.is_finite()) {
+            return None;
+        }
+        Some(MoveData {
+            origin: Vec3::new(f[0], f[1], f[2]),
+            velocity: Vec3::new(f[3], f[4], f[5]),
+            buttons: f[6].max(0.0) as u32,
+            moves: Vec3::new(f[7], f[8], f[9]),
+            angles: Vec3::new(f[10], f[11], f[12]),
+            max_speed: f[13].max(0.0),
+            old_buttons: self.old_buttons,
+        })
+    }
+}
+
 pub type RequestHook = Box<dyn FnMut(&mut Server<'_>, &Request) -> Verdict>;
 
 /// `(speed / IMPACT_SOUND_FULL_SPEED)^2` capped at 1; `None` under the audible threshold.
@@ -3591,6 +3709,8 @@ pub struct Server<'w> {
     pub pending_chat: Vec<(u32, String)>,
     /// Script-facing model data per model name (the snapshot points at this map).
     pub model_scripts: BTreeMap<String, ModelScriptData>,
+    /// Some addon listens to `SetupMove` / `Move` / `FinishMove`: ask them around every move.
+    pub move_hooks: bool,
     /// `Entity:SetFriction / SetElasticity` overrides of the model surface, per prop.
     pub surface_overrides: BTreeMap<u32, (f32, f32)>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
@@ -3742,6 +3862,7 @@ impl<'w> Server<'w> {
             models: BTreeMap::new(),
             pending_chat: Vec::new(),
             model_scripts: BTreeMap::new(),
+            move_hooks: false,
             surface_overrides: BTreeMap::new(),
             sounds: Vec::new(),
             scrapes: BTreeMap::new(),
@@ -10403,28 +10524,104 @@ impl<'w> Server<'w> {
         if pc.impulse == 100 {
             self.use_flashlight(player);
         }
-        if let Some(p) = self.players.get_mut(&player) {
-            p.view_angles = p.eye_override.take().unwrap_or(pc.cmd.view_angles);
-            let cmd = if p.locked {
-                gm_move::UserCmd {
-                    buttons: 0,
-                    forward_move: 0.0,
-                    side_move: 0.0,
-                    up_move: 0.0,
-                    view_angles: p.view_angles,
-                }
-            } else {
-                gm_move::UserCmd {
-                    buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
-                    view_angles: p.view_angles,
-                    ..pc.cmd
-                }
+        let Some(p) = self.players.get_mut(&player) else {
+            return;
+        };
+        p.view_angles = p.eye_override.take().unwrap_or(pc.cmd.view_angles);
+        let mut cmd = if p.locked {
+            gm_move::UserCmd {
+                buttons: 0,
+                forward_move: 0.0,
+                side_move: 0.0,
+                up_move: 0.0,
+                view_angles: p.view_angles,
+            }
+        } else {
+            gm_move::UserCmd {
+                buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
+                view_angles: p.view_angles,
+                ..pc.cmd
+            }
+        };
+        let mut cfg = p.move_override.effective(&self.mover.cfg);
+        let (origin, velocity, old_buttons) = (p.state.origin, p.state.velocity, p.prev_buttons);
+        let mut skip_mover = false;
+        let mut write_back = None;
+        let max_speed = self.max_speed_with(&cfg, &cmd);
+        if self.move_hooks {
+            let mut data = MoveData {
+                origin,
+                velocity,
+                angles: cmd.view_angles,
+                buttons: cmd.buttons,
+                old_buttons,
+                moves: Vec3::new(cmd.forward_move, cmd.side_move, cmd.up_move),
+                max_speed,
             };
+            if let Verdict::Text(t) = self.ask(Request::SetupMove { player, data }) {
+                if let Some(d) = data.parse(&t) {
+                    data = d;
+                }
+            }
+            match self.ask(Request::Move { player, data }) {
+                Verdict::Cancel => skip_mover = true,
+                Verdict::Text(t) => {
+                    if let Some(d) = data.parse(&t) {
+                        data = d;
+                    }
+                }
+                _ => {}
+            }
+            cmd.buttons = data.buttons;
+            cmd.view_angles = data.angles;
+            cmd.forward_move = data.moves.x;
+            cmd.side_move = data.moves.y;
+            cmd.up_move = data.moves.z;
+            if data.max_speed != max_speed {
+                cfg.walk_speed = data.max_speed;
+                cfg.run_speed = data.max_speed;
+            }
+            write_back = Some((data.origin, data.velocity));
+        }
+        let Some(p) = self.players.get_mut(&player) else {
+            return;
+        };
+        if let Some((o, v)) = write_back {
+            p.state.origin = o;
+            p.state.velocity = v;
+        }
+        if !skip_mover {
             let saved_cfg = self.mover.cfg;
-            p.move_override.apply(&mut self.mover.cfg);
+            self.mover.cfg = cfg;
             self.mover.tick(&mut p.state, &cmd);
             self.mover.cfg = saved_cfg;
         }
+        if self.move_hooks {
+            let data = MoveData {
+                origin: p.state.origin,
+                velocity: p.state.velocity,
+                angles: cmd.view_angles,
+                buttons: cmd.buttons,
+                old_buttons,
+                moves: Vec3::new(cmd.forward_move, cmd.side_move, cmd.up_move),
+                max_speed,
+            };
+            if let Verdict::Text(t) = self.ask(Request::FinishMove { player, data }) {
+                if let (Some(d), Some(p)) = (data.parse(&t), self.players.get_mut(&player)) {
+                    p.state.origin = d.origin;
+                    p.state.velocity = d.velocity;
+                }
+            }
+        }
+    }
+
+    /// The ground speed cap of a command under a config (walk or run speed).
+    fn max_speed_with(&mut self, cfg: &gm_move::MoveConfig, cmd: &gm_move::UserCmd) -> f32 {
+        let saved = self.mover.cfg;
+        self.mover.cfg = *cfg;
+        let v = self.mover.step_max_speed(cmd);
+        self.mover.cfg = saved;
+        v
     }
 
     /// One fixed tick: weapons fire with the pre-move eye, physics steps, players move, prop

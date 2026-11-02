@@ -581,3 +581,90 @@ fn the_processed_command_is_kept_for_get_current_command() {
     assert_eq!(p.cmd_impulse, 100);
     assert_eq!(p.cmd_tick, server.tick_count());
 }
+
+#[test]
+fn move_hooks_bracket_the_mover() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    for m in ["models/nova/chair_wood01.mdl", "models/buggy.mdl"] {
+        match gm_dedicated::model_info(&mount, m) {
+            Ok(info) => {
+                eprintln!("{m}: {} attachments", info.attachments.len());
+                server.register_model(m, info);
+            }
+            Err(e) => panic!("{m}: {e}"),
+        }
+    }
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    let walk = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            forward_move: 400.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let start = server.players[&1].state.origin;
+    for _ in 0..10 {
+        server.move_player(1, &walk);
+    }
+    let plain = server.players[&1].state.origin;
+    assert!(
+        plain.distance(start) > 10.0,
+        "the mover walks without hooks"
+    );
+    server.move_hooks = true;
+    server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::SetupMove { data, .. } => gm_server::Verdict::Text(
+            gm_server::MoveData {
+                moves: Vec3::ZERO,
+                velocity: Vec3::ZERO,
+                ..*data
+            }
+            .to_text(),
+        ),
+        gm_server::Request::FinishMove { data, .. } => gm_server::Verdict::Text(
+            gm_server::MoveData {
+                origin: data.origin + Vec3::new(0.0, 0.0, 100.0),
+                ..*data
+            }
+            .to_text(),
+        ),
+        _ => gm_server::Verdict::Allow,
+    }));
+    server.move_player(1, &walk);
+    let after = server.players[&1].state.origin;
+    assert!(
+        (after.z - plain.z - 100.0).abs() < 1.0
+            && after.truncate().distance(plain.truncate()) < 0.5,
+        "SetupMove zeroed the move, FinishMove lifted the player: {plain} -> {after}"
+    );
+    server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::Move { .. } => gm_server::Verdict::Cancel,
+        _ => gm_server::Verdict::Allow,
+    }));
+    let before = server.players[&1].state.origin;
+    server.move_player(1, &walk);
+    assert_eq!(
+        server.players[&1].state.origin, before,
+        "Move true skips the mover"
+    );
+    server.request_hook = None;
+    server.move_hooks = false;
+    let d = gm_server::MoveData {
+        origin: Vec3::ONE,
+        velocity: Vec3::ZERO,
+        angles: Vec3::ZERO,
+        buttons: 9,
+        old_buttons: 1,
+        moves: Vec3::ZERO,
+        max_speed: 200.0,
+    };
+    assert_eq!(d.parse(&d.to_text()), Some(d));
+    assert_eq!(d.parse("1 2"), None);
+}

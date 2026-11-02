@@ -903,6 +903,36 @@ impl Runtime {
                     gm_server::Verdict::Cancel
                 }
             }
+            gm_server::Request::SetupMove { player, data }
+            | gm_server::Request::Move { player, data }
+            | gm_server::Request::FinishMove { player, data } => {
+                p.ints.push(("player", *player as i64));
+                p.ints.push(("buttons", i64::from(data.buttons)));
+                p.ints.push(("old_buttons", i64::from(data.old_buttons)));
+                for (k, v) in [
+                    ("ox", data.origin.x),
+                    ("oy", data.origin.y),
+                    ("oz", data.origin.z),
+                    ("vx", data.velocity.x),
+                    ("vy", data.velocity.y),
+                    ("vz", data.velocity.z),
+                    ("fx", data.moves.x),
+                    ("fy", data.moves.y),
+                    ("fz", data.moves.z),
+                    ("ax", data.angles.x),
+                    ("ay", data.angles.y),
+                    ("az", data.angles.z),
+                    ("maxspeed", data.max_speed),
+                ] {
+                    p.floats.push((k, v as f64));
+                }
+                let event = match req {
+                    gm_server::Request::SetupMove { .. } => "player.setup_move",
+                    gm_server::Request::Move { .. } => "player.move",
+                    _ => "player.finish_move",
+                };
+                self.ask_text(server, event, p)
+            }
             gm_server::Request::SwitchFlashlight { player, on } => {
                 p.ints.push(("player", *player as i64));
                 p.ints.push(("on", i64::from(*on)));

@@ -903,7 +903,13 @@ stay stubs (no such inputs on our bodies).
 `Player:GetCurrentCommand` is a `CUserCmd` copy of the command the server processed for
 the player this tick (buttons, forward/side/up move, view angles, mouse deltas, impulse,
 server tick as `TickCount` / `CommandNumber`); the command has already run, so the setters
-change the copy only. Mouse wheel is not in our command (stub). `GetPreferredCarryAngles` (the hook, else the scripted
+change the copy only. Mouse wheel is not in our command (stub).
+`SetupMove(ply, mv, cmd)`, `Move(ply, mv)` and `FinishMove(ply, mv)` bracket the mover's
+step of every player command once an addon listens to any of them: `mv` is a `CMoveData`
+of origin, velocity, angles, buttons (and the previous command's), forward/side/up move and
+the command's ground speed cap; what the hooks change in it is written back (`SetMaxSpeed`
+caps walk and run for that step), `Move` returning `true` skips the mover (the hook moved
+the player). Constraint / final-velocity / abs-move-angle fields have no mover input: stubs. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

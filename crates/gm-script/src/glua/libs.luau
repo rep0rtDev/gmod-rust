@@ -285,7 +285,53 @@ do
     function C:IsForced() return false end
     function C:SelectWeapon(w) if self.__ply and IsValid(w) then self.__ply:SelectWeapon(w:GetClass()) end end
 end
-for _, n in ipairs({ "AddKey", "GetAbsMoveAngles", "GetAngles", "GetButtons", "GetConstraintCenter", "GetConstraintRadius", "GetConstraintSpeedScale", "GetConstraintWidth", "GetFinalIdealVelocity", "GetFinalJumpVelocity", "GetFinalStepHeight", "GetForwardSpeed", "GetImpulseCommand", "GetMaxClientSpeed", "GetMaxSpeed", "GetMoveAngles", "GetOldAngles", "GetOldButtons", "GetOrigin", "GetSideSpeed", "GetUpSpeed", "GetVelocity", "KeyDown", "KeyPressed", "KeyReleased", "KeyWasDown", "RemoveKey", "SetAbsMoveAngles", "SetAngles", "SetButtons", "SetConstraintCenter", "SetConstraintRadius", "SetConstraintSpeedScale", "SetConstraintWidth", "SetFinalIdealVelocity", "SetFinalJumpVelocity", "SetFinalStepHeight", "SetForwardSpeed", "SetImpulseCommand", "SetMaxClientSpeed", "SetMaxSpeed", "SetMoveAngles", "SetOldAngles", "SetOldButtons", "SetOrigin", "SetSideSpeed", "SetUpSpeed", "SetVelocity" }) do if __glua_classes.CMoveData[n] == nil then __glua_classes.CMoveData[n] = stub("CMoveData:" .. n) end end
+for _, n in ipairs({ "GetAbsMoveAngles", "GetConstraintCenter", "GetConstraintRadius", "GetConstraintSpeedScale", "GetConstraintWidth", "GetFinalIdealVelocity", "GetFinalJumpVelocity", "GetFinalStepHeight", "SetAbsMoveAngles", "SetConstraintCenter", "SetConstraintRadius", "SetConstraintSpeedScale", "SetConstraintWidth", "SetFinalIdealVelocity", "SetFinalJumpVelocity", "SetFinalStepHeight" }) do if __glua_classes.CMoveData[n] == nil then __glua_classes.CMoveData[n] = stub("CMoveData:" .. n) end end
+-- CMoveData: the move of a player's command as SetupMove / Move / FinishMove see it; origin,
+-- velocity, buttons, moves, angles and max speed are written back to the server's mover.
+do
+    local M = __glua_classes.CMoveData
+    local function v3(t) return Vector(t.x, t.y, t.z) end
+    local function a3(t) return Angle(t.x, t.y, t.z) end
+    local function setv(t, v) if v then t.x, t.y, t.z = v.x or 0, v.y or 0, v.z or 0 end end
+    local function seta(t, a) if a then t.x, t.y, t.z = a.p or a.x or 0, a.y or 0, a.r or a.z or 0 end end
+    function M:GetOrigin() return v3(self.origin) end
+    function M:SetOrigin(v) setv(self.origin, v) end
+    function M:GetVelocity() return v3(self.velocity) end
+    function M:SetVelocity(v) setv(self.velocity, v) end
+    function M:GetAngles() return a3(self.angles) end
+    function M:SetAngles(a) seta(self.angles, a) end
+    function M:GetMoveAngles() return a3(self.angles) end
+    function M:SetMoveAngles(a) seta(self.angles, a) end
+    function M:GetOldAngles() return a3(self.old_angles) end
+    function M:SetOldAngles(a) seta(self.old_angles, a) end
+    function M:GetButtons() return self.buttons end
+    function M:SetButtons(b) self.buttons = math.floor(tonumber(b) or 0) end
+    function M:GetOldButtons() return self.old_buttons end
+    function M:SetOldButtons(b) self.old_buttons = math.floor(tonumber(b) or 0) end
+    function M:KeyDown(k) return bit.band(self.buttons, k) ~= 0 end
+    function M:KeyWasDown(k) return bit.band(self.old_buttons, k) ~= 0 end
+    function M:KeyPressed(k) return self:KeyDown(k) and not self:KeyWasDown(k) end
+    function M:KeyReleased(k) return self:KeyWasDown(k) and not self:KeyDown(k) end
+    function M:AddKey(k) self.buttons = bit.bor(self.buttons, k) end
+    function M:RemoveKey(k) self.buttons = bit.band(self.buttons, bit.bnot(k)) end
+    function M:GetForwardSpeed() return self.moves.x end
+    function M:SetForwardSpeed(v) self.moves.x = tonumber(v) or 0 end
+    function M:GetSideSpeed() return self.moves.y end
+    function M:SetSideSpeed(v) self.moves.y = tonumber(v) or 0 end
+    function M:GetUpSpeed() return self.moves.z end
+    function M:SetUpSpeed(v) self.moves.z = tonumber(v) or 0 end
+    function M:GetMaxSpeed() return self.maxspeed end
+    function M:SetMaxSpeed(v) self.maxspeed = math.max(tonumber(v) or 0, 0) end
+    function M:GetMaxClientSpeed() return self.maxspeed end
+    function M:SetMaxClientSpeed(v) self.maxspeed = math.max(tonumber(v) or 0, 0) end
+    function M:GetImpulseCommand() return self.impulse end
+    function M:SetImpulseCommand(i) self.impulse = math.floor(tonumber(i) or 0) end
+    function M:__text()
+        local o, v, m, a = self.origin, self.velocity, self.moves, self.angles
+        return string.format("%.9g %.9g %.9g %.9g %.9g %.9g %d %.9g %.9g %.9g %.9g %.9g %.9g %.9g",
+            o.x, o.y, o.z, v.x, v.y, v.z, self.buttons, m.x, m.y, m.z, a.x, a.y, a.z, self.maxspeed)
+    end
+end
 for _, n in ipairs({ "ConnectTo", "Disconnect", "GetBottom", "GetBottomArea", "GetID", "GetLength", "GetNormal", "GetPosAtHeight", "GetTop", "GetTopBehindArea", "GetTopForwardArea", "GetTopLeftArea", "GetTopRightArea", "GetWidth", "IsConnectedAtSide", "IsValid", "Remove", "SetBottomArea", "SetTopBehindArea", "SetTopForwardArea", "SetTopLeftArea", "SetTopRightArea" }) do if __glua_classes.CNavLadder[n] == nil then __glua_classes.CNavLadder[n] = stub("CNavLadder:" .. n) end end
 for _, n in ipairs({ "Chase", "Compute", "Draw", "FirstSegment", "GetAge", "GetAllSegments", "GetClosestPosition", "GetCurrentGoal", "GetCursorData", "GetCursorPosition", "GetEnd", "GetGoalTolerance", "GetHindrance", "GetLength", "GetMinLookAheadDistance", "GetPositionOnPath", "GetStart", "Invalidate", "IsValid", "LastSegment", "MoveCursor", "MoveCursorTo", "MoveCursorToClosestPosition", "MoveCursorToEnd", "MoveCursorToStart", "NextSegment", "PriorSegment", "ResetAge", "SetGoalTolerance", "SetMinLookAheadDistance", "Update" }) do if __glua_classes.PathFollower[n] == nil then __glua_classes.PathFollower[n] = stub("PathFollower:" .. n) end end
 for _, n in ipairs({ "Approach", "ClearStuck", "FaceTowards", "GetAcceleration", "GetAvoidAllowed", "GetClimbAllowed", "GetCurrentAcceleration", "GetDeathDropHeight", "GetDeceleration", "GetDesiredSpeed", "GetGravity", "GetGroundMotionVector", "GetGroundNormal", "GetJumpGapsAllowed", "GetJumpHeight", "GetMaxJumpHeight", "GetMaxYawRate", "GetNextBot", "GetStepHeight", "GetVelocity", "IsAreaTraversable", "IsAttemptingToMove", "IsClimbingOrJumping", "IsOnGround", "IsStuck", "IsUsingLadder", "Jump", "JumpAcrossGap", "SetAcceleration", "SetAvoidAllowed", "SetClimbAllowed", "SetDeathDropHeight", "SetDeceleration", "SetDesiredSpeed", "SetGravity", "SetJumpGapsAllowed", "SetJumpHeight", "SetMaxYawRate", "SetStepHeight", "SetVelocity" }) do if __glua_classes.CLuaLocomotion[n] == nil then __glua_classes.CLuaLocomotion[n] = stub("CLuaLocomotion:" .. n) end end

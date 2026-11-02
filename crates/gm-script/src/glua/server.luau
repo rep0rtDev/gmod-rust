@@ -540,6 +540,30 @@ if events then
     local initialized = false
 local seen_players = {}
 local prev_move = {}
+    local move_hooks_on = false
+    local function movedata(p)
+        return setmetatable({
+            origin = { x = p.ox, y = p.oy, z = p.oz }, velocity = { x = p.vx, y = p.vy, z = p.vz },
+            angles = { x = p.ax, y = p.ay, z = p.az }, old_angles = { x = p.ax, y = p.ay, z = p.az },
+            buttons = p.buttons, old_buttons = p.old_buttons, moves = { x = p.fx, y = p.fy, z = p.fz },
+            maxspeed = p.maxspeed, impulse = 0,
+        }, __glua_classes.CMoveData)
+    end
+    events.on("player.setup_move", function(p)
+        local ply = Player(p.player); local mv = movedata(p)
+        hook.Run("SetupMove", ply, mv, ply:GetCurrentCommand())
+        return mv:__text()
+    end)
+    events.on("player.move", function(p)
+        local ply = Player(p.player); local mv = movedata(p)
+        if hook.Run("Move", ply, mv) == true then return false end
+        return mv:__text()
+    end)
+    events.on("player.finish_move", function(p)
+        local ply = Player(p.player); local mv = movedata(p)
+        hook.Run("FinishMove", ply, mv)
+        return mv:__text()
+    end)
     events.on("tick.pre", function()
         if not initialized then
             initialized = true
@@ -552,6 +576,8 @@ local prev_move = {}
         end
         local hooks = hook.GetTable()
         local function wanted(name) return hooks[name] ~= nil and next(hooks[name]) ~= nil end
+        local mh = wanted("SetupMove") or wanted("Move") or wanted("FinishMove")
+        if mh ~= move_hooks_on and world and world.queue then move_hooks_on = mh; world.queue("move_hooks", 0, mh) end
         local per_tick = wanted("PlayerTick") or wanted("PlayerPostThink")
         local deltas = wanted("OnPlayerJump") or wanted("OnPlayerHitGround") or wanted("PlayerAmmoChanged")
         local first_sight = wanted("PlayerConnect") or wanted("PlayerAuthed") or wanted("NetworkIDValidated") or wanted("PlayerInitialSpawn") or wanted("PlayerSetModel")
