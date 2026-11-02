@@ -1111,3 +1111,35 @@ fn player_delta_hooks_fire_on_landing_jump_and_ammo() {
     assert!(joined.contains(":99"), "{joined}");
     assert!(log.last().is_some_and(|l| l == "jump"), "{joined}");
 }
+
+#[test]
+fn default_reload_and_drop_if_held() {
+    let mut rt = runtime(
+        "weapons.Register({ Primary = { ClipSize = 30, Ammo = 'Pistol' } }, 'weapon_pistol')
+         events.on('tick.pre', function()
+             local w = Player(1):GetWeapon('weapon_pistol')
+             local before = w:Clip1()
+             state.r = { w:DefaultReload(ACT_VM_RELOAD) and 1 or 0, w:GetMaxClip1(), before,
+                         w:DefaultReload(ACT_VM_RELOAD) and 1 or 0 }
+             DropEntityIfHeld(Entity(5))
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!((r[0], r[1]), (1.0, 30.0));
+    let take = (30.0 - r[2]).min(20.0) as i32;
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    let dbg = format!("{writes:?}");
+    assert!(
+        dbg.contains(&format!("count: {}", r[2] as i32 + take)),
+        "{dbg}"
+    );
+    assert!(dbg.contains(&format!("count: -{take}")), "{dbg}");
+    assert!(
+        matches!(writes.last(), Some(QueuedWrite::ForceDrop { ent: 5 })),
+        "{dbg}"
+    );
+}

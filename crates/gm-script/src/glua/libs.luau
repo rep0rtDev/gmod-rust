@@ -160,7 +160,7 @@ function IsFriendEntityName(c) return ({ npc_citizen = true, npc_alyx = true, np
 function IsUselessModel(m) m = string.lower(m or ""); return m:find("_gesture") ~= nil or m:find("_anim") ~= nil or m:find("_gestures") ~= nil or m:find("_postures") ~= nil or m:find("_shared") ~= nil or m:find("_ss") ~= nil or m:find("_arms") ~= nil or m:find("_animations") ~= nil end
 UTIL_IsUselessModel = IsUselessModel
 BRANCH = "x86-64"
-for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CompileString", "CreatePhysCollideBox", "CreatePhysCollidesFromModel", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "DropEntityIfHeld", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "IsMounted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "Path", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "RunString", "RunStringEx", "SentenceDuration", "SetPhysConstraintSystem", "SoundDuration", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
+for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CompileString", "CreatePhysCollideBox", "CreatePhysCollidesFromModel", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "IsMounted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "Path", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "RunString", "RunStringEx", "SentenceDuration", "SetPhysConstraintSystem", "SoundDuration", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
 
 
 -- Tool: the tool gun's per-mode state object (ghost entities need the client realm).
@@ -548,3 +548,5 @@ usermessage = usermessage or {}
 for _, n in ipairs({ "GetTable", "Hook", "IncomingMessage" }) do if usermessage[n] == nil then usermessage[n] = stub("usermessage." .. n) end end
 widgets = widgets or {}
 for _, n in ipairs({ "PlayerTick" }) do if widgets[n] == nil then widgets[n] = stub("widgets." .. n) end end
+
+function DropEntityIfHeld(e) if IsValid(e) then e:ForcePlayerDrop() end end

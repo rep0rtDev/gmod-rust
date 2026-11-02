@@ -846,6 +846,11 @@ Player snapshot also carries `joined_tick` (`TimeConnected` = ticks since x inte
 `last_hitgroup` (last recorded hit on the player); entity snapshot carries `on_fire`
 (`IsOnFire`). `Entity:ForcePlayerDrop` makes every holder let go (`Server::force_player_drop`).
 
+`Weapon:GetMaxClip1 / 2` read `Primary / Secondary.ClipSize` of the registered SWEP table
+(-1 without one); `Weapon:DefaultReload` moves reserve ammo into the clip through the same
+queued clip / ammo writes (no reload animation or timing: the game plays the reload sequence
+and refills at its end). `DropEntityIfHeld` is `Entity:ForcePlayerDrop`.
+
 Per-player delta hooks (only when something is subscribed, like `PlayerTick`): the bridge
 keeps the previous tick's `on_ground` / velocity / ammo per player and raises
 `OnPlayerHitGround` (speed = the fall speed), `OnPlayerJump` (`IN_JUMP` pressed while on the

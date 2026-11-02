@@ -13,10 +13,10 @@ local function snap(id) return world and world.get(id) or nil end
 ------------------------------------------------------------------------ Entity
 local ENT = {}
 ENT.__index = function(self, k)
-    local m = rawget(ENT, k)
-    if m ~= nil then return m end
     local sub = rawget(self, "__class_meta")
     if sub then local f = sub[k]; if f ~= nil then return f end end
+    local m = rawget(ENT, k)
+    if m ~= nil then return m end
     return rawget(self, "__vars")[k]
 end
 ENT.__newindex = function(self, k, v) rawget(self, "__vars")[k] = v end
@@ -24,7 +24,12 @@ ENT.__tostring = function(self)
     if not self:IsValid() then return "[NULL Entity]" end
     return "Entity [" .. self:EntIndex() .. "][" .. self:GetClass() .. "]"
 end
-ENT.__eq = function(a, b) return rawget(a, "__id") == rawget(b, "__id") and rawget(a, "__id") ~= nil end
+ENT.__eq = function(a, b)
+    local id = rawget(a, "__id")
+    if id == nil or id ~= rawget(b, "__id") then return false end
+    if id ~= 0 then return true end
+    return rawget(a, "__class") == rawget(b, "__class") and rawget(a, "__owner") == rawget(b, "__owner")
+end
 local entities = setmetatable({}, { __mode = "v" })
 local function wrap(id, class_meta)
     local e = entities[id]
@@ -1591,7 +1596,7 @@ function WEP:GetNextSecondaryFire() return rawget(self, "__next2") or 0 end
 function WEP:SetNextSecondaryFire(t) rawset(self, "__next2", t) end
 function WEP:LastShootTime() return rawget(self, "__lastshot") or 0 end
 function WEP:SetLastShootTime(t) rawset(self, "__lastshot", t or CurTime()) end
-for _, name in ipairs({ "CallOnClient", "DefaultReload", "GetActivity", "IsWeaponVisible", "SendWeaponAnim", "SetActivity", "SetClip1", "SetClip2" }) do
+for _, name in ipairs({ "CallOnClient", "GetActivity", "IsWeaponVisible", "SendWeaponAnim", "SetActivity", "SetClip1", "SetClip2" }) do
     if WEP[name] == nil then WEP[name] = stub("Weapon:" .. name) end
 end
 
@@ -1609,4 +1614,21 @@ function VEH:BoostTimeLeft() return 0 end
 function VEH:IsVehicleBodyInWater() return false end
 for _, name in ipairs({ "CheckExitPoint", "EnableEngine", "GetAmmo", "GetCameraDistance", "GetMaxSpeed", "GetOperatingParams", "GetPassengerSeatPoint", "GetRPM", "GetSteeringDegrees", "GetThirdPersonMode", "GetVehicleParams", "GetVehicleViewPosition", "GetWheel", "GetWheelBaseHeight", "GetWheelContactPoint", "GetWheelTotalHeight", "HasBrakePedal", "ReleaseHandbrake", "SetBoost", "SetCameraDistance", "SetHandbrake", "SetHasBrakePedal", "SetMaxReverseThrottle", "SetMaxThrottle", "SetSpringLength", "SetSteering", "SetSteeringDegrees", "SetThirdPersonMode", "SetThrottle", "SetVehicleClass", "SetVehicleEntryAnim", "SetVehicleParams", "SetWheelFriction", "StartEngine" }) do
     if VEH[name] == nil then VEH[name] = stub("Vehicle:" .. name) end
+end
+
+function WEP:GetMaxClip1() local d = wdef(self); local n = d and d.Primary and d.Primary.ClipSize; return n or -1 end
+function WEP:GetMaxClip2() local d = wdef(self); local n = d and d.Secondary and d.Secondary.ClipSize; return n or -1 end
+function WEP:DefaultReload(_act)
+    local owner = self:GetOwner()
+    if owner == NULL then return false end
+    local max, clip = self:GetMaxClip1(), self:Clip1()
+    if max < 0 or clip >= max then return false end
+    local d = wdef(self)
+    local atype = d and d.Primary and d.Primary.Ammo or self:GetPrimaryAmmoType()
+    local reserve = owner:GetAmmoCount(atype)
+    local take = math.min(max - clip, reserve)
+    if take <= 0 then return false end
+    self:SetClip1(clip + take)
+    owner:RemoveAmmo(take, atype)
+    return true
 end
