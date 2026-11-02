@@ -684,3 +684,23 @@ fn move_hooks_bracket_the_mover() {
     assert_eq!(d.parse(&d.to_text()), Some(d));
     assert_eq!(d.parse("1 2"), None);
 }
+
+#[test]
+fn physenv_cvars_reach_the_physics() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    assert_eq!(server.cvar("sv_gravity"), Some("600"));
+    assert!(server.set_cvar("sv_gravity", "300"));
+    assert_eq!(server.physics.gravity, 300.0);
+    assert!(server.set_cvar("phys_timescale", "0.5"));
+    assert_eq!(server.physics_time_scale, 0.5);
+    assert!(server.set_cvar("phys_timescale", "-1"));
+    assert_eq!(server.physics_time_scale, 1.0);
+    assert!(server.set_cvar("gm_phys_paused", "1"));
+    assert!(server.physics_paused);
+}

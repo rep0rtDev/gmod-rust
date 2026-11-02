@@ -4474,6 +4474,10 @@ pub struct Server<'w> {
     /// `sbox_playershurtplayers`: with it off hits are still resolved and recorded but neither
     /// hurt nor push (`hit_pistol_nohurt`, `hit_rpg_nohurt`).
     pub players_hurt_players: bool,
+    /// `gm_phys_paused`: the physics step is skipped.
+    pub physics_paused: bool,
+    /// `phys_timescale`: the physics step runs at this fraction of the tick.
+    pub physics_time_scale: f32,
     pub prop_hits: Vec<PropHit>,
 
     pub spawn_points: Vec<SpawnPoint>,
@@ -4570,6 +4574,14 @@ impl Cvar {
 
 /// The sandbox `sbox_*` variables with their measured defaults (convars-defaults.md), all
 /// replicated like the game's.
+/// Physics environment variables scripts drive through `physenv` (`sv_gravity` and
+/// `phys_timescale` as in the game; `gm_phys_paused` is ours, `physenv.SetPhysicsPaused`).
+pub const PHYS_CVARS: [(&str, &str); 3] = [
+    ("sv_gravity", "600"),
+    ("phys_timescale", "1"),
+    ("gm_phys_paused", "0"),
+];
+
 pub const SBOX_CVARS: [(&str, &str); 24] = [
     ("sbox_maxprops", "200"),
     ("sbox_maxragdolls", "10"),
@@ -4644,6 +4656,8 @@ impl<'w> Server<'w> {
             step_loader: None,
             step_sounds: BTreeMap::new(),
             players_hurt_players: true,
+            physics_paused: false,
+            physics_time_scale: 1.0,
             prop_hits: Vec::new(),
 
             spawn_points: Vec::new(),
@@ -4662,6 +4676,7 @@ impl<'w> Server<'w> {
             fall_damage_progressive: false,
             cvars: SBOX_CVARS
                 .iter()
+                .chain(PHYS_CVARS.iter())
                 .map(|(n, d)| (n.to_string(), Cvar::replicated(d)))
                 .collect(),
             cvar_changes: Vec::new(),
@@ -4865,6 +4880,18 @@ impl<'w> Server<'w> {
             "sbox_maxconstraints" => self.sandbox.limits.max_constraints = num as i32,
             "sbox_maxropeconstraints" => self.sandbox.limits.max_ropeconstraints = num as i32,
             "sbox_playershurtplayers" => self.players_hurt_players = num != 0.0,
+            "sv_gravity" => {
+                self.mover.cfg.gravity = num;
+                self.physics.set_world_gravity(num);
+            }
+            "phys_timescale" => {
+                self.physics_time_scale = if num.is_finite() && num > 0.0 {
+                    num
+                } else {
+                    1.0
+                }
+            }
+            "gm_phys_paused" => self.physics_paused = num != 0.0,
             _ => {}
         }
         self.cvar_changes.push((name.to_string(), old, v));
@@ -13064,7 +13091,12 @@ impl<'w> Server<'w> {
         self.animate_ragdoll_friction();
         // the physics step after bullets, moves and projectiles: a prop hit by any of them takes
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
-        self.physics.step();
+        if !self.physics_paused {
+            let base = self.physics.tick_interval;
+            self.physics.tick_interval = base * self.physics_time_scale;
+            self.physics.step();
+            self.physics.tick_interval = base;
+        }
         self.follow_parents();
         self.impact_sounds();
         let contacts = self.physics.take_contacts();

@@ -101,11 +101,15 @@ function SendUserMessage(name, filter, ...) umsg.Start(name, filter); for _, v i
 
 physenv = physenv or {}
 function physenv.GetGravity() return Vector(0, 0, -(GetConVar("sv_gravity") and GetConVar("sv_gravity"):GetFloat() or 600)) end
-function physenv.GetTimeScale() return 1 end
-function physenv.GetPhysicsPaused() return false end
+function physenv.GetTimeScale() local c = GetConVar("phys_timescale"); return c and c:GetFloat() or 1 end
+function physenv.GetPhysicsPaused() local c = GetConVar("gm_phys_paused"); return c ~= nil and c:GetInt() ~= 0 end
+-- the server's physics environment is driven through its replicated variables
+function physenv.SetGravity(v) RunConsoleCommand("sv_gravity", tostring(-(v and v.z or 0))) end
+function physenv.SetTimeScale(s) RunConsoleCommand("phys_timescale", tostring(tonumber(s) or 1)) end
+function physenv.SetPhysicsPaused(b) RunConsoleCommand("gm_phys_paused", b and "1" or "0") end
 function physenv.GetAirDensity() return 2 end
 function physenv.GetLastSimulationTime() return engine.TickInterval() end
-for _, n in ipairs({ "AddSurfaceData", "GetPerformanceSettings", "SetAirDensity", "SetGravity", "SetPerformanceSettings", "SetPhysicsPaused", "SetTimeScale" }) do if physenv[n] == nil then physenv[n] = stub("physenv." .. n) end end
+for _, n in ipairs({ "AddSurfaceData", "GetPerformanceSettings", "SetAirDensity", "SetPerformanceSettings" }) do if physenv[n] == nil then physenv[n] = stub("physenv." .. n) end end
 
 function game.GetAmmoDamageType(id) local d = game.GetAmmoData and game.GetAmmoData(id); return d and d.dmgtype or DMG_BULLET end
 function game.GetAmmoForce(id) local d = game.GetAmmoData and game.GetAmmoData(id); return d and d.force or 1000 end

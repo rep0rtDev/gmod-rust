@@ -776,6 +776,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `physenv.SetGravity(v)` / `SetTimeScale(s)` / `SetPhysicsPaused(b)` drive the server's
+  replicated variables `sv_gravity` (the physics world gravity re-applied to live bodies, and the
+  players' mover gravity), `phys_timescale` (the physics step runs at that fraction of the tick;
+  non-positive restores 1) and our `gm_phys_paused` (the physics step is skipped); the getters read
+  them back. `SetAirDensity` / `AddSurfaceData` / performance settings stay stubs (drag is
+  measured per face, surfaces come from the mounted content).
 - `NPC:AddRelationship("player D_* prio")` / `AddEntityRelationship(ply, D_*, prio)` set the
   NPC's disposition toward players: `D_HT` makes it hunt them even for a class the table calls
   friendly (it fights with what it has: weapon, melee moves, or just facing), anything else

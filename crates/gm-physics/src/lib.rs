@@ -1538,6 +1538,27 @@ impl World {
         }
     }
 
+    /// `physenv.SetGravity` / `sv_gravity`: a new world gravity (u/s^2) applied to every live
+    /// body that has gravity (held and weightless bodies keep their factor 0).
+    pub fn set_world_gravity(&mut self, gravity: f32) {
+        if !gravity.is_finite() {
+            return;
+        }
+        self.gravity = gravity;
+        let factor = self.gravity_factor();
+        let ids: Vec<u32> = self.inertias.keys().copied().collect();
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            for id in ids {
+                if self.no_gravity.contains(&id) || self.held.contains(&id) {
+                    continue;
+                }
+                JPC_BodyInterface_SetGravityFactor(bi, id, factor);
+                JPC_BodyInterface_ActivateBody(bi, id);
+            }
+        }
+    }
+
     pub fn set_gravity(&mut self, body: BodyHandle, on: bool) {
         self.no_gravity.remove(&body.0);
         if !on {

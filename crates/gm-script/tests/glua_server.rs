@@ -2622,3 +2622,37 @@ fn npc_relationship_write_and_disposition() {
     let disp: f64 = rt.actors()[0].eval("return state.disp").unwrap();
     assert_eq!(disp, 3.0);
 }
+
+#[test]
+fn physenv_setters_drive_the_cvars() {
+    let mut rt = runtime(
+        "hook.Add('Think', 't', function()
+            physenv.SetGravity(Vector(0, 0, -300)) physenv.SetTimeScale(0.5) physenv.SetPhysicsPaused(true)
+            state.g, state.ts, state.p = physenv.GetGravity().z, physenv.GetTimeScale(), physenv.GetPhysicsPaused()
+         end)",
+    );
+    let mut s = (*snapshot()).clone();
+    for (k, v) in [
+        ("sv_gravity", "600"),
+        ("phys_timescale", "2"),
+        ("gm_phys_paused", "1"),
+    ] {
+        s.cvars.insert(k.into(), v.into());
+    }
+    rt.actors_mut()[0]
+        .dispatch(&Arc::new(s), "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    let text = format!("{writes:?}");
+    for want in [
+        "SetCvar { name: \"sv_gravity\", value: \"300\" }",
+        "SetCvar { name: \"phys_timescale\", value: \"0.5\" }",
+        "SetCvar { name: \"gm_phys_paused\", value: \"1\" }",
+    ] {
+        assert!(text.contains(want), "{want} in {text}");
+    }
+    let (g, ts, p): (f64, f64, bool) = rt.actors()[0]
+        .eval("return state.g, state.ts, state.p")
+        .unwrap();
+    assert_eq!((g, ts, p), (-600.0, 2.0, true));
+}
