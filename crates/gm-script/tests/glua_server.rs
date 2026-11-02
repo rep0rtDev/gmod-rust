@@ -1702,3 +1702,24 @@ fn step_sound_time_hook_returns_the_interval() {
         .unwrap();
     assert_eq!((kind, walking), (3, true));
 }
+
+#[test]
+fn game_description_comes_from_the_hook() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"GetGameDescription\", \"t\", function() return \"My Mode\" end)".into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let reply = rt.actors_mut()[0]
+        .dispatch_reply(&snap, "gamemode.description", &Payload::default(), 3)
+        .unwrap();
+    assert!(matches!(reply, gm_script::actor::Reply::Text(t) if t == "My Mode"));
+}

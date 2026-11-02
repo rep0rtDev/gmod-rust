@@ -1370,6 +1370,10 @@ pub trait ServerHooks {
     fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32);
     /// `entity.removed` after an entity left the table through a player's command.
     fn entity_removed(&mut self, _server: &mut Server<'_>, _player: u32, _ent: u32) {}
+    /// `GetGameDescription`: what the server advertises as its game (None keeps the last).
+    fn game_description(&mut self, _server: &mut Server<'_>) -> Option<String> {
+        None
+    }
     /// A click of a stool the sandbox does not know: a scripted tool may handle it.
     fn tool_click(
         &mut self,

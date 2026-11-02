@@ -713,6 +713,10 @@ local prev_move = {}
     events.on("sandbox.check_limit", function(p)
         if hook.Run("PlayerCheckLimit", Player(p.player), p.kind, p.current or 0, p.max or -1) == false then return false end
     end)
+    events.on("gamemode.description", function()
+        local d = hook.Run("GetGameDescription")
+        if type(d) == "string" then return d end
+    end)
     events.on("player.step_time", function(p)
         local r = hook.Run("PlayerStepSoundTime", Player(p.player), p.kind or 0, p.walking == true)
         if type(r) == "number" then return r end

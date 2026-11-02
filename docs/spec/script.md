@@ -712,6 +712,9 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `GM:GetGameDescription()` is asked every 64 ticks (`gamemode.description`) and the string
+  travels in the master heartbeat (`ServerInfo.game`); the server browser shows it as the
+  gamemode column (was the constant "sandbox").
 - `GM:PlayerStepSoundTime(ply, kind, walking)` is asked after every footstep the server plays
   (`Request::StepTime`; kind `STEPSOUNDTIME_NORMAL` / `WATER_KNEE` / `WATER_FOOT` from the
   water level, ladder steps do not pass here): a number replaces the milliseconds to the next

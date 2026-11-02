@@ -244,6 +244,7 @@ mod tests {
             version: "0.1".into(),
             addons: vec!["hud".into()],
             key: None,
+            game: "Sandbox".into(),
         };
         s_ep.send(0, MasterMsg::Heartbeat(info.clone()).encode());
         net.tick();

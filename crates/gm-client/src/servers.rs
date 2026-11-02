@@ -357,7 +357,11 @@ fn entry_from_info(addr: &str, info: &gm_net::ServerInfo, ping: u32) -> ServerEn
         players: u32::from(info.players),
         maxplayers: u32::from(info.max_players),
         ping,
-        gamemode: "sandbox".to_string(),
+        gamemode: if info.game.is_empty() {
+            "sandbox".to_string()
+        } else {
+            info.game.clone()
+        },
         last_played: 0,
     }
 }

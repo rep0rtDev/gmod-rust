@@ -27,6 +27,8 @@ pub struct ServerInfo {
     pub addons: Vec<String>,
     /// The server's identity (`ServerNet::with_key`), what a client pins with `--server-key`.
     pub key: Option<[u8; 32]>,
+    /// `GM:GetGameDescription` of the running gamemode (empty until the gamemode answered).
+    pub game: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,6 +82,7 @@ fn write_info(w: &mut Writer, i: &ServerInfo) {
         }
         None => w.u8(0),
     }
+    w.str(&i.game);
 }
 
 fn read_info(r: &mut Reader) -> Result<ServerInfo, Truncated> {
@@ -103,6 +106,7 @@ fn read_info(r: &mut Reader) -> Result<ServerInfo, Truncated> {
     } else {
         None
     };
+    let game = r.str()?;
     Ok(ServerInfo {
         name,
         map,
@@ -112,6 +116,7 @@ fn read_info(r: &mut Reader) -> Result<ServerInfo, Truncated> {
         version,
         addons,
         key,
+        game,
     })
 }
 

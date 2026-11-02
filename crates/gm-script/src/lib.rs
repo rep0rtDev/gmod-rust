@@ -1639,6 +1639,12 @@ impl gm_server::ServerHooks for Runtime {
     fn entity_removed(&mut self, server: &mut Server<'_>, player: u32, ent: u32) {
         Runtime::entity_removed(self, server, player, ent);
     }
+    fn game_description(&mut self, server: &mut Server<'_>) -> Option<String> {
+        match self.ask_text(server, "gamemode.description", api::Payload::default()) {
+            gm_server::Verdict::Text(t) => Some(t),
+            _ => None,
+        }
+    }
     fn player_disconnected(&mut self, server: &mut Server<'_>, player: u32) {
         Runtime::player_disconnected(self, server, player);
     }
@@ -1737,6 +1743,9 @@ impl gm_server::ServerHooks for SharedRuntime {
             .lock()
             .unwrap()
             .prop_spawn_request(server, player, model)
+    }
+    fn game_description(&mut self, server: &mut Server<'_>) -> Option<String> {
+        self.0.lock().unwrap().game_description(server)
     }
     fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32) {
         self.0.lock().unwrap().entity_spawned(server, player, ent);

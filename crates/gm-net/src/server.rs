@@ -694,6 +694,11 @@ impl ServerNet {
             }
         }
         if let Some(h) = self.hooks.as_mut() {
+            if self.tick.is_multiple_of(64) {
+                if let Some(game) = h.game_description(server) {
+                    self.info.game = game;
+                }
+            }
             h.pre_tick(server);
         }
         server.tick(&cmds);
