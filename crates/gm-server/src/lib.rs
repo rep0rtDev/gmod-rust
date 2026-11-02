@@ -968,6 +968,8 @@ pub struct Npc {
     pub cover_at: Option<Vec3>,
     pub cover_until: u64,
     pub cover_cooldown: u64,
+    pub suppress_hits: u8,
+    pub suppress_since: u64,
     /// Thinks in a row the body covered less than a tenth of its step (a blocked sweep).
     pub stuck: u8,
     /// Set by an addon's `npc_target` clear: no target is picked until the next `npc_target`.
@@ -1201,6 +1203,18 @@ pub const NPC_COVER_HEALTH: f32 = 0.4;
 pub const NPC_COVER_SPACING: f32 = 32.0;
 pub const NPC_COVER_TICKS: u64 = 200;
 pub const NPC_COVER_COOLDOWN: u64 = 660;
+/// Suppressing fire (own rule): a player's bullet passing within this of an armed NPC's chest
+/// without hitting it is a near miss; NPC_SUPPRESS_SHOTS of them inside NPC_SUPPRESS_WINDOW
+/// ticks send the NPC to cover like a wounding hit does.
+pub const NPC_SUPPRESS_RADIUS: f32 = 48.0;
+pub const NPC_SUPPRESS_SHOTS: u8 = 3;
+pub const NPC_SUPPRESS_WINDOW: u64 = 66;
+/// A live grenade / rocket (any exploding projectile) inside this of an armed NPC sends it to
+/// cover from the thrower (own rule).
+pub const NPC_GRENADE_RANGE: f32 = 256.0;
+/// Squadmates chasing one target fan out: slot k (by entity id) aims
+/// ceil(k/2) * this to the left / right of the target, perpendicular to its own approach.
+pub const NPC_FORMATION_SPACING: f32 = 96.0;
 pub const NPC_SQUAD_RANGE: f32 = 512.0;
 const NPC_GRAVITY: f32 = 600.0;
 
@@ -1342,6 +1356,17 @@ fn cone_dir(axis: Vec3, half_deg: f32, seed: u64) -> Vec3 {
     let right = axis.cross(up).normalize();
     let fwd_up = right.cross(axis);
     (axis * ang.cos() + (right * phi.cos() + fwd_up * phi.sin()) * ang.sin()).normalize()
+}
+
+/// Distance from `p` to the segment `a..a + d`.
+fn segment_distance(a: Vec3, d: Vec3, p: Vec3) -> f32 {
+    let len2 = d.length_squared();
+    let t = if len2 > 1e-6 {
+        ((p - a).dot(d) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (a + d * t).distance(p)
 }
 
 fn wrap_deg(a: f32) -> f32 {
@@ -4168,6 +4193,46 @@ impl<'w> Server<'w> {
                 }
             }
         }
+        {
+            let mut t_end = world.fraction;
+            if let Some(h) = prop.as_ref() {
+                t_end = t_end.min(h.fraction);
+            }
+            if let Some((_, t)) = best {
+                t_end = t_end.min(t);
+            }
+            if let Some((_, t)) = npc_hit {
+                t_end = t_end.min(t);
+            }
+            let seg = d * t_end;
+            let near: Vec<u32> = self
+                .npcs
+                .iter()
+                .filter(|(id, n)| {
+                    n.dead_at.is_none()
+                        && npc_hit.is_none_or(|h| h.0 != **id)
+                        && npc_weapon_shot(&n.weapon).is_some()
+                        && segment_distance(eye, seg, n.pos + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT))
+                            <= NPC_SUPPRESS_RADIUS
+                })
+                .map(|(id, _)| *id)
+                .collect();
+            for id in near {
+                let tick = self.tick_count;
+                let Some(n) = self.npcs.get_mut(&id) else {
+                    continue;
+                };
+                if tick > n.suppress_since + NPC_SUPPRESS_WINDOW {
+                    n.suppress_hits = 0;
+                    n.suppress_since = tick;
+                }
+                n.suppress_hits += 1;
+                if n.suppress_hits >= NPC_SUPPRESS_SHOTS {
+                    n.suppress_hits = 0;
+                    self.npc_threatened(id, attacker, tick);
+                }
+            }
+        }
         if let Some((npc, t)) = npc_hit {
             if best.is_none_or(|b| t < b.1)
                 && prop.as_ref().is_none_or(|h| t < h.fraction)
@@ -4750,6 +4815,32 @@ impl<'w> Server<'w> {
         }
         let mut k = keep.into_iter();
         self.projectiles.retain(|_| k.next().unwrap_or(true));
+        let threats: Vec<(u32, Vec3)> = self
+            .projectiles
+            .iter()
+            .filter(|p| weapons::explosion(p.kind).is_some())
+            .map(|p| (p.owner, p.origin))
+            .chain(
+                died.iter()
+                    .filter(|(k, _, _)| weapons::explosion(*k).is_some())
+                    .map(|(_, o, at)| (*o, *at)),
+            )
+            .collect();
+        for (owner, at) in threats {
+            let ids: Vec<u32> = self
+                .npcs
+                .iter()
+                .filter(|(_, n)| {
+                    n.dead_at.is_none()
+                        && npc_weapon_shot(&n.weapon).is_some()
+                        && n.pos.distance(at) <= NPC_GRENADE_RANGE
+                })
+                .map(|(i, _)| *i)
+                .collect();
+            for id in ids {
+                self.npc_threatened(id, owner, self.tick_count);
+            }
+        }
         for (kind, owner, at) in died {
             if kind == weapons::Launch::Rocket {
                 if let Some(p) = self.players.get_mut(&owner) {
@@ -5692,6 +5783,8 @@ impl<'w> Server<'w> {
             cover_at: None,
             cover_until: 0,
             cover_cooldown: 0,
+            suppress_hits: 0,
+            suppress_since: 0,
             stuck: 0,
             passive: false,
             last_shot: 0,
@@ -6053,6 +6146,7 @@ impl<'w> Server<'w> {
             .keys()
             .filter_map(|&p| self.eye(p).map(|e| self.collision.cluster_at(e.0)))
             .collect();
+        let slots = self.formation_slots();
         let mut thought = Vec::new();
         for id in ids {
             let Some(n) = self.npcs.get_mut(&id) else {
@@ -6083,10 +6177,12 @@ impl<'w> Server<'w> {
                         let away = n.pos.truncate().distance(target.truncate()) > n.chase_reach;
                         if stale && away {
                             let extents = Vec3::new(32.0, 32.0, 72.0);
+                            let slot = slots.get(&id).copied().unwrap_or(glam::Vec2::ZERO);
+                            let goal = target + slot.extend(0.0);
                             if let Some(path) = self
                                 .nav
                                 .as_deref()
-                                .and_then(|nav| nav.find_path(n.pos, target, extents))
+                                .and_then(|nav| nav.find_path(n.pos, goal, extents))
                             {
                                 n.goal = Some(NpcPath {
                                     points: path.points,
@@ -6667,6 +6763,70 @@ impl<'w> Server<'w> {
 
     /// Squads: an NPC without a target takes the target of a squadmate (same spawn key within
     /// NPC_SQUAD_RANGE); unseen, it chases it like a target it lost sight of.
+    /// A threat that is not a hit (suppressing fire, a live grenade): an armed hostile NPC
+    /// off cooldown and not already in cover wants cover on its next think, from `by` if it
+    /// had no target yet.
+    fn npc_threatened(&mut self, id: u32, by: u32, tick: u64) {
+        let alive = self.players.get(&by).is_some_and(|p| p.alive);
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
+        if n.dead_at.is_some()
+            || n.passive
+            || !npc_hostile(&n.class)
+            || n.cover_at.is_some()
+            || tick < n.cover_cooldown
+        {
+            return;
+        }
+        if n.target.is_none() && alive {
+            n.target = Some(by);
+            n.target_seen = tick;
+        }
+        if n.target.is_some() {
+            n.cover_wanted = true;
+        }
+    }
+
+    /// Formation slots (own rule): squadmates (same spawn key within NPC_SQUAD_RANGE) chasing
+    /// the same player are ordered by id; slot 0 goes straight at them, slot k aims
+    /// ceil(k / 2) * NPC_FORMATION_SPACING to its own left (odd) or right (even) of the player,
+    /// perpendicular to its own line of approach, so the squad fans out instead of stacking.
+    fn formation_slots(&self) -> HashMap<u32, glam::Vec2> {
+        let mut slots = HashMap::new();
+        for (&id, n) in &self.npcs {
+            let Some(p) = n.chase.filter(|_| n.dead_at.is_none()) else {
+                continue;
+            };
+            let Some(target) = self.players.get(&p).map(|pl| pl.state.origin) else {
+                continue;
+            };
+            let k = self
+                .npcs
+                .iter()
+                .filter(|(&i, o)| {
+                    i < id
+                        && o.key == n.key
+                        && o.dead_at.is_none()
+                        && o.chase == Some(p)
+                        && o.pos.distance(n.pos) <= NPC_SQUAD_RANGE
+                })
+                .count();
+            if k == 0 {
+                continue;
+            }
+            let to = (n.pos - target).truncate();
+            let dir = if to.length_squared() > 1e-6 {
+                to.normalize()
+            } else {
+                glam::Vec2::X
+            };
+            let side = glam::Vec2::new(-dir.y, dir.x) * if k % 2 == 1 { 1.0 } else { -1.0 };
+            slots.insert(id, side * (k as f32 / 2.0).ceil() * NPC_FORMATION_SPACING);
+        }
+        slots
+    }
+
     fn npc_share_targets(&mut self, thought: &[u32], now: u64) {
         for &id in thought {
             let Some(n) = self.npcs.get(&id) else {
@@ -7180,6 +7340,8 @@ impl<'w> Server<'w> {
                 cover_at: None,
                 cover_until: 0,
                 cover_cooldown: 0,
+                suppress_hits: 0,
+                suppress_since: 0,
                 stuck: 0,
                 passive: false,
                 last_shot: 0,

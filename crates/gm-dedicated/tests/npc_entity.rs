@@ -1094,3 +1094,123 @@ fn antlion_runs_and_jumps_from_afar() {
     let hit = first_hit.expect("never hit");
     assert!(hit > t_wind + 42 + flew, "hit {hit} before the jump ended");
 }
+
+/// Suppressing fire (our rule): NPC_SUPPRESS_SHOTS bullets passing within NPC_SUPPRESS_RADIUS
+/// of an unhurt soldier's chest inside NPC_SUPPRESS_WINDOW ticks send it to cover; a lone
+/// near miss does not.
+#[test]
+fn soldier_takes_cover_under_suppressing_fire() {
+    let world = combat_server!(world);
+    let (mut server, idle, _start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    for _ in 0..10 {
+        server.tick(&idle);
+    }
+    assert_eq!(server.npcs[&id].target, Some(1));
+    let eye = server.eye(1).unwrap().0;
+    let chest = server.npcs[&id].pos + Vec3::new(0.0, 0.0, 40.0);
+    // aim 30 u beside the chest: a miss inside the suppression radius
+    let to = chest - eye;
+    let side = Vec3::new(-to.y, to.x, 0.0).normalize() * 30.0;
+    let hp = server.npcs[&id].health;
+    server.fire_bullets(1, (chest + side - eye).normalize(), "Pistol", None);
+    assert_eq!(server.npcs[&id].health, hp, "the near miss hit");
+    assert_eq!(server.npcs[&id].suppress_hits, 1);
+    assert!(!server.npcs[&id].cover_wanted);
+    // the window lapses: the count restarts
+    for _ in 0..gm_server::NPC_SUPPRESS_WINDOW + 1 {
+        server.tick(&idle);
+    }
+    server.fire_bullets(1, (chest + side - eye).normalize(), "Pistol", None);
+    assert_eq!(server.npcs[&id].suppress_hits, 1);
+    server.fire_bullets(1, (chest - side - eye).normalize(), "Pistol", None);
+    server.fire_bullets(1, (chest + side - eye).normalize(), "Pistol", None);
+    assert_eq!(server.npcs[&id].health, hp, "a near miss hit");
+    assert!(
+        server.npcs[&id].cover_wanted,
+        "three near misses did not call for cover"
+    );
+    // a bullet far past the soldier never counts
+    assert_eq!(server.npcs[&id].suppress_hits, 0);
+    server.fire_bullets(1, (chest + side * 4.0 - eye).normalize(), "Pistol", None);
+    assert_eq!(server.npcs[&id].suppress_hits, 0);
+}
+
+/// Formation (our rule): two squadmates chasing one player do not stack - the second aims
+/// NPC_FORMATION_SPACING beside the player and the two end up apart.
+#[test]
+fn squad_fans_out_on_the_chase() {
+    let world = combat_server!(world);
+    let (mut server, idle, start) = combat_server!(world, server);
+    let a = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    let b = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    // both chase the player (forced, as an addon would)
+    assert!(server.npc_chase(a, 1, true));
+    assert!(server.npc_chase(b, 1, true));
+    server.npcs.get_mut(&a).unwrap().passive = true;
+    server.npcs.get_mut(&b).unwrap().passive = true;
+    // the player steps 400 u north so the chase has somewhere to go
+    server.teleport_player(1, start + Vec3::new(0.0, 400.0, 0.0));
+    for _ in 0..400 {
+        server.tick(&idle);
+    }
+    let pa = server.npcs[&a].pos;
+    let pb = server.npcs[&b].pos;
+    let player = server.players[&1].state.origin;
+    let ga = server.npcs[&a]
+        .goal
+        .as_ref()
+        .map(|g| g.points.last().copied());
+    let gb = server.npcs[&b]
+        .goal
+        .as_ref()
+        .map(|g| g.points.last().copied());
+    eprintln!("a {pa} b {pb} player {player} goals {ga:?} {gb:?}");
+    let apart = pa.truncate().distance(pb.truncate());
+    assert!(apart >= 64.0, "squadmates stacked: {apart:.1} u apart");
+    assert!(pa.truncate().distance(player.truncate()) < 200.0);
+    assert!(pb.truncate().distance(player.truncate()) < 200.0);
+}
+
+/// Grenade threat (our rule): a live exploding projectile inside NPC_GRENADE_RANGE of an
+/// armed soldier sends it to cover from the thrower before it goes off.
+#[test]
+fn soldier_takes_cover_from_a_live_grenade() {
+    let world = combat_server!(world);
+    let (mut server, idle, _start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    for _ in 0..10 {
+        server.tick(&idle);
+    }
+    assert_eq!(server.npcs[&id].target, Some(1));
+    assert!(!server.npcs[&id].cover_wanted);
+    // an AR2 grenade dropped 100 u beside the soldier (no physics body needed)
+    let at = server.npcs[&id].pos + Vec3::new(100.0, 0.0, 40.0);
+    let mut pr = gm_server::projectile::spawn(
+        gm_server::weapons::Launch::Smg1Grenade,
+        1,
+        at,
+        0.0,
+        0.0,
+        &world.collision,
+        None,
+    )
+    .expect("no grenade");
+    pr.velocity = Vec3::ZERO;
+    server.projectiles.push(pr);
+    server.tick(&idle);
+    assert!(
+        server.npcs[&id].cover_wanted || server.npcs[&id].cover_at.is_some(),
+        "grenade ignored"
+    );
+    let mut covered = None;
+    for t in 0..20 {
+        server.tick(&idle);
+        if server.npcs[&id].cover_at.is_some() {
+            covered = Some(t);
+            break;
+        }
+    }
+    eprintln!("cover after {covered:?}");
+    assert!(covered.is_some(), "never ran for cover");
+}
