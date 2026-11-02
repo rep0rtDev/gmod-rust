@@ -735,3 +735,18 @@ fn npc_state_caps_and_flex_materials() {
         rt.actors()[0].eval("return unpack(state.r)").unwrap();
     assert_eq!((cap, lo, kind.as_str(), nmat), (0x80000, 0.0, "", 0));
 }
+
+#[test]
+fn ban_limit_hit_and_remove_all_items_queue_writes() {
+    let (_, writes) =
+        run("local p = Player(1); p:Ban(10, true); p:LimitHit(\"props\"); p:RemoveAllItems()");
+    assert!(writes
+        .iter()
+        .any(|w| matches!(w, QueuedWrite::PlayerBan { player: 1 })));
+    assert!(writes.iter().any(
+        |w| matches!(w, QueuedWrite::PlayerLimitHit { player: 1, limit } if limit == "props")
+    ));
+    assert!(writes
+        .iter()
+        .any(|w| matches!(w, QueuedWrite::PlayerStripWeapon { player: 1, .. })));
+}

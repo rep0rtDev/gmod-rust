@@ -638,6 +638,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   read it and `MarkTookDamageFromEnemy` stamps the NPC's last enemy damage (`npc_mark_damaged`).
   `CapabilitiesAdd/Remove/Clear` stay stubs (the mask is what the AI does, not a setting).
   `Entity:GetFlexBounds` / `GetFlexType` / `GetMaterials` read the MDL flex controllers / textures.
+- `Player:LimitHit(kind)` queues the same `LimitHit <kind>` client notice the sandbox sends on a
+  refused spawn (`Server::notices`, drained by the network layer each tick); `Player:Ban` drops
+  the player with the identity banned for the server's lifetime (`Server::pending_bans` ->
+  `NetServer::kick(.., ban)`; minutes are not kept across restarts); `Player:RemoveAllItems` strips
+  weapons and ammo.
 
 Done in `glua/server.luau`:
 

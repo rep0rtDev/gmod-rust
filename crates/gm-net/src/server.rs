@@ -633,6 +633,14 @@ impl ServerNet {
     }
 
     pub fn tick(&mut self, server: &mut Server<'_>) {
+        for (pid, text) in std::mem::take(&mut server.notices) {
+            if let Some((_, slot)) = self.clients.iter_mut().find(|(_, c)| c.player == pid) {
+                slot.pending_events.push(text);
+            }
+        }
+        for pid in std::mem::take(&mut server.pending_bans) {
+            self.kick(server, pid, "banned", true);
+        }
         for slot in self.clients.values().filter(|c| !c.closing) {
             let since = self.tick.saturating_sub(slot.last_heard);
             server.set_connection(

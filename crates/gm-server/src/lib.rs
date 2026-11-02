@@ -4210,6 +4210,10 @@ pub struct Server<'w> {
     /// `game.GetMapVersion` / `game.GetSunInfo`: from the loaded BSP, set by the host.
     pub map_revision: i32,
     pub sun_direction: Option<Vec3>,
+    /// Script requests for the network layer: per-player client notices (`Player:LimitHit`)
+    /// and players to drop with their identity banned (`Player:Ban`); drained every tick.
+    pub notices: Vec<(u32, String)>,
+    pub pending_bans: Vec<u32>,
     spawn_rng: u64,
     tick_count: u64,
     /// `mp_falldamage`: progressive fall damage instead of the flat 10.
@@ -4361,6 +4365,8 @@ impl<'w> Server<'w> {
             spawn_points: Vec::new(),
             map_revision: 0,
             sun_direction: None,
+            notices: Vec::new(),
+            pending_bans: Vec::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
             fall_damage_progressive: false,

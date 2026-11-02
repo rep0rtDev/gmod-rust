@@ -375,6 +375,15 @@ pub enum QueuedWrite {
         frags: Option<u32>,
         deaths: Option<u32>,
     },
+    /// `Player:LimitHit(kind)`: the client shows the limit notice.
+    PlayerLimitHit {
+        player: u32,
+        limit: String,
+    },
+    /// `Player:Ban`: dropped with the identity banned for the server's lifetime.
+    PlayerBan {
+        player: u32,
+    },
     PlayerKick {
         player: u32,
     },
@@ -1851,6 +1860,11 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     deaths: Some(int_arg(&arg)?.max(0) as u32),
                 },
                 "player.kick" => QueuedWrite::PlayerKick { player: ent },
+                "player.ban" => QueuedWrite::PlayerBan { player: ent },
+                "player.limit_hit" => QueuedWrite::PlayerLimitHit {
+                    player: ent,
+                    limit: str_arg(&arg)?,
+                },
                 "vehicle.controls" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::VehicleControls {
@@ -3234,6 +3248,14 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             deaths,
         } => server.set_player_score(*player, *frags, *deaths),
         QueuedWrite::PlayerKick { player } => server.remove_player(*player),
+        QueuedWrite::PlayerBan { player } => {
+            server.pending_bans.push(*player);
+            true
+        }
+        QueuedWrite::PlayerLimitHit { player, limit } => {
+            server.notices.push((*player, format!("LimitHit {limit}")));
+            true
+        }
         QueuedWrite::VehicleControls {
             ent,
             throttle,
