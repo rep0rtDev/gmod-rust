@@ -679,6 +679,7 @@ fn oildrum_models() -> std::collections::BTreeMap<String, gm_server::ModelScript
             friction: 0.0,
             elasticity: 0.0,
             attachments: vec![("eyes".into(), 1, Vec3::new(0.0, 0.0, 36.0), Vec3::X)],
+            ..Default::default()
         },
     );
     models

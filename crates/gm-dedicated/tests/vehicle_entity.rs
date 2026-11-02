@@ -488,3 +488,50 @@ fn impulse_100_asks_player_switch_flashlight() {
         "the command's impulse toggles"
     );
 }
+
+#[test]
+fn phys_mesh_of_registered_models_feeds_physobj_geometry() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    for m in ["models/nova/chair_wood01.mdl", "models/buggy.mdl"] {
+        match gm_dedicated::model_info(&mount, m) {
+            Ok(info) => {
+                eprintln!("{m}: {} attachments", info.attachments.len());
+                server.register_model(m, info);
+            }
+            Err(e) => panic!("{m}: {e}"),
+        }
+    }
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    let (name, m) = server
+        .model_scripts
+        .iter()
+        .find(|(_, m)| !m.mesh.is_empty())
+        .expect("a PHY-backed model");
+    assert!(m.surface_area > 0.0 && m.volume > 0.0, "{name}");
+    assert!(
+        m.phys_maxs.x > m.phys_mins.x && m.phys_maxs.z > m.phys_mins.z,
+        "{name}"
+    );
+    let tris: usize = m.mesh.iter().map(Vec::len).sum();
+    assert!(tris >= 12, "{name}: {tris} triangles");
+    assert_eq!(m.volume, server.models[name].volume, "PHY volume");
+    let fan: f32 = m
+        .mesh
+        .iter()
+        .flatten()
+        .map(|t| t[0].dot(t[1].cross(t[2])) / 6.0)
+        .sum::<f32>()
+        .abs();
+    assert!(
+        (fan - m.volume).abs() < 0.05 * m.volume.max(1.0),
+        "{name}: the fans close the hull ({fan} vs {})",
+        m.volume
+    );
+}

@@ -894,7 +894,12 @@ movement, hit tests and eye position.
 `impulse 100` travels in the command (protocol 8, `NetCmd.impulse`; the `f` bind of the
 game's `kb_def.lst`) and asks `PlayerSwitchFlashlight(ply, on)` before toggling the server
 flag; `Player:Flashlight` does not ask, as in the game. The flag is server state only until
-the client light exists. `GetPreferredCarryAngles` (the hook, else the scripted
+the client light exists.
+`PhysObj:GetAABB/GetVolume/GetSurfaceArea/GetMassCenter/GetInertia/GetInvInertia/GetMesh/
+GetMeshConvexes` read the PHY of the model: vertex AABB, PHY volume, convex faces as
+triangle fans (`MeshVertex` with the face normal, `u`/`v` 0), mass centre, rotation inertia
+times the body mass. `SetInertia`, buoyancy/drag coefficients, game flags, shadow control
+stay stubs (no such inputs on our bodies). `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

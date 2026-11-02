@@ -211,7 +211,6 @@ function P:EnableDrag(on) end
 function P:GetEntity() return self.__ent end
 function P:GetMass() local s = psn(self); local m = s and s.mass or 0; if m <= 0 then return 1 end return m end
 function P:SetMass(m) qwrite("set_mass", self.__ent.__id, m) end
-function P:GetMassCenter() return Vector() end
 function P:ApplyForceCenter(f) self.__ent:SetVelocity(self.__ent:GetVelocity() + f / math.max(self:GetMass(), 1e-3) * FrameTime()) end
 function P:GetMaterial() return "" end
 function P:SetMaterial() end
@@ -1566,6 +1565,25 @@ end
 
 
 ------------------------------------------------------------------------ PhysObj: the rest
+local PH = __glua_classes.PhysObj
+local function pminfo(self) local e = self.__ent; return e and minfo(e) or nil end
+local function mesh_verts(list, out)
+    for i = 1, #list - 2, 3 do
+        local a, b, c = list[i], list[i + 1], list[i + 2]
+        local va, vb, vc = Vector(a.x, a.y, a.z), Vector(b.x, b.y, b.z), Vector(c.x, c.y, c.z)
+        local n = (vb - va):Cross(vc - va); n:Normalize()
+        for _, v in ipairs({ va, vb, vc }) do out[#out + 1] = { pos = v, normal = n, u = 0, v = 0 } end
+    end
+    return out
+end
+function PH:GetAABB() local m = pminfo(self); if not m or m.phys_mins == nil then return Vector(), Vector() end return Vector(m.phys_mins.x, m.phys_mins.y, m.phys_mins.z), Vector(m.phys_maxs.x, m.phys_maxs.y, m.phys_maxs.z) end
+function PH:GetVolume() local m = pminfo(self); return m and m.volume or 0 end
+function PH:GetSurfaceArea() local m = pminfo(self); return m and m.surface_area or 0 end
+function PH:GetMassCenter() local m = pminfo(self); if not m or m.mass_center == nil then return Vector() end return Vector(m.mass_center.x, m.mass_center.y, m.mass_center.z) end
+function PH:GetInertia() local m = pminfo(self); if not m or m.inertia == nil then return Vector() end local k = self:GetMass(); return Vector(m.inertia.x * k, m.inertia.y * k, m.inertia.z * k) end
+function PH:GetInvInertia() local i = self:GetInertia(); local function inv(x) return x > 0 and 1 / x or 0 end return Vector(inv(i.x), inv(i.y), inv(i.z)) end
+function PH:GetMeshConvexes() local m = pminfo(self); local out = {}; if m and m.mesh then for i, c in ipairs(m.mesh) do out[i] = mesh_verts(c, {}) end end return out end
+function PH:GetMesh() local m = pminfo(self); local out = {}; if m and m.mesh then for _, c in ipairs(m.mesh) do mesh_verts(c, out) end end return out end
 local PHYS = __glua_classes.PhysObj
 function PHYS:GetIndex() return 0 end
 function PHYS:GetInvMass() return 1 / math.max(self:GetMass(), 1e-6) end
@@ -1582,7 +1600,7 @@ function PHYS:IsGravityEnabled() local g = rawget(self.__ent, "__pgravity"); if 
 function PHYS:IsCollisionEnabled() local c = rawget(self.__ent, "__pcollide"); if c == nil then return true end return c end
 function PHYS:GetName() return self.__ent:GetClass() end
 function PHYS:OutputDebugInfo() print(string.format("PhysObj[%d] mass %.2f pos %s vel %s", self.__ent:EntIndex(), self:GetMass(), tostring(self:GetPos()), tostring(self:GetVelocity()))) end
-for _, name in ipairs({ "AddAngleVelocity", "AddGameFlag", "AlignAngles", "ApplyTorqueCenter", "CalculateForceOffset", "CalculateVelocityOffset", "ClearGameFlag", "ComputeShadowControl", "GetAABB", "GetAngleVelocity", "GetBuoyancyRatio", "GetContents", "GetDamping", "GetFrictionSnapshot", "GetInertia", "GetInvInertia", "GetMesh", "GetMeshConvexes", "GetRotDamping", "GetShadowAngles", "GetShadowPos", "GetSpeedDamping", "GetStress", "GetSurfaceArea", "GetVolume", "HasGameFlag", "IsDragEnabled", "IsPenetrating", "RecheckCollisionFilter", "RotateAroundAxis", "SetAngleDragCoefficient", "SetAngleVelocity", "SetAngleVelocityInstantaneous", "SetBuoyancyRatio", "SetContents", "SetDamping", "SetDragCoefficient", "SetInertia", "UpdateShadow" }) do
+for _, name in ipairs({ "AddAngleVelocity", "AddGameFlag", "AlignAngles", "ApplyTorqueCenter", "CalculateForceOffset", "CalculateVelocityOffset", "ClearGameFlag", "ComputeShadowControl", "GetAngleVelocity", "GetBuoyancyRatio", "GetContents", "GetDamping", "GetFrictionSnapshot", "GetRotDamping", "GetShadowAngles", "GetShadowPos", "GetSpeedDamping", "GetStress", "HasGameFlag", "IsDragEnabled", "IsPenetrating", "RecheckCollisionFilter", "RotateAroundAxis", "SetAngleDragCoefficient", "SetAngleVelocity", "SetAngleVelocityInstantaneous", "SetBuoyancyRatio", "SetContents", "SetDamping", "SetDragCoefficient", "SetInertia", "UpdateShadow" }) do
     if PHYS[name] == nil then PHYS[name] = stub("PhysObj:" .. name) end
 end
 

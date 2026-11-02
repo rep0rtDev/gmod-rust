@@ -2139,6 +2139,23 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             t.set("maxs", vec3_table(lua, m.maxs)?)?;
             t.set("friction", m.friction)?;
             t.set("elasticity", m.elasticity)?;
+            t.set("phys_mins", vec3_table(lua, m.phys_mins)?)?;
+            t.set("phys_maxs", vec3_table(lua, m.phys_maxs)?)?;
+            t.set("volume", m.volume)?;
+            t.set("surface_area", m.surface_area)?;
+            t.set("mass_center", vec3_table(lua, m.mass_center)?)?;
+            t.set("inertia", vec3_table(lua, m.inertia)?)?;
+            let mesh = lua.create_table()?;
+            for (i, convex) in m.mesh.iter().enumerate() {
+                let ct = lua.create_table()?;
+                for (j, tri) in convex.iter().enumerate() {
+                    for (k, v) in tri.iter().enumerate() {
+                        ct.set(j * 3 + k + 1, vec3_table(lua, *v)?)?;
+                    }
+                }
+                mesh.set(i + 1, ct)?;
+            }
+            t.set("mesh", mesh)?;
             let at = lua.create_table()?;
             for (i, (n, b, p, f)) in m.attachments.iter().enumerate() {
                 let e = lua.create_table()?;

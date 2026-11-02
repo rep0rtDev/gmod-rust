@@ -180,11 +180,94 @@ pub struct ModelScriptData {
     /// Surface properties of the physics hull (`PhysObj:GetMaterial` family), set on register.
     pub friction: f32,
     pub elasticity: f32,
+    /// AABB of the PHY vertices in the entity frame (`PhysObj:GetAABB`).
+    pub phys_mins: Vec3,
+    pub phys_maxs: Vec3,
+    /// PHY volume and the area of the convex faces, Source units.
+    pub volume: f32,
+    pub surface_area: f32,
+    /// PHY mass centre in the entity frame.
+    pub mass_center: Vec3,
+    /// PHY rotation inertia per unit mass (zero when the PHY has none).
+    pub inertia: Vec3,
+    /// Faces of each PHY convex as triangles (`PhysObj:GetMesh` / `GetMeshConvexes`).
+    pub mesh: Vec<Vec<[Vec3; 3]>>,
     /// `(name, bone, local position, forward)`.
     pub attachments: Vec<(String, i32, Vec3, Vec3)>,
 }
 
+/// Faces of each PHY convex as triangle fans: the hull's vertices on each outward plane,
+/// sorted around the face centre.
+pub fn phys_mesh(hulls: &[Vec<Vec3>], planes: &[Vec<(Vec3, f32)>]) -> Vec<Vec<[Vec3; 3]>> {
+    hulls
+        .iter()
+        .zip(planes)
+        .map(|(verts, ps)| {
+            let mut tris = Vec::new();
+            for &(n, d) in ps {
+                let mut face: Vec<Vec3> = verts
+                    .iter()
+                    .copied()
+                    .filter(|v| (v.dot(n) - d).abs() < 0.25)
+                    .collect();
+                if face.len() < 3 {
+                    continue;
+                }
+                let c = face.iter().sum::<Vec3>() / face.len() as f32;
+                let u = (face[0] - c).normalize_or_zero();
+                let w = n.cross(u);
+                let angle = |v: Vec3| (v - c).dot(w).atan2((v - c).dot(u));
+                face.sort_by(|a, b| {
+                    angle(*a)
+                        .partial_cmp(&angle(*b))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                for i in 1..face.len() - 1 {
+                    tris.push([face[0], face[i], face[i + 1]]);
+                }
+            }
+            tris
+        })
+        .collect()
+}
+
 impl ModelScriptData {
+    /// PHY geometry for the script `PhysObj` queries (`GetAABB`, `GetVolume`,
+    /// `GetSurfaceArea`, `GetMesh`, `GetMassCenter`, `GetInertia`).
+    pub fn set_phys(&mut self, info: &ModelInfo) {
+        self.mesh = phys_mesh(&info.hulls, &info.hull_planes);
+        let mut mins = Vec3::splat(f32::MAX);
+        let mut maxs = Vec3::splat(f32::MIN);
+        let mut any = false;
+        for v in info.hulls.iter().flatten() {
+            mins = mins.min(*v);
+            maxs = maxs.max(*v);
+            any = true;
+        }
+        if any {
+            self.phys_mins = mins;
+            self.phys_maxs = maxs;
+        }
+        self.surface_area = self
+            .mesh
+            .iter()
+            .flatten()
+            .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).length())
+            .sum();
+        self.volume = if info.volume > 0.0 {
+            info.volume
+        } else {
+            self.mesh
+                .iter()
+                .flatten()
+                .map(|t| t[0].dot(t[1].cross(t[2])) / 6.0)
+                .sum::<f32>()
+                .abs()
+        };
+        self.mass_center = info.mass_center;
+        self.inertia = info.inertia.unwrap_or(Vec3::ZERO);
+    }
+
     pub fn from_mdl(mdl: &gm_formats::mdl::Mdl, data: &[u8]) -> Self {
         let seqs = gm_formats::mdl::sequences(data, &mdl.header);
         let anims = gm_formats::mdl::anim_descs(data, &mdl.header);
@@ -239,6 +322,13 @@ impl ModelScriptData {
             maxs: Vec3::from(mdl.header.hull_max),
             friction: 0.0,
             elasticity: 0.0,
+            phys_mins: Vec3::ZERO,
+            phys_maxs: Vec3::ZERO,
+            volume: 0.0,
+            surface_area: 0.0,
+            mass_center: Vec3::ZERO,
+            inertia: Vec3::ZERO,
+            mesh: Vec::new(),
             attachments: mdl
                 .attachments
                 .iter()
@@ -5473,6 +5563,7 @@ impl<'w> Server<'w> {
         let mut script = info.script.clone();
         script.friction = info.surface.friction;
         script.elasticity = info.surface.elasticity;
+        script.set_phys(&info);
         self.model_scripts.insert(name.to_string(), script);
         self.models.insert(name.to_string(), info);
     }
