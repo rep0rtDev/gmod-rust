@@ -156,3 +156,86 @@ fn jeep_drives_like_the_measured_one() {
         speed(&server, veh)
     );
 }
+
+#[test]
+fn airboat_drives_like_the_measured_one() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_flatgrass").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let info = gm_dedicated::model_info(&mount, "models/airboat.mdl").unwrap();
+    server.register_model("models/airboat.mdl", info);
+    let start = Vec3::new(1600.0, 384.0, -12799.0);
+    server.add_player(1, start, Vec3::new(20.0, 90.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 90.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let veh = server.spawn_vehicle(1, "Airboat").expect("airboat spawns");
+    for _ in 0..40 {
+        server.tick(&idle);
+    }
+    let yaw0 = yaw(&server, veh);
+    // the fan: 111 u/s after 40 ticks, 190 after 100, 228 after 200 (terminal 235)
+    assert!(server.set_vehicle_engine(veh, true));
+    assert!(server.set_vehicle_controls(veh, Some(1.0), Some(0.0), Some(false)));
+    for _ in 0..40 {
+        server.tick(&idle);
+    }
+    let s40 = speed(&server, veh);
+    assert!((s40 - 111.0).abs() < 20.0, "speed after 40 ticks: {s40}");
+    for _ in 0..60 {
+        server.tick(&idle);
+    }
+    let s100 = speed(&server, veh);
+    assert!((s100 - 190.0).abs() < 25.0, "speed after 100 ticks: {s100}");
+    for _ in 0..100 {
+        server.tick(&idle);
+    }
+    let s200 = speed(&server, veh);
+    assert!((s200 - 228.0).abs() < 20.0, "speed after 200 ticks: {s200}");
+    assert_eq!(
+        server.vehicles[&veh]
+            .controls
+            .rpm(&gm_server::AIRBOAT_DRIVE),
+        0.0
+    );
+    // 60 deg of steering: the yaw builds up to 1.5 deg per tick, ~70 deg over 60 ticks
+    assert!(server.set_vehicle_controls(veh, None, Some(1.0), None));
+    for _ in 0..60 {
+        server.tick(&idle);
+    }
+    let turned = (yaw0 - yaw(&server, veh)).rem_euclid(360.0);
+    assert!(
+        (40.0..110.0).contains(&turned),
+        "turned {turned} deg in 60 ticks"
+    );
+    // the sliding tyres stop a coasting boat within ~40 ticks
+    assert!(server.set_vehicle_controls(veh, Some(0.0), Some(0.0), None));
+    for _ in 0..50 {
+        server.tick(&idle);
+    }
+    assert!(
+        speed(&server, veh).abs() < 25.0,
+        "coasted to: {}",
+        speed(&server, veh)
+    );
+    // reverse: -65 u/s after 50 ticks, approaching -100
+    assert!(server.set_vehicle_controls(veh, Some(-1.0), None, None));
+    for _ in 0..50 {
+        server.tick(&idle);
+    }
+    let s_rev = speed(&server, veh);
+    assert!((s_rev + 65.0).abs() < 15.0, "reverse {s_rev}");
+}

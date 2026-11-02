@@ -683,7 +683,10 @@ The rest of `Player`, `PhysObj`, `Weapon` and `Vehicle` (end of `glua/entity.lua
   bot driver's command resets the controls every tick): full throttle gains 5.85 u/s per tick to
   35 mph then creeps, coasting loses 1 u/s per tick, the handbrake 11.8, reverse caps at 14 mph,
   the steering cone is 50 deg up to 14 mph and 18 from 20 mph, and 18 deg at 620 u/s turns 66.7
-  deg/s. Jalopy and APC share the jeep's law until measured; the airboat has no drive yet.
+  deg/s. The airboat's fan is measured the same way (`server_airboat_drive`): `a = 260 - 1.1 v` forward
+  (terminal 235 u/s), `187 - 1.87 |v|` in reverse, a 60 deg cone at every speed, sliding tyres
+  that stop a coasting boat at 3.7 u/s per tick and let it slide through a turn; RPM reads 0.
+  Jalopy and APC share the jeep's law until measured.
   `SetMaxThrottle / SetMaxReverseThrottle / SetBoost / SetSpringLength / SetWheelFriction /
   SetSteeringDegrees / SetVehicleParams` stay stubs (no such inputs on our wheels).
 

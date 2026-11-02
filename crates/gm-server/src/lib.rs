@@ -3015,6 +3015,14 @@ pub struct VehicleControls {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DriveSpec {
     pub accel: f32,
+    /// Reverse acceleration (the jeep's equals `accel`; the airboat's fan pushes back weaker).
+    pub accel_rev: f32,
+    /// Linear drag terms (1/s) of a thrust vehicle: `a = accel - drag * speed`, giving the
+    /// airboat its first-order approach to a terminal speed; zero for the geared cars.
+    pub drag_fwd: f32,
+    pub drag_rev: f32,
+    /// Share of the tyre friction cone a rolling tyre holds with (the airboat's slide).
+    pub tyre_mu: f32,
     pub max_fwd: f32,
     pub max_rev: f32,
     pub creep_fwd: f32,
@@ -3045,6 +3053,10 @@ pub const MPH: f32 = 17.6;
 /// RPM = 6.86 x speed in first gear (3.2 x 4.56 over a 20.3 u mean radius), second at 3800.
 pub const JEEP_DRIVE: DriveSpec = DriveSpec {
     accel: 390.0,
+    accel_rev: 390.0,
+    drag_fwd: 0.0,
+    drag_rev: 0.0,
+    tyre_mu: 1.0,
     max_fwd: 35.0 * MPH,
     max_rev: 14.0 * MPH,
     creep_fwd: 16.0,
@@ -3064,11 +3076,42 @@ pub const JEEP_DRIVE: DriveSpec = DriveSpec {
     wheel_radius: 20.3,
 };
 
-/// The drive law of a vehicle key; the jeep's is measured, the jalopy and the APC share it until
-/// measured (same engine family in their scripts); the airboat has no wheel drive yet.
+/// Measured (`server_airboat_drive`, on dry ground): the fan's speed follows
+/// `v = 235 (1 - e^(-1.1 t))` forward (111 u/s after 40 ticks, 228 after 200) and approaches
+/// 100 u/s in reverse, the sliding tyres stop a coasting boat at 3.7 u/s per tick, the cone is
+/// 60 deg at every speed and the yaw rate builds to 100 deg/s at 160-230 u/s while the boat
+/// slides from 230 to 153 u/s through a 90-tick turn; no gears, RPM reads 0.
+pub const AIRBOAT_DRIVE: DriveSpec = DriveSpec {
+    accel: 260.0,
+    accel_rev: 187.0,
+    drag_fwd: 1.1,
+    drag_rev: 1.87,
+    tyre_mu: 0.8,
+    max_fwd: 34.0 * MPH,
+    max_rev: 34.0 * MPH,
+    creep_fwd: 0.0,
+    creep_rev: 0.0,
+    coast: 250.0,
+    brake: 250.0,
+    deg_slow: 60.0,
+    deg_fast: 60.0,
+    slow_speed: 0.0,
+    fast_speed: 35.0 * MPH,
+    steer_exp: 1.0,
+    turn_len: 227.0,
+    gears: &[],
+    axle_ratio: 4.85,
+    shift_up_rpm: 10000.0,
+    shift_down_rpm: 0.0,
+    wheel_radius: 10.0,
+};
+
+/// The drive law of a vehicle key; the jeep's and the airboat's are measured, the jalopy and
+/// the APC share the jeep's until measured (same engine family in their scripts).
 pub fn drive_spec(key: &str) -> Option<DriveSpec> {
     match key {
         "Jeep" | "Jalopy" | "APC" => Some(JEEP_DRIVE),
+        "Airboat" => Some(AIRBOAT_DRIVE),
         _ => None,
     }
 }
@@ -3076,7 +3119,12 @@ pub fn drive_spec(key: &str) -> Option<DriveSpec> {
 impl VehicleControls {
     /// Engine revolutions per minute from the forward speed through the current gear.
     pub fn rpm(&self, spec: &DriveSpec) -> f32 {
-        let gear = spec.gears[(self.gear as usize).min(spec.gears.len() - 1)];
+        let Some(&gear) = spec
+            .gears
+            .get((self.gear as usize).min(spec.gears.len().saturating_sub(1)))
+        else {
+            return 0.0;
+        };
         self.speed.abs() / (2.0 * std::f32::consts::PI * spec.wheel_radius)
             * 60.0
             * gear
@@ -7383,6 +7431,11 @@ impl<'w> Server<'w> {
                     let want = lateral.length() * share;
                     if want > 1e-3 {
                         let at = com + (hub - com) - up * (hub - com).dot(up);
+                        // the airboat's sliding tyres hold with a share of the cone; the speed
+                        // the game's boat loses through a hard turn is not reproduced
+                        // (kinetic friction on the whole slip was tried: it brakes the
+                        // straight run, since the hold's own jitter counts as sliding)
+                        let cap = cap * spec.tyre_mu;
                         self.physics
                             .add_impulse_at(body, at, -lateral.normalize() * want.min(cap));
                     }
@@ -7403,13 +7456,13 @@ impl<'w> Server<'w> {
                     stop.abs().min(spec.brake) * stop.signum()
                 } else if throttle > 0.05 {
                     if speed < spec.max_fwd {
-                        spec.accel * throttle
+                        spec.accel * throttle - spec.drag_fwd * speed
                     } else {
                         spec.creep_fwd * throttle
                     }
                 } else if throttle < -0.05 {
                     if speed > -spec.max_rev {
-                        spec.accel * throttle
+                        spec.accel_rev * throttle - spec.drag_rev * speed
                     } else {
                         spec.creep_rev * throttle
                     }
@@ -7426,7 +7479,10 @@ impl<'w> Server<'w> {
             c.wheels_in_contact = contacts;
             if driving {
                 let rpm = c.rpm(&spec);
-                if rpm > spec.shift_up_rpm && (c.gear as usize) + 1 < spec.gears.len() {
+                if !spec.gears.is_empty()
+                    && rpm > spec.shift_up_rpm
+                    && (c.gear as usize) + 1 < spec.gears.len()
+                {
                     c.gear += 1;
                 } else if rpm < spec.shift_down_rpm && c.gear > 0 {
                     c.gear -= 1;
