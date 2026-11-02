@@ -776,6 +776,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `NPC:AddRelationship("player D_* prio")` / `AddEntityRelationship(ply, D_*, prio)` set the
+  NPC's disposition toward players: `D_HT` makes it hunt them even for a class the table calls
+  friendly (it fights with what it has: weapon, melee moves, or just facing), anything else
+  stops the hunt (target and chase dropped). Relationships toward other classes / entities have
+  no backend (our AI targets players only) and are ignored; priority is accepted.
+  `Disposition(ply)` returns the scripted one when set (else the class answer).
 - `NPC:SetViewOffset(v)` moves the NPC's eye (sight checks, melee reach origin, standing aim
   origin; the crouched aim keeps the measured 40 u); nil restores the measured 64 u.
   `GetViewOffset` reads it back (was a constant 66).

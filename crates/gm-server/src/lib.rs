@@ -1660,6 +1660,9 @@ pub struct Npc {
     pub move_yaw_locked: bool,
     /// `NPC:SetViewOffset`: the eye position relative to the feet (None: the measured 64 u).
     pub view_offset: Option<Vec3>,
+    /// `NPC:AddRelationship` toward players (GLua `D_*` code: 1 hate, 2 fear, 3 like, 4 neutral);
+    /// None: the class table decides.
+    pub relation: Option<u8>,
 }
 
 /// Corners of a navigation path and the one the NPC is heading for.
@@ -1903,6 +1906,15 @@ pub fn npc_weapon_shot_in(weapon: &str, scripted: &[ScriptedWeapon]) -> Option<(
         .iter()
         .find(|w| w.class == weapon && !w.ammo.is_empty())
         .map(|w| (w.ammo.clone(), 1))
+}
+
+/// Whether an NPC hunts players: a scripted relationship toward players (`D_HT` hates, any
+/// other disposition does not) overrides the class table.
+pub fn npc_hostile_to_players(n: &Npc) -> bool {
+    match n.relation {
+        Some(d) => d == 1,
+        None => npc_hostile(&n.class),
+    }
 }
 
 /// A melee attack: damage per hit, 2D reach (u), swing length and the tick inside the swing
@@ -9154,6 +9166,7 @@ impl<'w> Server<'w> {
             ideal_yaw: None,
             move_yaw_locked: false,
             view_offset: None,
+            relation: None,
             swing_until: 0,
             melee_hit_at: None,
             melee_hits_left: 0,
@@ -9569,6 +9582,23 @@ impl<'w> Server<'w> {
                         let err = wrap_deg(want - n.angles.y);
                         n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
                     }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `NPC:AddRelationship("player D_HT ...")` / `AddEntityRelationship(ply, D_*)`: the NPC's
+    /// disposition toward players; None restores the class table. Live NPCs only; a hated NPC
+    /// drops its target when it stops hating.
+    pub fn npc_set_relation(&mut self, id: u32, disp: Option<u8>) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) if n.dead_at.is_none() => {
+                n.relation = disp.filter(|d| (1..=4).contains(d));
+                if !npc_hostile_to_players(n) {
+                    n.target = None;
+                    n.chase = None;
                 }
                 true
             }
@@ -10011,7 +10041,7 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
-        if n.dead_at.is_some() || n.passive || !npc_hostile(&n.class) {
+        if n.dead_at.is_some() || n.passive || !npc_hostile_to_players(n) {
             return;
         }
         if let Some(l) = npc_leap(&n.class) {
@@ -10419,7 +10449,7 @@ impl<'w> Server<'w> {
         };
         if n.dead_at.is_some()
             || n.passive
-            || !npc_hostile(&n.class)
+            || !npc_hostile_to_players(n)
             || n.cover_at.is_some()
             || tick < n.cover_cooldown
         {
@@ -10482,7 +10512,8 @@ impl<'w> Server<'w> {
             let Some(n) = self.npcs.get(&id) else {
                 continue;
             };
-            if n.target.is_some() || n.passive || n.dead_at.is_some() || !npc_hostile(&n.class) {
+            if n.target.is_some() || n.passive || n.dead_at.is_some() || !npc_hostile_to_players(n)
+            {
                 continue;
             }
             let (pos, key) = (n.pos, n.key.clone());
@@ -11015,6 +11046,7 @@ impl<'w> Server<'w> {
                 ideal_yaw: None,
                 move_yaw_locked: false,
                 view_offset: None,
+                relation: None,
                 swing_until: 0,
                 melee_hit_at: None,
                 melee_hits_left: 0,

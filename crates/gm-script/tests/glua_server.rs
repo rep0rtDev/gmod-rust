@@ -60,6 +60,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_ideal_yaw: None,
             npc_move_yaw_locked: false,
             npc_view_offset: None,
+            npc_relation: None,
             npc_ignore: Vec::new(),
             npc_move_speed: 0.0,
             npc_next_goal: None,
@@ -126,6 +127,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_ideal_yaw: None,
             npc_move_yaw_locked: false,
             npc_view_offset: None,
+            npc_relation: None,
             npc_ignore: Vec::new(),
             npc_move_speed: 0.0,
             npc_next_goal: None,
@@ -2579,4 +2581,44 @@ fn npc_view_offset_write_and_readback() {
     );
     let z: f64 = rt.actors()[0].eval("return state.z").unwrap();
     assert_eq!(z, 50.0);
+}
+
+#[test]
+fn npc_relationship_write_and_disposition() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            local n = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.NPC }, __glua_classes.Entity)
+            n:AddRelationship(\"player D_HT 99\") n:AddRelationship(\"npc_zombie D_LI 99\") n:AddEntityRelationship(Player(1), D_LI, 99)
+            state.disp = n:Disposition(Player(1)) end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let mut s = (*snapshot()).clone();
+    if let Some(e) = s.entities.get_mut(&5) {
+        e.npc_relation = Some(3);
+    }
+    rt.actors_mut()[0]
+        .dispatch(&Arc::new(s), "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    let text = format!("{writes:?}");
+    assert_eq!(text.matches("NpcRelation").count(), 2, "{text}");
+    assert!(
+        text.contains("NpcRelation { ent: 5, disp: Some(1) }"),
+        "{text}"
+    );
+    assert!(
+        text.contains("NpcRelation { ent: 5, disp: Some(3) }"),
+        "{text}"
+    );
+    let disp: f64 = rt.actors()[0].eval("return state.disp").unwrap();
+    assert_eq!(disp, 3.0);
 }

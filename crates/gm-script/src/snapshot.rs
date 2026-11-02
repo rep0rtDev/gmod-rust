@@ -73,6 +73,7 @@ pub struct EntitySnap {
     pub npc_ideal_yaw: Option<f32>,
     pub npc_move_yaw_locked: bool,
     pub npc_view_offset: Option<Vec3>,
+    pub npc_relation: Option<u8>,
     /// NPC: players it still ignores as targets (`IgnoreEnemyUntil` / `RememberUnreachable`).
     pub npc_ignore: Vec<u32>,
     pub npc_move_speed: f32,
@@ -449,6 +450,7 @@ impl Snapshot {
                             npc_ideal_yaw: None,
                             npc_move_yaw_locked: false,
                             npc_view_offset: None,
+                            npc_relation: None,
                             npc_ignore: Vec::new(),
                             npc_move_speed: 0.0,
                             npc_next_goal: None,
@@ -584,6 +586,7 @@ impl Snapshot {
                             npc_ideal_yaw: None,
                             npc_move_yaw_locked: false,
                             npc_view_offset: None,
+                            npc_relation: None,
                             npc_ignore: Vec::new(),
                             npc_move_speed: 0.0,
                             npc_next_goal: None,
@@ -657,6 +660,7 @@ impl Snapshot {
                             npc_ideal_yaw: n.ideal_yaw,
                             npc_move_yaw_locked: n.move_yaw_locked,
                             npc_view_offset: n.view_offset,
+                            npc_relation: n.relation,
                             npc_ignore: n
                                 .ignore
                                 .iter()

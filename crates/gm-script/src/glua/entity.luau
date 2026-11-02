@@ -1994,7 +1994,28 @@ function NPC:NavSetGoal(pos) self:NavSetGoalPos(pos) end
 function NPC:TargetOrder(e) self:SetTarget(e) end
 function NPC:MoveOrder(pos) self:NavSetGoalPos(pos) end
 function NPC:Classify() local c = self:GetClass(); if string.find(c, "zombie") or string.find(c, "headcrab") then return CLASS_ZOMBIE elseif string.find(c, "antlion") then return CLASS_ANTLION elseif string.find(c, "combine") or string.find(c, "metropolice") or string.find(c, "manhack") or string.find(c, "stalker") then return CLASS_COMBINE elseif string.find(c, "citizen") or string.find(c, "alyx") or string.find(c, "barney") or string.find(c, "kleiner") or string.find(c, "eli") or string.find(c, "mossman") or string.find(c, "monk") or string.find(c, "gman") or string.find(c, "vortigaunt") or string.find(c, "dog") then return CLASS_PLAYER_ALLY end return CLASS_NONE end
-function NPC:Disposition(e) local c = self:Classify(); if c == CLASS_PLAYER_ALLY or c == CLASS_NONE then return D_LI end return D_HT end
+-- disposition toward players: the scripted one (AddRelationship / AddEntityRelationship) when
+-- set, else from the class; other entities are not targets of our AI (the class answer)
+function NPC:Disposition(e)
+    local s = snap(self.__id)
+    if s and s.npc_relation and e and e.IsPlayer and e:IsPlayer() then return s.npc_relation end
+    local c = self:Classify(); if c == CLASS_PLAYER_ALLY or c == CLASS_NONE then return D_LI end return D_HT
+end
+local function disp_code(d)
+    if type(d) == "number" then return math.floor(d) end
+    if type(d) == "string" then local g = _G[d]; if type(g) == "number" then return g end return tonumber(d) end
+    return nil
+end
+-- "player D_HT 99": only the player relationship has a backend (our AI targets players)
+function NPC:AddRelationship(str)
+    local target, disp = tostring(str):match("^%s*(%S+)%s+(%S+)")
+    if target ~= "player" then return end
+    qwrite("npc_relation", self.__id, { disp = disp_code(disp) })
+end
+function NPC:AddEntityRelationship(e, disp, prio)
+    if not (e and e.IsPlayer and e:IsPlayer()) then return end
+    qwrite("npc_relation", self.__id, { disp = disp_code(disp) })
+end
 function NPC:GetWeapon() local w = rawget(self, "__weapon"); if w then return w end return NULL end
 function NPC:GetWeapons() local w = self:GetWeapon(); if IsValid(w) then return { w } end return {} end
 function NPC:GetActivity() return self:GetVelocity():Length() > 1 and ACT_RUN or ACT_IDLE end
@@ -2012,7 +2033,7 @@ function NPC:UpdateYaw() qwrite("npc_ideal_yaw", self.__id, { update = true }) e
 function NPC:SetIdealYawAndUpdate(y) qwrite("npc_ideal_yaw", self.__id, { yaw = tonumber(y) or 0, update = true }) end
 function NPC:SetMoveYawLocked(b) qwrite("npc_move_yaw_locked", self.__id, { on = b ~= false }) end
 function NPC:IsMoveYawLocked() local s = snap(self.__id); return s ~= nil and s.npc_move_yaw_locked == true end
-for _, name in ipairs({ "AddEntityRelationship", "AddRelationship", "AdvancePath", "AlertSound", "AutoMovement", "BecomeRagdoll", "CapabilitiesAdd", "CapabilitiesClear", "CapabilitiesRemove", "ClearBlockingEntity", "ClearCondition", "ClearExpression", "ClearSchedule", "ConditionID", "ConditionName", "ExitScriptedSequence", "FearSound", "FoundEnemySound", "GetArrivalActivity", "GetArrivalDirection", "GetArrivalSequence", "GetArrivalSpeed", "GetBestSoundHint", "GetBlockingEntity", "GetCurrentSchedule", "GetCurrentWeaponProficiency", "GetExpression", "GetIdealActivity", "GetIdealMoveAcceleration", "GetIdealSequence", "GetMinMoveCheckDist", "GetMinMoveStopDist", "GetMoveDelay", "GetMovementActivity", "GetMovementSequence", "GetTaskStatus", "HasCondition", "IdleSound", "IsCurrentSchedule", "IsRunningBehavior", "IsUnforgettable", "LostEnemySound", "MaintainActivity", "MoveClimbExec", "MoveClimbStart", "MoveClimbStop", "MoveGroundStep", "MoveJumpExec", "MoveJumpStart", "MoveJumpStop", "PlaySentence", "RemoveIgnoreConditions", "ResetIdealActivity", "ResetMoveCalc", "RunEngineTask", "SentenceStop", "SetActivity", "SetArrivalActivity", "SetArrivalDirection", "SetArrivalSequence", "SetArrivalSpeed", "SetCondition", "SetCurrentWeaponProficiency", "SetExpression", "SetFOV", "SetIdealActivity", "SetIdealSequence", "SetIgnoreConditions", "SetMaxRouteRebuildTime", "SetMoveDelay", "SetMovementSequence", "SetNPCState", "SetSchedule", "SetTaskStatus", "SetUnforgettable", "StartEngineTask", "TaskComplete", "TaskFail", "UpdateTurnActivity", "UseActBusyBehavior", "UseAssaultBehavior", "UseFollowBehavior", "UseFuncTankBehavior", "UseLeadBehavior", "UseNoBehavior" }) do
+for _, name in ipairs({ "AdvancePath", "AlertSound", "AutoMovement", "BecomeRagdoll", "CapabilitiesAdd", "CapabilitiesClear", "CapabilitiesRemove", "ClearBlockingEntity", "ClearCondition", "ClearExpression", "ClearSchedule", "ConditionID", "ConditionName", "ExitScriptedSequence", "FearSound", "FoundEnemySound", "GetArrivalActivity", "GetArrivalDirection", "GetArrivalSequence", "GetArrivalSpeed", "GetBestSoundHint", "GetBlockingEntity", "GetCurrentSchedule", "GetCurrentWeaponProficiency", "GetExpression", "GetIdealActivity", "GetIdealMoveAcceleration", "GetIdealSequence", "GetMinMoveCheckDist", "GetMinMoveStopDist", "GetMoveDelay", "GetMovementActivity", "GetMovementSequence", "GetTaskStatus", "HasCondition", "IdleSound", "IsCurrentSchedule", "IsRunningBehavior", "IsUnforgettable", "LostEnemySound", "MaintainActivity", "MoveClimbExec", "MoveClimbStart", "MoveClimbStop", "MoveGroundStep", "MoveJumpExec", "MoveJumpStart", "MoveJumpStop", "PlaySentence", "RemoveIgnoreConditions", "ResetIdealActivity", "ResetMoveCalc", "RunEngineTask", "SentenceStop", "SetActivity", "SetArrivalActivity", "SetArrivalDirection", "SetArrivalSequence", "SetArrivalSpeed", "SetCondition", "SetCurrentWeaponProficiency", "SetExpression", "SetFOV", "SetIdealActivity", "SetIdealSequence", "SetIgnoreConditions", "SetMaxRouteRebuildTime", "SetMoveDelay", "SetMovementSequence", "SetNPCState", "SetSchedule", "SetTaskStatus", "SetUnforgettable", "StartEngineTask", "TaskComplete", "TaskFail", "UpdateTurnActivity", "UseActBusyBehavior", "UseAssaultBehavior", "UseFollowBehavior", "UseFuncTankBehavior", "UseLeadBehavior", "UseNoBehavior" }) do
     if NPC[name] == nil then NPC[name] = stub("NPC:" .. name) end
 end
 

@@ -123,6 +123,10 @@ pub enum QueuedWrite {
         yaw: Option<f32>,
         update: bool,
     },
+    NpcRelation {
+        ent: u32,
+        disp: Option<u8>,
+    },
     NpcViewOffset {
         ent: u32,
         offset: Option<Vec3>,
@@ -1101,6 +1105,9 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
         t.set("npc_ideal_yaw", y)?;
     }
     t.set("npc_move_yaw_locked", e.npc_move_yaw_locked)?;
+    if let Some(d) = e.npc_relation {
+        t.set("npc_relation", d)?;
+    }
     if let Some(v) = e.npc_view_offset {
         t.set("npc_view_offset", vec3_table(lua, v)?)?;
     }
@@ -1668,6 +1675,13 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         ent,
                         yaw: t.get::<Option<f32>>("yaw")?,
                         update: t.get::<Option<bool>>("update")?.unwrap_or(false),
+                    }
+                }
+                "npc_relation" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NpcRelation {
+                        ent,
+                        disp: t.get::<Option<u8>>("disp")?,
                     }
                 }
                 "npc_view_offset" => {
@@ -3702,6 +3716,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::NpcIdealYaw { ent, yaw, update } => {
             server.npc_set_ideal_yaw(*ent, *yaw, *update)
         }
+        QueuedWrite::NpcRelation { ent, disp } => server.npc_set_relation(*ent, *disp),
         QueuedWrite::NpcViewOffset { ent, offset } => server.npc_set_view_offset(*ent, *offset),
         QueuedWrite::NpcMoveYawLocked { ent, on } => server.npc_set_move_yaw_locked(*ent, *on),
         QueuedWrite::NpcMoveInterval { ent, seconds } => {
