@@ -3819,6 +3819,9 @@ pub struct Player {
     pub cmd_tick: u64,
     /// `Player:Flashlight` state (a script toggle; no client impulse yet).
     pub flashlight: bool,
+    /// `Player:SetFOV(fov, time)`: the target field of view and the seconds to blend to it
+    /// (None: the client's own `fov_desired`).
+    pub fov: Option<(f32, f32)>,
     /// `IN_USE` was down in the last command (a use fires on the press, not the hold).
     pub use_down: bool,
     /// The `ONOFF_USE` entity the held E is on, for its `use_off` on the release.
@@ -3938,6 +3941,7 @@ impl Player {
             cmd_impulse: 0,
             cmd_tick: 0,
             flashlight: false,
+            fov: None,
             carry: None,
             use_down: false,
             use_target: None,
@@ -4302,6 +4306,8 @@ pub struct Server<'w> {
     pub player_anims: BTreeMap<u32, EntAnim>,
     /// Scripted NextBots (`CLuaLocomotion`): a ground mover per scripted entity, keyed by entity.
     pub nextbots: BTreeMap<u32, NextBot>,
+    /// `Entity:SetModelScale` per prop (render only, like the game: physics untouched).
+    pub model_scales: BTreeMap<u32, f32>,
     spawn_rng: u64,
     tick_count: u64,
     /// `mp_falldamage`: progressive fall damage instead of the flat 10.
@@ -4457,6 +4463,7 @@ impl<'w> Server<'w> {
             pending_bans: Vec::new(),
             player_anims: BTreeMap::new(),
             nextbots: BTreeMap::new(),
+            model_scales: BTreeMap::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
             fall_damage_progressive: false,
@@ -6768,6 +6775,34 @@ impl<'w> Server<'w> {
         true
     }
 
+    /// `Player:SetFOV(fov, time)`; `fov <= 0` returns the player to the client's own setting.
+    pub fn set_player_fov(&mut self, id: u32, fov: f32, secs: f32) -> bool {
+        match self.players.get_mut(&id) {
+            Some(p) => {
+                p.fov = (fov > 0.0).then_some((fov.clamp(1.0, 179.0), secs.max(0.0)));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `Entity:SetModelScale(scale)` on a prop; 1 clears the override.
+    pub fn set_model_scale(&mut self, ent: u32, scale: f32) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == ent) {
+            return false;
+        }
+        if (scale - 1.0).abs() < 1e-4 || scale <= 0.0 {
+            self.model_scales.remove(&ent);
+        } else {
+            self.model_scales.insert(ent, scale);
+        }
+        true
+    }
+
+    pub fn model_scale(&self, ent: u32) -> f32 {
+        self.model_scales.get(&ent).copied().unwrap_or(1.0)
+    }
+
     pub fn set_player_flashlight(&mut self, id: u32, on: bool) -> bool {
         match self.players.get_mut(&id) {
             Some(p) => {
@@ -8285,6 +8320,7 @@ impl<'w> Server<'w> {
         if !self.sandbox.props().iter().any(|p| p.id == ent) {
             return false;
         }
+        self.model_scales.remove(&ent);
         if let Some(body) = self.bodies.remove(&ent) {
             self.physics.remove_body(body);
         }

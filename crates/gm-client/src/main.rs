@@ -162,6 +162,7 @@ impl Sim {
                             color: [255; 4],
                             render_mode: 0,
                             render_fx: 0,
+                            model_scale: 1.0,
                             bones: Vec::new(),
                             manips: Vec::new(),
                             flex: None,
@@ -824,6 +825,8 @@ struct App {
     grabbed: bool,
     /// Options dialog cvars and binds (`cfg/config.cfg`).
     settings: settings::Settings,
+    /// The camera FOV being blended toward the server's `Player:SetFOV` target (value, last frame).
+    fov_blend: Option<(f32, std::time::Instant)>,
     /// The Options dialog while open.
     options: Option<options::OptionsState>,
     /// The main menu's New Game page while open (`#/newgame/`).
@@ -1150,6 +1153,26 @@ impl App {
         }
         // without a grab (some X servers) input still works, only the pointer is not held
         self.grabbed = on;
+    }
+
+    /// The camera FOV: the server's `Player:SetFOV` target blended over its time, else the own
+    /// `fov_desired`.
+    fn camera_fov(&mut self) -> f32 {
+        let own = self.settings.fov_desired;
+        let (target, secs) = self
+            .local_snap()
+            .filter(|p| p.fov > 0.0)
+            .map_or((own, 0.0), |p| (p.fov, p.fov_time));
+        let now = std::time::Instant::now();
+        let (cur, last) = self.fov_blend.unwrap_or((target, now));
+        let dt = now.duration_since(last).as_secs_f32();
+        let next = if secs > 0.0 && (target - cur).abs() > 0.01 {
+            cur + (target - cur) * (dt / secs).min(1.0)
+        } else {
+            target
+        };
+        self.fov_blend = Some((next, now));
+        next
     }
 
     fn local_snap(&self) -> Option<&PlayerSnap> {
@@ -3046,6 +3069,7 @@ impl App {
                     .copied()
             })
         };
+        let fov_x = self.camera_fov();
         let Some(g) = &mut self.gfx else { return };
         if self.menu.is_some() {
             let visible = self.menu_cache.borrow().visible.clone();
@@ -3084,7 +3108,7 @@ impl App {
         let mut camera = Camera {
             position: o + Vec3::Z * eye,
             angles: self.view + punch,
-            fov_x: self.settings.fov_desired,
+            fov_x,
             near: 3.0,
             far: 28000.0,
             gamma: self.settings.mat_monitorgamma,
@@ -3325,7 +3349,8 @@ impl App {
                     let params: Vec<(&str, f32)> =
                         e.pose.iter().map(|(n, v)| (n.as_str(), *v)).collect();
                     let local = m.bone_world_gesture(&e.sequence, t, None, &params, gesture)?;
-                    let place = gm_render::world::model_transform(pos, ang);
+                    let place = gm_render::world::model_transform(pos, ang)
+                        * glam::Mat4::from_scale(Vec3::splat(e.model_scale.max(0.01)));
                     let world: Vec<glam::Mat4> = local.iter().map(|b| place * *b).collect();
                     return Some((e.id, m.skin_matrices(&world)));
                 }
@@ -3358,7 +3383,8 @@ impl App {
                 }
                 Some(DrawItem {
                     model,
-                    transform: gm_render::world::model_transform(pos, ang),
+                    transform: gm_render::world::model_transform(pos, ang)
+                        * glam::Mat4::from_scale(Vec3::splat(e.model_scale.max(0.01))),
                     bones: None,
                 })
             })
@@ -5193,6 +5219,7 @@ fn main() -> Result<()> {
         grabbed: false,
         main_menu: false,
         settings,
+        fov_blend: None,
         options: None,
         newgame: None,
         servers: None,

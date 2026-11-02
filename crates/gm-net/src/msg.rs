@@ -177,6 +177,8 @@ pub struct EntityState {
     pub color: [u8; 4],
     pub render_mode: u8,
     pub render_fx: u8,
+    /// `Entity:SetModelScale` (render only).
+    pub model_scale: f32,
     /// prop_ragdoll: pose of every physics object (`GetPhysicsObjectNum(i)`), empty on a prop.
     pub bones: Vec<BonePose>,
     /// Manipulated model bones (inflator scale, finger poser angles); only the touched ones.
@@ -254,6 +256,9 @@ pub struct PlayerSnap {
     pub alive: bool,
     pub health: i16,
     pub armor: i16,
+    /// `Player:SetFOV`: the server-set field of view (0: the client's own) and its blend time.
+    pub fov: f32,
+    pub fov_time: f32,
     /// Weapons carried as a bit per entry of `Server::weapon_classes` (`LOADOUT`, then the
     /// scripted weapons of `ServerMsg::WeaponDefs` in order).
     pub weapons: u64,
@@ -494,7 +499,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 12;
+pub const PROTOCOL: u16 = 13;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -974,6 +979,8 @@ impl ServerMsg {
                     w.bool(p.alive);
                     w.i16(p.health);
                     w.i16(p.armor);
+                    w.f32(p.fov);
+                    w.f32(p.fov_time);
                     w.u64(p.weapons);
                     w.u8(p.active);
                     w.i16(p.clip);
@@ -1000,6 +1007,7 @@ impl ServerMsg {
                     }
                     w.u8(e.render_mode);
                     w.u8(e.render_fx);
+                    w.f32(e.model_scale);
                     w.varint(e.bones.len() as u64);
                     for b in &e.bones {
                         w.qpos(b.pos);
@@ -1292,6 +1300,8 @@ impl ServerMsg {
                         alive: r.bool()?,
                         health: r.i16()?,
                         armor: r.i16()?,
+                        fov: r.f32()?,
+                        fov_time: r.f32()?,
                         weapons: r.u64()?,
                         active: r.u8()?,
                         clip: r.i16()?,
@@ -1321,6 +1331,7 @@ impl ServerMsg {
                         color: [r.u8()?, r.u8()?, r.u8()?, r.u8()?],
                         render_mode: r.u8()?,
                         render_fx: r.u8()?,
+                        model_scale: r.f32()?,
                         bones: {
                             let n = r.varint()? as usize;
                             let mut bones = Vec::with_capacity(n);

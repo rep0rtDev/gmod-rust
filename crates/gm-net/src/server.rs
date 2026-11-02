@@ -1017,6 +1017,7 @@ impl ServerNet {
                     color: [255; 4],
                     render_mode: 0,
                     render_fx: 0,
+                    model_scale: 1.0,
                     bones: Vec::new(),
                     manips: Vec::new(),
                     flex: None,
@@ -1075,6 +1076,7 @@ impl ServerNet {
                     color: p.color,
                     render_mode: p.render_mode,
                     render_fx: p.render_fx,
+                    model_scale: server.model_scale(p.id),
                     bones: server.ragdoll_bone_poses(p.id),
                     manips: {
                         let mut m: std::collections::BTreeMap<u16, crate::msg::BoneManip> =
@@ -1145,6 +1147,8 @@ impl ServerNet {
                 alive: p.alive,
                 health: p.health.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
                 armor: p.armor.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+                fov: p.fov.map_or(0.0, |f| f.0),
+                fov_time: p.fov.map_or(0.0, |f| f.1),
                 weapons: crate::msg::weapon_mask(&p.weapons, &classes),
                 active: crate::msg::weapon_index(&p.active_weapon, &classes),
                 clip: p.inventory.clip(&p.active_weapon)[0].clamp(-1, i16::MAX as i32) as i16,

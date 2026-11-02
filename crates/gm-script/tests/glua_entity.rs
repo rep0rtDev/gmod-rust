@@ -34,6 +34,7 @@ fn snapshot() -> Arc<Snapshot> {
             material: "models/debug/debugwhite".into(),
             render_mode: 1,
             render_fx: 0,
+            model_scale: 1.0,
             sequence: "idle".into(),
             cycle: 0.0,
             playback_rate: 1.0,
@@ -90,6 +91,7 @@ fn snapshot() -> Arc<Snapshot> {
             material: "models/debug/debugwhite".into(),
             render_mode: 1,
             render_fx: 0,
+            model_scale: 1.0,
             sequence: "idle".into(),
             cycle: 0.0,
             playback_rate: 1.0,
@@ -140,6 +142,7 @@ fn snapshot() -> Arc<Snapshot> {
             alive: true,
             health: 85,
             armor: 10,
+            fov: 0.0,
             max_health: 100,
             identity: Some("STEAM_0:1:2".into()),
             model: "models/player/kleiner.mdl".into(),
@@ -1015,4 +1018,17 @@ fn nextbot_vision_and_body_helpers() {
     assert!(writes
         .iter()
         .any(|w| matches!(w, QueuedWrite::EntityPose { ent: 5, name, .. } if name == "move_y")));
+}
+
+#[test]
+fn fov_and_model_scale_writes() {
+    let (rt, writes) = run("Player(1):SetFOV(100, 0.5); Entity(5):SetModelScale(2)");
+    let (fov, scale): (f32, f32) = rt.actors()[0]
+        .eval("return Player(1):GetFOV(), Entity(5):GetModelScale()")
+        .unwrap();
+    assert_eq!((fov, scale), (75.0, 1.0));
+    assert!(writes.iter().any(|w| matches!(w, QueuedWrite::PlayerFov { player: 1, fov, secs } if *fov == 100.0 && *secs == 0.5)));
+    assert!(writes
+        .iter()
+        .any(|w| matches!(w, QueuedWrite::ModelScale { ent: 5, scale } if *scale == 2.0)));
 }

@@ -31,6 +31,8 @@ pub struct EntitySnap {
     pub material: String,
     pub render_mode: u8,
     pub render_fx: u8,
+    /// `Entity:GetModelScale`.
+    pub model_scale: f32,
     /// Sequence the entity plays (NPCs; props do not animate on the server).
     pub sequence: String,
     /// The server animator's cycle `[0, 1]`, playback rate, finished flag and gesture layer.
@@ -93,6 +95,8 @@ pub struct PlayerSnap {
     pub alive: bool,
     pub health: i32,
     pub armor: i32,
+    /// `Player:GetFOV`: the server-set field of view, 0 when the client's own applies.
+    pub fov: f32,
     pub max_health: i32,
     /// Authenticated identity (ed25519 public key, hex) or `None`.
     pub identity: Option<String>,
@@ -375,6 +379,7 @@ impl Snapshot {
                             material: e.material.clone(),
                             render_mode: e.render_mode,
                             render_fx: e.render_fx,
+                            model_scale: e.model_scale,
                             sequence: e.sequence.clone(),
                             cycle: e.cycle,
                             playback_rate: e.playback_rate,
@@ -434,6 +439,7 @@ impl Snapshot {
                             alive: p.alive,
                             health: p.health as i32,
                             armor: p.armor as i32,
+                            fov: p.fov,
                             max_health: 100,
                             identity: None,
                             weapons: gm_net::msg::weapon_names(p.weapons, &classes),
@@ -496,6 +502,7 @@ impl Snapshot {
                             material: p.material.clone(),
                             render_mode: p.render_mode,
                             render_fx: p.render_fx,
+                            model_scale: server.model_scale(p.id),
                             sequence: server
                                 .anim(p.id)
                                 .map_or(String::new(), |a| a.sequence.clone()),
@@ -566,6 +573,7 @@ impl Snapshot {
                             material: String::new(),
                             render_mode: 0,
                             render_fx: 0,
+                            model_scale: 1.0,
                             sequence: server
                                 .anim(id)
                                 .map_or(n.sequence.as_str(), |a| a.sequence.as_str())
@@ -648,6 +656,7 @@ impl Snapshot {
                             alive: p.alive,
                             health: p.health,
                             armor: p.armor,
+                            fov: p.fov.map_or(0.0, |f| f.0),
                             max_health: p.max_health,
                             identity: p
                                 .identity

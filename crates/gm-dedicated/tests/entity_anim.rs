@@ -436,3 +436,26 @@ fn nextbot_mover_approaches_a_point() {
     assert_eq!(nb.stuck, 0);
     assert!(!server.nextbot_op(999, gm_server::NextBotOp::Jump));
 }
+
+#[test]
+fn player_fov_and_model_scale_state() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.add_player(
+        1,
+        Vec3::new(823.235, -500.0, -143.0),
+        Vec3::new(20.0, 0.0, 0.0),
+    );
+    assert!(server.set_player_fov(1, 100.0, 0.5));
+    assert_eq!(server.players[&1].fov, Some((100.0, 0.5)));
+    assert!(server.set_player_fov(1, 0.0, 0.0));
+    assert_eq!(server.players[&1].fov, None);
+    assert!(!server.set_player_fov(2, 90.0, 0.0));
+    assert!(!server.set_model_scale(999, 2.0));
+    assert_eq!(server.model_scale(999), 1.0);
+}

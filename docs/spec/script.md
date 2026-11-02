@@ -669,6 +669,13 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   when a weapon leaves the inventory (`weapon.remove` from `strip_weapon`; the instance stays for a
   re-equip); `OnCleanup(kind)` fires per cleaned-up kind (`sandbox.cleanup` from the sandbox's
   cleanup events).
+- `Player:SetFOV(fov, time)` is server state (`Player.fov`), networked in the player snapshot
+  (`fov`, `fov_time`); the client blends its own camera to it over `time` seconds and returns to
+  `fov_desired` when the server clears it (`fov <= 0`); `GetFOV` reads the snapshot (75, the
+  game's default `fov_desired`, when nothing is set). `Entity:SetModelScale(scale)` is a render
+  scale per prop (`Server::model_scales`, `EntityState.model_scale`): the client scales the
+  model about its origin, physics is untouched (as in the game); the `deltaTime` blend is not
+  kept. Both were constant fakes before (90 and 1).
 - NextBots: a scripted entity with `Base = "base_nextbot"` (or `Type = "nextbot"`) gets a server
   ground mover (`Server::nextbots`, `NextBot`): each tick the xy velocity ramps toward the
   `Approach` goal at the desired speed (accel / decel), gravity pulls an airborne bot, the hull

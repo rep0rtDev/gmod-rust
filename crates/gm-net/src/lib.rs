@@ -82,6 +82,8 @@ mod tests {
                 alive: true,
                 health: 100,
                 armor: 0,
+                fov: 0.0,
+                fov_time: 0.0,
                 weapons: 0x1fff,
                 active: 5,
                 clip: 18,
@@ -110,6 +112,7 @@ mod tests {
                 color: [255; 4],
                 render_mode: 0,
                 render_fx: 0,
+                model_scale: 1.0,
                 bones: vec![BonePose {
                     pos: Vec3::new(4.0, 5.0, 6.0),
                     angles: Vec3::new(0.0, 90.0, 0.0),

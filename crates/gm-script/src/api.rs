@@ -375,6 +375,17 @@ pub enum QueuedWrite {
         frags: Option<u32>,
         deaths: Option<u32>,
     },
+    /// `Player:SetFOV(fov, time)`.
+    PlayerFov {
+        player: u32,
+        fov: f32,
+        secs: f32,
+    },
+    /// `Entity:SetModelScale(scale)`.
+    ModelScale {
+        ent: u32,
+        scale: f32,
+    },
     /// `CLuaLocomotion` ops on a scripted NextBot.
     NextBot {
         ent: u32,
@@ -681,6 +692,7 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("alive", p.alive)?;
     t.set("health", p.health)?;
     t.set("armor", p.armor)?;
+    t.set("fov", p.fov)?;
     t.set("max_health", p.max_health)?;
     t.set("identity", p.identity.as_deref())?;
     t.set("model", p.model.as_str())?;
@@ -949,6 +961,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
         t.set("npc_next_goal", vec3_table(lua, g)?)?;
     }
     t.set("npc_caps", e.npc_caps)?;
+    t.set("model_scale", e.model_scale)?;
     if let Some(nb) = &e.nextbot {
         let n = lua.create_table()?;
         n.set("desired_speed", nb.desired_speed)?;
@@ -1967,6 +1980,15 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     dt: f32_arg(&arg),
                 },
                 "npc.took_damage" => QueuedWrite::NpcTookDamage { ent },
+                "player.fov" => QueuedWrite::PlayerFov {
+                    player: ent,
+                    fov: tbl_field::<f32>(&arg, "fov")?.unwrap_or(0.0),
+                    secs: tbl_field::<f32>(&arg, "time")?.unwrap_or(0.0),
+                },
+                "ent.model_scale" => QueuedWrite::ModelScale {
+                    ent,
+                    scale: f32_arg(&arg),
+                },
                 "nextbot.approach" => QueuedWrite::NextBot {
                     ent,
                     op: gm_server::NextBotOp::Approach {
@@ -3403,6 +3425,8 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::EntityResetSequence { ent } => server.reset_sequence_info(*ent),
         QueuedWrite::EntityFrameAdvance { ent, dt } => server.frame_advance(*ent, *dt),
         QueuedWrite::NpcTookDamage { ent } => server.npc_mark_damaged(*ent),
+        QueuedWrite::PlayerFov { player, fov, secs } => server.set_player_fov(*player, *fov, *secs),
+        QueuedWrite::ModelScale { ent, scale } => server.set_model_scale(*ent, *scale),
         QueuedWrite::NextBot { ent, op } => server.nextbot_op(*ent, op.clone()),
         QueuedWrite::EntityPose { ent, name, value } => {
             server.set_pose_parameter(*ent, name, *value)
