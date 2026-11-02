@@ -3725,6 +3725,8 @@ pub struct Server<'w> {
     pub model_scripts: BTreeMap<String, ModelScriptData>,
     /// Some addon listens to `SetupMove` / `Move` / `FinishMove`: ask them around every move.
     pub move_hooks: bool,
+    /// Labels of the mounted content providers (`IsMounted`).
+    pub mounted: Vec<String>,
     /// `Entity:SetFriction / SetElasticity` overrides of the model surface, per prop.
     pub surface_overrides: BTreeMap<u32, (f32, f32)>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
@@ -3877,6 +3879,7 @@ impl<'w> Server<'w> {
             pending_chat: Vec::new(),
             model_scripts: BTreeMap::new(),
             move_hooks: false,
+            mounted: Vec::new(),
             surface_overrides: BTreeMap::new(),
             sounds: Vec::new(),
             scrapes: BTreeMap::new(),

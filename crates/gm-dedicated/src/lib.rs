@@ -493,3 +493,55 @@ sbox_godmode = "1"
         );
     }
 }
+
+/// Seconds of a RIFF WAVE file from its `fmt ` and `data` chunks (`SoundDuration`).
+pub fn wav_duration_bytes(b: &[u8]) -> Option<f32> {
+    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        return None;
+    }
+    let (mut rate, mut block, mut data) = (0u32, 0u32, None);
+    let mut i = 12;
+    while i + 8 <= b.len() {
+        let id = &b[i..i + 4];
+        let size = u32::from_le_bytes(b[i + 4..i + 8].try_into().ok()?) as usize;
+        let body = &b[i + 8..(i + 8 + size).min(b.len())];
+        if id == b"fmt " && body.len() >= 14 {
+            rate = u32::from_le_bytes(body[4..8].try_into().ok()?);
+            block = u32::from(u16::from_le_bytes(body[12..14].try_into().ok()?));
+        } else if id == b"data" {
+            data = Some(size as u32);
+        }
+        i += 8 + size + (size & 1);
+    }
+    let data = data?;
+    (rate > 0 && block > 0).then(|| data as f32 / (rate * block) as f32)
+}
+
+/// `SoundDuration(name)`: the length of `sound/<name>` from the mounted content (WAV only).
+pub fn wav_duration(mount: &gm_content::Mount, name: &str) -> Option<f32> {
+    let path = format!("sound/{}", name.trim_start_matches('/'));
+    wav_duration_bytes(&mount.read(&path).ok()?)
+}
+
+#[cfg(test)]
+mod wav_tests {
+    #[test]
+    fn wav_duration_reads_fmt_and_data_chunks() {
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(b"WAVE");
+        b.extend_from_slice(b"fmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes()); // pcm
+        b.extend_from_slice(&1u16.to_le_bytes()); // mono
+        b.extend_from_slice(&44100u32.to_le_bytes());
+        b.extend_from_slice(&88200u32.to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes()); // block align
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&(44100u32 * 2 * 3).to_le_bytes());
+        assert_eq!(super::wav_duration_bytes(&b), Some(3.0));
+        assert_eq!(super::wav_duration_bytes(b"RIFX"), None);
+    }
+}

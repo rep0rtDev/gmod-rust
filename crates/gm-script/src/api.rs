@@ -541,6 +541,9 @@ pub enum DrawCmd {
 }
 
 /// Shared between the Rust side of an actor and the closures its VM calls.
+/// Host lookup behind `SoundDuration`: sound length in seconds by name.
+pub type SoundDuration = Arc<dyn Fn(&str) -> Option<f32> + Send + Sync>;
+
 pub struct Shared {
     pub snapshot: RwLock<Arc<Snapshot>>,
     pub queue: Mutex<Vec<(u64, QueuedWrite)>>,
@@ -553,6 +556,8 @@ pub struct Shared {
     pub draws: Mutex<Vec<DrawCmd>>,
     /// The addon's store when it has the `storage` capability.
     pub store: Option<Arc<Mutex<crate::storage::Store>>>,
+    /// `SoundDuration`: sound length by name from the host content, if the host offers it.
+    pub sound_duration: Option<SoundDuration>,
 }
 
 fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
@@ -1992,6 +1997,18 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     lua.globals().set("storage", storage)?;
+    let sh = shared.clone();
+    lua.globals().set(
+        "__mounted",
+        lua.create_function(move |_, ()| Ok(sh.snapshot.read().unwrap().mounted.clone()))?,
+    )?;
+    let sh = shared.clone();
+    lua.globals().set(
+        "__sound_duration",
+        lua.create_function(move |_, name: String| {
+            Ok(sh.sound_duration.as_ref().and_then(|f| f(&name)))
+        })?,
+    )?;
     // `CompileString` / `RunString`: a chunk from a string, compiled in this VM's sandbox
     // (no file access; `include` / `CompileFile` are not this).
     lua.globals().set(

@@ -8,6 +8,7 @@ use std::sync::Arc;
 fn snapshot() -> Arc<Snapshot> {
     let mut s = Snapshot::default();
     s.cvars.insert("sv_gravity".into(), "600".into());
+    s.mounted = vec!["garrysmod".into(), "hl2".into()];
     s.entities.insert(
         5,
         gm_script::snapshot::EntitySnap {
@@ -1444,5 +1445,31 @@ fn a_player_answers_every_entity_method() {
     assert_eq!(
         eq, "falsefalsetruefalsefalse",
         "a player equals only itself"
+    );
+}
+
+#[test]
+fn is_mounted_reads_the_provider_labels_and_sound_duration_asks_the_host() {
+    let mut rt = runtime(
+        "state = {}
+         events.on('tick.pre', function()
+             state.m = tostring(IsMounted('hl2')) .. tostring(IsMounted('cstrike')) .. tostring(IsMounted('GarrysMod'))
+             state.d = SoundDuration('ambient/alarms/klaxon1.wav')
+         end)",
+    );
+    rt.set_sound_duration(std::sync::Arc::new(|n: &str| {
+        (n == "ambient/alarms/klaxon1.wav").then_some(2.5)
+    }));
+    let mut rt2 = runtime("state = {}");
+    let _ = &mut rt2;
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let (m, d): (String, f64) = rt.actors()[0].eval("return state.m, state.d").unwrap();
+    assert_eq!(m, "truefalsetrue");
+    assert_eq!(
+        d, 0.0,
+        "the lookup set after load does not reach the running actor"
     );
 }

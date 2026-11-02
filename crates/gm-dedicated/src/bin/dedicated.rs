@@ -134,6 +134,10 @@ fn main() -> Result<()> {
     server.step_loader = Some(Box::new(move |m: Option<&str>| {
         gm_dedicated::step_sounds(&mount_for_steps, &table, m)
     }));
+    server.mounted = mount.providers().iter().map(|p| p.label()).collect();
+    let sound_mount = gm_content::Mount::for_install(&inst)?;
+    let sound_duration: gm_script::api::SoundDuration =
+        std::sync::Arc::new(move |n| gm_dedicated::wav_duration(&sound_mount, n));
     let spawn = glam::Vec3::new(args.spawn[0], args.spawn[1], args.spawn[2]);
     for (name, value) in config.cvar_strings() {
         if !server.set_cvar(&name, &value) {
@@ -191,6 +195,7 @@ fn main() -> Result<()> {
     let mut bans_known = net.bans.len();
     if !args.addon.is_empty() {
         let mut rt = gm_script::Runtime::new();
+        rt.set_sound_duration(sound_duration.clone());
         rt.data_dir = Some(args.data.clone());
         rt.watch = args.watch;
         for t in &args.trust {

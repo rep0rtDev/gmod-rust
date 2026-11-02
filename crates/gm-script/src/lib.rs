@@ -59,6 +59,7 @@ pub struct Runtime {
     /// Where addon stores are kept (`<data_dir>/<realm>/<addon>.gms`); None = memory only.
     pub data_dir: Option<std::path::PathBuf>,
     stores: std::collections::BTreeMap<String, Arc<std::sync::Mutex<storage::Store>>>,
+    sound_duration: Option<api::SoundDuration>,
     /// Poll the loaded addons' files every 33 ticks and hot reload the changed ones.
     pub watch: bool,
     addon_stamps: std::collections::BTreeMap<String, u64>,
@@ -99,6 +100,7 @@ impl Runtime {
             cvars_last: Default::default(),
             data_dir: None,
             stores: Default::default(),
+            sound_duration: None,
             watch: false,
             addon_stamps: Default::default(),
             addon_versions: Default::default(),
@@ -493,9 +495,14 @@ impl Runtime {
     pub fn load(&mut self, spec: ActorSpec) -> Result<usize, mlua::Error> {
         let id = self.actors.len() as u32;
         let store = spec.config.can_storage.then(|| self.store_of(&spec.addon));
-        let actor = Actor::new(id, spec, store)?;
+        let actor = Actor::new(id, spec, store, self.sound_duration.clone())?;
         self.actors.push(actor);
         Ok(id as usize)
+    }
+
+    /// Host lookup behind `SoundDuration` (sound length by name); applies to actors loaded after.
+    pub fn set_sound_duration(&mut self, f: api::SoundDuration) {
+        self.sound_duration = Some(f);
     }
 
     fn store_path(&self, addon: &str) -> Option<std::path::PathBuf> {

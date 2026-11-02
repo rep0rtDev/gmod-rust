@@ -78,6 +78,7 @@ impl Actor {
         id: u32,
         spec: ActorSpec,
         store: Option<Arc<Mutex<crate::storage::Store>>>,
+        sound_duration: Option<crate::api::SoundDuration>,
     ) -> mlua::Result<Self> {
         let shared = Arc::new(Shared {
             snapshot: std::sync::RwLock::new(Arc::new(Snapshot::default())),
@@ -88,6 +89,7 @@ impl Actor {
             net_out: Mutex::new(Vec::new()),
             draws: Mutex::new(Vec::new()),
             store,
+            sound_duration,
         });
         let mut a = Actor {
             id,

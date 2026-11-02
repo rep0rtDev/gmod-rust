@@ -179,7 +179,14 @@ function RunString(code, identifier, handleError)
     return err
 end
 RunStringEx = RunString
-for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CreatePhysCollideBox", "CreatePhysCollidesFromModel", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "IsMounted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "SentenceDuration", "SetPhysConstraintSystem", "SoundDuration", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
+-- Mounted content (provider labels from the host) and sound lengths from its WAV headers.
+function IsMounted(name)
+    name = string.lower(tostring(name or ""))
+    for _, l in ipairs(__mounted()) do if string.find(string.lower(l), name, 1, true) then return true end end
+    return false
+end
+function SoundDuration(name) return __sound_duration(tostring(name or "")) or 0 end
+for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CreatePhysCollideBox", "CreatePhysCollidesFromModel", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "SentenceDuration", "SetPhysConstraintSystem", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
 
 
 -- Tool: the tool gun's per-mode state object (ghost entities need the client realm).

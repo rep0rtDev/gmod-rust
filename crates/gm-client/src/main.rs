@@ -5006,12 +5006,17 @@ fn main() -> Result<()> {
     server.step_loader = Some(Box::new(move |m: Option<&str>| {
         gm_dedicated::step_sounds(&steps_mount, &table, m)
     }));
+    server.mounted = mount.providers().iter().map(|p| p.label()).collect();
+    let sound_mount = gm_content::Mount::for_install(&inst)?;
+    let sound_duration: gm_script::api::SoundDuration =
+        std::sync::Arc::new(move |n| gm_dedicated::wav_duration(&sound_mount, n));
     let mut net = ServerNet::new(&map, spawn);
     net.admins.extend(1..=16);
     net.saves_dir = Some(settings::home_dir().join("saves"));
     // `--addon <dir|file.gmr>` (repeatable): addons of the in-process server; their client realm
     // reaches the client realm below over the loopback like from a dedicated server
     let mut rt = gm_script::Runtime::new();
+    rt.set_sound_duration(sound_duration.clone());
     let argv: Vec<String> = std::env::args().collect();
     for (i, a) in argv.iter().enumerate() {
         if a == "--addon" {

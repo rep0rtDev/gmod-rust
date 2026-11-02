@@ -188,6 +188,8 @@ impl Default for NavRef {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Snapshot {
     pub tick: u64,
+    /// Mounted content provider labels (`IsMounted`).
+    pub mounted: Vec<String>,
     pub world: WorldRef,
     pub nav: NavRef,
     pub models: ModelsRef,
@@ -277,6 +279,7 @@ impl Snapshot {
         let classes = gm_net::msg::weapon_classes(&world.weapon_defs);
         Snapshot {
             tick: world.tick as u64,
+            mounted: Vec::new(),
             world: world_ref,
             nav: NavRef::default(),
             models: ModelsRef::default(),
@@ -372,6 +375,7 @@ impl Snapshot {
     pub fn of(server: &Server<'_>, tick: u64) -> Self {
         Snapshot {
             tick,
+            mounted: server.mounted.clone(),
             world: WorldRef(server.collision as *const _),
             models: ModelsRef(&server.model_scripts as *const _),
             vehicles: VehiclesRef(&server.vehicles as *const _),
