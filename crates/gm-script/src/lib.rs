@@ -894,6 +894,16 @@ impl Runtime {
                     gm_server::Verdict::Cancel
                 }
             }
+            gm_server::Request::Spawn { player, kind, name } => {
+                p.ints.push(("player", *player as i64));
+                p.strs.push(("kind", kind.to_string()));
+                p.strs.push(("name", name.clone()));
+                if self.ask(server, "sandbox.spawn_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
             gm_server::Request::PhysgunPickup { player, ent } => {
                 p.ints.push(("player", *player as i64));
                 p.ints.push(("entity", *ent as i64));
@@ -1220,6 +1230,18 @@ impl Runtime {
                         "think" => "weapon.think",
                         _ => "weapon.holster",
                     }
+                }
+                E::Spawned {
+                    player,
+                    ent,
+                    kind,
+                    name,
+                } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("entity", ent as i64));
+                    p.strs.push(("kind", kind.to_string()));
+                    p.strs.push(("name", name));
+                    "sandbox.spawned"
                 }
                 E::ScriptSpawned { owner, ent, tag } => {
                     p.ints.push(("player", owner as i64));

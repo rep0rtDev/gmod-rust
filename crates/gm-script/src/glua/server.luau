@@ -649,6 +649,20 @@ local prev_move = {}
     events.on("player.pickup_weapon_request", function(p) if hook.Run("PlayerCanPickupWeapon", Player(p.player), __glua_classes.Weapon.__from(p.class, p.player)) == false then return false end end)
     events.on("player.enter_vehicle_request", function(p) if hook.Run("CanPlayerEnterVehicle", Player(p.player), Entity(p.vehicle), 0) == false then return false end end)
     events.on("player.exit_vehicle_request", function(p) if hook.Run("CanExitVehicle", Entity(p.vehicle), Player(p.player)) == false then return false end end)
+    events.on("sandbox.spawn_request", function(p)
+        local ply = Player(p.player)
+        local r
+        if p.kind == "npc" then r = hook.Run("PlayerSpawnNPC", ply, p.name, "")
+        elseif p.kind == "vehicle" then r = hook.Run("PlayerSpawnVehicle", ply, "", p.name, list.Get("Vehicles")[p.name] or {})
+        elseif p.kind == "weapon" then r = hook.Run("PlayerSpawnSWEP", ply, p.name, weapons.GetStored(p.name) or {}) end
+        if r == false then return false end
+    end)
+    events.on("sandbox.spawned", function(p)
+        local ply, e = Player(p.player), Entity(p.entity)
+        if p.kind == "npc" then hook.Run("PlayerSpawnedNPC", ply, e)
+        elseif p.kind == "vehicle" then hook.Run("PlayerSpawnedVehicle", ply, e)
+        elseif p.kind == "weapon" then hook.Run("PlayerSpawnedSWEP", ply, e) end
+    end)
     events.on("player.loadout", function(p) if hook.Run("PlayerLoadout", Player(p.player)) == true then return false end end)
     events.on("prop.spawn_request", function(p) if hook.Run("PlayerSpawnProp", Player(p.player), p.model) == false then return false end end)
     events.on("tool.before", function(p)

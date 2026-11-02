@@ -851,6 +851,11 @@ player's command is processed) for `Player:GetPreviousWeapon`. `Entity:AddEffect
 RemoveEffects / IsEffectActive` and the `EFlags` family keep a per-entity bitmask in the script
 layer; `EF_NODRAW` is the one flag with a server meaning and maps onto `SetNoDraw`.
 
+Spawning an NPC, vehicle or weapon for a player asks the addon runtime first (`PlayerSpawnNPC /
+PlayerSpawnVehicle / PlayerSpawnSWEP`) and reports the entity afterwards (`PlayerSpawned*`); props
+already did through the network layer's spawn request. Hooks the server raises count as
+implemented in the manifest even when their gamemode default is a stub.
+
 +use on a vehicle and +use while seated ask the addon runtime first (`CanPlayerEnterVehicle`,
 `CanExitVehicle`); a `false` leaves the player where they are. Scripted `Player:EnterVehicle /
 ExitVehicle` are not asked, like the game.

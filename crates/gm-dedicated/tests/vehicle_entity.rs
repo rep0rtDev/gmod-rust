@@ -37,7 +37,22 @@ fn chair_spawns_seats_and_releases_the_player() {
     }
     assert!(server.spawn_vehicle(1, "Bogus").is_none());
     let hit = server.tool_hit(1).unwrap();
+    server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::Spawn {
+            kind: "vehicle", ..
+        } => gm_server::Verdict::Cancel,
+        _ => gm_server::Verdict::Allow,
+    }));
+    assert!(
+        server.spawn_vehicle(1, "Chair_Wood").is_none(),
+        "PlayerSpawnVehicle refuses"
+    );
+    server.request_hook = None;
     let id = server.spawn_vehicle(1, "Chair_Wood").expect("chair spawns");
+    assert!(matches!(
+        server.game_events.last(),
+        Some(gm_server::GameEvent::Spawned { player: 1, ent, kind: "vehicle", .. }) if *ent == id
+    ));
     let prop = server
         .sandbox
         .props()

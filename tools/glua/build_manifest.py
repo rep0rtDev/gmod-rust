@@ -94,10 +94,11 @@ if present is not None:
         if e['kind'] in ('enum', 'structure', 'type'):
             e['status'] = 'implemented' if a in present else e['status']
             continue
-        if a in stubs:
-            e['status'] = 'stub'
-        elif a in present:
+        # A hook the server really raises counts even when its gamemode default is a stub.
+        if a in present and (a not in stubs or e['kind'] == 'hook'):
             e['status'] = 'implemented'
+        elif a in stubs:
+            e['status'] = 'stub'
         else:
             e['status'] = 'missing'
 

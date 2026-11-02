@@ -493,6 +493,13 @@ pub enum GameEvent {
         hit: Option<(u32, Vec3, Vec3)>,
         other: String,
     },
+    /// The sandbox spawned an NPC / vehicle / weapon for the player (`PlayerSpawnedNPC` etc.).
+    Spawned {
+        player: u32,
+        ent: u32,
+        kind: &'static str,
+        name: String,
+    },
     /// A script spawned a prop (`world.queue("spawn", ...)`); `tag` is the script's own.
     ScriptSpawned {
         owner: u32,
@@ -538,6 +545,13 @@ pub enum Request {
     EnterVehicle { player: u32, vehicle: u32 },
     /// `CanExitVehicle`: the seated player pressed +use.
     ExitVehicle { player: u32, vehicle: u32 },
+    /// `PlayerSpawnNPC / PlayerSpawnVehicle / PlayerSpawnSWEP`: the sandbox is about to spawn
+    /// `kind` (`npc`, `vehicle`, `weapon`) named `name` for the player.
+    Spawn {
+        player: u32,
+        kind: &'static str,
+        name: String,
+    },
     /// `CanProperty`: the player asked for a context-menu property on a prop.
     Property { player: u32, ent: u32, name: String },
     /// `PlayerSetModel` on (re)spawn with the model the player's choice translates to;
@@ -5789,6 +5803,14 @@ impl<'w> Server<'w> {
         if !self.players.get(&player).is_some_and(|p| p.alive) {
             return None;
         }
+        if self.ask(Request::Spawn {
+            player,
+            kind: "weapon",
+            name: class.to_string(),
+        }) == Verdict::Cancel
+        {
+            return None;
+        }
         let (model, print_name) = match self.scripted_weapons.iter().find(|w| w.class == class) {
             Some(sw) => (sw.world_model.clone(), sw.print_name.clone()),
             None => {
@@ -5813,7 +5835,14 @@ impl<'w> Server<'w> {
             let loaded = self.model_loader.as_mut().and_then(|f| f(&model))?;
             self.register_model(&model, loaded);
         }
-        Some(self.place_world_weapon(player, class, &model, &print_name, pos))
+        let id = self.place_world_weapon(player, class, &model, &print_name, pos);
+        self.game_events.push(GameEvent::Spawned {
+            player,
+            ent: id,
+            kind: "weapon",
+            name: class.to_string(),
+        });
+        Some(id)
     }
 
     fn place_world_weapon(
@@ -5998,6 +6027,14 @@ impl<'w> Server<'w> {
         if !self.players.get(&player).is_some_and(|p| p.alive) {
             return None;
         }
+        if self.ask(Request::Spawn {
+            player,
+            kind: "vehicle",
+            name: key.to_string(),
+        }) == Verdict::Cancel
+        {
+            return None;
+        }
         let def = *vehicle_def(key)?;
         let mut events = Vec::new();
         if !self.sandbox.check_limit(player, "vehicles", &mut events) {
@@ -6059,6 +6096,12 @@ impl<'w> Server<'w> {
             Some(format!("Undone {name}")),
             vec![id],
         );
+        self.game_events.push(GameEvent::Spawned {
+            player,
+            ent: id,
+            kind: "vehicle",
+            name: key.to_string(),
+        });
         self.events.extend(events);
         Some(id)
     }
@@ -6473,6 +6516,14 @@ impl<'w> Server<'w> {
         if !self.players.get(&player).is_some_and(|p| p.alive) {
             return None;
         }
+        if self.ask(Request::Spawn {
+            player,
+            kind: "npc",
+            name: key.to_string(),
+        }) == Verdict::Cancel
+        {
+            return None;
+        }
         let def = *npc_def(key)?;
         let mut events = Vec::new();
         if !self.sandbox.check_limit(player, "npcs", &mut events) {
@@ -6524,6 +6575,12 @@ impl<'w> Server<'w> {
             Some(format!("Undone {name}")),
             vec![id],
         );
+        self.game_events.push(GameEvent::Spawned {
+            player,
+            ent: id,
+            kind: "npc",
+            name: key.to_string(),
+        });
         self.events.extend(events);
         Some(id)
     }
