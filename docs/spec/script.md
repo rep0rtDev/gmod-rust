@@ -712,6 +712,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `WEAPON:Tick()` runs every server tick on every carried scripted weapon; `WEAPON:EquipAmmo(ply)`
+  when the player walks into a weapon of a class he already carries (the entity is gone, the
+  inventory unchanged, as measured); `WEAPON:OnReloaded()` right after `DefaultReload` refilled
+  the clip (our reload is instant). `WEAPON:AcceptInput` / `KeyValue` stay stubs: carried
+  weapons have no entity id to fire inputs at.
 - `GM:AcceptInput(ent, input, activator, caller, value)` runs before any `Entity:Fire` /
   `Entity:Input` reaches a scripted entity's `ENTITY:AcceptInput` (true swallows the input).
 - `GM:GetGameDescription()` is asked every 64 ticks (`gamemode.description`) and the string

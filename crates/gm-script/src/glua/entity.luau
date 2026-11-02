@@ -1982,6 +1982,8 @@ function WEP:DefaultReload(_act)
     if take <= 0 then return false end
     self:SetClip1(clip + take)
     owner:RemoveAmmo(take, atype)
+    -- @hook WEAPON:OnReloaded (our reload refills at once, so this is the same moment)
+    if self.OnReloaded then self:OnReloaded() end
     return true
 end
 

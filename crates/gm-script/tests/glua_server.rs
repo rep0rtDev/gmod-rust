@@ -1755,3 +1755,40 @@ fn accept_input_hook_sees_and_blocks_inputs() {
         .unwrap();
     assert_eq!((seen, input.as_str(), value.as_str()), (2, "Kill", "nil"));
 }
+
+#[test]
+fn weapon_tick_and_equip_ammo() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "weapons.Register({ Tick = function(self) state.ticks = (state.ticks or 0) + 1 end,
+            EquipAmmo = function(self, ply) state.equip = ply:EntIndex() end }, 'weapon_t')"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut p = Payload::default();
+    p.ints.push(("player", 1));
+    p.strs.push(("class", "weapon_t".into()));
+    let a = &mut rt.actors_mut()[0];
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    a.dispatch(&snap, "player.weapon_pickup", &p, 3).unwrap();
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    a.dispatch(&snap, "weapon.remove", &p, 3).unwrap();
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    a.dispatch(&snap, "player.weapon_equip_ammo", &p, 3)
+        .unwrap();
+    let (ticks, equip): (i32, i32) = a.eval("return state.ticks, state.equip").unwrap();
+    assert_eq!((ticks, equip), (2, 1));
+}

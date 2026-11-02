@@ -1364,6 +1364,11 @@ impl Runtime {
                     p.strs.push(("class", class));
                     "player.weapon_pickup"
                 }
+                E::WeaponEquipAmmo { player, class } => {
+                    p.ints.push(("player", player as i64));
+                    p.strs.push(("class", class));
+                    "player.weapon_equip_ammo"
+                }
                 E::NpcKilled {
                     npc,
                     attacker,

@@ -166,6 +166,9 @@ function weapons.Register(SWEP, class)
         think = function(p) local i = inst(p); if i.Think then return i:Think() end end,
     })
 end
+local wep_live = {}
+-- carried scripted weapons (set on equip, cleared when the weapon leaves the inventory)
+function weapons.__live(i, on) wep_live[i] = on or nil end
 function weapons.__ensure(class, player) if not wep_defs[class] then return nil end return instance_for(wep_defs, wep_defs, class, player, __glua_classes.Weapon.__from(class, player)) end
 function weapons.Get(class) local d = wep_defs[class]; return d and inherit(d, wep_defs) or nil end
 function weapons.GetStored(class) return wep_defs[class] end
@@ -210,7 +213,16 @@ end)
 -- the weapon left the player's inventory (strip, death); the instance stays for a re-equip
 events.on("weapon.remove", function(p)
     local i = weapons.__ensure(p.class, p.player)
+    if i then weapons.__live(i, false) end
     if i and i.OnRemove then i:OnRemove() end
+end)
+
+-- @hook WEAPON:EquipAmmo
+-- the player walked into a weapon of a class he already carries (the entity is gone, the
+-- inventory unchanged - measured)
+events.on("player.weapon_equip_ammo", function(p)
+    local i = weapons.__ensure(p.class, p.player)
+    if i and i.EquipAmmo then i:EquipAmmo(Player(p.player)) end
 end)
 
 -- @hook NEXTBOT:RunBehaviour
@@ -411,5 +423,9 @@ scripted_ents.__ai_methods = AIM
 events.on("tick.pre", function()
     for id, i in pairs(by_id) do
         if i.PhysicsUpdate then i:PhysicsUpdate(i.Entity:GetPhysicsObject()) end
+    end
+    -- @hook WEAPON:Tick
+    for i in pairs(wep_live) do
+        if i.Tick then i:Tick() end
     end
 end)

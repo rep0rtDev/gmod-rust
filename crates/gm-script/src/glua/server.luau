@@ -639,7 +639,7 @@ local prev_move = {}
         local r = hook.Run("FindUseEntity", Player(p.player), Entity(p.entity))
         if r ~= nil and r ~= NULL and IsValid(r) and r.EntIndex then return tostring(r:EntIndex()) end
     end)
-    events.on("player.weapon_pickup", function(p) hook.Run("WeaponEquip", __glua_classes.Weapon.__from(p.class, p.player), Player(p.player)); local i = weapons.__ensure(p.class, p.player); if i then rawset(i, "Owner", Player(p.player)); if i.Equip then i:Equip(Player(p.player)) end if i.OwnerChanged then i:OwnerChanged() end end end)
+    events.on("player.weapon_pickup", function(p) hook.Run("WeaponEquip", __glua_classes.Weapon.__from(p.class, p.player), Player(p.player)); local i = weapons.__ensure(p.class, p.player); if i then rawset(i, "Owner", Player(p.player)); weapons.__live(i, true); if i.Equip then i:Equip(Player(p.player)) end if i.OwnerChanged then i:OwnerChanged() end end end)
     events.on("player.enter_vehicle", function(p) hook.Run("PlayerEnteredVehicle", Player(p.player), Entity(p.vehicle), 0) end)
     events.on("player.exit_vehicle", function(p) hook.Run("PlayerLeaveVehicle", Player(p.player), Entity(p.vehicle)) end)
     events.on("player.key_press", function(p) hook.Run("KeyPress", Player(p.player), in_key(p.key)) end)

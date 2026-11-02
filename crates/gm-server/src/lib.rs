@@ -666,6 +666,12 @@ pub enum GameEvent {
         player: u32,
         class: String,
     },
+    /// The player walked into a weapon of a class he already carries: the entity is gone,
+    /// the inventory unchanged (measured), scripts get `WEAPON:EquipAmmo`.
+    WeaponEquipAmmo {
+        player: u32,
+        class: String,
+    },
     /// An NPC died (its body lingers `NPC_CORPSE_TICKS`); the corpse is the client's ragdoll.
     NpcKilled {
         npc: u32,
@@ -10737,6 +10743,8 @@ impl<'w> Server<'w> {
             // measured: a class already carried still takes the entity off the ground and
             // changes nothing in the inventory (no reserve ammo either)
             if p.weapons.contains(&class) {
+                self.game_events
+                    .push(GameEvent::WeaponEquipAmmo { player: pid, class });
                 continue;
             }
             p.weapons.push(class.clone());
