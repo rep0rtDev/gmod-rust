@@ -30,6 +30,9 @@ pub struct Payload {
 pub enum ToolOp {
     SetObject,
     Clear,
+    /// The scripted stool did something of its own (GLua `TOOL:LeftClick` returned true): the
+    /// click counts as fired (effect, `tool.after` done).
+    Done,
     Weld {
         ent1: u32,
         ent2: u32,
@@ -3316,6 +3319,7 @@ pub fn tool_ops(v: Value) -> Result<Vec<ToolOp>> {
         out.push(match op.as_str() {
             "set_object" => ToolOp::SetObject,
             "clear" => ToolOp::Clear,
+            "done" => ToolOp::Done,
             "weld" => ToolOp::Weld {
                 ent1: t.get::<Option<u32>>("ent1")?.unwrap_or(0),
                 ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
@@ -3355,6 +3359,7 @@ pub fn apply_tool_ops(
     let mut did = false;
     for op in ops {
         match op {
+            ToolOp::Done => did = true,
             ToolOp::SetObject => {
                 let n = server.sandbox.set_object(player, "script", hit);
                 server.sandbox.set_stage(player, n as u32);

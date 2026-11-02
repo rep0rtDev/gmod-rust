@@ -2042,3 +2042,38 @@ fn enable_drag_write_and_readback() {
     let drag: bool = rt.actors()[0].eval("return state.drag").unwrap();
     assert!(!drag);
 }
+
+#[test]
+fn glua_stool_handles_unknown_tool_clicks() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "TOOL = ToolObj:Create()
+            TOOL.Mode = \"mytool\"
+            function TOOL:LeftClick(tr) state.z, state.owner, state.world = tr.HitPos.z, self:GetOwner():EntIndex(), tr.HitWorld; return true end
+            function TOOL:RightClick(tr) return false end"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let a = &mut rt.actors_mut()[0];
+    assert!(a.has_tool("mytool"));
+    assert!(!a.has_tool("nosuch"));
+    let mut p = Payload::default();
+    p.ints.push(("player", 1));
+    p.ints.push(("stage", 0));
+    p.hit = Some((0, Vec3::new(0.0, 0.0, 7.0), Vec3::Z));
+    let ops = a.dispatch_tool(&snap, "mytool", "left", &p).unwrap();
+    assert_eq!(ops, vec![gm_script::api::ToolOp::Done]);
+    let ops = a.dispatch_tool(&snap, "mytool", "right", &p).unwrap();
+    assert!(ops.is_empty());
+    let (z, owner, world): (f32, i32, bool) =
+        a.eval("return state.z, state.owner, state.world").unwrap();
+    assert_eq!((z, owner, world), (7.0, 1, true));
+}

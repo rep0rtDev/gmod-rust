@@ -196,7 +196,12 @@ for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "Br
 -- Tool: the tool gun's per-mode state object (ghost entities need the client realm).
 local TOOL = {}
 TOOL.__index = TOOL
-function TOOL:Create() return setmetatable({ Mode = nil, SWEP = nil, Owner = nil, ClientConVar = {}, ServerConVar = {}, Objects = {}, Stage = 0, Operation = 0, Message = "start", LastMessage = 0, AllowedCVar = 0 }, TOOL) end
+-- scripted stools: a TOOL instance registers under its Mode the moment the addon assigns it (our
+-- addons are manifest actors, there is no stools/<mode>.lua loader, so `TOOL.Mode = "x"` is
+-- required); the server's click on a mode no Rust stool owns reaches it through the host `__tool`
+local glua_tools = {}
+local tool_inst_meta = { __index = TOOL, __newindex = function(t, k, v) rawset(t, k, v) if k == "Mode" and type(v) == "string" then glua_tools[v] = t end end }
+function TOOL:Create() return setmetatable({ Mode = nil, SWEP = nil, Owner = nil, ClientConVar = {}, ServerConVar = {}, Objects = {}, Stage = 0, Operation = 0, Message = "start", LastMessage = 0, AllowedCVar = 0 }, tool_inst_meta) end
 function TOOL:GetMode() return self.Mode end
 function TOOL:GetOwner() return self.Owner or (self.SWEP and self.SWEP.Owner) or NULL end
 function TOOL:GetSWEP() return self.SWEP end
@@ -226,6 +231,33 @@ function TOOL:CreateConVars() for k, v in pairs(self.ClientConVar) do CreateConV
 for _, n in ipairs({ "MakeGhostEntity", "ReleaseGhostEntity", "StartGhostEntity", "UpdateData", "UpdateGhostEntity" }) do if TOOL[n] == nil then TOOL[n] = stub("Tool:" .. n) end end
 __glua_classes.Tool = TOOL
 ToolObj = TOOL
+local function tool_trace(ctx)
+    local h = ctx.hit or {}
+    local pos = h.pos and Vector(h.pos.x, h.pos.y, h.pos.z) or Vector()
+    local n = h.normal and Vector(h.normal.x, h.normal.y, h.normal.z) or Vector(0, 0, 1)
+    local world = (h.ent or 0) == 0
+    return {
+        Hit = true, HitPos = pos, HitNormal = n, Entity = world and NULL or Entity(h.ent), Fraction = 0.5, FractionLeftSolid = 0, StartPos = pos,
+        HitWorld = world, HitNonWorld = not world, HitSky = false, HitNoDraw = false, HitBox = 0, HitGroup = 0,
+        HitTexture = world and "**studio**" or "", MatType = 0, Normal = -n, PhysicsBone = 0, StartSolid = false, AllSolid = false,
+        SurfaceProps = 0, SurfaceFlags = 0, DispFlags = 0, Contents = 0,
+    }
+end
+-- @hook TOOL:LeftClick
+-- @hook TOOL:RightClick
+local native_has_tool, native_tool = __has_tool, __tool
+function __has_tool(name) return native_has_tool(name) or glua_tools[name] ~= nil end
+function __tool(name, button, ctx)
+    if native_has_tool(name) then return native_tool(name, button, ctx) end
+    local t = glua_tools[name]
+    if t == nil then return nil end
+    local f = button == "right" and t.RightClick or button == "reload" and t.Reload or t.LeftClick
+    if f == nil then return nil end
+    t.Owner = Player(ctx.player or 0)
+    t.Stage = ctx.stage or 0
+    if f(t, tool_trace(ctx)) == true then return { { op = "done" } } end
+    return nil
+end
 
 duplicator = duplicator or {}
 duplicator.EntityClasses, duplicator.EntityModifiers, duplicator.BoneModifiers, duplicator.ConstraintType = {}, {}, {}, {}
@@ -622,7 +654,7 @@ for _, n in ipairs({ "AddDeathNotice", "AdjustMouseSensitivity", "CalcMainActivi
 for _, n in ipairs({ "BehaveStart", "BehaveUpdate", "BodyUpdate", "OnContact", "OnEntitySight", "OnEntitySightLost", "OnIgnite", "OnInjured", "OnKilled", "OnLandOnGround", "OnLeaveGround", "OnNavAreaChanged", "OnOtherKilled", "OnStuck", "OnTraceAttack", "OnUnStuck", "RunBehaviour" }) do stub("NEXTBOT:" .. n) end
 for _, n in ipairs({ "FinishMove", "GetHandsModel", "Move", "PostDrawViewModel", "PreDrawViewModel", "SetupDataTables", "StartMove", "ViewModelChanged" }) do stub("PLAYER:" .. n) end
 for _, n in ipairs({ "AddGamemodeToolMenuCategories", "AddGamemodeToolMenuTabs", "AddToolMenuCategories", "AddToolMenuTabs", "CanArmDupe", "CanDrive", "ContentSidebarSelection", "ContextMenuClosed", "ContextMenuCreated", "ContextMenuEnabled", "ContextMenuOpen", "ContextMenuOpened", "ContextMenuShowTool", "OnRevertSpawnlist", "OnSaveSpawnlist", "OpenToolbox", "PaintNotes", "PaintWorldTips", "PersistenceLoad", "PersistenceSave", "PlayerSpawnEffect", "PlayerSpawnObject", "PlayerSpawnedEffect", "PopulateContent", "PopulateEntities", "PopulateNPCs", "PopulatePropMenu", "PopulateToolMenu", "PopulateVehicles", "PopulateWeapons", "PostReloadToolsMenu", "PreRegisterTOOL", "PreReloadToolsMenu", "SpawnMenuEnabled", "SpawnMenuOpen", "SpawnMenuOpened", "SpawnlistContentChanged", "SpawnlistOpenGenericMenu", "SpawnmenuIconMenuOpen" }) do stub("SANDBOX:" .. n) end
-for _, n in ipairs({ "BuildCPanel", "Deploy", "DrawHUD", "DrawToolScreen", "FreezeMovement", "Holster", "LeftClick", "Reload", "RightClick", "Think" }) do stub("TOOL:" .. n) end
+for _, n in ipairs({ "BuildCPanel", "Deploy", "DrawHUD", "DrawToolScreen", "FreezeMovement", "Holster", "Reload", "Think" }) do stub("TOOL:" .. n) end
 for _, n in ipairs({ "AcceptInput", "AdjustMouseSensitivity", "CalcView", "CalcViewModelView", "CustomAmmoDisplay", "DoDrawCrosshair", "DoImpactEffect", "DrawHUD", "DrawHUDBackground", "DrawWeaponSelection", "DrawWorldModel", "DrawWorldModelTranslucent", "FireAnimationEvent", "FreezeMovement", "GetCapabilities", "GetNPCBulletSpread", "GetNPCBurstSettings", "GetNPCRestTimes", "GetTracerOrigin", "GetViewModelPosition", "HUDShouldDraw", "KeyValue", "NPCShoot_Primary", "NPCShoot_Secondary", "OnRestore", "PostDrawViewModel", "PreDrawViewModel", "PrintWeaponInfo", "RenderScreen", "ShootEffects", "ShouldDrawViewModel", "TranslateActivity", "TranslateFOV", "ViewModelDrawn" }) do stub("WEAPON:" .. n) end
 
 
