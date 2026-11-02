@@ -485,6 +485,8 @@ pub struct World {
     springs: Vec<Spring>,
     pulleys: Vec<Pulley>,
     drags: Vec<Drag>,
+    /// Per-body rotation inertia per unit mass (Source axes) from the PHY solid.
+    inertias: std::collections::HashMap<u32, Vec3>,
     pivot_joints: Vec<(u32, u32)>,
     held: std::collections::HashSet<u32>,
     /// Bodies with gravity switched off (`set_gravity`), kept weightless after a release.
@@ -535,6 +537,7 @@ impl World {
             springs: Vec::new(),
             pulleys: Vec::new(),
             drags: Vec::new(),
+            inertias: std::collections::HashMap::new(),
             pivot_joints: Vec::new(),
             held: std::collections::HashSet::new(),
             no_gravity: std::collections::HashSet::new(),
@@ -829,6 +832,7 @@ impl World {
                 (verts.len() / 3) as u32,
             );
             if let Some(i) = desc.inertia {
+                self.inertias.insert(id, i);
                 gmp_set_inertia(
                     self.system.as_raw(),
                     id,
@@ -1083,6 +1087,31 @@ impl World {
             }
         }
         unsafe { gmp_set_mass(self.system.as_raw(), body.0, mass) }
+    }
+
+    /// Rotation inertia of a body (kg u^2, Source axes): the PHY solid's per-unit inertia times
+    /// the mass; `None` when Jolt derives it from the hull.
+    pub fn inertia(&self, body: BodyHandle) -> Option<Vec3> {
+        let m = self.mass(body);
+        self.inertias.get(&body.0).map(|i| *i * m)
+    }
+
+    /// `PhysObj:SetInertia`: rotation inertia in kg u^2 (Source axes); non-positive or non-finite
+    /// components keep the current value.
+    pub fn set_inertia(&mut self, body: BodyHandle, inertia: Vec3) {
+        let m = self.mass(body);
+        if m <= 0.0 {
+            return;
+        }
+        let cur = self.inertia(body).unwrap_or(inertia);
+        let pick = |n: f32, c: f32| if n.is_finite() && n > 0.0 { n } else { c };
+        let i = Vec3::new(
+            pick(inertia.x, cur.x),
+            pick(inertia.y, cur.y),
+            pick(inertia.z, cur.z),
+        );
+        self.inertias.insert(body.0, i / m);
+        unsafe { gmp_set_inertia(self.system.as_raw(), body.0, m, i.x, i.z, i.y) }
     }
 
     /// Mass of a body (kg); 0 for a static or frozen one.

@@ -221,6 +221,17 @@ function P:SetAngleVelocity(w) local t = v3(self.__ent:GetVelocity()); t.angular
 function P:SetAngleVelocityInstantaneous(w) self:SetAngleVelocity(w) end
 function P:AddAngleVelocity(w) self:SetAngleVelocity(self:GetAngleVelocity() + w) end
 function P:GetDamping() local s = psn(self); if not s then return 0, 0 end return s.damping_linear, s.damping_angular end
+function P:GetSpeedDamping() local s = psn(self); return s and s.damping_linear or 0 end
+function P:GetRotDamping() local s = psn(self); return s and s.damping_angular or 0 end
+function P:SetInertia(v) qwrite("set_inertia", self.__ent.__id, { x = v.x, y = v.y, z = v.z }) end
+-- components the physics does not know (0) divide by 1
+local function over_inertia(self, v) local i = self:GetInertia(); local function d(a, b) return a / (b > 0 and b or 1) end; return Vector(d(v.x, i.x), d(v.y, i.y), d(v.z, i.z)) end
+-- a torque impulse about the mass centre (body axes) becomes angular velocity through the inertia
+function P:ApplyTorqueCenter(t) self:AddAngleVelocity(over_inertia(self, t)) end
+function P:CalculateVelocityOffset(f, pos)
+    local lin, ang = self:CalculateForceOffset(f, pos)
+    return lin / self:GetMass(), over_inertia(self, ang)
+end
 function P:GetSpeedDamping() local l = self:GetDamping(); return l end
 function P:GetRotDamping() local _, a = self:GetDamping(); return a end
 function P:SetDamping(lin, ang) qwrite("set_damping", self.__ent.__id, { linear = lin, angular = ang }) end
@@ -1963,7 +1974,13 @@ function PH:GetAABB() local m = pminfo(self); if not m or m.phys_mins == nil the
 function PH:GetVolume() local m = pminfo(self); return m and m.volume or 0 end
 function PH:GetSurfaceArea() local m = pminfo(self); return m and m.surface_area or 0 end
 function PH:GetMassCenter() local m = pminfo(self); if not m or m.mass_center == nil then return Vector() end return Vector(m.mass_center.x, m.mass_center.y, m.mass_center.z) end
-function PH:GetInertia() local m = pminfo(self); if not m or m.inertia == nil then return Vector() end local k = self:GetMass(); return Vector(m.inertia.x * k, m.inertia.y * k, m.inertia.z * k) end
+-- rotation inertia (kg u^2, body axes): the live body's (the PHY solid's per-unit inertia times the
+-- mass, or what SetInertia set), else from the model data
+function PH:GetInertia()
+    local s = psn(self); local i = s and s.inertia
+    if i and (i.x > 0 or i.y > 0 or i.z > 0) then return Vector(i.x, i.y, i.z) end
+    local m = pminfo(self); if not m or m.inertia == nil then return Vector() end local k = self:GetMass(); return Vector(m.inertia.x * k, m.inertia.y * k, m.inertia.z * k)
+end
 function PH:GetInvInertia() local i = self:GetInertia(); local function inv(x) return x > 0 and 1 / x or 0 end return Vector(inv(i.x), inv(i.y), inv(i.z)) end
 function PH:GetMeshConvexes() local m = pminfo(self); local out = {}; if m and m.mesh then for i, c in ipairs(m.mesh) do out[i] = mesh_verts(c, {}) end end return out end
 function PH:GetMesh() local m = pminfo(self); local out = {}; if m and m.mesh then for _, c in ipairs(m.mesh) do mesh_verts(c, out) end end return out end
@@ -1983,7 +2000,7 @@ function PHYS:IsGravityEnabled() local g = rawget(self.__ent, "__pgravity"); if 
 function PHYS:IsCollisionEnabled() local c = rawget(self.__ent, "__pcollide"); if c == nil then return true end return c end
 function PHYS:GetName() return self.__ent:GetClass() end
 function PHYS:OutputDebugInfo() print(string.format("PhysObj[%d] mass %.2f pos %s vel %s", self.__ent:EntIndex(), self:GetMass(), tostring(self:GetPos()), tostring(self:GetVelocity()))) end
-for _, name in ipairs({ "AddAngleVelocity", "AddGameFlag", "AlignAngles", "ApplyTorqueCenter", "CalculateForceOffset", "CalculateVelocityOffset", "ClearGameFlag", "ComputeShadowControl", "GetAngleVelocity", "GetBuoyancyRatio", "GetContents", "GetDamping", "GetFrictionSnapshot", "GetRotDamping", "GetShadowAngles", "GetShadowPos", "GetSpeedDamping", "GetStress", "HasGameFlag", "IsPenetrating", "RecheckCollisionFilter", "RotateAroundAxis", "SetAngleDragCoefficient", "SetAngleVelocity", "SetAngleVelocityInstantaneous", "SetBuoyancyRatio", "SetContents", "SetDamping", "SetDragCoefficient", "SetInertia", "UpdateShadow" }) do
+for _, name in ipairs({ "AddGameFlag", "ClearGameFlag", "ComputeShadowControl", "GetBuoyancyRatio", "GetContents", "GetFrictionSnapshot", "GetShadowAngles", "GetShadowPos", "GetStress", "HasGameFlag", "IsPenetrating", "RecheckCollisionFilter", "SetAngleDragCoefficient", "SetBuoyancyRatio", "SetContents", "SetDragCoefficient", "UpdateShadow" }) do
     if PHYS[name] == nil then PHYS[name] = stub("PhysObj:" .. name) end
 end
 

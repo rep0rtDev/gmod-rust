@@ -6705,7 +6705,7 @@ impl<'w> Server<'w> {
             .is_some_and(|b| self.physics.drag_enabled(*b))
     }
 
-    pub fn entity_phys(&self, id: u32) -> (Vec3, f32, (f32, f32), bool) {
+    pub fn entity_phys(&self, id: u32) -> (Vec3, f32, (f32, f32), bool, Vec3) {
         let body = self.bodies.get(&id).copied().or_else(|| {
             self.ragdoll_bodies
                 .get(&id)
@@ -6719,9 +6719,10 @@ impl<'w> Server<'w> {
                     self.physics.mass(b),
                     self.physics.damping(b),
                     !st.active,
+                    self.physics.inertia(b).unwrap_or(Vec3::ZERO),
                 )
             }
-            None => (Vec3::ZERO, 0.0, (0.0, 0.0), false),
+            None => (Vec3::ZERO, 0.0, (0.0, 0.0), false, Vec3::ZERO),
         }
     }
 

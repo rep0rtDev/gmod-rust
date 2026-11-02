@@ -730,6 +730,13 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   the server's exit hull (32x32x72 from 11.4 u up). Stubs with a reason: `GetWheel` (raycast wheels
   have no bodies), `HasBrakePedal` / `SetHasBrakePedal` (no separate brake-pedal path in the drive
   model), camera / third-person (client), `SetVehicleClass` / `SetVehicleEntryAnim`, `GetAmmo`.
+- `PhysObj:GetInertia` is the body's rotation inertia (the PHY solid's per-unit inertia times the
+  mass, body axes; (1,1,1) when the physics derives it from the hull), `SetInertia` sets it in
+  the physics (non-positive components keep theirs); `ApplyTorqueCenter` and
+  `CalculateVelocityOffset` divide the torque by it (body axes; the game's world-space torque is
+  not rotated - documented); `GetSpeedDamping` / `GetRotDamping` read the body damping.
+  Stubs with a reason: buoyancy, contents, drag coefficients, game flags, shadow control, stress,
+  penetration, friction snapshot (no such state in the physics layer).
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.

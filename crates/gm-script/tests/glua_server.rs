@@ -27,6 +27,7 @@ fn snapshot() -> Arc<Snapshot> {
             ang_velocity: Vec3::new(1.0, 2.0, 3.0),
             mass: 40.0,
             damping: (0.1, 0.2),
+            inertia: glam::Vec3::ZERO,
             asleep: false,
             drag: false,
             parent: 0,
@@ -88,6 +89,7 @@ fn snapshot() -> Arc<Snapshot> {
             ang_velocity: Vec3::new(1.0, 2.0, 3.0),
             mass: 40.0,
             damping: (0.1, 0.2),
+            inertia: glam::Vec3::ZERO,
             asleep: false,
             drag: false,
             parent: 5,
@@ -2322,4 +2324,28 @@ fn vehicle_tuning_queues_writes() {
         d.contains("VehicleWheel") && d.contains("spring: Some(50.0)"),
         "{d}"
     );
+}
+
+#[test]
+fn phys_inertia_write_and_torque() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local p = Entity(5):GetPhysicsObject()
+             p:SetInertia(Vector(1, 2, 3))
+             local lin, ang = p:CalculateVelocityOffset(Vector(0, 0, 10), Entity(5):GetPos() + Vector(1, 0, 0))
+             state.ang = ang
+             p:ApplyTorqueCenter(Vector(10, 0, 0))
+         end)",
+    );
+    rt.actors_mut()[0]
+        .dispatch(&snapshot(), "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let d = format!("{:?}", rt.drain_writes());
+    assert!(d.contains("SetInertia") && d.contains("2.0, 3.0"), "{d}");
+    // unknown inertia divides by 1: the torque adds straight to the fixture's (1,2,3) angular velocity
+    assert!(d.contains("angular: Vec3(11.0, 2.0, 3.0)"), "{d}");
+    let ang: Vec<f32> = rt.actors()[0]
+        .eval("return { state.ang.x, state.ang.y, state.ang.z }")
+        .unwrap();
+    assert_eq!(ang, vec![0.0, -10.0, 0.0]);
 }

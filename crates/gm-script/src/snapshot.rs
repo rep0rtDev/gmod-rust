@@ -23,6 +23,8 @@ pub struct EntitySnap {
     pub ang_velocity: Vec3,
     pub mass: f32,
     pub damping: (f32, f32),
+    /// Physics body: rotation inertia (kg u^2, Source axes); zero when unknown.
+    pub inertia: Vec3,
     pub asleep: bool,
     /// `PhysObj:IsDragEnabled`.
     pub drag: bool,
@@ -384,6 +386,7 @@ impl Snapshot {
                             ang_velocity: Vec3::ZERO,
                             mass: 0.0,
                             damping: (0.0, 0.0),
+                            inertia: Vec3::ZERO,
                             asleep: false,
                             drag: false,
                             parent: 0,
@@ -511,6 +514,7 @@ impl Snapshot {
                             ang_velocity: phys.0,
                             mass: phys.1,
                             damping: phys.2,
+                            inertia: phys.4,
                             asleep: phys.3,
                             drag: server.entity_drag(p.id),
                             parent: server.entity_parent(p.id),
@@ -586,6 +590,7 @@ impl Snapshot {
                             ang_velocity: Vec3::ZERO,
                             mass: 0.0,
                             damping: (0.0, 0.0),
+                            inertia: Vec3::ZERO,
                             asleep: false,
                             drag: false,
                             parent: 0,

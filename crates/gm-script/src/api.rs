@@ -330,6 +330,11 @@ pub enum QueuedWrite {
         ent: u32,
         mass: f32,
     },
+    /// `PhysObj:SetInertia` (kg u^2, Source axes).
+    SetInertia {
+        ent: u32,
+        inertia: Vec3,
+    },
     SetDamping {
         ent: u32,
         linear: f32,
@@ -1018,6 +1023,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("ang_velocity", vec3_table(lua, e.ang_velocity)?)?;
     t.set("mass", e.mass)?;
     t.set("damping_linear", e.damping.0)?;
+    t.set("inertia", vec3_table(lua, e.inertia)?)?;
     t.set("damping_angular", e.damping.1)?;
     t.set("asleep", e.asleep)?;
     t.set("drag", e.drag)?;
@@ -2094,6 +2100,17 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         _ => return Err(mlua::Error::runtime("set_mass needs a number")),
                     },
                 },
+                "set_inertia" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::SetInertia {
+                        ent,
+                        inertia: Vec3::new(
+                            t.get::<f32>("x")?,
+                            t.get::<f32>("y")?,
+                            t.get::<f32>("z")?,
+                        ),
+                    }
+                }
                 "set_damping" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::SetDamping {
@@ -3819,6 +3836,13 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::SetMass { ent, mass } => match server.body_of(*ent) {
             Some(body) => {
                 server.physics.set_mass(body, *mass);
+                true
+            }
+            None => false,
+        },
+        QueuedWrite::SetInertia { ent, inertia } => match server.body_of(*ent) {
+            Some(body) => {
+                server.physics.set_inertia(body, *inertia);
                 true
             }
             None => false,
