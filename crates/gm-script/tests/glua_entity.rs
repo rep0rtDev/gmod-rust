@@ -25,6 +25,9 @@ fn snapshot() -> Arc<Snapshot> {
             health: 0,
             max_health: 0,
             velocity: Vec3::new(1.0, 2.0, 3.0),
+            npc_target: 0,
+            npc_chase: 0,
+            npc_goal: None,
         },
     );
     s.entities.insert(
@@ -42,6 +45,9 @@ fn snapshot() -> Arc<Snapshot> {
             health: 50,
             max_health: 50,
             velocity: Vec3::ZERO,
+            npc_target: 1,
+            npc_chase: 1,
+            npc_goal: Some(Vec3::new(400.0, 0.0, 0.0)),
         },
     );
     s.players.insert(
@@ -76,7 +82,10 @@ fn run(source: &str) -> (Runtime, Vec<QueuedWrite>) {
         name: "ent".into(),
         priority: 0,
         source: format!("events.on('tick.pre', function() {source} end)"),
-        config: ActorConfig::default(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
     })
     .unwrap();
     let snap = snapshot();
@@ -226,7 +235,10 @@ fn ents_create_binds_to_the_spawned_entity() {
                      end
                  end)"
             .into(),
-        config: ActorConfig::default(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
     })
     .unwrap();
     let snap = snapshot();
@@ -287,4 +299,58 @@ fn util_trace_and_json() {
     );
     assert_eq!(b64, "hello world");
     assert_eq!(crc, "891568578");
+}
+
+#[test]
+fn npc_and_datatable_methods() {
+    let (mut rt, writes) = run(
+        "local n, e = Entity(9), Entity(5)
+         e:InstallDataTable()
+         e:NetworkVar('Int', 0, 'Count')
+         state.seen = {}
+         e:NetworkVarNotify('Count', function(_, name, old, new) state.seen[#state.seen + 1] = name .. ':' .. tostring(old) .. '>' .. tostring(new) end)
+         e:SetCount(3); e:SetCount(3); e:SetCount(4)
+         e:CallOnRemove('bye', function(ent, tag) state.removed = tag .. ent:EntIndex() end, 'gone')
+         n:TakeDamage(30, Entity(1))
+         state.r = {
+            n:GetEnemy():UserID(), n:IsGoalActive(), n:GetGoalPos().x, n:GetPathDistanceToGoal(), n:GetCurGoalType(),
+            n:Classify() == CLASS_ZOMBIE, n:Disposition(Entity(1)) == D_HT, e:GetCount(), #state.seen, state.seen[1], state.seen[2],
+            e:GetNetworkVars().Count, e:GetMoveType() == MOVETYPE_NONE, n:GetEnemyLastKnownPos().x, e:IsConstrained(),
+         }",
+    );
+    let r: Vec<mlua::Value> = rt.actors()[0].eval("return state.r").unwrap();
+    let s = |i: usize| match &r[i] {
+        mlua::Value::String(s) => s.to_string_lossy().to_string(),
+        mlua::Value::Boolean(b) => b.to_string(),
+        mlua::Value::Number(n) => n.to_string(),
+        mlua::Value::Integer(n) => n.to_string(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(s(0), "1");
+    assert_eq!(s(1), "true");
+    assert_eq!(s(2), "400");
+    assert_eq!(s(3), "400");
+    assert_eq!(s(4), "2");
+    assert_eq!(s(5), "true");
+    assert_eq!(s(6), "true");
+    assert_eq!(s(7), "4");
+    assert_eq!(s(8), "2");
+    assert_eq!(s(9), "Count:nil>3");
+    assert_eq!(s(10), "Count:3>4");
+    assert_eq!(s(11), "4");
+    assert_eq!(s(12), "true");
+    assert_eq!(s(14), "false");
+    assert!(
+        writes
+            .iter()
+            .any(|w| matches!(w, QueuedWrite::SetHealth { ent: 9, health: 20 })),
+        "TakeDamage should lower the NPC's health through the health op: {writes:?}"
+    );
+    let mut payload = Payload::default();
+    payload.ints.push(("entity", 5));
+    rt.actors_mut()[0]
+        .dispatch(&snapshot(), "entity.removed", &payload, 8)
+        .unwrap();
+    let removed: String = rt.actors()[0].eval("return state.removed").unwrap();
+    assert_eq!(removed, "gone5");
 }

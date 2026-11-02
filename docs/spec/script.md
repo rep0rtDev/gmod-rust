@@ -626,6 +626,32 @@ Done in `glua/classes.luau` and `glua/scripted.luau`:
   instance bound to the carrying player (`self.Owner`); `Get / GetStored / GetList /
   IsBasedOn / OnLoaded`; `baseclass.Get / Set`.
 
+The rest of `Entity` and `NPC` (end of `glua/entity.luau`):
+
+- Real over the snapshot and the own ops: local / abs / network position and velocity aliases,
+  `IsOnGround / GetGroundEntity` (a 2 u trace down), `GetMoveType` (frozen = `MOVETYPE_NONE`) and
+  `SetMoveType` through the freeze op, `GetSolid / IsSolid / SetNotSolid`, `SetCollisionGroup`
+  (the collide op), `SetGravity` (the gravity op), `TakeDamage / TakeDamageInfo /
+  DispatchTraceAttack` (players through the damage request, entities through the health op),
+  `Visible / VisibleVec / IsLineOfSightClear`, `DropToFloor`, `PointAtEntity`, `Fire / Input`
+  (`Kill` only), `CallOnRemove / DeleteOnRemove` from `entity.removed`, `GetFlags / IsFlagSet`
+  (`FL_ONGROUND / FL_FROZEN / FL_CLIENT / FL_NPC`), spawn flags, key values, `AddCallback`,
+  `FireBullets` (players, the bullet op), `GetConstrainedEntities` from the `constraint` table.
+- `NW2 / Networked / Networked2 / DT` variants alias the actor-local NW storage; `NetworkVar /
+  NetworkVarElement / NetworkVarNotify / InstallDataTable / GetNetworkVars /
+  RestoreNetworkVars / SetNetworkKeyValue` build the scripted-entity data table on it, with
+  `Set*VarProxy` change callbacks.
+- `NPC`: `GetEnemy / GetTarget / GetGoalTarget` (the snapshot's `npc_target / npc_chase`),
+  `GetGoalPos / IsGoalActive / GetPathDistanceToGoal / GetPathTimeToGoal / GetCurGoalType`
+  (the end of the own path, `npc_goal`), `GetShootPos` (+40, the crouch-fire eye height),
+  `GetAimVector`, `IsInViewCone`, enemy-memory reads over the single target, `Classify /
+  Disposition` from the class table, `MoveOrder / TargetOrder / NavSetGoal / MoveStop`.
+- Honest stubs (listed as `stub` in the manifest) for everything bound to model data (bones,
+  sequences, gestures, layers, flexes, hitboxes, attachments, body groups, render colour /
+  material / mode), parenting, map IO beyond `Kill`, physics (re)initialisation, and the whole
+  NPC schedule / condition / relationship / capability / behaviour / sentence surface - the AI
+  has none of those by design.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

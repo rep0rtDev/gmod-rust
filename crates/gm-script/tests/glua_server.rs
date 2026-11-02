@@ -40,7 +40,10 @@ fn runtime(source: &str) -> Runtime {
         name: "srv".into(),
         priority: 0,
         source: source.into(),
-        config: ActorConfig::default(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
     })
     .unwrap();
     rt

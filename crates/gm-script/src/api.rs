@@ -434,6 +434,11 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("class", e.class.as_str())?;
     t.set("health", e.health)?;
     t.set("max_health", e.max_health)?;
+    t.set("npc_target", e.npc_target)?;
+    t.set("npc_chase", e.npc_chase)?;
+    if let Some(g) = e.npc_goal {
+        t.set("npc_goal", vec3_table(lua, g)?)?;
+    }
     t.set("velocity", vec3_table(lua, e.velocity)?)?;
     Ok(t)
 }

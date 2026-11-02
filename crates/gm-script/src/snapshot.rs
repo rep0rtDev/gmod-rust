@@ -19,6 +19,10 @@ pub struct EntitySnap {
     pub health: i32,
     pub max_health: i32,
     pub velocity: Vec3,
+    /// NPC only: the player it has as target / chases, and the end of its current path.
+    pub npc_target: u32,
+    pub npc_chase: u32,
+    pub npc_goal: Option<Vec3>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -123,6 +127,9 @@ impl Snapshot {
                             health: 0,
                             max_health: 0,
                             velocity: e.vel,
+                            npc_target: 0,
+                            npc_chase: 0,
+                            npc_goal: None,
                         },
                     )
                 })
@@ -185,6 +192,9 @@ impl Snapshot {
                             health: server.vehicles.get(&p.id).map_or(p.health, |v| v.health),
                             max_health: server.vehicles.get(&p.id).map_or(0, |v| v.max_health),
                             velocity: server.entity_velocity(p.id),
+                            npc_target: 0,
+                            npc_chase: 0,
+                            npc_goal: None,
                         },
                     )
                 })
@@ -204,6 +214,9 @@ impl Snapshot {
                             health: n.health.max(0.0) as i32,
                             max_health: n.max_health,
                             velocity: n.flight.unwrap_or(Vec3::ZERO),
+                            npc_target: n.target.unwrap_or(0),
+                            npc_chase: n.chase.unwrap_or(0),
+                            npc_goal: n.goal.as_ref().and_then(|g| g.points.last().copied()),
                         },
                     )
                 }))

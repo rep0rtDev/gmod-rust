@@ -1012,3 +1012,309 @@ __glua_classes.NPC = NPC
 __glua_classes.Vehicle = VEH
 __glua_classes.Weapon = WEP
 __glua_classes.Player = PLY
+
+------------------------------------------------------------------------ Entity: the rest of the documented surface
+-- Real where the snapshot or an own op carries it; `__glua_stub` where the engine side (model
+-- bones / sequences / flexes, map IO, parenting, render flags, schedules) does not exist yet.
+local stub = __glua_stub
+local function v3(p) return Vector(p.x, p.y, p.z) end
+ENT.GetNWVar = ENT.GetNWVar or ENT.GetNetworkedVar
+ENT.SetNWVar = ENT.SetNWVar or ENT.SetNetworkedVar
+ENT.GetNWVars = ENT.GetNWVars or function(self) return rawget(self, "__vars").__nw or {} end
+function ENT:GetLocalPos() return self:GetPos() end
+function ENT:GetLocalAngles() return self:GetAngles() end
+function ENT:SetLocalPos(p) self:SetPos(p) end
+function ENT:SetLocalAngles(a) self:SetAngles(a) end
+function ENT:GetAbsVelocity() return self:GetVelocity() end
+function ENT:SetAbsVelocity(v) self:SetVelocity(v) end
+function ENT:GetBaseVelocity() return Vector() end
+function ENT:GetLocalAngularVelocity() return Angle() end
+function ENT:SetLocalAngularVelocity(a) local ph = self:GetPhysicsObject(); if IsValid(ph) then ph:AddAngleVelocity(Vector(a.p, a.y, a.r)) end end
+function ENT:GetNetworkOrigin() return self:GetPos() end
+function ENT:SetNetworkOrigin(p) self:SetPos(p) end
+function ENT:Alive() return self:Health() > 0 end
+function ENT:IsOnGround()
+    local p = self:GetPos()
+    local tr = util.TraceLine({ start = p + Vector(0, 0, 1), endpos = p - Vector(0, 0, 2), filter = self })
+    return tr.Hit
+end
+ENT.OnGround = ENT.IsOnGround
+function ENT:GetGroundEntity()
+    local p = self:GetPos()
+    local tr = util.TraceLine({ start = p + Vector(0, 0, 1), endpos = p - Vector(0, 0, 2), filter = self })
+    if not tr.Hit then return NULL end
+    return tr.Entity or game.GetWorld()
+end
+function ENT:SetGroundEntity(e) end
+function ENT:IsInWorld() local p = self:GetPos(); return math.abs(p.x) < 16384 and math.abs(p.y) < 16384 and math.abs(p.z) < 16384 end
+function ENT:WaterLevel() return 0 end
+function ENT:GetMoveType() local s = snap(self.__id); if not s then return MOVETYPE_NONE end if s.frozen then return MOVETYPE_NONE end return MOVETYPE_VPHYSICS end
+function ENT:SetMoveType(t) if t == MOVETYPE_NONE then world.queue("freeze", self.__id, true) elseif t == MOVETYPE_VPHYSICS then world.queue("freeze", self.__id, false) end end
+function ENT:GetMoveCollide() return MOVECOLLIDE_DEFAULT end
+function ENT:SetMoveCollide(m) end
+function ENT:GetSolid() return self:IsValid() and SOLID_VPHYSICS or SOLID_NONE end
+function ENT:IsSolid() return self:GetSolid() ~= SOLID_NONE end
+function ENT:SetNotSolid(b) world.queue("set_collide", self.__id, not b) end
+function ENT:GetSolidFlags() return 0 end
+function ENT:SetSolidFlags(f) end
+function ENT:AddSolidFlags(f) end
+function ENT:RemoveSolidFlags(f) end
+function ENT:GetCollisionGroup() return rawget(self, "__cgroup") or COLLISION_GROUP_NONE end
+local base_set_cg = ENT.SetCollisionGroup
+function ENT:SetCollisionGroup(g)
+    rawset(self, "__cgroup", g)
+    world.queue("set_collide", self.__id, g ~= COLLISION_GROUP_WORLD and g ~= COLLISION_GROUP_IN_VEHICLE)
+end
+function ENT:GetGravity() return rawget(self, "__gravity") or 1 end
+function ENT:SetGravity(g) rawset(self, "__gravity", g); world.queue("set_gravity", self.__id, g ~= 0) end
+function ENT:GetParent() return NULL end
+function ENT:GetMoveParent() return NULL end
+function ENT:GetChildren() return {} end
+function ENT:GetParentAttachment() return 0 end
+function ENT:GetParentPhysNum() return 0 end
+function ENT:GetPhysicsObjectCount() return self:IsValid() and 1 or 0 end
+function ENT:GetPhysicsObjectNum(i) return self:GetPhysicsObject() end
+function ENT:GetCreationID() return self.__id end
+function ENT:MapCreationID() return -1 end
+function ENT:CreatedByMap() return false end
+function ENT:GetCreationTime() return rawget(self, "__created") or 0 end
+function ENT:GetTable() return self end
+function ENT:SetTable(t) for k, v in pairs(t) do rawset(self, k, v) end end
+function ENT:IsMarkedForDeletion() return rawget(self, "__removing") == true end
+function ENT:IsDormant() return false end
+function ENT:IsLagCompensated() return false end
+function ENT:SetLagCompensated(b) end
+function ENT:IsConstraint() return false end
+function ENT:IsConstrained() return constraint.HasConstraints(self) end
+function ENT:GetConstrainedEntities() local a = {}; for _, c in ipairs(constraint.GetTable(self)) do a[#a + 1] = c.Ent1 == self and c.Ent2 or c.Ent1 end return a end
+function ENT:GetConstrainedPhysObjects() local a = {}; for _, e in ipairs(self:GetConstrainedEntities()) do a[#a + 1] = e:GetPhysicsObject() end return a end
+function ENT:IsWidget() return false end
+function ENT:TestPVS(v) return true end
+function ENT:GetWorkshopID() return 0 end
+function ENT:GetPersistent() return rawget(self, "__persistent") == true end
+function ENT:SetPersistent(b) rawset(self, "__persistent", b) end
+function ENT:GetUnFreezable() return rawget(self, "__unfreezable") == true end
+function ENT:SetUnFreezable(b) rawset(self, "__unfreezable", b) end
+function ENT:GetPhysicsAttacker() return rawget(self, "__attacker") or NULL end
+function ENT:SetPhysicsAttacker(p, t) rawset(self, "__attacker", p) end
+function ENT:GetCustomCollisionCheck() return rawget(self, "__ccc") == true end
+function ENT:SetCustomCollisionCheck(b) rawset(self, "__ccc", b) end
+function ENT:EnableCustomCollisions(b) rawset(self, "__ccc", b) end
+function ENT:CollisionRulesChanged() end
+-- damage: entities through the own health op, players through the player damage op
+function ENT:TakeDamage(dmg, attacker, inflictor)
+    local d = DamageInfo(); d:SetDamage(dmg); d:SetAttacker(attacker or NULL); d:SetInflictor(inflictor or NULL)
+    self:TakeDamageInfo(d)
+end
+function ENT:TakeDamageInfo(d)
+    if self:IsPlayer() then
+        local a = d:GetAttacker()
+        world.queue("player.damage", self.__id, { amount = d:GetDamage(), attacker = IsValid(a) and a:IsPlayer() and a:UserID() or 0, type = d:GetDamageType() })
+        return
+    end
+    local s = snap(self.__id)
+    if not s then return end
+    world.queue("set_health", self.__id, math.max(0, s.health - d:GetDamage()))
+end
+function ENT:DispatchTraceAttack(d, tr, dir) self:TakeDamageInfo(d) end
+function ENT:TakePhysicsDamage(d) self:TakeDamageInfo(d) end
+function ENT:PassesDamageFilter(d) return true end
+function ENT:PassesFilter(caller, e) return true end
+function ENT:Visible(other)
+    if not IsValid(other) then return false end
+    local tr = util.TraceLine({ start = self:EyePos(), endpos = other:EyePos(), filter = { self, other } })
+    return not tr.Hit
+end
+function ENT:VisibleVec(pos)
+    local tr = util.TraceLine({ start = self:EyePos(), endpos = pos, filter = self })
+    return not tr.Hit
+end
+function ENT:IsLineOfSightClear(target) if IsEntity(target) then return self:Visible(target) end return self:VisibleVec(target) end
+function ENT:DropToFloor()
+    local p = self:GetPos()
+    local tr = util.TraceLine({ start = p, endpos = p - Vector(0, 0, 4096), filter = self })
+    if tr.Hit then self:SetPos(tr.HitPos) end
+    return tr.Hit
+end
+function ENT:PointAtEntity(e) if IsValid(e) then self:SetAngles((e:GetPos() - self:GetPos()):Angle()) end end
+function ENT:Use(activator, caller, useType, value) end
+function ENT:Respawn() end
+function ENT:Dissolve() self:Remove() end
+-- removal callbacks and the delete-with chain
+local on_remove, delete_with = {}, {}
+function ENT:CallOnRemove(name, fn, ...) on_remove[self.__id] = on_remove[self.__id] or {}; on_remove[self.__id][name] = { fn, { ... } } end
+function ENT:RemoveCallOnRemove(name) if on_remove[self.__id] then on_remove[self.__id][name] = nil end end
+function ENT:DeleteOnRemove(e) delete_with[self.__id] = delete_with[self.__id] or {}; delete_with[self.__id][e.__id] = e end
+function ENT:DontDeleteOnRemove(e) if delete_with[self.__id] then delete_with[self.__id][e.__id] = nil end end
+if events then
+    events.on("entity.removed", function(p)
+        local id = p.entity
+        local cbs = on_remove[id]
+        if cbs then for _, c in pairs(cbs) do c[1](Entity(id), unpack(c[2])) end on_remove[id] = nil end
+        local kids = delete_with[id]
+        if kids then for _, e in pairs(kids) do if IsValid(e) then e:Remove() end end delete_with[id] = nil end
+    end, 1e9)
+end
+-- NW aliases: NW2 / Networked / Networked2 / DT share the actor-local NW storage
+for _, t in ipairs({ "Angle", "Bool", "Entity", "Float", "Int", "String", "Vector" }) do
+    local g, s = ENT["GetNW" .. t], ENT["SetNW" .. t]
+    ENT["GetNW2" .. t] = g; ENT["SetNW2" .. t] = s
+    ENT["GetNetworked" .. t] = g; ENT["SetNetworked" .. t] = s
+    ENT["GetNetworked2" .. t] = g; ENT["SetNetworked2" .. t] = s
+    ENT["GetDT" .. t] = function(self, i) return self:GetNWVar("dt_" .. t .. i) end
+    ENT["SetDT" .. t] = function(self, i, v) self:SetNWVar("dt_" .. t .. i, v) end
+end
+ENT.SetNetworkedNumber = ENT.SetNWFloat
+ENT.GetNetworked2Var, ENT.SetNetworked2Var, ENT.GetNW2Var, ENT.SetNW2Var = ENT.GetNWVar, ENT.SetNWVar, ENT.GetNWVar, ENT.SetNWVar
+local nw_proxies = {}
+function ENT:SetNWVarProxy(key, fn) nw_proxies[self.__id] = nw_proxies[self.__id] or {}; nw_proxies[self.__id][key] = fn end
+function ENT:GetNWVarProxy(key) return nw_proxies[self.__id] and nw_proxies[self.__id][key] end
+ENT.SetNW2VarProxy, ENT.GetNW2VarProxy = ENT.SetNWVarProxy, ENT.GetNWVarProxy
+ENT.SetNetworkedVarProxy, ENT.GetNetworkedVarProxy = ENT.SetNWVarProxy, ENT.GetNWVarProxy
+ENT.SetNetworked2VarProxy, ENT.GetNetworked2VarProxy = ENT.SetNWVarProxy, ENT.GetNWVarProxy
+local base_set_nw = ENT.SetNWVar
+function ENT:SetNWVar(key, v)
+    local old = self:GetNWVar(key)
+    base_set_nw(self, key, v)
+    local fn = nw_proxies[self.__id] and nw_proxies[self.__id][key]
+    if fn and old ~= v then fn(self, key, old, v) end
+end
+ENT.SetNetworkedVar = ENT.SetNWVar
+for _, t in ipairs({ "Angle", "Bool", "Entity", "Float", "Int", "String", "Vector" }) do
+    ENT["SetNW" .. t] = function(self, k, v) self:SetNWVar(k, v) end
+    ENT["SetNW2" .. t], ENT["SetNetworked" .. t], ENT["SetNetworked2" .. t] = ENT["SetNW" .. t], ENT["SetNW" .. t], ENT["SetNW" .. t]
+end
+function ENT:GetNWVarTable() return self:GetNWVars() end
+ENT.GetNW2VarTable, ENT.GetNetworkedVarTable, ENT.GetNetworked2VarTable = ENT.GetNWVarTable, ENT.GetNWVarTable, ENT.GetNWVarTable
+-- NetworkVar: the scripted-entity data table over the same storage
+local dt_callbacks = {}
+function ENT:InstallDataTable() rawset(self, "__dt", true) end
+function ENT:NetworkVar(t, slot, name, extra)
+    if type(slot) == "string" then extra = name; name = slot end
+    rawset(self, "Get" .. name, function(s) local v = s:GetNWVar("dt_" .. name); if v == nil and extra and extra.KeyName then return nil end return v end)
+    rawset(self, "Set" .. name, function(s, v) s:SetNWVar("dt_" .. name, v) end)
+    if extra and extra.KeyName then rawset(self, "__dt_keys", rawget(self, "__dt_keys") or {}); rawget(self, "__dt_keys")[string.lower(extra.KeyName)] = name end
+end
+function ENT:NetworkVarElement(t, slot, element, name, extra)
+    rawset(self, "Get" .. name, function(s) local v = s:GetNWVar("dt_" .. t .. slot); return v and v[element] end)
+    rawset(self, "Set" .. name, function(s, v) local cur = s:GetNWVar("dt_" .. t .. slot) or Vector(); cur[element] = v; s:SetNWVar("dt_" .. t .. slot, cur) end)
+end
+function ENT:NetworkVarNotify(name, fn) self:SetNWVarProxy("dt_" .. name, function(s, k, old, new) fn(s, name, old, new) end) end
+function ENT:GetNetworkVars() local o = {}; for k, v in pairs(self:GetNWVars()) do if string.sub(k, 1, 3) == "dt_" then o[string.sub(k, 4)] = v end end return o end
+function ENT:RestoreNetworkVars(t) for k, v in pairs(t) do self:SetNWVar("dt_" .. k, v) end end
+function ENT:SetNetworkVarsFromMapInput(t) self:RestoreNetworkVars(t) end
+function ENT:CallDTVarProxies(t, slot, v) end
+function ENT:DTVar(t, slot, name) self:NetworkVar(t, slot, name) end
+function ENT:SetNetworkKeyValue(k, v) local n = rawget(self, "__dt_keys") and rawget(self, "__dt_keys")[string.lower(k)]; if n then self["Set" .. n](self, v); return true end return false end
+function ENT:SetKeyValue(k, v) if not self:SetNetworkKeyValue(k, v) then rawset(self, "__kv", rawget(self, "__kv") or {}); rawget(self, "__kv")[k] = v end end
+function ENT:GetKeyValues() return rawget(self, "__kv") or {} end
+function ENT:AddCallback(hook, fn) rawset(self, "__cbs", rawget(self, "__cbs") or {}); local c = rawget(self, "__cbs"); c[hook] = c[hook] or {}; table.insert(c[hook], fn); return #c[hook] end
+function ENT:RemoveCallback(hook, id) local c = rawget(self, "__cbs"); if c and c[hook] then c[hook][id] = nil end end
+function ENT:GetCallbacks(hook) local c = rawget(self, "__cbs"); return c and c[hook] or {} end
+function ENT:FireBullets(b)
+    if not self:IsPlayer() then return end
+    world.queue("fire_bullet", self.__id, { damage = b.Damage or 1, pellets = b.Num or 1, spread = b.Spread and b.Spread.x or 0, force = b.Force or 1 })
+end
+function ENT:SetUseType(t) rawset(self, "__use_type", t) end
+function ENT:GetTouchTrace() return rawget(self, "__touch_trace") or {} end
+function ENT:ObjectCaps() return 0 end
+function ENT:SetCreator(p) rawset(self, "__creator", p) end
+function ENT:GetSpawnFlags() return rawget(self, "__spawnflags") or 0 end
+function ENT:HasSpawnFlags(f) return bit.band(self:GetSpawnFlags(), f) ~= 0 end
+function ENT:SetSpawnFlags(f) rawset(self, "__spawnflags", f) end
+function ENT:AddSpawnFlags(f) rawset(self, "__spawnflags", bit.bor(self:GetSpawnFlags(), f)) end
+function ENT:RemoveSpawnFlags(f) rawset(self, "__spawnflags", bit.band(self:GetSpawnFlags(), bit.bnot(f))) end
+function ENT:GetFlags() local f = 0; if self:IsOnGround() then f = bit.bor(f, FL_ONGROUND) end if self:IsPlayer() then f = bit.bor(f, FL_CLIENT) elseif self:IsNPC() then f = bit.bor(f, FL_NPC) end if self:GetMoveType() == MOVETYPE_NONE then f = bit.bor(f, FL_FROZEN) end return f end
+function ENT:IsFlagSet(f) return bit.band(self:GetFlags(), f) ~= 0 end
+function ENT:GetEFlags() return 0 end
+function ENT:IsEFlagSet(f) return false end
+function ENT:GetBloodColor() return self:IsPlayer() and BLOOD_COLOR_RED or (self:IsNPC() and BLOOD_COLOR_YELLOW or DONT_BLEED) end
+function ENT:GetMaterialType() return MAT_DEFAULT end
+function ENT:GetModelContents() return CONTENTS_SOLID end
+function ENT:SkinCount() return 1 end
+function ENT:GetSubModels() return {} end
+function ENT:Weapon_SetActivity(a, d) end
+function ENT:Weapon_TranslateActivity(a) return a end
+function ENT:StopLoopingSound(id) end
+function ENT:StartLoopingSound(name) return 0 end
+function ENT:StopParticles() end
+function ENT:RemoveAllDecals() end
+function ENT:Input(name, activator, caller, data) if name == "Kill" then self:Remove() return true end return false end
+function ENT:Fire(input, param, delay, activator, caller)
+    if (delay or 0) > 0 then local me = self; timer.Simple(delay, function() if IsValid(me) then me:Input(input, activator, caller, param) end end) else self:Input(input, activator, caller, param) end
+end
+function ENT:ClearAllOutputs() end
+function ENT:EmitStepSound() end
+FL_ONGROUND, FL_DUCKING, FL_ANIMDUCKING, FL_WATERJUMP, FL_ONTRAIN, FL_INRAIN, FL_FROZEN, FL_ATCONTROLS, FL_CLIENT, FL_FAKECLIENT, FL_INWATER, FL_FLY, FL_SWIM, FL_CONVEYOR, FL_NPC, FL_GODMODE, FL_NOTARGET, FL_AIMTARGET, FL_PARTIALGROUND, FL_STATICPROP, FL_GRAPHED, FL_GRENADE, FL_STEPMOVEMENT, FL_DONTTOUCH, FL_BASEVELOCITY, FL_WORLDBRUSH, FL_OBJECT, FL_KILLME, FL_ONFIRE, FL_DISSOLVING, FL_TRANSRAGDOLL, FL_UNBLOCKABLE_BY_PLAYER = 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216, 33554432, 67108864, 134217728, 268435456, 536870912, 1073741824, 2147483648
+MOVETYPE_NONE, MOVETYPE_ISOMETRIC, MOVETYPE_WALK, MOVETYPE_STEP, MOVETYPE_FLY, MOVETYPE_FLYGRAVITY, MOVETYPE_VPHYSICS, MOVETYPE_PUSH, MOVETYPE_NOCLIP, MOVETYPE_LADDER, MOVETYPE_OBSERVER, MOVETYPE_CUSTOM = 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+MOVECOLLIDE_DEFAULT, MOVECOLLIDE_FLY_BOUNCE, MOVECOLLIDE_FLY_CUSTOM, MOVECOLLIDE_FLY_SLIDE = 0, 1, 2, 3
+SOLID_NONE, SOLID_BSP, SOLID_BBOX, SOLID_OBB, SOLID_OBB_YAW, SOLID_CUSTOM, SOLID_VPHYSICS = 0, 1, 2, 3, 4, 5, 6
+COLLISION_GROUP_NONE, COLLISION_GROUP_DEBRIS, COLLISION_GROUP_DEBRIS_TRIGGER, COLLISION_GROUP_INTERACTIVE_DEBRIS, COLLISION_GROUP_INTERACTIVE, COLLISION_GROUP_PLAYER, COLLISION_GROUP_BREAKABLE_GLASS, COLLISION_GROUP_VEHICLE, COLLISION_GROUP_PLAYER_MOVEMENT, COLLISION_GROUP_NPC, COLLISION_GROUP_IN_VEHICLE, COLLISION_GROUP_WEAPON, COLLISION_GROUP_VEHICLE_CLIP, COLLISION_GROUP_PROJECTILE, COLLISION_GROUP_DOOR_BLOCKER, COLLISION_GROUP_PASSABLE_DOOR, COLLISION_GROUP_DISSOLVING, COLLISION_GROUP_PUSHAWAY, COLLISION_GROUP_NPC_ACTOR, COLLISION_GROUP_NPC_SCRIPTED, COLLISION_GROUP_WORLD = 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+BLOOD_COLOR_RED, BLOOD_COLOR_YELLOW, BLOOD_COLOR_GREEN, BLOOD_COLOR_MECH, BLOOD_COLOR_ANTLION, BLOOD_COLOR_ZOMBIE, BLOOD_COLOR_ANTLION_WORKER, DONT_BLEED = 0, 1, 2, 3, 4, 5, 6, -1
+MAT_DEFAULT = 67
+-- model-data, parenting, render and map-IO methods: honest stubs until the engine side exists
+for _, name in ipairs({ "AddEFlags", "AddEffects", "AddFlags", "AddGesture", "AddGestureSequence", "AddLayeredSequence", "AddToMotionController", "AlignAngles", "Blocked", "BodyTarget", "BoneHasFlag", "BoneLength", "BoundingRadius", "ClearPoseParameters", "CopyBoneMatrix", "CreateBoneFollowers", "DestroyBoneFollowers", "DrawShadow", "EnableConstraints", "FindBodygroupByName", "FindGestureLayer", "FindGestureSequenceLayer", "FindTransitionSequence", "FollowBone", "ForcePlayerDrop", "FrameAdvance", "GetAnimCount", "GetAnimInfo", "GetAnimTimeInterval", "GetAttachment", "GetAttachments", "GetBodyGroups", "GetBodygroupCount", "GetBodygroupName", "GetBoneContents", "GetBoneController", "GetBoneCount", "GetBoneMatrix", "GetBoneName", "GetBoneParent", "GetBonePosition", "GetBoneSurfaceProp", "GetBrushPlane", "GetBrushPlaneCount", "GetBrushSurfaces", "GetChildBones", "GetColor", "GetColor4Part", "GetCycle", "GetEditingData", "GetEffects", "GetElasticity", "GetFlexBounds", "GetFlexIDByName", "GetFlexName", "GetFlexNum", "GetFlexScale", "GetFlexType", "GetFlexWeight", "GetFriction", "GetGroundSpeedVelocity", "GetHitBoxBone", "GetHitBoxBounds", "GetHitBoxCount", "GetHitBoxGroupCount", "GetHitBoxHitGroup", "GetHitboxSet", "GetHitboxSetCount", "GetLayerCycle", "GetLayerDuration", "GetLayerPlaybackRate", "GetLayerSequence", "GetLayerWeight", "GetLightingOriginEntity", "GetManipulateBoneAngles", "GetManipulateBoneJiggle", "GetManipulateBonePosition", "GetManipulateBoneScale", "GetMaterial", "GetMaterials", "GetModelBounds", "GetModelRadius", "GetModelRenderBounds", "GetModelScale", "GetMomentaryRotButtonPos", "GetNoDraw", "GetNumBodyGroups", "GetNumPoseParameters", "GetParentWorldTransformMatrix", "GetPlaybackRate", "GetPoseParameter", "GetPoseParameterName", "GetPoseParameterRange", "GetPreferredCarryAngles", "GetRagdollOwner", "GetRenderFX", "GetRenderMode", "GetRotatedAABB", "GetSequence", "GetSequenceActivity", "GetSequenceActivityName", "GetSequenceCount", "GetSequenceGroundSpeed", "GetSequenceInfo", "GetSequenceList", "GetSequenceMoveDist", "GetSequenceMoveYaw", "GetSequenceMovement", "GetSequenceName", "GetSequenceVelocity", "GetShouldPlayPickupSound", "GetShouldServerRagdoll", "GetSpawnEffect", "GetSubMaterial", "GetSurroundingBounds", "GetTransmitWithParent", "GetWorldTransformMatrix", "GibBreakClient", "GibBreakServer", "HasBoneManipulations", "HasFlexManipulatior", "HeadTarget", "IsEffectActive", "IsOnFire", "IsPlayingGesture", "IsPointInBounds", "IsSequenceFinished", "LookupAttachment", "LookupBone", "LookupPoseParameter", "LookupSequence", "MakePhysicsObjectAShadow", "ManipulateBoneAngles", "ManipulateBoneJiggle", "ManipulateBonePosition", "ManipulateBoneScale", "MuzzleFlash", "NearestPoint", "OBBMaxs", "OBBMins", "PhysWake", "PhysicsDestroy", "PhysicsFromMesh", "PhysicsInit", "PhysicsInitBox", "PhysicsInitConvex", "PhysicsInitMultiConvex", "PhysicsInitShadow", "PhysicsInitSphere", "PhysicsInitStatic", "PlayScene", "PrecacheGibs", "RagdollSolve", "RagdollStopControlling", "RagdollUpdatePhysics", "RemoveAllGestures", "RemoveEFlags", "RemoveEffects", "RemoveFlags", "RemoveFromMotionController", "RemoveGesture", "RemoveInternalConstraint", "RemoveLayer", "ResetSequence", "ResetSequenceInfo", "RestartGesture", "SelectWeightedSequence", "SelectWeightedSequenceSeeded", "SendViewModelMatchingSequence", "SequenceDuration", "SetAnimation", "SetAttachment", "SetBloodColor", "SetBodyGroups", "SetBoneController", "SetBoneMatrix", "SetCollisionBounds", "SetCollisionBoundsWS", "SetColor", "SetColor4Part", "SetCycle", "SetElasticity", "SetEntity", "SetEyeTarget", "SetFlexScale", "SetFlexWeight", "SetFriction", "SetHitboxSet", "SetIK", "SetLayerAutokill", "SetLayerBlendIn", "SetLayerBlendOut", "SetLayerCycle", "SetLayerDuration", "SetLayerLooping", "SetLayerPlaybackRate", "SetLayerPriority", "SetLayerSequence", "SetLayerWeight", "SetLightingOriginEntity", "SetMaterial", "SetModelName", "SetModelScale", "SetMoveParent", "SetNoDraw", "SetParent", "SetParentPhysNum", "SetPhysConstraintObjects", "SetPlaybackRate", "SetPoseParameter", "SetPreventTransmit", "SetRagdollAng", "SetRagdollBuildFunction", "SetRagdollPos", "SetRenderFX", "SetRenderMode", "SetSequence", "SetShouldPlayPickupSound", "SetShouldServerRagdoll", "SetSpawnEffect", "SetSubMaterial", "SetSurroundingBounds", "SetSurroundingBoundsType", "SetTransmitWithParent", "SetTrigger", "SetWeaponModel", "StartMotionController", "StopMotionController", "TranslateBoneToPhysBone", "TranslatePhysBoneToBone", "UpdateBoneFollowers", "UseClientSideAnimation", "UseTriggerBounds", "ViewModelIndex", "WorldSpaceAABB" }) do
+    if ENT[name] == nil then ENT[name] = stub("Entity:" .. name) end
+end
+
+------------------------------------------------------------------------ NPC: the rest
+-- Our AI has no schedules / conditions / relationships (not ported by policy); what it has is a
+-- target, a chase, a path goal and a squad, carried by the snapshot.
+function NPC:GetEnemy() local s = snap(self.__id); if s and s.npc_target and s.npc_target ~= 0 then return Player(s.npc_target) end return NULL end
+function NPC:GetTarget() local s = snap(self.__id); if s and s.npc_chase and s.npc_chase ~= 0 then return Player(s.npc_chase) end return self:GetEnemy() end
+function NPC:GetGoalPos() local s = snap(self.__id); if s and s.npc_goal then return v3(s.npc_goal) end return Vector() end
+function NPC:GetGoalTarget() return self:GetTarget() end
+function NPC:IsGoalActive() local s = snap(self.__id); return s ~= nil and s.npc_goal ~= nil end
+function NPC:GetLastPosition() return rawget(self, "__last_pos") or self:GetGoalPos() end
+function NPC:GetPathDistanceToGoal() if not self:IsGoalActive() then return 0 end return (self:GetGoalPos() - self:GetPos()):Length() end
+function NPC:GetPathTimeToGoal() local d = self:GetPathDistanceToGoal(); local sp = self:GetVelocity():Length(); if sp < 1 then return 0 end return d / sp end
+function NPC:GetCurWaypointPos() return self:GetGoalPos() end
+function NPC:GetNextWaypointPos() return self:GetGoalPos() end
+function NPC:IsCurWaypointGoal() return true end
+function NPC:GetCurGoalType() if not self:IsGoalActive() then return 0 end if IsValid(self:GetTarget()) then return 2 end return 1 end
+function NPC:GetViewOffset() return Vector(0, 0, 66) end
+function NPC:GetShootPos() return self:GetPos() + Vector(0, 0, 40) end
+function NPC:GetEyeDirection() return self:GetAngles():Forward() end
+function NPC:GetHeadDirection() return self:GetAngles():Forward() end
+function NPC:GetAimVector() local e = self:GetEnemy(); if IsValid(e) then return (e:GetPos() + Vector(0, 0, 36) - self:GetShootPos()):GetNormalized() end return self:GetEyeDirection() end
+function NPC:GetEnemyLastKnownPos(e) e = e or self:GetEnemy(); if IsValid(e) then return e:GetPos() end return Vector() end
+NPC.GetEnemyLastSeenPos = NPC.GetEnemyLastKnownPos
+function NPC:GetKnownEnemies() local e = self:GetEnemy(); if IsValid(e) then return { e } end return {} end
+function NPC:GetKnownEnemyCount() return IsValid(self:GetEnemy()) and 1 or 0 end
+function NPC:HasEnemyMemory(e) return IsValid(self:GetEnemy()) and (e == nil or e == self:GetEnemy()) end
+function NPC:HasEnemyEluded(e) return false end
+function NPC:ClearEnemyMemory(e) self:SetEnemy(NULL) end
+function NPC:IsInViewCone(v) local p = IsEntity(v) and v:GetPos() or v; return (p - self:GetPos()):GetNormalized():Dot(self:GetEyeDirection()) > 0 end
+function NPC:GetSquad() return rawget(self, "__squad") end
+function NPC:SetSquad(name) rawset(self, "__squad", name) end
+function NPC:IsSquadLeader() return false end
+function NPC:GetNearestSquadMember() return NULL end
+function NPC:GetStepHeight() return 18 end
+function NPC:SetStepHeight(h) end
+function NPC:GetHullType() return HULL_HUMAN end
+function NPC:SetHullType(t) end
+function NPC:SetHullSizeNormal() end
+function NPC:GetNavType() return NAV_GROUND end
+function NPC:SetNavType(t) end
+function NPC:GetMoveVelocity() return self:GetVelocity() end
+function NPC:SetMoveVelocity(v) self:SetVelocity(v) end
+function NPC:MoveStop() self:StopMoving() end
+function NPC:ClearGoal() world.queue("npc_stop", self.__id) end
+function NPC:NavSetGoal(pos) self:NavSetGoalPos(pos) end
+function NPC:TargetOrder(e) self:SetTarget(e) end
+function NPC:MoveOrder(pos) self:NavSetGoalPos(pos) end
+function NPC:Classify() local c = self:GetClass(); if string.find(c, "zombie") or string.find(c, "headcrab") then return CLASS_ZOMBIE elseif string.find(c, "antlion") then return CLASS_ANTLION elseif string.find(c, "combine") or string.find(c, "metropolice") or string.find(c, "manhack") or string.find(c, "stalker") then return CLASS_COMBINE elseif string.find(c, "citizen") or string.find(c, "alyx") or string.find(c, "barney") or string.find(c, "kleiner") or string.find(c, "eli") or string.find(c, "mossman") or string.find(c, "monk") or string.find(c, "gman") or string.find(c, "vortigaunt") or string.find(c, "dog") then return CLASS_PLAYER_ALLY end return CLASS_NONE end
+function NPC:Disposition(e) local c = self:Classify(); if c == CLASS_PLAYER_ALLY or c == CLASS_NONE then return D_LI end return D_HT end
+function NPC:GetWeapon() local w = rawget(self, "__weapon"); if w then return w end return NULL end
+function NPC:GetWeapons() local w = self:GetWeapon(); if IsValid(w) then return { w } end return {} end
+function NPC:GetActivity() return self:GetVelocity():Length() > 1 and ACT_RUN or ACT_IDLE end
+function NPC:IsCrouching() return false end
+function NPC:GetFOV() return 360 end
+HULL_HUMAN, HULL_SMALL_CENTERED, HULL_WIDE_HUMAN, HULL_TINY, HULL_WIDE_SHORT, HULL_MEDIUM, HULL_TINY_CENTERED, HULL_LARGE, HULL_LARGE_CENTERED, HULL_MEDIUM_TALL = 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+NAV_GROUND, NAV_JUMP, NAV_FLY, NAV_CLIMB = 0, 1, 2, 3
+CLASS_NONE, CLASS_PLAYER, CLASS_PLAYER_ALLY, CLASS_PLAYER_ALLY_VITAL, CLASS_ANTLION, CLASS_BARNACLE, CLASS_BULLSEYE, CLASS_CITIZEN_PASSIVE, CLASS_CITIZEN_REBEL, CLASS_COMBINE, CLASS_COMBINE_GUNSHIP, CLASS_CONSCRIPT, CLASS_HEADCRAB, CLASS_MANHACK, CLASS_METROPOLICE, CLASS_MILITARY, CLASS_SCANNER, CLASS_STALKER, CLASS_VORTIGAUNT, CLASS_ZOMBIE, CLASS_PROTOSNIPER, CLASS_MISSILE, CLASS_FLARE, CLASS_EARTH_FAUNA, CLASS_HACKED_ROLLERMINE, CLASS_COMBINE_HUNTER = 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25
+D_ER, D_HT, D_FR, D_LI, D_NU = 0, 1, 2, 3, 4
+ACT_RESET, ACT_IDLE, ACT_TRANSITION, ACT_COVER, ACT_COVER_MED, ACT_COVER_LOW, ACT_WALK, ACT_WALK_AIM, ACT_WALK_CROUCH, ACT_WALK_CROUCH_AIM, ACT_RUN, ACT_RUN_AIM, ACT_RUN_CROUCH, ACT_RUN_CROUCH_AIM, ACT_RUN_PROTECTED = 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14
+for _, name in ipairs({ "AddEntityRelationship", "AddRelationship", "AdvancePath", "AlertSound", "AutoMovement", "BecomeRagdoll", "CapabilitiesAdd", "CapabilitiesClear", "CapabilitiesGet", "CapabilitiesHas", "CapabilitiesRemove", "ClearBlockingEntity", "ClearCondition", "ClearExpression", "ClearSchedule", "ConditionID", "ConditionName", "DropWeapon", "ExitScriptedSequence", "FearSound", "FoundEnemySound", "GetArrivalActivity", "GetArrivalDirection", "GetArrivalDistance", "GetArrivalSequence", "GetArrivalSpeed", "GetBestSoundHint", "GetBlockingEntity", "GetCurrentSchedule", "GetCurrentWeaponProficiency", "GetEnemyFirstTimeSeen", "GetEnemyLastTimeSeen", "GetExpression", "GetIdealActivity", "GetIdealMoveAcceleration", "GetIdealMoveSpeed", "GetIdealSequence", "GetIdealYaw", "GetLastTimeTookDamageFromEnemy", "GetMaxLookDistance", "GetMinMoveCheckDist", "GetMinMoveStopDist", "GetMoveDelay", "GetMoveInterval", "GetMovementActivity", "GetMovementSequence", "GetTaskStatus", "GetTimeEnemyLastReacquired", "Give", "HasCondition", "HasObstacles", "IdleSound", "IgnoreEnemyUntil", "IsCurrentSchedule", "IsFacingIdealYaw", "IsMoveYawLocked", "IsRunningBehavior", "IsUnforgettable", "IsUnreachable", "LostEnemySound", "MaintainActivity", "MarkEnemyAsEluded", "MarkTookDamageFromEnemy", "MoveClimbExec", "MoveClimbStart", "MoveClimbStop", "MoveGroundStep", "MoveJumpExec", "MoveJumpStart", "MoveJumpStop", "MovePause", "MoveStart", "NavSetRandomGoal", "NavSetWanderGoal", "PickupWeapon", "PlaySentence", "RememberUnreachable", "RemoveIgnoreConditions", "ResetIdealActivity", "ResetMoveCalc", "RunEngineTask", "SelectWeapon", "SentenceStop", "SetActivity", "SetArrivalActivity", "SetArrivalDirection", "SetArrivalDistance", "SetArrivalSequence", "SetArrivalSpeed", "SetCondition", "SetCurrentWeaponProficiency", "SetExpression", "SetFOV", "SetForceCrouch", "SetIdealActivity", "SetIdealSequence", "SetIdealYaw", "SetIdealYawAndUpdate", "SetIgnoreConditions", "SetMaxLookDistance", "SetMaxRouteRebuildTime", "SetMoveDelay", "SetMoveInterval", "SetMoveYawLocked", "SetMovementSequence", "SetNPCState", "SetSchedule", "SetTaskStatus", "SetUnforgettable", "SetViewOffset", "StartEngineTask", "TaskComplete", "TaskFail", "UpdateEnemyMemory", "UpdateTurnActivity", "UpdateYaw", "UseActBusyBehavior", "UseAssaultBehavior", "UseFollowBehavior", "UseFuncTankBehavior", "UseLeadBehavior", "UseNoBehavior" }) do
+    if NPC[name] == nil then NPC[name] = stub("NPC:" .. name) end
+end
