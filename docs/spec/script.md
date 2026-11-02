@@ -776,6 +776,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `CreatePhysCollideBox(mins, maxs)` and `CreatePhysCollidesFromModel(model)` (one per PHY
+  solid, from the server's model hull planes) build `PhysCollide`s; `PhysCollide:TraceBox(origin,
+  angles, start, end, mins, maxs)` sweeps the box against the hulls posed there through the same
+  sweep the prop hull trace uses (returns end, zero normal, 1 on a miss); `IsValid` / `Destroy`.
+  `Add_NPC_Class(name)` hands out `CLASS_*` ids from 26 (the same name gives the same id).
 - `physenv.SetGravity(v)` / `SetTimeScale(s)` / `SetPhysicsPaused(b)` drive the server's
   replicated variables `sv_gravity` (the physics world gravity re-applied to live bodies, and the
   players' mover gravity), `phys_timescale` (the physics step runs at that fraction of the tick;

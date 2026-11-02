@@ -2656,3 +2656,37 @@ fn physenv_setters_drive_the_cvars() {
         .unwrap();
     assert_eq!((g, ts, p), (-600.0, 2.0, true));
 }
+
+#[test]
+fn phys_collide_box_trace_and_npc_class() {
+    let mut rt = runtime(
+        "hook.Add('Think', 't', function()
+            local c = CreatePhysCollideBox(Vector(-8, -8, -8), Vector(8, 8, 8))
+            local p, n, f = c:TraceBox(Vector(0, 0, 0), Angle(0, 0, 0), Vector(0, 0, -50), Vector(0, 0, 50), Vector(-1, -1, -1), Vector(1, 1, 1))
+            state.f, state.z, state.nz = f, p.z, n.z
+            local _, _, f2 = c:TraceBox(Vector(0, 0, 0), Angle(0, 0, 0), Vector(100, 0, -50), Vector(100, 0, 50), Vector(), Vector())
+            state.f2 = f2
+            local _, _, f3 = c:TraceBox(Vector(100, 0, 0), Angle(0, 0, 0), Vector(100, 0, -50), Vector(100, 0, 50), Vector(), Vector())
+            state.f3 = f3
+            c:Destroy() state.valid = c:IsValid()
+            state.cls, state.cls2 = Add_NPC_Class('CLASS_MY'), Add_NPC_Class('CLASS_OTHER')
+            state.again = Add_NPC_Class('CLASS_MY')
+         end)",
+    );
+    rt.actors_mut()[0]
+        .dispatch(&snapshot(), "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let (f, z, nz, f2, f3): (f64, f64, f64, f64, f64) = rt.actors()[0]
+        .eval("return state.f, state.z, state.nz, state.f2, state.f3")
+        .unwrap();
+    assert!(
+        (f - 0.41).abs() < 0.01 && (z + 9.0).abs() < 0.5 && nz == -1.0,
+        "{f} {z} {nz}"
+    );
+    assert_eq!(f2, 1.0);
+    assert!((f3 - 0.42).abs() < 0.01, "{f3}");
+    let (valid, cls, cls2, again): (bool, f64, f64, f64) = rt.actors()[0]
+        .eval("return state.valid, state.cls, state.cls2, state.again")
+        .unwrap();
+    assert_eq!((valid, cls, cls2, again), (false, 26.0, 27.0, 26.0));
+}

@@ -2960,6 +2960,64 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     let sh = shared.clone();
+    // `PhysCollide:TraceBox`: a box swept against a set of convex hulls (outward planes, entity
+    // frame) posed at pos / ang, the same sweep the prop hull trace uses
+    phys.set(
+        "collide_trace_box",
+        lua.create_function(
+            |lua,
+             (hulls, pos, ang, start, end, mins, maxs): (
+                Table,
+                Table,
+                Table,
+                Table,
+                Table,
+                Table,
+                Table,
+            )| {
+                let mut planes = Vec::new();
+                for hull in hulls.sequence_values::<Table>() {
+                    let hull = hull?;
+                    let mut pl = Vec::new();
+                    for plane in hull.sequence_values::<Table>() {
+                        let plane = plane?;
+                        pl.push((
+                            Vec3::new(plane.get("x")?, plane.get("y")?, plane.get("z")?),
+                            plane.get::<f32>("d")?,
+                        ));
+                    }
+                    planes.push(pl);
+                }
+                let body = gm_sandbox::PropBody {
+                    id: 1,
+                    bone: 0,
+                    pos: table_vec3(&pos)?,
+                    angles: table_vec3(&ang)?,
+                    hulls: planes,
+                };
+                let t = lua.create_table()?;
+                match gm_sandbox::sweep_hull_props(
+                    std::slice::from_ref(&body),
+                    table_vec3(&start)?,
+                    table_vec3(&end)?,
+                    table_vec3(&mins)?,
+                    table_vec3(&maxs)?,
+                ) {
+                    Some(h) => {
+                        t.set("hit", true)?;
+                        t.set("pos", vec3_table(lua, h.pos)?)?;
+                        t.set("normal", vec3_table(lua, h.normal)?)?;
+                        t.set("fraction", h.fraction)?;
+                    }
+                    None => {
+                        t.set("hit", false)?;
+                        t.set("fraction", 1.0)?;
+                    }
+                }
+                Ok(t)
+            },
+        )?,
+    )?;
     phys.set(
         "trace_hull",
         lua.create_function(
@@ -3199,6 +3257,20 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             t.set("bones", m.bones.clone())?;
             t.set("bone_parents", m.bone_parents.clone())?;
             t.set("phys_bones", m.phys_bones.clone())?;
+            let hp = lua.create_table()?;
+            for (i, hull) in m.hull_planes.iter().enumerate() {
+                let h = lua.create_table()?;
+                for (j, (n, d)) in hull.iter().enumerate() {
+                    let pl = lua.create_table()?;
+                    pl.set("x", n.x)?;
+                    pl.set("y", n.y)?;
+                    pl.set("z", n.z)?;
+                    pl.set("d", *d)?;
+                    h.set(j + 1, pl)?;
+                }
+                hp.set(i + 1, h)?;
+            }
+            t.set("hull_planes", hp)?;
             let bb = lua.create_table()?;
             for (i, (pos, ang)) in m.bone_bind.iter().enumerate() {
                 let e = lua.create_table()?;

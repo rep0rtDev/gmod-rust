@@ -199,6 +199,8 @@ pub struct ModelScriptData {
     /// AABB of the PHY vertices in the entity frame (`PhysObj:GetAABB`).
     pub phys_mins: Vec3,
     pub phys_maxs: Vec3,
+    /// PHY convexes as outward planes (entity frame) for `CreatePhysCollidesFromModel`.
+    pub hull_planes: Vec<Vec<(Vec3, f32)>>,
     /// PHY volume and the area of the convex faces, Source units.
     pub volume: f32,
     pub surface_area: f32,
@@ -435,6 +437,7 @@ impl ModelScriptData {
             elasticity: 0.0,
             phys_mins: Vec3::ZERO,
             phys_maxs: Vec3::ZERO,
+            hull_planes: Vec::new(),
             volume: 0.0,
             surface_area: 0.0,
             mass_center: Vec3::ZERO,
@@ -6505,6 +6508,7 @@ impl<'w> Server<'w> {
         script.friction = info.surface.friction;
         script.elasticity = info.surface.elasticity;
         script.set_phys(&info);
+        script.hull_planes = info.hull_planes.clone();
         self.model_scripts.insert(name.to_string(), script);
         self.models.insert(name.to_string(), info);
     }

@@ -194,7 +194,7 @@ function IsMounted(name)
     return false
 end
 function SoundDuration(name) return __sound_duration(tostring(name or "")) or 0 end
-for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "Add_NPC_Class", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CreatePhysCollideBox", "CreatePhysCollidesFromModel", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "SentenceDuration", "SetPhysConstraintSystem", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
+for _, n in ipairs({ "AddConsoleCommand", "AddOriginToPVS", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "SentenceDuration", "SetPhysConstraintSystem", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
 
 
 -- Tool: the tool gun's per-mode state object (ghost entities need the client realm).
@@ -782,7 +782,47 @@ for _, n in ipairs({ "Download", "GetColor", "GetMappingHeight", "GetMappingWidt
 __glua_classes["NextBot"] = __glua_classes["NextBot"] or {}
 for _, n in ipairs({ "BecomeRagdoll", "FindSpot", "FindSpots", "GetSolidMask", "SetSolidMask"}) do if __glua_classes["NextBot"][n] == nil then __glua_classes["NextBot"][n] = stub("NextBot:" .. n) end end
 __glua_classes["PhysCollide"] = __glua_classes["PhysCollide"] or {}
-for _, n in ipairs({ "Destroy", "IsValid", "TraceBox" }) do if __glua_classes["PhysCollide"][n] == nil then __glua_classes["PhysCollide"][n] = stub("PhysCollide:" .. n) end end
+-- PhysCollide: a set of convex hulls (outward planes in its own frame); TraceBox sweeps a box
+-- against them posed at origin / angles through the server's prop hull sweep
+do
+    local PC = __glua_classes.PhysCollide
+    PC.__index = PC
+    local function pv(v) return { x = v and v.x or 0, y = v and v.y or 0, z = v and v.z or 0 } end
+    local function pc_new(hulls) return setmetatable({ __hulls = hulls, __valid = true }, PC) end
+    function PC:IsValid() return self.__valid == true end
+    function PC:Destroy() self.__valid = false; self.__hulls = nil end
+    function PC:TraceBox(origin, angles, start, endpos, mins, maxs)
+        if not self.__valid or not (phys and phys.collide_trace_box) then return endpos, Vector(0, 0, 0), 1 end
+        local a = angles or {}
+        local r = phys.collide_trace_box(self.__hulls, pv(origin), { x = a.p or a.x or 0, y = a.y or 0, z = a.r or a.z or 0 }, pv(start), pv(endpos), pv(mins), pv(maxs))
+        if not r.hit then return endpos, Vector(0, 0, 0), 1 end
+        return Vector(r.pos.x, r.pos.y, r.pos.z), Vector(r.normal.x, r.normal.y, r.normal.z), r.fraction
+    end
+    function CreatePhysCollideBox(mins, maxs)
+        return pc_new({ {
+            { x = 1, y = 0, z = 0, d = maxs.x }, { x = -1, y = 0, z = 0, d = -mins.x },
+            { x = 0, y = 1, z = 0, d = maxs.y }, { x = 0, y = -1, z = 0, d = -mins.y },
+            { x = 0, y = 0, z = 1, d = maxs.z }, { x = 0, y = 0, z = -1, d = -mins.z },
+        } })
+    end
+    -- one PhysCollide per PHY solid of the model (its hull planes from the server's model data)
+    function CreatePhysCollidesFromModel(m)
+        local info = model and model.info and model.info(m)
+        local out = {}
+        if not info or not info.hull_planes then return out end
+        for i, h in ipairs(info.hull_planes) do out[i] = pc_new({ h }) end
+        return out
+    end
+    -- Add_NPC_Class: a new CLASS_* id after the game's 0..25 (the name is kept for Classify users)
+    local npc_classes = {}
+    function Add_NPC_Class(name)
+        if npc_classes[name] then return npc_classes[name] end
+        local id = 26
+        for _, v in pairs(npc_classes) do if v >= id then id = v + 1 end end
+        npc_classes[name] = id
+        return id
+    end
+end
 __glua_classes["Schedule"] = __glua_classes["Schedule"] or {}
 for _, n in ipairs({ "AddTask", "EngTask", "GetTask", "NumTasks" }) do if __glua_classes["Schedule"][n] == nil then __glua_classes["Schedule"][n] = stub("Schedule:" .. n) end end
 __glua_classes["SurfaceInfo"] = __glua_classes["SurfaceInfo"] or {}
