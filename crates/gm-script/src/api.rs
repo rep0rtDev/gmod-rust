@@ -244,6 +244,11 @@ pub enum QueuedWrite {
         ent: u32,
         asleep: bool,
     },
+    /// `Entity:SetParent`; `None` unparents.
+    SetParent {
+        ent: u32,
+        parent: Option<u32>,
+    },
     PlayerStripWeapon {
         player: u32,
         class: Option<String>,
@@ -498,6 +503,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("damping_linear", e.damping.0)?;
     t.set("damping_angular", e.damping.1)?;
     t.set("asleep", e.asleep)?;
+    t.set("parent", e.parent)?;
     Ok(t)
 }
 
@@ -1289,6 +1295,15 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     ent,
                     asleep: matches!(arg, Value::Boolean(true)),
                 },
+                "set_parent" => QueuedWrite::SetParent {
+                    ent,
+                    parent: match &arg {
+                        Value::Nil => None,
+                        Value::Integer(i) => Some(*i as u32),
+                        Value::Number(n) => Some(*n as u32),
+                        _ => return Err(mlua::Error::runtime("set_parent needs an entity id")),
+                    },
+                },
                 "player.strip_weapon" => QueuedWrite::PlayerStripWeapon {
                     player: ent,
                     class: match &arg {
@@ -2055,6 +2070,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             }
             None => false,
         },
+        QueuedWrite::SetParent { ent, parent } => server.set_parent(*ent, *parent),
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())
         }

@@ -24,6 +24,8 @@ pub struct EntitySnap {
     pub mass: f32,
     pub damping: (f32, f32),
     pub asleep: bool,
+    /// `Entity:GetParent`: 0 when not parented.
+    pub parent: u32,
     /// NPC only: the player it has as target / chases, and the end of its current path.
     pub npc_target: u32,
     pub npc_chase: u32,
@@ -184,6 +186,7 @@ impl Snapshot {
                             mass: 0.0,
                             damping: (0.0, 0.0),
                             asleep: false,
+                            parent: 0,
                             npc_target: 0,
                             npc_chase: 0,
                             npc_goal: None,
@@ -255,6 +258,7 @@ impl Snapshot {
                             mass: phys.1,
                             damping: phys.2,
                             asleep: phys.3,
+                            parent: server.entity_parent(p.id),
                             npc_target: 0,
                             npc_chase: 0,
                             npc_goal: None,
@@ -281,6 +285,7 @@ impl Snapshot {
                             mass: 0.0,
                             damping: (0.0, 0.0),
                             asleep: false,
+                            parent: 0,
                             npc_target: n.target.unwrap_or(0),
                             npc_chase: n.chase.unwrap_or(0),
                             npc_goal: n.goal.as_ref().and_then(|g| g.points.last().copied()),

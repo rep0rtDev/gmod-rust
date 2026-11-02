@@ -3170,6 +3170,8 @@ pub struct Server<'w> {
     /// NPCs spawned from the NPCs tab (`Spawn_NPC`), by sandbox id (foreign to the prop list).
     pub npcs: BTreeMap<u32, Npc>,
     nav: Option<std::sync::Arc<gm_nav::NavMesh>>,
+    /// `Entity:SetParent` links: child prop id -> parent and the child pose in parent space.
+    parents: HashMap<u32, ParentLink>,
     /// Vehicles (`Spawn_Vehicle`): sandbox prop id -> seat state.
     pub vehicles: BTreeMap<u32, Vehicle>,
     /// Ticks that removed an entity since undo.lua last purged dead undo lists (every 16).
@@ -3297,6 +3299,7 @@ impl<'w> Server<'w> {
             world_weapons: HashMap::new(),
             npcs: BTreeMap::new(),
             nav: None,
+            parents: HashMap::new(),
             vehicles: BTreeMap::new(),
             undo_purge_ticks: 0,
             sent_player_touch: std::collections::HashSet::new(),
@@ -5227,6 +5230,62 @@ impl<'w> Server<'w> {
                 )
             }
             None => (Vec3::ZERO, 0.0, (0.0, 0.0), false),
+        }
+    }
+
+    /// World pose of a prop or a player (players: origin and view yaw) for parenting.
+    pub fn entity_pose(&self, id: u32) -> Option<(Vec3, Quat)> {
+        if let Some(p) = self.sandbox.props().iter().find(|p| p.id == id) {
+            return Some((p.pos, gm_sandbox::rotation(p.angles)));
+        }
+        self.players.get(&id).map(|p| {
+            (
+                p.state.origin,
+                gm_sandbox::rotation(Vec3::new(0.0, p.view_angles.y, 0.0)),
+            )
+        })
+    }
+
+    /// `Entity:SetParent`: a prop follows a prop or a player, keeping its current offset in the
+    /// parent's space; its own physics is frozen while parented (the game disables it). `None`
+    /// unparents and leaves the prop where it is, still frozen.
+    pub fn set_parent(&mut self, child: u32, parent: Option<u32>) -> bool {
+        let Some(parent) = parent else {
+            return self.parents.remove(&child).is_some();
+        };
+        if parent == child || !self.sandbox.props().iter().any(|p| p.id == child) {
+            return false;
+        }
+        let (Some(pp), Some(cp)) = (self.entity_pose(parent), self.entity_pose(child)) else {
+            return false;
+        };
+        let (local_pos, local_rot) = parent_local(pp, cp);
+        self.parents.insert(
+            child,
+            ParentLink {
+                parent,
+                local_pos,
+                local_rot,
+            },
+        );
+        self.set_prop_frozen(child, true);
+        true
+    }
+
+    pub fn entity_parent(&self, id: u32) -> u32 {
+        self.parents.get(&id).map_or(0, |l| l.parent)
+    }
+
+    fn follow_parents(&mut self) {
+        let links: Vec<(u32, ParentLink)> = self.parents.iter().map(|(c, l)| (*c, *l)).collect();
+        for (child, link) in links {
+            let (Some(pp), Some(_)) = (self.entity_pose(link.parent), self.entity_pose(child))
+            else {
+                self.parents.remove(&child);
+                continue;
+            };
+            let (pos, rot) = parent_world(pp, (link.local_pos, link.local_rot));
+            self.teleport_prop(child, pos, gm_sandbox::angles_of(rot));
         }
     }
 
@@ -9283,6 +9342,7 @@ impl<'w> Server<'w> {
         // the physics step after bullets, moves and projectiles: a prop hit by any of them takes
         // the impulse before the floor acts on it in the same tick (`shoot_prop_crossbow_drum`)
         self.physics.step();
+        self.follow_parents();
         self.impact_sounds();
         let contacts = self.physics.take_contacts();
         self.scrape_sounds(&contacts);
@@ -11106,5 +11166,60 @@ mod slot_tests {
             slot_order(&classes2, owned2, 1, std::slice::from_ref(&swep)),
             vec![idx("weapon_pistol"), LOADOUT.len() as u8, idx("weapon_357")]
         );
+    }
+}
+
+/// `Entity:SetParent` link: the child's pose in the parent's space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParentLink {
+    pub parent: u32,
+    pub local_pos: Vec3,
+    pub local_rot: Quat,
+}
+
+/// Child world pose expressed in the parent's space.
+pub fn parent_local(parent: (Vec3, Quat), child: (Vec3, Quat)) -> (Vec3, Quat) {
+    let inv = parent.1.inverse();
+    (inv * (child.0 - parent.0), (inv * child.1).normalize())
+}
+
+/// Parent-space pose back to the world.
+pub fn parent_world(parent: (Vec3, Quat), local: (Vec3, Quat)) -> (Vec3, Quat) {
+    (
+        parent.0 + parent.1 * local.0,
+        (parent.1 * local.1).normalize(),
+    )
+}
+
+#[cfg(test)]
+mod parent_tests {
+    use super::*;
+
+    #[test]
+    fn parent_space_round_trips_and_follows_a_turn() {
+        let parent = (
+            Vec3::new(100.0, 0.0, 0.0),
+            gm_sandbox::rotation(Vec3::new(0.0, 90.0, 0.0)),
+        );
+        let child = (
+            Vec3::new(100.0, 10.0, 5.0),
+            gm_sandbox::rotation(Vec3::new(0.0, 90.0, 0.0)),
+        );
+        let local = parent_local(parent, child);
+        assert!(
+            (local.0 - Vec3::new(10.0, 0.0, 5.0)).length() < 1e-4,
+            "{:?}",
+            local.0
+        );
+        let back = parent_world(parent, local);
+        assert!((back.0 - child.0).length() < 1e-4);
+        let turned = (parent.0, gm_sandbox::rotation(Vec3::new(0.0, 180.0, 0.0)));
+        let moved = parent_world(turned, local);
+        assert!(
+            (moved.0 - Vec3::new(90.0, 0.0, 5.0)).length() < 1e-4,
+            "{:?}",
+            moved.0
+        );
+        assert!((gm_sandbox::angles_of(moved.1).y.abs() - 180.0).abs() < 1e-3);
     }
 }

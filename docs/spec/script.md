@@ -757,6 +757,15 @@ tuned table). `CalculateForceOffset`, `RotateAroundAxis` and `AlignAngles` are p
 body pose. `ApplyTorqueCenter`, `CalculateVelocityOffset`, inertia, buoyancy, drag coefficients,
 AABB / volume / mesh queries still have no body-side reader and stay stubs.
 
+Entity parenting: `Server::set_parent` stores the child prop's pose in the parent's space
+(`ParentLink`, parent = prop or player with origin + view yaw), freezes the child and re-poses it
+right after every physics step (`follow_parents`, `parent_world`); unparenting leaves it where it
+is, still frozen; a vanished parent drops the link. `EntitySnap.parent` feeds
+`Entity:GetParent / GetChildren / GetParentWorldTransformMatrix`, `SetParent / SetMoveParent`
+queue `set_parent`, and `Get/SetLocalPos`, `Get/SetLocalAngles` are parent-relative when
+parented (world otherwise). Bone / attachment parenting (`SetParentPhysNum`, `FollowBone`,
+`GetParentAttachment`) has no model-side anchor yet and stays a stub.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

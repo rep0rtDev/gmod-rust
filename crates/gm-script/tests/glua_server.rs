@@ -27,6 +27,32 @@ fn snapshot() -> Arc<Snapshot> {
             mass: 40.0,
             damping: (0.1, 0.2),
             asleep: false,
+            parent: 0,
+            npc_target: 0,
+            npc_chase: 0,
+            npc_goal: None,
+        },
+    );
+    s.entities.insert(
+        6,
+        gm_script::snapshot::EntitySnap {
+            id: 6,
+            model: "models/props_c17/oildrum001.mdl".into(),
+            pos: Vec3::new(10.0, 20.0, 30.0),
+            angles: Vec3::ZERO,
+            frozen: false,
+            skin: 0,
+            body: String::new(),
+            owner: 1,
+            class: "prop_physics".into(),
+            health: 0,
+            max_health: 0,
+            velocity: Vec3::ZERO,
+            ang_velocity: Vec3::new(1.0, 2.0, 3.0),
+            mass: 40.0,
+            damping: (0.1, 0.2),
+            asleep: false,
+            parent: 5,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -463,4 +489,45 @@ fn physobj_mass_angular_velocity_damping_over_the_body() {
             asleep: true
         }
     ));
+}
+
+#[test]
+fn parenting_reads_the_link_and_queues_set_parent() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local c, p = Entity(6), Entity(5)
+             local lp = c:GetLocalPos()
+             state.r = { c:GetParent():EntIndex(), #p:GetChildren(), p:GetChildren()[1]:EntIndex(), lp.x, lp.y, lp.z,
+                 IsValid(p:GetParent()) and 1 or 0, c:GetParentWorldTransformMatrix():GetTranslation().x }
+             p:SetParent(Player(1))
+             c:SetParent(nil)
+             c:SetLocalPos(Vector(1, 2, 3))
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!(r, vec![5.0, 1.0, 6.0, 10.0, 20.0, 30.0, 0.0, 0.0]);
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(matches!(
+        &writes[0],
+        QueuedWrite::SetParent {
+            ent: 5,
+            parent: Some(1)
+        }
+    ));
+    assert!(matches!(
+        &writes[1],
+        QueuedWrite::SetParent {
+            ent: 6,
+            parent: None
+        }
+    ));
+    assert!(
+        matches!(&writes[2], QueuedWrite::SetPos { ent: 6, pos } if *pos == Vec3::new(1.0, 2.0, 3.0)),
+        "local pos of a parented child is parent-relative: {:?}",
+        writes[2]
+    );
 }

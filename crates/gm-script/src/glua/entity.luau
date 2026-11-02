@@ -1046,10 +1046,11 @@ local function v3(p) return Vector(p.x, p.y, p.z) end
 ENT.GetNWVar = ENT.GetNWVar or ENT.GetNetworkedVar
 ENT.SetNWVar = ENT.SetNWVar or ENT.SetNetworkedVar
 ENT.GetNWVars = ENT.GetNWVars or function(self) return rawget(self, "__vars").__nw or {} end
-function ENT:GetLocalPos() return self:GetPos() end
-function ENT:GetLocalAngles() return self:GetAngles() end
-function ENT:SetLocalPos(p) self:SetPos(p) end
-function ENT:SetLocalAngles(a) self:SetAngles(a) end
+-- Local pose: relative to the parent when parented, world otherwise (the game's rule).
+function ENT:GetLocalPos() local p = self:GetParent(); if not IsValid(p) then return self:GetPos() end local lp = WorldToLocal(self:GetPos(), self:GetAngles(), p:GetPos(), p:GetAngles()); return lp end
+function ENT:GetLocalAngles() local p = self:GetParent(); if not IsValid(p) then return self:GetAngles() end local _, la = WorldToLocal(self:GetPos(), self:GetAngles(), p:GetPos(), p:GetAngles()); return la end
+function ENT:SetLocalPos(lp) local p = self:GetParent(); if not IsValid(p) then self:SetPos(lp) return end local wp = LocalToWorld(lp, Angle(), p:GetPos(), p:GetAngles()); self:SetPos(wp) end
+function ENT:SetLocalAngles(la) local p = self:GetParent(); if not IsValid(p) then self:SetAngles(la) return end local _, wa = LocalToWorld(Vector(), la, p:GetPos(), p:GetAngles()); self:SetAngles(wa) end
 function ENT:GetAbsVelocity() return self:GetVelocity() end
 function ENT:SetAbsVelocity(v) self:SetVelocity(v) end
 function ENT:GetBaseVelocity() return Vector() end
@@ -1092,9 +1093,12 @@ function ENT:SetCollisionGroup(g)
 end
 function ENT:GetGravity() return rawget(self, "__gravity") or 1 end
 function ENT:SetGravity(g) rawset(self, "__gravity", g); world.queue("set_gravity", self.__id, g ~= 0) end
-function ENT:GetParent() return NULL end
+function ENT:GetParent() local s = snap(self.__id); if s and s.parent and s.parent ~= 0 then return Entity(s.parent) end return NULL end
+function ENT:SetParent(p) if p == nil or p == NULL or not IsValid(p) then qwrite("set_parent", self.__id, nil) else qwrite("set_parent", self.__id, p:EntIndex()) end end
+function ENT:SetMoveParent(p) self:SetParent(p) end
+function ENT:GetParentWorldTransformMatrix() local p = self:GetParent(); if not IsValid(p) then return nil end local m = Matrix(); m:SetTranslation(p:GetPos()); m:SetAngles(p:GetAngles()); return m end
 function ENT:GetMoveParent() return NULL end
-function ENT:GetChildren() return {} end
+function ENT:GetChildren() local out = {}; for _, e in ipairs(ents.GetAll()) do local id = rawget(e, "__id"); local s = id and id ~= 0 and snap(id) or nil; if s and s.parent == self.__id and self.__id ~= 0 then out[#out + 1] = e end end return out end
 function ENT:GetParentAttachment() return 0 end
 function ENT:GetParentPhysNum() return 0 end
 function ENT:GetPhysicsObjectCount() return self:IsValid() and 1 or 0 end
