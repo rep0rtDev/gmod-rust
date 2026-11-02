@@ -537,15 +537,39 @@ IN_ATTACK, IN_JUMP, IN_DUCK, IN_FORWARD, IN_BACK, IN_USE, IN_CANCEL, IN_LEFT, IN
 local function in_key(name) return _G[name] or 0 end
 if events then
     local initialized = false
+local seen_players = {}
     events.on("tick.pre", function()
         if not initialized then
             initialized = true
+            hook.Run("PreGamemodeLoaded")
+            hook.Run("OnGamemodeLoaded")
+            hook.Run("CreateTeams")
             hook.Run("Initialize")
             hook.Run("InitPostEntity")
             hook.Run("PostGamemodeLoaded")
         end
+        local hooks = hook.GetTable()
+        local function wanted(name) return hooks[name] ~= nil and next(hooks[name]) ~= nil end
+        local per_tick = wanted("PlayerTick") or wanted("PlayerPostThink")
+        local first_sight = wanted("PlayerConnect") or wanted("PlayerAuthed") or wanted("NetworkIDValidated") or wanted("PlayerInitialSpawn") or wanted("PlayerSetModel")
+        if not (per_tick or first_sight) then return end
+        for _, ply in ipairs(player.GetAll()) do
+            if first_sight and not seen_players[ply:UserID()] then
+                seen_players[ply:UserID()] = true
+                hook.Run("PlayerConnect", ply:Nick(), "")
+                hook.Run("PlayerAuthed", ply, ply:SteamID(), ply:UniqueID())
+                hook.Run("NetworkIDValidated", ply:Nick(), ply:SteamID())
+                hook.Run("PlayerInitialSpawn", ply, false)
+                hook.Run("PlayerSetModel", ply)
+            end
+            if per_tick then
+                hook.Run("PlayerTick", ply, nil)
+                hook.Run("PlayerPostThink", ply)
+            end
+        end
     end, -1e9 + 1)
     events.on("addon.reloaded", function() hook.Run("OnReloaded") end)
+    events.on("addon.reloaded", function() hook.Run("ShutDown") end, 1e9)
     events.on("entity.created", function(p) hook.Run("OnEntityCreated", Entity(p.entity)) end)
     events.on("entity.spawned", function(p) if not p.tag then local e = Entity(p.entity); hook.Run("PlayerSpawnedProp", Player(p.player), e:GetModel(), e) end end)
     events.on("entity.removed", function(p) hook.Run("EntityRemoved", Entity(p.entity), false) end)
@@ -570,14 +594,18 @@ if events then
     events.on("player.key_press", function(p) hook.Run("KeyPress", Player(p.player), in_key(p.key)) end)
     events.on("player.key_release", function(p) hook.Run("KeyRelease", Player(p.player), in_key(p.key)) end)
     events.on("player.property", function(p) hook.Run("PropertyUsed", Player(p.player), p.property, Entity(p.entity)) end)
-    events.on("player.unfroze", function(p) hook.Run("OnPhysgunReload", NULL, Player(p.player)) end)
-    events.on("physgun.drop", function(p) hook.Run("PhysgunDrop", Player(p.player), Entity(p.entity)) end)
-    events.on("physgun.freeze", function(p) local e = Entity(p.entity); hook.Run("OnPhysgunFreeze", NULL, e:GetPhysicsObject(), e, Player(p.player)) end)
+    events.on("player.unfroze", function(p) hook.Run("OnPhysgunReload", NULL, Player(p.player)); hook.Run("PlayerUnfrozeObject", Player(p.player), NULL, NULL) end)
+    events.on("physgun.pickup", function(p) hook.Run("OnPhysgunPickup", Player(p.player), Entity(p.entity)); hook.Run("OnPlayerPhysicsPickup", Player(p.player), Entity(p.entity)) end)
+    events.on("physgun.drop", function(p) hook.Run("PhysgunDrop", Player(p.player), Entity(p.entity)); hook.Run("OnPlayerPhysicsDrop", Player(p.player), Entity(p.entity), false) end)
+    events.on("physgun.freeze", function(p) local e = Entity(p.entity); hook.Run("OnPhysgunFreeze", NULL, e:GetPhysicsObject(), e, Player(p.player)); hook.Run("PlayerFrozeObject", Player(p.player), e, e:GetPhysicsObject()) end)
     -- requests: the documented hook's cancel value becomes the own request's `false`
     events.on("player.damage", function(p)
         local ply = Player(p.player)
         local d = dmginfo_for(p)
+        if hook.Run("PlayerShouldTakeDamage", ply, d:GetAttacker()) == false then return false end
+        hook.Run("ScalePlayerDamage", ply, HITGROUP_GENERIC, d)
         if hook.Run("EntityTakeDamage", ply, d) == true then return false end
+        hook.Run("PostEntityTakeDamage", ply, d, true)
         if d:GetDamage() ~= (p.amount or 0) then return d:GetDamage() end
     end)
     events.on("player.fall_damage", function(p)
@@ -592,7 +620,13 @@ if events then
     end)
     events.on("physgun.pickup_request", function(p) if hook.Run("PhysgunPickup", Player(p.player), Entity(p.entity)) == false then return false end end)
     events.on("player.unfreeze_request", function(p) local e = Entity(p.entity); if hook.Run("CanPlayerUnfreeze", Player(p.player), e, e:GetPhysicsObject()) == false then return false end end)
-    events.on("player.undo_request", function(p) if hook.Run("CanUndo", Player(p.player), { Name = p.name }) == false then return false end end)
+    events.on("player.undo_request", function(p)
+        local u = { Name = p.name, Owner = Player(p.player) }
+        if hook.Run("CanUndo", Player(p.player), u) == false then return false end
+        hook.Run("PreUndo", u)
+        hook.Run("OnUndo", Player(p.player), p.name, u.CustomUndoText or "")
+        hook.Run("PostUndo", u, 1)
+    end)
     events.on("player.property_request", function(p) if hook.Run("CanProperty", Player(p.player), p.property, Entity(p.entity)) == false then return false end end)
     events.on("player.pickup_weapon_request", function(p) if hook.Run("PlayerCanPickupWeapon", Player(p.player), __glua_classes.Weapon.__from(p.class, p.player)) == false then return false end end)
     events.on("player.loadout", function(p) if hook.Run("PlayerLoadout", Player(p.player)) == true then return false end end)
@@ -607,3 +641,74 @@ if events then
         if type(r) == "string" then return r end
     end)
 end
+
+
+-- Sandbox gamemode defaults (pure Lua in the original gamemode as well): `hook.Run` falls through
+-- to these when no addon hook answers.
+GM = GM or {}
+GAMEMODE = GAMEMODE or GM
+function GM:PlayerCanSeePlayersChat(text, teamOnly, listener, speaker) if teamOnly and IsValid(listener) and IsValid(speaker) and listener:Team() ~= speaker:Team() then return false end return true end
+function GM:PlayerCanHearPlayersVoice(listener, talker) return true, false end
+function GM:PlayerShouldTakeDamage(ply, attacker) return true end
+function GM:CanPlayerSuicide(ply) return true end
+function GM:IsSpawnpointSuitable(ply, spawn, makeSuitable) return true end
+function GM:PlayerCanJoinTeam(ply, team) return true end
+function GM:PlayerRequestTeam(ply, team) if hook.Run("PlayerCanJoinTeam", ply, team) == false then return end hook.Run("PlayerJoinTeam", ply, team) end
+function GM:PlayerJoinTeam(ply, team) local old = ply:Team(); ply:SetTeam(team); hook.Run("OnPlayerChangedTeam", ply, old, team); hook.Run("PlayerChangedTeam", ply, old, team) end
+function GM:OnPlayerChangedTeam(ply, old, new) end
+function GM:PlayerChangedTeam(ply, old, new) end
+function GM:GetGameDescription() return GM.Name or "Sandbox" end
+function GM:CreateTeams() if team and team.SetUp then team.SetUp(TEAM_UNASSIGNED or 1001, "Unassigned", Color(255, 255, 255)); team.SetUp(TEAM_SPECTATOR or 1002, "Spectator", Color(200, 200, 200)) end end
+function GM:PlayerDeathThink(ply) return true end
+function GM:PlayerSilentDeath(ply) end
+function GM:PlayerDeathSound(ply) return false end
+function GM:PlayerFootstep(ply, pos, foot, sound, volume, filter) return false end
+function GM:PlayerStepSoundTime(ply, type, walking) return walking and 400 or 300 end
+function GM:PlayerShouldTaunt(ply, act) return true end
+function GM:PlayerStartTaunt(ply, act, length) end
+function GM:PlayerSwitchFlashlight(ply, on) return ply.CanUseFlashlight == nil or true end
+function GM:PlayerSpray(ply) return false end
+function GM:PlayerCheckLimit(ply, name, current, max) if current >= max then ply:LimitHit(name); return false end return true end
+function GM:PlayerCanPickupItem(ply, item) return true end
+function GM:PlayerSwitchWeapon(ply, old, new) return false end
+function GM:PlayerDroppedWeapon(ply, wep) end
+function GM:CanPlayerEnterVehicle(ply, veh, role) return true end
+function GM:CanExitVehicle(veh, ply) return true end
+function GM:CanCreateUndo(ply, undo) return true end
+function GM:OnCleanup(name) end
+function GM:PreCleanupMap() end
+function GM:PostCleanupMap() end
+function GM:CheckPassword(steamID64, ip, svPassword, clPassword, name) return svPassword == "" or svPassword == clPassword end
+function GM:OnLuaError(err, realm, stack, name, id) end
+function GM:OnNPCDropItem(npc, item) end
+function GM:OnDamagedByExplosion(ply, dmginfo) end
+function GM:OnCrazyPhysics(ent, phys) end
+function GM:GetPreferredCarryAngles(ent) return nil end
+function GM:EntityKeyValue(ent, key, value) return nil end
+function GM:EntityNetworkedVarChanged(ent, name, old, new) end
+function GM:AcceptInput(ent, input, activator, caller, value) return false end
+function GM:PlayerSelectSpawn(ply, transition) return NULL end
+function GM:PlayerSelectTeamSpawn(team, ply) return NULL end
+function GM:PlayerSpawnAsSpectator(ply) ply:Spectate(OBS_MODE_ROAMING or 5) end
+function GM:PlayerSetHandsModel(ply, ent) end
+function GM:SetPlayerSpeed(ply, walk, run) ply:SetWalkSpeed(walk); ply:SetRunSpeed(run) end
+function GM:OnEntityWaterLevelChanged(ent, old, new) end
+function GM:PlayerAmmoChanged(ply, id, old, new) end
+function GM:PlayerClassChanged(ply, class) end
+function GM:OnAchievementAchieved(ply, id) end
+function GM:PlayerStartVoice(ply) end
+function GM:PlayerEndVoice(ply) end
+function GM:OnPlayerHitGround(ply, water, floater, speed) return false end
+function GM:OnPlayerJump(ply, speed) end
+function GM:EntityFireBullets(ent, data) return true end
+function GM:PostEntityFireBullets(ent, data) return true end
+function GM:EntityEmitSound(data) return true end
+function GM:ShouldCollide(a, b) return true end
+function GM:SetupPlayerVisibility(ply, viewEnt) end
+function GM:PlayerTraceAttack(ply, dmginfo, dir, tr) return false end
+function GM:CanEditVariable(ent, ply, key, val, editor) return ply:IsAdmin() end
+function GM:VariableEdited(ent, ply, key, val, editor) if hook.Run("CanEditVariable", ent, ply, key, val, editor) then ent:SetNetworkKeyValue(key, val) end end
+function GM:Saved() end
+function GM:Restored() end
+function GM:PreRegisterSENT(ent, class) return true end
+function GM:PreRegisterSWEP(swep, class) return true end

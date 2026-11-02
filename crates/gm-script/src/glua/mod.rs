@@ -114,6 +114,26 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
             _ => {}
         }
     }
+    // Hooks are not Lua values: a GM hook counts as present when a bridge raises it
+    // (`hook.Run("Name"`), a scripted ENTITY / WEAPON callback when the dispatcher that calls it
+    // is annotated `-- @hook CLASS:Name`.
+    for src in [CORE, ENTITY, SERVER, CLASSES, SCRIPTED] {
+        for (marker, prefix) in [("hook.Run(\"", "GM:"), ("@hook ", "")] {
+            let mut rest = src;
+            while let Some(i) = rest.find(marker) {
+                rest = &rest[i + marker.len()..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
+                    .collect();
+                if !name.is_empty() && name != "event" {
+                    present.push(format!("{prefix}{name}"));
+                }
+            }
+        }
+    }
+    present.sort();
+    present.dedup();
     if let Value::Table(classes) = g.get::<Value>("__glua_classes")? {
         for pair in classes.pairs::<String, Table>() {
             let (class, meta) = pair?;
@@ -129,6 +149,16 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
     if let Value::Table(t) = g.get::<Value>("__glua_stubs")? {
         for pair in t.pairs::<String, bool>() {
             stubs.push(pair?.0);
+        }
+    }
+    // A gamemode default on `GM` whose trigger no bridge raises is only a stub.
+    if let Value::Table(gm) = g.get::<Value>("GM")? {
+        for pair in gm.pairs::<String, Value>() {
+            let (k, v) = pair?;
+            let addr = format!("GM:{k}");
+            if matches!(v, Value::Function(_)) && !present.contains(&addr) {
+                stubs.push(addr);
+            }
         }
     }
     present.sort();

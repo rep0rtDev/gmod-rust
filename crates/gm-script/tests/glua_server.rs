@@ -159,3 +159,57 @@ fn convars_read_the_snapshot_and_hooks_bridge_events() {
         "[Integer(15), Boolean(true), Boolean(false)]"
     );
 }
+
+#[test]
+fn gm_hooks_bridge_more_events_and_defaults() {
+    let mut rt = runtime(
+        "state.log = {}
+         hook.Add('PlayerInitialSpawn', 'a', function(ply) table.insert(state.log, 'initial ' .. ply:UserID()) end)
+         hook.Add('PlayerTick', 'a', function(ply) table.insert(state.log, 'tick') end)
+         hook.Add('EntityNetworkedVarChanged', 'a', function(ent, name, old, new)
+             table.insert(state.log, 'nw ' .. name .. ' ' .. tostring(old) .. '>' .. tostring(new))
+         end)
+         hook.Add('PlayerShouldTakeDamage', 'a', function(ply, att) return false end)
+         hook.Add('PreRegisterSENT', 'a', function(ent, class) if class == 'blocked_ent' then return false end end)
+         events.on('tick.pre', function()
+             Player(1):SetNWInt('score', 7)
+             Player(1):SetNWInt('score', 7)
+             state.desc = hook.Run('GetGameDescription')
+             state.suicide = hook.Run('CanPlayerSuicide', Player(1))
+             scripted_ents.Register({ Type = 'anim', Model = 'models/props_c17/oildrum001.mdl', PrintName = 'B' }, 'blocked_ent')
+             scripted_ents.Register({ Type = 'anim', Model = 'models/props_c17/oildrum001.mdl', PrintName = 'O' }, 'ok_ent')
+             state.reg = { scripted_ents.Get('blocked_ent') == nil, scripted_ents.Get('ok_ent') ~= nil }
+         end)",
+    );
+    let snap = snapshot();
+    let a = &mut rt.actors_mut()[0];
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 2)
+        .unwrap();
+    let mut dmg = Payload::default();
+    dmg.ints.push(("player", 1));
+    dmg.floats.push(("amount", 20.0));
+    dmg.ints.push(("type", 2));
+    let refused = a.dispatch_reply(&snap, "player.damage", &dmg, 2).unwrap();
+    assert!(matches!(refused, gm_script::Reply::Cancel));
+    let log: Vec<String> = a.eval("return state.log").unwrap();
+    assert_eq!(
+        log.iter().filter(|l| l.starts_with("initial")).count(),
+        1,
+        "PlayerInitialSpawn once per player: {log:?}"
+    );
+    assert_eq!(log.iter().filter(|l| *l == "tick").count(), 2, "{log:?}");
+    assert_eq!(
+        log.iter().filter(|l| l.starts_with("nw")).count(),
+        1,
+        "{log:?}"
+    );
+    assert!(log.contains(&"nw score nil>7".to_string()), "{log:?}");
+    let desc: String = a.eval("return state.desc").unwrap();
+    assert_eq!(desc, "Sandbox");
+    let suicide: bool = a.eval("return state.suicide").unwrap();
+    assert!(suicide);
+    let reg: Vec<bool> = a.eval("return state.reg").unwrap();
+    assert_eq!(reg, vec![true, true]);
+}

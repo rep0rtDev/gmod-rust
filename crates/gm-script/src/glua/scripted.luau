@@ -1,3 +1,18 @@
+-- Dispatched scripted callbacks (counted in the coverage manifest):
+-- @hook ENTITY:Initialize
+-- @hook ENTITY:Think
+-- @hook ENTITY:StartTouch
+-- @hook ENTITY:Touch
+-- @hook ENTITY:EndTouch
+-- @hook ENTITY:Use
+-- @hook ENTITY:OnRemove
+-- @hook ENTITY:OnTakeDamage
+-- @hook WEAPON:PrimaryAttack
+-- @hook WEAPON:SecondaryAttack
+-- @hook WEAPON:Reload
+-- @hook WEAPON:Deploy
+-- @hook WEAPON:Holster
+-- @hook WEAPON:Think
 -- Scripted entity and weapon tables in GLua form (ENT / SWEP, scripted_ents / weapons /
 -- baseclass) over the host's entity.register / weapon.register and their event callbacks.
 scripted_ents = {}
@@ -34,6 +49,7 @@ local function instance_for(store, defs, class, id, extra)
     return inst
 end
 function scripted_ents.Register(ENT, class)
+    if hook.Run("PreRegisterSENT", ENT, class) == false then return end
     ENT.ClassName = class
     ent_defs[class] = ENT
     baseclass.Set(class, ENT)
@@ -77,6 +93,7 @@ function ENTm:GetClassName() return self:GetClass() end
 local base_next = ENTm.NextThink
 local SWEP_wrappers = {}
 function weapons.Register(SWEP, class)
+    if hook.Run("PreRegisterSWEP", SWEP, class) == false then return end
     SWEP.ClassName = class
     wep_defs[class] = SWEP
     baseclass.Set(class, SWEP)

@@ -1175,11 +1175,16 @@ function ENT:SetNWVar(key, v)
     base_set_nw(self, key, v)
     local fn = nw_proxies[self.__id] and nw_proxies[self.__id][key]
     if fn and old ~= v then fn(self, key, old, v) end
+    if old ~= v then hook.Run("EntityNetworkedVarChanged", self, key, old, v) end
 end
 ENT.SetNetworkedVar = ENT.SetNWVar
 for _, t in ipairs({ "Angle", "Bool", "Entity", "Float", "Int", "String", "Vector" }) do
     ENT["SetNW" .. t] = function(self, k, v) self:SetNWVar(k, v) end
     ENT["SetNW2" .. t], ENT["SetNetworked" .. t], ENT["SetNetworked2" .. t] = ENT["SetNW" .. t], ENT["SetNW" .. t], ENT["SetNW" .. t]
+end
+-- Player copied the NW setters before the proxy / hook layer existed: take the final ones.
+for k, fn in pairs(ENT) do
+    if type(fn) == "function" and (k:match("^[GS]etNW") or k:match("^[GS]etNetworked")) then PLY[k] = fn end
 end
 function ENT:GetNWVarTable() return self:GetNWVars() end
 ENT.GetNW2VarTable, ENT.GetNetworkedVarTable, ENT.GetNetworked2VarTable = ENT.GetNWVarTable, ENT.GetNWVarTable, ENT.GetNWVarTable
@@ -1203,7 +1208,7 @@ function ENT:SetNetworkVarsFromMapInput(t) self:RestoreNetworkVars(t) end
 function ENT:CallDTVarProxies(t, slot, v) end
 function ENT:DTVar(t, slot, name) self:NetworkVar(t, slot, name) end
 function ENT:SetNetworkKeyValue(k, v) local n = rawget(self, "__dt_keys") and rawget(self, "__dt_keys")[string.lower(k)]; if n then self["Set" .. n](self, v); return true end return false end
-function ENT:SetKeyValue(k, v) if not self:SetNetworkKeyValue(k, v) then rawset(self, "__kv", rawget(self, "__kv") or {}); rawget(self, "__kv")[k] = v end end
+function ENT:SetKeyValue(k, v) hook.Run("EntityKeyValue", self, k, tostring(v)); if not self:SetNetworkKeyValue(k, v) then rawset(self, "__kv", rawget(self, "__kv") or {}); rawget(self, "__kv")[k] = v end end
 function ENT:GetKeyValues() return rawget(self, "__kv") or {} end
 function ENT:AddCallback(hook, fn) rawset(self, "__cbs", rawget(self, "__cbs") or {}); local c = rawget(self, "__cbs"); c[hook] = c[hook] or {}; table.insert(c[hook], fn); return #c[hook] end
 function ENT:RemoveCallback(hook, id) local c = rawget(self, "__cbs"); if c and c[hook] then c[hook][id] = nil end end

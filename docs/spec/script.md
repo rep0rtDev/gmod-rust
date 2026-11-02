@@ -674,6 +674,27 @@ The rest of `Player`, `PhysObj`, `Weapon` and `Vehicle` (end of `glua/entity.lua
   `GetWheelCount / HasBoost` from the class table; throttle / steering / handbrake setters and
   the vehicle-script parameters are stubs until the driving backend exposes them.
 
+GM hooks and the coverage manifest: a hook is not a Lua value, so `glua::list` counts a `GM`
+hook as present when a bridge in the GLua sources raises it (`hook.Run("Name"`), and a scripted
+`ENTITY` / `WEAPON` callback when its dispatcher carries an `-- @hook CLASS:Name` annotation.
+Bridged from the own events beyond the earlier set: the gamemode load chain
+(`PreGamemodeLoaded / OnGamemodeLoaded / CreateTeams / Initialize / InitPostEntity /
+PostGamemodeLoaded` on the first tick), per player the first-sight chain `PlayerConnect /
+PlayerAuthed / NetworkIDValidated / PlayerInitialSpawn / PlayerSetModel` (the snapshot carries no
+connect event, so "connected" means "first seen in a snapshot"), `PlayerTick / PlayerPostThink`
+every tick, `PlayerShouldTakeDamage / ScalePlayerDamage / PostEntityTakeDamage` around the
+damage request, `OnPhysgunPickup / OnPlayerPhysicsPickup / OnPlayerPhysicsDrop /
+PlayerFrozeObject / PlayerUnfrozeObject`, `PreUndo / OnUndo / PostUndo`, `ShutDown` before a
+reload, `EntityKeyValue` from `SetKeyValue`, `EntityNetworkedVarChanged` from every NW change,
+`PreRegisterSENT / PreRegisterSWEP` (returning `false` refuses the registration). The sandbox
+gamemode's pure-Lua defaults live on `GM` (`PlayerCanSeePlayersChat`, `PlayerShouldTakeDamage`,
+`CanPlayerSuicide`, `PlayerCheckLimit`, `PlayerRequestTeam -> PlayerJoinTeam -> *ChangedTeam`,
+`CheckPassword`, `GetGameDescription`, `VariableEdited -> CanEditVariable`, ...) so `hook.Run`
+falls through to them when no addon answers. Hooks whose trigger does not exist in the own
+server yet (animation events, footsteps, voice, water level, ammo changes, `ShouldCollide`,
+`SetupMove / Move / FinishMove`, `StartCommand`) have only the default and are therefore
+listed as `stub`, never as implemented.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`
