@@ -7147,13 +7147,16 @@ impl<'w> Server<'w> {
         if !class.is_empty() && npc_weapon_shot(class).is_none() {
             return false;
         }
-        match self.npcs.get_mut(&id) {
-            Some(n) => {
-                n.weapon = class.to_string();
-                true
-            }
-            None => false,
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        let old = std::mem::replace(&mut n.weapon, class.to_string());
+        let (pos, yaw, alive) = (n.pos, n.angles.y, n.dead_at.is_none());
+        // `NPC:DropWeapon` (empty class) drops the carried one as a world weapon, as the death path does
+        if class.is_empty() && alive && !old.is_empty() {
+            self.drop_npc_weapon(0, &old, pos, yaw);
         }
+        true
     }
 
     pub fn entity_parent(&self, id: u32) -> u32 {

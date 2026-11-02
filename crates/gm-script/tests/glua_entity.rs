@@ -1172,3 +1172,103 @@ fn transmit_state_physics_update_and_movement_callbacks() {
         .iter()
         .any(|w| matches!(w, QueuedWrite::TransmitMode { ent: 5, mode: 0 })));
 }
+
+#[test]
+fn on_state_change_fires_when_the_derived_npc_state_flips() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source: "local ENT = { Type = \"ai\", Base = \"base_ai\", Model = \"models/props_c17/oildrum001.mdl\" }
+            state.log = {}
+            function ENT:OnStateChange(old, new) state.log[#state.log + 1] = old .. \">\" .. new end
+            scripted_ents.Register(ENT, \"my_npc\")"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let mut alive = (*snapshot()).clone();
+    if let Some(e) = alive.entities.get_mut(&5) {
+        e.health = 100;
+    }
+    let snap = Arc::new(alive);
+    let mut ev = Payload::default();
+    ev.ints.push(("entity", 5));
+    ev.ints.push(("player", 0));
+    ev.ints.push(("other", 0));
+    ev.floats.push(("amount", 0.0));
+    ev.strs.push(("class", "my_npc".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.init", &ev, 7)
+        .unwrap();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.think", &ev, 8)
+        .unwrap();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.think", &ev, 9)
+        .unwrap();
+    let mut combat = (*snap).clone();
+    if let Some(e) = combat.entities.get_mut(&5) {
+        e.npc_target = 1;
+    }
+    let combat = Arc::new(combat);
+    rt.actors_mut()[0]
+        .dispatch(&combat, "entity.think", &ev, 10)
+        .unwrap();
+    rt.actors_mut()[0]
+        .dispatch(&combat, "entity.think", &ev, 11)
+        .unwrap();
+    let log: Vec<String> = rt.actors()[0].eval("return state.log").unwrap();
+    // NPC_STATE_IDLE (1) -> NPC_STATE_COMBAT (3), reported once
+    assert_eq!(log, vec!["1>3".to_string()]);
+}
+
+#[test]
+fn is_jump_legal_gates_the_gap_jump() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source: "local ENT = { Type = \"nextbot\", Base = \"base_nextbot\", Model = \"models/props_c17/oildrum001.mdl\" }
+            state.asked = 0
+            function ENT:IsJumpLegal(s, apex, d) state.asked = state.asked + 1; state.apex_z = apex.z; return d.x < 50 end
+            function ENT:RunBehaviour() self.loco:JumpAcrossGap(Vector(100, 0, 0)); self.loco:JumpAcrossGap(Vector(10, 0, 0)) end
+            scripted_ents.Register(ENT, \"my_bot\")"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut ev = Payload::default();
+    ev.ints.push(("entity", 5));
+    ev.ints.push(("player", 0));
+    ev.ints.push(("other", 0));
+    ev.floats.push(("amount", 0.0));
+    ev.strs.push(("class", "my_bot".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.init", &ev, 7)
+        .unwrap();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "entity.think", &ev, 8)
+        .unwrap();
+    let (asked, apex_z): (i32, f32) = rt.actors()[0]
+        .eval("return state.asked, state.apex_z")
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    let jumps = writes
+        .iter()
+        .filter(|w| {
+            format!("{w:?}").contains("jump_gap") || format!("{w:?}").contains("JumpAcrossGap")
+        })
+        .count();
+    assert_eq!((asked, jumps), (2, 1), "{writes:?}");
+    assert!(apex_z > 0.0);
+}

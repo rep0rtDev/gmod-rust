@@ -110,7 +110,7 @@ function scripted_ents.Register(ENT, class)
         model = ENT.Model, think_interval = ENT.ThinkInterval, use_type = ENT.UseType,
         print_name = ENT.PrintName, category = ENT.Category,
         init = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.SetupDataTables and not rawget(i, "__dt") then rawset(i, "__dt", true); i:SetupDataTables() end if i.Initialize then i:Initialize() end if i.UpdateTransmitState then local m = i:UpdateTransmitState(); if type(m) == "number" then world.queue("ent.transmit", p.entity, m) end end end,
-        think = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if scripted_ents.__is_nextbot(ENT) then scripted_ents.__nextbot_think(i) end if scripted_ents.__is_ai(ENT) and i.RunAI then i:RunAI() end if i.Think then local r = i:Think(); local nt = rawget(i, "__next_think"); if nt then rawset(i, "__next_think", nil); return nt end return r end end,
+        think = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if scripted_ents.__is_nextbot(ENT) then scripted_ents.__nextbot_think(i) end if scripted_ents.__is_ai(ENT) then scripted_ents.__state_change(i) if i.RunAI then i:RunAI() end end if i.Think then local r = i:Think(); local nt = rawget(i, "__next_think"); if nt then rawset(i, "__next_think", nil); return nt end return r end end,
         start_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.StartTouch then i:StartTouch(Entity(p.other)) end end,
         touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.Touch then i:Touch(Entity(p.other)) end end,
         end_touch = function(p) local i = instance_for(ent_defs, ent_defs, class, p.entity); if i.EndTouch then i:EndTouch(Entity(p.other)) end end,
@@ -256,7 +256,18 @@ function LOCO:GetMaxYawRate() return lv(self, "max_yaw_rate", 180) end
 function LOCO:SetGravity(v) lq(self, "nextbot.gravity", tonumber(v) or 0) end
 function LOCO:GetGravity() return lv(self, "gravity", 600) end
 function LOCO:Jump() lq(self, "nextbot.jump", nil) end
-function LOCO:JumpAcrossGap(pos, normal) lq(self, "nextbot.jump_gap", v3(pos)) end
+-- @hook ENTITY:IsJumpLegal
+-- the bot is asked whether the gap jump is legal (start, apex above the midpoint by the jump
+-- height, landing); false cancels it
+function LOCO:JumpAcrossGap(pos, normal)
+    local e = rawget(self, "__ent")
+    if e and e.IsJumpLegal and e.Entity then
+        local start = e.Entity:GetPos()
+        local apex = (start + pos) / 2 + Vector(0, 0, self:GetJumpHeight())
+        if e:IsJumpLegal(start, apex, pos) == false then return end
+    end
+    lq(self, "nextbot.jump_gap", v3(pos))
+end
 function LOCO:ClearStuck() lq(self, "nextbot.clear_stuck", nil) end
 function LOCO:SetVelocity(v) lq(self, "nextbot.velocity", v3(v)) end
 function LOCO:GetVelocity() local st = loco_state(self); local v = st and st.velocity; return v and Vector(v.x, v.y, v.z) or Vector() end
@@ -279,7 +290,7 @@ function LOCO:SetJumpGapsAllowed(b) rawset(self, "__gaps", b ~= false) end
 scripted_ents.__is_nextbot = function(ENT) return ENT and (ENT.Base == "base_nextbot" or ENT.Type == "nextbot") end
 -- the coroutine behaviour: created on the first think, resumed every think until it ends
 function scripted_ents.__nextbot_think(i)
-    if not rawget(i, "loco") then rawset(i, "loco", setmetatable({ __id = i.Entity.__id }, LOCO)) end
+    if not rawget(i, "loco") then rawset(i, "loco", setmetatable({ __id = i.Entity.__id, __ent = i }, LOCO)) end
     local co = rawget(i, "__behaviour")
     if co == nil and i.RunBehaviour then
         co = coroutine.create(function() i:RunBehaviour() end)
@@ -413,6 +424,17 @@ function AIM:RunAI()
     if s then self:DoSchedule(s) else local n = self:SelectSchedule(); if n then self:StartSchedule(n) end end
 end
 scripted_ents.__is_ai = function(ENT) return ENT ~= nil and ENT.Type == "ai" end
+-- @hook ENTITY:OnStateChange
+-- NPC state of a scripted NPC is derived from the server AI (dead / enemy = combat / path = alert /
+-- idle); the callback fires on the think where it changed
+scripted_ents.__state_change = function(i)
+    local e = i.Entity
+    if not e then return end
+    local st = __glua_classes.NPC.GetNPCState(e)
+    local prev = rawget(i, "__npc_state")
+    rawset(i, "__npc_state", st)
+    if prev ~= nil and prev ~= st and i.OnStateChange then i:OnStateChange(prev, st) end
+end
 scripted_ents.__ai_methods = AIM
 
 -- @hook ENTITY:OnMovementComplete
