@@ -851,6 +851,11 @@ player's command is processed) for `Player:GetPreviousWeapon`. `Entity:AddEffect
 RemoveEffects / IsEffectActive` and the `EFlags` family keep a per-entity bitmask in the script
 layer; `EF_NODRAW` is the one flag with a server meaning and maps onto `SetNoDraw`.
 
+Player damage carries the hit behind it (attacker, hit group, position): `PlayerTraceAttack` may
+swallow a bullet hit, `ScalePlayerDamage` sees the real hit group, `OnDamagedByExplosion` follows
+blast damage. Every sandbox spawn under its limit asks `PlayerCheckLimit` (a `false` denies; a reached
+limit denies without asking, there is no `true` override) and every undo entry asks `CanCreateUndo`.
+
 Every bullet shot asks `EntityFireBullets` (a `false` fires nothing) and reports
 `PostEntityFireBullets` after it resolved; a hit on an NPC runs `ScaleNPCDamage` / `EntityTakeDamage`
 over a CTakeDamageInfo the way player damage does (the changed amount is what the NPC loses).

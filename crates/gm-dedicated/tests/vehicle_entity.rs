@@ -238,4 +238,24 @@ fn fire_bullets_and_npc_damage_are_asked() {
     ));
     server.damage_npc(npc, 1, 10.0, 0);
     assert!(server.npcs[&npc].health < hp);
+    server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::CreateUndo { .. } => gm_server::Verdict::Cancel,
+        _ => gm_server::Verdict::Allow,
+    }));
+    let undos = server.sandbox.undos(1).len();
+    assert!(server.spawn_npc(1, "npc_zombie", "none").is_some());
+    assert_eq!(
+        server.sandbox.undos(1).len(),
+        undos,
+        "CanCreateUndo refused the entry"
+    );
+    server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::CheckLimit { kind, .. } if kind == "npcs" => gm_server::Verdict::Cancel,
+        _ => gm_server::Verdict::Allow,
+    }));
+    assert!(
+        server.spawn_npc(1, "npc_zombie", "none").is_none(),
+        "PlayerCheckLimit denies"
+    );
+    server.request_hook = None;
 }

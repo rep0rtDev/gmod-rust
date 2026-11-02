@@ -621,9 +621,20 @@ local prev_move = {}
         local ply = Player(p.player)
         local d = dmginfo_for(p)
         if hook.Run("PlayerShouldTakeDamage", ply, d:GetAttacker()) == false then return false end
-        hook.Run("ScalePlayerDamage", ply, HITGROUP_GENERIC, d)
+        local group = p.group or HITGROUP_GENERIC
+        if p.px then
+            local pos = Vector(p.px, p.py, p.pz)
+            d:SetDamagePosition(pos)
+            if p.attacker and p.attacker ~= 0 then
+                local dir = (pos - Player(p.attacker):EyePos()):GetNormalized()
+                local tr = { Hit = true, HitPos = pos, HitGroup = group, Entity = ply, Fraction = 1, Normal = dir }
+                if hook.Run("PlayerTraceAttack", ply, d, dir, tr) == true then return false end
+            end
+        end
+        hook.Run("ScalePlayerDamage", ply, group, d)
         if hook.Run("EntityTakeDamage", ply, d) == true then return false end
         hook.Run("PostEntityTakeDamage", ply, d, true)
+        if d:IsDamageType(DMG_BLAST) then hook.Run("OnDamagedByExplosion", ply, d) end
         if d:GetDamage() ~= (p.amount or 0) then return d:GetDamage() end
     end)
     events.on("player.fall_damage", function(p)
@@ -664,6 +675,13 @@ local prev_move = {}
         if hook.Run("EntityFireBullets", Player(p.attacker), bullet_data(p)) == false then return false end
     end)
     events.on("entity.fired_bullets", function(p) hook.Run("PostEntityFireBullets", Player(p.attacker), bullet_data(p)) end)
+    events.on("sandbox.check_limit", function(p)
+        if hook.Run("PlayerCheckLimit", Player(p.player), p.kind, p.current or 0, p.max or -1) == false then return false end
+    end)
+    events.on("undo.create_request", function(p)
+        local tbl = { Owner = Player(p.player), Name = p.name, NiceName = p.text, Entities = {}, Functions = {} }
+        if hook.Run("CanCreateUndo", Player(p.player), tbl) == false then return false end
+    end)
     events.on("player.respawn_request", function(p) if hook.Run("PlayerDeathThink", Player(p.player)) == true then return false end end)
     events.on("player.suicide_request", function(p) if hook.Run("CanPlayerSuicide", Player(p.player)) == false then return false end end)
     events.on("player.switch_weapon_request", function(p)

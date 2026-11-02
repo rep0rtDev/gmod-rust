@@ -792,10 +792,18 @@ impl Runtime {
                 player,
                 amount,
                 dmg_type,
+                attacker,
+                hitgroup,
+                pos,
             } => {
                 p.ints.push(("player", *player as i64));
                 p.floats.push(("amount", *amount as f64));
                 p.ints.push(("type", *dmg_type as i64));
+                p.ints.push(("attacker", *attacker as i64));
+                p.ints.push(("group", *hitgroup as i64));
+                for (k, v) in [("px", pos.x), ("py", pos.y), ("pz", pos.z)] {
+                    p.floats.push((k, v as f64));
+                }
                 self.ask_amount(server, "player.damage", p)
             }
             gm_server::Request::Loadout { player } => {
@@ -929,6 +937,32 @@ impl Runtime {
                     p.floats.push((k, v as f64));
                 }
                 if self.ask(server, "entity.fire_bullets_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
+            gm_server::Request::CheckLimit {
+                player,
+                kind,
+                current,
+                max,
+            } => {
+                p.ints.push(("player", *player as i64));
+                p.strs.push(("kind", kind.clone()));
+                p.ints.push(("current", *current as i64));
+                p.ints.push(("max", *max as i64));
+                if self.ask(server, "sandbox.check_limit", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
+            gm_server::Request::CreateUndo { player, name, text } => {
+                p.ints.push(("player", *player as i64));
+                p.strs.push(("name", name.clone()));
+                p.strs.push(("text", text.clone()));
+                if self.ask(server, "undo.create_request", p) {
                     gm_server::Verdict::Allow
                 } else {
                     gm_server::Verdict::Cancel

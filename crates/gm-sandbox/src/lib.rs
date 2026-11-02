@@ -140,7 +140,7 @@ impl Default for Limits {
 }
 
 impl Limits {
-    fn get(&self, kind: &str) -> i32 {
+    pub fn get(&self, kind: &str) -> i32 {
         match kind {
             "props" => self.max_props,
             "ragdolls" => self.max_ragdolls,

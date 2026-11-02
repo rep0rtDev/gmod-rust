@@ -538,6 +538,24 @@ pub enum Request {
         player: u32,
         amount: f32,
         dmg_type: u32,
+        /// The hit behind it (this tick's last hit on the player), else 0 / 0 / zero.
+        attacker: u32,
+        hitgroup: u8,
+        pos: Vec3,
+    },
+    /// `PlayerCheckLimit`: the player is under the sandbox limit for `kind` and about to spawn
+    /// one; `Cancel` denies anyway (a reached limit denies without asking).
+    CheckLimit {
+        player: u32,
+        kind: String,
+        current: u32,
+        max: i32,
+    },
+    /// `CanCreateUndo`: an undo entry `name` / `text` is about to be recorded.
+    CreateUndo {
+        player: u32,
+        name: String,
+        text: String,
     },
     /// The physgun's trace found an unfrozen prop while attack is pressed.
     PhysgunPickup { player: u32, ent: u32 },
@@ -3539,10 +3557,19 @@ impl<'w> Server<'w> {
         if !self.players.get(&id).is_some_and(|p| p.alive) || amount <= 0.0 {
             return 0.0;
         }
+        let (attacker, hitgroup, pos) = match self.hits.last() {
+            Some(h) if h.tick == tick && h.target == id => {
+                (h.attacker, h.hitgroup.unwrap_or(0), h.pos)
+            }
+            _ => (0, 0, Vec3::ZERO),
+        };
         let amount = match self.ask(Request::PlayerDamage {
             player: id,
             amount,
             dmg_type,
+            attacker,
+            hitgroup,
+            pos,
         }) {
             Verdict::Cancel => return 0.0,
             Verdict::Amount(a) => a,
@@ -3931,6 +3958,45 @@ impl<'w> Server<'w> {
     /// `RESPAWN_TICKS`.
     /// `SelectWeapon`: a carried weapon becomes active in the same tick, its deploy time arms the
     /// fire timers (measured `weapon_switch`). Dead players and unknown classes are ignored.
+    /// The sandbox limit for `kind`; under it the addon runtime may still deny
+    /// (`PlayerCheckLimit`).
+    pub fn check_limit(
+        &mut self,
+        player: u32,
+        kind: &str,
+        events: &mut Vec<gm_sandbox::Event>,
+    ) -> bool {
+        if !self.sandbox.check_limit(player, kind, events) {
+            return false;
+        }
+        self.ask(Request::CheckLimit {
+            player,
+            kind: kind.to_string(),
+            current: self.sandbox.count_of(player, kind) as u32,
+            max: self.sandbox.limits.get(kind),
+        }) != Verdict::Cancel
+    }
+
+    /// An undo entry, unless the addon runtime refuses it (`CanCreateUndo`).
+    pub fn push_undo(
+        &mut self,
+        player: u32,
+        name: &str,
+        text: String,
+        custom: Option<String>,
+        entities: Vec<u32>,
+    ) {
+        if self.ask(Request::CreateUndo {
+            player,
+            name: name.to_string(),
+            text: text.clone(),
+        }) == Verdict::Cancel
+        {
+            return;
+        }
+        self.sandbox.push_undo(player, name, text, custom, entities);
+    }
+
     /// The `kill` console command: the addon runtime may refuse (`CanPlayerSuicide`).
     pub fn player_kill_command(&mut self, id: u32) -> bool {
         if !self.players.get(&id).is_some_and(|p| p.alive) {
@@ -5869,7 +5935,7 @@ impl<'w> Server<'w> {
         // counted / cleaned up as a sent only (`sbox_maxsents`), never as a prop
         let id = self.script_spawn_entity(player, class, pos, Vec3::ZERO, false)?;
         let name = def.print_name.clone().unwrap_or_else(|| class.to_string());
-        self.sandbox.push_undo(
+        self.push_undo(
             player,
             "SENT",
             format!("Scripted Entity ({class})"),
@@ -5944,7 +6010,7 @@ impl<'w> Server<'w> {
         self.sandbox.add_cleanup(player, "sents", id);
         self.sync_physics();
         self.world_weapons.insert(id, class.to_string());
-        self.sandbox.push_undo(
+        self.push_undo(
             player,
             "SWEP",
             format!("#undo.generic.weapon ({print_name})"),
@@ -6122,7 +6188,7 @@ impl<'w> Server<'w> {
         }
         let def = *vehicle_def(key)?;
         let mut events = Vec::new();
-        if !self.sandbox.check_limit(player, "vehicles", &mut events) {
+        if !self.check_limit(player, "vehicles", &mut events) {
             self.events.extend(events);
             return None;
         }
@@ -6174,7 +6240,7 @@ impl<'w> Server<'w> {
         );
         self.setup_car(id, key);
         let name = vehicle_name(&def);
-        self.sandbox.push_undo(
+        self.push_undo(
             player,
             "Vehicle",
             format!("#undo.generic.vehicle ({name})"),
@@ -6611,7 +6677,7 @@ impl<'w> Server<'w> {
         }
         let def = *npc_def(key)?;
         let mut events = Vec::new();
-        if !self.sandbox.check_limit(player, "npcs", &mut events) {
+        if !self.check_limit(player, "npcs", &mut events) {
             self.events.extend(events);
             return None;
         }
@@ -6653,7 +6719,7 @@ impl<'w> Server<'w> {
         self.sandbox.add_count(player, "npcs", id);
         self.sandbox.add_cleanup(player, "npcs", id);
         let name = format!("#{key}");
-        self.sandbox.push_undo(
+        self.push_undo(
             player,
             "NPC",
             format!("#undo.generic.npc ({name})"),
@@ -8586,7 +8652,7 @@ impl<'w> Server<'w> {
         };
         let mut made: Vec<u32> = Vec::new();
         for n in &clip.npcs {
-            if !self.sandbox.check_limit(player, "npcs", &mut Vec::new()) {
+            if !self.check_limit(player, "npcs", &mut Vec::new()) {
                 break;
             }
             let placed = save::SavedNpc {
@@ -8600,7 +8666,7 @@ impl<'w> Server<'w> {
         }
         let mut ids: Vec<Option<u32>> = Vec::new();
         for p in &clip.props {
-            if !self.sandbox.check_limit(player, "props", events) {
+            if !self.check_limit(player, "props", events) {
                 break;
             }
             if !self.models.contains_key(&p.model) {
@@ -8660,7 +8726,7 @@ impl<'w> Server<'w> {
             self.sandbox.add_cleanup(player, "constraints", id);
             made.push(id);
         }
-        self.sandbox.push_undo(
+        self.push_undo(
             player,
             "Duplicator",
             "#tool.duplicator.name".into(),
@@ -10480,7 +10546,7 @@ impl<'w> Server<'w> {
             if !self.players.contains_key(&owner) {
                 return None;
             }
-            if !self.sandbox.check_limit(owner, kind, &mut events) {
+            if !self.check_limit(owner, kind, &mut events) {
                 self.events.extend(events);
                 return None;
             }
