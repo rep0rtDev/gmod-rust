@@ -693,3 +693,61 @@ fn fast_zombie_runs_in_and_claws_twice() {
         .distance(server.players[&1].state.origin.truncate());
     assert!(d < 60.0, "ended {d} u away");
 }
+
+/// Headcrab (server_npc_melee_headcrab): leaps at the player on a ballistic arc, lands 5 hp
+/// on touching the hull about 26 ticks in, drops, runs ~150 u away and leaps again.
+#[test]
+fn headcrab_leaps_hits_lands_and_leaps_again() {
+    let world = combat_server!(world);
+    let (mut server, idle, start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_headcrab", "none").unwrap();
+    let mut hits = Vec::new();
+    let mut leaps = Vec::new();
+    let mut landings = Vec::new();
+    let mut farthest = 0.0f32;
+    let mut hp = server.players[&1].health;
+    let mut airborne = false;
+    for tick in 0..700u64 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        let now_air = n.flight.is_some();
+        if now_air && !airborne {
+            leaps.push(tick);
+        }
+        if !now_air && airborne {
+            landings.push((tick, n.pos));
+        }
+        airborne = now_air;
+        let p = &server.players[&1];
+        if p.health != hp {
+            hits.push((tick, hp - p.health, n.pos - p.state.origin));
+            hp = p.health;
+        }
+        if !now_air && !leaps.is_empty() {
+            farthest = farthest.max(n.pos.truncate().distance(p.state.origin.truncate()));
+        }
+    }
+    eprintln!("leaps {leaps:?}\nhits {hits:?}\nlandings {landings:?}\nfarthest {farthest:.1}");
+    assert!(leaps.len() >= 2, "leaps {leaps:?}");
+    assert!(hits.len() >= 2, "hits {hits:?}");
+    assert!(hits.iter().all(|(_, d, _)| *d == 5));
+    let flight = hits[0].0 - leaps[0];
+    assert!(
+        (20..=34).contains(&flight),
+        "hit {flight} ticks into the leap"
+    );
+    assert!(
+        hits[0].2.z > 40.0 && hits[0].2.z < 90.0,
+        "hit the hull at {:?}",
+        hits[0].2
+    );
+    assert!(!landings.is_empty());
+    assert!(
+        (landings[0].1.z - start.z).abs() < 4.0,
+        "landed at {:?}",
+        landings[0].1
+    );
+    assert!(farthest > 110.0, "ran only {farthest} u away");
+    let period = leaps[1] - leaps[0];
+    assert!((280..=400).contains(&period), "period {period}");
+}

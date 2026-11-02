@@ -946,6 +946,11 @@ pub struct Npc {
     pub swing_until: u64,
     pub melee_hit_at: Option<u64>,
     pub melee_hits_left: u8,
+    /// Leap attack (headcrabs): velocity while airborne, the tick a hang on the player's hull
+    /// ends, and the earliest tick of the next leap.
+    pub flight: Option<Vec3>,
+    pub hung_until: u64,
+    pub next_leap: u64,
     /// Set by an addon's `npc_target` clear: no target is picked until the next `npc_target`.
     pub passive: bool,
     /// Tick of the last shot (the shoot sequence runs 7 ticks past it) and the sequence to
@@ -1068,6 +1073,42 @@ pub struct NpcMelee {
     pub run: bool,
 }
 
+/// A leap attack: the NPC throws itself at the player on a ballistic arc (`speed` u/s
+/// horizontal, aimed `aim_height` above the player's origin under NPC_GRAVITY), damages on
+/// touching the player's hull, hangs there `hang_ticks`, drops, runs `retreat` u away and
+/// leaps again after `rest_ticks`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NpcLeap {
+    pub speed: f32,
+    pub aim_height: f32,
+    pub damage: f32,
+    pub punch: f32,
+    pub hang_ticks: u64,
+    pub retreat: f32,
+    pub rest_ticks: u64,
+}
+
+pub const NPC_LEAP_RANGE: f32 = 256.0;
+const NPC_GRAVITY: f32 = 600.0;
+
+/// Measured on the game's headcrab (server_npc_melee_headcrab): 379.5 u/s horizontal, 272 u/s
+/// up from 178 u (an aim point ~62 u above the player's origin), 5 DMG_SLASH on touch, ~12
+/// ticks hanging on the hull, then a 150 u run-away, a turn and the next leap 328 ticks later.
+pub fn npc_leap(class: &str) -> Option<NpcLeap> {
+    match class {
+        "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => Some(NpcLeap {
+            speed: 380.0,
+            aim_height: 62.0,
+            damage: 5.0,
+            punch: 25.0,
+            hang_ticks: 12,
+            retreat: 150.0,
+            rest_ticks: 238,
+        }),
+        _ => None,
+    }
+}
+
 /// Measured on the game's zombie (server_npc_melee_zombie): attackE starts inside 55 u, lasts
 /// 84 ticks, 25 DMG_SLASH at tick 48, the player leaves at ~325 u/s (damage force 125 plus a
 /// 200 u/s claw punch). Zombine shares the zombie's claws; other melee classes are unmeasured.
@@ -1166,6 +1207,13 @@ const NPC_MOVE_FASTZOMBIE: NpcMoveDef = NpcMoveDef {
     run: 201.5,
     run_accel: 262.0,
 };
+/// Headcrab run-away after a leap, measured in server_npc_melee_headcrab (5.25 u per think).
+const NPC_MOVE_HEADCRAB: NpcMoveDef = NpcMoveDef {
+    walk: 49.5,
+    walk_accel: 100.0,
+    run: 49.5,
+    run_accel: 100.0,
+};
 /// Zombie approach measured in server_npc_melee_zombie (4.73 u per think); it never runs.
 const NPC_MOVE_ZOMBIE: NpcMoveDef = NpcMoveDef {
     walk: 44.6,
@@ -1182,6 +1230,7 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
         "npc_combine_s" => NPC_MOVE_COMBINE,
         "npc_zombie" | "npc_zombine" => NPC_MOVE_ZOMBIE,
         "npc_fastzombie" => NPC_MOVE_FASTZOMBIE,
+        "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => NPC_MOVE_HEADCRAB,
         _ => NPC_MOVE_CITIZEN,
     }
 }
@@ -5471,6 +5520,9 @@ impl<'w> Server<'w> {
                 swing_until: 0,
                 melee_hit_at: None,
                 melee_hits_left: 0,
+                flight: None,
+                hung_until: 0,
+                next_leap: 0,
                 passive: false,
                 last_shot: 0,
                 rest_sequence: None,
@@ -5982,6 +6034,10 @@ impl<'w> Server<'w> {
         if n.dead_at.is_some() || n.passive || !npc_hostile(&n.class) {
             return;
         }
+        if let Some(l) = npc_leap(&n.class) {
+            self.npc_leap_think(id, now, l);
+            return;
+        }
         let melee = npc_melee(&n.class).filter(|_| npc_weapon_shot(&n.weapon).is_none());
         if let Some(m) = melee {
             self.npc_melee_think(id, now, m);
@@ -6175,6 +6231,189 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// Leap combat (headcrabs): a visible player inside NPC_LEAP_RANGE is leapt at once the
+    /// rest after the previous leap is over; farther players are walked toward. Nothing is
+    /// decided while airborne or during the run-away after a landing.
+    fn npc_leap_think(&mut self, id: u32, now: u64, l: NpcLeap) {
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        if n.flight.is_some() {
+            return;
+        }
+        let eye = n.pos + Vec3::new(0.0, 0.0, (n.maxs.z - 8.0).clamp(4.0, NPC_EYE_HEIGHT));
+        let feet = n.pos;
+        let sees = |server: &Self, p: u32| -> Option<Vec3> {
+            let pl = server.players.get(&p).filter(|pl| pl.alive)?;
+            let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
+            if chest.distance(eye) > NPC_SIGHT_RANGE {
+                return None;
+            }
+            let tr = server
+                .collision
+                .trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
+            (tr.fraction >= 1.0 && !tr.start_solid).then_some(pl.state.origin)
+        };
+        let mut target = n.target.and_then(|p| sees(self, p).map(|o| (p, o)));
+        if target.is_none() {
+            let mut ids: Vec<u32> = self.players.keys().copied().collect();
+            ids.sort_unstable();
+            target = ids
+                .into_iter()
+                .filter_map(|p| sees(self, p).map(|o| (p, o)))
+                .min_by(|a, b| a.1.distance(feet).total_cmp(&b.1.distance(feet)));
+        }
+        let Some((player, origin)) = target else {
+            let (old, seen) = (n.target, n.target_seen);
+            if let Some(p) = old {
+                if now.saturating_sub(seen) > NPC_TARGET_LOSE_TICKS {
+                    self.npc_stop(id);
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.target = None;
+                    }
+                } else if self.npcs.get(&id).is_some_and(|n| n.chase != Some(p)) {
+                    self.npc_chase(id, p, false);
+                }
+            }
+            return;
+        };
+        let to = (origin - feet).truncate();
+        let dist = to.length();
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
+        n.target = Some(player);
+        n.target_seen = now;
+        if now < n.next_leap {
+            return;
+        }
+        if dist > NPC_LEAP_RANGE {
+            if n.chase != Some(player) {
+                self.npc_chase(id, player, false);
+            }
+            return;
+        }
+        // the arc: constant horizontal speed, the vertical speed that meets the aim point
+        let t = (dist / l.speed).max(1.0 / 66.0);
+        let dz = origin.z + l.aim_height - feet.z;
+        let vz = NPC_GRAVITY * t * 0.5 + dz / t;
+        let dir = if dist > 1e-3 {
+            to / dist
+        } else {
+            glam::Vec2::X
+        };
+        n.flight = Some((dir * l.speed).extend(vz));
+        n.hung_until = 0;
+        n.goal = None;
+        n.next_goal = None;
+        n.chase = None;
+        n.move_speed = 0.0;
+        n.angles.y = dir.y.atan2(dir.x).to_degrees();
+    }
+
+    /// Airborne NPCs each tick: the arc under gravity, swept against the world; touching the
+    /// target's hull lands the leap's damage and hangs the NPC on it before it drops; the
+    /// floor ends the flight and starts the run-away, with the next leap after the rest.
+    fn tick_npc_flight(&mut self) {
+        let now = self.tick_count;
+        let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        let ids: Vec<u32> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| n.dead_at.is_none() && n.flight.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let Some(n) = self.npcs.get(&id) else {
+                continue;
+            };
+            let Some(l) = npc_leap(&n.class) else {
+                continue;
+            };
+            let (Some(mut vel), pos, mins, maxs, target) =
+                (n.flight, n.pos, n.mins, n.maxs, n.target)
+            else {
+                continue;
+            };
+            let hanging = now < n.hung_until;
+            if hanging {
+                continue;
+            }
+            if n.hung_until != 0 && vel.truncate().length_squared() > 0.0 {
+                // the hang is over: drop straight down
+                vel = Vec3::new(0.0, 0.0, 0.0);
+            }
+            vel.z -= NPC_GRAVITY * dt;
+            let want = pos + vel * dt;
+            let tr =
+                self.collision
+                    .trace_box(pos, want, mins, maxs, gm_collision::MASK_PLAYERSOLID);
+            let mut next = if tr.start_solid { want } else { tr.end };
+            let landed = tr.fraction < 1.0 && tr.normal.z > 0.7 && vel.z <= 0.0;
+            if tr.fraction < 1.0 && !landed {
+                // a wall: slide down it
+                vel.x = 0.0;
+                vel.y = 0.0;
+            }
+            // touching the target's hull on the way: the hit
+            let mut hit = None;
+            if n.hung_until == 0 {
+                if let Some(p) = target.and_then(|t| self.players.get(&t).filter(|p| p.alive)) {
+                    let (pm, px) = self.mover.hull(p.state.ducked);
+                    let lo = p.state.origin + pm - Vec3::new(maxs.x, maxs.y, maxs.z);
+                    let hi = p.state.origin + px - Vec3::new(mins.x, mins.y, mins.z);
+                    let inside = (0..3).all(|a| next[a] >= lo[a] && next[a] <= hi[a]);
+                    if inside {
+                        hit = target;
+                        // stay on the hull face it came from
+                        let back = (pos - p.state.origin).truncate();
+                        if back.length_squared() > 1e-6 {
+                            let b = back.normalize() * (px.x + maxs.x);
+                            next.x = p.state.origin.x + b.x;
+                            next.y = p.state.origin.y + b.y;
+                        }
+                    }
+                }
+            }
+            if let Some(player) = hit {
+                let dir = (next - self.players[&player].state.origin)
+                    .truncate()
+                    .normalize_or_zero();
+                if self.damage_player(player, l.damage, weapons::DMG_SLASH) > 0.0 {
+                    if let Some(p) = self.players.get_mut(&player) {
+                        p.state.velocity -= (dir * l.punch).extend(0.0);
+                    }
+                }
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.pos = next;
+                    n.flight = Some(Vec3::ZERO);
+                    n.hung_until = now + l.hang_ticks;
+                }
+                continue;
+            }
+            if landed {
+                let floor = self.npc_floor(next, mins, maxs).unwrap_or(next);
+                let away = target
+                    .and_then(|t| self.players.get(&t))
+                    .map(|p| (floor - p.state.origin).truncate().normalize_or_zero())
+                    .unwrap_or(glam::Vec2::X);
+                let goal = floor + (away * l.retreat).extend(0.0);
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.pos = floor;
+                    n.flight = None;
+                    n.hung_until = 0;
+                    n.next_leap = now + l.rest_ticks;
+                }
+                self.npc_goto(id, goal, false);
+                continue;
+            }
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.pos = next;
+                n.flight = Some(vel);
+            }
+        }
+    }
+
     /// The tick a melee swing lands: the target still inside the reach in front of the NPC
     /// takes the damage as DMG_SLASH and is launched away at `punch`.
     fn tick_npc_melee_hits(&mut self) {
@@ -6305,6 +6544,9 @@ impl<'w> Server<'w> {
                 swing_until: 0,
                 melee_hit_at: None,
                 melee_hits_left: 0,
+                flight: None,
+                hung_until: 0,
+                next_leap: 0,
                 passive: false,
                 last_shot: 0,
                 rest_sequence: None,
@@ -8134,6 +8376,7 @@ impl<'w> Server<'w> {
         self.settle_npcs();
         self.tick_npc_move();
         self.tick_npc_melee_hits();
+        self.tick_npc_flight();
         self.remove_dead_npcs();
         self.ride_vehicles();
         // undo.lua counts ticks with removals (its EntityRemoved hook coalesces them through a
