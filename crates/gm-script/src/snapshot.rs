@@ -31,6 +31,8 @@ pub struct EntitySnap {
     pub material: String,
     pub render_mode: u8,
     pub render_fx: u8,
+    /// Sequence the entity plays (NPCs; props do not animate on the server).
+    pub sequence: String,
     /// NPC only: the player it has as target / chases, and the end of its current path.
     pub npc_target: u32,
     pub npc_chase: u32,
@@ -228,6 +230,7 @@ impl Snapshot {
                             material: e.material.clone(),
                             render_mode: e.render_mode,
                             render_fx: e.render_fx,
+                            sequence: e.sequence.clone(),
                             npc_target: 0,
                             npc_chase: 0,
                             npc_goal: None,
@@ -305,6 +308,7 @@ impl Snapshot {
                             material: p.material.clone(),
                             render_mode: p.render_mode,
                             render_fx: p.render_fx,
+                            sequence: String::new(),
                             npc_target: 0,
                             npc_chase: 0,
                             npc_goal: None,
@@ -336,6 +340,7 @@ impl Snapshot {
                             material: String::new(),
                             render_mode: 0,
                             render_fx: 0,
+                            sequence: n.sequence.to_string(),
                             npc_target: n.target.unwrap_or(0),
                             npc_chase: n.chase.unwrap_or(0),
                             npc_goal: n.goal.as_ref().and_then(|g| g.points.last().copied()),

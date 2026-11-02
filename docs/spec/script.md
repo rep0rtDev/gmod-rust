@@ -795,6 +795,15 @@ write through `player.set_flashlight / set_frags / set_deaths / kick / vehicle` 
 light yet). Movement tunables are one `MoveConfig` for the whole server, so per-player speed
 setters (`SetWalkSpeed`, `SetRunSpeed`, `SetJumpPower`, ...) are stubs rather than silent no-ops.
 
+Animation data: `EntitySnap.sequence` is the sequence the server plays (NPCs; props do not
+animate server-side), `ModelScriptData.sequence_anim` / `anims` carry fps / frames / flags from
+the MDL animation descriptors; `Entity:GetSequence / SequenceDuration ((frames - 1) / fps) /
+GetSequenceInfo / GetAnimCount / GetAnimInfo` read them. Bounds math is pure over the model hull:
+`OBBMins / OBBMaxs / OBBCenter / BoundingRadius / GetRotatedAABB / WorldSpaceAABB / NearestPoint /
+IsPointInBounds / GetWorldTransformMatrix`; `GetNoDraw / SetNoDraw` map onto render mode 10
+(`RENDERMODE_NONE`). Cycle, playback rate, activities, pose parameters, gestures / layers and
+sequence writes need a server-side animation clock and stay stubs.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

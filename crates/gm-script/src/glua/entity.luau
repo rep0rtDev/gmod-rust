@@ -1299,6 +1299,34 @@ function ENT:GetBoneParent(i) local m = minfo(self); local p = m and m.bone_pare
 function ENT:GetSequenceCount() local m = minfo(self); return m and #m.sequences or 0 end
 function ENT:GetSequenceName(i) local m = minfo(self); return m and m.sequences[(i or 0) + 1] or "Unknown" end
 function ENT:LookupSequence(name) local m = minfo(self); if m then for i, q in ipairs(m.sequences) do if q == name then return i - 1, 0 end end end return -1, 0 end
+-- Current sequence from the snapshot (NPCs); durations from the MDL animation tables.
+function ENT:GetSequence() local sn = snap(self.__id); local name = sn and sn.sequence; if not name or name == "" then return 0 end local i = self:LookupSequence(name); return i >= 0 and i or 0 end
+local function seq_anim(self, i) local m = minfo(self); return m and m.sequence_anim[(i or 0) + 1] end
+function ENT:SequenceDuration(i) local a = seq_anim(self, i or self:GetSequence()); if not a or a.fps <= 0 then return 0 end return math.max(a.frames - 1, 1) / a.fps end
+function ENT:GetSequenceInfo(i) local m = minfo(self); i = i or self:GetSequence(); local name = m and m.sequences[i + 1]; if not name then return nil end local a = m.sequence_anim[i + 1] or { fps = 0, frames = 0, flags = 0 }; return { label = name, activityname = "", activity = -1, flags = a.flags, numframes = a.frames, fps = a.fps, fadeintime = 0.2, fadeouttime = 0.2, numevents = 0, numblends = 1, anims = { [0] = i } } end
+function ENT:GetAnimCount() local m = minfo(self); return m and #m.anims or 0 end
+function ENT:GetAnimInfo(i) local m = minfo(self); local a = m and m.anims[(i or 0) + 1]; if not a then return nil end return { label = a.name, fps = a.fps, numframes = a.frames, flags = a.flags } end
+function ENT:OBBMins() local mn = self:GetModelBounds(); return mn end
+function ENT:OBBMaxs() local _, mx = self:GetModelBounds(); return mx end
+function ENT:OBBCenter() local mn, mx = self:GetModelBounds(); return (mn + mx) / 2 end
+function ENT:BoundingRadius() return self:GetModelRadius() end
+function ENT:GetModelScale() return 1 end
+function ENT:GetRotatedAABB(mins, maxs)
+    local a = self:GetAngles()
+    local lo, hi = Vector(math.huge, math.huge, math.huge), Vector(-math.huge, -math.huge, -math.huge)
+    for _, x in ipairs({ mins.x, maxs.x }) do for _, y in ipairs({ mins.y, maxs.y }) do for _, z in ipairs({ mins.z, maxs.z }) do
+        local c = LocalToWorld(Vector(x, y, z), Angle(), Vector(), a)
+        lo.x, lo.y, lo.z = math.min(lo.x, c.x), math.min(lo.y, c.y), math.min(lo.z, c.z)
+        hi.x, hi.y, hi.z = math.max(hi.x, c.x), math.max(hi.y, c.y), math.max(hi.z, c.z)
+    end end end
+    return lo, hi
+end
+function ENT:WorldSpaceAABB() local mn, mx = self:GetModelBounds(); local lo, hi = self:GetRotatedAABB(mn, mx); local p = self:GetPos(); return lo + p, hi + p end
+function ENT:NearestPoint(pos) local lo, hi = self:WorldSpaceAABB(); return Vector(math.Clamp(pos.x, lo.x, hi.x), math.Clamp(pos.y, lo.y, hi.y), math.Clamp(pos.z, lo.z, hi.z)) end
+function ENT:IsPointInBounds(pos) local lo, hi = self:WorldSpaceAABB(); return pos.x >= lo.x and pos.x <= hi.x and pos.y >= lo.y and pos.y <= hi.y and pos.z >= lo.z and pos.z <= hi.z end
+function ENT:GetWorldTransformMatrix() local m = Matrix(); m:SetTranslation(self:GetPos()); m:SetAngles(self:GetAngles()); return m end
+function ENT:GetNoDraw() return self:GetRenderMode() == 10 end
+function ENT:SetNoDraw(nd) self:SetRenderMode(nd and 10 or 0) end
 function ENT:GetSequenceList() local m = minfo(self); local out = {}; if m then for i, q in ipairs(m.sequences) do out[i - 1] = q end end return out end
 function ENT:GetHitBoxCount(set) local m = minfo(self); return m and m.hitboxes or 0 end
 function ENT:GetHitboxSetCount() local m = minfo(self); return m and m.hitbox_sets or 0 end

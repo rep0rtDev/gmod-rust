@@ -547,6 +547,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("material", e.material.as_str())?;
     t.set("render_mode", e.render_mode)?;
     t.set("render_fx", e.render_fx)?;
+    t.set("sequence", e.sequence.as_str())?;
     Ok(t)
 }
 
@@ -1372,7 +1373,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     ent,
                     material: None,
                     color: None,
-                    mode: Some(int_arg(&arg)?.clamp(0, 9) as u8),
+                    mode: Some(int_arg(&arg)?.clamp(0, 10) as u8),
                     fx: None,
                 },
                 "set_render_fx" => QueuedWrite::SetRender {
@@ -1702,6 +1703,25 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             t.set("bones", m.bones.clone())?;
             t.set("bone_parents", m.bone_parents.clone())?;
             t.set("sequences", m.sequences.clone())?;
+            let sa = lua.create_table()?;
+            for (i, (fps, frames, flags)) in m.sequence_anim.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("fps", *fps)?;
+                e.set("frames", *frames)?;
+                e.set("flags", *flags)?;
+                sa.set(i + 1, e)?;
+            }
+            t.set("sequence_anim", sa)?;
+            let an = lua.create_table()?;
+            for (i, (name, fps, frames, flags)) in m.anims.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("name", name.as_str())?;
+                e.set("fps", *fps)?;
+                e.set("frames", *frames)?;
+                e.set("flags", *flags)?;
+                an.set(i + 1, e)?;
+            }
+            t.set("anims", an)?;
             t.set("hitboxes", m.hitboxes)?;
             t.set("hitbox_sets", m.hitbox_sets)?;
             t.set("flexes", m.flexes.clone())?;

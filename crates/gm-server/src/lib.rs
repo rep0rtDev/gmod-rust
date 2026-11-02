@@ -163,6 +163,10 @@ pub struct ModelScriptData {
     pub bones: Vec<String>,
     pub bone_parents: Vec<i32>,
     pub sequences: Vec<String>,
+    /// Per sequence: `(fps, frames, anim flags)` of its first animation (0x1 = looping).
+    pub sequence_anim: Vec<(f32, i32, i32)>,
+    /// Raw animations: `(name, fps, frames, flags)`.
+    pub anims: Vec<(String, f32, i32, i32)>,
     pub hitboxes: u32,
     pub hitbox_sets: u32,
     pub flexes: Vec<String>,
@@ -174,6 +178,8 @@ pub struct ModelScriptData {
 
 impl ModelScriptData {
     pub fn from_mdl(mdl: &gm_formats::mdl::Mdl, data: &[u8]) -> Self {
+        let seqs = gm_formats::mdl::sequences(data, &mdl.header);
+        let anims = gm_formats::mdl::anim_descs(data, &mdl.header);
         ModelScriptData {
             body_groups: mdl
                 .body_parts
@@ -183,9 +189,18 @@ impl ModelScriptData {
             skins: mdl.skins.len() as u32,
             bones: mdl.bones.iter().map(|b| b.name.clone()).collect(),
             bone_parents: mdl.bones.iter().map(|b| b.parent).collect(),
-            sequences: gm_formats::mdl::sequences(data, &mdl.header)
-                .into_iter()
-                .map(|q| q.name)
+            sequences: seqs.iter().map(|q| q.name.clone()).collect(),
+            sequence_anim: seqs
+                .iter()
+                .map(|q| {
+                    anims
+                        .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
+                        .map_or((0.0, 0, 0), |a| (a.fps, a.frames, a.flags))
+                })
+                .collect(),
+            anims: anims
+                .iter()
+                .map(|a| (a.name.clone(), a.fps, a.frames, a.flags))
                 .collect(),
             hitboxes: gm_formats::mdl::hitboxes(data, &mdl.header).len() as u32,
             hitbox_sets: mdl.header.hitbox_set_count.max(0) as u32,

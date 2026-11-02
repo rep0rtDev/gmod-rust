@@ -32,6 +32,7 @@ fn snapshot() -> Arc<Snapshot> {
             material: "models/debug/debugwhite".into(),
             render_mode: 1,
             render_fx: 0,
+            sequence: "idle".into(),
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -61,6 +62,7 @@ fn snapshot() -> Arc<Snapshot> {
             material: "models/debug/debugwhite".into(),
             render_mode: 1,
             render_fx: 0,
+            sequence: "idle".into(),
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -623,6 +625,11 @@ fn model_data_comes_from_the_server_tables() {
             hitboxes: 4,
             hitbox_sets: 1,
             flexes: vec!["smile".into()],
+            sequence_anim: vec![(30.0, 31, 1), (24.0, 49, 0)],
+            anims: vec![
+                ("ragdoll".into(), 30.0, 31, 1),
+                ("idle".into(), 24.0, 49, 0),
+            ],
             mins: Vec3::new(-8.0, -8.0, 0.0),
             maxs: Vec3::new(8.0, 8.0, 40.0),
             attachments: vec![("eyes".into(), 1, Vec3::new(0.0, 0.0, 36.0), Vec3::X)],
@@ -720,4 +727,52 @@ fn player_mover_state_and_ops() {
         QueuedWrite::PlayerVehicle { vehicle: None, .. }
     ));
     assert!(matches!(&writes[5], QueuedWrite::PlayerKick { player: 1 }));
+}
+
+#[test]
+fn animation_and_bounds_math_over_the_model() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local e = Entity(5)
+             local info = e:GetSequenceInfo()
+             local lo, hi = e:WorldSpaceAABB()
+             local np = e:NearestPoint(Vector(100, 0, 100))
+             state.r = { e:GetSequence(), e:SequenceDuration(), e:SequenceDuration(0), info.label, info.numframes, e:GetAnimCount(), e:GetAnimInfo(0).label,
+                 e:OBBMaxs().z, lo.z, hi.z, np.x, np.z, e:IsPointInBounds(Vector(0, 0, 10)) and 1 or 0, e:IsPointInBounds(Vector(0, 0, 50)) and 1 or 0, e:GetNoDraw() and 1 or 0 }
+             e:SetNoDraw(true)
+         end)",
+    );
+    let mut models = std::collections::BTreeMap::new();
+    models.insert(
+        "models/props_c17/oildrum001.mdl".to_string(),
+        gm_server::ModelScriptData {
+            sequences: vec!["ragdoll".into(), "idle".into()],
+            sequence_anim: vec![(30.0, 31, 1), (24.0, 49, 0)],
+            anims: vec![
+                ("ragdoll".into(), 30.0, 31, 1),
+                ("idle".into(), 24.0, 49, 0),
+            ],
+            mins: Vec3::new(-8.0, -8.0, 0.0),
+            maxs: Vec3::new(8.0, 8.0, 40.0),
+            ..Default::default()
+        },
+    );
+    let mut snap = (*snapshot()).clone();
+    snap.models = gm_script::snapshot::ModelsRef(&models as *const _);
+    let snap = Arc::new(snap);
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<String> = rt.actors()[0]
+        .eval("local o = {} for i, v in ipairs(state.r) do o[i] = tostring(v) end return o")
+        .unwrap();
+    assert_eq!(
+        r,
+        ["1", "2", "1", "idle", "49", "2", "ragdoll", "40", "0", "40", "8", "40", "1", "0", "0"]
+    );
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(matches!(
+        &writes[0],
+        QueuedWrite::SetRender { mode: Some(10), .. }
+    ));
 }
