@@ -545,6 +545,17 @@ pub enum Request {
     EnterVehicle { player: u32, vehicle: u32 },
     /// `CanExitVehicle`: the seated player pressed +use.
     ExitVehicle { player: u32, vehicle: u32 },
+    /// `PlayerDeathThink`: the dead player's respawn is due; `Cancel` keeps them dead for now
+    /// (asked again next tick).
+    Respawn { player: u32 },
+    /// `CanPlayerSuicide`: the player typed `kill`.
+    Suicide { player: u32 },
+    /// `PlayerSwitchWeapon`: the player's own weapon selection, from `from` to `to`.
+    SwitchWeapon {
+        player: u32,
+        from: String,
+        to: String,
+    },
     /// `PlayerSpawnNPC / PlayerSpawnVehicle / PlayerSpawnSWEP`: the sandbox is about to spawn
     /// `kind` (`npc`, `vehicle`, `weapon`) named `name` for the player.
     Spawn {
@@ -3896,6 +3907,38 @@ impl<'w> Server<'w> {
     /// `RESPAWN_TICKS`.
     /// `SelectWeapon`: a carried weapon becomes active in the same tick, its deploy time arms the
     /// fire timers (measured `weapon_switch`). Dead players and unknown classes are ignored.
+    /// The `kill` console command: the addon runtime may refuse (`CanPlayerSuicide`).
+    pub fn player_kill_command(&mut self, id: u32) -> bool {
+        if !self.players.get(&id).is_some_and(|p| p.alive) {
+            return false;
+        }
+        if self.ask(Request::Suicide { player: id }) == Verdict::Cancel {
+            return false;
+        }
+        self.kill_player(id);
+        true
+    }
+
+    /// The player's own weapon selection: the addon runtime may refuse (`PlayerSwitchWeapon`);
+    /// scripted `Player:SelectWeapon` goes through [`Self::select_weapon`] unasked.
+    pub fn player_select_weapon(&mut self, id: u32, class: &str) -> bool {
+        let Some(from) = self.players.get(&id).map(|p| p.active_weapon.clone()) else {
+            return false;
+        };
+        if from == class || !self.players[&id].weapons.iter().any(|w| w == class) {
+            return false;
+        }
+        if self.ask(Request::SwitchWeapon {
+            player: id,
+            from,
+            to: class.to_string(),
+        }) == Verdict::Cancel
+        {
+            return false;
+        }
+        self.select_weapon(id, class)
+    }
+
     pub fn select_weapon(&mut self, id: u32, class: &str) -> bool {
         let Some(p) = self.players.get_mut(&id) else {
             return false;
@@ -9723,6 +9766,9 @@ impl<'w> Server<'w> {
             }
         }
         for id in respawn {
+            if self.ask(Request::Respawn { player: id }) == Verdict::Cancel {
+                continue;
+            }
             self.spawn_player(id);
         }
         for (id, pc) in cmds.iter() {

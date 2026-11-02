@@ -851,6 +851,10 @@ player's command is processed) for `Player:GetPreviousWeapon`. `Entity:AddEffect
 RemoveEffects / IsEffectActive` and the `EFlags` family keep a per-entity bitmask in the script
 layer; `EF_NODRAW` is the one flag with a server meaning and maps onto `SetNoDraw`.
 
+A dead player's due respawn asks `PlayerDeathThink` (a `true` keeps them dead, asked again next
+tick), the `kill` command asks `CanPlayerSuicide`, and the player's own weapon selection asks
+`PlayerSwitchWeapon` (scripted `Player:SelectWeapon` / `Kill` are not asked).
+
 Spawning an NPC, vehicle or weapon for a player asks the addon runtime first (`PlayerSpawnNPC /
 PlayerSpawnVehicle / PlayerSpawnSWEP`) and reports the entity afterwards (`PlayerSpawned*`); props
 already did through the network layer's spawn request. Hooks the server raises count as

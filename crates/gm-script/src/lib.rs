@@ -894,6 +894,32 @@ impl Runtime {
                     gm_server::Verdict::Cancel
                 }
             }
+            gm_server::Request::Respawn { player } => {
+                p.ints.push(("player", *player as i64));
+                if self.ask(server, "player.respawn_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
+            gm_server::Request::Suicide { player } => {
+                p.ints.push(("player", *player as i64));
+                if self.ask(server, "player.suicide_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
+            gm_server::Request::SwitchWeapon { player, from, to } => {
+                p.ints.push(("player", *player as i64));
+                p.strs.push(("from", from.clone()));
+                p.strs.push(("to", to.clone()));
+                if self.ask(server, "player.switch_weapon_request", p) {
+                    gm_server::Verdict::Allow
+                } else {
+                    gm_server::Verdict::Cancel
+                }
+            }
             gm_server::Request::Spawn { player, kind, name } => {
                 p.ints.push(("player", *player as i64));
                 p.strs.push(("kind", kind.to_string()));

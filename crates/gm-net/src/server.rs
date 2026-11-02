@@ -771,12 +771,10 @@ impl ServerNet {
                         server.set_wanted_skin_body(slot.player, skin, &body)
                     }
                     Command::Kill => {
-                        if server.players.get(&slot.player).is_some_and(|p| p.alive) {
-                            server.kill_player(slot.player);
-                        }
+                        server.player_kill_command(slot.player);
                     }
                     Command::SelectWeapon { class } => {
-                        server.select_weapon(slot.player, &class);
+                        server.player_select_weapon(slot.player, &class);
                     }
                     Command::GiveWeapon { class } => {
                         server.give_weapon_cmd(slot.player, &class);

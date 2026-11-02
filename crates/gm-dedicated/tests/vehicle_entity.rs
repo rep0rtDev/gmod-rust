@@ -38,6 +38,26 @@ fn chair_spawns_seats_and_releases_the_player() {
     assert!(server.spawn_vehicle(1, "Bogus").is_none());
     let hit = server.tool_hit(1).unwrap();
     server.request_hook = Some(Box::new(|_, req| match req {
+        gm_server::Request::Suicide { .. } | gm_server::Request::SwitchWeapon { .. } => {
+            gm_server::Verdict::Cancel
+        }
+        _ => gm_server::Verdict::Allow,
+    }));
+    server.set_weapons(1, &["gmod_tool", "weapon_physgun"]);
+    assert!(
+        !server.player_kill_command(1) && server.players[&1].alive,
+        "CanPlayerSuicide refuses"
+    );
+    assert!(
+        !server.player_select_weapon(1, "weapon_physgun"),
+        "PlayerSwitchWeapon refuses"
+    );
+    assert_eq!(server.players[&1].active_weapon, "gmod_tool");
+    server.request_hook = None;
+    assert!(server.player_select_weapon(1, "weapon_physgun"));
+    assert_eq!(server.players[&1].active_weapon, "weapon_physgun");
+    server.select_weapon(1, "gmod_tool");
+    server.request_hook = Some(Box::new(|_, req| match req {
         gm_server::Request::Spawn {
             kind: "vehicle", ..
         } => gm_server::Verdict::Cancel,

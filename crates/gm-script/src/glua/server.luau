@@ -649,6 +649,13 @@ local prev_move = {}
     events.on("player.pickup_weapon_request", function(p) if hook.Run("PlayerCanPickupWeapon", Player(p.player), __glua_classes.Weapon.__from(p.class, p.player)) == false then return false end end)
     events.on("player.enter_vehicle_request", function(p) if hook.Run("CanPlayerEnterVehicle", Player(p.player), Entity(p.vehicle), 0) == false then return false end end)
     events.on("player.exit_vehicle_request", function(p) if hook.Run("CanExitVehicle", Entity(p.vehicle), Player(p.player)) == false then return false end end)
+    events.on("player.respawn_request", function(p) if hook.Run("PlayerDeathThink", Player(p.player)) == true then return false end end)
+    events.on("player.suicide_request", function(p) if hook.Run("CanPlayerSuicide", Player(p.player)) == false then return false end end)
+    events.on("player.switch_weapon_request", function(p)
+        local ply = Player(p.player)
+        local W = __glua_classes.Weapon
+        if hook.Run("PlayerSwitchWeapon", ply, W.__from(p.from, p.player), W.__from(p.to, p.player)) == true then return false end
+    end)
     events.on("sandbox.spawn_request", function(p)
         local ply = Player(p.player)
         local r
@@ -693,7 +700,7 @@ function GM:OnPlayerChangedTeam(ply, old, new) end
 function GM:PlayerChangedTeam(ply, old, new) end
 function GM:GetGameDescription() return GM.Name or "Sandbox" end
 function GM:CreateTeams() if team and team.SetUp then team.SetUp(TEAM_UNASSIGNED or 1001, "Unassigned", Color(255, 255, 255)); team.SetUp(TEAM_SPECTATOR or 1002, "Spectator", Color(200, 200, 200)) end end
-function GM:PlayerDeathThink(ply) return true end
+function GM:PlayerDeathThink(ply) end -- the server owns the respawn timer; `true` here keeps the player dead
 function GM:PlayerSilentDeath(ply) end
 function GM:PlayerDeathSound(ply) return false end
 function GM:PlayerFootstep(ply, pos, foot, sound, volume, filter) return false end
