@@ -677,6 +677,9 @@ fn move_hooks_bracket_the_mover() {
         old_buttons: 1,
         moves: Vec3::ZERO,
         max_speed: 200.0,
+        step_height: 18.0,
+        jump_power: 160.0,
+        ideal_velocity: 200.0,
     };
     assert_eq!(d.parse(&d.to_text()), Some(d));
     assert_eq!(d.parse("1 2"), None);

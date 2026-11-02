@@ -771,6 +771,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   cone for that shot) and `WEAPON:NPCShoot_Primary(shootPos, shootDir)` (anything but `false`
   means the SWEP fired itself and the server skips its bullets). `GetNPCBurstSettings` /
   `GetNPCRestTimes` stay stubs: the NPC cadence is the measured burst / rest, not the SWEP's.
+- `CMoveData:SetFinalStepHeight` / `SetFinalJumpVelocity` / `SetFinalIdealVelocity` (and the
+  getters) ride the move write-back: the mover uses them as this command's step height, jump
+  impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
+  movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
+  mover).
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.

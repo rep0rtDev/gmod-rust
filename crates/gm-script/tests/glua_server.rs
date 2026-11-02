@@ -2427,3 +2427,35 @@ fn npc_shoot_params_ask_the_swep() {
         .unwrap();
     assert_eq!((prof, dx), (2.0, 1.0));
 }
+
+#[test]
+fn move_final_fields_round_trip() {
+    let mut rt = runtime(
+        "hook.Add('Move', 'final', function(ply, mv)
+            state.step, state.jump, state.ideal = mv:GetFinalStepHeight(), mv:GetFinalJumpVelocity(), mv:GetFinalIdealVelocity()
+            mv:SetFinalStepHeight(30) mv:SetFinalJumpVelocity(300) mv:SetFinalIdealVelocity(400)
+         end)",
+    );
+    let mut p = Payload::default();
+    p.ints.push(("player", 1));
+    p.ints.push(("buttons", 0));
+    p.ints.push(("old_buttons", 0));
+    for k in [
+        "ox", "oy", "oz", "vx", "vy", "vz", "fx", "fy", "fz", "ax", "ay", "az",
+    ] {
+        p.floats.push((k, 0.0));
+    }
+    p.floats.push(("maxspeed", 200.0));
+    p.floats.push(("step", 18.0));
+    p.floats.push(("jump", 160.0));
+    p.floats.push(("ideal", 200.0));
+    let reply = rt.actors_mut()[0]
+        .dispatch_reply(&snapshot(), "player.move", &p, 3)
+        .unwrap();
+    let text = format!("{reply:?}");
+    assert!(text.ends_with("200 30 300 400\")"), "{text}");
+    let seen: (f64, f64, f64) = rt.actors()[0]
+        .eval("return state.step, state.jump, state.ideal")
+        .unwrap();
+    assert_eq!(seen, (18.0, 160.0, 200.0));
+}

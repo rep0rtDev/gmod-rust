@@ -348,7 +348,7 @@ do
     function C:IsForced() return false end
     function C:SelectWeapon(w) if self.__ply and IsValid(w) then self.__ply:SelectWeapon(w:GetClass()) end end
 end
-for _, n in ipairs({ "GetAbsMoveAngles", "GetConstraintCenter", "GetConstraintRadius", "GetConstraintSpeedScale", "GetConstraintWidth", "GetFinalIdealVelocity", "GetFinalJumpVelocity", "GetFinalStepHeight", "SetAbsMoveAngles", "SetConstraintCenter", "SetConstraintRadius", "SetConstraintSpeedScale", "SetConstraintWidth", "SetFinalIdealVelocity", "SetFinalJumpVelocity", "SetFinalStepHeight" }) do if __glua_classes.CMoveData[n] == nil then __glua_classes.CMoveData[n] = stub("CMoveData:" .. n) end end
+for _, n in ipairs({ "GetAbsMoveAngles", "GetConstraintCenter", "GetConstraintRadius", "GetConstraintSpeedScale", "GetConstraintWidth", "SetAbsMoveAngles", "SetConstraintCenter", "SetConstraintRadius", "SetConstraintSpeedScale", "SetConstraintWidth" }) do if __glua_classes.CMoveData[n] == nil then __glua_classes.CMoveData[n] = stub("CMoveData:" .. n) end end
 -- CMoveData: the move of a player's command as SetupMove / Move / FinishMove see it; origin,
 -- velocity, buttons, moves, angles and max speed are written back to the server's mover.
 do
@@ -391,9 +391,17 @@ do
     function M:SetImpulseCommand(i) self.impulse = math.floor(tonumber(i) or 0) end
     function M:__text()
         local o, v, m, a = self.origin, self.velocity, self.moves, self.angles
-        return string.format("%.9g %.9g %.9g %.9g %.9g %.9g %d %.9g %.9g %.9g %.9g %.9g %.9g %.9g",
-            o.x, o.y, o.z, v.x, v.y, v.z, self.buttons, m.x, m.y, m.z, a.x, a.y, a.z, self.maxspeed)
+        return string.format("%.9g %.9g %.9g %.9g %.9g %.9g %d %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g %.9g",
+            o.x, o.y, o.z, v.x, v.y, v.z, self.buttons, m.x, m.y, m.z, a.x, a.y, a.z, self.maxspeed,
+            self.step or 18, self.jump or 160, self.ideal or self.maxspeed)
     end
+    -- the mover's step height / jump impulse / ground wish-speed cap for this command
+    function M:GetFinalStepHeight() return self.step or 18 end
+    function M:SetFinalStepHeight(h) self.step = math.max(0, tonumber(h) or 0) end
+    function M:GetFinalJumpVelocity() return self.jump or 160 end
+    function M:SetFinalJumpVelocity(v) self.jump = math.max(0, tonumber(v) or 0) end
+    function M:GetFinalIdealVelocity() return self.ideal or self.maxspeed end
+    function M:SetFinalIdealVelocity(v) self.ideal = math.max(0, tonumber(v) or 0) end
 end
 for _, n in ipairs({ "ConnectTo", "Disconnect", "GetBottom", "GetBottomArea", "GetID", "GetLength", "GetNormal", "GetPosAtHeight", "GetTop", "GetTopBehindArea", "GetTopForwardArea", "GetTopLeftArea", "GetTopRightArea", "GetWidth", "IsConnectedAtSide", "IsValid", "Remove", "SetBottomArea", "SetTopBehindArea", "SetTopForwardArea", "SetTopLeftArea", "SetTopRightArea" }) do if __glua_classes.CNavLadder[n] == nil then __glua_classes.CNavLadder[n] = stub("CNavLadder:" .. n) end end
 -- PathFollower: a polyline from our navmesh path query (nav.path) with the game's segment

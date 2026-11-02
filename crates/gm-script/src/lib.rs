@@ -947,6 +947,9 @@ impl Runtime {
                     ("ay", data.angles.y),
                     ("az", data.angles.z),
                     ("maxspeed", data.max_speed),
+                    ("step", data.step_height),
+                    ("jump", data.jump_power),
+                    ("ideal", data.ideal_velocity),
                 ] {
                     p.floats.push((k, v as f64));
                 }

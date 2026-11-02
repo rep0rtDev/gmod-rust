@@ -1307,6 +1307,11 @@ pub struct MoveData {
     pub moves: Vec3,
     /// Ground speed cap of this command (walk or run speed).
     pub max_speed: f32,
+    /// Step height, jump impulse and ground wish-speed cap the mover will use for this command
+    /// (`SetFinalStepHeight` / `SetFinalJumpVelocity` / `SetFinalIdealVelocity`).
+    pub step_height: f32,
+    pub jump_power: f32,
+    pub ideal_velocity: f32,
 }
 
 impl MoveData {
@@ -1314,7 +1319,7 @@ impl MoveData {
     pub fn to_text(&self) -> String {
         let (o, v, m, a) = (self.origin, self.velocity, self.moves, self.angles);
         format!(
-            "{} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
             o.x,
             o.y,
             o.z,
@@ -1328,7 +1333,10 @@ impl MoveData {
             a.x,
             a.y,
             a.z,
-            self.max_speed
+            self.max_speed,
+            self.step_height,
+            self.jump_power,
+            self.ideal_velocity
         )
     }
 
@@ -1338,7 +1346,7 @@ impl MoveData {
             .split_whitespace()
             .map(|t| t.parse::<f32>().ok())
             .collect::<Option<Vec<f32>>>()?;
-        if f.len() != 14 || f.iter().any(|v| !v.is_finite()) {
+        if !(f.len() == 14 || f.len() == 17) || f.iter().any(|v| !v.is_finite()) {
             return None;
         }
         Some(MoveData {
@@ -1349,6 +1357,9 @@ impl MoveData {
             angles: Vec3::new(f[10], f[11], f[12]),
             max_speed: f[13].max(0.0),
             old_buttons: self.old_buttons,
+            step_height: f.get(14).map_or(self.step_height, |v| v.max(0.0)),
+            jump_power: f.get(15).map_or(self.jump_power, |v| v.max(0.0)),
+            ideal_velocity: f.get(16).map_or(self.ideal_velocity, |v| v.max(0.0)),
         })
     }
 }
@@ -12508,6 +12519,9 @@ impl<'w> Server<'w> {
                 old_buttons,
                 moves: Vec3::new(cmd.forward_move, cmd.side_move, cmd.up_move),
                 max_speed,
+                step_height: cfg.step_size,
+                jump_power: cfg.jump_power,
+                ideal_velocity: max_speed,
             };
             if let Verdict::Text(t) = self.ask(Request::SetupMove { player, data }) {
                 if let Some(d) = data.parse(&t) {
@@ -12532,6 +12546,12 @@ impl<'w> Server<'w> {
                 cfg.walk_speed = data.max_speed;
                 cfg.run_speed = data.max_speed;
             }
+            if data.ideal_velocity != max_speed {
+                cfg.walk_speed = data.ideal_velocity;
+                cfg.run_speed = data.ideal_velocity;
+            }
+            cfg.step_size = data.step_height;
+            cfg.jump_power = data.jump_power;
             write_back = Some((data.origin, data.velocity));
         }
         let Some(p) = self.players.get_mut(&player) else {
@@ -12556,6 +12576,9 @@ impl<'w> Server<'w> {
                 old_buttons,
                 moves: Vec3::new(cmd.forward_move, cmd.side_move, cmd.up_move),
                 max_speed,
+                step_height: cfg.step_size,
+                jump_power: cfg.jump_power,
+                ideal_velocity: max_speed,
             };
             if let Verdict::Text(t) = self.ask(Request::FinishMove { player, data }) {
                 if let (Some(d), Some(p)) = (data.parse(&t), self.players.get_mut(&player)) {
@@ -14833,6 +14856,31 @@ pub fn parent_world(parent: (Vec3, Quat), local: (Vec3, Quat)) -> (Vec3, Quat) {
 
 #[cfg(test)]
 mod parent_tests {
+    #[test]
+    fn move_data_text_carries_the_final_fields() {
+        let d = super::MoveData {
+            origin: Vec3::new(1.0, 2.0, 3.0),
+            velocity: Vec3::ZERO,
+            angles: Vec3::ZERO,
+            buttons: 1,
+            old_buttons: 0,
+            moves: Vec3::ZERO,
+            max_speed: 200.0,
+            step_height: 18.0,
+            jump_power: 160.0,
+            ideal_velocity: 200.0,
+        };
+        let back = d.parse(&d.to_text()).unwrap();
+        assert_eq!(back, d);
+        let legacy = d.parse("1 2 3 0 0 0 1 0 0 0 0 0 0 250").unwrap();
+        assert_eq!(
+            (legacy.max_speed, legacy.step_height, legacy.jump_power),
+            (250.0, 18.0, 160.0)
+        );
+        let edited = d.parse(&(d.to_text().rsplit_once(' ').unwrap().0.to_string() + " 400"));
+        assert_eq!(edited.unwrap().ideal_velocity, 400.0);
+    }
+
     #[test]
     fn scripted_swep_arms_an_npc_with_its_ammo() {
         assert_eq!(

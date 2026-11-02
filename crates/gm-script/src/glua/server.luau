@@ -609,7 +609,7 @@ local prev_move = {}
             origin = { x = p.ox, y = p.oy, z = p.oz }, velocity = { x = p.vx, y = p.vy, z = p.vz },
             angles = { x = p.ax, y = p.ay, z = p.az }, old_angles = { x = p.ax, y = p.ay, z = p.az },
             buttons = p.buttons, old_buttons = p.old_buttons, moves = { x = p.fx, y = p.fy, z = p.fz },
-            maxspeed = p.maxspeed, impulse = 0,
+            maxspeed = p.maxspeed, impulse = 0, step = p.step or 18, jump = p.jump or 160, ideal = p.ideal or p.maxspeed,
         }, __glua_classes.CMoveData)
     end
     events.on("player.setup_move", function(p)
