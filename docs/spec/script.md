@@ -712,6 +712,9 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
+  is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
+  `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.
 - `ENTITY:PhysicsSimulate(phys, dt)` runs every tick on scripted entities that define it; its
   `(linear, angular, SIM_*)` return is applied as velocity this tick (forces over the mass, LOCAL
   in the entity frame). `ENTITY:SpawnFunction(ply, tr, class)` of a class takes over the SENT

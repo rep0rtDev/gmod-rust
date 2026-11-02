@@ -54,6 +54,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_target_first_seen: 0,
             npc_stuck: 0,
             npc_chase_reach: 0.0,
+            npc_ignore: Vec::new(),
             npc_move_speed: 0.0,
             npc_next_goal: None,
             npc_caps: 0,
@@ -113,6 +114,7 @@ fn snapshot() -> Arc<Snapshot> {
             npc_target_first_seen: 0,
             npc_stuck: 0,
             npc_chase_reach: 0.0,
+            npc_ignore: Vec::new(),
             npc_move_speed: 0.0,
             npc_next_goal: None,
             npc_caps: 0,
@@ -2201,4 +2203,36 @@ fn spawn_function_takes_over_the_sent_spawn() {
         !matches!(reply, gm_script::actor::Reply::Cancel),
         "{reply:?}"
     );
+}
+
+#[test]
+fn npc_unreachable_memory_writes_an_ignore() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            local n = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.NPC }, __glua_classes.Entity)
+            n:RememberUnreachable(Player(1)); state.un = n:IsUnreachable(Player(1)) end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(
+        writes
+            .iter()
+            .any(|w| format!("{w:?}").contains("NpcIgnore")),
+        "{writes:?}"
+    );
+    let un: bool = rt.actors()[0].eval("return state.un").unwrap();
+    assert!(!un, "nothing ignored in the test snapshot");
 }
