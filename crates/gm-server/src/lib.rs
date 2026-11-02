@@ -2857,6 +2857,8 @@ pub struct Player {
     /// `Player:SetPlayerColor` / `SetWeaponColor` (0..1 RGB), script-only data for now.
     pub player_color: Vec3,
     pub weapon_color: Vec3,
+    /// `Player:Lock`: commands are ignored, the player stands still.
+    pub locked: bool,
     pub max_health: i32,
     pub model: String,
     /// The player's model choice (`cl_playermodel`), applied on the next spawn.
@@ -2944,6 +2946,7 @@ impl Player {
             no_target: false,
             player_color: Vec3::new(0.24, 0.34, 0.41),
             weapon_color: Vec3::new(0.3, 1.0, 0.25),
+            locked: false,
             max_health: PLAYER_HEALTH,
             model: PLAYER_MODEL.to_string(),
             wanted_model: String::new(),
@@ -3218,6 +3221,8 @@ pub struct Server<'w> {
     pub pending_chat: Vec<(u32, String)>,
     /// Script-facing model data per model name (the snapshot points at this map).
     pub model_scripts: BTreeMap<String, ModelScriptData>,
+    /// `Entity:SetFriction / SetElasticity` overrides of the model surface, per prop.
+    pub surface_overrides: BTreeMap<u32, (f32, f32)>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
     sounds: Vec<WorldSound>,
     /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
@@ -3367,6 +3372,7 @@ impl<'w> Server<'w> {
             models: BTreeMap::new(),
             pending_chat: Vec::new(),
             model_scripts: BTreeMap::new(),
+            surface_overrides: BTreeMap::new(),
             sounds: Vec::new(),
             scrapes: BTreeMap::new(),
             thruster_loops: BTreeSet::new(),
@@ -5862,6 +5868,56 @@ impl<'w> Server<'w> {
             }
             None => false,
         }
+    }
+
+    pub fn set_locked(&mut self, player: u32, locked: bool) -> bool {
+        match self.players.get_mut(&player) {
+            Some(p) => {
+                p.locked = locked;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The surface a prop's body uses: the script override, else the model's PHY surface.
+    pub fn entity_surface(&self, id: u32) -> (f32, f32) {
+        if let Some(s) = self.surface_overrides.get(&id) {
+            return *s;
+        }
+        self.sandbox
+            .props()
+            .iter()
+            .find(|p| p.id == id)
+            .and_then(|p| self.model_scripts.get(&p.model))
+            .map(|m| (m.friction, m.elasticity))
+            .unwrap_or((0.8, 0.25))
+    }
+
+    /// Script `Entity:SetFriction / SetElasticity`: the body gets the new surface right away.
+    pub fn set_entity_surface(
+        &mut self,
+        id: u32,
+        friction: Option<f32>,
+        elasticity: Option<f32>,
+    ) -> bool {
+        let Some(body) = self.body_of(id) else {
+            return false;
+        };
+        let (f, e) = self.entity_surface(id);
+        let next = (
+            friction.unwrap_or(f).max(0.0),
+            elasticity.unwrap_or(e).max(0.0),
+        );
+        self.surface_overrides.insert(id, next);
+        self.physics.set_surface(
+            body,
+            gm_physics::Surface {
+                friction: next.0,
+                elasticity: next.1,
+            },
+        );
+        true
     }
 
     pub fn set_max_armor(&mut self, player: u32, max: i32) -> bool {
@@ -9409,9 +9465,19 @@ impl<'w> Server<'w> {
     pub fn move_player(&mut self, player: u32, pc: &PlayerCmd) {
         if let Some(p) = self.players.get_mut(&player) {
             p.view_angles = pc.cmd.view_angles;
-            let cmd = gm_move::UserCmd {
-                buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
-                ..pc.cmd
+            let cmd = if p.locked {
+                gm_move::UserCmd {
+                    buttons: 0,
+                    forward_move: 0.0,
+                    side_move: 0.0,
+                    up_move: 0.0,
+                    ..pc.cmd
+                }
+            } else {
+                gm_move::UserCmd {
+                    buttons: pc.cmd.buttons & !(IN_ATTACK | IN_USE | IN_ATTACK2),
+                    ..pc.cmd
+                }
             };
             self.mover.tick(&mut p.state, &cmd);
         }

@@ -41,6 +41,8 @@ fn snapshot() -> Arc<Snapshot> {
             eye_target: None,
             weapon: "weapon_smg1".into(),
             npc_target_seen: 200,
+            friction: 0.6,
+            elasticity: 0.1,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -77,6 +79,8 @@ fn snapshot() -> Arc<Snapshot> {
             eye_target: None,
             weapon: "weapon_smg1".into(),
             npc_target_seen: 200,
+            friction: 0.6,
+            elasticity: 0.1,
             npc_target: 1,
             npc_chase: 1,
             npc_goal: Some(Vec3::new(400.0, 0.0, 0.0)),
@@ -119,6 +123,7 @@ fn snapshot() -> Arc<Snapshot> {
             no_target: true,
             player_color: Vec3::new(0.5, 0.25, 1.0),
             weapon_color: Vec3::new(1.0, 0.0, 0.0),
+            locked: true,
         },
     );
     Arc::new(s)

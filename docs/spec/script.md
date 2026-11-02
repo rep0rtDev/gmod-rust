@@ -837,6 +837,11 @@ clamped to it). `Player:DropWeapon / DropNamedWeapon` strip the weapon and place
 weapon 32 u in front of the origin (`Server::drop_weapon`, same undo / cleanup as a spawned
 one); `DropObject` releases the held prop.
 
+`Player:Lock / UnLock / IsFrozen`: a locked player's commands are run with no buttons and no
+move (view angles still follow). `Entity:SetFriction / SetElasticity` set the Jolt body's
+surface at once and are remembered per prop (`Server::surface_overrides`); the snapshot's
+`friction / elasticity` is the surface in use (override, else the model's PHY values).
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

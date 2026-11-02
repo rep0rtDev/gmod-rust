@@ -384,7 +384,9 @@ function PLY:Say(text, team) qwrite("player.say", self.__pid, tostring(text)) en
 function PLY:Kick(reason) qwrite("player.kick", self.__pid, reason or "") end
 function PLY:EnterVehicle(v) if IsValid(v) then qwrite("player.vehicle", self.__pid, v:EntIndex()) end end
 function PLY:ExitVehicle() qwrite("player.vehicle", self.__pid, nil) end
-function PLY:IsFrozen() return false end
+function PLY:IsFrozen() local p = psnap(self.__pid); return p ~= nil and p.locked == true end
+function PLY:Lock() qwrite("player.lock", self.__pid, true) end
+function PLY:UnLock() qwrite("player.lock", self.__pid, false) end
 function PLY:IsOnGround() local p = psnap(self.__pid); return p ~= nil and p.on_ground == true end
 function PLY:OnGround() return self:IsOnGround() end
 function PLY:Crouching() local p = psnap(self.__pid); return p ~= nil and p.ducked == true end
@@ -1341,8 +1343,10 @@ function ENT:OBBMaxs() local _, mx = self:GetModelBounds(); return mx end
 function ENT:OBBCenter() local mn, mx = self:GetModelBounds(); return (mn + mx) / 2 end
 function ENT:BoundingRadius() return self:GetModelRadius() end
 function ENT:GetModelScale() return 1 end
-function ENT:GetFriction() local m = minfo(self); return m and m.friction or 0 end
-function ENT:GetElasticity() local m = minfo(self); return m and m.elasticity or 0 end
+function ENT:GetFriction() local sn = snap(self.__id); if sn and sn.friction then return sn.friction end local m = minfo(self); return m and m.friction or 0 end
+function ENT:GetElasticity() local sn = snap(self.__id); if sn and sn.elasticity then return sn.elasticity end local m = minfo(self); return m and m.elasticity or 0 end
+function ENT:SetFriction(f) qwrite("set_surface", self.__id, { friction = f }) end
+function ENT:SetElasticity(e) qwrite("set_surface", self.__id, { elasticity = e }) end
 function ENT:GetRotatedAABB(mins, maxs)
     local a = self:GetAngles()
     local lo, hi = Vector(math.huge, math.huge, math.huge), Vector(-math.huge, -math.huge, -math.huge)

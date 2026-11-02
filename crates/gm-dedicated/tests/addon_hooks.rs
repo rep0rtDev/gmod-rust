@@ -1,6 +1,15 @@
 //! The example addon through the real stack: map, server loop, net commands and the script hooks.
 use std::collections::BTreeMap;
 
+/// The GLua layer booted in every actor grows with each block; the production 2 ms budget
+/// throttles `tick.pre` under test load and skews tick-stamped logs, so tests run on 50 ms.
+fn test_actor_config() -> gm_script::ActorConfig {
+    gm_script::ActorConfig {
+        cpu_budget: std::time::Duration::from_millis(50),
+        ..Default::default()
+    }
+}
+
 #[test]
 fn freeze_crates_addon_through_the_server() {
     let Some(inst) = gm_content::find_install() else {
@@ -472,7 +481,7 @@ fn key_press_and_release_events_follow_the_usercmd_edges() {
             events.on('player.key_press', function(p) table.insert(state.keys, 'down:' .. p.key .. ':' .. p.player) end)
             events.on('player.key_release', function(p) table.insert(state.keys, 'up:' .. p.key .. ':' .. p.player) end)"
             .into(),
-        config: gm_script::ActorConfig::default(),
+        config: test_actor_config(),
     })
     .unwrap();
     // E held for three ticks (a KeyPress once, the use request every tick, then a KeyRelease),
@@ -567,7 +576,7 @@ fn scripted_entities_follow_the_measured_sent_cadences() {
             events.on("entity.spawned", function(p) state[p.tag] = p.entity end)
         "#
         .into(),
-        config: gm_script::ActorConfig::default(),
+        config: test_actor_config(),
     })
     .unwrap();
     let cmd = |buttons: u32| gm_server::PlayerCmd {
@@ -769,7 +778,7 @@ fn a_player_walking_into_a_scripted_entity_touches_it() {
             end)
         "#
         .into(),
-        config: gm_script::ActorConfig::default(),
+        config: test_actor_config(),
     })
     .unwrap();
     // 60 u ahead; forward 30 ticks (into the crate), then back 30 ticks
@@ -832,7 +841,7 @@ fn scripted_weapon_think_runs_every_tick_after_the_deploy() {
             weapon.register('parity_think', { automatic = true, primary_delay = 0.2,
                 think = function(p) table.insert(state.thinks, state.t) end })"
             .into(),
-        config: gm_script::ActorConfig::default(),
+        config: test_actor_config(),
     })
     .unwrap();
     rt.pre_tick(&mut server);
@@ -895,7 +904,7 @@ fn use_on_another_player_is_reported_every_tick_held() {
             events.on('player.use_player', function(p) if p.player == 1 and p.target == 2 then state.n += 1 end end)
             events.on('player.use', function(p) state.prop = true end)"
             .into(),
-        config: gm_script::ActorConfig::default(),
+        config: test_actor_config(),
     })
     .unwrap();
     let cmd = |buttons: u32, pitch: f32| gm_server::PlayerCmd {
@@ -5293,7 +5302,7 @@ fn sent_overlay_text_is_replicated_and_cleared_on_remove() {
             events.on("entity.spawned", function(p) state[p.tag] = p.entity end)
         "#
         .into(),
-        config: gm_script::ActorConfig::default(),
+        config: test_actor_config(),
     })
     .unwrap();
     let step = |server: &mut gm_server::Server, rt: &mut gm_script::Runtime| {

@@ -39,6 +39,8 @@ fn snapshot() -> Arc<Snapshot> {
             eye_target: None,
             weapon: "weapon_smg1".into(),
             npc_target_seen: 200,
+            friction: 0.6,
+            elasticity: 0.1,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -75,6 +77,8 @@ fn snapshot() -> Arc<Snapshot> {
             eye_target: None,
             weapon: "weapon_smg1".into(),
             npc_target_seen: 200,
+            friction: 0.6,
+            elasticity: 0.1,
             npc_target: 0,
             npc_chase: 0,
             npc_goal: None,
@@ -117,6 +121,7 @@ fn snapshot() -> Arc<Snapshot> {
             no_target: true,
             player_color: Vec3::new(0.5, 0.25, 1.0),
             weapon_color: Vec3::new(1.0, 0.0, 0.0),
+            locked: true,
         },
     );
     Arc::new(s)
@@ -933,7 +938,7 @@ fn enemy_seen_tick_and_surface_reads() {
         .dispatch(&snap, "tick.pre", &Payload::default(), 1)
         .unwrap();
     let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
-    assert_eq!(r, vec![3.0, 0.800000011920929, 0.25]);
+    assert_eq!(r, vec![3.0, 0.6000000238418579, 0.10000000149011612]);
 }
 
 #[test]
@@ -982,4 +987,45 @@ fn player_drop_notarget_colors_armor() {
         &writes[5],
         QueuedWrite::PlayerMaxArmor { max: 200, .. }
     ));
+}
+
+#[test]
+fn lock_and_surface_writes() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local p, e = Player(1), Entity(5)
+             state.r = { p:IsFrozen() and 1 or 0, math.Round(e:GetFriction(), 3), math.Round(e:GetElasticity(), 3) }
+             p:Lock()
+             p:UnLock()
+             e:SetFriction(1.5)
+             e:SetElasticity(0.9)
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!(r, vec![1.0, 0.6, 0.1]);
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(matches!(
+        &writes[0],
+        QueuedWrite::PlayerLock {
+            player: 1,
+            locked: true
+        }
+    ));
+    assert!(matches!(
+        &writes[1],
+        QueuedWrite::PlayerLock {
+            player: 1,
+            locked: false
+        }
+    ));
+    assert!(
+        matches!(&writes[2], QueuedWrite::SetSurface { ent: 5, friction: Some(f), elasticity: None } if *f == 1.5)
+    );
+    assert!(
+        matches!(&writes[3], QueuedWrite::SetSurface { ent: 5, friction: None, elasticity: Some(e) } if *e == 0.9)
+    );
 }

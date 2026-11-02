@@ -309,6 +309,15 @@ pub enum QueuedWrite {
         body: Option<Vec3>,
         weapon: Option<Vec3>,
     },
+    PlayerLock {
+        player: u32,
+        locked: bool,
+    },
+    SetSurface {
+        ent: u32,
+        friction: Option<f32>,
+        elasticity: Option<f32>,
+    },
     PlayerMaxArmor {
         player: u32,
         max: i32,
@@ -515,6 +524,7 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("no_target", p.no_target)?;
     t.set("player_color", vec3_table(lua, p.player_color)?)?;
     t.set("weapon_color", vec3_table(lua, p.weapon_color)?)?;
+    t.set("locked", p.locked)?;
     Ok(t)
 }
 
@@ -601,6 +611,8 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("sequence", e.sequence.as_str())?;
     t.set("weapon", e.weapon.as_str())?;
     t.set("npc_target_seen", e.npc_target_seen)?;
+    t.set("friction", e.friction)?;
+    t.set("elasticity", e.elasticity)?;
     let bs = lua.create_table()?;
     for (b, v) in &e.bone_scales {
         bs.set(*b, vec3_table(lua, *v)?)?;
@@ -1531,6 +1543,18 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                             .transpose()?,
                     }
                 }
+                "player.lock" => QueuedWrite::PlayerLock {
+                    player: ent,
+                    locked: matches!(arg, Value::Boolean(true)),
+                },
+                "set_surface" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::SetSurface {
+                        ent,
+                        friction: t.get("friction")?,
+                        elasticity: t.get("elasticity")?,
+                    }
+                }
                 "player.max_armor" => QueuedWrite::PlayerMaxArmor {
                     player: ent,
                     max: int_arg(&arg)?,
@@ -2446,6 +2470,12 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             weapon,
         } => server.set_player_colors(*player, *body, *weapon),
         QueuedWrite::PlayerMaxArmor { player, max } => server.set_max_armor(*player, *max),
+        QueuedWrite::PlayerLock { player, locked } => server.set_locked(*player, *locked),
+        QueuedWrite::SetSurface {
+            ent,
+            friction,
+            elasticity,
+        } => server.set_entity_surface(*ent, *friction, *elasticity),
         QueuedWrite::NpcWeapon { ent, class } => server.set_npc_weapon(*ent, class),
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())
