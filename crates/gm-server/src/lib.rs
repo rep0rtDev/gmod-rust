@@ -947,6 +947,10 @@ pub struct Npc {
     pub melee_hit_at: Option<u64>,
     /// Set by an addon's `npc_target` clear: no target is picked until the next `npc_target`.
     pub passive: bool,
+    /// Tick of the last shot (the shoot sequence runs 7 ticks past it) and the sequence to
+    /// return to when combat ends.
+    pub last_shot: u64,
+    pub rest_sequence: Option<&'static str>,
     pub spawn_tick: u64,
     pub next_think: u64,
     pub think_interval: u8,
@@ -995,6 +999,8 @@ pub const NPC_AIM_CONE_DEG: f32 = 5.0;
 /// The NPC fires once its body yaw is within this many degrees of the target.
 const NPC_FIRE_FACING_DEG: f32 = 15.0;
 const NPC_EYE_HEIGHT: f32 = 64.0;
+/// Eye height of an armed NPC firing from the crouch it takes in combat (game: origin + 40).
+const NPC_CROUCH_EYE_HEIGHT: f32 = 40.0;
 const NPC_CHEST_HEIGHT: f32 = 36.0;
 
 /// Classes that engage players on sight.
@@ -1022,6 +1028,16 @@ pub fn npc_hostile(class: &str) -> bool {
             | "npc_barnacle"
             | "npc_rollermine"
     )
+}
+
+/// Sequences an armed NPC shows in combat: (firing, between bursts). Measured on the soldier
+/// (server_npc_fire_soldier: `shootSMG1c` for 7 ticks per shot, `CrouchIdle` for the rest of
+/// the gap); other classes are unmeasured and keep their sequence.
+pub fn npc_combat_sequences(class: &str) -> Option<(&'static str, &'static str)> {
+    match class {
+        "npc_combine_s" => Some(("shootSMG1c", "CrouchIdle")),
+        _ => None,
+    }
 }
 
 /// Hitscan weapon an NPC fires: (ammo, pellets per shot). Melee and projectile weapons give None.
@@ -5429,6 +5445,8 @@ impl<'w> Server<'w> {
                 swing_until: 0,
                 melee_hit_at: None,
                 passive: false,
+                last_shot: 0,
+                rest_sequence: None,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,
@@ -5476,6 +5494,17 @@ impl<'w> Server<'w> {
         }
         let class_scale = if n.class == "npc_zombie" { 0.5 } else { 1.0 };
         n.health -= amount * weapons::npc_hitgroup_scale(group) * class_scale;
+        if n.health > 0.0 && n.target.is_some() && npc_weapon_shot(&n.weapon).is_some() {
+            // measured (server_npc_flinch_soldier): no flinch animation; a hit inside a burst
+            // ends it with the usual gap after the last shot, a hit in the gap delays the next
+            // burst by one think
+            if n.burst_left > 0 && n.burst_left < NPC_BURST_SHOTS {
+                n.burst_left = 0;
+                n.next_shot = n.last_shot + NPC_BURST_GAP_TICKS;
+            } else if n.next_shot > tick {
+                n.next_shot += n.think_interval as u64;
+            }
+        }
         if n.health <= 0.0 {
             n.dead_at = Some(tick);
             n.movetype = 0;
@@ -5683,6 +5712,9 @@ impl<'w> Server<'w> {
                 n.melee_hit_at = None;
                 n.swing_until = 0;
                 n.burst_left = 0;
+                if let Some(rest) = n.rest_sequence.take() {
+                    n.sequence = rest;
+                }
                 self.npc_stop(id);
                 true
             }
@@ -5931,7 +5963,14 @@ impl<'w> Server<'w> {
         let Some((ammo, pellets)) = npc_weapon_shot(&n.weapon) else {
             return;
         };
-        let eye = n.pos + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT);
+        // in combat and standing still the NPC fires from a crouch
+        let crouched = n.target.is_some() && n.goal.is_none();
+        let eye_height = if crouched {
+            NPC_CROUCH_EYE_HEIGHT
+        } else {
+            NPC_EYE_HEIGHT
+        };
+        let eye = n.pos + Vec3::new(0.0, 0.0, eye_height);
         let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
             let pl = server.players.get(&p).filter(|pl| pl.alive)?;
@@ -5962,9 +6001,17 @@ impl<'w> Server<'w> {
                     if let Some(n) = self.npcs.get_mut(&id) {
                         n.target = None;
                         n.burst_left = 0;
+                        if let Some(rest) = n.rest_sequence.take() {
+                            n.sequence = rest;
+                        }
                     }
                 } else if self.npcs.get(&id).is_some_and(|n| n.chase != Some(p)) {
                     self.npc_chase(id, p, true);
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        if let Some(rest) = n.rest_sequence.take() {
+                            n.sequence = rest;
+                        }
+                    }
                 }
             }
             return;
@@ -5992,6 +6039,16 @@ impl<'w> Server<'w> {
             let max_turn = NPC_YAW_RATE * dt;
             n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
         }
+        if n.goal.is_none() {
+            if let Some((shoot, between)) = npc_combat_sequences(&n.class) {
+                let firing = n.shots > 0 && now < n.last_shot + n.think_interval as u64;
+                let seq = if firing { shoot } else { between };
+                if n.sequence != shoot && n.sequence != between {
+                    n.rest_sequence = Some(n.sequence);
+                }
+                n.sequence = seq;
+            }
+        }
         if err.abs() > NPC_FIRE_FACING_DEG || now < n.next_shot {
             return;
         }
@@ -6000,6 +6057,10 @@ impl<'w> Server<'w> {
         }
         n.burst_left -= 1;
         n.shots += 1;
+        n.last_shot = now;
+        if let Some((shoot, _)) = npc_combat_sequences(&n.class) {
+            n.sequence = shoot;
+        }
         n.next_shot = if n.burst_left == 0 {
             now + NPC_BURST_GAP_TICKS
         } else {
@@ -6212,6 +6273,8 @@ impl<'w> Server<'w> {
                 swing_until: 0,
                 melee_hit_at: None,
                 passive: false,
+                last_shot: 0,
+                rest_sequence: None,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,

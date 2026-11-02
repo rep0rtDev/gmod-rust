@@ -198,7 +198,9 @@ Tests (`gm-dedicated/tests/npc_entity.rs`): `armed_soldier_fires_bursts_at_a_vis
 
 Addon control: `npc_target` (`Server::npc_target(id, Some(player))`) forces the target, `npc_target` with no value drops it and sets `Npc::passive`, which keeps the NPC out of combat until the next `npc_target`; `npc_goto` / `npc_chase` / `npc_stop` are untouched.
 
-Pending: melee for headcrabs, antlions and the fast/poison zombies (unmeasured), the game's crouch-to-fire pose, hit reactions / flinch, squads and cover.
+Crouch pose and hits taken (measured, `server_npc_flinch_soldier`: two pistol bullets into a firing soldier): in combat and standing still the soldier fires from a crouch - eyes at origin + 40 (standing + 66), the hull stays 13 x 13 x 72; the sequence is `shootSMG1c` from the first shot for 7 ticks per shot (35 for a full burst) and `CrouchIdle` for the rest of the gap (21). A bullet hit plays no flinch; a hit inside a burst ends the burst (3 shots instead of 5, the next burst `NPC_BURST_GAP_TICKS` after the last shot), a hit in the gap delays the next burst by one think (gap 35). Ours: `NPC_CROUCH_EYE_HEIGHT` = 40 for sight and bullet origin while crouched, `npc_combat_sequences` (soldier only, other classes keep their sequence), `Npc::rest_sequence` restores the idle when the target is lost, dropped or cleared, the flinch rule in `damage_npc`. Test `soldier_hit_mid_burst_ends_it_and_crouches`.
+
+Pending: melee for headcrabs, antlions and the fast/poison zombies (unmeasured), combat sequences of other armed classes, squads and cover.
 
 ## Melee: measured inputs and our model
 

@@ -567,3 +567,78 @@ fn npc_target_overrides_and_clears_the_combat_target() {
     assert!(!server.npc_target(id, Some(9)));
     assert!(!server.npc_target(999, None));
 }
+
+/// Measured on the game's soldier (server_npc_flinch_soldier): no flinch animation; a hit
+/// inside a burst ends it (the next burst comes NPC_BURST_GAP_TICKS after the last shot), a
+/// hit in the gap delays the next burst by one think. In combat the soldier crouches: eyes at
+/// +40, `shootSMG1c` for 7 ticks per shot, `CrouchIdle` for the rest of the gap.
+#[test]
+fn soldier_hit_mid_burst_ends_it_and_crouches() {
+    let world = combat_server!(world);
+    let (mut server, idle, _start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    let rest = server.npcs[&id].sequence;
+    let mut shots = Vec::new();
+    let mut seqs = Vec::new();
+    let mut last = 0;
+    let mut hit_in_burst = None;
+    let mut hit_in_gap = None;
+    for tick in 0..400u64 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if n.shots != last {
+            shots.push(tick);
+            last = n.shots;
+            // the third shot of the second burst: a hit two ticks later
+            if n.shots == 8 {
+                hit_in_burst = Some(tick + 2);
+            }
+        }
+        if seqs.last().map(|(_, s)| *s) != Some(n.sequence) {
+            seqs.push((tick, n.sequence));
+        }
+        if hit_in_burst == Some(tick) || hit_in_gap == Some(tick) {
+            assert!(server.damage_npc(id, 1, 10.0, 0));
+        }
+        // the gap after the third burst: a hit 10 ticks into it
+        if last == 13 && hit_in_gap.is_none() && shots.len() == 13 {
+            hit_in_gap = Some(shots[12] + 10);
+        }
+    }
+    let gaps: Vec<u64> = shots.windows(2).map(|w| w[1] - w[0]).collect();
+    eprintln!("shots {shots:?}\ngaps {gaps:?}\nseqs {seqs:?}");
+    // burst 1: 5 shots, burst 2 cut to 3, burst 3: 5 shots, then the delayed burst 4
+    assert_eq!(&gaps[..4], &[7, 7, 7, 7]);
+    assert_eq!(gaps[4], gm_server::NPC_BURST_GAP_TICKS);
+    assert_eq!(&gaps[5..7], &[7, 7], "burst 2 before the hit");
+    assert_eq!(
+        gaps[7],
+        gm_server::NPC_BURST_GAP_TICKS,
+        "the hit ended burst 2"
+    );
+    assert_eq!(&gaps[8..12], &[7, 7, 7, 7], "burst 3");
+    assert_eq!(
+        gaps[12],
+        gm_server::NPC_BURST_GAP_TICKS + 7,
+        "the gap hit delays one think"
+    );
+    // pose: crouch sequences in combat, the shoot one while firing
+    assert!(seqs.iter().any(|(_, s)| *s == "shootSMG1c"));
+    assert!(seqs.iter().any(|(_, s)| *s == "CrouchIdle"));
+    let first_shoot = seqs.iter().find(|(_, s)| *s == "shootSMG1c").unwrap().0;
+    assert_eq!(
+        first_shoot, shots[0],
+        "shoot sequence starts with the first shot"
+    );
+    // 35 ticks of shooting then CrouchIdle for the first full burst
+    let after = seqs
+        .iter()
+        .find(|(t, s)| *t > shots[0] && *s == "CrouchIdle")
+        .unwrap()
+        .0;
+    assert_eq!(after - shots[0], 35);
+    // clearing the target restores the idle sequence
+    assert!(server.npc_target(id, None));
+    server.tick(&idle);
+    assert_eq!(server.npcs[&id].sequence, rest);
+}
