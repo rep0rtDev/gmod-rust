@@ -457,6 +457,65 @@ plain HTTP/1.1 with the standard library (`Content-Length` or chunked, 64 MiB ca
 integrity comes from the sha256 and the signatures, so TLS adds privacy, not correctness, and
 waits for a real client; a published package is capped at 50 MiB.
 
+## GLua surface
+
+The documented Garry's Mod Lua API, reproduced function by function inside every actor VM on top
+of the own `world` / `events` API (`crates/gm-script/src/glua/`). The catalogue is the wiki
+(`https://wiki.facepunch.com/gmod/~pagelist`, every function page's `<function>` markup: parent,
+realm, args, returns) in `tools/glua/manifest.json`: 5817 entries (5642 functions and hooks, 101
+enums, 72 structures), each with a status. Statuses are not hand-written: `cargo run -p gm-script
+--example glua_list` prints what a booted VM really provides (`lib.fn` from the global tables,
+`Class:method` from the metatables registered in `__glua_classes`, `Global.fn`),
+`tools/glua/build_manifest.py --present ... --stubs ...` writes them, and
+`tests/glua_coverage.rs` fails when the manifest claims an address the VM lacks. `glua::stub`
+registers a documented function that cannot work yet (wrong realm, no frontend): it exists,
+raises "not available in this realm yet" when called, and is counted as `stub`, never
+`implemented`. `docs/glua/coverage.md` is the generated summary per realm and per library /
+class. Everything is written from the documented behaviour; no Garry's Mod Lua is copied.
+
+Order of work: shared and server realms first (backend first), client / menu realm functions
+(render, surface, vgui, the panels) are catalogued and arrive with the frontend.
+
+Done in `glua/core.luau` (Luau, loaded at boot after the host API):
+
+- `Vector` / `Angle` / `Color` as tables with metatables (`x y z`, `p y r`, `r g b a`; the same
+  shape the host API's `{x, y, z}` tables use), the arithmetic metamethods, `tostring` in the
+  game's `%f %f %f` / `r g b a` form, and every documented method: Vector 33 (`Angle` is
+  Source's VectorAngles: +x is 0 0 0, straight up is pitch 270; `AngleEx`, `Rotate`,
+  `WithinAABox`, `IsEqualTol`, ...; `ToScreen` is client), Angle 18 (`Forward / Right / Up`
+  from the Source basis, `RotateAroundAxis` through Rodrigues on the basis vectors,
+  `SnapTo`, `Normalize` to -180..180), Color 28 (`ToHSV / ToHSL / ToHWB / ToHex / Lerp`, the
+  HSV/HSL/HWB getters and setters, `HSVToColor`, `HSLToColor`, `ColorToHSV`, `ColorToHSL`,
+  `ColorAlpha`, `ColorRand`, `IsColor`).
+- `math` (`Clamp`, `Round`, `Approach`, `ApproachAngle`, `AngleDifference`, `NormalizeAngle`,
+  `Remap`, `EaseInOut`, the Bezier / Catmull-Rom / B-spline curves, `Dist`, `Rand`, `SnapTo`,
+  `Truncate`, `IntToBin` / `BinToInt`, `tau`, `pow`, `mod`, the hyperbolic functions and
+  `log10` Luau lacks), `Lerp`, `LerpVector`, `LerpAngle`.
+- `string` (`Explode` / `Split` / `Implode`, `Replace` (plain), `Trim*`, `Left / Right / GetChar /
+  SetChar`, `StartsWith / EndsWith`, `PatternSafe`, `Comma`, `NiceSize`, `NiceTime`,
+  `FormattedTime` / `ToMinutesSeconds*`, `NiceName`, `CardinalToOrdinal`, the filename helpers,
+  `ToColor / FromColor`, `JavascriptSafe`, `Interpolate`, `ToTable`, `gfind`), the string
+  metatable indexes it so `s:Trim()` works.
+- `table` (`Copy` deep with cycles, `Merge`, `Inherit`, `Count`, `HasValue`, `KeyFromValue(s)`,
+  `GetKeys`, `Random` (value, key), `RemoveByValue`, `Reverse`, `Shuffle`, `IsSequential`,
+  `ClearKeys`, `CollapseKeyValue`, `Flip`, `ForceInsert`, `LowerKeyNames`,
+  `MemberValuesFromKey`, `GetWinningKey`, `FindNext / FindPrev`, `SortByKey / SortByMember /
+  SortDesc`, `Sanitise / DeSanitise`, `ToString`, `Pack`, `getn / maxn / foreach(i)`).
+- `bit` (LuaJIT semantics on Luau's `bit32`: results wrapped to signed 32-bit, shifts masked to
+  5 bits, `tohex` with the negative-length upper-case rule), `utf8.GetChar / sub / force`.
+- `hook`: `Add / Remove / Call / Run / GetTable` with handlers run in insertion order (a re-added
+  id keeps its place), the first non-nil return stops the chain, table ids are passed as the
+  first argument and dropped when `IsValid()` fails, then the gamemode's own method. The own
+  event bus feeds `Think` and `Tick` (`tick.pre`) and `OnEntityCreated` (`entity.spawned`);
+  the rest of the GM hooks arrive with their systems.
+- `timer` is the host prelude's measured library (see Timers); the GLua surface adds
+  `IsPaused` and `Check`, and the time globals `CurTime` / `RealTime` (tick x interval),
+  `SysTime`, `FrameTime`.
+- `FindMetaTable` over the registered classes.
+
+Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
+timers against documented values) and `glua_coverage`.
+
 ## Not yet
 
 Scripted entities' touches while both bodies sleep; the weapon selection

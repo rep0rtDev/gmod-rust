@@ -1,0 +1,119 @@
+//! GLua-compatible surface for actors: the documented Garry's Mod Lua API (libraries, classes,
+//! globals) installed into every actor VM on top of the own `world` / `events` API. Server and
+//! shared realms first; client / menu realm functions are catalogued in
+//! `tools/glua/manifest.json` and arrive with the frontend. Coverage is tracked function by
+//! function: `examples/glua_list.rs` lists what a VM really has, `tools/glua/build_manifest.py`
+//! writes the statuses, `tests/glua_coverage.rs` refuses a manifest that claims more.
+//!
+//! Everything here is written from the documented behaviour; no Garry's Mod Lua is copied.
+
+use std::sync::Arc;
+use std::time::Instant;
+
+use mlua::{Lua, Result, Table, Value};
+
+use crate::api::Shared;
+
+/// The core libraries in Luau: Vector / Angle / Color, math / string / table / bit / utf8
+/// extensions, hook, timer and the time globals.
+const CORE: &str = include_str!("core.luau");
+
+/// Registers a class metatable under `__glua_classes[name]` so the coverage listing (and
+/// `FindMetaTable`) can reach it.
+pub fn register_class(lua: &Lua, name: &str, meta: &Table) -> Result<()> {
+    let classes = classes(lua)?;
+    classes.set(name, meta.clone())
+}
+
+fn classes(lua: &Lua) -> Result<Table> {
+    let g = lua.globals();
+    Ok(match g.get::<Value>("__glua_classes")? {
+        Value::Table(t) => t,
+        _ => {
+            let t = lua.create_table()?;
+            g.set("__glua_classes", t.clone())?;
+            t
+        }
+    })
+}
+
+/// A documented function that exists but cannot do its job in this realm / build yet: calling
+/// it raises a clear error, and the coverage listing reports it as a stub, never as implemented.
+pub fn stub(lua: &Lua, address: &'static str) -> Result<mlua::Function> {
+    let g = lua.globals();
+    let stubs: Table = match g.get::<Value>("__glua_stubs")? {
+        Value::Table(t) => t,
+        _ => {
+            let t = lua.create_table()?;
+            g.set("__glua_stubs", t.clone())?;
+            t
+        }
+    };
+    stubs.set(address, true)?;
+    lua.create_function(move |_, _: mlua::Variadic<Value>| -> Result<()> {
+        Err(mlua::Error::runtime(format!(
+            "{address}: not available in this realm yet"
+        )))
+    })
+}
+
+pub fn install(lua: &Lua, _shared: Arc<Shared>) -> Result<()> {
+    let g = lua.globals();
+    let start = Instant::now();
+    g.set(
+        "__glua_systime",
+        lua.create_function(move |_, ()| Ok(start.elapsed().as_secs_f64()))?,
+    )?;
+    classes(lua)?;
+    lua.load(CORE).set_name("glua/core").exec()?;
+    let classes = classes(lua)?;
+    g.set(
+        "FindMetaTable",
+        lua.create_function(move |_, name: String| classes.get::<Value>(name.as_str()))?,
+    )?;
+    Ok(())
+}
+
+/// Every documented address the VM really provides: `lib.fn` for functions reachable from a
+/// global table, `Class:method` for the registered class metatables, `Global/fn` for global
+/// functions. Stubs are listed separately.
+pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
+    let g = lua.globals();
+    let mut present = Vec::new();
+    for pair in g.pairs::<String, Value>() {
+        let (name, v) = pair?;
+        match v {
+            Value::Function(_) => present.push(format!("Global.{name}")),
+            Value::Table(t) if !name.starts_with("__glua") => {
+                for inner in t.pairs::<String, Value>() {
+                    let (k, iv) = inner?;
+                    if !matches!(iv, Value::Nil | Value::Table(_)) {
+                        present.push(format!("{name}.{k}"));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Value::Table(classes) = g.get::<Value>("__glua_classes")? {
+        for pair in classes.pairs::<String, Table>() {
+            let (class, meta) = pair?;
+            for inner in meta.pairs::<String, Value>() {
+                let (k, iv) = inner?;
+                if matches!(iv, Value::Function(_)) && !k.starts_with("__") {
+                    present.push(format!("{class}:{k}"));
+                }
+            }
+        }
+    }
+    let mut stubs = Vec::new();
+    if let Value::Table(t) = g.get::<Value>("__glua_stubs")? {
+        for pair in t.pairs::<String, bool>() {
+            stubs.push(pair?.0);
+        }
+    }
+    present.sort();
+    present.dedup();
+    stubs.sort();
+    Ok((present, stubs))
+}

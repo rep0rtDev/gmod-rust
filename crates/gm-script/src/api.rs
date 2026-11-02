@@ -491,6 +491,10 @@ function timer.UnPause(name: string): boolean
     t.paused = false
     return true
 end
+function timer.IsPaused(name: string): boolean
+    local t = timers[name]
+    return t ~= nil and t.paused
+end
 function timer.Toggle(name: string): boolean
     local t = timers[name]
     if t == nil then return false end
@@ -502,6 +506,14 @@ function timer.Start(name: string): boolean
     if t == nil then return false end
     t.due = t.at + t.delay
     t.paused = false
+    return true
+end
+function timer.Stop(name: string): boolean
+    -- GLua: stop and rewind; `Start` runs it from the full delay again
+    local t = timers[name]
+    if t == nil then return false end
+    t.due = t.at + t.delay
+    t.paused = true
     return true
 end
 function timer.Adjust(name: string, delay: number, reps: number?, fn): boolean

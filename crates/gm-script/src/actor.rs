@@ -123,6 +123,7 @@ impl Actor {
             Ok(VmState::Continue)
         });
         api::install(&lua, self.shared.clone())?;
+        crate::glua::install(&lua, self.shared.clone())?;
         if let Some(saved) = &self.saved_state {
             lua.load(format!("state = {saved}"))
                 .set_name("state")
@@ -381,6 +382,11 @@ impl Actor {
     }
 
     /// For tests: evaluate an expression in the actor's VM.
+    /// The documented GLua addresses this VM provides (present, stubs); see `glua::list`.
+    pub fn glua_list(&self) -> mlua::Result<(Vec<String>, Vec<String>)> {
+        crate::glua::list(&self.lua)
+    }
+
     pub fn eval<T: mlua::FromLuaMulti>(&self, code: &str) -> mlua::Result<T> {
         self.lua.load(code).eval()
     }
