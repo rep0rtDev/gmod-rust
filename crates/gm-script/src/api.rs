@@ -118,6 +118,18 @@ pub enum QueuedWrite {
         ent: u32,
         rate: f32,
     },
+    NpcMoveInterval {
+        ent: u32,
+        seconds: f32,
+    },
+    NpcForceCrouch {
+        ent: u32,
+        on: Option<bool>,
+    },
+    NpcMovePause {
+        ent: u32,
+        paused: bool,
+    },
     NpcArrival {
         ent: u32,
         dist: f32,
@@ -1628,6 +1640,27 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     QueuedWrite::NpcMaxYaw {
                         ent,
                         rate: t.get::<Option<f32>>("rate")?.unwrap_or(0.0),
+                    }
+                }
+                "npc_move_interval" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NpcMoveInterval {
+                        ent,
+                        seconds: t.get::<Option<f32>>("seconds")?.unwrap_or(0.0),
+                    }
+                }
+                "npc_force_crouch" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NpcForceCrouch {
+                        ent,
+                        on: t.get::<Option<bool>>("on")?,
+                    }
+                }
+                "npc_move_pause" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NpcMovePause {
+                        ent,
+                        paused: t.get::<Option<bool>>("paused")?.unwrap_or(true),
                     }
                 }
                 "npc_arrival" => {
@@ -3619,6 +3652,11 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::NpcGoto { ent, pos, run } => server.npc_goto(*ent, *pos, *run),
         QueuedWrite::NpcChase { ent, player, run } => server.npc_chase(*ent, *player, *run),
         QueuedWrite::NpcMaxYaw { ent, rate } => server.npc_set_max_yaw(*ent, *rate),
+        QueuedWrite::NpcMoveInterval { ent, seconds } => {
+            server.npc_set_move_interval(*ent, *seconds)
+        }
+        QueuedWrite::NpcForceCrouch { ent, on } => server.npc_set_force_crouch(*ent, *on),
+        QueuedWrite::NpcMovePause { ent, paused } => server.npc_move_pause(*ent, *paused),
         QueuedWrite::NpcArrival { ent, dist } => server.npc_set_arrival(*ent, *dist),
         QueuedWrite::NpcTarget { ent, player } => server.npc_target(*ent, *player),
         QueuedWrite::NpcStop { ent } => {

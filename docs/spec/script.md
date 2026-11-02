@@ -776,6 +776,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `NPC:SetMoveInterval(seconds)` fixes the NPC's think cadence (rounded to 1..=255 ticks; 0
+  restores the measured near / far 7 / 13 ticks), `NPC:SetForceCrouch(on)` makes an armed NPC
+  fire from a crouch (true) or never (false; nil returns to "in combat and standing still"),
+  `NPC:MovePause()` / `MoveStart()` halt and resume the current path (no path: no-op). Live NPCs
+  only; no readbacks (the game has none for these either except `GetMoveInterval`, a stub).
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.

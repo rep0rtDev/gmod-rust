@@ -1650,6 +1650,10 @@ pub struct Npc {
     pub spawn_tick: u64,
     pub next_think: u64,
     pub think_interval: u8,
+    /// `NPC:SetMoveInterval`: a fixed think interval (ticks) instead of the measured near / far one.
+    pub move_interval: Option<u8>,
+    /// `NPC:SetForceCrouch`: fire from a crouch regardless of the combat state (None: derived).
+    pub force_crouch: Option<bool>,
 }
 
 /// Corners of a navigation path and the one the NPC is heading for.
@@ -9139,6 +9143,8 @@ impl<'w> Server<'w> {
             shots: 0,
             chase_reach: NPC_CHASE_REACH,
             max_yaw: None,
+            move_interval: None,
+            force_crouch: None,
             swing_until: 0,
             melee_hit_at: None,
             melee_hits_left: 0,
@@ -9539,6 +9545,47 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// `NPC:SetMoveInterval(seconds)`: the NPC thinks every `seconds` (1..=255 ticks) instead of
+    /// the measured near / far cadence; 0 restores it. Live NPCs only.
+    pub fn npc_set_move_interval(&mut self, id: u32, seconds: f32) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) if n.dead_at.is_none() => {
+                n.move_interval = (seconds.is_finite() && seconds > 0.0).then(|| {
+                    (seconds / gm_core::tick::DEFAULT_TICK_INTERVAL)
+                        .round()
+                        .clamp(1.0, 255.0) as u8
+                });
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `NPC:SetForceCrouch(on)`: fire from a crouch (or never); `None` returns to the derived pose.
+    pub fn npc_set_force_crouch(&mut self, id: u32, on: Option<bool>) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) if n.dead_at.is_none() => {
+                n.force_crouch = on;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `NPC:MovePause` / `MoveStart`: halt the current path (the NPC stands on it) and resume it.
+    pub fn npc_move_pause(&mut self, id: u32, paused: bool) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) if n.dead_at.is_none() => match n.goal.as_mut() {
+                Some(g) => {
+                    g.halt = paused;
+                    true
+                }
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
     pub fn npc_set_arrival(&mut self, id: u32, dist: f32) -> bool {
         match self.npcs.get_mut(&id) {
             Some(n) if n.dead_at.is_none() => {
@@ -9638,11 +9685,11 @@ impl<'w> Server<'w> {
             let cluster = self.collision.cluster_at(n.pos + Vec3::new(0.0, 0.0, 36.0));
             let far = eyes.iter().all(|&e| !self.collision.visible(e, cluster));
             let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
-            n.think_interval = if far {
+            n.think_interval = n.move_interval.unwrap_or(if far {
                 NPC_THINK_TICKS_FAR
             } else {
                 NPC_THINK_TICKS
-            };
+            });
             n.next_think = now + n.think_interval as u64;
             thought.push(id);
             if let Some(p) = n.chase {
@@ -9925,7 +9972,9 @@ impl<'w> Server<'w> {
         };
         let n_weapon = n.weapon.clone();
         // in combat and standing still the NPC fires from a crouch
-        let crouched = n.target.is_some() && n.goal.is_none();
+        let crouched = n
+            .force_crouch
+            .unwrap_or(n.target.is_some() && n.goal.is_none());
         let eye_height = if crouched {
             NPC_CROUCH_EYE_HEIGHT
         } else {
@@ -10885,6 +10934,8 @@ impl<'w> Server<'w> {
                 shots: 0,
                 chase_reach: NPC_CHASE_REACH,
                 max_yaw: None,
+                move_interval: None,
+                force_crouch: None,
                 swing_until: 0,
                 melee_hit_at: None,
                 melee_hits_left: 0,

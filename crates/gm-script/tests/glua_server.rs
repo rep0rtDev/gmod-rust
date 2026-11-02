@@ -2459,3 +2459,37 @@ fn move_final_fields_round_trip() {
         .unwrap();
     assert_eq!(seen, (18.0, 160.0, 200.0));
 }
+
+#[test]
+fn npc_move_interval_crouch_pause_writes() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            local n = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.NPC }, __glua_classes.Entity)
+            n:SetMoveInterval(0.5) n:SetForceCrouch(true) n:SetForceCrouch(nil) n:MovePause() n:MoveStart() end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    let text = format!("{writes:?}");
+    for want in [
+        "NpcMoveInterval { ent: 5, seconds: 0.5 }",
+        "NpcForceCrouch { ent: 5, on: Some(true) }",
+        "NpcForceCrouch { ent: 5, on: None }",
+        "NpcMovePause { ent: 5, paused: true }",
+        "NpcMovePause { ent: 5, paused: false }",
+    ] {
+        assert!(text.contains(want), "{want} in {text}");
+    }
+}
