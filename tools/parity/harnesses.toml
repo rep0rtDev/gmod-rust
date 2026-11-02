@@ -3716,6 +3716,26 @@ crates = ["gm-physics", "gm-server"]
 pos = 4.0
 
 [[harness]]
+name = "physgun_ragdoll_head_grab"
+scenario = "physgun/ragdoll_head_grab"
+compare = "ragdoll_parts"
+realm = "server"
+crates = ["gm-physics", "gm-server"]
+
+[harness.tolerance]
+pos = 4.0
+
+[[harness]]
+name = "physgun_ragdoll_foot_grab"
+scenario = "physgun/ragdoll_foot_grab"
+compare = "ragdoll_parts"
+realm = "server"
+crates = ["gm-physics", "gm-server"]
+
+[harness.tolerance]
+pos = 4.0
+
+[[harness]]
 name = "phys_ragdoll_kleiner_hang_side"
 scenario = "phys/ragdoll_kleiner_hang_side"
 compare = "ragdoll_parts"

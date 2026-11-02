@@ -1,0 +1,59 @@
+{
+ "name": "physgun_ragdoll_foot_grab",
+ "kind": "physgun",
+ "map": "gm_construct",
+ "model": "models/kleiner.mdl",
+ "start": [
+  823.235,
+  -600.0,
+  -143.6
+ ],
+ "angles": [
+  -1.0,
+  90.7,
+  0
+ ],
+ "prop": [
+  823.235,
+  -480.0,
+  -80.0
+ ],
+ "prop_angles": [
+  0,
+  0,
+  0
+ ],
+ "frozen": true,
+ "segments": [
+  {
+   "ticks": 20,
+   "buttons": 0,
+   "pitch": -1.0,
+   "yaw": 90.7
+  },
+  {
+   "ticks": 40,
+   "buttons": 1,
+   "pitch": -1.0,
+   "yaw": 90.7
+  },
+  {
+   "ticks": 60,
+   "buttons": 1,
+   "pitch": -1.0,
+   "yaw": 120.7
+  },
+  {
+   "ticks": 1,
+   "buttons": 2049,
+   "pitch": -1.0,
+   "yaw": 120.7
+  },
+  {
+   "ticks": 100,
+   "buttons": 0,
+   "pitch": -1.0,
+   "yaw": 120.7
+  }
+ ]
+}

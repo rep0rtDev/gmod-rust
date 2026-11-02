@@ -562,6 +562,13 @@ SCENARIOS.physgun = function(scn, done)
 				eye = { e.x, e.y, e.z },
 				eye_ang = { ea.p, ea.y, ea.r },
 			}
+			-- what the physgun's ray sees (MASK_SHOT hits the ragdoll's hitboxes)
+			local tr = util.TraceLine({ start = e, endpos = e + ea:Forward() * 4096, filter = ply, mask = MASK_SHOT })
+			ticks[#ticks].trace = {
+				ent = IsValid(tr.Entity) and tr.Entity:GetClass() or (tr.HitWorld and "world" or ""),
+				bone = tr.PhysicsBone, hitbox = tr.HitBox, group = tr.HitGroup,
+				pos = { tr.HitPos.x, tr.HitPos.y, tr.HitPos.z },
+			}
 			if ent:GetPhysicsObjectCount() > 1 then
 				local parts = {}
 				for i = 0, ent:GetPhysicsObjectCount() - 1 do
