@@ -352,3 +352,36 @@ fn fire_bullets_and_npc_damage_are_asked() {
     );
     server.request_hook = None;
 }
+
+#[test]
+fn view_punch_pickup_object_step_sound_and_ladder_are_server_operations() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    for m in ["models/nova/chair_wood01.mdl", "models/buggy.mdl"] {
+        match gm_dedicated::model_info(&mount, m) {
+            Ok(info) => {
+                eprintln!("{m}: {} attachments", info.attachments.len());
+                server.register_model(m, info);
+            }
+            Err(e) => panic!("{m}: {e}"),
+        }
+    }
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    assert!(server.view_punch(1, Some(Vec3::new(5.0, 0.0, 0.0)), None, true));
+    assert!(server.view_punch(1, Some(Vec3::new(1.0, 2.0, 0.0)), None, true));
+    assert!((server.players[&1].state.punch - Vec3::new(6.0, 2.0, 0.0)).length() < 1e-4);
+    assert!(server.view_punch(1, Some(Vec3::ZERO), Some(Vec3::ZERO), false));
+    assert_eq!(server.players[&1].state.punch, Vec3::ZERO);
+    assert!(
+        !server.pickup_object(1, 99_999),
+        "no such entity, nothing carried"
+    );
+    assert!(server.exit_ladder(1));
+    assert!(!server.view_punch(7, None, None, false), "no such player");
+}

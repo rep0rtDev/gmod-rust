@@ -862,7 +862,12 @@ from the mover (0 dry, 1 feet, 2 waist, 3 eyes); props carry no water level, so 
 position and angles instead of the server's pick (we have no spawn-point entities, so
 `IsSpawnpointSuitable` is asked only about team spawn entities): the default
 `PlayerSelectSpawn` hands a player whose team has spawn classes (`team.SetSpawnPoint`) to
-`PlayerSelectTeamSpawn`, which picks a random spawn entity `IsSpawnpointSuitable` accepts. `GetPreferredCarryAngles` (the hook, else the scripted
+`PlayerSelectTeamSpawn`, which picks a random spawn entity `IsSpawnpointSuitable` accepts. `Player:ViewPunch` / `SetViewPunchAngles` / `SetViewPunchVelocity` /
+`ViewPunchReset` write the mover's view punch spring (angle in Source degrees, the spring in
+gm-move decays it), `GetViewPunchAngles` / `GetPunchAngle` / `GetViewPunchVelocity` read it from
+the snapshot; `PickupObject` carries an entity as +use would (no reach check, the pickup rules and
+`PlayerPickup` still apply), `PlayStepSound` plays one footstep through the footstep rule (right
+foot), `ExitLadder` lets go of the mover's ladder. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

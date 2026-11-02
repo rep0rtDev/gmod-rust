@@ -84,6 +84,9 @@ pub struct PlayerSnap {
     pub driving: u32,
     pub use_target: u32,
     pub flashlight: bool,
+    pub punch: Vec3,
+    pub punch_vel: Vec3,
+    pub ladder: bool,
     pub frags: u32,
     pub deaths: u32,
     pub max_armor: i32,
@@ -482,6 +485,9 @@ impl Snapshot {
                             driving: p.driving.map_or(0, |d| d.prop),
                             use_target: p.use_target.unwrap_or(0),
                             flashlight: p.flashlight,
+                            punch: p.state.punch,
+                            punch_vel: p.state.punch_vel,
+                            ladder: p.state.ladder != 0,
                         },
                     )
                 })

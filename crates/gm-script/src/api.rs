@@ -263,6 +263,27 @@ pub enum QueuedWrite {
         player: u32,
         on: bool,
     },
+    /// `ViewPunch` (`add`) / `SetViewPunchAngles` / `SetViewPunchVelocity` / `ViewPunchReset`.
+    PlayerPunch {
+        player: u32,
+        angle: Option<Vec3>,
+        vel: Option<Vec3>,
+        add: bool,
+    },
+    /// `Player:PickupObject`: carry `ent` as +use would.
+    PlayerPickupObject {
+        player: u32,
+        ent: u32,
+    },
+    /// `Player:PlayStepSound`.
+    PlayerStepSound {
+        player: u32,
+        volume: f32,
+    },
+    /// `Player:ExitLadder`.
+    PlayerExitLadder {
+        player: u32,
+    },
     /// `SetFrags` / `SetDeaths`: `None` keeps that counter.
     PlayerSetScore {
         player: u32,
@@ -503,6 +524,9 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("driving", p.driving)?;
     t.set("use_target", p.use_target)?;
     t.set("flashlight", p.flashlight)?;
+    t.set("punch", vec3_table(lua, p.punch)?)?;
+    t.set("punch_vel", vec3_table(lua, p.punch_vel)?)?;
+    t.set("ladder", p.ladder)?;
     t.set(
         "ammo",
         p.ammo
@@ -576,6 +600,14 @@ fn vec3_table(lua: &Lua, v: Vec3) -> Result<Table> {
     t.set("y", v.y)?;
     t.set("z", v.z)?;
     Ok(t)
+}
+
+/// A `{x, y, z}` table argument of a queued write (anything else is the zero vector).
+fn value_vec3(v: &Value) -> mlua::Result<Vec3> {
+    match v {
+        Value::Table(t) => table_vec3(t),
+        _ => Ok(Vec3::ZERO),
+    }
 }
 
 fn table_vec3(t: &Table) -> Result<Vec3> {
@@ -1475,6 +1507,47 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     mode: None,
                     fx: Some(int_arg(&arg)?.clamp(0, 255) as u8),
                 },
+                "player.view_punch" => QueuedWrite::PlayerPunch {
+                    player: ent,
+                    angle: Some(value_vec3(&arg)?),
+                    vel: None,
+                    add: true,
+                },
+                "player.set_view_punch" => QueuedWrite::PlayerPunch {
+                    player: ent,
+                    angle: Some(value_vec3(&arg)?),
+                    vel: None,
+                    add: false,
+                },
+                "player.set_view_punch_vel" => QueuedWrite::PlayerPunch {
+                    player: ent,
+                    angle: None,
+                    vel: Some(value_vec3(&arg)?),
+                    add: false,
+                },
+                "player.view_punch_reset" => QueuedWrite::PlayerPunch {
+                    player: ent,
+                    angle: Some(Vec3::ZERO),
+                    vel: Some(Vec3::ZERO),
+                    add: false,
+                },
+                "player.pickup_object" => QueuedWrite::PlayerPickupObject {
+                    player: ent,
+                    ent: match &arg {
+                        Value::Integer(i) => *i as u32,
+                        Value::Number(n) => *n as u32,
+                        _ => 0,
+                    },
+                },
+                "player.step_sound" => QueuedWrite::PlayerStepSound {
+                    player: ent,
+                    volume: match &arg {
+                        Value::Integer(i) => *i as f32,
+                        Value::Number(n) => *n as f32,
+                        _ => 1.0,
+                    },
+                },
+                "player.exit_ladder" => QueuedWrite::PlayerExitLadder { player: ent },
                 "player.set_flashlight" => QueuedWrite::PlayerSetFlashlight {
                     player: ent,
                     on: matches!(arg, Value::Boolean(true)),
@@ -2481,6 +2554,15 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::PlayerSetFlashlight { player, on } => {
             server.set_player_flashlight(*player, *on)
         }
+        QueuedWrite::PlayerPunch {
+            player,
+            angle,
+            vel,
+            add,
+        } => server.view_punch(*player, *angle, *vel, *add),
+        QueuedWrite::PlayerPickupObject { player, ent } => server.pickup_object(*player, *ent),
+        QueuedWrite::PlayerStepSound { player, volume } => server.play_step_sound(*player, *volume),
+        QueuedWrite::PlayerExitLadder { player } => server.exit_ladder(*player),
         QueuedWrite::PlayerSetScore {
             player,
             frags,

@@ -5671,6 +5671,69 @@ impl<'w> Server<'w> {
     }
 
     /// Script `Player:Flashlight` / `SetFrags` / `SetDeaths`.
+    /// `Player:ViewPunch` and friends: `angle` / `vel` replace the view punch spring's angle /
+    /// velocity (`add`: the angle is added instead); the spring in gm-move decays it.
+    pub fn view_punch(
+        &mut self,
+        id: u32,
+        angle: Option<Vec3>,
+        vel: Option<Vec3>,
+        add: bool,
+    ) -> bool {
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        if let Some(a) = angle {
+            p.state.punch = if add { p.state.punch + a } else { a };
+        }
+        if let Some(v) = vel {
+            p.state.punch_vel = v;
+        }
+        true
+    }
+
+    /// `Player:PickupObject`: carry `ent` as a +use press on it would (same reach-free path:
+    /// no distance check, the pickup rules and `PlayerPickup` still apply).
+    pub fn pickup_object(&mut self, player: u32, ent: u32) -> bool {
+        let Some(p) = self.players.get(&player) else {
+            return false;
+        };
+        if p.carry.is_some() || !p.alive {
+            return false;
+        }
+        let yaw = p.view_angles.y;
+        self.try_pickup(player, ent, yaw);
+        self.players.get(&player).is_some_and(|p| p.carry.is_some())
+    }
+
+    /// `Player:PlayStepSound`: one footstep at the player's feet through the footstep rule
+    /// (`PlayerFootstep` asked, surface sound by the ground material; the right foot).
+    pub fn play_step_sound(&mut self, player: u32, volume: f32) -> bool {
+        let Some(p) = self.players.get(&player) else {
+            return false;
+        };
+        let feet = p.state.origin;
+        self.footstep(
+            player,
+            feet,
+            gm_move::Step {
+                right: true,
+                volume: volume.clamp(0.0, 1.0),
+            },
+            None,
+        );
+        true
+    }
+
+    /// `Player:ExitLadder`: lets go of the ladder the mover has the player on.
+    pub fn exit_ladder(&mut self, id: u32) -> bool {
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        p.state.ladder = 0;
+        true
+    }
+
     pub fn set_player_flashlight(&mut self, id: u32, on: bool) -> bool {
         match self.players.get_mut(&id) {
             Some(p) => {
