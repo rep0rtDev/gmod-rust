@@ -712,6 +712,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- Entity outputs as base_entity keeps them: `ENTITY:StoreOutput(name, "targets,input,param,delay,
+  times")`, `TriggerOutput(name, activator, data)` fires every stored entry through `Entity:Fire`
+  (`!self` / `!activator` / named targets; times counts down, -1 forever), `AddOutputFromKeyValue`
+  takes `On*` keys, `AddOutputFromAcceptInput` the `AddOutput` input, `ClearAllOutputs` drops them.
+  `ENTITY:CanProperty(ply, property)` and `ENTITY:CanTool(ply, tr, mode, tool, button)` of the
+  scripted entity under the cursor are asked after the GM hooks.
 - `NPC:SetArrivalDistance(d)` sets the chase stop distance the mover uses (read back as
   `GetArrivalDistance`). `http.Fetch` / `Post` stay stubs: the host HTTP is a plain-text
   registry fetcher without TLS, not a general client.

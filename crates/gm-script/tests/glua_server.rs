@@ -2110,3 +2110,50 @@ fn npc_arrival_distance_write() {
         "{writes:?}"
     );
 }
+
+#[test]
+fn entity_outputs_fire_through_inputs() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"AcceptInput\", \"t\", function(ent, input, activator, caller, value)
+                state.n = (state.n or 0) + 1; state.input, state.value, state.caller = input, tostring(value), caller:EntIndex() end)
+            hook.Add(\"Think\", \"t\", function()
+                local e = Entity(5)
+                e:StoreOutput(\"OnFoo\", \"!self,Bar,7,0,1\")
+                state.kv = e:AddOutputFromKeyValue(\"OnBaz\", \"!activator,Q,,0,-1\")
+                state.kv2 = e:AddOutputFromKeyValue(\"model\", \"x\")
+                state.ai = e:AddOutputFromAcceptInput(\"AddOutput\", \"OnBaz !self,R,1,0,-1\")
+                e:TriggerOutput(\"OnFoo\", e)
+                e:TriggerOutput(\"OnFoo\", e)
+                state.after_foo = state.n
+                e:TriggerOutput(\"OnBaz\", Entity(6), \"d\")
+            end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let (n, after_foo, input, value, caller): (i32, i32, String, String, i32) = rt.actors()[0]
+        .eval("return state.n, state.after_foo, state.input, state.value, state.caller")
+        .unwrap();
+    assert_eq!(
+        (after_foo, n),
+        (1, 3),
+        "once for OnFoo (times 1), twice for OnBaz"
+    );
+    // the list is walked from the newest entry down, so the last input seen is the first stored one
+    assert_eq!((input.as_str(), value.as_str(), caller), ("Q", "d", 5));
+    let flags: Vec<bool> = rt.actors()[0]
+        .eval("return { state.kv, not state.kv2, state.ai }")
+        .unwrap();
+    assert_eq!(flags, vec![true; 3]);
+}

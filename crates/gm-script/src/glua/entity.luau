@@ -1645,7 +1645,48 @@ function ENT:Input(name, activator, caller, data) if hook.Run("AcceptInput", sel
 function ENT:Fire(input, param, delay, activator, caller)
     if (delay or 0) > 0 then local me = self; timer.Simple(delay, function() if IsValid(me) then me:Input(input, activator, caller, param) end end) else self:Input(input, activator, caller, param) end
 end
-function ENT:ClearAllOutputs() end
+-- Lua-side entity outputs as base_entity keeps them: "targets,input,param,delay,times" per
+-- output name; TriggerOutput fires every stored entry through Entity:Fire (times counts down,
+-- -1 = forever), !self / !activator resolve, other targets by name
+-- @hook ENTITY:StoreOutput
+function ENT:StoreOutput(name, info)
+    local outs = rawget(self, "__outputs") or {}
+    rawset(self, "__outputs", outs)
+    outs[name] = outs[name] or {}
+    local f = {}
+    for part in string.gmatch(tostring(info) .. ",", "([^,]*),") do f[#f + 1] = part end
+    table.insert(outs[name], { entities = f[1] or "", input = f[2] or "", param = f[3] or "", delay = tonumber(f[4]) or 0, times = tonumber(f[5]) or -1 })
+end
+-- @hook ENTITY:TriggerOutput
+function ENT:TriggerOutput(name, activator, data)
+    local outs = rawget(self, "__outputs")
+    local list = outs and outs[name]
+    if not list then return end
+    for i = #list, 1, -1 do
+        local o = list[i]
+        local targets
+        if o.entities == "!self" then targets = { self }
+        elseif o.entities == "!activator" then targets = { activator }
+        else targets = (ents.FindByName and ents.FindByName(o.entities)) or {} end
+        for _, t in ipairs(targets) do
+            if IsValid(t) then t:Fire(o.input, o.param ~= "" and o.param or data, o.delay, activator, self) end
+        end
+        if o.times > 0 then
+            o.times = o.times - 1
+            if o.times == 0 then table.remove(list, i) end
+        end
+    end
+end
+-- @hook ENTITY:AddOutputFromKeyValue
+function ENT:AddOutputFromKeyValue(k, v) if string.sub(tostring(k), 1, 2) == "On" then self:StoreOutput(k, v) return true end return false end
+-- @hook ENTITY:AddOutputFromAcceptInput
+function ENT:AddOutputFromAcceptInput(name, data)
+    if name ~= "AddOutput" then return false end
+    local k, v = string.match(tostring(data), "^%s*(%S+)%s+(.-)%s*$")
+    if k then return self:AddOutputFromKeyValue(k, v) end
+    return false
+end
+function ENT:ClearAllOutputs() rawset(self, "__outputs", {}) end
 function ENT:EmitStepSound() end
 FL_ONGROUND, FL_DUCKING, FL_ANIMDUCKING, FL_WATERJUMP, FL_ONTRAIN, FL_INRAIN, FL_FROZEN, FL_ATCONTROLS, FL_CLIENT, FL_FAKECLIENT, FL_INWATER, FL_FLY, FL_SWIM, FL_CONVEYOR, FL_NPC, FL_GODMODE, FL_NOTARGET, FL_AIMTARGET, FL_PARTIALGROUND, FL_STATICPROP, FL_GRAPHED, FL_GRENADE, FL_STEPMOVEMENT, FL_DONTTOUCH, FL_BASEVELOCITY, FL_WORLDBRUSH, FL_OBJECT, FL_KILLME, FL_ONFIRE, FL_DISSOLVING, FL_TRANSRAGDOLL, FL_UNBLOCKABLE_BY_PLAYER = 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216, 33554432, 67108864, 134217728, 268435456, 536870912, 1073741824, 2147483648
 MOVETYPE_NONE, MOVETYPE_ISOMETRIC, MOVETYPE_WALK, MOVETYPE_STEP, MOVETYPE_FLY, MOVETYPE_FLYGRAVITY, MOVETYPE_VPHYSICS, MOVETYPE_PUSH, MOVETYPE_NOCLIP, MOVETYPE_LADDER, MOVETYPE_OBSERVER, MOVETYPE_CUSTOM = 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11

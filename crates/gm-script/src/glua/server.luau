@@ -752,7 +752,12 @@ local prev_move = {}
         hook.Run("OnUndo", Player(p.player), p.name, u.CustomUndoText or "")
         hook.Run("PostUndo", u, 1)
     end)
-    events.on("player.property_request", function(p) if hook.Run("CanProperty", Player(p.player), p.property, Entity(p.entity)) == false then return false end end)
+    -- @hook ENTITY:CanProperty
+    events.on("player.property_request", function(p)
+        if hook.Run("CanProperty", Player(p.player), p.property, Entity(p.entity)) == false then return false end
+        local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(p.entity)
+        if si and si.CanProperty and si:CanProperty(Player(p.player), p.property) == false then return false end
+    end)
     events.on("player.pickup_weapon_request", function(p) if hook.Run("PlayerCanPickupWeapon", Player(p.player), __glua_classes.Weapon.__from(p.class, p.player)) == false then return false end end)
     events.on("player.enter_vehicle_request", function(p) if hook.Run("CanPlayerEnterVehicle", Player(p.player), Entity(p.vehicle), 0) == false then return false end end)
     events.on("player.switch_flashlight_request", function(p) if hook.Run("PlayerSwitchFlashlight", Player(p.player), p.on ~= 0) == false then return false end end)
@@ -856,9 +861,16 @@ local prev_move = {}
     -- @hook SANDBOX:PlayerSpawnedRagdoll
     -- a ragdoll model (the server knows from its .phy) asks PlayerSpawnRagdoll instead
     events.on("prop.spawn_request", function(p) if hook.Run(p.ragdoll and "PlayerSpawnRagdoll" or "PlayerSpawnProp", Player(p.player), p.model) == false then return false end end)
+    -- @hook ENTITY:CanTool
     events.on("tool.before", function(p)
         local ply = Player(p.player)
-        if hook.Run("CanTool", ply, ply:GetEyeTrace(), p.tool, nil, p.right == 1 and 2 or 1) == false then return false end
+        local tr = ply:GetEyeTrace()
+        local button = p.right == 1 and 2 or 1
+        if hook.Run("CanTool", ply, tr, p.tool, nil, button) == false then return false end
+        if IsValid(tr.Entity) then
+            local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(tr.Entity:EntIndex())
+            if si and si.CanTool and si:CanTool(ply, tr, p.tool, nil, button) == false then return false end
+        end
     end)
     events.on("player.chat", function(p)
         local r = hook.Run("PlayerSay", Player(p.player), p.text, false)
