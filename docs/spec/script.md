@@ -652,6 +652,28 @@ The rest of `Entity` and `NPC` (end of `glua/entity.luau`):
   NPC schedule / condition / relationship / capability / behaviour / sentence surface - the AI
   has none of those by design.
 
+The rest of `Player`, `PhysObj`, `Weapon` and `Vehicle` (end of `glua/entity.luau`):
+
+- `PhysObj` is one shared metatable over the owning entity (`__ent`): `GetInvMass / GetEnergy /
+  GetVelocityAtPoint / GetPositionMatrix / LocalToWorldVector / WorldToLocalVector`,
+  `ApplyForceOffset` (centre force, the torque is dropped), `IsGravityEnabled /
+  IsCollisionEnabled` remember the last `Enable*` call. Angular velocity, damping, drag, AABB,
+  mesh, shadow and game flags are stubs: the snapshot carries no angular state.
+- `Player`: the engine's movement constants (`GetHull` 32x32x72, `GetHullDuck` 36, view offsets
+  64 / 28, step 18, `GetMaxSpeed` from the walk / run speeds), `SetActiveWeapon /
+  SwitchToDefaultWeapon` through the weapon-select op, `PickupWeapon` (give + remove),
+  `PhysgunUnfreeze / UnfreezePhysicsObjects / AddFrozenPhysicsObject` through the freeze op on
+  the player's frozen props, `UniqueIDTable`, `OwnerSteamID64`. Ammo, vehicles, flashlight,
+  spectating, view punch, animation events, kick / ban and every setter without a server op are
+  stubs.
+- `Weapon`: reads of the registered SWEP table (`GetWeaponViewModel / GetWeaponWorldModel /
+  GetWeight / GetHoldType / AllowsAutoSwitch* / GetPrimaryAmmoType / GetDeploySpeed`),
+  actor-local `Get/SetNextPrimaryFire / NextSecondaryFire / LastShootTime`, `HasAmmo`.
+  `SetClip1 / SetClip2 / SendWeaponAnim / DefaultReload / CallOnClient` are stubs.
+- `Vehicle`: `GetSpeed / GetHLSpeed` (velocity), `GetPassenger / IsEngineStarted` (driver),
+  `GetWheelCount / HasBoost` from the class table; throttle / steering / handbrake setters and
+  the vehicle-script parameters are stubs until the driving backend exposes them.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

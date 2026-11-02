@@ -166,40 +166,37 @@ function ENT:Spawn()
     qwrite("spawn", 0, { class = pend.class ~= "prop_physics" and pend.class or nil, model = pend.model or "", pos = pend.pos or { x = 0, y = 0, z = 0 }, angles = pend.angles, owner = pend.owner or 0, tag = pend.tag })
 end
 function ENT:Activate() end
-function ENT:GetPhysicsObject()
-    local P = {}
-    P.__index = P
-    local ent = self
-    function P:IsValid() return ent:IsValid() end
-    function P:GetPos() return ent:GetPos() end
-    function P:GetAngles() return ent:GetAngles() end
-    function P:GetVelocity() return ent:GetVelocity() end
-    function P:SetVelocity(v) ent:SetVelocity(v) end
-    function P:SetVelocityInstantaneous(v) ent:SetVelocity(v) end
-    function P:AddVelocity(v) ent:SetVelocity(ent:GetVelocity() + v) end
-    function P:SetPos(v) ent:SetPos(v) end
-    function P:SetAngles(a) ent:SetAngles(a) end
-    function P:EnableMotion(on) qwrite("freeze", ent.__id, not on) end
-    function P:IsMotionEnabled() local s = snap(ent.__id); return s ~= nil and not s.frozen end
-    function P:IsMoveable() return self:IsMotionEnabled() end
-    function P:IsAsleep() return false end
-    function P:Wake() end
-    function P:Sleep() end
-    function P:EnableGravity(on) qwrite("set_gravity", ent.__id, on) end
-    function P:EnableCollisions(on) qwrite("set_collide", ent.__id, on) end
-    function P:EnableDrag(on) end
-    function P:GetEntity() return ent end
-    function P:GetMass() return 1 end
-    function P:SetMass() end
-    function P:GetMassCenter() return Vector() end
-    function P:ApplyForceCenter(f) ent:SetVelocity(ent:GetVelocity() + f / math.max(self:GetMass(), 1e-3) * FrameTime()) end
-    function P:GetMaterial() return "" end
-    function P:SetMaterial() end
-    function P:LocalToWorld(v) return ent:LocalToWorld(v) end
-    function P:WorldToLocal(v) return ent:WorldToLocal(v) end
-    return setmetatable({}, P)
-end
-__glua_classes.PhysObj = ENT:GetPhysicsObject() and getmetatable(NULL:GetPhysicsObject()) or {}
+local P = {}
+P.__index = P
+function P:IsValid() return self.__ent:IsValid() end
+function P:GetPos() return self.__ent:GetPos() end
+function P:GetAngles() return self.__ent:GetAngles() end
+function P:GetVelocity() return self.__ent:GetVelocity() end
+function P:SetVelocity(v) self.__ent:SetVelocity(v) end
+function P:SetVelocityInstantaneous(v) self.__ent:SetVelocity(v) end
+function P:AddVelocity(v) self.__ent:SetVelocity(self.__ent:GetVelocity() + v) end
+function P:SetPos(v) self.__ent:SetPos(v) end
+function P:SetAngles(a) self.__ent:SetAngles(a) end
+function P:EnableMotion(on) qwrite("freeze", self.__ent.__id, not on) end
+function P:IsMotionEnabled() local s = snap(self.__ent.__id); return s ~= nil and not s.frozen end
+function P:IsMoveable() return self:IsMotionEnabled() end
+function P:IsAsleep() return false end
+function P:Wake() end
+function P:Sleep() end
+function P:EnableGravity(on) qwrite("set_gravity", self.__ent.__id, on) end
+function P:EnableCollisions(on) qwrite("set_collide", self.__ent.__id, on) end
+function P:EnableDrag(on) end
+function P:GetEntity() return self.__ent end
+function P:GetMass() return 1 end
+function P:SetMass() end
+function P:GetMassCenter() return Vector() end
+function P:ApplyForceCenter(f) self.__ent:SetVelocity(self.__ent:GetVelocity() + f / math.max(self:GetMass(), 1e-3) * FrameTime()) end
+function P:GetMaterial() return "" end
+function P:SetMaterial() end
+function P:LocalToWorld(v) return self.__ent:LocalToWorld(v) end
+function P:WorldToLocal(v) return self.__ent:WorldToLocal(v) end
+function ENT:GetPhysicsObject() return setmetatable({ __ent = self }, P) end
+__glua_classes.PhysObj = P
 
 ------------------------------------------------------------------------ NPC / Vehicle / Weapon
 function NPC:SetEnemy(ply) if ply and ply.IsPlayer and ply:IsPlayer() then qwrite("npc_target", self.__id, { player = ply:UserID() }) else qwrite("npc_target", self.__id, {}) end end
@@ -1317,4 +1314,110 @@ D_ER, D_HT, D_FR, D_LI, D_NU = 0, 1, 2, 3, 4
 ACT_RESET, ACT_IDLE, ACT_TRANSITION, ACT_COVER, ACT_COVER_MED, ACT_COVER_LOW, ACT_WALK, ACT_WALK_AIM, ACT_WALK_CROUCH, ACT_WALK_CROUCH_AIM, ACT_RUN, ACT_RUN_AIM, ACT_RUN_CROUCH, ACT_RUN_CROUCH_AIM, ACT_RUN_PROTECTED = 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14
 for _, name in ipairs({ "AddEntityRelationship", "AddRelationship", "AdvancePath", "AlertSound", "AutoMovement", "BecomeRagdoll", "CapabilitiesAdd", "CapabilitiesClear", "CapabilitiesGet", "CapabilitiesHas", "CapabilitiesRemove", "ClearBlockingEntity", "ClearCondition", "ClearExpression", "ClearSchedule", "ConditionID", "ConditionName", "DropWeapon", "ExitScriptedSequence", "FearSound", "FoundEnemySound", "GetArrivalActivity", "GetArrivalDirection", "GetArrivalDistance", "GetArrivalSequence", "GetArrivalSpeed", "GetBestSoundHint", "GetBlockingEntity", "GetCurrentSchedule", "GetCurrentWeaponProficiency", "GetEnemyFirstTimeSeen", "GetEnemyLastTimeSeen", "GetExpression", "GetIdealActivity", "GetIdealMoveAcceleration", "GetIdealMoveSpeed", "GetIdealSequence", "GetIdealYaw", "GetLastTimeTookDamageFromEnemy", "GetMaxLookDistance", "GetMinMoveCheckDist", "GetMinMoveStopDist", "GetMoveDelay", "GetMoveInterval", "GetMovementActivity", "GetMovementSequence", "GetTaskStatus", "GetTimeEnemyLastReacquired", "Give", "HasCondition", "HasObstacles", "IdleSound", "IgnoreEnemyUntil", "IsCurrentSchedule", "IsFacingIdealYaw", "IsMoveYawLocked", "IsRunningBehavior", "IsUnforgettable", "IsUnreachable", "LostEnemySound", "MaintainActivity", "MarkEnemyAsEluded", "MarkTookDamageFromEnemy", "MoveClimbExec", "MoveClimbStart", "MoveClimbStop", "MoveGroundStep", "MoveJumpExec", "MoveJumpStart", "MoveJumpStop", "MovePause", "MoveStart", "NavSetRandomGoal", "NavSetWanderGoal", "PickupWeapon", "PlaySentence", "RememberUnreachable", "RemoveIgnoreConditions", "ResetIdealActivity", "ResetMoveCalc", "RunEngineTask", "SelectWeapon", "SentenceStop", "SetActivity", "SetArrivalActivity", "SetArrivalDirection", "SetArrivalDistance", "SetArrivalSequence", "SetArrivalSpeed", "SetCondition", "SetCurrentWeaponProficiency", "SetExpression", "SetFOV", "SetForceCrouch", "SetIdealActivity", "SetIdealSequence", "SetIdealYaw", "SetIdealYawAndUpdate", "SetIgnoreConditions", "SetMaxLookDistance", "SetMaxRouteRebuildTime", "SetMoveDelay", "SetMoveInterval", "SetMoveYawLocked", "SetMovementSequence", "SetNPCState", "SetSchedule", "SetTaskStatus", "SetUnforgettable", "SetViewOffset", "StartEngineTask", "TaskComplete", "TaskFail", "UpdateEnemyMemory", "UpdateTurnActivity", "UpdateYaw", "UseActBusyBehavior", "UseAssaultBehavior", "UseFollowBehavior", "UseFuncTankBehavior", "UseLeadBehavior", "UseNoBehavior" }) do
     if NPC[name] == nil then NPC[name] = stub("NPC:" .. name) end
+end
+
+
+------------------------------------------------------------------------ PhysObj: the rest
+local PHYS = __glua_classes.PhysObj
+function PHYS:GetIndex() return 0 end
+function PHYS:GetInvMass() return 1 / math.max(self:GetMass(), 1e-6) end
+function PHYS:GetEnergy() local v = self:GetVelocity():Length(); return 0.5 * self:GetMass() * v * v end
+function PHYS:GetVelocityAtPoint(p) return self:GetVelocity() end
+function PHYS:GetPositionMatrix() local m = Matrix(); m:SetTranslation(self:GetPos()); m:SetAngles(self:GetAngles()); return m end
+function PHYS:LocalToWorldVector(v) local a = self:GetAngles(); return a:Forward() * v.x + a:Right() * -v.y + a:Up() * v.z end
+function PHYS:WorldToLocalVector(v) local a = self:GetAngles(); return Vector(v:Dot(a:Forward()), -v:Dot(a:Right()), v:Dot(a:Up())) end
+function PHYS:ApplyForceOffset(f, pos) self:ApplyForceCenter(f) end
+local base_gravity, base_collide = PHYS.EnableGravity, PHYS.EnableCollisions
+function PHYS:EnableGravity(on) rawset(self.__ent, "__pgravity", on); base_gravity(self, on) end
+function PHYS:EnableCollisions(on) rawset(self.__ent, "__pcollide", on); base_collide(self, on) end
+function PHYS:IsGravityEnabled() local g = rawget(self.__ent, "__pgravity"); if g == nil then return true end return g end
+function PHYS:IsCollisionEnabled() local c = rawget(self.__ent, "__pcollide"); if c == nil then return true end return c end
+function PHYS:GetName() return self.__ent:GetClass() end
+function PHYS:OutputDebugInfo() print(string.format("PhysObj[%d] mass %.2f pos %s vel %s", self.__ent:EntIndex(), self:GetMass(), tostring(self:GetPos()), tostring(self:GetVelocity()))) end
+for _, name in ipairs({ "AddAngleVelocity", "AddGameFlag", "AlignAngles", "ApplyTorqueCenter", "CalculateForceOffset", "CalculateVelocityOffset", "ClearGameFlag", "ComputeShadowControl", "GetAABB", "GetAngleVelocity", "GetBuoyancyRatio", "GetContents", "GetDamping", "GetFrictionSnapshot", "GetInertia", "GetInvInertia", "GetMesh", "GetMeshConvexes", "GetRotDamping", "GetShadowAngles", "GetShadowPos", "GetSpeedDamping", "GetStress", "GetSurfaceArea", "GetVolume", "HasGameFlag", "IsDragEnabled", "IsPenetrating", "RecheckCollisionFilter", "RotateAroundAxis", "SetAngleDragCoefficient", "SetAngleVelocity", "SetAngleVelocityInstantaneous", "SetBuoyancyRatio", "SetContents", "SetDamping", "SetDragCoefficient", "SetInertia", "UpdateShadow" }) do
+    if PHYS[name] == nil then PHYS[name] = stub("PhysObj:" .. name) end
+end
+
+------------------------------------------------------------------------ Player: the rest
+-- Movement constants are the engine's measured ones (hull 32x32x72 / 36 ducked, eyes 64 / 28,
+-- step 18); setters without a server op stay stubs rather than pretending.
+function PLY:GetHull() return Vector(-16, -16, 0), Vector(16, 16, 72) end
+function PLY:GetHullDuck() return Vector(-16, -16, 0), Vector(16, 16, 36) end
+function PLY:GetViewOffset() return Vector(0, 0, 64) end
+function PLY:GetViewOffsetDucked() return Vector(0, 0, 28) end
+function PLY:GetCurrentViewOffset() if self:Crouching() then return self:GetViewOffsetDucked() end return self:GetViewOffset() end
+function PLY:GetStepSize() return 18 end
+function PLY:GetMaxSpeed() if self:IsSprinting() then return self:GetRunSpeed() end return self:GetWalkSpeed() end
+function PLY:GetSlowWalkSpeed() return 100 end
+function PLY:GetCrouchedWalkSpeed() return 0.3 end
+function PLY:GetLadderClimbSpeed() return 200 end
+function PLY:GetLaggedMovementValue() return 1 end
+function PLY:GetDrivingEntity() return NULL end
+function PLY:IsDrivingEntity() return false end
+function PLY:GetDrivingMode() return 0 end
+function PLY:OwnerSteamID64() if self.SteamID64 then return self:SteamID64() end return util.SteamIDTo64(self:SteamID()) end
+function PLY:SetActiveWeapon(w) if IsValid(w) then self:SelectWeapon(w:GetClass()) end end
+function PLY:SwitchToDefaultWeapon() local w = self:GetWeapons()[1]; if w then self:SelectWeapon(w:GetClass()) end end
+function PLY:PickupWeapon(w) if not IsValid(w) then return false end self:Give(w:GetClass()); w:Remove(); return true end
+local frozen_objs = {}
+function PLY:AddFrozenPhysicsObject(ent, ph) frozen_objs[self.__pid] = frozen_objs[self.__pid] or {}; table.insert(frozen_objs[self.__pid], ent) end
+function PLY:UnfreezePhysicsObjects()
+    local n = 0
+    for _, e in ipairs(frozen_objs[self.__pid] or {}) do if IsValid(e) then world.queue("freeze", e.__id, false); n = n + 1 end end
+    frozen_objs[self.__pid] = nil
+    return n
+end
+function PLY:PhysgunUnfreeze()
+    local n = self:UnfreezePhysicsObjects()
+    for _, e in ipairs(ents.GetAll()) do
+        local s = snap(e.__id)
+        if s and s.frozen and s.owner == self.__pid then world.queue("freeze", e.__id, false); n = n + 1 end
+    end
+    return n
+end
+local uid_tables = {}
+function PLY:UniqueIDTable(key) uid_tables[self.__pid] = uid_tables[self.__pid] or {}; local t = uid_tables[self.__pid]; t[key] = t[key] or {}; return t[key] end
+function PLY:DebugInfo() return string.format("%s [%d] %s hp %d", self:Nick(), self:UserID(), tostring(self:GetPos()), self:Health()) end
+for _, name in ipairs({ "AddDeaths", "AddFrags", "AddPlayerOption", "AddVCDSequenceToGestureSlot", "AllowFlashlight", "AllowImmediateDecalPainting", "AnimResetGestureSlot", "AnimRestartGesture", "AnimRestartMainSequence", "AnimSetGestureSequence", "AnimSetGestureWeight", "Ban", "CanUseFlashlight", "CreateRagdoll", "CrosshairDisable", "CrosshairEnable", "DetonateTripmines", "DisableWorldClicking", "DoAnimationEvent", "DoAttackEvent", "DoCustomAnimEvent", "DoReloadEvent", "DoSecondaryAttack", "DrawViewModel", "DrawWorldModel", "DropNamedWeapon", "DropObject", "DropWeapon", "EnterVehicle", "EquipSuit", "ExitLadder", "ExitVehicle", "Flashlight", "FlashlightIsOn", "GetActivity", "GetAllowFullRotation", "GetAllowWeaponsInVehicle", "GetAmmo", "GetAmmoCount", "GetAvoidPlayers", "GetCanWalk", "GetCanZoom", "GetClassID", "GetCurrentCommand", "GetEntityInUse", "GetFlashlightColor", "GetFriendStatus", "GetHands", "GetHoveredWidget", "GetNoCollideWithTeammates", "GetObserverTarget", "GetPlayerColor", "GetPlayerInfo", "GetPreferredCarryAngles", "GetPressedWidget", "GetPreviousWeapon", "GetPunchAngle", "GetRagdollEntity", "GetRenderAngles", "GetSuitPower", "GetTimeoutSeconds", "GetUnDuckSpeed", "GetUseEntity", "GetViewModel", "GetViewPunchAngles", "GetViewPunchVelocity", "GetVoiceVolumeScale", "GetWeaponColor", "GiveAmmo", "IPAddress", "IsMuted", "IsPlayingTaunt", "IsSuitEquipped", "IsTimingOut", "IsVoiceAudible", "IsWalking", "IsWorldClickingDisabled", "KeyDownLast", "KeyPressed", "KeyReleased", "Kick", "LagCompensation", "LastHitGroup", "LimitHit", "LocalEyeAngles", "Lock", "UnLock", "MotionSensorPos", "PacketLoss", "PickupObject", "PlayStepSound", "RemoveAllAmmo", "RemoveAllItems", "RemoveAmmo", "RemoveSuit", "ResetHull", "Say", "ScreenFade", "SendHint", "SetActivity", "SetAllowFullRotation", "SetAllowWeaponsInVehicle", "SetAmmo", "SetAvoidPlayers", "SetCanWalk", "SetCanZoom", "SetClassID", "SetCrouchedWalkSpeed", "SetCurrentViewOffset", "SetDSP", "SetDeaths", "SetDrivingEntity", "SetEyeAngles", "SetFOV", "SetFlashlightColor", "SetFrags", "SetHands", "SetHoveredWidget", "SetHull", "SetHullDuck", "SetLadderClimbSpeed", "SetLaggedMovementValue", "SetLastHitGroup", "SetMaxArmor", "SetMaxSpeed", "SetMuted", "SetNoCollideWithTeammates", "SetNoTarget", "SetObserverMode", "SetPlayerColor", "SetPressedWidget", "SetRenderAngles", "SetSlowWalkSpeed", "SetStepSize", "SetSuitPower", "SetSuppressPickupNotices", "SetUnDuckSpeed", "SetViewEntity", "SetViewOffset", "SetViewOffsetDucked", "SetViewPunchAngles", "SetViewPunchVelocity", "SetVoiceVolumeScale", "SetWeaponColor", "SetupHands", "ShouldDrawLocalPlayer", "ShouldDropWeapon", "ShowProfile", "SimulateGravGunDrop", "SimulateGravGunPickup", "Spectate", "SpectateEntity", "SprayDecal", "SprintDisable", "SprintEnable", "StartSprinting", "StartWalking", "StopSprinting", "StopWalking", "StopZooming", "StripAmmo", "SuppressHint", "TimeConnected", "TraceHullAttack", "TranslateWeaponActivity", "UnSpectate", "ViewPunch", "ViewPunchReset", "VoiceVolume" }) do
+    if PLY[name] == nil then PLY[name] = stub("Player:" .. name) end
+end
+
+------------------------------------------------------------------------ Weapon: the rest (over the registered SWEP table)
+local function wdef(self) return weapons and weapons.Get and weapons.Get(self:GetClass()) or nil end
+function WEP:GetWeaponViewModel() local d = wdef(self); return d and d.ViewModel or "" end
+function WEP:GetWeaponWorldModel() local d = wdef(self); return d and d.WorldModel or "" end
+function WEP:GetWeight() local d = wdef(self); return d and d.Weight or 5 end
+function WEP:GetHoldType() local h = rawget(self, "__holdtype"); if h then return h end local d = wdef(self); return d and d.HoldType or "normal" end
+function WEP:SetHoldType(h) rawset(self, "__holdtype", h) end
+function WEP:AllowsAutoSwitchFrom() local d = wdef(self); if d and d.AutoSwitchFrom ~= nil then return d.AutoSwitchFrom end return true end
+function WEP:AllowsAutoSwitchTo() local d = wdef(self); if d and d.AutoSwitchTo ~= nil then return d.AutoSwitchTo end return true end
+function WEP:GetPrimaryAmmoType() local d = wdef(self); local a = d and d.Primary and d.Primary.Ammo; return a and game.GetAmmoID and game.GetAmmoID(a) or -1 end
+function WEP:GetSecondaryAmmoType() local d = wdef(self); local a = d and d.Secondary and d.Secondary.Ammo; return a and game.GetAmmoID and game.GetAmmoID(a) or -1 end
+function WEP:GetDeploySpeed() local d = wdef(self); return d and d.DeploySpeed or 1 end
+function WEP:HasAmmo() return self:Clip1() ~= 0 end
+function WEP:GetNextPrimaryFire() return rawget(self, "__next1") or 0 end
+function WEP:SetNextPrimaryFire(t) rawset(self, "__next1", t) end
+function WEP:GetNextSecondaryFire() return rawget(self, "__next2") or 0 end
+function WEP:SetNextSecondaryFire(t) rawset(self, "__next2", t) end
+function WEP:LastShootTime() return rawget(self, "__lastshot") or 0 end
+function WEP:SetLastShootTime(t) rawset(self, "__lastshot", t or CurTime()) end
+for _, name in ipairs({ "CallOnClient", "DefaultReload", "GetActivity", "IsWeaponVisible", "SendWeaponAnim", "SetActivity", "SetClip1", "SetClip2" }) do
+    if WEP[name] == nil then WEP[name] = stub("Weapon:" .. name) end
+end
+
+------------------------------------------------------------------------ Vehicle: the rest
+local veh_wheels = { prop_vehicle_jeep = 4, prop_vehicle_jeep_old = 4, prop_vehicle_apc = 4, prop_vehicle_airboat = 0, prop_vehicle_prisoner_pod = 0 }
+local veh_boost = { prop_vehicle_jeep = true, prop_vehicle_jeep_old = true }
+function VEH:GetSpeed() return self:GetVelocity():Length() end
+function VEH:GetHLSpeed() return self:GetVelocity():Length() end
+function VEH:GetPassenger(i) if (i or 0) == 0 then return self:GetDriver() end return NULL end
+function VEH:IsValidVehicle() return self:IsValid() end
+function VEH:IsEngineStarted() return IsValid(self:GetDriver()) end
+function VEH:GetWheelCount() return veh_wheels[self:GetClass()] or 0 end
+function VEH:HasBoost() return veh_boost[self:GetClass()] == true end
+function VEH:IsBoosting() return false end
+function VEH:BoostTimeLeft() return 0 end
+function VEH:IsVehicleBodyInWater() return false end
+for _, name in ipairs({ "CheckExitPoint", "EnableEngine", "GetAmmo", "GetCameraDistance", "GetMaxSpeed", "GetOperatingParams", "GetPassengerSeatPoint", "GetRPM", "GetSteeringDegrees", "GetThirdPersonMode", "GetVehicleParams", "GetVehicleViewPosition", "GetWheel", "GetWheelBaseHeight", "GetWheelContactPoint", "GetWheelTotalHeight", "HasBrakePedal", "ReleaseHandbrake", "SetBoost", "SetCameraDistance", "SetHandbrake", "SetHasBrakePedal", "SetMaxReverseThrottle", "SetMaxThrottle", "SetSpringLength", "SetSteering", "SetSteeringDegrees", "SetThirdPersonMode", "SetThrottle", "SetVehicleClass", "SetVehicleEntryAnim", "SetVehicleParams", "SetWheelFriction", "StartEngine" }) do
+    if VEH[name] == nil then VEH[name] = stub("Vehicle:" .. name) end
 end

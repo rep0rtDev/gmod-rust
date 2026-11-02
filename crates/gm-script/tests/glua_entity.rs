@@ -316,6 +316,8 @@ fn npc_and_datatable_methods() {
             n:GetEnemy():UserID(), n:IsGoalActive(), n:GetGoalPos().x, n:GetPathDistanceToGoal(), n:GetCurGoalType(),
             n:Classify() == CLASS_ZOMBIE, n:Disposition(Entity(1)) == D_HT, e:GetCount(), #state.seen, state.seen[1], state.seen[2],
             e:GetNetworkVars().Count, e:GetMoveType() == MOVETYPE_NONE, n:GetEnemyLastKnownPos().x, e:IsConstrained(),
+            e:GetPhysicsObject():GetEntity() == e, e:GetPhysicsObject():IsGravityEnabled(), select(2, Player(1):GetHull()).z, Player(1):GetMaxSpeed(),
+            e:GetPhysicsObject():GetInvMass(),
          }",
     );
     let r: Vec<mlua::Value> = rt.actors()[0].eval("return state.r").unwrap();
@@ -340,6 +342,11 @@ fn npc_and_datatable_methods() {
     assert_eq!(s(11), "4");
     assert_eq!(s(12), "true");
     assert_eq!(s(14), "false");
+    assert_eq!(s(15), "true");
+    assert_eq!(s(16), "true");
+    assert_eq!(s(17), "72");
+    assert_eq!(s(18), "200");
+    assert_eq!(s(19), "1");
     assert!(
         writes
             .iter()
