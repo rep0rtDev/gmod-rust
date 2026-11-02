@@ -2993,6 +2993,9 @@ pub struct VehicleControls {
     /// -1..1, right positive.
     pub steer: f32,
     pub handbrake: bool,
+    /// `Vehicle:SetBoost`: 0..1, the turbo while above zero (no time limit through the API, as in
+    /// the game).
+    pub boost: f32,
     /// On with a driver (`enter_vehicle`) or `Vehicle:StartEngine(true)`; off, the wheels hold
     /// the car still like a parked one.
     pub engine_on: bool,
@@ -3023,6 +3026,12 @@ pub struct DriveSpec {
     pub drag_rev: f32,
     /// Share of the tyre friction cone a rolling tyre holds with (the airboat's slide).
     pub tyre_mu: f32,
+    /// The turbo: acceleration while boosting, its speed cap, the creep above it, and the rate
+    /// (1/s) the speed decays back toward the cap once the boost is off.
+    pub boost_accel: f32,
+    pub boost_max: f32,
+    pub boost_creep: f32,
+    pub over_decay: f32,
     pub max_fwd: f32,
     pub max_rev: f32,
     pub creep_fwd: f32,
@@ -3057,6 +3066,13 @@ pub const JEEP_DRIVE: DriveSpec = DriveSpec {
     drag_fwd: 0.0,
     drag_rev: 0.0,
     tyre_mu: 1.0,
+    // measured (`server_vehicle_boost`): 637 -> 880 u/s (50 mph) in 28 ticks, +0.3 u/s per tick
+    // above, decaying 922 -> 677 over 47 ticks once off
+    boost_accel: 600.0,
+    boost_max: 50.0 * MPH,
+    // measured +0.3 u/s per tick; the tyre hold at 880 u/s takes most of it back
+    boost_creep: 50.0,
+    over_decay: 2.7,
     max_fwd: 35.0 * MPH,
     max_rev: 14.0 * MPH,
     creep_fwd: 16.0,
@@ -3086,6 +3102,8 @@ pub const JALOPY_DRIVE: DriveSpec = DriveSpec {
     accel_rev: 440.0,
     turn_len: 192.0,
     wheel_radius: 19.7,
+    // the script's turbo speed, unmeasured
+    boost_max: 42.0 * MPH,
     ..JEEP_DRIVE
 };
 
@@ -3100,6 +3118,10 @@ pub const AIRBOAT_DRIVE: DriveSpec = DriveSpec {
     drag_fwd: 1.1,
     drag_rev: 1.87,
     tyre_mu: 0.8,
+    boost_accel: 0.0,
+    boost_max: 0.0,
+    boost_creep: 0.0,
+    over_decay: 0.0,
     max_fwd: 34.0 * MPH,
     max_rev: 34.0 * MPH,
     creep_fwd: 0.0,
@@ -7210,6 +7232,15 @@ impl<'w> Server<'w> {
         true
     }
 
+    /// `Vehicle:SetBoost`: the turbo, 0..1, kept until changed.
+    pub fn set_vehicle_boost(&mut self, veh: u32, boost: f32) -> bool {
+        let Some(v) = self.vehicles.get_mut(&veh) else {
+            return false;
+        };
+        v.controls.boost = boost.clamp(0.0, 1.0);
+        true
+    }
+
     /// `Vehicle:StartEngine` / `EnableEngine`: the engine switch; off, the car parks.
     pub fn set_vehicle_engine(&mut self, veh: u32, on: bool) -> bool {
         let Some(v) = self.vehicles.get_mut(&veh) else {
@@ -7238,6 +7269,7 @@ impl<'w> Server<'w> {
             v.controls.throttle = 0.0;
             v.controls.steer = 0.0;
             v.controls.handbrake = false;
+            v.controls.boost = 0.0;
         }
         if let Some(p) = self.players.get_mut(&player) {
             p.seat = None;
@@ -7468,9 +7500,19 @@ impl<'w> Server<'w> {
                 let stop = -speed.signum() * (speed.abs() / dt);
                 let accel = if c.handbrake {
                     stop.abs().min(spec.brake) * stop.signum()
+                } else if throttle > 0.05 && c.boost > 0.0 && spec.boost_accel > 0.0 {
+                    if speed < spec.boost_max {
+                        spec.boost_accel * throttle
+                    } else {
+                        spec.boost_creep * throttle
+                    }
                 } else if throttle > 0.05 {
                     if speed < spec.max_fwd {
                         spec.accel * throttle - spec.drag_fwd * speed
+                    } else if speed > spec.max_fwd + 30.0 {
+                        // coming off the turbo: back toward the plateau (the game's settles at
+                        // 677 u/s in its higher gear, ours at the plateau)
+                        -spec.over_decay * (speed - spec.max_fwd)
                     } else {
                         spec.creep_fwd * throttle
                     }

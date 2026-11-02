@@ -1365,7 +1365,13 @@ SCENARIOS.toolgun = function(scn, done)
 		elseif op.op == "drive" then
 			-- the bot's usercmd never reaches the vehicle, so the controls are set through the
 			-- Vehicle API every tick for `ticks` ticks (throttle -1..1, steer -1..1, handbrake)
-			DRIVE = { until_tick = engine.TickCount() + (op.ticks or 1), throttle = op.throttle or 0, steer = op.steer or 0, handbrake = op.handbrake or false }
+			DRIVE = { until_tick = engine.TickCount() + (op.ticks or 1), throttle = op.throttle or 0, steer = op.steer or 0, handbrake = op.handbrake or false , boost = op.boost or 0 }
+			for _, e in ipairs(ents.GetAll()) do
+				if e:IsVehicle() then
+					if op.maxthrottle and e.SetMaxThrottle then e:SetMaxThrottle(op.maxthrottle) end
+					if op.maxrevthrottle and e.SetMaxReverseThrottle then e:SetMaxReverseThrottle(op.maxrevthrottle) end
+				end
+			end
 			hook.Add("Think", "parity_drive", function()
 				if not DRIVE or engine.TickCount() > DRIVE.until_tick then hook.Remove("Think", "parity_drive") return end
 				for _, e in ipairs(ents.GetAll()) do
@@ -1374,6 +1380,7 @@ SCENARIOS.toolgun = function(scn, done)
 						if e.SetVehicleEntryAnim then e:SetVehicleEntryAnim(false) end
 						if e.EnableEngine then e:EnableEngine(true) end
 						local wph = e:GetPhysicsObject() if IsValid(wph) then wph:Wake() end
+						if e.SetBoost then e:SetBoost(DRIVE.boost) end
 						e:SetThrottle(DRIVE.throttle)
 						e:SetSteering(DRIVE.steer, 0)
 						e:SetHandbrake(DRIVE.handbrake)

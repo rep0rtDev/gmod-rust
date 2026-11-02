@@ -4386,7 +4386,7 @@
 {"address":"Vehicle:IsValidVehicle","kind":"classfunc","parent":"Vehicle","name":"IsValidVehicle","realms":["client","server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
 {"address":"Vehicle:IsVehicleBodyInWater","kind":"classfunc","parent":"Vehicle","name":"IsVehicleBodyInWater","realms":["server"],"args":[],"rets":[{"name":"","type":"boolean"}],"status":"implemented"},
 {"address":"Vehicle:ReleaseHandbrake","kind":"classfunc","parent":"Vehicle","name":"ReleaseHandbrake","realms":["server"],"args":[],"rets":[],"status":"implemented"},
-{"address":"Vehicle:SetBoost","kind":"classfunc","parent":"Vehicle","name":"SetBoost","realms":["server"],"args":[{"name":"boost","type":"number"}],"rets":[],"status":"stub"},
+{"address":"Vehicle:SetBoost","kind":"classfunc","parent":"Vehicle","name":"SetBoost","realms":["server"],"args":[{"name":"boost","type":"number"}],"rets":[],"status":"implemented"},
 {"address":"Vehicle:SetCameraDistance","kind":"classfunc","parent":"Vehicle","name":"SetCameraDistance","realms":["client","server"],"args":[{"name":"distance","type":"number"}],"rets":[],"status":"stub"},
 {"address":"Vehicle:SetHandbrake","kind":"classfunc","parent":"Vehicle","name":"SetHandbrake","realms":["server"],"args":[{"name":"handbrake","type":"boolean"}],"rets":[],"status":"implemented"},
 {"address":"Vehicle:SetHasBrakePedal","kind":"classfunc","parent":"Vehicle","name":"SetHasBrakePedal","realms":["server"],"args":[{"name":"brakePedal","type":"boolean"}],"rets":[],"status":"stub"},

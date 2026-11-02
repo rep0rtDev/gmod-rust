@@ -257,6 +257,7 @@ struct OpSpec {
     throttle: Option<f32>,
     steer: Option<f32>,
     handbrake: Option<bool>,
+    boost: Option<f32>,
     /// `press`: "use" / "attack" held for `ticks`.
     #[serde(default)]
     buttons: Option<String>,
@@ -4454,7 +4455,8 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                     "operating": gm_server::drive_spec(&v.key).map(|spec| json!({
                         "speed": v.controls.speed, "RPM": v.controls.rpm(&spec),
                         "gear": v.controls.gear, "steeringAngle": v.controls.steer_angle,
-                        "wheelsInContact": v.controls.wheels_in_contact, "isTorqueBoosting": false,
+                        "wheelsInContact": v.controls.wheels_in_contact,
+                        "isTorqueBoosting": v.controls.boost > 0.0 && spec.boost_accel > 0.0,
                     })),
                 }))
             }).collect::<Vec<_>>(),
@@ -4596,6 +4598,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 let keys: Vec<u32> = server.vehicles.keys().copied().collect();
                 for veh in keys {
                     server.set_vehicle_engine(veh, true);
+                    server.set_vehicle_boost(veh, op.boost.unwrap_or(0.0));
                     server.set_vehicle_controls(
                         veh,
                         Some(op.throttle.unwrap_or(0.0)),

@@ -76,6 +76,23 @@ fn jeep_drives_like_the_measured_one() {
     let rpm = server.vehicles[&veh].controls.rpm(&gm_server::JEEP_DRIVE);
     assert!((3100.0..3500.0).contains(&rpm), "rpm {rpm}");
 
+    // the turbo: 637 -> 880 u/s (50 mph) in ~28 ticks, decaying back once off
+    assert!(server.set_vehicle_boost(veh, 1.0));
+    for _ in 0..40 {
+        server.tick(&idle);
+    }
+    let s_boost = speed(&server, veh);
+    assert!((850.0..920.0).contains(&s_boost), "boosted: {s_boost}");
+    assert!(server.set_vehicle_boost(veh, 0.0));
+    for _ in 0..60 {
+        server.tick(&idle);
+    }
+    let s_off = speed(&server, veh);
+    assert!((600.0..720.0).contains(&s_off), "off the turbo: {s_off}");
+    for _ in 0..40 {
+        server.tick(&idle);
+    }
+
     // steering right at speed: 18 deg cone, a degree of yaw per tick (66.7 deg/s)
     assert!(server.set_vehicle_controls(veh, None, Some(1.0), None));
     for _ in 0..60 {

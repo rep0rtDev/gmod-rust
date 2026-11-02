@@ -1755,10 +1755,11 @@ function VEH:GetHLSpeed() return self:GetVelocity():Length() end
 function VEH:GetPassenger(i) if (i or 0) == 0 then return self:GetDriver() end return NULL end
 function VEH:IsValidVehicle() return self:IsValid() end
 function VEH:HasBoost() return veh_boost[self:GetClass()] == true end
-function VEH:IsBoosting() return false end
+function VEH:IsBoosting() local v = vinfo(self); return v ~= nil and v.engine == true and (v.boost or 0) > 0 end
+function VEH:SetBoost(b) qwrite("vehicle.boost", self.__id, tonumber(b) or 0) end
 function VEH:BoostTimeLeft() return 0 end
 function VEH:IsVehicleBodyInWater() return false end
-for _, name in ipairs({ "CheckExitPoint", "GetAmmo", "GetCameraDistance", "GetPassengerSeatPoint", "GetThirdPersonMode", "GetVehicleParams", "GetVehicleViewPosition", "GetWheel", "GetWheelBaseHeight", "GetWheelContactPoint", "GetWheelTotalHeight", "HasBrakePedal", "SetBoost", "SetCameraDistance", "SetHasBrakePedal", "SetMaxReverseThrottle", "SetMaxThrottle", "SetSpringLength", "SetSteeringDegrees", "SetThirdPersonMode", "SetVehicleClass", "SetVehicleEntryAnim", "SetVehicleParams", "SetWheelFriction" }) do
+for _, name in ipairs({ "CheckExitPoint", "GetAmmo", "GetCameraDistance", "GetPassengerSeatPoint", "GetThirdPersonMode", "GetVehicleParams", "GetVehicleViewPosition", "GetWheel", "GetWheelBaseHeight", "GetWheelContactPoint", "GetWheelTotalHeight", "HasBrakePedal", "SetCameraDistance", "SetHasBrakePedal", "SetMaxReverseThrottle", "SetMaxThrottle", "SetSpringLength", "SetSteeringDegrees", "SetThirdPersonMode", "SetVehicleClass", "SetVehicleEntryAnim", "SetVehicleParams", "SetWheelFriction" }) do
     if VEH[name] == nil then VEH[name] = stub("Vehicle:" .. name) end
 end
 

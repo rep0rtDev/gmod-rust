@@ -689,7 +689,11 @@ The rest of `Player`, `PhysObj`, `Weapon` and `Vehicle` (end of `glua/entity.lua
   The jalopy (`server_jalopy_drive`) is the jeep's law pulling harder (+6.6 u/s per tick) and
   turning a little slower (60 deg/s at 18 deg); the APC cannot be spawned in the game's spawnmenu
   (`bad_vehicle`) and keeps the jeep's law.
-  `SetMaxThrottle / SetMaxReverseThrottle / SetBoost / SetSpringLength / SetWheelFriction /
+  `SetBoost / IsBoosting` is the turbo (`server_vehicle_boost`: the jeep goes 637 -> 880 u/s, 50
+  mph, in 28 ticks while boosted, creeps above, and decays back once off; the game holds 677 in its
+  higher gear afterwards, ours returns to the plateau; no 3 s limit through the API, as in the
+  game). `SetMaxThrottle / SetMaxReverseThrottle` stay stubs: measured, they do not touch the API
+  throttle (full acceleration with the cap at 0.5). `SetSpringLength / SetWheelFriction /
   SetSteeringDegrees / SetVehicleParams` stay stubs (no such inputs on our wheels).
 
 GM hooks and the coverage manifest: a hook is not a Lua value, so `glua::list` counts a `GM`

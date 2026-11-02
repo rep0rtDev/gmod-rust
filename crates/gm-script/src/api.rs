@@ -331,6 +331,11 @@ pub enum QueuedWrite {
         steer: Option<f32>,
         handbrake: Option<bool>,
     },
+    /// `Vehicle:SetBoost`.
+    VehicleBoost {
+        ent: u32,
+        boost: f32,
+    },
     /// `Vehicle:StartEngine` / `EnableEngine`.
     VehicleEngine {
         ent: u32,
@@ -1706,6 +1711,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         handbrake: t.get::<Option<bool>>("handbrake")?,
                     }
                 }
+                "vehicle.boost" => QueuedWrite::VehicleBoost {
+                    ent,
+                    boost: match &arg {
+                        Value::Number(n) => *n as f32,
+                        Value::Integer(i) => *i as f32,
+                        _ => 0.0,
+                    },
+                },
                 "vehicle.engine" => QueuedWrite::VehicleEngine {
                     ent,
                     on: matches!(arg, Value::Boolean(true)),
@@ -2287,6 +2300,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             t.set("throttle", c.throttle)?;
             t.set("steer", c.steer)?;
             t.set("handbrake", c.handbrake)?;
+            t.set("boost", c.boost)?;
             t.set("engine", c.engine_on)?;
             t.set("steer_angle", c.steer_angle)?;
             t.set("speed", c.speed)?;
@@ -2301,6 +2315,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 let d = lua.create_table()?;
                 d.set("max_fwd", spec.max_fwd)?;
                 d.set("max_rev", spec.max_rev)?;
+                d.set("boost_max", spec.boost_max)?;
                 d.set("deg_slow", spec.deg_slow)?;
                 d.set("deg_fast", spec.deg_fast)?;
                 d.set("slow_speed", spec.slow_speed)?;
@@ -2875,6 +2890,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             steer,
             handbrake,
         } => server.set_vehicle_controls(*ent, *throttle, *steer, *handbrake),
+        QueuedWrite::VehicleBoost { ent, boost } => server.set_vehicle_boost(*ent, *boost),
         QueuedWrite::VehicleEngine { ent, on } => server.set_vehicle_engine(*ent, *on),
         QueuedWrite::PlayerVehicle { player, vehicle } => match vehicle {
             Some(v) => server.enter_vehicle(*player, *v),

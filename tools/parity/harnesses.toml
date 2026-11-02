@@ -3919,6 +3919,17 @@ speed = 60.0
 ang = 20.0
 
 [[harness]]
+name = "server_vehicle_boost"
+scenario = "server/vehicle_boost"
+compare = "server"
+realm = "server"
+crates = ["gm-server"]
+[harness.tolerance]
+pos = 150.0
+speed = 60.0
+ang = 12.0
+
+[[harness]]
 name = "server_airboat_drive"
 scenario = "server/airboat_drive"
 compare = "server"
