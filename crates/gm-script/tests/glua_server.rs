@@ -1839,3 +1839,52 @@ fn sprint_and_ladder_writes_go_to_the_move_params() {
         .unwrap();
     assert_eq!((ladder, lag, sprint), (200.0, 1.0, true));
 }
+
+#[test]
+fn rope_constraint_write_carries_its_kind() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            local c = constraint.Rope(Entity(5), Entity(6), 0, 0, Vector(1, 2, 3), Vector(0, 0, 0), 100, 10, 0, 2, \"cable/rope\", false)
+            constraint.Axis(Entity(5), Entity(6), 0, 0, Vector(0, 0, 0), Vector(0, 0, 0), 0, 0, 0, 1, Vector(0, 0, 1))
+            state.kind = c and c.Type end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    let kinds: Vec<&gm_sandbox::ConstraintKind> = writes
+        .iter()
+        .filter_map(|w| match w {
+            QueuedWrite::Constrain {
+                ent: 5,
+                ent2: 6,
+                kind,
+                ..
+            } => Some(kind),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds.len(), 2, "{writes:?}");
+    assert!(matches!(
+        kinds[0],
+        gm_sandbox::ConstraintKind::Rope { lpos1, length, addlength, rigid: false, .. }
+            if *lpos1 == Vec3::new(1.0, 2.0, 3.0) && *length == 100.0 && *addlength == 10.0
+    ));
+    assert!(matches!(
+        kinds[1],
+        gm_sandbox::ConstraintKind::Axis { local_axis, nocollide: true, .. } if *local_axis == Vec3::Z
+    ));
+    let kind: String = rt.actors()[0].eval("return state.kind").unwrap();
+    assert_eq!(kind, "Rope");
+}

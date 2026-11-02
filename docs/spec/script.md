@@ -712,6 +712,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `constraint.Rope` / `Axis` / `Ballsocket` / `Slider` / `Elastic` queue a `constrain` write with
+  the kind's fields (local attachment points as given, the elastic's rest length measured now);
+  the record joins the sandbox table like a stool's and the physics sync builds the joint from
+  it (limits, undo and cleanup under the owner as for `Weld`). `Hydraulic` / `Winch` / `Muscle` /
+  `Motor` / `AdvBallsocket` / `Keepupright` / `Pulley` stay stubs (keyed controllers).
 - `Player:SprintEnable` / `SprintDisable` gate the sprint button in the mover (the speed cap stays
   at walk speed while disabled), `Player:SetLadderClimbSpeed` sets the climb and mount speed
   (jumping off keeps the measured 200 u/s), `Player:SetLaggedMovementValue` scales the movement

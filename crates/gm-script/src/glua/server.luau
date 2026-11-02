@@ -518,7 +518,37 @@ function constraint.AddConstraintTable() end
 function constraint.AddConstraintTableNoDelete() end
 function constraint.CreateKeyframeRope() return NULL end
 function constraint.CreateStaticAnchorPoint(pos) return NULL end
-for _, kind in ipairs({ "Axis", "AdvBallsocket", "Ballsocket", "Elastic", "Hydraulic", "Keepupright", "Motor", "Muscle", "Pulley", "Rope", "Slider", "Winch" }) do
+local function cvec(v) if v == nil then return { x = 0, y = 0, z = 0 } end return { x = v.x or 0, y = v.y or 0, z = v.z or 0 } end
+local function cworld(e, l) if not IsValid(e) then return Vector(l.x, l.y, l.z) end if e.LocalToWorld then return e:LocalToWorld(l) end return e:GetPos() + l end
+local function cqueue(kind, ent1, ent2, fields)
+    local owner = IsValid(ent1) and ent1:GetOwner()
+    fields.kind, fields.ent2, fields.owner = kind, IsValid(ent2) and ent2:EntIndex() or 0, IsValid(owner) and owner:UserID() or 0
+    world.queue("constrain", IsValid(ent1) and ent1:EntIndex() or 0, fields)
+end
+function constraint.Rope(ent1, ent2, bone1, bone2, lpos1, lpos2, length, addlength, forcelimit, width, material, rigid, color)
+    cqueue("Rope", ent1, ent2, { lpos1 = cvec(lpos1), lpos2 = cvec(lpos2), length = length or 0, addlength = addlength or 0, width = width or 2, material = material or "cable/rope", rigid = rigid == true })
+    return remember("Rope", ent1, ent2, { length = length, addlength = addlength, forcelimit = forcelimit, width = width, material = material, rigid = rigid }), nil
+end
+function constraint.Axis(ent1, ent2, bone1, bone2, lpos1, lpos2, forcelimit, torquelimit, friction, nocollide, localaxis, dontaddtable)
+    cqueue("Axis", ent1, ent2, { lpos1 = cvec(lpos1), lpos2 = cvec(lpos2), localaxis = cvec(localaxis), forcelimit = forcelimit or 0, torquelimit = torquelimit or 0, friction = friction or 0, nocollide = (nocollide or 0) ~= 0 and nocollide ~= false })
+    if dontaddtable then return nil end
+    return remember("Axis", ent1, ent2, { forcelimit = forcelimit, torquelimit = torquelimit, friction = friction, nocollide = nocollide })
+end
+function constraint.Ballsocket(ent1, ent2, bone1, bone2, lpos, forcelimit, torquelimit, nocollide)
+    cqueue("Ballsocket", ent1, ent2, { lpos = cvec(lpos), forcelimit = forcelimit or 0, torquelimit = torquelimit or 0, nocollide = (nocollide or 0) ~= 0 and nocollide ~= false })
+    return remember("Ballsocket", ent1, ent2, { forcelimit = forcelimit, torquelimit = torquelimit, nocollide = nocollide })
+end
+function constraint.Slider(ent1, ent2, bone1, bone2, lpos1, lpos2, width, material, color)
+    cqueue("Slider", ent1, ent2, { lpos1 = cvec(lpos1), lpos2 = cvec(lpos2), width = width or 0, material = material or "cable/cable" })
+    return remember("Slider", ent1, ent2, { width = width, material = material }), nil
+end
+function constraint.Elastic(ent1, ent2, bone1, bone2, lpos1, lpos2, constant, damping, rdamping, material, width, stretchonly, color)
+    local l1, l2 = cvec(lpos1), cvec(lpos2)
+    local len = (cworld(ent1, Vector(l1.x, l1.y, l1.z)) - cworld(ent2, Vector(l2.x, l2.y, l2.z))):Length()
+    cqueue("Elastic", ent1, ent2, { lpos1 = l1, lpos2 = l2, constant = constant or 0, damping = damping or 0, rdamping = rdamping or 0, width = width or 0, material = material or "cable/cable", length = len, stretchonly = stretchonly == true or stretchonly == 1 })
+    return remember("Elastic", ent1, ent2, { constant = constant, damping = damping, rdamping = rdamping, material = material, width = width, stretchonly = stretchonly }), nil
+end
+for _, kind in ipairs({ "AdvBallsocket", "Hydraulic", "Keepupright", "Motor", "Muscle", "Pulley", "Winch" }) do
     constraint[kind] = stub("constraint." .. kind)
 end
 

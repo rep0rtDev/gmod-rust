@@ -257,6 +257,14 @@ pub enum QueuedWrite {
         ent2: u32,
         owner: u32,
     },
+    /// `constraint.Rope` / `Axis` / `Ballsocket` / `Slider` / `Elastic`: a constraint record of
+    /// that kind between `ent` and `ent2` (0 = the world); `owner` as for `Weld`.
+    Constrain {
+        ent: u32,
+        ent2: u32,
+        owner: u32,
+        kind: gm_sandbox::ConstraintKind,
+    },
     PlayerTeleport {
         player: u32,
         pos: Vec3,
@@ -1769,6 +1777,80 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         ent,
                         ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
                         owner: t.get::<Option<u32>>("owner")?.unwrap_or(0),
+                    }
+                }
+                "constrain" => {
+                    let t = table_arg(&arg)?;
+                    let v3 = |n: &str| -> Result<Vec3> {
+                        Ok(match t.get::<Option<Table>>(n)? {
+                            Some(v) => Vec3::new(
+                                v.get::<Option<f32>>("x")?.unwrap_or(0.0),
+                                v.get::<Option<f32>>("y")?.unwrap_or(0.0),
+                                v.get::<Option<f32>>("z")?.unwrap_or(0.0),
+                            ),
+                            None => Vec3::ZERO,
+                        })
+                    };
+                    let num = |n: &str, d: f32| -> Result<f32> {
+                        Ok(t.get::<Option<f32>>(n)?.unwrap_or(d))
+                    };
+                    let flag = |n: &str| -> Result<bool> {
+                        Ok(t.get::<Option<bool>>(n)?.unwrap_or(false))
+                    };
+                    let text = |n: &str, d: &str| -> Result<String> {
+                        Ok(t.get::<Option<String>>(n)?.unwrap_or_else(|| d.to_string()))
+                    };
+                    use gm_sandbox::ConstraintKind as K;
+                    let kind = match t.get::<Option<String>>("kind")?.as_deref() {
+                        Some("Rope") => K::Rope {
+                            lpos1: v3("lpos1")?,
+                            lpos2: v3("lpos2")?,
+                            length: num("length", 0.0)?,
+                            addlength: num("addlength", 0.0)?,
+                            width: num("width", 2.0)?,
+                            material: text("material", "cable/rope")?,
+                            rigid: flag("rigid")?,
+                        },
+                        Some("Axis") => K::Axis {
+                            lpos1: v3("lpos1")?,
+                            lpos2: v3("lpos2")?,
+                            local_axis: v3("localaxis")?,
+                            forcelimit: num("forcelimit", 0.0)?,
+                            torquelimit: num("torquelimit", 0.0)?,
+                            friction: num("friction", 0.0)?,
+                            nocollide: flag("nocollide")?,
+                        },
+                        Some("Ballsocket") => K::Ballsocket {
+                            lpos: v3("lpos")?,
+                            forcelimit: num("forcelimit", 0.0)?,
+                            torquelimit: num("torquelimit", 0.0)?,
+                            nocollide: flag("nocollide")?,
+                        },
+                        Some("Slider") => K::Slider {
+                            lpos1: v3("lpos1")?,
+                            lpos2: v3("lpos2")?,
+                            width: num("width", 1.5)?,
+                            material: text("material", "cable/cable")?,
+                            part_of: None,
+                        },
+                        Some("Elastic") => K::Elastic {
+                            lpos1: v3("lpos1")?,
+                            lpos2: v3("lpos2")?,
+                            constant: num("constant", 500.0)?,
+                            damping: num("damping", 3.0)?,
+                            rdamping: num("rdamping", 0.01)?,
+                            width: num("width", 2.0)?,
+                            material: text("material", "cable/cable")?,
+                            length: num("length", 0.0)?,
+                            stretchonly: flag("stretchonly")?,
+                        },
+                        _ => return Err(mlua::Error::runtime("unknown constraint kind")),
+                    };
+                    QueuedWrite::Constrain {
+                        ent,
+                        ent2: t.get::<Option<u32>>("ent2")?.unwrap_or(0),
+                        owner: t.get::<Option<u32>>("owner")?.unwrap_or(0),
+                        kind,
                     }
                 }
                 "undo.push" => {
@@ -3360,6 +3442,37 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
                     .weld(*owner, world(*ent), world(*ent2), *forcelimit, *nocollide);
             if let Some(id) = made {
                 own_constraint(server, *owner, "weld", id);
+                server.sync_after_script();
+            }
+            made.is_some()
+        }
+        QueuedWrite::Constrain {
+            ent,
+            ent2,
+            owner,
+            kind,
+        } => {
+            let world = |e: u32| if e == 0 { None } else { Some(e) };
+            if (*ent != 0 && !exists(server, *ent)) || (*ent2 != 0 && !exists(server, *ent2)) {
+                return false;
+            }
+            if !owner_may_constrain(server, *owner) {
+                return false;
+            }
+            use gm_sandbox::ConstraintKind as K;
+            let tool = match kind {
+                K::Rope { .. } => "rope",
+                K::Axis { .. } => "axis",
+                K::Ballsocket { .. } => "ballsocket",
+                K::Slider { .. } => "slider",
+                K::Elastic { .. } => "elastic",
+                _ => "constraint",
+            };
+            let made = server
+                .sandbox
+                .constrain(*owner, world(*ent), world(*ent2), kind.clone());
+            if let Some(id) = made {
+                own_constraint(server, *owner, tool, id);
                 server.sync_after_script();
             }
             made.is_some()

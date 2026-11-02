@@ -1716,6 +1716,21 @@ impl Sandbox {
         id
     }
 
+    /// A script-made constraint of any kind (`constraint.Rope` and friends): the record the
+    /// physics sync builds the joint from. Nothing for a body against itself or world-to-world.
+    pub fn constrain(
+        &mut self,
+        owner: u32,
+        ent1: Option<u32>,
+        ent2: Option<u32>,
+        kind: ConstraintKind,
+    ) -> Option<u32> {
+        if ent1 == ent2 {
+            return None;
+        }
+        Some(self.restore_constraint(owner, ent1, ent2, kind))
+    }
+
     /// A constraint record straight from a save (no limits, undo entry or duplicate check).
     pub fn restore_constraint(
         &mut self,
