@@ -459,3 +459,64 @@ fn soldier_chases_a_target_out_of_sight_then_gives_up() {
     assert!(dropped.is_some_and(|t| t >= gm_server::NPC_TARGET_LOSE_TICKS));
     assert!(n.chase.is_none() && n.goal.is_none());
 }
+
+/// Melee: a zombie walks up at its measured gait, swings inside its reach, lands 25 DMG_SLASH
+/// 48 ticks into the swing and launches the player away, then closes in and swings again
+/// (server_npc_melee_zombie: hits 196 ticks apart).
+#[test]
+fn zombie_closes_in_and_claws_the_player() {
+    let world = combat_server!(world);
+    let (mut server, idle, start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_zombie", "none").unwrap();
+    let melee = gm_server::npc_melee("npc_zombie").unwrap();
+    let mut hits = Vec::new();
+    let mut steps = Vec::new();
+    let mut swing_dist = Vec::new();
+    let mut hp = server.players[&1].health;
+    let mut last = server.npcs[&id].pos;
+    let mut swinging = false;
+    for tick in 0..600u64 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        let p = &server.players[&1];
+        let s = n.pos.truncate().distance(last.truncate());
+        if s > 1e-4 {
+            steps.push(s);
+        }
+        last = n.pos;
+        let now_swinging = n.melee_hit_at.is_some();
+        if now_swinging && !swinging {
+            swing_dist.push(n.pos.truncate().distance(p.state.origin.truncate()));
+        }
+        swinging = now_swinging;
+        if p.health != hp {
+            hits.push((tick, hp - p.health, p.state.velocity.truncate().length()));
+            hp = p.health;
+        }
+    }
+    eprintln!(
+        "steps {:?}\nswings at {swing_dist:?}\nhits {hits:?}",
+        &steps[..steps.len().min(8)]
+    );
+    assert_eq!(server.npcs[&id].target, Some(1));
+    let steady = steps.iter().filter(|s| (**s - 4.73).abs() < 0.1).count();
+    assert!(steady >= 10, "zombie gait: {steps:?}");
+    assert!(!swing_dist.is_empty(), "never swung");
+    for d in &swing_dist {
+        assert!(
+            *d <= melee.reach && *d > melee.reach - 8.0,
+            "swung at {d} u"
+        );
+    }
+    assert!(hits.len() >= 2, "hits {hits:?}");
+    for (_, dmg, v) in &hits {
+        assert_eq!(*dmg, melee.damage as i32);
+        assert!(*v > 250.0 && *v <= melee.punch + 1.0, "launched at {v} u/s");
+    }
+    let gap = hits[1].0 - hits[0].0;
+    assert!((150..=260).contains(&gap), "hits {gap} ticks apart");
+    assert!(
+        server.players[&1].state.origin.x < start.x - 40.0,
+        "player not pushed west"
+    );
+}

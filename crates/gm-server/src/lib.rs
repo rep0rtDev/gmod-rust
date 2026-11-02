@@ -940,6 +940,11 @@ pub struct Npc {
     pub burst_left: u8,
     pub next_shot: u64,
     pub shots: u32,
+    /// How close a chase brings the NPC to its player (NPC_CHASE_REACH, or the melee reach).
+    pub chase_reach: f32,
+    /// Melee: the tick the current swing ends and the tick its damage lands.
+    pub swing_until: u64,
+    pub melee_hit_at: Option<u64>,
     pub spawn_tick: u64,
     pub next_think: u64,
     pub think_interval: u8,
@@ -1028,6 +1033,33 @@ pub fn npc_weapon_shot(weapon: &str) -> Option<(&'static str, u8)> {
         _ => None,
     }
 }
+
+/// A melee attack: damage per hit, 2D reach (u), swing length and the tick inside the swing
+/// the damage lands, and the speed the hit launches the player at (u/s, away from the NPC).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NpcMelee {
+    pub damage: f32,
+    pub reach: f32,
+    pub swing_ticks: u64,
+    pub hit_tick: u64,
+    pub punch: f32,
+}
+
+/// Measured on the game's zombie (server_npc_melee_zombie): attackE starts inside 55 u, lasts
+/// 84 ticks, 25 DMG_SLASH at tick 48, the player leaves at ~325 u/s (damage force 125 plus a
+/// 200 u/s claw punch). Zombine shares the zombie's claws; other melee classes are unmeasured.
+pub fn npc_melee(class: &str) -> Option<NpcMelee> {
+    match class {
+        "npc_zombie" | "npc_zombine" => Some(NpcMelee {
+            damage: 25.0,
+            reach: 55.0,
+            swing_ticks: 84,
+            hit_tick: 48,
+            punch: 325.0,
+        }),
+        _ => None,
+    }
+}
 const NPC_YAW_RATE_PER_SPEED: f32 = 0.267;
 const NPC_TURN_ACCEL: f32 = 0.89;
 const NPC_BRAKE_CURVE: f32 = 0.755;
@@ -1091,6 +1123,13 @@ const NPC_MOVE_COMBINE: NpcMoveDef = NpcMoveDef {
     run: 214.78,
     run_accel: 264.8,
 };
+/// Zombie approach measured in server_npc_melee_zombie (4.73 u per think); it never runs.
+const NPC_MOVE_ZOMBIE: NpcMoveDef = NpcMoveDef {
+    walk: 44.6,
+    walk_accel: 93.0,
+    run: 44.6,
+    run_accel: 93.0,
+};
 
 /// Measured for citizens, metropolice and combine soldiers; every other class walks like a
 /// citizen until measured.
@@ -1098,6 +1137,7 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
     match class {
         "npc_metropolice" => NPC_MOVE_METROPOLICE,
         "npc_combine_s" => NPC_MOVE_COMBINE,
+        "npc_zombie" | "npc_zombine" => NPC_MOVE_ZOMBIE,
         _ => NPC_MOVE_CITIZEN,
     }
 }
@@ -5383,6 +5423,9 @@ impl<'w> Server<'w> {
                 burst_left: 0,
                 next_shot: 0,
                 shots: 0,
+                chase_reach: NPC_CHASE_REACH,
+                swing_until: 0,
+                melee_hit_at: None,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,
@@ -5663,7 +5706,7 @@ impl<'w> Server<'w> {
                                 e.truncate().distance(target.truncate()) > NPC_CHASE_REPATH
                             })
                         });
-                        let away = n.pos.truncate().distance(target.truncate()) > NPC_CHASE_REACH;
+                        let away = n.pos.truncate().distance(target.truncate()) > n.chase_reach;
                         if stale && away {
                             let extents = Vec3::new(32.0, 32.0, 72.0);
                             if let Some(path) = self
@@ -5685,6 +5728,7 @@ impl<'w> Server<'w> {
                 }
             }
             let chasing = n.chase.is_some();
+            let chase_reach = n.chase_reach;
             let Some(goal) = n.goal.as_mut() else {
                 continue;
             };
@@ -5719,7 +5763,7 @@ impl<'w> Server<'w> {
                 remaining += w[0].truncate().distance(w[1].truncate());
             }
             if chasing {
-                remaining = (remaining - NPC_CHASE_REACH).max(0.0);
+                remaining = (remaining - chase_reach).max(0.0);
             }
             let s0 = v0 * dt;
             let a = accel * dt * dt;
@@ -5840,6 +5884,11 @@ impl<'w> Server<'w> {
         if n.dead_at.is_some() || !npc_hostile(&n.class) {
             return;
         }
+        let melee = npc_melee(&n.class).filter(|_| npc_weapon_shot(&n.weapon).is_none());
+        if let Some(m) = melee {
+            self.npc_melee_think(id, now, m);
+            return;
+        }
         let Some((ammo, pellets)) = npc_weapon_shot(&n.weapon) else {
             return;
         };
@@ -5925,6 +5974,112 @@ impl<'w> Server<'w> {
         for k in 0..pellets {
             let dir = cone_dir(aim, NPC_AIM_CONE_DEG, seed.wrapping_add(k as u64 * 7919));
             self.npc_fire_bullet(id, eye, dir, dmg);
+        }
+    }
+
+    /// Melee combat: the NPC closes on the nearest visible player (chase that rests at the
+    /// reach), swings when the player is inside `reach`, stands through the swing and
+    /// swings again if the player is still in reach, otherwise closes in again. Sight is
+    /// lost and the target dropped exactly as for armed NPCs.
+    fn npc_melee_think(&mut self, id: u32, now: u64, m: NpcMelee) {
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        if now < n.swing_until {
+            return;
+        }
+        let eye = n.pos + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT);
+        let feet = n.pos;
+        let sees = |server: &Self, p: u32| -> Option<Vec3> {
+            let pl = server.players.get(&p).filter(|pl| pl.alive)?;
+            let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
+            if chest.distance(eye) > NPC_SIGHT_RANGE {
+                return None;
+            }
+            let tr = server
+                .collision
+                .trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
+            (tr.fraction >= 1.0 && !tr.start_solid).then_some(pl.state.origin)
+        };
+        let mut target = n.target.and_then(|p| sees(self, p).map(|o| (p, o)));
+        if target.is_none() {
+            let mut ids: Vec<u32> = self.players.keys().copied().collect();
+            ids.sort_unstable();
+            target = ids
+                .into_iter()
+                .filter_map(|p| sees(self, p).map(|o| (p, o)))
+                .min_by(|a, b| a.1.distance(feet).total_cmp(&b.1.distance(feet)));
+        }
+        let Some((player, origin)) = target else {
+            let (old, seen) = (n.target, n.target_seen);
+            if let Some(p) = old {
+                if now.saturating_sub(seen) > NPC_TARGET_LOSE_TICKS {
+                    self.npc_stop(id);
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.target = None;
+                    }
+                } else if self.npcs.get(&id).is_some_and(|n| n.chase != Some(p)) {
+                    self.npc_chase(id, p, false);
+                }
+            }
+            return;
+        };
+        let dist = origin.truncate().distance(feet.truncate());
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
+        n.target = Some(player);
+        n.target_seen = now;
+        n.chase_reach = m.reach - 3.0;
+        if dist <= m.reach {
+            n.chase = None;
+            n.goal = None;
+            n.next_goal = None;
+            n.move_speed = 0.0;
+            n.swing_until = now + m.swing_ticks;
+            n.melee_hit_at = Some(now + m.hit_tick);
+            let to = origin.truncate() - feet.truncate();
+            if to.length_squared() > 1e-6 {
+                n.angles.y = to.y.atan2(to.x).to_degrees();
+            }
+        } else if n.chase != Some(player) {
+            self.npc_chase(id, player, false);
+        }
+    }
+
+    /// The tick a melee swing lands: the target still inside the reach in front of the NPC
+    /// takes the damage as DMG_SLASH and is launched away at `punch`.
+    fn tick_npc_melee_hits(&mut self) {
+        let now = self.tick_count;
+        let due: Vec<(u32, u32, NpcMelee)> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| n.dead_at.is_none() && n.melee_hit_at == Some(now))
+            .filter_map(|(id, n)| Some((*id, n.target?, npc_melee(&n.class)?)))
+            .collect();
+        for (id, player, m) in due {
+            let Some(n) = self.npcs.get_mut(&id) else {
+                continue;
+            };
+            n.melee_hit_at = None;
+            let feet = n.pos;
+            let Some(p) = self.players.get(&player).filter(|p| p.alive) else {
+                continue;
+            };
+            let to = (p.state.origin - feet).truncate();
+            if to.length() > m.reach + 16.0 {
+                continue;
+            }
+            let dir = if to.length_squared() > 1e-6 {
+                to.normalize()
+            } else {
+                glam::Vec2::X
+            };
+            if self.damage_player(player, m.damage, weapons::DMG_SLASH) > 0.0 {
+                if let Some(p) = self.players.get_mut(&player) {
+                    p.state.velocity += dir.extend(0.0) * m.punch;
+                }
+            }
         }
     }
 
@@ -6014,6 +6169,9 @@ impl<'w> Server<'w> {
                 burst_left: 0,
                 next_shot: 0,
                 shots: 0,
+                chase_reach: NPC_CHASE_REACH,
+                swing_until: 0,
+                melee_hit_at: None,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,
@@ -7839,6 +7997,7 @@ impl<'w> Server<'w> {
         self.weapon_pickups();
         self.settle_npcs();
         self.tick_npc_move();
+        self.tick_npc_melee_hits();
         self.remove_dead_npcs();
         self.ride_vehicles();
         // undo.lua counts ticks with removals (its EntityRemoved hook coalesces them through a
