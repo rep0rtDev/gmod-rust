@@ -3791,6 +3791,59 @@ impl<'w> Server<'w> {
     /// Holster / deploy callbacks of scripted weapons on a switch (measured: the holster, with
     /// the class switched to, comes before the deploy in the same tick; the deploy blocks the
     /// primary for 0.2 s).
+    /// Script `StripWeapon` / `StripWeapons`: drop the class (all classes with `None`) from the
+    /// inventory; stripping the active weapon selects the first remaining one.
+    pub fn strip_weapon(&mut self, id: u32, class: Option<&str>) -> bool {
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        let before = p.weapons.len();
+        match class {
+            Some(c) => {
+                p.weapons.retain(|w| w != c);
+                p.inventory.clips.remove(c);
+            }
+            None => {
+                p.weapons.clear();
+                p.inventory.clips.clear();
+            }
+        }
+        if p.weapons.len() == before {
+            return false;
+        }
+        if !p.weapons.contains(&p.active_weapon) {
+            let next = p.weapons.first().cloned().unwrap_or_default();
+            p.active_weapon = next.clone();
+            if !next.is_empty() {
+                p.inventory.select(&next);
+            }
+        }
+        true
+    }
+
+    /// Script `SetAmmo` / `GiveAmmo` / `RemoveAmmo`: reserve ammo of one type, clamped at zero.
+    /// Returns the new count.
+    pub fn set_ammo(&mut self, id: u32, ammo: &str, count: i32, add: bool) -> i32 {
+        let Some(p) = self.players.get_mut(&id) else {
+            return 0;
+        };
+        let slot = p.inventory.ammo.entry(ammo.to_string()).or_insert(0);
+        *slot = if add { *slot + count } else { count }.max(0);
+        *slot
+    }
+
+    /// Script `Weapon:SetClip1/2`: the clip of a carried weapon, clamped at zero.
+    pub fn set_clip(&mut self, id: u32, class: &str, slot: usize, count: i32) -> bool {
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        if !p.weapons.iter().any(|w| w == class) || slot > 1 {
+            return false;
+        }
+        p.inventory.clips.entry(class.to_string()).or_insert([0, 0])[slot] = count.max(0);
+        true
+    }
+
     fn swep_switch(&mut self, id: u32, from: &str, to: &str) {
         let Some(p) = self.players.get_mut(&id) else {
             return;

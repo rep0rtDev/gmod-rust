@@ -43,6 +43,9 @@ pub struct PlayerSnap {
     pub body: String,
     pub weapons: Vec<String>,
     pub active_weapon: String,
+    /// Reserve ammo per ammo type and `(class, clip1, clip2)` per carried weapon.
+    pub ammo: Vec<(String, i32)>,
+    pub clips: Vec<(String, i32, i32)>,
     pub frags: u32,
     pub deaths: u32,
 }
@@ -293,6 +296,18 @@ impl Snapshot {
                             active_weapon: p.active_weapon.clone(),
                             frags: p.frags,
                             deaths: p.deaths,
+                            ammo: p
+                                .inventory
+                                .ammo
+                                .iter()
+                                .map(|(k, v)| (k.clone(), *v))
+                                .collect(),
+                            clips: p
+                                .inventory
+                                .clips
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v[0], v[1]))
+                                .collect(),
                         },
                     )
                 })

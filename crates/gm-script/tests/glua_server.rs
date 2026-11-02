@@ -1,6 +1,6 @@
 //! net, ConVar, concommand, file, CTakeDamageInfo and the GM hook bridge.
 use glam::Vec3;
-use gm_script::api::Payload;
+use gm_script::api::{Payload, QueuedWrite};
 use gm_script::snapshot::PlayerSnap;
 use gm_script::{ActorConfig, ActorSpec, Runtime, Snapshot};
 use std::sync::Arc;
@@ -44,8 +44,13 @@ fn snapshot() -> Arc<Snapshot> {
             model: String::new(),
             skin: 0,
             body: String::new(),
-            weapons: vec![],
+            weapons: vec!["weapon_pistol".into(), "weapon_smg1".into()],
             active_weapon: String::new(),
+            ammo: vec![("Pistol".into(), 20), ("SMG1".into(), 45)],
+            clips: vec![
+                ("weapon_pistol".into(), 18, 0),
+                ("weapon_smg1".into(), 45, 1),
+            ],
             frags: 0,
             deaths: 0,
         },
@@ -365,4 +370,52 @@ fn tail_libraries_stack_sound_cookie_gamemode() {
         r,
         vec![3.0, 3.0, 3.0, 2.0, 1.0, 90.0, 3.0, 1.0, 1.0, 1.0, 1.0]
     );
+}
+
+#[test]
+fn player_ammo_and_clips_over_the_inventory() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local ply = Player(1)
+             local w = ply:GetWeapon('weapon_pistol')
+             state.r = { ply:GetAmmoCount('Pistol'), ply:GetAmmoCount('AR2'), ply:GetAmmo().SMG1, w:Clip1(), w:Clip2(), ply:GetWeapon('weapon_smg1'):Clip2() }
+             ply:SetAmmo(7, 'Pistol')
+             ply:GiveAmmo(5, 'SMG1')
+             ply:RemoveAmmo(3, 'SMG1')
+             w:SetClip1(2)
+             ply:StripWeapon('weapon_smg1')
+             ply:StripWeapons()
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<i64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!(r, vec![20, 0, 45, 18, 0, 1]);
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(
+        matches!(&writes[0], QueuedWrite::PlayerSetAmmo { player: 1, ammo, count: 7, add: false } if ammo == "Pistol")
+    );
+    assert!(
+        matches!(&writes[1], QueuedWrite::PlayerSetAmmo { ammo, count: 5, add: true, .. } if ammo == "SMG1")
+    );
+    assert!(matches!(
+        &writes[2],
+        QueuedWrite::PlayerSetAmmo {
+            count: -3,
+            add: true,
+            ..
+        }
+    ));
+    assert!(
+        matches!(&writes[3], QueuedWrite::PlayerSetClip { class, slot: 0, count: 2, .. } if class == "weapon_pistol")
+    );
+    assert!(
+        matches!(&writes[4], QueuedWrite::PlayerStripWeapon { class: Some(c), .. } if c == "weapon_smg1")
+    );
+    assert!(matches!(
+        &writes[5],
+        QueuedWrite::PlayerStripWeapon { class: None, .. }
+    ));
 }

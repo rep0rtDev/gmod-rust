@@ -216,8 +216,6 @@ function VEH:IsEngineEnabled() return true end
 function VEH:GetThrottle() return 0 end
 function VEH:GetSteering() return 0 end
 function WEP:GetPrintName() return self:GetClass() end
-function WEP:Clip1() return -1 end
-function WEP:Clip2() return -1 end
 function WEP:GetMaxClip1() return -1 end
 function WEP:GetMaxClip2() return -1 end
 function WEP:GetHoldType() return "normal" end
@@ -353,8 +351,21 @@ function PLY:ChatPrint(msg) print(msg) end
 function PLY:ConCommand(cmd) end
 function PLY:SendLua(code) end
 function PLY:Spawn() end
-function PLY:StripWeapons() end
-function PLY:StripWeapon(class) end
+function PLY:StripWeapons() qwrite("player.strip_weapon", self.__pid, nil) end
+function PLY:StripWeapon(class) qwrite("player.strip_weapon", self.__pid, class) end
+-- Ammo: reserve per type from the snapshot (`ammo`), writes through player.set_ammo / give_ammo.
+local function ammo_name(t) if type(t) == "number" then return (game and game.GetAmmoName and game.GetAmmoName(t)) or tostring(t) end return tostring(t) end
+function PLY:GetAmmoCount(t) local p = psnap(self.__pid); return p and p.ammo and p.ammo[ammo_name(t)] or 0 end
+function PLY:GetAmmo() local p = psnap(self.__pid); local out = {}; if p and p.ammo then for k, v in pairs(p.ammo) do out[k] = v end end return out end
+function PLY:SetAmmo(count, t) qwrite("player.set_ammo", self.__pid, { type = ammo_name(t), count = math.floor(count) }) end
+function PLY:GiveAmmo(count, t, hide) qwrite("player.give_ammo", self.__pid, { type = ammo_name(t), count = math.floor(count) }) return math.floor(count) end
+function PLY:RemoveAmmo(count, t) qwrite("player.give_ammo", self.__pid, { type = ammo_name(t), count = -math.floor(count) }) end
+function PLY:RemoveAllAmmo() for k in pairs(self:GetAmmo()) do qwrite("player.set_ammo", self.__pid, { type = k, count = 0 }) end end
+function PLY:StripAmmo() self:RemoveAllAmmo() end
+function WEP:Clip1() local p = psnap(self.__owner); local c = p and p.clips1 and p.clips1[self.__class]; return c or -1 end
+function WEP:Clip2() local p = psnap(self.__owner); local c = p and p.clips2 and p.clips2[self.__class]; return c or -1 end
+function WEP:SetClip1(n) qwrite("player.set_clip", self.__owner, { class = self.__class, slot = 0, count = math.floor(n) }) end
+function WEP:SetClip2(n) qwrite("player.set_clip", self.__owner, { class = self.__class, slot = 1, count = math.floor(n) }) end
 function PLY:Freeze(on) end
 function PLY:GodEnable() rawget(self, "__vars").__god = true end
 function PLY:GodDisable() rawget(self, "__vars").__god = false end

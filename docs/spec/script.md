@@ -740,6 +740,14 @@ ReadVars / Receivers`. `sql`, `saverestore`, `gmsave`, `IMaterial` / `ITexture`,
 stubs (no sqlite, save system, material system or debug backend on the own server). `os` and
 `package` stay absent: the sandbox test requires it.
 
+Player ammo and clips over the server inventory: `PlayerSnap.ammo` (reserve per ammo type) and
+`PlayerSnap.clips` (`class, clip1, clip2`) come from `weapons::Inventory`; `Player:GetAmmoCount /
+GetAmmo / SetAmmo / GiveAmmo / RemoveAmmo / RemoveAllAmmo / StripAmmo / StripWeapon / StripWeapons`
+and `Weapon:Clip1 / Clip2 / SetClip1 / SetClip2` write through `player.set_ammo / give_ammo /
+set_clip / strip_weapon` (`Server::set_ammo`, `set_clip`, `strip_weapon`; stripping the active
+weapon selects the first remaining one; counts clamp at zero). Reads see the state of the
+snapshot they run on, so a write shows up one tick later like every other queued write.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

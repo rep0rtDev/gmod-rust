@@ -229,6 +229,24 @@ pub enum QueuedWrite {
         player: u32,
         class: String,
     },
+    /// `None` strips every weapon.
+    PlayerStripWeapon {
+        player: u32,
+        class: Option<String>,
+    },
+    /// Reserve ammo of one type; `add` accumulates instead of replacing.
+    PlayerSetAmmo {
+        player: u32,
+        ammo: String,
+        count: i32,
+        add: bool,
+    },
+    PlayerSetClip {
+        player: u32,
+        class: String,
+        slot: u8,
+        count: i32,
+    },
     /// `CreateConVar` (rejected when the name exists; needs no capability).
     CreateCvar {
         name: String,
@@ -370,6 +388,27 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("body", p.body.as_str())?;
     t.set("weapons", p.weapons.clone())?;
     t.set("active_weapon", p.active_weapon.as_str())?;
+    t.set(
+        "ammo",
+        p.ammo
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashMap<String, i32>>(),
+    )?;
+    t.set(
+        "clips1",
+        p.clips
+            .iter()
+            .map(|(c, a, _)| (c.clone(), *a))
+            .collect::<std::collections::HashMap<String, i32>>(),
+    )?;
+    t.set(
+        "clips2",
+        p.clips
+            .iter()
+            .map(|(c, _, b)| (c.clone(), *b))
+            .collect::<std::collections::HashMap<String, i32>>(),
+    )?;
     t.set("frags", p.frags)?;
     t.set("deaths", p.deaths)?;
     Ok(t)
@@ -1211,6 +1250,31 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     player: ent,
                     class: str_arg(&arg)?,
                 },
+                "player.strip_weapon" => QueuedWrite::PlayerStripWeapon {
+                    player: ent,
+                    class: match &arg {
+                        Value::Nil => None,
+                        _ => Some(str_arg(&arg)?),
+                    },
+                },
+                "player.set_ammo" | "player.give_ammo" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::PlayerSetAmmo {
+                        player: ent,
+                        ammo: t.get::<String>("type")?,
+                        count: t.get::<i32>("count")?,
+                        add: op == "player.give_ammo",
+                    }
+                }
+                "player.set_clip" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::PlayerSetClip {
+                        player: ent,
+                        class: t.get::<String>("class")?,
+                        slot: t.get::<Option<u8>>("slot")?.unwrap_or(0),
+                        count: t.get::<i32>("count")?,
+                    }
+                }
                 other => return Err(mlua::Error::runtime(format!("unknown write {other}"))),
             };
             let mut n = sh.queued.lock().unwrap();
@@ -1927,6 +1991,24 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         }
         QueuedWrite::PlayerGiveWeapon { player, class } => server.give_weapon(*player, class),
         QueuedWrite::PlayerSelectWeapon { player, class } => server.select_weapon(*player, class),
+        QueuedWrite::PlayerStripWeapon { player, class } => {
+            server.strip_weapon(*player, class.as_deref())
+        }
+        QueuedWrite::PlayerSetAmmo {
+            player,
+            ammo,
+            count,
+            add,
+        } => {
+            server.set_ammo(*player, ammo, *count, *add);
+            true
+        }
+        QueuedWrite::PlayerSetClip {
+            player,
+            class,
+            slot,
+            count,
+        } => server.set_clip(*player, class, *slot as usize, *count),
         QueuedWrite::UndoPush {
             player,
             name,

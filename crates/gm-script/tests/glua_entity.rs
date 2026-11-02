@@ -68,6 +68,11 @@ fn snapshot() -> Arc<Snapshot> {
             body: String::new(),
             weapons: vec!["weapon_pistol".into(), "weapon_physgun".into()],
             active_weapon: "weapon_physgun".into(),
+            ammo: vec![("Pistol".into(), 20), ("SMG1".into(), 45)],
+            clips: vec![
+                ("weapon_pistol".into(), 18, 0),
+                ("weapon_smg1".into(), 45, 1),
+            ],
             frags: 3,
             deaths: 1,
         },
