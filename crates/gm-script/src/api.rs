@@ -1938,6 +1938,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     ent,
                     dt: f32_arg(&arg),
                 },
+                "npc.took_damage" => QueuedWrite::NpcTookDamage { ent },
                 "ent.pose" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::EntityPose {

@@ -894,3 +894,11 @@ fn weapon_remove_cleanup_and_find_use_reach_scripts() {
         .unwrap();
     assert_eq!((removed, cleaned.as_str(), dflt), (1, "props", 5));
 }
+
+#[test]
+fn npc_took_damage_queues_a_write() {
+    let (_, writes) = run("Entity(9):MarkTookDamageFromEnemy()");
+    assert!(writes
+        .iter()
+        .any(|w| matches!(w, QueuedWrite::NpcTookDamage { ent: 9 })));
+}
