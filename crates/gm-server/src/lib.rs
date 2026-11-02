@@ -12,6 +12,8 @@ use gm_physics::{BodyHandle, ConstraintHandle, PropDesc, Surface, World};
 use gm_sandbox::{ConstraintKind, Event, ModelBounds, PropBody, Sandbox, SpawnRequest, ToolHit};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+pub use gm_physics::surface::SurfaceTable;
+
 /// Everything the server needs to know about a model to spawn and trace it.
 pub mod player_models;
 
@@ -3965,6 +3967,20 @@ pub struct SpawnPoint {
     pub angles: Vec3,
 }
 
+/// The map's `info_player_start` entities as spawn points.
+pub fn spawn_points_from_bsp(bsp: &gm_formats::bsp::Bsp) -> Vec<SpawnPoint> {
+    bsp.entities
+        .iter()
+        .filter(|e| e.classname() == "info_player_start")
+        .filter_map(|e| {
+            e.origin().map(|o| SpawnPoint {
+                pos: Vec3::from(o),
+                angles: Vec3::from(e.angles().unwrap_or([0.0; 3])),
+            })
+        })
+        .collect()
+}
+
 /// `IN_ATTACK`, `IN_USE`, `IN_ATTACK2` of a usercmd.
 pub const IN_ATTACK: u32 = 1;
 pub const IN_USE: u32 = 32;
@@ -4533,17 +4549,7 @@ impl<'w> Server<'w> {
 
     /// Spawn points from the map's entities.
     pub fn set_spawn_points_from_bsp(&mut self, bsp: &gm_formats::bsp::Bsp) {
-        self.spawn_points = bsp
-            .entities
-            .iter()
-            .filter(|e| e.classname() == "info_player_start")
-            .filter_map(|e| {
-                e.origin().map(|o| SpawnPoint {
-                    pos: Vec3::from(o),
-                    angles: Vec3::from(e.angles().unwrap_or([0.0; 3])),
-                })
-            })
-            .collect();
+        self.spawn_points = spawn_points_from_bsp(bsp);
     }
 
     /// xorshift64*: deterministic for the harnesses, uniform like the game's random picks.

@@ -113,6 +113,7 @@ fn snapshot() -> Arc<Snapshot> {
         1,
         PlayerSnap {
             id: 1,
+            counts: vec![("props".to_string(), 3)],
             origin: Vec3::ZERO,
             velocity: Vec3::ZERO,
             view_angles: Vec3::ZERO,

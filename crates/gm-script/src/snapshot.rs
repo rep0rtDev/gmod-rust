@@ -99,6 +99,8 @@ pub struct PlayerSnap {
     /// Mover state: buttons of this and the previous processed command, ground / duck flags.
     pub buttons: u32,
     pub buttons_last: u32,
+    /// Sandbox spawn counts per kind (`Player:GetCount`), from the server's ledger.
+    pub counts: Vec<(String, u32)>,
     /// The processed command: forward/side/up move, mouse deltas, impulse, server tick.
     pub cmd_move: Vec3,
     pub cmd_mouse_x: f32,
@@ -166,6 +168,17 @@ unsafe impl Sync for NavRef {}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModelsRef(pub *const std::collections::BTreeMap<String, gm_server::ModelScriptData>);
 
+/// The server's surface table, read through the snapshot like the model data.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SurfacesRef(pub *const Option<gm_server::SurfaceTable>);
+unsafe impl Send for SurfacesRef {}
+unsafe impl Sync for SurfacesRef {}
+impl Default for SurfacesRef {
+    fn default() -> Self {
+        SurfacesRef(std::ptr::null())
+    }
+}
+
 unsafe impl Send for ModelsRef {}
 unsafe impl Sync for ModelsRef {}
 
@@ -202,6 +215,10 @@ pub struct Snapshot {
     pub world: WorldRef,
     pub nav: NavRef,
     pub models: ModelsRef,
+    /// The server's `surfaceproperties` table (`util.GetSurfaceData`).
+    pub surfaces: SurfacesRef,
+    /// First spawn point of the map (`game.StartSpot`): position and angles.
+    pub start_spot: Option<(glam::Vec3, glam::Vec3)>,
     pub vehicles: VehiclesRef,
     /// Prop collision hulls for `phys.trace`.
     pub props: Vec<gm_sandbox::PropBody>,
@@ -255,6 +272,14 @@ impl Snapshot {
         self.nav().map_or(&[], |n| n.polys())
     }
 
+    pub fn surface_table(&self) -> Option<&gm_server::SurfaceTable> {
+        if self.surfaces.0.is_null() {
+            return None;
+        }
+        // SAFETY: the pointer is the server's field, alive while the snapshot is read
+        unsafe { (*self.surfaces.0).as_ref() }
+    }
+
     pub fn nav_vertices(&self) -> &[glam::Vec3] {
         self.nav().map_or(&[], |n| n.vertices())
     }
@@ -292,6 +317,8 @@ impl Snapshot {
             world: world_ref,
             nav: NavRef::default(),
             models: ModelsRef::default(),
+            surfaces: SurfacesRef::default(),
+            start_spot: None,
             vehicles: VehiclesRef::default(),
             props,
             entities: world
@@ -371,6 +398,7 @@ impl Snapshot {
                         p.id,
                         PlayerSnap {
                             id: p.id,
+                            counts: Vec::new(),
                             origin: p.origin,
                             velocity: p.velocity,
                             view_angles: p.view_angles,
@@ -403,6 +431,8 @@ impl Snapshot {
             mounted: server.mounted.clone(),
             world: WorldRef(server.collision as *const _),
             models: ModelsRef(&server.model_scripts as *const _),
+            surfaces: SurfacesRef(&server.surface_table as *const _),
+            start_spot: server.spawn_points.first().map(|s| (s.pos, s.angles)),
             vehicles: VehiclesRef(&server.vehicles as *const _),
             nav: NavRef(server.navmesh().map_or(std::ptr::null(), |n| n as *const _)),
             props: server.trace_bodies(),
@@ -541,6 +571,28 @@ impl Snapshot {
                         *id,
                         PlayerSnap {
                             id: *id,
+                            counts: [
+                                "props",
+                                "ragdolls",
+                                "npcs",
+                                "vehicles",
+                                "constraints",
+                                "ropeconstraints",
+                                "thrusters",
+                                "hoverballs",
+                                "balloons",
+                                "wheels",
+                                "buttons",
+                                "dynamite",
+                                "lamps",
+                                "lights",
+                                "emitters",
+                                "cameras",
+                                "sents",
+                            ]
+                            .iter()
+                            .map(|k| (k.to_string(), server.sandbox.count_of(*id, k) as u32))
+                            .collect(),
                             origin: p.state.origin,
                             velocity: p.state.velocity,
                             view_angles: p.view_angles,

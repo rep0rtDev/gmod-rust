@@ -101,6 +101,13 @@ impl SurfaceTable {
             .find_map(|n| self.raw[n].names.get(key).cloned())
     }
 
+    /// Every material name, sorted (the script layer's surface index order).
+    pub fn names(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.raw.keys().cloned().collect();
+        v.sort();
+        v
+    }
+
     pub fn get(&self, name: &str) -> SurfaceProps {
         let mut out = SurfaceProps::default();
         // apply from the root of the chain down so children override

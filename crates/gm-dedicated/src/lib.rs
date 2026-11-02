@@ -10,6 +10,8 @@ pub struct LoadedWorld {
     pub physics: World,
     pub world_body: BodyHandle,
     pub nav: std::sync::Arc<gm_nav::NavMesh>,
+    /// The map's `info_player_start` points (`Server::spawn_points`).
+    pub spawn_points: Vec<gm_server::SpawnPoint>,
 }
 
 /// Default Jolt solver settings used by all harnesses (`tools/parity/runner` mirrors this).
@@ -49,6 +51,7 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
         physics,
         world_body,
         nav: std::sync::Arc::new(nav),
+        spawn_points: gm_server::spawn_points_from_bsp(&bsp),
     })
 }
 

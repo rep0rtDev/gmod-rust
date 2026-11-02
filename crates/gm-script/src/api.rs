@@ -649,6 +649,11 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("previous_weapon", p.previous_weapon.as_str())?;
     t.set("buttons", p.buttons)?;
     t.set("buttons_last", p.buttons_last)?;
+    let counts = lua.create_table()?;
+    for (k, v) in &p.counts {
+        counts.set(k.as_str(), *v)?;
+    }
+    t.set("counts", counts)?;
     t.set("cmd_move", vec3_table(lua, p.cmd_move)?)?;
     t.set("cmd_mouse_x", p.cmd_mouse_x)?;
     t.set("cmd_mouse_y", p.cmd_mouse_y)?;
@@ -2345,6 +2350,65 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     g.set("nav", nav)?;
+    // surfaceproperties: index = position in the sorted name list
+    let surf = lua.create_table()?;
+    let sh = shared.clone();
+    surf.set(
+        "names",
+        lua.create_function(move |_, ()| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            Ok(snap.surface_table().map_or_else(Vec::new, |t| t.names()))
+        })?,
+    )?;
+    let sh = shared.clone();
+    surf.set(
+        "data",
+        lua.create_function(move |lua, name: String| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            let Some(t) = snap.surface_table() else {
+                return Ok(Value::Nil);
+            };
+            if !t.names().contains(&name) {
+                return Ok(Value::Nil);
+            }
+            let p = t.get(&name);
+            let d = lua.create_table()?;
+            d.set("name", name.as_str())?;
+            d.set("friction", p.friction)?;
+            d.set("elasticity", p.elasticity)?;
+            d.set("density", p.density)?;
+            d.set("dampening", p.dampening)?;
+            for key in [
+                "stepleft",
+                "stepright",
+                "impactsoft",
+                "impacthard",
+                "scraperough",
+                "scrapesmooth",
+                "bulletimpact",
+                "break",
+                "strain",
+                "rolling",
+            ] {
+                if let Some(v) = t.sound(&name, key) {
+                    d.set(key, v)?;
+                }
+            }
+            Ok(Value::Table(d))
+        })?,
+    )?;
+    g.set("surf", surf)?;
+    let sh = shared.clone();
+    g.get::<Table>("game")?.set(
+        "__start_spot",
+        lua.create_function(move |lua, ()| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            match snap.start_spot {
+                Some((pos, ang)) => Ok((Some(vec3_table(lua, pos)?), Some(vec3_table(lua, ang)?))),
+                None => Ok((None, None)),
+            }
+        })?,
+    )?;
     let model = lua.create_table()?;
     let sh = shared.clone();
     model.set(

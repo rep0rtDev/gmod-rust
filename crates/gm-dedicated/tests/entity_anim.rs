@@ -186,4 +186,29 @@ fn pose_parameters_clamp_or_wrap_into_the_model_range_and_clear() {
     );
     assert_eq!(server.npcs[&id].maxs.z, 30.0, "the hull itself moved");
     assert!(!server.set_collision_bounds(9999, Vec3::ZERO, Vec3::ONE));
+
+    // the surface table and spawn counts reach the script snapshot
+    let text =
+        String::from_utf8_lossy(&mount.read("scripts/surfaceproperties.txt").unwrap()).to_string();
+    server.surface_table = Some(gm_physics::surface::SurfaceTable::parse(&[&text]));
+    let snap = gm_script::Snapshot::of(&server, 0);
+    let table = snap.surface_table().expect("surface table in the snapshot");
+    let names = table.names();
+    assert!(
+        names.len() > 50 && names.windows(2).all(|w| w[0] < w[1]),
+        "{}",
+        names.len()
+    );
+    assert!(names.iter().any(|n| n == "metal") && table.get("metal").friction > 0.0);
+    assert!(
+        snap.start_spot.is_none(),
+        "no spawn points before the BSP entities are read"
+    );
+    let bsp_data = mount.read("maps/gm_construct.bsp").unwrap();
+    let bsp = gm_formats::bsp::Bsp::parse(&bsp_data).unwrap();
+    server.set_spawn_points_from_bsp(&bsp);
+    let snap = gm_script::Snapshot::of(&server, 0);
+    assert!(snap.start_spot.is_some(), "gm_construct has a spawn point");
+    let counts = &snap.players[&1].counts;
+    assert_eq!(counts.iter().find(|c| c.0 == "npcs").map(|c| c.1), Some(1));
 }

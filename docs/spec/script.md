@@ -601,6 +601,15 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   `SetCollisionBounds` (`WS` subtracts the position) changes an NPC's hull, which its hit tests
   use; on a prop it is readback only, the body stays the PHY. `SetSurroundingBounds(Type)` stay
   stubs.
+- Constant fakes replaced: `Player:GetCount(kind)` reads the sandbox ledger (every `sbox_max*`
+  kind, carried per player in the snapshot) and `CheckLimit(kind)` compares it with the
+  `sbox_max<kind>` cvar (true when there is no such cvar or it is negative; the server's own
+  refusal still rules the spawn); `Player:IsSprinting` is `IN_SPEED` held while the command
+  moves; `game.StartSpot` is the map's first spawn point; `util.GetSurfacePropName` /
+  `GetSurfaceIndex` / `GetSurfaceData` read the server's `surfaceproperties` table (our index
+  is the position in the sorted material list, data = friction / elasticity / density /
+  dampening + the sound script names up the `base` chain; the engine's jump / speed factors and
+  material letter are not in our table).
 
 Done in `glua/server.luau`:
 

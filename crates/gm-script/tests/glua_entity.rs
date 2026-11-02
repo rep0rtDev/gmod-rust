@@ -114,6 +114,7 @@ fn snapshot() -> Arc<Snapshot> {
         1,
         PlayerSnap {
             id: 1,
+            counts: vec![("props".to_string(), 3)],
             origin: Vec3::new(10.0, 20.0, 30.0),
             velocity: Vec3::ZERO,
             view_angles: Vec3::new(0.0, 180.0, 0.0),
@@ -612,4 +613,26 @@ fn collision_bounds_write_carries_both_corners_sorted_by_the_server() {
     let (mn, mx, c): (String, String, String) =
         rt.actors()[0].eval("return unpack(state.r)").unwrap();
     assert!(!mn.is_empty() && !mx.is_empty() && !c.is_empty());
+}
+
+#[test]
+fn spawn_counts_and_surface_lookups_come_from_the_snapshot() {
+    let (rt, _) = run("local ply = Entity(5):GetOwner()
+         state.r = { ply:GetCount(\"props\"), ply:GetCount(\"npcs\"), ply:CheckLimit(\"props\"), ply:IsSprinting(),
+                     util.GetSurfaceIndex(\"metal\"), util.GetSurfacePropName(0), util.GetSurfaceData(0) == nil,
+                     tostring(game.StartSpot()) }");
+    let (props, npcs, ok, sprint, idx, name, nodata, spot): (
+        i32,
+        i32,
+        bool,
+        bool,
+        i32,
+        String,
+        bool,
+        String,
+    ) = rt.actors()[0].eval("return unpack(state.r)").unwrap();
+    assert_eq!((props, npcs, ok, sprint), (3, 0, true, false));
+    // no surface table / spawn point in this harness
+    assert_eq!((idx, name.as_str(), nodata), (-1, "", true));
+    assert!(!spot.is_empty());
 }

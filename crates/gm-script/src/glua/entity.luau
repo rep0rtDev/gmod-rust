@@ -496,7 +496,7 @@ function PLY:UnLock() qwrite("player.lock", self.__pid, false) end
 function PLY:IsOnGround() local p = psnap(self.__pid); return p ~= nil and p.on_ground == true end
 function PLY:OnGround() return self:IsOnGround() end
 function PLY:Crouching() local p = psnap(self.__pid); return p ~= nil and p.ducked == true end
-function PLY:IsSprinting() return false end
+function PLY:IsSprinting() local p = psnap(self.__pid); if not p then return false end return bit.band(p.buttons or 0, IN_SPEED) ~= 0 and (p.cmd_move.x ~= 0 or p.cmd_move.y ~= 0) end
 function PLY:IsTyping() return false end
 function PLY:IsSpeaking() return false end
 function PLY:Team() return rawget(self, "__vars").__team or 1 end
@@ -558,8 +558,8 @@ function PLY:GetInfoNum(cvar, default) return default end
 function PLY:SetPData(k, v) rawget(self, "__vars").__pdata = rawget(self, "__vars").__pdata or {}; rawget(self, "__vars").__pdata[k] = v return true end
 function PLY:GetPData(k, d) local pd = rawget(self, "__vars").__pdata; if pd and pd[k] ~= nil then return pd[k] end return d end
 function PLY:RemovePData(k) local pd = rawget(self, "__vars").__pdata; if pd then pd[k] = nil end return true end
-function PLY:GetCount(kind) return 0 end
-function PLY:CheckLimit(kind) return true end
+function PLY:GetCount(kind) local p = psnap(self.__pid); return p and p.counts and p.counts[tostring(kind)] or 0 end
+function PLY:CheckLimit(kind) local c = GetConVar("sbox_max" .. tostring(kind)); if not c then return true end local max = c:GetInt(); return max < 0 or self:GetCount(kind) < max end
 function PLY:AddCount() end
 function PLY:AddCleanup() end
 function PLY:GetTool() return nil end
@@ -705,7 +705,7 @@ function game.AddParticles() end
 function game.MountGMA() return false end
 function game.GetMapNext() return "" end
 function game.GetMapVersion() return 0 end
-function game.StartSpot() return Vector() end
+function game.StartSpot() local p = game.__start_spot(); if not p then return Vector() end return Vector(p.x, p.y, p.z) end
 function game.MaxPlayers() return 128 end
 function game.SetGlobalState() end
 function game.GetSunInfo() return nil end
@@ -768,9 +768,10 @@ end
 function util.TraceHull(data) return util.TraceLine(data) end
 function util.TraceEntity(data, ent) return util.TraceLine(data) end
 function util.QuickTrace(origin, dir, filter) return util.TraceLine({ start = origin, endpos = origin + dir, filter = filter }) end
-function util.GetSurfacePropName() return "" end
-function util.GetSurfaceIndex() return 0 end
-function util.GetSurfaceData() return nil end
+-- surfaceproperties: our index is the position in the sorted material list (the engine's is its load order)
+function util.GetSurfacePropName(i) local n = surf.names()[(tonumber(i) or -1) + 1]; return n or "" end
+function util.GetSurfaceIndex(name) name = string.lower(tostring(name)); for i, n in ipairs(surf.names()) do if n == name then return i - 1 end end return -1 end
+function util.GetSurfaceData(i) local n = surf.names()[(tonumber(i) or -1) + 1]; if not n then return nil end return surf.data(n) end
 function util.PointContents(pos)
     local tr = util.TraceLine({ start = pos, endpos = pos })
     return tr.Hit and CONTENTS_SOLID or CONTENTS_EMPTY
