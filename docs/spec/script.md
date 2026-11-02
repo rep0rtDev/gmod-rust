@@ -706,6 +706,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   radius + PVS test. `ENTITY:PhysicsUpdate(phys)` runs every server tick on the scripted entities
   that define it (not per physics sub-step). `NextBot:MoveToPos` calls `OnMovementComplete` on
   arrival and `OnMovementFailed` when the path is invalid or the bot is stuck.
+- Sandbox spawn hooks for the remaining spawn paths: `gm_spawnsent` asks `PlayerSpawnSENT(ply,
+  class)` and fires `PlayerSpawnedSENT(ply, ent)` (kind `sent` on the spawn request / spawned
+  events), `gm_giveswep` asks `PlayerGiveSWEP(ply, class, swep)` (kind `giveswep`), a ragdoll
+  model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
+  `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
+  `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
 - NextBots: a scripted entity with `Base = "base_nextbot"` (or `Type = "nextbot"`) gets a server
   ground mover (`Server::nextbots`, `NextBot`): each tick the xy velocity ramps toward the
   `Approach` goal at the desired speed (accel / decel), gravity pulls an airborne bot, the hull

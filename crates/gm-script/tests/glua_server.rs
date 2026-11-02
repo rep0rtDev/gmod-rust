@@ -1615,3 +1615,60 @@ fn is_mounted_reads_the_provider_labels_and_sound_duration_asks_the_host() {
         "the lookup set after load does not reach the running actor"
     );
 }
+
+#[test]
+fn sandbox_sent_giveswep_and_ragdoll_hooks() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"PlayerSpawnSENT\", \"t\", function(ply, class) state.sent = class; return false end)
+            hook.Add(\"PlayerSpawnedSENT\", \"t\", function(ply, ent) state.spawned = ent:EntIndex() end)
+            hook.Add(\"PlayerGiveSWEP\", \"t\", function(ply, class, tbl) state.give = class end)
+            hook.Add(\"PlayerSpawnRagdoll\", \"t\", function(ply, model) state.ragdoll = model end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut p = Payload::default();
+    p.ints.push(("player", 1));
+    p.strs.push(("kind", "sent".into()));
+    p.strs.push(("name", "my_sent".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "sandbox.spawn_request", &p, 3)
+        .unwrap();
+    let mut q = Payload::default();
+    q.ints.push(("player", 1));
+    q.ints.push(("entity", 9));
+    q.strs.push(("kind", "sent".into()));
+    q.strs.push(("name", "my_sent".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "sandbox.spawned", &q, 4)
+        .unwrap();
+    let mut g = Payload::default();
+    g.ints.push(("player", 1));
+    g.strs.push(("kind", "giveswep".into()));
+    g.strs.push(("name", "weapon_crowbar".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "sandbox.spawn_request", &g, 5)
+        .unwrap();
+    let mut r = Payload::default();
+    r.ints.push(("player", 1));
+    r.strs.push(("model", "models/alyx.mdl".into()));
+    r.bools.push(("ragdoll", true));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "prop.spawn_request", &r, 6)
+        .unwrap();
+    let (sent, spawned, give, ragdoll): (String, i32, String, String) = rt.actors()[0]
+        .eval("return state.sent, state.spawned, state.give, state.ragdoll")
+        .unwrap();
+    assert_eq!(
+        (sent.as_str(), spawned, give.as_str(), ragdoll.as_str()),
+        ("my_sent", 9, "weapon_crowbar", "models/alyx.mdl")
+    );
+}

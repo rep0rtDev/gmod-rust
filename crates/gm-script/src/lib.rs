@@ -1216,6 +1216,13 @@ impl Runtime {
         let mut p = api::Payload::default();
         p.ints.push(("player", player as i64));
         p.strs.push(("model", model.to_string()));
+        p.bools.push((
+            "ragdoll",
+            server
+                .models
+                .get(model)
+                .is_some_and(|m| m.ragdoll.is_some()),
+        ));
         self.ask(server, "prop.spawn_request", p)
     }
 

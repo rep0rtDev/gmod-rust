@@ -616,7 +616,7 @@ local prev_move = {}
     events.on("addon.reloaded", function() hook.Run("OnReloaded") end)
     events.on("addon.reloaded", function() hook.Run("ShutDown") end, 1e9)
     events.on("entity.created", function(p) hook.Run("OnEntityCreated", Entity(p.entity)) end)
-    events.on("entity.spawned", function(p) if not p.tag then local e = Entity(p.entity); hook.Run("PlayerSpawnedProp", Player(p.player), e:GetModel(), e) end end)
+    events.on("entity.spawned", function(p) if not p.tag then local e = Entity(p.entity); if e:GetClass() == "prop_ragdoll" then hook.Run("PlayerSpawnedRagdoll", Player(p.player), e:GetModel(), e) else hook.Run("PlayerSpawnedProp", Player(p.player), e:GetModel(), e) end end end)
     events.on("entity.removed", function(p) hook.Run("EntityRemoved", Entity(p.entity), false) end)
     events.on("entity.break", function(p) hook.Run("PropBreak", NULL, Entity(p.entity)) end)
     events.on("npc.killed", function(p) hook.Run("OnNPCKilled", Entity(p.npc), p.attacker ~= 0 and Player(p.attacker) or NULL, NULL) end)
@@ -764,17 +764,27 @@ local prev_move = {}
         local r
         if p.kind == "npc" then r = hook.Run("PlayerSpawnNPC", ply, p.name, "")
         elseif p.kind == "vehicle" then r = hook.Run("PlayerSpawnVehicle", ply, "", p.name, list.Get("Vehicles")[p.name] or {})
-        elseif p.kind == "weapon" then r = hook.Run("PlayerSpawnSWEP", ply, p.name, weapons.GetStored(p.name) or {}) end
+        elseif p.kind == "weapon" then r = hook.Run("PlayerSpawnSWEP", ply, p.name, weapons.GetStored(p.name) or {})
+        elseif p.kind == "sent" then r = hook.Run("PlayerSpawnSENT", ply, p.name)
+        elseif p.kind == "giveswep" then r = hook.Run("PlayerGiveSWEP", ply, p.name, weapons.GetStored(p.name) or {}) end
         if r == false then return false end
     end)
     events.on("sandbox.spawned", function(p)
         local ply, e = Player(p.player), Entity(p.entity)
         if p.kind == "npc" then hook.Run("PlayerSpawnedNPC", ply, e)
         elseif p.kind == "vehicle" then hook.Run("PlayerSpawnedVehicle", ply, e)
-        elseif p.kind == "weapon" then hook.Run("PlayerSpawnedSWEP", ply, e) end
+        elseif p.kind == "weapon" then hook.Run("PlayerSpawnedSWEP", ply, e)
+        elseif p.kind == "sent" then hook.Run("PlayerSpawnedSENT", ply, e) end
     end)
     events.on("player.loadout", function(p) Player(p.player):EquipSuit(); if hook.Run("PlayerLoadout", Player(p.player)) == true then return false end end)
-    events.on("prop.spawn_request", function(p) if hook.Run("PlayerSpawnProp", Player(p.player), p.model) == false then return false end end)
+    -- @hook SANDBOX:PlayerSpawnSENT
+    -- @hook SANDBOX:PlayerSpawnedSENT
+    -- @hook SANDBOX:PlayerGiveSWEP
+    -- @hook SANDBOX:PlayerSpawnProp
+    -- @hook SANDBOX:PlayerSpawnRagdoll
+    -- @hook SANDBOX:PlayerSpawnedRagdoll
+    -- a ragdoll model (the server knows from its .phy) asks PlayerSpawnRagdoll instead
+    events.on("prop.spawn_request", function(p) if hook.Run(p.ragdoll and "PlayerSpawnRagdoll" or "PlayerSpawnProp", Player(p.player), p.model) == false then return false end end)
     events.on("tool.before", function(p)
         local ply = Player(p.player)
         if hook.Run("CanTool", ply, ply:GetEyeTrace(), p.tool, nil, p.right == 1 and 2 or 1) == false then return false end

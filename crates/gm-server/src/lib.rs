@@ -7261,6 +7261,14 @@ impl<'w> Server<'w> {
         if !self.content_lists().0.iter().any(|w| w.class == class) {
             return false;
         }
+        if self.ask(Request::Spawn {
+            player,
+            kind: "giveswep",
+            name: class.to_string(),
+        }) == Verdict::Cancel
+        {
+            return false;
+        }
         self.give_weapon(player, class)
     }
 
@@ -7275,10 +7283,24 @@ impl<'w> Server<'w> {
             .iter()
             .find(|e| e.class == class)?
             .clone();
+        if self.ask(Request::Spawn {
+            player,
+            kind: "sent",
+            name: class.to_string(),
+        }) == Verdict::Cancel
+        {
+            return None;
+        }
         let hit = self.tool_hit(player)?;
         let pos = hit.pos + hit.normal * 16.0;
         // counted / cleaned up as a sent only (`sbox_maxsents`), never as a prop
         let id = self.script_spawn_entity(player, class, pos, Vec3::ZERO, false, None)?;
+        self.game_events.push(GameEvent::Spawned {
+            player,
+            ent: id,
+            kind: "sent",
+            name: class.to_string(),
+        });
         let name = def.print_name.clone().unwrap_or_else(|| class.to_string());
         self.push_undo(
             player,
