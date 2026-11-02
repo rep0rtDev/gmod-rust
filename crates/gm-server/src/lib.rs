@@ -493,6 +493,13 @@ pub enum GameEvent {
         hit: Option<(u32, Vec3, Vec3)>,
         other: String,
     },
+    /// A player's water level (0 dry, 1 feet, 2 waist, 3 eyes) changed
+    /// (`OnEntityWaterLevelChanged`).
+    WaterLevelChanged {
+        ent: u32,
+        old: u8,
+        new: u8,
+    },
     /// `attacker` fired bullets (`PostEntityFireBullets`), after the shot resolved.
     FiredBullets {
         attacker: u32,
@@ -3004,6 +3011,8 @@ pub struct Player {
     /// Vertical velocity before the last movement tick, for fall damage on landing.
     prev_vz: f32,
     prev_on_ground: bool,
+    /// The water level last reported to addons (`OnEntityWaterLevelChanged`).
+    prev_water_level: u8,
     /// Footstep timer and foot alternation (measured rule in `gm_move::Footsteps`).
     steps: gm_move::Footsteps,
 }
@@ -3088,6 +3097,7 @@ impl Player {
             last_damage: (0, "worldspawn"),
             prev_vz: 0.0,
             prev_on_ground: true,
+            prev_water_level: 0,
             steps: gm_move::Footsteps::default(),
         }
     }
@@ -10122,6 +10132,17 @@ impl<'w> Server<'w> {
                 self.undo_purge_ticks = 0;
                 self.sandbox.purge_dead_undos();
             }
+        }
+        let mut water = Vec::new();
+        for (id, p) in self.players.iter_mut() {
+            if p.prev_water_level != p.state.water_level {
+                water.push((*id, p.prev_water_level, p.state.water_level));
+                p.prev_water_level = p.state.water_level;
+            }
+        }
+        for (ent, old, new) in water {
+            self.game_events
+                .push(GameEvent::WaterLevelChanged { ent, old, new });
         }
         let landed: Vec<(u32, f32)> = self
             .players

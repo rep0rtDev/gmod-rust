@@ -1366,6 +1366,12 @@ impl Runtime {
                         _ => "weapon.holster",
                     }
                 }
+                E::WaterLevelChanged { ent, old, new } => {
+                    p.ints.push(("entity", ent as i64));
+                    p.ints.push(("old", old as i64));
+                    p.ints.push(("new", new as i64));
+                    "entity.water_level_changed"
+                }
                 E::FiredBullets {
                     attacker,
                     src,

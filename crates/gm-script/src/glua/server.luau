@@ -675,6 +675,7 @@ local prev_move = {}
     events.on("entity.fire_bullets_request", function(p)
         if hook.Run("EntityFireBullets", Player(p.attacker), bullet_data(p)) == false then return false end
     end)
+    events.on("entity.water_level_changed", function(p) hook.Run("OnEntityWaterLevelChanged", Player(p.entity), p.old or 0, p.new or 0) end)
     events.on("entity.fired_bullets", function(p) hook.Run("PostEntityFireBullets", Player(p.attacker), bullet_data(p)) end)
     events.on("sandbox.check_limit", function(p)
         if hook.Run("PlayerCheckLimit", Player(p.player), p.kind, p.current or 0, p.max or -1) == false then return false end
