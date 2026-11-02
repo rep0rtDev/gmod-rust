@@ -686,3 +686,16 @@ fn date_stamp_and_timer_cycle_come_from_the_host_clock() {
         (2000, 2, 29, 0, 0, 0)
     );
 }
+
+#[test]
+fn map_version_sun_pvs_and_angular_velocity_read_the_snapshot() {
+    let (rt, _) = run(
+        "state.r = { game.GetMapVersion(), game.GetSunInfo() == nil, Entity(5):TestPVS(Entity(9)),
+         Entity(5):TestPVS(Vector(1, 2, 3)), tostring(Entity(5):GetLocalAngularVelocity()) }",
+    );
+    let (ver, nosun, pvs_ent, pvs_pos, av): (i32, bool, bool, bool, String) =
+        rt.actors()[0].eval("return unpack(state.r)").unwrap();
+    // no BSP in this harness: version 0, no sun, PVS open
+    assert_eq!((ver, nosun, pvs_ent, pvs_pos), (0, true, true, true));
+    assert!(!av.is_empty());
+}

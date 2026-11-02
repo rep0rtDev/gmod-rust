@@ -4168,6 +4168,9 @@ pub struct Server<'w> {
     pub prop_hits: Vec<PropHit>,
 
     pub spawn_points: Vec<SpawnPoint>,
+    /// `game.GetMapVersion` / `game.GetSunInfo`: from the loaded BSP, set by the host.
+    pub map_revision: i32,
+    pub sun_direction: Option<Vec3>,
     spawn_rng: u64,
     tick_count: u64,
     /// `mp_falldamage`: progressive fall damage instead of the flat 10.
@@ -4317,6 +4320,8 @@ impl<'w> Server<'w> {
             prop_hits: Vec::new(),
 
             spawn_points: Vec::new(),
+            map_revision: 0,
+            sun_direction: None,
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
             fall_damage_progressive: false,

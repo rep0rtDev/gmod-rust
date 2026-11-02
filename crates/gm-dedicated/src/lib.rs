@@ -12,6 +12,10 @@ pub struct LoadedWorld {
     pub nav: std::sync::Arc<gm_nav::NavMesh>,
     /// The map's `info_player_start` points (`Server::spawn_points`).
     pub spawn_points: Vec<gm_server::SpawnPoint>,
+    /// BSP header revision (`game.GetMapVersion`) and the direction towards the sun from
+    /// `light_environment` (`game.GetSunInfo`), if the map has one.
+    pub map_revision: i32,
+    pub sun_direction: Option<Vec3>,
 }
 
 /// Default Jolt solver settings used by all harnesses (`tools/parity/runner` mirrors this).
@@ -52,6 +56,20 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
         world_body,
         nav: std::sync::Arc::new(nav),
         spawn_points: gm_server::spawn_points_from_bsp(&bsp),
+        map_revision: bsp.header.map_revision,
+        sun_direction: bsp
+            .entities
+            .iter()
+            .find(|e| e.classname() == "light_environment")
+            .map(|e| {
+                let angles = e.angles().unwrap_or([0.0, 0.0, 0.0]);
+                let pitch = e
+                    .get("pitch")
+                    .and_then(|p| p.parse::<f32>().ok())
+                    .unwrap_or(angles[0]);
+                let (p, y) = (pitch.to_radians(), angles[1].to_radians());
+                -Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin())
+            }),
     })
 }
 

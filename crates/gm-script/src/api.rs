@@ -2425,6 +2425,34 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     let sh = shared.clone();
+    g.set(
+        "__map_version",
+        lua.create_function(move |_, ()| Ok(sh.snapshot.read().unwrap().map_revision))?,
+    )?;
+    let sh = shared.clone();
+    g.set(
+        "__sun_dir",
+        lua.create_function(move |lua, ()| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            match snap.sun_direction {
+                Some(d) => Ok(Some(vec3_table(lua, d)?)),
+                None => Ok(None),
+            }
+        })?,
+    )?;
+    let sh = shared.clone();
+    g.set(
+        "__pvs_visible",
+        lua.create_function(move |_, (a, b): (Table, Table)| {
+            let snap = sh.snapshot.read().unwrap().clone();
+            let (a, b) = (table_vec3(&a)?, table_vec3(&b)?);
+            let Some(w) = snap.collision() else {
+                return Ok(true);
+            };
+            Ok(w.visible(w.cluster_at(a), w.cluster_at(b)))
+        })?,
+    )?;
+    let sh = shared.clone();
     g.get::<Table>("game")?.set(
         "__start_spot",
         lua.create_function(move |lua, ()| {

@@ -725,11 +725,11 @@ function game.AddDecal() end
 function game.AddParticles() end
 function game.MountGMA() return false end
 function game.GetMapNext() return "" end
-function game.GetMapVersion() return 0 end
+function game.GetMapVersion() return __map_version() end
 function game.StartSpot() local p = game.__start_spot(); if not p then return Vector() end return Vector(p.x, p.y, p.z) end
 function game.MaxPlayers() return 128 end
 function game.SetGlobalState() end
-function game.GetSunInfo() return nil end
+function game.GetSunInfo() local d = __sun_dir(); if not d then return nil end return { direction = Vector(d.x, d.y, d.z), obstruction = 0 } end
 function game.KickID() end
 function game.RemoveRagdolls() end
 function game.SetTimeScale() end
@@ -1239,7 +1239,8 @@ function ENT:SetLocalAngles(la) local p = self:GetParent(); if not IsValid(p) th
 function ENT:GetAbsVelocity() return self:GetVelocity() end
 function ENT:SetAbsVelocity(v) self:SetVelocity(v) end
 function ENT:GetBaseVelocity() return Vector() end
-function ENT:GetLocalAngularVelocity() return Angle() end
+function ENT:GetLocalAngularVelocity() local s = snap(self.__id); local v = s and s.ang_velocity; if not v then return Angle() end return Angle(v.x, v.y, v.z) end
+function ENT:TestPVS(a, b) local p = type(a) == "table" and a.GetPos and a:GetPos() or a; if not p then return false end local me = self:GetPos(); return __pvs_visible({ x = me.x, y = me.y, z = me.z }, { x = p.x, y = p.y, z = p.z }) end
 function ENT:SetLocalAngularVelocity(a) local ph = self:GetPhysicsObject(); if IsValid(ph) then ph:AddAngleVelocity(Vector(a.p, a.y, a.r)) end end
 function ENT:GetNetworkOrigin() return self:GetPos() end
 function ENT:SetNetworkOrigin(p) self:SetPos(p) end
@@ -1307,7 +1308,6 @@ function ENT:IsConstrained() return constraint.HasConstraints(self) end
 function ENT:GetConstrainedEntities() local a = {}; for _, c in ipairs(constraint.GetTable(self)) do a[#a + 1] = c.Ent1 == self and c.Ent2 or c.Ent1 end return a end
 function ENT:GetConstrainedPhysObjects() local a = {}; for _, e in ipairs(self:GetConstrainedEntities()) do a[#a + 1] = e:GetPhysicsObject() end return a end
 function ENT:IsWidget() return false end
-function ENT:TestPVS(v) return true end
 function ENT:GetWorkshopID() return 0 end
 function ENT:GetPersistent() return rawget(self, "__persistent") == true end
 function ENT:SetPersistent(b) rawset(self, "__persistent", b) end

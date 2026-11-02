@@ -219,6 +219,8 @@ pub struct Snapshot {
     pub surfaces: SurfacesRef,
     /// First spawn point of the map (`game.StartSpot`): position and angles.
     pub start_spot: Option<(glam::Vec3, glam::Vec3)>,
+    pub map_revision: i32,
+    pub sun_direction: Option<glam::Vec3>,
     pub vehicles: VehiclesRef,
     /// Prop collision hulls for `phys.trace`.
     pub props: Vec<gm_sandbox::PropBody>,
@@ -231,6 +233,15 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// The collision world behind the snapshot (`Entity:TestPVS`), if the host set one.
+    pub fn collision(&self) -> Option<&gm_collision::World> {
+        if self.world.0.is_null() {
+            return None;
+        }
+        // SAFETY: the pointer is the server's world, alive while the snapshot is read
+        Some(unsafe { &*self.world.0 })
+    }
+
     /// `phys.trace`: world brushes/displacements and prop hulls, like the tool gun's trace.
     pub fn trace(&self, start: glam::Vec3, end: glam::Vec3) -> Option<gm_sandbox::ToolHit> {
         if self.world.0.is_null() {
@@ -319,6 +330,8 @@ impl Snapshot {
             models: ModelsRef::default(),
             surfaces: SurfacesRef::default(),
             start_spot: None,
+            map_revision: 0,
+            sun_direction: None,
             vehicles: VehiclesRef::default(),
             props,
             entities: world
@@ -433,6 +446,8 @@ impl Snapshot {
             models: ModelsRef(&server.model_scripts as *const _),
             surfaces: SurfacesRef(&server.surface_table as *const _),
             start_spot: server.spawn_points.first().map(|s| (s.pos, s.angles)),
+            map_revision: server.map_revision,
+            sun_direction: server.sun_direction,
             vehicles: VehiclesRef(&server.vehicles as *const _),
             nav: NavRef(server.navmesh().map_or(std::ptr::null(), |n| n as *const _)),
             props: server.trace_bodies(),

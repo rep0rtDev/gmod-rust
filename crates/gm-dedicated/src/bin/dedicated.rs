@@ -121,6 +121,8 @@ fn main() -> Result<()> {
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
     server.spawn_points = world.spawn_points.clone();
+    server.map_revision = world.map_revision;
+    server.sun_direction = world.sun_direction;
     server.surface_table = gm_dedicated::surface_table(&mount).ok();
     let mount_for_models = gm_content::Mount::for_install(&inst)?;
     server.model_loader = Some(Box::new(move |model: &str| {

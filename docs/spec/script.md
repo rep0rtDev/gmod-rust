@@ -619,6 +619,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   `util.DateStamp` is the host's UTC clock (`YYYY-MM-DD HH-MM-SS`), `util.TimerCycle` the
   milliseconds since its previous call, `file.Time` the unix time the addon store entry was
   written (0 for none).
+- Map data for scripts: `game.GetMapVersion` is the BSP header revision, `game.GetSunInfo` the
+  direction towards the sun from `light_environment` (`obstruction` 0; nil without one),
+  `Entity:TestPVS(pos|ent)` asks the collision world's PVS (cluster visibility, true when there
+  is no world), `Entity:GetLocalAngularVelocity` is the body's angular velocity (previously
+  constants). `load_world` carries revision and sun to both servers like the spawn points.
 
 Done in `glua/server.luau`:
 
