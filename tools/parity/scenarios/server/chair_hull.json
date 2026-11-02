@@ -1,0 +1,168 @@
+{
+ "name": "server_chair_hull",
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -321.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "ops": [
+  {
+   "op": "spawnvehicle",
+   "class": "Chair_Wood",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    941.7,
+    -321.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 30.0,
+   "yaw": 0.0,
+   "wait": 2
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 37.0,
+   "yaw": 0.0,
+   "wait": 2
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 45.0,
+   "yaw": 0.0,
+   "wait": 2
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    1001.7,
+    -381.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 30.0,
+   "yaw": 90.0,
+   "wait": 2
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 37.0,
+   "yaw": 90.0,
+   "wait": 2
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 45.0,
+   "yaw": 90.0,
+   "wait": 2
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    1061.7,
+    -321.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 30.0,
+   "yaw": 180.0,
+   "wait": 2
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 37.0,
+   "yaw": 180.0,
+   "wait": 2
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 45.0,
+   "yaw": 180.0,
+   "wait": 2
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    1001.7,
+    -261.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 30.0,
+   "yaw": -90.0,
+   "wait": 2
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 37.0,
+   "yaw": -90.0,
+   "wait": 2
+  },
+  {
+   "op": "click",
+   "tool": "duplicator",
+   "button": "right",
+   "pitch": 45.0,
+   "yaw": -90.0,
+   "wait": 2
+  }
+ ]
+}

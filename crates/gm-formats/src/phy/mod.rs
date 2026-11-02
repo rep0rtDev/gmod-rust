@@ -245,6 +245,9 @@ fn parse_solid(d: &[u8]) -> Result<Solid> {
         }
         let points_base = off + point_offset;
         ledge_end = ledge_end.min(points_base);
+        // has_children_flag (bits 0-1): the ledge is a ledgetree node's bounding hull of the
+        // pieces under it (the whole model for the root), not a collision piece
+        let bounding = u32_at(s, off + 8, "ledge")? & 0x3 != 0;
         let ledge = &s[off..tris_end];
         let mut raw = Vec::with_capacity(n_tris);
         let mut max_index = 0usize;
@@ -258,18 +261,36 @@ fn parse_solid(d: &[u8]) -> Result<Solid> {
             }
             raw.push(tri);
         }
-        let mut points = Vec::with_capacity(max_index + 1);
-        for p in 0..=max_index {
-            points.push(ivp_to_source(vec3_at(
-                s,
-                points_base + p * 16,
-                "ledge points",
-            )?));
+        // The point array is shared by every ledge of the solid (a chair's ten pieces index
+        // one list), so a ledge owns only the points its triangles name - taking `0..=max`
+        // would hand each later piece all the earlier ones and turn it into the whole model's
+        // envelope.
+        let mut remap: Vec<Option<u16>> = vec![None; max_index + 1];
+        let mut points = Vec::new();
+        let mut triangles = Vec::with_capacity(raw.len());
+        for tri in &raw {
+            let mut t = [0u16; 3];
+            for (e, idx) in tri.iter().enumerate() {
+                let k = match remap[*idx as usize] {
+                    Some(k) => k,
+                    None => {
+                        let k = points.len() as u16;
+                        points.push(ivp_to_source(vec3_at(
+                            s,
+                            points_base + *idx as usize * 16,
+                            "ledge points",
+                        )?));
+                        remap[*idx as usize] = Some(k);
+                        k
+                    }
+                };
+                t[e] = k;
+            }
+            triangles.push(t);
         }
-        convexes.push(Convex {
-            points,
-            triangles: raw,
-        });
+        if !bounding {
+            convexes.push(Convex { points, triangles });
+        }
         off = tris_end;
     }
     Ok(Solid {
