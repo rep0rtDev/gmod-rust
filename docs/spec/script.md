@@ -887,7 +887,10 @@ state: dead `NPC_STATE_DEAD`, a target `COMBAT`, a goal `ALERT`, else `IDLE`.
 SetUnDuckSpeed/SetMaxSpeed` are per-player overrides of the server's movement tunables,
 swapped into the mover for that player's moves only (the snapshot carries the effective
 values the getters read; `SetMaxSpeed` sets the velocity cap, `SetSlowWalkSpeed` /
-`SetLadderClimbSpeed` stay stubs: our mover has neither). `GetPreferredCarryAngles` (the hook, else the scripted
+`SetLadderClimbSpeed` stay stubs: our mover has neither). `SetViewOffset` / `SetViewOffsetDucked` (the z
+component) and `SetHull` / `SetHullDuck` (half width from `maxs.x`, height from `maxs.z`;
+`ResetHull` clears) are overrides of the same kind: the player's own hull is used for its
+movement, hit tests and eye position. `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

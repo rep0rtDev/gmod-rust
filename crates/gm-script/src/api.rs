@@ -589,6 +589,11 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("duck_time", p.duck_time)?;
     t.set("unduck_time", p.unduck_time)?;
     t.set("max_velocity", p.max_velocity)?;
+    t.set("stand_eye", p.stand_eye)?;
+    t.set("duck_eye", p.duck_eye)?;
+    t.set("hull_half", p.hull_half)?;
+    t.set("stand_height", p.stand_height)?;
+    t.set("duck_height", p.duck_height)?;
     t.set(
         "ammo",
         p.ammo

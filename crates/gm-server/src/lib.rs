@@ -1246,6 +1246,11 @@ pub struct MoveOverride {
     pub duck_time: Option<f32>,
     pub unduck_time: Option<f32>,
     pub max_velocity: Option<f32>,
+    pub stand_eye: Option<f32>,
+    pub duck_eye: Option<f32>,
+    pub hull_half: Option<f32>,
+    pub stand_height: Option<f32>,
+    pub duck_height: Option<f32>,
 }
 
 impl MoveOverride {
@@ -1274,6 +1279,31 @@ impl MoveOverride {
         if let Some(v) = self.max_velocity {
             cfg.max_velocity = v;
         }
+        if let Some(v) = self.stand_eye {
+            cfg.stand_eye = v;
+        }
+        if let Some(v) = self.duck_eye {
+            cfg.duck_eye = v;
+        }
+        if let Some(v) = self.hull_half {
+            cfg.hull_half = v;
+        }
+        if let Some(v) = self.stand_height {
+            cfg.stand_height = v;
+        }
+        if let Some(v) = self.duck_height {
+            cfg.duck_height = v;
+        }
+    }
+
+    /// This player's hull (`Player:SetHull` / `SetHullDuck` over the server config).
+    pub fn hull(&self, cfg: &gm_move::MoveConfig, ducked: bool) -> (Vec3, Vec3) {
+        gm_move::hull_of(&self.effective(cfg), ducked)
+    }
+
+    /// This player's eye height (`Player:SetViewOffset` / `SetViewOffsetDucked`).
+    pub fn eye(&self, cfg: &gm_move::MoveConfig, ducked: bool) -> f32 {
+        gm_move::eye_height_of(&self.effective(cfg), ducked)
     }
 
     pub fn effective(&self, cfg: &gm_move::MoveConfig) -> gm_move::MoveConfig {
@@ -1283,7 +1313,8 @@ impl MoveOverride {
     }
 
     /// Field `which` (0 walk, 1 run, 2 jump, 3 step, 4 crouched walk, 5 duck time, 6 unduck
-    /// time, 7 max velocity); `None` clears it.
+    /// time, 7 max velocity, 8 standing eye, 9 ducked eye, 10 hull half width, 11 standing
+    /// height, 12 ducked height); `None` clears it.
     pub fn set(&mut self, which: u8, value: Option<f32>) -> bool {
         let v = value.filter(|v| v.is_finite()).map(|v| v.max(0.0));
         match which {
@@ -1295,6 +1326,11 @@ impl MoveOverride {
             5 => self.duck_time = v,
             6 => self.unduck_time = v,
             7 => self.max_velocity = v,
+            8 => self.stand_eye = v,
+            9 => self.duck_eye = v,
+            10 => self.hull_half = v,
+            11 => self.stand_height = v,
+            12 => self.duck_height = v,
             _ => return false,
         }
         true
@@ -4665,7 +4701,7 @@ impl<'w> Server<'w> {
                 continue;
             }
             let (origin, ducked) = self.pose_at(p, seen_tick);
-            let (mins, maxs) = self.mover.hull(ducked);
+            let (mins, maxs) = p.move_override.hull(&self.mover.cfg, ducked);
             let (lo, hi) = (origin + mins, origin + maxs);
             let (mut t0, mut t1) = (0.0f32, 1.0f32);
             let mut inside = true;
@@ -4906,7 +4942,7 @@ impl<'w> Server<'w> {
             if *id == attacker || !p.alive {
                 continue;
             }
-            let (mins, maxs) = self.mover.hull(p.state.ducked);
+            let (mins, maxs) = p.move_override.hull(&self.mover.cfg, p.state.ducked);
             if let Some(t) =
                 ray_box_entry(eye, forward, p.state.origin + mins, p.state.origin + maxs)
             {
@@ -5033,7 +5069,7 @@ impl<'w> Server<'w> {
             if !p.alive {
                 continue;
             }
-            let (mins, maxs) = self.mover.hull(p.state.ducked);
+            let (mins, maxs) = p.move_override.hull(&self.mover.cfg, p.state.ducked);
             let (lo, hi) = (p.state.origin + mins, p.state.origin + maxs);
             let eye = p.state.origin + Vec3::new(0.0, 0.0, weapons::PLAYER_EYE_Z);
             let to = eye - src;
@@ -5120,7 +5156,7 @@ impl<'w> Server<'w> {
             if *id == owner || !p.alive {
                 continue;
             }
-            let (mins, maxs) = self.mover.hull(p.state.ducked);
+            let (mins, maxs) = p.move_override.hull(&self.mover.cfg, p.state.ducked);
             let lo = p.state.origin + mins - Vec3::splat(grow);
             let hi = p.state.origin + maxs + Vec3::splat(grow);
             let t = if sweep && len > 1e-6 {
@@ -5300,7 +5336,8 @@ impl<'w> Server<'w> {
                         }
                         (weapons::Launch::Ball, Some((target, _))) => {
                             let t = &self.players[&target];
-                            let (mins, maxs) = self.mover.hull(t.state.ducked);
+                            let (mins, maxs) =
+                                t.move_override.hull(&self.mover.cfg, t.state.ducked);
                             let at = end.clamp(t.state.origin + mins, t.state.origin + maxs);
                             let hp = t.health as f32;
                             self.hits.push(Hit {
@@ -5478,7 +5515,12 @@ impl<'w> Server<'w> {
     /// `GetShootPos()` and view angles of a player.
     pub fn eye(&self, player: u32) -> Option<(Vec3, Vec3)> {
         let p = self.players.get(&player)?;
-        let eye = p.state.origin + Vec3::new(0.0, 0.0, self.mover.eye_height(&p.state));
+        let eye = p.state.origin
+            + Vec3::new(
+                0.0,
+                0.0,
+                p.move_override.eye(&self.mover.cfg, p.state.ducked),
+            );
         Some((eye, p.view_angles))
     }
 
@@ -8434,7 +8476,7 @@ impl<'w> Server<'w> {
             let mut hit = None;
             if n.hung_until == 0 && l.damage > 0.0 {
                 if let Some(p) = target.and_then(|t| self.players.get(&t).filter(|p| p.alive)) {
-                    let (pm, px) = self.mover.hull(p.state.ducked);
+                    let (pm, px) = p.move_override.hull(&self.mover.cfg, p.state.ducked);
                     let lo = p.state.origin + pm - Vec3::new(maxs.x, maxs.y, maxs.z);
                     let hi = p.state.origin + px - Vec3::new(mins.x, mins.y, mins.z);
                     let inside = (0..3).all(|a| next[a] >= lo[a] && next[a] <= hi[a]);
@@ -8611,7 +8653,7 @@ impl<'w> Server<'w> {
             if !p.alive {
                 continue;
             }
-            let (mins, maxs) = self.mover.hull(p.state.ducked);
+            let (mins, maxs) = p.move_override.hull(&self.mover.cfg, p.state.ducked);
             let lo = p.state.origin + mins;
             let hi = p.state.origin + maxs;
             if let Some(t) = ray_box(eye, d, lo, hi) {
@@ -10406,7 +10448,12 @@ impl<'w> Server<'w> {
                     continue;
                 }
                 let shot = p.inventory.command(&p.active_weapon, pc.cmd.buttons);
-                let eye = p.state.origin + Vec3::new(0.0, 0.0, self.mover.eye_height(&p.state));
+                let eye = p.state.origin
+                    + Vec3::new(
+                        0.0,
+                        0.0,
+                        p.move_override.eye(&self.mover.cfg, p.state.ducked),
+                    );
                 if let Some(shot) = shot {
                     let forward = gm_sandbox::forward(pc.cmd.view_angles.x, pc.cmd.view_angles.y);
                     let class = weapons::WEAPONS

@@ -102,6 +102,11 @@ pub struct PlayerSnap {
     pub duck_time: f32,
     pub unduck_time: f32,
     pub max_velocity: f32,
+    pub stand_eye: f32,
+    pub duck_eye: f32,
+    pub hull_half: f32,
+    pub stand_height: f32,
+    pub duck_height: f32,
     pub frags: u32,
     pub deaths: u32,
     pub max_armor: i32,
@@ -527,6 +532,11 @@ impl Snapshot {
                             duck_time: p.move_override.effective(server.move_cfg()).duck_time,
                             unduck_time: p.move_override.effective(server.move_cfg()).unduck_time,
                             max_velocity: p.move_override.effective(server.move_cfg()).max_velocity,
+                            stand_eye: p.move_override.effective(server.move_cfg()).stand_eye,
+                            duck_eye: p.move_override.effective(server.move_cfg()).duck_eye,
+                            hull_half: p.move_override.effective(server.move_cfg()).hull_half,
+                            stand_height: p.move_override.effective(server.move_cfg()).stand_height,
+                            duck_height: p.move_override.effective(server.move_cfg()).duck_height,
                         },
                     )
                 })

@@ -261,6 +261,28 @@ fn angle_vectors(angles: Vec3) -> (Vec3, Vec3) {
 pub const NON_JUMP_VELOCITY: f32 = 140.0;
 
 /// Remove the component of `v` going into `normal`, with the standard overbounce of 1.
+/// The player hull of a config (standing or ducked).
+pub fn hull_of(cfg: &MoveConfig, ducked: bool) -> (Vec3, Vec3) {
+    let h = if ducked {
+        cfg.duck_height
+    } else {
+        cfg.stand_height
+    };
+    (
+        Vec3::new(-cfg.hull_half, -cfg.hull_half, 0.0),
+        Vec3::new(cfg.hull_half, cfg.hull_half, h),
+    )
+}
+
+/// The eye height of a config (standing or ducked).
+pub fn eye_height_of(cfg: &MoveConfig, ducked: bool) -> f32 {
+    if ducked {
+        cfg.duck_eye
+    } else {
+        cfg.stand_eye
+    }
+}
+
 pub fn clip_velocity(v: Vec3, normal: Vec3, overbounce: f32) -> Vec3 {
     let backoff = v.dot(normal) * overbounce;
     let mut out = v - normal * backoff;
@@ -282,23 +304,11 @@ impl<'a> Mover<'a> {
     }
 
     pub fn hull(&self, ducked: bool) -> (Vec3, Vec3) {
-        let h = if ducked {
-            self.cfg.duck_height
-        } else {
-            self.cfg.stand_height
-        };
-        (
-            Vec3::new(-self.cfg.hull_half, -self.cfg.hull_half, 0.0),
-            Vec3::new(self.cfg.hull_half, self.cfg.hull_half, h),
-        )
+        hull_of(&self.cfg, ducked)
     }
 
     pub fn eye_height(&self, st: &PlayerState) -> f32 {
-        if st.ducked {
-            self.cfg.duck_eye
-        } else {
-            self.cfg.stand_eye
-        }
+        eye_height_of(&self.cfg, st.ducked)
     }
 
     /// The props (PHY convexes at their poses) the player collides with from now on; the

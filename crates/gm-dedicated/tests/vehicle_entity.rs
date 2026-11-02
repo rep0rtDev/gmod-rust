@@ -429,6 +429,15 @@ fn script_move_overrides_apply_to_one_player() {
         server.move_config_of(1).unwrap().walk_speed,
         base.walk_speed
     );
-    assert!(!server.set_move_param(1, 9, Some(1.0)), "unknown field");
+    assert!(server.set_move_param(1, 8, Some(50.0)));
+    assert!(server.set_move_param(1, 11, Some(100.0)));
+    let mc = server.move_config_of(1).unwrap();
+    assert_eq!((mc.stand_eye, mc.stand_height), (50.0, 100.0));
+    assert_eq!(
+        gm_move::hull_of(&mc, false).1,
+        Vec3::new(base.hull_half, base.hull_half, 100.0),
+        "the standing hull grows for this player only"
+    );
+    assert!(!server.set_move_param(1, 13, Some(1.0)), "unknown field");
     assert!(!server.set_move_param(99_999, 0, Some(1.0)));
 }
