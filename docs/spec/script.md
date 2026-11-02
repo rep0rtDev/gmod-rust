@@ -846,6 +846,11 @@ Player snapshot also carries `joined_tick` (`TimeConnected` = ticks since x inte
 `last_hitgroup` (last recorded hit on the player); entity snapshot carries `on_fire`
 (`IsOnFire`). `Entity:ForcePlayerDrop` makes every holder let go (`Server::force_player_drop`).
 
+The model table also carries the default hit box set (bone, hit group, mins, maxs per box) for
+`Entity:GetHitBoxBone / GetHitBoxHitGroup / GetHitBoxBounds` (set argument ignored: one set);
+`GetChildBones` walks the bone parents. `util.SHA256` hashes on the host, `util.Timer` is a
+`CurTime`-based timer object. `util.SHA1` stays a stub (no SHA-1 in the workspace).
+
 `Weapon:GetMaxClip1 / 2` read `Primary / Secondary.ClipSize` of the registered SWEP table
 (-1 without one); `Weapon:DefaultReload` moves reserve ammo into the clip through the same
 queued clip / ammo writes (no reload animation or timing: the game plays the reload sequence

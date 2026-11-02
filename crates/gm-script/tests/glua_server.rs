@@ -622,19 +622,7 @@ fn render_state_reads_the_prop_and_queues_parts() {
     ));
 }
 
-#[test]
-fn model_data_comes_from_the_server_tables() {
-    let mut rt = runtime(
-        "events.on('tick.pre', function()
-             local e = Entity(5)
-             local bg = e:GetBodyGroups()
-             local mn, mx = e:GetModelBounds()
-             local at = e:GetAttachment(e:LookupAttachment('eyes'))
-             state.r = { e:GetNumBodyGroups(), bg[2].name, e:GetBodygroupCount(1), e:FindBodygroupByName('hat'), e:SkinCount(), e:GetBoneCount(),
-                 e:GetBoneName(1), e:LookupBone('ValveBiped.Bip01_Head1'), e:GetBoneParent(1), e:GetSequenceCount(), e:LookupSequence('idle'),
-                 e:GetSequenceList()[1], e:GetHitBoxCount(0), e:GetFlexNum(), e:GetFlexName(0), mn.z, mx.z, math.Round(e:GetModelRadius(), 3), at.Pos.z, tostring(Entity(6):GetBoneCount()) }
-         end)",
-    );
+fn oildrum_models() -> std::collections::BTreeMap<String, gm_server::ModelScriptData> {
     let mut models = std::collections::BTreeMap::new();
     models.insert(
         "models/props_c17/oildrum001.mdl".to_string(),
@@ -649,6 +637,7 @@ fn model_data_comes_from_the_server_tables() {
             sequences: vec!["ragdoll".into(), "idle".into()],
             hitboxes: 4,
             hitbox_sets: 1,
+            hitbox_list: vec![(0, 1, Vec3::new(-4.0, -4.0, -4.0), Vec3::new(4.0, 4.0, 4.0))],
             flexes: vec!["smile".into()],
             sequence_anim: vec![(30.0, 31, 1), (24.0, 49, 0)],
             anims: vec![
@@ -662,6 +651,23 @@ fn model_data_comes_from_the_server_tables() {
             attachments: vec![("eyes".into(), 1, Vec3::new(0.0, 0.0, 36.0), Vec3::X)],
         },
     );
+    models
+}
+
+#[test]
+fn model_data_comes_from_the_server_tables() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local e = Entity(5)
+             local bg = e:GetBodyGroups()
+             local mn, mx = e:GetModelBounds()
+             local at = e:GetAttachment(e:LookupAttachment('eyes'))
+             state.r = { e:GetNumBodyGroups(), bg[2].name, e:GetBodygroupCount(1), e:FindBodygroupByName('hat'), e:SkinCount(), e:GetBoneCount(),
+                 e:GetBoneName(1), e:LookupBone('ValveBiped.Bip01_Head1'), e:GetBoneParent(1), e:GetSequenceCount(), e:LookupSequence('idle'),
+                 e:GetSequenceList()[1], e:GetHitBoxCount(0), e:GetFlexNum(), e:GetFlexName(0), mn.z, mx.z, math.Round(e:GetModelRadius(), 3), at.Pos.z, tostring(Entity(6):GetBoneCount()) }
+         end)",
+    );
+    let models = oildrum_models();
     let mut snap = (*snapshot()).clone();
     snap.models = gm_script::snapshot::ModelsRef(&models as *const _);
     let snap = Arc::new(snap);
@@ -1141,5 +1147,37 @@ fn default_reload_and_drop_if_held() {
     assert!(
         matches!(writes.last(), Some(QueuedWrite::ForceDrop { ent: 5 })),
         "{dbg}"
+    );
+}
+
+#[test]
+fn hitboxes_child_bones_timer_and_sha256() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local e = Entity(5)
+             local mins, maxs = e:GetHitBoxBounds(0, 0)
+             local t = util.Timer(1)
+             local later = t:Elapsed() and 1 or 0
+             t:Start(0)
+             state.r = { e:GetHitBoxBone(0, 0), e:GetHitBoxHitGroup(0, 0), mins.x, maxs.z,
+                         #e:GetChildBones(0), e:GetHitBoxBone(9, 0), later, t:Elapsed() and 1 or 0 }
+             state.h = util.SHA256('abc')
+         end)",
+    );
+    let models = oildrum_models();
+    let mut snap = (*snapshot()).clone();
+    snap.models = gm_script::snapshot::ModelsRef(&models as *const _);
+    let snap = Arc::new(snap);
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    let h: String = rt.actors()[0].eval("return state.h").unwrap();
+    assert_eq!(&r[..4], &[0.0, 1.0, -4.0, 4.0]);
+    assert!(r[4] >= 1.0, "{r:?}");
+    assert_eq!(&r[5..], &[-1.0, 0.0, 1.0]);
+    assert_eq!(
+        h,
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     );
 }

@@ -133,7 +133,7 @@ function util.LocalToWorld(ent, lpos, bone) return ent:LocalToWorld(lpos) end
 function util.SharedRandom(name, lo, hi, add) local seed = util.CRC(name .. tostring(math.floor(CurTime() * 100)) .. tostring(add or 0)); return lo + (tonumber(seed) % 10000) / 10000 * (hi - lo) end
 function util.KeyValuesToTablePreserveOrder(kv, usesEscapes, preserveKeyCase) local t = util.KeyValuesToTable(kv, usesEscapes, preserveKeyCase); local out = {}; for k, v in pairs(t) do out[#out + 1] = { Key = k, Value = v } end return out end
 function util.TraceEntityHull(data, ent) local mins, maxs = ent:OBBMins(), ent:OBBMaxs(); data.mins, data.maxs = mins, maxs; return util.TraceHull(data) end
-for _, n in ipairs({ "GetActivityIDByName", "GetActivityNameByID", "GetAnimEventIDByName", "GetAnimEventNameByID", "GetUserGroups", "SHA1", "SHA256", "Timer" }) do if util[n] == nil then util[n] = stub("util." .. n) end end
+for _, n in ipairs({ "GetActivityIDByName", "GetActivityNameByID", "GetAnimEventIDByName", "GetAnimEventNameByID", "GetUserGroups", "SHA1", }) do if util[n] == nil then util[n] = stub("util." .. n) end end
 
 function VectorRand(lo, hi) lo, hi = lo or -1, hi or 1; return Vector(math.Rand(lo, hi), math.Rand(lo, hi), math.Rand(lo, hi)) end
 function AngleRand(lo, hi) lo, hi = lo or -90, hi or 90; return Angle(math.Rand(lo, hi), math.Rand(math.max(lo, -180), math.min(hi, 180)), math.Rand(lo, hi)) end
@@ -550,3 +550,12 @@ widgets = widgets or {}
 for _, n in ipairs({ "PlayerTick" }) do if widgets[n] == nil then widgets[n] = stub("widgets." .. n) end end
 
 function DropEntityIfHeld(e) if IsValid(e) then e:ForcePlayerDrop() end end
+
+function util.SHA256(s) return __sha256(tostring(s)) end
+local TIMER = {}
+TIMER.__index = TIMER
+function TIMER:Start(dur) self.endtime = CurTime() + (dur or 0); self.started = CurTime() end
+function TIMER:Elapsed() return CurTime() >= self.endtime end
+function TIMER:Reset() self.endtime = 0 end
+function TIMER:GetElapsedTime() return CurTime() - self.started end
+function util.Timer(start) local t = setmetatable({ endtime = 0, started = CurTime() }, TIMER); if start then t:Start(start) end return t end

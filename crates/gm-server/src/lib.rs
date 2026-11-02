@@ -169,6 +169,8 @@ pub struct ModelScriptData {
     pub anims: Vec<(String, f32, i32, i32)>,
     pub hitboxes: u32,
     pub hitbox_sets: u32,
+    /// Default hit box set: (bone, hit group, mins, maxs) per box.
+    pub hitbox_list: Vec<(i32, i32, Vec3, Vec3)>,
     pub flexes: Vec<String>,
     pub mins: Vec3,
     pub maxs: Vec3,
@@ -206,6 +208,10 @@ impl ModelScriptData {
                 .map(|a| (a.name.clone(), a.fps, a.frames, a.flags))
                 .collect(),
             hitboxes: gm_formats::mdl::hitboxes(data, &mdl.header).len() as u32,
+            hitbox_list: gm_formats::mdl::hitboxes(data, &mdl.header)
+                .iter()
+                .map(|h| (h.bone, h.group, Vec3::from(h.mins), Vec3::from(h.maxs)))
+                .collect(),
             hitbox_sets: mdl.header.hitbox_set_count.max(0) as u32,
             flexes: mdl
                 .flex_controllers

@@ -1758,6 +1758,13 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         })?,
     )?;
     lua.globals().set("storage", storage)?;
+    lua.globals().set(
+        "__sha256",
+        lua.create_function(|_, s: mlua::LuaString| {
+            use sha2::Digest;
+            Ok(format!("{:x}", sha2::Sha256::digest(s.as_bytes())))
+        })?,
+    )?;
     let game = lua.create_table()?;
     game.set(
         "interval",
@@ -1893,6 +1900,16 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             t.set("anims", an)?;
             t.set("hitboxes", m.hitboxes)?;
             t.set("hitbox_sets", m.hitbox_sets)?;
+            let hb = lua.create_table()?;
+            for (i, (b, g, mins, maxs)) in m.hitbox_list.iter().enumerate() {
+                let e = lua.create_table()?;
+                e.set("bone", *b)?;
+                e.set("group", *g)?;
+                e.set("mins", vec3_table(lua, *mins)?)?;
+                e.set("maxs", vec3_table(lua, *maxs)?)?;
+                hb.set(i + 1, e)?;
+            }
+            t.set("hitbox_list", hb)?;
             t.set("flexes", m.flexes.clone())?;
             t.set("mins", vec3_table(lua, m.mins)?)?;
             t.set("maxs", vec3_table(lua, m.maxs)?)?;
