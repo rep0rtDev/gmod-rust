@@ -2850,6 +2850,13 @@ pub struct Player {
     pub alive: bool,
     pub health: i32,
     pub armor: i32,
+    /// `Player:SetMaxArmor` (game default 100).
+    pub max_armor: i32,
+    /// `Player:SetNoTarget`: NPCs never pick this player as a target.
+    pub no_target: bool,
+    /// `Player:SetPlayerColor` / `SetWeaponColor` (0..1 RGB), script-only data for now.
+    pub player_color: Vec3,
+    pub weapon_color: Vec3,
     pub max_health: i32,
     pub model: String,
     /// The player's model choice (`cl_playermodel`), applied on the next spawn.
@@ -2933,6 +2940,10 @@ impl Player {
             alive: true,
             health: PLAYER_HEALTH,
             armor: 0,
+            max_armor: 100,
+            no_target: false,
+            player_color: Vec3::new(0.24, 0.34, 0.41),
+            weapon_color: Vec3::new(0.3, 1.0, 0.25),
             max_health: PLAYER_HEALTH,
             model: PLAYER_MODEL.to_string(),
             wanted_model: String::new(),
@@ -5758,9 +5769,20 @@ impl<'w> Server<'w> {
             let loaded = self.model_loader.as_mut().and_then(|f| f(&model))?;
             self.register_model(&model, loaded);
         }
+        Some(self.place_world_weapon(player, class, &model, &print_name, pos))
+    }
+
+    fn place_world_weapon(
+        &mut self,
+        player: u32,
+        class: &str,
+        model: &str,
+        print_name: &str,
+        pos: Vec3,
+    ) -> u32 {
         let id = self
             .sandbox
-            .restore_prop(player, &model, pos, Vec3::ZERO, false);
+            .restore_prop(player, model, pos, Vec3::ZERO, false);
         self.sandbox.add_cleanup(player, "sents", id);
         self.sync_physics();
         self.world_weapons.insert(id, class.to_string());
@@ -5771,7 +5793,86 @@ impl<'w> Server<'w> {
             Some(format!("Undone {print_name}")),
             vec![id],
         );
-        Some(id)
+        id
+    }
+
+    /// Script `Player:DropWeapon` / `DropNamedWeapon`: strips the weapon (active one when
+    /// `class` is `None`) and places it as a world weapon 32 u in front of the player's origin.
+    pub fn drop_weapon(&mut self, player: u32, class: Option<&str>) -> Option<u32> {
+        let p = self.players.get(&player).filter(|p| p.alive)?;
+        let class = class
+            .map(str::to_string)
+            .unwrap_or_else(|| p.active_weapon.clone());
+        if class.is_empty() || !self.strip_weapon(player, Some(&class)) {
+            return None;
+        }
+        let p = self.players.get(&player)?;
+        let yaw = p.view_angles.y.to_radians();
+        let pos = p.state.origin + Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 32.0 + Vec3::Z * 16.0;
+        let (model, print_name) = match self.scripted_weapons.iter().find(|w| w.class == class) {
+            Some(sw) => (sw.world_model.clone(), sw.print_name.clone()),
+            None => (hl2_world_model(&class)?.to_string(), format!("#{class}")),
+        };
+        if model.is_empty() {
+            return None;
+        }
+        if !self.models.contains_key(&model) {
+            let loaded = self.model_loader.as_mut().and_then(|f| f(&model))?;
+            self.register_model(&model, loaded);
+        }
+        Some(self.place_world_weapon(player, &class, &model, &print_name, pos))
+    }
+
+    /// Script `Player:DropObject`: lets go of whatever the physgun / gravity gun holds.
+    pub fn drop_object(&mut self, player: u32) -> bool {
+        match self.players.get_mut(&player) {
+            Some(p) if p.held.is_some() => {
+                p.held = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn set_no_target(&mut self, player: u32, on: bool) -> bool {
+        match self.players.get_mut(&player) {
+            Some(p) => {
+                p.no_target = on;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn set_player_colors(
+        &mut self,
+        player: u32,
+        body: Option<Vec3>,
+        weapon: Option<Vec3>,
+    ) -> bool {
+        match self.players.get_mut(&player) {
+            Some(p) => {
+                if let Some(c) = body {
+                    p.player_color = c;
+                }
+                if let Some(c) = weapon {
+                    p.weapon_color = c;
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn set_max_armor(&mut self, player: u32, max: i32) -> bool {
+        match self.players.get_mut(&player) {
+            Some(p) => {
+                p.max_armor = max.max(0);
+                p.armor = p.armor.min(p.max_armor);
+                true
+            }
+            None => false,
+        }
     }
 
     /// `Spawn_Vehicle` (`gm_spawnvehicle <key>`, creator type 2): the list entry's model as a
@@ -7269,7 +7370,11 @@ impl<'w> Server<'w> {
                     && o.pos.distance(pos) <= NPC_SQUAD_RANGE)
                     .then_some(o.target)
                     .flatten()
-                    .filter(|p| self.players.get(p).is_some_and(|pl| pl.alive))
+                    .filter(|p| {
+                        self.players
+                            .get(p)
+                            .is_some_and(|pl| pl.alive && !pl.no_target)
+                    })
             });
             if let (Some(p), Some(n)) = (shared, self.npcs.get_mut(&id)) {
                 n.target = Some(p);

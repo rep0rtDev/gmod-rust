@@ -292,6 +292,27 @@ pub enum QueuedWrite {
         ent: u32,
         target: Option<Vec3>,
     },
+    PlayerDropWeapon {
+        player: u32,
+        class: Option<String>,
+    },
+    PlayerDropObject {
+        player: u32,
+    },
+    PlayerNoTarget {
+        player: u32,
+        on: bool,
+    },
+    /// `SetPlayerColor` / `SetWeaponColor` (0..1 RGB).
+    PlayerColors {
+        player: u32,
+        body: Option<Vec3>,
+        weapon: Option<Vec3>,
+    },
+    PlayerMaxArmor {
+        player: u32,
+        max: i32,
+    },
     PlayerSay {
         player: u32,
         text: String,
@@ -490,6 +511,10 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     )?;
     t.set("frags", p.frags)?;
     t.set("deaths", p.deaths)?;
+    t.set("max_armor", p.max_armor)?;
+    t.set("no_target", p.no_target)?;
+    t.set("player_color", vec3_table(lua, p.player_color)?)?;
+    t.set("weapon_color", vec3_table(lua, p.weapon_color)?)?;
     Ok(t)
 }
 
@@ -1480,6 +1505,36 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         _ => Some(table_vec3(&table_arg(&arg)?)?),
                     },
                 },
+                "player.drop_weapon" => QueuedWrite::PlayerDropWeapon {
+                    player: ent,
+                    class: match &arg {
+                        Value::Nil => None,
+                        v => Some(str_arg(v)?),
+                    },
+                },
+                "player.drop_object" => QueuedWrite::PlayerDropObject { player: ent },
+                "player.no_target" => QueuedWrite::PlayerNoTarget {
+                    player: ent,
+                    on: matches!(arg, Value::Boolean(true)),
+                },
+                "player.colors" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::PlayerColors {
+                        player: ent,
+                        body: t
+                            .get::<Option<Table>>("body")?
+                            .map(|v| table_vec3(&v))
+                            .transpose()?,
+                        weapon: t
+                            .get::<Option<Table>>("weapon")?
+                            .map(|v| table_vec3(&v))
+                            .transpose()?,
+                    }
+                }
+                "player.max_armor" => QueuedWrite::PlayerMaxArmor {
+                    player: ent,
+                    max: int_arg(&arg)?,
+                },
                 "player.say" => QueuedWrite::PlayerSay {
                     player: ent,
                     text: str_arg(&arg)?,
@@ -2380,6 +2435,17 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         }
         QueuedWrite::SetEyeTarget { ent, target } => server.set_script_eye_target(*ent, *target),
         QueuedWrite::PlayerSay { player, text } => server.say(*player, text),
+        QueuedWrite::PlayerDropWeapon { player, class } => {
+            server.drop_weapon(*player, class.as_deref()).is_some()
+        }
+        QueuedWrite::PlayerDropObject { player } => server.drop_object(*player),
+        QueuedWrite::PlayerNoTarget { player, on } => server.set_no_target(*player, *on),
+        QueuedWrite::PlayerColors {
+            player,
+            body,
+            weapon,
+        } => server.set_player_colors(*player, *body, *weapon),
+        QueuedWrite::PlayerMaxArmor { player, max } => server.set_max_armor(*player, *max),
         QueuedWrite::NpcWeapon { ent, class } => server.set_npc_weapon(*ent, class),
         QueuedWrite::PlayerStripWeapon { player, class } => {
             server.strip_weapon(*player, class.as_deref())

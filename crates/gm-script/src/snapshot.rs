@@ -81,6 +81,10 @@ pub struct PlayerSnap {
     pub flashlight: bool,
     pub frags: u32,
     pub deaths: u32,
+    pub max_armor: i32,
+    pub no_target: bool,
+    pub player_color: Vec3,
+    pub weapon_color: Vec3,
 }
 
 /// The server's collision world for traces during a dispatch. The snapshot only lives while the
@@ -432,6 +436,10 @@ impl Snapshot {
                             active_weapon: p.active_weapon.clone(),
                             frags: p.frags,
                             deaths: p.deaths,
+                            max_armor: p.max_armor,
+                            no_target: p.no_target,
+                            player_color: p.player_color,
+                            weapon_color: p.weapon_color,
                             ammo: p
                                 .inventory
                                 .ammo

@@ -369,6 +369,17 @@ function PLY:SetFrags(n) qwrite("player.set_frags", self.__pid, math.floor(n)) e
 function PLY:SetDeaths(n) qwrite("player.set_deaths", self.__pid, math.floor(n)) end
 function PLY:AddFrags(n) self:SetFrags(self:Frags() + math.floor(n)) end
 function PLY:AddDeaths(n) self:SetDeaths(self:Deaths() + math.floor(n)) end
+function PLY:DropWeapon(w) qwrite("player.drop_weapon", self.__pid, (w and w ~= NULL) and w:GetClass() or nil) end
+function PLY:DropNamedWeapon(class) qwrite("player.drop_weapon", self.__pid, class) end
+function PLY:DropObject() qwrite("player.drop_object", self.__pid, true) end
+function PLY:GetNoTarget() local p = psnap(self.__pid); return p ~= nil and p.no_target == true end
+function PLY:SetNoTarget(on) qwrite("player.no_target", self.__pid, on == true) end
+function PLY:GetPlayerColor() local p = psnap(self.__pid); local c = p and p.player_color; return c and Vector(c.x, c.y, c.z) or Vector(0, 0, 0) end
+function PLY:GetWeaponColor() local p = psnap(self.__pid); local c = p and p.weapon_color; return c and Vector(c.x, c.y, c.z) or Vector(0, 0, 0) end
+function PLY:SetPlayerColor(c) qwrite("player.colors", self.__pid, { body = v3(c) }) end
+function PLY:SetWeaponColor(c) qwrite("player.colors", self.__pid, { weapon = v3(c) }) end
+function PLY:GetMaxArmor() local p = psnap(self.__pid); return p and p.max_armor or 100 end
+function PLY:SetMaxArmor(n) qwrite("player.max_armor", self.__pid, math.floor(n)) end
 function PLY:Say(text, team) qwrite("player.say", self.__pid, tostring(text)) end
 function PLY:Kick(reason) qwrite("player.kick", self.__pid, reason or "") end
 function PLY:EnterVehicle(v) if IsValid(v) then qwrite("player.vehicle", self.__pid, v:EntIndex()) end end

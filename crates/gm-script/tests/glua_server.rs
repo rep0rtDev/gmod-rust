@@ -113,6 +113,10 @@ fn snapshot() -> Arc<Snapshot> {
             flashlight: true,
             frags: 0,
             deaths: 0,
+            max_armor: 150,
+            no_target: true,
+            player_color: Vec3::new(0.5, 0.25, 1.0),
+            weapon_color: Vec3::new(1.0, 0.0, 0.0),
         },
     );
     Arc::new(s)
@@ -930,4 +934,52 @@ fn enemy_seen_tick_and_surface_reads() {
         .unwrap();
     let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
     assert_eq!(r, vec![3.0, 0.800000011920929, 0.25]);
+}
+
+#[test]
+fn player_drop_notarget_colors_armor() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local p = Player(1)
+             state.r = { p:GetNoTarget() and 1 or 0, p:GetPlayerColor().y, p:GetWeaponColor().x, p:GetMaxArmor() }
+             p:DropWeapon()
+             p:DropNamedWeapon('weapon_crowbar')
+             p:DropObject()
+             p:SetNoTarget(true)
+             p:SetPlayerColor(Vector(1, 0.5, 0))
+             p:SetMaxArmor(200)
+         end)",
+    );
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    assert_eq!(r, vec![1.0, 0.25, 1.0, 150.0]);
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(matches!(
+        &writes[0],
+        QueuedWrite::PlayerDropWeapon {
+            player: 1,
+            class: None
+        }
+    ));
+    assert!(
+        matches!(&writes[1], QueuedWrite::PlayerDropWeapon { class: Some(c), .. } if c == "weapon_crowbar")
+    );
+    assert!(matches!(
+        &writes[2],
+        QueuedWrite::PlayerDropObject { player: 1 }
+    ));
+    assert!(matches!(
+        &writes[3],
+        QueuedWrite::PlayerNoTarget { on: true, .. }
+    ));
+    assert!(
+        matches!(&writes[4], QueuedWrite::PlayerColors { body: Some(b), weapon: None, .. } if b.y == 0.5)
+    );
+    assert!(matches!(
+        &writes[5],
+        QueuedWrite::PlayerMaxArmor { max: 200, .. }
+    ));
 }

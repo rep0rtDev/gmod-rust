@@ -115,6 +115,10 @@ fn snapshot() -> Arc<Snapshot> {
             flashlight: true,
             frags: 3,
             deaths: 1,
+            max_armor: 150,
+            no_target: true,
+            player_color: Vec3::new(0.5, 0.25, 1.0),
+            weapon_color: Vec3::new(1.0, 0.0, 0.0),
         },
     );
     Arc::new(s)
