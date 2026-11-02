@@ -1007,10 +1007,19 @@ fn brake_staircase(dist: f32, a: f32) -> f32 {
     }
 }
 
-/// Measured for citizens and metropolice; every other class walks like a citizen until measured.
+const NPC_MOVE_COMBINE: NpcMoveDef = NpcMoveDef {
+    walk: 71.84,
+    walk_accel: 121.8,
+    run: 214.78,
+    run_accel: 264.8,
+};
+
+/// Measured for citizens, metropolice and combine soldiers; every other class walks like a
+/// citizen until measured.
 pub fn npc_move_def(class: &str) -> NpcMoveDef {
     match class {
         "npc_metropolice" => NPC_MOVE_METROPOLICE,
+        "npc_combine_s" => NPC_MOVE_COMBINE,
         _ => NPC_MOVE_CITIZEN,
     }
 }

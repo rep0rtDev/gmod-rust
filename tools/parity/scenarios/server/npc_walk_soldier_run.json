@@ -1,0 +1,1661 @@
+{
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "name": "server_npc_walk_soldier_run",
+ "ops": [
+  {
+   "op": "concmd",
+   "cmd": "ai_disabled",
+   "value": "0"
+  },
+  {
+   "op": "concmd",
+   "cmd": "ai_ignoreplayers",
+   "value": "1"
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_combine_s",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -620.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "npcgoto",
+   "pos": [
+    601.0,
+    -500.0,
+    -148.0
+   ],
+   "name": "run"
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "concmd",
+   "cmd": "ai_ignoreplayers",
+   "value": "0"
+  }
+ ]
+}

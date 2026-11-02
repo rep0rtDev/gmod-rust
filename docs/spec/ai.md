@@ -90,6 +90,7 @@ Own path following, one step per tick after the physics step and NPC settling:
   |---|---|---|---|---|
   | npc_citizen | 79.92 | 129.9 | 209.79 | 259.8 |
   | npc_metropolice | 57.69 | 115.4 | 184.56 | 369.2 |
+  | npc_combine_s | 71.84 | 121.8 | 214.78 | 264.8 |
 
   Every other class takes the citizen row until measured (the zombie recordings were
   contaminated by its combat state even under `ai_ignoreplayers 1`).
@@ -129,8 +130,9 @@ Own path following, one step per tick after the physics step and NPC settling:
   3.581 / 5.013 / 6.446 / 7.732; 2.7 u if ignored). Pitch/roll untouched.
 
 Harnesses `server_npc_walk_citizen` / `_citizen_run` / `_metrocop` / `_metrocop_run`,
-`_citizen_p11`..`_p15` (goal tick phase), `_citizen_turn90` and `_citizen_redirect`
-(golden 261102, one scenario per srcds session, 1-tick waits): all eleven equal at 2 u.
+`_citizen_p11`..`_p15` (goal tick phase), `_citizen_turn90`, `_citizen_redirect`,
+`_soldier` and `_soldier_run` (golden 261102, one scenario per srcds session, 1-tick
+waits): all thirteen equal at 2 u.
 A `wait 17` of the probe lasted 18 ticks in one session (other waits exact), so that phase
 was not kept. `_citizen_corner` / `_corner_seen` (1300 u to (-300, -300) round the
 building) are red by construction: the game walks its node graph (175 -> 180 -> 147 ->
@@ -167,6 +169,6 @@ player with monotonically growing steps, i.e. no halt).
 
 ## Not yet
 
-Gaits of the other classes (zombie, soldier, ...), idle / combat behaviour, crowd
+Gaits of the other classes (zombie, antlion, ...), idle / combat behaviour, crowd
 avoidance, dynamic obstacles (props), off-mesh links (ladders, jumps), addon API for
 `npc_goto` / `npc_chase`.

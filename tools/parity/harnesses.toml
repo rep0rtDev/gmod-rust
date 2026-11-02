@@ -4066,3 +4066,21 @@ realm = "server"
 crates = ["gm-server", "gm-nav"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_soldier"
+scenario = "server/npc_walk_soldier"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_soldier_run"
+scenario = "server/npc_walk_soldier_run"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
