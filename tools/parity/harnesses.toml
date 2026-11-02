@@ -3954,3 +3954,9 @@ name = "server_npc_drop"
 scenario = "server/npc_drop"
 compare = "server"
 realm = "server"
+
+[[harness]]
+name = "server_stools_npc"
+scenario = "server/stools_npc"
+compare = "server"
+realm = "server"

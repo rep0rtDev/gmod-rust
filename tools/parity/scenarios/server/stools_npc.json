@@ -1,0 +1,245 @@
+{
+ "name": "server_stools_npc",
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [
+  {
+   "model": "models/props_junk/wood_crate001a.mdl",
+   "pos": [
+    900.0,
+    -440.0,
+    -123.7
+   ],
+   "angles": [
+    0,
+    0,
+    0
+   ],
+   "frozen": true
+  }
+ ],
+ "ops": [
+  {
+   "op": "concmd",
+   "cmd": "ai_disabled",
+   "value": "1"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_kleiner",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "click",
+   "tool": "colour",
+   "pitch": 20.0,
+   "yaw": 0.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "material",
+   "pitch": 20.0,
+   "yaw": 0.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "nocollide",
+   "pitch": 20.0,
+   "yaw": 0.0,
+   "wait": 10
+  },
+  {
+   "op": "click",
+   "tool": "nocollide",
+   "pitch": 20.0,
+   "yaw": 38.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 20.0,
+   "yaw": 0.0,
+   "wait": 10
+  },
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 20.0,
+   "yaw": 38.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "rope",
+   "pitch": 20.0,
+   "yaw": 0.0,
+   "wait": 10
+  },
+  {
+   "op": "click",
+   "tool": "rope",
+   "pitch": 20.0,
+   "yaw": 38.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "axis",
+   "pitch": 20.0,
+   "yaw": 0.0,
+   "wait": 10
+  },
+  {
+   "op": "click",
+   "tool": "axis",
+   "pitch": 20.0,
+   "yaw": 38.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "remover",
+   "pitch": 20.0,
+   "yaw": 0.0,
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "undo",
+   "wait": 10
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  }
+ ]
+}

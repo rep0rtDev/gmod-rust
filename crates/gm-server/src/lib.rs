@@ -925,11 +925,15 @@ pub struct Npc {
     pub settle: bool,
     /// Tick of death: the body lingers `NPC_CORPSE_TICKS` (MOVETYPE_NONE) before it goes.
     pub dead_at: Option<u64>,
+    /// The remover's `timer.Simple(1)`: the tick the entity goes after the click made it `MOVETYPE_NONE`.
+    pub remove_at: Option<u64>,
 }
 
 /// Ticks a dead NPC stays on the server before it is removed (measured 66..106 for the
 /// metropolice, 76..96 for the headcrab); the corpse itself is the client's ragdoll.
 pub const NPC_CORPSE_TICKS: u64 = 90;
+/// The remover's `timer.Simple(1)` on an NPC, in ticks.
+pub const NPC_REMOVER_TICKS: u64 = 66;
 /// Vehicle exit point height over the vehicle origin and the "all sides blocked" top exit
 /// (measured `server_vehicle_exit_*`, chair: 11.4 / 90.9 u).
 const VEHICLE_EXIT_Z: f32 = 11.4;
@@ -5180,6 +5184,7 @@ impl<'w> Server<'w> {
                 sequence: def.sequence,
                 settle,
                 dead_at: None,
+                remove_at: None,
             },
         );
         self.sandbox.add_count(player, "npcs", id);
@@ -5287,6 +5292,7 @@ impl<'w> Server<'w> {
             .filter(|(_, n)| {
                 n.dead_at
                     .is_some_and(|t| self.tick_count.saturating_sub(t) >= NPC_CORPSE_TICKS)
+                    || n.remove_at.is_some_and(|t| self.tick_count >= t)
             })
             .map(|(id, _)| *id)
             .collect();
@@ -5359,6 +5365,7 @@ impl<'w> Server<'w> {
                 sequence: def.sequence,
                 settle: false,
                 dead_at: None,
+                remove_at: None,
             },
         );
         self.sandbox.add_count(owner, "npcs", id);
@@ -5884,6 +5891,25 @@ impl<'w> Server<'w> {
             };
             self.events.extend(events);
             self.sync_physics();
+            return ToolClick::Done(ret);
+        }
+        if let Some(npc) = hit.ent.filter(|e| self.npcs.contains_key(e)) {
+            // measured `server_stools_npc` (kleiner): colour / material accept an NPC, the
+            // constraint stools refuse it (no physics object: false, no stage), the remover
+            // takes it like a prop - `MOVETYPE_NONE` at once, gone a second later, the undo
+            // entry stays dead until the purge.
+            let ret = match tool {
+                "colour" | "material" => true,
+                "remover" if !right => {
+                    let tick = self.tick_count;
+                    if let Some(n) = self.npcs.get_mut(&npc) {
+                        n.movetype = 0;
+                        n.remove_at.get_or_insert(tick + NPC_REMOVER_TICKS);
+                    }
+                    true
+                }
+                _ => false,
+            };
             return ToolClick::Done(ret);
         }
         if matches!(

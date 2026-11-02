@@ -1532,7 +1532,7 @@ pub fn apply_tool_ops(
     for op in ops {
         match op {
             ToolOp::SetObject => {
-                let n = server.sandbox.set_object(player, hit);
+                let n = server.sandbox.set_object(player, "script", hit);
                 server.sandbox.set_stage(player, n as u32);
                 did = true;
             }

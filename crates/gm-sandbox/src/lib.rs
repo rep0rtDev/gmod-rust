@@ -512,7 +512,13 @@ pub struct ToolObject {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ToolGun {
     pub objects: Vec<ToolObject>,
+    /// The stool that selected `objects` (the game keeps one object list per tool mode; we
+    /// keep the current mode's and drop it when another stool starts selecting).
+    pub objects_tool: String,
     pub stage: u32,
+    /// `TOOL:SetOperation`: an NWInt on the toolgun itself, so shared across modes (the weld's
+    /// left click sets 2, which makes the axis' left click refuse until something sets 1).
+    pub operation: u32,
 }
 
 /// Client tool settings the stools read with `GetClientNumber`/`GetClientInfo`.
@@ -2109,6 +2115,10 @@ impl Sandbox {
         hit: &ToolHit,
         events: &mut Vec<Event>,
     ) -> bool {
+        if tool == "weld" {
+            // the weld's right click (weld to world) sets `Op` 1, freeing the axis again
+            self.tools.entry(player).or_default().operation = 1;
+        }
         if !self.can_tool(hit) {
             return false;
         }
@@ -2168,7 +2178,8 @@ impl Sandbox {
         if n == 0 && hit.ent.is_none() {
             return false;
         }
-        let n = self.set_object(player, hit);
+        self.tools.entry(player).or_default().operation = 2;
+        let n = self.set_object(player, tool, hit);
         if n == 1 {
             self.tools.entry(player).or_default().stage = 1;
             return true;
@@ -2250,7 +2261,14 @@ impl Sandbox {
     }
 
     /// `ToolObj:SetObject`: the hit is stored in the entity frame (world space for the world).
-    pub fn set_object(&mut self, player: u32, hit: &ToolHit) -> usize {
+    pub fn set_object(&mut self, player: u32, tool: &str, hit: &ToolHit) -> usize {
+        {
+            let t = self.tools.entry(player).or_default();
+            if t.objects_tool != tool {
+                t.objects.clear();
+                t.objects_tool = tool.to_string();
+            }
+        }
         let obj = match hit.ent.and_then(|e| self.prop_pose(e)) {
             Some((pos, rot)) => {
                 let inv = rot.inverse();
@@ -3702,6 +3720,12 @@ impl Sandbox {
         {
             return false;
         }
+        if tool == "axis" {
+            if self.tool(player).operation == 2 {
+                return false;
+            }
+            self.tools.entry(player).or_default().operation = 1;
+        }
         if matches!(
             tool,
             "thruster"
@@ -3733,7 +3757,7 @@ impl Sandbox {
         {
             return false;
         }
-        let n = self.set_object(player, hit);
+        let n = self.set_object(player, tool, hit);
         if n == 1 {
             self.tools.entry(player).or_default().stage = 1;
             return true;
