@@ -4039,3 +4039,30 @@ crates = ["gm-server", "gm-nav"]
 [harness.tolerance]
 pos = 2.0
 
+
+[[harness]]
+name = "server_npc_walk_citizen_redirect"
+scenario = "server/npc_walk_citizen_redirect"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_citizen_corner"
+scenario = "server/npc_walk_citizen_corner"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_citizen_corner_seen"
+scenario = "server/npc_walk_citizen_corner_seen"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0

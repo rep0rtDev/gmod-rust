@@ -931,7 +931,10 @@ pub struct Npc {
     pub move_speed: f32,
     pub run: bool,
     pub goal: Option<NpcPath>,
+    pub next_goal: Option<Vec3>,
     pub spawn_tick: u64,
+    pub next_think: u64,
+    pub think_interval: u8,
 }
 
 /// Corners of a navigation path and the one the NPC is heading for.
@@ -941,6 +944,7 @@ pub struct NpcPath {
     pub idx: usize,
     pub partial: bool,
     pub braking: bool,
+    pub halt: bool,
 }
 
 /// Ground locomotion per class as measured on the game (server_npc_walk_*): the NPC moves
@@ -957,9 +961,10 @@ pub struct NpcMoveDef {
 
 pub const NPC_THINK_TICKS: u8 = 7;
 pub const NPC_THINK_PHASE: u64 = 3;
+pub const NPC_THINK_TICKS_FAR: u8 = 13;
 const NPC_YAW_RATE: f32 = 150.0;
+const NPC_YAW_RATE_PER_SPEED: f32 = 0.267;
 const NPC_TURN_ACCEL: f32 = 0.89;
-const NPC_THINK_DT: f32 = NPC_THINK_TICKS as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
 const NPC_BRAKE_CURVE: f32 = 0.755;
 const NPC_MOVE_CITIZEN: NpcMoveDef = NpcMoveDef {
     walk: 79.92,
@@ -5279,7 +5284,10 @@ impl<'w> Server<'w> {
                 settle,
                 dead_at: None,
                 remove_at: None,
+                next_goal: None,
                 spawn_tick: self.tick_count,
+                next_think: self.tick_count + NPC_THINK_PHASE,
+                think_interval: NPC_THINK_TICKS,
                 move_speed: 0.0,
                 run: false,
                 goal: None,
@@ -5450,11 +5458,20 @@ impl<'w> Server<'w> {
         let partial = path.partial;
         if let Some(n) = self.npcs.get_mut(&id) {
             n.run = run;
+            if n.goal.is_some() && n.move_speed > 0.0 {
+                // a moving NPC first halts along its old path, then takes the new goal
+                n.next_goal = Some(target);
+                if let Some(g) = n.goal.as_mut() {
+                    g.halt = true;
+                }
+                return true;
+            }
             n.goal = Some(NpcPath {
                 points: path.points,
                 idx: 1,
                 partial,
                 braking: false,
+                halt: false,
             });
         }
         true
@@ -5467,8 +5484,9 @@ impl<'w> Server<'w> {
         }
     }
 
-    /// One tick of path following. The NPC only moves on its think: every NPC_THINK_TICKS,
-    /// NPC_THINK_PHASE ticks past its spawn tick. The think's step is the trapezoid of the
+    /// One tick of path following. The NPC only moves on its think: NPC_THINK_PHASE ticks
+    /// past its spawn tick, then every NPC_THINK_TICKS (NPC_THINK_TICKS_FAR while no player's
+    /// PVS contains it). The think's step is the trapezoid of the
     /// speed ramping at the class accel (scaled while the body still turns) toward the gait
     /// speed, capped by the braking
     /// curve over the remaining path (the brake onset only) and by the staircase that arrives
@@ -5479,22 +5497,39 @@ impl<'w> Server<'w> {
         let ids: Vec<u32> = self
             .npcs
             .iter()
-            .filter(|(_, n)| n.goal.is_some() && n.dead_at.is_none())
+            .filter(|(_, n)| n.dead_at.is_none())
             .map(|(id, _)| *id)
             .collect();
         let now = self.tick_count;
+        let eyes: Vec<i32> = self
+            .players
+            .keys()
+            .filter_map(|&p| self.eye(p).map(|e| self.collision.cluster_at(e.0)))
+            .collect();
         for id in ids {
             let Some(n) = self.npcs.get_mut(&id) else {
                 continue;
             };
+            if now < n.next_think {
+                continue;
+            }
+            // out of every player's PVS the game thinks every 13 ticks instead of 7
+            let cluster = self.collision.cluster_at(n.pos + Vec3::new(0.0, 0.0, 36.0));
+            let far = eyes.iter().all(|&e| !self.collision.visible(e, cluster));
+            let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
+            n.think_interval = if far {
+                NPC_THINK_TICKS_FAR
+            } else {
+                NPC_THINK_TICKS
+            };
+            n.next_think = now + n.think_interval as u64;
             let Some(goal) = n.goal.as_mut() else {
                 continue;
             };
-            if (now - n.spawn_tick) % NPC_THINK_TICKS as u64 != NPC_THINK_PHASE {
-                continue;
-            }
             let braking = goal.braking;
+            let halt = goal.halt;
             let points = goal.points.clone();
+            let next_goal = n.next_goal;
             let mut idx = goal.idx.min(points.len() - 1);
             let def = npc_move_def(&n.class);
             let (ideal, accel) = if n.run {
@@ -5511,6 +5546,7 @@ impl<'w> Server<'w> {
             let head = points[idx].truncate() - pos.truncate();
             let turning = head.length_squared() > 1e-6
                 && wrap_deg(head.y.atan2(head.x).to_degrees() - yaw0).abs() > 0.5;
+            let a_halt = accel * dt * dt;
             let accel = if turning {
                 accel * NPC_TURN_ACCEL
             } else {
@@ -5520,27 +5556,35 @@ impl<'w> Server<'w> {
             for w in points[idx..].windows(2) {
                 remaining += w[0].truncate().distance(w[1].truncate());
             }
-            let s0 = v0 * NPC_THINK_DT;
-            let a = accel * NPC_THINK_DT * NPC_THINK_DT;
-            let ramp = 0.5 * (s0 + (s0 + a).min(ideal * NPC_THINK_DT));
-            let curve = if braking {
-                f32::INFINITY
+            let s0 = v0 * dt;
+            let a = accel * dt * dt;
+            let (step, v1, braking) = if halt {
+                // a redirected NPC sheds the accel per think along its old path until it halts
+                let v = (s0 - a_halt).max(0.0);
+                ((0.5 * (s0 + v)).min(remaining), v / dt, true)
             } else {
-                (2.0 * NPC_BRAKE_CURVE * a * remaining).sqrt()
+                let ramp = 0.5 * (s0 + (s0 + a).min(ideal * dt));
+                let curve = if braking {
+                    f32::INFINITY
+                } else {
+                    (2.0 * NPC_BRAKE_CURVE * a * remaining).sqrt()
+                };
+                let floor = if braking { s0 - a } else { s0 - 0.5 * a };
+                let step = ramp
+                    .min(curve)
+                    .min(brake_staircase(remaining, a))
+                    .max(floor)
+                    .min(remaining);
+                let braking = braking || step < ramp;
+                // the ramp is a trapezoid of the end-of-think speed, braking moves at the step
+                let v1 = if braking {
+                    step / dt
+                } else {
+                    ((2.0 * step - s0) / dt).max(0.0)
+                };
+                (step, v1, braking)
             };
-            let floor = if braking { s0 - a } else { s0 - 0.5 * a };
-            let step = ramp
-                .min(curve)
-                .min(brake_staircase(remaining, a))
-                .max(floor)
-                .min(remaining);
-            let braking = braking || step < ramp;
-            // the ramp is a trapezoid of the end-of-think speed, braking moves at the step
-            let v1 = if braking {
-                step / NPC_THINK_DT
-            } else {
-                ((2.0 * step - s0) / NPC_THINK_DT).max(0.0)
-            };
+            let stopped = halt && v1 <= 0.0;
             let arrived = step >= remaining - 1e-3;
             let mut at = pos.truncate();
             let mut left = step;
@@ -5579,10 +5623,19 @@ impl<'w> Server<'w> {
             let floor = self
                 .npc_floor(reached, mins, maxs)
                 .unwrap_or(reached - lift);
+            // while halting the body already turns toward the new goal, faster at speed
+            let (face, rate) = match next_goal.filter(|_| halt) {
+                Some(g) if g.truncate().distance_squared(floor.truncate()) > 1e-6 => (
+                    (g.truncate() - floor.truncate()).normalize(),
+                    NPC_YAW_RATE + NPC_YAW_RATE_PER_SPEED * v0,
+                ),
+                _ => (dir, NPC_YAW_RATE),
+            };
+            let mut swap = None;
             if let Some(n) = self.npcs.get_mut(&id) {
                 n.pos = floor;
-                let max_turn = NPC_YAW_RATE * NPC_THINK_DT;
-                let turn = wrap_deg(dir.y.atan2(dir.x).to_degrees() - n.angles.y);
+                let max_turn = rate * dt;
+                let turn = wrap_deg(face.y.atan2(face.x).to_degrees() - n.angles.y);
                 let yaw = n.angles.y + turn.clamp(-max_turn, max_turn);
                 n.angles.y = if yaw > 180.0 {
                     yaw - 360.0
@@ -5591,13 +5644,17 @@ impl<'w> Server<'w> {
                 } else {
                     yaw
                 };
-                n.move_speed = if arrived { 0.0 } else { v1 };
-                if arrived {
+                n.move_speed = if arrived || stopped { 0.0 } else { v1 };
+                if arrived || stopped {
                     n.goal = None;
+                    swap = n.next_goal.take().map(|g| (g, n.run));
                 } else if let Some(g) = n.goal.as_mut() {
                     g.idx = idx.min(points.len() - 1);
                     g.braking = braking;
                 }
+            }
+            if let Some((target, run)) = swap {
+                self.npc_goto(id, target, run);
             }
         }
     }
@@ -5645,7 +5702,10 @@ impl<'w> Server<'w> {
                 settle: false,
                 dead_at: None,
                 remove_at: None,
+                next_goal: None,
                 spawn_tick: self.tick_count,
+                next_think: self.tick_count + NPC_THINK_PHASE,
+                think_interval: NPC_THINK_TICKS,
                 move_speed: 0.0,
                 run: false,
                 goal: None,

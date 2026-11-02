@@ -76,7 +76,12 @@ Own path following, one step per tick after the physics step and NPC settling:
   `NPC_THINK_PHASE` = 3 past the spawn modulo 7. A goal set between ticks starts moving
   on the first grid tick after it (1..7 ticks later; `server_npc_walk_citizen_p11`..`_p15`
   shift the goal tick by one each and all land on the game's tick). Between thinks the
-  origin does not change.
+  origin does not change. While no player's PVS contains the NPC the game thinks every
+  13 ticks instead (`NPC_THINK_TICKS_FAR`; `server_npc_walk_citizen_corner` /
+  `_corner_seen` switch at the same spot of the same line behind the building whether
+  the bot looks at the NPC or not, while `_turn90` stays at 7 in the open 370 u away);
+  the step and the yaw clamp scale with the actual interval (15.58 u / 29.3 deg per 13
+  ticks at walk speed). Ours uses the map's PVS from the player's eye cluster to the NPC's.
 - Gait (`NpcMoveDef`, `npc_move_def(class)`), measured on gm_construct over a 400 u
   straight walk (one think = 0.105 s):
 
@@ -102,6 +107,13 @@ Own path following, one step per tick after the physics step and NPC settling:
 - `npc_goto(id, target, run)` picks the gait; `npc_set_run(id, run)` switches it from the
   next think on (the oracle probe forces `ACT_RUN` once the NPC moves; the runner mirrors
   that by switching as soon as the NPC has moved).
+- A new goal while moving (`server_npc_walk_citizen_redirect`, goal behind-right at full
+  walk speed): the game halts along its old path first, shedding the accel per think as
+  a trapezoid (7.675 / 6.055 / 4.657 / 3.322 / 2.002 / 0.833; ours 7.676 / 6.243 / 4.811 /
+  3.379 / 1.947 / 0.615), while the body already turns toward the new goal faster than
+  usual (17.8 -> 15.7 deg per think as it slows; `NPC_YAW_RATE_PER_SPEED` = 0.267 deg/s
+  per u/s), then starts the new path from zero on the next think (0.548 vs our 0.716).
+  `NpcPath::halt` + `Npc::next_goal`; the new path is queried from the halt point.
 - Step: along the path in the XY plane (a step longer than the distance to the corner
   continues along the next segment); the hull is swept 18 u above the feet
   (`step_height`) with `MASK_PLAYERSOLID`, stops at the first solid, then is dropped onto
@@ -116,9 +128,17 @@ Own path following, one step per tick after the physics step and NPC settling:
   3.581 / 5.013 / 6.446 / 7.732; 2.7 u if ignored). Pitch/roll untouched.
 
 Harnesses `server_npc_walk_citizen` / `_citizen_run` / `_metrocop` / `_metrocop_run`,
-`_citizen_p11`..`_p15` (goal tick phase) and `_citizen_turn90` (golden 261102, one
-scenario per srcds session, 1-tick waits): all ten equal at 2 u. A `wait 17` of the probe
-lasted 18 ticks in one session (other waits exact), so that phase was not kept.
+`_citizen_p11`..`_p15` (goal tick phase), `_citizen_turn90` and `_citizen_redirect`
+(golden 261102, one scenario per srcds session, 1-tick waits): all eleven equal at 2 u.
+A `wait 17` of the probe lasted 18 ticks in one session (other waits exact), so that phase
+was not kept. `_citizen_corner` / `_corner_seen` (1300 u to (-300, -300) round the
+building) are red by construction: the game walks its node graph (175 -> 180 -> 147 ->
+140 -> 136 -> 168 deg legs with a ~1 u brake dip at a mid-leg node), ours string-pulls the
+Detour mesh and leaves south-about instead of north-about, so the routes part at the first
+step; they stay as recordings of the 13-tick regime. Open: check why Detour prefers the
+southern route (the northern passage may be pinched below the agent radius on our mesh).
+In `_corner_seen` the probe's `spawnnpc` yaw only turned the bot's eyes, so the game's NPC
+spawned facing the bot's body (yaw 180) while ours faces the eye yaw: a probe artifact.
 Residuals inside the tolerance: the game's first braking step is gentler than the curve
 on the citizen run (0.8 u, it arrives one think after us), and the metrocop walk sheds
 0.06-0.3 u per think over four thinks before its brake onset (1.3 u).
