@@ -684,6 +684,14 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   `UseTriggerBounds(on, padding)` grows its player-touch boxes by the padding (the prop-contact
   path is unpadded). `SetSubMaterial` stays a stub: the client does not apply the networked
   entity material yet.
+- `Player:SendHint(name, delay)` and `Player:ScreenFade(flags, color, time, hold)` ride the
+  per-player notice queue (`Hint <name> <delay>`, `ScreenFade r g b a time hold flags`): the
+  client shows the `#Hint_<name>` token from the mounted `*_english.txt` after the delay, and
+  draws a full-screen fade (SCREENFADE_IN: the colour held `hold` then fading out over `time`;
+  OUT: fading in over `time`, held `hold`; STAYOUT keeps it; MODULATE / PURGE are ignored). The
+  dead player's ragdoll is a server record without an entity id, so `GetRagdollEntity` /
+  `CreateRagdoll` stay stubs; `LagCompensation` (shots already rewind by `seen_tick`, script
+  traces do not) and `SetAvoidPlayers` (players do not collide) too.
 - NextBots: a scripted entity with `Base = "base_nextbot"` (or `Type = "nextbot"`) gets a server
   ground mover (`Server::nextbots`, `NextBot`): each tick the xy velocity ramps toward the
   `Approach` goal at the desired speed (accel / decel), gravity pulls an airborne bot, the hull

@@ -827,6 +827,10 @@ struct App {
     settings: settings::Settings,
     /// The camera FOV being blended toward the server's `Player:SetFOV` target (value, last frame).
     fov_blend: Option<(f32, std::time::Instant)>,
+    /// `Player:SendHint` tokens waiting for their delay.
+    hint_queue: Vec<(Instant, String)>,
+    /// `Player:ScreenFade`: the running full-screen fade.
+    screen_fade: Option<ScreenFade>,
     /// The Options dialog while open.
     options: Option<options::OptionsState>,
     /// The main menu's New Game page while open (`#/newgame/`).
@@ -3000,6 +3004,30 @@ impl App {
                     self.prev_weapons = Some(p.weapons);
                 }
             }
+            let now = Instant::now();
+            let due: Vec<String> = {
+                let (ready, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.hint_queue)
+                    .into_iter()
+                    .partition(|(t, _)| *t <= now);
+                self.hint_queue = later;
+                ready.into_iter().map(|(_, n)| n).collect()
+            };
+            for name in due {
+                let key = format!("hint_{name}").to_lowercase();
+                let text = self
+                    .gameui
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| format!("#Hint_{name}"));
+                self.notify(text, NotifyKind::Hint, 6.0);
+            }
+            if self
+                .screen_fade
+                .as_ref()
+                .is_some_and(|f| f.alpha(now).is_none())
+            {
+                self.screen_fade = None;
+            }
             let events = std::mem::take(&mut self.sim.client.events);
             for e in events {
                 if let Some(d) = DeathNotice::parse(&e, &self.sim.client.world.players) {
@@ -3007,6 +3035,18 @@ impl App {
                 }
                 if let Some((text, kind, length)) = Notices::legacy(&e) {
                     self.notify(text, kind, length);
+                }
+                if let Some(rest) = e.strip_prefix("Hint ") {
+                    let mut it = rest.split(' ');
+                    let name = it.next().unwrap_or("").to_string();
+                    let delay = it.next().and_then(|d| d.parse::<f32>().ok()).unwrap_or(0.0);
+                    self.hint_queue.push((
+                        Instant::now() + std::time::Duration::from_secs_f32(delay.max(0.0)),
+                        name,
+                    ));
+                }
+                if let Some(f) = e.strip_prefix("ScreenFade ").and_then(ScreenFade::parse) {
+                    self.screen_fade = Some(f);
                 }
                 println!("{e}");
                 self.console.log(e);
@@ -3785,6 +3825,20 @@ impl App {
         let lh = g.ui.line_height();
         let mut items = Vec::new();
         let white = [0.92, 0.92, 0.92, 1.0];
+        if let Some(a) = self
+            .screen_fade
+            .as_ref()
+            .and_then(|f| f.alpha(Instant::now()))
+        {
+            let [r, g, b, _] = self.screen_fade.as_ref().map_or([0.0; 4], |f| f.color);
+            items.push(UiItem::Rect {
+                x: 0.0,
+                y: 0.0,
+                w,
+                h,
+                color: [r, g, b, a],
+            });
+        }
         if self.main_menu {
             items.extend(self.main_menu_layout(g).items);
             if let Some(st) = &self.options {
@@ -5220,6 +5274,8 @@ fn main() -> Result<()> {
         main_menu: false,
         settings,
         fov_blend: None,
+        hint_queue: Vec::new(),
+        screen_fade: None,
         options: None,
         newgame: None,
         servers: None,
@@ -5851,4 +5907,76 @@ fn rounded_box(items: &mut Vec<UiItem>, r: f32, x: f32, y: f32, w: f32, h: f32, 
         h: r,
         color,
     });
+}
+
+/// `Player:ScreenFade` on the wire: `r g b a time hold flags` (SCREENFADE_IN 1: the colour, held
+/// `hold`, fading out over `time`; OUT 2: fading in over `time`, held `hold`; STAYOUT 8 keeps it).
+#[derive(Clone, Debug, PartialEq)]
+struct ScreenFade {
+    color: [f32; 4],
+    start: Instant,
+    time: f32,
+    hold: f32,
+    flags: u32,
+}
+
+impl ScreenFade {
+    fn parse(rest: &str) -> Option<Self> {
+        let v: Vec<f32> = rest.split(' ').filter_map(|x| x.parse().ok()).collect();
+        if v.len() < 7 {
+            return None;
+        }
+        Some(Self {
+            color: [v[0] / 255.0, v[1] / 255.0, v[2] / 255.0, v[3] / 255.0],
+            start: Instant::now(),
+            time: v[4].max(0.0),
+            hold: v[5].max(0.0),
+            flags: v[6] as u32,
+        })
+    }
+
+    fn alpha(&self, now: Instant) -> Option<f32> {
+        fade_alpha_at(
+            self.flags,
+            self.color[3],
+            self.time,
+            self.hold,
+            now.duration_since(self.start).as_secs_f32(),
+        )
+    }
+}
+
+/// The fade's alpha `t` seconds in; None once it is over.
+fn fade_alpha_at(flags: u32, a: f32, time: f32, hold: f32, t: f32) -> Option<f32> {
+    if flags & 1 != 0 {
+        if t < hold {
+            Some(a)
+        } else if time > 0.0 && t < hold + time {
+            Some(a * (1.0 - (t - hold) / time))
+        } else {
+            None
+        }
+    } else if time > 0.0 && t < time {
+        Some(a * t / time)
+    } else if t < time + hold || flags & 8 != 0 {
+        Some(a)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod fade_tests {
+    use super::fade_alpha_at;
+
+    #[test]
+    fn screen_fade_alpha_follows_the_flags() {
+        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 1.0), Some(0.5));
+        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 2.5), Some(1.0));
+        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 3.5), None);
+        assert_eq!(fade_alpha_at(2 | 8, 1.0, 2.0, 1.0, 9.0), Some(1.0));
+        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 0.5), Some(0.8));
+        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 2.0), Some(0.4));
+        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 3.1), None);
+    }
 }

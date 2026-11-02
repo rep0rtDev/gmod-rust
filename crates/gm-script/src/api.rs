@@ -392,6 +392,20 @@ pub enum QueuedWrite {
         on: bool,
         pad: f32,
     },
+    /// `Player:SendHint(name, delay)`.
+    PlayerHint {
+        player: u32,
+        name: String,
+        delay: f32,
+    },
+    /// `Player:ScreenFade(flags, color, time, hold)`.
+    PlayerScreenFade {
+        player: u32,
+        flags: u32,
+        color: [u8; 4],
+        time: f32,
+        hold: f32,
+    },
     /// `Player:SetFOV(fov, time)`.
     PlayerFov {
         player: u32,
@@ -2012,6 +2026,31 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     on: tbl_field::<bool>(&arg, "on")?.unwrap_or(true),
                     pad: tbl_field::<f32>(&arg, "pad")?.unwrap_or(0.0),
                 },
+                "player.hint" => QueuedWrite::PlayerHint {
+                    player: ent,
+                    name: tbl_field::<String>(&arg, "name")?.unwrap_or_default(),
+                    delay: tbl_field::<f32>(&arg, "delay")?.unwrap_or(0.0),
+                },
+                "player.screen_fade" => QueuedWrite::PlayerScreenFade {
+                    player: ent,
+                    flags: tbl_field::<u32>(&arg, "flags")?.unwrap_or(2),
+                    color: [
+                        tbl_field::<f32>(&arg, "r")?
+                            .unwrap_or(0.0)
+                            .clamp(0.0, 255.0) as u8,
+                        tbl_field::<f32>(&arg, "g")?
+                            .unwrap_or(0.0)
+                            .clamp(0.0, 255.0) as u8,
+                        tbl_field::<f32>(&arg, "b")?
+                            .unwrap_or(0.0)
+                            .clamp(0.0, 255.0) as u8,
+                        tbl_field::<f32>(&arg, "a")?
+                            .unwrap_or(255.0)
+                            .clamp(0.0, 255.0) as u8,
+                    ],
+                    time: tbl_field::<f32>(&arg, "time")?.unwrap_or(0.0),
+                    hold: tbl_field::<f32>(&arg, "hold")?.unwrap_or(0.0),
+                },
                 "player.fov" => QueuedWrite::PlayerFov {
                     player: ent,
                     fov: tbl_field::<f32>(&arg, "fov")?.unwrap_or(0.0),
@@ -3458,6 +3497,37 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::EntityFrameAdvance { ent, dt } => server.frame_advance(*ent, *dt),
         QueuedWrite::NpcTookDamage { ent } => server.npc_mark_damaged(*ent),
         QueuedWrite::PlayerFov { player, fov, secs } => server.set_player_fov(*player, *fov, *secs),
+        QueuedWrite::PlayerHint {
+            player,
+            name,
+            delay,
+        } => {
+            if !server.players.contains_key(player) {
+                return false;
+            }
+            let name: String = name.chars().filter(|c| !c.is_whitespace()).collect();
+            server
+                .notices
+                .push((*player, format!("Hint {name} {delay}")));
+            true
+        }
+        QueuedWrite::PlayerScreenFade {
+            player,
+            flags,
+            color,
+            time,
+            hold,
+        } => {
+            if !server.players.contains_key(player) {
+                return false;
+            }
+            let [r, g, b, a] = color;
+            server.notices.push((
+                *player,
+                format!("ScreenFade {r} {g} {b} {a} {time} {hold} {flags}"),
+            ));
+            true
+        }
         QueuedWrite::PreventTransmit {
             ent,
             player,

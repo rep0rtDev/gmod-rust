@@ -1059,3 +1059,10 @@ fn prevent_transmit_and_trigger_writes() {
         |w| matches!(w, QueuedWrite::SentTriggerBounds { ent: 5, on: true, pad } if *pad == 8.0)
     ));
 }
+
+#[test]
+fn hint_and_screen_fade_writes() {
+    let (_, writes) = run("Player(1):SendHint(\"OpenSpawnMenu\", 2); Player(1):ScreenFade(SCREENFADE_OUT, Color(255, 0, 0, 128), 1, 0.5)");
+    assert!(writes.iter().any(|w| matches!(w, QueuedWrite::PlayerHint { player: 1, name, delay } if name == "OpenSpawnMenu" && *delay == 2.0)));
+    assert!(writes.iter().any(|w| matches!(w, QueuedWrite::PlayerScreenFade { player: 1, flags: 2, color: [255, 0, 0, 128], time, hold } if *time == 1.0 && *hold == 0.5)));
+}
