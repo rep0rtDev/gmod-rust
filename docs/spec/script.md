@@ -179,6 +179,12 @@ digit; refused when the model has no such part or model), `set_gravity` / `set_c
 `keep_upright` (boolean), `ignite` (seconds, default the property's 360) / `extinguish` (refused
 when not burning), `set_health` (number, the prop's `prop_data` health).
 
+NPC ops on `world.queue`, `ent` being the NPC id (`npc.*` events carry it): `npc_goto`
+(`{x, y, z, run?}`, the server's own navigation on its Recast mesh with the measured gaits, see
+`docs/spec/ai.md`; rejected without a path, for a dead NPC or off the mesh), `npc_chase`
+(`{player, run?}`: follow that player, re-pathing without halting, resting 64 u short; rejected
+for an unknown player) and `npc_stop`. No game schedule or relationship is involved.
+
 `world.queue("spawn", 0, {model, pos, angles?, frozen?, owner?, tag?})` is `ents.Create
 ("prop_physics")` + `SetModel` + `Spawn` at a pose: `owner` 0 (default) is the server's prop (no
 limits, undo or cleanup, like script constraints); a player id goes through `sbox_maxprops` and

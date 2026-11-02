@@ -91,6 +91,21 @@ pub enum QueuedWrite {
         tool: String,
         settings: Vec<gm_server::ToolSetting>,
     },
+    /// `npc_goto` / `npc_chase` / `npc_stop`: `ent` is the NPC id; the server's own
+    /// navigation (measured gaits, no game schedules).
+    NpcGoto {
+        ent: u32,
+        pos: Vec3,
+        run: bool,
+    },
+    NpcChase {
+        ent: u32,
+        player: u32,
+        run: bool,
+    },
+    NpcStop {
+        ent: u32,
+    },
     SetVelocity {
         ent: u32,
         velocity: Vec3,
@@ -888,6 +903,23 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     frozen: !matches!(arg, Value::Boolean(false)),
                 },
                 "remove" => QueuedWrite::Remove { ent },
+                "npc_goto" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NpcGoto {
+                        ent,
+                        pos: table_vec3(&t)?,
+                        run: t.get::<Option<bool>>("run")?.unwrap_or(false),
+                    }
+                }
+                "npc_chase" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NpcChase {
+                        ent,
+                        player: t.get::<u32>("player")?,
+                        run: t.get::<Option<bool>>("run")?.unwrap_or(false),
+                    }
+                }
+                "npc_stop" => QueuedWrite::NpcStop { ent },
                 "set_overlay_text" => QueuedWrite::SetOverlayText {
                     ent,
                     text: match &arg {
@@ -1652,6 +1684,15 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         }
         QueuedWrite::Freeze { ent, frozen } => server.set_prop_frozen(*ent, *frozen),
         QueuedWrite::Remove { ent } => server.remove_prop(*ent),
+        QueuedWrite::NpcGoto { ent, pos, run } => server.npc_goto(*ent, *pos, *run),
+        QueuedWrite::NpcChase { ent, player, run } => server.npc_chase(*ent, *player, *run),
+        QueuedWrite::NpcStop { ent } => {
+            if !server.npcs.contains_key(ent) {
+                return false;
+            }
+            server.npc_stop(*ent);
+            true
+        }
         QueuedWrite::Sound { name, pos, volume } => {
             server.play_sound(name.clone(), *pos, *volume);
             true
