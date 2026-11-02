@@ -3255,7 +3255,7 @@
 {"address":"NPC:SetTarget","kind":"classfunc","parent":"NPC","name":"SetTarget","realms":["server"],"args":[{"name":"entity","type":"Entity"}],"rets":[],"status":"implemented"},
 {"address":"NPC:SetTaskStatus","kind":"classfunc","parent":"NPC","name":"SetTaskStatus","realms":["server"],"args":[{"name":"status","type":"number"}],"rets":[],"status":"stub"},
 {"address":"NPC:SetUnforgettable","kind":"classfunc","parent":"NPC","name":"SetUnforgettable","realms":["server"],"args":[{"name":"enemy","type":"Entity"},{"name":"set","type":"boolean","default":"true"}],"rets":[],"status":"stub"},
-{"address":"NPC:SetViewOffset","kind":"classfunc","parent":"NPC","name":"SetViewOffset","realms":["server"],"args":[{"name":"","type":"Vector"}],"rets":[],"status":"missing"},
+{"address":"NPC:SetViewOffset","kind":"classfunc","parent":"NPC","name":"SetViewOffset","realms":["server"],"args":[{"name":"","type":"Vector"}],"rets":[],"status":"stub"},
 {"address":"NPC:StartEngineTask","kind":"classfunc","parent":"NPC","name":"StartEngineTask","realms":["server"],"args":[{"name":"task","type":"number"},{"name":"taskData","type":"number"}],"rets":[],"status":"stub"},
 {"address":"NPC:StopMoving","kind":"classfunc","parent":"NPC","name":"StopMoving","realms":["server"],"args":[{"name":"immediate","type":"boolean","default":"true"}],"rets":[],"status":"implemented"},
 {"address":"NPC:TargetOrder","kind":"classfunc","parent":"NPC","name":"TargetOrder","realms":["server"],"args":[{"name":"target","type":"Entity"}],"rets":[],"status":"implemented"},
