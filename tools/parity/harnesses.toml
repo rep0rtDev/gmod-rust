@@ -3984,3 +3984,9 @@ name = "server_chair_hull"
 scenario = "server/chair_hull"
 compare = "server"
 realm = "server"
+
+[[harness]]
+name = "server_stools_vehicle"
+scenario = "server/stools_vehicle"
+compare = "server"
+realm = "server"

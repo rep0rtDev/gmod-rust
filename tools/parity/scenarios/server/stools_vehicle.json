@@ -1,0 +1,336 @@
+{
+ "name": "server_stools_vehicle",
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -321.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": [],
+ "ops": [
+  {
+   "op": "spawnvehicle",
+   "class": "Chair_Wood",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 20
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    941.7,
+    -321.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "click",
+   "tool": "colour",
+   "pitch": 37.0,
+   "yaw": 0.0,
+   "wait": 5
+  },
+  {
+   "op": "click",
+   "tool": "material",
+   "pitch": 37.0,
+   "yaw": 0.0,
+   "wait": 5
+  },
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 37.0,
+   "yaw": 0.0,
+   "wait": 5
+  },
+  {
+   "op": "click",
+   "tool": "weld",
+   "pitch": 30.0,
+   "yaw": 30.0,
+   "wait": 5
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "nocollide",
+   "pitch": 37.0,
+   "yaw": 0.0,
+   "wait": 5
+  },
+  {
+   "op": "click",
+   "tool": "nocollide",
+   "pitch": 30.0,
+   "yaw": 30.0,
+   "wait": 5
+  },
+  {
+   "op": "wait",
+   "ticks": 10
+  },
+  {
+   "op": "click",
+   "tool": "remover",
+   "pitch": 37.0,
+   "yaw": 0.0,
+   "wait": 5
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 40
+  },
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "teleport",
+   "pos": [
+    823.235,
+    -321.0,
+    -143.0
+   ]
+  },
+  {
+   "op": "wait",
+   "ticks": 3
+  },
+  {
+   "op": "spawnvehicle",
+   "class": "Jeep",
+   "pitch": 20.0,
+   "yaw": 90.0
+  },
+  {
+   "op": "wait",
+   "ticks": 40
+  },
+  {
+   "op": "click",
+   "tool": "colour",
+   "pitch": 15.0,
+   "yaw": 90.0,
+   "wait": 5
+  },
+  {
+   "op": "click",
+   "tool": "remover",
+   "pitch": 15.0,
+   "yaw": 90.0,
+   "wait": 5
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 1
+  },
+  {
+   "op": "wait",
+   "ticks": 40
+  }
+ ]
+}

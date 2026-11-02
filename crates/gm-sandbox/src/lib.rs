@@ -1807,7 +1807,11 @@ impl Sandbox {
     pub fn undo_live(&self, u: &Undo) -> usize {
         u.entities
             .iter()
-            .filter(|e| self.props.iter().any(|p| p.id == **e) || self.foreign.contains(e))
+            .filter(|e| {
+                self.props.iter().any(|p| p.id == **e)
+                    || self.foreign.contains(e)
+                    || self.constraints.iter().any(|c| c.id == **e)
+            })
             .count()
     }
 
@@ -3718,6 +3722,11 @@ impl Sandbox {
             && hit.ent.is_none()
             && self.tool(player).objects.is_empty()
         {
+            return false;
+        }
+        // measured `server_stools_vehicle`: the nocollide's click on the world is refused
+        // outright (`util.IsValidPhysicsObject` on worldspawn is false), the first pick stays
+        if tool == "nocollide" && hit.ent.is_none() {
             return false;
         }
         if tool == "axis" {
