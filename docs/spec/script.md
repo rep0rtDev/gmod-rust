@@ -670,9 +670,22 @@ The rest of `Player`, `PhysObj`, `Weapon` and `Vehicle` (end of `glua/entity.lua
   GetWeight / GetHoldType / AllowsAutoSwitch* / GetPrimaryAmmoType / GetDeploySpeed`),
   actor-local `Get/SetNextPrimaryFire / NextSecondaryFire / LastShootTime`, `HasAmmo`.
   `SetClip1 / SetClip2 / SendWeaponAnim / DefaultReload / CallOnClient` are stubs.
-- `Vehicle`: `GetSpeed / GetHLSpeed` (velocity), `GetPassenger / IsEngineStarted` (driver),
-  `GetWheelCount / HasBoost` from the class table; throttle / steering / handbrake setters and
-  the vehicle-script parameters are stubs until the driving backend exposes them.
+- `Vehicle`: `GetSpeed / GetHLSpeed` (velocity), `GetPassenger` (driver), `GetWheelCount /
+  HasBoost` from the class table. Driving is the server's: `SetThrottle / SetSteering /
+  SetHandbrake / ReleaseHandbrake` queue the controls onto the server's vehicle (kept until
+  changed, as the game keeps a driverless vehicle's), `StartEngine / EnableEngine` the engine
+  switch (on with a driver, off when he leaves; off, the wheels park the car); `GetThrottle /
+  GetSteering / IsEngineStarted / IsEngineEnabled` read them back from the snapshot, `GetRPM /
+  GetSteeringDegrees / GetMaxSpeed / GetOperatingParams` (`speed`, `RPM`, `gear`,
+  `steeringAngle`, `wheelsInContact`, `isTorqueBoosting` false) the drive law's last tick, and
+  `GetVehicleParams` carries `engine` / `steering` tables from it. The law is measured on srcds
+  (`server_vehicle_drive`: a driverless jeep on gm_flatgrass driven through this API, since a
+  bot driver's command resets the controls every tick): full throttle gains 5.85 u/s per tick to
+  35 mph then creeps, coasting loses 1 u/s per tick, the handbrake 11.8, reverse caps at 14 mph,
+  the steering cone is 50 deg up to 14 mph and 18 from 20 mph, and 18 deg at 620 u/s turns 66.7
+  deg/s. Jalopy and APC share the jeep's law until measured; the airboat has no drive yet.
+  `SetMaxThrottle / SetMaxReverseThrottle / SetBoost / SetSpringLength / SetWheelFriction /
+  SetSteeringDegrees / SetVehicleParams` stay stubs (no such inputs on our wheels).
 
 GM hooks and the coverage manifest: a hook is not a Lua value, so `glua::list` counts a `GM`
 hook as present when a bridge in the GLua sources raises it (`hook.Run("Name"`), and a scripted

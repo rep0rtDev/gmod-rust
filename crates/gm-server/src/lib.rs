@@ -2951,6 +2951,8 @@ pub struct Vehicle {
     pub add_gravity: f32,
     /// The vehicle script's `massoverride` (kg) the springs scale with.
     pub mass: f32,
+    /// Driver inputs and the driving state they produced last tick.
+    pub controls: VehicleControls,
 }
 
 /// One raycast wheel: the hub in body space, the tyre radius, the axle's spring constant
@@ -2982,6 +2984,120 @@ pub struct VehicleScript {
 
 /// `vehiclescript` of the spawnmenu's cars (`base_vehicles.lua`): jeep_test, airboat, jalopy,
 /// apc_gmod.
+/// Driver inputs of a vehicle (`Vehicle:SetThrottle` / `SetSteering` / `SetHandbrake`, the
+/// engine switch) and what the drive law made of them on the last tick, for scripts.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VehicleControls {
+    /// -1..1, forward positive.
+    pub throttle: f32,
+    /// -1..1, right positive.
+    pub steer: f32,
+    pub handbrake: bool,
+    /// On with a driver (`enter_vehicle`) or `Vehicle:StartEngine(true)`; off, the wheels hold
+    /// the car still like a parked one.
+    pub engine_on: bool,
+    /// Steering angle of the front wheels in degrees after the speed cone.
+    pub steer_angle: f32,
+    /// Signed speed along the car's forward axis, units per second.
+    pub speed: f32,
+    pub wheels_in_contact: u32,
+    /// Gear index of the automatic transmission (0 = first).
+    pub gear: u8,
+}
+
+/// The driving law of a wheeled vehicle, measured on srcds (`server_vehicle_drive`: a driverless
+/// jeep on gm_flatgrass steered through the Vehicle API, since a bot driver's command resets the
+/// controls every tick). Full throttle accelerates at a constant rate up to the script's
+/// `maxspeed`, then creeps; no throttle coasts down at a constant rate; the handbrake brakes at a
+/// constant rate near the tyre friction limit; the steering cone shrinks between the script's
+/// slow and fast car speeds; the yaw rate follows a bicycle with the effective wheelbase
+/// `turn_len` (`speed * tan(angle) / turn_len`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DriveSpec {
+    pub accel: f32,
+    pub max_fwd: f32,
+    pub max_rev: f32,
+    pub creep_fwd: f32,
+    pub creep_rev: f32,
+    pub coast: f32,
+    pub brake: f32,
+    pub deg_slow: f32,
+    pub deg_fast: f32,
+    pub slow_speed: f32,
+    pub fast_speed: f32,
+    pub steer_exp: f32,
+    pub turn_len: f32,
+    pub gears: &'static [f32],
+    pub axle_ratio: f32,
+    pub shift_up_rpm: f32,
+    pub shift_down_rpm: f32,
+    /// Mean wheel radius the transmission counts revolutions with (the RPM readout matched the
+    /// mean of the front and rear radii).
+    pub wheel_radius: f32,
+}
+
+/// Units per second in one mile per hour (the scripts give speeds in mph).
+pub const MPH: f32 = 17.6;
+
+/// Measured: +5.85 u/s per tick to 614 u/s (35 mph), then +0.24 u/s per tick; reverse the same
+/// rate to 14 mph, then -0.53 u/s per tick; coasting -1.0 u/s per tick; handbrake -11.8 u/s per
+/// tick; steering 18 deg at 620 u/s turns 66.7 deg/s (radius 531 u); 50 deg standing still;
+/// RPM = 6.86 x speed in first gear (3.2 x 4.56 over a 20.3 u mean radius), second at 3800.
+pub const JEEP_DRIVE: DriveSpec = DriveSpec {
+    accel: 390.0,
+    max_fwd: 35.0 * MPH,
+    max_rev: 14.0 * MPH,
+    creep_fwd: 16.0,
+    creep_rev: 35.0,
+    coast: 67.0,
+    brake: 790.0,
+    deg_slow: 50.0,
+    deg_fast: 18.0,
+    slow_speed: 14.0 * MPH,
+    fast_speed: 20.0 * MPH,
+    steer_exp: 1.4,
+    turn_len: 172.0,
+    gears: &[3.2, 2.4, 1.5, 1.0, 0.84],
+    axle_ratio: 4.56,
+    shift_up_rpm: 3800.0,
+    shift_down_rpm: 1600.0,
+    wheel_radius: 20.3,
+};
+
+/// The drive law of a vehicle key; the jeep's is measured, the jalopy and the APC share it until
+/// measured (same engine family in their scripts); the airboat has no wheel drive yet.
+pub fn drive_spec(key: &str) -> Option<DriveSpec> {
+    match key {
+        "Jeep" | "Jalopy" | "APC" => Some(JEEP_DRIVE),
+        _ => None,
+    }
+}
+
+impl VehicleControls {
+    /// Engine revolutions per minute from the forward speed through the current gear.
+    pub fn rpm(&self, spec: &DriveSpec) -> f32 {
+        let gear = spec.gears[(self.gear as usize).min(spec.gears.len() - 1)];
+        self.speed.abs() / (2.0 * std::f32::consts::PI * spec.wheel_radius)
+            * 60.0
+            * gear
+            * spec.axle_ratio
+    }
+
+    /// Steering cone at a speed: `deg_slow` up to the slow car speed, `deg_fast` from the fast
+    /// one, linear between.
+    pub fn steer_cone(speed: f32, spec: &DriveSpec) -> f32 {
+        let s = speed.abs();
+        if s <= spec.slow_speed {
+            spec.deg_slow
+        } else if s >= spec.fast_speed {
+            spec.deg_fast
+        } else {
+            let t = (s - spec.slow_speed) / (spec.fast_speed - spec.slow_speed);
+            spec.deg_slow + (spec.deg_fast - spec.deg_slow) * t
+        }
+    }
+}
+
 pub fn vehicle_script(key: &str) -> Option<VehicleScript> {
     Some(match key {
         "Jeep" => VehicleScript {
@@ -3022,6 +3138,18 @@ pub fn vehicle_script(key: &str) -> Option<VehicleScript> {
 /// `rest + g_total / (4 k)` below the hub point (`Wheel::natural`) and the body's weight (g plus
 /// `addgravity`) compresses it back.
 const VEHICLE_WHEEL_TRAVEL: f32 = 60.0;
+
+/// One driven car for `Server::tick_vehicles`: id, wheels, addgravity, mass, rest extension,
+/// controls, drive law.
+type CarRow = (
+    u32,
+    Vec<Wheel>,
+    f32,
+    f32,
+    f32,
+    VehicleControls,
+    Option<DriveSpec>,
+);
 const VEHICLE_TYRE_FRICTION: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -6876,6 +7004,7 @@ impl<'w> Server<'w> {
         self.vehicles.insert(
             id,
             Vehicle {
+                controls: VehicleControls::default(),
                 key: def.key.to_string(),
                 class: def.class.to_string(),
                 model: def.model.to_string(),
@@ -6955,6 +7084,7 @@ impl<'w> Server<'w> {
         }
         if let Some(v) = self.vehicles.get_mut(&veh) {
             v.driver = Some(player);
+            v.controls.engine_on = true;
         }
         self.game_events.push(GameEvent::EnterVehicle {
             player,
@@ -6994,6 +7124,39 @@ impl<'w> Server<'w> {
         self.exit_vehicle(player)
     }
 
+    /// `Vehicle:SetThrottle` / `SetSteering` / `SetHandbrake`: driver inputs of a vehicle, kept
+    /// until changed (`None` leaves one as it is). False for an unknown vehicle.
+    pub fn set_vehicle_controls(
+        &mut self,
+        veh: u32,
+        throttle: Option<f32>,
+        steer: Option<f32>,
+        handbrake: Option<bool>,
+    ) -> bool {
+        let Some(v) = self.vehicles.get_mut(&veh) else {
+            return false;
+        };
+        if let Some(t) = throttle {
+            v.controls.throttle = t.clamp(-1.0, 1.0);
+        }
+        if let Some(st) = steer {
+            v.controls.steer = st.clamp(-1.0, 1.0);
+        }
+        if let Some(h) = handbrake {
+            v.controls.handbrake = h;
+        }
+        true
+    }
+
+    /// `Vehicle:StartEngine` / `EnableEngine`: the engine switch; off, the car parks.
+    pub fn set_vehicle_engine(&mut self, veh: u32, on: bool) -> bool {
+        let Some(v) = self.vehicles.get_mut(&veh) else {
+            return false;
+        };
+        v.controls.engine_on = on;
+        true
+    }
+
     pub fn exit_vehicle(&mut self, player: u32) -> bool {
         let Some(veh) = self.players.get(&player).and_then(|p| p.seat) else {
             return false;
@@ -7008,6 +7171,12 @@ impl<'w> Server<'w> {
                 self.players[&player].view_angles.y,
             ),
         };
+        if let Some(v) = self.vehicles.get_mut(&veh) {
+            v.controls.engine_on = false;
+            v.controls.throttle = 0.0;
+            v.controls.steer = 0.0;
+            v.controls.handbrake = false;
+        }
         if let Some(p) = self.players.get_mut(&player) {
             p.seat = None;
             p.state.origin = pos;
@@ -7090,6 +7259,9 @@ impl<'w> Server<'w> {
             })
             .collect();
         if let Some(&body) = self.bodies.get(&veh) {
+            // the game's car body shows no air drag: full throttle gains and coasting lose speed
+            // at constant rates from standstill to 35 mph (`server_vehicle_drive`)
+            self.physics.disable_drag(body);
             self.physics.set_mass(body, script.mass);
         }
         // measured `server_vehicle_settle`: a car whose hull clears the floor sits 1 u under
@@ -7114,16 +7286,24 @@ impl<'w> Server<'w> {
     /// body down on top of gravity. The wheels see the world only for now.
     fn tick_vehicles(&mut self) {
         let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
-        let cars: Vec<(u32, Vec<Wheel>, f32, f32, f32)> = self
+        let cars: Vec<CarRow> = self
             .vehicles
             .iter()
             .filter(|(_, v)| !v.wheels.is_empty())
             .filter_map(|(id, v)| {
                 let script = vehicle_script(&v.key)?;
-                Some((*id, v.wheels.clone(), v.add_gravity, v.mass, script.rest))
+                Some((
+                    *id,
+                    v.wheels.clone(),
+                    v.add_gravity,
+                    v.mass,
+                    script.rest,
+                    v.controls.clone(),
+                    drive_spec(&v.key),
+                ))
             })
             .collect();
-        for (id, wheels, add_gravity, mass, rest) in cars {
+        for (id, wheels, add_gravity, mass, rest, mut c, spec) in cars {
             let Some(&body) = self.bodies.get(&id) else {
                 continue;
             };
@@ -7135,12 +7315,35 @@ impl<'w> Server<'w> {
             // the state's angular velocity is in degrees per second
             let omega = st.angular_velocity * (std::f32::consts::PI / 180.0);
             let up = st.rotation * Vec3::Z;
+            // the front axle is the pair of hubs further along +Y of the model
+            let fwd = st.rotation * Vec3::Y;
             let g_total = (1.0 + add_gravity) * 600.0;
             if add_gravity > 0.0 {
                 self.physics
                     .add_impulse(body, Vec3::new(0.0, 0.0, -add_gravity * 600.0 * mass * dt));
             }
+            let driving = c.engine_on && spec.is_some();
+            let spec = spec.unwrap_or(JEEP_DRIVE);
+            let speed = st.velocity.dot(fwd);
+            let cone = VehicleControls::steer_cone(speed, &spec);
+            let steer = c.steer.clamp(-1.0, 1.0);
+            let angle = if driving {
+                cone * steer.abs().powf(spec.steer_exp) * steer.signum()
+            } else {
+                0.0
+            };
+            // the kinematic wheelbase of the measured turn is longer than the hubs' span: the
+            // front wheels steer by the angle that gives the measured yaw rate over the real span
+            let span = {
+                let ys: Vec<f32> = wheels.iter().map(|w| w.hub.y).collect();
+                let max = ys.iter().cloned().fold(f32::MIN, f32::max);
+                let min = ys.iter().cloned().fold(f32::MAX, f32::min);
+                (max - min).max(1.0)
+            };
+            let wheel_angle = (angle.to_radians().tan() * span / spec.turn_len).atan();
+            let mid_y = wheels.iter().map(|w| w.hub.y).sum::<f32>() / wheels.len() as f32;
             let share = mass / wheels.len() as f32;
+            let mut contacts = 0u32;
             for w in &wheels {
                 let hub = st.position + st.rotation * w.hub;
                 let len = w.radius + VEHICLE_WHEEL_TRAVEL;
@@ -7150,6 +7353,7 @@ impl<'w> Server<'w> {
                 if tr.fraction >= 1.0 {
                     continue;
                 }
+                contacts += 1;
                 let ext = tr.fraction * len - w.radius;
                 let natural = rest + g_total / (4.0 * w.spring);
                 let v_hub = st.velocity + omega.cross(hub - com);
@@ -7162,15 +7366,76 @@ impl<'w> Server<'w> {
                     continue;
                 }
                 self.physics.add_impulse_at(body, hub, up * (force * dt));
-                // the tyre holds the contact still: the hub's ground-plane velocity is taken
-                // out, bounded by the friction cone of the spring's load
                 let v_h = v_hub - up * v_up;
-                let want = v_h.length() * share;
-                if want > 1e-3 {
-                    let cap = VEHICLE_TYRE_FRICTION * force * dt;
-                    self.physics
-                        .add_impulse_at(body, com, -v_h.normalize() * want.min(cap));
+                let cap = VEHICLE_TYRE_FRICTION * force * dt;
+                if driving {
+                    // a rolling tyre holds only across its heading: the front wheels' heading
+                    // carries the steering angle, and the hold acts at the hub brought to the
+                    // centre-of-mass height so that it turns the car without rolling it
+                    let heading = if w.hub.y > mid_y {
+                        let (sn, cs) = wheel_angle.sin_cos();
+                        // steering right (positive) turns the heading clockwise seen from above
+                        fwd * cs - up.cross(fwd) * sn
+                    } else {
+                        fwd
+                    };
+                    let lateral = v_h - heading * v_h.dot(heading);
+                    let want = lateral.length() * share;
+                    if want > 1e-3 {
+                        let at = com + (hub - com) - up * (hub - com).dot(up);
+                        self.physics
+                            .add_impulse_at(body, at, -lateral.normalize() * want.min(cap));
+                    }
+                } else {
+                    // parked: the tyre holds the contact still, bounded by the friction cone of
+                    // the spring's load
+                    let want = v_h.length() * share;
+                    if want > 1e-3 {
+                        self.physics
+                            .add_impulse_at(body, com, -v_h.normalize() * want.min(cap));
+                    }
                 }
+            }
+            if driving && contacts > 0 {
+                let throttle = c.throttle.clamp(-1.0, 1.0);
+                let stop = -speed.signum() * (speed.abs() / dt);
+                let accel = if c.handbrake {
+                    stop.abs().min(spec.brake) * stop.signum()
+                } else if throttle > 0.05 {
+                    if speed < spec.max_fwd {
+                        spec.accel * throttle
+                    } else {
+                        spec.creep_fwd * throttle
+                    }
+                } else if throttle < -0.05 {
+                    if speed > -spec.max_rev {
+                        spec.accel * throttle
+                    } else {
+                        spec.creep_rev * throttle
+                    }
+                } else {
+                    stop.abs().min(spec.coast) * stop.signum()
+                };
+                if accel.abs() > 1e-3 {
+                    self.physics
+                        .add_impulse_at(body, com, fwd * (accel * dt * mass));
+                }
+            }
+            c.steer_angle = angle;
+            c.speed = speed;
+            c.wheels_in_contact = contacts;
+            if driving {
+                let rpm = c.rpm(&spec);
+                if rpm > spec.shift_up_rpm && (c.gear as usize) + 1 < spec.gears.len() {
+                    c.gear += 1;
+                } else if rpm < spec.shift_down_rpm && c.gear > 0 {
+                    c.gear -= 1;
+                }
+            } else {
+                c.gear = 0;
+            }
+            if let Some(v) = self.vehicles.get_mut(&id) {
+                v.controls = c;
             }
         }
     }
@@ -11718,6 +11983,7 @@ impl<'w> Server<'w> {
             self.vehicles.insert(
                 id,
                 Vehicle {
+                    controls: VehicleControls::default(),
                     key: def.key.to_string(),
                     class: def.class.to_string(),
                     model: def.model.to_string(),

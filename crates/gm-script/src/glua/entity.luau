@@ -271,18 +271,36 @@ function VEH:GetVehicleParams()
     local v = vinfo(self); if not v then return nil end
     local wheels = {}
     for i, w in ipairs(v.wheels) do wheels[i] = { hub = Vector(w.hub.x, w.hub.y, w.hub.z), radius = w.radius, springConstant = w.spring, springDamping = w.damping, springDampingCompression = w.damping_compression } end
-    return { wheelsPerAxle = 2, axleCount = math.ceil(#v.wheels / 2), body = { massOverride = v.mass, addGravity = v.add_gravity }, wheels = wheels, axles = {} }
+    local d = v.drive
+    local engine = d and { maxSpeed = d.max_fwd / 17.6, maxRevSpeed = d.max_rev / 17.6, axleRatio = d.axle_ratio, gearCount = #d.gears, gearRatio = d.gears, shiftUpRPM = d.shift_up, shiftDownRPM = d.shift_down } or nil
+    local steering = d and { degreesSlow = d.deg_slow, degreesFast = d.deg_fast, speedSlow = d.slow_speed / 17.6, speedFast = d.fast_speed / 17.6, steeringExponent = d.steer_exp } or nil
+    return { wheelsPerAxle = 2, axleCount = math.ceil(#v.wheels / 2), engine = engine, steering = steering, body = { massOverride = v.mass, addGravity = v.add_gravity }, wheels = wheels, axles = {} }
 end
 function VEH:GetWheelCount() local v = vinfo(self); return v and #v.wheels or 0 end
 function VEH:GetWheelBaseHeight(i) local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]; return w and (w.hub.z - w.radius) or 0 end
 function VEH:GetWheelTotalHeight(i) local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]; return w and (w.radius * 2) or 0 end
 function VEH:GetSpringLength(i) local v = vinfo(self); local w = v and v.wheels[(i or 0) + 1]; return w and w.radius or 0 end
-function VEH:IsEngineEnabled() local v = vinfo(self); return v ~= nil and v.driver ~= 0 end
-function VEH:IsEngineStarted() return self:IsEngineEnabled() end
 function VEH:GetVehicleClass() return self:GetClass() end
-function VEH:IsEngineEnabled() return true end
-function VEH:GetThrottle() return 0 end
-function VEH:GetSteering() return 0 end
+-- driving: the controls live on the server's vehicle (kept until changed), the drive law runs
+-- in its tick; readbacks come from the snapshot of the last tick
+function VEH:SetThrottle(t) qwrite("vehicle.controls", self.__id, { throttle = tonumber(t) or 0 }) end
+function VEH:GetThrottle() local v = vinfo(self); return v and v.throttle or 0 end
+function VEH:SetSteering(s, _idx) qwrite("vehicle.controls", self.__id, { steer = tonumber(s) or 0 }) end
+function VEH:GetSteering() local v = vinfo(self); return v and v.steer or 0 end
+function VEH:SetHandbrake(b) qwrite("vehicle.controls", self.__id, { handbrake = b == true }) end
+function VEH:ReleaseHandbrake() self:SetHandbrake(false) end
+function VEH:StartEngine(b) qwrite("vehicle.engine", self.__id, b ~= false) end
+function VEH:EnableEngine(b) qwrite("vehicle.engine", self.__id, b ~= false) end
+function VEH:IsEngineEnabled() local v = vinfo(self); return v ~= nil and v.engine == true end
+function VEH:IsEngineStarted() return self:IsEngineEnabled() end
+function VEH:GetRPM() local v = vinfo(self); return v and v.rpm or 0 end
+function VEH:GetSteeringDegrees() local v = vinfo(self); return v and v.cone or 0 end
+function VEH:GetMaxSpeed() local v = vinfo(self); return v and v.drive and v.drive.max_fwd or 0 end
+function VEH:GetOperatingParams()
+    local v = vinfo(self); if not v then return nil end
+    return { speed = v.speed, RPM = v.rpm or 0, gear = v.gear, steeringAngle = v.steer_angle,
+        wheelsInContact = v.contacts, isTorqueBoosting = false }
+end
 function WEP:GetPrintName() return self:GetClass() end
 function WEP:GetMaxClip1() return -1 end
 function WEP:GetMaxClip2() return -1 end
@@ -1736,12 +1754,11 @@ function VEH:GetSpeed() return self:GetVelocity():Length() end
 function VEH:GetHLSpeed() return self:GetVelocity():Length() end
 function VEH:GetPassenger(i) if (i or 0) == 0 then return self:GetDriver() end return NULL end
 function VEH:IsValidVehicle() return self:IsValid() end
-function VEH:IsEngineStarted() return IsValid(self:GetDriver()) end
 function VEH:HasBoost() return veh_boost[self:GetClass()] == true end
 function VEH:IsBoosting() return false end
 function VEH:BoostTimeLeft() return 0 end
 function VEH:IsVehicleBodyInWater() return false end
-for _, name in ipairs({ "CheckExitPoint", "EnableEngine", "GetAmmo", "GetCameraDistance", "GetMaxSpeed", "GetOperatingParams", "GetPassengerSeatPoint", "GetRPM", "GetSteeringDegrees", "GetThirdPersonMode", "GetVehicleParams", "GetVehicleViewPosition", "GetWheel", "GetWheelBaseHeight", "GetWheelContactPoint", "GetWheelTotalHeight", "HasBrakePedal", "ReleaseHandbrake", "SetBoost", "SetCameraDistance", "SetHandbrake", "SetHasBrakePedal", "SetMaxReverseThrottle", "SetMaxThrottle", "SetSpringLength", "SetSteering", "SetSteeringDegrees", "SetThirdPersonMode", "SetThrottle", "SetVehicleClass", "SetVehicleEntryAnim", "SetVehicleParams", "SetWheelFriction", "StartEngine" }) do
+for _, name in ipairs({ "CheckExitPoint", "GetAmmo", "GetCameraDistance", "GetPassengerSeatPoint", "GetThirdPersonMode", "GetVehicleParams", "GetVehicleViewPosition", "GetWheel", "GetWheelBaseHeight", "GetWheelContactPoint", "GetWheelTotalHeight", "HasBrakePedal", "SetBoost", "SetCameraDistance", "SetHasBrakePedal", "SetMaxReverseThrottle", "SetMaxThrottle", "SetSpringLength", "SetSteeringDegrees", "SetThirdPersonMode", "SetVehicleClass", "SetVehicleEntryAnim", "SetVehicleParams", "SetWheelFriction" }) do
     if VEH[name] == nil then VEH[name] = stub("Vehicle:" .. name) end
 end
 

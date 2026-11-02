@@ -932,6 +932,16 @@ fn vehicle_record_reads_the_server_table() {
         5,
         gm_server::Vehicle {
             key: "Jeep".into(),
+            controls: gm_server::VehicleControls {
+                throttle: 1.0,
+                steer: 0.5,
+                handbrake: false,
+                engine_on: true,
+                steer_angle: 9.0,
+                speed: 300.0,
+                wheels_in_contact: 4,
+                gear: 1,
+            },
             class: "prop_vehicle_jeep".into(),
             model: "models/buggy.mdl".into(),
             health: 100,
@@ -965,6 +975,102 @@ fn vehicle_record_reads_the_server_table() {
         .unwrap();
     let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
     assert_eq!(r, vec![1.0, 2.0, -8.0, 40.0, 800.0, 120.0, 1.0]);
+}
+
+#[test]
+fn vehicle_driving_readbacks_and_writes() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local v = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.Vehicle }, __glua_classes.Entity)
+             local o = v:GetOperatingParams()
+             state.r = { v:GetThrottle(), v:GetSteering(), v:IsEngineStarted() and 1 or 0, o.speed, math.Round(o.RPM), o.gear,
+                 o.steeringAngle, o.wheelsInContact, v:GetSteeringDegrees(), v:GetMaxSpeed(), v:GetRPM() == o.RPM and 1 or 0,
+                 v:GetVehicleParams().engine.maxSpeed, v:GetVehicleParams().steering.degreesFast }
+             v:SetThrottle(0.5)
+             v:SetSteering(-1, 0)
+             v:SetHandbrake(true)
+             v:ReleaseHandbrake()
+             v:StartEngine(false)
+             v:EnableEngine(true)
+         end)",
+    );
+    let mut vehicles: std::collections::BTreeMap<u32, gm_server::Vehicle> =
+        std::collections::BTreeMap::new();
+    vehicles.insert(
+        5,
+        gm_server::Vehicle {
+            key: "Jeep".into(),
+            class: "prop_vehicle_jeep".into(),
+            model: "models/buggy.mdl".into(),
+            health: 100,
+            max_health: 100,
+            driver: None,
+            wheels: vec![],
+            add_gravity: 0.5,
+            mass: 1000.0,
+            controls: gm_server::VehicleControls {
+                throttle: 1.0,
+                steer: 0.5,
+                handbrake: false,
+                engine_on: true,
+                steer_angle: 9.0,
+                speed: 300.0,
+                wheels_in_contact: 4,
+                gear: 1,
+            },
+        },
+    );
+    let mut snap = (*snapshot()).clone();
+    snap.vehicles = gm_script::snapshot::VehiclesRef(&vehicles as *const _);
+    rt.actors_mut()[0]
+        .dispatch(&Arc::new(snap), "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = rt.actors()[0].eval("return state.r").unwrap();
+    // 300 u/s in second gear: 300 / (2 pi 20.3) * 60 * 2.4 * 4.56 = 1544 rpm; the cone at 300
+    // u/s (between 14 and 20 mph) is 50 -> 18 at 51 %: 33.7
+    assert_eq!(r[0..4], [1.0, 0.5, 1.0, 300.0]);
+    assert_eq!(r[4], 1544.0);
+    assert_eq!(r[5..8], [1.0, 9.0, 4.0]);
+    assert!((r[8] - 33.66).abs() < 0.1, "cone {}", r[8]);
+    assert_eq!(r[9], 616.0);
+    assert_eq!(r[10], 1.0);
+    assert_eq!(r[11], 35.0);
+    assert_eq!(r[12], 18.0);
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(matches!(
+        &writes[0],
+        QueuedWrite::VehicleControls { ent: 5, throttle: Some(t), steer: None, handbrake: None } if *t == 0.5
+    ));
+    assert!(matches!(
+        &writes[1],
+        QueuedWrite::VehicleControls { ent: 5, throttle: None, steer: Some(s), handbrake: None } if *s == -1.0
+    ));
+    assert!(matches!(
+        &writes[2],
+        QueuedWrite::VehicleControls {
+            ent: 5,
+            throttle: None,
+            steer: None,
+            handbrake: Some(true)
+        }
+    ));
+    assert!(matches!(
+        &writes[3],
+        QueuedWrite::VehicleControls {
+            ent: 5,
+            throttle: None,
+            steer: None,
+            handbrake: Some(false)
+        }
+    ));
+    assert!(matches!(
+        &writes[4],
+        QueuedWrite::VehicleEngine { ent: 5, on: false }
+    ));
+    assert!(matches!(
+        &writes[5],
+        QueuedWrite::VehicleEngine { ent: 5, on: true }
+    ));
 }
 
 #[test]

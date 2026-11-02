@@ -324,6 +324,18 @@ pub enum QueuedWrite {
         player: u32,
     },
     /// `EnterVehicle(ent)` / `ExitVehicle` (`None`).
+    /// `Vehicle:SetThrottle` / `SetSteering` / `SetHandbrake` (`None` leaves one alone).
+    VehicleControls {
+        ent: u32,
+        throttle: Option<f32>,
+        steer: Option<f32>,
+        handbrake: Option<bool>,
+    },
+    /// `Vehicle:StartEngine` / `EnableEngine`.
+    VehicleEngine {
+        ent: u32,
+        on: bool,
+    },
     PlayerVehicle {
         player: u32,
         vehicle: Option<u32>,
@@ -1685,6 +1697,19 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     deaths: Some(int_arg(&arg)?.max(0) as u32),
                 },
                 "player.kick" => QueuedWrite::PlayerKick { player: ent },
+                "vehicle.controls" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::VehicleControls {
+                        ent,
+                        throttle: t.get::<Option<f32>>("throttle")?,
+                        steer: t.get::<Option<f32>>("steer")?,
+                        handbrake: t.get::<Option<bool>>("handbrake")?,
+                    }
+                }
+                "vehicle.engine" => QueuedWrite::VehicleEngine {
+                    ent,
+                    on: matches!(arg, Value::Boolean(true)),
+                },
                 "player.vehicle" => QueuedWrite::PlayerVehicle {
                     player: ent,
                     vehicle: match &arg {
@@ -2258,6 +2283,35 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             t.set("driver", v.driver.unwrap_or(0))?;
             t.set("health", v.health)?;
             t.set("max_health", v.max_health)?;
+            let c = &v.controls;
+            t.set("throttle", c.throttle)?;
+            t.set("steer", c.steer)?;
+            t.set("handbrake", c.handbrake)?;
+            t.set("engine", c.engine_on)?;
+            t.set("steer_angle", c.steer_angle)?;
+            t.set("speed", c.speed)?;
+            t.set("contacts", c.wheels_in_contact)?;
+            t.set("gear", c.gear)?;
+            if let Some(spec) = gm_server::drive_spec(&v.key) {
+                t.set("rpm", c.rpm(&spec))?;
+                t.set(
+                    "cone",
+                    gm_server::VehicleControls::steer_cone(c.speed, &spec),
+                )?;
+                let d = lua.create_table()?;
+                d.set("max_fwd", spec.max_fwd)?;
+                d.set("max_rev", spec.max_rev)?;
+                d.set("deg_slow", spec.deg_slow)?;
+                d.set("deg_fast", spec.deg_fast)?;
+                d.set("slow_speed", spec.slow_speed)?;
+                d.set("fast_speed", spec.fast_speed)?;
+                d.set("steer_exp", spec.steer_exp)?;
+                d.set("axle_ratio", spec.axle_ratio)?;
+                d.set("shift_up", spec.shift_up_rpm)?;
+                d.set("shift_down", spec.shift_down_rpm)?;
+                d.set("gears", spec.gears.to_vec())?;
+                t.set("drive", d)?;
+            }
             let ws = lua.create_table()?;
             for (i, w) in v.wheels.iter().enumerate() {
                 let e = lua.create_table()?;
@@ -2815,6 +2869,13 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             deaths,
         } => server.set_player_score(*player, *frags, *deaths),
         QueuedWrite::PlayerKick { player } => server.remove_player(*player),
+        QueuedWrite::VehicleControls {
+            ent,
+            throttle,
+            steer,
+            handbrake,
+        } => server.set_vehicle_controls(*ent, *throttle, *steer, *handbrake),
+        QueuedWrite::VehicleEngine { ent, on } => server.set_vehicle_engine(*ent, *on),
         QueuedWrite::PlayerVehicle { player, vehicle } => match vehicle {
             Some(v) => server.enter_vehicle(*player, *v),
             None => server.exit_vehicle(*player),

@@ -253,6 +253,10 @@ struct OpSpec {
     /// `spawnnpc`: weapon handed to the NPC ("none" for unarmed).
     #[serde(default)]
     weapon: Option<String>,
+    /// `drive`: Vehicle API controls kept from this op on (throttle / steer -1..1, handbrake).
+    throttle: Option<f32>,
+    steer: Option<f32>,
+    handbrake: Option<bool>,
     /// `press`: "use" / "attack" held for `ticks`.
     #[serde(default)]
     buttons: Option<String>,
@@ -4445,6 +4449,13 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                     "mass": server.body_of(*id).map(|b| server.physics.mass(b)),
                     "vel": server.prop_state(*id).map(|st| [st.velocity.x, st.velocity.y, st.velocity.z]),
                     "asleep": server.prop_state(*id).map(|st| !st.active),
+                    "throttle": v.controls.throttle, "steering": v.controls.steer,
+                    "engine": v.controls.engine_on,
+                    "operating": gm_server::drive_spec(&v.key).map(|spec| json!({
+                        "speed": v.controls.speed, "RPM": v.controls.rpm(&spec),
+                        "gear": v.controls.gear, "steeringAngle": v.controls.steer_angle,
+                        "wheelsInContact": v.controls.wheels_in_contact, "isTorqueBoosting": false,
+                    })),
                 }))
             }).collect::<Vec<_>>(),
             "bot": server.players.get(&player).map(|pl| json!({
@@ -4578,6 +4589,20 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }
             "exit" => {
                 server.exit_vehicle(player);
+            }
+            // the game's op sets the controls through the Vehicle API every tick (and starts the
+            // engine); ours keeps them until the next `drive`
+            "drive" => {
+                let keys: Vec<u32> = server.vehicles.keys().copied().collect();
+                for veh in keys {
+                    server.set_vehicle_engine(veh, true);
+                    server.set_vehicle_controls(
+                        veh,
+                        Some(op.throttle.unwrap_or(0.0)),
+                        Some(op.steer.unwrap_or(0.0)),
+                        Some(op.handbrake.unwrap_or(false)),
+                    );
+                }
             }
             // console variables of the game (ai_disabled for clean damage readings): nothing here
             "concmd" => {}
@@ -5724,6 +5749,8 @@ fn decals_same(a: &Value, b: &Value) -> bool {
 
 fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
     let pos_tol = tol.get("pos").and_then(|v| v.as_float()).unwrap_or(2.0) as f32;
+    let ang_tol = tol.get("ang").and_then(|v| v.as_float()).unwrap_or(5.0) as f32;
+    let speed_tol = tol.get("speed").and_then(|v| v.as_float()).unwrap_or(40.0);
     let empty = Vec::new();
     let v3 = |v: &Value| -> glam::Vec3 {
         let a = v.as_array().cloned().unwrap_or_default();
@@ -5809,11 +5836,21 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     .angle_between(gm_sandbox::rotation(v3(&b["ang"])))
                     .to_degrees();
                 let driven = |x: &Value| x["driver"].as_i64().unwrap_or(-1) >= 0;
+                let ds = (a["operating"]["speed"].as_f64().unwrap_or(0.0)
+                    - b["operating"]["speed"].as_f64().unwrap_or(0.0))
+                .abs();
+                if a["operating"].is_object() && b["operating"].is_object() && ds > speed_tol {
+                    println!(
+                        "  op {i}: vehicle {} speed {:.1} vs {:.1}",
+                        a["key"], a["operating"]["speed"], b["operating"]["speed"]
+                    );
+                    ok = false;
+                }
                 if a["key"] != b["key"]
                     || a["class"] != b["class"]
                     || a["model"] != b["model"]
                     || dp > pos_tol
-                    || da > 5.0
+                    || da > ang_tol
                     || a["health"] != b["health"]
                     || a["maxhealth"] != b["maxhealth"]
                     || driven(a) != driven(b)
