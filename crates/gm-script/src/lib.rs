@@ -1079,6 +1079,22 @@ impl Runtime {
                 p.ints.push(("entity", *default as i64));
                 self.ask_text(server, "player.find_use", p)
             }
+            gm_server::Request::NpcShoot {
+                npc,
+                weapon,
+                pos,
+                dir,
+            } => {
+                p.ints.push(("npc", *npc as i64));
+                p.strs.push(("weapon", weapon.clone()));
+                p.floats.push(("x", pos.x as f64));
+                p.floats.push(("y", pos.y as f64));
+                p.floats.push(("z", pos.z as f64));
+                p.floats.push(("dx", dir.x as f64));
+                p.floats.push(("dy", dir.y as f64));
+                p.floats.push(("dz", dir.z as f64));
+                self.ask_text(server, "npc.shoot_params", p)
+            }
             gm_server::Request::CarryAngles { player, ent } => {
                 p.ints.push(("player", *player as i64));
                 p.ints.push(("entity", *ent as i64));

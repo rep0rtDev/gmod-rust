@@ -866,6 +866,14 @@ pub enum Request {
         player: u32,
         default: u32,
     },
+    /// An NPC armed with a scripted SWEP is about to fire: the SWEP's `GetNPCBulletSpread` (deg)
+    /// and `NPCShoot_Primary`; reply "spread" or "spread,fired".
+    NpcShoot {
+        npc: u32,
+        weapon: String,
+        pos: Vec3,
+        dir: Vec3,
+    },
     SelectSpawn {
         player: u32,
         pos: Vec3,
@@ -9904,6 +9912,7 @@ impl<'w> Server<'w> {
         let Some((ammo, pellets)) = npc_weapon_shot_in(&n.weapon, &self.scripted_weapons) else {
             return;
         };
+        let n_weapon = n.weapon.clone();
         // in combat and standing still the NPC fires from a crouch
         let crouched = n.target.is_some() && n.goal.is_none();
         let eye_height = if crouched {
@@ -10071,8 +10080,28 @@ impl<'w> Server<'w> {
         let Some(dmg) = weapons::npc_shot_damage(&ammo) else {
             return;
         };
+        // a scripted SWEP is asked for its NPC spread and may fire itself (`NPCShoot_Primary`)
+        let mut cone = NPC_AIM_CONE_DEG;
+        if npc_weapon_shot(&n_weapon).is_none() {
+            if let Verdict::Text(t) = self.ask(Request::NpcShoot {
+                npc: id,
+                weapon: n_weapon.clone(),
+                pos: eye,
+                dir: aim,
+            }) {
+                let mut parts = t.split(',');
+                if let Some(s) = parts.next().and_then(|s| s.trim().parse::<f32>().ok()) {
+                    if s.is_finite() && s >= 0.0 {
+                        cone = s;
+                    }
+                }
+                if parts.next().is_some_and(|f| f.trim() == "fired") {
+                    return;
+                }
+            }
+        }
         for k in 0..pellets {
-            let dir = cone_dir(aim, NPC_AIM_CONE_DEG, seed.wrapping_add(k as u64 * 7919));
+            let dir = cone_dir(aim, cone, seed.wrapping_add(k as u64 * 7919));
             self.npc_fire_bullet(id, eye, dir, dmg);
         }
     }

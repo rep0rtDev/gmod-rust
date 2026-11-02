@@ -698,6 +698,20 @@ local prev_move = {}
     events.on("player.drop", function(p) hook.Run("GravGunOnDropped", Player(p.player), Entity(p.entity)) end)
     events.on("npc.drop", function(p) hook.Run("OnNPCDropItem", Entity(p.npc), Entity(p.entity)) end)
     events.on("sandbox.cleanup", function(p) hook.Run("OnCleanup", p.kind) end)
+    -- @hook WEAPON:GetNPCBulletSpread
+    -- @hook WEAPON:NPCShoot_Primary
+    -- an NPC with a scripted SWEP about to fire: the SWEP's spread (deg) and, if it shoots itself,
+    -- "fired" so the server skips its own bullets
+    events.on("npc.shoot_params", function(p)
+        local w = weapons.__ensure and weapons.__ensure(p.weapon, p.npc)
+        if not w then return end
+        local spread = w.GetNPCBulletSpread and tonumber(w:GetNPCBulletSpread(WEAPON_PROFICIENCY_AVERAGE or 2))
+        local fired = false
+        if w.NPCShoot_Primary then
+            fired = w:NPCShoot_Primary(Vector(p.x, p.y, p.z), Vector(p.dx, p.dy, p.dz)) ~= false
+        end
+        return tostring(spread or -1) .. (fired and ",fired" or "")
+    end)
     events.on("player.find_use", function(p)
         local r = hook.Run("FindUseEntity", Player(p.player), Entity(p.entity))
         if r ~= nil and r ~= NULL and IsValid(r) and r.EntIndex then return tostring(r:EntIndex()) end

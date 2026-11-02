@@ -766,6 +766,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   a touch start. `BehaveStart` / `BehaveUpdate` / `RunBehaviour` were already driven. `OnKilled`,
   `OnOtherKilled`, `OnIgnite`, `OnEntitySight(Lost)`, `OnTraceAttack`, `BodyUpdate` stay stubs
   (no death / ignite / sight events for scripted entities).
+- An NPC armed with a scripted SWEP asks it before each shot (`npc.shoot_params` request from the
+  combat think): `WEAPON:GetNPCBulletSpread(proficiency)` (degrees; replaces the measured NPC
+  cone for that shot) and `WEAPON:NPCShoot_Primary(shootPos, shootDir)` (anything but `false`
+  means the SWEP fired itself and the server skips its bullets). `GetNPCBurstSettings` /
+  `GetNPCRestTimes` stay stubs: the NPC cadence is the measured burst / rest, not the SWEP's.
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.

@@ -2396,3 +2396,34 @@ fn player_sprint_force_and_info() {
         "{d}"
     );
 }
+
+#[test]
+fn npc_shoot_params_ask_the_swep() {
+    let mut rt = runtime(
+        "weapons.Register({ Base = 'weapon_base', Primary = { Ammo = 'SMG1', ClipSize = 30, DefaultClip = 30, Automatic = true }, Secondary = {},
+             GetNPCBulletSpread = function(self, prof) state.prof = prof return 7.5 end,
+             NPCShoot_Primary = function(self, pos, dir) state.dir = dir return false end }, 'my_swep')",
+    );
+    let mut p = Payload::default();
+    p.ints.push(("npc", 5));
+    p.strs.push(("weapon", "my_swep".into()));
+    for (k, v) in [
+        ("x", 0.0),
+        ("y", 0.0),
+        ("z", 64.0),
+        ("dx", 1.0),
+        ("dy", 0.0),
+        ("dz", 0.0),
+    ] {
+        p.floats.push((k, v));
+    }
+    let reply = rt.actors_mut()[0]
+        .dispatch_reply(&snapshot(), "npc.shoot_params", &p, 3)
+        .unwrap();
+    let text = format!("{reply:?}");
+    assert!(text.contains("7.5") && !text.contains("fired"), "{text}");
+    let (prof, dx): (f64, f64) = rt.actors()[0]
+        .eval("return state.prof, state.dir.x")
+        .unwrap();
+    assert_eq!((prof, dx), (2.0, 1.0));
+}
