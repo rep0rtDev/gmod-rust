@@ -513,8 +513,53 @@ Done in `glua/core.luau` (Luau, loaded at boot after the host API):
   `SysTime`, `FrameTime`.
 - `FindMetaTable` over the registered classes.
 
+Done in `glua/entity.luau` (over the snapshot and the write queue; the snapshot now carries
+every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weapon / NPC class),
+`health`, `max_health` and `velocity`, and lists NPCs beside props):
+
+- `Entity(id)` wrappers (one table per id, `==` by id, `NULL`, `IsValid` = present in the tick's
+  snapshot): the reads (`GetPos / GetAngles / GetVelocity / GetClass / GetModel / GetOwner /
+  GetSkin / GetBodygroup / Health / GetMaxHealth / IsNPC / IsVehicle / IsWeapon / IsRagdoll`,
+  `GetForward / Right / Up`, `LocalToWorld / WorldToLocal`), the writes as queued ops
+  (`SetPos`, `SetAngles`, `SetVelocity`, `SetHealth`, `Remove`, `SetSkin`, `SetBodygroup`,
+  `Ignite / Extinguish`, `SetCollisionGroup / SetSolid` -> `set_collide`, `NextThink`), NW /
+  NW2 vars and `GetTable` kept in the actor; `GetPhysicsObject` (`EnableMotion` -> `freeze`,
+  `IsMotionEnabled`, `EnableGravity`, `EnableCollisions`, velocity / pose through the entity).
+  `ents.Create(class)` returns a pending entity whose `SetModel / SetPos / SetAngles` are
+  recorded and `Spawn()` queues the `spawn` op with a tag; the wrapper binds to its id when
+  `entity.spawned` reports that tag (invalid until then - the game's `ents.Create` is
+  synchronous, ours is a tick late by design of the serial phase).
+- `NPC` (`SetEnemy / SetTarget` -> `npc_target`, `NavSetGoalPos / SetLastPosition` ->
+  `npc_goto`, `NavSetGoalTarget` -> `npc_chase`, `ClearGoal / StopMoving` -> `npc_stop`,
+  `SetMovementActivity(ACT_RUN)` picks the run gait), `Vehicle`, `Weapon` (a carried weapon has
+  no entity id: a wrapper by class and owner, valid while the player holds it).
+- `Player(id)` over the player snapshot (`Nick / Name / SteamID` from the identity, `GetPos`,
+  `GetVelocity`, `EyeAngles`, `GetAimVector`, `EyePos`, `Alive / Health / Armor / GetMaxHealth /
+  Frags / Deaths`, `GetWeapons / HasWeapon / GetWeapon / GetActiveWeapon`, `GetEyeTrace`,
+  `IsBot` = no identity, user groups, PData in the actor) with the writes `SetPos` ->
+  `player.teleport`, `SetHealth`, `SetArmor`, `Kill`, `Give`, `SelectWeapon`, `TakeDamage(Info)`.
+- `ents` (`GetAll` = props, NPCs and players, `FindByClass` with `*`, `FindByModel`, `FindByName`,
+  `FindInSphere / Box / Cone`, `FindAlongRay`, `GetByIndex`, `GetCount`, `Iterator`, `Create`),
+  `player` (`GetAll / GetCount / GetByID / GetBySteamID / GetHumans / GetBots / Iterator`),
+  `game` (`GetMap`, `MaxPlayers` from the cvars, the rest of the reads with their server-realm
+  values), `engine` (`TickInterval / TickCount / ActiveGamemode`, ...).
+- `util`: `TraceLine / TraceHull / QuickTrace` through `phys.trace` into the documented
+  `TraceResult` shape, the geometry helpers (`DistanceToLine`, `IntersectRayWithOBB / Plane`,
+  `IsPointInCone`, sphere / box tests), `TableToJSON / JSONToTable` (arrays for sequential
+  tables, Vector as `"[x y z]"`, Angle as `"{p y r}"`), `KeyValuesToTable`, `Base64Encode /
+  Decode`, `CRC`, `Stack`, `StringToType`, `GetPlayerTrace`; precache / effect / decal / network
+  string calls accepted and inert.
+- Globals: `IsValid`, `IsEntity`, the `is*` type predicates, `tobool`, `Either`, `Format`,
+  `Msg / MsgN / MsgC / ErrorNoHalt` to the actor's print queue, `PrintTable`, `ProtectedCall`,
+  `SortedPairs / ByValue / ByMemberValue`, `RandomPairs`, `AccessorFunc`, `TypeID`, the
+  `Get/SetGlobal*` (actor-local), `SERVER / CLIENT`, `include / AddCSLuaFile` (inert: packages
+  carry their files), and the enums these use (`TYPE_*`, `DMG_*`, `SOLID_*`,
+  `COLLISION_GROUP_*`, `CONTENTS_*`, `ACT_*` movement, `HITGROUP_*`, `MOVETYPE_*`, `FORCE_*`).
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
-timers against documented values) and `glua_coverage`.
+timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
+writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON) and
+`glua_coverage`.
 
 ## Not yet
 

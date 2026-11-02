@@ -17,6 +17,9 @@ use crate::api::Shared;
 /// The core libraries in Luau: Vector / Angle / Color, math / string / table / bit / utf8
 /// extensions, hook, timer and the time globals.
 const CORE: &str = include_str!("core.luau");
+/// Entity / Player / NPC / Vehicle / Weapon / PhysObj, ents / player / game / engine / util and
+/// the entity globals over the host snapshot and write queue.
+const ENTITY: &str = include_str!("entity.luau");
 
 /// Registers a class metatable under `__glua_classes[name]` so the coverage listing (and
 /// `FindMetaTable`) can reach it.
@@ -66,6 +69,7 @@ pub fn install(lua: &Lua, _shared: Arc<Shared>) -> Result<()> {
     )?;
     classes(lua)?;
     lua.load(CORE).set_name("glua/core").exec()?;
+    lua.load(ENTITY).set_name("glua/entity").exec()?;
     let classes = classes(lua)?;
     g.set(
         "FindMetaTable",

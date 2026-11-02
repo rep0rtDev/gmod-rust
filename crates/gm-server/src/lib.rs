@@ -5133,6 +5133,51 @@ impl<'w> Server<'w> {
         );
     }
 
+    /// The entity's class name: a vehicle's or a world weapon's class, `prop_ragdoll` for a
+    /// jointed prop, an NPC's class, `prop_physics` for every other prop, empty when unknown.
+    pub fn entity_class(&self, id: u32) -> String {
+        if let Some(v) = self.vehicles.get(&id) {
+            return v.class.clone();
+        }
+        if let Some(w) = self.world_weapons.get(&id) {
+            return w.clone();
+        }
+        if let Some(n) = self.npcs.get(&id) {
+            return n.class.clone();
+        }
+        if self.ragdoll_bodies.contains_key(&id) {
+            return "prop_ragdoll".to_owned();
+        }
+        if self.sandbox.props().iter().any(|p| p.id == id) {
+            return "prop_physics".to_owned();
+        }
+        String::new()
+    }
+
+    /// Linear velocity of a prop's physics body (the pelvis body of a ragdoll); zero otherwise.
+    pub fn entity_velocity(&self, id: u32) -> Vec3 {
+        if let Some(&b) = self.bodies.get(&id) {
+            return self.physics.state(b).velocity;
+        }
+        if let Some(r) = self.ragdoll_bodies.get(&id) {
+            if let Some(&b) = r.bodies.first() {
+                return self.physics.state(b).velocity;
+            }
+        }
+        Vec3::ZERO
+    }
+
+    /// The player an entity is registered to in the sandbox cleanup lists (NPCs, vehicles,
+    /// props, ...), 0 when none.
+    pub fn entity_owner(&self, id: u32) -> u32 {
+        if let Some(p) = self.sandbox.props().iter().find(|p| p.id == id) {
+            if p.owner != 0 {
+                return p.owner;
+            }
+        }
+        self.sandbox.cleanup_owner(id).unwrap_or(0)
+    }
+
     pub fn trace_bodies(&self) -> Vec<PropBody> {
         let mut out = Vec::new();
         for p in self.sandbox.props() {

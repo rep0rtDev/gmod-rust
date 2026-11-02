@@ -431,6 +431,10 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("skin", e.skin)?;
     t.set("body", e.body.as_str())?;
     t.set("owner", e.owner)?;
+    t.set("class", e.class.as_str())?;
+    t.set("health", e.health)?;
+    t.set("max_health", e.max_health)?;
+    t.set("velocity", vec3_table(lua, e.velocity)?)?;
     Ok(t)
 }
 

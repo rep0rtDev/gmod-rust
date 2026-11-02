@@ -14,6 +14,11 @@ pub struct EntitySnap {
     pub skin: u8,
     pub body: String,
     pub owner: u32,
+    /// Class name (`prop_physics`, `prop_ragdoll`, a vehicle / weapon / NPC class).
+    pub class: String,
+    pub health: i32,
+    pub max_health: i32,
+    pub velocity: Vec3,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -110,6 +115,14 @@ impl Snapshot {
                             skin: e.skin,
                             body: e.body.clone(),
                             owner: e.owner,
+                            class: if e.bones.is_empty() {
+                                "prop_physics".to_owned()
+                            } else {
+                                "prop_ragdoll".to_owned()
+                            },
+                            health: 0,
+                            max_health: 0,
+                            velocity: e.vel,
                         },
                     )
                 })
@@ -167,10 +180,33 @@ impl Snapshot {
                             frozen: p.frozen,
                             skin: p.skin,
                             body: p.body.clone(),
-                            owner: p.owner,
+                            owner: server.entity_owner(p.id),
+                            class: server.entity_class(p.id),
+                            health: server.vehicles.get(&p.id).map_or(p.health, |v| v.health),
+                            max_health: server.vehicles.get(&p.id).map_or(0, |v| v.max_health),
+                            velocity: server.entity_velocity(p.id),
                         },
                     )
                 })
+                .chain(server.npcs.iter().map(|(&id, n)| {
+                    (
+                        id,
+                        EntitySnap {
+                            id,
+                            model: n.model.clone(),
+                            pos: n.pos,
+                            angles: n.angles,
+                            frozen: false,
+                            skin: n.skin,
+                            body: String::new(),
+                            owner: server.entity_owner(id),
+                            class: n.class.clone(),
+                            health: n.health.max(0.0) as i32,
+                            max_health: n.max_health,
+                            velocity: n.flight.unwrap_or(Vec3::ZERO),
+                        },
+                    )
+                }))
                 .collect(),
             players: server
                 .players

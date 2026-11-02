@@ -1851,6 +1851,14 @@ impl Sandbox {
         });
     }
 
+    /// The player whose cleanup lists hold `id`, if any.
+    pub fn cleanup_owner(&self, id: u32) -> Option<u32> {
+        self.cleanup
+            .iter()
+            .find(|(_, kinds)| kinds.values().any(|ids| ids.contains(&id)))
+            .map(|(p, _)| *p)
+    }
+
     pub fn add_cleanup(&mut self, player: u32, kind: &str, id: u32) {
         self.cleanup
             .entry(player)
