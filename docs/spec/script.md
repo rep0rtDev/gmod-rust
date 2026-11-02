@@ -712,6 +712,8 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   model from the prop spawn path asks `PlayerSpawnRagdoll(ply, model)` instead of
   `PlayerSpawnProp` (the server flags the request from the model's .phy) and fires
   `PlayerSpawnedRagdoll` for a `prop_ragdoll`.
+- `GM:AcceptInput(ent, input, activator, caller, value)` runs before any `Entity:Fire` /
+  `Entity:Input` reaches a scripted entity's `ENTITY:AcceptInput` (true swallows the input).
 - `GM:GetGameDescription()` is asked every 64 ticks (`gamemode.description`) and the string
   travels in the master heartbeat (`ServerInfo.game`); the server browser shows it as the
   gamemode column (was the constant "sandbox").

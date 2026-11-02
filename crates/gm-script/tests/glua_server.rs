@@ -1723,3 +1723,35 @@ fn game_description_comes_from_the_hook() {
         .unwrap();
     assert!(matches!(reply, gm_script::actor::Reply::Text(t) if t == "My Mode"));
 }
+
+#[test]
+fn accept_input_hook_sees_and_blocks_inputs() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"AcceptInput\", \"t\", function(ent, input, activator, caller, value)
+                state.seen = (state.seen or 0) + 1; state.input, state.value = input, tostring(value)
+                return input == \"Kill\" end)
+            hook.Add(\"Think\", \"t\", function()
+                local e = Entity(5)
+                e:Fire(\"Open\", \"3\")
+                e:Input(\"Kill\")
+            end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    rt.actors_mut()[0]
+        .dispatch(&snap, "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let (seen, input, value): (i32, String, String) = rt.actors()[0]
+        .eval("return state.seen, state.input, state.value")
+        .unwrap();
+    assert_eq!((seen, input.as_str(), value.as_str()), (2, "Kill", "nil"));
+}

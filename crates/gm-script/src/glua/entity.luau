@@ -1640,7 +1640,7 @@ function ENT:StopLoopingSound(id) end
 function ENT:StartLoopingSound(name) return 0 end
 function ENT:StopParticles() end
 function ENT:RemoveAllDecals() end
-function ENT:Input(name, activator, caller, data) local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(self.__id); if si and si.AcceptInput and si:AcceptInput(name, activator or NULL, caller or NULL, data) == true then return true end if name == "Kill" then self:Remove() return true end return false end
+function ENT:Input(name, activator, caller, data) if hook.Run("AcceptInput", self, name, activator, caller, data) == true then return end local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(self.__id); if si and si.AcceptInput and si:AcceptInput(name, activator or NULL, caller or NULL, data) == true then return true end if name == "Kill" then self:Remove() return true end return false end
 function ENT:Fire(input, param, delay, activator, caller)
     if (delay or 0) > 0 then local me = self; timer.Simple(delay, function() if IsValid(me) then me:Input(input, activator, caller, param) end end) else self:Input(input, activator, caller, param) end
 end
