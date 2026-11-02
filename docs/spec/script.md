@@ -899,7 +899,11 @@ the client light exists.
 GetMeshConvexes` read the PHY of the model: vertex AABB, PHY volume, convex faces as
 triangle fans (`MeshVertex` with the face normal, `u`/`v` 0), mass centre, rotation inertia
 times the body mass. `SetInertia`, buoyancy/drag coefficients, game flags, shadow control
-stay stubs (no such inputs on our bodies). `GetPreferredCarryAngles` (the hook, else the scripted
+stay stubs (no such inputs on our bodies).
+`Player:GetCurrentCommand` is a `CUserCmd` copy of the command the server processed for
+the player this tick (buttons, forward/side/up move, view angles, mouse deltas, impulse,
+server tick as `TickCount` / `CommandNumber`); the command has already run, so the setters
+change the copy only. Mouse wheel is not in our command (stub). `GetPreferredCarryAngles` (the hook, else the scripted
 entity's method) is asked at every +use pickup; an Angle holds the prop at those angles in the
 player's yaw frame instead of as it lies.
 

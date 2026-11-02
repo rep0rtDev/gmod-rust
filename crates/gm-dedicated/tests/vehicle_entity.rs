@@ -535,3 +535,49 @@ fn phys_mesh_of_registered_models_feeds_physobj_geometry() {
         m.volume
     );
 }
+
+#[test]
+fn the_processed_command_is_kept_for_get_current_command() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    for m in ["models/nova/chair_wood01.mdl", "models/buggy.mdl"] {
+        match gm_dedicated::model_info(&mount, m) {
+            Ok(info) => {
+                eprintln!("{m}: {} attachments", info.attachments.len());
+                server.register_model(m, info);
+            }
+            Err(e) => panic!("{m}: {e}"),
+        }
+    }
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    let mut cmds = std::collections::BTreeMap::new();
+    cmds.insert(
+        1,
+        gm_server::PlayerCmd {
+            cmd: gm_move::UserCmd {
+                buttons: 1 | 8,
+                forward_move: 250.0,
+                side_move: -50.0,
+                up_move: 0.0,
+                view_angles: Vec3::new(10.0, 20.0, 0.0),
+            },
+            impulse: 100,
+            mouse_x: 3.0,
+            mouse_y: -2.0,
+            ..Default::default()
+        },
+    );
+    server.tick(&cmds);
+    let p = &server.players[&1];
+    assert_eq!(p.buttons, 1 | 8);
+    assert_eq!(p.cmd_move, Vec3::new(250.0, -50.0, 0.0));
+    assert_eq!(p.cmd_mouse, (3.0, -2.0));
+    assert_eq!(p.cmd_impulse, 100);
+    assert_eq!(p.cmd_tick, server.tick_count());
+}

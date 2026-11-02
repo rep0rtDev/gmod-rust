@@ -571,6 +571,11 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("previous_weapon", p.previous_weapon.as_str())?;
     t.set("buttons", p.buttons)?;
     t.set("buttons_last", p.buttons_last)?;
+    t.set("cmd_move", vec3_table(lua, p.cmd_move)?)?;
+    t.set("cmd_mouse_x", p.cmd_mouse_x)?;
+    t.set("cmd_mouse_y", p.cmd_mouse_y)?;
+    t.set("cmd_impulse", p.cmd_impulse)?;
+    t.set("cmd_tick", p.cmd_tick)?;
     t.set("on_ground", p.on_ground)?;
     t.set("ducked", p.ducked)?;
     t.set("vehicle", p.vehicle)?;

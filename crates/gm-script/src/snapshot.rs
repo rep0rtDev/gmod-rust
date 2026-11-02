@@ -82,6 +82,12 @@ pub struct PlayerSnap {
     /// Mover state: buttons of this and the previous processed command, ground / duck flags.
     pub buttons: u32,
     pub buttons_last: u32,
+    /// The processed command: forward/side/up move, mouse deltas, impulse, server tick.
+    pub cmd_move: Vec3,
+    pub cmd_mouse_x: f32,
+    pub cmd_mouse_y: f32,
+    pub cmd_impulse: u8,
+    pub cmd_tick: u64,
     pub on_ground: bool,
     pub ducked: bool,
     /// Vehicle seat / driven prop / `+use` target entity, 0 for none.
@@ -511,6 +517,11 @@ impl Snapshot {
                                 .collect(),
                             buttons: p.buttons,
                             buttons_last: p.buttons_last,
+                            cmd_move: p.cmd_move,
+                            cmd_mouse_x: p.cmd_mouse.0,
+                            cmd_mouse_y: p.cmd_mouse.1,
+                            cmd_impulse: p.cmd_impulse,
+                            cmd_tick: p.cmd_tick,
                             on_ground: p.state.on_ground,
                             ducked: p.state.ducked,
                             vehicle: p.seat.unwrap_or(0),

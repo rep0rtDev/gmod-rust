@@ -3169,6 +3169,12 @@ pub struct Player {
     /// Buttons of the command processed this tick and the one before (`KeyPressed`).
     pub buttons: u32,
     pub buttons_last: u32,
+    /// The rest of the command processed this tick (`Player:GetCurrentCommand`): forward /
+    /// side / up move, mouse deltas, impulse, server tick it ran on.
+    pub cmd_move: Vec3,
+    pub cmd_mouse: (f32, f32),
+    pub cmd_impulse: u8,
+    pub cmd_tick: u64,
     /// `Player:Flashlight` state (a script toggle; no client impulse yet).
     pub flashlight: bool,
     /// `IN_USE` was down in the last command (a use fires on the press, not the hold).
@@ -3283,6 +3289,10 @@ impl Player {
             prev_buttons: 0,
             buttons: 0,
             buttons_last: 0,
+            cmd_move: Vec3::ZERO,
+            cmd_mouse: (0.0, 0.0),
+            cmd_impulse: 0,
+            cmd_tick: 0,
             flashlight: false,
             carry: None,
             use_down: false,
@@ -10525,6 +10535,10 @@ impl<'w> Server<'w> {
             p.prev_buttons = pc.cmd.buttons;
             p.buttons_last = p.buttons;
             p.buttons = pc.cmd.buttons;
+            p.cmd_move = Vec3::new(pc.cmd.forward_move, pc.cmd.side_move, pc.cmd.up_move);
+            p.cmd_mouse = (pc.mouse_x, pc.mouse_y);
+            p.cmd_impulse = pc.impulse;
+            p.cmd_tick = self.tick_count;
             if p.active_weapon != p.last_active_weapon {
                 p.previous_weapon =
                     std::mem::replace(&mut p.last_active_weapon, p.active_weapon.clone());

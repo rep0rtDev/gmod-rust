@@ -254,7 +254,37 @@ for _, cls in ipairs({ "CUserCmd", "CMoveData", "CNavLadder", "PathFollower", "C
     T.__index = T
     __glua_classes[cls] = T
 end
-for _, n in ipairs({ "AddKey", "ClearButtons", "ClearMovement", "CommandNumber", "GetButtons", "GetForwardMove", "GetImpulse", "GetMouseWheel", "GetMouseX", "GetMouseY", "GetSideMove", "GetUpMove", "GetViewAngles", "IsForced", "KeyDown", "RemoveKey", "SelectWeapon", "SetButtons", "SetForwardMove", "SetImpulse", "SetMouseWheel", "SetMouseX", "SetMouseY", "SetSideMove", "SetUpMove", "SetViewAngles", "TickCount" }) do if __glua_classes.CUserCmd[n] == nil then __glua_classes.CUserCmd[n] = stub("CUserCmd:" .. n) end end
+for _, n in ipairs({ "GetMouseWheel", "SetMouseWheel" }) do if __glua_classes.CUserCmd[n] == nil then __glua_classes.CUserCmd[n] = stub("CUserCmd:" .. n) end end
+-- CUserCmd: a copy of the command the server processed for the player this tick
+-- (Player:GetCurrentCommand); the command has already run, so writes change the copy only.
+do
+    local C = __glua_classes.CUserCmd
+    function C:GetButtons() return self.buttons end
+    function C:SetButtons(b) self.buttons = math.floor(tonumber(b) or 0) end
+    function C:KeyDown(k) return bit.band(self.buttons, k) ~= 0 end
+    function C:AddKey(k) self.buttons = bit.bor(self.buttons, k) end
+    function C:RemoveKey(k) self.buttons = bit.band(self.buttons, bit.bnot(k)) end
+    function C:ClearButtons() self.buttons = 0 end
+    function C:ClearMovement() self.move = { x = 0, y = 0, z = 0 } end
+    function C:GetForwardMove() return self.move.x end
+    function C:SetForwardMove(v) self.move.x = tonumber(v) or 0 end
+    function C:GetSideMove() return self.move.y end
+    function C:SetSideMove(v) self.move.y = tonumber(v) or 0 end
+    function C:GetUpMove() return self.move.z end
+    function C:SetUpMove(v) self.move.z = tonumber(v) or 0 end
+    function C:GetViewAngles() return Angle(self.view.x, self.view.y, self.view.z) end
+    function C:SetViewAngles(a) if a then self.view = { x = a.p or a.x or 0, y = a.y or 0, z = a.r or a.z or 0 } end end
+    function C:GetImpulse() return self.impulse end
+    function C:SetImpulse(i) self.impulse = math.floor(tonumber(i) or 0) end
+    function C:GetMouseX() return self.mx end
+    function C:SetMouseX(v) self.mx = tonumber(v) or 0 end
+    function C:GetMouseY() return self.my end
+    function C:SetMouseY(v) self.my = tonumber(v) or 0 end
+    function C:CommandNumber() return self.tick end
+    function C:TickCount() return self.tick end
+    function C:IsForced() return false end
+    function C:SelectWeapon(w) if self.__ply and IsValid(w) then self.__ply:SelectWeapon(w:GetClass()) end end
+end
 for _, n in ipairs({ "AddKey", "GetAbsMoveAngles", "GetAngles", "GetButtons", "GetConstraintCenter", "GetConstraintRadius", "GetConstraintSpeedScale", "GetConstraintWidth", "GetFinalIdealVelocity", "GetFinalJumpVelocity", "GetFinalStepHeight", "GetForwardSpeed", "GetImpulseCommand", "GetMaxClientSpeed", "GetMaxSpeed", "GetMoveAngles", "GetOldAngles", "GetOldButtons", "GetOrigin", "GetSideSpeed", "GetUpSpeed", "GetVelocity", "KeyDown", "KeyPressed", "KeyReleased", "KeyWasDown", "RemoveKey", "SetAbsMoveAngles", "SetAngles", "SetButtons", "SetConstraintCenter", "SetConstraintRadius", "SetConstraintSpeedScale", "SetConstraintWidth", "SetFinalIdealVelocity", "SetFinalJumpVelocity", "SetFinalStepHeight", "SetForwardSpeed", "SetImpulseCommand", "SetMaxClientSpeed", "SetMaxSpeed", "SetMoveAngles", "SetOldAngles", "SetOldButtons", "SetOrigin", "SetSideSpeed", "SetUpSpeed", "SetVelocity" }) do if __glua_classes.CMoveData[n] == nil then __glua_classes.CMoveData[n] = stub("CMoveData:" .. n) end end
 for _, n in ipairs({ "ConnectTo", "Disconnect", "GetBottom", "GetBottomArea", "GetID", "GetLength", "GetNormal", "GetPosAtHeight", "GetTop", "GetTopBehindArea", "GetTopForwardArea", "GetTopLeftArea", "GetTopRightArea", "GetWidth", "IsConnectedAtSide", "IsValid", "Remove", "SetBottomArea", "SetTopBehindArea", "SetTopForwardArea", "SetTopLeftArea", "SetTopRightArea" }) do if __glua_classes.CNavLadder[n] == nil then __glua_classes.CNavLadder[n] = stub("CNavLadder:" .. n) end end
 for _, n in ipairs({ "Chase", "Compute", "Draw", "FirstSegment", "GetAge", "GetAllSegments", "GetClosestPosition", "GetCurrentGoal", "GetCursorData", "GetCursorPosition", "GetEnd", "GetGoalTolerance", "GetHindrance", "GetLength", "GetMinLookAheadDistance", "GetPositionOnPath", "GetStart", "Invalidate", "IsValid", "LastSegment", "MoveCursor", "MoveCursorTo", "MoveCursorToClosestPosition", "MoveCursorToEnd", "MoveCursorToStart", "NextSegment", "PriorSegment", "ResetAge", "SetGoalTolerance", "SetMinLookAheadDistance", "Update" }) do if __glua_classes.PathFollower[n] == nil then __glua_classes.PathFollower[n] = stub("PathFollower:" .. n) end end
