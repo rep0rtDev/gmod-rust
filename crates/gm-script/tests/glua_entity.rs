@@ -808,3 +808,43 @@ fn physics_collide_reaches_the_scripted_entity() {
     assert_eq!((speed, z, other, has_phys), (320.0, 3.0, 0, true));
     assert!((nlen - 1.0).abs() < 1e-4);
 }
+
+#[test]
+fn weapon_drop_and_npc_drop_reach_scripts() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source: "local SWEP = { Base = \"weapon_base\", PrintName = \"My Wep\", Primary = {}, Secondary = {},
+                          WorldModel = \"models/weapons/w_pistol.mdl\", ViewModel = \"models/weapons/c_pistol.mdl\" }
+            function SWEP:OnDrop() state.dropped = (state.dropped or 0) + 1 end
+            weapons.Register(SWEP, \"my_wep\")
+            weapons.__ensure(\"my_wep\", 1)
+            hook.Add(\"OnNPCDropItem\", \"t\", function(npc, item) state.npc_drop = { npc:EntIndex(), item:EntIndex() } end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let snap = snapshot();
+    let mut drop = Payload::default();
+    drop.ints.push(("player", 1));
+    drop.ints.push(("entity", 5));
+    drop.strs.push(("class", "my_wep".into()));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "weapon.drop", &drop, 7)
+        .unwrap();
+    let mut nd = Payload::default();
+    nd.ints.push(("npc", 9));
+    nd.ints.push(("entity", 5));
+    rt.actors_mut()[0]
+        .dispatch(&snap, "npc.drop", &nd, 8)
+        .unwrap();
+    let (dropped, npc, item): (i32, i32, i32) = rt.actors()[0]
+        .eval("return state.dropped, state.npc_drop[1], state.npc_drop[2]")
+        .unwrap();
+    assert_eq!((dropped, npc, item), (1, 9, 5));
+}

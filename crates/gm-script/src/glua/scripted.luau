@@ -192,3 +192,10 @@ events.on("entity.collide", function(p)
         OurOldVelocity = ov, OurNewVelocity = ov, TheirOldVelocity = tv, TheirNewVelocity = tv,
     }, e:GetPhysicsObject())
 end)
+
+-- @hook WEAPON:OnDrop
+-- the player dropped this scripted weapon (server event with the world entity it became)
+events.on("weapon.drop", function(p)
+    local i = weapons.__ensure(p.class, p.player)
+    if i and i.OnDrop then i:OnDrop() end
+end)

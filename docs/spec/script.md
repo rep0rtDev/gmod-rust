@@ -661,6 +661,9 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   snapshot's (old == new): per-contact normals are not reported yet. Stale stub names dropped from
   the GM / SANDBOX lists for hooks that are fired (SetupMove / Move / FinishMove / ScaleNPCDamage,
   PlayerSpawn* / PlayerSpawned* / CanTool).
+- `WEAPON:OnDrop` fires when a player drops a scripted weapon (`weapon.drop`: player, class and
+  the world entity it became) and `GM:OnNPCDropItem(npc, item)` when a dying NPC drops its weapon
+  (`npc.drop`), both from the server's drop paths.
 
 Done in `glua/server.luau`:
 

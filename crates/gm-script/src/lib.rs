@@ -1497,6 +1497,17 @@ impl Runtime {
                     p.ints.push(("count", count as i64));
                     "player.unfroze"
                 }
+                E::WeaponDrop { player, class, ent } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("entity", ent as i64));
+                    p.strs.push(("class", class));
+                    "weapon.drop"
+                }
+                E::NpcDrop { npc, ent } => {
+                    p.ints.push(("npc", npc as i64));
+                    p.ints.push(("entity", ent as i64));
+                    "npc.drop"
+                }
                 E::Collide {
                     ent,
                     other,

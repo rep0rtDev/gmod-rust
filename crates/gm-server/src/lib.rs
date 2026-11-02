@@ -664,6 +664,17 @@ pub enum GameEvent {
     /// A scripted weapon's callbacks: `kind` is `primary`, `secondary`, `reload`, `deploy` or
     /// `holster`; `hit` is the eye trace for the attacks; `other` the class switched to on a
     /// holster.
+    /// A player dropped the weapon `class` as the world entity `ent` (`WEAPON:OnDrop`).
+    WeaponDrop {
+        player: u32,
+        class: String,
+        ent: u32,
+    },
+    /// A dying NPC dropped its weapon as `ent` (`GM:OnNPCDropItem`).
+    NpcDrop {
+        npc: u32,
+        ent: u32,
+    },
     Weapon {
         player: u32,
         class: String,
@@ -7160,7 +7171,13 @@ impl<'w> Server<'w> {
             let loaded = self.model_loader.as_mut().and_then(|f| f(&model))?;
             self.register_model(&model, loaded);
         }
-        Some(self.place_world_weapon(player, &class, &model, &print_name, pos))
+        let ent = self.place_world_weapon(player, &class, &model, &print_name, pos);
+        self.game_events.push(GameEvent::WeaponDrop {
+            player,
+            class: class.clone(),
+            ent,
+        });
+        Some(ent)
     }
 
     /// Script `Player:DropObject`: lets go of whatever the physgun / gravity gun holds.
@@ -8644,6 +8661,10 @@ impl<'w> Server<'w> {
             Vec3::new(0.0, yaw, 0.0),
             false,
         );
+        self.game_events.push(GameEvent::NpcDrop {
+            npc: owner,
+            ent: id,
+        });
         self.sync_physics();
         if let Some(&body) = self.bodies.get(&id) {
             self.physics

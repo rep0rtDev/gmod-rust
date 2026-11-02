@@ -633,6 +633,7 @@ local prev_move = {}
     events.on("player.use_player", function(p) hook.Run("PlayerUse", Player(p.player), Player(p.target)) end)
     events.on("player.pickup", function(p) hook.Run("GravGunOnPickedUp", Player(p.player), Entity(p.entity)) end)
     events.on("player.drop", function(p) hook.Run("GravGunOnDropped", Player(p.player), Entity(p.entity)) end)
+    events.on("npc.drop", function(p) hook.Run("OnNPCDropItem", Entity(p.npc), Entity(p.entity)) end)
     events.on("player.weapon_pickup", function(p) hook.Run("WeaponEquip", __glua_classes.Weapon.__from(p.class, p.player), Player(p.player)); local i = weapons.__ensure(p.class, p.player); if i then rawset(i, "Owner", Player(p.player)); if i.Equip then i:Equip(Player(p.player)) end if i.OwnerChanged then i:OwnerChanged() end end end)
     events.on("player.enter_vehicle", function(p) hook.Run("PlayerEnteredVehicle", Player(p.player), Entity(p.vehicle), 0) end)
     events.on("player.exit_vehicle", function(p) hook.Run("PlayerLeaveVehicle", Player(p.player), Entity(p.vehicle)) end)
