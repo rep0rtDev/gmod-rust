@@ -1161,6 +1161,7 @@ impl ServerNet {
                     }),
                 vm_act: p.inventory.vm_act as u8,
                 vm_serial: p.inventory.vm_serial,
+                gesture: gesture_state(server.player_anim(*id)),
             })
             .collect();
         // voice goes out every tick to everyone but the speaker (sandbox: all talk)

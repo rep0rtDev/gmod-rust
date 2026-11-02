@@ -375,6 +375,22 @@ pub enum QueuedWrite {
         frags: Option<u32>,
         deaths: Option<u32>,
     },
+    /// `Player:AnimRestartGesture(slot, act, autokill)`.
+    PlayerGestureAct {
+        player: u32,
+        act: String,
+        autokill: bool,
+    },
+    /// `Player:AnimSetGestureSequence` / `AnimSetGestureWeight`.
+    PlayerGestureSet {
+        player: u32,
+        sequence: Option<String>,
+        weight: Option<f32>,
+    },
+    /// `Player:AnimResetGestureSlot`.
+    PlayerGestureReset {
+        player: u32,
+    },
     /// `Player:LimitHit(kind)`: the client shows the limit notice.
     PlayerLimitHit {
         player: u32,
@@ -756,6 +772,14 @@ pub enum GestureOp {
     Add { sequence: String, autokill: bool },
     Remove,
     Set(gm_server::GesturePatch),
+}
+
+/// A field of a table argument (`nil` / not a table -> `None`).
+fn tbl_field<T: mlua::FromLua>(v: &Value, key: &str) -> Result<Option<T>> {
+    match v {
+        Value::Table(t) => t.get::<Option<T>>(key),
+        _ => Ok(None),
+    }
 }
 
 fn f32_arg(v: &Value) -> f32 {
@@ -1861,6 +1885,17 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 },
                 "player.kick" => QueuedWrite::PlayerKick { player: ent },
                 "player.ban" => QueuedWrite::PlayerBan { player: ent },
+                "player.gesture_act" => QueuedWrite::PlayerGestureAct {
+                    player: ent,
+                    act: tbl_field::<String>(&arg, "act")?.unwrap_or_default(),
+                    autokill: tbl_field::<bool>(&arg, "autokill")?.unwrap_or(true),
+                },
+                "player.gesture_set" => QueuedWrite::PlayerGestureSet {
+                    player: ent,
+                    sequence: tbl_field::<String>(&arg, "sequence")?,
+                    weight: tbl_field::<f32>(&arg, "weight")?,
+                },
+                "player.gesture_reset" => QueuedWrite::PlayerGestureReset { player: ent },
                 "player.limit_hit" => QueuedWrite::PlayerLimitHit {
                     player: ent,
                     limit: str_arg(&arg)?,
@@ -3248,6 +3283,17 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             deaths,
         } => server.set_player_score(*player, *frags, *deaths),
         QueuedWrite::PlayerKick { player } => server.remove_player(*player),
+        QueuedWrite::PlayerGestureAct {
+            player,
+            act,
+            autokill,
+        } => server.player_add_gesture_by_activity(*player, act, *autokill),
+        QueuedWrite::PlayerGestureSet {
+            player,
+            sequence,
+            weight,
+        } => server.player_set_gesture(*player, sequence.as_deref(), *weight),
+        QueuedWrite::PlayerGestureReset { player } => server.player_remove_gesture(*player),
         QueuedWrite::PlayerBan { player } => {
             server.pending_bans.push(*player);
             true

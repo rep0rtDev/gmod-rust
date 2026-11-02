@@ -170,7 +170,7 @@ impl Sim {
                             cycle: 0.0,
                             playback_rate: 1.0,
                             sequence_finished: false,
-                            gesture: None,
+                            gesture: p.gesture.clone(),
                             pose: Vec::new(),
                             mins: glam::Vec3::ZERO,
                             maxs: glam::Vec3::ZERO,
@@ -3404,11 +3404,21 @@ impl App {
                             }
                         }
                     }
-                    let gesture = gestures.get(&p.id).and_then(|(g, since, _)| {
-                        let t = since.elapsed().as_secs_f32();
-                        let (len, _) = m.sequence_length(g)?;
-                        (t < len).then_some((*g, t))
-                    });
+                    // a script gesture from the server wins over the weapon one-shot
+                    let gesture = p
+                        .gesture
+                        .as_ref()
+                        .and_then(|g| {
+                            let (glen, _) = m.sequence_length(&g.sequence)?;
+                            Some((g.sequence.as_str(), g.cycle * glen))
+                        })
+                        .or_else(|| {
+                            gestures.get(&p.id).and_then(|(g, since, _)| {
+                                let t = since.elapsed().as_secs_f32();
+                                let (len, _) = m.sequence_length(g)?;
+                                (t < len).then_some((*g, t))
+                            })
+                        });
                     let world = m.bone_world_gesture(&seq, t, None, &params, gesture);
                     let pose = world.as_ref().map(|w| m.skin_matrices(w));
                     // the weapon's world model rides the right hand (bone merge by name)

@@ -643,6 +643,17 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   the player with the identity banned for the server's lifetime (`Server::pending_bans` ->
   `NetServer::kick(.., ban)`; minutes are not kept across restarts); `Player:RemoveAllItems` strips
   weapons and ammo.
+- Player gestures: the server runs one gesture layer per player (`Server::player_anims`; the
+  base sequence stays the client's pose), networked in `PlayerSnap.gesture` (protocol 12) and
+  played by the client over its pose, ahead of the weapon one-shot. `Player:AnimRestartGesture(slot,
+  act, autokill)` picks a sequence of the player's model tagged with the activity by weight,
+  `AnimSetGestureSequence` / `AnimSetGestureWeight` edit the layer (a fresh one for a sequence
+  without a layer), `AnimResetGestureSlot` removes it; `DoAnimationEvent` maps attack / reload
+  events to the `ACT_HL2MP_GESTURE_RANGE_ATTACK_<hold>` / `RELOAD_<hold>` gestures of the active
+  weapon's hold type, custom gesture / sequence events to the layer, cancel to a reset (jump,
+  swim, die, flinch, spawn events are main-sequence business of the client pose: no-op).
+  `DoAttackEvent` / `DoSecondaryAttack` / `DoReloadEvent` / `DoCustomAnimEvent` wrap it. Slot ids
+  are accepted and not kept (one layer). `AnimRestartMainSequence` stays a stub.
 
 Done in `glua/server.luau`:
 

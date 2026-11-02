@@ -268,6 +268,8 @@ pub struct PlayerSnap {
     /// client plays the sequence when the serial changes.
     pub vm_act: u8,
     pub vm_serial: u8,
+    /// The server-side gesture layer (`Player:AnimRestartGesture`), on top of the client pose.
+    pub gesture: Option<GestureState>,
 }
 
 /// Weapon class names to the registry bitmask and back.
@@ -492,7 +494,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 11;
+pub const PROTOCOL: u16 = 12;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1297,6 +1299,7 @@ impl ServerMsg {
                         alt: r.i16()?,
                         vm_act: r.u8()?,
                         vm_serial: r.u8()?,
+                        gesture: None,
                     });
                 }
                 let n = r.varint()? as usize;

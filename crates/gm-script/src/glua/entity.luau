@@ -495,6 +495,30 @@ function PLY:Say(text, team) qwrite("player.say", self.__pid, tostring(text)) en
 function PLY:Kick(reason) qwrite("player.kick", self.__pid, reason or "") end
 function PLY:Ban(minutes, kick) qwrite("player.ban", self.__pid, nil) end
 function PLY:LimitHit(kind) qwrite("player.limit_hit", self.__pid, tostring(kind)) end
+-- gesture slots: the server runs one gesture layer per player (slot ids are accepted, not kept)
+local function act_name(act) if type(act) == "number" then return util.GetActivityNameByID(act) end return tostring(act) end
+function PLY:AnimRestartGesture(slot, act, autokill) qwrite("player.gesture_act", self.__pid, { act = act_name(act), autokill = autokill ~= false }) end
+function PLY:AnimSetGestureSequence(slot, seq) local name = type(seq) == "number" and self:GetSequenceName(seq) or tostring(seq); qwrite("player.gesture_set", self.__pid, { sequence = name }) end
+function PLY:AnimSetGestureWeight(slot, w) qwrite("player.gesture_set", self.__pid, { weight = tonumber(w) or 1 }) end
+function PLY:AnimResetGestureSlot(slot) qwrite("player.gesture_reset", self.__pid, nil) end
+local function ply_hold(self) local w = self:GetActiveWeapon(); local h = w and w:IsValid() and w:GetHoldType() or "fist"; return string.upper(h) end
+function PLY:DoAnimationEvent(event, data)
+    if event == PLAYERANIMEVENT_ATTACK_PRIMARY or event == PLAYERANIMEVENT_ATTACK_SECONDARY then
+        self:AnimRestartGesture(GESTURE_SLOT_ATTACK_AND_RELOAD, "ACT_HL2MP_GESTURE_RANGE_ATTACK_" .. ply_hold(self), true)
+    elseif event == PLAYERANIMEVENT_RELOAD or event == PLAYERANIMEVENT_RELOAD_LOOP or event == PLAYERANIMEVENT_RELOAD_END then
+        self:AnimRestartGesture(GESTURE_SLOT_ATTACK_AND_RELOAD, "ACT_HL2MP_GESTURE_RELOAD_" .. ply_hold(self), true)
+    elseif event == PLAYERANIMEVENT_CUSTOM_GESTURE then
+        self:AnimRestartGesture(GESTURE_SLOT_CUSTOM, data, true)
+    elseif event == PLAYERANIMEVENT_CUSTOM_GESTURE_SEQUENCE then
+        self:AnimSetGestureSequence(GESTURE_SLOT_CUSTOM, data)
+    elseif event == PLAYERANIMEVENT_CANCEL or event == PLAYERANIMEVENT_CANCEL_RELOAD then
+        self:AnimResetGestureSlot(GESTURE_SLOT_ATTACK_AND_RELOAD)
+    end
+end
+function PLY:DoAttackEvent() self:DoAnimationEvent(PLAYERANIMEVENT_ATTACK_PRIMARY) end
+function PLY:DoSecondaryAttack() self:DoAnimationEvent(PLAYERANIMEVENT_ATTACK_SECONDARY) end
+function PLY:DoReloadEvent() self:DoAnimationEvent(PLAYERANIMEVENT_RELOAD) end
+function PLY:DoCustomAnimEvent(event, data) self:DoAnimationEvent(event, data) end
 function PLY:RemoveAllItems() self:StripWeapons(); self:RemoveAllAmmo() end
 function PLY:EnterVehicle(v) if IsValid(v) then qwrite("player.vehicle", self.__pid, v:EntIndex()) end end
 function PLY:ExitVehicle() qwrite("player.vehicle", self.__pid, nil) end
@@ -1884,7 +1908,7 @@ function PLY:GetCurrentCommand()
         tick = p and p.cmd_tick or 0,
     }, __glua_classes.CUserCmd)
 end
-for _, name in ipairs({ "SetSlowWalkSpeed",  "AddPlayerOption", "AddVCDSequenceToGestureSlot", "AllowFlashlight", "AllowImmediateDecalPainting", "AnimResetGestureSlot", "AnimRestartGesture", "AnimRestartMainSequence", "AnimSetGestureSequence", "AnimSetGestureWeight", "CanUseFlashlight", "CreateRagdoll", "CrosshairDisable", "CrosshairEnable", "DetonateTripmines", "DisableWorldClicking", "DoAnimationEvent", "DoAttackEvent", "DoCustomAnimEvent", "DoReloadEvent", "DoSecondaryAttack", "DrawViewModel", "DrawWorldModel", "DropNamedWeapon", "DropObject", "DropWeapon", "EnterVehicle", "ExitVehicle", "Flashlight", "FlashlightIsOn", "GetActivity", "GetAllowFullRotation", "GetAllowWeaponsInVehicle", "GetAmmo", "GetAmmoCount", "GetAvoidPlayers", "GetCanWalk", "GetCanZoom", "GetClassID", "GetEntityInUse", "GetFlashlightColor", "GetFriendStatus", "GetHands", "GetHoveredWidget", "GetNoCollideWithTeammates", "GetObserverTarget", "GetPlayerColor", "GetPlayerInfo", "GetPreferredCarryAngles", "GetPressedWidget", "GetRagdollEntity", "GetRenderAngles", "GetSuitPower", "GetUseEntity", "GetViewModel", "GetVoiceVolumeScale", "GetWeaponColor", "GiveAmmo", "IsMuted", "IsPlayingTaunt", "IsVoiceAudible", "IsWalking", "IsWorldClickingDisabled", "KeyDownLast", "KeyPressed", "KeyReleased", "Kick", "LagCompensation", "LastHitGroup", "Lock", "UnLock", "MotionSensorPos", "RemoveAllAmmo", "RemoveAmmo", "Say", "ScreenFade", "SendHint", "SetActivity", "SetAllowFullRotation", "SetAllowWeaponsInVehicle", "SetAmmo", "SetAvoidPlayers", "SetCanWalk", "SetCanZoom", "SetClassID", "SetCurrentViewOffset", "SetDSP", "SetDeaths", "SetDrivingEntity", "SetFOV", "SetFlashlightColor", "SetFrags", "SetHands", "SetHoveredWidget", "SetLadderClimbSpeed", "SetLaggedMovementValue", "SetMaxArmor", "SetMuted", "SetNoCollideWithTeammates", "SetNoTarget", "SetObserverMode", "SetPlayerColor", "SetPressedWidget", "SetRenderAngles", "SetSlowWalkSpeed", "SetSuitPower", "SetSuppressPickupNotices", "SetViewEntity", "SetVoiceVolumeScale", "SetWeaponColor", "SetupHands", "ShouldDrawLocalPlayer", "ShowProfile", "SimulateGravGunDrop", "SimulateGravGunPickup", "Spectate", "SpectateEntity", "SprayDecal", "SprintDisable", "SprintEnable", "StartSprinting", "StartWalking", "StopSprinting", "StopWalking", "StopZooming", "StripAmmo", "SuppressHint", "TimeConnected", "TraceHullAttack", "TranslateWeaponActivity", "UnSpectate", "VoiceVolume" }) do
+for _, name in ipairs({ "SetSlowWalkSpeed",  "AddPlayerOption", "AddVCDSequenceToGestureSlot", "AllowFlashlight", "AllowImmediateDecalPainting", "AnimRestartMainSequence", "CanUseFlashlight", "CreateRagdoll", "CrosshairDisable", "CrosshairEnable", "DetonateTripmines", "DisableWorldClicking", "DrawViewModel", "DrawWorldModel", "DropNamedWeapon", "DropObject", "DropWeapon", "EnterVehicle", "ExitVehicle", "Flashlight", "FlashlightIsOn", "GetActivity", "GetAllowFullRotation", "GetAllowWeaponsInVehicle", "GetAmmo", "GetAmmoCount", "GetAvoidPlayers", "GetCanWalk", "GetCanZoom", "GetClassID", "GetEntityInUse", "GetFlashlightColor", "GetFriendStatus", "GetHands", "GetHoveredWidget", "GetNoCollideWithTeammates", "GetObserverTarget", "GetPlayerColor", "GetPlayerInfo", "GetPreferredCarryAngles", "GetPressedWidget", "GetRagdollEntity", "GetRenderAngles", "GetSuitPower", "GetUseEntity", "GetViewModel", "GetVoiceVolumeScale", "GetWeaponColor", "GiveAmmo", "IsMuted", "IsPlayingTaunt", "IsVoiceAudible", "IsWalking", "IsWorldClickingDisabled", "KeyDownLast", "KeyPressed", "KeyReleased", "Kick", "LagCompensation", "LastHitGroup", "Lock", "UnLock", "MotionSensorPos", "RemoveAllAmmo", "RemoveAmmo", "Say", "ScreenFade", "SendHint", "SetActivity", "SetAllowFullRotation", "SetAllowWeaponsInVehicle", "SetAmmo", "SetAvoidPlayers", "SetCanWalk", "SetCanZoom", "SetClassID", "SetCurrentViewOffset", "SetDSP", "SetDeaths", "SetDrivingEntity", "SetFOV", "SetFlashlightColor", "SetFrags", "SetHands", "SetHoveredWidget", "SetLadderClimbSpeed", "SetLaggedMovementValue", "SetMaxArmor", "SetMuted", "SetNoCollideWithTeammates", "SetNoTarget", "SetObserverMode", "SetPlayerColor", "SetPressedWidget", "SetRenderAngles", "SetSlowWalkSpeed", "SetSuitPower", "SetSuppressPickupNotices", "SetViewEntity", "SetVoiceVolumeScale", "SetWeaponColor", "SetupHands", "ShouldDrawLocalPlayer", "ShowProfile", "SimulateGravGunDrop", "SimulateGravGunPickup", "Spectate", "SpectateEntity", "SprayDecal", "SprintDisable", "SprintEnable", "StartSprinting", "StartWalking", "StopSprinting", "StopWalking", "StopZooming", "StripAmmo", "SuppressHint", "TimeConnected", "TraceHullAttack", "TranslateWeaponActivity", "UnSpectate", "VoiceVolume" }) do
     if PLY[name] == nil then PLY[name] = stub("Player:" .. name) end
 end
 

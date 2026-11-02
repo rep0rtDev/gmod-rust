@@ -283,3 +283,57 @@ fn flex_info_materials_and_npc_took_damage() {
     assert!(server.npcs[&id].last_enemy_damage > 0);
     assert!(!server.npc_mark_damaged(999));
 }
+
+#[test]
+fn player_gesture_layer_runs_and_autokills() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.add_player(
+        1,
+        Vec3::new(823.235, -500.0, -143.0),
+        Vec3::new(20.0, 0.0, 0.0),
+    );
+    let model = server.players[&1].model.clone();
+    server.register_model(&model, gm_dedicated::model_info(&mount, &model).unwrap());
+    assert!(!server.player_add_gesture_by_activity(1, "ACT_NOT_A_THING", true));
+    assert!(server.player_add_gesture_by_activity(1, "ACT_GMOD_GESTURE_AGREE", true));
+    let g = server.player_anim(1).unwrap().gesture.clone().unwrap();
+    assert!(!g.sequence.is_empty() && g.cycle == 0.0);
+    for _ in 0..5 {
+        server.tick(&std::collections::BTreeMap::new());
+    }
+    let c = server
+        .player_anim(1)
+        .unwrap()
+        .gesture
+        .as_ref()
+        .unwrap()
+        .cycle;
+    assert!(c > 0.0, "gesture advances: {c}");
+    assert!(server.player_set_gesture(1, None, Some(0.25)));
+    assert_eq!(
+        server
+            .player_anim(1)
+            .unwrap()
+            .gesture
+            .as_ref()
+            .unwrap()
+            .weight,
+        0.25
+    );
+    for _ in 0..600 {
+        server.tick(&std::collections::BTreeMap::new());
+    }
+    assert!(
+        server.player_anim(1).is_none(),
+        "autokill removed the layer"
+    );
+    assert!(server.player_set_gesture(1, Some(&g.sequence), None));
+    assert!(server.player_remove_gesture(1));
+    assert!(!server.player_remove_gesture(1));
+}

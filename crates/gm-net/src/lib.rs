@@ -89,6 +89,7 @@ mod tests {
                 alt: -1,
                 vm_act: 0,
                 vm_serial: 0,
+                gesture: None,
                 skin: 0,
                 body: String::new(),
                 name: "bot".to_string(),

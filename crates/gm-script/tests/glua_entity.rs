@@ -750,3 +750,18 @@ fn ban_limit_hit_and_remove_all_items_queue_writes() {
         .iter()
         .any(|w| matches!(w, QueuedWrite::PlayerStripWeapon { player: 1, .. })));
 }
+
+#[test]
+fn player_gestures_queue_writes() {
+    let (_, writes) = run("local p = Player(1)
+         p:AnimRestartGesture(GESTURE_SLOT_CUSTOM, ACT_GMOD_GESTURE_AGREE, false)
+         p:AnimSetGestureWeight(GESTURE_SLOT_CUSTOM, 0.5)
+         p:DoAnimationEvent(PLAYERANIMEVENT_ATTACK_PRIMARY)
+         p:AnimResetGestureSlot(GESTURE_SLOT_CUSTOM)");
+    assert!(writes.iter().any(|w| matches!(w, QueuedWrite::PlayerGestureAct { player: 1, act, autokill: false } if act == "ACT_GMOD_GESTURE_AGREE")));
+    assert!(writes.iter().any(|w| matches!(w, QueuedWrite::PlayerGestureSet { player: 1, sequence: None, weight: Some(w) } if (*w - 0.5).abs() < 1e-6)));
+    assert!(writes.iter().any(|w| matches!(w, QueuedWrite::PlayerGestureAct { act, autokill: true, .. } if act.starts_with("ACT_HL2MP_GESTURE_RANGE_ATTACK_"))));
+    assert!(writes
+        .iter()
+        .any(|w| matches!(w, QueuedWrite::PlayerGestureReset { player: 1 })));
+}

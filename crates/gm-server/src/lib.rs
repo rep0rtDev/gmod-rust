@@ -4214,6 +4214,9 @@ pub struct Server<'w> {
     /// and players to drop with their identity banned (`Player:Ban`); drained every tick.
     pub notices: Vec<(u32, String)>,
     pub pending_bans: Vec<u32>,
+    /// Players' gesture layers (`Player:AnimRestartGesture`): the base sequence is the
+    /// client's, only the gesture runs here. Keyed by player id (separate from entity ids).
+    pub player_anims: BTreeMap<u32, EntAnim>,
     spawn_rng: u64,
     tick_count: u64,
     /// `mp_falldamage`: progressive fall damage instead of the flat 10.
@@ -4367,6 +4370,7 @@ impl<'w> Server<'w> {
             sun_direction: None,
             notices: Vec::new(),
             pending_bans: Vec::new(),
+            player_anims: BTreeMap::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
             fall_damage_progressive: false,
@@ -7574,6 +7578,152 @@ impl<'w> Server<'w> {
         self.advance_anim(&model, &mut a, dt);
         self.anims.insert(ent, a);
         true
+    }
+
+    /// Players' gesture layers advance like the entities' (the base sequence is the
+    /// client's); a finished autokill layer goes away, as does a gone player's.
+    fn tick_player_anims(&mut self) {
+        let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        let ids: Vec<u32> = self.player_anims.keys().copied().collect();
+        for id in ids {
+            let Some(model) = self.players.get(&id).map(|p| p.model.clone()) else {
+                self.player_anims.remove(&id);
+                continue;
+            };
+            let mut a = self.player_anims.remove(&id).unwrap_or_default();
+            self.advance_anim(&model, &mut a, dt);
+            if a.gesture.is_some() {
+                self.player_anims.insert(id, a);
+            }
+        }
+    }
+
+    /// Loads and registers `model` through the host loader if the server does not have it.
+    fn ensure_model(&mut self, model: &str) -> bool {
+        if self.models.contains_key(model) {
+            return true;
+        }
+        let Some(loaded) = self.model_loader.as_mut().and_then(|f| f(model)) else {
+            return false;
+        };
+        self.register_model(model, loaded);
+        true
+    }
+
+    /// A player's gesture layer, if one plays.
+    pub fn player_anim(&self, player: u32) -> Option<&EntAnim> {
+        self.player_anims.get(&player)
+    }
+
+    /// `Player:AnimSetGestureSequence` with a fresh layer: `name` must be a sequence of the
+    /// player's model.
+    pub fn player_add_gesture(&mut self, player: u32, name: &str, autokill: bool) -> bool {
+        let Some(model) = self.players.get(&player).map(|p| p.model.clone()) else {
+            return false;
+        };
+        if !self.ensure_model(&model) || self.seq_duration(&model, name).is_none() {
+            return false;
+        }
+        let a = self.player_anims.entry(player).or_default();
+        a.gesture = Some(GestureLayer {
+            sequence: name.to_string(),
+            cycle: 0.0,
+            rate: 1.0,
+            weight: 1.0,
+            looping: false,
+            autokill,
+            priority: 0,
+            finished: false,
+        });
+        true
+    }
+
+    /// `Player:AnimRestartGesture(slot, act, autokill)`: the gesture is a sequence of the
+    /// player's model tagged with `act`, picked by weight (deterministic on the tick).
+    pub fn player_add_gesture_by_activity(
+        &mut self,
+        player: u32,
+        act: &str,
+        autokill: bool,
+    ) -> bool {
+        let Some(model) = self.players.get(&player).map(|p| p.model.clone()) else {
+            return false;
+        };
+        if !self.ensure_model(&model) {
+            return false;
+        }
+        let Some(m) = self.models.get(&model) else {
+            return false;
+        };
+        let candidates: Vec<(String, i32)> = m
+            .script
+            .sequences
+            .iter()
+            .zip(m.script.sequence_activity.iter())
+            .filter(|(_, (a, _))| a.eq_ignore_ascii_case(act))
+            .map(|(s, (_, w))| (s.clone(), (*w).max(1)))
+            .collect();
+        if candidates.is_empty() {
+            return false;
+        }
+        let total: i32 = candidates.iter().map(|c| c.1).sum();
+        let mut pick = (self.tick_count.wrapping_mul(2_654_435_761) % total.max(1) as u64) as i32;
+        let mut name = candidates[0].0.clone();
+        for (s, w) in &candidates {
+            if pick < *w {
+                name = s.clone();
+                break;
+            }
+            pick -= w;
+        }
+        self.player_add_gesture(player, &name, autokill)
+    }
+
+    /// `Player:AnimSetGestureSequence` / `AnimSetGestureWeight` on the playing layer (a
+    /// sequence the model lacks is refused; no layer, no change).
+    pub fn player_set_gesture(
+        &mut self,
+        player: u32,
+        sequence: Option<&str>,
+        weight: Option<f32>,
+    ) -> bool {
+        let Some(model) = self.players.get(&player).map(|p| p.model.clone()) else {
+            return false;
+        };
+        if let Some(seq) = sequence {
+            if self
+                .player_anims
+                .get(&player)
+                .and_then(|a| a.gesture.as_ref())
+                .is_none()
+            {
+                return self.player_add_gesture(player, seq, true);
+            }
+            if self.seq_duration(&model, seq).is_none() {
+                return false;
+            }
+        }
+        let Some(g) = self
+            .player_anims
+            .get_mut(&player)
+            .and_then(|a| a.gesture.as_mut())
+        else {
+            return false;
+        };
+        if let Some(seq) = sequence {
+            g.sequence = seq.to_string();
+            g.cycle = 0.0;
+            g.finished = false;
+        }
+        if let Some(w) = weight {
+            g.weight = w.clamp(0.0, 1.0);
+        }
+        true
+    }
+
+    /// `Player:AnimResetGestureSlot`: the layer goes away.
+    pub fn player_remove_gesture(&mut self, player: u32) -> bool {
+        self.player_anims.remove(&player).is_some()
     }
 
     /// Advances every animator one tick: an NPC's sequence follows what its AI plays (a change
@@ -11950,6 +12100,7 @@ impl<'w> Server<'w> {
         self.tick_devices();
         self.tick_vehicles();
         self.tick_anims();
+        self.tick_player_anims();
         // winch controllers think before the physics step, like any entity's Think
         for (id, len) in self
             .sandbox
