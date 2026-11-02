@@ -200,7 +200,16 @@ Addon control: `npc_target` (`Server::npc_target(id, Some(player))`) forces the 
 
 Crouch pose and hits taken (measured, `server_npc_flinch_soldier`: two pistol bullets into a firing soldier): in combat and standing still the soldier fires from a crouch - eyes at origin + 40 (standing + 66), the hull stays 13 x 13 x 72; the sequence is `shootSMG1c` from the first shot for 7 ticks per shot (35 for a full burst) and `CrouchIdle` for the rest of the gap (21). A bullet hit plays no flinch; a hit inside a burst ends the burst (3 shots instead of 5, the next burst `NPC_BURST_GAP_TICKS` after the last shot), a hit in the gap delays the next burst by one think (gap 35). Ours: `NPC_CROUCH_EYE_HEIGHT` = 40 for sight and bullet origin while crouched, `npc_combat_sequences` (soldier only, other classes keep their sequence), `Npc::rest_sequence` restores the idle when the target is lost, dropped or cleared, the flinch rule in `damage_npc`. Test `soldier_hit_mid_burst_ends_it_and_crouches`.
 
-Pending: antlions and the poison zombie (unmeasured), combat sequences of other armed classes, squads and cover.
+## Squads and cover: our model
+
+No oracle here - the game's squad slots and hint-node cover are not measurable from outside and are not copied.
+
+- Squad: NPCs of the same spawn key within `NPC_SQUAD_RANGE` (512 u). On its think an NPC without a target takes a squadmate's target (`npc_share_targets`) and, not seeing it, chases it under the usual loss rules. Test `squad_shares_the_target`: a second soldier placed on a navmesh spot the player cannot see takes the target within two thinks and starts the chase.
+- Cover: a bullet hit that leaves an armed NPC at `NPC_COVER_HEALTH` (40%) of its max health or less asks for cover (the game's soldier at 60% kept firing, see the flinch recording). On the next think `npc_take_cover` picks, among navmesh vertices within `NPC_COVER_RANGE` (512 u) of the NPC, those the target's eye cannot see at chest height, not within `NPC_COVER_SPACING` (32 u) of a squadmate's cover, reachable by a complete path, ranked by path length (capped at 1.5 x range: a point 65 u away across a wall can be 1000 u on foot); the NPC runs there without firing, holds `NPC_COVER_TICKS` (200) out of sight without chasing, then the usual rules return (chase if still unseen, fire if seen). `NPC_COVER_COOLDOWN` (660) between cover runs. Test `soldier_takes_cover_when_hit`: the soldier at 15/50 runs a 6-corner path to a vertex hidden from the player, stops within 8 u of it, holds, re-engages.
+
+Locomotion fixes that fell out of the cover run: a path corner within `NPC_CORNER_REACH` (8 u) is passed only when the hull can already sweep to the next corner (cutting it against a wall end jams: the mesh keeps 16 u, the box hull 13); a think-step sweep blocked after passing a corner is retried to the corner itself; the remainder of a blocked step slides along the hit plane (the box hull's 18.4 u half-diagonal reaches past the mesh's 16 u margin at wall ends); a body that covers less than a tenth of its step three thinks running gives the path up (`Npc::stuck`).
+
+Pending: antlions and the poison zombie (unmeasured), combat sequences of other armed classes, cover from grenades / suppressing fire, squad formations.
 
 ## Melee: measured inputs and our model
 

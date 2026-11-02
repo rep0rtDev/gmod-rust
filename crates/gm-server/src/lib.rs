@@ -951,6 +951,14 @@ pub struct Npc {
     pub flight: Option<Vec3>,
     pub hung_until: u64,
     pub next_leap: u64,
+    /// Cover: a hit asks for it, the point chosen, the tick the stay there ends, the earliest
+    /// tick of the next cover run.
+    pub cover_wanted: bool,
+    pub cover_at: Option<Vec3>,
+    pub cover_until: u64,
+    pub cover_cooldown: u64,
+    /// Thinks in a row the body covered less than a tenth of its step (a blocked sweep).
+    pub stuck: u8,
     /// Set by an addon's `npc_target` clear: no target is picked until the next `npc_target`.
     pub passive: bool,
     /// Tick of the last shot (the shoot sequence runs 7 ticks past it) and the sequence to
@@ -1089,6 +1097,16 @@ pub struct NpcLeap {
 }
 
 pub const NPC_LEAP_RANGE: f32 = 256.0;
+/// Cover and squads (our rules): a cover point lies within this of the NPC, is a navmesh
+/// vertex the target's eye cannot see, and is not within NPC_COVER_SPACING of a squadmate's;
+/// the NPC stays NPC_COVER_TICKS once there and waits NPC_COVER_COOLDOWN before the next run.
+/// Squadmates are NPCs of the same spawn key within NPC_SQUAD_RANGE.
+pub const NPC_COVER_RANGE: f32 = 512.0;
+pub const NPC_COVER_HEALTH: f32 = 0.4;
+pub const NPC_COVER_SPACING: f32 = 32.0;
+pub const NPC_COVER_TICKS: u64 = 200;
+pub const NPC_COVER_COOLDOWN: u64 = 660;
+pub const NPC_SQUAD_RANGE: f32 = 512.0;
 const NPC_GRAVITY: f32 = 600.0;
 
 /// Measured on the game's headcrab (server_npc_melee_headcrab): 379.5 u/s horizontal, 272 u/s
@@ -1237,6 +1255,8 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
 /// An intermediate corner counts as passed within this horizontal distance; the final
 /// point is walked onto exactly.
 const NPC_CORNER_REACH: f32 = 8.0;
+/// The hull is swept this far above the feet (the step height) when it moves along a path.
+const NPC_STEP_LIFT: f32 = 18.0;
 
 /// Ticks a dead NPC stays on the server before it is removed (measured 66..106 for the
 /// metropolice, 76..96 for the headcrab); the corpse itself is the client's ragdoll.
@@ -5523,6 +5543,11 @@ impl<'w> Server<'w> {
                 flight: None,
                 hung_until: 0,
                 next_leap: 0,
+                cover_wanted: false,
+                cover_at: None,
+                cover_until: 0,
+                cover_cooldown: 0,
+                stuck: 0,
                 passive: false,
                 last_shot: 0,
                 rest_sequence: None,
@@ -5582,6 +5607,14 @@ impl<'w> Server<'w> {
                 n.next_shot = n.last_shot + NPC_BURST_GAP_TICKS;
             } else if n.next_shot > tick {
                 n.next_shot += n.think_interval as u64;
+            }
+            // the game's soldier at 60% kept firing (server_npc_flinch_soldier); ours runs
+            // for cover once a hit leaves it at NPC_COVER_HEALTH of its max or less
+            if tick >= n.cover_cooldown
+                && n.cover_at.is_none()
+                && n.health <= n.max_health as f32 * NPC_COVER_HEALTH
+            {
+                n.cover_wanted = true;
             }
         }
         if n.health <= 0.0 {
@@ -5894,9 +5927,24 @@ impl<'w> Server<'w> {
                 (def.walk, def.walk_accel)
             };
             let (pos, mins, maxs, v0, yaw0) = (n.pos, n.mins, n.maxs, n.move_speed, n.angles.y);
+            // a corner within reach is passed only when the hull can already sweep to the
+            // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
             while idx + 1 < points.len()
                 && points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
             {
+                let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
+                let next = points[idx + 1];
+                let to = Vec3::new(next.x, next.y, pos.z) + lift;
+                let tr = self.collision.trace_box(
+                    pos + lift,
+                    to,
+                    mins,
+                    maxs,
+                    gm_collision::MASK_PLAYERSOLID,
+                );
+                if tr.fraction < 0.999 && !tr.start_solid {
+                    break;
+                }
                 idx += 1;
             }
             let head = points[idx].truncate() - pos.truncate();
@@ -5948,6 +5996,7 @@ impl<'w> Server<'w> {
             let mut at = pos.truncate();
             let mut left = step;
             let mut dir = glam::Vec2::X;
+            let mut passed: Option<glam::Vec2> = None;
             while left > 1e-4 && idx < points.len() {
                 let corner = points[idx].truncate();
                 let to = corner - at;
@@ -5961,6 +6010,7 @@ impl<'w> Server<'w> {
                     at = corner;
                     left -= d;
                     idx += 1;
+                    passed.get_or_insert(corner);
                 } else {
                     at += dir * left;
                     left = 0.0;
@@ -5969,15 +6019,50 @@ impl<'w> Server<'w> {
             if arrived && !chasing {
                 at = points[points.len() - 1].truncate();
             }
-            let lift = Vec3::new(0.0, 0.0, 18.0);
+            let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
             let want = at.extend(pos.z);
-            let tr = self.collision.trace_box(
+            let mut tr = self.collision.trace_box(
                 pos + lift,
                 want + lift,
                 mins,
                 maxs,
                 gm_collision::MASK_PLAYERSOLID,
             );
+            if tr.fraction < 0.999 && !tr.start_solid {
+                // the step past a corner runs into a wall end: take the corner itself this
+                // think, the next heads for the following corner from there
+                if let Some(c) = passed.filter(|c| c.distance(pos.truncate()) > 1e-3) {
+                    let tc = self.collision.trace_box(
+                        pos + lift,
+                        c.extend(pos.z) + lift,
+                        mins,
+                        maxs,
+                        gm_collision::MASK_PLAYERSOLID,
+                    );
+                    if tc.fraction > tr.fraction {
+                        tr = tc;
+                    }
+                }
+            }
+            if tr.fraction < 0.999 && !tr.start_solid {
+                // move and slide: the rest of the step along the wall it ran into (the box
+                // hull's half-diagonal, 18.4 u, reaches past the mesh's 16 u margin at wall ends)
+                let rest = want + lift - tr.end;
+                let n2 = Vec3::new(tr.normal.x, tr.normal.y, 0.0);
+                let slide = rest - n2 * rest.dot(n2);
+                if slide.length_squared() > 1e-4 {
+                    let ts = self.collision.trace_box(
+                        tr.end,
+                        tr.end + slide,
+                        mins,
+                        maxs,
+                        gm_collision::MASK_PLAYERSOLID,
+                    );
+                    if !ts.start_solid {
+                        tr.end = ts.end;
+                    }
+                }
+            }
             let reached = if tr.start_solid { pos + lift } else { tr.end };
             let floor = self
                 .npc_floor(reached, mins, maxs)
@@ -5992,6 +6077,13 @@ impl<'w> Server<'w> {
             };
             let mut swap = None;
             if let Some(n) = self.npcs.get_mut(&id) {
+                let moved = floor.truncate().distance(pos.truncate());
+                let intended = v0 * dt;
+                n.stuck = if intended > 1.0 && moved < intended * 0.1 {
+                    n.stuck + 1
+                } else {
+                    0
+                };
                 n.pos = floor;
                 let max_turn = rate * dt;
                 let turn = wrap_deg(face.y.atan2(face.x).to_degrees() - n.angles.y);
@@ -6003,6 +6095,15 @@ impl<'w> Server<'w> {
                 } else {
                     yaw
                 };
+                // a sweep blocked three thinks running: the path is given up (the think
+                // re-decides), a cover run with it
+                let jammed = n.stuck >= 3;
+                if jammed {
+                    n.stuck = 0;
+                    n.cover_at = None;
+                    n.cover_until = 0;
+                }
+                let (arrived, stopped) = (arrived || jammed, stopped);
                 n.move_speed = if arrived || stopped { 0.0 } else { v1 };
                 if arrived || stopped {
                     n.goal = None;
@@ -6016,6 +6117,7 @@ impl<'w> Server<'w> {
                 self.npc_goto(id, target, run);
             }
         }
+        self.npc_share_targets(&thought, now);
         for id in thought {
             self.npc_combat_think(id, now);
         }
@@ -6078,6 +6180,28 @@ impl<'w> Server<'w> {
         }
         let Some((player, chest)) = target else {
             let (old, seen) = (n.target, n.target_seen);
+            if old.is_some() && n.cover_at.is_some() {
+                // arrived in cover out of sight: hold there for the stay, moving nowhere
+                if n.goal.is_some() {
+                    return;
+                }
+                if n.cover_until == 0 {
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.cover_until = now + NPC_COVER_TICKS;
+                        n.target_seen = now;
+                    }
+                    return;
+                }
+                if now < n.cover_until {
+                    return;
+                }
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.cover_at = None;
+                    n.cover_until = 0;
+                    n.target_seen = now;
+                }
+                return;
+            }
             if let Some(p) = old {
                 if now.saturating_sub(seen) > NPC_TARGET_LOSE_TICKS {
                     self.npc_stop(id);
@@ -6114,6 +6238,26 @@ impl<'w> Server<'w> {
             n.goal = None;
             n.next_goal = None;
             n.move_speed = 0.0;
+        }
+        if n.cover_at.is_some() && n.goal.is_none() && n.cover_until == 0 {
+            n.cover_until = now + NPC_COVER_TICKS;
+        }
+        if n.cover_at.is_some() && now >= n.cover_until && n.cover_until != 0 {
+            n.cover_at = None;
+            n.cover_until = 0;
+        }
+        if n.cover_wanted {
+            n.cover_wanted = false;
+            if self.npc_take_cover(id, player) {
+                return;
+            }
+        }
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
+        if n.cover_at.is_some() && n.goal.is_some() {
+            // running to cover: no shots on the way
+            return;
         }
         let to = chest - eye;
         let want = to.y.atan2(to.x).to_degrees();
@@ -6228,6 +6372,99 @@ impl<'w> Server<'w> {
             }
         } else if n.chase != Some(player) {
             self.npc_chase(id, player, m.run);
+        }
+    }
+
+    /// Our cover rule: the nearest navmesh vertex within NPC_COVER_RANGE that `player`'s eye
+    /// cannot see (chest height), reachable, and not already a squadmate's cover; the NPC runs
+    /// there. False when no such point exists.
+    fn npc_take_cover(&mut self, id: u32, player: u32) -> bool {
+        let (Some(n), Some(nav), Some((eye, _))) =
+            (self.npcs.get(&id), self.nav.as_deref(), self.eye(player))
+        else {
+            return false;
+        };
+        let (feet, key) = (n.pos, n.key.clone());
+        let taken: Vec<Vec3> = self
+            .npcs
+            .iter()
+            .filter(|(i, o)| **i != id && o.key == key && o.dead_at.is_none())
+            .filter_map(|(_, o)| o.cover_at)
+            .collect();
+        let extents = Vec3::new(32.0, 32.0, 72.0);
+        let mut best: Option<(f32, Vec3)> = None;
+        for v in nav.vertices() {
+            let d = v.truncate().distance(feet.truncate());
+            if d < 48.0 || d > NPC_COVER_RANGE {
+                continue;
+            }
+            // ranked by path length (a point 65 u away across a wall can be 1000 u on foot)
+            if best.is_some_and(|b| d >= b.0) {
+                continue;
+            }
+            let Some(p) = nav.nearest(*v, extents) else {
+                continue;
+            };
+            if taken.iter().any(|t| t.distance(p) < NPC_COVER_SPACING) {
+                continue;
+            }
+            let tr = self.collision.trace_ray(
+                eye,
+                p + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT),
+                gm_collision::MASK_PLAYERSOLID,
+            );
+            if tr.fraction >= 1.0 {
+                continue;
+            }
+            if let Some(path) = nav.find_path(feet, p, extents).filter(|path| !path.partial) {
+                let len: f32 = path.points.windows(2).map(|w| w[0].distance(w[1])).sum();
+                if len <= NPC_COVER_RANGE * 1.5 && best.is_none_or(|b| len < b.0) {
+                    best = Some((len, p));
+                }
+            }
+        }
+        let Some((_, p)) = best else {
+            return false;
+        };
+        if !self.npc_goto(id, p, true) {
+            return false;
+        }
+        let now = self.tick_count;
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.cover_at = Some(p);
+            n.cover_until = 0;
+            n.cover_cooldown = now + NPC_COVER_COOLDOWN;
+            n.chase = None;
+        }
+        true
+    }
+
+    /// Squads: an NPC without a target takes the target of a squadmate (same spawn key within
+    /// NPC_SQUAD_RANGE); unseen, it chases it like a target it lost sight of.
+    fn npc_share_targets(&mut self, thought: &[u32], now: u64) {
+        for &id in thought {
+            let Some(n) = self.npcs.get(&id) else {
+                continue;
+            };
+            if n.target.is_some() || n.passive || n.dead_at.is_some() || !npc_hostile(&n.class) {
+                continue;
+            }
+            let (pos, key) = (n.pos, n.key.clone());
+            let shared = self.npcs.iter().find_map(|(i, o)| {
+                (*i != id
+                    && o.key == key
+                    && o.dead_at.is_none()
+                    && o.pos.distance(pos) <= NPC_SQUAD_RANGE)
+                    .then_some(o.target)
+                    .flatten()
+                    .filter(|p| self.players.get(p).is_some_and(|pl| pl.alive))
+            });
+            if let (Some(p), Some(n)) = (shared, self.npcs.get_mut(&id)) {
+                n.target = Some(p);
+                n.target_seen = now;
+                n.burst_left = NPC_BURST_SHOTS;
+                n.next_shot = now + n.think_interval as u64;
+            }
         }
     }
 
@@ -6547,6 +6784,11 @@ impl<'w> Server<'w> {
                 flight: None,
                 hung_until: 0,
                 next_leap: 0,
+                cover_wanted: false,
+                cover_at: None,
+                cover_until: 0,
+                cover_cooldown: 0,
+                stuck: 0,
                 passive: false,
                 last_shot: 0,
                 rest_sequence: None,

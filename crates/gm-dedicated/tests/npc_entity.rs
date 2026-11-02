@@ -751,3 +751,172 @@ fn headcrab_leaps_hits_lands_and_leaps_again() {
     let period = leaps[1] - leaps[0];
     assert!((280..=400).contains(&period), "period {period}");
 }
+
+/// Squads (our rule): a soldier that cannot see the player takes the target of a squadmate
+/// (same spawn key within NPC_SQUAD_RANGE) and chases it.
+#[test]
+fn squad_shares_the_target() {
+    let world = combat_server!(world);
+    let (mut server, idle, _start) = combat_server!(world, server);
+    let a = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    for _ in 0..10 {
+        server.tick(&idle);
+    }
+    assert_eq!(server.npcs[&a].target, Some(1));
+    // a second soldier placed behind geometry: a navmesh spot within squad range of the
+    // first that the player's eye cannot see
+    let extents = Vec3::new(32.0, 32.0, 72.0);
+    let eye = server.eye(1).unwrap().0;
+    let a_pos = server.npcs[&a].pos;
+    let hidden = world
+        .nav
+        .vertices()
+        .iter()
+        .filter(|v| {
+            let d = v.distance(a_pos);
+            (200.0..gm_server::NPC_SQUAD_RANGE - 10.0).contains(&d)
+        })
+        .filter_map(|v| world.nav.nearest(*v, extents))
+        .find(|p| {
+            let tr = world.collision.trace_ray(
+                eye,
+                *p + Vec3::new(0.0, 0.0, 36.0),
+                gm_collision::MASK_PLAYERSOLID,
+            );
+            tr.fraction < 1.0
+        })
+        .expect("no hidden spot within squad range");
+    let b = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    server.npcs.get_mut(&b).unwrap().pos = hidden;
+    assert!(server.npcs[&b].target.is_none());
+    let mut shared = None;
+    for t in 0..30 {
+        server.tick(&idle);
+        let n = &server.npcs[&b];
+        if n.target == Some(1) && (n.chase == Some(1) || n.goal.is_some()) {
+            shared = Some(t);
+            break;
+        }
+    }
+    eprintln!("hidden {hidden} shared after {shared:?}");
+    assert!(shared.is_some(), "squadmate never took the target");
+}
+
+/// Cover (our rule): a soldier hit while firing runs to the nearest navmesh vertex within
+/// NPC_COVER_RANGE the player cannot see, holds NPC_COVER_TICKS without chasing, then
+/// re-engages.
+#[test]
+fn soldier_takes_cover_when_hit() {
+    let world = combat_server!(world);
+    let (mut server, idle, start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    let extents = Vec3::new(32.0, 32.0, 72.0);
+    let s_pos = server.npcs[&id].pos;
+    // a vantage for the player that sees the soldier and leaves it a cover point
+    let eye_h = server.eye(1).unwrap().0.z - start.z;
+    let candidates: Vec<Vec3> = world
+        .nav
+        .vertices()
+        .iter()
+        .filter(|v| {
+            let d = v.truncate().distance(s_pos.truncate());
+            (48.0..gm_server::NPC_COVER_RANGE).contains(&d)
+        })
+        .filter_map(|v| world.nav.nearest(*v, extents))
+        .collect();
+    let sees = |from: Vec3, to: Vec3| {
+        world
+            .collision
+            .trace_ray(from, to, gm_collision::MASK_PLAYERSOLID)
+            .fraction
+            >= 1.0
+    };
+    let mut vantage = None;
+    'scan: for gx in -8..=8 {
+        for gy in -8..=8 {
+            let cand = Vec3::new(gx as f32 * 160.0, gy as f32 * 160.0, -143.0);
+            let Some(p) = world.nav.nearest(cand, extents) else {
+                continue;
+            };
+            if p.distance(cand) > 64.0 || !(150.0..900.0).contains(&p.distance(s_pos)) {
+                continue;
+            }
+            let eye = p + Vec3::new(0.0, 0.0, eye_h);
+            if !sees(eye, s_pos + Vec3::new(0.0, 0.0, 40.0)) {
+                continue;
+            }
+            if candidates
+                .iter()
+                .any(|c| !sees(eye, *c + Vec3::new(0.0, 0.0, 36.0)))
+            {
+                vantage = Some(p);
+                break 'scan;
+            }
+        }
+    }
+    let vantage = vantage.expect("no vantage with a cover point for the soldier");
+    server.teleport_player(1, vantage);
+    for _ in 0..40 {
+        server.tick(&idle);
+    }
+    assert_eq!(server.npcs[&id].target, Some(1));
+    let shots = server.npcs[&id].shots;
+    assert!(shots > 0, "no fire from the vantage");
+    // 50 -> 15 hp: under NPC_COVER_HEALTH
+    assert!(server.damage_npc(id, 1, 35.0, 0));
+    let mut covered = None;
+    for t in 0..20 {
+        server.tick(&idle);
+        if let Some(c) = server.npcs[&id].cover_at {
+            covered = Some((t, c));
+            break;
+        }
+    }
+    let (_, cover) = covered.expect("never took cover");
+    let eye = server.eye(1).unwrap().0;
+    assert!(
+        !sees(eye, cover + Vec3::new(0.0, 0.0, 36.0)),
+        "cover {cover} is in view"
+    );
+    assert!(cover.distance(s_pos) <= gm_server::NPC_COVER_RANGE);
+    // runs there without firing, then holds
+    let shots_at_hit = server.npcs[&id].shots;
+    let mut arrived = None;
+    for t in 0..400 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if n.goal.is_none() && n.move_speed == 0.0 {
+            arrived = Some(t);
+            break;
+        }
+        assert_eq!(n.shots, shots_at_hit, "fired on the way to cover");
+    }
+    let arrived = arrived.expect("never reached cover");
+    let n = &server.npcs[&id];
+    let at = n.pos;
+    eprintln!("cover {cover} reached after {arrived} ticks at {at}");
+    assert!(
+        at.truncate().distance(cover.truncate()) < 8.0,
+        "stopped at {at}"
+    );
+    for _ in 0..(gm_server::NPC_COVER_TICKS - 20) {
+        server.tick(&idle);
+    }
+    let n = &server.npcs[&id];
+    assert_eq!(n.target, Some(1));
+    assert!(
+        n.chase.is_none() && n.cover_at.is_some(),
+        "left cover early"
+    );
+    // after the stay the usual rules return: unseen target -> chase
+    let mut back = false;
+    for _ in 0..60 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if n.chase == Some(1) || n.shots > shots_at_hit {
+            back = true;
+            break;
+        }
+    }
+    assert!(back, "never re-engaged");
+}
