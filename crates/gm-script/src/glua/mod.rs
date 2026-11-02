@@ -20,6 +20,9 @@ const CORE: &str = include_str!("core.luau");
 /// Entity / Player / NPC / Vehicle / Weapon / PhysObj, ents / player / game / engine / util and
 /// the entity globals over the host snapshot and write queue.
 const ENTITY: &str = include_str!("entity.luau");
+/// net, ConVar / cvars, concommand, file, CTakeDamageInfo, sound, undo / cleanup / constraint
+/// and the GM hook bridge from the own server events.
+const SERVER: &str = include_str!("server.luau");
 
 /// Registers a class metatable under `__glua_classes[name]` so the coverage listing (and
 /// `FindMetaTable`) can reach it.
@@ -42,7 +45,7 @@ fn classes(lua: &Lua) -> Result<Table> {
 
 /// A documented function that exists but cannot do its job in this realm / build yet: calling
 /// it raises a clear error, and the coverage listing reports it as a stub, never as implemented.
-pub fn stub(lua: &Lua, address: &'static str) -> Result<mlua::Function> {
+pub fn stub(lua: &Lua, address: &str) -> Result<mlua::Function> {
     let g = lua.globals();
     let stubs: Table = match g.get::<Value>("__glua_stubs")? {
         Value::Table(t) => t,
@@ -53,6 +56,7 @@ pub fn stub(lua: &Lua, address: &'static str) -> Result<mlua::Function> {
         }
     };
     stubs.set(address, true)?;
+    let address = address.to_owned();
     lua.create_function(move |_, _: mlua::Variadic<Value>| -> Result<()> {
         Err(mlua::Error::runtime(format!(
             "{address}: not available in this realm yet"
@@ -68,8 +72,13 @@ pub fn install(lua: &Lua, _shared: Arc<Shared>) -> Result<()> {
         lua.create_function(move |_, ()| Ok(start.elapsed().as_secs_f64()))?,
     )?;
     classes(lua)?;
+    g.set(
+        "__glua_stub",
+        lua.create_function(|lua, address: String| stub(lua, &address))?,
+    )?;
     lua.load(CORE).set_name("glua/core").exec()?;
     lua.load(ENTITY).set_name("glua/entity").exec()?;
+    lua.load(SERVER).set_name("glua/server").exec()?;
     let classes = classes(lua)?;
     g.set(
         "FindMetaTable",

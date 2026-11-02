@@ -773,7 +773,6 @@ function hook.Run(event, ...) return hook.Call(event, GM or GAMEMODE, ...) end
 -- the own event bus feeds the documented hooks
 if events then
     events.on("tick.pre", function() hook.Run("Think"); hook.Run("Tick") end)
-    events.on("entity.spawned", function(p) hook.Run("OnEntityCreated", p and p.entity) end)
 end
 
 ------------------------------------------------------------------------ timer / time

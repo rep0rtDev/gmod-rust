@@ -556,10 +556,59 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   carry their files), and the enums these use (`TYPE_*`, `DMG_*`, `SOLID_*`,
   `COLLISION_GROUP_*`, `CONTENTS_*`, `ACT_*` movement, `HITGROUP_*`, `MOVETYPE_*`, `FORCE_*`).
 
+Done in `glua/server.luau`:
+
+- `net`: `Start`, every documented `Write*` / `Read*` (string, int / uint / uint64, float /
+  double, bool / bit, vector / normal, angle, color, entity, player, data, table as JSON,
+  matrix, `WriteType / ReadType`), `Send(player | table | CRecipientFilter)`, `Broadcast`,
+  `SendOmit`, `SendPVS / SendPAS` (= broadcast), `SendToServer`, `Receive`, `BytesWritten /
+  BytesLeft`, `Abort`; the message travels as a typed item list on the own transport
+  (`net.send(name, items, player)`, `net.message` on the other side), `util.AddNetworkString /
+  NetworkStringToID / NetworkIDToString`, `RecipientFilter()` (`CRecipientFilter`).
+- `ConVar` over the snapshot's cvars and the `cvar.create / set` ops (`GetString / Int / Float /
+  Bool / Default / HelpText / Min / Max / Flags / IsFlagSet`, the setters, `Revert`),
+  `CreateConVar(name, default, flags, help, min, max)` (replicated / archive from the
+  `FCVAR_*` bits), `CreateClientConVar`, `GetConVar` (nil when unknown), `GetConVarNumber /
+  String`, `ConVarExists`, `cvars` (`Number / String / Bool`, change callbacks fed from
+  `cvar.changed`).
+- `concommand` (`Add / Remove / GetTable / Run / AutoComplete`, an actor-local registry),
+  `RunConsoleCommand` (a registered command, else a cvar set), `game.ConsoleCommand`.
+- `file` over the addon's storage as its DATA folder (`Write / Append / Read / Exists / Delete /
+  Find` with `*` / `CreateDir / IsDir / Size / Rename / Async*`, `Open` -> `File` with
+  `Read / ReadLine / Write / Seek / Tell / Size / EndOfFile / Close` and the typed
+  read / write pairs); without the `storage` capability every call fails closed.
+- `CTakeDamageInfo` (`DamageInfo()`, damage / base / max / bonus / custom, attacker,
+  inflictor, type with `IsDamageType / IsBulletDamage / IsExplosionDamage / IsFallDamage`,
+  position, force, reported position, ammo type).
+- `sound` (`Add / Get / GetTable / GetProperties`, `Play` -> the `sound.play` op from a
+  registered script's file or the raw name), `EmitSound`, `Entity:EmitSound`, `SNDLVL_* /
+  CHAN_*`.
+- `undo` (`Create / AddEntity / AddFunction / SetPlayer / SetCustomUndoText / ReplaceEntity /
+  Finish` -> the `undo.push` op, `GetTable`, `Do_Undo`), `cleanup` (`Register / GetTable /
+  Add / GetList / ReplaceEntity / CC_Cleanup / CC_AdminCleanup`, actor-local lists),
+  `constraint` (`Weld` and `NoCollide` as the own ops, `GetTable / HasConstraints / Find /
+  FindConstraint(s) / FindConstraintEntity / GetAllConstrainedEntities / RemoveAll /
+  RemoveConstraints` over what the actor made; `Axis / Rope / Slider / Elastic / ...` are
+  stubs until the constraint ops exist outside stools).
+- The GM hook bridge: `GM` / `GAMEMODE`, `Initialize / InitPostEntity / PostGamemodeLoaded` on
+  the first tick, `OnReloaded`, and every own server event raised as its documented hook with
+  the documented arguments - `OnEntityCreated`, `PlayerSpawnedProp`, `EntityRemoved`,
+  `PropBreak`, `OnNPCKilled`, `PlayerSpawn`, `PlayerDisconnected`, `PlayerHurt`,
+  `DoPlayerDeath / PlayerDeath / PostPlayerDeath`, `PlayerNoClip`, `PlayerUsedEntity`,
+  `PlayerUse`, `GravGunOnPickedUp / OnDropped`, `WeaponEquip`, `PlayerEnteredVehicle /
+  PlayerLeaveVehicle`, `KeyPress / KeyRelease` (`IN_*`), `PropertyUsed`, `OnPhysgunReload`,
+  `PhysgunDrop`, `OnPhysgunFreeze`; the requests map the hook's cancel value onto the own
+  request's `false`: `EntityTakeDamage` (true blocks, a changed `CTakeDamageInfo` damage is
+  dealt instead), `GetFallDamage`, `PlayerUse`, `GravGunPickupAllowed / AllowPlayerPickup`,
+  `PhysgunPickup`, `CanPlayerUnfreeze`, `CanUndo`, `CanProperty`, `PlayerCanPickupWeapon`,
+  `PlayerLoadout` (true skips the default), `PlayerSpawnProp`, `CanTool`, `PlayerSay` (`""`
+  drops the line, a string replaces it).
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
-writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON) and
-`glua_coverage`.
+writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`
+(a net round trip through the host transport, ConVar reads, concommand, damage info, the hook
+bridge for events and requests) and `glua_coverage`.
 
 ## Not yet
 
