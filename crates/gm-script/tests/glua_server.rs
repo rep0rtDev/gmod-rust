@@ -57,6 +57,8 @@ fn snapshot() -> Arc<Snapshot> {
             npc_stuck: 0,
             npc_chase_reach: 0.0,
             npc_max_yaw: 0.0,
+            npc_ideal_yaw: None,
+            npc_move_yaw_locked: false,
             npc_ignore: Vec::new(),
             npc_move_speed: 0.0,
             npc_next_goal: None,
@@ -120,6 +122,8 @@ fn snapshot() -> Arc<Snapshot> {
             npc_stuck: 0,
             npc_chase_reach: 0.0,
             npc_max_yaw: 0.0,
+            npc_ideal_yaw: None,
+            npc_move_yaw_locked: false,
             npc_ignore: Vec::new(),
             npc_move_speed: 0.0,
             npc_next_goal: None,
@@ -2492,4 +2496,46 @@ fn npc_move_interval_crouch_pause_writes() {
     ] {
         assert!(text.contains(want), "{want} in {text}");
     }
+}
+
+#[test]
+fn npc_ideal_yaw_writes_and_readback() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"Think\", \"t\", function()
+            local n = setmetatable({ __id = 5, __vars = {}, __tables = {}, __class_meta = __glua_classes.NPC }, __glua_classes.Entity)
+            n:SetIdealYaw(90) n:UpdateYaw() n:SetIdealYawAndUpdate(-45) n:SetMoveYawLocked(true)
+            state.yaw, state.locked = n:GetIdealYaw(), n:IsMoveYawLocked() end)"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let mut s = (*snapshot()).clone();
+    if let Some(e) = s.entities.get_mut(&5) {
+        e.npc_ideal_yaw = Some(135.0);
+        e.npc_move_yaw_locked = true;
+    }
+    rt.actors_mut()[0]
+        .dispatch(&Arc::new(s), "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    let text = format!("{writes:?}");
+    for want in [
+        "NpcIdealYaw { ent: 5, yaw: Some(90.0), update: false }",
+        "NpcIdealYaw { ent: 5, yaw: None, update: true }",
+        "NpcIdealYaw { ent: 5, yaw: Some(-45.0), update: true }",
+        "NpcMoveYawLocked { ent: 5, on: true }",
+    ] {
+        assert!(text.contains(want), "{want} in {text}");
+    }
+    let (yaw, locked): (f64, bool) = rt.actors()[0]
+        .eval("return state.yaw, state.locked")
+        .unwrap();
+    assert_eq!((yaw, locked), (135.0, true));
 }

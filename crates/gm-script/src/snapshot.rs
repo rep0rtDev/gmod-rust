@@ -70,6 +70,8 @@ pub struct EntitySnap {
     pub npc_chase_reach: f32,
     /// NPC: script turn-rate override (deg/s), 0 = class rate.
     pub npc_max_yaw: f32,
+    pub npc_ideal_yaw: Option<f32>,
+    pub npc_move_yaw_locked: bool,
     /// NPC: players it still ignores as targets (`IgnoreEnemyUntil` / `RememberUnreachable`).
     pub npc_ignore: Vec<u32>,
     pub npc_move_speed: f32,
@@ -443,6 +445,8 @@ impl Snapshot {
                             npc_stuck: 0,
                             npc_chase_reach: 0.0,
                             npc_max_yaw: 0.0,
+                            npc_ideal_yaw: None,
+                            npc_move_yaw_locked: false,
                             npc_ignore: Vec::new(),
                             npc_move_speed: 0.0,
                             npc_next_goal: None,
@@ -575,6 +579,8 @@ impl Snapshot {
                             npc_stuck: 0,
                             npc_chase_reach: 0.0,
                             npc_max_yaw: 0.0,
+                            npc_ideal_yaw: None,
+                            npc_move_yaw_locked: false,
                             npc_ignore: Vec::new(),
                             npc_move_speed: 0.0,
                             npc_next_goal: None,
@@ -645,6 +651,8 @@ impl Snapshot {
                             npc_stuck: n.stuck,
                             npc_chase_reach: n.chase_reach,
                             npc_max_yaw: n.max_yaw.unwrap_or(0.0),
+                            npc_ideal_yaw: n.ideal_yaw,
+                            npc_move_yaw_locked: n.move_yaw_locked,
                             npc_ignore: n
                                 .ignore
                                 .iter()

@@ -776,6 +776,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `NPC:SetIdealYaw(yaw)` stores the yaw an idle NPC (no path, no chase, no enemy) turns to at
+  its yaw rate each think; `UpdateYaw()` turns one think's worth now, `SetIdealYawAndUpdate`
+  both; `GetIdealYaw` returns the stored one (else the derived enemy / path yaw).
+  `SetMoveYawLocked(on)` stops movement and arrival from turning the body (combat facing still
+  turns); `IsMoveYawLocked` reads it back. Both ride the NPC snapshot.
 - `NPC:SetMoveInterval(seconds)` fixes the NPC's think cadence (rounded to 1..=255 ticks; 0
   restores the measured near / far 7 / 13 ticks), `NPC:SetForceCrouch(on)` makes an armed NPC
   fire from a crouch (true) or never (false; nil returns to "in combat and standing still"),

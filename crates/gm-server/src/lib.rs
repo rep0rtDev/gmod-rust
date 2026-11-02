@@ -1654,6 +1654,10 @@ pub struct Npc {
     pub move_interval: Option<u8>,
     /// `NPC:SetForceCrouch`: fire from a crouch regardless of the combat state (None: derived).
     pub force_crouch: Option<bool>,
+    /// `NPC:SetIdealYaw`: the yaw an idle NPC (no path, no enemy) turns to at its yaw rate.
+    pub ideal_yaw: Option<f32>,
+    /// `NPC:SetMoveYawLocked`: movement no longer turns the body.
+    pub move_yaw_locked: bool,
 }
 
 /// Corners of a navigation path and the one the NPC is heading for.
@@ -9145,6 +9149,8 @@ impl<'w> Server<'w> {
             max_yaw: None,
             move_interval: None,
             force_crouch: None,
+            ideal_yaw: None,
+            move_yaw_locked: false,
             swing_until: 0,
             melee_hit_at: None,
             melee_hits_left: 0,
@@ -9545,6 +9551,39 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// `NPC:SetIdealYaw(yaw)` (None clears it); `update` turns one think's worth right now
+    /// (`UpdateYaw` / `SetIdealYawAndUpdate`). Live NPCs only.
+    pub fn npc_set_ideal_yaw(&mut self, id: u32, yaw: Option<f32>, update: bool) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) if n.dead_at.is_none() => {
+                if let Some(y) = yaw {
+                    n.ideal_yaw = y.is_finite().then(|| wrap_deg(y));
+                }
+                if update {
+                    if let Some(want) = n.ideal_yaw {
+                        let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
+                        let max_turn = n.max_yaw.unwrap_or(NPC_YAW_RATE) * dt;
+                        let err = wrap_deg(want - n.angles.y);
+                        n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `NPC:SetMoveYawLocked(on)`: movement stops turning the body.
+    pub fn npc_set_move_yaw_locked(&mut self, id: u32, on: bool) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) if n.dead_at.is_none() => {
+                n.move_yaw_locked = on;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// `NPC:SetMoveInterval(seconds)`: the NPC thinks every `seconds` (1..=255 ticks) instead of
     /// the measured near / far cadence; 0 restores it. Live NPCs only.
     pub fn npc_set_move_interval(&mut self, id: u32, seconds: f32) -> bool {
@@ -9692,6 +9731,13 @@ impl<'w> Server<'w> {
             });
             n.next_think = now + n.think_interval as u64;
             thought.push(id);
+            if n.goal.is_none() && n.chase.is_none() && n.target.is_none() {
+                if let Some(want) = n.ideal_yaw {
+                    let max_turn = n.max_yaw.unwrap_or(NPC_YAW_RATE) * dt;
+                    let err = wrap_deg(want - n.angles.y);
+                    n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
+                }
+            }
             if let Some(p) = n.chase {
                 match self.players.get(&p).map(|pl| pl.state.origin) {
                     Some(target) => {
@@ -9901,7 +9947,11 @@ impl<'w> Server<'w> {
                 n.pos = floor;
                 let max_turn = rate * dt;
                 let turn = wrap_deg(face.y.atan2(face.x).to_degrees() - n.angles.y);
-                let yaw = n.angles.y + turn.clamp(-max_turn, max_turn);
+                let yaw = if n.move_yaw_locked {
+                    n.angles.y
+                } else {
+                    n.angles.y + turn.clamp(-max_turn, max_turn)
+                };
                 n.angles.y = if yaw > 180.0 {
                     yaw - 360.0
                 } else if yaw <= -180.0 {
@@ -10536,7 +10586,9 @@ impl<'w> Server<'w> {
         n.next_goal = None;
         n.chase = None;
         n.move_speed = 0.0;
-        n.angles.y = dir.y.atan2(dir.x).to_degrees();
+        if !n.move_yaw_locked {
+            n.angles.y = dir.y.atan2(dir.x).to_degrees();
+        }
     }
 
     /// The poison on top of a poison headcrab's bite: NPC_POISON_DAMAGE, never below 1 hp.
@@ -10570,7 +10622,9 @@ impl<'w> Server<'w> {
         n.next_goal = None;
         n.chase = None;
         n.move_speed = 0.0;
-        n.angles.y = dir.y.atan2(dir.x).to_degrees();
+        if !n.move_yaw_locked {
+            n.angles.y = dir.y.atan2(dir.x).to_degrees();
+        }
     }
 
     /// Wound-up jumps leave the ground on their tick, aimed at where the target stands now.
@@ -10936,6 +10990,8 @@ impl<'w> Server<'w> {
                 max_yaw: None,
                 move_interval: None,
                 force_crouch: None,
+                ideal_yaw: None,
+                move_yaw_locked: false,
                 swing_until: 0,
                 melee_hit_at: None,
                 melee_hits_left: 0,

@@ -118,6 +118,15 @@ pub enum QueuedWrite {
         ent: u32,
         rate: f32,
     },
+    NpcIdealYaw {
+        ent: u32,
+        yaw: Option<f32>,
+        update: bool,
+    },
+    NpcMoveYawLocked {
+        ent: u32,
+        on: bool,
+    },
     NpcMoveInterval {
         ent: u32,
         seconds: f32,
@@ -1084,6 +1093,10 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("npc_stuck", e.npc_stuck)?;
     t.set("npc_chase_reach", e.npc_chase_reach)?;
     t.set("npc_max_yaw", e.npc_max_yaw)?;
+    if let Some(y) = e.npc_ideal_yaw {
+        t.set("npc_ideal_yaw", y)?;
+    }
+    t.set("npc_move_yaw_locked", e.npc_move_yaw_locked)?;
     t.set("npc_move_speed", e.npc_move_speed)?;
     if let Some(g) = e.npc_next_goal {
         t.set("npc_next_goal", vec3_table(lua, g)?)?;
@@ -1640,6 +1653,21 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     QueuedWrite::NpcMaxYaw {
                         ent,
                         rate: t.get::<Option<f32>>("rate")?.unwrap_or(0.0),
+                    }
+                }
+                "npc_ideal_yaw" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NpcIdealYaw {
+                        ent,
+                        yaw: t.get::<Option<f32>>("yaw")?,
+                        update: t.get::<Option<bool>>("update")?.unwrap_or(false),
+                    }
+                }
+                "npc_move_yaw_locked" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NpcMoveYawLocked {
+                        ent,
+                        on: t.get::<Option<bool>>("on")?.unwrap_or(true),
                     }
                 }
                 "npc_move_interval" => {
@@ -3652,6 +3680,10 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::NpcGoto { ent, pos, run } => server.npc_goto(*ent, *pos, *run),
         QueuedWrite::NpcChase { ent, player, run } => server.npc_chase(*ent, *player, *run),
         QueuedWrite::NpcMaxYaw { ent, rate } => server.npc_set_max_yaw(*ent, *rate),
+        QueuedWrite::NpcIdealYaw { ent, yaw, update } => {
+            server.npc_set_ideal_yaw(*ent, *yaw, *update)
+        }
+        QueuedWrite::NpcMoveYawLocked { ent, on } => server.npc_set_move_yaw_locked(*ent, *on),
         QueuedWrite::NpcMoveInterval { ent, seconds } => {
             server.npc_set_move_interval(*ent, *seconds)
         }
