@@ -1310,7 +1310,10 @@ impl ServerNet {
                     }
                     None => true,
                 };
-                let near_ent = |e: &EntityState| near(e.pos, clusters.get(&e.id).copied());
+                let near_ent = |e: &EntityState| {
+                    near(e.pos, clusters.get(&e.id).copied())
+                        && !server.transmit_prevented(e.id, slot.player)
+                };
                 let tick = self.tick;
                 let age =
                     |last: Option<&u32>| tick.saturating_sub(last.copied().unwrap_or(0)) as f32;

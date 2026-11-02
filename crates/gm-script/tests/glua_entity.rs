@@ -35,6 +35,7 @@ fn snapshot() -> Arc<Snapshot> {
             render_mode: 1,
             render_fx: 0,
             model_scale: 1.0,
+            transmit_block: Vec::new(),
             sequence: "idle".into(),
             cycle: 0.0,
             playback_rate: 1.0,
@@ -92,6 +93,7 @@ fn snapshot() -> Arc<Snapshot> {
             render_mode: 1,
             render_fx: 0,
             model_scale: 1.0,
+            transmit_block: Vec::new(),
             sequence: "idle".into(),
             cycle: 0.0,
             playback_rate: 1.0,
@@ -1031,4 +1033,29 @@ fn fov_and_model_scale_writes() {
     assert!(writes
         .iter()
         .any(|w| matches!(w, QueuedWrite::ModelScale { ent: 5, scale } if *scale == 2.0)));
+}
+
+#[test]
+fn prevent_transmit_and_trigger_writes() {
+    let (rt, writes) = run(
+        "Entity(5):SetPreventTransmit(Player(1), true); Entity(5):SetTrigger(true); Entity(5):UseTriggerBounds(true, 8)",
+    );
+    let seen: bool = rt.actors()[0]
+        .eval("return Entity(5):GetPreventTransmit(Player(1))")
+        .unwrap();
+    assert!(!seen);
+    assert!(writes.iter().any(|w| matches!(
+        w,
+        QueuedWrite::PreventTransmit {
+            ent: 5,
+            player: 1,
+            prevent: true
+        }
+    )));
+    assert!(writes
+        .iter()
+        .any(|w| matches!(w, QueuedWrite::SentTrigger { ent: 5, on: true })));
+    assert!(writes.iter().any(
+        |w| matches!(w, QueuedWrite::SentTriggerBounds { ent: 5, on: true, pad } if *pad == 8.0)
+    ));
 }

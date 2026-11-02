@@ -459,3 +459,49 @@ fn player_fov_and_model_scale_state() {
     assert!(!server.set_model_scale(999, 2.0));
     assert_eq!(server.model_scale(999), 1.0);
 }
+
+#[test]
+fn prevent_transmit_and_trigger_state() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let model = "models/props_c17/oildrum001.mdl";
+    server.register_model(model, gm_dedicated::model_info(&mount, model).unwrap());
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.register_entity(gm_server::ScriptedEntity {
+        class: "my_sent".into(),
+        model: model.into(),
+        print_name: None,
+        category: None,
+        think: None,
+        use_type: gm_server::UseType::Simple,
+    });
+    let ent = server
+        .script_spawn_entity(
+            1,
+            "my_sent",
+            start + Vec3::new(80.0, 0.0, 8.0),
+            Vec3::ZERO,
+            true,
+            None,
+        )
+        .unwrap();
+    assert!(server.set_prevent_transmit(ent, 1, true));
+    assert!(server.transmit_prevented(ent, 1));
+    assert!(!server.transmit_prevented(ent, 2));
+    assert_eq!(server.prevented_for(ent), vec![1]);
+    assert!(server.set_prevent_transmit(ent, 1, false));
+    assert!(server.prevented_for(ent).is_empty());
+    assert!(!server.set_prevent_transmit(999, 1, true));
+    assert!(server.sents[&ent].trigger);
+    assert!(server.set_sent_trigger(ent, false));
+    assert!(!server.sents[&ent].trigger);
+    assert!(server.set_sent_trigger_bounds(ent, true, 8.0));
+    assert_eq!(server.sents[&ent].trigger_pad, Some(8.0));
+    assert!(!server.set_sent_trigger(999, true));
+}

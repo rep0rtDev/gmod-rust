@@ -3726,6 +3726,10 @@ pub struct SentState {
     /// `ent.set_overlay_text`: the world tip the clients draw when aiming at it.
     pub overlay: String,
     pub next_think: u64,
+    /// `ENT:SetTrigger`: touch callbacks fire (on by default here; the game needs the call).
+    pub trigger: bool,
+    /// `ENT:UseTriggerBounds(true, padding)`: the player-touch boxes grow by this.
+    pub trigger_pad: Option<f32>,
     /// The tick of the last `think` (the `CurTime()` a `NextThink` in its callback is relative to).
     pub last_think: Option<u64>,
 }
@@ -4308,6 +4312,8 @@ pub struct Server<'w> {
     pub nextbots: BTreeMap<u32, NextBot>,
     /// `Entity:SetModelScale` per prop (render only, like the game: physics untouched).
     pub model_scales: BTreeMap<u32, f32>,
+    /// `Entity:SetPreventTransmit`: (entity, player) pairs the network layer must not send.
+    pub prevent_transmit: BTreeSet<(u32, u32)>,
     spawn_rng: u64,
     tick_count: u64,
     /// `mp_falldamage`: progressive fall damage instead of the flat 10.
@@ -4464,6 +4470,7 @@ impl<'w> Server<'w> {
             player_anims: BTreeMap::new(),
             nextbots: BTreeMap::new(),
             model_scales: BTreeMap::new(),
+            prevent_transmit: BTreeSet::new(),
             spawn_rng: 0x9E37_79B9_7F4A_7C15,
             tick_count: 0,
             fall_damage_progressive: false,
@@ -5218,6 +5225,8 @@ impl<'w> Server<'w> {
                 next_think: self.tick_count + SENT_FIRST_THINK_TICKS,
                 last_think: None,
                 overlay: String::new(),
+                trigger: true,
+                trigger_pad: None,
             },
         );
         self.sent_event(ent, "init", 0, 0, 0.0);
@@ -5225,6 +5234,11 @@ impl<'w> Server<'w> {
     }
 
     fn sent_event(&mut self, ent: u32, kind: &'static str, player: u32, other: u32, amount: f32) {
+        if matches!(kind, "start_touch" | "touch" | "end_touch")
+            && self.sents.get(&ent).is_some_and(|s| !s.trigger)
+        {
+            return;
+        }
         if let Some(s) = self.sents.get(&ent) {
             self.game_events.push(GameEvent::Sent {
                 ent,
@@ -6786,6 +6800,53 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// `Entity:SetPreventTransmit(ply, stop)` on a prop.
+    pub fn set_prevent_transmit(&mut self, ent: u32, player: u32, prevent: bool) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == ent) {
+            return false;
+        }
+        if prevent {
+            self.prevent_transmit.insert((ent, player));
+        } else {
+            self.prevent_transmit.remove(&(ent, player));
+        }
+        true
+    }
+
+    pub fn transmit_prevented(&self, ent: u32, player: u32) -> bool {
+        self.prevent_transmit.contains(&(ent, player))
+    }
+
+    /// The players `ent` is hidden from.
+    pub fn prevented_for(&self, ent: u32) -> Vec<u32> {
+        self.prevent_transmit
+            .range((ent, 0)..=(ent, u32::MAX))
+            .map(|(_, p)| *p)
+            .collect()
+    }
+
+    /// `ENT:SetTrigger(on)`: whether the scripted entity gets touch callbacks.
+    pub fn set_sent_trigger(&mut self, ent: u32, on: bool) -> bool {
+        match self.sents.get_mut(&ent) {
+            Some(s) => {
+                s.trigger = on;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `ENT:UseTriggerBounds(on, padding)`: grow the player-touch boxes by `padding`.
+    pub fn set_sent_trigger_bounds(&mut self, ent: u32, on: bool, pad: f32) -> bool {
+        match self.sents.get_mut(&ent) {
+            Some(s) => {
+                s.trigger_pad = on.then_some(pad.max(0.0));
+                true
+            }
+            None => false,
+        }
+    }
+
     /// `Entity:SetModelScale(scale)` on a prop; 1 clears the override.
     pub fn set_model_scale(&mut self, ent: u32, scale: f32) -> bool {
         if !self.sandbox.props().iter().any(|p| p.id == ent) {
@@ -8321,6 +8382,7 @@ impl<'w> Server<'w> {
             return false;
         }
         self.model_scales.remove(&ent);
+        self.prevent_transmit.retain(|(e, _)| *e != ent);
         if let Some(body) = self.bodies.remove(&ent) {
             self.physics.remove_body(body);
         }
@@ -14146,13 +14208,22 @@ impl<'w> Server<'w> {
                 continue;
             };
             let st = self.physics.state(*b);
-            let aabbs = info
+            let aabbs: Vec<(Vec3, Vec3)> = info
                 .hull_planes
                 .iter()
                 .zip(&info.hulls)
                 .map(|(pl, pts)| {
                     gm_physics::pickup::world_convex(pl, pts, st.rotation, st.position).1
                 })
+                .collect();
+            let pad = self
+                .sents
+                .get(&id)
+                .and_then(|s| s.trigger_pad)
+                .unwrap_or(0.0);
+            let aabbs: Vec<(Vec3, Vec3)> = aabbs
+                .into_iter()
+                .map(|(a, b): (Vec3, Vec3)| (a - Vec3::splat(pad), b + Vec3::splat(pad)))
                 .collect();
             boxes.push((id, aabbs));
         }

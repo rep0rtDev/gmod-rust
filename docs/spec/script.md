@@ -676,6 +676,14 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   scale per prop (`Server::model_scales`, `EntityState.model_scale`): the client scales the
   model about its origin, physics is untouched (as in the game); the `deltaTime` blend is not
   kept. Both were constant fakes before (90 and 1).
+- `Entity:SetPreventTransmit(ply, stop)` is a server set of (entity, player) pairs the network
+  layer skips for that client (`Server::prevent_transmit`, checked in the per-client interest
+  test next to the radius and PVS); `GetPreventTransmit(ply)` reads it from the server-realm
+  snapshot. `ENT:SetTrigger(on)` gates the touch callbacks of a scripted entity (on by default
+  here, where the game needs the call; off drops start_touch / touch / end_touch),
+  `UseTriggerBounds(on, padding)` grows its player-touch boxes by the padding (the prop-contact
+  path is unpadded). `SetSubMaterial` stays a stub: the client does not apply the networked
+  entity material yet.
 - NextBots: a scripted entity with `Base = "base_nextbot"` (or `Type = "nextbot"`) gets a server
   ground mover (`Server::nextbots`, `NextBot`): each tick the xy velocity ramps toward the
   `Approach` goal at the desired speed (accel / decel), gravity pulls an airborne bot, the hull

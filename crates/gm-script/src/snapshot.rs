@@ -33,6 +33,8 @@ pub struct EntitySnap {
     pub render_fx: u8,
     /// `Entity:GetModelScale`.
     pub model_scale: f32,
+    /// `Entity:GetPreventTransmit`: the players this entity is hidden from (server realm).
+    pub transmit_block: Vec<u32>,
     /// Sequence the entity plays (NPCs; props do not animate on the server).
     pub sequence: String,
     /// The server animator's cycle `[0, 1]`, playback rate, finished flag and gesture layer.
@@ -380,6 +382,7 @@ impl Snapshot {
                             render_mode: e.render_mode,
                             render_fx: e.render_fx,
                             model_scale: e.model_scale,
+                            transmit_block: Vec::new(),
                             sequence: e.sequence.clone(),
                             cycle: e.cycle,
                             playback_rate: e.playback_rate,
@@ -503,6 +506,7 @@ impl Snapshot {
                             render_mode: p.render_mode,
                             render_fx: p.render_fx,
                             model_scale: server.model_scale(p.id),
+                            transmit_block: server.prevented_for(p.id),
                             sequence: server
                                 .anim(p.id)
                                 .map_or(String::new(), |a| a.sequence.clone()),
@@ -574,6 +578,7 @@ impl Snapshot {
                             render_mode: 0,
                             render_fx: 0,
                             model_scale: 1.0,
+                            transmit_block: Vec::new(),
                             sequence: server
                                 .anim(id)
                                 .map_or(n.sequence.as_str(), |a| a.sequence.as_str())

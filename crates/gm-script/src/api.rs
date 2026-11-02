@@ -375,6 +375,23 @@ pub enum QueuedWrite {
         frags: Option<u32>,
         deaths: Option<u32>,
     },
+    /// `Entity:SetPreventTransmit(ply, stop)`.
+    PreventTransmit {
+        ent: u32,
+        player: u32,
+        prevent: bool,
+    },
+    /// `ENT:SetTrigger(on)`.
+    SentTrigger {
+        ent: u32,
+        on: bool,
+    },
+    /// `ENT:UseTriggerBounds(on, padding)`.
+    SentTriggerBounds {
+        ent: u32,
+        on: bool,
+        pad: f32,
+    },
     /// `Player:SetFOV(fov, time)`.
     PlayerFov {
         player: u32,
@@ -962,6 +979,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     }
     t.set("npc_caps", e.npc_caps)?;
     t.set("model_scale", e.model_scale)?;
+    t.set("transmit_block", e.transmit_block.clone())?;
     if let Some(nb) = &e.nextbot {
         let n = lua.create_table()?;
         n.set("desired_speed", nb.desired_speed)?;
@@ -1980,6 +1998,20 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     dt: f32_arg(&arg),
                 },
                 "npc.took_damage" => QueuedWrite::NpcTookDamage { ent },
+                "ent.prevent_transmit" => QueuedWrite::PreventTransmit {
+                    ent,
+                    player: tbl_field::<u32>(&arg, "player")?.unwrap_or(0),
+                    prevent: tbl_field::<bool>(&arg, "prevent")?.unwrap_or(true),
+                },
+                "ent.trigger" => QueuedWrite::SentTrigger {
+                    ent,
+                    on: matches!(arg, Value::Boolean(true)),
+                },
+                "ent.trigger_bounds" => QueuedWrite::SentTriggerBounds {
+                    ent,
+                    on: tbl_field::<bool>(&arg, "on")?.unwrap_or(true),
+                    pad: tbl_field::<f32>(&arg, "pad")?.unwrap_or(0.0),
+                },
                 "player.fov" => QueuedWrite::PlayerFov {
                     player: ent,
                     fov: tbl_field::<f32>(&arg, "fov")?.unwrap_or(0.0),
@@ -3426,6 +3458,15 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::EntityFrameAdvance { ent, dt } => server.frame_advance(*ent, *dt),
         QueuedWrite::NpcTookDamage { ent } => server.npc_mark_damaged(*ent),
         QueuedWrite::PlayerFov { player, fov, secs } => server.set_player_fov(*player, *fov, *secs),
+        QueuedWrite::PreventTransmit {
+            ent,
+            player,
+            prevent,
+        } => server.set_prevent_transmit(*ent, *player, *prevent),
+        QueuedWrite::SentTrigger { ent, on } => server.set_sent_trigger(*ent, *on),
+        QueuedWrite::SentTriggerBounds { ent, on, pad } => {
+            server.set_sent_trigger_bounds(*ent, *on, *pad)
+        }
         QueuedWrite::ModelScale { ent, scale } => server.set_model_scale(*ent, *scale),
         QueuedWrite::NextBot { ent, op } => server.nextbot_op(*ent, op.clone()),
         QueuedWrite::EntityPose { ent, name, value } => {
