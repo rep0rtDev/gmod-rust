@@ -27,6 +27,15 @@
 -- @hook WEAPON:Initialize
 -- @hook WEAPON:Equip
 -- @hook WEAPON:OwnerChanged
+-- @hook WEAPON:Ammo1
+-- @hook WEAPON:Ammo2
+-- @hook WEAPON:CanBePickedUpByNPCs
+-- @hook WEAPON:SetDeploySpeed
+-- @hook WEAPON:SetWeaponHoldType
+-- @hook WEAPON:ShootBullet
+-- @hook WEAPON:ShouldDropOnDie
+-- @hook WEAPON:TakePrimaryAmmo
+-- @hook WEAPON:TakeSecondaryAmmo
 -- Scripted entity and weapon tables in GLua form (ENT / SWEP, scripted_ents / weapons /
 -- baseclass) over the host's entity.register / weapon.register and their event callbacks.
 scripted_ents = {}

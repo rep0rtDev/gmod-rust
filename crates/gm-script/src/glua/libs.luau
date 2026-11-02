@@ -395,3 +395,156 @@ for _, n in ipairs({ "FinishMove", "GetHandsModel", "Move", "PostDrawViewModel",
 for _, n in ipairs({ "AddGamemodeToolMenuCategories", "AddGamemodeToolMenuTabs", "AddToolMenuCategories", "AddToolMenuTabs", "CanArmDupe", "CanDrive", "CanTool", "ContentSidebarSelection", "ContextMenuClosed", "ContextMenuCreated", "ContextMenuEnabled", "ContextMenuOpen", "ContextMenuOpened", "ContextMenuShowTool", "OnRevertSpawnlist", "OnSaveSpawnlist", "OpenToolbox", "PaintNotes", "PaintWorldTips", "PersistenceLoad", "PersistenceSave", "PlayerGiveSWEP", "PlayerSpawnEffect", "PlayerSpawnNPC", "PlayerSpawnObject", "PlayerSpawnProp", "PlayerSpawnRagdoll", "PlayerSpawnSENT", "PlayerSpawnSWEP", "PlayerSpawnVehicle", "PlayerSpawnedEffect", "PlayerSpawnedNPC", "PlayerSpawnedProp", "PlayerSpawnedRagdoll", "PlayerSpawnedSENT", "PlayerSpawnedSWEP", "PlayerSpawnedVehicle", "PopulateContent", "PopulateEntities", "PopulateNPCs", "PopulatePropMenu", "PopulateToolMenu", "PopulateVehicles", "PopulateWeapons", "PostReloadToolsMenu", "PreRegisterTOOL", "PreReloadToolsMenu", "SpawnMenuEnabled", "SpawnMenuOpen", "SpawnMenuOpened", "SpawnlistContentChanged", "SpawnlistOpenGenericMenu", "SpawnmenuIconMenuOpen" }) do stub("SANDBOX:" .. n) end
 for _, n in ipairs({ "BuildCPanel", "Deploy", "DrawHUD", "DrawToolScreen", "FreezeMovement", "Holster", "LeftClick", "Reload", "RightClick", "Think" }) do stub("TOOL:" .. n) end
 for _, n in ipairs({ "AcceptInput", "AdjustMouseSensitivity", "CalcView", "CalcViewModelView", "CustomAmmoDisplay", "DoDrawCrosshair", "DoImpactEffect", "DrawHUD", "DrawHUDBackground", "DrawWeaponSelection", "DrawWorldModel", "DrawWorldModelTranslucent", "EquipAmmo", "FireAnimationEvent", "FreezeMovement", "GetCapabilities", "GetNPCBulletSpread", "GetNPCBurstSettings", "GetNPCRestTimes", "GetTracerOrigin", "GetViewModelPosition", "HUDShouldDraw", "KeyValue", "NPCShoot_Primary", "NPCShoot_Secondary", "OnDrop", "OnReloaded", "OnRemove", "OnRestore", "PostDrawViewModel", "PreDrawViewModel", "PrintWeaponInfo", "RenderScreen", "ShootEffects", "ShouldDrawViewModel", "Tick", "TranslateActivity", "TranslateFOV", "ViewModelDrawn" }) do stub("WEAPON:" .. n) end
+
+
+-- Shared / server tail. Stack and CSoundPatch are own objects; cookie persists through the addon's
+-- file storage; properties / gamemode are registries; everything that needs sqlite, the engine's
+-- save system, materials, the AI graph or a debug backend is an acknowledged stub.
+local STACK = {}
+STACK.__index = STACK
+function STACK:Push(v) self.n = self.n + 1; self[self.n] = v end
+function STACK:Pop(n) local out = {}; for i = 1, n or 1 do if self.n == 0 then break end out[i] = self[self.n]; self[self.n] = nil; self.n = self.n - 1 end return unpack(out) end
+function STACK:PopMulti(n) local out = {}; for i = 1, n or 1 do if self.n == 0 then break end out[i] = self[self.n]; self[self.n] = nil; self.n = self.n - 1 end return out end
+function STACK:Size() return self.n end
+function STACK:Top() return self[self.n] end
+function util.Stack() return setmetatable({ n = 0 }, STACK) end
+__glua_classes.Stack = STACK
+
+local SP = {}
+SP.__index = SP
+function CreateSound(ent, name, filter) return setmetatable({ ent = ent, name = name, filter = filter, pitch = 100, volume = 1, level = 75, dsp = 0, playing = false }, SP) end
+function SP:Play() self.playing = true; local pos = IsValid(self.ent) and self.ent:GetPos() or Vector(); sound.Play(self.name, pos, self.level, self.pitch, self.volume) end
+function SP:PlayEx(vol, pitch) self.volume, self.pitch = vol or self.volume, pitch or self.pitch; self:Play() end
+function SP:IsPlaying() return self.playing end
+function SP:GetSoundName() return self.name end
+function SP:GetPitch() return self.pitch end
+function SP:GetVolume() return self.volume end
+function SP:GetSoundLevel() return self.level end
+function SP:GetDSP() return self.dsp end
+function SP:ChangePitch(p, dt) self.pitch = p end
+function SP:ChangeVolume(v, dt) self.volume = v end
+function SP:SetDSP(d) self.dsp = d end
+function SP:SetSoundLevel(l) self.level = l end
+__glua_classes.CSoundPatch = SP
+
+properties = properties or {}
+properties.List = properties.List or {}
+function properties.Add(name, data) data.InternalName = name; properties.List[string.lower(name)] = data end
+function properties.Remove(name) properties.List[string.lower(name)] = nil end
+function properties.CanBeTargeted(ent, ply) if not IsValid(ent) or ent:IsPlayer() then return false end if ent.CanProperty then return ent:CanProperty(ply, "") ~= false end return true end
+
+cookie = cookie or {}
+local cookies
+local function cookie_load() if not cookies then local raw = file.Read("cookies.json", "DATA"); cookies = raw and util.JSONToTable(raw) or {} end return cookies end
+local function cookie_save() file.Write("cookies.json", util.TableToJSON(cookies)) end
+function cookie.Set(k, v) cookie_load()[k] = tostring(v); cookie_save() end
+function cookie.GetString(k, default) local v = cookie_load()[k]; if v == nil then return default end return v end
+function cookie.GetNumber(k, default) local v = tonumber(cookie_load()[k]); if v == nil then return default end return v end
+function cookie.Delete(k) cookie_load()[k] = nil; cookie_save() end
+
+gamemode = gamemode or {}
+local gamemodes = {}
+function gamemode.Register(gm, name, base) gm.Name = gm.Name or name; gm.FolderName = name; gm.BaseClass = gamemodes[base]; if gm.BaseClass then setmetatable(gm, { __index = gm.BaseClass }) end gamemodes[name] = gm; return true end
+function gamemode.Get(name) return gamemodes[name] end
+function gamemode.Call(name, ...) local fn = GAMEMODE and GAMEMODE[name]; if fn then return fn(GAMEMODE, ...) end end
+gmod = gmod or {}
+function gmod.GetGamemode() return GAMEMODE end
+
+ai_schedule = ai_schedule or {}
+ai_task = ai_task or {}
+local SCHED, TASKT = {}, {}
+SCHED.__index, TASKT.__index = SCHED, TASKT
+function ai_schedule.New(name) return setmetatable({ Name = name, Tasks = {}, TaskCount = 0 }, SCHED) end
+function ai_task.New() return setmetatable({ TaskName = "", TaskData = nil, RunFunc = nil, StartFunc = nil }, TASKT) end
+function SCHED:AddTask(name, data) self.TaskCount = self.TaskCount + 1; local t = ai_task.New(); t.TaskName = name; t.TaskData = data; self.Tasks[self.TaskCount] = t end
+function SCHED:EngTask(name, data) self:AddTask(name, data) end
+function SCHED:NumTasks() return self.TaskCount end
+function SCHED:GetTask(i) return self.Tasks[i] end
+function TASKT:InitFunctionName(start, run, startData, runData) self.StartFunc, self.RunFunc, self.StartData, self.RunData = start, run, startData, runData end
+function TASKT:InitEngine(name, data) self.TaskName, self.TaskData = name, data end
+__glua_classes.Schedule = SCHED
+__glua_classes.Task = TASKT
+
+do
+    local D = __glua_classes.CTakeDamageInfo
+    if D then
+        function D:GetWeapon() return rawget(self, "__weapon") or NULL end
+        function D:SetWeapon(w) rawset(self, "__weapon", w) end
+    end
+    local RF = __glua_classes.CRecipientFilter
+    if RF and RF.AddPlayer then
+        function RF:AddPlayers(t) for _, p in ipairs(t) do self:AddPlayer(p) end end
+        function RF:RemovePlayers(t) for _, p in ipairs(t) do self:RemovePlayer(p) end end
+    end
+    if net then
+        net.Receivers = net.Receivers or {}
+        net.WriteVars = net.WriteVars or { [TYPE_NIL] = function() end, [TYPE_STRING] = net.WriteString, [TYPE_NUMBER] = net.WriteDouble, [TYPE_TABLE] = net.WriteTable, [TYPE_BOOL] = net.WriteBool, [TYPE_ENTITY] = net.WriteEntity, [TYPE_VECTOR] = net.WriteVector, [TYPE_ANGLE] = net.WriteAngle, [TYPE_COLOR] = net.WriteColor }
+        net.ReadVars = net.ReadVars or { [TYPE_NIL] = function() return nil end, [TYPE_STRING] = net.ReadString, [TYPE_NUMBER] = net.ReadDouble, [TYPE_TABLE] = net.ReadTable, [TYPE_BOOL] = net.ReadBool, [TYPE_ENTITY] = net.ReadEntity, [TYPE_VECTOR] = net.ReadVector, [TYPE_ANGLE] = net.ReadAngle, [TYPE_COLOR] = net.ReadColor }
+    end
+    local E = __glua_classes.Entity
+    if E and E.Use == nil then function E:Use(activator, caller, useType, value) return self:Input("Use", activator, caller, value) end end
+end
+__glua_classes["CSoundPatch"] = __glua_classes["CSoundPatch"] or {}
+for _, n in ipairs({ "FadeOut", "Stop" }) do if __glua_classes["CSoundPatch"][n] == nil then __glua_classes["CSoundPatch"][n] = stub("CSoundPatch:" .. n) end end
+__glua_classes["IMaterial"] = __glua_classes["IMaterial"] or {}
+for _, n in ipairs({ "GetColor", "GetFloat", "GetInt", "GetKeyValues", "GetMatrix", "GetName", "GetShader", "GetString", "GetTexture", "GetVector", "GetVector4D", "GetVectorLinear", "Height", "IsError", "Recompute", "SetFloat", "SetInt", "SetMatrix", "SetShader", "SetString", "SetTexture", "SetUndefined", "SetVector", "SetVector4D", "Width" }) do if __glua_classes["IMaterial"][n] == nil then __glua_classes["IMaterial"][n] = stub("IMaterial:" .. n) end end
+__glua_classes["IRestore"] = __glua_classes["IRestore"] or {}
+for _, n in ipairs({ "EndBlock", "ReadAngle", "ReadBool", "ReadEntity", "ReadFloat", "ReadInt", "ReadString", "ReadVector", "StartBlock" }) do if __glua_classes["IRestore"][n] == nil then __glua_classes["IRestore"][n] = stub("IRestore:" .. n) end end
+__glua_classes["ISave"] = __glua_classes["ISave"] or {}
+for _, n in ipairs({ "EndBlock", "StartBlock", "WriteAngle", "WriteBool", "WriteEntity", "WriteFloat", "WriteInt", "WriteString", "WriteVector" }) do if __glua_classes["ISave"][n] == nil then __glua_classes["ISave"][n] = stub("ISave:" .. n) end end
+__glua_classes["ITexture"] = __glua_classes["ITexture"] or {}
+for _, n in ipairs({ "Download", "GetColor", "GetMappingHeight", "GetMappingWidth", "GetName", "GetNumAnimationFrames", "Height", "IsError", "IsErrorTexture", "Width" }) do if __glua_classes["ITexture"][n] == nil then __glua_classes["ITexture"][n] = stub("ITexture:" .. n) end end
+__glua_classes["NextBot"] = __glua_classes["NextBot"] or {}
+for _, n in ipairs({ "BecomeRagdoll", "BodyMoveXY", "ClearLastKnownArea", "FindSpot", "FindSpots", "GetActivity", "GetFOV", "GetLastKnownArea", "GetMaxVisionRange", "GetRangeSquaredTo", "GetRangeTo", "GetSolidMask", "HandleStuck", "IsAbleToSee", "MoveToPos", "PlaySequenceAndWait", "SetFOV", "SetMaxVisionRange", "SetSolidMask", "StartActivity" }) do if __glua_classes["NextBot"][n] == nil then __glua_classes["NextBot"][n] = stub("NextBot:" .. n) end end
+__glua_classes["PhysCollide"] = __glua_classes["PhysCollide"] or {}
+for _, n in ipairs({ "Destroy", "IsValid", "TraceBox" }) do if __glua_classes["PhysCollide"][n] == nil then __glua_classes["PhysCollide"][n] = stub("PhysCollide:" .. n) end end
+__glua_classes["Schedule"] = __glua_classes["Schedule"] or {}
+for _, n in ipairs({ "AddTask", "AddTaskEx", "EngTask", "GetTask", "Init", "NumTasks" }) do if __glua_classes["Schedule"][n] == nil then __glua_classes["Schedule"][n] = stub("Schedule:" .. n) end end
+__glua_classes["SurfaceInfo"] = __glua_classes["SurfaceInfo"] or {}
+for _, n in ipairs({ "GetMaterial", "GetVertices", "IsNoDraw", "IsSky", "IsWater" }) do if __glua_classes["SurfaceInfo"][n] == nil then __glua_classes["SurfaceInfo"][n] = stub("SurfaceInfo:" .. n) end end
+__glua_classes["Task"] = __glua_classes["Task"] or {}
+for _, n in ipairs({ "Init", "InitEngine", "InitFunctionName", "IsEngineType", "IsFNameType", "Run", "Run_FName", "Start", "Start_FName" }) do if __glua_classes["Task"][n] == nil then __glua_classes["Task"][n] = stub("Task:" .. n) end end
+__glua_classes["WorkshopFileBase"] = __glua_classes["WorkshopFileBase"] or {}
+for _, n in ipairs({ "Fetch", "FetchSubscribed", "FillFileInfo", "Publish", "RetrieveUserName" }) do if __glua_classes["WorkshopFileBase"][n] == nil then __glua_classes["WorkshopFileBase"][n] = stub("WorkshopFileBase:" .. n) end end
+ai = ai or {}
+for _, n in ipairs({ "GetNodeCount", "GetScheduleID", "GetSquadLeader", "GetSquadMemberCount", "GetSquadMembers", "GetTaskID" }) do if ai[n] == nil then ai[n] = stub("ai." .. n) end end
+construct = construct or {}
+for _, n in ipairs({ "Magnet", "SetPhysProp" }) do if construct[n] == nil then construct[n] = stub("construct." .. n) end end
+coroutine = coroutine or {}
+for _, n in ipairs({ "wait" }) do if coroutine[n] == nil then coroutine[n] = stub("coroutine." .. n) end end
+debug = debug or {}
+for _, n in ipairs({ "Trace", "debug", "getfenv", "gethook", "getinfo", "getlocal", "getmetatable", "getregistry", "getupvalue", "setfenv", "sethook", "setlocal", "setmetatable", "setupvalue", "traceback", "upvalueid", "upvaluejoin" }) do if debug[n] == nil then debug[n] = stub("debug." .. n) end end
+debugoverlay = debugoverlay or {}
+for _, n in ipairs({ "Axis", "Box", "BoxAngles", "Cross", "EntityTextAtPosition", "Grid", "Line", "ScreenText", "Sphere", "SweptBox", "Text", "Triangle" }) do if debugoverlay[n] == nil then debugoverlay[n] = stub("debugoverlay." .. n) end end
+ents = ents or {}
+for _, n in ipairs({ "FindInPVS", "FireTargets" }) do if ents[n] == nil then ents[n] = stub("ents." .. n) end end
+gameevent = gameevent or {}
+for _, n in ipairs({ "Listen" }) do if gameevent[n] == nil then gameevent[n] = stub("gameevent." .. n) end end
+gmsave = gmsave or {}
+for _, n in ipairs({ "LoadMap", "PlayerLoad", "PlayerSave", "SaveMap", "ShouldSaveEntity" }) do if gmsave[n] == nil then gmsave[n] = stub("gmsave." .. n) end end
+hammer = hammer or {}
+for _, n in ipairs({ "SendCommand" }) do if hammer[n] == nil then hammer[n] = stub("hammer." .. n) end end
+http = http or {}
+for _, n in ipairs({ "Fetch", "Post" }) do if http[n] == nil then http[n] = stub("http." .. n) end end
+jit = jit or {}
+for _, n in ipairs({ "arch", "attach", "flush", "off", "on", "os", "status", "version", "version_num" }) do if jit[n] == nil then jit[n] = stub("jit." .. n) end end
+motionsensor = motionsensor or {}
+for _, n in ipairs({ "BuildSkeleton", "ChooseBuilderFromEntity", "ProcessAngle", "ProcessAnglesTable", "ProcessPositionTable" }) do if motionsensor[n] == nil then motionsensor[n] = stub("motionsensor." .. n) end end
+player = player or {}
+for _, n in ipairs({ "GetCountConnecting" }) do if player[n] == nil then player[n] = stub("player." .. n) end end
+properties = properties or {}
+for _, n in ipairs({ "OnScreenClick", "OpenEntityMenu" }) do if properties[n] == nil then properties[n] = stub("properties." .. n) end end
+resource = resource or {}
+for _, n in ipairs({ "AddFile", "AddSingleFile", "AddWorkshop" }) do if resource[n] == nil then resource[n] = stub("resource." .. n) end end
+saverestore = saverestore or {}
+for _, n in ipairs({ "AddRestoreHook", "AddSaveHook", "LoadEntity", "LoadGlobal", "PreRestore", "PreSave", "ReadTable", "ReadVar", "SaveEntity", "SaveGlobal", "WritableKeysInTable", "WriteTable", "WriteVar" }) do if saverestore[n] == nil then saverestore[n] = stub("saverestore." .. n) end end
+sound = sound or {}
+for _, n in ipairs({ "AddSoundOverrides", "GetLoudestSoundHint", "SetActorGender" }) do if sound[n] == nil then sound[n] = stub("sound." .. n) end end
+sql = sql or {}
+for _, n in ipairs({ "Begin", "Commit", "IndexExists", "LastError", "Query", "QueryRow", "QueryTyped", "QueryValue", "SQLStr", "TableExists" }) do if sql[n] == nil then sql[n] = stub("sql." .. n) end end
+steamworks = steamworks or {}
+for _, n in ipairs({ "FileInfo", "GetList" }) do if steamworks[n] == nil then steamworks[n] = stub("steamworks." .. n) end end
+usermessage = usermessage or {}
+for _, n in ipairs({ "GetTable", "Hook", "IncomingMessage" }) do if usermessage[n] == nil then usermessage[n] = stub("usermessage." .. n) end end
+widgets = widgets or {}
+for _, n in ipairs({ "PlayerTick" }) do if widgets[n] == nil then widgets[n] = stub("widgets." .. n) end end

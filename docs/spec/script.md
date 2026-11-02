@@ -730,6 +730,16 @@ SetModel / ClassChanged`) run through `player_manager` on the gamemode hooks. Ra
 are listed under `SANDBOX:` as well. Callbacks the server never calls (AI schedules / tasks,
 movement, animation, client effects) are acknowledged as stubs in the manifest, not claimed.
 
+Shared / server tail: `util.Stack` (own Stack object), `CreateSound` / `CSoundPatch` as a
+one-shot over `sound.Play` with local pitch / volume / level state (`Stop` / `FadeOut` need a
+sound handle and are stubs), `cookie` persisted through the addon's file storage
+(`cookies.json`), `properties` and `gamemode` registries, `ai_schedule` / `ai_task` as data
+objects, `CTakeDamageInfo:GetWeapon`, `CRecipientFilter:AddPlayers`, `net.WriteVars /
+ReadVars / Receivers`. `sql`, `saverestore`, `gmsave`, `IMaterial` / `ITexture`, `debug`, `jit`,
+`debugoverlay`, `ai` graph queries, `NextBot`, `http`, `resource`, `steamworks` are acknowledged
+stubs (no sqlite, save system, material system or debug backend on the own server). `os` and
+`package` stay absent: the sandbox test requires it.
+
 Tests: `glua_core` (vectors / angles / colours / math / string / table / bit / utf8 / hooks /
 timers against documented values), `glua_entity` (reads from a snapshot, setters as queued
 writes, `ents` / `player` queries, `ents.Create` binding, traces and JSON), `glua_server`

@@ -336,3 +336,33 @@ fn libs_team_list_numpad_duplicator() {
         .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn tail_libraries_stack_sound_cookie_gamemode() {
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local st = util.Stack()
+             st:Push(1) st:Push(2) st:Push(3)
+             local top, size = st:Top(), st:Size()
+             local popped = st:Pop()
+             local snd = CreateSound(Entity(5), 'ambient/wind1.wav')
+             snd:PlayEx(0.5, 90)
+             cookie.Set('seen', 3)
+             properties.Add('bonk', { MenuLabel = 'Bonk', Order = 1 })
+             gamemode.Register({ Name = 'Mine' }, 'mine', 'base')
+             local sched = ai_schedule.New('patrol')
+             sched:EngTask('TASK_WAIT', 2)
+             state.r = { top, size, popped, st:Size(), snd:IsPlaying() and 1 or 0, snd:GetPitch(), cookie.GetNumber('seen', 0),
+                 properties.List.bonk.Order, gamemode.Get('mine').Name == 'Mine' and 1 or 0, sched:NumTasks(), properties.CanBeTargeted(Entity(5), Player(1)) and 1 or 0 }
+         end)",
+    );
+    let snap = snapshot();
+    let a = &mut rt.actors_mut()[0];
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<f64> = a.eval("return state.r").unwrap();
+    assert_eq!(
+        r,
+        vec![3.0, 3.0, 3.0, 2.0, 1.0, 90.0, 3.0, 1.0, 1.0, 1.0, 1.0]
+    );
+}
