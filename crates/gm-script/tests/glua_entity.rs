@@ -1288,3 +1288,76 @@ fn util_trace_hull_without_a_world() {
     assert!(!hit, "no world in the test snapshot");
     assert_eq!((pos.as_str(), frac), ("0.000000 0.000000 -100.000000", 1.0));
 }
+
+#[test]
+fn nextbot_callbacks_follow_the_mover_state() {
+    let mut rt = Runtime::new();
+    rt.load(ActorSpec {
+        addon: "glua".into(),
+        name: "ent".into(),
+        priority: 0,
+        source: "local ENT = { Type = \"nextbot\", Base = \"base_nextbot\", Model = \"models/props_c17/oildrum001.mdl\" }
+            state.log = {}
+            local function log(s) state.log[#state.log + 1] = s end
+            function ENT:OnStuck() log(\"stuck\") end
+            function ENT:OnUnStuck() log(\"unstuck\") end
+            function ENT:OnLeaveGround(g) log(\"air\") end
+            function ENT:OnLandOnGround(g) log(\"land\") end
+            function ENT:OnInjured(d) log(\"hurt\" .. d:GetDamage()) end
+            function ENT:OnContact(e) log(\"touch\" .. e:EntIndex()) end
+            scripted_ents.Register(ENT, \"my_bot\")"
+            .into(),
+        config: ActorConfig {
+            cpu_budget: std::time::Duration::from_millis(50),
+            ..Default::default()
+        },
+    })
+    .unwrap();
+    let bot = |stuck: u8, on_ground: bool| {
+        let mut s = (*snapshot()).clone();
+        if let Some(e) = s.entities.get_mut(&5) {
+            e.nextbot = Some(gm_server::NextBot {
+                desired_speed: 100.0,
+                accel: 400.0,
+                decel: 400.0,
+                step_height: 18.0,
+                jump_height: 58.0,
+                max_yaw_rate: 180.0,
+                gravity: 600.0,
+                goal: None,
+                face: None,
+                velocity: glam::Vec3::ZERO,
+                on_ground,
+                stuck,
+            });
+        }
+        Arc::new(s)
+    };
+    let mut ev = Payload::default();
+    ev.ints.push(("entity", 5));
+    ev.ints.push(("player", 0));
+    ev.ints.push(("other", 9));
+    ev.floats.push(("amount", 12.0));
+    ev.strs.push(("class", "my_bot".into()));
+    let a = rt.actors_mut();
+    a[0].dispatch(&bot(0, true), "entity.init", &ev, 7).unwrap();
+    a[0].dispatch(&bot(0, true), "entity.think", &ev, 8)
+        .unwrap();
+    a[0].dispatch(&bot(3, true), "entity.think", &ev, 9)
+        .unwrap();
+    a[0].dispatch(&bot(3, false), "entity.think", &ev, 10)
+        .unwrap();
+    a[0].dispatch(&bot(0, true), "entity.think", &ev, 11)
+        .unwrap();
+    a[0].dispatch(&bot(0, true), "entity.damage", &ev, 12)
+        .unwrap();
+    a[0].dispatch(&bot(0, true), "entity.start_touch", &ev, 13)
+        .unwrap();
+    let log: Vec<String> = rt.actors()[0].eval("return state.log").unwrap();
+    assert_eq!(
+        log,
+        ["stuck", "air", "unstuck", "land", "hurt12", "touch9"]
+            .map(String::from)
+            .to_vec()
+    );
+}

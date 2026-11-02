@@ -759,6 +759,13 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   WEAPON NPC callbacks (`GetNPCBulletSpread`, `GetNPCBurstSettings`, `GetNPCRestTimes`,
   `NPCShoot_Primary/Secondary`) are not asked yet (no reply-style hook from the NPC fire path) and
   stay stubs.
+- NextBot callbacks over the mover state, compared think to think: `NEXTBOT:OnStuck` /
+  `OnUnStuck` (the mover's stuck counter crossing 3 ticks), `OnLandOnGround(ground)` /
+  `OnLeaveGround(ground)` (its on-ground flag), `OnNavAreaChanged(old, new)` (the area under the
+  bot); `OnInjured(dmginfo)` on every damage event (before `OnTakeDamage`), `OnContact(ent)` on
+  a touch start. `BehaveStart` / `BehaveUpdate` / `RunBehaviour` were already driven. `OnKilled`,
+  `OnOtherKilled`, `OnIgnite`, `OnEntitySight(Lost)`, `OnTraceAttack`, `BodyUpdate` stay stubs
+  (no death / ignite / sight events for scripted entities).
 - `NPC:RememberUnreachable(ent)` ignores the entity as a target for 5 s (the game's interval
   is not measured), `IsUnreachable(ent)` reads the still-ignored set from the snapshot,
   `MarkEnemyAsEluded()` drops the current enemy; all over the `IgnoreEnemyUntil` ignore list.
