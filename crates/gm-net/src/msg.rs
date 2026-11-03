@@ -90,6 +90,12 @@ pub enum Command {
     /// Asks which context-menu properties the prop under the cursor offers right now; the
     /// server answers with [`ServerMsg::Properties`].
     PropertyList,
+    /// `editentity`: one row of an editor entity's property sheet (`edit_fog`, ...) changed.
+    EditEntity {
+        ent: u32,
+        key: String,
+        value: String,
+    },
     /// A numpad key edge (`numpad.Activate` / `Deactivate`): drives the stools bound to it.
     Numpad {
         key: u8,
@@ -506,6 +512,11 @@ pub enum ServerMsg {
     EntityClasses {
         items: Vec<(u32, String)>,
     },
+    /// The editor entities' `Edit` vars (`edit_fog`, `edit_sky`, `edit_sun`) by entity id,
+    /// key / value, whole; sent reliably whenever one changes.
+    EntityEdits {
+        items: EditVars,
+    },
 }
 
 /// A world sound: script name, where, and a volume factor on the script's own.
@@ -573,7 +584,10 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 26;
+/// The editor entities' vars by entity id: key / value pairs (`ServerMsg::EntityEdits`).
+pub type EditVars = Vec<(u32, Vec<(String, String)>)>;
+
+pub const PROTOCOL: u16 = 27;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -865,6 +879,12 @@ impl ClientMsg {
                     }
                     Command::Kill => w.u8(15),
                     Command::PropertyList => w.u8(16),
+                    Command::EditEntity { ent, key, value } => {
+                        w.u8(21);
+                        w.u32(*ent);
+                        w.str(key);
+                        w.str(value);
+                    }
                     Command::Numpad { key, down } => {
                         w.u8(17);
                         w.u8(*key);
@@ -962,6 +982,11 @@ impl ClientMsg {
                     },
                     15 => Command::Kill,
                     16 => Command::PropertyList,
+                    21 => Command::EditEntity {
+                        ent: r.u32()?,
+                        key: r.str()?,
+                        value: r.str()?,
+                    },
                     17 => Command::Numpad {
                         key: r.u8()?,
                         down: r.bool()?,
@@ -1007,6 +1032,7 @@ impl ServerMsg {
                 | ServerMsg::ContentLists { .. }
                 | ServerMsg::EntityOverlays { .. }
                 | ServerMsg::EntityClasses { .. }
+                | ServerMsg::EntityEdits { .. }
         )
     }
 
@@ -1318,6 +1344,18 @@ impl ServerMsg {
                 for (ent, class) in items {
                     w.u32(*ent);
                     w.str(class);
+                }
+            }
+            ServerMsg::EntityEdits { items } => {
+                w.u8(23);
+                w.varint(items.len() as u64);
+                for (ent, vars) in items {
+                    w.u32(*ent);
+                    w.varint(vars.len() as u64);
+                    for (k, v) in vars {
+                        w.str(k);
+                        w.str(v);
+                    }
                 }
             }
             ServerMsg::WeaponDefs { version, defs } => {
@@ -1778,6 +1816,20 @@ impl ServerMsg {
                     items.push((r.u32()?, r.str()?));
                 }
                 ServerMsg::EntityClasses { items }
+            }
+            23 => {
+                let n = r.varint()?.min(4096) as usize;
+                let mut items = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let ent = r.u32()?;
+                    let k = r.varint()?.min(256) as usize;
+                    let mut vars = Vec::with_capacity(k);
+                    for _ in 0..k {
+                        vars.push((r.str()?, r.str()?));
+                    }
+                    items.push((ent, vars));
+                }
+                ServerMsg::EntityEdits { items }
             }
             18 => {
                 let version = r.u32()?;

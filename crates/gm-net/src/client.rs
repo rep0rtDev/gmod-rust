@@ -40,6 +40,8 @@ pub struct ClientWorld {
     pub overlays: Vec<(u32, String)>,
     /// Scripted / sandbox entity classes by entity id (`ServerMsg::EntityClasses`), whole.
     pub classes: Vec<(u32, String)>,
+    /// The editor entities' vars by entity id (`ServerMsg::EntityEdits`), whole.
+    pub edits: crate::msg::EditVars,
 }
 
 /// The settings a click of `tool` carries: the schema's defaults overlaid with the player's
@@ -602,6 +604,7 @@ impl ClientNet {
                             content_entities: std::mem::take(&mut self.world.content_entities),
                             overlays: std::mem::take(&mut self.world.overlays),
                             classes: std::mem::take(&mut self.world.classes),
+                            edits: std::mem::take(&mut self.world.edits),
                         };
                         self.server_tick = tick;
                     }
@@ -624,6 +627,7 @@ impl ClientNet {
                     }
                     ServerMsg::EntityOverlays { items, .. } => self.world.overlays = items,
                     ServerMsg::EntityClasses { items } => self.world.classes = items,
+                    ServerMsg::EntityEdits { items } => self.world.edits = items,
                     ServerMsg::Properties { ent, names } => {
                         self.properties = Some((ent, names));
                     }

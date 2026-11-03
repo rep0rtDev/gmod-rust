@@ -48,6 +48,7 @@ pub struct ClientSlot {
     content_lists_sent: u32,
     overlays_sent: u32,
     classes_sent: Option<Vec<(u32, String)>>,
+    edits_sent: Option<crate::msg::EditVars>,
     tool_schemas_sent: u32,
     /// The face entity whose faceposer sliders this client has (None: the plain panel).
     face_schema_sent: Option<u32>,
@@ -272,6 +273,7 @@ impl ServerNet {
                         content_lists_sent: u32::MAX,
                         overlays_sent: u32::MAX,
                         classes_sent: None,
+                        edits_sent: None,
                         tool_schemas_sent: 0,
                         face_schema_sent: None,
                         hand_schema_sent: None,
@@ -876,6 +878,9 @@ impl ServerNet {
                     Command::Property { name } => {
                         server.apply_property(slot.player, &name);
                     }
+                    Command::EditEntity { ent, key, value } => {
+                        server.edit_entity(slot.player, ent, &key, &value);
+                    }
                     Command::PropertyList => {
                         let ent = server
                             .tool_hit(slot.player)
@@ -1398,6 +1403,16 @@ impl ServerNet {
                 .write(&mut w);
                 slot.channel.send_reliable(w.buf);
                 slot.classes_sent = Some(classes);
+            }
+            let edits = server.entity_edits();
+            if slot.edits_sent.as_ref() != Some(&edits) {
+                let mut w = Writer::default();
+                ServerMsg::EntityEdits {
+                    items: edits.clone(),
+                }
+                .write(&mut w);
+                slot.channel.send_reliable(w.buf);
+                slot.edits_sent = Some(edits);
             }
             if slot.weapon_defs_sent != server.scripted_weapons_version {
                 let mut w = Writer::default();

@@ -606,6 +606,9 @@ pub struct WorldRenderer {
     /// The map's `env_fog_controller` fog, and the `sky_camera`'s for the 3D skybox.
     pub fog: Option<Fog>,
     pub sky_fog: Option<Fog>,
+    /// An `edit_fog` entity's fog (its `SetupWorldFog` hook returns true): replaces the map's
+    /// and the water's while it exists.
+    pub fog_override: Option<Fog>,
     pub water_volumes: Vec<WaterVolume>,
     /// `func_reflective_glass` faces (LightmappedReflective): plane and bounds.
     mirrors: Vec<Mirror>,
@@ -2622,6 +2625,7 @@ impl WorldRenderer {
             sky_camera,
             fog,
             sky_fog,
+            fog_override: None,
             water_volumes,
             mirrors,
             stats,
@@ -2848,13 +2852,15 @@ impl WorldRenderer {
         if let Some(zs) = self.reflect.lock().unwrap().clip {
             p.z = 2.0 * zs - p.z;
         }
-        self.water_volumes
+        let base = self
+            .water_volumes
             .iter()
             .find(|w| {
                 p.z < w.surface_z && p.cmpge(w.min).all() && p.cmple(w.max).all() && w.fog.is_some()
             })
             .and_then(|w| w.fog)
-            .or(self.fog)
+            .or(self.fog);
+        self.fog_override.or(base)
     }
 
     fn camera_uniform(

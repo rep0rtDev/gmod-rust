@@ -1085,6 +1085,8 @@ struct App {
     dmg: [f32; 4],
     dmg_at: Instant,
     context: Option<ContextMenu>,
+    /// The editor entity whose "Edit Properties" sheet is open in the context menu.
+    edit_sheet: Option<u32>,
     /// Scripted weapons as last seen (`ClientWorld::weapon_defs`) and their viewmodel / world
     /// model entries after the stock table (leaked once per change: the table is `'static`).
     scripted_defs: Vec<gm_server::ScriptedWeapon>,
@@ -1810,10 +1812,40 @@ impl App {
     /// The tool's ControlPanel: a scripted stool's schema from the server, else the built-in
     /// stool's `BuildCPanel` controls.
     fn panel_schema(&self) -> Option<Vec<gm_server::ToolSetting>> {
+        if let Some(ent) = self.edit_sheet.filter(|_| self.menu.is_none()) {
+            return self.edit_class(ent).and_then(gm_server::editor_schema);
+        }
         Some(
             self.tool_schema(&self.tool)
                 .map_or_else(|| gm_server::builtin_tool_schema(&self.tool), <[_]>::to_vec),
         )
+    }
+
+    /// The class of entity `ent` as the server told it (`EntityClasses`).
+    fn edit_class(&self, ent: u32) -> Option<&str> {
+        self.sim
+            .client
+            .world
+            .classes
+            .iter()
+            .find(|(id, _)| *id == ent)
+            .map(|(_, c)| c.as_str())
+    }
+
+    /// The editor entity's vars (`EntityEdits`), key -> value.
+    fn edit_values(&self, ent: u32) -> BTreeMap<String, String> {
+        edit_values_of(&self.sim.client.world.edits, ent)
+    }
+
+    /// The panel row's current value: the open editor sheet's var, else the tool's setting.
+    fn panel_value(&self, name: &str) -> Option<String> {
+        if let Some(ent) = self.edit_sheet.filter(|_| self.menu.is_none()) {
+            return self.edit_values(ent).get(name).cloned();
+        }
+        self.tool_settings
+            .get(&self.tool)
+            .and_then(|m| m.get(name))
+            .cloned()
     }
 
     /// The panel row under the cursor and the cursor's 0..1 position across its control.
@@ -1843,10 +1875,7 @@ impl App {
         };
         self.panel_text = None;
         let cur = self
-            .tool_settings
-            .get(&self.tool)
-            .and_then(|m| m.get(&s.name))
-            .cloned()
+            .panel_value(&s.name)
             .unwrap_or_else(|| s.default.clone());
         let value = match s.kind {
             gm_server::ToolSettingKind::Number => {
@@ -2094,6 +2123,28 @@ impl App {
     }
 
     fn set_tool_setting(&mut self, key: &str, value: String) {
+        // an open "Edit Properties" sheet: the row is the editor entity's var, not a convar
+        if let Some(ent) = self.edit_sheet.filter(|_| self.menu.is_none()) {
+            self.sim.client.command(Command::EditEntity {
+                ent,
+                key: key.to_string(),
+                value: value.clone(),
+            });
+            if let Some((_, vars)) = self
+                .sim
+                .client
+                .world
+                .edits
+                .iter_mut()
+                .find(|(id, _)| *id == ent)
+            {
+                match vars.iter_mut().find(|(k, _)| k == key) {
+                    Some(kv) => kv.1 = value,
+                    None => vars.push((key.to_string(), value)),
+                }
+            }
+            return;
+        }
         self.console
             .log(format!("tool {}: {key} = {value}", self.tool));
         self.tool_settings
@@ -3768,6 +3819,7 @@ impl App {
                 }
                 "+menu_context" if self.context_held => {
                     self.context_held = false;
+                    self.edit_sheet = None;
                     self.context = None;
                     if self.menu.is_none() {
                         self.set_grab(true);
@@ -5188,6 +5240,9 @@ impl App {
             clear_depth: false,
             alpha: 1.0,
         };
+        // an edit_fog entity's SetupWorldFog hook: the newest one's fog replaces the map's
+        g.world.fog_override =
+            edit_fog_of(&self.sim.client.world.classes, &self.sim.client.world.edits);
         // the world draws the entity models itself, between its opaque and translucent
         // surfaces (and into the water reflection)
         g.world.draw(
@@ -5484,6 +5539,12 @@ impl App {
         }
         if self.context_held || self.context.is_some() {
             // contextmenu.lua: the tool's ControlPanel moves into a 320 wide canvas bottom-right
+            // (an editor entity's "Edit Properties" sheet takes the canvas while it is open)
+            let title: &str = if self.edit_sheet.is_some() {
+                "Edit Properties"
+            } else {
+                &self.tool
+            };
             let font = g.ui.font_metrics(Some(derma::FONT));
             let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
             let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
@@ -5498,13 +5559,19 @@ impl App {
                 lists: &self.spawnlists,
                 content: [&self.content[0], &self.content[1]],
                 results: &self.search_results,
-                tool: &self.tool,
+                tool: title,
                 has_image: &has_image,
             };
             let mut layout = derma::Layout::default();
             if let (Some(schema), true) = (self.panel_schema(), self.menu.is_none()) {
                 let rect = derma::context_canvas(&mut layout, &dctx, &schema);
-                let set = self.tool_settings.get(&self.tool);
+                let sheet_vals = self
+                    .edit_sheet
+                    .filter(|_| self.menu.is_none())
+                    .map(|ent| self.edit_values(ent));
+                let set = sheet_vals
+                    .as_ref()
+                    .or_else(|| self.tool_settings.get(&self.tool));
                 let value_of = |name: &str| {
                     set.and_then(|m| m.get(name)).cloned().unwrap_or_else(|| {
                         schema
@@ -6963,7 +7030,12 @@ impl ApplicationHandler for App {
                                     return;
                                 }
                                 if let Some(name) = self.context_row() {
-                                    self.sim.client.command(Command::Property { name });
+                                    if name == "editentity" {
+                                        self.edit_sheet =
+                                            self.sim.client.properties.as_ref().map(|p| p.0);
+                                    } else {
+                                        self.sim.client.command(Command::Property { name });
+                                    }
                                     self.context = None;
                                 }
                             }
@@ -7332,6 +7404,7 @@ fn main() -> Result<()> {
         search_results: derma::SearchResults::default(),
         cursor: (0.0, 0.0),
         panel_drag: None,
+        edit_sheet: None,
         player_skin: 0,
         player_body: String::new(),
         panel_text: None,
@@ -8364,6 +8437,40 @@ fn fx_vec_rand(s: &mut u32) -> Vec3 {
         fx_range(s, -1.0, 1.0),
         fx_range(s, -1.0, 1.0),
     )
+}
+
+/// The vars of editor entity `ent` out of the `EntityEdits` list.
+fn edit_values_of(edits: &[(u32, Vec<(String, String)>)], ent: u32) -> BTreeMap<String, String> {
+    edits
+        .iter()
+        .find(|(id, _)| *id == ent)
+        .map(|(_, vars)| vars.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// edit_fog.lua `SetupWorldFog`: linear fog from the newest `edit_fog` entity's vars
+/// (`fogstart`, `fogend`, `density`, `fogcolor_r/g/b` 0..255), none without one.
+fn edit_fog_of(
+    classes: &[(u32, String)],
+    edits: &[(u32, Vec<(String, String)>)],
+) -> Option<gm_render::world::Fog> {
+    let ent = classes
+        .iter()
+        .filter(|(_, c)| c == "edit_fog")
+        .map(|(id, _)| *id)
+        .max()?;
+    let vars = edit_values_of(edits, ent);
+    let num = |k: &str, d: f32| vars.get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
+    Some(gm_render::world::Fog {
+        color: [
+            num("fogcolor_r", 153.0) / 255.0,
+            num("fogcolor_g", 179.0) / 255.0,
+            num("fogcolor_b", 204.0) / 255.0,
+        ],
+        start: num("fogstart", 0.0),
+        end: num("fogend", 10000.0),
+        max_density: num("density", 0.9),
+    })
 }
 
 #[cfg(test)]

@@ -1886,6 +1886,88 @@ pub const SANDBOX_SPAWNABLE_ENTITIES: [(&str, &str, f32, &str); 4] = [
         "#spawnmenu.category.editors",
     ),
 ];
+
+/// The `Edit` network vars of an editor entity (`SetupDataTables`, DProperties' sheet) as the
+/// tool-panel rows the client shows under "Edit Properties": floats with their ranges,
+/// `VectorColor`s as r/g/b channels 0..255 (the g and b defaults ride in the option values).
+/// `edit_sky` is `env_skypaint`'s table (the star texture is left out).
+pub fn editor_schema(class: &str) -> Option<Vec<ToolSetting>> {
+    let num = |name: &str, v: f32, min: f32, max: f32| ToolSetting {
+        name: name.into(),
+        kind: ToolSettingKind::Number,
+        min,
+        max,
+        default: format!("{v}"),
+        label: String::new(),
+        options: Vec::new(),
+    };
+    let flag = |name: &str, v: bool| ToolSetting {
+        name: name.into(),
+        kind: ToolSettingKind::Bool,
+        min: 0.0,
+        max: 1.0,
+        default: if v { "1" } else { "0" }.into(),
+        label: String::new(),
+        options: Vec::new(),
+    };
+    let color = |name: &str, c: [f32; 3]| ToolSetting {
+        name: format!("{name}_r"),
+        kind: ToolSettingKind::Color,
+        min: 0.0,
+        max: 255.0,
+        default: format!("{:.0}", c[0] * 255.0),
+        label: String::new(),
+        options: vec![
+            (format!("{name}_g"), format!("{:.0}", c[1] * 255.0)),
+            (format!("{name}_b"), format!("{:.0}", c[2] * 255.0)),
+        ],
+    };
+    Some(match class {
+        "edit_fog" => vec![
+            num("fogstart", 0.0, 0.0, 1_000_000.0),
+            num("fogend", 10000.0, 0.0, 1_000_000.0),
+            num("density", 0.9, 0.0, 1.0),
+            color("fogcolor", [0.6, 0.7, 0.8]),
+        ],
+        "edit_sun" => vec![
+            num("sunsize", 20.0, 0.0, 100.0),
+            num("overlaysize", 20.0, 0.0, 200.0),
+            color("suncolor", [1.0; 3]),
+            color("overlaycolor", [1.0; 3]),
+        ],
+        "edit_sky" => vec![
+            color("topcolor", [0.2, 0.5, 1.0]),
+            color("bottomcolor", [0.8, 1.0, 1.0]),
+            num("fadebias", 1.0, 0.0, 1.0),
+            num("hdrscale", 0.66, 0.0, 1.0),
+            num("sunsize", 2.0, 0.0, 10.0),
+            color("suncolor", [0.2, 0.1, 0.0]),
+            num("duskscale", 1.0, 0.0, 1.0),
+            num("duskintensity", 1.0, 0.0, 10.0),
+            color("duskcolor", [1.0, 0.2, 0.0]),
+            flag("drawstars", true),
+            num("starlayers", 1.0, 1.0, 3.0),
+            num("starscale", 0.5, 0.0, 5.0),
+            num("starfade", 1.5, 0.0, 5.0),
+            num("starspeed", 0.01, 0.0, 2.0),
+        ],
+        _ => return None,
+    })
+}
+
+/// Every key of an editor schema at its default (colour channels included).
+pub fn editor_defaults(schema: &[ToolSetting]) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for s in schema {
+        out.insert(s.name.clone(), s.default.clone());
+        if s.kind == ToolSettingKind::Color {
+            for (name, v) in &s.options {
+                out.insert(name.clone(), v.clone());
+            }
+        }
+    }
+    out
+}
 /// `ADD_WEAPON` of `lua/autorun/game_hl2.lua`: the HL2 weapons the game's Weapons tab offers.
 pub const HL2_SPAWNABLE_WEAPONS: [&str; 13] = [
     "weapon_physcannon",
@@ -4934,6 +5016,8 @@ pub struct Server<'w> {
     pub hl2_items: BTreeMap<u32, String>,
     /// The `SANDBOX_SPAWNABLE_ENTITIES` spawned (`sent_ball`, the editors) by prop id.
     pub sandbox_sents: BTreeMap<u32, String>,
+    /// The editor entities' `Edit` vars (`editor_schema`) by prop id, key -> value.
+    pub editor_vars: BTreeMap<u32, BTreeMap<String, String>>,
     /// `item_healthcharger` / `item_suitcharger` units by entity id.
     pub chargers: BTreeMap<u32, Charger>,
     pub request_hook: Option<RequestHook>,
@@ -5134,6 +5218,7 @@ impl<'w> Server<'w> {
             game_events: Vec::new(),
             hl2_items: BTreeMap::new(),
             sandbox_sents: BTreeMap::new(),
+            editor_vars: BTreeMap::new(),
             chargers: BTreeMap::new(),
             request_hook: None,
             physgun_params: PhysgunParams::default(),
@@ -8238,6 +8323,63 @@ impl<'w> Server<'w> {
         self.emit_sound(ent, "garrysmod/balloon_pop_cute.wav".into(), volume);
     }
 
+    /// The editor entities' vars by id (`ServerMsg::EntityEdits`), keys sorted.
+    pub fn entity_edits(&self) -> Vec<(u32, Vec<(String, String)>)> {
+        self.editor_vars
+            .iter()
+            .map(|(id, vars)| {
+                (
+                    *id,
+                    vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// `editentity`: one row of an editor entity's property sheet changed; the value is
+    /// clamped to the schema (numbers to their range, colour channels to 0..255, flags to
+    /// 0 / 1) and reaches every client with the next `EntityEdits`.
+    pub fn edit_entity(&mut self, player: u32, ent: u32, key: &str, value: &str) -> bool {
+        if !self.players.get(&player).is_some_and(|p| p.alive) {
+            return false;
+        }
+        let Some(schema) = self.sandbox_sents.get(&ent).and_then(|c| editor_schema(c)) else {
+            return false;
+        };
+        let Some(setting) = schema
+            .iter()
+            .find(|s| s.name == key || s.options.iter().any(|(n, _)| n == key))
+        else {
+            return false;
+        };
+        let value = match setting.kind {
+            ToolSettingKind::Number if setting.name == key => {
+                let Ok(v) = value.trim().parse::<f32>() else {
+                    return false;
+                };
+                format!("{}", v.clamp(setting.min, setting.max))
+            }
+            ToolSettingKind::Bool => if matches!(value.trim(), "1" | "true" | "on") {
+                "1"
+            } else {
+                "0"
+            }
+            .to_string(),
+            ToolSettingKind::Color => {
+                let Ok(v) = value.trim().parse::<f32>() else {
+                    return false;
+                };
+                format!("{:.0}", v.clamp(0.0, 255.0))
+            }
+            _ => return false,
+        };
+        let Some(vars) = self.editor_vars.get_mut(&ent) else {
+            return false;
+        };
+        vars.insert(key.to_string(), value);
+        true
+    }
+
     /// Every scripted entity with a non-empty overlay text, by id.
     pub fn overlays(&self) -> Vec<(u32, String)> {
         let mut out: Vec<(u32, String)> = self
@@ -8338,6 +8480,9 @@ impl<'w> Server<'w> {
         {
             let id = self.spawn_hl2_item(player, class, model, *offset)?;
             self.sandbox_sents.insert(id, class.to_string());
+            if let Some(schema) = editor_schema(class) {
+                self.editor_vars.insert(id, editor_defaults(&schema));
+            }
             if class == "sent_ball" {
                 // sent_ball.lua SpawnFunction: a random 16..48 size and colour
                 let size = 16.0 + self.next_random() * 32.0;
@@ -14448,6 +14593,14 @@ impl<'w> Server<'w> {
             return Vec::new();
         };
         let mut out = Vec::new();
+        // base_edit `ENT.Editable`: the property sheet of its `Edit` vars
+        if self
+            .sandbox_sents
+            .get(&ent)
+            .is_some_and(|c| editor_schema(c).is_some())
+        {
+            out.push("editentity".into());
+        }
         if let Some(info) = self.models.get(&prop.model) {
             for (part, &n) in info.body_groups.iter().enumerate() {
                 if n > 1 {
@@ -14495,6 +14648,10 @@ impl<'w> Server<'w> {
         };
         let offered = match name {
             "remove" | "gravity" => true,
+            "editentity" => self
+                .sandbox_sents
+                .get(&ent)
+                .is_some_and(|c| editor_schema(c).is_some()),
             "drive" => self.drive_offered(player, ent),
             "collision_off" => prop.collide,
             "collision_on" => !prop.collide,
@@ -14535,6 +14692,8 @@ impl<'w> Server<'w> {
             "remove" => {
                 self.remove_prop(ent);
             }
+            // the sheet is the client's; its rows come back as `edit_entity`
+            "editentity" => {}
             "drive" => {
                 self.sandbox.set_frozen(ent, true);
                 self.sync_physics();
@@ -14955,6 +15114,7 @@ impl<'w> Server<'w> {
     pub fn remove_prop(&mut self, id: u32) -> bool {
         self.hl2_items.remove(&id);
         self.sandbox_sents.remove(&id);
+        self.editor_vars.remove(&id);
         self.chargers.remove(&id);
         if !self.sandbox.props().iter().any(|p| p.id == id) {
             return false;
