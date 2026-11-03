@@ -19,6 +19,8 @@ pub struct ClientWorld {
     pub players: Vec<PlayerSnap>,
     /// The constraints' ropes to draw.
     pub ropes: Vec<crate::msg::RopeSnap>,
+    /// The thrusters that are on, with their effects.
+    pub thrusters: Vec<crate::msg::ThrusterSnap>,
     pub entities: BTreeMap<u32, EntityState>,
     pub own: OwnSandbox,
     pub last_cmd_tick: u32,
@@ -535,6 +537,7 @@ impl ClientNet {
                         players,
                         entities,
                         ropes,
+                        thrusters,
                         removed,
                         own,
                         local,
@@ -582,6 +585,7 @@ impl ClientNet {
                             players,
                             entities: world,
                             ropes,
+                            thrusters,
                             own,
                             last_cmd_tick,
                             local,

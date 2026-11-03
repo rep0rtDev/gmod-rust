@@ -14600,6 +14600,29 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// Thrusters that are on with a visible effect: `(ent, GetOffset() in model space, effect)`
+    /// for the client's `ThrusterEffects` draw.
+    pub fn thruster_visuals(&self) -> Vec<(u32, Vec3, String)> {
+        self.sandbox
+            .devices()
+            .iter()
+            .filter_map(|(id, d)| match d {
+                gm_sandbox::Device::Thruster {
+                    on: true,
+                    effect,
+                    top_z,
+                    bottom_z,
+                    rear,
+                    ..
+                } if !effect.is_empty() && effect != "none" => {
+                    let z = if *rear { *bottom_z } else { *top_z };
+                    Some((*id, Vec3::new(0.0, 0.0, z), effect.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     fn item_tick(&mut self) {
         if self.hl2_items.is_empty() {
             return;

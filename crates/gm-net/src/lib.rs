@@ -143,6 +143,7 @@ mod tests {
                 maxs: glam::Vec3::ZERO,
             }],
             ropes: Vec::new(),
+            thrusters: Vec::new(),
             removed: vec![1],
             own: OwnSandbox {
                 count: 1,

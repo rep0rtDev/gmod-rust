@@ -3511,6 +3511,46 @@ impl WorldRenderer {
         (verts, idx)
     }
 
+    /// `render.StartBeam/AddBeam/EndBeam`: a camera-facing strip through `points`, each with
+    /// its own width, colour (alpha premultiplied for the additive pass) and texture v.
+    pub fn beam_strip_var(
+        &self,
+        points: &[(Vec3, f32, [f32; 4], f32)],
+        eye: Vec3,
+    ) -> (Vec<Vertex>, Vec<u32>) {
+        let mut verts = Vec::with_capacity(points.len() * 2);
+        let mut idx = Vec::new();
+        for (i, (p, width, rgba, v)) in points.iter().enumerate() {
+            let dir = if i + 1 < points.len() {
+                points[i + 1].0 - *p
+            } else if i > 0 {
+                *p - points[i - 1].0
+            } else {
+                Vec3::X
+            };
+            let to_eye = (eye - *p).normalize_or_zero();
+            let side = dir.cross(to_eye).normalize_or_zero() * (width * 0.5);
+            let base = verts.len() as u32;
+            let color = [rgba[0] * rgba[3], rgba[1] * rgba[3], rgba[2] * rgba[3]];
+            for (s, across) in [(-1.0f32, 0.0f32), (1.0, 1.0)] {
+                verts.push(Vertex {
+                    position: (*p + side * s).to_array(),
+                    uv: [across, *v],
+                    lm_uv: self.white_uv,
+                    color,
+                    alpha: 0.0,
+                    lm_page: 0.0,
+                    normal: [0.0; 3],
+                    cube: -1.0,
+                });
+            }
+            if i > 0 {
+                idx.extend([base - 2, base - 1, base, base - 1, base + 1, base]);
+            }
+        }
+        (verts, idx)
+    }
+
     /// Camera-facing square of `size` units at `pos` (a `vp_parallel` sprite).
     pub fn sprite_quad(
         &self,

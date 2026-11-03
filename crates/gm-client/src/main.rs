@@ -218,6 +218,8 @@ struct Gfx {
     beam_mat: Option<wgpu::BindGroup>,
     /// Materials of the constraint ropes seen so far (`cable/cable`, `cable/rope`, ...).
     rope_mats: std::collections::HashMap<String, Option<wgpu::BindGroup>>,
+    /// When each thruster effect started (`OnStart`), for its 0.2 s scale-in.
+    thruster_on: std::collections::HashMap<u32, std::time::Instant>,
     /// `sprites/physbeama`: the brighter beam while something is held.
     beam_active_mat: Option<wgpu::BindGroup>,
     glow1: Option<wgpu::BindGroup>,
@@ -1464,6 +1466,7 @@ impl App {
             player_box,
             beam_mat,
             rope_mats: Default::default(),
+            thruster_on: Default::default(),
             gg_core,
             gg_glow,
             gg_beam,
@@ -3687,6 +3690,13 @@ impl App {
                 g.rope_mats.insert(r.material.clone(), m);
             }
         }
+        for t in &self.sim.client.world.thrusters {
+            let name = thruster_fx_material(&t.effect);
+            if !name.is_empty() && !g.rope_mats.contains_key(name) {
+                let m = g.world.sprite_material(&g.gpu, &self.mount, name);
+                g.rope_mats.insert(name.to_string(), m);
+            }
+        }
         if self.main_menu && !self.started {
             if let Some(name) = self.backgrounds.tick(&self.mount) {
                 g.ui.load_image(&g.gpu, &self.mount, &name);
@@ -4281,6 +4291,82 @@ impl App {
                 if let Some(gl) = &g.glow2 {
                     let (v, i) = g.world.sprite_quad(start, 6.0, color, &camera);
                     additive.push((gl, v, i));
+                }
+            }
+        }
+        // gmod_thruster effects (`ThrusterEffects`, gmod_thruster.lua): beams from GetOffset()
+        // along its direction from the origin, scaling in over 0.2 s from `OnStart`; the
+        // heat-wave refraction pass of the flames is not drawn
+        {
+            let now = std::time::Instant::now();
+            let on: std::collections::HashSet<u32> = self
+                .sim
+                .client
+                .world
+                .thrusters
+                .iter()
+                .map(|t| t.ent)
+                .collect();
+            g.thruster_on.retain(|id, _| on.contains(id));
+            for t in &self.sim.client.world.thrusters {
+                let Some(e) = ents.get(&t.ent) else {
+                    continue;
+                };
+                let name = thruster_fx_material(&t.effect);
+                let Some(bm) = g.rope_mats.get(name).and_then(|m| m.as_ref()) else {
+                    continue;
+                };
+                let t0 = *g.thruster_on.entry(t.ent).or_insert(now);
+                let age = now.duration_since(t0).as_secs_f32();
+                let scale = (age * 5.0).clamp(0.0, 1.0);
+                let off = e.pos + gm_render::props::angle_matrix(e.angles.to_array()) * t.offset;
+                let n = (off - e.pos).normalize_or_zero();
+                let obb = e.maxs - e.mins;
+                let size = if obb.x > 0.0 && obb.y > 0.0 {
+                    obb.x.min(obb.y).min(50.0)
+                } else {
+                    32.0
+                };
+                let seed = (t.ent % 97) as f32;
+                let eye = camera.position;
+                match t.effect.as_str() {
+                    "fire" => {
+                        let blue = [0.0, 0.0, 1.0, 0.5];
+                        let white = [1.0, 1.0, 1.0, 0.5];
+                        let clear = [1.0, 1.0, 1.0, 0.0];
+                        let scroll = (seed - age * 10.0) % 1000.0;
+                        for (w, s) in [(32.0, scroll), (16.0, scroll * 1.3)] {
+                            let (v, i) = g.world.beam_strip_var(
+                                &[
+                                    (off, size * scale, blue, s),
+                                    (off + n * 60.0 * scale, w * scale, white, s + 1.0),
+                                    (off + n * 148.0 * scale, w * scale, clear, s + 3.0),
+                                ],
+                                eye,
+                            );
+                            additive.push((bm, v, i));
+                        }
+                    }
+                    "plasma" => {
+                        let cyan = [0.0, 1.0, 1.0, 1.0];
+                        let white = [1.0, 1.0, 1.0, 1.0];
+                        let clear = [0.0, 1.0, 1.0, 0.0];
+                        let size = obb.x.min(obb.y).max(1.0) * 1.5;
+                        let mut scroll = (seed - age * 20.0) % 1000.0;
+                        for _ in 0..3 {
+                            scroll *= 0.9;
+                            let (v, i) = g.world.beam_strip_var(
+                                &[
+                                    (off, size, cyan, scroll),
+                                    (off + n * 8.0, size, white, scroll + 0.01),
+                                    (off + n * 64.0, size, clear, scroll + 0.02),
+                                ],
+                                eye,
+                            );
+                            additive.push((bm, v, i));
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -7575,6 +7661,15 @@ impl App {
         self.sim
             .script
             .client_audio(&self.sim.client.world, &reports);
+    }
+}
+
+/// `ThrusterEffects` (`gmod_thruster.lua`): the beam material of an effect; empty for none.
+fn thruster_fx_material(effect: &str) -> &'static str {
+    match effect {
+        "fire" => "effects/fire_cloud1",
+        "plasma" => "effects/strider_muzzle",
+        _ => "",
     }
 }
 

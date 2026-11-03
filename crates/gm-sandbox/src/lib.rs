@@ -1268,6 +1268,8 @@ pub enum Device {
         mul: f32,
         /// Loop soundscript while on (empty: silent).
         sound: String,
+        /// `ThrusterEffects` key drawn by the client while on (`none`: nothing).
+        effect: String,
         toggle: bool,
         on: bool,
         top_z: f32,
@@ -3341,6 +3343,7 @@ impl Sandbox {
                     } else {
                         String::new()
                     },
+                    effect: s.thruster_effect.clone(),
                     toggle: s.thruster_toggle,
                     on: false,
                     top_z: shape.max.z,

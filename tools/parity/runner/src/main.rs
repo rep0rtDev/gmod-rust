@@ -657,6 +657,7 @@ impl DeviceSpec {
     fn device(&self, top_z: f32, bottom_z: f32) -> gm_sandbox::Device {
         match self.kind.as_str() {
             "thruster" => gm_sandbox::Device::Thruster {
+                effect: "fire".into(),
                 force: self.force.unwrap_or(1500.0),
                 mul: 0.0,
                 sound: String::new(),

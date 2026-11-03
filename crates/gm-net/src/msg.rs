@@ -167,6 +167,15 @@ pub struct RopeSnap {
     pub color: [u8; 3],
 }
 
+/// A `gmod_thruster` that is on with an effect: the client draws it from `offset` (the
+/// model-space `GetOffset()`) away from the model's origin.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThrusterSnap {
+    pub ent: u32,
+    pub offset: Vec3,
+    pub effect: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EntityState {
     pub id: u32,
@@ -378,6 +387,7 @@ pub enum ServerMsg {
         players: Vec<PlayerSnap>,
         entities: Vec<EntityState>,
         ropes: Vec<RopeSnap>,
+        thrusters: Vec<ThrusterSnap>,
         removed: Vec<u32>,
         own: OwnSandbox,
         local: Option<LocalPlayer>,
@@ -551,7 +561,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 21;
+pub const PROTOCOL: u16 = 22;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1008,6 +1018,7 @@ impl ServerMsg {
                 players,
                 entities,
                 ropes,
+                thrusters,
                 removed,
                 own,
                 local,
@@ -1134,6 +1145,12 @@ impl ServerMsg {
                     w.u8(r.color[0]);
                     w.u8(r.color[1]);
                     w.u8(r.color[2]);
+                }
+                w.varint(thrusters.len() as u64);
+                for t in thrusters {
+                    w.u32(t.ent);
+                    w.vec3(t.offset);
+                    w.str(&t.effect);
                 }
                 w.varint(removed.len() as u64);
                 for id in removed {
@@ -1536,6 +1553,15 @@ impl ServerMsg {
                     });
                 }
                 let n = r.varint()? as usize;
+                let mut thrusters = Vec::with_capacity(n.min(4096));
+                for _ in 0..n {
+                    thrusters.push(ThrusterSnap {
+                        ent: r.u32()?,
+                        offset: r.vec3()?,
+                        effect: r.str()?,
+                    });
+                }
+                let n = r.varint()? as usize;
                 let mut removed = Vec::with_capacity(n);
                 for _ in 0..n {
                     removed.push(r.u32()?);
@@ -1556,6 +1582,7 @@ impl ServerMsg {
                     players,
                     entities,
                     ropes,
+                    thrusters,
                     removed,
                     own: OwnSandbox {
                         count,

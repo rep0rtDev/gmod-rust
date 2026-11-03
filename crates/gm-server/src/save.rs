@@ -50,6 +50,8 @@ pub enum SavedDeviceKind {
         key_back: i32,
         #[serde(default)]
         sound: String,
+        #[serde(default = "fire_effect")]
+        effect: String,
     },
     Hoverball {
         target_z: f32,
@@ -150,6 +152,7 @@ impl From<&Device> for SavedDeviceKind {
                 key,
                 key_back,
                 sound,
+                effect,
                 ..
             } => SavedDeviceKind::Thruster {
                 force,
@@ -158,6 +161,7 @@ impl From<&Device> for SavedDeviceKind {
                 top_z,
                 bottom_z,
                 sound,
+                effect,
                 key,
                 key_back,
             },
@@ -329,11 +333,13 @@ impl SavedDeviceKind {
                 key,
                 key_back,
                 sound,
+                effect,
             } => (
                 Device::Thruster {
                     force,
                     mul,
                     sound,
+                    effect,
                     toggle,
                     on: mul != 0.0,
                     top_z,
@@ -655,6 +661,10 @@ pub struct SavedConstraint {
     pub kind: SavedKind,
     #[serde(default = "white")]
     pub color: [u8; 3],
+}
+
+fn fire_effect() -> String {
+    "fire".into()
 }
 
 fn white() -> [u8; 3] {
