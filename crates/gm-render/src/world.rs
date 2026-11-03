@@ -65,6 +65,20 @@ struct MaterialParams {
     selfillum_tint: [f32; 4],
 }
 
+/// `LightmappedReflective` that is not water: `func_reflective_glass`, a mirror.
+fn is_mirror(mat: &material::Material) -> bool {
+    mat.shader.eq_ignore_ascii_case("lightmappedreflective") && !mat.water
+}
+
+/// A mirror face: its plane (`normal . p = d`, the normal towards the viewer) and bounds.
+#[derive(Clone, Copy, Debug)]
+struct Mirror {
+    normal: Vec3,
+    d: f32,
+    min: Vec3,
+    max: Vec3,
+}
+
 fn envmap_params(mat: &material::Material) -> [f32; 4] {
     // water reuses the slot: reflect / refract amounts and the normal-map scroll
     if mat.water {
@@ -292,6 +306,8 @@ struct CameraUniform {
     /// valid (y), clip on (w).
     /// ... and seconds since start (z) for scrolling water normals.
     clip: [f32; 4],
+    /// The reflection pass's clip plane: normal and distance.
+    clip_plane: [f32; 4],
     /// Dynamic lights: position (xyz) and radius in units (w, 0 = none).
     dlight_pos: [[f32; 4]; MAX_DLIGHTS],
     /// Their linear colours (rgb).
@@ -563,6 +579,8 @@ pub struct WorldRenderer {
     pub fog: Option<Fog>,
     pub sky_fog: Option<Fog>,
     pub water_volumes: Vec<WaterVolume>,
+    /// `func_reflective_glass` faces (LightmappedReflective): plane and bounds.
+    mirrors: Vec<Mirror>,
     pub stats: Stats,
     material_layout: wgpu::BindGroupLayout,
     base_sampler: wgpu::Sampler,
@@ -1638,6 +1656,8 @@ impl WorldRenderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let mut mirror_cache: HashMap<String, bool> = HashMap::new();
+        let mut mirrors: Vec<Mirror> = Vec::new();
         for (fi, face) in bsp.faces.iter().enumerate() {
             if skip_face(bsp, face) {
                 continue;
@@ -1648,6 +1668,31 @@ impl WorldRenderer {
             let Some((canon, tw, th)) = resolve(name, &mut stats) else {
                 continue;
             };
+            let is_mirror_face = *mirror_cache
+                .entry(canon.clone())
+                .or_insert_with(|| material::load(mount, &canon).is_ok_and(|m| is_mirror(&m)));
+            if is_mirror_face {
+                let mut n = Vec3::from(bsp.planes[face.plane_num as usize].normal);
+                if face.side != 0 {
+                    n = -n;
+                }
+                let poly: Vec<Vec3> = bsp
+                    .face_vertices(face)
+                    .into_iter()
+                    .map(Vec3::from)
+                    .collect();
+                if let Some(first) = poly.first().copied() {
+                    let (lo, hi) = poly
+                        .iter()
+                        .fold((first, first), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+                    mirrors.push(Mirror {
+                        normal: n,
+                        d: n.dot(first),
+                        min: lo,
+                        max: hi,
+                    });
+                }
+            }
             let (tw, th) = (tw as f32, th as f32);
             let mut lm_page = 0.0f32;
             let (placement, lit) = if face.light_ofs >= 0 && face.light_styles() > 0 {
@@ -2133,7 +2178,12 @@ impl WorldRenderer {
                     uv2_m: uv2.0,
                     uv2_t: uv2.1,
                     water_color: water.0,
-                    water_range: water.1,
+                    water_range: [
+                        water.1[0],
+                        water.1[1],
+                        f32::from(u8::from(is_mirror(mat))),
+                        0.0,
+                    ],
                     envmap: envmap_params(mat),
                     envmap2: envmap2_params(mat),
                     envmap3: envmap3_params(mat),
@@ -2218,7 +2268,7 @@ impl WorldRenderer {
                 sky,
                 translucent: mat.translucent,
                 nocull: mat.nocull,
-                water: mat.water,
+                water: mat.water || is_mirror(mat),
                 centre,
             });
             indices_all.extend_from_slice(idx);
@@ -2490,6 +2540,7 @@ impl WorldRenderer {
             fog,
             sky_fog,
             water_volumes,
+            mirrors,
             stats,
             sky2d,
             material_layout,
@@ -2544,14 +2595,29 @@ impl WorldRenderer {
             .map(|w| w.surface_z)
     }
 
+    /// The plane the reflection pass mirrors in: the water surface under the eye, else the
+    /// nearest `func_reflective_glass` facing the eye within 3000 u (one reflection a frame).
+    fn reflected_plane(&self, eye: Vec3) -> Option<(Vec3, f32)> {
+        if let Some(z) = self.reflected_surface(eye) {
+            return Some((Vec3::Z, z));
+        }
+        let dist = |m: &Mirror| eye.clamp(m.min, m.max).distance_squared(eye);
+        self.mirrors
+            .iter()
+            .filter(|m| m.normal.z.abs() < 0.5 && eye.dot(m.normal) - m.d > 0.0)
+            .min_by(|a, b| dist(a).total_cmp(&dist(b)))
+            .filter(|m| dist(m) < 3000.0 * 3000.0)
+            .map(|m| (m.normal, m.d))
+    }
     /// `_rt_WaterReflection`: the scene above the water plane seen from the eye mirrored in
     /// it, drawn by a real camera below the plane (pitch and roll negated, so the winding
     /// stays and the image is read upside down); everything below the plane is clipped.
     fn draw_reflection(&self, gpu: &Gpu, camera: &Camera, aspect: f32, items: &[DrawItem<'_>]) {
-        let Some(zs) = self.reflected_surface(camera.position) else {
+        let Some((n, zs)) = self.reflected_plane(camera.position) else {
             self.reflect.lock().unwrap().valid = false;
             return;
         };
+        let vertical = n.z.abs() < 0.5;
         let w = REFLECT_WIDTH;
         let h = ((w as f32 / aspect).round() as u32).max(1);
         {
@@ -2566,16 +2632,35 @@ impl WorldRenderer {
                 ));
             }
             state.clip = Some(zs);
+            state.normal = n;
+            state.flip_x = vertical;
             state.valid = false;
         }
-        let mirrored = Camera {
-            position: Vec3::new(
-                camera.position.x,
-                camera.position.y,
-                2.0 * zs - camera.position.z,
-            ),
-            angles: Vec3::new(-camera.angles.x, camera.angles.y, -camera.angles.z),
-            ..*camera
+        let mirrored = if vertical {
+            // a vertical mirror (normal at yaw th): the eye reflected over the plane, the yaw
+            // mirrored (2 th + 180 - yaw), the roll negated; the image is the reflection
+            // mirrored left-right, which the shader undoes
+            let p = camera.position;
+            let th = n.y.atan2(n.x).to_degrees();
+            Camera {
+                position: p - n * (2.0 * (p.dot(n) - zs)),
+                angles: Vec3::new(
+                    camera.angles.x,
+                    2.0 * th + 180.0 - camera.angles.y,
+                    -camera.angles.z,
+                ),
+                ..*camera
+            }
+        } else {
+            Camera {
+                position: Vec3::new(
+                    camera.position.x,
+                    camera.position.y,
+                    2.0 * zs - camera.position.z,
+                ),
+                angles: Vec3::new(-camera.angles.x, camera.angles.y, -camera.angles.z),
+                ..*camera
+            }
         };
         let (color, resolve, depth) = {
             let state = self.reflect.lock().unwrap();
@@ -2600,10 +2685,18 @@ impl WorldRenderer {
 
     /// The clip plane of the running reflection pass, in skybox units for the 3D skybox.
     fn clip_for(&self, sky: bool) -> Option<f32> {
-        let z = self.reflect.lock().unwrap().clip?;
+        let (z, up) = {
+            let st = self.reflect.lock().unwrap();
+            (st.clip?, st.normal.z > 0.99)
+        };
         if sky {
             let s = self.sky_camera?;
-            Some(s.origin.z + z / s.scale)
+            // a mirror's plane means nothing in skybox units: the skybox is not clipped
+            Some(if up {
+                s.origin.z + z / s.scale
+            } else {
+                f32::MIN
+            })
         } else {
             Some(z)
         }
@@ -2691,7 +2784,7 @@ impl WorldRenderer {
     ) -> CameraUniform {
         let valid = {
             let st = self.reflect.lock().unwrap();
-            (st.valid as u32 | ((st.refr_valid as u32) << 1)) as f32
+            (st.valid as u32 | ((st.refr_valid as u32) << 1) | ((st.flip_x as u32) << 2)) as f32
         };
         let f = fog.unwrap_or(Fog {
             color: [0.0; 3],
@@ -2733,6 +2826,15 @@ impl WorldRenderer {
                     Some(z) => [z, valid, t, 1.0],
                     None => [0.0, valid, t, 0.0],
                 }
+            },
+            clip_plane: {
+                let st = self.reflect.lock().unwrap();
+                let n = if st.normal == Vec3::ZERO {
+                    Vec3::Z
+                } else {
+                    st.normal
+                };
+                [n.x, n.y, n.z, clip.unwrap_or(0.0)]
             },
         }
     }
@@ -4020,6 +4122,10 @@ const REFLECT_WIDTH: u32 = 1024;
 #[derive(Default)]
 struct ReflectState {
     target: Option<ReflectTarget>,
+    /// Normal of the clip plane (`clip` is its distance along it); the water's is +z.
+    normal: Vec3,
+    /// The mirrored camera of a vertical mirror gives the reflection mirrored left-right.
+    flip_x: bool,
     /// Clip plane z while the reflection pass runs.
     clip: Option<f32>,
     /// `target.sampled` holds this frame's reflection.

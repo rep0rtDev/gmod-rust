@@ -9,6 +9,8 @@ struct Camera {
     fog_color: vec4<f32>,
     fog_range: vec4<f32>,
     clip: vec4<f32>,
+    // the reflection pass clips everything behind this plane (normal, distance)
+    clip_plane: vec4<f32>,
     dlight_pos: array<vec4<f32>, 8>,
     dlight_color: array<vec4<f32>, 8>,
     dlight_dir: array<vec4<f32>, 8>,
@@ -89,7 +91,7 @@ fn vs_main(in: VsIn) -> VsOut {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // the water reflection pass sees nothing below the water plane
-    if camera.clip.w > 0.5 && in.world.z < camera.clip.x {
+    if camera.clip.w > 0.5 && dot(in.world, camera.clip_plane.xyz) < camera.clip_plane.w {
         discard;
     }
     // WorldVertexTransition: lerp($basetexture, $basetexture2, displacement vertex alpha)
@@ -234,7 +236,14 @@ fn fs_water(in: VsOut) -> @location(0) vec4<f32> {
     let has_refl = f32((flags & 1u) != 0u);
     let has_refr = f32((flags & 2u) != 0u);
     let suv = in.clip.xy / dims + n.xy * material.envmap.x;
-    let refl = textureSample(reflection, reflection_sampler, vec2<f32>(suv.x, 1.0 - suv.y)).rgb;
+    // a vertical mirror's camera gives the reflection mirrored left-right instead
+    let flip_x = (flags & 4u) != 0u;
+    let refl_uv = select(vec2<f32>(suv.x, 1.0 - suv.y), vec2<f32>(1.0 - suv.x, suv.y), flip_x);
+    let refl = textureSample(reflection, reflection_sampler, refl_uv).rgb;
+    // LightmappedReflective (func_reflective_glass): the reflection itself
+    if material.water_range.z > 0.5 {
+        return vec4<f32>(refl, 1.0);
+    }
     // _rt_WaterRefraction: the scene behind the surface offset by $refractamount, under the
     // water fog; without the copy the already-drawn bottom shows through the fog alpha
     let ruv = in.clip.xy / dims + n.xy * material.envmap.y;
