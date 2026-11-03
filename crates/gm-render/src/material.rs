@@ -513,6 +513,46 @@ pub fn load_texture_lod(mount: &Mount, name: &str, max_side: u32, skip: u32) -> 
     })
 }
 
+/// Every frame of an animated VTF (`sprites/zerogxplode`), each at the mip that fits
+/// `max_side`, with its smaller mips.
+pub fn load_texture_frames(mount: &Mount, name: &str, max_side: u32) -> Result<Vec<Rgba>> {
+    let base = name.trim_start_matches('/');
+    let bytes = mount.read(&format!("materials/{base}.vtf"))?;
+    let h = vtf::Header::parse(&bytes)?;
+    let mut mip = 0u32;
+    while mip + 1 < h.mipmap_count as u32 {
+        let (w, hh, _) = vtf::decode::mip_dims(&h, mip);
+        if w.max(hh) <= max_side {
+            break;
+        }
+        mip += 1;
+    }
+    let (w, hh, _) = vtf::decode::mip_dims(&h, mip);
+    let mut out = Vec::new();
+    for frame in 0..h.frames.max(1) as u32 {
+        let slice = vtf::decode::mip_slice(&h, &bytes, mip, frame, 0, 0)?;
+        let pixels = vtf::decode::decode_rgba8(h.high_res_format, w, hh, slice)?;
+        let mut mips = Vec::new();
+        for m in mip + 1..h.mipmap_count as u32 {
+            let (mw, mh, _) = vtf::decode::mip_dims(&h, m);
+            let Ok(slice) = vtf::decode::mip_slice(&h, &bytes, m, frame, 0, 0) else {
+                break;
+            };
+            let Ok(px) = vtf::decode::decode_rgba8(h.high_res_format, mw, mh, slice) else {
+                break;
+            };
+            mips.push(px);
+        }
+        out.push(Rgba {
+            width: w,
+            height: hh,
+            pixels,
+            mips,
+        });
+    }
+    Ok(out)
+}
+
 /// Numbers of a `[x y z]` / `{x y z}` / `x y z` value.
 fn vec_of(v: Option<String>) -> Vec<f32> {
     v.map(|v| {

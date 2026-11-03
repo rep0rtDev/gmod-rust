@@ -3398,6 +3398,17 @@ impl WorldRenderer {
         let mat = crate::material::load(mount, name).ok()?;
         let tex = mat.base_texture.as_deref()?;
         let rgba = crate::material::load_texture(mount, tex, 512).ok()?;
+        Some(self.sprite_bind_group(gpu, &rgba, format, name))
+    }
+
+    /// The bind group of a sprite image (unlit, no lightmap) in `format`.
+    fn sprite_bind_group(
+        &self,
+        gpu: &Gpu,
+        rgba: &crate::material::Rgba,
+        format: wgpu::TextureFormat,
+        name: &str,
+    ) -> wgpu::BindGroup {
         let device = &gpu.device;
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("sprite params"),
@@ -3418,8 +3429,8 @@ impl WorldRenderer {
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let t = upload_rgba_mips(gpu, &rgba, format, name);
-        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let t = upload_rgba_mips(gpu, rgba, format, name);
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(name),
             layout: &self.material_layout,
             entries: &[
@@ -3459,7 +3470,22 @@ impl WorldRenderer {
                     resource: params.as_entire_binding(),
                 },
             ],
-        }))
+        })
+    }
+
+    /// Every frame of an animated sprite (`sprites/zerogxplode`) as its own material.
+    pub fn sprite_frames(&self, gpu: &Gpu, mount: &Mount, name: &str) -> Vec<wgpu::BindGroup> {
+        let Ok(mat) = crate::material::load(mount, name) else {
+            return Vec::new();
+        };
+        let Some(tex) = mat.base_texture.as_deref() else {
+            return Vec::new();
+        };
+        crate::material::load_texture_frames(mount, tex, 512)
+            .unwrap_or_default()
+            .iter()
+            .map(|f| self.sprite_bind_group(gpu, f, wgpu::TextureFormat::Rgba8UnormSrgb, name))
+            .collect()
     }
 
     /// Camera-facing strip along `points` (world space), `width` units wide, the texture's

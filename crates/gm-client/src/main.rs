@@ -238,8 +238,8 @@ struct Gfx {
     /// `effects/spark` (tracer streak), `decals/<group>/shot1..5` (bullet holes, by the
     /// surface's game material, loaded on first use).
     fx_muzzle: Option<wgpu::BindGroup>,
-    /// `sprites/zerogxplode`: the explosion fireball (frame 0 - the sprite's frames are open).
-    fx_explosion: Option<wgpu::BindGroup>,
+    /// `sprites/zerogxplode`: the explosion fireball, its frames played over the burst.
+    fx_explosion: Vec<wgpu::BindGroup>,
     fx_spark: Option<wgpu::BindGroup>,
     fx_decal_mats: std::collections::HashMap<String, Option<wgpu::BindGroup>>,
     /// `sprites/redglow1`: the RPG's laser dot.
@@ -1310,7 +1310,7 @@ impl App {
         let gg_glow = world.sprite_material(&gpu, &self.mount, "sprites/glow04_noz");
         let gg_beam = world.sprite_material(&gpu, &self.mount, "sprites/orangelight1");
         let fx_muzzle = world.sprite_material(&gpu, &self.mount, "effects/muzzleflash1");
-        let fx_explosion = world.sprite_material(&gpu, &self.mount, "sprites/zerogxplode");
+        let fx_explosion = world.sprite_frames(&gpu, &self.mount, "sprites/zerogxplode");
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
         let fx_splash = world.sprite_material(&gpu, &self.mount, "effects/splash2");
@@ -4710,11 +4710,14 @@ impl App {
                 let age = now.duration_since(born).as_secs_f32() / burst_life(size);
                 let k = 1.0 - age;
                 let (m, color) = if splash {
-                    (&g.fx_splash, [k, k, k])
+                    (g.fx_splash.as_ref(), [k, k, k])
                 } else if size > 32.0 {
-                    (&g.fx_explosion, [k, k, k])
+                    // the TE_Explosion sprite plays its frames once over the burst
+                    let n = g.fx_explosion.len();
+                    let f = ((age * n as f32) as usize).min(n.saturating_sub(1));
+                    (g.fx_explosion.get(f), [k, k, k])
                 } else {
-                    (&g.fx_muzzle, [k, k * 0.7, k * 0.4])
+                    (g.fx_muzzle.as_ref(), [k, k * 0.7, k * 0.4])
                 };
                 if let Some(m) = m {
                     let (v, i) = g.world.sprite_quad(pos, size * (0.6 + age), color, &camera);
