@@ -14748,6 +14748,32 @@ impl<'w> Server<'w> {
         Some((ent, rows))
     }
 
+    /// finger.lua `BuildCPanel`: the panel for the player's picked hand, the tool's rows plus a
+    /// spread / bend slider per finger part (the `fingervar` panel's x / y, degrees) as
+    /// `finger_<i>_x` / `finger_<i>_y`; None without a picked entity with hand bones. Returns
+    /// the entity and hand with the rows.
+    pub fn finger_schema(&self, player: u32) -> Option<((u32, u8), Vec<ToolSetting>)> {
+        let ps = self.posers.get(&player)?;
+        let ent = ps.hand_ent?;
+        self.hand_bones(ent)?;
+        const FINGERS: [&str; 5] = ["Thumb", "Index", "Middle", "Ring", "Pinky"];
+        let mut rows = builtin_tool_schema("finger");
+        for i in 0..15 {
+            for (axis, what, max) in [("x", "spread", 100.0_f32), ("y", "bend", 100.0_f32)] {
+                rows.push(ToolSetting {
+                    name: format!("finger_{i}_{axis}"),
+                    kind: ToolSettingKind::Number,
+                    min: -max / 2.0,
+                    max: max / 2.0,
+                    default: "0".into(),
+                    label: format!("{} {} {what}", FINGERS[i / 3], i % 3 + 1),
+                    options: Vec::new(),
+                });
+            }
+        }
+        Some(((ent, ps.hand), rows))
+    }
+
     pub fn thruster_visuals(&self) -> Vec<(u32, Vec3, String)> {
         self.sandbox
             .devices()

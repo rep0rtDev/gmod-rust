@@ -50,6 +50,8 @@ pub struct ClientSlot {
     tool_schemas_sent: u32,
     /// The face entity whose faceposer sliders this client has (None: the plain panel).
     face_schema_sent: Option<u32>,
+    /// The entity and hand whose finger sliders this client has.
+    hand_schema_sent: Option<(u32, u8)>,
     weapon_defs_sent: u32,
     /// Last snapshot tick each player / entity state went to this client (for the staleness
     /// weight in the budget order).
@@ -270,6 +272,7 @@ impl ServerNet {
                         overlays_sent: u32::MAX,
                         tool_schemas_sent: 0,
                         face_schema_sent: None,
+                        hand_schema_sent: None,
                         weapon_defs_sent: 0,
                         uploads: VecDeque::new(),
                         undo_seq: 0,
@@ -1394,12 +1397,19 @@ impl ServerNet {
                 slot.channel.send_reliable(w.buf);
                 slot.weapon_defs_sent = server.scripted_weapons_version;
             }
+            // the posers' per-client panels (the face entity's flexes, the picked hand's fingers)
             let face = server.faceposer_schema(slot.player);
             let face_key = face.as_ref().map(|(e, _)| *e);
+            let hand = server.finger_schema(slot.player);
+            let hand_key = hand.as_ref().map(|(k, _)| *k);
             if slot.tool_schemas_sent != server.tool_schemas_version
                 || slot.face_schema_sent != face_key
+                || slot.hand_schema_sent != hand_key
             {
                 let mut tools = server.tool_schemas.clone();
+                if let Some((_, rows)) = hand {
+                    tools.insert(0, ("finger".to_string(), rows));
+                }
                 if let Some((_, rows)) = face {
                     tools.insert(0, ("faceposer".to_string(), rows));
                 }
@@ -1412,6 +1422,7 @@ impl ServerNet {
                 slot.channel.send_reliable(w.buf);
                 slot.tool_schemas_sent = server.tool_schemas_version;
                 slot.face_schema_sent = face_key;
+                slot.hand_schema_sent = hand_key;
             }
             let mut unreliable = Vec::new();
             for (speaker, seq, data) in &voice {

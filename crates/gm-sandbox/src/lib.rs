@@ -752,14 +752,7 @@ impl ToolSettings {
                         Ok(v) => { self.$ints = v as i32; true }
                         Err(_) => false,
                     })*
-                    // faceposer_flex<i>: the face entity's flex controller sliders
-                    _ => match key.strip_prefix("faceposer_flex").and_then(|i| i.parse::<usize>().ok()) {
-                        Some(i) if i < self.faceposer_flex.len() => match value.trim().parse::<f32>() {
-                            Ok(v) => { self.faceposer_flex[i] = v; true }
-                            Err(_) => false,
-                        },
-                        _ => false,
-                    },
+                    _ => self.set_indexed(key, value),
                 }
             };
         }
@@ -793,6 +786,58 @@ impl ToolSettings {
             wheel_bck, motor_fwd, motor_bwd, button_keygroup, dynamite_group, lamp_key, light_key,
             emitter_key, camera_key
         )
+    }
+
+    /// The posers' indexed convars: `faceposer_flex<i>` (a flex weight), `finger_<i>` ("x y"
+    /// degrees of a finger part) and the native panel's `finger_<i>_x` / `finger_<i>_y` sliders.
+    fn set_indexed(&mut self, key: &str, value: &str) -> bool {
+        let num = |s: &str| s.trim().parse::<f32>().ok();
+        if let Some(i) = key
+            .strip_prefix("faceposer_flex")
+            .and_then(|i| i.parse::<usize>().ok())
+        {
+            return match (self.faceposer_flex.get_mut(i), num(value)) {
+                (Some(slot), Some(v)) => {
+                    *slot = v;
+                    true
+                }
+                _ => false,
+            };
+        }
+        let Some(rest) = key.strip_prefix("finger_") else {
+            return false;
+        };
+        let (idx, axis) = match (rest.strip_suffix("_x"), rest.strip_suffix("_y")) {
+            (Some(i), _) => (i, Some(0)),
+            (_, Some(i)) => (i, Some(1)),
+            _ => (rest, None),
+        };
+        let Some(slot) = idx
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| self.finger.get_mut(i))
+        else {
+            return false;
+        };
+        match axis {
+            Some(a) => match num(value) {
+                Some(v) => {
+                    slot[a] = v;
+                    true
+                }
+                None => false,
+            },
+            None => {
+                let mut it = value.split_whitespace().map(num);
+                match (it.next().flatten(), it.next().flatten()) {
+                    (Some(x), Some(y)) => {
+                        *slot = [x, y];
+                        true
+                    }
+                    _ => false,
+                }
+            }
+        }
     }
 }
 
