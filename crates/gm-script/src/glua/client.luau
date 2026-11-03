@@ -1624,5 +1624,4 @@ function CHAN:GetTagsMeta() return nil end
 function CHAN:GetTagsOGG() return nil end
 function CHAN:GetTagsVendor() return nil end
 function CHAN:GetTagsWMA() return nil end
-__glua_metatables = __glua_metatables or {}
-__glua_metatables.IGModAudioChannel = CHAN
+__glua_classes.IGModAudioChannel = CHAN

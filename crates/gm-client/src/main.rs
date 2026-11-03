@@ -6036,22 +6036,6 @@ fn fade_alpha_at(flags: u32, a: f32, time: f32, hold: f32, t: f32) -> Option<f32
     }
 }
 
-#[cfg(test)]
-mod fade_tests {
-    use super::fade_alpha_at;
-
-    #[test]
-    fn screen_fade_alpha_follows_the_flags() {
-        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 1.0), Some(0.5));
-        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 2.5), Some(1.0));
-        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 3.5), None);
-        assert_eq!(fade_alpha_at(2 | 8, 1.0, 2.0, 1.0, 9.0), Some(1.0));
-        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 0.5), Some(0.8));
-        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 2.0), Some(0.4));
-        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 3.1), None);
-    }
-}
-
 /// A script audio channel: the mixer voice playing it, or why it could not start.
 struct AudioChan {
     voice: u32,
@@ -6179,5 +6163,21 @@ impl App {
         self.sim
             .script
             .client_audio(&self.sim.client.world, &reports);
+    }
+}
+
+#[cfg(test)]
+mod fade_tests {
+    use super::fade_alpha_at;
+
+    #[test]
+    fn screen_fade_alpha_follows_the_flags() {
+        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 1.0), Some(0.5));
+        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 2.5), Some(1.0));
+        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 3.5), None);
+        assert_eq!(fade_alpha_at(2 | 8, 1.0, 2.0, 1.0, 9.0), Some(1.0));
+        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 0.5), Some(0.8));
+        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 2.0), Some(0.4));
+        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 3.1), None);
     }
 }
