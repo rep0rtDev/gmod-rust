@@ -50,6 +50,57 @@ struct CameraUniform {
     lm_scale: f32,
     /// Tonemap scale (HDR exposure; 1 in LDR).
     exposure: f32,
+    /// Eye position (xyz) and whether fog is on (w).
+    eye: [f32; 4],
+    /// View forward (xyz): fog depth is the distance along it.
+    forward: [f32; 4],
+    /// Fog colour in display space (rgb) and `fogmaxdensity` (w).
+    fog_color: [f32; 4],
+    /// `fogstart`, `fogend` in units.
+    fog_range: [f32; 4],
+}
+
+/// Linear distance fog of an `env_fog_controller` (the world) or a `sky_camera` (its 3D
+/// skybox, in skybox units): the fraction `(depth - start) / (end - start)` of the fog
+/// colour, clamped to `max_density`, where depth is the view-space distance.
+#[derive(Clone, Copy, Debug)]
+pub struct Fog {
+    pub color: [f32; 3],
+    pub start: f32,
+    pub end: f32,
+    pub max_density: f32,
+}
+
+impl Fog {
+    fn from_entity(e: &gm_formats::bsp::lumps::Entity) -> Option<Fog> {
+        if e.get("fogenable").map(|v| v.trim()) != Some("1") {
+            return None;
+        }
+        let f = |k: &str, d: f32| {
+            e.get(k)
+                .and_then(|v| v.trim().parse::<f32>().ok())
+                .unwrap_or(d)
+        };
+        let c: Vec<f32> = e
+            .get("fogcolor")
+            .map(|v| {
+                v.split_whitespace()
+                    .filter_map(|x| x.parse::<f32>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let color = if c.len() >= 3 {
+            [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0]
+        } else {
+            [0.0; 3]
+        };
+        Some(Fog {
+            color,
+            start: f("fogstart", 0.0),
+            end: f("fogend", 0.0),
+            max_density: f("fogmaxdensity", 1.0),
+        })
+    }
 }
 
 /// Renderer quality from the client's Advanced Video settings.
@@ -151,6 +202,9 @@ pub struct WorldRenderer {
     index_buffer: wgpu::Buffer,
     batches: Vec<Batch>,
     pub sky_camera: Option<SkyCamera>,
+    /// The map's `env_fog_controller` fog, and the `sky_camera`'s for the 3D skybox.
+    pub fog: Option<Fog>,
+    pub sky_fog: Option<Fog>,
     pub stats: Stats,
     material_layout: wgpu::BindGroupLayout,
     base_sampler: wgpu::Sampler,
@@ -964,6 +1018,16 @@ impl WorldRenderer {
                     scale,
                 })
             });
+        let fog = bsp
+            .entities
+            .iter()
+            .filter(|e| e.classname() == "env_fog_controller")
+            .find_map(Fog::from_entity);
+        let sky_fog = bsp
+            .entities
+            .iter()
+            .find(|e| e.classname() == "sky_camera")
+            .and_then(Fog::from_entity);
         // Faces whose centre lies in the sky camera's area belong to the 3D skybox.
         // Displacement faces are not in leaf face lists, so classify by position.
         let face_offset = brush_entity_offsets(bsp);
@@ -1418,6 +1482,8 @@ impl WorldRenderer {
             index_buffer,
             batches,
             sky_camera,
+            fog,
+            sky_fog,
             stats,
             sky2d: build_sky_cube(gpu, mount, bsp, &material_layout, white_uv),
             material_layout,
@@ -1463,6 +1529,38 @@ impl WorldRenderer {
         }
     }
 
+    fn camera_uniform(
+        &self,
+        cam: &Camera,
+        aspect: f32,
+        alpha: f32,
+        fog: Option<Fog>,
+    ) -> CameraUniform {
+        let f = fog.unwrap_or(Fog {
+            color: [0.0; 3],
+            start: 0.0,
+            end: 1.0,
+            max_density: 0.0,
+        });
+        let fw = cam.forward();
+        CameraUniform {
+            view_proj: cam.view_proj(aspect).to_cols_array_2d(),
+            alpha,
+            gamma: cam.gamma,
+            lm_scale: self.lm_scale,
+            exposure: self.exposure,
+            eye: [
+                cam.position.x,
+                cam.position.y,
+                cam.position.z,
+                if fog.is_some() { 1.0 } else { 0.0 },
+            ],
+            forward: [fw.x, fw.y, fw.z, 0.0],
+            fog_color: [f.color[0], f.color[1], f.color[2], f.max_density],
+            fog_range: [f.start, f.end, 0.0, 0.0],
+        }
+    }
+
     /// The 2D sky cube around an eye at the origin, clearing colour and depth.
     fn sky_pass(
         &self,
@@ -1483,15 +1581,7 @@ impl WorldRenderer {
         gpu.queue.write_buffer(
             &self.camera_buffer,
             0,
-            bytemuck::bytes_of(&CameraUniform {
-                view_proj: cam.view_proj(aspect).to_cols_array_2d(),
-                alpha: 1.0,
-                gamma: cam.gamma,
-
-                lm_scale: self.lm_scale,
-
-                exposure: self.exposure,
-            }),
+            bytemuck::bytes_of(&self.camera_uniform(&cam, aspect, 1.0, None)),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
@@ -1543,19 +1633,15 @@ impl WorldRenderer {
         sky: bool,
         clear_color: bool,
     ) {
-        let vp = camera.view_proj(aspect);
         gpu.queue.write_buffer(
             &self.camera_buffer,
             0,
-            bytemuck::bytes_of(&CameraUniform {
-                view_proj: vp.to_cols_array_2d(),
-                alpha: 1.0,
-                gamma: camera.gamma,
-
-                lm_scale: self.lm_scale,
-
-                exposure: self.exposure,
-            }),
+            bytemuck::bytes_of(&self.camera_uniform(
+                camera,
+                aspect,
+                1.0,
+                if sky { self.sky_fog } else { self.fog },
+            )),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
@@ -1918,15 +2004,7 @@ impl WorldRenderer {
             contents: bytemuck::cast_slice(&idx),
             usage: wgpu::BufferUsages::INDEX,
         });
-        let cam = CameraUniform {
-            view_proj: camera.view_proj(target.aspect).to_cols_array_2d(),
-            alpha: 1.0,
-            gamma: camera.gamma,
-
-            lm_scale: self.lm_scale,
-
-            exposure: self.exposure,
-        };
+        let cam = self.camera_uniform(camera, target.aspect, 1.0, self.fog);
         gpu.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
         let mut enc = device.create_command_encoder(&Default::default());
@@ -2120,15 +2198,7 @@ impl WorldRenderer {
         gpu.queue.write_buffer(
             &self.camera_buffer,
             0,
-            bytemuck::bytes_of(&CameraUniform {
-                view_proj: camera.view_proj(aspect).to_cols_array_2d(),
-                alpha,
-                gamma: camera.gamma,
-
-                lm_scale: self.lm_scale,
-
-                exposure: self.exposure,
-            }),
+            bytemuck::bytes_of(&self.camera_uniform(camera, aspect, alpha, self.fog)),
         );
         let mut enc = device.create_command_encoder(&Default::default());
         {

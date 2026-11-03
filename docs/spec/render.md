@@ -34,6 +34,12 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   SunSpreadAngle 6. `env_sun` at -2845 6842 12256, size 16, `sprites/light_glow02_add_noz`,
   colour 241 240 199, HDRColorScale 1.0. `env_fog_controller`: fogcolor 142 164 178, start
   1024, end 250000, maxdensity 1, enabled.
+  Fog law (`gm-render`): the world pass mixes the fog colour (display space, `fogcolor` / 255)
+  into every fragment by `min(saturate((depth - fogstart) / (fogend - fogstart)), fogmaxdensity)`
+  with depth the view-space distance along the camera forward; the 3D skybox pass uses the
+  `sky_camera`'s own fog keys (gm_construct: start -4000, end 320000, same colour) in skybox
+  units; the 2D sky is not fogged. On gm_construct the world fog is 0.4 % at 2000 u and 3.6 %
+  at 10 000 u - faint, as in the game.
 - `env_tonemap_controller` "TonemapController" set by `logic_auto` OnMapSpawn:
   SetAutoExposureMax 1.8, SetAutoExposureMin 0.7, SetBloomScale 0.3, SetTonemapRate 0.2.
   Engine defaults otherwise: `mat_autoexposure_min 0.5`, `mat_autoexposure_max 2`,

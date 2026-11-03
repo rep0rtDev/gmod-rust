@@ -4,6 +4,10 @@ struct Camera {
     gamma: f32,
     lm_scale: f32,
     exposure: f32,
+    eye: vec4<f32>,
+    forward: vec4<f32>,
+    fog_color: vec4<f32>,
+    fog_range: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -32,6 +36,7 @@ struct VsOut {
     @location(0) uv: vec2<f32>,
     @location(1) lm_uv: vec2<f32>,
     @location(2) color: vec3<f32>,
+    @location(3) world: vec3<f32>,
 };
 
 @vertex
@@ -41,6 +46,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.uv = in.uv;
     out.lm_uv = in.lm_uv;
     out.color = in.color;
+    out.world = in.position;
     return out;
 }
 
@@ -57,5 +63,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     let shaded = albedo.rgb * light * in.color * camera.exposure;
     // mat_monitorgamma: 2.2 is neutral, lower brightens
-    return vec4<f32>(pow(max(shaded, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma)), camera.alpha);
+    let out = pow(max(shaded, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
+    // env_fog_controller: linear in the view depth from fogstart to fogend, capped at
+    // fogmaxdensity, the colour given in display space
+    let depth = dot(in.world - camera.eye.xyz, camera.forward.xyz);
+    let span = max(camera.fog_range.y - camera.fog_range.x, 1.0);
+    let fog = min(clamp((depth - camera.fog_range.x) / span, 0.0, 1.0), camera.fog_color.w) * camera.eye.w;
+    return vec4<f32>(mix(out, camera.fog_color.rgb, fog), camera.alpha);
 }
