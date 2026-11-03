@@ -1008,3 +1008,6 @@ __glua_classes.bf_read = BF
 -- @field Global.BRANCH @field duplicator.BoneModifiers @field duplicator.ConstraintType @field duplicator.EntityClasses
 -- @field duplicator.EntityModifiers @field matproxy.ActiveList @field matproxy.ProxyList @field net.ReadVars @field net.Receivers
 -- @field net.WriteVars @field properties.List
+-- @field math.ease @field package.loaded @field mesh.BoneData
+package = package or {}
+package.loaded = package.loaded or {}

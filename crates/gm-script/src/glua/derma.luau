@@ -4455,7 +4455,8 @@ function controlpanel.Get(name)
 	return p
 end
 function controlpanel.Clear() for _, p in pairs(tool_panels) do if IsValid(p) then p:Remove() end end tool_panels = {} end
-Tool = Tool or {}
+local Tool = __glua_classes.Tool or {}
+__glua_classes.Tool = Tool
 function Tool:RebuildControlPanel()
 	local p = controlpanel.Get(self.Mode or "")
 	p:ClearControls()
@@ -4482,4 +4483,35 @@ function properties.GetHovered(eyepos, eyevec)
 	return tr.Entity or NULL
 end
 
+for name, tbl in pairs(classes) do __glua_classes[name] = tbl end
+
+function DHorizontalScroller:Init() self.pnlCanvas = vgui.Create("DPanel", self) self.__overlap, self.__scroll = 0, 0 end
+function DHorizontalScroller:GetCanvas() return self.pnlCanvas end
+function DHorizontalScroller:AddPanel(pnl) pnl:SetParent(self.pnlCanvas) self:InvalidateLayout() end
+function DHorizontalScroller:SetOverlap(o) self.__overlap = o end
+function DHorizontalScroller:GetOverlap() return self.__overlap or 0 end
+function DHorizontalScroller:SetScroll(x) self.__scroll = math.max(0, x) self:InvalidateLayout() end
+function DHorizontalScroller:ScrollToChild(pnl) local x = pnl:GetPos() self:SetScroll(x - self:GetWide() / 2 + pnl:GetWide() / 2) end
+function DHorizontalScroller:SetUseLiveDrag(b) self.__live_drag = b == true end
+function DHorizontalScroller:MakeDroppable(name) self.pnlCanvas:Droppable(name) self.pnlCanvas:Receiver(name, function(_, tbl, dropped) if dropped then for _, p in ipairs(tbl) do self:AddPanel(p) end self:OnDragModified() end end) end
+function DHorizontalScroller:OnDragModified() end
+function DHorizontalScroller:PerformLayout()
+	local x = -(self.__scroll or 0)
+	for _, c in ipairs(self.pnlCanvas:GetChildren()) do c:SetPos(x, 0) x = x + c:GetWide() - (self.__overlap or 0) end
+	self.pnlCanvas:SetSize(math.max(x + (self.__scroll or 0), self:GetWide()), self:GetTall())
+end
+function DPanelOverlay:SetType(t) self.__type = t end
+function DPanelOverlay:GetType() return self.__type or 1 end
+function DPanelSelect:AddPanel(pnl, convars) pnl.__convars = convars pnl:SetParent(self) pnl.DoClick = function() self:SelectPanel(pnl) end return pnl end
+function DPanelSelect:SelectPanel(pnl)
+	if self.__active == pnl then return end
+	local old = self.__active
+	self.__active = pnl
+	for k, v in pairs(pnl.__convars or {}) do RunConsoleCommand(k, tostring(v)) end
+	self:OnActivePanelChanged(old, pnl)
+end
+function DPanelSelect:OnActivePanelChanged(old, new) end
+PropSelect.Height = 2
+-- @field PropSelect.Height @field Panel.PaintingDragging @field derma.Controls @field TOOL.BuildCPanel
+-- @hook TextEntry:OnTextChanged (DTextEntry raises OnTextChanged / OnValueChange from its edit path)
 for name, tbl in pairs(classes) do __glua_classes[name] = tbl end

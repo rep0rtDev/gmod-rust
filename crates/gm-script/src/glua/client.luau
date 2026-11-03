@@ -2130,3 +2130,7 @@ setfenv = setfenv or stub("setfenv")
 function UpdateSubscribedAddons() end
 function effects.GetList() local out = {} for name in pairs(effects.__registry or {}) do out[#out + 1] = name end table.sort(out) return out end
 function effects.TracerSound(start, endpos, kind) end
+
+-- the client material object is the IMaterial class (server keeps the stub table)
+for k, v in pairs(__glua_classes.IMaterial or {}) do if MAT[k] == nil then MAT[k] = v end end
+__glua_classes.IMaterial = MAT
