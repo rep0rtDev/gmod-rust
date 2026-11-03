@@ -220,6 +220,11 @@ struct Gfx {
     rope_mats: std::collections::HashMap<String, Option<wgpu::BindGroup>>,
     /// When each thruster effect started (`OnStart`), for its 0.2 s scale-in.
     thruster_on: std::collections::HashMap<u32, std::time::Instant>,
+    /// Live particles of the magic / rings / smoke thruster effects.
+    thruster_fx: Vec<ThrusterParticle>,
+    /// Next emission time per thruster (the effects' 0.01 / 0.015 s timers).
+    thruster_emit: std::collections::HashMap<u32, std::time::Instant>,
+    fx_rng: u32,
     /// `sprites/physbeama`: the brighter beam while something is held.
     beam_active_mat: Option<wgpu::BindGroup>,
     glow1: Option<wgpu::BindGroup>,
@@ -1467,6 +1472,9 @@ impl App {
             beam_mat,
             rope_mats: Default::default(),
             thruster_on: Default::default(),
+            thruster_fx: Vec::new(),
+            thruster_emit: Default::default(),
+            fx_rng: 0x9E37_79B9,
             gg_core,
             gg_glow,
             gg_beam,
@@ -4347,6 +4355,75 @@ impl App {
                             additive.push((bm, v, i));
                         }
                     }
+                    "magic" | "rings" | "smoke" => {
+                        let interval = if t.effect == "smoke" { 0.015 } else { 0.01 };
+                        let next = g.thruster_emit.entry(t.ent).or_insert(now);
+                        let mut burst = 0;
+                        while *next <= now && burst < 8 {
+                            *next += std::time::Duration::from_secs_f32(interval);
+                            burst += 1;
+                            let r = &mut g.fx_rng;
+                            let p = match t.effect.as_str() {
+                                "magic" => ThrusterParticle {
+                                    mat: name,
+                                    additive: true,
+                                    pos: off + fx_vec_rand(r) * (size / 3.0),
+                                    vel: n * fx_range(r, 80.0, 160.0),
+                                    grav: Vec3::ZERO,
+                                    born: now,
+                                    life: 0.5,
+                                    size: (fx_range(r, 1.0, 3.0), 0.0),
+                                    alpha: (1.0, 1.0),
+                                    color: [1.0; 3],
+                                    roll: fx_range(r, -0.2, 0.2),
+                                    axis: None,
+                                },
+                                "rings" => ThrusterParticle {
+                                    mat: name,
+                                    additive: true,
+                                    pos: off + n * 5.0,
+                                    vel: n * 300.0,
+                                    grav: Vec3::ZERO,
+                                    born: now,
+                                    life: 0.2,
+                                    size: (size / 2.0, 10.0),
+                                    alpha: (1.0, 0.0),
+                                    color: [
+                                        fx_range(r, 10.0, 100.0) / 255.0,
+                                        fx_range(r, 100.0, 220.0) / 255.0,
+                                        fx_range(r, 240.0, 255.0) / 255.0,
+                                    ],
+                                    roll: 0.0,
+                                    axis: Some(n),
+                                },
+                                _ => {
+                                    // the normal from a point 32 u out, jittered by 3 u; the
+                                    // thruster's own velocity (which slows the smoke) is not known
+                                    let nr = (off + n * 32.0 + fx_vec_rand(r) * 3.0 - e.pos)
+                                        .normalize_or_zero();
+                                    let speed = fx_range(r, 10.0, 30.0) * 10.0;
+                                    ThrusterParticle {
+                                        mat: name,
+                                        additive: false,
+                                        pos: off + fx_vec_rand(r) * 3.0,
+                                        vel: nr * speed,
+                                        grav: Vec3::new(0.0, 0.0, 32.0),
+                                        born: now,
+                                        life: 2.0,
+                                        size: (size / 2.0, fx_range(r, 64.0, 128.0)),
+                                        alpha: (fx_range(r, 50.0, 150.0) / 255.0, 0.0),
+                                        color: [200.0 / 255.0, 200.0 / 255.0, 210.0 / 255.0],
+                                        roll: fx_range(r, -0.2, 0.2),
+                                        axis: None,
+                                    }
+                                }
+                            };
+                            g.thruster_fx.push(p);
+                        }
+                        if *next < now {
+                            *next = now;
+                        }
+                    }
                     "plasma" => {
                         let cyan = [0.0, 1.0, 1.0, 1.0];
                         let white = [1.0, 1.0, 1.0, 1.0];
@@ -4367,6 +4444,32 @@ impl App {
                         }
                     }
                     _ => {}
+                }
+            }
+            g.thruster_emit.retain(|id, _| on.contains(id));
+            g.thruster_fx
+                .retain(|p| now.duration_since(p.born).as_secs_f32() < p.life);
+            for p in &g.thruster_fx {
+                let Some(bm) = g.rope_mats.get(p.mat).and_then(|m| m.as_ref()) else {
+                    continue;
+                };
+                let age = now.duration_since(p.born).as_secs_f32();
+                let f = age / p.life;
+                let pos = p.pos + p.vel * age + p.grav * (0.5 * age * age);
+                let size = p.size.0 + (p.size.1 - p.size.0) * f;
+                let a = p.alpha.0 + (p.alpha.1 - p.alpha.0) * f;
+                let rgba = if p.additive {
+                    [p.color[0] * a, p.color[1] * a, p.color[2] * a, 0.0]
+                } else {
+                    [p.color[0], p.color[1], p.color[2], a.max(1e-3)]
+                };
+                let (v, i) = g
+                    .world
+                    .sprite_quad_var(pos, size, rgba, p.roll, p.axis, &camera);
+                if p.additive {
+                    additive.push((bm, v, i));
+                } else {
+                    alpha.push((bm, v, i));
                 }
             }
         }
@@ -7669,8 +7772,53 @@ fn thruster_fx_material(effect: &str) -> &'static str {
     match effect {
         "fire" => "effects/fire_cloud1",
         "plasma" => "effects/strider_muzzle",
+        "magic" => "sprites/gmdm_pickups/light",
+        "rings" => "effects/select_ring",
+        "smoke" => "particles/smokey",
         _ => "",
     }
+}
+
+/// One `emitter:Add` particle of a thruster effect (`ParticleEmitter`: position integrated
+/// with the velocity and gravity, size / alpha lerped over its die time).
+struct ThrusterParticle {
+    mat: &'static str,
+    additive: bool,
+    pos: Vec3,
+    vel: Vec3,
+    grav: Vec3,
+    born: std::time::Instant,
+    life: f32,
+    size: (f32, f32),
+    alpha: (f32, f32),
+    color: [f32; 3],
+    roll: f32,
+    /// `SetAngles`: the quad lies in the plane normal to it (camera-facing when none).
+    axis: Option<Vec3>,
+}
+
+/// xorshift in [0, 1).
+fn fx_rand(s: &mut u32) -> f32 {
+    let mut x = *s;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *s = x;
+    (x >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// `math.Rand(a, b)`.
+fn fx_range(s: &mut u32, a: f32, b: f32) -> f32 {
+    a + (b - a) * fx_rand(s)
+}
+
+/// `VectorRand()`: each component in [-1, 1].
+fn fx_vec_rand(s: &mut u32) -> Vec3 {
+    Vec3::new(
+        fx_range(s, -1.0, 1.0),
+        fx_range(s, -1.0, 1.0),
+        fx_range(s, -1.0, 1.0),
+    )
 }
 
 #[cfg(test)]

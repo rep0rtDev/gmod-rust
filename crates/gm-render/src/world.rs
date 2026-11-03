@@ -3551,6 +3551,43 @@ impl WorldRenderer {
         (verts, idx)
     }
 
+    /// A particle quad: camera-facing, or in the plane normal to `axis`, rolled by `roll`
+    /// radians; `rgba[3]` is the vertex opacity (the shader multiplies the texture alpha by
+    /// it in the alpha pass; pass premultiplied colour and 0 for the additive pass).
+    pub fn sprite_quad_var(
+        &self,
+        pos: Vec3,
+        size: f32,
+        rgba: [f32; 4],
+        roll: f32,
+        axis: Option<Vec3>,
+        camera: &Camera,
+    ) -> (Vec<Vertex>, Vec<u32>) {
+        let fwd = axis.unwrap_or_else(|| camera.forward());
+        let mut right = fwd.cross(Vec3::Z).normalize_or_zero();
+        if right == Vec3::ZERO {
+            right = Vec3::X;
+        }
+        let up = right.cross(fwd).normalize_or_zero();
+        let (sr, cr) = roll.sin_cos();
+        let (right, up) = (right * cr + up * sr, up * cr - right * sr);
+        let h = size * 0.5;
+        let verts = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .into_iter()
+            .map(|(x, y)| Vertex {
+                position: (pos + right * (x * h) + up * (y * h)).to_array(),
+                uv: [(x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5],
+                lm_uv: self.white_uv,
+                color: [rgba[0], rgba[1], rgba[2]],
+                alpha: rgba[3],
+                lm_page: 0.0,
+                normal: [0.0; 3],
+                cube: -1.0,
+            })
+            .collect();
+        (verts, vec![0, 1, 2, 0, 2, 3])
+    }
+
     /// Camera-facing square of `size` units at `pos` (a `vp_parallel` sprite).
     pub fn sprite_quad(
         &self,

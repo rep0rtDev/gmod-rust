@@ -204,6 +204,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if material.translucent != 0u {
         alpha = albedo.a * camera.alpha;
     }
+    // sprite particles: the vertex alpha is their opacity when the material has no $basetexture2
+    if material.blend == 0u && in.alpha > 0.0 {
+        alpha = alpha * in.alpha;
+    }
     return vec4<f32>(mix(out, camera.fog_color.rgb, fog), alpha);
 }
 
