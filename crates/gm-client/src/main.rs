@@ -1595,6 +1595,7 @@ impl App {
                     icon: "icon16/folder_database.png".to_string(),
                     models: models.clone(),
                     addon: true,
+                    parent: 0,
                 });
             }
         }
@@ -3057,15 +3058,48 @@ impl App {
                             icon: "icon16/page.png".into(),
                             models: Vec::new(),
                             addon: false,
+                            parent: 0,
                         },
                     );
                     menu.st.node = at;
+                }
+                Some(derma::Action::Menu("spawnlist_sub")) => {
+                    let Some(parent) = self.spawnlists.get(i).map(|l| l.id) else {
+                        return;
+                    };
+                    let id = self.spawnlists.iter().map(|l| l.id).max().unwrap_or(0) + 1;
+                    self.spawnlists.insert(
+                        i + 1,
+                        derma::SpawnList {
+                            id,
+                            name: "New Category".into(),
+                            icon: "icon16/folder.png".into(),
+                            models: Vec::new(),
+                            addon: false,
+                            parent,
+                        },
+                    );
+                    menu.st.node = i + 1;
                 }
                 Some(derma::Action::Menu("spawnlist_remove")) => {
                     let editable = self.spawnlists.iter().filter(|l| !l.addon).count() > 1
                         && self.spawnlists.get(i).is_some_and(|l| !l.addon);
                     if editable {
-                        self.spawnlists.remove(i);
+                        // the list and its sub-categories
+                        let mut gone = vec![self.spawnlists[i].id];
+                        loop {
+                            let more: Vec<u32> = self
+                                .spawnlists
+                                .iter()
+                                .filter(|l| gone.contains(&l.parent) && !gone.contains(&l.id))
+                                .map(|l| l.id)
+                                .collect();
+                            if more.is_empty() {
+                                break;
+                            }
+                            gone.extend(more);
+                        }
+                        self.spawnlists.retain(|l| !gone.contains(&l.id));
                         menu.st.node = menu.st.node.min(self.spawnlists.len().saturating_sub(1));
                     }
                 }

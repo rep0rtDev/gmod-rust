@@ -212,6 +212,8 @@ pub struct SpawnList {
     pub icon: String,
     pub models: Vec<String>,
     pub addon: bool,
+    /// The parent list's id (`parentid`; 0 = top level).
+    pub parent: u32,
 }
 
 /// The client's default spawnlists in id order.
@@ -264,6 +266,10 @@ pub fn load_spawnlists(mount: &Mount) -> Vec<SpawnList> {
             .get_str("id")
             .and_then(|s| s.parse().ok())
             .unwrap_or_else(|| num.parse().unwrap_or(0));
+        let parent: u32 = root
+            .get_str("parentid")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         let models = root
             .get("contents")
             .map(|c| {
@@ -286,6 +292,7 @@ pub fn load_spawnlists(mount: &Mount) -> Vec<SpawnList> {
                 icon,
                 models,
                 addon: false,
+                parent,
             },
         ));
     }
@@ -314,7 +321,7 @@ pub fn save_spawnlists(lists: &[SpawnList]) -> std::io::Result<()> {
         let id = if l.id > 0 { l.id } else { i as u32 + 1 };
         let mut out = String::from("\"TableToKeyValues\"\n{\n");
         out.push_str(&format!("\t\"name\"\t\t\"{}\"\n", l.name));
-        out.push_str("\t\"parentid\"\t\t\"0\"\n");
+        out.push_str(&format!("\t\"parentid\"\t\t\"{}\"\n", l.parent));
         out.push_str(&format!("\t\"icon\"\t\t\"{}\"\n", l.icon));
         out.push_str(&format!("\t\"id\"\t\t\"{id}\"\n"));
         out.push_str("\t\"version\"\t\t\"3\"\n\t\"contents\"\n\t{\n");
@@ -627,6 +634,11 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
         if editable {
             opts.push(("Edit".to_string(), "icon16/pencil.png", "spawnlist_edit"));
             opts.push((
+                "Add subcategory".to_string(),
+                "icon16/folder_add.png",
+                "spawnlist_sub",
+            ));
+            opts.push((
                 "Delete".to_string(),
                 "icon16/bin_closed.png",
                 "spawnlist_remove",
@@ -802,22 +814,35 @@ fn spawnlists(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f3
     search_box(out, ctx, st, x, y, TREE_W);
     let (ty, th) = (y + 24.0, h - 24.0);
     nine(&mut out.items, &TREE, x, ty, TREE_W, th, WHITE);
-    let mut rows: Vec<NodeRow> = ctx
-        .lists
-        .iter()
-        .enumerate()
-        .map(|(i, l)| NodeRow {
-            label: match &st.rename {
-                Some((r, t)) if *r == i => format!("{t}_"),
-                _ => l.name.clone(),
-            },
-            icon: l.icon.clone(),
-            level: if l.addon { 1.0 } else { 0.0 },
-            selected: st.node == i,
-            expander: None,
-            action: Action::Node(i),
-        })
-        .collect();
+    // the lists nest by `parentid` (custom.lua AddPropsOfParent), depth first
+    fn list_rows(rows: &mut Vec<NodeRow>, ctx: &Ctx, st: &MenuState, parent: u32, level: f32) {
+        if level > 8.0 {
+            return;
+        }
+        let is_child = |l: &SpawnList| {
+            l.parent != 0 && ctx.lists.iter().any(|p| p.id == l.parent && p.id != l.id)
+        };
+        for (i, l) in ctx.lists.iter().enumerate() {
+            let child = is_child(l);
+            if (parent == 0 && child) || (parent != 0 && (!child || l.parent != parent)) {
+                continue;
+            }
+            rows.push(NodeRow {
+                label: match &st.rename {
+                    Some((r, t)) if *r == i => format!("{t}_"),
+                    _ => l.name.clone(),
+                },
+                icon: l.icon.clone(),
+                level: level + if l.addon { 1.0 } else { 0.0 },
+                selected: st.node == i,
+                expander: None,
+                action: Action::Node(i),
+            });
+            list_rows(rows, ctx, st, l.id, level + 1.0);
+        }
+    }
+    let mut rows: Vec<NodeRow> = Vec::new();
+    list_rows(&mut rows, ctx, st, 0, 0.0);
     rows.push(NodeRow {
         label: "Browse".into(),
         icon: "icon16/cog.png".into(),
