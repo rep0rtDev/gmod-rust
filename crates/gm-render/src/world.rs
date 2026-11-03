@@ -61,7 +61,7 @@ struct MaterialParams {
     envmap2: [f32; 4],
     /// `$envmapfresnelminmaxexp` (xyz) and `$envmapfresnel` on (w).
     envmap3: [f32; 4],
-    /// `$selfillumtint` (rgb).
+    /// `$selfillumtint` (rgb) and `$envmapmaskscale` (w).
     selfillum_tint: [f32; 4],
 }
 
@@ -100,7 +100,8 @@ fn envmap3_params(mat: &material::Material) -> [f32; 4] {
 
 fn selfillum_tint(mat: &material::Material) -> [f32; 4] {
     let t = mat.selfillum_tint;
-    [t[0], t[1], t[2], 0.0]
+    // w: `$envmapmaskscale` (the mask texture's uv scale)
+    [t[0], t[1], t[2], mat.envmapmask_scale.max(1e-3)]
 }
 
 /// Nearest baked `env_cubemap` sample: (origin, layer in the cube array).

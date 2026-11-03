@@ -144,7 +144,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // $envmap: the nearest env_cubemap along the reflected view ray, times $envmaptint and
     // the mask (1 - base alpha for $basealphaenvmapmask, normal alpha), added after lighting
     let bump_a = textureSample(bump, base_sampler, in.uv).a;
-    let mask_tex = textureSample(envmask, base_sampler, in.uv).rgb;
+    let mask_tex = textureSample(envmask, base_sampler, in.uv * material.selfillum_tint.w).rgb;
     if material.envmap.w > 0.5 && in.cube >= 0.0 && dot(in.normal, in.normal) > 0.0 {
         let r = reflect(normalize(in.world - camera.eye.xyz), normalize(in.normal));
         var mask = vec3<f32>(1.0);

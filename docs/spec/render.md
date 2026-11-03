@@ -126,7 +126,7 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   bytes per 32-texel cubemap on construct), uploaded as `Rgba16Float` with no conversion,
   so they go through the same exposure as the HDR lightmap atlas. Spawn view HDR vs LDR
   (`GM_HDR=1` on the headless example): 22.8k px differ, max 85, the window reflections
-  softer and warmer. Open: `$envmapmaskscale` / `$envmapmasktransform`.
+  softer and warmer. `$envmapmaskscale` scales the mask uv. Open: `$envmapmasktransform`.
   Done since: the eye's water volume (`LUMP_LEAFWATERDATA` 36: surface z, min z, surface
   texinfo; its `CONTENTS_WATER` leaves' boxes) switches the view fog of the world, model and
   3D-skybox passes (the latter in skybox units) to the surface material's `$bottommaterial`
@@ -210,9 +210,11 @@ engine scales the offset with depth is unverified). The normal map scrolls by th
 water: rate 0.02 uv/s at 25 deg, i.e. (0.0181, 0.0085) uv/s), else by `$scroll1` xy. `$reflectentities` (set on
 construct's water): the client hands `draw` the frame's entity models and the reflection
 pass draws them after the world with the mirrored camera, still under the clip plane
-(static props are world batches and reflect regardless). Open: reflection and refraction
-of translucent surfaces (drawn after the copy), the view model and beams/sprites in the
-reflection.
+(static props are world batches and reflect regardless). Translucent world surfaces
+(glass) are in both: a pass draws opaque, then sorted translucent, then water, so the
+mirrored pass has them and the refraction copy is taken after them. Open: entity models
+in the refraction copy (the client draws them after the world), the view model and
+beams/sprites in the reflection.
 
 ### `$ssbump`
 

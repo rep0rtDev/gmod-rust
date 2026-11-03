@@ -48,6 +48,8 @@ pub struct Material {
     pub envmap: Option<EnvMap>,
     /// `$envmapmask` texture path.
     pub envmapmask: Option<String>,
+    /// `$envmapmaskscale`: uv scale of the mask texture (1 when absent).
+    pub envmapmask_scale: f32,
     /// `$selfillum`: the base alpha lerps the lit result towards the unlit base.
     pub selfillum: bool,
     /// `$selfillumtint` (1 1 1 when absent).
@@ -311,6 +313,9 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
             };
             let one = |k: &str| matches!(get(k).as_deref(), Some("1"));
             mat.envmapmask = get("$envmapmask");
+            mat.envmapmask_scale = get("$envmapmaskscale")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(1.0);
             let numv = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
             let mask = if mat.envmapmask.is_some() {
                 EnvMapMask::Texture
