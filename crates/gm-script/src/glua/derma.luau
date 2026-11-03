@@ -1685,7 +1685,12 @@ function Derma_Install_Convar_Functions(p)
 	p.ConVarNumberThink = function() end
 end
 
+-- `FindMetaTable("Panel")` and the control tables: addons extend them (the game's
+-- `vgui.GetControlTable` returns the same tables)
+__glua_classes.Panel = Panel
+for name, tbl in pairs(classes) do __glua_classes[name] = tbl end
 -- documented panels not built yet: creatable as a plain DPanel so addons keep running
 for _, n in ipairs({ "DColorMixer", "DColorPalette", "DColorButton", "DColorCube", "DAlphaBar", "DRGBPicker", "DColorCombo", "DListView", "DListView_Line", "DListView_Column", "DListBox", "DListBoxItem", "DTree", "DTree_Node", "DPropertySheet", "DTab", "DCollapsibleCategory", "DCategoryList", "DForm", "DIconLayout", "DGrid", "DTooltip", "DHTML", "DHTMLControls", "DModelPanel", "DModelSelect", "DAdjustableModelPanel", "DImageButton", "DSpawnIcon", "DIconBrowser", "DFileBrowser", "DEntityProperties", "DProperties", "DProperty_Generic", "DProperty_Boolean", "DProperty_Combo", "DProperty_Float", "DProperty_Int", "DProperty_VectorColor", "DNumberWang", "DNumberScratch", "DNumPad", "DBinder", "DButtonSelect", "DHorizontalDivider", "DHorizontalScroller", "DVerticalDivider", "DDragBase", "DDrawer", "DExpandButton", "DKillIcon", "DLabelEditable", "DLabelURL", "DMenuBar", "DMenuOptionCVar", "DNotify", "DPanelList", "DPanelOverlay", "DPanelSelect", "DProgressBar", "DScrollBarGrip", "DShape", "DSizeToContents", "DSprite", "DTextEditor", "DTileLayout", "DTreeScroller", "DTree_Node_Button", "DVScrollBar", "ContentIcon", "ContentHeader", "ContentContainer", "ContentSidebar", "ContentSidebarToolbox", "SpawnIcon", "SpawnmenuContentPanel", "ControlPanel", "ControlPresets", "PresetEditor", "PropSelect", "MatSelect", "ImageCheckBox", "Material", "AvatarImage", "RichText", "RadioButton", "CheckButton", "Frame", "Label", "Button", "TextEntry", "HTML", "Slider", "ImagePanel", "ScrollBar", "ScrollBarGrip", "Divider", "GModNotify", "ToolMenu", "ToolPanel", "DAlphaBar", "SlideBar" }) do
 	if not classes[n] then vgui.Register(n, {}, "DPanel") end
 end
+for name, tbl in pairs(classes) do __glua_classes[name] = tbl end
