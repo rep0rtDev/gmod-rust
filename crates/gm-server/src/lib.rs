@@ -4604,6 +4604,8 @@ pub struct Server<'w> {
     pub sents: HashMap<u32, SentState>,
     /// Weapon entities lying in the world (`Spawn_Weapon`): prop id -> weapon class.
     pub world_weapons: HashMap<u32, String>,
+    /// `ai_disabled 1`: no NPC thinks at all (no movement, no combat), as in the game.
+    pub ai_disabled: bool,
     /// NPCs spawned from the NPCs tab (`Spawn_NPC`), by sandbox id (foreign to the prop list).
     pub npcs: BTreeMap<u32, Npc>,
     nav: Option<std::sync::Arc<gm_nav::NavMesh>>,
@@ -4764,6 +4766,7 @@ impl<'w> Server<'w> {
             scripted_entities: Vec::new(),
             sents: HashMap::new(),
             world_weapons: HashMap::new(),
+            ai_disabled: false,
             npcs: BTreeMap::new(),
             nav: None,
             parents: HashMap::new(),
@@ -9866,6 +9869,9 @@ impl<'w> Server<'w> {
     /// `step_height` above the feet and dropped to the floor; the yaw turns toward the motion
     /// at NPC_YAW_RATE.
     fn tick_npc_move(&mut self) {
+        if self.ai_disabled {
+            return;
+        }
         let ids: Vec<u32> = self
             .npcs
             .iter()

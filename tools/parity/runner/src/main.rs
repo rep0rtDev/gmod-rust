@@ -223,6 +223,9 @@ struct OpSpec {
     yaw: f32,
     #[serde(default)]
     name: Option<String>,
+    /// `concmd`: the console command (`ai_disabled`, `ai_ignoreplayers`, ...).
+    #[serde(default)]
+    cmd: Option<String>,
     #[serde(default)]
     value: Option<String>,
     #[serde(default)]
@@ -4359,7 +4362,13 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         physics.add_static_mesh(&disp_pos, &disp_idx, world_surface)?;
     }
     let mut server = gm_server::Server::new(&collision, physics, world_body);
-    if scn.ops.iter().any(|op| op.op == "npcgoto") {
+    // the game always has its node graph: any scenario with an NPC gets the mesh (a hostile
+    // NPC shot from across the room walks at the shooter, `server_npc_damage`)
+    if scn
+        .ops
+        .iter()
+        .any(|op| op.op == "npcgoto" || op.op == "spawnnpc")
+    {
         let nav = gm_nav::NavMesh::build(&bsp, &gm_nav::NavParams::default())
             .map_err(|e| anyhow::anyhow!("navmesh for {map}: {e}"))?;
         server.set_navmesh(std::sync::Arc::new(nav));
@@ -4641,8 +4650,13 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                     );
                 }
             }
-            // console variables of the game (ai_disabled for clean damage readings): nothing here
-            "concmd" => {}
+            // console variables of the game: `ai_disabled` freezes every NPC's AI as in the game;
+            // the rest (ai_ignoreplayers: our walkers are not hostile anyway) are nothing here
+            "concmd" => {
+                if op.cmd.as_deref() == Some("ai_disabled") {
+                    server.ai_disabled = op.value.as_deref() == Some("1");
+                }
+            }
             "firebullets" => {
                 // the game's op aims `Player:FireBullets` at the first (matching) NPC's centre
                 let target = if op.target.as_deref() == Some("vehicle") {
