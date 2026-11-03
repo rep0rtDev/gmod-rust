@@ -811,8 +811,12 @@ public:
 		// with the friction on the slope; the crate's 0.417 + 0.467 f is this rule at b*h/k^2 =
 		// 2.1 (`phys_drop_flat_{crate2,cardbox1,cardbox3,harddrive,ammocan}_lo*` 261103)
 		float face_floor = 0.417f + 0.467f * friction;
+		// the floor never sends a point back faster than it came (the series' slowest landing,
+		// 45 u/s, still leaves at 0.62 of it): a body touching down slower than its floor is
+		// settling and keeps plain restitution, or a chair spawned on the floor would hop
+		// 0.8 u at its own floor speed forever (`server_duplicator_vehicle`)
 		auto separation = [&](float restitution_speed, float approach) {
-			if (approach <= 0.3f) return restitution_speed;
+			if (approach <= 0.3f || approach <= face_floor) return restitution_speed;
 			return std::max(restitution_speed, face_floor);
 		};
 		auto rel = [&](JPH::RVec3Arg p) { return point_velocity(b1, p) - point_velocity(b2, p); };
