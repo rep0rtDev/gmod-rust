@@ -228,7 +228,8 @@ function S.DrawCircle(x, y, r, c)
 end
 
 ------------------------------------------------------------------------ draw (GLua)
-draw = {}
+-- The GLua library sits over the host `draw` (font/rect/text/texture/start3d2d): actors keep both.
+draw = setmetatable({}, { __index = hostdraw })
 local D = draw
 function D.NoTexture() material = nil end
 function D.GetFontHeight(f)
