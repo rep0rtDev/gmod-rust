@@ -82,7 +82,7 @@ Measured on gm_construct's `func_useableladder` (the line x -2920, y -1076 from 
 
 A frozen prop is a solid for the player hull exactly like a brush: the PHY convexes at the prop's pose, planes pushed out by the hull extents, the 1/32 u skin (`move_prop_block`: walking into a frozen crate stops 0.03 u short of its face, the forward speed clipped to 0, bit-exact; `move_prop_step`: a PHX plate on the floor is stepped onto (4 u up) and off, the ground entity is the prop, bit-exact). Footsteps on a prop use the prop's surface property (the plastic plate plays `tile*.wav`). The bump into the frozen crate also makes the crate's impact sound (a physics event, not reproduced).
 
-A frozen prop teleported with `SetPos` every tick does not carry the player: he stays put and loses the ground once the plate has slid out from under him (`move_prop_setpos`). The tick that loses the ground ends with the second gravity half (-4.5) although it started grounded: `FullWalkMove` finishes with gravity when the move left the ground; we do that too. Open: the game drops him one tick earlier than our sweep does (its ground probe misses the plate while 0.6 u of the hull is still over it, tick 82), and he lands at -143.26 instead of the floor's -143.97. Teleporting the plate before the player's command instead gets the drop tick right but then our tick-start probe misses the plate as well (full gravity, -9 and 0.07 u down), while the game's start probe still found it and only its end probe did not - two probes of the same geometry disagreeing, which no ordering of ours reproduces.
+A frozen prop teleported with `SetPos` every tick does not carry the player: he stays put and loses the ground once the plate has slid out from under him (`move_prop_setpos`). The tick that loses the ground ends with the second gravity half (-4.5) although it started grounded: `FullWalkMove` finishes with gravity when the move left the ground; we do that too. The ground is kept from the previous tick's end, so the tick the plate's edge clears the hull still runs the ground move (see *Start-of-tick ground* below); bit-exact over 320 ticks.
 
 An unfrozen floating prop (gravity off, velocity set every tick) with the player standing on it is a vphysics shadow interaction: the plate sinks and tilts under him, he is carried at about half its speed and slides off (`move_prop_ride`, recorded, not modelled, no harness).
 
@@ -139,3 +139,18 @@ Recorded on srcds with an `EntityEmitSound` hook on gm_construct's concrete spaw
 Landing (`move_step_fall_50/100/200/300/500/900`, drops onto the spawn floor; fall speeds 243, 342, 486, 594, 774, 1035 u/s): a fall of 526.5 u/s or more (the one that hurts, see fall damage) lands with a step at volume 1.0 and `Player.FallDamage` (script volume 0.75, pitch 90-110 from the script, soundlevel 75) on the same tick, in that order; more than half of that (342, 486) lands with a step at 0.85 and nothing else; 243 (a standing jump) makes no landing sound. No pain sound is emitted by the server on top.
 
 Implementation: `gm_move::Footsteps` holds the timer and the foot and is run before each player's move with the state entering the tick (`before_move`) and on a jump (`on_jump`). `gm-server` resolves the wave set: a 4 u ray down from the origin finds the floor brush side (`gm_collision::World::ground_material`; an idle player on the spawn stands 1 u above the floor), its material's `$surfaceprop` (through `patch` includes, `default` when missing) gives `stepleft`/`stepright` through the surfaceproperties base chain, and the soundscript name goes to clients as a world sound with the measured volume as its factor (the step scripts have volume 1.0). The five `move_step_*` harnesses compare tick, volume and wave set; which foot a recording starts on is whatever the bot's pre-roll left, so the compare may swap feet once for the whole list ("feet swapped").
+
+## Start-of-tick ground (measured `move_prop_setpos`, plate2x2 teleported out from under a standing player)
+
+The game's optimized movement does not re-check the ground at the start of a walking player's
+tick: the ground entity is carried from the end of the previous tick, and only a player moved
+by game code (spawn, teleport, being seated) starts the tick with a ground check
+(`PlayerState::game_moved`). The probe's Tick hook teleports the plate before the player's move
+of the same tick; on the tick the plate's edge clears the hull (82) the player still runs the
+ground move (vertical speed zeroed), loses the ground at the move's end and gets only the
+second gravity half: -4.5 u/s with the origin unchanged, the fall starting one tick later than
+an air move would. With that the whole fall and the landing match to 0.0000 u over 320 ticks:
+the last air move ends 0.71 u above the floor (-143.257) and the 2 u ground probe grounds the
+player there without snapping, which is why that rest differs from the -143.969 of a walk-off
+fall. Checking the ground at the tick start instead ran the air move (-9 u/s, 0.07 u moved)
+and landed on the floor itself.

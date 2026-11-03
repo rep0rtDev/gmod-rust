@@ -4790,6 +4790,7 @@ impl<'w> Server<'w> {
     pub fn teleport_player(&mut self, id: u32, pos: Vec3) {
         if let Some(p) = self.players.get_mut(&id) {
             p.state.origin = pos;
+            p.state.game_moved = true;
             p.state.velocity = Vec3::ZERO;
             p.state.on_ground = false;
             p.prev_vz = 0.0;
@@ -8015,6 +8016,7 @@ impl<'w> Server<'w> {
         if let Some(p) = self.players.get_mut(&player) {
             p.seat = Some(veh);
             p.state.origin = seat;
+            p.state.game_moved = true;
             p.state.velocity = Vec3::ZERO;
             p.view_angles = prop.angles;
         }
@@ -8887,6 +8889,7 @@ impl<'w> Server<'w> {
         if let Some(p) = self.players.get_mut(&player) {
             p.seat = None;
             p.state.origin = pos;
+            p.state.game_moved = true;
             p.state.velocity = Vec3::ZERO;
             p.view_angles = Vec3::new(0.0, yaw.rem_euclid(360.0), 0.0);
         }
@@ -9238,6 +9241,7 @@ impl<'w> Server<'w> {
                 });
             if let (Some(seat), Some(p)) = (seat, self.players.get_mut(&player)) {
                 p.state.origin = seat;
+                p.state.game_moved = true;
                 p.state.velocity = Vec3::ZERO;
             }
         }
@@ -12959,6 +12963,7 @@ impl<'w> Server<'w> {
         };
         if let Some((o, v)) = write_back {
             p.state.origin = o;
+            p.state.game_moved = true;
             p.state.velocity = v;
         }
         if !skip_mover {
@@ -12983,6 +12988,7 @@ impl<'w> Server<'w> {
             if let Verdict::Text(t) = self.ask(Request::FinishMove { player, data }) {
                 if let (Some(d), Some(p)) = (data.parse(&t), self.players.get_mut(&player)) {
                     p.state.origin = d.origin;
+                    p.state.game_moved = true;
                     p.state.velocity = d.velocity;
                 }
             }

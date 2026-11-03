@@ -149,6 +149,7 @@ mod tests {
                     origin: Vec3::new(1.0, 2.0, 3.0),
                     ducked: true,
                     duck_timer: 0.4,
+                    game_moved: false,
                     ..Default::default()
                 },
             }),

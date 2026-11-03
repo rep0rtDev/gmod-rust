@@ -1323,8 +1323,9 @@ fn run_move(scn: &Scenario) -> Result<Value> {
             let prev_level = st.water_level;
             let (prev_move, prev_vz_l) = (st.move_type, st.velocity.z);
             let step = steps.before_move(&st, mover.step_max_speed(&cmd), 15.0);
-            mover.tick(&mut st, &cmd);
-            // the probe's Tick hook teleports the platform after the player has moved
+            // the probe's Tick hook teleports the platform before the player's move of the
+            // same tick: `move_prop_setpos` loses the ground on the tick the plate's edge
+            // (teleported that tick) clears the hull, not one later
             if let Some((p, ..)) = &platform {
                 if p.mode.as_deref() == Some("setpos") {
                     for m in &p.moves {
@@ -1335,6 +1336,7 @@ fn run_move(scn: &Scenario) -> Result<Value> {
                     mover.set_props(platform_convexes(plat_pos));
                 }
             }
+            mover.tick(&mut st, &cmd);
             let ladder_step = steps.ladder_step(prev_move, prev_vz_l, &st, 15.0);
             if let Some((name, vol)) = steps.water_sound(prev_level, &st, &cmd) {
                 let e = scripts.get(name);
@@ -4817,6 +4819,7 @@ fn run_server_segments(
     for _ in 0..60 {
         if let Some(p) = server.players.get_mut(&player) {
             p.state.origin = start;
+            p.state.game_moved = true;
             p.state.velocity = Vec3::ZERO;
         }
         server.tick(&settle);
@@ -5112,6 +5115,7 @@ fn run_net_predict(
     let settle = |server: &mut gm_server::Server<'_>, st: &mut gm_move::PlayerState| {
         if let Some(p) = server.players.get_mut(&1) {
             p.state.origin = start;
+            p.state.game_moved = true;
             p.state.velocity = Vec3::ZERO;
         }
         st.origin = start;

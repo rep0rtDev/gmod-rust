@@ -144,6 +144,9 @@ pub struct PlayerState {
     /// vertical push of up to 250 u/s shows in that tick's velocity but does not lift the
     /// player; `categorize` keeps the ground once and clears it.
     pub ground_push: bool,
+    /// Set when game code placed the player (spawn, teleport, seat): the next tick starts
+    /// with a ground check, like `m_bGameCodeMovedPlayer`.
+    pub game_moved: bool,
     pub ground_normal: Vec3,
     pub ducked: bool,
     pub ducking: bool,
@@ -183,6 +186,7 @@ impl Default for PlayerState {
             velocity: Vec3::ZERO,
             impulse: Vec3::ZERO,
             ground_push: false,
+            game_moved: true,
             on_ground: false,
             ground_normal: Vec3::Z,
             ducked: false,
@@ -428,7 +432,13 @@ impl<'a> Mover<'a> {
         }
         st.ducked_at_tick_start = st.ducked;
         self.duck(st, cmd, dt);
-        self.categorize(st);
+        // the game's optimized movement keeps a walking player's ground from the end of the
+        // last tick (`move_prop_setpos` tick 82: the plate teleported out from under the feet
+        // still gives a ground move, the ground is lost only at the move's end)
+        if st.move_type != MoveType::Walk || st.game_moved {
+            self.categorize(st);
+        }
+        st.game_moved = false;
         let mut water = WaterCache::default();
         self.check_water(st, &mut water);
         if st.water_level >= 2 {
