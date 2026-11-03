@@ -1,0 +1,12 @@
+{
+ "name": "device_hoverball_drop_m40",
+ "kind": "constraint",
+ "map": "gm_construct",
+ "bot": true,
+ "start": [600.0, -500.0, -143.0],
+ "ticks": 240,
+ "props": [],
+ "constraints": [],
+ "devices": [{"kind": "hoverball", "pos": [823.235, -500.0, -40.0], "speed": 5, "resistance": 5, "strength": 10, "key_up": 46, "key_dn": 43, "key_on": 40}],
+ "keys": [{"t": 20, "key": 40, "down": true}, {"t": 21, "key": 40, "down": false}]
+}

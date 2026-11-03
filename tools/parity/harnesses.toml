@@ -3253,6 +3253,42 @@ ang = 5.0
 contact = 1
 
 [[harness]]
+name = "constraint_device_hoverball_drop_m90"
+scenario = "constraint/device_hoverball_drop_m90"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_device_hoverball_drop_m40"
+scenario = "constraint/device_hoverball_drop_m40"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
+name = "constraint_device_hoverball_drop_p40"
+scenario = "constraint/device_hoverball_drop_p40"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-sandbox"]
+[harness.tolerance]
+pos = 2.0
+rest = 2.0
+ang = 5.0
+contact = 1
+
+[[harness]]
 name = "constraint_device_hoverball_crate"
 scenario = "constraint/device_hoverball_crate"
 compare = "rigid"
