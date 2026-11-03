@@ -12908,14 +12908,20 @@ impl<'w> Server<'w> {
                 let bodies = self.trace_bodies();
                 let hit = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward);
                 match hit.and_then(|h| h.ent.map(|e| (e, h))) {
-                    Some((ent, h))
-                        if !self.sandbox.props().iter().any(|p| p.id == ent && p.frozen)
-                            && !self.part_frozen(ent, h.bone) =>
-                    {
+                    Some((ent, h)) => {
                         let allowed = !matches!(
                             self.ask(Request::PhysgunPickup { player, ent }),
                             Verdict::Cancel
                         );
+                        // a frozen prop is grabbed like any other and comes unfrozen: the
+                        // game's physgun enables motion on the object it picks up, and the
+                        // prop stays unfrozen when dropped (freeze again with the right button)
+                        if allowed
+                            && (self.sandbox.props().iter().any(|p| p.id == ent && p.frozen)
+                                || self.part_frozen(ent, h.bone))
+                        {
+                            self.set_prop_frozen(ent, false);
+                        }
                         let body = allowed.then(|| self.part_body(ent, h.bone)).flatten();
                         body.map(|b| {
                             let st = self.physics.state(b);
