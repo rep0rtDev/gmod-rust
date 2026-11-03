@@ -2996,9 +2996,8 @@ impl App {
             }
         }
         if let Some(derma::Action::Spawn(model)) = action {
-            let editable = menu.st.creation_tab == 0
-                && self.spawnlists.get(menu.st.node).is_some_and(|l| !l.addon);
-            if editable {
+            let listed = menu.st.creation_tab == 0 && menu.st.node < self.spawnlists.len();
+            if listed {
                 let models = if menu.st.selected.contains(&model) {
                     menu.st.selected.clone()
                 } else {
@@ -3076,6 +3075,20 @@ impl App {
             return;
         }
         if let Some((_, models)) = menu.st.ctx_menu.take() {
+            if matches!(action, Some(derma::Action::Menu("spawnlist_copy"))) {
+                if let Some(t) = self.spawnlists.iter().position(|l| !l.addon) {
+                    for model in &models {
+                        if !self.spawnlists[t].models.contains(model) {
+                            self.spawnlists[t].models.push(model.clone());
+                        }
+                    }
+                    menu.st.selected.clear();
+                    if let Err(e) = derma::save_spawnlists(&self.spawnlists) {
+                        eprintln!("spawnlist: {e}");
+                    }
+                }
+                return;
+            }
             if matches!(action, Some(derma::Action::Menu("spawnlist_delete"))) {
                 if let Some(l) = self.spawnlists.get_mut(menu.st.node) {
                     l.models.retain(|m| !models.contains(m));

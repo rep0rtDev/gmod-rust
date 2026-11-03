@@ -600,17 +600,24 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
     }
     // contenticon.lua `OpenGenericSpawnmenuRightClickMenu` / the selection's "Delete %i items"
     if let Some((at, models)) = &st.ctx_menu {
-        let label = if models.len() > 1 {
-            format!("Delete {} items", models.len())
+        let n = models.len();
+        let addon = ctx.lists.get(st.node).is_some_and(|l| l.addon);
+        let opts = if addon {
+            // a read-only (addon) list: the icons go to the player's first spawnlist
+            vec![(
+                "Copy to my spawnlist".to_string(),
+                "icon16/page_copy.png",
+                "spawnlist_copy",
+            )]
         } else {
-            "Delete".to_string()
+            let label = if n > 1 {
+                format!("Delete {n} items")
+            } else {
+                "Delete".to_string()
+            };
+            vec![(label, "icon16/bin_closed.png", "spawnlist_delete")]
         };
-        context_menu(
-            &mut out,
-            ctx,
-            *at,
-            &[(label, "icon16/bin_closed.png", "spawnlist_delete")],
-        );
+        context_menu(&mut out, ctx, *at, &opts);
     }
     // the tree's menu (contentsidebar.lua): New, and Delete for an editable list
     if let Some((at, i)) = &st.list_menu {
