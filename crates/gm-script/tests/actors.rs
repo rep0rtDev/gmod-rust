@@ -1178,3 +1178,52 @@ fn glua_spawnmenu_registry_and_achievements() {
     assert_eq!(tab_icon, "icon16/application_view_tile.png");
     assert_eq!(ach, "2/5000/false");
 }
+
+/// render.* world geometry: a box from PostDrawOpaqueRenderables arrives as 12 world
+/// triangles, a line as 2, colour modulation applies.
+#[test]
+fn glua_render_world_geometry_reaches_the_client() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "fx".into(),
+        name: "box".into(),
+        priority: 0,
+        source: r#"
+            hook.Add("PostDrawOpaqueRenderables", "t", function()
+                render.SetColorMaterial()
+                render.DrawBox(Vector(0, 0, 0), Angle(0, 0, 0), Vector(-8, -8, -8), Vector(8, 8, 8), Color(255, 0, 0))
+                render.SetColorModulation(0.5, 1, 1)
+                render.DrawLine(Vector(0, 0, 0), Vector(100, 0, 0), Color(200, 200, 200))
+            end)
+        "#
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let world = gm_net::ClientWorld::default();
+    let draws = rt.client_render(&world, 1280, 720);
+    let tris: Vec<_> = draws
+        .iter()
+        .filter_map(|d| match d {
+            gm_script::DrawCmd::WorldTri { pts, color } => Some((pts, color)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tris.len(),
+        14,
+        "12 box triangles + 2 line triangles: {draws:?}"
+    );
+    assert!(tris[..12].iter().all(|(_, c)| c[0] == 1.0 && c[1] == 0.0));
+    assert!(
+        tris[12].1[0] < 0.5 && tris[12].1[1] > 0.7,
+        "colour modulation halves red: {:?}",
+        tris[12].1
+    );
+    assert!(tris[..12]
+        .iter()
+        .all(|(p, _)| p.iter().all(|v| v.abs().max_element() == 8.0)));
+}

@@ -792,6 +792,11 @@ pub enum DrawCmd {
     HideHud {
         name: String,
     },
+    /// `render.Draw*` in the world: one triangle in world space, drawn with the 3D2D planes.
+    WorldTri {
+        pts: [Vec3; 3],
+        color: [f32; 4],
+    },
     /// `gui.EnableScreenClicker(on)`: the client shows the cursor and stops mouse look.
     ScreenClicker {
         on: bool,
@@ -1468,6 +1473,21 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     .lock()
                     .unwrap()
                     .push(DrawCmd::Rect { x, y, w, h, color });
+                Ok(())
+            },
+        )?,
+    )?;
+    let sh = shared.clone();
+    draw.set(
+        "world_tri",
+        lua.create_function(
+            move |_, (a, b, c, color): (Table, Table, Table, Option<Table>)| {
+                let pts = [table_vec3(&a)?, table_vec3(&b)?, table_vec3(&c)?];
+                let color = color_of(color.as_ref())?;
+                sh.draws
+                    .lock()
+                    .unwrap()
+                    .push(DrawCmd::WorldTri { pts, color });
                 Ok(())
             },
         )?,

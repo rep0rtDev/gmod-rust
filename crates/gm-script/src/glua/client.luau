@@ -27,6 +27,8 @@ if not CLIENT then
 	for _, n in ipairs({ "ActivateTool", "ActivateToolPanel", "ActiveControlPanel", "AddContentType", "AddCreationTab", "AddPropCategory", "AddToolCategory", "AddToolMenuOption", "AddToolTab", "ClearToolMenus", "CreateContentIcon", "DoSaveToTextFiles", "GetContentType", "GetCreationTabs", "GetCustomPropTable", "GetPropTable", "GetToolMenu", "GetTools", "PopulateFromEngineTextFiles", "PopulateFromTextFiles", "SaveToTextFiles", "SetActiveControlPanel", "SwitchCreationTab", "SwitchToolTab" }) do spawnmenu[n] = stub("spawnmenu." .. n) end
 	achievements = achievements or {}
 	for _, n in ipairs({ "BalloonPopped", "Count", "EatBall", "GetCount", "GetDesc", "GetGoal", "GetName", "IncBaddies", "IncBystander", "IncGoodies", "IsAchieved", "Remover", "SpawnMenuOpen", "SpawnedNPC", "SpawnedProp", "SpawnedRagdoll" }) do achievements[n] = stub("achievements." .. n) end
+	render = render or {}
+	for _, n in ipairs({ "AddBeam", "BlurRenderTarget", "BrushMaterialOverride", "Capture", "CapturePixels", "Clear", "ClearBuffersObeyStencil", "ClearDepth", "ClearRenderTarget", "ClearStencil", "ClearStencilBufferRectangle", "ComputeDynamicLighting", "ComputeLighting", "ComputePixelDiameterOfSphere", "CopyRenderTargetToTexture", "CopyTexture", "CullMode", "DepthRange", "DrawBeam", "DrawBox", "DrawLine", "DrawQuad", "DrawQuadEasy", "DrawScreenQuad", "DrawScreenQuadEx", "DrawSphere", "DrawSprite", "DrawTextureToScreen", "DrawTextureToScreenRect", "DrawWireframeBox", "DrawWireframeSphere", "EnableClipping", "EndBeam", "Fog*", "GetAmbientLightColor", "GetBlend", "GetColorModulation", "GetDXLevel", "GetFogColor", "GetFogDistances", "GetFogMode", "GetLightColor", "GetRenderTarget", "GetScreenEffectTexture", "GetToneMappingScaleLinear", "GetViewSetup", "MaterialOverride", "MaterialOverrideByIndex", "MaxTextureHeight", "MaxTextureWidth", "ModelMaterialOverride", "OverrideAlphaWriteEnable", "OverrideBlend", "OverrideBlendFunc", "OverrideColorWriteEnable", "OverrideDepthEnable", "PerformFullScreenStencilOperation", "PopCustomClipPlane", "PopFilterMag", "PopFilterMin", "PopFlashlightMode", "PopRenderTarget", "PushCustomClipPlane", "PushFilterMag", "PushFilterMin", "PushFlashlightMode", "PushRenderTarget", "ReadPixel", "RedownloadAllLightmaps", "RenderFlashlights", "RenderHUD", "RenderView", "ResetModelLighting", "ResetToneMappingScale", "SetAmbientLight", "SetBlend", "SetColorMaterial", "SetColorMaterialIgnoreZ", "SetColorModulation", "SetFogZ", "SetGoalToneMappingScale", "SetLightingMode", "SetLightingOrigin", "SetLocalModelLights", "SetMaterial", "SetModelLighting", "SetRenderTarget", "SetRenderTargetEx", "SetScissorRect", "SetShadowColor", "SetShadowDirection", "SetShadowDistance", "SetShadowsDisabled", "SetStencilCompareFunction", "SetStencilEnable", "SetStencilFailOperation", "SetStencilPassOperation", "SetStencilReferenceValue", "SetStencilTestMask", "SetStencilWriteMask", "SetStencilZFailOperation", "SetToneMappingScaleLinear", "SetViewPort", "SetWriteDepthToDestAlpha", "Spin", "StartBeam", "SupportsHDR", "SupportsPixelShaders_1_4", "SupportsPixelShaders_2_0", "SupportsVertexShaders_2_0", "SuppressEngineLighting", "UpdateFullScreenDepthTexture", "UpdatePowerOfTwoTexture", "UpdateRefractTexture", "UpdateScreenEffectTexture" }) do if n ~= "Fog*" then render[n] = stub("render." .. n) end end
 	ScrW = stub("Global.ScrW")
 	ScrH = stub("Global.ScrH")
 	Material = stub("Global.Material")
@@ -683,6 +685,226 @@ for _, a in ipairs(ACH) do
 	achievements[a[1]] = function() ach_counts[a[1]] = (ach_counts[a[1]] or 0) + 1 end
 end
 
+
+------------------------------------------------------------------------ render
+-- world geometry goes to the client as triangles (`draw.world_tri`) drawn with the 3D2D
+-- planes; the colour material / SetMaterial state is kept (textures on world quads are not
+-- drawn yet - they fill with the colour). Render targets, stencil and fog are recorded, not
+-- applied (documented as open).
+render = render or {}
+local R = render
+local render_mat, color_mod, blend, scissor = nil, { 1, 1, 1 }, 1, nil
+local function wcol(c)
+	c = c or Color(255, 255, 255, 255)
+	return { r = (c.r or 255) * color_mod[1], g = (c.g or 255) * color_mod[2], b = (c.b or 255) * color_mod[3], a = (c.a or 255) * blend }
+end
+local function tri(a, b, c, color) hostdraw.world_tri(a, b, c, wcol(color)) end
+function R.SetColorMaterial() render_mat = nil end
+function R.SetColorMaterialIgnoreZ() render_mat = nil end
+function R.SetMaterial(m) render_mat = m end
+function R.SetColorModulation(r, g, b) color_mod = { r or 1, g or 1, b or 1 } end
+function R.GetColorModulation() return color_mod[1], color_mod[2], color_mod[3] end
+function R.SetBlend(a) blend = a or 1 end
+function R.GetBlend() return blend end
+function R.DrawQuad(a, b, c, d, color) tri(a, b, c, color); tri(a, c, d, color) end
+function R.DrawQuadEasy(pos, normal, w, h, color, rot)
+	local n = Vector(normal.x, normal.y, normal.z); n:Normalize()
+	local up = math.abs(n.z) < 0.99 and Vector(0, 0, 1) or Vector(1, 0, 0)
+	local right = n:Cross(up); right:Normalize()
+	local u = right:Cross(n); u:Normalize()
+	if rot and rot ~= 0 then
+		local cs, sn = math.cos(math.rad(rot)), math.sin(math.rad(rot))
+		right, u = right * cs + u * sn, u * cs - right * sn
+	end
+	local hw, hh = w / 2, h / 2
+	R.DrawQuad(pos - right * hw + u * hh, pos + right * hw + u * hh, pos + right * hw - u * hh, pos - right * hw - u * hh, color)
+end
+function R.DrawLine(a, b, color, ignorez)
+	-- a one-unit-thick ribbon facing the viewer's up: two triangles
+	local d = b - a
+	local len = d:Length()
+	if len <= 0 then return end
+	local side = d:Cross(Vector(0, 0, 1))
+	if side:Length() < 1e-4 then side = d:Cross(Vector(1, 0, 0)) end
+	side:Normalize()
+	side = side * 0.5
+	tri(a - side, b - side, b + side, color); tri(a - side, b + side, a + side, color)
+end
+local function box_corners(pos, ang, mins, maxs)
+	local out = {}
+	for i = 0, 7 do
+		local v = Vector(bit.band(i, 1) == 0 and mins.x or maxs.x, bit.band(i, 2) == 0 and mins.y or maxs.y, bit.band(i, 4) == 0 and mins.z or maxs.z)
+		if ang then v:Rotate(ang) end
+		out[i] = pos + v
+	end
+	return out
+end
+local BOX_FACES = { { 0, 2, 3, 1 }, { 4, 5, 7, 6 }, { 0, 1, 5, 4 }, { 2, 6, 7, 3 }, { 0, 4, 6, 2 }, { 1, 3, 7, 5 } }
+local BOX_EDGES = { { 0, 1 }, { 1, 3 }, { 3, 2 }, { 2, 0 }, { 4, 5 }, { 5, 7 }, { 7, 6 }, { 6, 4 }, { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 } }
+function R.DrawBox(pos, ang, mins, maxs, color)
+	local c = box_corners(pos, ang, mins, maxs)
+	for _, f in ipairs(BOX_FACES) do R.DrawQuad(c[f[1]], c[f[2]], c[f[3]], c[f[4]], color) end
+end
+function R.DrawWireframeBox(pos, ang, mins, maxs, color, ignorez)
+	local c = box_corners(pos, ang, mins, maxs)
+	for _, e in ipairs(BOX_EDGES) do R.DrawLine(c[e[1]], c[e[2]], color, ignorez) end
+end
+local function sphere_point(pos, r, lon, lat)
+	local sl, cl = math.sin(lat), math.cos(lat)
+	return pos + Vector(cl * math.cos(lon), cl * math.sin(lon), sl) * r
+end
+function R.DrawSphere(pos, r, longs, lats, color)
+	longs, lats = math.max(3, longs or 8), math.max(2, lats or 8)
+	for i = 0, lats - 1 do
+		local la0, la1 = -math.pi / 2 + math.pi * i / lats, -math.pi / 2 + math.pi * (i + 1) / lats
+		for j = 0, longs - 1 do
+			local lo0, lo1 = 2 * math.pi * j / longs, 2 * math.pi * (j + 1) / longs
+			R.DrawQuad(sphere_point(pos, r, lo0, la0), sphere_point(pos, r, lo1, la0), sphere_point(pos, r, lo1, la1), sphere_point(pos, r, lo0, la1), color)
+		end
+	end
+end
+function R.DrawWireframeSphere(pos, r, longs, lats, color, ignorez)
+	longs, lats = math.max(3, longs or 8), math.max(2, lats or 8)
+	for i = 1, lats - 1 do
+		local la = -math.pi / 2 + math.pi * i / lats
+		for j = 0, longs - 1 do R.DrawLine(sphere_point(pos, r, 2 * math.pi * j / longs, la), sphere_point(pos, r, 2 * math.pi * (j + 1) / longs, la), color, ignorez) end
+	end
+	for j = 0, longs - 1 do
+		local lo = 2 * math.pi * j / longs
+		for i = 0, lats - 1 do R.DrawLine(sphere_point(pos, r, lo, -math.pi / 2 + math.pi * i / lats), sphere_point(pos, r, lo, -math.pi / 2 + math.pi * (i + 1) / lats), color, ignorez) end
+	end
+end
+local beam
+function R.StartBeam(n) beam = {} end
+function R.AddBeam(pos, width, tex, color) if beam then beam[#beam + 1] = { pos, width, color } end end
+function R.EndBeam()
+	if not beam then return end
+	for i = 1, #beam - 1 do R.DrawBeam(beam[i][1], beam[i + 1][1], beam[i][2], 0, 1, beam[i][3]) end
+	beam = nil
+end
+function R.DrawBeam(a, b, width, tex_start, tex_end, color)
+	local d = b - a
+	local side = d:Cross(Vector(0, 0, 1))
+	if side:Length() < 1e-4 then side = d:Cross(Vector(1, 0, 0)) end
+	side:Normalize()
+	side = side * (width / 2)
+	R.DrawQuad(a - side, b - side, b + side, a + side, color)
+end
+function R.DrawSprite(pos, w, h, color) R.DrawQuadEasy(pos, Vector(0, 0, 1), w, h, color, 0) end
+function R.DrawScreenQuad() surface.SetDrawColor(255 * color_mod[1], 255 * color_mod[2], 255 * color_mod[3], 255 * blend); if render_mat then surface.SetMaterial(render_mat); surface.DrawTexturedRect(0, 0, ScrW(), ScrH()) else surface.DrawRect(0, 0, ScrW(), ScrH()) end end
+function R.DrawScreenQuadEx(x, y, w, h) surface.SetDrawColor(255 * color_mod[1], 255 * color_mod[2], 255 * color_mod[3], 255 * blend); if render_mat then surface.SetMaterial(render_mat); surface.DrawTexturedRect(x, y, w, h) else surface.DrawRect(x, y, w, h) end end
+function R.DrawTextureToScreen(tex) R.DrawScreenQuad() end
+function R.DrawTextureToScreenRect(tex, x, y, w, h) R.DrawScreenQuadEx(x, y, w, h) end
+function R.Clear(r, g, b, a, depth, stencil) surface.SetDrawColor(r or 0, g or 0, b or 0, a or 255); surface.DrawRect(0, 0, ScrW(), ScrH()) end
+function R.ClearDepth() end
+function R.ClearStencil() end
+function R.ClearBuffersObeyStencil(r, g, b, a) R.Clear(r, g, b, a) end
+function R.ClearStencilBufferRectangle() end
+function R.ClearRenderTarget(tex, color) end
+function R.SetScissorRect(x, y, x2, y2, on) scissor = on and { x, y, x2, y2 } or nil end
+function R.GetDXLevel() return 95 end
+function R.SupportsHDR() return true end
+function R.SupportsPixelShaders_1_4() return true end
+function R.SupportsPixelShaders_2_0() return true end
+function R.SupportsVertexShaders_2_0() return true end
+function R.MaxTextureWidth() return 4096 end
+function R.MaxTextureHeight() return 4096 end
+function R.GetAmbientLightColor() return Vector(0.2, 0.2, 0.2) end
+function R.GetLightColor(pos) return Vector(1, 1, 1) end
+function R.ComputeLighting(pos, normal) return Vector(1, 1, 1) end
+function R.ComputeDynamicLighting(pos, normal) return Vector(0, 0, 0) end
+function R.ComputePixelDiameterOfSphere(pos, r)
+	local lp = LocalPlayer()
+	local eye = lp and lp.EyePos and lp:EyePos() or Vector()
+	local d = (pos - eye):Length()
+	if d <= r then return ScrH() end
+	local fov = lp and lp.GetFOV and lp:GetFOV() or 90
+	return 2 * r / d / math.tan(math.rad(fov) / 2) * ScrH() / 2
+end
+local fog = { mode = 0, start = 0, ["end"] = 0, color = { 0, 0, 0 }, z = 0 }
+function R.FogMode(m) fog.mode = m end
+function R.FogStart(s) fog.start = s end
+function R.FogEnd(e) fog["end"] = e end
+function R.FogColor(r, g, b) fog.color = { r, g, b } end
+function R.FogMaxDensity(d) fog.density = d end
+function R.SetFogZ(z) fog.z = z end
+function R.GetFogMode() return fog.mode end
+function R.GetFogDistances() return fog.start, fog["end"], fog.z end
+function R.GetFogColor() return fog.color[1], fog.color[2], fog.color[3] end
+local rts = {}
+function R.PushRenderTarget(tex) rts[#rts + 1] = tex end
+function R.PopRenderTarget() rts[#rts] = nil end
+function R.SetRenderTarget(tex) rts[#rts] = tex end
+function R.SetRenderTargetEx(i, tex) rts[#rts] = tex end
+function R.GetRenderTarget() return rts[#rts] end
+function R.GetScreenEffectTexture(i) return Material("_rt_FullFrameFB" .. (i or 0)) end
+function R.CopyRenderTargetToTexture() end
+function R.CopyTexture() end
+function R.UpdateScreenEffectTexture() end
+function R.UpdateRefractTexture() end
+function R.UpdateFullScreenDepthTexture() end
+function R.UpdatePowerOfTwoTexture() return Material("_rt_PowerOfTwoFB") end
+function R.BlurRenderTarget() end
+function R.Capture(data) return "" end
+function R.CapturePixels() end
+function R.ReadPixel(x, y) return 0, 0, 0, 255 end
+function R.SetViewPort(x, y, w, h) end
+function R.GetViewSetup(main)
+	local lp = LocalPlayer()
+	return { origin = lp and lp.EyePos and lp:EyePos() or Vector(), angles = lp and lp.EyeAngles and lp:EyeAngles() or Angle(), fov = lp and lp.GetFOV and lp:GetFOV() or 90, x = 0, y = 0, width = ScrW(), height = ScrH(), znear = 3, zfar = 28377.9, aspect = ScrW() / ScrH() }
+end
+function R.RenderView(view) hook.Run("RenderScene", view and view.origin, view and view.angles, view and view.fov) end
+function R.RenderHUD(x, y, w, h) hook.Run("HUDPaint") end
+function R.RenderFlashlights() end
+function R.Spin() end
+function R.SetLightingMode() end
+function R.SetLightingOrigin() end
+function R.SetLocalModelLights() end
+function R.SetModelLighting() end
+function R.ResetModelLighting() end
+function R.SetAmbientLight() end
+function R.SuppressEngineLighting() end
+function R.SetShadowColor() end
+function R.SetShadowDirection() end
+function R.SetShadowDistance() end
+function R.SetShadowsDisabled() end
+function R.SetToneMappingScaleLinear() end
+function R.GetToneMappingScaleLinear() return Vector(1, 1, 1) end
+function R.SetGoalToneMappingScale() end
+function R.ResetToneMappingScale() end
+function R.PushFilterMag() end
+function R.PopFilterMag() end
+function R.PushFilterMin() end
+function R.PopFilterMin() end
+function R.PushFlashlightMode() end
+function R.PopFlashlightMode() end
+function R.PushCustomClipPlane() end
+function R.PopCustomClipPlane() end
+function R.EnableClipping(b) return false end
+function R.CullMode() end
+function R.DepthRange() end
+function R.OverrideAlphaWriteEnable() end
+function R.OverrideBlend() end
+function R.OverrideBlendFunc() end
+function R.OverrideColorWriteEnable() end
+function R.OverrideDepthEnable() end
+function R.SetWriteDepthToDestAlpha() end
+function R.MaterialOverride(m) end
+function R.MaterialOverrideByIndex() end
+function R.ModelMaterialOverride(m) end
+function R.BrushMaterialOverride(m) end
+function R.SetStencilEnable() end
+function R.SetStencilCompareFunction() end
+function R.SetStencilFailOperation() end
+function R.SetStencilPassOperation() end
+function R.SetStencilZFailOperation() end
+function R.SetStencilReferenceValue() end
+function R.SetStencilTestMask() end
+function R.SetStencilWriteMask() end
+function R.PerformFullScreenStencilOperation() end
+function R.RedownloadAllLightmaps() end
+function cam.Start3D() end
+
 ------------------------------------------------------------------------ the frame
 -- the engine HUD elements the game asks `HUDShouldDraw` about (the sandbox hides CHudHealth,
 -- CHudBattery, CHudAmmo, CHudSecondaryAmmo and draws its own; the client applies the answers)
@@ -705,6 +927,15 @@ if events then
 		set_color(text_color, 255, 255, 255, 255)
 		font, material, alpha_mul = "DermaDefault", nil, 1
 		ox, oy = 0, 0
+		-- the scene hooks of the game's frame (world geometry from them goes to the 3D pass)
+		hook.Run("PreRender")
+		hook.Run("PreDrawOpaqueRenderables", false, false, false)
+		hook.Run("PostDrawOpaqueRenderables", false, false, false)
+		hook.Run("PreDrawTranslucentRenderables", false, false, false)
+		hook.Run("PostDrawTranslucentRenderables", false, false, false)
+		hook.Run("PreDrawEffects")
+		hook.Run("PostDrawEffects")
+		hook.Run("RenderScreenspaceEffects")
 		hook.Run("PreDrawHUD")
 		-- the engine's HUD elements each ask `HUDShouldDraw(name)`; a false hides that element
 		for _, name in ipairs(HUD_ELEMENTS) do
@@ -718,6 +949,7 @@ if events then
 		-- the vgui layer paints above the HUD (derma.luau), then the overlay
 		if __derma_paint then __derma_paint() end
 		hook.Run("DrawOverlay")
+		hook.Run("PostRender")
 	end)
 	-- key edges: the vgui layer takes the mouse / keyboard first, then `PlayerBindPress`-style hooks
 	events.on("input.key", function(p)

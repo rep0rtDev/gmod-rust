@@ -4020,6 +4020,7 @@ impl App {
                     gm_script::DrawCmd::Model { .. } => continue,
                     // answered `HUDShouldDraw`: applied when the native HUD is built
                     gm_script::DrawCmd::HideHud { .. } => continue,
+                    gm_script::DrawCmd::WorldTri { .. } => continue,
                     gm_script::DrawCmd::ScreenClicker { .. }
                     | gm_script::DrawCmd::OpenUrl { .. } => continue,
                     gm_script::DrawCmd::Begin3D2D { .. } | gm_script::DrawCmd::End3D2D => continue,
@@ -5393,6 +5394,24 @@ fn hud_planes(
                 if let Some(p) = current.take() {
                     planes.push(p);
                 }
+            }
+            // a world triangle: its own plane whose (0,0) / (1,0) / (0,1) are the three points
+            gm_script::DrawCmd::WorldTri { pts, color } => {
+                let e1 = pts[1] - pts[0];
+                let e2 = pts[2] - pts[0];
+                let n = e1.cross(e2).normalize_or_zero();
+                planes.push((
+                    glam::Mat4::from_cols(
+                        e1.extend(0.0),
+                        e2.extend(0.0),
+                        n.extend(0.0),
+                        pts[0].extend(1.0),
+                    ),
+                    vec![UiItem::Tri {
+                        pts: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+                        color: *color,
+                    }],
+                ));
             }
             _ => {
                 let Some((_, items)) = current.as_mut() else {
