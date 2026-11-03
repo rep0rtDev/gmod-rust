@@ -4157,6 +4157,15 @@ crates = ["gm-server", "gm-nav"]
 pos = 2.0
 
 [[harness]]
+name = "server_npc_turn_33"
+scenario = "server/npc_turn_33"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
 name = "server_npc_walk_soldier"
 scenario = "server/npc_walk_soldier"
 compare = "server"
