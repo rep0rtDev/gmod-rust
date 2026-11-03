@@ -1745,3 +1745,78 @@ fn glua_client_libs_remainder() {
     );
     assert!(pix == 0.0 || pix == 1.0);
 }
+
+/// Property sheets, PropSelect, GWEN texture draws, controlpanel/search, the clipboard.
+#[test]
+fn glua_props_fields_remainder() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "q".into(),
+        name: "q".into(),
+        priority: 0,
+        source: r##"
+            got = {}
+            local props = vgui.Create("DProperties")
+            local row = props:CreateRow("Cat", "Speed")
+            row:Setup({ type = "Float", decimals = 1 })
+            row:SetValue(5)
+            row.DataChanged = function(_, v) got.changed = v end
+            row:ValueChanged(7)
+            got.row = row:GetRow() .. ":" .. tostring(props:GetCategory("Cat") ~= nil)
+            local ps = vgui.Create("PropSelect")
+            ps:AddModel("models/a.mdl", { my_cv = "a" })
+            ps:AddModel("models/b.mdl", { my_cv = "b" })
+            ps.OnSelect = function(_, v) got.sel = v end
+            ps:FindAndSelectButton("models/b.mdl")
+            got.gwen = type(GWEN.CreateTextureBorder(0, 0, 64, 64, 8, 8, 8, 8)) == "function"
+            got.cp = controlpanel.Get("weld") == controlpanel.Get("weld")
+            search.AddProvider(function(q) return { { text = "hit:" .. q } } end, "p")
+            got.search = search.GetResults("x")[1].text
+            SetClipboardText("clip")
+            got.clip = __glua_clipboard() .. ":" .. BRANCH .. ":" .. tostring(getfenv ~= nil)
+            got.icb = (function() local c = vgui.Create("ImageCheckBox") c:SetChecked(true) return c:GetChecked() end)()
+        "##
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let (row, changed, sel, gwen, cp, search, clip, icb): (
+        String,
+        f64,
+        String,
+        bool,
+        bool,
+        String,
+        String,
+        bool,
+    ) = rt.actors()[0]
+        .eval(
+            "return got.row, got.changed, got.sel, got.gwen, got.cp, got.search, got.clip, got.icb",
+        )
+        .expect("eval");
+    assert_eq!(
+        (
+            row.as_str(),
+            changed,
+            sel.as_str(),
+            gwen,
+            cp,
+            search.as_str(),
+            clip.as_str(),
+            icb
+        ),
+        (
+            "Speed:true",
+            7.0,
+            "models/b.mdl",
+            true,
+            true,
+            "hit:x",
+            "clip:x86-64:true",
+            true
+        )
+    );
+}

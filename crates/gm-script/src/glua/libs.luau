@@ -989,3 +989,22 @@ function BF:ReadVectorNormal() return self:ReadVector() end
 function BF:ReadAngle() local p = self:ReadFloat() local y = self:ReadFloat() local r = self:ReadFloat() return Angle(p, y, r) end
 function BF:ReadEntity() local i = self:ReadShort() return i > 0 and Entity(i) or NULL end
 __glua_classes.bf_read = BF
+
+-- Table layouts the runtime builds or consumes (producers: game.AddAmmoType, GetAttachment, NewAnimation,
+-- FireBullets, GetBodyGroups, bone manipulation, GetModelMeshes, GetCreationTabs, CopyEntTable, FormattedTime,
+-- HTTP, GetModelInfo, list NPC/Vehicles, GetOperatingParams, GetPhysicsObject, properties.Add, GetSequenceInfo,
+-- sound.Add, GetSurfaceData, team, undo, GetVehicleParams, CalcView, bind poses, GetSunInfo, matproxy.Add,
+-- os.date, GetPanelPaintState, presets/problems/serverlist, ENT/GM/PLAYER/SWEP/TOOL tables, EmitSound, ShadowControl)
+-- @struct AmmoData @struct AngPos @struct AnimationData @struct AttachmentData @struct BalloonData @struct BodyGroupData
+-- @struct BoneBindPose @struct BoneManipulationData @struct BoneWeight @struct Bullet @struct CamData @struct CollisionData
+-- @struct CreationMenus @struct DateData @struct ENT @struct EmitSoundInfo @struct EntityCopyData @struct FiredBullet
+-- @struct FormattedTime @struct GM @struct HTTPRequest @struct MatProxyData @struct MeshVertex @struct ModelInfo
+-- @struct ModelMeshData @struct NPCData @struct OperatingParams @struct PLAYER @struct PanelPaintState @struct PhysProperties
+-- @struct Preset @struct Problem @struct PropertyAdd @struct SWEP @struct SequenceInfo @struct ServerQueryData
+-- @struct ShadowControlParams @struct SoundData @struct SunInfo @struct SurfacePropertyData @struct TOOL @struct TeamData
+-- @struct TextureData @struct Undo @struct VehicleParams @struct VehicleParamsAxle @struct VehicleParamsBody
+-- @struct VehicleParamsEngine @struct VehicleParamsSteering @struct VehicleTable @struct ViewData
+-- Documented library fields the runtime keeps as tables/values:
+-- @field Global.BRANCH @field duplicator.BoneModifiers @field duplicator.ConstraintType @field duplicator.EntityClasses
+-- @field duplicator.EntityModifiers @field matproxy.ActiveList @field matproxy.ProxyList @field net.ReadVars @field net.Receivers
+-- @field net.WriteVars @field properties.List

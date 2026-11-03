@@ -168,13 +168,16 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
             ("@hook ", ""),
             ("@enum ", "Enums/"),
             ("@struct ", "Structures/"),
+            ("@field ", ""),
         ] {
             let mut rest = src;
             while let Some(i) = rest.find(marker) {
                 rest = &rest[i + marker.len()..];
                 let name: String = rest
                     .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
+                    .take_while(|c| {
+                        c.is_ascii_alphanumeric() || *c == '_' || *c == ':' || *c == '.'
+                    })
                     .collect();
                 if !name.is_empty() && name != "event" {
                     present.push(format!("{prefix}{name}"));

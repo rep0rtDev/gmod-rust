@@ -4239,3 +4239,247 @@ function vgui.RegisterFile(path) end
 
 -- every control registered above is a class for FindMetaTable and the coverage listing
 for name, tbl in pairs(classes) do __glua_classes[name] = tbl end
+
+-- ---------------------------------------------------------------------------------------------
+-- property sheets, model/prop pickers, spawnmenu content panels, GWEN texture helpers
+-- ---------------------------------------------------------------------------------------------
+local ImageCheckBox = derma.DefineControl("ImageCheckBox", "Image check box", {}, "DButton")
+function ImageCheckBox:Set(b) self.__checked = b == true end
+function ImageCheckBox:SetChecked(b) self.__checked = b == true end
+function ImageCheckBox:GetChecked() return self.__checked == true end
+
+local DListBoxItem = derma.DefineControl("DListBoxItem", "List box row", {}, "DLabel")
+function DListBoxItem:SetMother(m) self.__mother = m end
+function DListBoxItem:GetMother() return self.__mother end
+function DListBoxItem:Select(b) self.__selected = b ~= false if self.__mother and self.__mother.OnSelect then self.__mother:OnSelect(self) end end
+
+local DBubbleContainer = derma.DefineControl("DBubbleContainer", "Speech bubble container", {}, "DPanel")
+function DBubbleContainer:SetBackgroundColor(c) self.__bubble_bg = c end
+function DBubbleContainer:GetBackgroundColor() return self.__bubble_bg or Color(255, 255, 255) end
+function DBubbleContainer:OpenForPos(x, y, w, h) self.__target = { x, y } self:SetSize(w, h) self:SetPos(x - w / 2, y - h - 30) end
+
+local DPanelOverlay = derma.DefineControl("DPanelOverlay", "Panel outline overlay", {}, "DPanel")
+function DPanelOverlay:PaintDifferentColours(ca, cb, cc, cd, w, h, size)
+	size = size or 2
+	surface.SetDrawColor(ca) surface.DrawRect(0, 0, w, size)
+	surface.SetDrawColor(cb) surface.DrawRect(0, h - size, w, size)
+	surface.SetDrawColor(cc) surface.DrawRect(0, size, size, h - size * 2)
+	surface.SetDrawColor(cd) surface.DrawRect(w - size, size, size, h - size * 2)
+end
+function DPanelOverlay:PaintInnerCorners(w, h, size) size = size or 2 surface.DrawRect(0, 0, size, size) surface.DrawRect(w - size, 0, size, size) surface.DrawRect(0, h - size, size, size) surface.DrawRect(w - size, h - size, size, size) end
+
+local DHorizontalScroller = derma.DefineControl("DHorizontalScroller", "Horizontal scroller", {}, "DPanel")
+function DHorizontalScroller:SetShowDropTargets(b) self.__drop_targets = b == true end
+function DHorizontalScroller:GetShowDropTargets() return self.__drop_targets == true end
+
+local DPanelSelect = derma.DefineControl("DPanelSelect", "Panel selector", {}, "DPanelList")
+function DPanelSelect:FindBestActive()
+	for _, c in ipairs(self:GetChildren()) do
+		if c.__convars then
+			local ok = true
+			for k, v in pairs(c.__convars) do if GetConVar(k) and GetConVar(k):GetString() ~= tostring(v) then ok = false end end
+			if ok then self.__active = c return c end
+		end
+	end
+end
+local DModelSelect = derma.DefineControl("DModelSelect", "Model selector", {}, "DPanelSelect")
+function DModelSelect:SetModelList(list, convar, dontsort, dontcallinit)
+	self.__models, self.__convar = list, convar
+	for model, data in pairs(list) do
+		local icon = vgui.Create("SpawnIcon", self)
+		icon:SetModel(model)
+		icon.__convars = { [convar] = model }
+		icon.DoClick = function() RunConsoleCommand(convar, model) end
+	end
+end
+local DModelSelectMulti = derma.DefineControl("DModelSelectMulti", "Model selector with tabs", {}, "DPropertySheet")
+function DModelSelectMulti:AddModelList(name, list, convar, dontsort, dontcallinit)
+	local sel = vgui.Create("DModelSelect", self)
+	sel:SetModelList(list, convar, dontsort, dontcallinit)
+	self:AddSheet(name, sel)
+	return sel
+end
+
+local PropSelect = derma.DefineControl("PropSelect", "Prop picker", {}, "ContextBase")
+function PropSelect:Init() self.__props, self.__buttons = {}, {} end
+function PropSelect:AddModel(model, convars)
+	local b = vgui.Create("SpawnIcon", self)
+	b:SetModel(model)
+	b.__value, b.__convars = model, convars or { [self.__convar or ""] = model }
+	b.DoClick = function() self:SelectModel(b) end
+	b.DoRightClick = function() self:OnRightClick(b) end
+	self.__buttons[#self.__buttons + 1] = b
+	return b
+end
+function PropSelect:AddModelEx(value, model, skin)
+	local b = self:AddModel(model)
+	b.__value = value
+	b:SetSkinID(skin or 0)
+	return b
+end
+function PropSelect:FindModelByValue(value) for _, b in ipairs(self.__buttons) do if b.__value == value then return b end end end
+function PropSelect:FindAndSelectButton(value) local b = self:FindModelByValue(value) if b then self:SelectModel(b) end return b end
+function PropSelect:SelectModel(b) self.__selected = b for k, v in pairs(b.__convars or {}) do if k ~= "" then RunConsoleCommand(k, tostring(v)) end end self:OnSelect(b.__value, b) end
+function PropSelect:OnSelect(value, b) end
+function PropSelect:OnRightClick(b) end
+
+local DProperties = derma.DefineControl("DProperties", "Property sheet", {}, "DPanel")
+function DProperties:Init() self.__canvas = vgui.Create("DScrollPanel", self) self.__canvas:Dock(FILL) self.__cats = {} end
+function DProperties:GetCanvas() return self.__canvas end
+function DProperties:GetCategory(name, create)
+	if self.__cats[name] or not create then return self.__cats[name] end
+	local c = vgui.Create("DCollapsibleCategory", self.__canvas)
+	c:SetLabel(name) c:Dock(TOP)
+	c.__rows = {}
+	self.__cats[name] = c
+	return c
+end
+function DProperties:CreateRow(cat, name)
+	local c = self:GetCategory(cat, true)
+	local row = vgui.Create("DProperty_Generic", c)
+	row:SetRow(name) row:Dock(TOP)
+	c.__rows[#c.__rows + 1] = row
+	return row
+end
+local DProperty_Generic = derma.DefineControl("DProperty_Generic", "Property row", {}, "DPanel")
+function DProperty_Generic:Init() self.__label = vgui.Create("DLabel", self) self.__label:Dock(LEFT) self:SetTall(20) end
+function DProperty_Generic:SetRow(name) self.__row = name self.__label:SetText(tostring(name)) end
+function DProperty_Generic:GetRow() return self.__row end
+function DProperty_Generic:Setup(vars) self.__vars = vars or {} end
+function DProperty_Generic:SetValue(v) self.__value = v if self.__entry then self.__entry:SetValue(tostring(v)) end end
+function DProperty_Generic:GetValue() return self.__value end
+function DProperty_Generic:ValueChanged(v, force) if v ~= self.__value or force then self.__value = v self:DataChanged(v) end end
+function DProperty_Generic:DataChanged(v) end
+local DProperty_Combo = derma.DefineControl("DProperty_Combo", "Property combo row", {}, "DProperty_Generic")
+function DProperty_Combo:Setup(vars)
+	DProperty_Generic.Setup(self, vars)
+	self.__combo = vgui.Create("DComboBox", self) self.__combo:Dock(FILL)
+	self.__combo.OnSelect = function(_, i, t, d) self:ValueChanged(d ~= nil and d or t) end
+	for k, v in pairs(vars and vars.values or {}) do self:AddChoice(k, v) end
+end
+function DProperty_Combo:AddChoice(text, data, select) self.__combo:AddChoice(text, data, select) end
+function DProperty_Combo:DataChanged(v) end
+local DProperty_Float = derma.DefineControl("DProperty_Float", "Property float row", {}, "DProperty_Generic")
+function DProperty_Float:Setup(vars) DProperty_Generic.Setup(self, vars) self.__decimals = vars and vars.decimals or 2 end
+function DProperty_Float:GetDecimals() return self.__decimals or 2 end
+derma.DefineControl("DProperty_Int", "Property int row", { Setup = function(self, vars) DProperty_Generic.Setup(self, vars) self.__decimals = 0 end }, "DProperty_Float")
+derma.DefineControl("DProperty_Boolean", "Property bool row", {}, "DProperty_Generic")
+local DProperty_VectorColor = derma.DefineControl("DProperty_VectorColor", "Property colour row", {}, "DProperty_Generic")
+function DProperty_VectorColor:Setup(vars) DProperty_Generic.Setup(self, vars) self.__mixer = vgui.Create("DColorMixer", self) self.__mixer:Dock(FILL) self.__mixer.ValueChanged = function(_, c) self:ValueChanged(Vector(c.r / 255, c.g / 255, c.b / 255)) end end
+
+local DEntityProperties = derma.DefineControl("DEntityProperties", "Editable entity variables", {}, "DProperties")
+function DEntityProperties:SetEntity(ent)
+	self.__ent = ent
+	self:RebuildControls()
+end
+function DEntityProperties:RebuildControls()
+	if self.__canvas then for _, c in ipairs(self.__canvas:GetChildren()) do c:Remove() end end
+	self.__cats = {}
+	local ent = self.__ent
+	if not IsValid(ent) then return end
+	local tbl = ent.GetEditingData and ent:GetEditingData() or (ent.EditingData) or {}
+	for name, var in pairs(tbl) do
+		local row = self:CreateRow(var.category or "Entity", var.title or name)
+		row:Setup(var)
+		row:SetValue(ent["Get" .. name] and ent["Get" .. name](ent))
+		row.DataChanged = function(_, v) self:EditVariable(name, v) end
+	end
+end
+function DEntityProperties:EditVariable(name, value)
+	if not IsValid(self.__ent) then return end
+	net.Start("editvariable") net.WriteUInt(self.__ent:EntIndex(), 16) net.WriteString(name) net.WriteString(tostring(value)) net.SendToServer()
+end
+function DEntityProperties:EntityLost() self:OnEntityLost() end
+function DEntityProperties:OnEntityLost() end
+function DEntityProperties:Think() if self.__ent and not IsValid(self.__ent) then self.__ent = nil self:EntityLost() end end
+
+local ContentHeader = derma.DefineControl("ContentHeader", "Spawnmenu content header", {}, "DLabelEditable")
+function ContentHeader:ToTable(out) out[#out + 1] = { type = "header", text = self:GetText() } end
+function ContentHeader:OpenMenu()
+	local m = DermaMenu()
+	m:AddOption("#spawnmenu.menu.delete", function() self:Remove() end)
+	m:Open()
+	return m
+end
+local ContentSidebar = derma.DefineControl("ContentSidebar", "Spawnmenu sidebar", {}, "DPanel")
+function ContentSidebar:Init() self.Tree = vgui.Create("DTree", self) self.Tree:Dock(FILL) end
+function ContentSidebar:EnableSearch(ctype, hookname) self.Search = vgui.Create("DTextEntry", self) self.Search:Dock(TOP) self.Search.__ctype = ctype end
+function ContentSidebar:EnableModify() self.Toolbox = vgui.Create("DPanel", self) self.Toolbox:Dock(BOTTOM) end
+function ContentSidebar:CreateSaveNotification(style) self.__save_note = vgui.Create("DLabel", self) self.__save_note:SetText("#spawnmenu.savechanges") self.__save_note:Dock(BOTTOM) self.__save_note.__style = style end
+local SpawnmenuContentPanel = derma.DefineControl("SpawnmenuContentPanel", "Spawnmenu content pane", {}, "DPanel")
+function SpawnmenuContentPanel:Init() self.ContentNavBar = vgui.Create("ContentSidebar", self) self.ContentNavBar:Dock(LEFT) self.__panels = {} end
+function SpawnmenuContentPanel:EnableSearch(ctype, hookname) self.ContentNavBar:EnableSearch(ctype, hookname) end
+function SpawnmenuContentPanel:EnableModify() self.ContentNavBar:EnableModify() end
+function SpawnmenuContentPanel:CallPopulateHook(name) hook.Run(name, self, self.ContentNavBar.Tree, self.ContentNavBar) end
+function SpawnmenuContentPanel:SwitchPanel(pnl)
+	if IsValid(self.__current) then self.__current:SetVisible(false) end
+	self.__current = pnl
+	if IsValid(pnl) then pnl:SetParent(self) pnl:Dock(FILL) pnl:SetVisible(true) end
+end
+
+-- the text entry's text hook fires from the editing path
+local te_set = Panel.SetText
+if TextEntry and TextEntry.OnTextChanged == nil then function TextEntry:OnTextChanged() end end
+
+-- GWEN: draw functions cut from a skin texture (no pixel reads: TextureColor is white)
+GWEN = GWEN or {}
+local function tex_uv(mat, x, y, w, h) local tw, th = surface.GetTextureSize(mat) if tw == 0 then tw = 512 end if th == 0 then th = 512 end return x / tw, y / th, (x + w) / tw, (y + h) / th end
+function GWEN.CreateTextureNormal(x, y, w, h, mat)
+	mat = mat or SKIN.GwenTexture
+	return function(px, py, pw, ph, col) local u0, v0, u1, v1 = tex_uv(mat, x, y, w, h) surface.SetDrawColor(col or Color(255, 255, 255)) surface.SetMaterial(mat) surface.DrawTexturedRectUV(px, py, pw, ph, u0, v0, u1, v1) end
+end
+function GWEN.CreateTextureCentered(x, y, w, h, mat)
+	local draw_n = GWEN.CreateTextureNormal(x, y, w, h, mat)
+	return function(px, py, pw, ph, col) draw_n(px + (pw - w) / 2, py + (ph - h) / 2, w, h, col) end
+end
+function GWEN.CreateTextureBorder(x, y, w, h, l, t, r, b, mat)
+	mat = mat or SKIN.GwenTexture
+	return function(px, py, pw, ph, col)
+		surface.SetDrawColor(col or Color(255, 255, 255)) surface.SetMaterial(mat)
+		local function piece(sx, sy, sw, sh, dx, dy, dw, dh) local u0, v0, u1, v1 = tex_uv(mat, sx, sy, sw, sh) surface.DrawTexturedRectUV(px + dx, py + dy, dw, dh, u0, v0, u1, v1) end
+		piece(x, y, l, t, 0, 0, l, t) piece(x + l, y, w - l - r, t, l, 0, pw - l - r, t) piece(x + w - r, y, r, t, pw - r, 0, r, t)
+		piece(x, y + t, l, h - t - b, 0, t, l, ph - t - b) piece(x + l, y + t, w - l - r, h - t - b, l, t, pw - l - r, ph - t - b) piece(x + w - r, y + t, r, h - t - b, pw - r, t, r, ph - t - b)
+		piece(x, y + h - b, l, b, 0, ph - b, l, b) piece(x + l, y + h - b, w - l - r, b, l, ph - b, pw - l - r, b) piece(x + w - r, y + h - b, r, b, pw - r, ph - b, r, b)
+	end
+end
+function GWEN.TextureColor(x, y, mat) return Color(255, 255, 255, 255) end
+
+-- controlpanel: one ControlPanel per tool, rebuilt on demand
+controlpanel = controlpanel or {}
+local tool_panels = {}
+function controlpanel.Get(name)
+	if IsValid(tool_panels[name]) then return tool_panels[name] end
+	local p = vgui.Create("ControlPanel")
+	p:SetName(name)
+	tool_panels[name] = p
+	return p
+end
+function controlpanel.Clear() for _, p in pairs(tool_panels) do if IsValid(p) then p:Remove() end end tool_panels = {} end
+Tool = Tool or {}
+function Tool:RebuildControlPanel()
+	local p = controlpanel.Get(self.Mode or "")
+	p:ClearControls()
+	if self.BuildCPanel then self.BuildCPanel(p) end
+	return p
+end
+
+-- search: providers run against the query, results merged in provider order
+search = search or {}
+local providers = {}
+function search.AddProvider(fn, id) providers[id or #providers + 1] = fn end
+function search.GetResults(str, types, max)
+	local out = {}
+	for _, fn in pairs(providers) do
+		local ok, res = pcall(fn, str, types)
+		if ok and type(res) == "table" then for _, r in ipairs(res) do out[#out + 1] = r if max and #out >= max then return out end end end
+	end
+	return out
+end
+
+-- properties.GetHovered: the entity under the eye trace
+function properties.GetHovered(eyepos, eyevec)
+	local tr = util.TraceLine({ start = eyepos, endpos = eyepos + eyevec * 1024, filter = LocalPlayer() })
+	return tr.Entity or NULL
+end
+
+for name, tbl in pairs(classes) do __glua_classes[name] = tbl end
