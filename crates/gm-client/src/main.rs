@@ -228,6 +228,8 @@ struct Gfx {
     /// Shot effects: `effects/muzzleflash1` (muzzle flash, impact and explosion flashes),
     /// `effects/spark` (tracer streak), `decals/concrete|metal/shot1` (bullet holes).
     fx_muzzle: Option<wgpu::BindGroup>,
+    /// `sprites/zerogxplode`: the explosion fireball (frame 0 - the sprite's frames are open).
+    fx_explosion: Option<wgpu::BindGroup>,
     fx_spark: Option<wgpu::BindGroup>,
     fx_decal: Option<wgpu::BindGroup>,
     fx_decal_metal: Option<wgpu::BindGroup>,
@@ -583,6 +585,16 @@ const WEAPONS: [Viewmodel; 13] = [
 
 /// `NetCmd::weapon`: 1 while the physgun is out (the server's physgun acts on attack), 2 for
 /// the toolgun, 0 for everything else.
+/// Lifetime of a world burst sprite: explosions (over 32 u) hold about as long as the game's
+/// 20-frame fireball, small flashes and splashes a third of a second.
+fn burst_life(size: f32) -> f32 {
+    if size > 32.0 {
+        0.6
+    } else {
+        0.35
+    }
+}
+
 fn net_weapon(weapon: u8) -> u8 {
     match weapon {
         0 => 1,
@@ -1162,6 +1174,7 @@ impl App {
         let gg_glow = world.sprite_material(&gpu, &self.mount, "sprites/glow04_noz");
         let gg_beam = world.sprite_material(&gpu, &self.mount, "sprites/orangelight1");
         let fx_muzzle = world.sprite_material(&gpu, &self.mount, "effects/muzzleflash1");
+        let fx_explosion = world.sprite_material(&gpu, &self.mount, "sprites/zerogxplode");
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
         let fx_decal = world.decal_material(&gpu, &self.mount, "decals/concrete/shot1");
         let fx_decal_metal = world.decal_material(&gpu, &self.mount, "decals/metal/shot1");
@@ -1313,6 +1326,7 @@ impl App {
             gg_glow,
             gg_beam,
             fx_muzzle,
+            fx_explosion,
             fx_spark,
             fx_decal,
             fx_decal_metal,
@@ -4087,13 +4101,16 @@ impl App {
                     ..Default::default()
                 });
             }
-            self.fx_bursts
-                .retain(|(_, _, born, _)| now.duration_since(*born).as_secs_f32() < 0.35);
+            self.fx_bursts.retain(|(_, size, born, _)| {
+                now.duration_since(*born).as_secs_f32() < burst_life(*size)
+            });
             for &(pos, size, born, splash) in &self.fx_bursts {
-                let age = now.duration_since(born).as_secs_f32() / 0.35;
+                let age = now.duration_since(born).as_secs_f32() / burst_life(size);
                 let k = 1.0 - age;
                 let (m, color) = if splash {
                     (&g.fx_splash, [k, k, k])
+                } else if size > 32.0 {
+                    (&g.fx_explosion, [k, k, k])
                 } else {
                     (&g.fx_muzzle, [k, k * 0.7, k * 0.4])
                 };
