@@ -72,6 +72,9 @@ pub struct Phong {
     pub albedo_tint: f32,
     /// `$phongfresnelranges` [0 0.5 1]: the highlight at (1 - n.v)^5 of 0, 0.5 and 1.
     pub fresnel: [f32; 3],
+    /// `$phongexponenttexture`: red = the exponent over 1..150 (replaces `$phongexponent`),
+    /// green = the `$phongalbedotint` mask.
+    pub exponent_texture: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -322,6 +325,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
             let fr = vec_of(get("$phongfresnelranges"));
             mat.phong = Some(Phong {
                 exponent: num("$phongexponent", 5.0),
+                exponent_texture: get("$phongexponenttexture"),
                 boost: num("$phongboost", 1.0),
                 albedo_tint: num("$phongalbedotint", 0.0),
                 fresnel: if fr.len() >= 3 {

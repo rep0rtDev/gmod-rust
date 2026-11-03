@@ -55,6 +55,7 @@ struct MaterialParams {
 @group(1) @binding(5) var blend_modulate: texture_2d<f32>;
 @group(1) @binding(6) var bump: texture_2d<f32>;
 @group(1) @binding(7) var envmask: texture_2d<f32>;
+@group(1) @binding(8) var phongexp: texture_2d<f32>;
 // water pass only: the depth of the opaque scene (multisampled variant substituted at load)
 @group(2) @binding(0) var scene_depth: texture_depth_2d;
 @group(2) @binding(1) var reflection: texture_2d<f32>;
@@ -180,6 +181,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // $envmap: the nearest env_cubemap along the reflected view ray, times $envmaptint and
     // the mask (1 - base alpha for $basealphaenvmapmask, normal alpha), added after lighting
     let bump_a = textureSample(bump, base_sampler, in.uv).a;
+    let phong_tex = textureSample(phongexp, base_sampler, in.uv);
     let mask_tex = textureSample(envmask, base_sampler, in.uv * material.selfillum_tint.w).rgb;
     // $phongfresnelranges over (1 - n.v)^5: the highlight's and, on $phong materials, the
     // reflection's fresnel (the skin shader scales the envmap by it and the spec mask)
@@ -217,15 +219,22 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         shaded = shaded + env * material.envmap.rgb * mask * camera.exposure;
     }
     // $phong: the Blinn-Phong highlight of the sun through the baked light, $phongexponent /
-    // $phongboost, $phongfresnelranges over (1 - n.v)^5, masked by the normal map alpha
-    // ($phongexponenttexture and the local lights are not drawn)
+    // $phongboost, $phongfresnelranges over (1 - n.v)^5, masked by the normal map alpha;
+    // a $phongexponenttexture gives the exponent (red, 1..150) and the albedo tint mask
+    // (green) (the local lights are not drawn)
     if material.phong.x > 0.5 && material.unlit == 0u && dot(in.normal, in.normal) > 0.0 {
         let nw = normalize(in.normal);
         let v = normalize(camera.eye.xyz - in.world);
         let l = normalize(camera.sun.xyz);
         let ndl = max(dot(nw, l), 0.0);
-        let spec = pow(max(dot(nw, normalize(l + v)), 0.0), material.phong.y) * material.phong.z;
-        let tint = mix(vec3<f32>(1.0), albedo.rgb, material.phong.w);
+        var exponent = material.phong.y;
+        var tint_mask = 1.0;
+        if material.phong.x > 1.5 {
+            exponent = phong_tex.r * 149.0 + 1.0;
+            tint_mask = phong_tex.g;
+        }
+        let spec = pow(max(dot(nw, normalize(l + v)), 0.0), exponent) * material.phong.z;
+        let tint = mix(vec3<f32>(1.0), albedo.rgb, material.phong.w * tint_mask);
         shaded = shaded + in.color * (spec * phong_fres * ndl * bump_a) * tint * camera.exposure;
     }
     // $selfillum: the base alpha lerps towards the unlit base colour
