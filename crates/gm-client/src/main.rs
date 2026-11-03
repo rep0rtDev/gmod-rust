@@ -3918,7 +3918,8 @@ impl App {
         if bloom {
             g.post.apply(&g.gpu, &view, g.world.tm_bloom);
         }
-        g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);
+        // the auto-exposure probe sees the scene only (Source measures the HDR scene
+        // buffer before the HUD / menus are drawn on it)
         if g.world.hdr && self.frames.is_multiple_of(15) {
             let bright =
                 frame_bright_pixels(&g.gpu, &frame.texture, g.config.width, g.config.height);
@@ -3930,6 +3931,8 @@ impl App {
                 println!("hdr: bright {bright:.3} exposure {:.3}", g.world.exposure);
             }
         }
+        let g = self.gfx.as_ref().unwrap();
+        g.ui.draw(&g.gpu, &view, g.config.width, g.config.height, &ui_items);
         let g = self.gfx.as_ref().unwrap();
         g.gpu.queue.present(frame);
         self.frames += 1;
