@@ -2597,7 +2597,13 @@ impl WorldRenderer {
     /// The fog an eye at `camera.position` sees: the `$bottommaterial`'s when it is inside a
     /// water volume below its surface, else the map's.
     pub fn view_fog(&self, camera: &Camera) -> Option<Fog> {
-        let p = camera.position;
+        // the reflection pass renders from the mirrored eye, which sits under the surface
+        // whenever the real eye is near it; the fog is the real eye's (the game's reflection
+        // is the scene as seen from above the water, never the water's own fog)
+        let mut p = camera.position;
+        if let Some(zs) = self.reflect.lock().unwrap().clip {
+            p.z = 2.0 * zs - p.z;
+        }
         self.water_volumes
             .iter()
             .find(|w| {
