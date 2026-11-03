@@ -1107,10 +1107,70 @@ pub enum ToolSettingKind {
     Choice,
 }
 
+/// A transcribed ControlPanel ([`tool_panels::Panel`]) as the schema the client receives: one
+/// setting per control, defaults from the stool's `ClientConVar` table.
+fn panel_schema(p: &tool_panels::Panel) -> Vec<ToolSetting> {
+    use tool_panels::Row;
+    let default = |cmd: &str| -> String {
+        p.defaults
+            .iter()
+            .find(|(c, _)| *c == cmd)
+            .map(|(_, d)| (*d).to_string())
+            .unwrap_or_default()
+    };
+    let setting = |name: &str, label: &str, kind: ToolSettingKind| ToolSetting {
+        name: name.into(),
+        kind,
+        min: f32::MIN,
+        max: f32::MAX,
+        default: default(name),
+        label: label.into(),
+        options: Vec::new(),
+    };
+    p.rows
+        .iter()
+        .map(|row| match *row {
+            Row::Help(text) => setting("", text, ToolSettingKind::Help),
+            Row::Slider {
+                label,
+                cmd,
+                min,
+                max,
+                ..
+            } => ToolSetting {
+                min,
+                max,
+                ..setting(cmd, label, ToolSettingKind::Number)
+            },
+            Row::Check { label, cmd } => setting(cmd, label, ToolSettingKind::Bool),
+            Row::Key { label, cmd } => setting(cmd, label, ToolSettingKind::Key),
+            Row::Color { label, r, g, b } => ToolSetting {
+                options: vec![(g.into(), String::new()), (b.into(), String::new())],
+                ..setting(r, label, ToolSettingKind::Color)
+            },
+            Row::Choice {
+                label,
+                cmd,
+                options,
+            } => ToolSetting {
+                options: options
+                    .iter()
+                    .map(|(l, v)| ((*l).to_string(), (*v).to_string()))
+                    .collect(),
+                ..setting(cmd, label, ToolSettingKind::Choice)
+            },
+            Row::Text { label, cmd } => setting(cmd, label, ToolSettingKind::Text),
+        })
+        .collect()
+}
+
 /// The built-in stools' ControlPanels as the game builds them (`TOOL.BuildCPanel`: NumSlider
 /// ranges, CheckBoxes, the numpad KeyBinders as KEY_PAD_0..9 = 37..46, rope materials and
 /// models as text), defaults from [`gm_sandbox::ToolSettings`].
 pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
+    if let Some(p) = tool_panels::panel(tool) {
+        return panel_schema(p);
+    }
     fn fmt_num(v: f32) -> String {
         if v.fract() == 0.0 {
             format!("{v:.0}")
