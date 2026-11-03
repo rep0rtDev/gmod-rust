@@ -2,6 +2,7 @@
 //! props and constraints the sandbox owns mirrored into the Jolt world of `gm-physics`
 //! (weld -> fixed, rope -> distance, axis -> hinge). Nothing here is networked yet.
 
+pub mod finger_skeletons;
 pub mod projectile;
 pub mod save;
 pub mod tool_panels;
