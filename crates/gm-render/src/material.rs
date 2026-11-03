@@ -12,6 +12,8 @@ pub struct Material {
     pub base_texture: Option<String>,
     pub base_texture2: Option<String>,
     pub translucent: bool,
+    /// `$alphatest 1`: the base alpha cuts the surface out (drawn opaque, no sorting).
+    pub alpha_test: bool,
     /// `$additive 1`: drawn as src + dst (the UI approximates it by alpha = max(r, g, b)).
     pub additive: bool,
     /// `$halflambert`: models lit with the half-Lambert wrap (characters), else plain Lambert.
@@ -105,8 +107,8 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
             mat.base_texture2 = get("$basetexture2");
         }
         mat.half_lambert = matches!(get("$halflambert").as_deref(), Some("1"));
-        mat.translucent = matches!(get("$translucent").as_deref(), Some("1"))
-            || matches!(get("$alphatest").as_deref(), Some("1"));
+        mat.alpha_test = matches!(get("$alphatest").as_deref(), Some("1"));
+        mat.translucent = matches!(get("$translucent").as_deref(), Some("1")) && !mat.alpha_test;
         mat.additive = matches!(get("$additive").as_deref(), Some("1"));
         mat.no_draw = matches!(get("%compilenodraw").as_deref(), Some("1"))
             || matches!(get("%compilesky").as_deref(), Some("1"))

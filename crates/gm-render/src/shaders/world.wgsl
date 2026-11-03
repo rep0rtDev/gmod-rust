@@ -19,8 +19,8 @@ struct Camera {
 struct MaterialParams {
     alpha_test: u32,
     unlit: u32,
-    pad1: u32,
-    pad2: u32,
+    translucent: u32,
+    pad: u32,
 };
 @group(1) @binding(2) var<uniform> material: MaterialParams;
 
@@ -69,5 +69,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let depth = dot(in.world - camera.eye.xyz, camera.forward.xyz);
     let span = max(camera.fog_range.y - camera.fog_range.x, 1.0);
     let fog = min(clamp((depth - camera.fog_range.x) / span, 0.0, 1.0), camera.fog_color.w) * camera.eye.w;
-    return vec4<f32>(mix(out, camera.fog_color.rgb, fog), camera.alpha);
+    var alpha = camera.alpha;
+    if material.translucent != 0u {
+        alpha = albedo.a * camera.alpha;
+    }
+    return vec4<f32>(mix(out, camera.fog_color.rgb, fog), alpha);
 }

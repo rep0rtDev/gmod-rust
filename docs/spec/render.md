@@ -38,7 +38,12 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   into every fragment by `min(saturate((depth - fogstart) / (fogend - fogstart)), fogmaxdensity)`
   with depth the view-space distance along the camera forward; the 3D skybox pass uses the
   `sky_camera`'s own fog keys (gm_construct: start -4000, end 320000, same colour) in skybox
-  units; the 2D sky is not fogged. On gm_construct the world fog is 0.4 % at 2000 u and 3.6 %
+  units; the 2D sky is not fogged.
+  Translucency (`gm-render`): `$alphatest` surfaces are cut out at alpha 0.5 in the opaque pass
+  (no sorting); `$translucent` surfaces are drawn after all opaque batches of their pass with
+  alpha blending and no depth write, batches ordered farthest first by the distance from the eye
+  to the batch's vertex centroid, output alpha = base alpha (gm_construct: the reflective glass
+  and the skybox foliage/antenna sheets). Water is still an opaque placeholder. On gm_construct the world fog is 0.4 % at 2000 u and 3.6 %
   at 10 000 u - faint, as in the game.
 - `env_tonemap_controller` "TonemapController" set by `logic_auto` OnMapSpawn:
   SetAutoExposureMax 1.8, SetAutoExposureMin 0.7, SetBloomScale 0.3, SetTonemapRate 0.2.

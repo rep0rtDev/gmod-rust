@@ -31,7 +31,9 @@ struct MaterialParams {
     alpha_test: u32,
     /// `UnlitGeneric`: the base texture is shown as is, no lightmap.
     unlit: u32,
-    pad: [u32; 2],
+    /// `$translucent`: the base alpha is the output alpha.
+    translucent: u32,
+    pad: u32,
 }
 
 fn is_unlit(shader: &str) -> bool {
@@ -167,6 +169,9 @@ struct Batch {
     index_count: u32,
     material: String,
     sky: bool,
+    /// `$translucent`: blended after the opaque batches, back to front by `centre`.
+    translucent: bool,
+    centre: Vec3,
 }
 
 /// `sky_camera` entity: the 3D skybox is a small copy of the world rendered first,
@@ -267,7 +272,8 @@ fn build_sky_cube(
         contents: bytemuck::bytes_of(&MaterialParams {
             alpha_test: 0,
             unlit: 0,
-            pad: [0; 2],
+            translucent: 0,
+            pad: 0,
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });
@@ -1345,9 +1351,10 @@ impl WorldRenderer {
             let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("material params"),
                 contents: bytemuck::bytes_of(&MaterialParams {
-                    alpha_test: mat.translucent as u32,
+                    alpha_test: mat.alpha_test as u32,
                     unlit: is_unlit(&mat.shader) as u32,
-                    pad: [0; 2],
+                    translucent: mat.translucent as u32,
+                    pad: 0,
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -1372,12 +1379,22 @@ impl WorldRenderer {
                     },
                 ],
             });
+            let centre = if idx.is_empty() {
+                Vec3::ZERO
+            } else {
+                idx.iter()
+                    .map(|&i| Vec3::from(vertices[i as usize].position))
+                    .sum::<Vec3>()
+                    / idx.len() as f32
+            };
             batches.push(Batch {
                 bind_group,
                 first_index: indices_all.len() as u32,
                 index_count: idx.len() as u32,
                 material: name.clone(),
                 sky,
+                translucent: mat.translucent,
+                centre,
             });
             indices_all.extend_from_slice(idx);
         }
@@ -1681,9 +1698,31 @@ impl WorldRenderer {
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            for b in self.batches.iter().filter(|b| b.sky == sky) {
+            for b in self
+                .batches
+                .iter()
+                .filter(|b| b.sky == sky && !b.translucent)
+            {
                 pass.set_bind_group(1, &b.bind_group, &[]);
                 pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
+            }
+            // translucent surfaces after everything opaque, farthest first, no depth write
+            let mut trans: Vec<&Batch> = self
+                .batches
+                .iter()
+                .filter(|b| b.sky == sky && b.translucent)
+                .collect();
+            trans.sort_by(|a, b| {
+                let da = a.centre.distance_squared(camera.position);
+                let db = b.centre.distance_squared(camera.position);
+                db.total_cmp(&da)
+            });
+            if !trans.is_empty() {
+                pass.set_pipeline(&self.translucent_pipeline);
+                for b in trans {
+                    pass.set_bind_group(1, &b.bind_group, &[]);
+                    pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
+                }
             }
         }
         gpu.queue.submit([enc.finish()]);
@@ -1799,9 +1838,10 @@ impl WorldRenderer {
                 let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("model material params"),
                     contents: bytemuck::bytes_of(&MaterialParams {
-                        alpha_test: mat.translucent as u32,
+                        alpha_test: mat.alpha_test as u32,
                         unlit: is_unlit(&mat.shader) as u32,
-                        pad: [0; 2],
+                        translucent: mat.translucent as u32,
+                        pad: 0,
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
@@ -1875,7 +1915,8 @@ impl WorldRenderer {
             contents: bytemuck::bytes_of(&MaterialParams {
                 alpha_test: 0,
                 unlit: 1,
-                pad: [0; 2],
+                translucent: 0,
+                pad: 0,
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -2051,7 +2092,8 @@ impl WorldRenderer {
             contents: bytemuck::bytes_of(&MaterialParams {
                 alpha_test: 0,
                 unlit: 0,
-                pad: [0; 2],
+                translucent: 0,
+                pad: 0,
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
