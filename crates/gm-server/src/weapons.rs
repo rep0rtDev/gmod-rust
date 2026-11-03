@@ -1144,11 +1144,16 @@ pub const BOLT_DAMAGE: f32 = 100.0;
 /// Crowbar on a player (`hit_crowbar*`): a ray from the eye along the aim reaching the hull
 /// within 75 u (50 u away hits, 110 misses; aimed 20 deg up at 50 u it passes over the hull),
 /// 10 damage as DMG_CLUB with the generic hit group in the tick of the swing, every 27 ticks
-/// while held. The push is 17.4 u/s for the 10 damage, 10 deg off the aim to the right in the
-/// recording (unexplained; applied along the aim). The physcannon does nothing to players.
+/// while held. The push is the player fling from a point (the inflictor's centre): from
+/// `MELEE_PUSH_POINT` (forward, right, up of the attacker's eye) toward the target's centre,
+/// `MELEE_PUSH_PER_DAMAGE` u/s per point of damage along that line, so a target 50 u away gets
+/// 17.35 u/s 10 deg to the right and each later hit of `hit_crowbar_hold` a little more as it
+/// slides away (18.2, 19.1, 20.0, 21.0 u/s; the fit of the five hits is exact in direction and
+/// within 0.07 u/s). The physcannon does nothing to players.
 pub const MELEE_RANGE: f32 = 75.0;
 pub const MELEE_DAMAGE: f32 = 10.0;
-pub const MELEE_PUSH_PER_DAMAGE: f32 = 1.74;
+pub const MELEE_PUSH_PER_DAMAGE: f32 = 4.75;
+pub const MELEE_PUSH_POINT: [f32; 3] = [24.0, -4.7, 38.0];
 pub const DMG_CLUB: u32 = 128;
 /// Weapons on props (`shoot_prop_*`): bullets deal the single-player `sk_plr_dmg_*` to props
 /// (pistol 5, .357 40, buckshot 8 per pellet) with the damage type without NEVERGIB; the damage

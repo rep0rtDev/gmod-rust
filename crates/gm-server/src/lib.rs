@@ -6667,9 +6667,15 @@ impl<'w> Server<'w> {
         if !self.players_hurt_players {
             return;
         }
-        let push = Vec3::new(forward.x, forward.y, 0.0).normalize_or_zero()
-            * (weapons::MELEE_PUSH_PER_DAMAGE * damage);
+        let fwd = Vec3::new(forward.x, forward.y, 0.0).normalize_or_zero();
+        let right = Vec3::new(fwd.y, -fwd.x, 0.0);
+        let [pf, pr, pu] = weapons::MELEE_PUSH_POINT;
+        let from = eye + fwd * pf + right * pr + Vec3::Z * pu;
         if let Some(t) = self.players.get_mut(&target) {
+            let center = t.state.origin + Vec3::new(0.0, 0.0, weapons::PLAYER_CENTER_Z);
+            let mut push =
+                (center - from).normalize_or_zero() * (weapons::MELEE_PUSH_PER_DAMAGE * damage);
+            push.z = push.z.min(weapons::PUSH_MAX_Z);
             t.state.impulse += push;
             t.last_damage = (attacker, "weapon_crowbar");
         }
