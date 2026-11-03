@@ -92,6 +92,19 @@ pub fn sweep_convexes(
     maxs: Vec3,
     convexes: &[Convex],
 ) -> (Trace, Option<u32>) {
+    sweep_convexes_skin(start, end, mins, maxs, convexes, 0.0)
+}
+
+/// `sweep_convexes` with every convex's faces pushed out by `skin` for a box that starts
+/// outside the pushed-out hull; a box already within the skin sweeps the bare hull.
+pub fn sweep_convexes_skin(
+    start: Vec3,
+    end: Vec3,
+    mins: Vec3,
+    maxs: Vec3,
+    convexes: &[Convex],
+    skin: f32,
+) -> (Trace, Option<u32>) {
     let center = (mins + maxs) * 0.5;
     let extents = (maxs - mins) * 0.5;
     let (cs, ce) = (start + center, end + center);
@@ -112,6 +125,11 @@ pub fn sweep_convexes(
         if c.mins.cmpgt(hi).any() || c.maxs.cmplt(lo).any() {
             continue;
         }
+        let within_skin = skin > 0.0
+            && c.planes
+                .iter()
+                .all(|&(n, d)| n.dot(cs) - (d + n.abs().dot(extents) + skin) <= 0.0);
+        let skin = if within_skin { 0.0 } else { skin };
         let mut enter_frac = -1.0f32;
         let mut leave_frac = 1.0f32;
         let mut clip: Option<(Vec3, f32)> = None;
@@ -119,7 +137,7 @@ pub fn sweep_convexes(
         let mut starts_out = false;
         let mut miss = false;
         for &(n, d) in &c.planes {
-            let dist = d + n.abs().dot(extents);
+            let dist = d + n.abs().dot(extents) + skin;
             let d1 = n.dot(cs) - dist;
             let d2 = n.dot(ce) - dist;
             if d2 > 0.0 {
@@ -1123,5 +1141,40 @@ mod tests {
             MASK_SOLID,
         );
         assert!(!slide.hit(), "{slide:?}");
+    }
+    #[test]
+    fn sweep_skin_stops_outside_the_hull_unless_already_within_it() {
+        let slab = Convex {
+            entity: 7,
+            friction: 1.0,
+            planes: vec![
+                (Vec3::X, 16.0),
+                (Vec3::NEG_X, 16.0),
+                (Vec3::Y, 16.0),
+                (Vec3::NEG_Y, 16.0),
+                (Vec3::Z, 0.0),
+                (Vec3::NEG_Z, 4.0),
+            ],
+            mins: Vec3::new(-16.0, -16.0, -4.0),
+            maxs: Vec3::new(16.0, 16.0, 0.0),
+        };
+        let (mins, maxs) = (Vec3::new(-1.0, -1.0, 0.0), Vec3::new(1.0, 1.0, 2.0));
+        let (t, ent) = sweep_convexes_skin(
+            Vec3::Z * 10.0,
+            Vec3::Z * -10.0,
+            mins,
+            maxs,
+            &[slab.clone()],
+            0.5,
+        );
+        assert_eq!(ent, Some(7));
+        assert!(
+            (t.end.z - 0.5).abs() < 2.0 * DIST_EPSILON,
+            "skin stop {}",
+            t.end.z
+        );
+        // a box already within the skin (standing on the bare hull) sweeps the bare hull
+        let (t, _) = sweep_convexes_skin(Vec3::Z * 0.1, Vec3::Z * 10.0, mins, maxs, &[slab], 0.5);
+        assert!(!t.start_solid && t.fraction == 1.0, "left freely {:?}", t);
     }
 }

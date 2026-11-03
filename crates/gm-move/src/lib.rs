@@ -22,6 +22,12 @@ pub mod buttons {
 }
 
 /// Tunables, defaults as measured on a stock sandbox server.
+const ENTITY_GROUND_REACH: f32 = 0.4;
+
+/// How far outside a prop's PHY hull the player hull stops: the game stands 0.5 u above our
+/// raw hull top on the glass / plastic plates (move_friction_glass, move_friction_plastic).
+pub const PROP_SKIN: f32 = 0.5;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MoveConfig {
     pub gravity: f32,
@@ -336,11 +342,19 @@ impl<'a> Mover<'a> {
     }
 
     fn trace(&self, st: &PlayerState, start: Vec3, end: Vec3) -> Trace {
-        self.trace_ent(st, start, end).0
+        // airborne the player stops at the props' skin, walking he rides the bare hull
+        let skin = if st.on_ground { 0.0 } else { PROP_SKIN };
+        self.trace_ent(st, start, end, skin).0
     }
 
     /// The trace plus the prop it ended on (`None` for the map or nothing).
-    fn trace_ent(&self, st: &PlayerState, start: Vec3, end: Vec3) -> (Trace, Option<u32>) {
+    fn trace_ent(
+        &self,
+        st: &PlayerState,
+        start: Vec3,
+        end: Vec3,
+        skin: f32,
+    ) -> (Trace, Option<u32>) {
         let (mins, maxs) = self.hull(st.ducked);
         let world = self
             .world
@@ -348,7 +362,8 @@ impl<'a> Mover<'a> {
         if self.props.is_empty() {
             return (world, None);
         }
-        let (prop, ent) = gm_collision::sweep_convexes(start, end, mins, maxs, &self.props);
+        let (prop, ent) =
+            gm_collision::sweep_convexes_skin(start, end, mins, maxs, &self.props, skin);
         if prop.fraction < world.fraction || (prop.all_solid && !world.all_solid) {
             let mut t = prop;
             t.start_solid |= world.start_solid;
@@ -664,16 +679,19 @@ impl<'a> Mover<'a> {
             return;
         }
         st.ground_push = false;
-        let (t, ent) = self.trace_ent(st, st.origin, st.origin - Vec3::Z * self.cfg.ground_probe);
-        let world_gap = if ent.is_none() {
-            t.fraction * self.cfg.ground_probe
+        let (t, ent) = self.trace_ent(
+            st,
+            st.origin,
+            st.origin - Vec3::Z * self.cfg.ground_probe,
+            PROP_SKIN,
+        );
+        let gap = t.fraction * self.cfg.ground_probe;
+        let reach = if ent.is_none() {
+            self.cfg.world_ground_probe
         } else {
-            0.0
+            ENTITY_GROUND_REACH
         };
-        if !t.hit()
-            || t.normal.z < self.cfg.ground_normal_z
-            || world_gap > self.cfg.world_ground_probe
-        {
+        if !t.hit() || t.normal.z < self.cfg.ground_normal_z || gap > reach {
             st.on_ground = false;
             st.ground_ent = 0;
             st.ground_friction = 1.0;
