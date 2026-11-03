@@ -795,6 +795,19 @@ public:
 		bool face_done = false;
 		float e_eff = elasticity;
 		float extra = 0.0f;
+		// the game's low-speed rebound is not restitution: the crate dropped flat leaves at
+		// 28 u/s (0.72 m/s) from 45 to 170 u/s of approach whatever its mass (3 .. 2000 kg) and
+		// whatever its elasticity (dirt 0.01 .. tile 0.3); only the pair friction moves it (ice
+		// 0.1: 18 u/s, popcan 0.3: 19). Measured as a floor on a contact point's separation
+		// speed, linear in the combined friction, for a face landing (three or more vertices
+		// together); the rim vertex and edge landings keep plain restitution - the floor on
+		// them launched rolling and sliding bodies (`phys_push_drum_v10..v40` and ten more
+		// harnesses flipped); a point approaching slower than the face threshold is settling
+		// (`phys_drop_flat_crate_*` 261103)
+		auto separation = [&](float restitution_speed, float approach) {
+			if (approach <= 0.3f) return restitution_speed;
+			return std::max(restitution_speed, 0.417f + 0.467f * friction);
+		};
 		auto rel = [&](JPH::RVec3Arg p) { return point_velocity(b1, p) - point_velocity(b2, p); };
 		// a speculative manifold whose closest pair is farther than the fastest vertex travels
 		// this step is not touched this step: the model measures vertices against the manifold's
@@ -1038,7 +1051,7 @@ public:
 							Pt &pt = *face[k];
 							JPH::Vec3 v = rel(pt.p);
 							float vn = v.Dot(n);
-							float target = std::sqrt(e_eff) * (-pt.vn0);
+							float target = (edge_pair || ring) ? std::sqrt(e_eff) * (-pt.vn0) : separation(std::sqrt(e_eff) * (-pt.vn0), -pt.vn0);
 							if (edge_pair) {
 								if (!ring && pt.p.GetX() < face[1 - k]->p.GetX()) target = 0.0f;
 								pt.dir = direction(v, pt.dir);
