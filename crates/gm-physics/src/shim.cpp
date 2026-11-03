@@ -913,7 +913,14 @@ public:
 		// a pair meeting for the first time with the face already through the plane is a body
 		// spawned in the floor (the thruster can, 0.08 u deep): the game settles it upright
 		bool fresh_pair = rest.find(pair_key) == rest.end();
-		bool landing_in_progress = rest[pair_key].phase == 3 && rest[pair_key].landed_tick == tick - 1 && rest[pair_key].land_vn > 2.0f;
+		// a landed body still turning is rocking: the next feature coming down is a pivot switch
+		// (angular momentum about the new contact is kept, the old one lifts), not Jolt's face
+		// contact that flattens it in a tick (`use_locker`: the locker on its two foot rows rocks
+		// 5 degrees for 90+ ticks in the game, ours died on the second row's touchdown)
+		bool rocking = rest.find(pair_key) != rest.end() && rest[pair_key].land_vn > 2.0f &&
+			tick - rest[pair_key].landed_tick <= 60 &&
+			(b1.IsDynamic() ? b1 : b2).GetAngularVelocity().Length() > 0.3f;
+		bool landing_in_progress = (rest[pair_key].phase == 3 && rest[pair_key].landed_tick == tick - 1 && rest[pair_key].land_vn > 2.0f) || rocking;
 		rest[pair_key].phase = 3; // landing in progress: the resting branch must not read it as a push
 		if (verts_of_b2_used) cps.clear();
 		for (int round = 0; round < 8; ++round) {
