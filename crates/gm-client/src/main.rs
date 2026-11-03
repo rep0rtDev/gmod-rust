@@ -3737,18 +3737,20 @@ impl App {
             self.sim.hud_draws = self.sim.script.client_render(&self.sim.client.world, w, h);
             // `gui.EnableScreenClicker`: a script shows the cursor over the game (the mouse
             // look stops) until it turns it off again
+            let mut clicker = None;
             for d in &self.sim.hud_draws {
                 match d {
-                    gm_script::DrawCmd::ScreenClicker { on } if *on != self.screen_clicker => {
-                        self.screen_clicker = *on;
-                        if self.menu.is_none() && !self.context_held && !self.main_menu {
-                            self.set_grab(!*on);
-                        }
-                    }
+                    gm_script::DrawCmd::ScreenClicker { on } => clicker = Some(*on),
                     gm_script::DrawCmd::OpenUrl { url } => {
                         let _ = std::process::Command::new("xdg-open").arg(url).spawn();
                     }
                     _ => {}
+                }
+            }
+            if let Some(on) = clicker.filter(|on| *on != self.screen_clicker) {
+                self.screen_clicker = on;
+                if self.menu.is_none() && !self.context_held && !self.main_menu {
+                    self.set_grab(!on);
                 }
             }
             if let Some(gm) = self.gfx.as_mut() {
