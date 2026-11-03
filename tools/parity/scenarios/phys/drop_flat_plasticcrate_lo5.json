@@ -1,0 +1,1 @@
+{"name": "phys_drop_flat_plasticcrate_lo5", "kind": "phys", "map": "gm_construct", "model": "models/props_junk/PlasticCrate01a.mdl", "start": [823.235, -540.0, -131.311], "angles": [0, 0, 0], "ticks": 200}

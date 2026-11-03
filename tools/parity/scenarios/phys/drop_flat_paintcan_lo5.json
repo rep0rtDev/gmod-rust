@@ -1,0 +1,1 @@
+{"name": "phys_drop_flat_paintcan_lo5", "kind": "phys", "map": "gm_construct", "model": "models/props_junk/metal_paintcan001a.mdl", "start": [823.235, -540.0, -132.065], "angles": [0, 0, 0], "ticks": 200}
