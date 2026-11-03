@@ -260,7 +260,7 @@ pub const LADDER_MATERIAL: &str = "surfaceprop:ladder";
 
 /// Footsteps in water up to the feet use this surface property instead of the floor's
 /// (measured: `slosh*.wav` at the normal step volume), as the `surfaceprop:` pseudo material.
-pub const WADE_MATERIAL: &str = "surfaceprop:wade";
+pub const WATER_MATERIAL: &str = "surfaceprop:water";
 
 /// One tick's point-contents lookups of the three water probes: (point, contents) per probe.
 #[derive(Default, Clone, Copy, Debug)]
@@ -1071,6 +1071,8 @@ pub struct Footsteps {
     pub right: bool,
     /// Milliseconds until a held jump in the water voices `Player.Swim` again.
     pub swim_ms: f32,
+    /// `Player.Wade` is due: the water level moved into the feet or the waist last tick.
+    wade_pending: bool,
     /// Milliseconds of climbing until the next ladder step.
     pub ladder_ms: f32,
 }
@@ -1182,19 +1184,28 @@ impl Footsteps {
     /// tick and the state after the move: `Player.Swim` (volume 0.5) on wading in from dry
     /// ground (`move_water_walk` tick 117) and on a jump held while the tick starts swimming,
     /// once a second (`move_water_swim` ticks 160, 250, 328: the held jump at 227 came while
-    /// bobbing at the surface with the waist out, 250 is the next tick that starts at the waist).
+    /// bobbing at the surface with the waist out, 250 is the next tick that starts at the waist);
+    /// `Player.Wade` (volume 0.25) one tick after the level moves into the feet from dry
+    /// (`move_water_walk` 117 -> 118) or into the waist from the eyes (`move_water_swim`
+    /// 208 -> 209), not after waist -> feet (250, 328 voice only the held jump).
     pub fn water_sound(
         &mut self,
         prev_level: u8,
         st: &PlayerState,
         cmd: &UserCmd,
-    ) -> Option<&'static str> {
-        if prev_level == 0 && st.water_level > 0 {
-            return Some("Player.Swim");
+    ) -> Option<(&'static str, f32)> {
+        let wade = std::mem::take(&mut self.wade_pending);
+        let level = st.water_level;
+        self.wade_pending = (prev_level == 0 && level == 1) || (prev_level == 3 && level == 2);
+        if prev_level == 0 && level > 0 {
+            return Some(("Player.Swim", 0.5));
         }
         if prev_level >= 2 && cmd.buttons & buttons::JUMP != 0 && self.swim_ms <= 0.0 {
             self.swim_ms = 1000.0;
-            return Some("Player.Swim");
+            return Some(("Player.Swim", 0.5));
+        }
+        if wade {
+            return Some(("Player.Wade", 0.25));
         }
         None
     }
@@ -1764,17 +1775,34 @@ mod tests {
         };
         assert_eq!(
             f.water_sound(0, &wet, &UserCmd::default()),
-            Some("Player.Swim")
+            Some(("Player.Swim", 0.5))
+        );
+        // the tick after wading in: `Player.Wade`, then quiet at the feet
+        assert_eq!(
+            f.water_sound(1, &wet, &UserCmd::default()),
+            Some(("Player.Wade", 0.25))
         );
         assert_eq!(f.water_sound(1, &wet, &UserCmd::default()), None);
-        assert_eq!(f.water_sound(2, &wet, &jump), Some("Player.Swim"));
+        assert_eq!(f.water_sound(2, &wet, &jump), Some(("Player.Swim", 0.5)));
+        // surfacing from the eyes to the waist: `Player.Wade` a tick later, waist -> feet: nothing
+        let waist = PlayerState {
+            water_level: 2,
+            ..PlayerState::default()
+        };
+        assert_eq!(f.water_sound(3, &waist, &UserCmd::default()), None);
+        assert_eq!(
+            f.water_sound(2, &waist, &UserCmd::default()),
+            Some(("Player.Wade", 0.25))
+        );
+        assert_eq!(f.water_sound(2, &wet, &UserCmd::default()), None);
+        assert_eq!(f.water_sound(1, &wet, &UserCmd::default()), None);
         // held: once a second (1000 ms, 15 ms ticks)
         for _ in 0..66 {
             f.before_move(&dry, 200.0, 15.0);
             assert_eq!(f.water_sound(2, &wet, &jump), None);
         }
         f.before_move(&dry, 200.0, 15.0);
-        assert_eq!(f.water_sound(2, &wet, &jump), Some("Player.Swim"));
+        assert_eq!(f.water_sound(2, &wet, &jump), Some(("Player.Swim", 0.5)));
         // no footsteps with the water at the waist, even on the bottom
         let bottom = PlayerState {
             water_level: 2,

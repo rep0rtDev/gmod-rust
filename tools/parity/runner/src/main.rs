@@ -1333,14 +1333,14 @@ fn run_move(scn: &Scenario) -> Result<Value> {
                 }
             }
             let ladder_step = steps.ladder_step(prev_move, prev_vz_l, &st, 15.0);
-            if let Some(name) = steps.water_sound(prev_level, &st, &cmd) {
+            if let Some((name, vol)) = steps.water_sound(prev_level, &st, &cmd) {
                 let e = scripts.get(name);
                 sounds.push(serde_json::json!({
                     "t": t,
                     "name": name,
                     "waves": e.map(|e| e.waves.iter().map(|w| gm_audio::script::wave_path(w).to_ascii_lowercase()).collect::<Vec<_>>()).unwrap_or_default(),
                     "alt_waves": [],
-                    "vol": 0.5,
+                    "vol": vol,
                 }));
             }
             let jumped = st.boost_pending && was_on_ground;
@@ -1358,7 +1358,7 @@ fn run_move(scn: &Scenario) -> Result<Value> {
             }
             let land_step = landed.then(|| steps.on_land(fall_speed)).flatten();
             let land_feet = st.origin;
-            let wade = |level: u8| (level == 1).then_some(gm_move::WADE_MATERIAL);
+            let wade = |level: u8| (level == 1).then_some(gm_move::WATER_MATERIAL);
             // steps on a prop take the prop's surface property (`move_friction_glass`)
             let prop_mat = (st.ground_ent != 0)
                 .then(|| {

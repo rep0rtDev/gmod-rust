@@ -13119,11 +13119,11 @@ impl<'w> Server<'w> {
                 self.mover.cfg = saved_cfg;
                 p.prev_vz = prev_vz;
                 p.prev_on_ground = !was_airborne;
-                if let Some(name) = p.steps.water_sound(prev_level, &p.state, &cmd) {
+                if let Some((name, volume)) = p.steps.water_sound(prev_level, &p.state, &cmd) {
                     self.sounds.push(WorldSound {
                         name: name.to_owned(),
                         pos: p.state.origin,
-                        volume: 0.5,
+                        volume,
                         ..Default::default()
                     });
                 }
@@ -13142,7 +13142,7 @@ impl<'w> Server<'w> {
                         feet,
                         step,
                         (prev_level == 1)
-                            .then(|| gm_move::WADE_MATERIAL.to_owned())
+                            .then(|| gm_move::WATER_MATERIAL.to_owned())
                             .or(prop_mat),
                     ));
                 }
@@ -13174,7 +13174,7 @@ impl<'w> Server<'w> {
                             *id,
                             p.state.origin,
                             step,
-                            (p.state.water_level == 1).then(|| gm_move::WADE_MATERIAL.to_owned()),
+                            (p.state.water_level == 1).then(|| gm_move::WATER_MATERIAL.to_owned()),
                         ));
                     }
                 }
