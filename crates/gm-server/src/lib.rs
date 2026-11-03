@@ -4,6 +4,7 @@
 
 pub mod projectile;
 pub mod save;
+pub mod tool_panels;
 pub mod weapons;
 
 use glam::{Quat, Vec3};
