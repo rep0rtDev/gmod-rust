@@ -81,6 +81,11 @@ local font = "DermaDefault"
 local material = nil
 local alpha_mul = 1
 local fonts = {}
+-- the vgui layer paints each panel in its own coordinates: `surface.__origin(x, y)` moves
+-- the origin of every draw call to the panel's screen position
+local ox, oy = 0, 0
+function S.__origin(x, y) ox, oy = x or 0, y or 0 end
+function S.__get_origin() return ox, oy end
 
 local function col(c, mul)
 	local a = (c.a or 255) * alpha_mul * (mul or 1)
@@ -107,10 +112,11 @@ function S.ScreenHeight() return scr_h end
 function S.DisableClipping(b) return false end
 function S.PlaySound(path) end
 
-function S.DrawRect(x, y, w, h) hostdraw.rect(x, y, w, h, col(draw_color)) end
+function S.DrawRect(x, y, w, h) hostdraw.rect(x + ox, y + oy, w, h, col(draw_color)) end
 function S.DrawOutlinedRect(x, y, w, h, t)
 	t = t or 1
 	local c = col(draw_color)
+	x, y = x + ox, y + oy
 	hostdraw.rect(x, y, w, t, c)
 	hostdraw.rect(x, y + h - t, w, t, c)
 	hostdraw.rect(x, y, t, h, c)
@@ -120,6 +126,7 @@ end
 -- one-pixel steps (the client has no line primitive in the command list)
 function S.DrawLine(x1, y1, x2, y2)
 	local c = col(draw_color)
+	x1, y1, x2, y2 = x1 + ox, y1 + oy, x2 + ox, y2 + oy
 	if y1 == y2 then
 		hostdraw.rect(math.min(x1, x2), y1, math.abs(x2 - x1) + 1, 1, c)
 	elseif x1 == x2 then
@@ -155,7 +162,7 @@ function S.GetTextSize(text)
 end
 function S.DrawText(text)
 	if fonts[font] == nil then S.GetTextSize("") end
-	hostdraw.text(text_x, text_y, tostring(text), col(text_color), font)
+	hostdraw.text(text_x + ox, text_y + oy, tostring(text), col(text_color), font)
 	local w = hostdraw.text_size(tostring(text), font)
 	text_x = text_x + (w or 0)
 end
@@ -166,9 +173,9 @@ function S.GetTextureID(name) return Material(name) end
 function S.GetHUDTexture(name) return Material(name) end
 function S.DrawTexturedRect(x, y, w, h)
 	if material and material.__name ~= "" then
-		hostdraw.texture(x, y, w, h, material.__name, col(draw_color))
+		hostdraw.texture(x + ox, y + oy, w, h, material.__name, col(draw_color))
 	else
-		hostdraw.rect(x, y, w, h, col(draw_color))
+		hostdraw.rect(x + ox, y + oy, w, h, col(draw_color))
 	end
 end
 function S.DrawTexturedRectUV(x, y, w, h) S.DrawTexturedRect(x, y, w, h) end
@@ -189,7 +196,7 @@ function S.DrawPoly(verts)
 			end
 		end
 		table.sort(xs)
-		for i = 1, #xs - 1, 2 do hostdraw.rect(xs[i], y, xs[i + 1] - xs[i], 1, c) end
+		for i = 1, #xs - 1, 2 do hostdraw.rect(xs[i] + ox, y + oy, xs[i + 1] - xs[i], 1, c) end
 	end
 end
 function S.DrawCircle(x, y, r, c)
@@ -269,6 +276,7 @@ end
 function D.RoundedBoxEx(radius, x, y, w, h, color, tl, tr, bl, br)
 	local c = col(color or draw_color)
 	radius = math.max(0, math.min(radius or 0, math.floor(math.min(w, h) / 2)))
+	x, y = x + ox, y + oy
 	if radius == 0 then hostdraw.rect(x, y, w, h, c) return end
 	hostdraw.rect(x, y + radius, w, h - radius * 2, c)
 	for i = 0, radius - 1 do
@@ -334,6 +342,7 @@ if events then
 		set_color(draw_color, 255, 255, 255, 255)
 		set_color(text_color, 255, 255, 255, 255)
 		font, material, alpha_mul = "DermaDefault", nil, 1
+		ox, oy = 0, 0
 		hook.Run("PreDrawHUD")
 		-- the engine's HUD elements each ask `HUDShouldDraw(name)`; a false hides that element
 		for _, name in ipairs(HUD_ELEMENTS) do
@@ -344,6 +353,12 @@ if events then
 			hook.Run("HUDPaint")
 		end
 		hook.Run("PostDrawHUD")
+		-- the vgui layer paints above the HUD (derma.luau), then the overlay
+		if __derma_paint then __derma_paint() end
 		hook.Run("DrawOverlay")
+	end)
+	-- key edges: the vgui layer takes the mouse / keyboard first, then `PlayerBindPress`-style hooks
+	events.on("input.key", function(p)
+		if __derma_key and __derma_key(p.key, p.down) then return end
 	end)
 end

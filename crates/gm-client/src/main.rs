@@ -3731,6 +3731,7 @@ impl App {
         {
             let g = self.gfx.as_ref().unwrap();
             let (w, h) = (g.config.width, g.config.height);
+            self.sim.script.cursor = (!self.grabbed).then_some(self.cursor);
             self.sim.hud_draws = self.sim.script.client_render(&self.sim.client.world, w, h);
             if let Some(gm) = self.gfx.as_mut() {
                 // `draw.font` builds its atlas now and reports the metrics to the runtime;

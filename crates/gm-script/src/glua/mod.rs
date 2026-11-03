@@ -31,6 +31,7 @@ const CLASSES: &str = include_str!("classes.luau");
 const SCRIPTED: &str = include_str!("scripted.luau");
 const LIBS: &str = include_str!("libs.luau");
 const CLIENT: &str = include_str!("client.luau");
+const DERMA: &str = include_str!("derma.luau");
 
 /// Registers a class metatable under `__glua_classes[name]` so the coverage listing (and
 /// `FindMetaTable`) can reach it.
@@ -114,6 +115,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
     lua.load(SCRIPTED).set_name("glua/scripted").exec()?;
     lua.load(LIBS).set_name("glua/libs").exec()?;
     lua.load(CLIENT).set_name("glua/client").exec()?;
+    lua.load(DERMA).set_name("glua/derma").exec()?;
     let classes = classes(lua)?;
     g.set(
         "FindMetaTable",
@@ -156,7 +158,9 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
     // Hooks are not Lua values: a GM hook counts as present when a bridge raises it
     // (`hook.Run("Name"`), a scripted ENTITY / WEAPON callback when the dispatcher that calls it
     // is annotated `-- @hook CLASS:Name`.
-    for src in [CORE, ACT, ENTITY, SERVER, CLASSES, SCRIPTED, LIBS, CLIENT] {
+    for src in [
+        CORE, ACT, ENTITY, SERVER, CLASSES, SCRIPTED, LIBS, CLIENT, DERMA,
+    ] {
         for (marker, prefix) in [("hook.Run(\"", "GM:"), ("@hook ", "")] {
             let mut rest = src;
             while let Some(i) = rest.find(marker) {

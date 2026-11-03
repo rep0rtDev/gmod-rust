@@ -939,3 +939,102 @@ fn glua_client_hud_paint_draws_through_surface() {
         "OnScreenSizeChanged on a new screen size"
     );
 }
+
+/// Derma: a DFrame with a DButton paints through `surface` in panel coordinates, the cursor
+/// hovers it, a MouseLeft press / release over it runs `DoClick`, a DTextEntry takes typing.
+#[test]
+fn glua_derma_frame_button_click_and_typing() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "ui".into(),
+        name: "frame".into(),
+        priority: 0,
+        source: r#"
+            FRAME = vgui.Create("DFrame")
+            FRAME:SetPos(100, 100)
+            FRAME:SetSize(300, 200)
+            FRAME:SetTitle("Test")
+            BTN = vgui.Create("DButton", FRAME)
+            BTN:SetPos(20, 40)
+            BTN:SetSize(100, 30)
+            BTN:SetText("Press")
+            CLICKS = 0
+            BTN.DoClick = function() CLICKS = CLICKS + 1 end
+            ENTRY = vgui.Create("DTextEntry", FRAME)
+            ENTRY:SetPos(20, 100)
+            ENTRY:SetSize(200, 20)
+            ENTRY.OnEnter = function(_, v) ENTERED = v end
+            DOCKED = vgui.Create("DPanel", FRAME)
+            DOCKED:Dock(BOTTOM)
+            DOCKED:SetTall(30)
+            FRAME:MakePopup()
+        "#
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let world = gm_net::ClientWorld::default();
+    rt.cursor = Some((170.0, 155.0));
+    let draws = rt.client_render(&world, 1280, 720);
+    // the button's body: frame (100,100) + button (20,40) => a 100x30 rect at (120,140)
+    assert!(
+        draws.iter().any(|d| matches!(d, gm_script::DrawCmd::Rect { x, y, w, h, .. } if *x == 120.0 && *y == 140.0 && *w == 100.0 && *h == 30.0)),
+        "button painted in screen space: {draws:?}"
+    );
+    assert!(
+        draws
+            .iter()
+            .any(|d| matches!(d, gm_script::DrawCmd::Text { text, .. } if text == "Press")),
+        "button label: {draws:?}"
+    );
+    let (hovered, docked): (bool, String) = rt.actors()[0]
+        .eval("return BTN:IsHovered(), DOCKED:GetPos() .. ',' .. select(2, DOCKED:GetPos()) .. ',' .. DOCKED:GetWide()")
+        .expect("eval");
+    assert!(hovered, "the cursor over the button hovers it");
+    assert_eq!(
+        docked, "0,170,300",
+        "Dock(BOTTOM) lays the panel along the frame's bottom"
+    );
+    rt.client_input(
+        &world,
+        &[("MouseLeft".into(), true), ("MouseLeft".into(), false)],
+    );
+    let clicks: f64 = rt.actors()[0].eval("return CLICKS").expect("eval");
+    assert_eq!(clicks, 1.0, "press + release over the button is a click");
+    // click the entry, type, enter
+    rt.cursor = Some((130.0, 210.0));
+    let _ = rt.client_render(&world, 1280, 720);
+    rt.client_input(
+        &world,
+        &[
+            ("MouseLeft".into(), true),
+            ("MouseLeft".into(), false),
+            ("ShiftLeft".into(), true),
+            ("KeyH".into(), true),
+            ("KeyH".into(), false),
+            ("ShiftLeft".into(), false),
+            ("KeyI".into(), true),
+            ("KeyI".into(), false),
+            ("Digit1".into(), true),
+            ("Digit1".into(), false),
+            ("Backspace".into(), true),
+            ("Backspace".into(), false),
+            ("Enter".into(), true),
+            ("Enter".into(), false),
+        ],
+    );
+    let (value, entered): (String, String) = rt.actors()[0]
+        .eval("return ENTRY:GetValue(), ENTERED or ''")
+        .expect("eval");
+    assert_eq!(value, "Hi", "typed with shift, digit removed by backspace");
+    assert_eq!(entered, "Hi", "Enter runs OnEnter with the value");
+    // the frame's close button removes it
+    rt.actors()[0]
+        .eval::<()>("FRAME.btnClose:DoClick()")
+        .expect("eval");
+    let valid: bool = rt.actors()[0].eval("return IsValid(FRAME)").expect("eval");
+    assert!(!valid, "Close() removes a DFrame that deletes on close");
+}

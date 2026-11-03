@@ -44,6 +44,9 @@ pub struct ActorSpec {
 pub struct Runtime {
     /// `server` (default) or `client`: which actors `load_addon` takes.
     pub realm: String,
+    /// Client realm: the cursor in screen pixels while it is visible (menus / vgui), `None`
+    /// while the mouse looks; `render.hud` carries it as `mx`, `my`, `cursor`.
+    pub cursor: Option<(f32, f32)>,
     /// Where every loaded addon came from (directory or `.gmr`), for reloads by id.
     pub addon_paths: std::collections::BTreeMap<String, std::path::PathBuf>,
     /// Client-realm packages built by `load_addon`/`check_reloads` on the server, until the
@@ -93,6 +96,7 @@ impl Runtime {
     pub fn new() -> Self {
         Runtime {
             realm: "server".into(),
+            cursor: None,
             addon_paths: std::collections::BTreeMap::new(),
             published: Vec::new(),
             actors: Vec::new(),
@@ -370,6 +374,11 @@ impl Runtime {
         let mut p = api::Payload::default();
         p.ints.push(("w", w as i64));
         p.ints.push(("h", h as i64));
+        if let Some((mx, my)) = self.cursor {
+            p.floats.push(("mx", mx as f64));
+            p.floats.push(("my", my as f64));
+        }
+        p.bools.push(("cursor", self.cursor.is_some()));
         self.parallel(&snap, "render.hud", &p);
         self.release_snapshots();
         let mut out = Vec::new();
