@@ -447,6 +447,15 @@ impl Projectile {
         self.kind == Launch::Rocket && self.movetype == MoveType::Fly
     }
 
+    /// `CMissile::SeekThink`: while the launcher's laser dot is on, the ignited rocket homes on
+    /// it - the restoring aim becomes the dot's direction from the rocket each tick (the fit
+    /// in `rocket_turn` was taken with a held aim, where the dot and the launch aim coincide).
+    pub fn home_on(&mut self, dot: Vec3) {
+        if self.kind == Launch::Rocket && self.movetype == MoveType::Fly {
+            self.home = heading_of(dot - self.origin);
+        }
+    }
+
     fn step_rocket(&mut self, world: &World) -> Event {
         if self.movetype == MoveType::FlyGravity {
             if self.age >= ROCKET_IGNITE_TICKS {

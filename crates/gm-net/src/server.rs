@@ -1439,6 +1439,11 @@ impl ServerNet {
                     None => true,
                 };
                 let near_ent = |e: &EntityState| {
+                    // projectiles: the interest radius only, no PVS - a rocket crossing the
+                    // sky's cluster or clipping a brush must not pop out mid-flight
+                    if e.id >= gm_server::PROJECTILE_ID_BASE {
+                        return eye.is_none_or(|p| p.distance(e.pos) <= self.interest_radius);
+                    }
                     if server.transmit_prevented(e.id, slot.player) {
                         return false;
                     }

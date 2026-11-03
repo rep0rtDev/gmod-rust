@@ -6429,6 +6429,25 @@ impl<'w> Server<'w> {
             }
         }
         let world = self.collision;
+        // the RPG's laser dot: where the launcher's owner aims this tick, for the ignited
+        // rockets to home on (`CMissile::SeekThink`) while the launcher is held
+        let dots: HashMap<u32, Vec3> = self
+            .projectiles
+            .iter()
+            .filter(|pr| pr.kind == weapons::Launch::Rocket)
+            .filter_map(|pr| {
+                let p = self.players.get(&pr.owner)?;
+                if !p.alive || !(true) {
+                    return None;
+                }
+                let (eye, ang) = self.eye(pr.owner)?;
+                let f = gm_sandbox::forward(ang.x, ang.y);
+                let dot = world
+                    .trace_ray(eye, eye + f * 56755.84, gm_collision::MASK_SOLID)
+                    .end;
+                Some((pr.owner, dot))
+            })
+            .collect();
         let mut phys = projectile::Physics {
             world: &mut self.physics,
             grenade: self.models.get(projectile::GRENADE_MODEL),
@@ -6436,6 +6455,9 @@ impl<'w> Server<'w> {
         };
         let mut steps = Vec::with_capacity(self.projectiles.len());
         for pr in &mut self.projectiles {
+            if let Some(&dot) = dots.get(&pr.owner) {
+                pr.home_on(dot);
+            }
             let prev = pr.origin;
             steps.push((prev, pr.step(world, Some(&mut phys))));
         }
