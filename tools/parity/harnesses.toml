@@ -5071,3 +5071,10 @@ crates = ["gm-move", "gm-collision"]
 [harness.tolerance]
 pos = 0.05
 vel = 0.5
+
+[[harness]]
+name = "server_wall_overlap"
+scenario = "server/wall_overlap"
+compare = "server"
+realm = "server"
+crates = ["gm-server"]
