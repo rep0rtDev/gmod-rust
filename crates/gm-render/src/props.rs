@@ -73,7 +73,10 @@ pub fn load_model(mount: &Mount, path: &str, root_lod: usize) -> Result<(Mdl, Vv
     Ok((mdl, vvd, vtx, lod))
 }
 
-pub type MaterialMap = HashMap<String, Option<(Material, Rgba)>>;
+/// Material, its base texture and, for `$normalmapalphaenvmapmask` materials, the normal map
+/// whose alpha masks the reflection (the viewmodels' sheets: without it the mask reads 1 and
+/// the gun turns to chrome).
+pub type MaterialMap = HashMap<String, Option<(Material, Rgba, Option<Rgba>)>>;
 
 pub fn resolve_model_texture(
     mount: &Mount,
@@ -96,7 +99,16 @@ pub fn resolve_model_texture(
         let loaded = material::load_path(mount, &key, &path).ok().and_then(|m| {
             let tex = m.base_texture.clone()?;
             let rgba = material::load_texture(mount, &tex, 512).ok()?;
-            Some((m, rgba))
+            let normal_mask = matches!(
+                m.envmap.as_ref().map(|e| e.mask),
+                Some(material::EnvMapMask::NormalAlpha)
+            );
+            let bump = m
+                .bumpmap
+                .as_ref()
+                .filter(|_| normal_mask)
+                .and_then(|b| material::load_texture(mount, b, 512).ok());
+            Some((m, rgba, bump))
         });
         let ok = loaded.is_some();
         materials.insert(key.clone(), loaded);
@@ -211,7 +223,7 @@ pub fn collect_static_props(
                 let Some(Some(key)) = model.texture_keys.get(tex_index) else {
                     continue;
                 };
-                let Some(Some((mat, rgba))) = materials.get(key) else {
+                let Some(Some((mat, rgba, _))) = materials.get(key) else {
                     continue;
                 };
                 let (tw, th) = (rgba.width as f32, rgba.height as f32);

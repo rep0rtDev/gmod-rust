@@ -1451,8 +1451,7 @@ impl WorldRenderer {
         let mut stats = Stats::default();
 
         // material -> (texture rgba, flags)
-        let mut materials: HashMap<String, Option<(material::Material, material::Rgba)>> =
-            HashMap::new();
+        let mut materials: crate::props::MaterialMap = HashMap::new();
         let mut per_material: HashMap<String, Vec<u32>> = HashMap::new();
         let mut vertices: Vec<Vertex> = Vec::new();
 
@@ -1534,6 +1533,7 @@ impl WorldRenderer {
                             pixels: vec![px[0], px[1], px[2], 255],
                             mips: Vec::new(),
                         },
+                        None,
                     ));
                 }
                 let Some(tex) = m.base_texture.clone() else {
@@ -1545,10 +1545,11 @@ impl WorldRenderer {
                             pixels: vec![128, 128, 128, 255],
                             mips: Vec::new(),
                         },
+                        None,
                     ));
                 };
                 match material::load_texture_lod(mount, &tex, 1024, quality.picmip.max(0) as u32) {
-                    Ok(rgba) => Some((m, rgba)),
+                    Ok(rgba) => Some((m, rgba, None)),
                     Err(_) => {
                         stats.missing_materials.push(format!("{canon} -> {tex}"));
                         None
@@ -1557,7 +1558,7 @@ impl WorldRenderer {
             });
             entry
                 .as_ref()
-                .map(|(_, rgba)| (canon, rgba.width, rgba.height))
+                .map(|(_, rgba, _)| (canon, rgba.width, rgba.height))
         };
 
         let (cubes, cube_view) = load_cubemaps(gpu, mount, bsp, hdr);
@@ -1982,7 +1983,7 @@ impl WorldRenderer {
         .create_view(&Default::default());
         let mut reflect_entities = false;
         for (name, idx, sky) in jobs {
-            let Some(Some((mat, rgba))) = materials.get(name) else {
+            let Some(Some((mat, rgba, _))) = materials.get(name) else {
                 continue;
             };
             reflect_entities |= mat.water && mat.reflect_entities;
@@ -3061,7 +3062,7 @@ impl WorldRenderer {
                 let Some(Some(key)) = keys.get(tex) else {
                     continue;
                 };
-                let Some(Some((mat, rgba))) = materials.get(key) else {
+                let Some(Some((mat, rgba, bump))) = materials.get(key) else {
                     continue;
                 };
                 let mut remap: HashMap<u32, u32> = HashMap::new();
@@ -3106,6 +3107,10 @@ impl WorldRenderer {
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
                 let t = upload_rgba_mips(gpu, rgba, wgpu::TextureFormat::Rgba8UnormSrgb, key);
+                let bump_t = bump
+                    .as_ref()
+                    .map(|b| upload_rgba_mips(gpu, b, wgpu::TextureFormat::Rgba8Unorm, key));
+                let bump_view = bump_t.as_ref().map(|t| t.create_view(&Default::default()));
                 let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some(key),
                     layout: &self.material_layout,
@@ -3134,7 +3139,9 @@ impl WorldRenderer {
                         },
                         wgpu::BindGroupEntry {
                             binding: 6,
-                            resource: wgpu::BindingResource::TextureView(&self.bump_fallback),
+                            resource: wgpu::BindingResource::TextureView(
+                                bump_view.as_ref().unwrap_or(&self.bump_fallback),
+                            ),
                         },
                         wgpu::BindGroupEntry {
                             binding: 7,
