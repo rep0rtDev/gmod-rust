@@ -970,7 +970,22 @@ public:
 				// a ring of vertices (the drum's 16-gon bottom) does not land flat in the game: the
 				// yaw-spinning drum strikes the rim vertex on the hull's own +x axis first (628 u/s)
 				// and its antipode second (245), one diameter apart, and tumbles at -375 deg/s
+				// a ring is round: its vertices sit at one radius from their centre (the drum's
+				// 16-gon); the locker's ten feet put 40 vertices on the plane in a rectangle and
+				// land as a face
 				bool ring = face.size() > 8;
+				if (ring) {
+					JPH::Vec3 c = JPH::Vec3::sZero();
+					for (const Pt *f : face) c += JPH::Vec3(f->p);
+					c /= float(face.size());
+					float rmin = 1e30f, rmax = 0.0f;
+					for (const Pt *f : face) {
+						float r = (JPH::Vec3(f->p) - c).Length();
+						rmin = std::min(rmin, r);
+						rmax = std::max(rmax, r);
+					}
+					ring = rmax < rmin * 1.15f;
+				}
 				// a ring arriving without spin is a single rim vertex impact in the game (the
 				// upright drum of `device_dynamite_push` lands on its +x rim: -63 u/s of slip
 				// stuck, -175 deg/s, the centre nearly stopped, the antipode a tick later); the
