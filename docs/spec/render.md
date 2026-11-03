@@ -179,8 +179,11 @@ units for the 3D skybox pass, never for the 2D sky; the water itself is skipped 
 pass. `fs_water` mixes the reflection over the water fog colour by the Schlick fresnel of
 the flat surface, (1 − n·v)^5, and adds that fraction to the volume-fog alpha. Measured on
 construct's pond (surface z −160): the far buildings mirror at the right height, grazing
-views are almost fully mirror. Open: `$refracttexture` (the scene behind the surface is
-still the already-drawn bottom through the fog alpha, no refraction offset), the dudv /
-normal-map distortion (`$bumpmap water_13_dudv`, `$refractamount`, `$reflectamount`),
-the per-pixel fresnel from the normal map, `$reflectentities`, reflection of translucent
-surfaces and models.
+views are almost fully mirror. The Water shader's expensive path is followed for the
+surface normal: `$normalmap` (`water_13_normal`, falling back to `$bumpmap`) sampled at the
+face uv scrolled by `$scroll1` xy per second, its xy times `$reflectamount` (0.4) offsets
+the reflection lookup in screen space and the fresnel uses n·v of that normal. Open:
+`$refracttexture` (the scene behind the surface is still the already-drawn bottom through
+the fog alpha, no `$refractamount` offset), the `$bumptransform` TextureScroll proxy (rate
+0.02 at 25 deg; the proxies block is not parsed, `$scroll1` stands in), `$reflectentities`,
+reflection of translucent surfaces and models.

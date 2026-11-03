@@ -35,6 +35,9 @@ pub struct Material {
     pub blend_modulate: Option<String>,
     /// `$bumpmap`: tangent-space normal map lit by the bumped lightmap pages.
     pub bumpmap: Option<String>,
+    /// Water: `$reflectamount`, `$refractamount` (screen-space offset per unit of normal xy)
+    /// and the `$scroll1` xy rate of the normal map, in uv per second.
+    pub water_dist: [f32; 4],
     /// `$envmap env_cubemap`: the nearest baked cubemap reflected, scaled by `$envmaptint`
     /// and masked by the base alpha (`$basealphaenvmapmask`), the normal map alpha
     /// (`$normalmapalphaenvmapmask`) or nothing.
@@ -201,6 +204,27 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         mat.water = shader == "water";
         if mat.water {
             mat.bottom_material = get("$bottommaterial");
+            mat.bumpmap = get("$normalmap").or_else(|| get("$bumpmap"));
+            let amount = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
+            let scroll: Vec<f32> = get("$scroll1")
+                .map(|v| {
+                    v.trim_matches(|c| c == '[' || c == ']')
+                        .split_whitespace()
+                        .filter_map(|x| x.parse::<f32>().ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let (sx, sy) = if scroll.len() >= 2 {
+                (scroll[0], scroll[1])
+            } else {
+                (0.0, 0.0)
+            };
+            mat.water_dist = [
+                amount("$reflectamount", 0.0),
+                amount("$refractamount", 0.0),
+                sx,
+                sy,
+            ];
             let c: Vec<f32> = get("$fogcolor")
                 .map(|v| {
                     v.trim_matches(|c| c == '{' || c == '}' || c == '[' || c == ']')
@@ -234,7 +258,9 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
             .as_deref()
             .and_then(texture_transform);
         mat.blend_modulate = get("$blendmodulatetexture");
-        mat.bumpmap = get("$bumpmap");
+        if mat.bumpmap.is_none() {
+            mat.bumpmap = get("$bumpmap");
+        }
         if get("$envmap").is_some() {
             let tint: Vec<f32> = get("$envmaptint")
                 .map(|v| {

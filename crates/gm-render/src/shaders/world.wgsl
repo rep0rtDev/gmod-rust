@@ -177,10 +177,14 @@ fn fs_water(in: VsOut) -> @location(0) vec4<f32> {
     let fog = min(clamp((depth - camera.fog_range.x) / fspan, 0.0, 1.0), camera.fog_color.w) * camera.eye.w;
     // _rt_WaterReflection, drawn by the mirrored camera and read upside down, over the
     // water fog by the Schlick fresnel of the flat surface
+    // the $normalmap scrolled by $scroll1 perturbs the reflection lookup by $reflectamount
+    // and gives the per-pixel fresnel (the Water shader's expensive path)
+    let nuv = in.uv + material.envmap.zw * camera.clip.z;
+    let n = normalize(textureSample(bump, base_sampler, nuv).xyz * 2.0 - 1.0);
     let dims = vec2<f32>(textureDimensions(scene_depth));
-    let suv = in.clip.xy / dims;
+    let suv = in.clip.xy / dims + n.xy * material.envmap.x;
     let refl = textureSample(reflection, reflection_sampler, vec2<f32>(suv.x, 1.0 - suv.y)).rgb;
-    let nv = clamp(-ray.z / surf_len, 0.0, 1.0);
+    let nv = clamp(dot(-ray / surf_len, n), 0.0, 1.0);
     let fr = pow(1.0 - nv, 5.0) * camera.clip.y;
     let col = mix(mix(material.water_color.rgb, refl, fr), camera.fog_color.rgb, fog);
     return vec4<f32>(col, f + (1.0 - f) * fr);

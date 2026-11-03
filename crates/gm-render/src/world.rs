@@ -60,6 +60,10 @@ struct MaterialParams {
 }
 
 fn envmap_params(mat: &material::Material) -> [f32; 4] {
+    // water reuses the slot: reflect / refract amounts and the normal-map scroll
+    if mat.water {
+        return mat.water_dist;
+    }
     match mat.envmap {
         None => [0.0; 4],
         Some(e) => {
@@ -221,6 +225,7 @@ struct CameraUniform {
     /// `fogstart`, `fogend` in units.
     fog_range: [f32; 4],
     /// Water reflection pass: clip plane z (x), reflection texture valid (y), clip on (w).
+    /// ... and seconds since start (z) for scrolling water normals.
     clip: [f32; 4],
 }
 
@@ -438,6 +443,7 @@ pub struct WorldRenderer {
     color_format: wgpu::TextureFormat,
     reflect: Mutex<ReflectState>,
     reflect_sampler: wgpu::Sampler,
+    t0: std::time::Instant,
     /// `$nocull` variants of `pipeline` / `translucent_pipeline`.
     nocull_pipeline: wgpu::RenderPipeline,
     translucent_nocull_pipeline: wgpu::RenderPipeline,
@@ -2137,6 +2143,7 @@ impl WorldRenderer {
             color_format,
             reflect: Mutex::new(ReflectState::default()),
             reflect_sampler,
+            t0: std::time::Instant::now(),
             nocull_pipeline,
             translucent_nocull_pipeline,
             water_pipeline,
@@ -2346,9 +2353,12 @@ impl WorldRenderer {
             forward: [fw.x, fw.y, fw.z, 0.0],
             fog_color: [f.color[0], f.color[1], f.color[2], f.max_density],
             fog_range: [f.start, f.end, cam.near, cam.far],
-            clip: match clip {
-                Some(z) => [z, valid, 0.0, 1.0],
-                None => [0.0, valid, 0.0, 0.0],
+            clip: {
+                let t = self.t0.elapsed().as_secs_f32();
+                match clip {
+                    Some(z) => [z, valid, t, 1.0],
+                    None => [0.0, valid, t, 0.0],
+                }
             },
         }
     }
