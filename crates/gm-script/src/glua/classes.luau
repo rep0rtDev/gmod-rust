@@ -195,6 +195,7 @@ function util.Effect(name, data, allowOverride, ignorePredictionOrRecipientFilte
 effects = effects or {}
 local effect_defs = {}
 function effects.Register(def, name) effect_defs[name] = def end
+effects.__registry = effect_defs
 function effects.Create(name) return effect_defs[name] end
 function effects.BeamRingPoint() end
 function effects.Bubbles() end

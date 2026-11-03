@@ -78,7 +78,8 @@ function MAT:GetString(k) return nil end
 function MAT:GetInt(k) return nil end
 function MAT:GetFloat(k) return nil end
 function MAT:GetVector(k) return nil end
-function MAT:GetTexture(k) return nil end
+function MAT:GetTexture(k) if k == "$basetexture" then return self.__dynamic end return nil end
+function MAT:SetDynamicImage(tex) self.__dynamic = tex end
 function MAT:SetFloat() end
 function MAT:SetInt() end
 function MAT:SetString() end
@@ -1810,3 +1811,312 @@ local menubar_panel
 function menubar.Init() menubar_panel = vgui.Create("DMenuBar"); menubar_panel:SetVisible(false); hook.Run("PopulateMenuBar", menubar_panel); return menubar_panel end
 function menubar.ParentTo(pnl) if not menubar_panel or not menubar_panel.__valid then menubar.Init() end menubar_panel:SetParent(pnl); menubar_panel:SetVisible(true); menubar_panel:Dock(TOP) end
 function menubar.IsParent(pnl) return menubar_panel ~= nil and menubar_panel.__valid and menubar_panel.parent == pnl end
+
+-- ---------------------------------------------------------------------------------------------
+-- remaining client libraries
+-- ---------------------------------------------------------------------------------------------
+-- render: the engine's named textures as ITexture objects, a model draw, misc state
+for _, n in ipairs({ "GetBloomTex0", "GetBloomTex1", "GetMoBlurTex0", "GetMoBlurTex1", "GetMorphTex0", "GetMorphTex1", "GetSmallTex0", "GetSmallTex1", "GetSuperFPTex", "GetSuperFPTex2", "GetPowerOfTwoTexture", "GetRefractTexture", "GetFullScreenDepthTexture", "GetResolvedFullFrameDepth" }) do
+	local tex_name = "_rt_" .. string.gsub(string.gsub(n, "^Get", ""), "Texture$", "")
+	render[n] = function() return GetRenderTargetEx(tex_name, ScrW(), ScrH(), RT_SIZE_FULL_FRAME_BUFFER, MATERIAL_RT_DEPTH_SHARED, 0, 0, IMAGE_FORMAT_RGBA8888) end
+end
+local fog_max_density, world_override = 1, nil
+function render.GetFogMaxDensity() return fog_max_density end
+local set_fog_max = render.SetFogMaxDensity
+function render.SetFogMaxDensity(d) fog_max_density = d if set_fog_max then set_fog_max(d) end end
+function render.GetHDREnabled() return false end
+function render.IsTakingScreenshot() return false end
+function render.TurnOnToneMapping() end
+function render.BindLocalCubemap(tex) end
+function render.SetLightmapTexture(tex) end
+function render.WorldMaterialOverride(mat) world_override = mat end
+-- no lightmap sampling on the client yet: a lit white surface
+function render.GetSurfaceColor(a, b) return Vector(1, 1, 1) end
+function render.Model(settings, ent)
+	if not settings or not settings.model then return end
+	hostdraw.model(settings.model, settings.pos or Vector(), __glua_ang_xyz(settings.angle or Angle()), 255)
+end
+
+-- util: the world picker, visibility (no occlusion queries: a point in view is fully visible),
+-- the menu path helpers
+local picker = { active = false, cb = nil }
+util.worldpicker = setmetatable({}, { __call = function(_, cb) util.worldpicker.Start(cb) end })
+function util.worldpicker.Active() return picker.active end
+function util.worldpicker.Start(cb) picker.active, picker.cb = true, cb; gui.EnableScreenClicker(true) end
+function util.worldpicker.Finish(tr)
+	picker.active = false
+	gui.EnableScreenClicker(false)
+	local cb = picker.cb
+	picker.cb = nil
+	if cb then cb(tr) end
+end
+events.on("input.key", function(p)
+	if not picker.active or not p.down or p.key ~= "MouseLeft" then return end
+	local dir = gui.ScreenToVector(gui.MousePos())
+	local tr = util.TraceLine({ start = EyePos(), endpos = EyePos() + dir * 16384, filter = LocalPlayer() })
+	util.worldpicker.Finish(tr)
+end)
+function util.GetPixelVisibleHandle() return { __pixvis = true } end
+function util.PixelVisible(pos, radius, handle) local s = pos:ToScreen() return s.visible and 1 or 0 end
+function util.GetSunInfo() return { direction = Vector(0.3, 0.3, 0.9):GetNormalized(), obstruction = 0 } end
+function util.IsPlayerSpeaking(ply) return false end
+function util.RemoveDecalsAt(pos, radius) end
+function util.FullPathToRelative_Menu(path, game_dir) local p = string.gsub(path, "\\", "/") local i = string.find(p, "/garrysmod/", 1, true) return i and string.sub(p, i + 11) or p end
+function util.RelativePathToFull_Menu(path, game_dir) return (game_dir or "garrysmod") .. "/" .. path end
+function util.RelativePathToGMA_Menu(path) return string.gsub(path, "^addons/", "") end
+
+-- os: time from the host clock, dates in UTC
+os = os or {}
+local function civil(days)
+	local z = days + 719468
+	local era = math.floor(z / 146097)
+	local doe = z - era * 146097
+	local yoe = math.floor((doe - math.floor(doe / 1460) + math.floor(doe / 36524) - math.floor(doe / 146096)) / 365)
+	local y = yoe + era * 400
+	local doy = doe - (365 * yoe + math.floor(yoe / 4) - math.floor(yoe / 100))
+	local mp = math.floor((5 * doy + 2) / 153)
+	local d = doy - math.floor((153 * mp + 2) / 5) + 1
+	local m = mp < 10 and mp + 3 or mp - 9
+	if m <= 2 then y = y + 1 end
+	return y, m, d, doy
+end
+local month_names = { "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" }
+local day_names = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" }
+local host_time = os.time
+function os.time(t)
+	if type(t) == "table" then
+		local y, m, d = t.year, t.month, t.day
+		if m <= 2 then y = y - 1 end
+		local era = math.floor(y / 400)
+		local yoe = y - era * 400
+		local mp = m > 2 and m - 3 or m + 9
+		local doy = math.floor((153 * mp + 2) / 5) + d - 1
+		local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
+		local days = era * 146097 + doe - 719468
+		return days * 86400 + (t.hour or 12) * 3600 + (t.min or 0) * 60 + (t.sec or 0)
+	end
+	if host_time then return host_time() end
+	return math.floor(__glua_unixtime())
+end
+os.clock = os.clock or function() return SysTime() end
+function os.difftime(a, b) return a - (b or 0) end
+function os.date(fmt, t)
+	fmt = fmt or "%c"
+	t = t or os.time()
+	local utc = string.sub(fmt, 1, 1) == "!"
+	if utc then fmt = string.sub(fmt, 2) end
+	local days = math.floor(t / 86400)
+	local secs = t - days * 86400
+	local y, m, d, doy = civil(days)
+	local H, M, S = math.floor(secs / 3600), math.floor(secs % 3600 / 60), math.floor(secs % 60)
+	local wday = (days + 4) % 7 + 1
+	local yday = math.floor((t - os.time({ year = y, month = 1, day = 1, hour = 0 })) / 86400) + 1
+	if fmt == "*t" then return { year = y, month = m, day = d, hour = H, min = M, sec = S, wday = wday, yday = yday, isdst = false } end
+	local map = {
+		Y = tostring(y), y = string.format("%02d", y % 100), m = string.format("%02d", m), d = string.format("%02d", d),
+		H = string.format("%02d", H), M = string.format("%02d", M), S = string.format("%02d", S), I = string.format("%02d", (H % 12 == 0) and 12 or H % 12),
+		p = H < 12 and "AM" or "PM", A = day_names[wday], a = string.sub(day_names[wday], 1, 3), B = month_names[m], b = string.sub(month_names[m], 1, 3),
+		j = string.format("%03d", yday), w = tostring(wday - 1), Z = "UTC", z = "+0000", ["%"] = "%",
+	}
+	map.x = map.m .. "/" .. map.d .. "/" .. map.y
+	map.X = map.H .. ":" .. map.M .. ":" .. map.S
+	map.c = map.a .. " " .. map.b .. " " .. map.d .. " " .. map.X .. " " .. map.Y
+	return (string.gsub(fmt, "%%(.)", function(c) return map[c] or ("%" .. c) end))
+end
+
+-- markup: <color=r,g,b,a> / <colour> / <font=name> tags into a drawable object
+markup = markup or {}
+local MARKUP = {}
+MARKUP.__index = MARKUP
+function markup.Escape(s) return (string.gsub(string.gsub(string.gsub(tostring(s), "&", "&amp;"), "<", "&lt;"), ">", "&gt;")) end
+local function unescape(s) return (string.gsub(string.gsub(string.gsub(s, "&lt;", "<"), "&gt;", ">"), "&amp;", "&")) end
+function markup.Color(str)
+	local r, g, b, a = string.match(str, "(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*,?%s*(%d*)")
+	if not r then return Color(255, 255, 255) end
+	return Color(tonumber(r), tonumber(g), tonumber(b), tonumber(a) or 255)
+end
+local function text_w(font, t) surface.SetFont(font) local w, h = surface.GetTextSize(t) if w == 0 then w = #t * 8 end if h == 0 then h = 16 end return w, h end
+function markup.Parse(text, maxwidth)
+	local color_stack, font_stack = { Color(255, 255, 255) }, { "DermaDefault" }
+	local blocks = {}
+	local pos = 1
+	local function push_text(t)
+		if t == "" then return end
+		for seg, nl in string.gmatch(t, "([^\n]*)(\n?)") do
+			if seg ~= "" then blocks[#blocks + 1] = { text = unescape(seg), color = color_stack[#color_stack], font = font_stack[#font_stack] } end
+			if nl == "\n" then blocks[#blocks + 1] = { newline = true } end
+			if seg == "" and nl == "" then break end
+		end
+	end
+	while true do
+		local a, b, closing, tag, arg = string.find(text, "<(/?)(%a+)=?([^>]*)>", pos)
+		if not a then push_text(string.sub(text, pos)) break end
+		push_text(string.sub(text, pos, a - 1))
+		tag = string.lower(tag)
+		if tag == "color" or tag == "colour" then
+			if closing == "/" then if #color_stack > 1 then table.remove(color_stack) end else color_stack[#color_stack + 1] = markup.Color(arg) end
+		elseif tag == "font" then
+			if closing == "/" then if #font_stack > 1 then table.remove(font_stack) end else font_stack[#font_stack + 1] = arg end
+		else
+			push_text(string.sub(text, a, b))
+		end
+		pos = b + 1
+	end
+	-- lay out: lines of segments, wrapped by word at maxwidth
+	local lines, line, x, line_h = {}, {}, 0, 0
+	local function flush() lines[#lines + 1] = { segs = line, w = x, h = line_h > 0 and line_h or 16 } line, x, line_h = {}, 0, 0 end
+	for _, blk in ipairs(blocks) do
+		if blk.newline then flush()
+		else
+			for word, sep in string.gmatch(blk.text, "([^%s]*)(%s*)") do
+				if word == "" and sep == "" then break end
+				local piece = word .. sep
+				local w, h = text_w(blk.font, piece)
+				if maxwidth and maxwidth > 0 and x > 0 and x + w > maxwidth then flush() end
+				line[#line + 1] = { text = piece, color = blk.color, font = blk.font, x = x, w = w, h = h }
+				x = x + w
+				if h > line_h then line_h = h end
+			end
+		end
+	end
+	if #line > 0 or #lines == 0 then flush() end
+	local total_w, total_h = 0, 0
+	for _, l in ipairs(lines) do total_w = math.max(total_w, l.w); total_h = total_h + l.h end
+	return setmetatable({ __lines = lines, __w = total_w, __h = total_h, __maxw = maxwidth or 0 }, MARKUP)
+end
+function MARKUP:GetWidth() return self.__w end
+function MARKUP:GetHeight() return self.__h end
+function MARKUP:GetMaxWidth() return self.__maxw end
+function MARKUP:Size() return self.__w, self.__h end
+function MARKUP:Draw(x, y, halign, valign, alpha, textalign)
+	halign, valign, alpha = halign or TEXT_ALIGN_LEFT, valign or TEXT_ALIGN_TOP, alpha or 255
+	if halign == TEXT_ALIGN_CENTER then x = x - self.__w / 2 elseif halign == TEXT_ALIGN_RIGHT then x = x - self.__w end
+	if valign == TEXT_ALIGN_CENTER then y = y - self.__h / 2 elseif valign == TEXT_ALIGN_BOTTOM then y = y - self.__h end
+	local cy = y
+	for _, l in ipairs(self.__lines) do
+		local off = 0
+		if textalign == TEXT_ALIGN_CENTER then off = (self.__w - l.w) / 2 elseif textalign == TEXT_ALIGN_RIGHT then off = self.__w - l.w end
+		for _, seg in ipairs(l.segs) do
+			surface.SetFont(seg.font)
+			surface.SetTextColor(Color(seg.color.r, seg.color.g, seg.color.b, math.min(seg.color.a or 255, alpha)))
+			surface.SetTextPos(x + off + seg.x, cy + (l.h - seg.h))
+			surface.DrawText(seg.text)
+		end
+		cy = cy + l.h
+	end
+end
+__glua_classes.MarkupObject = MARKUP
+
+-- matproxy: material proxies registered by addons (the renderer does not run proxies yet)
+matproxy = matproxy or {}
+matproxy.ProxyList, matproxy.ActiveList = {}, {}
+function matproxy.Add(def) if def and def.name then matproxy.ProxyList[def.name] = def end end
+function matproxy.ShouldOverrideProxy(name) return matproxy.ProxyList[name] ~= nil end
+function matproxy.Init(name, uname, mat, values)
+	local def = matproxy.ProxyList[name]
+	if not def then return end
+	matproxy.ActiveList[uname] = { def = def, mat = mat, values = values }
+	if def.init then def.init(def, mat, values) end
+end
+function matproxy.Call(uname, mat, ent)
+	local a = matproxy.ActiveList[uname]
+	if a and a.def.bind then a.def.bind(a.def, mat, ent) end
+end
+
+-- motionsensor: no Kinect here
+motionsensor = motionsensor or {}
+function motionsensor.IsAvailable() return false end
+function motionsensor.IsActive() return false end
+function motionsensor.Start() return false end
+function motionsensor.Stop() end
+function motionsensor.GetSkeleton() return nil end
+function motionsensor.GetColourMaterial() return Material("__error") end
+
+-- halo: glow passes collected per frame (the client's renderer has no halo pass yet - open)
+halo = halo or {}
+local halos, halo_ent = {}, nil
+function halo.Add(ents, color, blurx, blury, passes, additive, ignorez) halos[#halos + 1] = { ents = ents, color = color, blurx = blurx or 2, blury = blury or 2, passes = passes or 1, additive = additive ~= false, ignorez = ignorez == true } end
+function halo.RenderedEntity() return halo_ent end
+function halo.Render(pnl) halos = {} end
+hook.Add("PostDrawEffects", "__glua_halo_clear", function() halos = {} end)
+
+-- cam: the view and projection as VMatrix
+local function basis_matrix(pos, ang)
+	local m = Matrix()
+	m:SetTranslation(pos)
+	m:SetAngles(ang)
+	return m
+end
+function cam.GetViewMatrix() local m = basis_matrix(EyePos(), EyeAngles()) return m:GetInverse() or m end
+function cam.GetProjectionMatrix()
+	local lp = LocalPlayer()
+	local fov = IsValid(lp) and lp:GetFOV() or 90
+	local aspect = ScrW() / math.max(ScrH(), 1)
+	local f = 1 / math.tan(math.rad(fov) / 2)
+	local n, fz = 3, 28377
+	return Matrix({ { f / aspect, 0, 0, 0 }, { 0, f, 0, 0 }, { 0, 0, (fz + n) / (n - fz), 2 * fz * n / (n - fz) }, { 0, 0, -1, 0 } })
+end
+function cam.GetModelMatrix() return __glua_model_matrix or Matrix() end
+function cam.ApplyShake(pos, ang, factor) return pos, ang end
+
+-- surface: paint state, scissor, textures
+function surface.GetPanelPaintState() local x, y = surface.__origin_get and surface.__origin_get() or 0, 0 return { translate_x = x, translate_y = y, scissor_enabled = false, scissor_left = 0, scissor_top = 0, scissor_right = ScrW(), scissor_bottom = ScrH() } end
+function surface.GetScissorRect() return 0, 0, ScrW(), ScrH() end
+function surface.GetTextureNameByID(id) local m = type(id) == "table" and id or nil return m and m.__name or "" end
+function surface.GetTextureSize(id) local m = type(id) == "table" and id or nil return m and m.__w or 32, m and m.__h or 32 end
+
+-- system / vgui / language
+function system.FlashWindow() end
+function system.IsWindowed() return engine.VideoSettings().windowed end
+function language.FormatPhrase(token, ...) local ok, s = pcall(string.format, language.GetPhrase(token), ...) return ok and s or language.GetPhrase(token) end
+
+-- client effects: util.Effect runs a registered EFFECT (Init, Think until false, Render each frame)
+local active_effects = {}
+function util.Effect(name, data, allowOverride, ignorePrediction)
+	local def = effects.__registry and effects.__registry[name]
+	if not def then return end
+	local e = setmetatable({ __valid = true, __class = name }, { __index = def })
+	e.IsValid = function(s) return s.__valid end
+	e.Remove = function(s) s.__valid = false end
+	if e.Init then e:Init(data) end
+	active_effects[#active_effects + 1] = e
+end
+function __glua_run_effects()
+	for i = #active_effects, 1, -1 do
+		local e = active_effects[i]
+		if not e.__valid or (e.Think and e:Think() == false) then
+			e.__valid = false
+			table.remove(active_effects, i)
+		elseif e.Render then
+			e:Render()
+		end
+	end
+end
+-- @hook EFFECT:Init @hook EFFECT:Think @hook EFFECT:Render
+hook.Add("PostDrawTranslucentRenderables", "__glua_effects", function() __glua_run_effects() end)
+
+-- particle systems, client ropes, projected texture textures
+local CNP = __glua_classes.CNewParticleEffect
+if CNP then
+	function CNP:SetShouldSimulate(b) self.__simulate = b ~= false end
+	function CNP:GetShouldSimulate() return self.__simulate ~= false end
+end
+__glua_classes.ProjectedTexture = PT
+function PT:SetTexture(t) self.__texture = t end
+function PT:GetTexture() return self.__texture end
+function ents.CreateClientRope(startEnt, startBone, endEnt, endBone, startPos, endPos, width, mat, extra)
+	local rope = ClientsideModel("")
+	rope.__rope = { startEnt = startEnt, startBone = startBone, endEnt = endEnt, endBone = endBone, startPos = startPos, endPos = endPos, width = width or 1, mat = mat or "cable/cable2", extra = extra }
+	return rope
+end
+
+-- LuaJIT internals have no equivalent in this VM; video encoding and the widget renderer are open
+jit = jit or {}
+jit.util = jit.util or {}
+jit.opt = jit.opt or {}
+for _, n in ipairs({ "funcbc", "funcinfo", "funck", "funcuvname", "ircalladdr", "traceexitstub", "traceinfo", "traceir", "tracek", "tracemc", "tracesnap" }) do jit.util[n] = stub("jit.util." .. n) end
+jit.opt.start = stub("jit.opt.start")
+widgets = widgets or {}
+widgets.RenderMe = stub("widgets.RenderMe")
+video = video or {}
+video.Record = stub("video.Record")

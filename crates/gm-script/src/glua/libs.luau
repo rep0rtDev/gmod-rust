@@ -952,3 +952,40 @@ SCREENFADE_IN, SCREENFADE_OUT, SCREENFADE_MODULATE, SCREENFADE_STAYOUT, SCREENFA
 TRANSMIT_ALWAYS, TRANSMIT_NEVER, TRANSMIT_PVS = 0, 1, 2
 STEPSOUNDTIME_NORMAL, STEPSOUNDTIME_ON_LADDER, STEPSOUNDTIME_WATER_KNEE, STEPSOUNDTIME_WATER_FOOT = 0, 1, 2, 3
 SIM_NOTHING, SIM_LOCAL_ACCELERATION, SIM_LOCAL_FORCE, SIM_GLOBAL_ACCELERATION, SIM_GLOBAL_FORCE = 0, 1, 2, 3, 4
+
+------------------------------------------------------------------------ bf_read: the usermessage reader over a byte string
+local BF = {}
+BF.__index = BF
+BF.MetaName = "bf_read"
+function __glua_bf_read(bytes) return setmetatable({ __b = bytes or "", __p = 1 }, BF) end
+local function take(self, n) local s = string.sub(self.__b, self.__p, self.__p + n - 1) self.__p = self.__p + n return s end
+local function le(self, n, signed)
+	local s = take(self, n)
+	if #s < n then return 0 end
+	local v = 0
+	for i = n, 1, -1 do v = v * 256 + string.byte(s, i) end
+	if signed and v >= 2 ^ (8 * n - 1) then v = v - 2 ^ (8 * n) end
+	return v
+end
+function BF:Reset() self.__p = 1 end
+function BF:ReadBool() return le(self, 1) ~= 0 end
+function BF:ReadChar() return le(self, 1, true) end
+function BF:ReadShort() return le(self, 2, true) end
+function BF:ReadLong() return le(self, 4, true) end
+function BF:ReadFloat()
+	local s = take(self, 4)
+	if #s < 4 then return 0 end
+	local ok, v = pcall(string.unpack, "<f", s)
+	return ok and v or 0
+end
+function BF:ReadString()
+	local e = string.find(self.__b, "\0", self.__p, true)
+	local s = string.sub(self.__b, self.__p, (e or #self.__b + 1) - 1)
+	self.__p = (e or #self.__b) + 1
+	return s
+end
+function BF:ReadVector() local x = self:ReadFloat() local y = self:ReadFloat() local z = self:ReadFloat() return Vector(x, y, z) end
+function BF:ReadVectorNormal() return self:ReadVector() end
+function BF:ReadAngle() local p = self:ReadFloat() local y = self:ReadFloat() local r = self:ReadFloat() return Angle(p, y, r) end
+function BF:ReadEntity() local i = self:ReadShort() return i > 0 and Entity(i) or NULL end
+__glua_classes.bf_read = BF

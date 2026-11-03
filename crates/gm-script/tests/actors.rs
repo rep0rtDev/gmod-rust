@@ -1687,3 +1687,61 @@ fn glua_controls_remainder() {
         )
     );
 }
+
+/// The remaining client libraries: a bf_read decodes little-endian fields, os.date works on
+/// UTC, markup parses colour tags into a drawable object, a registered EFFECT runs through
+/// Init/Think/Render, render.Model reaches the client, the view matrix sits at the eye.
+#[test]
+fn glua_client_libs_remainder() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "l".into(),
+        name: "l".into(),
+        priority: 0,
+        source: r##"
+            got = {}
+            local bf = __glua_bf_read(string.char(1, 0xFE, 0xFF, 0x2A, 0, 0, 0) .. "hi\0")
+            got.bf = tostring(bf:ReadBool()) .. ":" .. bf:ReadShort() .. ":" .. bf:ReadLong() .. ":" .. bf:ReadString()
+            got.date = os.date("!%Y-%m-%d %H:%M:%S", 86400 * 365 + 3661)
+            got.tt = os.date("*t", 0).year
+            M = markup.Parse("<color=255,0,0>Red</color> and <font=Trebuchet18>big</font>", 500)
+            got.mw = M:GetWidth() > 0 and M:GetHeight() > 0
+            effects.Register({ Init = function(self, data) self.n = 0 got.init = data:GetOrigin().x end, Think = function(self) self.n = self.n + 1 return self.n < 3 end, Render = function(self) got.rendered = (got.rendered or 0) + 1 end }, "my_fx")
+            local d = EffectData() d:SetOrigin(Vector(7, 0, 0)) util.Effect("my_fx", d)
+            hook.Add("HUDPaint", "l", function() M:Draw(10, 10) render.Model({ model = "models/props_c17/oildrum001.mdl", pos = Vector(5, 0, 0), angle = Angle() }) end)
+            got.view = cam.GetViewMatrix() ~= nil and cam.GetProjectionMatrix() ~= nil
+            got.phrase = language.FormatPhrase("%d items", 3)
+            got.exists = vgui.Exists("DButton") and not vgui.Exists("Nope")
+            got.pix = util.PixelVisible(Vector(100, 0, 0), 8, util.GetPixelVisibleHandle())
+        "##
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let world = gm_net::ClientWorld::default();
+    rt.client_render(&world, 1280, 720);
+    rt.client_render(&world, 1280, 720);
+    let draws = rt.client_render(&world, 1280, 720);
+    assert!(
+        draws
+            .iter()
+            .any(|d| matches!(d, gm_script::DrawCmd::Text { text, .. } if text.starts_with("Red"))),
+        "{draws:?}"
+    );
+    assert!(draws
+        .iter()
+        .any(|d| matches!(d, gm_script::DrawCmd::Model { pos, .. } if pos.x == 5.0)));
+    let (bf, date, tt, mw, init, rendered, view, phrase, exists, pix): (String, String, f64, bool, f64, f64, bool, String, bool, f64) = rt.actors()[0]
+        .eval("return got.bf, got.date, got.tt, got.mw, got.init, got.rendered, got.view, got.phrase, got.exists, got.pix")
+        .expect("eval");
+    assert_eq!(bf.as_str(), "true:-2:42:hi");
+    assert_eq!(date.as_str(), "1971-01-01 01:01:01");
+    assert_eq!(
+        (tt, mw, init, rendered, view, phrase.as_str(), exists),
+        (1970.0, true, 7.0, 2.0, true, "3 items", true)
+    );
+    assert!(pix == 0.0 || pix == 1.0);
+}

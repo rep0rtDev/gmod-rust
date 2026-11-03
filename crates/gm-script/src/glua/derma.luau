@@ -4232,3 +4232,7 @@ function frame_blend.AddFrame() fb.done = fb.done + 1 end
 function frame_blend.BlendFrame() end
 function frame_blend.CompleteFrame() fb.done = 0 end
 function frame_blend.DrawPreview() end
+
+function vgui.CreateX(class, parent, name) return vgui.Create(class, parent, name) end
+function vgui.Exists(class) return vgui.GetControlTable(class) ~= nil end
+function vgui.RegisterFile(path) end

@@ -33,13 +33,19 @@ ENT.__eq = function(a, b)
     return rawget(a, "__class") == rawget(b, "__class") and rawget(a, "__owner") == rawget(b, "__owner")
 end
 local entities = setmetatable({}, { __mode = "v" })
+-- wrappers are weak; the per-entity state they carry must outlive them (an addon stores
+-- EntityMods / NW vars on one wrapper and reads them back through another)
+local ent_vars, ent_tables = {}, {}
 local function wrap(id, class_meta)
     local e = entities[id]
     if e then return e end
-    e = setmetatable({ __id = id, __vars = {}, __class_meta = class_meta, __tables = {} }, ENT)
+    ent_vars[id] = ent_vars[id] or {}
+    ent_tables[id] = ent_tables[id] or {}
+    e = setmetatable({ __id = id, __vars = ent_vars[id], __class_meta = class_meta, __tables = ent_tables[id] }, ENT)
     entities[id] = e
     return e
 end
+function __glua_forget_entity(id) entities[id] = nil ent_vars[id] = nil ent_tables[id] = nil end
 NULL = setmetatable({ __id = 0, __vars = {}, __tables = {} }, ENT)
 local NPC, VEH, WEP = {}, {}, {}
 local function class_meta(class)
@@ -798,6 +804,7 @@ if events then
             pending_by_tag[p.tag] = nil
             rawset(e, "__id", p.entity)
             entities[p.entity] = e
+            ent_vars[p.entity], ent_tables[p.entity] = rawget(e, "__vars"), rawget(e, "__tables")
             hook.Run("PlayerSpawnedProp", Player(p.player), e:GetModel(), e)
         end
     end)
@@ -1526,6 +1533,7 @@ if events then
         if cbs then for _, c in pairs(cbs) do c[1](Entity(id), unpack(c[2])) end on_remove[id] = nil end
         local kids = delete_with[id]
         if kids then for _, e in pairs(kids) do if IsValid(e) then e:Remove() end end delete_with[id] = nil end
+        __glua_forget_entity(id)
     end, 1e9)
 end
 -- NW aliases: NW2 / Networked / Networked2 / DT share the actor-local NW storage
