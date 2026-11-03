@@ -799,7 +799,8 @@ fn weapon_sound(act: u8, active: u8) -> Option<String> {
         _ => return None,
     };
     let suffix = match (act, prefix) {
-        (6, "Weapon_PhysCannon") => "Launch",
+        // the server plays the physcannon's Launch / DryFire / Pickup / Drop itself
+        (_, "Weapon_PhysCannon") => return None,
         (_, "Toolgun") if act != 6 => return None,
         (6, _) => "Single",
         (1, "Weapon_Shotgun") => return None,

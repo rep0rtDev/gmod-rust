@@ -122,6 +122,8 @@ pub struct Throw {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Alt {
     None,
+    /// weapon_physcannon: primary punts, secondary carries / pulls (`Inventory::cannon`).
+    Physcannon,
     /// Shotgun: `n` shells at once when the primary timer expired, primary timer `cycle` then the
     /// usual pump (shot every 70 ticks); `pellets` in one `FireBullets` (12, same cone).
     Shells {
@@ -261,8 +263,28 @@ const PHYSCANNON: Fire = Fire {
     auto: true,
     from_now: true,
     cycle: 0.5,
+    alt: Alt::Physcannon,
     ..BASE
 };
+/// weapon_physcannon.cpp convars: `physcannon_tracelength`, `physcannon_maxmass`,
+/// `physcannon_maxforce`, `physcannon_minforce`, `physcannon_pullforce`; the pull reaches the
+/// trace's 4096 u. A pickup or drop sets the secondary 0.5 from now.
+pub const PHYSCANNON_TRACELENGTH: f32 = 250.0;
+pub const PHYSCANNON_MAXMASS: f32 = 250.0;
+pub const PHYSCANNON_MAXFORCE: f32 = 1500.0;
+pub const PHYSCANNON_MINFORCE: f32 = 700.0;
+pub const PHYSCANNON_PULLFORCE: f32 = 4000.0;
+pub const PHYSCANNON_PULLRANGE: f32 = 4096.0;
+pub const PHYSCANNON_SECONDARY: f32 = 0.5;
+/// What the physcannon's owner asked of the world this tick, resolved by the server against
+/// its props: `Punt` on the primary (every cycle while held), `Grab` on the secondary's press,
+/// `Pull` while the secondary is held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CannonIntent {
+    Punt,
+    Grab,
+    Pull,
+}
 /// Rocket: reserve -1, primary 0.5, secondary untouched. The rocket entity and the 1.6667 reload
 /// of both timers when it dies are not simulated yet.
 const RPG: Fire = Fire {
@@ -529,6 +551,8 @@ pub struct Inventory {
     pub launched: Option<Launch>,
     /// A melee swing happened in this command (`Fire::melee`).
     pub swung: bool,
+    pub cannon: Option<CannonIntent>,
+    pub prev_attack2: bool,
     /// A `rearm_after_reload` refill happened last tick.
     pub rearm: bool,
     /// Last viewmodel event the client cannot predict from its own buttons, with a serial that
@@ -657,6 +681,7 @@ impl Inventory {
     pub fn command(&mut self, class: &str, buttons: u32) -> Option<Shot> {
         self.launched = None;
         self.swung = false;
+        self.cannon = None;
         let pressed = buttons & IN_ATTACK != 0;
         let edge = pressed && !self.prev_attack;
         if !pressed {
@@ -679,6 +704,23 @@ impl Inventory {
             self.next_secondary = 0.0;
         }
         let pressed2 = buttons & IN_ATTACK2 != 0;
+        if matches!(f.alt, Alt::Physcannon) {
+            let edge2 = pressed2 && !self.prev_attack2;
+            self.prev_attack2 = pressed2;
+            if edge2 && self.next_secondary <= 0.0 {
+                self.cannon = Some(CannonIntent::Grab);
+                self.next_secondary = PHYSCANNON_SECONDARY;
+            } else if pressed2 {
+                self.cannon = Some(CannonIntent::Pull);
+            }
+            // DryFire too plays ACT_VM_PRIMARYATTACK and reloads the 0.5: same timing either way
+            if pressed && self.next_primary <= 0.0 {
+                self.next_primary = f.cycle;
+                self.cannon = Some(CannonIntent::Punt);
+                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Fire);
+            }
+            return None;
+        }
         if let Some(th) = f.throw {
             return self.throw_command(w, th, pressed);
         }

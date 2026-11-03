@@ -7008,6 +7008,18 @@ impl<'w> Server<'w> {
     /// (`CanPickupObject(35, 128)`), moveable (a frozen one is not: `IsMoveable`), nobody
     /// physguns it and `Request::PlayerPickup` allows.
     fn try_pickup(&mut self, player: u32, ent: u32, yaw: f32) {
+        let (mass, size) = (gm_physics::pickup::MAX_MASS, gm_physics::pickup::MAX_SIZE);
+        self.pickup_with(player, ent, yaw, mass, size);
+    }
+    /// The carry with the caller's mass and size limits (the physcannon's are its own).
+    fn pickup_with(
+        &mut self,
+        player: u32,
+        ent: u32,
+        yaw: f32,
+        max_mass: f32,
+        max_size: f32,
+    ) -> bool {
         let Some(model) = self
             .sandbox
             .props()
@@ -7015,27 +7027,25 @@ impl<'w> Server<'w> {
             .find(|p| p.id == ent && !p.frozen)
             .map(|p| p.model.clone())
         else {
-            return;
+            return false;
         };
         let Some(info) = self.models.get(&model) else {
-            return;
+            return false;
         };
         let size = info.bounds.max - info.bounds.min;
-        if info.mass > gm_physics::pickup::MAX_MASS
-            || size.max_element() > gm_physics::pickup::MAX_SIZE
-        {
-            return;
+        if info.mass > max_mass || size.max_element() > max_size {
+            return false;
         }
         if self.players.values().any(|p| {
             p.held.is_some_and(|(e, _)| e == ent) || p.carry.is_some_and(|(e, _)| e == ent)
         }) {
-            return;
+            return false;
         }
         let Some(b) = self.bodies.get(&ent).copied() else {
-            return;
+            return false;
         };
         if self.ask(Request::PlayerPickup { player, ent }) == Verdict::Cancel {
-            return;
+            return false;
         }
         let mut body_rot = self.physics.state(b).rotation;
         if let Verdict::Text(t) = self.ask(Request::CarryAngles { player, ent }) {
@@ -7049,9 +7059,121 @@ impl<'w> Server<'w> {
             p.carry = Some((ent, carry));
         }
         self.game_events.push(GameEvent::Pickup { player, ent });
+        true
     }
 
     /// Let the carried prop go where it is, at rest (the game drops it with no velocity).
+    /// The physcannon's target: the prop the aim hits within `reach` u of the eye.
+    fn cannon_target(&self, eye: Vec3, forward: Vec3, reach: f32) -> Option<u32> {
+        let bodies = self.trace_bodies();
+        let h = gm_sandbox::tool_trace(self.collision, &bodies, eye, forward)?;
+        let ent = h.ent?;
+        if (h.pos - eye).length() > reach {
+            return None;
+        }
+        self.sandbox
+            .props()
+            .iter()
+            .any(|p| p.id == ent)
+            .then_some(ent)
+    }
+    /// weapon_physcannon.cpp. Primary: the carried prop, else an unfrozen prop within 250 u, is
+    /// launched along the aim at `physcannon_maxforce` 1500 u/s (`minforce` 700 above `maxmass`
+    /// 250 kg; the game applies the force through vphysics, we set the speed) with the Launch
+    /// sound; nothing in reach is a DryFire. Secondary: a carried prop is dropped (Drop,
+    /// CloseClaws); a prop within 250 u up to 250 kg is carried (Pickup, OpenClaws), a heavier
+    /// one is TooHeavy; while held, a farther prop (to 4096 u) is pulled to the player
+    /// (`pullforce` 4000 per think, approximated as 400 / mass u/s per tick) and carried once
+    /// within 250 u. The hold loop sound is not played yet.
+    fn physcannon(&mut self, player: u32, intent: weapons::CannonIntent, eye: Vec3, ang: Vec3) {
+        let forward = gm_sandbox::forward(ang.x, ang.y);
+        let carried = self
+            .players
+            .get(&player)
+            .and_then(|p| p.carry.map(|(e, _)| e));
+        let snd = |s: &mut Self, name: &str| {
+            s.emit_sound(player, format!("Weapon_PhysCannon.{name}"), 1.0);
+        };
+        let frozen = |s: &Self, ent: u32| s.sandbox.props().iter().any(|p| p.id == ent && p.frozen);
+        match intent {
+            weapons::CannonIntent::Punt => {
+                let target = match carried {
+                    Some(e) => {
+                        self.drop_carry(player);
+                        Some(e)
+                    }
+                    None => self
+                        .cannon_target(eye, forward, weapons::PHYSCANNON_TRACELENGTH)
+                        .filter(|e| !frozen(self, *e)),
+                };
+                let Some(b) = target.and_then(|e| self.bodies.get(&e).copied()) else {
+                    snd(self, "DryFire");
+                    return;
+                };
+                let speed = if self.physics.mass(b) > weapons::PHYSCANNON_MAXMASS {
+                    weapons::PHYSCANNON_MINFORCE
+                } else {
+                    weapons::PHYSCANNON_MAXFORCE
+                };
+                let st = self.physics.state(b);
+                self.physics
+                    .set_velocity(b, forward * speed, st.angular_velocity);
+                snd(self, "Launch");
+            }
+            weapons::CannonIntent::Grab => {
+                if carried.is_some() {
+                    self.drop_carry(player);
+                    snd(self, "Drop");
+                    snd(self, "CloseClaws");
+                    return;
+                }
+                let Some(ent) = self.cannon_target(eye, forward, weapons::PHYSCANNON_TRACELENGTH)
+                else {
+                    return;
+                };
+                let Some(b) = self.bodies.get(&ent).copied() else {
+                    return;
+                };
+                if self.physics.mass(b) > weapons::PHYSCANNON_MAXMASS {
+                    snd(self, "TooHeavy");
+                    return;
+                }
+                if self.pickup_with(player, ent, ang.y, f32::MAX, f32::MAX) {
+                    snd(self, "Pickup");
+                    snd(self, "OpenClaws");
+                }
+            }
+            weapons::CannonIntent::Pull => {
+                if carried.is_some() {
+                    return;
+                }
+                let Some(ent) = self.cannon_target(eye, forward, weapons::PHYSCANNON_PULLRANGE)
+                else {
+                    return;
+                };
+                let Some(b) = self.bodies.get(&ent).copied() else {
+                    return;
+                };
+                let mass = self.physics.mass(b);
+                if frozen(self, ent) || mass > weapons::PHYSCANNON_MAXMASS {
+                    return;
+                }
+                let st = self.physics.state(b);
+                let d = st.position - eye;
+                if d.length() <= weapons::PHYSCANNON_TRACELENGTH {
+                    if self.pickup_with(player, ent, ang.y, f32::MAX, f32::MAX) {
+                        snd(self, "Pickup");
+                        snd(self, "OpenClaws");
+                    }
+                    return;
+                }
+                let dv =
+                    -d.normalize_or_zero() * (weapons::PHYSCANNON_PULLFORCE * 0.1 / mass.max(1.0));
+                self.physics
+                    .set_velocity(b, st.velocity + dv, st.angular_velocity);
+            }
+        }
+    }
     fn drop_carry(&mut self, player: u32) {
         let Some((ent, _)) = self.players.get_mut(&player).and_then(|p| p.carry.take()) else {
             return;
@@ -13396,6 +13518,7 @@ impl<'w> Server<'w> {
         let mut swings = Vec::new();
         let mut launches = Vec::new();
         let mut sweps = Vec::new();
+        let mut cannons = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -13427,6 +13550,9 @@ impl<'w> Server<'w> {
                 if let Some(kind) = p.inventory.launched.take() {
                     launches.push((*id, kind, eye, pc.cmd.view_angles));
                 }
+                if let Some(intent) = p.inventory.cannon.take() {
+                    cannons.push((*id, intent, eye, pc.cmd.view_angles));
+                }
                 p.inventory.tick(&p.active_weapon);
             }
         }
@@ -13438,6 +13564,9 @@ impl<'w> Server<'w> {
         }
         for (attacker, eye, forward) in swings {
             self.resolve_melee(attacker, eye, forward);
+        }
+        for (id, intent, eye, ang) in cannons {
+            self.physcannon(id, intent, eye, ang);
         }
         self.drive_tick(cmds);
         let mut steps: Vec<(u32, Vec3, gm_move::Step, Option<String>)> = Vec::new();
