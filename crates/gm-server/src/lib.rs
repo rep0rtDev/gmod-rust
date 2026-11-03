@@ -11259,15 +11259,22 @@ impl<'w> Server<'w> {
                 continue;
             };
             let st = self.physics.state(*b);
+            // the entity's collision box (the model's hull box in the body frame) turned with the
+            // body, then its world-axis bounds: wider than the hull itself when the weapon
+            // lies at an angle (`server_weapon_touch`: the game still picks up at 60 u
+            // sideways where the hull's own bounds end 4 u short)
+            let (bmin, bmax) = (info.bounds.min, info.bounds.max);
             let mut lo = Vec3::splat(f32::INFINITY);
             let mut hi = Vec3::splat(f32::NEG_INFINITY);
-            for (pl, pts) in info.hull_planes.iter().zip(&info.hulls) {
-                let (a, b) = gm_physics::pickup::world_convex(pl, pts, st.rotation, st.position).1;
-                lo = lo.min(a);
-                hi = hi.max(b);
-            }
-            if lo.x > hi.x {
-                continue;
+            for i in 0..8 {
+                let c = Vec3::new(
+                    if i & 1 == 0 { bmin.x } else { bmax.x },
+                    if i & 2 == 0 { bmin.y } else { bmax.y },
+                    if i & 4 == 0 { bmin.z } else { bmax.z },
+                );
+                let w = st.position + st.rotation * c;
+                lo = lo.min(w);
+                hi = hi.max(w);
             }
             // measured (`server_weapon_touch*`): the pickup trigger is the weapon's world box
             // bloated 36 u sideways and 18 u upward, not downward
