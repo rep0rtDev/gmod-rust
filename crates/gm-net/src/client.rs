@@ -67,6 +67,7 @@ pub fn tool_click_settings(
                 gm_server::ToolSettingKind::Text
                 | gm_server::ToolSettingKind::Help
                 | gm_server::ToolSettingKind::Presets
+                | gm_server::ToolSettingKind::Button
                 | gm_server::ToolSettingKind::Key
                 | gm_server::ToolSettingKind::Color
                 | gm_server::ToolSettingKind::Choice => v.clone(),

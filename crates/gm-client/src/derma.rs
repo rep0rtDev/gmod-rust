@@ -1589,6 +1589,25 @@ pub fn controls(
                 }
                 (h, (x, w))
             }
+            gm_server::ToolSettingKind::Button => {
+                // DButton, 20 tall, its label centred
+                let h = 20.0;
+                if y + h <= ry + rh {
+                    nine(&mut out.items, &TEXTBOX, x, y, w, h, WHITE);
+                    let tw = ctx.font.text_width(&label);
+                    text(
+                        &mut out.items,
+                        FONT,
+                        ctx.font,
+                        x + (w - tw) / 2.0,
+                        y,
+                        h,
+                        &label,
+                        BUTTON_TEXT,
+                    );
+                }
+                (h, (x, w))
+            }
             gm_server::ToolSettingKind::Presets => {
                 // ControlPresets: a DComboBox of the presets (Default first) and the 20 px
                 // wrench button that saves the current settings as a new preset
@@ -2264,7 +2283,8 @@ pub fn controls_height(schema: &[gm_server::ToolSetting]) -> f32 {
                 gm_server::ToolSettingKind::Text
                 | gm_server::ToolSettingKind::Key
                 | gm_server::ToolSettingKind::Choice
-                | gm_server::ToolSettingKind::Presets => 20.0,
+                | gm_server::ToolSettingKind::Presets
+                | gm_server::ToolSettingKind::Button => 20.0,
                 gm_server::ToolSettingKind::Help => 16.0,
                 gm_server::ToolSettingKind::Color => 64.0,
             }

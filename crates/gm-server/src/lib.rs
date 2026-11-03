@@ -1115,6 +1115,8 @@ pub enum ToolSettingKind {
     Choice,
     /// `ToolPresets`: the preset chooser of the tool (`name` is the tool); no convar.
     Presets,
+    /// `CPanel:Button`: `name` is the console command it runs; no convar.
+    Button,
 }
 
 /// A transcribed ControlPanel ([`tool_panels::Panel`]) as the schema the client receives: one
@@ -1141,6 +1143,7 @@ fn panel_schema(p: &tool_panels::Panel) -> Vec<ToolSetting> {
         .iter()
         .map(|row| match *row {
             Row::Help(text) => setting("", text, ToolSettingKind::Help),
+            Row::Button { label, cmd } => setting(cmd, label, ToolSettingKind::Button),
             Row::Slider {
                 label,
                 cmd,
@@ -1464,6 +1467,7 @@ impl ToolSettingKind {
             5 => Self::Color,
             6 => Self::Choice,
             7 => Self::Presets,
+            8 => Self::Button,
             _ => Self::Number,
         }
     }
@@ -1478,6 +1482,7 @@ impl ToolSettingKind {
             Self::Color => 5,
             Self::Choice => 6,
             Self::Presets => 7,
+            Self::Button => 8,
         }
     }
 }

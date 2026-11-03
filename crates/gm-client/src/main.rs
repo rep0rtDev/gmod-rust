@@ -1888,6 +1888,16 @@ impl App {
                 self.panel_text = Some((row, cur));
                 return true;
             }
+            gm_server::ToolSettingKind::Button => {
+                // `dupe_show`: the spawn menu's Dupes tab
+                if s.name == "dupe_show" {
+                    if let Some(m) = self.menu.as_mut() {
+                        m.st.creation_tab = 6;
+                        m.st.scroll = 0.0;
+                    }
+                }
+                return true;
+            }
             gm_server::ToolSettingKind::Presets => {
                 let sel = self.preset_selected(&s.name);
                 if t > 0.9 {
@@ -6343,7 +6353,8 @@ impl App {
                                     | gm_server::ToolSettingKind::Key
                                     | gm_server::ToolSettingKind::Color
                                     | gm_server::ToolSettingKind::Choice
-                                    | gm_server::ToolSettingKind::Presets => " text".into(),
+                                    | gm_server::ToolSettingKind::Presets
+                                    | gm_server::ToolSettingKind::Button => " text".into(),
                                 };
                                 self.console.log(format!(
                                     "  {} = {cur}{range} (default {})",
