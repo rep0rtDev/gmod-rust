@@ -216,6 +216,8 @@ struct Gfx {
     /// Physgun beam materials: `sprites/physbeam` along the beam, `physg_glow1` at its end,
     /// `physg_glow2` at the muzzle (the game's materials, additive sprites).
     beam_mat: Option<wgpu::BindGroup>,
+    /// Materials of the constraint ropes seen so far (`cable/cable`, `cable/rope`, ...).
+    rope_mats: std::collections::HashMap<String, Option<wgpu::BindGroup>>,
     /// `sprites/physbeama`: the brighter beam while something is held.
     beam_active_mat: Option<wgpu::BindGroup>,
     glow1: Option<wgpu::BindGroup>,
@@ -1457,6 +1459,7 @@ impl App {
             models: Default::default(),
             player_box,
             beam_mat,
+            rope_mats: Default::default(),
             gg_core,
             gg_glow,
             gg_beam,
@@ -3638,6 +3641,12 @@ impl App {
         };
         let fov_x = self.camera_fov();
         let Some(g) = &mut self.gfx else { return };
+        for r in &self.sim.client.world.ropes {
+            if !g.rope_mats.contains_key(&r.material) {
+                let m = g.world.sprite_material(&g.gpu, &self.mount, &r.material);
+                g.rope_mats.insert(r.material.clone(), m);
+            }
+        }
         if self.main_menu && !self.started {
             if let Some(name) = self.backgrounds.tick(&self.mount) {
                 g.ui.load_image(&g.gpu, &self.mount, &name);
@@ -4232,6 +4241,63 @@ impl App {
                     additive.push((gl, v, i));
                 }
             }
+        }
+        // constraint ropes (`keyframe_rope`): a strip between the endpoints, sagging by the
+        // slack (rest length over the distance) along a quadratic curve
+        for r in &self.sim.client.world.ropes {
+            let pose = |ent: u32, local: Vec3| -> Option<Vec3> {
+                if ent == 0 {
+                    return Some(local);
+                }
+                if let Some(e) = ents.get(&ent) {
+                    return Some(
+                        e.pos + gm_render::props::angle_matrix(e.angles.to_array()) * local,
+                    );
+                }
+                self.sim
+                    .client
+                    .world
+                    .players
+                    .iter()
+                    .find(|p| p.id == ent)
+                    .map(|p| p.origin + local)
+            };
+            let (Some(a), Some(b)) = (pose(r.ent1, r.lpos1), pose(r.ent2, r.lpos2)) else {
+                continue;
+            };
+            let Some(bm) = g
+                .rope_mats
+                .get(&r.material)
+                .and_then(|m| m.as_ref())
+                .or(g.beam_mat.as_ref())
+            else {
+                continue;
+            };
+            let dist = a.distance(b);
+            let sag = (r.length - dist).max(0.0) * 0.5;
+            let ctrl = (a + b) * 0.5 - Vec3::Z * (2.0 * sag);
+            let n = if sag > 0.5 { 12 } else { 1 };
+            let points: Vec<Vec3> = (0..=n)
+                .map(|k| {
+                    let t = k as f32 / n as f32;
+                    let u = 1.0 - t;
+                    a * (u * u) + ctrl * (2.0 * u * t) + b * (t * t)
+                })
+                .collect();
+            let color = [
+                f32::from(r.color[0]) / 255.0,
+                f32::from(r.color[1]) / 255.0,
+                f32::from(r.color[2]) / 255.0,
+            ];
+            let (v, i) = g.world.beam_strip(
+                &points,
+                r.width.max(1.0),
+                color,
+                camera.position,
+                0.0,
+                1.0 / 32.0,
+            );
+            additive.push((bm, v, i));
         }
         // gravity gun: the core glows at the muzzle, the fork tips glow, and while a prop is
         // held the tips beam to it and the gun lights its surroundings orange
