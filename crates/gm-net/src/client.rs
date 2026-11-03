@@ -17,6 +17,8 @@ pub struct ClientWorld {
     /// The local player's entity id once the server accepted us (`LocalPlayer()` in scripts).
     pub local_id: Option<u32>,
     pub players: Vec<PlayerSnap>,
+    /// The constraints' ropes to draw.
+    pub ropes: Vec<crate::msg::RopeSnap>,
     pub entities: BTreeMap<u32, EntityState>,
     pub own: OwnSandbox,
     pub last_cmd_tick: u32,
@@ -532,6 +534,7 @@ impl ClientNet {
                         last_cmd_tick,
                         players,
                         entities,
+                        ropes,
                         removed,
                         own,
                         local,
@@ -578,6 +581,7 @@ impl ClientNet {
                             local_id: self.player_id,
                             players,
                             entities: world,
+                            ropes,
                             own,
                             last_cmd_tick,
                             local,

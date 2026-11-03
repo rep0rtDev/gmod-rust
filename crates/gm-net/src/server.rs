@@ -4,7 +4,7 @@
 use crate::channel::Channel;
 use crate::msg::{
     auth_message, server_message, ClientMsg, Command, EffectEvent, EntityState, LocalPlayer,
-    OwnSandbox, PlayerSnap, ServerMsg, SoundEvent, UndoEntry, PROTOCOL,
+    OwnSandbox, PlayerSnap, RopeSnap, ServerMsg, SoundEvent, UndoEntry, PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -1557,6 +1557,20 @@ impl ServerNet {
                     last_cmd_tick: slot.last_cmd_tick,
                     players,
                     entities,
+                    ropes: server
+                        .rope_visuals()
+                        .into_iter()
+                        .map(|r| RopeSnap {
+                            ent1: r.ent1,
+                            lpos1: r.lpos1,
+                            ent2: r.ent2,
+                            lpos2: r.lpos2,
+                            length: r.length,
+                            width: r.width,
+                            material: r.material,
+                            color: r.color,
+                        })
+                        .collect(),
                     removed,
                     own,
                     local,

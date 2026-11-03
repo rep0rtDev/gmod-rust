@@ -1693,6 +1693,20 @@ pub enum UseType {
     OnOff,
 }
 
+/// A constraint rope for the client (see `rope_visuals`): endpoints in their entities' frames
+/// (entity 0: the world, world space), rest length (0: taut), width, material, colour.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RopeVisual {
+    pub ent1: u32,
+    pub lpos1: Vec3,
+    pub ent2: u32,
+    pub lpos2: Vec3,
+    pub length: f32,
+    pub width: f32,
+    pub material: String,
+    pub color: [u8; 3],
+}
+
 /// One spawn menu content icon (Weapons / Entities tabs).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentEntry {
@@ -13367,6 +13381,96 @@ impl<'w> Server<'w> {
     /// `impulse 100` from the player's command: the addon runtime may refuse
     /// (`PlayerSwitchFlashlight`); a dead player has no flashlight. Script `Player:Flashlight`
     /// does not ask, as in the game.
+    /// The constraints' ropes for the client to draw (`keyframe_rope`): one per rope-like
+    /// constraint, the pulley's as its three segments. Colour is the material's white until
+    /// the tools' colour convars are wired in.
+    pub fn rope_visuals(&self) -> Vec<RopeVisual> {
+        use gm_sandbox::ConstraintKind as K;
+        let mut out = Vec::new();
+        for c in self.sandbox.constraints() {
+            let (e1, e2) = (c.ent1.unwrap_or(0), c.ent2.unwrap_or(0));
+            let mut push = |ent1: u32,
+                            lpos1: Vec3,
+                            ent2: u32,
+                            lpos2: Vec3,
+                            length: f32,
+                            width: f32,
+                            material: &str| {
+                out.push(RopeVisual {
+                    ent1,
+                    lpos1,
+                    ent2,
+                    lpos2,
+                    length,
+                    width,
+                    material: material.to_string(),
+                    color: [255, 255, 255],
+                });
+            };
+            match &c.kind {
+                K::Rope {
+                    lpos1,
+                    lpos2,
+                    length,
+                    addlength,
+                    width,
+                    material,
+                    ..
+                } => push(e1, *lpos1, e2, *lpos2, length + addlength, *width, material),
+                K::Elastic {
+                    lpos1,
+                    lpos2,
+                    width,
+                    material,
+                    length,
+                    ..
+                } => push(e1, *lpos1, e2, *lpos2, *length, *width, material),
+                K::Slider {
+                    lpos1,
+                    lpos2,
+                    width,
+                    material,
+                    ..
+                }
+                | K::Hydraulic {
+                    lpos1,
+                    lpos2,
+                    width,
+                    material,
+                    ..
+                }
+                | K::Winch {
+                    lpos1,
+                    lpos2,
+                    width,
+                    material,
+                    ..
+                }
+                | K::Muscle {
+                    lpos1,
+                    lpos2,
+                    width,
+                    material,
+                    ..
+                } => push(e1, *lpos1, e2, *lpos2, 0.0, *width, material),
+                K::Pulley {
+                    lpos1,
+                    lpos4,
+                    wpos2,
+                    wpos3,
+                    width,
+                    material,
+                    ..
+                } => {
+                    push(e1, *lpos1, 0, *wpos2, 0.0, *width, material);
+                    push(0, *wpos2, 0, *wpos3, 0.0, *width, material);
+                    push(0, *wpos3, e2, *lpos4, 0.0, *width, material);
+                }
+                _ => {}
+            }
+        }
+        out
+    }
     /// The player's tool gun stage (`TOOL:GetStage`), 0 when idle.
     pub fn tool_stage(&self, player: u32) -> u8 {
         self.sandbox.tool(player).stage.min(255) as u8

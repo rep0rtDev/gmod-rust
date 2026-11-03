@@ -152,6 +152,21 @@ pub enum ClientMsg {
     },
 }
 
+/// A constraint's rope (rope, elastic, slider, hydraulic, muscle, winch, pulley segment):
+/// endpoints in their entities' frames (entity 0: the world, world space), the rest length,
+/// width, material and colour of its `keyframe_rope`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RopeSnap {
+    pub ent1: u32,
+    pub lpos1: Vec3,
+    pub ent2: u32,
+    pub lpos2: Vec3,
+    pub length: f32,
+    pub width: f32,
+    pub material: String,
+    pub color: [u8; 3],
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EntityState {
     pub id: u32,
@@ -362,6 +377,7 @@ pub enum ServerMsg {
         last_cmd_tick: u32,
         players: Vec<PlayerSnap>,
         entities: Vec<EntityState>,
+        ropes: Vec<RopeSnap>,
         removed: Vec<u32>,
         own: OwnSandbox,
         local: Option<LocalPlayer>,
@@ -535,7 +551,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 20;
+pub const PROTOCOL: u16 = 21;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -991,6 +1007,7 @@ impl ServerMsg {
                 last_cmd_tick,
                 players,
                 entities,
+                ropes,
                 removed,
                 own,
                 local,
@@ -1104,6 +1121,19 @@ impl ServerMsg {
                         w.f32(v.y);
                         w.f32(v.z);
                     }
+                }
+                w.varint(ropes.len() as u64);
+                for r in ropes {
+                    w.u32(r.ent1);
+                    w.vec3(r.lpos1);
+                    w.u32(r.ent2);
+                    w.vec3(r.lpos2);
+                    w.f32(r.length);
+                    w.f32(r.width);
+                    w.str(&r.material);
+                    w.u8(r.color[0]);
+                    w.u8(r.color[1]);
+                    w.u8(r.color[2]);
                 }
                 w.varint(removed.len() as u64);
                 for id in removed {
@@ -1505,12 +1535,27 @@ impl ServerMsg {
                 } else {
                     None
                 };
+                let n = r.varint()? as usize;
+                let mut ropes = Vec::with_capacity(n.min(4096));
+                for _ in 0..n {
+                    ropes.push(RopeSnap {
+                        ent1: r.u32()?,
+                        lpos1: r.vec3()?,
+                        ent2: r.u32()?,
+                        lpos2: r.vec3()?,
+                        length: r.f32()?,
+                        width: r.f32()?,
+                        material: r.str()?,
+                        color: [r.u8()?, r.u8()?, r.u8()?],
+                    });
+                }
                 ServerMsg::Snapshot {
                     tick,
                     baseline,
                     last_cmd_tick,
                     players,
                     entities,
+                    ropes,
                     removed,
                     own: OwnSandbox {
                         count,
