@@ -797,6 +797,18 @@ type LocalPose = Vec<([f32; 3], [f32; 4])>;
 
 /// Adds a delta pose with weight `w`: positions scaled, the rotation slerped from identity and
 /// applied in the bone's own frame (Source's QuaternionMA).
+/// Moves `acc` toward `other` by `t` (positions lerp, rotations slerp).
+fn mix_local(acc: &mut LocalPose, other: &LocalPose, t: f32) {
+    for ((p, q), (p2, q2)) in acc.iter_mut().zip(other) {
+        for (a, b) in p.iter_mut().zip(p2) {
+            *a += (b - *a) * t;
+        }
+        let qa = glam::Quat::from_array(*q).normalize();
+        let qb = glam::Quat::from_array(*q2).normalize();
+        *q = qa.slerp(qb, t).to_array();
+    }
+}
+
 fn add_delta(local: &mut LocalPose, delta: &LocalPose, w: f32) {
     for ((pos, quat), (dpos, dquat)) in local.iter_mut().zip(delta) {
         for (p, d) in pos.iter_mut().zip(dpos) {
@@ -1254,6 +1266,41 @@ impl DynModel {
         params: &[(&str, f32)],
         gesture: Option<(&str, f32)>,
     ) -> Option<Vec<Mat4>> {
+        self.bone_world_full(name, time, merge, params, gesture, None)
+    }
+
+    /// [`bone_world`](Self::bone_world) with the sequence just left blended in the way
+    /// `CSequenceTransitioner` does: `prev` = (sequence, seconds into it when it was left, its
+    /// weight now), mixed into the local pose before the bone hierarchy.
+    pub fn bone_world_transition(
+        &self,
+        name: &str,
+        time: f32,
+        params: &[(&str, f32)],
+        prev: Option<(&str, f32, f32)>,
+    ) -> Option<Vec<Mat4>> {
+        self.bone_world_full(name, time, None, params, None, prev)
+    }
+
+    /// The sequence's `fadeouttime` (0.2 s when the model gives none).
+    pub fn sequence_fade_out(&self, name: &str) -> f32 {
+        self.skeleton
+            .as_ref()
+            .and_then(|sk| sk.seq(name))
+            .map(|(_, s)| s.fade_out)
+            .filter(|f| *f > 0.0)
+            .unwrap_or(0.2)
+    }
+
+    fn bone_world_full(
+        &self,
+        name: &str,
+        time: f32,
+        merge: Option<BoneMerge<'_>>,
+        params: &[(&str, f32)],
+        gesture: Option<(&str, f32)>,
+        transition: Option<(&str, f32, f32)>,
+    ) -> Option<Vec<Mat4>> {
         let sk = self.skeleton.as_ref()?;
         let (src, seq) = sk.seq(name)?;
         let anim = src.anims.get(seq.anim.max(0) as usize)?;
@@ -1269,6 +1316,24 @@ impl DynModel {
         };
         let mut local = src.blended(seq, cycle, params, false)?;
         src.apply_layers(seq, cycle, params, &mut local);
+        if let Some((pname, ptime, w)) = transition {
+            if let Some((psrc, pseq)) = sk.seq(pname) {
+                if let Some(panim) = psrc.anims.get(pseq.anim.max(0) as usize) {
+                    if std::ptr::eq(psrc, src) && panim.frames > 0 && w > 0.001 {
+                        let pf = ptime.max(0.0) * panim.fps / panim.frames as f32;
+                        let pcycle = if panim.flags & 1 != 0 {
+                            pf.fract()
+                        } else {
+                            pf.min(1.0)
+                        };
+                        if let Some(mut pl) = src.blended(pseq, pcycle, params, false) {
+                            src.apply_layers(pseq, pcycle, params, &mut pl);
+                            mix_local(&mut local, &pl, w.min(1.0));
+                        }
+                    }
+                }
+            }
+        }
         // a one-shot gesture (reload, shot) on top: its delta and its own layers at full weight
         if let Some((gname, gtime)) = gesture {
             if let Some((gsrc, gseq)) = sk.seq(gname) {

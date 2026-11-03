@@ -888,6 +888,10 @@ struct App {
     impulse: u8,
     /// One-shot viewmodel sequence playing (draw, fire) and when it started.
     vm_anim: Option<(&'static str, Instant)>,
+    /// Last frame's viewmodel (sequence, seconds into it) and the sequence left before it with
+    /// the time it was left at and when (`CSequenceTransitioner` fade-out).
+    vm_last: Option<(&'static str, f32)>,
+    vm_prev: Option<(&'static str, f32, Instant)>,
     /// `PlayerSnap::vm_serial` of the last server viewmodel event played.
     vm_serial_seen: u8,
     /// Tracers in flight: shooter, end, birth (a 128 u streak at 5000 u/s from the muzzle).
@@ -2973,6 +2977,31 @@ impl App {
     /// Sequence and time for the viewmodel this frame: the one-shot sequence while it lasts,
     /// then the hold sequence while a prop is held, else idle.
     fn vm_sequence(&mut self, vm: &Viewmodel) -> (&'static str, f32) {
+        let (seq, t) = self.vm_sequence_raw(vm);
+        if let Some((last, lt)) = self.vm_last {
+            if last != seq {
+                self.vm_prev = Some((last, lt, Instant::now()));
+            }
+        }
+        self.vm_last = Some((seq, t));
+        (seq, t)
+    }
+
+    /// `CSequenceTransitioner`: the sequence the viewmodel just left, frozen at the cycle it was
+    /// at, with its weight easing out over that sequence's `fadeouttime`.
+    fn vm_transition(
+        prev: Option<(&'static str, f32, Instant)>,
+        fade_of: impl Fn(&str) -> f32,
+    ) -> Option<(&'static str, f32, f32)> {
+        let (seq, t, at) = prev?;
+        let x = (at.elapsed().as_secs_f32() / fade_of(seq).max(0.001)).clamp(0.0, 1.0);
+        if x >= 1.0 {
+            return None;
+        }
+        Some((seq, t, 1.0 - (3.0 * x * x - 2.0 * x * x * x)))
+    }
+
+    fn vm_sequence_raw(&mut self, vm: &Viewmodel) -> (&'static str, f32) {
         // server-decided events: reload (manual, empty clip, automatic), pump, dry fire
         if let Some((act, serial, active)) =
             self.local_snap().map(|p| (p.vm_act, p.vm_serial, p.active))
@@ -3323,6 +3352,7 @@ impl App {
         let alpha = self.acc / gm_core::tick::DEFAULT_TICK_INTERVAL;
         let vm = self.vm_of(self.weapon);
         let vm_seq = vm.as_ref().map(|vm| self.vm_sequence(vm));
+        let vm_prev = self.vm_prev;
         let ghost_tool = (self.weapon == 1).then(|| (self.tool.clone(), self.tool_settings_list()));
         // the hands follow the player model (`player_manager`'s hands table: model, skin, body
         // groups), kleiner's citizen hands until the snapshot names one
@@ -3844,7 +3874,12 @@ impl App {
                 return None;
             };
             let m = g.models.get(vm.path)?.as_ref()?;
-            let w = m.bone_world(seq, t, None, &[])?;
+            let w = m.bone_world_transition(
+                seq,
+                t,
+                &[],
+                Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
+            )?;
             let a = m.attachment(name, &w)?;
             Some(
                 gm_render::world::model_transform(camera.position, self.view)
@@ -4186,7 +4221,12 @@ impl App {
                 g.models.insert(hands_key.clone(), m);
             }
             if let Some(m) = g.models.get(path).and_then(|m| m.as_ref()) {
-                let world = m.bone_world(seq, t, None, &[]);
+                let world = m.bone_world_transition(
+                    seq,
+                    t,
+                    &[],
+                    Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
+                );
                 let pose = world.as_ref().map(|w| m.skin_matrices(w));
                 let hands = g.models.get(&hands_key).and_then(|h| h.as_ref());
                 let hands_pose = match (hands, &world) {
@@ -5987,6 +6027,8 @@ fn main() -> Result<()> {
         noclip: false,
         impulse: 0,
         vm_anim: None,
+        vm_last: None,
+        vm_prev: None,
         vm_serial_seen: 0,
         fx_tracers: Vec::new(),
         fx_decals: Default::default(),
