@@ -1670,11 +1670,36 @@ impl App {
                     "1".into()
                 }
             }
-            gm_server::ToolSettingKind::Text
-            | gm_server::ToolSettingKind::Help
-            | gm_server::ToolSettingKind::Key
-            | gm_server::ToolSettingKind::Color
-            | gm_server::ToolSettingKind::Choice => {
+            gm_server::ToolSettingKind::Help => return true,
+            gm_server::ToolSettingKind::Key => {
+                let v = cur.trim().parse::<i32>().unwrap_or(0);
+                match v {
+                    37..=45 => (v + 1).to_string(),
+                    46 => "0".into(),
+                    _ => "37".into(),
+                }
+            }
+            gm_server::ToolSettingKind::Choice => {
+                let n = s.options.len();
+                if n == 0 {
+                    return true;
+                }
+                let next = match s.options.iter().position(|(_, v)| v == cur.trim()) {
+                    Some(i) if t < 0.5 => (i + n - 1) % n,
+                    Some(i) => (i + 1) % n,
+                    None => 0,
+                };
+                s.options[next].1.clone()
+            }
+            gm_server::ToolSettingKind::Color => {
+                let Some(name) = self.color_channel(s, row) else {
+                    return true;
+                };
+                self.panel_drag = Some(row);
+                self.set_tool_setting(&name, format!("{:.0}", t * 255.0));
+                return true;
+            }
+            gm_server::ToolSettingKind::Text => {
                 self.panel_text = Some((row, cur));
                 return true;
             }
@@ -1778,6 +1803,17 @@ impl App {
 
     /// The cursor moved with a slider held: the value follows it (clamped to the row's range,
     /// the cursor may leave the panel).
+    /// The convar of the colour picker's r/g/b bar under the cursor (the bars sit under a 16 px
+    /// label, 16 px each).
+    fn color_channel(&self, s: &gm_server::ToolSetting, row: usize) -> Option<String> {
+        let y = self.menu_cache.borrow().rows.get(row)?.y;
+        let k = ((self.cursor.1 - y - 16.0) / 16.0).floor().clamp(0.0, 2.0) as usize;
+        match k {
+            0 => Some(s.name.clone()),
+            _ => s.options.get(k - 1).map(|(n, _)| n.clone()),
+        }
+    }
+
     fn panel_drag_move(&mut self) {
         let Some(row) = self.panel_drag else { return };
         if self.menu.is_none() && !self.context_held {
@@ -1790,6 +1826,18 @@ impl App {
         let Some(s) = schema.get(row).cloned() else {
             return;
         };
+        if s.kind == gm_server::ToolSettingKind::Color {
+            let t = self
+                .menu_cache
+                .borrow()
+                .rows
+                .get(row)
+                .map(|r| r.fraction(self.cursor));
+            if let (Some(t), Some(name)) = (t, self.color_channel(&s, row)) {
+                self.set_tool_setting(&name, format!("{:.0}", t * 255.0));
+            }
+            return;
+        }
         let Some(t) = self
             .menu_cache
             .borrow()

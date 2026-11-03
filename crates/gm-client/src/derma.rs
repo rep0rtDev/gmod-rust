@@ -123,6 +123,8 @@ pub const PLACEHOLDER: [f32; 4] = rgba(128, 128, 128, 255);
 const HOVER: [f32; 4] = rgba(255, 255, 255, 30);
 /// `Colours.Label.Dark` (DLabel default) and `SKIN.colTextEntryText`.
 const LABEL_DARK: [f32; 4] = rgba(10, 10, 10, 255);
+/// `ControlHelp` text: the DForm's dimmed help label.
+const HELP_TEXT: [f32; 4] = rgba(90, 90, 90, 255);
 const TEXT_ENTRY: [f32; 4] = rgba(20, 20, 20, 255);
 /// `SKIN.colNumSliderNotch`.
 const NOTCH: [f32; 4] = rgba(0, 0, 0, 100);
@@ -1254,7 +1256,11 @@ pub fn controls(
     let mut y = ry + 20.0;
     for (i, s) in schema.iter().enumerate() {
         y += PAD;
-        let label = label_of(&s.name);
+        let label = if s.label.is_empty() {
+            label_of(&s.name)
+        } else {
+            label_of(&s.label)
+        };
         let cur = value_of(&s.name);
         let (h, bar) = match s.kind {
             gm_server::ToolSettingKind::Number => {
@@ -1318,11 +1324,94 @@ pub fn controls(
                 }
                 (h, (x, w))
             }
-            gm_server::ToolSettingKind::Text
-            | gm_server::ToolSettingKind::Help
-            | gm_server::ToolSettingKind::Key
-            | gm_server::ToolSettingKind::Color
-            | gm_server::ToolSettingKind::Choice => {
+            gm_server::ToolSettingKind::Help => {
+                let h = 16.0;
+                if y + h <= ry + rh {
+                    text(&mut out.items, FONT, ctx.font, x, y, h, &label, HELP_TEXT);
+                }
+                (h, (x, w))
+            }
+            gm_server::ToolSettingKind::Key | gm_server::ToolSettingKind::Choice => {
+                let h = 20.0;
+                if y + h <= ry + rh {
+                    text(&mut out.items, FONT, ctx.font, x, y, h, &label, LABEL_DARK);
+                    let (ex, ew) = (x + 110.0, w - 110.0);
+                    nine(&mut out.items, &TEXTBOX, ex, y, ew, h, WHITE);
+                    let shown = if s.kind == gm_server::ToolSettingKind::Key {
+                        pad_key_name(&cur)
+                    } else {
+                        s.options
+                            .iter()
+                            .find(|(_, v)| *v == cur.trim())
+                            .map_or_else(|| cur.clone(), |(l, _)| label_of(l))
+                    };
+                    text(
+                        &mut out.items,
+                        FONT,
+                        ctx.font,
+                        ex + 4.0,
+                        y,
+                        h,
+                        &shown,
+                        TEXT_ENTRY,
+                    );
+                }
+                (h, (x, w))
+            }
+            gm_server::ToolSettingKind::Color => {
+                let h = 64.0;
+                if y + h <= ry + rh {
+                    text(
+                        &mut out.items,
+                        FONT,
+                        ctx.font,
+                        x,
+                        y,
+                        16.0,
+                        &label,
+                        LABEL_DARK,
+                    );
+                    let names = [
+                        s.name.as_str(),
+                        s.options.first().map_or("", |(n, _)| n.as_str()),
+                        s.options.get(1).map_or("", |(n, _)| n.as_str()),
+                    ];
+                    for (k, name) in names.iter().enumerate() {
+                        let cy = y + 16.0 + k as f32 * 16.0;
+                        let v = value_of(name).trim().parse::<f32>().unwrap_or(255.0);
+                        let t = (v / 255.0).clamp(0.0, 1.0);
+                        let sw = w - 45.0;
+                        out.items.push(UiItem::Rect {
+                            x: x + 8.0,
+                            y: (cy + 7.0).round(),
+                            w: sw - 23.0,
+                            h: 1.0,
+                            color: NOTCH,
+                        });
+                        nine(
+                            &mut out.items,
+                            &SLIDER_KNOB,
+                            (x + t * (sw - 15.0)).round(),
+                            cy,
+                            15.0,
+                            15.0,
+                            WHITE,
+                        );
+                        text(
+                            &mut out.items,
+                            FONT,
+                            ctx.font,
+                            x + sw + 4.0,
+                            cy,
+                            16.0,
+                            &format!("{v:.0}"),
+                            TEXT_ENTRY,
+                        );
+                    }
+                }
+                (h, (x, w - 60.0))
+            }
+            gm_server::ToolSettingKind::Text => {
                 let h = 20.0;
                 if y + h <= ry + rh {
                     text(&mut out.items, FONT, ctx.font, x, y, h, &label, LABEL_DARK);
@@ -1362,6 +1451,12 @@ pub fn controls(
 /// `tool.<key>` (`forcelimit`, `torquelimit`, `nocollide`, `toggle`), with the game's names
 /// where our field differs from the convar; else the key itself.
 pub fn setting_label(lang: &BTreeMap<String, String>, tool: &str, name: &str) -> String {
+    if let Some(k) = name.strip_prefix('#') {
+        return lang
+            .get(k)
+            .cloned()
+            .unwrap_or_else(|| title_case(&k.rsplit('.').next().unwrap_or(k).replace('_', " ")));
+    }
     let key = name
         .strip_prefix(tool)
         .and_then(|r| r.strip_prefix('_'))
@@ -1848,6 +1943,15 @@ pub fn dmenu(
     }
 }
 
+/// The name a numpad KeyBinder shows for a key code (`KEY_PAD_0..9` = 37..46; 0 = none).
+pub fn pad_key_name(code: &str) -> String {
+    match code.trim().parse::<i32>().unwrap_or(0) {
+        0 => "NONE".into(),
+        n @ 37..=46 => format!("KP_{}", n - 37),
+        n => format!("KEY {n}"),
+    }
+}
+
 /// The DForm's height for a schema: header 20 + each item's 10 px top padding and height.
 pub fn controls_height(schema: &[gm_server::ToolSetting]) -> f32 {
     20.0 + schema
@@ -1857,10 +1961,10 @@ pub fn controls_height(schema: &[gm_server::ToolSetting]) -> f32 {
                 gm_server::ToolSettingKind::Number => 32.0,
                 gm_server::ToolSettingKind::Bool => 16.0,
                 gm_server::ToolSettingKind::Text
-                | gm_server::ToolSettingKind::Help
                 | gm_server::ToolSettingKind::Key
-                | gm_server::ToolSettingKind::Color
                 | gm_server::ToolSettingKind::Choice => 20.0,
+                gm_server::ToolSettingKind::Help => 16.0,
+                gm_server::ToolSettingKind::Color => 64.0,
             }
         })
         .sum::<f32>()
