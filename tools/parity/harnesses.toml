@@ -5027,3 +5027,47 @@ scenario = "phys/drop_flat_paintcan_lo10"
 compare = "rigid"
 realm = "server"
 crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "move_prop_block_slow"
+scenario = "move/prop_block_slow"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_prop_block_sprint"
+scenario = "move/prop_block_sprint"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_prop_step_slow"
+scenario = "move/prop_step_slow"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5
+
+[[harness]]
+name = "move_prop_step_sprint"
+scenario = "move/prop_step_sprint"
+compare = "trajectory"
+realm = "server"
+crates = ["gm-move", "gm-collision"]
+
+[harness.tolerance]
+pos = 0.05
+vel = 0.5

@@ -41,6 +41,9 @@ pub struct MoveConfig {
     pub jump_power: f32,
     pub walk_speed: f32,
     pub run_speed: f32,
+    /// `Player:SetSlowWalkSpeed`: the cap with the walk button held (`move_prop_*_slow`:
+    /// 100 u/s, the ground acceleration scales with it - 15 u/s on the first tick).
+    pub slow_walk_speed: f32,
     pub crouched_walk_speed: f32,
     pub duck_time: f32,
     pub unduck_time: f32,
@@ -87,6 +90,7 @@ impl Default for MoveConfig {
             jump_power: 200.0,
             walk_speed: 200.0,
             run_speed: 400.0,
+            slow_walk_speed: 100.0,
             crouched_walk_speed: 0.3,
             duck_time: 0.4,
             unduck_time: 0.1,
@@ -936,10 +940,13 @@ impl<'a> Mover<'a> {
     }
 
     /// The player's max speed as the footstep timer sees it (`GetMaxSpeed`): run or walk
-    /// speed by the sprint button; crouching does not lower it (measured `move_step_duck`).
+    /// speed by the sprint button, the slow walk speed by the walk button (`move_prop_step_slow`:
+    /// 27-tick cadence at 100 u/s); crouching does not lower it (measured `move_step_duck`).
     pub fn step_max_speed(&self, cmd: &UserCmd) -> f32 {
         if (cmd.buttons & buttons::SPEED != 0 || self.cfg.force_sprint) && self.cfg.sprint_enabled {
             self.cfg.run_speed
+        } else if cmd.buttons & buttons::WALK != 0 {
+            self.cfg.slow_walk_speed
         } else {
             self.cfg.walk_speed
         }
@@ -952,6 +959,8 @@ impl<'a> Mover<'a> {
             && self.cfg.sprint_enabled
         {
             self.cfg.run_speed
+        } else if cmd.buttons & buttons::WALK != 0 {
+            self.cfg.slow_walk_speed
         } else {
             self.cfg.walk_speed
         }

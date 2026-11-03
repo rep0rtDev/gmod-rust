@@ -153,6 +153,7 @@ pub struct PlayerSnap {
     pub lagged_movement: f32,
     pub sprint_enabled: bool,
     pub run_speed: f32,
+    pub slow_walk_speed: f32,
     pub jump_power: f32,
     pub step_size: f32,
     pub crouched_walk_speed: f32,
@@ -820,6 +821,10 @@ impl Snapshot {
                                 .effective(server.move_cfg())
                                 .sprint_enabled,
                             run_speed: p.move_override.effective(server.move_cfg()).run_speed,
+                            slow_walk_speed: p
+                                .move_override
+                                .effective(server.move_cfg())
+                                .slow_walk_speed,
                             jump_power: p.move_override.effective(server.move_cfg()).jump_power,
                             step_size: p.move_override.effective(server.move_cfg()).step_size,
                             crouched_walk_speed: p

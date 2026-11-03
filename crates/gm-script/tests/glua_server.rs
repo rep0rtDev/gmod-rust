@@ -197,6 +197,7 @@ fn snapshot() -> Arc<Snapshot> {
             lagged_movement: 1.0,
             sprint_enabled: true,
             run_speed: 400.0,
+            slow_walk_speed: 100.0,
             jump_power: 200.0,
             step_size: 18.0,
             crouched_walk_speed: 0.3,
