@@ -919,7 +919,17 @@ impl UiRenderer {
                     let Some(Some(bg)) = self.images.get(material) else {
                         continue;
                     };
-                    quad_rot(&mut vertices, *x, *y, x + w, y + h, *rot, *color);
+                    // whole pixels: an image at a fractional position blurs under the
+                    // linear sampler
+                    quad_rot(
+                        &mut vertices,
+                        x.round(),
+                        y.round(),
+                        (x + w).round(),
+                        (y + h).round(),
+                        *rot,
+                        *color,
+                    );
                     bg
                 }
             };

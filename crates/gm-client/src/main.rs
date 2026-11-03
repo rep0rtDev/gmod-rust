@@ -1889,12 +1889,13 @@ impl App {
                 far: dist + radius * 2.0,
                 gamma: 2.2,
             };
-            let (color, depth) = gm_render::world::icon_targets(&g.gpu, 64, g.config.format);
+            // rendered at twice the 64 px SpawnIcon so the icon stays sharp when drawn
+            let (color, depth) = gm_render::world::icon_targets(&g.gpu, 128, g.config.format);
             let color_view = color.create_view(&Default::default());
             let msaa = g.world.quality.msaa;
             // the pipelines are multisampled: draw into MSAA targets and resolve into the icon
             let ms = (msaa > 1).then(|| {
-                gm_render::world::offscreen_targets(&g.gpu, 64, 64, g.config.format, msaa)
+                gm_render::world::offscreen_targets(&g.gpu, 128, 128, g.config.format, msaa)
             });
             let ms_color = ms.as_ref().map(|(c, _)| c.create_view(&Default::default()));
             let depth_view = ms
