@@ -235,13 +235,13 @@ struct Gfx {
     gg_glow: Option<wgpu::BindGroup>,
     gg_beam: Option<wgpu::BindGroup>,
     /// Shot effects: `effects/muzzleflash1` (muzzle flash, impact and explosion flashes),
-    /// `effects/spark` (tracer streak), `decals/concrete|metal/shot1` (bullet holes).
+    /// `effects/spark` (tracer streak), `decals/<group>/shot1..5` (bullet holes, by the
+    /// surface's game material, loaded on first use).
     fx_muzzle: Option<wgpu::BindGroup>,
     /// `sprites/zerogxplode`: the explosion fireball (frame 0 - the sprite's frames are open).
     fx_explosion: Option<wgpu::BindGroup>,
     fx_spark: Option<wgpu::BindGroup>,
-    fx_decal: Option<wgpu::BindGroup>,
-    fx_decal_metal: Option<wgpu::BindGroup>,
+    fx_decal_mats: std::collections::HashMap<String, Option<wgpu::BindGroup>>,
     /// `sprites/redglow1`: the RPG's laser dot.
     fx_laserdot: Option<wgpu::BindGroup>,
     /// `effects/splash2`: the water splash.
@@ -1038,7 +1038,7 @@ struct App {
     /// Tracers in flight: shooter, end, birth (a 128 u streak at 5000 u/s from the muzzle).
     fx_tracers: Vec<(u32, Vec3, Instant)>,
     /// Bullet decals: position, normal, metal, birth (the newest 256).
-    fx_decals: std::collections::VecDeque<(Vec3, Vec3, bool, Instant)>,
+    fx_decals: std::collections::VecDeque<(Vec3, Vec3, String, Instant)>,
     /// Flashes: position, size, birth (impact sparks, explosions).
     fx_bursts: Vec<(Vec3, f32, Instant, bool)>,
     /// Own muzzle flash shows until then.
@@ -1310,8 +1310,6 @@ impl App {
         let fx_muzzle = world.sprite_material(&gpu, &self.mount, "effects/muzzleflash1");
         let fx_explosion = world.sprite_material(&gpu, &self.mount, "sprites/zerogxplode");
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
-        let fx_decal = world.decal_material(&gpu, &self.mount, "decals/concrete/shot1");
-        let fx_decal_metal = world.decal_material(&gpu, &self.mount, "decals/metal/shot1");
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
         let fx_splash = world.sprite_material(&gpu, &self.mount, "effects/splash2");
         let ui = UiRenderer::new(&gpu, &self.mount, format, quality.msaa)?;
@@ -1481,8 +1479,7 @@ impl App {
             fx_muzzle,
             fx_explosion,
             fx_spark,
-            fx_decal,
-            fx_decal_metal,
+            fx_decal_mats: Default::default(),
             fx_laserdot,
             fx_splash,
             beam_active_mat,
@@ -3673,7 +3670,7 @@ impl App {
                             self.fx_decals.pop_front();
                         }
                         self.fx_decals
-                            .push_back((pos, normal, surface == "metal", now));
+                            .push_back((pos, normal, impact_decal(&surface, pos), now));
                         self.fx_bursts.push((pos + normal * 1.5, 5.0, now, false));
                     }
                     gm_net::msg::EffectEvent::Tracer { player, end } => {
@@ -4723,14 +4720,15 @@ impl App {
             }
             self.fx_decals
                 .retain(|(_, _, _, born)| now.duration_since(*born).as_secs_f32() < 120.0);
-            for &(pos, normal, metal, _) in &self.fx_decals {
-                let m = if metal {
-                    &g.fx_decal_metal
-                } else {
-                    &g.fx_decal
-                };
-                if let Some(m) = m {
-                    let (v, i) = g.world.decal_quad(pos, normal, 6.4, [1.0; 3]);
+            for (_, _, name, _) in &self.fx_decals {
+                if !name.is_empty() && !g.fx_decal_mats.contains_key(name) {
+                    let m = g.world.decal_material(&g.gpu, &self.mount, name);
+                    g.fx_decal_mats.insert(name.clone(), m);
+                }
+            }
+            for (pos, normal, name, _) in &self.fx_decals {
+                if let Some(Some(m)) = g.fx_decal_mats.get(name) {
+                    let (v, i) = g.world.decal_quad(*pos, *normal, 6.4, [1.0; 3]);
                     modulate.push((m, v, i));
                 }
             }
@@ -6711,6 +6709,10 @@ fn main() -> Result<()> {
     server.step_loader = Some(Box::new(move |m: Option<&str>| {
         gm_dedicated::step_sounds(&steps_mount, &table, m)
     }));
+    let props_mount = gm_content::Mount::for_install(&inst)?;
+    server.surfaceprop_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::material_surfaceprop(&props_mount, m)
+    }));
     server.mounted = mount.providers().iter().map(|p| p.label()).collect();
     let sound_mount = gm_content::Mount::for_install(&inst)?;
     let sound_duration: gm_script::api::SoundDuration =
@@ -7855,6 +7857,22 @@ struct ThrusterParticle {
     roll: f32,
     /// `SetAngles`: the quad lies in the plane normal to it (camera-facing when none).
     axis: Option<Vec3>,
+}
+
+/// `decals_subrect.txt` `TranslationData`: the impact decal of a surface property's game
+/// material (`scripts/surfaceproperties.txt`); `Impact.Concrete` for the untranslated
+/// letters, nothing for `no_decal`; one of the group's five `shotN` by the hit position.
+fn impact_decal(surfaceprop: &str, pos: Vec3) -> String {
+    let group = match surfaceprop.to_ascii_lowercase().as_str() {
+        "no_decal" => return String::new(),
+        "solidmetal" | "metalpanel" | "metalvehicle" | "armorflesh" | "metalvent" => "metal",
+        "wood" | "watermelon" => "wood",
+        "glass" => "glass",
+        "antlionsand" => "sand",
+        _ => "concrete",
+    };
+    let h = pos.x.to_bits() ^ pos.y.to_bits().rotate_left(11) ^ pos.z.to_bits().rotate_left(22);
+    format!("decals/{group}/shot{}", 1 + h % 5)
 }
 
 /// xorshift in [0, 1).

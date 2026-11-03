@@ -137,6 +137,10 @@ fn main() -> Result<()> {
     server.step_loader = Some(Box::new(move |m: Option<&str>| {
         gm_dedicated::step_sounds(&mount_for_steps, &table, m)
     }));
+    let props_mount = gm_content::Mount::for_install(&inst)?;
+    server.surfaceprop_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::material_surfaceprop(&props_mount, m)
+    }));
     server.mounted = mount.providers().iter().map(|p| p.label()).collect();
     let sound_mount = gm_content::Mount::for_install(&inst)?;
     let sound_duration: gm_script::api::SoundDuration =

@@ -4361,6 +4361,9 @@ pub struct StepSounds {
 /// for ground with no brush side under it (displacements, props); the result is cached.
 pub type StepLoader = Box<dyn FnMut(Option<&str>) -> Option<StepSounds>>;
 
+/// Host hook: the `$surfaceprop` of a brush material (`concrete/concretefloor001a`).
+pub type SurfacepropLoader = Box<dyn FnMut(&str) -> String>;
+
 /// Damage types (`DMG_*` bits) that matter to the rules here.
 pub const DMG_FALL: u32 = 32;
 pub const DMG_DROWN: u32 = 16384;
@@ -4839,6 +4842,9 @@ pub struct Server<'w> {
     /// from the mounted content on demand).
     pub model_loader: Option<ModelLoader>,
     pub step_loader: Option<StepLoader>,
+    /// Host hook: the `$surfaceprop` of a brush material (impact decals); cached below.
+    pub surfaceprop_loader: Option<SurfacepropLoader>,
+    brush_surfaceprops: BTreeMap<String, String>,
     /// Step sounds by material, `""` for no material; filled through `step_loader`.
     step_sounds: BTreeMap<String, Option<StepSounds>>,
     /// `sbox_playershurtplayers`: with it off hits are still resolved and recorded but neither
@@ -5032,6 +5038,8 @@ impl<'w> Server<'w> {
             projectiles: Vec::new(),
             model_loader: None,
             step_loader: None,
+            surfaceprop_loader: None,
+            brush_surfaceprops: BTreeMap::new(),
             step_sounds: BTreeMap::new(),
             players_hurt_players: true,
             physics_paused: false,
@@ -15704,12 +15712,35 @@ impl<'w> Server<'w> {
 
     /// A shot or swing that ended on the world: the impact effect at the trace end.
     fn world_impact(&mut self, world: &gm_collision::Trace, melee: bool) {
+        let material = self
+            .collision
+            .surface_material(world.end, world.normal)
+            .map(str::to_owned);
+        let surface = material
+            .map(|m| self.brush_surfaceprop(&m))
+            .unwrap_or_else(|| "concrete".to_owned());
         self.effects.push(WorldEffect::Impact {
             pos: world.end,
             normal: world.normal,
-            surface: "concrete".to_owned(),
+            surface,
             melee,
         });
+    }
+
+    /// The `$surfaceprop` of a brush material through `surfaceprop_loader` (`concrete`
+    /// without one), cached per material.
+    fn brush_surfaceprop(&mut self, material: &str) -> String {
+        if let Some(s) = self.brush_surfaceprops.get(material) {
+            return s.clone();
+        }
+        let s = self
+            .surfaceprop_loader
+            .as_mut()
+            .map(|f| f(material))
+            .unwrap_or_else(|| "concrete".to_owned());
+        self.brush_surfaceprops
+            .insert(material.to_owned(), s.clone());
+        s
     }
 
     pub fn take_sounds(&mut self) -> Vec<WorldSound> {
