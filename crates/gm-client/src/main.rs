@@ -37,6 +37,9 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 /// `cl_weaponcolor` default "0.30 1.80 2.10" clamped to the display range: the beam and
 /// glow tint of the physgun.
 const PHYSGUN_BEAM_COLOR: [f32; 3] = [0.3, 1.0, 1.0];
+/// Slots in `WEAPONS` of the weapons with their own effects.
+const RPG_SLOT: u8 = 9;
+const GRAVGUN_SLOT: u8 = 10;
 
 const SPAWN_MODEL: &str = "models/props_c17/oildrum001.mdl";
 
@@ -228,6 +231,8 @@ struct Gfx {
     fx_spark: Option<wgpu::BindGroup>,
     fx_decal: Option<wgpu::BindGroup>,
     fx_decal_metal: Option<wgpu::BindGroup>,
+    /// `sprites/redglow1`: the RPG's laser dot.
+    fx_laserdot: Option<wgpu::BindGroup>,
     ui: UiRenderer,
 }
 
@@ -1052,6 +1057,7 @@ impl App {
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
         let fx_decal = world.sprite_material(&gpu, &self.mount, "decals/concrete/shot1");
         let fx_decal_metal = world.sprite_material(&gpu, &self.mount, "decals/metal/shot1");
+        let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
         let ui = UiRenderer::new(&gpu, &self.mount, format, quality.msaa)?;
         let mut ui = ui;
         {
@@ -1201,6 +1207,7 @@ impl App {
             fx_spark,
             fx_decal,
             fx_decal_metal,
+            fx_laserdot,
             beam_active_mat,
             glow1,
             glow2,
@@ -3826,7 +3833,7 @@ impl App {
         }
         // gravity gun: the core glows at the muzzle, the fork tips glow, and while a prop is
         // held the tips beam to it and the gun lights its surroundings orange
-        if self.weapon == 6 {
+        if self.weapon == GRAVGUN_SLOT {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
             let core = vm_attach("muzzle")
@@ -3943,6 +3950,20 @@ impl App {
                         color: Vec3::new(1.0, 0.6, 0.3) * k,
                         ..Default::default()
                     });
+                }
+            }
+            // the RPG's laser dot (`CLaserDot`): a red glow where the aim meets the world
+            if self.weapon == RPG_SLOT {
+                if let Some(m) = &g.fx_laserdot {
+                    let hit = self.sim.collision.trace_ray(
+                        camera.position,
+                        camera.position + fwd * 8192.0,
+                        gm_collision::MASK_SOLID,
+                    );
+                    let (v, i) =
+                        g.world
+                            .sprite_quad(hit.end - fwd * 1.0, 6.0, [1.0, 0.2, 0.2], &camera);
+                    additive.push((m, v, i));
                 }
             }
             self.fx_decals

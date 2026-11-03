@@ -1076,6 +1076,34 @@ impl ServerNet {
         let mut world: BTreeMap<u32, EntityState> = BTreeMap::new();
         // cluster of every prop once per send, not once per client
         let mut clusters: BTreeMap<u32, i32> = BTreeMap::new();
+        for (id, model, pos, angles) in server.projectile_entities() {
+            if self.use_pvs {
+                clusters.insert(id, server.collision.cluster_at(pos));
+            }
+            let model_id = match self.model_ids.get(model) {
+                Some(&id) => id,
+                None => {
+                    self.models.push(model.to_string());
+                    let id = self.models.len() as u32;
+                    self.model_ids.insert(model.to_string(), id);
+                    id
+                }
+            };
+            world.insert(
+                id,
+                EntityState {
+                    id,
+                    model: model.to_string(),
+                    model_id,
+                    pos,
+                    angles,
+                    color: [255; 4],
+                    model_scale: 1.0,
+                    playback_rate: 1.0,
+                    ..Default::default()
+                },
+            );
+        }
         for (id, n) in &server.npcs {
             if self.use_pvs {
                 clusters.insert(*id, server.collision.cluster_at(n.pos));

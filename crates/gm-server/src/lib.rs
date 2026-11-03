@@ -575,6 +575,22 @@ pub enum WorldEffect {
     Explosion { pos: Vec3 },
 }
 
+/// First projectile entity id (`Projectile::id`); sandbox ids stay far below.
+pub const PROJECTILE_ID_BASE: u32 = 0x4000_0000;
+
+/// Pitch / yaw (degrees, Source convention: pitch down positive) of a flight direction.
+fn velocity_angles(v: Vec3) -> Vec3 {
+    let len = v.length();
+    if len < 1e-3 {
+        return Vec3::ZERO;
+    }
+    Vec3::new(
+        (-v.z / len).asin().to_degrees(),
+        v.y.atan2(v.x).to_degrees(),
+        0.0,
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct WorldSound {
     /// Sound script name.
@@ -4563,6 +4579,8 @@ pub struct Server<'w> {
     sounds: Vec<WorldSound>,
     /// Visual effects of this tick (`take_effects`).
     effects: Vec<WorldEffect>,
+    /// Projectile entity ids live in their own range above every sandbox id.
+    next_projectile_id: u32,
     /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
     thruster_loops: BTreeSet<u32>,
     /// Props whose scrape loop is playing (the volume factor it started with).
@@ -4754,6 +4772,7 @@ impl<'w> Server<'w> {
             bounds_override: BTreeMap::new(),
             sounds: Vec::new(),
             effects: Vec::new(),
+            next_projectile_id: PROJECTILE_ID_BASE,
             scrapes: BTreeMap::new(),
             thruster_loops: BTreeSet::new(),
             clipboards: BTreeMap::new(),
@@ -6624,6 +6643,9 @@ impl<'w> Server<'w> {
                     pr.target = at;
                 }
             }
+            let mut pr = pr;
+            pr.id = self.next_projectile_id;
+            self.next_projectile_id += 1;
             self.projectiles.push(pr);
         }
     }
@@ -14900,6 +14922,24 @@ impl<'w> Server<'w> {
     }
 
     /// The world sounds of the last tick.
+    /// The projectiles as world entities for the snapshot: id, model, position, angles
+    /// along the flight (a rocket's `w_missile`, a bolt's `crossbow_bolt`, grenades; the
+    /// combine ball is a sprite and has no model).
+    pub fn projectile_entities(
+        &self,
+    ) -> impl Iterator<Item = (u32, &'static str, Vec3, Vec3)> + '_ {
+        self.projectiles.iter().filter_map(|pr| {
+            let model = match pr.kind {
+                weapons::Launch::Rocket => "models/weapons/w_missile.mdl",
+                weapons::Launch::Bolt => "models/crossbow_bolt.mdl",
+                weapons::Launch::Grenade => projectile::GRENADE_MODEL,
+                weapons::Launch::Smg1Grenade => "models/items/ar2_grenade.mdl",
+                weapons::Launch::Ball => return None,
+            };
+            Some((pr.id, model, pr.origin, velocity_angles(pr.velocity)))
+        })
+    }
+
     pub fn take_effects(&mut self) -> Vec<WorldEffect> {
         std::mem::take(&mut self.effects)
     }

@@ -89,6 +89,8 @@ pub enum MoveType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Projectile {
+    /// Entity id on the wire (`Server::projectile_entities`), 0 until spawned.
+    pub id: u32,
     pub kind: Launch,
     pub owner: u32,
     pub origin: Vec3,
@@ -182,6 +184,7 @@ pub fn spawn(
     let home = heading_of(target + Vec3::Z * lift - eye);
     let mut p = match kind {
         Launch::Rocket => Projectile {
+            id: 0,
             kind,
             owner,
             origin: eye
@@ -201,6 +204,7 @@ pub fn spawn(
             gravity: 1.0,
         },
         Launch::Bolt => Projectile {
+            id: 0,
             kind,
             owner,
             origin: eye,
@@ -217,6 +221,7 @@ pub fn spawn(
             gravity: BOLT_GRAVITY,
         },
         Launch::Smg1Grenade => Projectile {
+            id: 0,
             kind,
             owner,
             origin: eye,
@@ -233,6 +238,7 @@ pub fn spawn(
             gravity: AR2_GRENADE_GRAVITY,
         },
         Launch::Ball => Projectile {
+            id: 0,
             kind,
             owner,
             origin: eye,
@@ -278,6 +284,7 @@ pub fn spawn(
                 })
                 .ok()?;
             Projectile {
+                id: 0,
                 kind,
                 owner,
                 origin,
