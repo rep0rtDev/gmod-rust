@@ -3997,6 +3997,8 @@ impl App {
                 items.push(match d {
                     // a world draw from a HUD handler: nothing on the 2D layer
                     gm_script::DrawCmd::Model { .. } => continue,
+                    // answered `HUDShouldDraw`: applied when the native HUD is built
+                    gm_script::DrawCmd::HideHud { .. } => continue,
                     gm_script::DrawCmd::Begin3D2D { .. } | gm_script::DrawCmd::End3D2D => continue,
                     // fonts and images were prepared before the frame
                     gm_script::DrawCmd::Font { .. } => continue,
@@ -4038,7 +4040,14 @@ impl App {
                     },
                 });
             }
-            // sandbox HUD: health and suit boxes at the bottom left
+            // sandbox HUD: health and suit boxes at the bottom left; an element a script's
+            // `HUDShouldDraw` answered false for this frame is skipped
+            let hidden = |name: &str| {
+                self.sim
+                    .hud_draws
+                    .iter()
+                    .any(|d| matches!(d, gm_script::DrawCmd::HideHud { name: n } if n == name))
+            };
             let me = self.sim.client.player_id;
             if let Some(p) = self
                 .sim
@@ -4076,7 +4085,12 @@ impl App {
                 };
                 // HudCrosshair: the weapon script's Crosshairs glyph (Q for every weapon the
                 // loadout has) centred, ClientScheme Normal 255 208 64
-                if p.alive && self.menu.is_none() && !self.context_held && !self.main_menu {
+                if p.alive
+                    && self.menu.is_none()
+                    && !self.context_held
+                    && !self.main_menu
+                    && !hidden("CHudCrosshair")
+                {
                     let cm = g.ui.font_metrics(Some("Crosshairs"));
                     items.push(UiItem::Text {
                         font: Some("Crosshairs".to_string()),
@@ -4086,15 +4100,17 @@ impl App {
                         color: [1.0, 208.0 / 255.0, 64.0 / 255.0, 1.0],
                     });
                 }
-                panel(&mut items, 16.0 * s, 102.0 * s, "HEALTH");
-                items.push(UiItem::Text {
-                    font: numbers.clone(),
-                    x: 16.0 * s + 50.0 * s,
-                    y: y + 2.0 * s,
-                    text: p.health.max(0).to_string(),
-                    color: fg,
-                });
-                if p.armor > 0 {
+                if !hidden("CHudHealth") {
+                    panel(&mut items, 16.0 * s, 102.0 * s, "HEALTH");
+                    items.push(UiItem::Text {
+                        font: numbers.clone(),
+                        x: 16.0 * s + 50.0 * s,
+                        y: y + 2.0 * s,
+                        text: p.health.max(0).to_string(),
+                        color: fg,
+                    });
+                }
+                if p.armor > 0 && !hidden("CHudBattery") {
                     panel(&mut items, 140.0 * s, 102.0 * s, "SUIT");
                     items.push(UiItem::Text {
                         font: numbers.clone(),
@@ -4107,7 +4123,9 @@ impl App {
                 // PaintNotes -> notification Think: spring the panels to the anchor at 80 %
                 // height, charge left 4 % at 0.7 s left, leave right at 0.2 s
                 self.notices.borrow_mut().draw(&mut items, w, h, &g.ui);
-                self.draw_weapon_select(&mut items, w, h, &g.ui);
+                if !hidden("CHudWeaponSelection") {
+                    self.draw_weapon_select(&mut items, w, h, &g.ui);
+                }
                 // HUDDrawPickupHistory: notices slide in from the right edge with their alpha,
                 // corner8 border in the pickup colour, grey body, DermaDefaultBold text
                 {
@@ -4362,7 +4380,7 @@ impl App {
                         }
                     }
                 }
-                if p.clip >= 0 || p.reserve > 0 {
+                if (p.clip >= 0 || p.reserve > 0) && !hidden("CHudAmmo") {
                     let ax = w - 150.0 * s;
                     panel(&mut items, ax, 136.0 * s, "AMMO");
                     let clip = if p.clip >= 0 { p.clip } else { p.reserve };

@@ -2438,7 +2438,7 @@
 {"address":"GM:OnPlayerPhysicsDrop","kind":"hook","parent":"GM","name":"OnPlayerPhysicsDrop","realms":["server"],"args":[{"name":"ply","type":"Player"},{"name":"ent","type":"Entity"},{"name":"thrown","type":"boolean"}],"rets":[],"status":"implemented"},
 {"address":"GM:OnPlayerPhysicsPickup","kind":"hook","parent":"GM","name":"OnPlayerPhysicsPickup","realms":["server"],"args":[{"name":"ply","type":"Player"},{"name":"ent","type":"Entity"}],"rets":[],"status":"implemented"},
 {"address":"GM:OnReloaded","kind":"hook","parent":"GM","name":"OnReloaded","realms":["client","server"],"args":[],"rets":[],"status":"implemented"},
-{"address":"GM:OnScreenSizeChanged","kind":"hook","parent":"GM","name":"OnScreenSizeChanged","realms":["client"],"args":[{"name":"oldWidth","type":"number"},{"name":"oldHeight","type":"number"},{"name":"newWidth","type":"number"},{"name":"newHeight","type":"number"}],"rets":[],"status":"stub"},
+{"address":"GM:OnScreenSizeChanged","kind":"hook","parent":"GM","name":"OnScreenSizeChanged","realms":["client"],"args":[{"name":"oldWidth","type":"number"},{"name":"oldHeight","type":"number"},{"name":"newWidth","type":"number"},{"name":"newHeight","type":"number"}],"rets":[],"status":"implemented"},
 {"address":"GM:OnSpawnMenuClose","kind":"hook","parent":"GM","name":"OnSpawnMenuClose","realms":["client"],"args":[],"rets":[],"status":"stub"},
 {"address":"GM:OnSpawnMenuOpen","kind":"hook","parent":"GM","name":"OnSpawnMenuOpen","realms":["client"],"args":[],"rets":[],"status":"stub"},
 {"address":"GM:OnTextEntryGetFocus","kind":"hook","parent":"GM","name":"OnTextEntryGetFocus","realms":["client"],"args":[{"name":"panel","type":"Panel"}],"rets":[],"status":"stub"},

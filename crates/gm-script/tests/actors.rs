@@ -875,6 +875,8 @@ fn glua_client_hud_paint_draws_through_surface() {
                 draw.SimpleText("hi", "DermaDefault", ScrW() / 2, 0, Color(255, 255, 255), TEXT_ALIGN_CENTER)
             end)
             hook.Add("HUDShouldDraw", "test", function(name) return name ~= "CHudHealth" end)
+            hook.Add("Think", "test", function() THOUGHT = (THOUGHT or 0) + 1 end)
+            hook.Add("OnScreenSizeChanged", "test", function(ow, oh, nw, nh) SIZES = { ow, oh, nw, nh } end)
             hook.Add("PostDrawHUD", "test", function()
                 local lp = LocalPlayer()
                 surface.DrawRect(IsValid(lp) and lp:EntIndex() or -1, 0, 1, 1)
@@ -909,5 +911,27 @@ fn glua_client_hud_paint_draws_through_surface() {
             .iter()
             .any(|d| matches!(d, gm_script::DrawCmd::Text { text, .. } if text == "hi")),
         "draw.SimpleText reaches the client: {draws:?}"
+    );
+    assert!(
+        draws
+            .iter()
+            .any(|d| matches!(d, gm_script::DrawCmd::HideHud { name } if name == "CHudHealth")),
+        "HUDShouldDraw false hides the engine element: {draws:?}"
+    );
+    assert!(
+        !draws
+            .iter()
+            .any(|d| matches!(d, gm_script::DrawCmd::HideHud { name } if name == "CHudAmmo")),
+        "elements not vetoed stay: {draws:?}"
+    );
+    rt.client_tick(&world, false);
+    let _ = rt.client_render(&world, 1920, 1080);
+    let (thought, sizes): (f64, String) = rt.actors()[0]
+        .eval("return THOUGHT, SIZES and table.concat(SIZES, \",\") or \"\"")
+        .expect("eval");
+    assert_eq!(thought, 1.0, "Think runs once per client tick");
+    assert_eq!(
+        sizes, "1280,720,1920,1080",
+        "OnScreenSizeChanged on a new screen size"
     );
 }

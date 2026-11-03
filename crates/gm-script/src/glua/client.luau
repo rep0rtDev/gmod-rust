@@ -315,16 +315,30 @@ function cam.StartOrthoView() end
 function cam.EndOrthoView() end
 
 ------------------------------------------------------------------------ the frame
+-- the engine HUD elements the game asks `HUDShouldDraw` about (the sandbox hides CHudHealth,
+-- CHudBattery, CHudAmmo, CHudSecondaryAmmo and draws its own; the client applies the answers)
+HUD_ELEMENTS = { "CHudHealth", "CHudBattery", "CHudAmmo", "CHudSecondaryAmmo", "CHudCrosshair", "CHudWeaponSelection", "CHudDamageIndicator", "CHudChat", "CHudDeathNotice", "CHudHintDisplay", "CHudZoom", "CHudHistoryResource", "CHudPoisonDamageIndicator", "CHudSquadStatus", "CHudTrain", "CHudVehicle", "CHudWeapon", "CHudGeiger", "CHudCloseCaption", "CHudMenu", "CHudMessage", "CHudSuitPower", "CHudCredits", "CHudVoiceStatus", "CHudVoiceSelfStatus", "CHUDQuickInfo", "CHudAnimationInfo", "CHudPredictionDump", "NetGraph" }
 -- the game's HUD frame: `PreDrawHUD`, then `HUDPaintBackground` and `HUDPaint` unless
 -- `HUDShouldDraw("CHudGMod")` vetoes, then `PostDrawHUD` and `DrawOverlay`; each hook runs
 -- with the surface state reset (white, DermaDefault, no material)
 if events then
+	-- `Think` / `Tick` run once per client frame (the game calls the client's Think every frame)
+	events.on("tick.client", function() hook.Run("Think"); hook.Run("Tick") end)
 	events.on("render.hud", function(p)
-		scr_w, scr_h = p.w or scr_w, p.h or scr_h
+		local w, h = p.w or scr_w, p.h or scr_h
+		if w ~= scr_w or h ~= scr_h then
+			local ow, oh = scr_w, scr_h
+			scr_w, scr_h = w, h
+			hook.Run("OnScreenSizeChanged", ow, oh, w, h)
+		end
 		set_color(draw_color, 255, 255, 255, 255)
 		set_color(text_color, 255, 255, 255, 255)
 		font, material, alpha_mul = "DermaDefault", nil, 1
 		hook.Run("PreDrawHUD")
+		-- the engine's HUD elements each ask `HUDShouldDraw(name)`; a false hides that element
+		for _, name in ipairs(HUD_ELEMENTS) do
+			if hook.Run("HUDShouldDraw", name) == false then hostdraw.hide_hud(name) end
+		end
 		if hook.Run("HUDShouldDraw", "CHudGMod") ~= false then
 			hook.Run("HUDPaintBackground")
 			hook.Run("HUDPaint")

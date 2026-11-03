@@ -787,6 +787,11 @@ pub enum DrawCmd {
         scale: f32,
     },
     End3D2D,
+    /// `draw.hide_hud(name)`: `HUDShouldDraw(name)` returned false this frame; the client skips
+    /// that native HUD element (`CHudHealth`, `CHudBattery`, `CHudAmmo`, `CHudCrosshair`, ...).
+    HideHud {
+        name: String,
+    },
     /// `draw.model`: a model drawn in the world, translucent (alpha 0..1); tool ghosts.
     Model {
         model: String,
@@ -1458,6 +1463,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 Ok(())
             },
         )?,
+    )?;
+    let sh = shared.clone();
+    draw.set(
+        "hide_hud",
+        lua.create_function(move |_, name: String| {
+            sh.draws.lock().unwrap().push(DrawCmd::HideHud { name });
+            Ok(())
+        })?,
     )?;
     let sh = shared.clone();
     draw.set(
