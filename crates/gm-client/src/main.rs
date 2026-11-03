@@ -3060,6 +3060,12 @@ impl App {
                         menu.st.node = menu.st.node.min(self.spawnlists.len().saturating_sub(1));
                     }
                 }
+                Some(derma::Action::Menu("spawnlist_edit")) => {
+                    if let Some(l) = self.spawnlists.get(i) {
+                        menu.st.rename = Some((i, l.name.clone()));
+                    }
+                    return;
+                }
                 _ => return,
             }
             menu.st.selected.clear();
@@ -6492,6 +6498,49 @@ impl ApplicationHandler for App {
                     .and_then(settings::key_name)
                     .and_then(|n| self.settings.binds.get(n))
                     .is_some_and(|c| c == "+menu");
+                // a spawnlist being renamed in its tree row: Enter keeps the name, Escape drops it
+                if self.menu.as_ref().is_some_and(|m| m.st.rename.is_some()) && !holds_menu {
+                    if down && !event.repeat {
+                        let mut save = false;
+                        if let Some(m) = self.menu.as_mut() {
+                            let mut done: Option<Option<(usize, String)>> = None;
+                            if let Some((i, name)) = m.st.rename.as_mut() {
+                                match code {
+                                    Some(KeyCode::Enter | KeyCode::NumpadEnter) => {
+                                        done = Some(Some((*i, name.trim().to_string())));
+                                    }
+                                    Some(KeyCode::Escape) => done = Some(None),
+                                    Some(KeyCode::Backspace) => {
+                                        name.pop();
+                                    }
+                                    _ => {
+                                        if let Some(t) = event.text.as_deref() {
+                                            name.extend(t.chars().filter(|c| !c.is_control()));
+                                            name.truncate(48);
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(d) = done {
+                                m.st.rename = None;
+                                if let Some((i, n)) = d {
+                                    if let Some(l) = self.spawnlists.get_mut(i) {
+                                        if !n.is_empty() {
+                                            l.name = n;
+                                            save = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if save {
+                            if let Err(e) = derma::save_spawnlists(&self.spawnlists) {
+                                eprintln!("spawnlist: {e}");
+                            }
+                        }
+                    }
+                    return;
+                }
                 if self.menu.as_ref().is_some_and(|m| m.st.search_focus) && !holds_menu {
                     if down && !event.repeat {
                         let mut refresh = false;

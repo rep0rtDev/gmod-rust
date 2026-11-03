@@ -469,6 +469,8 @@ pub struct MenuState {
     pub ctx_menu: Option<((f32, f32), Vec<String>)>,
     /// The spawnlist tree's right-click `DermaMenu` (cursor position, the list's index).
     pub list_menu: Option<((f32, f32), usize)>,
+    /// A spawnlist being renamed in its tree row (index, the typed name).
+    pub rename: Option<(usize, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -616,6 +618,7 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
             && ctx.lists.get(*i).is_some_and(|l| !l.addon);
         let mut opts = vec![("New".to_string(), "icon16/add.png", "spawnlist_new")];
         if editable {
+            opts.push(("Edit".to_string(), "icon16/pencil.png", "spawnlist_edit"));
             opts.push((
                 "Delete".to_string(),
                 "icon16/bin_closed.png",
@@ -797,7 +800,10 @@ fn spawnlists(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f3
         .iter()
         .enumerate()
         .map(|(i, l)| NodeRow {
-            label: l.name.clone(),
+            label: match &st.rename {
+                Some((r, t)) if *r == i => format!("{t}_"),
+                _ => l.name.clone(),
+            },
             icon: l.icon.clone(),
             level: if l.addon { 1.0 } else { 0.0 },
             selected: st.node == i,
