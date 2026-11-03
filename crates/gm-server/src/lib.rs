@@ -646,6 +646,8 @@ pub enum GameEvent {
         player: u32,
         amount: f32,
         dmg_type: u32,
+        /// Where the hit came from (the `Damage` usermessage's vecFrom), zero when unknown.
+        pos: Vec3,
     },
     /// `dmg_type` 0 for `kill_player`.
     PlayerDied {
@@ -4927,6 +4929,7 @@ impl<'w> Server<'w> {
                 player: id,
                 amount: to_health,
                 dmg_type,
+                pos,
             });
         }
         if died {

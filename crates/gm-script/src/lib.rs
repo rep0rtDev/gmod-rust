@@ -1660,6 +1660,7 @@ impl Runtime {
                     player,
                     amount,
                     dmg_type,
+                    ..
                 } => {
                     p.ints.push(("player", player as i64));
                     p.floats.push(("amount", amount as f64));

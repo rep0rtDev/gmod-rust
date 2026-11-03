@@ -757,6 +757,21 @@ impl ServerNet {
                     }
                 }
             }
+            if let gm_server::GameEvent::PlayerDamaged {
+                player,
+                amount,
+                pos,
+                ..
+            } = e
+            {
+                // the Damage usermessage: only the hurt player hears about it
+                let text = format!("Hurt {amount} {} {} {}", pos.x, pos.y, pos.z);
+                for c in self.clients.values_mut() {
+                    if c.welcomed && !c.closing && c.player == *player {
+                        c.pending_events.push(text.clone());
+                    }
+                }
+            }
         }
         if let Some(h) = self.hooks.as_mut() {
             if !events.is_empty() {

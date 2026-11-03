@@ -804,6 +804,9 @@ struct App {
     /// the death camera keeps them while it pulls back.
     death_at: Option<Instant>,
     death_view: Vec3,
+    /// CHudDamageIndicator: attack strength front / rear / left / right, fading 2/s.
+    dmg: [f32; 4],
+    dmg_at: Instant,
     context: Option<ContextMenu>,
     /// Scripted weapons as last seen (`ClientWorld::weapon_defs`) and their viewmodel / world
     /// model entries after the stock table (leaked once per change: the table is `'static`).
@@ -1199,6 +1202,35 @@ impl App {
             .players
             .iter()
             .find(|p| Some(p.id) == me)
+    }
+
+    /// `CHudDamageIndicator::CalcDamageDirection` (Source SDK): a hit from within 50 u lights
+    /// every side; farther, the direction's dot with forward / right lights the side it
+    /// exceeds 0.3 on (kept at the strongest). A zero origin means an unknown source: nothing.
+    fn damage_from(&mut self, from: Vec3, origin: Vec3) {
+        if from == Vec3::ZERO {
+            return;
+        }
+        let d = from - origin;
+        if d.length() <= 50.0 {
+            self.dmg = [1.0; 4];
+            return;
+        }
+        let d = d.normalize();
+        let y = self.view.y.to_radians();
+        let fwd = Vec3::new(y.cos(), y.sin(), 0.0);
+        let right = Vec3::new(y.sin(), -y.cos(), 0.0);
+        let (f, r) = (d.dot(fwd), d.dot(right));
+        if f > 0.3 {
+            self.dmg[0] = self.dmg[0].max(f);
+        } else if f < -0.3 {
+            self.dmg[1] = self.dmg[1].max(-f);
+        }
+        if r > 0.3 {
+            self.dmg[3] = self.dmg[3].max(r);
+        } else if r < -0.3 {
+            self.dmg[2] = self.dmg[2].max(-r);
+        }
     }
 
     fn open_menu(&mut self) {
@@ -3044,6 +3076,15 @@ impl App {
             }
             let events = std::mem::take(&mut self.sim.client.events);
             for e in events {
+                if let Some(rest) = e.strip_prefix("Hurt ") {
+                    let v: Vec<f32> = rest.split(' ').filter_map(|x| x.parse().ok()).collect();
+                    if let (&[amount, x, y, z], Some(me)) = (v.as_slice(), self.local_snap()) {
+                        if amount > 0.0 {
+                            let o = me.origin;
+                            self.damage_from(Vec3::new(x, y, z), o);
+                        }
+                    }
+                }
                 if let Some(d) = DeathNotice::parse(&e, &self.sim.client.world.players) {
                     self.deaths.push(d);
                 }
@@ -3866,6 +3907,12 @@ impl App {
                 }
             }
         }
+        // CHudDamageIndicator fade: 2/s, dropped once below 0.4 (SDK Paint)
+        let fade = self.dmg_at.elapsed().as_secs_f32().min(0.25) * 2.0;
+        self.dmg_at = Instant::now();
+        for v in &mut self.dmg {
+            *v = if *v > 0.4 { (*v - fade).max(0.0) } else { 0.0 };
+        }
         let ui_items = self.ui_items(o, camera.view_proj(aspect));
         let g = self.gfx.as_ref().unwrap();
         if bloom {
@@ -4308,6 +4355,68 @@ impl App {
                         text: "Q".to_string(),
                         color: [1.0, 208.0 / 255.0, 64.0 / 255.0, 1.0],
                     });
+                }
+                // CHudDamageIndicator (hudlayout.res: dmg_xpos 30, dmg_ypos 100, dmg_wide 36,
+                // dmg_tall1 240 outer / dmg_tall2 200 inner, DmgColor 255 0 0, alpha from the attack
+                // strength): left / right trapezoids, front / rear a full-screen red wash; the SDK fades
+                // each 2/s and drops it below 0.4. Flat quads stand in for the game's alpha gradient
+                // (outer half full, inner half a third); the wash's 0.3 factor is not measured.
+                {
+                    if !hidden("CHudDamageIndicator") {
+                        let red = |a: f32| [1.0, 0.0, 0.0, a];
+                        let quad = |items: &mut Vec<UiItem>, pts: [[f32; 2]; 4], a: f32| {
+                            items.push(UiItem::Tri {
+                                pts: [pts[0], pts[1], pts[2]],
+                                color: red(a),
+                            });
+                            items.push(UiItem::Tri {
+                                pts: [pts[0], pts[2], pts[3]],
+                                color: red(a),
+                            });
+                        };
+                        let (x0, y0, wd, t1, t2) =
+                            (30.0 * s, 100.0 * s, 36.0 * s, 240.0 * s, 200.0 * s);
+                        let inset = (t1 - t2) * 0.5;
+                        for (side, v) in [(2usize, self.dmg[2]), (3, self.dmg[3])] {
+                            if v <= 0.0 {
+                                continue;
+                            }
+                            let xo = if side == 2 { x0 } else { w - x0 };
+                            let dir = if side == 2 { 1.0 } else { -1.0 };
+                            let xm = xo + dir * wd * 0.5;
+                            let xi = xo + dir * wd;
+                            quad(
+                                &mut items,
+                                [
+                                    [xo, y0],
+                                    [xm, y0 + inset * 0.5],
+                                    [xm, y0 + t1 - inset * 0.5],
+                                    [xo, y0 + t1],
+                                ],
+                                v,
+                            );
+                            quad(
+                                &mut items,
+                                [
+                                    [xm, y0 + inset * 0.5],
+                                    [xi, y0 + inset],
+                                    [xi, y0 + t2 + inset],
+                                    [xm, y0 + t1 - inset * 0.5],
+                                ],
+                                v / 3.0,
+                            );
+                        }
+                        let wash = self.dmg[0].max(self.dmg[1]);
+                        if wash > 0.0 {
+                            items.push(UiItem::Rect {
+                                x: 0.0,
+                                y: 0.0,
+                                w,
+                                h,
+                                color: red(0.3 * wash),
+                            });
+                        }
+                    }
                 }
                 if !hidden("CHudHealth") {
                     panel(&mut items, 16.0 * s, 102.0 * s, "HEALTH");
@@ -5487,6 +5596,8 @@ fn main() -> Result<()> {
         scoreboard: false,
         death_at: None,
         death_view: Vec3::ZERO,
+        dmg: [0.0; 4],
+        dmg_at: Instant::now(),
         context: None,
         scripted_defs: Vec::new(),
         scripted_vms: Vec::new(),
