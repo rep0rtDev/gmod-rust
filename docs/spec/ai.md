@@ -83,6 +83,14 @@ Own path following, one step per tick after the physics step and NPC settling:
   the bot looks at the NPC or not, while `_turn90` stays at 7 in the open 370 u away);
   the step and the yaw clamp scale with the actual interval (15.58 u / 29.3 deg per 13
   ticks at walk speed). Ours uses the map's PVS from the player's eye cluster to the NPC's.
+- Open (`server_npc_walk_citizen_corner_seen`, re-recorded with the probe bot's body yaw
+  following its eye yaw - the game's spawns read `GetAngles`, so the earlier recording had
+  the NPC facing the other way): an NPC spawned facing away from its goal turns in place
+  in the game slowly and late (yaw 16 deg 13 ticks after the goto, then 63 / 94 / 110 /
+  142 / 157 / 177 every 8 ticks while it creeps), then walks straight -x along y = -491
+  and corners at x = 75 (yaw 156) and x = -8 (140); ours turns at once at a steady 2
+  deg/tick, settles on the direct bearing (168) and walks the diagonal. Turn-in-place
+  rate and the route's first leg differ - not derived yet.
 - Gait (`NpcMoveDef`, `npc_move_def(class)`), measured on gm_construct over a 400 u
   straight walk (one think = 0.105 s):
 

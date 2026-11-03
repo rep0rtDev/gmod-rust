@@ -926,6 +926,7 @@ SCENARIOS.sandbox = function(scn, done)
 		for i, pe in ipairs(placed) do if IsValid(pe) then local p, a = pe:GetPos(), pe:GetAngles() rec.before.placed[i] = { pos = { p.x, p.y, p.z }, ang = { a.p, a.y, a.r } } end end
 		if op.op == "spawn" then
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			bot:SetAngles(Angle(0, op.yaw or 0, 0)) -- a real player's body yaw follows the eye yaw
 			local eye = bot:GetShootPos()
 			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 2048, filter = { bot } })
 			local placedIndex = 0
@@ -936,6 +937,7 @@ SCENARIOS.sandbox = function(scn, done)
 		elseif op.op == "spawnswep" then
 			-- Spawn_Weapon straight from the spawnmenu's weapons tab (gm_spawnswep)
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			bot:SetAngles(Angle(0, op.yaw or 0, 0)) -- a real player's body yaw follows the eye yaw
 			local eye = bot:GetShootPos()
 			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 2048, filter = { bot } })
 			rec.trace = { hit = tr.Hit, pos = { tr.HitPos.x, tr.HitPos.y, tr.HitPos.z }, normal = { tr.HitNormal.x, tr.HitNormal.y, tr.HitNormal.z } }
@@ -1261,6 +1263,7 @@ SCENARIOS.toolgun = function(scn, done)
 		local wait = op.wait or 3
 		if op.op == "click" then
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			bot:SetAngles(Angle(0, op.yaw or 0, 0)) -- a real player's body yaw follows the eye yaw
 			local tr = toolTrace()
 			local eye = bot:GetShootPos()
 			rec.tool, rec.button = op.tool, op.button or "left"
@@ -1285,6 +1288,7 @@ SCENARIOS.toolgun = function(scn, done)
 		elseif op.op == "spawnswep" then
 			-- Spawn_Weapon straight from the spawnmenu's weapons tab (gm_spawnswep)
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			bot:SetAngles(Angle(0, op.yaw or 0, 0)) -- a real player's body yaw follows the eye yaw
 			local eye = bot:GetShootPos()
 			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 2048, filter = { bot } })
 			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal) }
@@ -1292,6 +1296,7 @@ SCENARIOS.toolgun = function(scn, done)
 		elseif op.op == "spawnnpc" then
 			-- Spawn_NPC straight from the spawnmenu's NPCs tab (gm_spawnnpc <list key> <weapon>)
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			bot:SetAngles(Angle(0, op.yaw or 0, 0)) -- a real player's body yaw follows the eye yaw
 			local eye = bot:GetShootPos()
 			local tr = util.TraceLine({ start = eye, endpos = eye + bot:EyeAngles():Forward() * 2048, filter = { bot } })
 			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal) }
@@ -1324,6 +1329,7 @@ SCENARIOS.toolgun = function(scn, done)
 			bot:SelectWeapon(op.class)
 		elseif op.op == "spawnvehicle" then
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			bot:SetAngles(Angle(0, op.yaw or 0, 0)) -- a real player's body yaw follows the eye yaw
 			-- Spawn_Vehicle reads ply:GetAngles(); a real player's body yaw follows the view, the
 			-- bot's does not between a vehicle exit and the next command
 			bot:SetAngles(Angle(0, op.yaw or 0, 0))
@@ -1343,7 +1349,7 @@ SCENARIOS.toolgun = function(scn, done)
 			end
 		elseif op.op == "exit" then
 			-- optional view angles before the exit (does the engine pick the exit side by the view?)
-			if op.yaw then bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw, 0)) end
+			if op.yaw then bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw, 0)) bot:SetAngles(Angle(0, op.yaw, 0)) end
 			bot:ExitVehicle()
 		elseif op.op == "concmd" then
 			RunConsoleCommand(op.cmd, tostring(op.value or ""))
@@ -1392,6 +1398,7 @@ SCENARIOS.toolgun = function(scn, done)
 			end)
 		elseif op.op == "press" then
 			bot:SetEyeAngles(Angle(op.pitch or 0, op.yaw or 0, 0))
+			bot:SetAngles(Angle(0, op.yaw or 0, 0)) -- a real player's body yaw follows the eye yaw
 			-- a name or a list of names: "use" / "attack" / the driving keys (forward, back,
 			-- moveleft, moveright, jump = handbrake, speed = boost)
 			local names = { use = IN_USE, attack = IN_ATTACK, forward = IN_FORWARD, back = IN_BACK, moveleft = IN_MOVELEFT, moveright = IN_MOVERIGHT, jump = IN_JUMP, speed = IN_SPEED }

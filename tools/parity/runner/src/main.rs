@@ -2994,7 +2994,13 @@ fn run_sandbox(scn: &Scenario) -> Result<Value> {
         }
         for e in &events {
             match e {
-                Event::LimitHit { limit } => messages.push(json!({ "t": i, "limit": limit })),
+                Event::LimitHit { limit } => {
+                    messages.push(json!({ "t": i, "limit": limit }));
+                    // the game's Player:LimitHit is a SendLua
+                    messages.push(
+                        json!({ "t": i, "lua": format!("hook.Run('LimitHit',\"{limit}\")") }),
+                    );
+                }
                 Event::Spawned { .. } => {
                     messages.push(json!({ "t": i, "lua": "achievements.SpawnedProp()" }))
                 }
@@ -5813,7 +5819,15 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
         fn live_entries(l: &[Value]) -> Vec<&Value> {
             l.iter().filter(|u| u["live"].as_u64() != Some(0)).collect()
         }
-        let (tl, ol) = (live_entries(tu), live_entries(ou));
+        // a recording without the `live` field keeps its dead entries in the list (cleanup
+        // leaves them until the purge), so the whole lists are compared there
+        // (an empty list there may be a purged one, so it is held against our live entries)
+        let theirs_knows_live = tu.is_empty() || tu.iter().any(|u| u.get("live").is_some());
+        let (tl, ol) = if theirs_knows_live {
+            (live_entries(tu), live_entries(ou))
+        } else {
+            (tu.iter().collect(), ou.iter().collect())
+        };
         // ids restart with a purged list, so they only count while no entry is dead
         let ids_count = tl.len() == tu.len() && ol.len() == ou.len();
         if tl.len() != ol.len()
@@ -6613,7 +6627,13 @@ fn run_toolgun(scn: &Scenario) -> Result<Value> {
         }
         for e in &events {
             match e {
-                Event::LimitHit { limit } => messages.push(json!({ "t": i, "limit": limit })),
+                Event::LimitHit { limit } => {
+                    messages.push(json!({ "t": i, "limit": limit }));
+                    // the game's Player:LimitHit is a SendLua
+                    messages.push(
+                        json!({ "t": i, "lua": format!("hook.Run('LimitHit',\"{limit}\")") }),
+                    );
+                }
                 Event::Lua { code } => messages.push(json!({ "t": i, "lua": code })),
                 Event::Cleanup { kind } => messages
                     .push(json!({ "t": i, "lua": format!("hook.Run('OnCleanup','{kind}')") })),
