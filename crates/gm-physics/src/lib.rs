@@ -1584,6 +1584,7 @@ impl World {
     pub fn keep_upright(&mut self, body: BodyHandle, target: Quat, tick: f32) {
         let st = self.state(body);
         let p = physgun::PhysgunParams {
+            max_dv: f32::INFINITY,
             max_speed: f32::MAX,
             max_angular: 3700.0,
             damping: 1.0,

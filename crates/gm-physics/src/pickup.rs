@@ -54,6 +54,7 @@ pub const SWEEP_TANGENTS: [f32; 7] = [
 /// Controller parameters that put the prop on target as fast as the caps allow.
 pub fn params(tick: f32) -> PhysgunParams {
     PhysgunParams {
+        max_dv: f32::INFINITY,
         max_speed: MAX_SPEED,
         max_angular: MAX_ANGULAR,
         damping: 1.0,

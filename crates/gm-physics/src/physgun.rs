@@ -16,6 +16,9 @@ pub struct PhysgunParams {
     pub max_angular: f32,
     pub damping: f32,
     pub time_to_arrive: f32,
+    /// Largest velocity change one hold step may impose (u/s per tick); the shadow
+    /// controller's force limit, infinite for a plain prop.
+    pub max_dv: f32,
 }
 
 impl Default for PhysgunParams {
@@ -26,6 +29,7 @@ impl Default for PhysgunParams {
             max_angular: 5000.0,
             damping: 0.8,
             time_to_arrive: 0.05,
+            max_dv: f32::INFINITY,
         }
     }
 }
@@ -88,8 +92,14 @@ impl Grab {
 pub fn controller(v: Vec3, delta: Vec3, p: &PhysgunParams) -> Vec3 {
     let want = v * (1.0 - p.damping) + delta / p.time_to_arrive;
     let speed = want.length();
-    if speed > p.max_speed {
+    let want = if speed > p.max_speed {
         want * (p.max_speed / speed)
+    } else {
+        want
+    };
+    let dv = want - v;
+    if dv.length() > p.max_dv {
+        v + dv.normalize() * p.max_dv
     } else {
         want
     }

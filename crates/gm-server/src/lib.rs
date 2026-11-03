@@ -13823,7 +13823,11 @@ impl<'w> Server<'w> {
             if let Some(b) = self.part_body(ent, g.bone) {
                 let st = self.physics.state(b);
                 let (tp, tr) = g.target(eye, forward, view.y, st.rotation);
-                self.physics.hold(b, tp, tr, &self.physgun_params);
+                let mut params = self.physgun_params;
+                if self.ragdoll_bodies.contains_key(&ent) {
+                    params.max_dv = Self::RAGDOLL_HOLD_DV / self.physics.mass(b).max(0.1);
+                }
+                self.physics.hold(b, tp, tr, &params);
             }
             if let Some(p) = self.players.get_mut(&id) {
                 p.held = Some((ent, g));
@@ -15151,6 +15155,13 @@ impl<'w> Server<'w> {
     /// frozen pelvis (`phys_ragdoll_kleiner_hang`): the head sags from -75 to -3 pitch over 1.5 s;
     /// 0.15..0.3 track that, 1.0 locks every joint, 0 drops the head in 10 ticks.
     const RAGDOLL_FRICTION_SCALE: f32 = 0.25;
+
+    /// Physgun hold on a ragdoll part: the shadow controller's force limit, as velocity change
+    /// per tick times the part's mass. Measured on kleiner hung by a frozen pelvis
+    /// (`physgun_ragdoll_grab/head_grab/foot_grab`): unlimited, lifting the calf swung the leg
+    /// 50 u past the game's; 80 leaves 16.5 u there and keeps the head and foot grabs within
+    /// 4 u of unlimited; a flat (massless) cap or 10..40 moved the foot grab 5..10 u off.
+    const RAGDOLL_HOLD_DV: f32 = 80.0;
 
     /// `.phy` `animatedfriction`: every joint's dry friction ramps `min` -> `max` over
     /// `time_in` seconds from the spawn, holds `time_hold`, falls back to `min` over `time_out`
