@@ -761,6 +761,17 @@ impl ServerNet {
                 }
                 gm_server::WorldEffect::Explosion { pos } => EffectEvent::Explosion { pos },
                 gm_server::WorldEffect::Splash { pos } => EffectEvent::Splash { pos },
+                gm_server::WorldEffect::PropImpact {
+                    ent,
+                    lpos,
+                    lnormal,
+                    surface,
+                } => EffectEvent::PropImpact {
+                    ent,
+                    lpos,
+                    lnormal,
+                    surface,
+                },
             }));
         let events = std::mem::take(&mut server.game_events);
         for e in &events {

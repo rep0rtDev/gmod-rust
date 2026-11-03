@@ -1039,6 +1039,8 @@ struct App {
     fx_tracers: Vec<(u32, Vec3, Instant)>,
     /// Bullet decals: position, normal, metal, birth (the newest 256).
     fx_decals: std::collections::VecDeque<(Vec3, Vec3, String, Instant)>,
+    /// Bullet decals on props: entity, position and normal in its frame, decal material.
+    fx_prop_decals: std::collections::VecDeque<(u32, Vec3, Vec3, String, std::time::Instant)>,
     /// Flashes: position, size, birth (impact sparks, explosions).
     fx_bursts: Vec<(Vec3, f32, Instant, bool)>,
     /// Own muzzle flash shows until then.
@@ -3682,6 +3684,29 @@ impl App {
                     gm_net::msg::EffectEvent::Splash { pos } => {
                         self.fx_bursts.push((pos + Vec3::Z * 8.0, 28.0, now, true));
                     }
+                    gm_net::msg::EffectEvent::PropImpact {
+                        ent,
+                        lpos,
+                        lnormal,
+                        surface,
+                    } => {
+                        if let Some(e) = self.sim.client.world.entities.get(&ent) {
+                            let rot = gm_render::props::angle_matrix(e.angles.to_array());
+                            let pos = e.pos + rot * lpos;
+                            self.fx_bursts
+                                .push((pos + rot * lnormal * 1.5, 5.0, now, false));
+                        }
+                        if self.fx_prop_decals.len() >= 256 {
+                            self.fx_prop_decals.pop_front();
+                        }
+                        self.fx_prop_decals.push_back((
+                            ent,
+                            lpos,
+                            lnormal,
+                            impact_decal(&surface, lpos),
+                            now,
+                        ));
+                    }
                 }
             }
             for s in std::mem::take(&mut self.sim.client.sounds) {
@@ -4726,11 +4751,33 @@ impl App {
                     g.fx_decal_mats.insert(name.clone(), m);
                 }
             }
+            self.fx_prop_decals
+                .retain(|(_, _, _, _, born)| now.duration_since(*born).as_secs_f32() < 120.0);
+            for (_, _, _, name, _) in &self.fx_prop_decals {
+                if !name.is_empty() && !g.fx_decal_mats.contains_key(name) {
+                    let m = g.world.decal_material(&g.gpu, &self.mount, name);
+                    g.fx_decal_mats.insert(name.clone(), m);
+                }
+            }
             for (pos, normal, name, _) in &self.fx_decals {
                 if let Some(Some(m)) = g.fx_decal_mats.get(name) {
                     let (v, i) = g.world.decal_quad(*pos, *normal, 6.4, [1.0; 3]);
                     modulate.push((m, v, i));
                 }
+            }
+            // decals on props ride their entity
+            for (ent, lpos, lnormal, name, _) in &self.fx_prop_decals {
+                let (Some(e), Some(Some(m))) = (ents.get(ent), g.fx_decal_mats.get(name)) else {
+                    continue;
+                };
+                let rot = gm_render::props::angle_matrix(e.angles.to_array());
+                let (v, i) = g.world.decal_quad(
+                    e.pos + rot * *lpos,
+                    (rot * *lnormal).normalize_or_zero(),
+                    6.4,
+                    [1.0; 3],
+                );
+                modulate.push((m, v, i));
             }
         }
         // flashlights (`r_flashlightfov` 53.7, `r_flashlightfar` 750): a spot from each lit
@@ -6832,6 +6879,7 @@ fn main() -> Result<()> {
         vm_serial_seen: 0,
         fx_tracers: Vec::new(),
         fx_decals: Default::default(),
+        fx_prop_decals: Default::default(),
         fx_bursts: Vec::new(),
         fx_muzzle_until: None,
         tool_screen: ToolScreen::default(),

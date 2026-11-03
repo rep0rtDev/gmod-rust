@@ -524,6 +524,13 @@ pub enum EffectEvent {
     Splash {
         pos: Vec3,
     },
+    /// Bullet hit on a prop: a decal in the entity's frame, `surface` its surface property.
+    PropImpact {
+        ent: u32,
+        lpos: Vec3,
+        lnormal: Vec3,
+        surface: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -561,7 +568,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 22;
+pub const PROTOCOL: u16 = 23;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1386,6 +1393,18 @@ impl ServerMsg {
                             w.u8(3);
                             w.vec3(*pos);
                         }
+                        EffectEvent::PropImpact {
+                            ent,
+                            lpos,
+                            lnormal,
+                            surface,
+                        } => {
+                            w.u8(4);
+                            w.u32(*ent);
+                            w.vec3(*lpos);
+                            w.vec3(*lnormal);
+                            w.str(surface);
+                        }
                     }
                 }
             }
@@ -1713,6 +1732,12 @@ impl ServerMsg {
                         },
                         2 => EffectEvent::Explosion { pos: r.vec3()? },
                         3 => EffectEvent::Splash { pos: r.vec3()? },
+                        4 => EffectEvent::PropImpact {
+                            ent: r.u32()?,
+                            lpos: r.vec3()?,
+                            lnormal: r.vec3()?,
+                            surface: r.str()?,
+                        },
                         _ => return Err(Truncated),
                     });
                 }

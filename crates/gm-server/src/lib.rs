@@ -576,6 +576,14 @@ pub enum WorldEffect {
     Explosion { pos: Vec3 },
     /// `WaterSplash` at `pos`: a player entering or leaving the water.
     Splash { pos: Vec3 },
+    /// A bullet hit on a prop: a decal in the entity's frame (`lpos` / `lnormal`), `surface`
+    /// the prop's PHY surface property.
+    PropImpact {
+        ent: u32,
+        lpos: Vec3,
+        lnormal: Vec3,
+        surface: String,
+    },
 }
 
 /// First projectile entity id (`Projectile::id`); sandbox ids stay far below.
@@ -6370,6 +6378,25 @@ impl<'w> Server<'w> {
         // the pod 0/1 after 500, the jeep after 5000)
         let vehicle = self.vehicles.contains_key(&prop);
         let broke = !vehicle && self.damage_prop(prop, damage, dmg_type);
+        if !broke {
+            if let Some(st) = self.prop_state(prop) {
+                let inv = st.rotation.inverse();
+                let surface = self
+                    .sandbox
+                    .props()
+                    .iter()
+                    .find(|p| p.id == prop)
+                    .and_then(|p| self.models.get(&p.model))
+                    .map(|m| m.surfaceprop.clone())
+                    .unwrap_or_else(|| "concrete".to_owned());
+                self.effects.push(WorldEffect::PropImpact {
+                    ent: prop,
+                    lpos: inv * (pos - st.position),
+                    lnormal: inv * -force.normalize_or_zero(),
+                    surface,
+                });
+            }
+        }
         self.prop_hits.push(PropHit {
             tick: self.tick_count,
             attacker,
