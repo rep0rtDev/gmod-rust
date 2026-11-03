@@ -74,6 +74,8 @@ const fn normal(x: u16, y: u16, w: u16, h: u16) -> Piece {
 }
 
 pub const TREE: Piece = border(256, 128, 127, 127, 16);
+/// `SKIN.tex.Tooltip` (GWEN 384,64 31x31, 8 px borders).
+pub const TOOLTIP: Piece = border(384, 64, 31, 31, 8);
 pub const TEXTBOX: Piece = border(0, 150, 127, 21, 4);
 pub const TAB_CONTROL: Piece = border(0, 256, 127, 127, 8);
 pub const TABT_ACTIVE: Piece = border(0, 384, 63, 31, 8);

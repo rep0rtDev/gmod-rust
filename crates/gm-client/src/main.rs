@@ -4921,11 +4921,12 @@ impl App {
                 None => Vec::new(),
             };
             let (cx, cy) = self.cursor;
-            let hovered = layout
+            let hovered_tip = layout
                 .tips
                 .iter()
-                .find(|(x, y, tw, th, _)| cx >= *x && cy >= *y && cx < x + tw && cy < y + th)
-                .map(|t| t.4.clone());
+                .find(|(x, y, tw, th, _)| cx >= *x && cy >= *y && cx < x + tw && cy < y + th);
+            let hovered = hovered_tip.map(|t| t.4.clone());
+            let hover_y = hovered_tip.map(|t| t.1).unwrap_or(cy);
             let tip = hovered.map(|n| match self.menu_cache.borrow().tip.clone() {
                 Some((prev, t0)) if prev == n => (n, t0),
                 _ => (n, std::time::Instant::now()),
@@ -4940,33 +4941,25 @@ impl App {
                 tip: tip.clone(),
             };
             items.extend(layout.items);
-            // DTooltip after a short hover: the text in a light box above the cursor
+            // DTooltip (`dtooltip.lua`): after `tooltip_delay` (0.5 s) the text in the skin's
+            // Tooltip border, w + 8 / h + 6, centred on the cursor and above it (cursor - 50 or
+            // over the hovered icon, whichever is higher).
             if let Some((name, t0)) = &tip {
-                if t0.elapsed().as_secs_f32() >= 0.3 {
-                    let tw = ctx.font.text_width(name) + 16.0;
-                    let th = ctx.font.line_height + 8.0;
+                if t0.elapsed().as_secs_f32() >= 0.5 {
+                    let tw = ctx.font.text_width(name) + 8.0;
+                    let th = ctx.font.line_height + 6.0;
                     let x = (cx - tw / 2.0).clamp(0.0, (w - tw).max(0.0));
-                    let y = (cy - th - 12.0).max(0.0);
-                    items.push(UiItem::Rect {
-                        x: x - 1.0,
-                        y: y - 1.0,
-                        w: tw + 2.0,
-                        h: th + 2.0,
-                        color: [0.0, 0.0, 0.0, 1.0],
-                    });
-                    items.push(UiItem::Rect {
-                        x,
-                        y,
-                        w: tw,
-                        h: th,
-                        color: [250.0 / 255.0, 250.0 / 255.0, 250.0 / 255.0, 1.0],
-                    });
+                    let y = (cy - 50.0)
+                        .min(hover_y - th - 10.0)
+                        .max(2.0)
+                        .min((h - th).max(0.0));
+                    derma::nine(&mut items, &derma::TOOLTIP, x, y, tw, th, [1.0; 4]);
                     items.push(UiItem::Text {
                         font: Some(derma::FONT.to_string()),
-                        x: x + 8.0,
-                        y: y + 4.0,
+                        x: x + 4.0,
+                        y: y + 3.0,
                         text: name.clone(),
-                        color: [0.1, 0.1, 0.1, 1.0],
+                        color: [0.0, 0.0, 0.0, 1.0],
                     });
                 }
             }
