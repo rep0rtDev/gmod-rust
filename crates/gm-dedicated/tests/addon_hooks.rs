@@ -3703,6 +3703,8 @@ fn a_stools_setting_schema_reaches_the_client_and_shapes_the_clicks_settings() {
             min: 0.0,
             max: 1000.0,
             default: "10".into(),
+            label: String::new(),
+            options: Vec::new(),
         },
         ToolSetting {
             name: "nocollide".into(),
@@ -3710,6 +3712,8 @@ fn a_stools_setting_schema_reaches_the_client_and_shapes_the_clicks_settings() {
             min: f32::MIN,
             max: f32::MAX,
             default: "0".into(),
+            label: String::new(),
+            options: Vec::new(),
         },
         ToolSetting {
             name: "label".into(),
@@ -3717,6 +3721,8 @@ fn a_stools_setting_schema_reaches_the_client_and_shapes_the_clicks_settings() {
             min: f32::MIN,
             max: f32::MAX,
             default: "weld".into(),
+            label: String::new(),
+            options: Vec::new(),
         },
     ];
     assert_eq!(server.tool_schemas_version, 1);

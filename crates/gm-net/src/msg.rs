@@ -533,7 +533,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 18;
+pub const PROTOCOL: u16 = 19;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1283,6 +1283,12 @@ impl ServerMsg {
                         w.f32(s.min);
                         w.f32(s.max);
                         w.str(&s.default);
+                        w.str(&s.label);
+                        w.u8(s.options.len().min(255) as u8);
+                        for (l, v) in s.options.iter().take(255) {
+                            w.str(l);
+                            w.str(v);
+                        }
                     }
                 }
             }
@@ -1703,12 +1709,24 @@ impl ServerMsg {
                     let k = r.u8()? as usize;
                     let mut settings = Vec::with_capacity(k);
                     for _ in 0..k {
+                        let name = r.str()?;
+                        let kind = gm_server::ToolSettingKind::from_u8(r.u8()?);
+                        let min = r.f32()?;
+                        let max = r.f32()?;
+                        let default = r.str()?;
+                        let label = r.str()?;
+                        let mut options = Vec::new();
+                        for _ in 0..r.u8()? {
+                            options.push((r.str()?, r.str()?));
+                        }
                         settings.push(gm_server::ToolSetting {
-                            name: r.str()?,
-                            kind: gm_server::ToolSettingKind::from_u8(r.u8()?),
-                            min: r.f32()?,
-                            max: r.f32()?,
-                            default: r.str()?,
+                            name,
+                            kind,
+                            min,
+                            max,
+                            default,
+                            label,
+                            options,
                         });
                     }
                     tools.push((tool, settings));

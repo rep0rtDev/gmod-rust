@@ -60,7 +60,11 @@ pub fn tool_click_settings(
                     "0" | "false" | "off" => "0".into(),
                     _ => s.default.clone(),
                 },
-                gm_server::ToolSettingKind::Text => v.clone(),
+                gm_server::ToolSettingKind::Text
+                | gm_server::ToolSettingKind::Help
+                | gm_server::ToolSettingKind::Key
+                | gm_server::ToolSettingKind::Color
+                | gm_server::ToolSettingKind::Choice => v.clone(),
             },
         };
         out.push((s.name.clone(), v));

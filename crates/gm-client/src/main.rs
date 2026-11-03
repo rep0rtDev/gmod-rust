@@ -1670,7 +1670,11 @@ impl App {
                     "1".into()
                 }
             }
-            gm_server::ToolSettingKind::Text => {
+            gm_server::ToolSettingKind::Text
+            | gm_server::ToolSettingKind::Help
+            | gm_server::ToolSettingKind::Key
+            | gm_server::ToolSettingKind::Color
+            | gm_server::ToolSettingKind::Choice => {
                 self.panel_text = Some((row, cur));
                 return true;
             }
@@ -5361,7 +5365,11 @@ impl App {
                                         format!(" number {}..{}", s.min, s.max)
                                     }
                                     gm_server::ToolSettingKind::Bool => " bool".into(),
-                                    gm_server::ToolSettingKind::Text => " text".into(),
+                                    gm_server::ToolSettingKind::Text
+                                    | gm_server::ToolSettingKind::Help
+                                    | gm_server::ToolSettingKind::Key
+                                    | gm_server::ToolSettingKind::Color
+                                    | gm_server::ToolSettingKind::Choice => " text".into(),
                                 };
                                 self.console.log(format!(
                                     "  {} = {cur}{range} (default {})",

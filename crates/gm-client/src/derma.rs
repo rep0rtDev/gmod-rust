@@ -1318,7 +1318,11 @@ pub fn controls(
                 }
                 (h, (x, w))
             }
-            gm_server::ToolSettingKind::Text => {
+            gm_server::ToolSettingKind::Text
+            | gm_server::ToolSettingKind::Help
+            | gm_server::ToolSettingKind::Key
+            | gm_server::ToolSettingKind::Color
+            | gm_server::ToolSettingKind::Choice => {
                 let h = 20.0;
                 if y + h <= ry + rh {
                     text(&mut out.items, FONT, ctx.font, x, y, h, &label, LABEL_DARK);
@@ -1852,7 +1856,11 @@ pub fn controls_height(schema: &[gm_server::ToolSetting]) -> f32 {
             10.0 + match s.kind {
                 gm_server::ToolSettingKind::Number => 32.0,
                 gm_server::ToolSettingKind::Bool => 16.0,
-                gm_server::ToolSettingKind::Text => 20.0,
+                gm_server::ToolSettingKind::Text
+                | gm_server::ToolSettingKind::Help
+                | gm_server::ToolSettingKind::Key
+                | gm_server::ToolSettingKind::Color
+                | gm_server::ToolSettingKind::Choice => 20.0,
             }
         })
         .sum::<f32>()

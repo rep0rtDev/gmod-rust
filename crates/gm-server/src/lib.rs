@@ -1085,6 +1085,11 @@ pub struct ToolSetting {
     pub min: f32,
     pub max: f32,
     pub default: String,
+    /// The control's label: a localisation key (`#tool.<mode>.<setting>`); empty = derived
+    /// from the name by the client.
+    pub label: String,
+    /// `Choice`: the options (label, value); `Color`: the g and b convar names (the name is r).
+    pub options: Vec<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1092,6 +1097,14 @@ pub enum ToolSettingKind {
     Number,
     Bool,
     Text,
+    /// A line of help text (no setting).
+    Help,
+    /// A numpad key binder (KEY_PAD_0..9 = 37..46).
+    Key,
+    /// A colour picker over three r/g/b convars.
+    Color,
+    /// One of `options`.
+    Choice,
 }
 
 /// The built-in stools' ControlPanels as the game builds them (`TOOL.BuildCPanel`: NumSlider
@@ -1111,6 +1124,8 @@ pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
         min,
         max,
         default: fmt_num(v),
+        label: String::new(),
+        options: Vec::new(),
     };
     let key = |name: &str, v: i32| num(name, v as f32, 37.0, 46.0);
     let flag = |name: &str, v: bool| ToolSetting {
@@ -1119,6 +1134,8 @@ pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
         min: 0.0,
         max: 1.0,
         default: if v { "1" } else { "0" }.into(),
+        label: String::new(),
+        options: Vec::new(),
     };
     let text = |name: &str, v: &str| ToolSetting {
         name: name.into(),
@@ -1126,6 +1143,8 @@ pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
         min: 0.0,
         max: 0.0,
         default: v.into(),
+        label: String::new(),
+        options: Vec::new(),
     };
     match tool {
         "weld" => vec![
@@ -1319,6 +1338,10 @@ impl ToolSettingKind {
         match v {
             1 => Self::Bool,
             2 => Self::Text,
+            3 => Self::Help,
+            4 => Self::Key,
+            5 => Self::Color,
+            6 => Self::Choice,
             _ => Self::Number,
         }
     }
@@ -1328,6 +1351,10 @@ impl ToolSettingKind {
             Self::Number => 0,
             Self::Bool => 1,
             Self::Text => 2,
+            Self::Help => 3,
+            Self::Key => 4,
+            Self::Color => 5,
+            Self::Choice => 6,
         }
     }
 }

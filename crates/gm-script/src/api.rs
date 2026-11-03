@@ -1976,6 +1976,8 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                             kind,
                             min: s.get::<Option<f32>>("min")?.unwrap_or(f32::MIN),
                             max: s.get::<Option<f32>>("max")?.unwrap_or(f32::MAX),
+                            label: s.get::<Option<String>>("label")?.unwrap_or_default(),
+                            options: Vec::new(),
                             default,
                         });
                     }
