@@ -2761,7 +2761,7 @@
 {"address":"Global.LoadLastMap","kind":"libraryfunc","parent":"Global","name":"LoadLastMap","realms":["menu"],"args":[],"rets":[],"status":"missing"},
 {"address":"Global.LoadNewsList","kind":"libraryfunc","parent":"Global","name":"LoadNewsList","realms":["menu"],"args":[],"rets":[],"status":"missing"},
 {"address":"Global.LoadPresets","kind":"libraryfunc","parent":"Global","name":"LoadPresets","realms":["client"],"args":[],"rets":[{"name":"","type":"table"}],"status":"missing"},
-{"address":"Global.LocalPlayer","kind":"libraryfunc","parent":"Global","name":"LocalPlayer","realms":["client"],"args":[],"rets":[{"name":"","type":"Player"}],"status":"missing"},
+{"address":"Global.LocalPlayer","kind":"libraryfunc","parent":"Global","name":"LocalPlayer","realms":["client"],"args":[],"rets":[{"name":"","type":"Player"}],"status":"implemented"},
 {"address":"Global.LocalToWorld","kind":"libraryfunc","parent":"Global","name":"LocalToWorld","realms":["client","server"],"args":[{"name":"localPos","type":"Vector"},{"name":"localAng","type":"Angle"},{"name":"originPos","type":"Vector"},{"name":"originAngle","type":"Angle"}],"rets":[{"name":"","type":"Vector"},{"name":"","type":"Angle"}],"status":"implemented"},
 {"address":"Global.Localize","kind":"libraryfunc","parent":"Global","name":"Localize","realms":["client","menu"],"args":[{"name":"localizationToken","type":"string"},{"name":"default","type":"string"}],"rets":[{"name":"","type":"string"}],"status":"missing"},
 {"address":"Global.MainEyeAngles","kind":"libraryfunc","parent":"Global","name":"MainEyeAngles","realms":["client"],"args":[],"rets":[{"name":"","type":"Angle"}],"status":"missing"},

@@ -875,13 +875,31 @@ fn glua_client_hud_paint_draws_through_surface() {
                 draw.SimpleText("hi", "DermaDefault", ScrW() / 2, 0, Color(255, 255, 255), TEXT_ALIGN_CENTER)
             end)
             hook.Add("HUDShouldDraw", "test", function(name) return name ~= "CHudHealth" end)
+            hook.Add("PostDrawHUD", "test", function()
+                local lp = LocalPlayer()
+                surface.DrawRect(IsValid(lp) and lp:EntIndex() or -1, 0, 1, 1)
+            end)
         "#
         .into(),
         config: ActorConfig::default(),
     })
     .expect("actor");
-    let world = gm_net::ClientWorld::default();
+    let mut world = gm_net::ClientWorld::default();
     let draws = rt.client_render(&world, 1280, 720);
+    assert!(
+        draws.iter().any(|d| matches!(d, gm_script::DrawCmd::Rect { x, w, h, .. } if *x == -1.0 && *w == 1.0 && *h == 1.0)),
+        "LocalPlayer() is NULL before the server accepted us: {draws:?}"
+    );
+    world.local_id = Some(3);
+    world.players.push(gm_net::msg::PlayerSnap {
+        id: 3,
+        ..Default::default()
+    });
+    let draws = rt.client_render(&world, 1280, 720);
+    assert!(
+        draws.iter().any(|d| matches!(d, gm_script::DrawCmd::Rect { x, w, h, .. } if *x == 3.0 && *w == 1.0 && *h == 1.0)),
+        "LocalPlayer() is our player once connected: {draws:?}"
+    );
     assert!(
         draws.iter().any(|d| matches!(d, gm_script::DrawCmd::Rect { x, y, w, h, .. } if *x == 5.0 && *y == 6.0 && *w == 70.0 && *h == 80.0)),
         "HUDPaint's DrawRect reaches the client: {draws:?}"

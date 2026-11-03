@@ -1609,6 +1609,13 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             Ok(out)
         })?,
     )?;
+    // `world.local_player() -> id?`: the client's own player once the server accepted it
+    // (`LocalPlayer()`); nil on the server and before connecting
+    let sh = shared.clone();
+    world.set(
+        "local_player",
+        lua.create_function(move |_, ()| Ok(sh.snapshot.read().unwrap().local_player))?,
+    )?;
     let sh = shared.clone();
     world.set(
         "player",

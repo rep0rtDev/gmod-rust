@@ -262,6 +262,8 @@ pub struct Snapshot {
     pub constraint_count: usize,
     /// Console variables (every one on the server, the replicated ones on the client).
     pub cvars: BTreeMap<String, String>,
+    /// Client realm: the local player's entity id (`LocalPlayer()`), once connected.
+    pub local_player: Option<u32>,
 }
 
 impl Snapshot {
@@ -532,6 +534,7 @@ impl Snapshot {
             prop_count: world.own.count as usize,
             constraint_count: 0,
             cvars: world.cvars.clone(),
+            local_player: world.local_id,
         }
     }
 
@@ -837,6 +840,7 @@ impl Snapshot {
                 .collect(),
             prop_count: server.sandbox.props().len(),
             constraint_count: server.sandbox.constraints().len(),
+            local_player: None,
             cvars: server
                 .cvars
                 .iter()

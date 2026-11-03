@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, VecDeque};
 #[derive(Default)]
 pub struct ClientWorld {
     pub tick: u32,
+    /// The local player's entity id once the server accepted us (`LocalPlayer()` in scripts).
+    pub local_id: Option<u32>,
     pub players: Vec<PlayerSnap>,
     pub entities: BTreeMap<u32, EntityState>,
     pub own: OwnSandbox,
@@ -482,6 +484,7 @@ impl ClientNet {
                         tick,
                     } => {
                         self.player_id = Some(player_id);
+                        self.world.local_id = Some(player_id);
                         self.tick_interval = tick_interval;
                         self.map = map;
                         self.server_tick = tick;
@@ -535,6 +538,7 @@ impl ClientNet {
                         own.undos = std::mem::take(&mut self.world.own.undos);
                         self.world = ClientWorld {
                             tick,
+                            local_id: self.player_id,
                             players,
                             entities: world,
                             own,
@@ -574,6 +578,7 @@ impl ClientNet {
                     ServerMsg::Disconnect { reason } => {
                         self.disconnected = Some(reason);
                         self.player_id = None;
+                        self.world.local_id = None;
                     }
                     ServerMsg::Challenge {
                         nonce,
@@ -590,6 +595,7 @@ impl ClientNet {
                         if self.expect_server.is_some_and(|e| proven != Some(e)) {
                             self.disconnected = Some("server identity mismatch".to_string());
                             self.player_id = None;
+                            self.world.local_id = None;
                             return;
                         }
                         self.server_identity = proven;

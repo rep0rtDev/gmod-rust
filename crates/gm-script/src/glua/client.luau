@@ -18,7 +18,17 @@ if not CLIENT then
 	ScrW = stub("Global.ScrW")
 	ScrH = stub("Global.ScrH")
 	Material = stub("Global.Material")
+	LocalPlayer = stub("Global.LocalPlayer")
 	return
+end
+
+------------------------------------------------------------------------ the local player
+-- `LocalPlayer()`: our own player entity once the server accepted us, NULL before that
+-- (the game returns an invalid entity while connecting)
+function LocalPlayer()
+	local id = world and world.local_player()
+	if id then return Player(id) end
+	return NULL
 end
 
 ------------------------------------------------------------------------ screen

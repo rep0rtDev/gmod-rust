@@ -234,7 +234,7 @@ pub struct FlexState {
     pub scale: f32,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlayerSnap {
     pub id: u32,
     pub origin: Vec3,
