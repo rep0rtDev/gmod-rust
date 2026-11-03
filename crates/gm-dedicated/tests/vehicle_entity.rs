@@ -451,7 +451,7 @@ fn script_move_overrides_apply_to_one_player() {
         server.move_config_of(1).unwrap().force_sprint,
         "StartSprinting holds the sprint button for this player"
     );
-    assert!(!server.set_move_param(1, 17, Some(1.0)), "unknown field");
+    assert!(!server.set_move_param(1, 18, Some(1.0)), "unknown field");
     assert!(!server.set_move_param(99_999, 0, Some(1.0)));
 }
 
