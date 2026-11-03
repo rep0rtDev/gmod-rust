@@ -586,6 +586,8 @@ pub struct WorldRenderer {
     translucent_nocull_pipeline: wgpu::RenderPipeline,
     /// Water surfaces: alpha = the volume fog over the scene depth behind them.
     water_pipeline: wgpu::RenderPipeline,
+    /// `Refract` sprites (thruster heat-wave): the scene copy offset by a normal map.
+    refract_pipeline: wgpu::RenderPipeline,
     depth_layout: wgpu::BindGroupLayout,
     /// Additive, no depth write: beams and glow sprites.
     additive_pipeline: wgpu::RenderPipeline,
@@ -2482,6 +2484,52 @@ impl WorldRenderer {
             cache: None,
         })
 ;
+        let refract_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("refract"),
+            layout: Some(&water_layout),
+            vertex: wgpu::VertexState {
+                module: &water_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32],
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                // BSP faces wind clockwise seen from their front; the 2D sky cube is seen
+                // from inside, so it is the one pass without back-face culling
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: quality.msaa,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &water_shader,
+                entry_point: Some("fs_refract"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+;
         let translucent_nocull_pipeline = make_pipeline(
             "translucent nocull",
             Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -2560,6 +2608,7 @@ impl WorldRenderer {
             nocull_pipeline,
             translucent_nocull_pipeline,
             water_pipeline,
+            refract_pipeline,
             depth_layout,
             additive_pipeline,
             alpha_pipeline,
@@ -3428,9 +3477,19 @@ impl WorldRenderer {
         format: wgpu::TextureFormat,
     ) -> Option<wgpu::BindGroup> {
         let mat = crate::material::load(mount, name).ok()?;
-        let tex = mat.base_texture.as_deref()?;
+        // a `Refract` sprite has no base: its normal map (kept linear) drives `fs_refract`
+        let refract = mat.base_texture.is_none() && mat.shader.eq_ignore_ascii_case("refract");
+        let (tex, format, amount) = if refract {
+            (
+                mat.bumpmap.as_deref()?,
+                wgpu::TextureFormat::Rgba8Unorm,
+                mat.water_dist[1],
+            )
+        } else {
+            (mat.base_texture.as_deref()?, format, 0.0)
+        };
         let rgba = crate::material::load_texture(mount, tex, 512).ok()?;
-        Some(self.sprite_bind_group(gpu, &rgba, format, name))
+        Some(self.sprite_bind_group(gpu, &rgba, format, name, amount))
     }
 
     /// The bind group of a sprite image (unlit, no lightmap) in `format`.
@@ -3440,6 +3499,7 @@ impl WorldRenderer {
         rgba: &crate::material::Rgba,
         format: wgpu::TextureFormat,
         name: &str,
+        refract: f32,
     ) -> wgpu::BindGroup {
         let device = &gpu.device;
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -3454,7 +3514,7 @@ impl WorldRenderer {
                 uv2_t: [0.0; 4],
                 water_color: [0.0; 4],
                 water_range: [0.0; 4],
-                envmap: [0.0; 4],
+                envmap: [0.0, refract, 0.0, 0.0],
                 envmap2: [0.0; 4],
                 envmap3: [0.0; 4],
                 selfillum_tint: [1.0; 4],
@@ -3518,7 +3578,7 @@ impl WorldRenderer {
         crate::material::load_texture_frames(mount, tex, 512)
             .unwrap_or_default()
             .iter()
-            .map(|f| self.sprite_bind_group(gpu, f, wgpu::TextureFormat::Rgba8UnormSrgb, name))
+            .map(|f| self.sprite_bind_group(gpu, f, wgpu::TextureFormat::Rgba8UnormSrgb, name, 0.0))
             .collect()
     }
 
@@ -3717,6 +3777,131 @@ impl WorldRenderer {
         items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
     ) {
         self.draw_blended(gpu, camera, target, items, &self.additive_pipeline);
+    }
+
+    /// `Refract` sprites (the thruster flame's heat-wave): the scene so far is copied into
+    /// the refraction texture (`render.UpdateRefractTexture`) and each item redraws it offset
+    /// by its normal map; the items are [`sprite_material`](Self::sprite_material) bind groups
+    /// of a `Refract` material with world-space vertices.
+    pub fn draw_refract(
+        &self,
+        gpu: &Gpu,
+        camera: &Camera,
+        target: &ModelTarget<'_>,
+        scene_src: &wgpu::Texture,
+        items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
+    ) {
+        let mut verts: Vec<Vertex> = Vec::new();
+        let mut idx: Vec<u32> = Vec::new();
+        let mut draws = Vec::new();
+        for (bg, v, i) in items {
+            let base = verts.len() as u32;
+            let first = idx.len() as u32;
+            verts.extend_from_slice(v);
+            idx.extend(i.iter().map(|k| k + base));
+            draws.push((*bg, first, i.len() as u32));
+        }
+        if idx.is_empty() {
+            return;
+        }
+        let device = &gpu.device;
+        let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("refract vertices"),
+            contents: bytemuck::cast_slice(&verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("refract indices"),
+            contents: bytemuck::cast_slice(&idx),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let cam = self.camera_uniform(
+            camera,
+            target.aspect,
+            1.0,
+            self.view_fog(camera),
+            self.clip_for(false),
+        );
+        gpu.queue
+            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
+        let mut enc = device.create_command_encoder(&Default::default());
+        let mut state = self.reflect.lock().unwrap();
+        let size = scene_src.size();
+        if state
+            .refraction
+            .as_ref()
+            .is_none_or(|(t, _)| t.size() != size || t.format() != scene_src.format())
+        {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("water refraction"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: scene_src.format(),
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&Default::default());
+            state.refraction = Some((tex, view));
+        }
+        let (tex, refraction) = state.refraction.as_ref().unwrap();
+        enc.copy_texture_to_texture(scene_src.as_image_copy(), tex.as_image_copy(), size);
+        let depth_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("refract scene"),
+            layout: &self.depth_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(target.depth),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.bump_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.reflect_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(refraction),
+                },
+            ],
+        });
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("refract"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target.color,
+                    depth_slice: None,
+                    resolve_target: target.resolve,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: target.depth,
+                    depth_ops: None,
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.refract_pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(2, &depth_bind_group, &[]);
+            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            for (bg, first, count) in draws {
+                pass.set_bind_group(1, bg, &[]);
+                pass.draw_indexed(first..first + count, 0, 0..1);
+            }
+        }
+        drop(state);
+        gpu.queue.submit([enc.finish()]);
     }
 
     /// Alpha-blended geometry over the current colour with the current depth (constraint

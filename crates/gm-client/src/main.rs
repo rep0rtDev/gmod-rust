@@ -4098,6 +4098,10 @@ impl App {
                 let m = g.world.sprite_material(&g.gpu, &self.mount, name);
                 g.rope_mats.insert(name.to_string(), m);
             }
+            if t.effect == "fire" && !g.rope_mats.contains_key(HEATWAVE) {
+                let m = g.world.sprite_material(&g.gpu, &self.mount, HEATWAVE);
+                g.rope_mats.insert(HEATWAVE.to_string(), m);
+            }
         }
         if self.main_menu && !self.started {
             if let Some(name) = self.backgrounds.tick(&self.mount) {
@@ -4578,6 +4582,8 @@ impl App {
         // additive with the game's `sprites/physbeam`, a glow at each end
         let mut additive: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
             Vec::new();
+        let mut refract: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
+            Vec::new();
         let mut alpha: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
             Vec::new();
         let mut dlights: Vec<gm_render::world::DLight> = Vec::new();
@@ -4697,8 +4703,7 @@ impl App {
             }
         }
         // gmod_thruster effects (`ThrusterEffects`, gmod_thruster.lua): beams from GetOffset()
-        // along its direction from the origin, scaling in over 0.2 s from `OnStart`; the
-        // heat-wave refraction pass of the flames is not drawn
+        // along its direction from the origin, scaling in over 0.2 s from `OnStart`
         {
             let now = std::time::Instant::now();
             let on: std::collections::HashSet<u32> = self
@@ -4747,6 +4752,19 @@ impl App {
                                 eye,
                             );
                             additive.push((bm, v, i));
+                        }
+                        // the flame's heat-wave: sprites/heatwave over the scene behind it
+                        if let Some(hm) = g.rope_mats.get(HEATWAVE).and_then(|m| m.as_ref()) {
+                            let s = scroll * 0.5;
+                            let (v, i) = g.world.beam_strip_var(
+                                &[
+                                    (off, size * scale, [0.0, 0.0, 1.0, 0.5], s),
+                                    (off + n * 32.0 * scale, 32.0 * scale, [1.0; 4], s + 2.0),
+                                    (off + n * 128.0 * scale, 48.0 * scale, [0.0; 4], s + 5.0),
+                                ],
+                                eye,
+                            );
+                            refract.push((hm, v, i));
                         }
                     }
                     "magic" | "rings" | "smoke" => {
@@ -5163,6 +5181,10 @@ impl App {
         if !additive.is_empty() {
             g.world.draw_alpha(&g.gpu, &camera, &target, &alpha);
             g.world.draw_additive(&g.gpu, &camera, &target, &additive);
+        }
+        if !refract.is_empty() {
+            g.world
+                .draw_refract(&g.gpu, &camera, &target, scene_src, &refract);
         }
         for d in &ghost_draws {
             let gm_script::DrawCmd::Model {
@@ -8245,6 +8267,9 @@ impl App {
             .client_audio(&self.sim.client.world, &reports);
     }
 }
+
+/// gmod_thruster.lua `matHeatWave`: the `Refract` beam over the fire effect.
+const HEATWAVE: &str = "sprites/heatwave";
 
 /// `ThrusterEffects` (`gmod_thruster.lua`): the beam material of an effect; empty for none.
 fn thruster_fx_material(effect: &str) -> &'static str {

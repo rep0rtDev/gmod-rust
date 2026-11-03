@@ -240,7 +240,8 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
             continue;
         }
         mat.water = shader == "water";
-        if mat.water {
+        // Refract (sprites/heatwave) reads the same $normalmap / $refractamount
+        if mat.water || shader == "refract" {
             mat.bottom_material = get("$bottommaterial");
             mat.bumpmap = get("$normalmap").or_else(|| get("$bumpmap"));
             mat.reflect_entities = matches!(get("$reflectentities").as_deref(), Some("1"));

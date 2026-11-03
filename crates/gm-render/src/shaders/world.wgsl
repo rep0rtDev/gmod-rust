@@ -288,3 +288,14 @@ fn fs_water(in: VsOut) -> @location(0) vec4<f32> {
     let alpha = mix(f + (1.0 - f) * fr, 1.0, has_refr);
     return vec4<f32>(col, alpha);
 }
+
+// Refract (sprites/heatwave): the scene copy offset by the normal map by $refractamount
+// (material.envmap.y), scaled by the beam's vertex alpha (its colour fades to nothing)
+@fragment
+fn fs_refract(in: VsOut) -> @location(0) vec4<f32> {
+    let dims = vec2<f32>(textureDimensions(scene_depth));
+    let nm = textureSample(base, base_sampler, in.uv).xyz * 2.0 - 1.0;
+    let a = max(in.color.r, max(in.color.g, in.color.b));
+    let ruv = in.clip.xy / dims + nm.xy * material.envmap.y * a;
+    return vec4<f32>(textureSample(refraction, reflection_sampler, ruv).rgb, 1.0);
+}
