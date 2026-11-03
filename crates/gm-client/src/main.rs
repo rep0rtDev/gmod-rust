@@ -3025,6 +3025,7 @@ impl App {
                     4 => vm.reload_shell,
                     5 => vm.reload_end,
                     6 => Some(vm.fire),
+                    7 => Some(vm.draw),
                     _ => None,
                 };
                 if let Some(seq) = seq {

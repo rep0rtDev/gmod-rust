@@ -558,6 +558,8 @@ pub enum VmAct {
     /// A primary shot, swing or launch left (other players' `range_*` gestures; the owner's
     /// viewmodel plays its fire from the click).
     Fire = 6,
+    /// The weapon comes back out (the frag's redraw after a throw).
+    Draw = 7,
 }
 
 fn vm_event(slot: &mut VmAct, serial: &mut u8, act: VmAct) {
@@ -902,6 +904,7 @@ impl Inventory {
             }
             self.throw_in = None;
             *self.ammo.entry(w.ammo1.to_string()).or_insert(0) -= 1;
+            vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Fire);
             self.launched = Some(Launch::Grenade);
             self.next_primary = th.cycle;
             self.next_secondary = th.cycle;
@@ -917,6 +920,7 @@ impl Inventory {
         }
         if self.redraw_pending {
             if self.next_primary <= 0.0 {
+                vm_event(&mut self.vm_act, &mut self.vm_serial, VmAct::Draw);
                 self.redraw_pending = false;
                 self.next_primary = th.redraw;
                 self.next_secondary = th.redraw;
