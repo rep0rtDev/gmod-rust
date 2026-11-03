@@ -173,6 +173,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // the mask (1 - base alpha for $basealphaenvmapmask, normal alpha), added after lighting
     let bump_a = textureSample(bump, base_sampler, in.uv).a;
     let mask_tex = textureSample(envmask, base_sampler, in.uv * material.selfillum_tint.w).rgb;
+    // $phongfresnelranges over (1 - n.v)^5: the highlight's and, on $phong materials, the
+    // reflection's fresnel (the skin shader scales the envmap by it and the spec mask)
+    var phong_fres = 1.0;
+    if material.phong.x > 0.5 && dot(in.normal, in.normal) > 0.0 {
+        let nvp = clamp(dot(normalize(in.normal), normalize(camera.eye.xyz - in.world)), 0.0, 1.0);
+        let fp = pow(1.0 - nvp, 5.0);
+        phong_fres = mix(material.phong_fresnel.x, material.phong_fresnel.y, fp * 2.0);
+        if fp > 0.5 {
+            phong_fres = mix(material.phong_fresnel.y, material.phong_fresnel.z, fp * 2.0 - 1.0);
+        }
+    }
     if material.envmap.w > 0.5 && in.cube >= 0.0 && dot(in.normal, in.normal) > 0.0 {
         let r = reflect(normalize(in.world - camera.eye.xyz), normalize(in.normal));
         var mask = vec3<f32>(1.0);
@@ -192,6 +203,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             let nv = clamp(dot(normalize(camera.eye.xyz - in.world), normalize(in.normal)), 0.0, 1.0);
             env = env * (material.envmap3.x + (material.envmap3.y - material.envmap3.x) * pow(1.0 - nv, material.envmap3.z));
         }
+        if material.phong.x > 0.5 {
+            env = env * (phong_fres * bump_a);
+        }
         shaded = shaded + env * material.envmap.rgb * mask * camera.exposure;
     }
     // $phong: the Blinn-Phong highlight of the sun through the baked light, $phongexponent /
@@ -203,13 +217,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let l = normalize(camera.sun.xyz);
         let ndl = max(dot(nw, l), 0.0);
         let spec = pow(max(dot(nw, normalize(l + v)), 0.0), material.phong.y) * material.phong.z;
-        let f = pow(1.0 - clamp(dot(nw, v), 0.0, 1.0), 5.0);
-        var fres = mix(material.phong_fresnel.x, material.phong_fresnel.y, f * 2.0);
-        if f > 0.5 {
-            fres = mix(material.phong_fresnel.y, material.phong_fresnel.z, f * 2.0 - 1.0);
-        }
         let tint = mix(vec3<f32>(1.0), albedo.rgb, material.phong.w);
-        shaded = shaded + in.color * (spec * fres * ndl * bump_a) * tint * camera.exposure;
+        shaded = shaded + in.color * (spec * phong_fres * ndl * bump_a) * tint * camera.exposure;
     }
     // $selfillum: the base alpha lerps towards the unlit base colour
     shaded = mix(shaded, albedo.rgb * material.selfillum_tint.rgb * camera.exposure, albedo.a * material.envmap2.z);
