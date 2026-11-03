@@ -44,6 +44,13 @@ turn, E again). This is the public SDK's player pickup (`CPlayerPickupController
   is not, nor 150..300. When the line finds nothing, seven 16 u box sweeps of 72 u tilted
   down from the view (45, 30, 20, 15, 10, -10, -15 degrees) look for props at the feet: the
   gas can and the pop can below the view ray are used that way (`use_gascan`, `use_popcan`).
+  Residuals of the `use_*` set: the carried phase is exact (`use_popcan` / `use_drum` t60-200
+  to 0.00 u); what differs is the rest pose before the pickup (the can pitched 9 deg at
+  (823.8, -542.4) against ours yawed -10 deg at (822.7, -539.9), the drum pitched -17 against
+  -27 - the spawn drop's landing) and the landing after the drop (t303: can 34 u, drum 16 u) -
+  both the flat-landing family. `use_locker` is different and open: the 2000 kg locker is never
+  carried in the game but rocks along x between 819.7 and 827.6 with pitch +-6 deg at a period of
+  about 100 ticks for the whole trace, ours never moves - +use on an overweight prop pushes it.
 - Hold point: the centre of the prop's collision bounds (its `WorldSpaceCenter`, the half-sum
   of the PHY hull's extents in the body frame) goes to `eye + forward * (24 + radius)` where `forward`
   is the view with the pitch clamped to -75..75 and `radius = 22.63 + extent`, 22.63 the
