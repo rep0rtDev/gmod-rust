@@ -1479,6 +1479,7 @@ dependencies = [
  "gm-formats",
  "half",
  "jpeg-decoder",
+ "naga",
  "png",
  "pollster",
  "thiserror 2.0.21",

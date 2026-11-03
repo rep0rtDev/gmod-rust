@@ -20,3 +20,6 @@ thiserror = { workspace = true }
 png = "0.18"
 jpeg-decoder = "0.3"
 ab_glyph = "0.2"
+
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in"] }
