@@ -29,12 +29,14 @@ struct MaterialParams {
     water_color: vec4<f32>,
     water_range: vec4<f32>,
     envmap: vec4<f32>,
+    envmap2: vec4<f32>,
 };
 @group(1) @binding(2) var<uniform> material: MaterialParams;
 @group(1) @binding(3) var detail: texture_2d<f32>;
 @group(1) @binding(4) var base2: texture_2d<f32>;
 @group(1) @binding(5) var blend_modulate: texture_2d<f32>;
 @group(1) @binding(6) var bump: texture_2d<f32>;
+@group(1) @binding(7) var envmask: texture_2d<f32>;
 // water pass only: the depth of the opaque scene (multisampled variant substituted at load)
 @group(2) @binding(0) var scene_depth: texture_depth_2d;
 @group(2) @binding(1) var reflection: texture_2d<f32>;
@@ -132,17 +134,25 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // $envmap: the nearest env_cubemap along the reflected view ray, times $envmaptint and
     // the mask (1 - base alpha for $basealphaenvmapmask, normal alpha), added after lighting
     let bump_a = textureSample(bump, base_sampler, in.uv).a;
+    let mask_tex = textureSample(envmask, base_sampler, in.uv).rgb;
     if material.envmap.w > 0.5 && in.cube >= 0.0 && dot(in.normal, in.normal) > 0.0 {
         let r = reflect(normalize(in.world - camera.eye.xyz), normalize(in.normal));
-        var mask = 1.0;
-        if material.envmap.w > 2.5 {
-            mask = bump_a;
+        var mask = vec3<f32>(1.0);
+        if material.envmap.w > 3.5 {
+            mask = mask_tex;
+        } else if material.envmap.w > 2.5 {
+            mask = vec3<f32>(bump_a);
         } else if material.envmap.w > 1.5 {
-            mask = 1.0 - albedo.a;
+            mask = vec3<f32>(1.0 - albedo.a);
         }
-        let env = textureSampleLevel(cubes, lightmap_sampler, r, i32(in.cube + 0.5), 0.0).rgb;
+        var env = textureSampleLevel(cubes, lightmap_sampler, r, i32(in.cube + 0.5), 0.0).rgb;
+        // $envmapcontrast squares, $envmapsaturation desaturates towards the luminance
+        env = mix(env, env * env, material.envmap2.x);
+        env = mix(vec3<f32>(dot(env, vec3<f32>(0.299, 0.587, 0.114))), env, material.envmap2.y);
         shaded = shaded + env * material.envmap.rgb * mask * camera.exposure;
     }
+    // $selfillum: the base alpha lerps towards the unlit base colour
+    shaded = mix(shaded, albedo.rgb * camera.exposure, albedo.a * material.envmap2.z);
     // mat_monitorgamma: 2.2 is neutral, lower brightens
     let out = pow(max(shaded, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
     // env_fog_controller: linear in the view depth from fogstart to fogend, capped at

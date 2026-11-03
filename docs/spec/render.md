@@ -110,8 +110,15 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   origin, else the nearest to the face centre. The reflection is added after lighting,
   times `$envmaptint` and the mask (`$basealphaenvmapmask`: 1 - base alpha, so on the
   construct building templates only the windows reflect; `$normalmapalphaenvmapmask`: the
-  bump alpha). Open: HDR cubemaps (`.hdr.vtf`), `$envmapcontrast` / `$envmapsaturation`,
-  `$envmapmask` textures, fresnel.
+  bump alpha; `$envmapmask`: that texture's rgb). The sample is then squared by
+  `$envmapcontrast` (`env = lerp(env, env², contrast)`) and desaturated towards its
+  luminance by `$envmapsaturation`; the construct building templates and
+  `concretefloor028a` set contrast 1, so their reflections are the squared cubemap (spawn
+  view: windows darker by up to 59/255 against the linear sample). Keys inside fallback
+  blocks (`LightmappedGeneric_DX8 { $envmaptint .25 }`) are ignored, as on the DX9 path.
+  `$selfillum` lerps the lit colour towards the unlit base by the base alpha (11 of 60
+  surveyed HL2 prop VMTs use it). Open: HDR cubemaps (`.hdr.vtf`), `$envmapfresnel`,
+  `$selfillumtint`, `$envmapmaskscale` / `$envmapmasktransform`.
   Done since: the eye's water volume (`LUMP_LEAFWATERDATA` 36: surface z, min z, surface
   texinfo; its `CONTENTS_WATER` leaves' boxes) switches the view fog of the world, model and
   3D-skybox passes (the latter in skybox units) to the surface material's `$bottommaterial`

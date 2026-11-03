@@ -57,6 +57,8 @@ struct MaterialParams {
     water_range: [f32; 4],
     /// `$envmap`: `$envmaptint` and the mask mode (0 off, 1 none, 2 base alpha, 3 normal alpha).
     envmap: [f32; 4],
+    /// `$envmapcontrast`, `$envmapsaturation`, `$selfillum` on.
+    envmap2: [f32; 4],
 }
 
 fn envmap_params(mat: &material::Material) -> [f32; 4] {
@@ -71,10 +73,18 @@ fn envmap_params(mat: &material::Material) -> [f32; 4] {
                 material::EnvMapMask::None => 1.0,
                 material::EnvMapMask::BaseAlpha => 2.0,
                 material::EnvMapMask::NormalAlpha => 3.0,
+                material::EnvMapMask::Texture => 4.0,
             };
             [e.tint[0], e.tint[1], e.tint[2], mode]
         }
     }
+}
+
+fn envmap2_params(mat: &material::Material) -> [f32; 4] {
+    let (c, s) = mat
+        .envmap
+        .map_or((0.0, 1.0), |e| (e.contrast, e.saturation));
+    [c, s, if mat.selfillum { 1.0 } else { 0.0 }, 0.0]
 }
 
 /// Nearest baked `env_cubemap` sample: (origin, layer in the cube array).
@@ -439,6 +449,7 @@ pub struct WorldRenderer {
     detail_fallback: wgpu::TextureView,
     /// Flat normal bound as the bump map of materials without `$bumpmap`.
     bump_fallback: wgpu::TextureView,
+    white_fallback: wgpu::TextureView,
     cubes: CubeSet,
     color_format: wgpu::TextureFormat,
     reflect: Mutex<ReflectState>,
@@ -535,6 +546,7 @@ fn build_sky_cube(
             water_color: [0.0; 4],
             water_range: [0.0; 4],
             envmap: [0.0; 4],
+            envmap2: [0.0; 4],
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });
@@ -586,6 +598,11 @@ fn build_sky_cube(
                 },
                 wgpu::BindGroupEntry {
                     binding: 6,
+                    resource: wgpu::BindingResource::TextureView(detail),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+
                     resource: wgpu::BindingResource::TextureView(detail),
                 },
                 wgpu::BindGroupEntry {
@@ -1679,6 +1696,16 @@ impl WorldRenderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1755,6 +1782,7 @@ impl WorldRenderer {
         let mut base2_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
         let mut modulate_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
         let mut bump_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
+        let mut envmask_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
         let bump_fallback = upload_rgba_mips(
             gpu,
             &material::Rgba {
@@ -1765,6 +1793,18 @@ impl WorldRenderer {
             },
             wgpu::TextureFormat::Rgba8Unorm,
             "bump fallback",
+        )
+        .create_view(&Default::default());
+        let white_fallback = upload_rgba_mips(
+            gpu,
+            &material::Rgba {
+                width: 1,
+                height: 1,
+                pixels: vec![255, 255, 255, 255],
+                mips: Vec::new(),
+            },
+            wgpu::TextureFormat::Rgba8Unorm,
+            "white fallback",
         )
         .create_view(&Default::default());
         for (name, idx, sky) in jobs {
@@ -1817,8 +1857,19 @@ impl WorldRenderer {
                     })
                     .as_ref()
             });
+            let envmask_view = mat.envmapmask.as_ref().and_then(|t| {
+                envmask_cache
+                    .entry(t.clone())
+                    .or_insert_with(|| {
+                        let rgba = material::load_texture(mount, t, 1024).ok()?;
+                        let tex = upload_rgba_mips(gpu, &rgba, wgpu::TextureFormat::Rgba8Unorm, t);
+                        Some(tex.create_view(&Default::default()))
+                    })
+                    .as_ref()
+            });
             let uv2 = uv2_params(mat, modulate_view.is_some(), bump_view.is_some());
             let bump_view = bump_view.unwrap_or(&bump_fallback);
+            let envmask_view = envmask_view.unwrap_or(&white_fallback);
             let modulate_view = modulate_view.unwrap_or(&detail_fallback);
             let water = match mat.water_fog {
                 Some((c, start, end)) => {
@@ -1840,6 +1891,7 @@ impl WorldRenderer {
                     water_color: water.0,
                     water_range: water.1,
                     envmap: envmap_params(mat),
+                    envmap2: envmap2_params(mat),
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -1892,6 +1944,11 @@ impl WorldRenderer {
                     wgpu::BindGroupEntry {
                         binding: 6,
                         resource: wgpu::BindingResource::TextureView(bump_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+
+                        resource: wgpu::BindingResource::TextureView(envmask_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -2139,6 +2196,7 @@ impl WorldRenderer {
             sky_pipeline,
             detail_fallback,
             bump_fallback,
+            white_fallback,
             cubes,
             color_format,
             reflect: Mutex::new(ReflectState::default()),
@@ -2701,6 +2759,7 @@ impl WorldRenderer {
                         water_color: [0.0; 4],
                         water_range: [0.0; 4],
                         envmap: envmap_params(mat),
+                        envmap2: envmap2_params(mat),
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
@@ -2734,6 +2793,11 @@ impl WorldRenderer {
                         wgpu::BindGroupEntry {
                             binding: 6,
                             resource: wgpu::BindingResource::TextureView(&self.bump_fallback),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 7,
+
+                            resource: wgpu::BindingResource::TextureView(&self.white_fallback),
                         },
                         wgpu::BindGroupEntry {
                             binding: 2,
@@ -2798,6 +2862,7 @@ impl WorldRenderer {
                 water_color: [0.0; 4],
                 water_range: [0.0; 4],
                 envmap: [0.0; 4],
+                envmap2: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -2831,6 +2896,11 @@ impl WorldRenderer {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(&self.bump_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+
+                    resource: wgpu::BindingResource::TextureView(&self.white_fallback),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -3011,6 +3081,7 @@ impl WorldRenderer {
                 water_color: [0.0; 4],
                 water_range: [0.0; 4],
                 envmap: [0.0; 4],
+                envmap2: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -3051,6 +3122,11 @@ impl WorldRenderer {
                 wgpu::BindGroupEntry {
                     binding: 6,
                     resource: wgpu::BindingResource::TextureView(&self.bump_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+
+                    resource: wgpu::BindingResource::TextureView(&self.white_fallback),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,

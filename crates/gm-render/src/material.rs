@@ -42,6 +42,10 @@ pub struct Material {
     /// and masked by the base alpha (`$basealphaenvmapmask`), the normal map alpha
     /// (`$normalmapalphaenvmapmask`) or nothing.
     pub envmap: Option<EnvMap>,
+    /// `$envmapmask` texture path.
+    pub envmapmask: Option<String>,
+    /// `$selfillum`: the base alpha lerps the lit result towards the unlit base.
+    pub selfillum: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -49,12 +53,17 @@ pub enum EnvMapMask {
     None,
     BaseAlpha,
     NormalAlpha,
+    /// `$envmapmask` texture (rgb).
+    Texture,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct EnvMap {
     pub tint: [f32; 3],
     pub mask: EnvMapMask,
+    /// `$envmapcontrast` (0 = linear, 1 = squared) and `$envmapsaturation` (1 = full colour).
+    pub contrast: f32,
+    pub saturation: f32,
 }
 
 /// `center cx cy scale sx sy rotate deg translate tx ty` -> uv matrix
@@ -254,6 +263,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         mat.translucent = matches!(get("$translucent").as_deref(), Some("1")) && !mat.alpha_test;
         mat.additive = matches!(get("$additive").as_deref(), Some("1"));
         mat.nocull = matches!(get("$nocull").as_deref(), Some("1"));
+        mat.selfillum = matches!(get("$selfillum").as_deref(), Some("1"));
         mat.base2_transform = get("$basetexturetransform2")
             .as_deref()
             .and_then(texture_transform);
@@ -276,14 +286,23 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
                 [1.0; 3]
             };
             let one = |k: &str| matches!(get(k).as_deref(), Some("1"));
-            let mask = if one("$basealphaenvmapmask") {
+            mat.envmapmask = get("$envmapmask");
+            let numv = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
+            let mask = if mat.envmapmask.is_some() {
+                EnvMapMask::Texture
+            } else if one("$basealphaenvmapmask") {
                 EnvMapMask::BaseAlpha
             } else if one("$normalmapalphaenvmapmask") {
                 EnvMapMask::NormalAlpha
             } else {
                 EnvMapMask::None
             };
-            mat.envmap = Some(EnvMap { tint, mask });
+            mat.envmap = Some(EnvMap {
+                tint,
+                mask,
+                contrast: numv("$envmapcontrast", 0.0),
+                saturation: numv("$envmapsaturation", 1.0),
+            });
         }
         if let Some(texture) = get("$detail") {
             let num = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
