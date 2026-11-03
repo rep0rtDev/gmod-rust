@@ -3963,7 +3963,7 @@
 {"address":"Player:SetPressedWidget","kind":"classfunc","parent":"Player","name":"SetPressedWidget","realms":["client","server"],"args":[{"name":"pressedWidget","type":"Entity","default":"NULL"}],"rets":[],"status":"stub"},
 {"address":"Player:SetRenderAngles","kind":"classfunc","parent":"Player","name":"SetRenderAngles","realms":["client","server"],"args":[{"name":"ang","type":"Angle"}],"rets":[],"status":"stub"},
 {"address":"Player:SetRunSpeed","kind":"classfunc","parent":"Player","name":"SetRunSpeed","realms":["client","server"],"args":[{"name":"runSpeed","type":"number"}],"rets":[],"status":"implemented"},
-{"address":"Player:SetSlowWalkSpeed","kind":"classfunc","parent":"Player","name":"SetSlowWalkSpeed","realms":["client","server"],"args":[{"name":"speed","type":"number"}],"rets":[],"status":"stub"},
+{"address":"Player:SetSlowWalkSpeed","kind":"classfunc","parent":"Player","name":"SetSlowWalkSpeed","realms":["client","server"],"args":[{"name":"speed","type":"number"}],"rets":[],"status":"implemented"},
 {"address":"Player:SetStepSize","kind":"classfunc","parent":"Player","name":"SetStepSize","realms":["client","server"],"args":[{"name":"stepHeight","type":"number"}],"rets":[],"status":"implemented"},
 {"address":"Player:SetSuitPower","kind":"classfunc","parent":"Player","name":"SetSuitPower","realms":["client","server"],"args":[{"name":"power","type":"number"}],"rets":[],"status":"stub"},
 {"address":"Player:SetSuppressPickupNotices","kind":"classfunc","parent":"Player","name":"SetSuppressPickupNotices","realms":["client","server"],"args":[{"name":"doSuppress","type":"boolean"}],"rets":[],"status":"stub"},
