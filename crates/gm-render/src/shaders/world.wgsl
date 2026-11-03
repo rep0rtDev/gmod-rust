@@ -14,6 +14,7 @@ struct Camera {
     dlight_pos: array<vec4<f32>, 8>,
     dlight_color: array<vec4<f32>, 8>,
     dlight_dir: array<vec4<f32>, 8>,
+    sun: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -37,6 +38,8 @@ struct MaterialParams {
     envmap2: vec4<f32>,
     envmap3: vec4<f32>,
     selfillum_tint: vec4<f32>,
+    phong: vec4<f32>,
+    phong_fresnel: vec4<f32>,
 };
 @group(1) @binding(2) var<uniform> material: MaterialParams;
 @group(1) @binding(3) var detail: texture_2d<f32>;
@@ -190,6 +193,23 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             env = env * (material.envmap3.x + (material.envmap3.y - material.envmap3.x) * pow(1.0 - nv, material.envmap3.z));
         }
         shaded = shaded + env * material.envmap.rgb * mask * camera.exposure;
+    }
+    // $phong: the Blinn-Phong highlight of the sun through the baked light, $phongexponent /
+    // $phongboost, $phongfresnelranges over (1 - n.v)^5, masked by the normal map alpha
+    // ($phongexponenttexture and the local lights are not drawn)
+    if material.phong.x > 0.5 && material.unlit == 0u && dot(in.normal, in.normal) > 0.0 {
+        let nw = normalize(in.normal);
+        let v = normalize(camera.eye.xyz - in.world);
+        let l = normalize(camera.sun.xyz);
+        let ndl = max(dot(nw, l), 0.0);
+        let spec = pow(max(dot(nw, normalize(l + v)), 0.0), material.phong.y) * material.phong.z;
+        let f = pow(1.0 - clamp(dot(nw, v), 0.0, 1.0), 5.0);
+        var fres = mix(material.phong_fresnel.x, material.phong_fresnel.y, f * 2.0);
+        if f > 0.5 {
+            fres = mix(material.phong_fresnel.y, material.phong_fresnel.z, f * 2.0 - 1.0);
+        }
+        let tint = mix(vec3<f32>(1.0), albedo.rgb, material.phong.w);
+        shaded = shaded + in.color * (spec * fres * ndl * bump_a) * tint * camera.exposure;
     }
     // $selfillum: the base alpha lerps towards the unlit base colour
     shaded = mix(shaded, albedo.rgb * material.selfillum_tint.rgb * camera.exposure, albedo.a * material.envmap2.z);

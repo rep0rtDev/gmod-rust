@@ -63,6 +63,10 @@ struct MaterialParams {
     envmap3: [f32; 4],
     /// `$selfillumtint` (rgb) and `$envmapmaskscale` (w).
     selfillum_tint: [f32; 4],
+    /// `$phong` on, `$phongexponent`, `$phongboost`, `$phongalbedotint`.
+    phong: [f32; 4],
+    /// `$phongfresnelranges` (xyz).
+    phong_fresnel: [f32; 4],
 }
 
 /// `LightmappedReflective` that is not water: `func_reflective_glass`, a mirror.
@@ -103,6 +107,22 @@ fn envmap2_params(mat: &material::Material) -> [f32; 4] {
         .envmap
         .map_or((0.0, 1.0), |e| (e.contrast, e.saturation));
     [c, s, if mat.selfillum { 1.0 } else { 0.0 }, 0.0]
+}
+
+/// `$phong`: on, `$phongexponent`, `$phongboost`, `$phongalbedotint`.
+fn phong_params(mat: &material::Material) -> [f32; 4] {
+    match &mat.phong {
+        Some(p) => [1.0, p.exponent, p.boost, p.albedo_tint],
+        None => [0.0; 4],
+    }
+}
+
+/// `$phongfresnelranges` (xyz).
+fn phong_fresnel_params(mat: &material::Material) -> [f32; 4] {
+    match &mat.phong {
+        Some(p) => [p.fresnel[0], p.fresnel[1], p.fresnel[2], 0.0],
+        None => [0.0, 0.5, 1.0, 0.0],
+    }
 }
 
 fn envmap3_params(mat: &material::Material) -> [f32; 4] {
@@ -314,6 +334,8 @@ struct CameraUniform {
     dlight_color: [[f32; 4]; MAX_DLIGHTS],
     /// Spot direction (xyz) and the cosine of the cone half-angle (w, 0 = a point light).
     dlight_dir: [[f32; 4]; MAX_DLIGHTS],
+    /// Direction towards the sun (`light_environment`), for `$phong`.
+    sun: [f32; 4],
 }
 
 /// Dynamic lights lit per frame.
@@ -530,6 +552,8 @@ pub struct WorldRenderer {
     pub exposure: f32,
     /// Whether the HDR lumps were used.
     pub hdr: bool,
+    /// Direction towards the sun (`light_environment`), the `$phong` highlight's light.
+    pub sun: Vec3,
     pub quality: Quality,
     /// Auto-exposure bounds and rate of the map's env_tonemap_controller.
     pub tm_min: f32,
@@ -657,6 +681,8 @@ fn build_sky_cube(
             envmap2: [0.0; 4],
             envmap3: [0.0; 4],
             selfillum_tint: [1.0; 4],
+            phong: [0.0; 4],
+            phong_fresnel: [0.0, 0.5, 1.0, 0.0],
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });
@@ -2190,6 +2216,8 @@ impl WorldRenderer {
                     envmap2: envmap2_params(mat),
                     envmap3: envmap3_params(mat),
                     selfillum_tint: selfillum_tint(mat, DEFAULT_WEAPON_COLOR),
+                    phong: phong_params(mat),
+                    phong_fresnel: phong_fresnel_params(mat),
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -2512,6 +2540,7 @@ impl WorldRenderer {
             exposure,
 
             hdr,
+            sun: crate::props::sun_direction(bsp),
             quality,
             tm_min,
             tm_max,
@@ -2799,6 +2828,7 @@ impl WorldRenderer {
         });
         let fw = cam.forward();
         CameraUniform {
+            sun: [self.sun.x, self.sun.y, self.sun.z, 0.0],
             view_proj: cam.view_proj(aspect).to_cols_array_2d(),
             alpha,
             gamma: cam.gamma,
@@ -3284,6 +3314,8 @@ impl WorldRenderer {
                         envmap2: envmap2_params(mat),
                         envmap3: envmap3_params(mat),
                         selfillum_tint: selfillum_tint(mat, self.weapon_color),
+                        phong: phong_params(mat),
+                        phong_fresnel: phong_fresnel_params(mat),
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
@@ -3426,6 +3458,8 @@ impl WorldRenderer {
                 envmap2: [0.0; 4],
                 envmap3: [0.0; 4],
                 selfillum_tint: [1.0; 4],
+                phong: [0.0; 4],
+                phong_fresnel: [0.0, 0.5, 1.0, 0.0],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -3873,6 +3907,8 @@ impl WorldRenderer {
                 envmap2: [0.0; 4],
                 envmap3: [0.0; 4],
                 selfillum_tint: [1.0; 4],
+                phong: [0.0; 4],
+                phong_fresnel: [0.0, 0.5, 1.0, 0.0],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });

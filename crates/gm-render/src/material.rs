@@ -57,6 +57,21 @@ pub struct Material {
     /// `Proxies { PlayerWeaponColor { resultVar $selfillumtint } }`: the tint is the player's
     /// weapon colour (`cl_weaponcolor`) - the physgun's glowing parts.
     pub weapon_color_tint: bool,
+    /// `$phong`: the specular highlight of the sun (`VertexLitGeneric` models).
+    pub phong: Option<Phong>,
+}
+
+/// `$phong` parameters.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Phong {
+    /// `$phongexponent` (5 when absent).
+    pub exponent: f32,
+    /// `$phongboost` (1).
+    pub boost: f32,
+    /// `$phongalbedotint` (0): how much the highlight takes the base colour.
+    pub albedo_tint: f32,
+    /// `$phongfresnelranges` [0 0.5 1]: the highlight at (1 - n.v)^5 of 0, 0.5 and 1.
+    pub fresnel: [f32; 3],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -300,6 +315,20 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         mat.blend_modulate = get("$blendmodulatetexture");
         if mat.bumpmap.is_none() {
             mat.bumpmap = get("$bumpmap");
+        }
+        if matches!(get("$phong").as_deref(), Some("1")) {
+            let num = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
+            let fr = vec_of(get("$phongfresnelranges"));
+            mat.phong = Some(Phong {
+                exponent: num("$phongexponent", 5.0),
+                boost: num("$phongboost", 1.0),
+                albedo_tint: num("$phongalbedotint", 0.0),
+                fresnel: if fr.len() >= 3 {
+                    [fr[0], fr[1], fr[2]]
+                } else {
+                    [0.0, 0.5, 1.0]
+                },
+            });
         }
         if get("$envmap").is_some() {
             let tint: Vec<f32> = get("$envmaptint")
