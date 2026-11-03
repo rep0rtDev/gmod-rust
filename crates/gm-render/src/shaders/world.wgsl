@@ -13,6 +13,7 @@ struct Camera {
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var lightmap: texture_2d<f32>;
 @group(0) @binding(2) var lightmap_sampler: sampler;
+@group(0) @binding(3) var cubes: texture_cube_array<f32>;
 @group(1) @binding(0) var base: texture_2d<f32>;
 @group(1) @binding(1) var base_sampler: sampler;
 
@@ -26,6 +27,7 @@ struct MaterialParams {
     uv2_t: vec4<f32>,
     water_color: vec4<f32>,
     water_range: vec4<f32>,
+    envmap: vec4<f32>,
 };
 @group(1) @binding(2) var<uniform> material: MaterialParams;
 @group(1) @binding(3) var detail: texture_2d<f32>;
@@ -42,6 +44,8 @@ struct VsIn {
     @location(3) color: vec3<f32>,
     @location(4) alpha: f32,
     @location(5) lm_page: f32,
+    @location(6) normal: vec3<f32>,
+    @location(7) cube: f32,
 };
 
 struct VsOut {
@@ -52,6 +56,8 @@ struct VsOut {
     @location(3) world: vec3<f32>,
     @location(4) alpha: f32,
     @location(5) lm_page: f32,
+    @location(6) normal: vec3<f32>,
+    @location(7) cube: f32,
 };
 
 @vertex
@@ -64,6 +70,8 @@ fn vs_main(in: VsIn) -> VsOut {
     out.world = in.position;
     out.alpha = in.alpha;
     out.lm_page = in.lm_page;
+    out.normal = in.normal;
+    out.cube = in.cube;
     return out;
 }
 
@@ -113,7 +121,21 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // $detail mod2x: base * lerp(1, 2 * detail, $detailblendfactor) at base uv * $detailscale
     let d = textureSample(detail, base_sampler, in.uv * material.detail.x).rgb;
     let base = albedo.rgb * mix(vec3<f32>(1.0), d * 2.0, material.detail.y);
-    let shaded = base * light * in.color * camera.exposure;
+    var shaded = base * light * in.color * camera.exposure;
+    // $envmap: the nearest env_cubemap along the reflected view ray, times $envmaptint and
+    // the mask (1 - base alpha for $basealphaenvmapmask, normal alpha), added after lighting
+    let bump_a = textureSample(bump, base_sampler, in.uv).a;
+    if material.envmap.w > 0.5 && in.cube >= 0.0 && dot(in.normal, in.normal) > 0.0 {
+        let r = reflect(normalize(in.world - camera.eye.xyz), normalize(in.normal));
+        var mask = 1.0;
+        if material.envmap.w > 2.5 {
+            mask = bump_a;
+        } else if material.envmap.w > 1.5 {
+            mask = 1.0 - albedo.a;
+        }
+        let env = textureSampleLevel(cubes, lightmap_sampler, r, i32(in.cube + 0.5), 0.0).rgb;
+        shaded = shaded + env * material.envmap.rgb * mask * camera.exposure;
+    }
     // mat_monitorgamma: 2.2 is neutral, lower brightens
     let out = pow(max(shaded, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
     // env_fog_controller: linear in the view depth from fogstart to fogend, capped at

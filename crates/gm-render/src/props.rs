@@ -128,6 +128,7 @@ pub fn collect_static_props(
     per_material_sky: &mut HashMap<String, Vec<u32>>,
     skybox_bounds: &Option<([f32; 3], [f32; 3])>,
     root_lod: usize,
+    cube_at: &dyn Fn(Vec3) -> f32,
 ) -> Result<(usize, usize, usize, Vec<String>)> {
     let props = StaticProps::parse(bsp)?;
     let mut models: HashMap<u16, Option<LoadedModel>> = HashMap::new();
@@ -166,6 +167,7 @@ pub fn collect_static_props(
         let Some(model) = entry else { continue };
         let rot = angle_matrix(prop.angles);
         let origin = Vec3::from(prop.origin);
+        let prop_cube = cube_at(origin);
         let scale = if prop.uniform_scale > 0.0 {
             prop.uniform_scale
         } else {
@@ -249,6 +251,8 @@ pub fn collect_static_props(
                             color: (shade * tint).to_array(),
                             alpha: 0.0,
                             lm_page: 0.0,
+                            normal: n.to_array(),
+                            cube: prop_cube,
                         });
                     }
                     local_indices.push(base + li);

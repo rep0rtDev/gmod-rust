@@ -102,7 +102,16 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   mount now layers the map's pakfile (`Mount::add_pak`, `Provider::Pak`) in front of the
   install, as the engine does, so the cubemap VTFs and patched VMTs resolve through
   `material::load_texture` / `material::load` (gm_construct: 599 pak entries, 56 cubemap
-  VTFs); the model shader's `$envmap` lookup itself is still open.
+  VTFs); `$envmap` is drawn: every sample's 32-texel LDR mip
+  (faces 0-5 = +x -x +y -y +z -z, D3D order, sampled with the world-space reflected view
+  ray; measured: face 4 of outdoor samples is the sky (136, 192, 255), face 5 the ground)
+  goes into one cube array; a world face uses the sample vbsp baked into its patched
+  material name (`..._<x>_<y>_<z>`), a static prop or model entity the sample nearest its
+  origin, else the nearest to the face centre. The reflection is added after lighting,
+  times `$envmaptint` and the mask (`$basealphaenvmapmask`: 1 - base alpha, so on the
+  construct building templates only the windows reflect; `$normalmapalphaenvmapmask`: the
+  bump alpha). Open: HDR cubemaps (`.hdr.vtf`), `$envmapcontrast` / `$envmapsaturation`,
+  `$envmapmask` textures, fresnel.
   Done since: the eye's water volume (`LUMP_LEAFWATERDATA` 36: surface z, min z, surface
   texinfo; its `CONTENTS_WATER` leaves' boxes) switches the view fog of the world, model and
   3D-skybox passes (the latter in skybox units) to the surface material's `$bottommaterial`

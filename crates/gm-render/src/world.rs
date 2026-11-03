@@ -9,6 +9,7 @@ use gm_content::Mount;
 use gm_formats::bsp::extra::{build_disp_mesh, disp_infos, disp_verts, DispInfo};
 use gm_formats::bsp::lumps::{surf, Face};
 use gm_formats::bsp::Bsp;
+use gm_formats::vtf;
 use wgpu::util::DeviceExt;
 
 use crate::gpu::Gpu;
@@ -27,6 +28,10 @@ pub struct Vertex {
     pub alpha: f32,
     /// Bumped faces: atlas u stride between the four lightmap pages (0 when unbumped).
     pub lm_page: f32,
+    /// World-space normal for the `$envmap` reflection (zero when unused).
+    pub normal: [f32; 3],
+    /// Layer of the nearest `env_cubemap` sample in the cube array, -1 for none.
+    pub cube: f32,
 }
 
 #[repr(C)]
@@ -49,6 +54,128 @@ struct MaterialParams {
     water_color: [f32; 4],
     /// `Water` `$fogstart`, `$fogend`, 0, 0.
     water_range: [f32; 4],
+    /// `$envmap`: `$envmaptint` and the mask mode (0 off, 1 none, 2 base alpha, 3 normal alpha).
+    envmap: [f32; 4],
+}
+
+fn envmap_params(mat: &material::Material) -> [f32; 4] {
+    match mat.envmap {
+        None => [0.0; 4],
+        Some(e) => {
+            let mode = match e.mask {
+                material::EnvMapMask::None => 1.0,
+                material::EnvMapMask::BaseAlpha => 2.0,
+                material::EnvMapMask::NormalAlpha => 3.0,
+            };
+            [e.tint[0], e.tint[1], e.tint[2], mode]
+        }
+    }
+}
+
+/// Nearest baked `env_cubemap` sample: (origin, layer in the cube array).
+pub struct CubeSet {
+    samples: Vec<(Vec3, f32)>,
+}
+
+impl CubeSet {
+    /// The sample named by a vbsp-patched material (`..._<x>_<y>_<z>`), if loaded.
+    pub fn from_patched_name(&self, name: &str) -> Option<f32> {
+        let mut it = name.rsplit('_');
+        let z: i32 = it.next()?.parse().ok()?;
+        let y: i32 = it.next()?.parse().ok()?;
+        let x: i32 = it.next()?.parse().ok()?;
+        let o = Vec3::new(x as f32, y as f32, z as f32);
+        self.samples.iter().find(|s| s.0 == o).map(|s| s.1)
+    }
+
+    pub fn nearest(&self, p: Vec3) -> f32 {
+        self.samples
+            .iter()
+            .min_by(|a, b| a.0.distance_squared(p).total_cmp(&b.0.distance_squared(p)))
+            .map_or(-1.0, |s| s.1)
+    }
+}
+
+const CUBE_SIDE: u32 = 32;
+
+/// The map's `LUMP_CUBEMAPS` samples from their pakfile VTFs (`c<x>_<y>_<z>.vtf`, the LDR
+/// faces in D3D order +x -x +y -y +z -z, sampled with the world vector) as one cube array
+/// at the 32-texel mip.
+fn load_cubemaps(gpu: &Gpu, mount: &Mount, bsp: &Bsp<'_>) -> (CubeSet, wgpu::TextureView) {
+    let files: HashMap<String, String> = mount
+        .find("materials/maps/**/*.vtf")
+        .into_iter()
+        .filter_map(|p| Some((p.rsplit('/').next()?.to_string(), p.clone())))
+        .collect();
+    let mut samples = Vec::new();
+    let mut pixels = Vec::new();
+    for c in gm_formats::bsp::extra::cubemaps(bsp).unwrap_or_default() {
+        let name = format!("c{}_{}_{}.vtf", c.origin[0], c.origin[1], c.origin[2]);
+        let Some(bytes) = files.get(&name).and_then(|p| mount.read(p).ok()) else {
+            continue;
+        };
+        let Ok(h) = vtf::Header::parse(&bytes) else {
+            continue;
+        };
+        let Some(mip) =
+            (0..h.mipmap_count as u32).find(|&m| vtf::decode::mip_dims(&h, m).0 == CUBE_SIDE)
+        else {
+            continue;
+        };
+        let faces: Option<Vec<Vec<u8>>> = (0..6)
+            .map(|f| {
+                let slice = vtf::decode::mip_slice(&h, &bytes, mip, 0, f, 0).ok()?;
+                vtf::decode::decode_rgba8(h.high_res_format, CUBE_SIDE, CUBE_SIDE, slice).ok()
+            })
+            .collect();
+        let Some(faces) = faces else { continue };
+        let layer = samples.len() as f32;
+        samples.push((
+            Vec3::new(c.origin[0] as f32, c.origin[1] as f32, c.origin[2] as f32),
+            layer,
+        ));
+        pixels.extend(faces.into_iter().flatten());
+    }
+    let cubes = samples.len().max(1) as u32;
+    if samples.is_empty() {
+        pixels = vec![0; (CUBE_SIDE * CUBE_SIDE * 4 * 6) as usize];
+    }
+    let size = wgpu::Extent3d {
+        width: CUBE_SIDE,
+        height: CUBE_SIDE,
+        depth_or_array_layers: cubes * 6,
+    };
+    let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("env_cubemaps"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    gpu.queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &tex,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &pixels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(CUBE_SIDE * 4),
+            rows_per_image: Some(CUBE_SIDE),
+        },
+        size,
+    );
+    let view = tex.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::CubeArray),
+        ..Default::default()
+    });
+    eprintln!("env_cubemap: {} samples in the cube array", samples.len());
+    (CubeSet { samples }, view)
 }
 
 fn uv2_params(mat: &material::Material, modulate: bool, bump: bool) -> ([f32; 4], [f32; 4]) {
@@ -304,6 +431,7 @@ pub struct WorldRenderer {
     detail_fallback: wgpu::TextureView,
     /// Flat normal bound as the bump map of materials without `$bumpmap`.
     bump_fallback: wgpu::TextureView,
+    cubes: CubeSet,
     /// `$nocull` variants of `pipeline` / `translucent_pipeline`.
     nocull_pipeline: wgpu::RenderPipeline,
     translucent_nocull_pipeline: wgpu::RenderPipeline,
@@ -394,6 +522,7 @@ fn build_sky_cube(
             uv2_t: [0.0; 4],
             water_color: [0.0; 4],
             water_range: [0.0; 4],
+            envmap: [0.0; 4],
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });
@@ -463,6 +592,8 @@ fn build_sky_cube(
                 color: [1.0; 3],
                 alpha: 0.0,
                 lm_page: 0.0,
+                normal: [0.0; 3],
+                cube: -1.0,
             });
         }
         idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -1247,6 +1378,7 @@ impl WorldRenderer {
                 .map(|(_, rgba)| (canon, rgba.width, rgba.height))
         };
 
+        let (cubes, cube_view) = load_cubemaps(gpu, mount, bsp);
         for (fi, face) in bsp.faces.iter().enumerate() {
             if skip_face(bsp, face) {
                 continue;
@@ -1293,6 +1425,19 @@ impl WorldRenderer {
             } else {
                 (white, false)
             };
+            let face_normal = {
+                let n = bsp.planes[face.plane_num as usize].normal;
+                let sgn = if face.side != 0 { -1.0 } else { 1.0 };
+                [n[0] * sgn, n[1] * sgn, n[2] * sgn]
+            };
+            // vbsp bakes the chosen sample into the face's patched material name
+            // (`maps/<map>/<material>_<x>_<y>_<z>`); nearest to the face centre otherwise
+            let face_cube = cubes.from_patched_name(name).unwrap_or_else(|| {
+                let poly = bsp.face_vertices(face);
+                let c = poly.iter().fold(Vec3::ZERO, |a, v| a + Vec3::from(*v))
+                    / poly.len().max(1) as f32;
+                cubes.nearest(c)
+            });
             let in_sky = skybox_faces.contains(&fi);
             if in_sky {
                 stats.skybox_faces += 1;
@@ -1325,6 +1470,8 @@ impl WorldRenderer {
                         color: [1.0; 3],
                         alpha: mesh.alphas.get(i).copied().unwrap_or(0.0) / 255.0,
                         lm_page,
+                        normal: face_normal,
+                        cube: face_cube,
                     });
                 }
                 indices.extend(mesh.indices.iter().map(|i| base + i));
@@ -1350,6 +1497,8 @@ impl WorldRenderer {
                     color: [1.0; 3],
                     alpha: 0.0,
                     lm_page,
+                    normal: face_normal,
+                    cube: face_cube,
                 });
             }
             for i in 1..poly.len() as u32 - 1 {
@@ -1372,6 +1521,7 @@ impl WorldRenderer {
             &mut per_material_sky,
             &skybox_faces_bounds(bsp, &skybox_faces),
             quality.root_lod as usize,
+            &|p| cubes.nearest(p),
         )?;
         stats.props = prop_stats.0;
         stats.prop_models = prop_stats.1;
@@ -1426,6 +1576,16 @@ impl WorldRenderer {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::CubeArray,
+                        multisampled: false,
+                    },
                     count: None,
                 },
             ],
@@ -1524,6 +1684,10 @@ impl WorldRenderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&lm_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&cube_view),
                 },
             ],
         });
@@ -1655,6 +1819,7 @@ impl WorldRenderer {
                     uv2_t: uv2.1,
                     water_color: water.0,
                     water_range: water.1,
+                    envmap: envmap_params(mat),
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -1767,7 +1932,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -1850,7 +2015,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -1936,6 +2101,7 @@ impl WorldRenderer {
             sky_pipeline,
             detail_fallback,
             bump_fallback,
+            cubes,
             nocull_pipeline,
             translucent_nocull_pipeline,
             water_pipeline,
@@ -2382,6 +2548,7 @@ impl WorldRenderer {
                         uv2_t: [0.0; 4],
                         water_color: [0.0; 4],
                         water_range: [0.0; 4],
+                        envmap: envmap_params(mat),
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
@@ -2478,6 +2645,7 @@ impl WorldRenderer {
                 uv2_t: [0.0; 4],
                 water_color: [0.0; 4],
                 water_range: [0.0; 4],
+                envmap: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -2558,6 +2726,8 @@ impl WorldRenderer {
                     color,
                     alpha: 0.0,
                     lm_page: 0.0,
+                    normal: [0.0; 3],
+                    cube: -1.0,
                 });
             }
             if i > 0 {
@@ -2588,6 +2758,8 @@ impl WorldRenderer {
                 color,
                 alpha: 0.0,
                 lm_page: 0.0,
+                normal: [0.0; 3],
+                cube: -1.0,
             })
             .collect();
         (verts, vec![0, 1, 2, 0, 2, 3])
@@ -2680,6 +2852,7 @@ impl WorldRenderer {
                 uv2_t: [0.0; 4],
                 water_color: [0.0; 4],
                 water_range: [0.0; 4],
+                envmap: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -2786,6 +2959,7 @@ impl WorldRenderer {
             let (m, xf) = (item.model, &item.transform);
             // the game lights a model from its origin: ambient cube of the leaf + direct lights
             let origin = xf.transform_point3(Vec3::ZERO);
+            let model_cube = self.cubes.nearest(origin);
             let local = if m.unlit {
                 None
             } else {
@@ -2820,6 +2994,8 @@ impl WorldRenderer {
                         color: shade.to_array(),
                         alpha: 0.0,
                         lm_page: 0.0,
+                        normal: n.to_array(),
+                        cube: model_cube,
                     });
                 }
                 let first = idx.len() as u32;
