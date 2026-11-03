@@ -1147,3 +1147,34 @@ fn glua_derma_controls_build_and_lay_out() {
     assert_eq!(wang, 7.0);
     assert_eq!(errors, "");
 }
+
+/// spawnmenu registries (tool tabs / categories / options, creation tabs) and the local
+/// achievement counters.
+#[test]
+fn glua_spawnmenu_registry_and_achievements() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "menu".into(),
+        name: "reg".into(),
+        priority: 0,
+        source: r##"
+            spawnmenu.AddToolMenuOption("Main", "Construction", "weld", "#tool.weld.name", "gmod_tool weld", nil, function(cp) end)
+            spawnmenu.AddToolMenuOption("Main", "Construction", "rope", "#tool.rope.name", "gmod_tool rope")
+            achievements.SpawnedProp() achievements.SpawnedProp()
+        "##
+        .into(),
+        config: ActorConfig::default(),
+    })
+    .expect("actor");
+    let (tools, cat_items, tab_icon, ach): (f64, f64, String, String) = rt.actors()[0]
+        .eval(r##"
+            local menu = spawnmenu.GetToolMenu("Main")
+            return #spawnmenu.GetTools(), #menu[1], spawnmenu.GetCreationTabs()["#spawnmenu.content_tab"].Icon,
+                achievements.GetCount(1) .. "/" .. achievements.GetGoal(1) .. "/" .. tostring(achievements.IsAchieved(1))
+        "##)
+        .expect("eval");
+    assert_eq!(tools, 3.0, "the game's three tool tabs");
+    assert_eq!(cat_items, 2.0, "two options in the Construction category");
+    assert_eq!(tab_icon, "icon16/application_view_tile.png");
+    assert_eq!(ach, "2/5000/false");
+}

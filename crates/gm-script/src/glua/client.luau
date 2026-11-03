@@ -546,6 +546,143 @@ function dragndrop.HandleDroppedInGame() end
 -- on it; Panel:Receiver(name, fn, menu) takes the drop: fn(receiver, panels, dropped, cmd, x, y)
 __glua_dnd = drag
 
+
+------------------------------------------------------------------------ spawnmenu registry
+-- the sandbox spawn menu's registries (`spawnmenu.lua`, `creationmenu`, `toolmenu`): tool
+-- tabs / categories / options, creation tabs, content types, prop categories; the native
+-- menu in gm-client reads the game's text files itself, these hold what scripts add
+spawnmenu = spawnmenu or {}
+local tool_tabs, tool_tab_order = {}, {}
+local creation_tabs, creation_order = {}, {}
+local content_types, prop_tables, custom_props = {}, {}, {}
+local active_cpanel, active_tool_tab, active_creation_tab
+function spawnmenu.AddToolTab(name, label, icon)
+	if not tool_tabs[name] then
+		tool_tabs[name] = { Label = label or name, Icon = icon or "icon16/wrench.png", Items = {}, ItemOrder = {} }
+		tool_tab_order[#tool_tab_order + 1] = name
+	end
+	return tool_tabs[name]
+end
+function spawnmenu.AddToolCategory(tab, name, label)
+	local t = spawnmenu.AddToolTab(tab)
+	if not t.Items[name] then
+		t.Items[name] = { ItemName = name, Text = label or name, Items = {} }
+		t.ItemOrder[#t.ItemOrder + 1] = name
+	end
+	return t.Items[name]
+end
+function spawnmenu.AddToolMenuOption(tab, category, class, name, command, config, cpanel, tbl)
+	local cat = spawnmenu.AddToolCategory(tab, category)
+	local item = tbl or {}
+	item.ItemName, item.Text, item.Command, item.Config, item.CPanelFunction = class, name, command, config, cpanel
+	for i, it in ipairs(cat.Items) do if it.ItemName == class then cat.Items[i] = item return item end end
+	cat.Items[#cat.Items + 1] = item
+	return item
+end
+function spawnmenu.GetToolMenu(name, label, icon)
+	local t = spawnmenu.AddToolTab(name, label, icon)
+	local out = {}
+	for _, cname in ipairs(t.ItemOrder) do
+		local c = t.Items[cname]
+		local list = { ItemName = c.ItemName, Text = c.Text }
+		for i, it in ipairs(c.Items) do list[i] = it end
+		out[#out + 1] = list
+	end
+	return out
+end
+function spawnmenu.GetTools()
+	local out = {}
+	for _, name in ipairs(tool_tab_order) do
+		local t = tool_tabs[name]
+		out[#out + 1] = { Name = name, Label = t.Label, Icon = t.Icon, Items = spawnmenu.GetToolMenu(name) }
+	end
+	return out
+end
+function spawnmenu.ClearToolMenus() tool_tabs, tool_tab_order = {}, {} end
+function spawnmenu.SwitchToolTab(id) active_tool_tab = id end
+function spawnmenu.ActivateTool(name, menu_only)
+	if not menu_only then RunConsoleCommand("gmod_tool", name) end
+	for _, tab in pairs(tool_tabs) do
+		for _, cat in pairs(tab.Items) do
+			for _, it in ipairs(cat.Items) do
+				if it.ItemName == name then spawnmenu.ActivateToolPanel(1, it) return end
+			end
+		end
+	end
+end
+function spawnmenu.ActivateToolPanel(tab_id, item)
+	local cp = vgui.Create("ControlPanel")
+	if item.CPanelFunction then item.CPanelFunction(cp) end
+	active_cpanel = cp
+	hook.Run("SpawnMenuActivateToolPanel", tab_id, item)
+	return cp
+end
+function spawnmenu.ActiveControlPanel() return active_cpanel end
+function spawnmenu.SetActiveControlPanel(p) active_cpanel = p end
+function spawnmenu.AddCreationTab(name, fn, material, order, tooltip)
+	creation_tabs[name] = { Function = fn, Icon = material or "icon16/exclamation.png", Order = order or 1000, Tooltip = tooltip }
+	creation_order[#creation_order + 1] = name
+	table.sort(creation_order, function(a, b) local oa, ob = creation_tabs[a].Order, creation_tabs[b].Order; if oa ~= ob then return oa < ob end return a < b end)
+end
+function spawnmenu.GetCreationTabs() return creation_tabs end
+function spawnmenu.SwitchCreationTab(name) active_creation_tab = name end
+function spawnmenu.AddContentType(name, fn) content_types[name] = fn end
+function spawnmenu.GetContentType(name, container, data)
+	local fn = content_types[name]
+	if fn and container then return fn(container, data) end
+	return fn
+end
+function spawnmenu.CreateContentIcon(kind, container, data)
+	local fn = content_types[kind]
+	if fn then return fn(container, data) end
+end
+function spawnmenu.AddPropCategory(file, name, contents, icon, id, parentid, needsapp)
+	prop_tables[file] = { name = name, contents = contents or {}, icon = icon or "icon16/page.png", id = id or 0, parentid = parentid or 0, needsapp = needsapp or "" }
+	hook.Run("PopulatePropMenu")
+end
+function spawnmenu.GetPropTable() return prop_tables end
+function spawnmenu.GetCustomPropTable() return custom_props end
+function spawnmenu.PopulateFromTextFiles(fn)
+	-- the engine's spawnlists are the client's own (settings/spawnlist/*.txt); the native menu
+	-- mounts them, scripts see only what AddPropCategory added
+	for file, t in pairs(prop_tables) do fn(t.name, t.icon, t.id, t.parentid, t.needsapp, t.contents) end
+end
+function spawnmenu.PopulateFromEngineTextFiles() hook.Run("PopulatePropMenu") end
+function spawnmenu.SaveToTextFiles(tbl) custom_props = tbl or custom_props; hook.Run("SpawnlistContentChanged") end
+function spawnmenu.DoSaveToTextFiles(tbl) spawnmenu.SaveToTextFiles(tbl) end
+-- the game's own tabs so scripts can add next to them (sandbox `spawnmenu.AddCreationTab`)
+spawnmenu.AddCreationTab("#spawnmenu.content_tab", function() return vgui.Create("SpawnmenuContentPanel") end, "icon16/application_view_tile.png", 10)
+spawnmenu.AddToolTab("Main", "#spawnmenu.tools_tab", "icon16/wrench.png")
+spawnmenu.AddToolTab("Utilities", "#spawnmenu.utilities", "icon16/page_white_wrench.png")
+spawnmenu.AddToolTab("Options", "#spawnmenu.options", "icon16/wrench_orange.png")
+
+------------------------------------------------------------------------ achievements
+-- the game's achievements (Steam stats): the counters live locally here and the names / goals
+-- are the documented sandbox set; `IsAchieved` when the count reaches the goal
+achievements = achievements or {}
+local ACH = {
+	{ "Remover", "#achievements.remover", "#achievements.remover_desc", 1000 },
+	{ "SpawnedProp", "#achievements.spawnedprop", "#achievements.spawnedprop_desc", 5000 },
+	{ "SpawnedRagdoll", "#achievements.spawnedragdoll", "#achievements.spawnedragdoll_desc", 2000 },
+	{ "SpawnedNPC", "#achievements.spawnednpc", "#achievements.spawnednpc_desc", 1000 },
+	{ "SpawnMenuOpen", "#achievements.spawnmenuopen", "#achievements.spawnmenuopen_desc", 100000 },
+	{ "EatBall", "#achievements.eatball", "#achievements.eatball_desc", 200 },
+	{ "BalloonPopped", "#achievements.balloonpopped", "#achievements.balloonpopped_desc", 1000 },
+	{ "IncBaddies", "#achievements.baddies", "#achievements.baddies_desc", 1000 },
+	{ "IncGoodies", "#achievements.goodies", "#achievements.goodies_desc", 1000 },
+	{ "IncBystander", "#achievements.bystander", "#achievements.bystander_desc", 1000 },
+}
+local ach_counts = {}
+function achievements.Count() return #ACH end
+function achievements.GetName(i) local a = ACH[(i or 0) + 1]; return a and a[2] or "" end
+function achievements.GetDesc(i) local a = ACH[(i or 0) + 1]; return a and a[3] or "" end
+function achievements.GetGoal(i) local a = ACH[(i or 0) + 1]; return a and a[4] or 0 end
+function achievements.GetCount(i) local a = ACH[(i or 0) + 1]; return a and (ach_counts[a[1]] or 0) or 0 end
+function achievements.IsAchieved(i) local a = ACH[(i or 0) + 1]; return a ~= nil and (ach_counts[a[1]] or 0) >= a[4] end
+for _, a in ipairs(ACH) do
+	achievements[a[1]] = function() ach_counts[a[1]] = (ach_counts[a[1]] or 0) + 1 end
+end
+
 ------------------------------------------------------------------------ the frame
 -- the engine HUD elements the game asks `HUDShouldDraw` about (the sandbox hides CHudHealth,
 -- CHudBattery, CHudAmmo, CHudSecondaryAmmo and draws its own; the client applies the answers)
