@@ -883,7 +883,11 @@ fn glua_client_hud_paint_draws_through_surface() {
             end)
         "#
         .into(),
-        config: ActorConfig::default(),
+        // a frame's hook chain under the test suite's parallel load: not the 2 ms default
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
     })
     .expect("actor");
     let mut world = gm_net::ClientWorld::default();
