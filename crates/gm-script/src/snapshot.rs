@@ -347,6 +347,29 @@ impl Snapshot {
         self.nav().and_then(|n| n.nearest(pos, extents))
     }
 
+    /// `CNavArea:IsPotentiallyVisible`: PVS between two points lifted to half human height
+    /// (36 u), the same test the server's NPC interest check uses; false without a world.
+    pub fn nav_visible(&self, a: glam::Vec3, b: glam::Vec3) -> bool {
+        if self.world.0.is_null() {
+            return false;
+        }
+        // see WorldRef: valid while the snapshot is in use
+        let w = unsafe { &*self.world.0 };
+        let lift = glam::Vec3::new(0.0, 0.0, 36.0);
+        w.visible(w.cluster_at(a + lift), w.cluster_at(b + lift))
+    }
+
+    /// `CNavArea:IsUnderwater`: water or slime contents just above the point.
+    pub fn nav_underwater(&self, p: glam::Vec3) -> bool {
+        if self.world.0.is_null() {
+            return false;
+        }
+        const WATER_OR_SLIME: i32 = 0x20 | 0x10;
+        // see WorldRef: valid while the snapshot is in use
+        let w = unsafe { &*self.world.0 };
+        w.point_contents(p + glam::Vec3::new(0.0, 0.0, 1.0)) & WATER_OR_SLIME != 0
+    }
+
     pub fn nav_blocked(&self) -> Vec<usize> {
         self.nav().map(|n| n.blocked()).unwrap_or_default()
     }

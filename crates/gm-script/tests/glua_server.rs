@@ -2811,3 +2811,55 @@ fn nav_area_block_writes() {
         .unwrap();
     assert_eq!((blocked, n), (false, 0.0));
 }
+
+#[test]
+fn nav_area_visibility_and_water() {
+    let mut g = gm_nav::Geometry::default();
+    let sq = [
+        Vec3::new(-1024.0, -1024.0, 0.0),
+        Vec3::new(1024.0, -1024.0, 0.0),
+        Vec3::new(1024.0, 1024.0, 0.0),
+        Vec3::new(-1024.0, 1024.0, 0.0),
+    ];
+    g.push_polygon(&sq);
+    let mut rev = sq;
+    rev.reverse();
+    g.push_polygon(&rev);
+    g.mins = Vec3::new(-1024.0, -1024.0, -8.0);
+    g.maxs = Vec3::new(1024.0, 1024.0, 8.0);
+    let mesh = gm_nav::NavMesh::from_geometry(&g, &gm_nav::NavParams::default()).unwrap();
+    // a pool over the whole x < 0 half; a boxes world has no PVS data, so everything is visible
+    let world = gm_collision::World::from_boxes_contents(&[(
+        Vec3::new(-3000.0, -3000.0, -64.0),
+        Vec3::new(0.0, 3000.0, 64.0),
+        0x20,
+    )]);
+    let mut rt = runtime(
+        "events.on('tick.pre', function()
+             local all = navmesh.GetAllNavAreas()
+             local wet_ok, n = true, 0
+             for _, a in ipairs(all) do
+                 if a:IsUnderwater() ~= (a:GetCenter().x < 0) then wet_ok = false end
+                 if a:IsUnderwater() then n = n + 1 end
+             end
+             local a, b = all[1], all[#all]
+             state.r = { #all >= 2, wet_ok, n > 0, a:IsPotentiallyVisible(b), a:IsPartiallyVisible(b:GetCenter()),
+                         a:IsCompletelyVisible(b:GetCenter()), #a:GetVisibleAreas() == #all }
+         end)",
+    );
+    let mut snap = (*snapshot()).clone();
+    snap.nav = gm_script::snapshot::NavRef(&mesh as *const _);
+    snap.world = gm_script::snapshot::WorldRef(&world as *const _);
+    let snap = Arc::new(snap);
+    let a = &mut rt.actors_mut()[0];
+    a.dispatch(&snap, "tick.pre", &Payload::default(), 1)
+        .unwrap();
+    let r: Vec<bool> = a.eval("return state.r").unwrap();
+    assert_eq!(r, vec![true; 7], "{r:?}");
+    let mut dry = (*snapshot()).clone();
+    dry.nav = gm_script::snapshot::NavRef(&mesh as *const _);
+    a.dispatch(&Arc::new(dry), "tick.pre", &Payload::default(), 2)
+        .unwrap();
+    let r: Vec<bool> = a.eval("return state.r").unwrap();
+    assert_eq!((r[2], r[3], r[6]), (false, false, false), "{r:?}");
+}

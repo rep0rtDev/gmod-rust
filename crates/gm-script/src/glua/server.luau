@@ -1128,6 +1128,17 @@ function NAVAREA:GetID() return self.__id end
 -- blocked areas leave every path query (Detour exclude flag): NPC / NextBot paths route around
 function NAVAREA:IsBlocked() return nav and nav.is_blocked and nav.is_blocked(self.__id) == true end
 function NAVAREA:MarkAsBlocked() world.queue("nav_block", 0, { poly = self.__id, on = true }) end
+-- potential visibility = PVS of the world between the centres; water = contents at the centre
+local function nav_vis(a, b) return nav and nav.visible and nav.visible(a, b) == true end
+function NAVAREA:IsPotentiallyVisible(o) return o ~= nil and o.__center ~= nil and nav_vis(self.__center, o.__center) end
+function NAVAREA:GetVisibleAreas()
+    local out = {}
+    for _, a in ipairs(navmesh.GetAllNavAreas()) do
+        if self:IsPotentiallyVisible(a) then out[#out + 1] = a end
+    end
+    return out
+end
+function NAVAREA:IsUnderwater() return nav ~= nil and nav.underwater ~= nil and nav.underwater(self.__center) == true end
 function NAVAREA:MarkAsUnblocked() world.queue("nav_block", 0, { poly = self.__id, on = false }) end
 function NAVAREA:IsValid() return polys()[self.__id] ~= nil end
 function NAVAREA:GetCorner(i) local cs = P(self).corners; return cs[math.max(1, math.min(#cs, math.floor(tonumber(i) or 0) + 1))] or self.__center end
@@ -1217,7 +1228,7 @@ function NAVAREA:GetTotalCost() return nav_search.total[self.__id] or 0 end
 function NAVAREA:SetParent(parent, how) if parent then nav_search.area[parent.__id] = parent end nav_search.parent[self.__id] = parent and parent.__id or nil; nav_search.how[self.__id] = how end
 function NAVAREA:GetParent() local p = nav_search.parent[self.__id]; if p then return nav_search.area[p] or area_of(p) end return nil end
 function NAVAREA:GetParentHow() return nav_search.how[self.__id] or 9 end
-for _, name in ipairs({ "AddAttributes", "AddHidingSpot", "ComputeAdjacentConnectionHeightChange", "ComputeDirection", "ConnectTo", "Disconnect", "Draw", "DrawSpots", "GetAdjacentAreaDistances", "GetAdjacentAreas", "GetAdjacentAreasAtSide", "GetAdjacentCount", "GetAdjacentCountAtSide", "GetAttributes", "GetCorner", "GetExposedSpots", "GetExtentInfo", "GetHidingSpots", "GetIncomingConnectionDistances", "GetIncomingConnections", "GetIncomingConnectionsAtSide", "GetLadders", "GetLaddersAtSide", "GetLightIntensity", "GetPlace", "GetRandomAdjacentAreaAtSide", "GetRandomPoint", "GetSizeX", "GetSizeY", "GetSpotEncounters", "GetVisibleAreas", "HasAttributes", "IsCompletelyVisible", "IsConnected", "IsConnectedAtSide", "IsCoplanar", "IsDamaging", "IsFlat", "IsOverlapping", "IsOverlappingArea", "IsPartiallyVisible", "IsPotentiallyVisible", "IsRoughlySquare", "IsUnderwater", "MarkAsDamaging", "PlaceOnGround", "Remove", "RemoveAttributes", "SetAttributes", "SetCorner", "SetPlace" }) do
+for _, name in ipairs({ "AddAttributes", "AddHidingSpot", "ComputeAdjacentConnectionHeightChange", "ComputeDirection", "ConnectTo", "Disconnect", "Draw", "DrawSpots", "GetAdjacentAreaDistances", "GetAdjacentAreas", "GetAdjacentAreasAtSide", "GetAdjacentCount", "GetAdjacentCountAtSide", "GetAttributes", "GetCorner", "GetExposedSpots", "GetExtentInfo", "GetHidingSpots", "GetIncomingConnectionDistances", "GetIncomingConnections", "GetIncomingConnectionsAtSide", "GetLadders", "GetLaddersAtSide", "GetLightIntensity", "GetPlace", "GetRandomAdjacentAreaAtSide", "GetRandomPoint", "GetSizeX", "GetSizeY", "GetSpotEncounters", "HasAttributes", "IsConnected", "IsConnectedAtSide", "IsCoplanar", "IsDamaging", "IsFlat", "IsOverlapping", "IsOverlappingArea", "IsRoughlySquare", "MarkAsDamaging", "PlaceOnGround", "Remove", "RemoveAttributes", "SetAttributes", "SetCorner", "SetPlace" }) do
     if NAVAREA[name] == nil then NAVAREA[name] = stub("CNavArea:" .. name) end
 end
 __glua_classes.CNavArea = NAVAREA

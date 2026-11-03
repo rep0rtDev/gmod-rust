@@ -776,6 +776,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `CNavArea:IsPotentiallyVisible(area)` is the world's PVS between the two centres lifted 36 u
+  (the server's NPC interest test); `GetVisibleAreas()` filters every area with it
+  (`IsPartiallyVisible` / `IsCompletelyVisible` stay line-of-sight traces to a position).
+  `IsUnderwater()` is water or slime contents just above the centre. A map without visibility
+  data sees everything, as the engine does.
 - `CNavArea:MarkAsBlocked()` / `MarkAsUnblocked()` set a blocked flag on the mesh polygon that
   every path query excludes (Detour exclude flag), so NPC and NextBot paths route around the
   area; `IsBlocked()` and `navmesh.GetBlockedAreas()` read the set back. Blocking is not

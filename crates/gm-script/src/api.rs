@@ -3147,6 +3147,22 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             Ok(t)
         })?,
     )?;
+    let sh4 = shared.clone();
+    nav.set(
+        "visible",
+        lua.create_function(move |_, (a, b): (Table, Table)| {
+            let snap = sh4.snapshot.read().unwrap().clone();
+            Ok(snap.nav_visible(table_vec3(&a)?, table_vec3(&b)?))
+        })?,
+    )?;
+    let sh5 = shared.clone();
+    nav.set(
+        "underwater",
+        lua.create_function(move |_, p: Table| {
+            let snap = sh5.snapshot.read().unwrap().clone();
+            Ok(snap.nav_underwater(table_vec3(&p)?))
+        })?,
+    )?;
     let sh3 = shared.clone();
     nav.set(
         "is_blocked",
