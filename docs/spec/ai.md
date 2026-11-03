@@ -208,7 +208,10 @@ Implemented in `Server::npc_combat_think`, run once per NPC think right after th
   closes), and the later pistol shots at its centre miss while it moves (48 / 45 / 45 / 45 /
   43 ...). Ours, with the mesh (the harness runner now builds it for any scenario that spawns
   an NPC, and `ai_disabled 1` freezes every NPC as in the game), chases straight at 0.6 u/tick
-  from the first think and is hit by every shot - reaction delay, route and pace open.
+  from the first think and is hit by every shot - reaction delay, route and pace open. Note
+  the pace: the zombie that sees its target from the start (`server_npc_melee_zombie`) walks
+  44.6 u/s straight at it, the one woken by a bullet here 33.8 u/s along a curving leg - two
+  AI states (combat chase vs alert / investigate), only the first is modelled.
 - Facing: standing still the NPC turns toward the target at `NPC_YAW_RATE` (150 deg/s per think); while walking a path the motion owns the yaw. Fire starts once the yaw is within 15 deg of the target.
 - Fire: one shot per think, `NPC_BURST_SHOTS` = 5 per burst, `NPC_BURST_GAP_TICKS` = 28 between bursts; the first shot comes one think after the target is acquired (the game also opens fire one think after entering combat). Each pellet leaves the eye toward the chest inside a 5 deg cone (`NPC_AIM_CONE_DEG`, a hash of NPC id and tick, deterministic) and the nearest of the world, a prop and a player hull on the ray takes it; a player takes `weapons::npc_shot_damage` (3; .357 15) as DMG_BULLET through the normal damage hooks. NPCs do not hit each other.
 - Lost sight: the NPC runs after the player (`npc_chase`, run gait) until the player is seen again, which ends the chase and resumes fire; after `NPC_TARGET_LOSE_TICKS` (330) without sight the target is dropped and the NPC stops. A chase or goto issued by an addon is not overridden while the target stays in view.
