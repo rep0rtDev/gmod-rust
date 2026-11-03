@@ -553,6 +553,16 @@ public:
 	void OnContactRemoved(const JPH::SubShapeIDPair &pair) override {
 		contact(pair.GetBody1ID().GetIndexAndSequenceNumber(), pair.GetBody2ID().GetIndexAndSequenceNumber(), 2);
 		contact_points.erase((JPH::uint64(pair.GetBody1ID().GetIndexAndSequenceNumber()) << 32) | pair.GetBody2ID().GetIndexAndSequenceNumber());
+		// a body falling asleep loses its manifold too; its resting history stays, so a shot
+		// that wakes it is a push from rest and not a landing of a body that never touched
+		// (`shoot_prop_357_drum`: the asleep drum took rim vertex impacts and tumbled)
+		if (sys) {
+			const JPH::BodyInterface &bi = sys->GetBodyInterfaceNoLock();
+			auto asleep = [&](JPH::BodyID id) {
+				return bi.GetMotionType(id) != JPH::EMotionType::Static && !bi.IsActive(id);
+			};
+			if (asleep(pair.GetBody1ID()) || asleep(pair.GetBody2ID())) return;
+		}
 		rest.erase((JPH::uint64(pair.GetBody1ID().GetIndexAndSequenceNumber()) << 32) | pair.GetBody2ID().GetIndexAndSequenceNumber());
 	}
 
@@ -773,7 +783,10 @@ public:
 					// Coulomb cap solved with the anchor's own normal part scaling along: J_t = f (ratio J_t + m (g dt + vn_stored))
 					// the anchor's normal part only counts while the face is still flat (the game
 					// loses 15.3 u/s in the push step, then f g dt per step once the drum tips)
-					bool flat = dyn.GetAngularVelocity().Length() < 0.4f;
+					// (a body pushed from rest the step before is still flat whatever spin the
+					// push's torque left it: the crossbow bolt's drum turns 1.4 rad/s yet the game
+					// takes its full 0.4236 v and lifts it 245 u/s, `shoot_prop_crossbow_drum`)
+					bool flat = rs.phase == 1 || dyn.GetAngularVelocity().Length() < 0.4f;
 					float ratio = flat && jt.Length() > 1e-9f ? jn / jt.Length() : 0.0f;
 					float denom = 1.0f - friction * ratio;
 					float cap = denom > 1e-3f ? friction * mass * (g_dt + rs.vn_in) / denom : 1e30f;
