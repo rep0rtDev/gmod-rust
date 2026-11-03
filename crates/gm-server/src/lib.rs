@@ -4702,6 +4702,31 @@ pub enum Pickup {
 }
 
 /// `sk_healthkit` 25, `sk_healthvial` 10, `sk_battery` 15 and the `SIZE_AMMO_*` box values.
+/// `item_healthcharger` / `item_suitcharger` (CNewWallHealth / CNewRecharge): a wall unit with
+/// `sk_healthcharger` 50 / `sk_suitcharger` 30 points, one point per 0.1 s while +use is held.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Charger {
+    pub suit: bool,
+    pub juice: i32,
+    /// Tick of the next point while on.
+    pub next: u64,
+    pub on: bool,
+}
+
+pub fn hl2_charger(class: &str) -> Option<Charger> {
+    let (suit, juice) = match class {
+        "item_healthcharger" => (false, 50),
+        "item_suitcharger" => (true, 30),
+        _ => return None,
+    };
+    Some(Charger {
+        suit,
+        juice,
+        next: 0,
+        on: false,
+    })
+}
+
 pub fn hl2_item_pickup(class: &str) -> Option<Pickup> {
     Some(match class {
         "item_healthkit" => Pickup::Health(25),
@@ -4805,6 +4830,8 @@ pub struct Server<'w> {
     pub game_events: Vec<GameEvent>,
     /// HL2 items spawned from the Entities tab (entity id -> class), picked up on touch.
     pub hl2_items: BTreeMap<u32, String>,
+    /// `item_healthcharger` / `item_suitcharger` units by entity id.
+    pub chargers: BTreeMap<u32, Charger>,
     pub request_hook: Option<RequestHook>,
     pub physgun_params: PhysgunParams,
     pub projectiles: Vec<projectile::Projectile>,
@@ -4997,6 +5024,7 @@ impl<'w> Server<'w> {
             events: Vec::new(),
             game_events: Vec::new(),
             hl2_items: BTreeMap::new(),
+            chargers: BTreeMap::new(),
             request_hook: None,
             physgun_params: PhysgunParams::default(),
             projectiles: Vec::new(),
@@ -8185,6 +8213,9 @@ impl<'w> Server<'w> {
         self.sandbox.add_cleanup(player, "sents", id);
         if hl2_item_pickup(class).is_some() {
             self.hl2_items.insert(id, class.to_string());
+        }
+        if let Some(c) = hl2_charger(class) {
+            self.chargers.insert(id, c);
         }
         self.sync_physics();
         self.game_events.push(GameEvent::Spawned {
@@ -13216,6 +13247,7 @@ impl<'w> Server<'w> {
             {
                 self.sent_event(ent, "use_off", player, 0, 0.0);
                 self.sandbox.button_use(ent, player, false);
+                self.charger_off(ent);
             }
         }
         if use_pressed && self.players.get(&player).is_some_and(|p| p.seat.is_some()) {
@@ -13243,6 +13275,13 @@ impl<'w> Server<'w> {
                     if self.vehicles.contains_key(&ent) {
                         if use_pressed {
                             self.use_enter_vehicle(player, ent);
+                        }
+                        return;
+                    }
+                    if self.chargers.contains_key(&ent) {
+                        self.charger_use(player, ent, use_pressed);
+                        if let Some(p) = self.players.get_mut(&player) {
+                            p.use_target = Some(ent);
                         }
                         return;
                     }
@@ -14502,6 +14541,65 @@ impl<'w> Server<'w> {
     /// HL2 items touched by a player (`CItem::ItemTouch` -> `MyTouch`): a health kit / vial heals
     /// up to 100, a battery charges the suit up to its max, an ammo box gives its ammo up to the
     /// type's carry limit; an item that would give nothing stays on the ground.
+    /// `CNewRecharge::Use` / `CNewWallHealth::Use`: Deny when empty or the player is full,
+    /// else Start with the charging loop and a point every 0.1 s (7 ticks) while held.
+    fn charger_use(&mut self, player: u32, ent: u32, pressed: bool) {
+        let Some(c) = self.chargers.get(&ent).copied() else {
+            return;
+        };
+        let (deny, start, run) = if c.suit {
+            (
+                "SuitRecharge.Deny",
+                "SuitRecharge.Start",
+                "SuitRecharge.ChargingLoop",
+            )
+        } else {
+            (
+                "WallHealth.Deny",
+                "WallHealth.Start",
+                "WallHealth.LoopingContinueCharge",
+            )
+        };
+        let full = self.players.get(&player).is_none_or(|p| {
+            if c.suit {
+                p.armor >= p.max_armor.max(100)
+            } else {
+                p.health >= 100
+            }
+        });
+        if c.juice <= 0 || full {
+            if pressed || c.on {
+                self.emit_sound(ent, deny.to_string(), 1.0);
+            }
+            self.charger_off(ent);
+            return;
+        }
+        if !c.on {
+            self.emit_sound(ent, start.to_string(), 1.0);
+            self.emit_sound(ent, run.to_string(), 1.0);
+        } else if self.tick_count < c.next {
+            return;
+        }
+        if let Some(p) = self.players.get_mut(&player) {
+            if c.suit {
+                p.armor += 1;
+            } else {
+                p.health += 1;
+            }
+        }
+        if let Some(c) = self.chargers.get_mut(&ent) {
+            c.on = true;
+            c.juice -= 1;
+            c.next = self.tick_count + 7;
+        }
+    }
+
+    fn charger_off(&mut self, ent: u32) {
+        if let Some(c) = self.chargers.get_mut(&ent) {
+            c.on = false;
+        }
+    }
+
     fn item_tick(&mut self) {
         if self.hl2_items.is_empty() {
             return;
@@ -14567,6 +14665,7 @@ impl<'w> Server<'w> {
 
     pub fn remove_prop(&mut self, id: u32) -> bool {
         self.hl2_items.remove(&id);
+        self.chargers.remove(&id);
         if !self.sandbox.props().iter().any(|p| p.id == id) {
             return false;
         }
