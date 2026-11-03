@@ -1,6 +1,6 @@
 //! Static props (game lump `sprp`), displacements and PVS.
 
-use super::lumps::{parse_vec3, read_all, LeafWaterData, Record};
+use super::lumps::{parse_vec3, read_all, CubemapSample, LeafWaterData, Record};
 use super::{Bsp, Lump};
 use crate::{FormatError, Reader, Result};
 
@@ -264,6 +264,10 @@ pub struct DispMesh {
     pub positions: Vec<[f32; 3]>,
     pub alphas: Vec<f32>,
     pub indices: Vec<u32>,
+}
+
+pub fn cubemaps(bsp: &Bsp<'_>) -> Result<Vec<CubemapSample>> {
+    read_all("cubemaps", bsp.header.lump_data(bsp.data, Lump::Cubemaps)?)
 }
 
 pub fn leaf_water_data(bsp: &Bsp<'_>) -> Result<Vec<LeafWaterData>> {

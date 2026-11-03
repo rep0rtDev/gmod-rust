@@ -35,6 +35,23 @@ pub struct Material {
     pub blend_modulate: Option<String>,
     /// `$bumpmap`: tangent-space normal map lit by the bumped lightmap pages.
     pub bumpmap: Option<String>,
+    /// `$envmap env_cubemap`: the nearest baked cubemap reflected, scaled by `$envmaptint`
+    /// and masked by the base alpha (`$basealphaenvmapmask`), the normal map alpha
+    /// (`$normalmapalphaenvmapmask`) or nothing.
+    pub envmap: Option<EnvMap>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EnvMapMask {
+    None,
+    BaseAlpha,
+    NormalAlpha,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EnvMap {
+    pub tint: [f32; 3],
+    pub mask: EnvMapMask,
 }
 
 /// `center cx cy scale sx sy rotate deg translate tx ty` -> uv matrix
@@ -218,6 +235,30 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
             .and_then(texture_transform);
         mat.blend_modulate = get("$blendmodulatetexture");
         mat.bumpmap = get("$bumpmap");
+        if get("$envmap").is_some() {
+            let tint: Vec<f32> = get("$envmaptint")
+                .map(|v| {
+                    v.trim_matches(|c| c == '{' || c == '}' || c == '[' || c == ']')
+                        .split_whitespace()
+                        .filter_map(|x| x.parse::<f32>().ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let tint = if tint.len() >= 3 {
+                [tint[0], tint[1], tint[2]]
+            } else {
+                [1.0; 3]
+            };
+            let one = |k: &str| matches!(get(k).as_deref(), Some("1"));
+            let mask = if one("$basealphaenvmapmask") {
+                EnvMapMask::BaseAlpha
+            } else if one("$normalmapalphaenvmapmask") {
+                EnvMapMask::NormalAlpha
+            } else {
+                EnvMapMask::None
+            };
+            mat.envmap = Some(EnvMap { tint, mask });
+        }
         if let Some(texture) = get("$detail") {
             let num = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
             mat.detail = Some(Detail {

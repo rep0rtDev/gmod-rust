@@ -77,6 +77,24 @@ impl Record for LeafWaterData {
     }
 }
 
+/// `LUMP_CUBEMAPS` (42): one `env_cubemap` sample; its baked faces live in the pakfile as
+/// `materials/maps/<map>/c<x>_<y>_<z>.vtf` (and `.hdr.vtf`).
+#[derive(Clone, Copy, Debug)]
+pub struct CubemapSample {
+    pub origin: [i32; 3],
+    pub size: i32,
+}
+
+impl Record for CubemapSample {
+    const SIZE: usize = 16;
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        Ok(CubemapSample {
+            origin: [r.i32()?, r.i32()?, r.i32()?],
+            size: r.i32()?,
+        })
+    }
+}
+
 pub type Vertex = [f32; 3];
 
 impl Record for [f32; 3] {
