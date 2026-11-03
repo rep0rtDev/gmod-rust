@@ -997,7 +997,7 @@ public:
 				}
 				bool edge_pair = face.size() == 2 && (face[0]->p - face[1]->p).Length() > 0.2f;
 				bool spawned_in = fresh_pair && face.size() >= 3 && d_face <= 0.0f && face_slip < 3.0f;
-				if (((face.size() >= 3 || edge_pair) && fastest > 0.3f && d_face > 0.02f && face_slip < 3.0f) || spawned_in) {
+				if (((face.size() >= 3 || edge_pair) && fastest > 0.3f && (d_face > 0.02f || (fresh_pair && d_face > 0.0f)) && face_slip < 3.0f) || spawned_in) {
 					std::vector<float> acc(face.size(), 0.0f);
 					// the drum's ring is struck in sequence: the hull +x rim vertex as a free single
 					// vertex, then its antipode by the approach the first impact left it
