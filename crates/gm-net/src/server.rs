@@ -760,6 +760,7 @@ impl ServerNet {
                     EffectEvent::Tracer { player, end }
                 }
                 gm_server::WorldEffect::Explosion { pos } => EffectEvent::Explosion { pos },
+                gm_server::WorldEffect::Splash { pos } => EffectEvent::Splash { pos },
             }));
         let events = std::mem::take(&mut server.game_events);
         for e in &events {

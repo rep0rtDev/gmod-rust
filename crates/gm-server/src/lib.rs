@@ -573,6 +573,8 @@ pub enum WorldEffect {
     Tracer { player: u32, end: Vec3 },
     /// The `Explosion` effect at `pos`.
     Explosion { pos: Vec3 },
+    /// `WaterSplash` at `pos`: a player entering or leaving the water.
+    Splash { pos: Vec3 },
 }
 
 /// First projectile entity id (`Projectile::id`); sandbox ids stay far below.
@@ -13363,6 +13365,11 @@ impl<'w> Server<'w> {
                         pos: p.state.origin,
                         volume,
                         ..Default::default()
+                    });
+                }
+                if (prev_level == 0) != (p.state.water_level == 0) {
+                    self.effects.push(WorldEffect::Splash {
+                        pos: p.state.origin,
                     });
                 }
                 let jumped = p.state.boost_pending && !was_airborne;

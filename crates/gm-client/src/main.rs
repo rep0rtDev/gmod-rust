@@ -233,6 +233,8 @@ struct Gfx {
     fx_decal_metal: Option<wgpu::BindGroup>,
     /// `sprites/redglow1`: the RPG's laser dot.
     fx_laserdot: Option<wgpu::BindGroup>,
+    /// `effects/splash2`: the water splash.
+    fx_splash: Option<wgpu::BindGroup>,
     ui: UiRenderer,
 }
 
@@ -893,7 +895,7 @@ struct App {
     /// Bullet decals: position, normal, metal, birth (the newest 256).
     fx_decals: std::collections::VecDeque<(Vec3, Vec3, bool, Instant)>,
     /// Flashes: position, size, birth (impact sparks, explosions).
-    fx_bursts: Vec<(Vec3, f32, Instant)>,
+    fx_bursts: Vec<(Vec3, f32, Instant, bool)>,
     /// Own muzzle flash shows until then.
     fx_muzzle_until: Option<Instant>,
     tool_screen: ToolScreen,
@@ -1150,6 +1152,7 @@ impl App {
         let fx_decal = world.sprite_material(&gpu, &self.mount, "decals/concrete/shot1");
         let fx_decal_metal = world.sprite_material(&gpu, &self.mount, "decals/metal/shot1");
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
+        let fx_splash = world.sprite_material(&gpu, &self.mount, "effects/splash2");
         let ui = UiRenderer::new(&gpu, &self.mount, format, quality.msaa)?;
         let mut ui = ui;
         {
@@ -1300,6 +1303,7 @@ impl App {
             fx_decal,
             fx_decal_metal,
             fx_laserdot,
+            fx_splash,
             beam_active_mat,
             glow1,
             glow2,
@@ -3284,13 +3288,16 @@ impl App {
                         }
                         self.fx_decals
                             .push_back((pos, normal, surface == "metal", now));
-                        self.fx_bursts.push((pos + normal * 1.5, 5.0, now));
+                        self.fx_bursts.push((pos + normal * 1.5, 5.0, now, false));
                     }
                     gm_net::msg::EffectEvent::Tracer { player, end } => {
                         self.fx_tracers.push((player, end, now));
                     }
                     gm_net::msg::EffectEvent::Explosion { pos } => {
-                        self.fx_bursts.push((pos, 96.0, now));
+                        self.fx_bursts.push((pos, 96.0, now, false));
+                    }
+                    gm_net::msg::EffectEvent::Splash { pos } => {
+                        self.fx_bursts.push((pos + Vec3::Z * 8.0, 28.0, now, true));
                     }
                 }
             }
@@ -4026,20 +4033,20 @@ impl App {
                 });
             }
             self.fx_bursts
-                .retain(|(_, _, born)| now.duration_since(*born).as_secs_f32() < 0.35);
-            for &(pos, size, born) in &self.fx_bursts {
+                .retain(|(_, _, born, _)| now.duration_since(*born).as_secs_f32() < 0.35);
+            for &(pos, size, born, splash) in &self.fx_bursts {
                 let age = now.duration_since(born).as_secs_f32() / 0.35;
                 let k = 1.0 - age;
-                if let Some(m) = &g.fx_muzzle {
-                    let (v, i) = g.world.sprite_quad(
-                        pos,
-                        size * (0.6 + age),
-                        [k, k * 0.7, k * 0.4],
-                        &camera,
-                    );
+                let (m, color) = if splash {
+                    (&g.fx_splash, [k, k, k])
+                } else {
+                    (&g.fx_muzzle, [k, k * 0.7, k * 0.4])
+                };
+                if let Some(m) = m {
+                    let (v, i) = g.world.sprite_quad(pos, size * (0.6 + age), color, &camera);
                     additive.push((m, v, i));
                 }
-                if size > 32.0 {
+                if size > 32.0 && !splash {
                     dlights.push(gm_render::world::DLight {
                         pos,
                         radius: 300.0 * k,

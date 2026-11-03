@@ -493,6 +493,9 @@ pub enum EffectEvent {
     Explosion {
         pos: Vec3,
     },
+    Splash {
+        pos: Vec3,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -530,7 +533,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 17;
+pub const PROTOCOL: u16 = 18;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1323,6 +1326,10 @@ impl ServerMsg {
                             w.u8(2);
                             w.vec3(*pos);
                         }
+                        EffectEvent::Splash { pos } => {
+                            w.u8(3);
+                            w.vec3(*pos);
+                        }
                     }
                 }
             }
@@ -1623,6 +1630,7 @@ impl ServerMsg {
                             end: r.vec3()?,
                         },
                         2 => EffectEvent::Explosion { pos: r.vec3()? },
+                        3 => EffectEvent::Splash { pos: r.vec3()? },
                         _ => return Err(Truncated),
                     });
                 }
