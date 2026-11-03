@@ -648,6 +648,46 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
         }
         context_menu(&mut out, ctx, *at, &opts);
     }
+    // DragNDrop: once the press moved far enough to be a drag, the icon follows the cursor
+    // translucent (with the count when a shift selection is dragged)
+    if let Some((at, models)) = &st.drag {
+        let (cx, cy) = ctx.cursor;
+        let moved = (cx - at.0).abs() >= 6.0 || (cy - at.1).abs() >= 6.0;
+        if let (true, Some(model)) = (moved, models.first()) {
+            let key = format!("icon:{model}");
+            if (ctx.has_image)(&key) {
+                out.items.push(UiItem::Image {
+                    x: cx - 32.0,
+                    y: cy - 32.0,
+                    w: 64.0,
+                    h: 64.0,
+                    material: key,
+                    color: [1.0, 1.0, 1.0, 0.6],
+                    rot: 0,
+                });
+            }
+            if models.len() > 1 {
+                let n = models.len().to_string();
+                out.items.push(UiItem::Rect {
+                    x: cx + 12.0,
+                    y: cy + 12.0,
+                    w: 20.0,
+                    h: 20.0,
+                    color: [0.0, 0.0, 0.0, 0.7],
+                });
+                text(
+                    &mut out.items,
+                    FONT,
+                    ctx.font,
+                    cx + 16.0,
+                    cy + 13.0,
+                    16.0,
+                    &n,
+                    WHITE,
+                );
+            }
+        }
+    }
     out
 }
 
