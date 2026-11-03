@@ -783,6 +783,17 @@ public:
 		float e_eff = elasticity;
 		float extra = 0.0f;
 		auto rel = [&](JPH::RVec3Arg p) { return point_velocity(b1, p) - point_velocity(b2, p); };
+		// a speculative manifold whose closest pair is farther than the fastest vertex travels
+		// this step is not touched this step: the model measures vertices against the manifold's
+		// plane as if infinite, and a far surface's plane can pass through nearer geometry
+		// (`use_chair`: gm_construct's displacement runs 4 u under the brush floor; its tilted
+		// triangle's plane put a chair foot 4.3 cm away while the floor was at 1.9 cm, and the
+		// chair was struck twice in one step - 1.7 u deep, skidding)
+		{
+			float sep = -m.mPenetrationDepth, vmax = 0.0f;
+			for (const Pt &pt : pts) vmax = std::max(vmax, -rel(pt.p).Dot(n));
+			if (sep > 0.0f && sep > vmax * step_dt + 1e-4f) return;
+		}
 		// does the vertex really reach the plane this step? Its velocity along the normal is a
 		// linear extrapolation: a rim vertex of a wheel spinning over a gap approaches at rim
 		// speed yet swings past (the game's wheel 2.3 u above the floor never touches, ours was
