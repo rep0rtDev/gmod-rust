@@ -43,6 +43,10 @@ struct MaterialParams {
     uv2_m: [f32; 4],
     /// `$basetexturetransform2` translation, whether `$blendmodulatetexture` is bound, 0.
     uv2_t: [f32; 4],
+    /// `Water` `$fogcolor` (display space) and 1 when set.
+    water_color: [f32; 4],
+    /// `Water` `$fogstart`, `$fogend`, 0, 0.
+    water_range: [f32; 4],
 }
 
 fn uv2_params(mat: &material::Material, modulate: bool) -> ([f32; 4], [f32; 4]) {
@@ -141,7 +145,7 @@ fn water_volumes(bsp: &Bsp<'_>, mount: &Mount) -> Vec<WaterVolume> {
             .and_then(|b| material::load(mount, &material::canonical_name(&b)).ok())
             .and_then(|m| m.water_fog)
             .map(|(color, start, end)| Fog {
-                color,
+                color: color.map(material::srgb_to_linear),
                 start,
                 end,
                 max_density: 1.0,
@@ -183,7 +187,7 @@ impl Fog {
             })
             .unwrap_or_default();
         let color = if c.len() >= 3 {
-            [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0]
+            [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0].map(material::srgb_to_linear)
         } else {
             [0.0; 3]
         };
@@ -264,6 +268,8 @@ struct Batch {
     translucent: bool,
     /// `$nocull`: drawn with the two-sided pipelines.
     nocull: bool,
+    /// `Water`: drawn in the water pass over the scene depth.
+    water: bool,
     centre: Vec3,
 }
 
@@ -297,6 +303,9 @@ pub struct WorldRenderer {
     /// `$nocull` variants of `pipeline` / `translucent_pipeline`.
     nocull_pipeline: wgpu::RenderPipeline,
     translucent_nocull_pipeline: wgpu::RenderPipeline,
+    /// Water surfaces: alpha = the volume fog over the scene depth behind them.
+    water_pipeline: wgpu::RenderPipeline,
+    depth_layout: wgpu::BindGroupLayout,
     /// Additive, no depth write: beams and glow sprites.
     additive_pipeline: wgpu::RenderPipeline,
     /// Alpha-blended, no depth write: models drawn with `ModelTarget::alpha` below 1 (ghosts).
@@ -379,6 +388,8 @@ fn build_sky_cube(
             detail: [0.0; 4],
             uv2_m: [1.0, 0.0, 0.0, 1.0],
             uv2_t: [0.0; 4],
+            water_color: [0.0; 4],
+            water_range: [0.0; 4],
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });
@@ -1558,6 +1569,13 @@ impl WorldRenderer {
                 });
             let uv2 = uv2_params(mat, modulate_view.is_some());
             let modulate_view = modulate_view.unwrap_or(&detail_fallback);
+            let water = match mat.water_fog {
+                Some((c, start, end)) => {
+                    let c = c.map(material::srgb_to_linear);
+                    ([c[0], c[1], c[2], 1.0], [start, end, 0.0, 0.0])
+                }
+                None => ([0.0; 4], [0.0; 4]),
+            };
             let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("material params"),
                 contents: bytemuck::bytes_of(&MaterialParams {
@@ -1568,6 +1586,8 @@ impl WorldRenderer {
                     detail: detail_params(mat),
                     uv2_m: uv2.0,
                     uv2_t: uv2.1,
+                    water_color: water.0,
+                    water_range: water.1,
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -1639,6 +1659,7 @@ impl WorldRenderer {
                 sky,
                 translucent: mat.translucent,
                 nocull: mat.nocull,
+                water: mat.water,
                 centre,
             });
             indices_all.extend_from_slice(idx);
@@ -1714,6 +1735,86 @@ impl WorldRenderer {
         let pipeline = make_pipeline("world", None, true, true);
         let sky_pipeline = make_pipeline("sky", None, true, false);
         let nocull_pipeline = make_pipeline("world nocull", None, true, false);
+        // water: the scene depth of the main pass, read in a second pass with a read-only
+        // depth attachment
+        let depth_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scene depth"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: quality.msaa > 1,
+                },
+                count: None,
+            }],
+        });
+        let water_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("water"),
+            bind_group_layouts: &[
+                Some(&camera_layout),
+                Some(&material_layout),
+                Some(&depth_layout),
+            ],
+            ..Default::default()
+        });
+        let water_src = include_str!("shaders/world.wgsl");
+        let water_src = if quality.msaa > 1 {
+            water_src.replace("texture_depth_2d", "texture_depth_multisampled_2d")
+        } else {
+            water_src.to_string()
+        };
+        let water_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("water"),
+            source: wgpu::ShaderSource::Wgsl(water_src.into()),
+        });
+        let water_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("water"),
+            layout: Some(&water_layout),
+            vertex: wgpu::VertexState {
+                module: &water_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32],
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                // BSP faces wind clockwise seen from their front; the 2D sky cube is seen
+                // from inside, so it is the one pass without back-face culling
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: quality.msaa,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &water_shader,
+                entry_point: Some("fs_water"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+;
         let translucent_nocull_pipeline = make_pipeline(
             "translucent nocull",
             Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -1765,6 +1866,8 @@ impl WorldRenderer {
             detail_fallback,
             nocull_pipeline,
             translucent_nocull_pipeline,
+            water_pipeline,
+            depth_layout,
             additive_pipeline,
             translucent_pipeline,
             camera_buffer,
@@ -1882,7 +1985,7 @@ impl WorldRenderer {
             ],
             forward: [fw.x, fw.y, fw.z, 0.0],
             fog_color: [f.color[0], f.color[1], f.color[2], f.max_density],
-            fog_range: [f.start, f.end, 0.0, 0.0],
+            fog_range: [f.start, f.end, cam.near, cam.far],
         }
     }
 
@@ -2010,7 +2113,7 @@ impl WorldRenderer {
             for b in self
                 .batches
                 .iter()
-                .filter(|b| b.sky == sky && !b.translucent)
+                .filter(|b| b.sky == sky && !b.translucent && !b.water)
             {
                 pass.set_pipeline(if b.nocull {
                     &self.nocull_pipeline
@@ -2037,6 +2140,50 @@ impl WorldRenderer {
                 } else {
                     &self.translucent_pipeline
                 });
+                pass.set_bind_group(1, &b.bind_group, &[]);
+                pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
+            }
+        }
+        let water: Vec<&Batch> = self
+            .batches
+            .iter()
+            .filter(|b| b.sky == sky && b.water)
+            .collect();
+        if !water.is_empty() {
+            let depth_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("scene depth"),
+                layout: &self.depth_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(depth),
+                }],
+            });
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("water"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color,
+                    depth_slice: None,
+                    resolve_target: resolve,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: None,
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.water_pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(2, &depth_bind_group, &[]);
+            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            for b in water {
                 pass.set_bind_group(1, &b.bind_group, &[]);
                 pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
             }
@@ -2161,6 +2308,8 @@ impl WorldRenderer {
                         detail: detail_params(mat),
                         uv2_m: [1.0, 0.0, 0.0, 1.0],
                         uv2_t: [0.0; 4],
+                        water_color: [0.0; 4],
+                        water_range: [0.0; 4],
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
@@ -2251,6 +2400,8 @@ impl WorldRenderer {
                 detail: [0.0; 4],
                 uv2_m: [1.0, 0.0, 0.0, 1.0],
                 uv2_t: [0.0; 4],
+                water_color: [0.0; 4],
+                water_range: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -2445,6 +2596,8 @@ impl WorldRenderer {
                 detail: [0.0; 4],
                 uv2_m: [1.0, 0.0, 0.0, 1.0],
                 uv2_t: [0.0; 4],
+                water_color: [0.0; 4],
+                water_range: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -2792,7 +2945,7 @@ pub fn icon_targets(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
     (color, depth)
@@ -2828,7 +2981,7 @@ pub fn offscreen_targets(
         sample_count: msaa,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
     (color, depth)

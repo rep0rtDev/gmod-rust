@@ -34,7 +34,7 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   SunSpreadAngle 6. `env_sun` at -2845 6842 12256, size 16, `sprites/light_glow02_add_noz`,
   colour 241 240 199, HDRColorScale 1.0. `env_fog_controller`: fogcolor 142 164 178, start
   1024, end 250000, maxdensity 1, enabled.
-  Fog law (`gm-render`): the world pass mixes the fog colour (display space, `fogcolor` / 255)
+  Fog law (`gm-render`, fog colours linearised from display space - the target is sRGB): the world pass mixes the fog colour (display space, `fogcolor` / 255)
   into every fragment by `min(saturate((depth - fogstart) / (fogend - fogstart)), fogmaxdensity)`
   with depth the view-space distance along the camera forward; the 3D skybox pass uses the
   `sky_camera`'s own fog keys (gm_construct: start -4000, end 320000, same colour) in skybox
@@ -76,6 +76,12 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   converges to). Open: refraction/reflection render targets with the dudv/normal distortion and
   the depth-based volume fog through the surface; the view fog switching to the
   `$bottommaterial` keys when the eye is in a water leaf.
+  Water surface (`gm-render`): drawn in a second pass over the opaque scene with the depth
+  read-only and bound: alpha = `saturate((thickness - $fogstart) / ($fogend - $fogstart))`
+  with thickness the view-ray length between the surface and the scene behind it (depth
+  linearised as `far * near / (far - ndc * (far - near))`), colour = `$fogcolor` under the
+  view fog - the game's volume fog through the water without its refraction/reflection
+  textures (open).
   Done since: the eye's water volume (`LUMP_LEAFWATERDATA` 36: surface z, min z, surface
   texinfo; its `CONTENTS_WATER` leaves' boxes) switches the view fog of the world, model and
   3D-skybox passes (the latter in skybox units) to the surface material's `$bottommaterial`

@@ -24,11 +24,15 @@ struct MaterialParams {
     detail: vec4<f32>,
     uv2_m: vec4<f32>,
     uv2_t: vec4<f32>,
+    water_color: vec4<f32>,
+    water_range: vec4<f32>,
 };
 @group(1) @binding(2) var<uniform> material: MaterialParams;
 @group(1) @binding(3) var detail: texture_2d<f32>;
 @group(1) @binding(4) var base2: texture_2d<f32>;
 @group(1) @binding(5) var blend_modulate: texture_2d<f32>;
+// water pass only: the depth of the opaque scene (multisampled variant substituted at load)
+@group(2) @binding(0) var scene_depth: texture_depth_2d;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -101,4 +105,26 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         alpha = albedo.a * camera.alpha;
     }
     return vec4<f32>(mix(out, camera.fog_color.rgb, fog), alpha);
+}
+
+// Water surface: the volume fog of the material ($fogcolor / $fogstart / $fogend) over the
+// water thickness along the view ray, i.e. between the surface and the opaque scene behind
+// it, blended over the already-drawn bottom; the view fog applies on top.
+@fragment
+fn fs_water(in: VsOut) -> @location(0) vec4<f32> {
+    let ndc = textureLoad(scene_depth, vec2<i32>(in.clip.xy), 0);
+    let near = camera.fog_range.z;
+    let far = camera.fog_range.w;
+    let scene_z = far * near / max(far - ndc * (far - near), 1e-3);
+    let ray = in.world - camera.eye.xyz;
+    let surf_len = max(length(ray), 1e-3);
+    let cosang = max(dot(ray / surf_len, camera.forward.xyz), 1e-3);
+    let thickness = max(scene_z / cosang - surf_len, 0.0);
+    let span = max(material.water_range.y - material.water_range.x, 1.0);
+    let f = clamp((thickness - material.water_range.x) / span, 0.0, 1.0);
+    let depth = dot(ray, camera.forward.xyz);
+    let fspan = max(camera.fog_range.y - camera.fog_range.x, 1.0);
+    let fog = min(clamp((depth - camera.fog_range.x) / fspan, 0.0, 1.0), camera.fog_color.w) * camera.eye.w;
+    let col = mix(material.water_color.rgb, camera.fog_color.rgb, fog);
+    return vec4<f32>(col, f);
 }

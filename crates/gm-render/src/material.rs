@@ -92,6 +92,17 @@ pub struct Detail {
     pub mode: u32,
 }
 
+/// Display-space (sRGB-encoded, 0..1) to linear light: colours given in display space -
+/// `fogcolor` of `env_fog_controller` / `sky_camera`, `$fogcolor` of water - are written
+/// into the linear-light output that the sRGB target encodes on store.
+pub fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// `maps/<map>/<mat>_<x>_<y>_<z>` is a per-cubemap patch written by vbsp;
 /// the real material is `<mat>`.
 pub fn canonical_name(name: &str) -> String {
