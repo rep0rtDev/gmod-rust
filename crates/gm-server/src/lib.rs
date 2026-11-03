@@ -1855,6 +1855,37 @@ pub const HL2_SPAWNABLE_ENTITIES: [(&str, &str, f32); 21] = [
         -8.0,
     ),
 ];
+
+/// Sandbox scripted entities of the Entities tab with an engine-side body here: class, model,
+/// `NormalOffset` and category. `sent_ball` (the helibomb model it uses for its shadow,
+/// random 16..48 size) and the editors (`base_edit`: cube_tool, 10 u); the ball's sprite
+/// look / bounce and the editors' property sheets are not simulated yet.
+pub const SANDBOX_SPAWNABLE_ENTITIES: [(&str, &str, f32, &str); 4] = [
+    (
+        "sent_ball",
+        "models/Combine_Helicopter/helicopter_bomb01.mdl",
+        32.0,
+        "#spawnmenu.category.fun_games",
+    ),
+    (
+        "edit_fog",
+        "models/maxofs2d/cube_tool.mdl",
+        10.0,
+        "#spawnmenu.category.editors",
+    ),
+    (
+        "edit_sky",
+        "models/maxofs2d/cube_tool.mdl",
+        10.0,
+        "#spawnmenu.category.editors",
+    ),
+    (
+        "edit_sun",
+        "models/maxofs2d/cube_tool.mdl",
+        10.0,
+        "#spawnmenu.category.editors",
+    ),
+];
 /// `ADD_WEAPON` of `lua/autorun/game_hl2.lua`: the HL2 weapons the game's Weapons tab offers.
 pub const HL2_SPAWNABLE_WEAPONS: [&str; 13] = [
     "weapon_physcannon",
@@ -8216,6 +8247,15 @@ impl<'w> Server<'w> {
                 category: "Half-Life 2".into(),
             })
             .collect();
+        entities.extend(
+            SANDBOX_SPAWNABLE_ENTITIES
+                .iter()
+                .map(|(c, _, _, cat)| ContentEntry {
+                    class: c.to_string(),
+                    name: format!("#{c}"),
+                    category: cat.to_string(),
+                }),
+        );
         entities.extend(self.scripted_entities.iter().map(|e| {
             ContentEntry {
                 class: e.class.clone(),
@@ -8257,6 +8297,17 @@ impl<'w> Server<'w> {
         }
         if let Some((_, model, offset)) = HL2_SPAWNABLE_ENTITIES.iter().find(|e| e.0 == class) {
             return self.spawn_hl2_item(player, class, model, *offset);
+        }
+        if let Some((_, model, offset, _)) =
+            SANDBOX_SPAWNABLE_ENTITIES.iter().find(|e| e.0 == class)
+        {
+            let id = self.spawn_hl2_item(player, class, model, *offset)?;
+            if class == "sent_ball" {
+                // sent_ball.lua SpawnFunction: a random 16..48 size and colour
+                let size = 16.0 + self.next_random() * 32.0;
+                self.set_model_scale(id, size / 32.0);
+            }
+            return Some(id);
         }
         let def = self
             .scripted_entities
