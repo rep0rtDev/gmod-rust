@@ -505,6 +505,8 @@ pub struct WorldRenderer {
     reflect: Mutex<ReflectState>,
     reflect_sampler: wgpu::Sampler,
     t0: std::time::Instant,
+    /// Some water material asks for `$reflectentities`.
+    reflect_entities: bool,
     /// `$nocull` variants of `pipeline` / `translucent_pipeline`.
     nocull_pipeline: wgpu::RenderPipeline,
     translucent_nocull_pipeline: wgpu::RenderPipeline,
@@ -1859,10 +1861,12 @@ impl WorldRenderer {
             "white fallback",
         )
         .create_view(&Default::default());
+        let mut reflect_entities = false;
         for (name, idx, sky) in jobs {
             let Some(Some((mat, rgba))) = materials.get(name) else {
                 continue;
             };
+            reflect_entities |= mat.water && mat.reflect_entities;
             let base2_view = mat
                 .base_texture2
                 .as_ref()
@@ -2266,6 +2270,7 @@ impl WorldRenderer {
             reflect: Mutex::new(ReflectState::default()),
             reflect_sampler,
             t0: std::time::Instant::now(),
+            reflect_entities,
             nocull_pipeline,
             translucent_nocull_pipeline,
             water_pipeline,
@@ -2307,8 +2312,9 @@ impl WorldRenderer {
         depth: &wgpu::TextureView,
         aspect: f32,
         scene_src: Option<&wgpu::Texture>,
+        reflect_items: &[DrawItem<'_>],
     ) {
-        self.draw_reflection(gpu, camera, aspect);
+        self.draw_reflection(gpu, camera, aspect, reflect_items);
         self.draw_inner(gpu, camera, color, resolve, depth, aspect, scene_src);
     }
 
@@ -2328,7 +2334,7 @@ impl WorldRenderer {
     /// `_rt_WaterReflection`: the scene above the water plane seen from the eye mirrored in
     /// it, drawn by a real camera below the plane (pitch and roll negated, so the winding
     /// stays and the image is read upside down); everything below the plane is clipped.
-    fn draw_reflection(&self, gpu: &Gpu, camera: &Camera, aspect: f32) {
+    fn draw_reflection(&self, gpu: &Gpu, camera: &Camera, aspect: f32, items: &[DrawItem<'_>]) {
         let Some(zs) = self.reflected_surface(camera.position) else {
             self.reflect.lock().unwrap().valid = false;
             return;
@@ -2372,6 +2378,22 @@ impl WorldRenderer {
             aspect,
             None,
         );
+        // `$reflectentities`: the entity models too, still under the clip plane
+        if self.reflect_entities && !items.is_empty() {
+            self.draw_models(
+                gpu,
+                &mirrored,
+                &ModelTarget {
+                    color: &color,
+                    resolve: resolve.as_ref(),
+                    depth: &depth,
+                    aspect,
+                    clear_depth: false,
+                    alpha: 1.0,
+                },
+                items,
+            );
+        }
         let mut state = self.reflect.lock().unwrap();
         state.clip = None;
         state.valid = true;

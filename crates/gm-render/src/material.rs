@@ -40,6 +40,8 @@ pub struct Material {
     /// Water: `$reflectamount`, `$refractamount` (screen-space offset per unit of normal xy)
     /// and the `$scroll1` xy rate of the normal map, in uv per second.
     pub water_dist: [f32; 4],
+    /// Water `$reflectentities`: entities (models) are drawn into the reflection too.
+    pub reflect_entities: bool,
     /// `$envmap env_cubemap`: the nearest baked cubemap reflected, scaled by `$envmaptint`
     /// and masked by the base alpha (`$basealphaenvmapmask`), the normal map alpha
     /// (`$normalmapalphaenvmapmask`) or nothing.
@@ -221,6 +223,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         if mat.water {
             mat.bottom_material = get("$bottommaterial");
             mat.bumpmap = get("$normalmap").or_else(|| get("$bumpmap"));
+            mat.reflect_entities = matches!(get("$reflectentities").as_deref(), Some("1"));
             let amount = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
             let scroll: Vec<f32> = get("$scroll1")
                 .map(|v| {

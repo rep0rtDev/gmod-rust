@@ -207,9 +207,12 @@ the shallow rim changes (the deep water is fog colour either way), and the shore
 into the rim by the full-strength offset (`$refractamount 1`, no 1/w scaling - whether the
 engine scales the offset with depth is unverified). The normal map scrolls by the
 `Proxies { TextureScroll }` block on `$bumptransform` when the VMT has one (construct's
-water: rate 0.02 uv/s at 25 deg, i.e. (0.0181, 0.0085) uv/s), else by `$scroll1` xy. Open:
-`$reflectentities`, reflection of translucent surfaces and models, the refraction of
-translucent surfaces (they are drawn after the copy).
+water: rate 0.02 uv/s at 25 deg, i.e. (0.0181, 0.0085) uv/s), else by `$scroll1` xy. `$reflectentities` (set on
+construct's water): the client hands `draw` the frame's entity models and the reflection
+pass draws them after the world with the mirrored camera, still under the clip plane
+(static props are world batches and reflect regardless). Open: reflection and refraction
+of translucent surfaces (drawn after the copy), the view model and beams/sprites in the
+reflection.
 
 ### `$ssbump`
 

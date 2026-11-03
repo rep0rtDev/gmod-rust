@@ -3224,15 +3224,6 @@ impl App {
                 .update(&mut self.sounds, &self.mount, camera.position, &sees);
         }
         let aspect = g.config.width as f32 / g.config.height as f32;
-        g.world.draw(
-            &g.gpu,
-            &camera,
-            &attach,
-            resolve,
-            &g.depth,
-            aspect,
-            Some(scene_src),
-        );
         let ents = &self.sim.client.world.entities;
         let me = self.sim.client.player_id;
         let held_models = self
@@ -3647,6 +3638,18 @@ impl App {
             clear_depth: false,
             alpha: 1.0,
         };
+        // the world (with the water reflection, which takes the entity models too) goes
+        // first, then the models over it
+        g.world.draw(
+            &g.gpu,
+            &camera,
+            &attach,
+            resolve,
+            &g.depth,
+            aspect,
+            Some(scene_src),
+            &items,
+        );
         g.world.draw_models(&g.gpu, &camera, &target, &items);
         if !additive.is_empty() {
             g.world.draw_additive(&g.gpu, &camera, &target, &additive);

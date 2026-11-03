@@ -110,6 +110,7 @@ fn main() -> Result<()> {
         } else {
             Some(&color)
         },
+        &[],
     );
     let rgba = gpu.read_texture(&color, width, height)?;
     eprintln!("frame in {:.0} ms", t1.elapsed().as_secs_f32() * 1000.0);
