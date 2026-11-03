@@ -1,5 +1,6 @@
 //! Static world geometry: BSP faces and displacements, grouped by material.
 
+pub use crate::props::EnvSun;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
@@ -554,6 +555,8 @@ pub struct WorldRenderer {
     pub hdr: bool,
     /// Direction towards the sun (`light_environment`), the `$phong` highlight's light.
     pub sun: Vec3,
+    /// The map's `env_sun` glow, if any.
+    pub env_sun: Option<EnvSun>,
     pub quality: Quality,
     /// Auto-exposure bounds and rate of the map's env_tonemap_controller.
     pub tm_min: f32,
@@ -2592,6 +2595,7 @@ impl WorldRenderer {
 
             hdr,
             sun: crate::props::sun_direction(bsp),
+            env_sun: crate::props::env_sun(bsp),
             quality,
             tm_min,
             tm_max,
@@ -2936,6 +2940,12 @@ impl WorldRenderer {
     }
 
     /// The dynamic lights of the next frame (the first `MAX_DLIGHTS` are lit).
+    /// `render.ComputeLighting`: the baked light at `pos` on a surface facing `normal` (the
+    /// leaf's ambient cube and the direct lights, as a model's origin is lit).
+    pub fn light_at(&self, pos: Vec3, normal: Vec3) -> Vec3 {
+        self.light.at(pos, 4).shade(normal, false)
+    }
+
     pub fn set_dlights(&mut self, lights: &[DLight]) {
         self.dlights.clear();
         self.dlights

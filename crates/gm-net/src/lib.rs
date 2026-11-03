@@ -191,6 +191,7 @@ mod tests {
                 looping: true,
                 stop: false,
                 fade: 0.25,
+                pitch: 0.0,
             }],
         };
         let mut w = Writer::default();

@@ -561,6 +561,8 @@ pub struct SoundEvent {
     /// Stop what `ent` plays instead of starting `name`, fading out over `fade` seconds.
     pub stop: bool,
     pub fade: f32,
+    /// Pitch in percent, 0 for the script's own.
+    pub pitch: f32,
 }
 
 /// A published addon package: identity is the sha256 of the `.gmr` bytes.
@@ -587,7 +589,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
 /// The editor entities' vars by entity id: key / value pairs (`ServerMsg::EntityEdits`).
 pub type EditVars = Vec<(u32, Vec<(String, String)>)>;
 
-pub const PROTOCOL: u16 = 27;
+pub const PROTOCOL: u16 = 28;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1412,6 +1414,7 @@ impl ServerMsg {
                     w.varint(s.ent as u64);
                     w.u8(u8::from(s.looping) | (u8::from(s.stop) << 1));
                     w.f32(s.fade);
+                    w.f32(s.pitch);
                 }
             }
             ServerMsg::Effects { tick, list } => {
@@ -1739,6 +1742,7 @@ impl ServerMsg {
                     let ent = r.varint()? as u32;
                     let flags = r.u8()?;
                     let fade = r.f32()?;
+                    let pitch = r.f32()?;
                     list.push(SoundEvent {
                         name,
                         pos,
@@ -1747,6 +1751,7 @@ impl ServerMsg {
                         looping: flags & 1 != 0,
                         stop: flags & 2 != 0,
                         fade,
+                        pitch,
                     });
                 }
                 ServerMsg::Sounds { tick, list }

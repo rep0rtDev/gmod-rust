@@ -617,6 +617,8 @@ pub struct WorldSound {
     /// Stop the entity's sounds instead, fading over `fade` seconds (`ChangeVolume(0, t)`).
     pub stop: bool,
     pub fade: f32,
+    /// Pitch in percent (100 = as recorded); 0 leaves the script's own range.
+    pub pitch: f32,
 }
 
 /// Game events of this tick for the addon runtime (`ServerHooks::game_events`), drained by the
@@ -8321,7 +8323,10 @@ impl<'w> Server<'w> {
         self.physics
             .set_velocity(body, dir * last * 0.9, st.angular_velocity);
         let volume = (speed / 150.0).clamp(0.0, 1.0);
-        self.emit_sound(ent, "garrysmod/balloon_pop_cute.wav".into(), volume);
+        // pitch 32 + 128 - size, +-10 at random: small balls squeak, big ones thud
+        let size = (self.model_scales.get(&ent).copied().unwrap_or(1.0) * 32.0).clamp(16.0, 48.0);
+        let pitch = 32.0 + 128.0 - size + self.next_random() * 20.0 - 10.0;
+        self.emit_sound_pitch(ent, "garrysmod/balloon_pop_cute.wav".into(), volume, pitch);
     }
 
     /// The editor entities' vars by id (`ServerMsg::EntityEdits`), keys sorted.
@@ -16105,6 +16110,26 @@ impl<'w> Server<'w> {
             pos,
             volume: volume.clamp(0.0, 1.0),
             ent,
+            ..Default::default()
+        });
+        true
+    }
+
+    /// `emit_sound` at a pitch (percent; `EmitSound( name, level, pitch )`).
+    pub fn emit_sound_pitch(&mut self, ent: u32, name: String, volume: f32, pitch: f32) -> bool {
+        let pos = if let Some(p) = self.players.get(&ent) {
+            p.state.origin
+        } else if let Some((pos, _)) = self.entity_pose(ent) {
+            pos
+        } else {
+            return false;
+        };
+        self.sounds.push(WorldSound {
+            name,
+            pos,
+            volume: volume.clamp(0.0, 1.0),
+            ent,
+            pitch,
             ..Default::default()
         });
         true

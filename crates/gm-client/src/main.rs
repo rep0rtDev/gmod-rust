@@ -247,6 +247,8 @@ struct Gfx {
     fx_laserdot: Option<wgpu::BindGroup>,
     /// `sprites/sent_ball`: the bouncy ball's look (sent_ball.lua `Draw`, a sprite of its size).
     fx_ball: Option<wgpu::BindGroup>,
+    /// The `env_sun` glow sprite (`sprites/light_glow02_add_noz` unless the map names another).
+    fx_sun: Option<wgpu::BindGroup>,
     /// `effects/splash2`: the water splash.
     fx_splash: Option<wgpu::BindGroup>,
     ui: UiRenderer,
@@ -1319,6 +1321,10 @@ impl App {
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
         let fx_ball = world.sprite_material(&gpu, &self.mount, "sprites/sent_ball");
+        let fx_sun = world
+            .env_sun
+            .as_ref()
+            .and_then(|s| world.sprite_material(&gpu, &self.mount, &s.material));
         let fx_splash = world.sprite_material(&gpu, &self.mount, "effects/splash2");
         let ui = UiRenderer::new(&gpu, &self.mount, format, quality.msaa)?;
         let mut ui = ui;
@@ -1490,6 +1496,7 @@ impl App {
             fx_decal_mats: Default::default(),
             fx_laserdot,
             fx_ball,
+            fx_sun,
             fx_splash,
             beam_active_mat,
             glow1,
@@ -4092,6 +4099,7 @@ impl App {
                         s.volume,
                         s.ent,
                         s.looping,
+                        s.pitch,
                     );
                 }
             }
@@ -5101,15 +5109,52 @@ impl App {
             self.fx_bursts.retain(|(_, size, born, _)| {
                 now.duration_since(*born).as_secs_f32() < burst_life(*size)
             });
+            // env_sun (C_Sun's glow overlay; an edit_sun entity's values and forward replace
+            // the map's): the sprite sits far along the sun direction, so the world hides it
+            // like the game's visibility query; its size is an approximation of CGlowOverlay's
+            if let (Some(bm), Some(sun)) = (&g.fx_sun, g.world.env_sun.as_ref()) {
+                let (edit, size, osize, color, ocolor) = edit_sun_of(
+                    sun,
+                    &self.sim.client.world.classes,
+                    &self.sim.client.world.edits,
+                );
+                let dir = edit
+                    .and_then(|id| ents.get(&id))
+                    .map(|e| {
+                        let (p, y) = (e.angles.x.to_radians(), e.angles.y.to_radians());
+                        Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin())
+                    })
+                    .unwrap_or(sun.dir);
+                let d = camera.far * 0.9;
+                let pos = camera.position + dir * d;
+                let width = |s: f32| 2.0 * d * (s * 0.3_f32).to_radians().tan();
+                let (v, i) = g
+                    .world
+                    .sprite_quad(pos, width(size), color.to_array(), &camera);
+                additive.push((bm, v, i));
+                if osize > 0.0 {
+                    let (v, i) = g
+                        .world
+                        .sprite_quad(pos, width(osize), ocolor.to_array(), &camera);
+                    additive.push((bm, v, i));
+                }
+            }
             // sent_ball.lua `Draw`: a sprite of the ball's size in its colour where its body is
             if let Some(bm) = &g.fx_ball {
                 for e in ents.values().filter(|e| is_ball(e.id)) {
                     let pos = self.sim.interp.sample(e.id, rt).map_or(e.pos, |p| p.pos);
-                    let c = |v: u8| v as f32 / 255.0;
+                    // sent_ball.lua: the colour times (ComputeLighting(pos, up) + 0.5)
+                    let l = g.world.light_at(pos, Vec3::Z);
+                    let c = |v: u8, l: f32| v as f32 / 255.0 * (l.clamp(0.0, 1.0) + 0.5);
                     let (v, i) = g.world.sprite_quad_var(
                         pos,
                         32.0 * e.model_scale,
-                        [c(e.color[0]), c(e.color[1]), c(e.color[2]), 1.0],
+                        [
+                            c(e.color[0], l.x),
+                            c(e.color[1], l.y),
+                            c(e.color[2], l.z),
+                            1.0,
+                        ],
                         0.0,
                         None,
                         &camera,
@@ -8471,6 +8516,46 @@ fn edit_fog_of(
         end: num("fogend", 10000.0),
         max_density: num("density", 0.9),
     })
+}
+
+/// edit_sun.lua: the newest `edit_sun` entity's `sunsize`, `overlaysize`, `suncolor` and
+/// `overlaycolor` (0..255 channels) over the map's env_sun; its id so the caller can take its
+/// forward as `sun_dir`. Without one, the map's values.
+fn edit_sun_of(
+    sun: &gm_render::world::EnvSun,
+    classes: &[(u32, String)],
+    edits: &[(u32, Vec<(String, String)>)],
+) -> (Option<u32>, f32, f32, Vec3, Vec3) {
+    let Some(ent) = classes
+        .iter()
+        .filter(|(_, c)| c == "edit_sun")
+        .map(|(id, _)| *id)
+        .max()
+    else {
+        return (
+            None,
+            sun.size,
+            sun.overlay_size,
+            sun.color,
+            sun.overlay_color,
+        );
+    };
+    let vars = edit_values_of(edits, ent);
+    let num = |k: &str, d: f32| vars.get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
+    let color = |k: &str| {
+        Vec3::new(
+            num(&format!("{k}_r"), 255.0),
+            num(&format!("{k}_g"), 255.0),
+            num(&format!("{k}_b"), 255.0),
+        ) / 255.0
+    };
+    (
+        Some(ent),
+        num("sunsize", 20.0),
+        num("overlaysize", 20.0),
+        color("suncolor"),
+        color("overlaycolor"),
+    )
 }
 
 #[cfg(test)]

@@ -752,6 +752,7 @@ impl ServerNet {
                 looping: s.looping,
                 stop: s.stop,
                 fade: s.fade,
+                pitch: s.pitch,
             }));
         self.pending_effects
             .extend(server.take_effects().into_iter().map(|e| match e {

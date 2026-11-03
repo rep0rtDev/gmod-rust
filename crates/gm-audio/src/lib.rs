@@ -177,12 +177,13 @@ impl Sounds {
         position: Option<Vec3>,
         scale: f32,
     ) -> bool {
-        self.play_at(mount, name, position, scale, 0, false)
+        self.play_at(mount, name, position, scale, 0, false, 0.0)
     }
 
     /// A script entry on entity `ent` (0: the world): the entry's channel keys replacement
     /// on that entity, a loop plays until [`Sounds::stop_entity`] and follows the entity
     /// through [`Sounds::follow`].
+    #[allow(clippy::too_many_arguments)]
     pub fn play_at(
         &mut self,
         mount: &gm_content::Mount,
@@ -191,9 +192,28 @@ impl Sounds {
         scale: f32,
         ent: u32,
         looping: bool,
+        pitch: f32,
     ) -> bool {
         let Some(e) = self.scripts.get(name).cloned() else {
-            return false;
+            // a wave path (`sound.Play( "garrysmod/balloon_pop_cute.wav", ... )`) plays as is
+            if !(name.ends_with(".wav") || name.ends_with(".mp3")) {
+                return false;
+            }
+            let Some(pcm) = self.wave(mount, name) else {
+                return false;
+            };
+            self.mixer.play(Play {
+                pcm,
+                volume: scale,
+                pitch: if pitch > 0.0 { pitch } else { 100.0 },
+                position,
+                level: 75 as _,
+                looping,
+                ent,
+                channel: 0,
+                stream: false,
+            });
+            return true;
         };
         if e.waves.is_empty() {
             return false;
@@ -203,7 +223,12 @@ impl Sounds {
             return false;
         };
         let volume = self.rng.range(e.volume) * scale;
-        let pitch = self.rng.range(e.pitch);
+        // `pitch` > 0 (percent) overrides the script's range
+        let pitch = if pitch > 0.0 {
+            pitch
+        } else {
+            self.rng.range(e.pitch)
+        };
         let channel = e.channel;
         let id = self.mixer.play(Play {
             pcm,

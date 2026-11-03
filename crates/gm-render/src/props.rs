@@ -42,6 +42,55 @@ pub fn sun_direction(bsp: &Bsp<'_>) -> Vec3 {
     -Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin())
 }
 
+/// `env_sun`: the glow overlay of the sun - the direction towards it, `size`, `overlaysize`
+/// (-1: no overlay), `rendercolor` / `overlaycolor` (0..1) and the sprite `material`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnvSun {
+    pub dir: Vec3,
+    pub size: f32,
+    pub overlay_size: f32,
+    pub color: Vec3,
+    pub overlay_color: Vec3,
+    pub material: String,
+}
+
+/// The map's `env_sun`: `sun_dir` when set (what `edit_sun` writes), else the opposite of
+/// its angles' forward (`CSun::Activate` with `use_angles`), like `sun_direction`.
+pub fn env_sun(bsp: &Bsp<'_>) -> Option<EnvSun> {
+    let e = bsp.entities.iter().find(|e| e.classname() == "env_sun")?;
+    let num = |k: &str, d: f32| {
+        e.get(k)
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .unwrap_or(d)
+    };
+    let vec = |k: &str| {
+        let p: Vec<f32> = e
+            .get(k)?
+            .split_whitespace()
+            .filter_map(|x| x.parse().ok())
+            .collect();
+        (p.len() >= 3).then(|| Vec3::new(p[0], p[1], p[2]))
+    };
+    let dir = vec("sun_dir")
+        .map(|v| v.normalize_or_zero())
+        .filter(|v| *v != Vec3::ZERO)
+        .unwrap_or_else(|| {
+            let angles = e.angles().unwrap_or([0.0, 0.0, 0.0]);
+            let (p, y) = (num("pitch", angles[0]).to_radians(), angles[1].to_radians());
+            -Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin())
+        });
+    Some(EnvSun {
+        dir,
+        size: num("size", 16.0),
+        overlay_size: num("overlaysize", -1.0),
+        color: vec("rendercolor").unwrap_or(Vec3::new(100.0, 80.0, 80.0)) / 255.0,
+        overlay_color: vec("overlaycolor").unwrap_or(Vec3::ZERO) / 255.0,
+        material: e
+            .get("material")
+            .map_or_else(|| "sprites/light_glow02_add_noz".into(), |m| m.to_string()),
+    })
+}
+
 /// Source `QAngle` (pitch, yaw, roll) to a rotation: yaw about Z, pitch about Y, roll about X.
 pub fn angle_matrix(angles: [f32; 3]) -> Mat3 {
     let q = Quat::from_rotation_z(angles[1].to_radians())
