@@ -89,8 +89,14 @@ Own path following, one step per tick after the physics step and NPC settling:
   in the game slowly and late (yaw 16 deg 13 ticks after the goto, then 63 / 94 / 110 /
   142 / 157 / 177 every 8 ticks while it creeps), then walks straight -x along y = -491
   and corners at x = 75 (yaw 156) and x = -8 (140); ours turns at once at a steady 2
-  deg/tick, settles on the direct bearing (168) and walks the diagonal. Turn-in-place
-  rate and the route's first leg differ - not derived yet.
+  deg/tick, settles on the direct bearing (168) and walks the diagonal. Per think (7
+  ticks): the game does nothing on the think after the goto where ours already turns
+  15.75 and steps 0.6 u; then its yaw advances 15.7 / 31.5 / 15.8 / 31.5 / 15.7 / 31.5 /
+  15.8 / 19.6 (one and two yaw clamps alternating, 1.5x our steady 15.75) while its step
+  grows 0.7 / 2.0 / 3.1 / 4.3 then holds 5.1 / 5.3 / 5.5 until the yaw is within 20 deg
+  of the motion and only then 6.2 / 7.0 toward the 8.4 of walk speed (ours reaches 8.2
+  unthrottled). The first leg along y = -491 is the node graph's, not the direct bearing.
+  Not derived yet: the alternating double clamp, the speed hold while turning, the leg.
 - Gait (`NpcMoveDef`, `npc_move_def(class)`), measured on gm_construct over a 400 u
   straight walk (one think = 0.105 s):
 
@@ -152,8 +158,6 @@ brush entities' own models, and gm_construct has two 8 u NODRAW `CONTENTS_SOLID`
 through the map centre (x = -4..4, y = -968..968, z = -204..204) that walled the mesh in
 two. Only the world model's brushes (model 0's leaves) are meshed now; the route is the
 straight 1317 u diagonal, the game's node-graph legs total about 1300 u.
-In `_corner_seen` the probe's `spawnnpc` yaw only turned the bot's eyes, so the game's NPC
-spawned facing the bot's body (yaw 180) while ours faces the eye yaw: a probe artifact.
 Residuals inside the tolerance: the game's first braking step is gentler than the curve
 on the citizen run (0.8 u, it arrives one think after us), and the metrocop walk sheds
 0.06-0.3 u per think over four thinks before its brake onset (1.3 u).
