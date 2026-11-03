@@ -11,6 +11,7 @@ mod addons;
 mod derma;
 mod newgame;
 mod options;
+mod presets;
 mod servers;
 mod settings;
 mod ugc;
@@ -1887,9 +1888,109 @@ impl App {
                 self.panel_text = Some((row, cur));
                 return true;
             }
+            gm_server::ToolSettingKind::Presets => {
+                let sel = self.preset_selected(&s.name);
+                if t > 0.9 {
+                    // the wrench: a new preset named in the text row (Enter saves); with shift
+                    // held it removes the chosen preset instead (the game's Preset Editor)
+                    if self.shift_held {
+                        if !sel.is_empty() {
+                            let mut g = presets::load(&s.name);
+                            g.remove(&sel);
+                            if let Err(e) = presets::save(&s.name, &g) {
+                                eprintln!("presets: {e}");
+                            }
+                            self.set_preset_selected(&s.name, String::new());
+                        }
+                    } else {
+                        self.panel_text = Some((row, String::new()));
+                    }
+                    return true;
+                }
+                // the combo box: the left half steps back, the right half forward
+                let names: Vec<String> = presets::load(&s.name).into_keys().collect();
+                let n = names.len() + 1;
+                let i = if sel.is_empty() {
+                    0
+                } else {
+                    names.iter().position(|p| *p == sel).map_or(0, |i| i + 1)
+                };
+                let next = if t < 0.5 {
+                    (i + n - 1) % n
+                } else {
+                    (i + 1) % n
+                };
+                let chosen = if next == 0 {
+                    None
+                } else {
+                    names.get(next - 1).cloned()
+                };
+                self.apply_preset(&s.name, chosen);
+                return true;
+            }
         };
         self.set_tool_setting(&s.name, value);
         true
+    }
+
+    /// The preset the tool's ControlPresets shows (empty: Default); kept with the tool's
+    /// settings under a key no convar uses.
+    fn preset_selected(&self, tool: &str) -> String {
+        self.tool_settings
+            .get(tool)
+            .and_then(|m| m.get(&format!("__preset:{tool}")))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn set_preset_selected(&mut self, tool: &str, name: String) {
+        self.tool_settings
+            .entry(tool.to_string())
+            .or_default()
+            .insert(format!("__preset:{tool}"), name);
+    }
+
+    /// The tool's convars a preset covers: every control's convar (a colour's r, g and b).
+    fn preset_convars(&self, tool: &str) -> Vec<(String, String)> {
+        let schema = self
+            .tool_schema(tool)
+            .map_or_else(|| gm_server::builtin_tool_schema(tool), <[_]>::to_vec);
+        let mut out = Vec::new();
+        for s in &schema {
+            if matches!(
+                s.kind,
+                gm_server::ToolSettingKind::Help | gm_server::ToolSettingKind::Presets
+            ) {
+                continue;
+            }
+            out.push((s.name.clone(), s.default.clone()));
+            if s.kind == gm_server::ToolSettingKind::Color {
+                for (_, name) in &s.options {
+                    out.push((name.clone(), s.default.clone()));
+                }
+            }
+        }
+        out
+    }
+
+    /// `ControlPresets:OnSelect`: Default restores the controls' defaults, a preset sets its
+    /// convars.
+    fn apply_preset(&mut self, tool: &str, name: Option<String>) {
+        match &name {
+            None => {
+                for (k, d) in self.preset_convars(tool) {
+                    self.set_tool_setting(&k, d);
+                }
+            }
+            Some(p) => {
+                if let Some(vars) = presets::load(tool).remove(p) {
+                    for (k, v) in vars {
+                        self.set_tool_setting(&k, v);
+                    }
+                }
+            }
+        }
+        self.set_preset_selected(tool, name.unwrap_or_default());
     }
 
     /// Spawn-menu icons: with the menu open, up to two visible rows without an icon get their
@@ -2054,7 +2155,33 @@ impl App {
         match code {
             Some(KeyCode::Enter | KeyCode::NumpadEnter) => {
                 if let Some(s) = self.panel_schema().and_then(|sc| sc.get(row).cloned()) {
-                    self.set_tool_setting(&s.name, value);
+                    if s.kind == gm_server::ToolSettingKind::Presets {
+                        // `presets.Add`: the current settings under the typed name
+                        let name = value.trim().to_string();
+                        if !name.is_empty() {
+                            let vars: std::collections::BTreeMap<String, String> = self
+                                .preset_convars(&s.name)
+                                .into_iter()
+                                .map(|(k, d)| {
+                                    let v = self
+                                        .tool_settings
+                                        .get(&s.name)
+                                        .and_then(|m| m.get(&k))
+                                        .cloned()
+                                        .unwrap_or(d);
+                                    (k, v)
+                                })
+                                .collect();
+                            let mut g = presets::load(&s.name);
+                            g.insert(name.clone(), vars);
+                            if let Err(e) = presets::save(&s.name, &g) {
+                                eprintln!("presets: {e}");
+                            }
+                            self.set_preset_selected(&s.name, name);
+                        }
+                    } else {
+                        self.set_tool_setting(&s.name, value);
+                    }
                 }
             }
             Some(KeyCode::Escape) => {}
@@ -6156,7 +6283,8 @@ impl App {
                                     | gm_server::ToolSettingKind::Help
                                     | gm_server::ToolSettingKind::Key
                                     | gm_server::ToolSettingKind::Color
-                                    | gm_server::ToolSettingKind::Choice => " text".into(),
+                                    | gm_server::ToolSettingKind::Choice
+                                    | gm_server::ToolSettingKind::Presets => " text".into(),
                                 };
                                 self.console.log(format!(
                                     "  {} = {cur}{range} (default {})",

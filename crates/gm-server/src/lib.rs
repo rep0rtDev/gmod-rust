@@ -1113,6 +1113,8 @@ pub enum ToolSettingKind {
     Color,
     /// One of `options`.
     Choice,
+    /// `ToolPresets`: the preset chooser of the tool (`name` is the tool); no convar.
+    Presets,
 }
 
 /// A transcribed ControlPanel ([`tool_panels::Panel`]) as the schema the client receives: one
@@ -1175,7 +1177,58 @@ fn panel_schema(p: &tool_panels::Panel) -> Vec<ToolSetting> {
 /// The built-in stools' ControlPanels as the game builds them (`TOOL.BuildCPanel`: NumSlider
 /// ranges, CheckBoxes, the numpad KeyBinders as KEY_PAD_0..9 = 37..46, rope materials and
 /// models as text), defaults from [`gm_sandbox::ToolSettings`].
+/// Stools whose `BuildCPanel` starts with `CPanel:ToolPresets(<tool>, ConVarsDefault)`.
+pub const PRESET_TOOLS: &[&str] = &[
+    "axis",
+    "balloon",
+    "ballsocket",
+    "button",
+    "camera",
+    "colour",
+    "dynamite",
+    "elastic",
+    "emitter",
+    "faceposer",
+    "finger",
+    "hoverball",
+    "hydraulic",
+    "lamp",
+    "light",
+    "motor",
+    "muscle",
+    "physprop",
+    "pulley",
+    "rope",
+    "slider",
+    "thruster",
+    "trails",
+    "weld",
+    "wheel",
+    "winch",
+];
+
+/// The tool's ControlPanel: the `ToolPresets` row first where the game has one, then its
+/// controls.
 pub fn builtin_tool_schema(tool: &str) -> Vec<ToolSetting> {
+    let mut rows = builtin_tool_rows(tool);
+    if PRESET_TOOLS.contains(&tool) {
+        rows.insert(
+            0,
+            ToolSetting {
+                name: tool.into(),
+                kind: ToolSettingKind::Presets,
+                min: 0.0,
+                max: 0.0,
+                default: String::new(),
+                label: "#preset.default".into(),
+                options: Vec::new(),
+            },
+        );
+    }
+    rows
+}
+
+fn builtin_tool_rows(tool: &str) -> Vec<ToolSetting> {
     if let Some(p) = tool_panels::panel(tool) {
         return panel_schema(p);
     }
@@ -1410,6 +1463,7 @@ impl ToolSettingKind {
             4 => Self::Key,
             5 => Self::Color,
             6 => Self::Choice,
+            7 => Self::Presets,
             _ => Self::Number,
         }
     }
@@ -1423,6 +1477,7 @@ impl ToolSettingKind {
             Self::Key => 4,
             Self::Color => 5,
             Self::Choice => 6,
+            Self::Presets => 7,
         }
     }
 }

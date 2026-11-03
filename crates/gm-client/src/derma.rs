@@ -1540,6 +1540,38 @@ pub fn controls(
                 }
                 (h, (x, w))
             }
+            gm_server::ToolSettingKind::Presets => {
+                // ControlPresets: a DComboBox of the presets (Default first) and the 20 px
+                // wrench button that saves the current settings as a new preset
+                let h = 20.0;
+                if y + h <= ry + rh {
+                    let sel = value_of(&format!("__preset:{}", s.name));
+                    let shown = if sel.is_empty() { label } else { sel };
+                    nine(&mut out.items, &TEXTBOX, x, y, w - 24.0, h, WHITE);
+                    text(
+                        &mut out.items,
+                        FONT,
+                        ctx.font,
+                        x + 4.0,
+                        y,
+                        h,
+                        &shown,
+                        TEXT_ENTRY,
+                    );
+                    nine(&mut out.items, &TEXTBOX, x + w - 20.0, y, 20.0, h, WHITE);
+                    if (ctx.has_image)("icon16/wrench.png") {
+                        image(
+                            &mut out.items,
+                            "icon16/wrench.png",
+                            x + w - 18.0,
+                            y + 2.0,
+                            16.0,
+                            16.0,
+                        );
+                    }
+                }
+                (h, (x, w))
+            }
             gm_server::ToolSettingKind::Key | gm_server::ToolSettingKind::Choice => {
                 let h = 20.0;
                 if y + h <= ry + rh {
@@ -2182,7 +2214,8 @@ pub fn controls_height(schema: &[gm_server::ToolSetting]) -> f32 {
                 gm_server::ToolSettingKind::Bool => 16.0,
                 gm_server::ToolSettingKind::Text
                 | gm_server::ToolSettingKind::Key
-                | gm_server::ToolSettingKind::Choice => 20.0,
+                | gm_server::ToolSettingKind::Choice
+                | gm_server::ToolSettingKind::Presets => 20.0,
                 gm_server::ToolSettingKind::Help => 16.0,
                 gm_server::ToolSettingKind::Color => 64.0,
             }

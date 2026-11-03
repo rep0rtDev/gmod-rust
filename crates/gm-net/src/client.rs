@@ -66,6 +66,7 @@ pub fn tool_click_settings(
                 },
                 gm_server::ToolSettingKind::Text
                 | gm_server::ToolSettingKind::Help
+                | gm_server::ToolSettingKind::Presets
                 | gm_server::ToolSettingKind::Key
                 | gm_server::ToolSettingKind::Color
                 | gm_server::ToolSettingKind::Choice => v.clone(),
@@ -74,7 +75,8 @@ pub fn tool_click_settings(
         out.push((s.name.clone(), v));
     }
     for (k, v) in set {
-        if !schema.iter().any(|s| &s.name == k) {
+        // `__preset:<tool>` and the like are the client's own markers
+        if !k.starts_with("__") && !schema.iter().any(|s| &s.name == k) {
             out.push((k.clone(), v.clone()));
         }
     }
