@@ -3062,7 +3062,7 @@ impl App {
     /// 112x80 boxes with the WeaponIcons glyph and the highlighted weapon's name at 64, the
     /// other buckets as 32x32 boxes, numbers at 4,4, gap 8, all on the 640x480 layout scaled
     /// by the screen height; scripted weapons draw `weapons/swep` and the info bubble.
-    fn draw_weapon_select(&self, items: &mut Vec<UiItem>, _w: f32, h: f32, ui: &UiRenderer) {
+    fn draw_weapon_select(&self, items: &mut Vec<UiItem>, w: f32, h: f32, ui: &UiRenderer) {
         let Some(sel) = self.wsel else { return };
         let Some(snap) = self.local_snap() else {
             return;
@@ -3080,11 +3080,15 @@ impl App {
         let icons = ui.font_metrics(Some("WeaponIcons"));
         let numbers = ui.font_metrics(Some("HudSelectionNumbers"));
         let text_m = ui.font_metrics(Some("HudSelectionText"));
-        let mut x = 0.0;
+        // CHudWeaponSelection::Paint: the row of all slots (small boxes, the open one large)
+        // centred on the panel's width; an empty slot keeps its place
+        let width = (buckets.len().saturating_sub(1)) as f32 * (small + gap) + large_w;
+        let mut x = ((w - width) / 2.0).round();
         let y0 = 16.0 * s;
         let t = self.epoch.elapsed().as_secs_f32();
         for (slot, list) in buckets.iter().enumerate() {
             if list.is_empty() {
+                x += small + gap;
                 continue;
             }
             let open = list.contains(&sel);
