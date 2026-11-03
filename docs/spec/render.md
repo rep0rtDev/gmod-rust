@@ -43,7 +43,17 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   (no sorting); `$translucent` surfaces are drawn after all opaque batches of their pass with
   alpha blending and no depth write, batches ordered farthest first by the distance from the eye
   to the batch's vertex centroid, output alpha = base alpha (gm_construct: the reflective glass
-  and the skybox foliage/antenna sheets). Water is still an opaque placeholder. On gm_construct the world fog is 0.4 % at 2000 u and 3.6 %
+  and the skybox foliage/antenna sheets). Water is still an opaque placeholder.
+  Water (`gm_construct/water_13.vmt`, shader `Water`): `$abovewater 1`, `$refracttexture
+  _rt_WaterRefraction`, `$reflecttexture _rt_WaterReflection` (`$reflectamount 0.4`,
+  `$reflect3dskybox 1`, `$reflectentities 1`), `$bumpmap gm_construct/water_13_dudv`,
+  `$normalmap gm_construct/water_13_normal`, scroll `[.01 .01 .05]` / `[-.025 .025 .075]`,
+  `$fogenable 1`, `$fogcolor {7 58 66}`, `$fogstart 0`, `$fogend 1024`; `$bottommaterial
+  gm_construct/water_13_beneath` (`$abovewater 0`, `$fogcolor {24 64 72}`, `$fogstart -1024`,
+  `$fogend 2048`). Done: the surface is drawn flat in its `$fogcolor` (the colour the volume fog
+  converges to). Open: refraction/reflection render targets with the dudv/normal distortion,
+  the depth-based volume fog through the surface, and the view fog switching to the
+  `$bottommaterial` keys when the eye is in a water leaf. On gm_construct the world fog is 0.4 % at 2000 u and 3.6 %
   at 10 000 u - faint, as in the game.
 - `env_tonemap_controller` "TonemapController" set by `logic_auto` OnMapSpawn:
   SetAutoExposureMax 1.8, SetAutoExposureMin 0.7, SetBloomScale 0.3, SetTonemapRate 0.2.

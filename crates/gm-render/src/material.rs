@@ -20,6 +20,9 @@ pub struct Material {
     pub half_lambert: bool,
     pub no_draw: bool,
     pub water: bool,
+    /// `Water`: `$fogcolor` (display-space 0..1), `$fogstart`, `$fogend` of the volume fog
+    /// seen through the surface (`$abovewater 1`) or from inside (`$bottommaterial`).
+    pub water_fog: Option<([f32; 3], f32, f32)>,
 }
 
 /// `maps/<map>/<mat>_<x>_<y>_<z>` is a per-cubemap patch written by vbsp;
@@ -99,6 +102,24 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
             continue;
         }
         mat.water = shader == "water";
+        if mat.water {
+            let c: Vec<f32> = get("$fogcolor")
+                .map(|v| {
+                    v.trim_matches(|c| c == '{' || c == '}' || c == '[' || c == ']')
+                        .split_whitespace()
+                        .filter_map(|x| x.parse::<f32>().ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let num = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
+            if c.len() >= 3 {
+                mat.water_fog = Some((
+                    [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0],
+                    num("$fogstart", 0.0),
+                    num("$fogend", 1024.0),
+                ));
+            }
+        }
         mat.shader = shader;
         if mat.base_texture.is_none() {
             mat.base_texture = get("$basetexture");

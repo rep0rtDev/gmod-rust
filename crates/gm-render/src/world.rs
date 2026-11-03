@@ -1068,12 +1068,18 @@ impl WorldRenderer {
                     return None;
                 }
                 if m.water || m.shader.contains("reflective") || m.shader.contains("refract") {
+                    // no refraction/reflection targets yet: water shows its own volume fog
+                    // colour (what the game converges to at fogend), other RT shaders a grey
+                    let px = match m.water_fog {
+                        Some((c, _, _)) => c.map(|v| (v * 255.0).round() as u8),
+                        None => [60, 90, 110],
+                    };
                     return Some((
                         m,
                         material::Rgba {
                             width: 1,
                             height: 1,
-                            pixels: vec![60, 90, 110, 255],
+                            pixels: vec![px[0], px[1], px[2], 255],
                             mips: Vec::new(),
                         },
                     ));
