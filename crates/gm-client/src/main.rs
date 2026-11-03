@@ -3373,7 +3373,21 @@ impl App {
                 if let Some(d) = DeathNotice::parse(&e, &self.sim.client.world.players) {
                     self.deaths.push(d);
                 }
-                if let Some((text, kind, length)) = Notices::legacy(&e) {
+                // GM:OnUndo: hint.undoneX with `language.GetPhrase(name)` (prop_physics is
+                // "Physics Prop", a `#class` its entities.properties name)
+                let named = match e.strip_prefix("Undone ") {
+                    Some(n) => {
+                        let key = n.trim_start_matches('#');
+                        let name = self
+                            .lang
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| key.to_string());
+                        format!("Undone {name}")
+                    }
+                    None => e.clone(),
+                };
+                if let Some((text, kind, length)) = Notices::legacy(&named) {
                     self.notify(text, kind, length);
                 }
                 if let Some(rest) = e.strip_prefix("Hint ") {

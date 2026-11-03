@@ -1702,6 +1702,77 @@ pub struct ContentEntry {
     pub category: String,
 }
 
+/// `ADD_ITEM` of `lua/autorun/game_hl2.lua`: the HL2 entities the game's Entities tab offers
+/// under "Half-Life 2" (class, the engine entity's model, `NormalOffset` along the hit normal;
+/// 32 when unset). They spawn as props of their model: the pickups' and chargers' behaviour is
+/// not simulated yet. `combine_mine_resistance` (the mine with `Modification 1`) is left out.
+pub const HL2_SPAWNABLE_ENTITIES: [(&str, &str, f32); 21] = [
+    (
+        "item_ammo_ar2",
+        "models/items/combine_rifle_cartridge01.mdl",
+        -8.0,
+    ),
+    (
+        "item_ammo_ar2_large",
+        "models/items/combine_rifle_cartridge01.mdl",
+        -8.0,
+    ),
+    ("item_ammo_pistol", "models/items/boxsrounds.mdl", -4.0),
+    (
+        "item_ammo_pistol_large",
+        "models/items/boxsrounds.mdl",
+        -4.0,
+    ),
+    ("item_ammo_357", "models/items/357ammo.mdl", -4.0),
+    ("item_ammo_357_large", "models/items/357ammobox.mdl", -4.0),
+    ("item_ammo_smg1", "models/items/boxmrounds.mdl", -2.0),
+    ("item_ammo_smg1_large", "models/items/boxmrounds.mdl", -2.0),
+    (
+        "item_ammo_smg1_grenade",
+        "models/items/ar2_grenade.mdl",
+        -10.0,
+    ),
+    (
+        "item_ammo_crossbow",
+        "models/items/crossbowrounds.mdl",
+        -10.0,
+    ),
+    ("item_box_buckshot", "models/items/boxbuckshot.mdl", -10.0),
+    (
+        "item_ammo_ar2_altfire",
+        "models/items/combine_rifle_ammo01.mdl",
+        -2.0,
+    ),
+    (
+        "item_rpg_round",
+        "models/weapons/w_missile_closed.mdl",
+        -10.0,
+    ),
+    ("item_battery", "models/items/battery.mdl", -4.0),
+    ("item_healthkit", "models/items/healthkit.mdl", -8.0),
+    ("item_healthvial", "models/healthvial.mdl", -4.0),
+    (
+        "item_suitcharger",
+        "models/props_combine/suit_charger001.mdl",
+        32.0,
+    ),
+    (
+        "item_healthcharger",
+        "models/props_combine/health_charger001.mdl",
+        32.0,
+    ),
+    ("item_suit", "models/items/hevsuit.mdl", 0.0),
+    (
+        "prop_thumper",
+        "models/props_combine/combinethumper002.mdl",
+        32.0,
+    ),
+    (
+        "combine_mine",
+        "models/props_combine/combine_mine01.mdl",
+        -8.0,
+    ),
+];
 /// `ADD_WEAPON` of `lua/autorun/game_hl2.lua`: the HL2 weapons the game's Weapons tab offers.
 pub const HL2_SPAWNABLE_WEAPONS: [&str; 13] = [
     "weapon_physcannon",
@@ -7943,18 +8014,24 @@ impl<'w> Server<'w> {
             name: w.print_name.clone(),
             category: "#spawnmenu.category.other".into(),
         }));
-        let entities = self
-            .scripted_entities
+        let mut entities: Vec<ContentEntry> = HL2_SPAWNABLE_ENTITIES
             .iter()
-            .map(|e| ContentEntry {
+            .map(|(c, _, _)| ContentEntry {
+                class: c.to_string(),
+                name: format!("#{c}"),
+                category: "Half-Life 2".into(),
+            })
+            .collect();
+        entities.extend(self.scripted_entities.iter().map(|e| {
+            ContentEntry {
                 class: e.class.clone(),
                 name: e.print_name.clone().unwrap_or_else(|| e.class.clone()),
                 category: e
                     .category
                     .clone()
                     .unwrap_or_else(|| "#spawnmenu.category.other".into()),
-            })
-            .collect();
+            }
+        }));
         (weapons, entities)
     }
 
@@ -7983,6 +8060,9 @@ impl<'w> Server<'w> {
     pub fn spawn_sent(&mut self, player: u32, class: &str) -> Option<u32> {
         if !self.players.get(&player).is_some_and(|p| p.alive) {
             return None;
+        }
+        if let Some((_, model, offset)) = HL2_SPAWNABLE_ENTITIES.iter().find(|e| e.0 == class) {
+            return self.spawn_hl2_item(player, class, model, *offset);
         }
         let def = self
             .scripted_entities
@@ -8018,6 +8098,50 @@ impl<'w> Server<'w> {
         Some(id)
     }
 
+    /// An HL2 entity of the Entities tab (`Spawn_SENT` for an engine class): a prop of the
+    /// entity's model `NormalOffset` u along the hit normal from the eye trace, counted and
+    /// cleaned up as a sent, undoable as `SENT` with the class's localised name.
+    fn spawn_hl2_item(
+        &mut self,
+        player: u32,
+        class: &str,
+        model: &str,
+        offset: f32,
+    ) -> Option<u32> {
+        if self.ask(Request::Spawn {
+            player,
+            kind: "sent",
+            name: class.to_string(),
+        }) == Verdict::Cancel
+        {
+            return None;
+        }
+        let hit = self.tool_hit(player)?;
+        let pos = hit.pos + hit.normal * offset;
+        if !self.models.contains_key(model) {
+            let loaded = self.model_loader.as_mut().and_then(|f| f(model))?;
+            self.register_model(model, loaded);
+        }
+        let id = self
+            .sandbox
+            .restore_prop(player, model, pos, Vec3::ZERO, false);
+        self.sandbox.add_cleanup(player, "sents", id);
+        self.sync_physics();
+        self.game_events.push(GameEvent::Spawned {
+            player,
+            ent: id,
+            kind: "sent",
+            name: class.to_string(),
+        });
+        self.push_undo(
+            player,
+            "SENT",
+            format!("Scripted Entity ({class})"),
+            Some(format!("Undone #{class}")),
+            vec![id],
+        );
+        Some(id)
+    }
     /// `Spawn_Weapon` (`gm_spawnswep`, the Weapons tab's middle click, creator type 3): the
     /// weapon entity lands 32 u along the hit normal from the player's eye trace (pulled back to
     /// halfway when that point is outside the world), no angles, physics on; undo "SWEP" with
@@ -13476,6 +13600,15 @@ impl<'w> Server<'w> {
                 continue;
             }
             self.spawn_player(id);
+        }
+        // `impulse 100` of this tick's commands toggles the flashlight (`PlayerSwitchFlashlight`)
+        let flash: Vec<u32> = cmds
+            .iter()
+            .filter(|(_, pc)| pc.impulse == 100)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in flash {
+            self.use_flashlight(id);
         }
         for (id, pc) in cmds.iter() {
             let Some(p) = self.players.get_mut(id) else {
