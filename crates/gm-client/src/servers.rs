@@ -105,6 +105,14 @@ fn list_path(kind: &str) -> PathBuf {
     home_dir().join("cfg").join(format!("servers_{kind}.txt"))
 }
 
+/// The master server from cfg/master.txt, if one is configured.
+pub(crate) fn master_address() -> Option<String> {
+    std::fs::read_to_string(home_dir().join("cfg").join("master.txt"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 pub fn load_list(kind: &str) -> Vec<ServerEntry> {
     std::fs::read_to_string(list_path(kind))
         .unwrap_or_default()
@@ -154,10 +162,7 @@ impl ServersState {
             selected: None,
             internet: Vec::new(),
             lan: Vec::new(),
-            master: std::fs::read_to_string(home_dir().join("cfg").join("master.txt"))
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty()),
+            master: master_address(),
             probing: None,
             refreshing: None,
             status: String::new(),
@@ -367,7 +372,7 @@ fn entry_from_info(addr: &str, info: &gm_net::ServerInfo, ping: u32) -> ServerEn
 }
 
 /// A direct `Query` to a game server: its `Info` and the round trip as the ping.
-fn probe(addr: &str) -> Option<ServerEntry> {
+pub(crate) fn probe(addr: &str) -> Option<ServerEntry> {
     let target: std::net::SocketAddr = addr.parse().ok()?;
     let sock = open_socket(QUERY_TIMEOUT)?;
     let nonce = std::process::id() ^ (Instant::now().elapsed().as_nanos() as u32);
@@ -394,7 +399,7 @@ fn probe(addr: &str) -> Option<ServerEntry> {
 }
 
 /// The master's list (`List` pages until `total` is reached), each server then pinged.
-fn master_list(master: &str) -> Vec<ServerEntry> {
+pub(crate) fn master_list(master: &str) -> Vec<ServerEntry> {
     let Ok(target) = master.parse::<std::net::SocketAddr>() else {
         return Vec::new();
     };
@@ -438,7 +443,7 @@ fn master_list(master: &str) -> Vec<ServerEntry> {
 }
 
 /// Local Network: a broadcast `Query` on the default port, every `Info` within a second.
-fn lan_scan() -> Vec<ServerEntry> {
+pub(crate) fn lan_scan() -> Vec<ServerEntry> {
     let Some(sock) = open_socket(Duration::from_millis(250)) else {
         return Vec::new();
     };

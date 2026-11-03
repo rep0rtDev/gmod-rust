@@ -827,6 +827,8 @@ struct App {
     screen_clicker: bool,
     /// Script audio channels (`sound.PlayFile`) by the script's id: the mixer voice behind each.
     audio_channels: std::collections::BTreeMap<u32, AudioChan>,
+    /// Script server browser requests (`serverlist`) still being answered on a thread.
+    script_servers: Vec<(u32, std::sync::mpsc::Receiver<Vec<servers::ServerEntry>>)>,
     /// Options dialog cvars and binds (`cfg/config.cfg`).
     settings: settings::Settings,
     /// The camera FOV being blended toward the server's `Player:SetFOV` target (value, last frame).
@@ -3737,15 +3739,18 @@ impl App {
             let (w, h) = (g.config.width, g.config.height);
             self.sim.script.cursor = (!self.grabbed).then_some(self.cursor);
             self.report_audio();
+            self.report_servers();
             self.sim.hud_draws = self.sim.script.client_render(&self.sim.client.world, w, h);
             // `gui.EnableScreenClicker`: a script shows the cursor over the game (the mouse
             // look stops) until it turns it off again
             let mut clicker = None;
             let mut audio = Vec::new();
+            let mut servers_ops = Vec::new();
             for d in &self.sim.hud_draws {
                 match d {
                     gm_script::DrawCmd::ScreenClicker { on } => clicker = Some(*on),
                     gm_script::DrawCmd::Audio { id, op } => audio.push((*id, op.clone())),
+                    gm_script::DrawCmd::Servers { id, op } => servers_ops.push((*id, op.clone())),
                     gm_script::DrawCmd::OpenUrl { url } => {
                         let _ = std::process::Command::new("xdg-open").arg(url).spawn();
                     }
@@ -3754,6 +3759,9 @@ impl App {
             }
             for (id, op) in audio {
                 self.apply_audio(id, &op);
+            }
+            for (id, op) in servers_ops {
+                self.apply_servers(id, &op);
             }
             if let Some(on) = clicker.filter(|on| *on != self.screen_clicker) {
                 self.screen_clicker = on;
@@ -4031,7 +4039,8 @@ impl App {
                     gm_script::DrawCmd::WorldTri { .. } => continue,
                     gm_script::DrawCmd::ScreenClicker { .. }
                     | gm_script::DrawCmd::OpenUrl { .. }
-                    | gm_script::DrawCmd::Audio { .. } => continue,
+                    | gm_script::DrawCmd::Audio { .. }
+                    | gm_script::DrawCmd::Servers { .. } => continue,
                     gm_script::DrawCmd::Begin3D2D { .. } | gm_script::DrawCmd::End3D2D => continue,
                     // fonts and images were prepared before the frame
                     gm_script::DrawCmd::Font { .. } => continue,
@@ -5324,6 +5333,7 @@ fn main() -> Result<()> {
         grabbed: false,
         screen_clicker: false,
         audio_channels: Default::default(),
+        script_servers: Vec::new(),
         main_menu: false,
         settings,
         fov_blend: None,
@@ -6110,6 +6120,116 @@ impl App {
             AudioOp::Loop(b) => mixer.set_looping(ch.voice, *b),
             AudioOp::Play { .. } => {}
         }
+    }
+
+    /// `DrawCmd::Servers`: a script's server browser request onto the native browser's
+    /// queries (threads) and lists.
+    fn apply_servers(&mut self, id: u32, op: &gm_script::ServerOp) {
+        use gm_script::ServerOp;
+        let (tx, rx) = std::sync::mpsc::channel();
+        match op {
+            ServerOp::Query { kind } => match kind.as_str() {
+                "internet" => {
+                    let master = servers::master_address();
+                    std::thread::spawn(move || {
+                        let _ =
+                            tx.send(master.map(|m| servers::master_list(&m)).unwrap_or_default());
+                    });
+                }
+                "lan" => {
+                    std::thread::spawn(move || {
+                        let _ = tx.send(servers::lan_scan());
+                    });
+                }
+                other => {
+                    let kind = if other == "favorite" {
+                        "favorites"
+                    } else {
+                        other
+                    };
+                    let _ = tx.send(servers::load_list(kind));
+                }
+            },
+            ServerOp::Ping { addr } => {
+                let addr = if addr.contains(':') {
+                    addr.clone()
+                } else {
+                    format!("{addr}:27015")
+                };
+                std::thread::spawn(move || {
+                    let _ = tx.send(servers::probe(&addr).into_iter().collect());
+                });
+            }
+            ServerOp::Favorites => {
+                let _ = tx.send(servers::load_list("favorites"));
+            }
+            ServerOp::FavoriteAdd { addr } => {
+                let mut list = servers::load_list("favorites");
+                if !list.iter().any(|e| e.address == *addr) {
+                    list.push(servers::ServerEntry {
+                        address: addr.clone(),
+                        name: addr.clone(),
+                        map: String::new(),
+                        players: 0,
+                        maxplayers: 0,
+                        ping: 0,
+                        gamemode: String::new(),
+                        last_played: 0,
+                    });
+                    servers::save_list("favorites", &list);
+                }
+                return;
+            }
+            ServerOp::FavoriteRemove { addr } => {
+                let mut list = servers::load_list("favorites");
+                list.retain(|e| e.address != *addr);
+                servers::save_list("favorites", &list);
+                return;
+            }
+        }
+        if id != 0 {
+            self.script_servers.push((id, rx));
+        }
+    }
+
+    /// Once per frame before the HUD: finished server browser requests, as entries then done.
+    fn report_servers(&mut self) {
+        if self.script_servers.is_empty() {
+            return;
+        }
+        let mut reports = Vec::new();
+        self.script_servers.retain(|(id, rx)| match rx.try_recv() {
+            Ok(list) => {
+                for e in &list {
+                    reports.push(gm_script::ServerReport::Entry {
+                        id: *id,
+                        info: gm_script::ServerInfo {
+                            address: e.address.clone(),
+                            name: e.name.clone(),
+                            map: e.map.clone(),
+                            players: e.players,
+                            maxplayers: e.maxplayers,
+                            ping: e.ping,
+                            gamemode: e.gamemode.clone(),
+                            last_played: e.last_played,
+                        },
+                    });
+                }
+                reports.push(gm_script::ServerReport::Done {
+                    id: *id,
+                    count: list.len() as u32,
+                });
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                reports.push(gm_script::ServerReport::Done { id: *id, count: 0 });
+                false
+            }
+        });
+        self.sim
+            .script
+            .client_servers(&self.sim.client.world, &reports);
     }
 
     /// Once per frame before the HUD: what the mixer says about every script channel.

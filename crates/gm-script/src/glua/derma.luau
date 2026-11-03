@@ -5,6 +5,9 @@
 -- @hook PANEL:OnCursorEntered @hook PANEL:OnCursorExited @hook PANEL:OnCursorMoved @hook PANEL:OnFocusChanged
 -- @hook PANEL:OnKeyCodePressed @hook PANEL:OnKeyCodeReleased @hook PANEL:OnMousePressed @hook PANEL:OnMouseReleased
 -- @hook PANEL:OnMouseWheeled @hook PANEL:OnRemove @hook PANEL:OnScreenSizeChanged @hook PANEL:OnSizeChanged @hook PANEL:OnVScroll
+-- @hook PANEL:OnActivate @hook PANEL:OnDeactivate @hook PANEL:OnScrollbarAppear @hook PANEL:OnHScroll @hook PANEL:TestHover @hook PANEL:LoadCookies
+-- @hook PANEL:OnStartDragging @hook PANEL:OnStopDragging @hook PANEL:OnDrop @hook PANEL:DroppedOn @hook PANEL:DragHoverClick @hook PANEL:OnTextClicked
+-- @hook PANEL:PreAutoRefresh @hook PANEL:PostAutoRefresh @hook PANEL:GenerateExample
 -- behaviour): a panel tree with docking, z order, hover / click / keyboard routing from the
 -- client's cursor and key edges, painted each frame after `HUDPaint` through `surface.*`
 -- in panel coordinates; the default skin's colours (docs/spec/ui.md). Server realm: stubs.
@@ -60,6 +63,7 @@ local serial = 0
 local hovered, focused, pressed, pressed_button
 local popups = 0
 local cursor_x, cursor_y, cursor_visible = 0, 0, false
+local hit_test
 
 local function inherit(tbl, base)
 	local b = type(base) == "table" and base or classes[base or "Panel"] or Panel
@@ -181,6 +185,33 @@ function Panel:OnSizeChanged(w, h) end
 function Panel:OnScreenSizeChanged() end
 function Panel:ApplySchemeSettings() end
 function Panel:AnimationThink() end
+function Panel:OnActivate() end
+function Panel:OnDeactivate() end
+function Panel:OnScrollbarAppear() end
+function Panel:OnHScroll(offset) end
+function Panel:TestHover(x, y) return true end
+function Panel:LoadCookies() end
+function Panel:OnStartDragging() end
+function Panel:OnStopDragging() end
+function Panel:OnDrop() end
+function Panel:DroppedOn(panel) end
+function Panel:DragHoverClick(hover_time) end
+function Panel:OnTextClicked(signal) end
+function Panel:PreAutoRefresh() end
+function Panel:PostAutoRefresh() end
+function Panel:GenerateExample(class, sheet, w, h)
+	local c = vgui.Create(class)
+	if not c then return end
+	c:SetSize(w or 200, h or 100)
+	sheet:AddSheet(class, c)
+end
+-- cookies: `<cookiename>.<key>` in the cookie store, loaded when the name is set
+function Panel:SetCookieName(name) self.__cookie = name; self:LoadCookies() end
+function Panel:GetCookieName() return self.__cookie end
+function Panel:SetCookie(k, v) if self.__cookie then cookie.Set(self.__cookie .. "." .. k, v) end end
+function Panel:GetCookie(k, default) if not self.__cookie then return default end return cookie.GetString(self.__cookie .. "." .. k, default) end
+function Panel:GetCookieNumber(k, default) if not self.__cookie then return default end return cookie.GetNumber(self.__cookie .. "." .. k, default) end
+function Panel:DeleteCookie(k) if self.__cookie then cookie.Delete(self.__cookie .. "." .. k) end end
 
 function Panel:SetParent(parent)
 	if self.parent then
@@ -361,11 +392,12 @@ function Panel:RequestFocus()
 	if focused == self then return end
 	local old = focused
 	focused = self
-	if old and old.__valid then old:OnFocusChanged(false); old:OnLoseFocus() end
+	if old and old.__valid then old:OnFocusChanged(false); old:OnLoseFocus(); old:OnDeactivate() end
 	self:OnFocusChanged(true)
 	self:OnGetFocus()
+	self:OnActivate()
 end
-function Panel:KillFocus() if focused == self then focused = nil; self:OnFocusChanged(false); self:OnLoseFocus() end end
+function Panel:KillFocus() if focused == self then focused = nil; self:OnFocusChanged(false); self:OnLoseFocus(); self:OnDeactivate() end end
 function Panel:InvalidateLayout(now)
 	self.__invalid = true
 	if now then self:__layout() end
@@ -532,12 +564,86 @@ function Panel:Stop() self.__anims = nil end
 function Panel:LerpPositions(speed, ease) end
 function Panel:SetPaintFunction(name, fn) self[name] = fn end
 function Panel:Queue() end
-function Panel:Droppable() end
-function Panel:Receiver() end
-function Panel:DragMousePress() end
-function Panel:DragMouseRelease() return false end
-function Panel:IsDragging() return false end
-function Panel:DragHover() end
+-- drag and drop: a Droppable panel picked up by the mouse (8 px of travel) is offered to the
+-- Receiver of the same name under the cursor every frame and dropped on release
+local drag = { panels = nil, name = nil, source = nil, press = nil, hover = nil, hover_since = 0 }
+function Panel:Droppable(name) self.__droppable = name; return self end
+function Panel:Receiver(name, fn, menu) self.__receivers = self.__receivers or {}; self.__receivers[name] = { fn = fn, menu = menu } end
+function Panel:DragMousePress(code) if not self.__droppable then return false end drag.press = { panel = self, x = cursor_x, y = cursor_y, code = code } return true end
+function Panel:IsDragging() return drag.panels ~= nil and drag.source == self end
+function Panel:DragHover(hover_time)
+	if hover_time > 0.5 and not self.__drag_clicked then self.__drag_clicked = true; self:DragHoverClick(hover_time) end
+end
+local function find_receiver(p, name)
+	while p do if p.__receivers and p.__receivers[name] then return p end p = p.parent end
+end
+local function drop_on(r, code)
+	local rc = r.__receivers[drag.name]
+	local x, y = r:CursorPos()
+	local panels = drag.panels
+	if code == MOUSE_RIGHT and rc.menu and #rc.menu > 0 then
+		local m = DermaMenu()
+		for i, label in ipairs(rc.menu) do m:AddOption(label, function() rc.fn(r, panels, true, i, x, y) end) end
+		m:Open()
+	else
+		rc.fn(r, panels, true, nil, x, y)
+	end
+	for _, p in ipairs(panels) do if p.__valid then p:OnDrop(); r:DroppedOn(p) end end
+end
+function Panel:DragMouseRelease(code)
+	if drag.press and drag.press.panel == self then drag.press = nil end
+	if not drag.panels or drag.source ~= self then return false end
+	local r = drag.hover
+	if r and r.__valid then drop_on(r, code) end
+	local source = drag.source
+	drag.panels, drag.name, drag.source, drag.hover = nil, nil, nil, nil
+	if source and source.__valid then source:OnStopDragging() end
+	return true
+end
+local function drag_think()
+	if drag.press and not drag.panels then
+		if not drag.press.panel.__valid then drag.press = nil return end
+		local dx, dy = cursor_x - drag.press.x, cursor_y - drag.press.y
+		if dx * dx + dy * dy > 64 then
+			local p = drag.press.panel
+			drag.panels, drag.name, drag.source = { p }, p.__droppable, p
+			p:OnStartDragging()
+		end
+	end
+	if not drag.panels then return end
+	if not drag.source.__valid then drag.panels, drag.name, drag.source, drag.hover = nil, nil, nil, nil return end
+	local target = cursor_visible and hit_test(world_panel, cursor_x, cursor_y) or nil
+	local r = target and find_receiver(target, drag.name) or nil
+	if r ~= drag.hover then
+		if drag.hover then drag.hover.__drag_clicked = nil end
+		drag.hover, drag.hover_since = r, RealTime()
+	end
+	if r then
+		local x, y = r:CursorPos()
+		r.__receivers[drag.name].fn(r, drag.panels, false, nil, x, y)
+		r:DragHover(RealTime() - drag.hover_since)
+	end
+end
+function dragndrop.IsDragging() return drag.panels ~= nil end
+function dragndrop.GetDroppable(name) if not drag.panels or (name and drag.name ~= name) then return end return drag.panels end
+function dragndrop.StartDragging()
+	if drag.press and not drag.panels then
+		local p = drag.press.panel
+		drag.panels, drag.name, drag.source = { p }, p.__droppable, p
+		p:OnStartDragging()
+	end
+end
+function dragndrop.StopDragging()
+	local source = drag.source
+	drag.panels, drag.name, drag.source, drag.hover, drag.press = nil, nil, nil, nil, nil
+	if source and source.__valid then source:OnStopDragging() end
+end
+function dragndrop.Clear() dragndrop.StopDragging() end
+function dragndrop.Think() drag_think() end
+function dragndrop.HoverThink() end
+function dragndrop.UpdateReceiver() end
+-- after the frame handler has taken the cursor (higher priority runs later)
+if events then events.on("render.hud", function() drag_think() end, 1e6) end
 function Panel:DragHoverEnd() end
 function Panel:SetDropTarget() end
 function Panel:DrawFilledRect() surface.DrawRect(0, 0, self.w, self.h) end
@@ -618,7 +724,7 @@ function Panel:GetPanelAt() end
 classes.Panel = Panel
 
 ------------------------------------------------------------------------ the frame: layout, hover, paint
-local function hit_test(p, sx, sy)
+function hit_test(p, sx, sy)
 	if not p.visible or not p.__valid then return nil end
 	if sx < 0 or sy < 0 or sx >= p.w or sy >= p.h then return nil end
 	local order = p:__ordered()
@@ -627,7 +733,7 @@ local function hit_test(p, sx, sy)
 		local hit = hit_test(c, sx - c.x, sy - c.y)
 		if hit then return hit end
 	end
-	if p.mouse_input then return p end
+	if p.mouse_input and p:TestHover(p:LocalToScreen(sx, sy)) then return p end
 	return nil
 end
 local function paint(p, sx, sy)
@@ -701,6 +807,9 @@ function __derma_key(name, down)
 				pressed, pressed_button = target, code
 				if not target.__focus_passive then target:RequestFocus() end
 				target:OnMousePressed(code)
+				local d = target
+				while d and not d.__droppable do d = d.parent end
+				if d then d:DragMousePress(code) end
 			else
 				if focused and focused.__valid then focused:KillFocus() end
 			end
@@ -711,6 +820,8 @@ function __derma_key(name, down)
 		else
 			local target = pressed
 			pressed, pressed_button = nil, nil
+			if drag.panels and drag.source and drag.source.__valid and drag.source:DragMouseRelease(code) then return true end
+			drag.press = nil
 			if target and target.__valid then target:OnMouseReleased(code); return true end
 			return hovered ~= nil
 		end
@@ -1184,6 +1295,10 @@ function DScrollPanel:Init()
 	self.__bar_w = 15
 end
 function DScrollPanel:GetCanvas() return self.pnlCanvas end
+-- children parented to the scroll panel itself land on its canvas (the game does the same)
+function DScrollPanel:OnChildAdded(child)
+	if self.pnlCanvas and self.VBar and child ~= self.pnlCanvas and child ~= self.VBar and child.parent == self then child:SetParent(self.pnlCanvas) end
+end
 function DScrollPanel:GetVBar() return self.VBar end
 function DScrollPanel:AddItem(p) p:SetParent(self.pnlCanvas) end
 function DScrollPanel:Add(class) return vgui.Create(class, self.pnlCanvas) end
@@ -1208,7 +1323,9 @@ function DScrollPanel:PerformLayout(w, h)
 	local _, ch = c:ChildrenSize()
 	local bl, bt, br, bb = table.unpack(c.__padding)
 	ch = ch + bb
+	local had_bar = self.VBar.__visible
 	self.VBar.__visible = ch > h
+	if self.VBar.__visible and not had_bar then self:OnScrollbarAppear() end
 	c:SetSize(self.VBar.__visible and (w - self.__bar_w) or w, math.max(ch, h))
 	self.VBar.Scroll = math.max(0, math.min(self.VBar.Scroll, math.max(0, ch - h)))
 	self:OnVScroll(-self.VBar.Scroll)
@@ -3297,13 +3414,13 @@ function DHorizontalScroller:AddPanel(p) p:SetParent(self.pnlCanvas); self.Panel
 function DHorizontalScroller:GetCanvas() return self.pnlCanvas end
 function DHorizontalScroller:SetOverlap(o) self.__overlap = o end
 function DHorizontalScroller:GetOverlap() return self.__overlap end
-function DHorizontalScroller:SetScroll(s) self.__offset = s; self:InvalidateLayout() end
+function DHorizontalScroller:SetScroll(s) self.__offset = s; self:OnHScroll(s); self:InvalidateLayout() end
 function DHorizontalScroller:GetScroll() return self.__offset end
-function DHorizontalScroller:ScrollToChild(p) self.__offset = p.x; self:InvalidateLayout() end
+function DHorizontalScroller:ScrollToChild(p) self.__offset = p.x; self:OnHScroll(self.__offset); self:InvalidateLayout() end
 function DHorizontalScroller:SetUseLiveDrag() end
 function DHorizontalScroller:MakeDroppable() end
 function DHorizontalScroller:OnDragModified() end
-function DHorizontalScroller:OnMouseWheeled(d) self.__offset = math.max(0, self.__offset - d * 30); self:InvalidateLayout(); return true end
+function DHorizontalScroller:OnMouseWheeled(d) self.__offset = math.max(0, self.__offset - d * 30); self:OnHScroll(self.__offset); self:InvalidateLayout(); return true end
 function DHorizontalScroller:PerformLayout(w, h)
 	local x = 0
 	for _, p in ipairs(self.Panels) do p:SetPos(x, 0); p:SetTall(h); x = x + p.w - self.__overlap end
@@ -3331,3 +3448,62 @@ for _, n in ipairs({ "DColorMixer", "DColorPalette", "DColorButton", "DColorCube
 	if not classes[n] then vgui.Register(n, {}, "DPanel") end
 end
 for name, tbl in pairs(classes) do __glua_classes[name] = tbl end
+
+------------------------------------------------------------------------ RichText
+-- spans of coloured, optionally clickable text, word-wrapped at paint time
+function Panel:AppendText(t) self.__spans = self.__spans or {}; self.__spans[#self.__spans + 1] = { text = tostring(t), color = self.__span_color or Color(255, 255, 255), signal = self.__span_signal }; self:InvalidateLayout() end
+function Panel:InsertColorChange(r, g, b, a) self.__span_color = Color(r, g, b, a) end
+function Panel:InsertClickableTextStart(signal) self.__span_signal = signal end
+function Panel:InsertClickableTextEnd() self.__span_signal = nil end
+function Panel:InsertFade(sustain, length) end
+function Panel:SetVerticalScrollbarEnabled(b) self.__rt_scrollbar = b == true end
+function Panel:GotoTextEnd() self.__scroll = math.max(0, (self.__content_h or 0) - self.h) end
+function Panel:GotoTextStart() self.__scroll = 0 end
+function Panel:SetUnderlineFont(font) self.__underline_font = font end
+function Panel:SetMaximumCharCount(n) self.__max_chars = n end
+function Panel:SetToFullHeight() if self.__content_h then self:SetTall(self.__content_h) end end
+function Panel:SetBGColor(r, g, b, a) self.__bg = IsColor(r) and r or Color(r, g, b, a) end
+function Panel:SetFontInternal(font) self.__font = font end
+function Panel:ActionSignal(name, value) if name == "TextClicked" then self:OnTextClicked(value) end end
+local RichText = derma.DefineControl("RichText", "Rich text", {}, "Panel")
+function RichText:Init() self.__spans = {}; self.__scroll = 0; self.mouse_input = true end
+function RichText:SetText(t) self.__spans = {}; self:AppendText(t) end
+function RichText:GetText() local t = {} for i, s in ipairs(self.__spans) do t[i] = s.text end return table.concat(t) end
+function RichText:Paint(w, h)
+	if self.__bg then surface.SetDrawColor(self.__bg); surface.DrawRect(0, 0, w, h) end
+	surface.SetFont(self.__font or "DermaDefault")
+	local lh = select(2, surface.GetTextSize("W"))
+	local x, y = 2, 2 - (self.__scroll or 0)
+	self.__hits = {}
+	for _, span in ipairs(self.__spans) do
+		for word, sep in string.gmatch(span.text, "([^%s]*)(%s*)") do
+			if word == "" and sep == "" then break end
+			local tw = surface.GetTextSize(word)
+			-- without the host's font metrics (no client yet) lay out at 8 px a glyph
+			if tw == 0 then tw = #word * 8 end
+			if lh == 0 then lh = 16 end
+			if x + tw > w - 2 and x > 2 then x, y = 2, y + lh end
+			surface.SetTextColor(span.color)
+			surface.SetTextPos(x, y)
+			surface.DrawText(word)
+			if span.signal then self.__hits[#self.__hits + 1] = { x, y, tw, lh, span.signal } end
+			x = x + tw
+			local _, nl = string.gsub(sep, "\n", "")
+			if nl > 0 then x, y = 2, y + lh * nl else x = x + surface.GetTextSize(sep) end
+		end
+	end
+	self.__content_h = y + lh + (self.__scroll or 0)
+end
+function RichText:OnMousePressed(code)
+	local x, y = self:CursorPos()
+	for _, hit in ipairs(self.__hits or {}) do
+		if x >= hit[1] and x <= hit[1] + hit[3] and y >= hit[2] and y <= hit[2] + hit[4] then self:OnTextClicked(hit[5]) return end
+	end
+end
+function RichText:OnMouseWheeled(d) self.__scroll = math.max(0, math.min((self.__scroll or 0) - d * 20, math.max(0, (self.__content_h or 0) - self.h))) return true end
+
+-- auto refresh: every panel hears the reload before and after it is applied
+if events then
+	events.on("addon.reloaded", function() for p in pairs(all_panels) do if p.__valid then p:PreAutoRefresh() end end end, 0)
+	events.on("addon.reloaded", function() for p in pairs(all_panels) do if p.__valid then p:PostAutoRefresh() end end end, 1e9)
+end

@@ -1625,3 +1625,186 @@ function CHAN:GetTagsOGG() return nil end
 function CHAN:GetTagsVendor() return nil end
 function CHAN:GetTagsWMA() return nil end
 __glua_classes.IGModAudioChannel = CHAN
+
+-- ---------------------------------------------------------------------------------------------
+-- menu realm: the game's main-menu Lua surface. Local state lives in cookies (presets,
+-- disabled addons, last map, language, background images, problems); servers go through the
+-- host's browser (`serverlist`); the HTML-menu JS bridges and the Steam-only calls are stubs.
+-- ---------------------------------------------------------------------------------------------
+local function json_cookie(key, default) local raw = cookie.GetString(key, nil) if raw == nil or raw == "" then return default end return util.JSONToTable(raw) or default end
+local function set_json_cookie(key, t) cookie.Set(key, util.TableToJSON(t)) end
+
+-- addons
+local function disabled_set() return json_cookie("menu.addons.disabled", {}) end
+function GetAddonStatus()
+	local all, disabled = engine.GetAddons(), disabled_set()
+	local s = { total = #all, mounted = 0, disabled = 0 }
+	for _, a in ipairs(all) do if disabled[a.wsid] or disabled[a.file] then s.disabled = s.disabled + 1 elseif a.mounted then s.mounted = s.mounted + 1 end end
+	return s
+end
+function MenuGetAddonData(wsid) for _, a in ipairs(engine.GetAddons()) do if a.wsid == wsid or a.file == wsid then return a end end end
+function UpdateAddonDisabledState() local d = disabled_set() for _, a in ipairs(engine.GetAddons()) do a.mounted = not (d[a.wsid] or d[a.file]) end end
+function UpdateSubscribedAddon(wsid) end
+function UpdateAddonMapList() end
+function RefreshAddonConflicts() end
+function FireAddonConflicts(json) end
+-- addon presets: name -> { enabled = {wsid...}, disabled = {...}, newAction = ... }
+function ListAddonPresets() local names = {} for n in SortedPairs(json_cookie("menu.addons.presets", {})) do names[#names + 1] = n end return names end
+function LoadAddonPresets() return json_cookie("menu.addons.presets", {}) end
+function SaveAddonPresets(json) if type(json) == "string" then json = util.JSONToTable(json) end set_json_cookie("menu.addons.presets", json or {}) end
+function CreateNewAddonPreset(json)
+	local p = type(json) == "string" and util.JSONToTable(json) or json
+	if not p or not p.name then return end
+	local all = LoadAddonPresets(); all[p.name] = p; set_json_cookie("menu.addons.presets", all)
+end
+function DeleteAddonPreset(name) local all = LoadAddonPresets(); all[name] = nil; set_json_cookie("menu.addons.presets", all) end
+-- background images
+local backgrounds, background = {}, nil
+function AddBackgroundImage(path) backgrounds[#backgrounds + 1] = path end
+function ClearBackgroundImages() backgrounds, background = {}, nil end
+function ChangeBackground(kind) if #backgrounds > 0 then background = backgrounds[math.random(#backgrounds)] end return background end
+-- problems (the menu's problems panel)
+local problems = {}
+function FireProblem(t) if type(t) == "table" and t.id then problems[t.id] = t; hook.Run("OnProblemAdded", t) end end
+function FireProblemFromEngine(id, severity, params) FireProblem({ id = id, severity = severity, params = params, type = "engine" }) end
+function ClearProblem(id) if problems[id] then problems[id] = nil; hook.Run("OnProblemCleared", id) end end
+function ClearLuaErrorGroup(group) for id, p in pairs(problems) do if p.type == "lua" and p.group == group then problems[id] = nil end end end
+function OpenProblemsPanel()
+	local f = vgui.Create("DFrame"); f:SetTitle("#problems.title"); f:SetSize(500, 400); f:Center(); f:MakePopup()
+	local list = vgui.Create("DListView", f); list:Dock(FILL); list:AddColumn("#problems.severity"); list:AddColumn("#problems.id")
+	for id, p in SortedPairs(problems) do list:AddLine(tostring(p.severity or 0), tostring(id)) end
+	return f
+end
+-- loading / game state
+function IsInGame() return IsValid(LocalPlayer()) end
+function IsInLoading() return false end
+function GetLoadStatus() return IsInGame() and "" or "Not connected" end
+local load_panel
+function GetLoadPanel() if not load_panel or not load_panel.__valid then load_panel = vgui.Create("DPanel"); load_panel:SetVisible(false) end return load_panel end
+function UpdateLoadPanel(js) end
+function CancelLoading() RunConsoleCommand("disconnect") end
+function GetDemoFileDetails(path) return nil end
+function GetSaveFileDetails(path) return nil end
+function RecordDemoFrame() end
+function GetDownloadables() return {} end
+function NumDownloadables() return 0 end
+function TranslateDownloadableName(name) return name end
+function GetDefaultLoadingHTML() return "" end
+function GetAPIManifest() return "" end
+function LoadNewsList() end
+function SaveHideNews(hide) cookie.Set("menu.news.hide", hide and "1" or "0") end
+function UpdateGames() end
+function UpdateLanguages() end
+function UpdateMapList() end
+function UpdateServerSettings() end
+-- language / maps
+function LanguageChanged(lang) cookie.Set("gmod_language", lang); RunConsoleCommand("gmod_language", lang) end
+function GetMapList() local maps = file.Find("maps/*.bsp", "GAME") or {} for i, m in ipairs(maps) do maps[i] = string.StripExtension(m) end return maps end
+function SaveLastMap(map, category) cookie.Set("menu.lastmap", map); cookie.Set("menu.lastmap.category", category or "") end
+function LoadLastMap() local m = cookie.GetString("menu.lastmap", "") if m ~= "" then RunConsoleCommand("map", m) end end
+-- servers (through serverlist / the host browser)
+local menu_servers = {}
+function GetServers(kind, id)
+	menu_servers[kind] = {}
+	serverlist.Query({ Type = kind, Callback = function(ping, name, desc, map, players, maxplayers, bots, pass, lastplayed, address, gamemode)
+		menu_servers[kind][#menu_servers[kind] + 1] = { ping = ping, name = name, map = map, players = players, maxplayers = maxplayers, address = address, gamemode = gamemode, lastplayed = lastplayed }
+	end })
+	return id
+end
+function DoStopServers(kind) end
+function CanAddServerToFavorites() return true end
+function IsServerBlacklisted(address, hostname, description, gamemode, map) return false end
+function ToggleFavourite(address) if serverlist.IsServerFavorite(address) then serverlist.RemoveServerFromFavorites(address) else serverlist.AddServerToFavorites(address) end end
+function JoinServer(address) RunConsoleCommand("connect", address) end
+function RequestConnectToServer(address) permissions.AskToConnect(address) end
+function GetPlayerList(address) serverlist.PlayerList(address, function() end) end
+local game_details
+function GameDetails(servername, serverurl, mapname, maxplayers, steamid, gamemode) game_details = { servername = servername, serverurl = serverurl, mapname = mapname, maxplayers = maxplayers, steamid = steamid, gamemode = gamemode }; hook.Run("GameDetails", game_details) end
+function GMOD_OpenURLNoOverlay(url) gui.OpenURL(url) end
+function RequestOpenURL(url) gui.OpenURL(url) end
+function OpenFolder(path) gui.OpenURL("file://" .. tostring(path)) end
+function RunGameUICommand(cmd)
+	cmd = tostring(cmd)
+	if cmd:sub(1, 7) == "engine " then RunConsoleCommand(unpack(string.Explode(" ", cmd:sub(8))))
+	elseif cmd == "Quit" or cmd == "QuitNoConfirm" then RunConsoleCommand("quit")
+	elseif cmd == "ResumeGame" then if gui.HideGameUI then gui.HideGameUI() end
+	elseif cmd == "Disconnect" then RunConsoleCommand("disconnect")
+	end
+end
+function RequestPermission(name) return permissions.IsGranted(name) end
+
+-- permissions: what the player lets servers do; stored per name
+permissions = permissions or {}
+local permission_list = {
+	{ name = "connect", desc = "Connect to a server" },
+	{ name = "voicerecord", desc = "Record voice chat" },
+}
+local function grants() return json_cookie("menu.permissions", {}) end
+function permissions.GetAll() local out = {} for i, p in ipairs(permission_list) do out[i] = { name = p.name, desc = p.desc, granted = grants()[p.name] == true } end return out end
+function permissions.IsGranted(name) return grants()[name] == true end
+function permissions.Grant(name, granted) local g = grants(); g[name] = granted ~= false and true or nil; set_json_cookie("menu.permissions", g); hook.Run("PermissionsChanged") end
+function permissions.Revoke(name) permissions.Grant(name, false) end
+function permissions.Connect(address) RunConsoleCommand("connect", address) end
+function permissions.AskToConnect(address)
+	if permissions.IsGranted("connect") then permissions.Connect(address) return end
+	Derma_Query("#permissions.connect.ask " .. tostring(address), "#permissions.connect.title", "#permissions.yes", function() permissions.Connect(address) end, "#permissions.no")
+end
+function permissions.EnableVoiceChat(enable) RunConsoleCommand("voice_modenable", enable and "1" or "0") end
+
+-- serverlist: queries and pings run on the host's server browser, entries come back per frame
+serverlist = serverlist or {}
+local queries, next_query, favorites = {}, 0, nil
+local function servers_op(id, op, t) hostdraw.servers(id, op, t or {}) end
+local function entry_args(p)
+	return p.ping, p.name, "", p.map, p.players, p.maxplayers, 0, false, p.lastplayed, p.address, p.gamemode, "", false, "", "", ""
+end
+function serverlist.Query(data)
+	next_query = next_query + 1
+	queries[next_query] = { kind = "query", data = data }
+	servers_op(next_query, "query", { type = data.Type or "internet" })
+end
+function serverlist.PingServer(address, cb)
+	next_query = next_query + 1
+	queries[next_query] = { kind = "ping", cb = cb }
+	servers_op(next_query, "ping", { address = address })
+end
+function serverlist.PlayerList(address, cb) end
+local function load_favorites() if favorites then return end favorites = {}; next_query = next_query + 1; queries[next_query] = { kind = "favorites" }; servers_op(next_query, "favorites") end
+function serverlist.IsServerFavorite(address) load_favorites() return favorites[address] == true end
+function serverlist.AddServerToFavorites(address) load_favorites(); favorites[address] = true; servers_op(0, "favorite_add", { address = address }) end
+function serverlist.RemoveServerFromFavorites(address) load_favorites(); favorites[address] = nil; servers_op(0, "favorite_remove", { address = address }) end
+local function current_address() return game.GetIPAddress and game.GetIPAddress() or "" end
+function serverlist.IsCurrentServerFavorite() return serverlist.IsServerFavorite(current_address()) end
+function serverlist.AddCurrentServerToFavorites() serverlist.AddServerToFavorites(current_address()) end
+events.on("servers.entry", function(p)
+	local q = queries[p.id]
+	if not q then return end
+	if q.kind == "query" and q.data.Callback then q.data.Callback(entry_args(p))
+	elseif q.kind == "ping" and q.cb then q.cb(entry_args(p))
+	elseif q.kind == "favorites" then favorites[p.address] = true end
+end)
+events.on("servers.done", function(p)
+	local q = queries[p.id]
+	if not q then return end
+	queries[p.id] = nil
+	if q.kind == "query" and q.data.Finished then q.data.Finished() end
+end)
+
+-- Steam-only (no Steam here; our workshop is the launcher's), the HTML-menu bridges, demos
+steamworks = steamworks or {}
+for _, n in ipairs({ "ApplyAddons", "Download", "DownloadUGC", "FileInfo", "GetList", "GetPlayerName", "IsSubscribed", "OpenWorkshop", "Publish", "RequestPlayerInfo", "SetFileCompleted", "SetFilePlayed", "SetShouldMountAddon", "ShouldMountAddon", "Subscribe", "Unsubscribe", "ViewFile", "Vote", "VoteInfo" }) do
+	steamworks[n] = stub("steamworks." .. n)
+end
+menu = menu or {}
+menu.RecordFrame = stub("menu.RecordFrame")
+engine.OpenDupe = stub("engine.OpenDupe")
+engine.WriteDupe = stub("engine.WriteDupe")
+engine.WriteSave = stub("engine.WriteSave")
+function engine.VideoSettings() return { windowed = true, width = ScrW(), height = ScrH(), vsync = 1, fullscreen = false } end
+
+-- menubar: the spawnmenu's top bar
+menubar = menubar or {}
+local menubar_panel
+function menubar.Init() menubar_panel = vgui.Create("DMenuBar"); menubar_panel:SetVisible(false); hook.Run("PopulateMenuBar", menubar_panel); return menubar_panel end
+function menubar.ParentTo(pnl) if not menubar_panel or not menubar_panel.__valid then menubar.Init() end menubar_panel:SetParent(pnl); menubar_panel:SetVisible(true); menubar_panel:Dock(TOP) end
+function menubar.IsParent(pnl) return menubar_panel ~= nil and menubar_panel.__valid and menubar_panel.parent == pnl end

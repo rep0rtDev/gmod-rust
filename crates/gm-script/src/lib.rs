@@ -20,7 +20,7 @@ pub mod storage;
 pub mod wasm;
 
 pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite, Reply};
-pub use api::{set_font_metrics, text_size, AudioOp, DrawCmd, TextMetrics};
+pub use api::{set_font_metrics, text_size, AudioOp, DrawCmd, ServerOp, TextMetrics};
 pub use manifest::Manifest;
 pub use package::Package;
 pub use registry::Registry;
@@ -39,6 +39,26 @@ pub struct ActorSpec {
     pub priority: i32,
     pub source: String,
     pub config: ActorConfig,
+}
+
+/// One server as the host's browser reports it (`Runtime::client_servers`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ServerInfo {
+    pub address: String,
+    pub name: String,
+    pub map: String,
+    pub players: u32,
+    pub maxplayers: u32,
+    pub ping: u32,
+    pub gamemode: String,
+    pub last_played: u64,
+}
+
+/// A reply to a `DrawCmd::Servers` request: entries, then the end of the list.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ServerReport {
+    Entry { id: u32, info: ServerInfo },
+    Done { id: u32, count: u32 },
 }
 
 /// One script audio channel as the host's mixer sees it (`Runtime::client_audio`).
@@ -376,6 +396,40 @@ impl Runtime {
             p.strs.push(("key", key.clone()));
             p.bools.push(("down", *down));
             self.parallel(&snap, "input.key", &p);
+        }
+        self.release_snapshots();
+        for a in self.actors.iter_mut() {
+            a.take_queue();
+        }
+    }
+
+    /// Client realm: server browser replies, dispatched as `servers.entry` / `servers.done`.
+    pub fn client_servers(&mut self, world: &gm_net::ClientWorld, reports: &[ServerReport]) {
+        if reports.is_empty() {
+            return;
+        }
+        let snap = self.client_snapshot(world);
+        for r in reports {
+            let mut p = api::Payload::default();
+            match r {
+                ServerReport::Entry { id, info } => {
+                    p.ints.push(("id", *id as i64));
+                    p.ints.push(("players", info.players as i64));
+                    p.ints.push(("maxplayers", info.maxplayers as i64));
+                    p.ints.push(("ping", info.ping as i64));
+                    p.ints.push(("lastplayed", info.last_played as i64));
+                    p.strs.push(("address", info.address.clone()));
+                    p.strs.push(("name", info.name.clone()));
+                    p.strs.push(("map", info.map.clone()));
+                    p.strs.push(("gamemode", info.gamemode.clone()));
+                    self.parallel(&snap, "servers.entry", &p);
+                }
+                ServerReport::Done { id, count } => {
+                    p.ints.push(("id", *id as i64));
+                    p.ints.push(("count", *count as i64));
+                    self.parallel(&snap, "servers.done", &p);
+                }
+            }
         }
         self.release_snapshots();
         for a in self.actors.iter_mut() {

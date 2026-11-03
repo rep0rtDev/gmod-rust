@@ -746,6 +746,27 @@ pub fn text_size(text: &str, font: Option<&str>) -> (f32, f32) {
 
 /// A 2D draw command of a client actor's `render.hud` handler, screen pixels, colors 0..1.
 #[derive(Clone, Debug, PartialEq)]
+pub enum ServerOp {
+    /// `serverlist.Query`: the host's browser lists servers of this kind (`internet`, `lan`,
+    /// `favorite`, `history`); every entry comes back as `servers.entry`, then `servers.done`.
+    Query {
+        kind: String,
+    },
+    /// `serverlist.PingServer`: probe one address.
+    Ping {
+        addr: String,
+    },
+    /// The favorites list, as entries.
+    Favorites,
+    FavoriteAdd {
+        addr: String,
+    },
+    FavoriteRemove {
+        addr: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum AudioOp {
     /// Start a sample-backed channel (`sound.PlayFile`); `paused` is the game's `noplay`.
     Play {
@@ -829,6 +850,11 @@ pub enum DrawCmd {
     Audio {
         id: u32,
         op: AudioOp,
+    },
+    /// A server browser request (`serverlist`), by the script's query id (0: no reply).
+    Servers {
+        id: u32,
+        op: ServerOp,
     },
     /// `draw.model`: a model drawn in the world, translucent (alpha 0..1); tool ghosts.
     Model {
@@ -1572,6 +1598,31 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 }
             };
             sh.draws.lock().unwrap().push(DrawCmd::Audio { id, op });
+            Ok(())
+        })?,
+    )?;
+    let sh = shared.clone();
+    draw.set(
+        "servers",
+        lua.create_function(move |lua, (id, op, t): (u32, String, Option<Table>)| {
+            let t = match t {
+                Some(t) => t,
+                None => lua.create_table()?,
+            };
+            let addr = || -> String { t.get("address").unwrap_or_default() };
+            let op = match op.as_str() {
+                "query" => ServerOp::Query {
+                    kind: t.get("type").unwrap_or_else(|_| "internet".into()),
+                },
+                "ping" => ServerOp::Ping { addr: addr() },
+                "favorites" => ServerOp::Favorites,
+                "favorite_add" => ServerOp::FavoriteAdd { addr: addr() },
+                "favorite_remove" => ServerOp::FavoriteRemove { addr: addr() },
+                other => {
+                    return Err(mlua::Error::runtime(format!("unknown servers op {other}")));
+                }
+            };
+            sh.draws.lock().unwrap().push(DrawCmd::Servers { id, op });
             Ok(())
         })?,
     )?;

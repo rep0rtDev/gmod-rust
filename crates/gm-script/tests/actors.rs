@@ -1464,3 +1464,116 @@ fn glua_audio_channel_round_trip() {
         .expect("state");
     assert_eq!(state, 1.0);
 }
+
+/// Panel hooks the tree raises: a Droppable panel dragged onto a Receiver (OnStartDragging /
+/// receiver hover + drop / OnDrop / DroppedOn / OnStopDragging), a RichText click
+/// (OnTextClicked), cookies loading on SetCookieName, a scroll bar appearing; plus the menu
+/// libraries: permissions grants and a serverlist ping answered by the host.
+#[test]
+fn glua_panel_hooks_drag_richtext_cookies_servers() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "p".into(),
+        name: "p".into(),
+        priority: 0,
+        source: r##"
+            got = { drops = {} }
+            A = vgui.Create("DButton") A:SetPos(0, 0) A:SetSize(100, 100) A:SetText("") A:Droppable("thing")
+            A.OnStartDragging = function() got.start = true end
+            A.OnStopDragging = function() got.stop = true end
+            A.OnDrop = function() got.drop = true end
+            R = vgui.Create("DPanel") R:SetPos(300, 0) R:SetSize(100, 100) R.mouse_input = true
+            R:Receiver("thing", function(self, panels, dropped) got.drops[#got.drops + 1] = { dropped = dropped, n = #panels } end)
+            R.DroppedOn = function(self, p) got.dropped_on = p == A end
+            RT = vgui.Create("RichText") RT:SetPos(0, 300) RT:SetSize(400, 100)
+            RT:InsertClickableTextStart("sig") RT:AppendText("click me") RT:InsertClickableTextEnd()
+            RT.OnTextClicked = function(self, s) got.clicked = s end
+            P = vgui.Create("DPanel") P:SetPos(600, 200) P.LoadCookies = function() got.cookies = true end
+            P:SetCookieName("t") P:SetCookie("k", "v") got.cookie = P:GetCookie("k")
+            S = vgui.Create("DScrollPanel") S:SetPos(600, 0) S:SetSize(100, 100)
+            S.OnScrollbarAppear = function() got.bar = true end
+            local tall = vgui.Create("DPanel", S) tall:SetSize(50, 300)
+            permissions.Grant("connect", true) got.perm = permissions.IsGranted("connect")
+            serverlist.PingServer("1.2.3.4", function(ping, name, desc, map, players, maxplayers) got.ping, got.sname, got.players = ping, name, players end)
+        "##
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let world = gm_net::ClientWorld::default();
+    rt.cursor = Some((50.0, 50.0));
+    let draws = rt.client_render(&world, 1280, 720);
+    let ping: Vec<String> = draws
+        .iter()
+        .filter_map(|d| match d {
+            gm_script::DrawCmd::Servers { id, op } => Some(format!("{id}:{op:?}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ping, vec!["1:Ping { addr: \"1.2.3.4\" }"]);
+    rt.client_input(&world, &[("MouseLeft".into(), true)]);
+    rt.cursor = Some((200.0, 50.0));
+    rt.client_render(&world, 1280, 720);
+    rt.cursor = Some((350.0, 50.0));
+    rt.client_render(&world, 1280, 720);
+    let (start, hover_n): (bool, f64) = rt.actors()[0]
+        .eval("return got.start == true, #got.drops")
+        .expect("eval");
+    assert!(
+        start && hover_n >= 1.0,
+        "the drag started and hovered the receiver: {start} {hover_n}"
+    );
+    rt.client_input(&world, &[("MouseLeft".into(), false)]);
+    let (dropped, drop, dropped_on, stop): (bool, bool, bool, bool) = rt.actors()[0]
+        .eval("return got.drops[#got.drops].dropped == true, got.drop == true, got.dropped_on == true, got.stop == true")
+        .expect("eval");
+    assert_eq!((dropped, drop, dropped_on, stop), (true, true, true, true));
+    rt.cursor = Some((6.0, 306.0));
+    rt.client_render(&world, 1280, 720);
+    rt.client_input(&world, &[("MouseLeft".into(), true)]);
+    rt.client_input(&world, &[("MouseLeft".into(), false)]);
+    rt.client_servers(
+        &world,
+        &[
+            gm_script::ServerReport::Entry {
+                id: 1,
+                info: gm_script::ServerInfo {
+                    address: "1.2.3.4:27015".into(),
+                    name: "srv".into(),
+                    players: 3,
+                    ping: 40,
+                    ..Default::default()
+                },
+            },
+            gm_script::ServerReport::Done { id: 1, count: 1 },
+        ],
+    );
+    let (clicked, cookies, cookie, bar, perm, sname, players, ping): (
+        String,
+        bool,
+        String,
+        bool,
+        bool,
+        String,
+        f64,
+        f64,
+    ) = rt.actors()[0]
+        .eval("return tostring(got.clicked), got.cookies == true, tostring(got.cookie), got.bar == true, got.perm == true, tostring(got.sname), got.players or -1, got.ping or -1")
+        .expect("eval");
+    assert_eq!(
+        (
+            clicked.as_str(),
+            cookies,
+            cookie.as_str(),
+            bar,
+            perm,
+            sname.as_str(),
+            players,
+            ping
+        ),
+        ("sig", true, "v", true, true, "srv", 3.0, 40.0)
+    );
+}
