@@ -1,6 +1,7 @@
 //! Static world geometry: BSP faces and displacements, grouped by material.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 use anyhow::{anyhow, Result};
 use bytemuck::{Pod, Zeroable};
@@ -219,6 +220,8 @@ struct CameraUniform {
     fog_color: [f32; 4],
     /// `fogstart`, `fogend` in units.
     fog_range: [f32; 4],
+    /// Water reflection pass: clip plane z (x), reflection texture valid (y), clip on (w).
+    clip: [f32; 4],
 }
 
 /// Linear distance fog of an `env_fog_controller` (the world) or a `sky_camera` (its 3D
@@ -432,6 +435,9 @@ pub struct WorldRenderer {
     /// Flat normal bound as the bump map of materials without `$bumpmap`.
     bump_fallback: wgpu::TextureView,
     cubes: CubeSet,
+    color_format: wgpu::TextureFormat,
+    reflect: Mutex<ReflectState>,
+    reflect_sampler: wgpu::Sampler,
     /// `$nocull` variants of `pipeline` / `translucent_pipeline`.
     nocull_pipeline: wgpu::RenderPipeline,
     translucent_nocull_pipeline: wgpu::RenderPipeline,
@@ -1379,6 +1385,14 @@ impl WorldRenderer {
         };
 
         let (cubes, cube_view) = load_cubemaps(gpu, mount, bsp);
+        let reflect_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("water reflection"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         for (fi, face) in bsp.faces.iter().enumerate() {
             if skip_face(bsp, face) {
                 continue;
@@ -1975,16 +1989,34 @@ impl WorldRenderer {
         // depth attachment
         let depth_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scene depth"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: quality.msaa > 1,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: quality.msaa > 1,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
         let water_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("water"),
@@ -2102,6 +2134,9 @@ impl WorldRenderer {
             detail_fallback,
             bump_fallback,
             cubes,
+            color_format,
+            reflect: Mutex::new(ReflectState::default()),
+            reflect_sampler,
             nocull_pipeline,
             translucent_nocull_pipeline,
             water_pipeline,
@@ -2134,6 +2169,87 @@ impl WorldRenderer {
     /// Render one frame into `color` (cleared to sky grey) and `depth`.
     /// The 3D skybox, if any, is drawn first from the sky camera and the depth cleared after it.
     pub fn draw(
+        &self,
+        gpu: &Gpu,
+        camera: &Camera,
+        color: &wgpu::TextureView,
+        resolve: Option<&wgpu::TextureView>,
+        depth: &wgpu::TextureView,
+        aspect: f32,
+    ) {
+        self.draw_reflection(gpu, camera, aspect);
+        self.draw_inner(gpu, camera, color, resolve, depth, aspect);
+    }
+
+    /// The water surface the eye looks down on, if any: the volume nearest the eye among
+    /// those whose surface is below it.
+    fn reflected_surface(&self, eye: Vec3) -> Option<f32> {
+        self.water_volumes
+            .iter()
+            .filter(|w| w.surface_z < eye.z)
+            .min_by(|a, b| {
+                let d = |w: &WaterVolume| eye.clamp(w.min, w.max).distance_squared(eye);
+                d(a).total_cmp(&d(b))
+            })
+            .map(|w| w.surface_z)
+    }
+
+    /// `_rt_WaterReflection`: the scene above the water plane seen from the eye mirrored in
+    /// it, drawn by a real camera below the plane (pitch and roll negated, so the winding
+    /// stays and the image is read upside down); everything below the plane is clipped.
+    fn draw_reflection(&self, gpu: &Gpu, camera: &Camera, aspect: f32) {
+        let Some(zs) = self.reflected_surface(camera.position) else {
+            self.reflect.lock().unwrap().valid = false;
+            return;
+        };
+        let w = REFLECT_WIDTH;
+        let h = ((w as f32 / aspect).round() as u32).max(1);
+        {
+            let mut state = self.reflect.lock().unwrap();
+            if state.target.as_ref().is_none_or(|t| t.size != (w, h)) {
+                state.target = Some(ReflectTarget::new(
+                    gpu,
+                    w,
+                    h,
+                    self.color_format,
+                    self.quality.msaa,
+                ));
+            }
+            state.clip = Some(zs);
+            state.valid = false;
+        }
+        let mirrored = Camera {
+            position: Vec3::new(
+                camera.position.x,
+                camera.position.y,
+                2.0 * zs - camera.position.z,
+            ),
+            angles: Vec3::new(-camera.angles.x, camera.angles.y, -camera.angles.z),
+            ..*camera
+        };
+        let (color, resolve, depth) = {
+            let state = self.reflect.lock().unwrap();
+            let t = state.target.as_ref().unwrap();
+            (t.color.clone(), t.resolve.clone(), t.depth.clone())
+        };
+        self.draw_inner(gpu, &mirrored, &color, resolve.as_ref(), &depth, aspect);
+        let mut state = self.reflect.lock().unwrap();
+        state.clip = None;
+        state.valid = true;
+    }
+
+    /// The clip plane of the running reflection pass, in skybox units for the 3D skybox.
+    fn clip_for(&self, sky: bool) -> Option<f32> {
+        let z = self.reflect.lock().unwrap().clip?;
+        if sky {
+            let s = self.sky_camera?;
+            Some(s.origin.z + z / s.scale)
+        } else {
+            Some(z)
+        }
+    }
+
+    fn draw_inner(
         &self,
         gpu: &Gpu,
         camera: &Camera,
@@ -2201,7 +2317,13 @@ impl WorldRenderer {
         aspect: f32,
         alpha: f32,
         fog: Option<Fog>,
+        clip: Option<f32>,
     ) -> CameraUniform {
+        let valid = if self.reflect.lock().unwrap().valid {
+            1.0
+        } else {
+            0.0
+        };
         let f = fog.unwrap_or(Fog {
             color: [0.0; 3],
             start: 0.0,
@@ -2224,6 +2346,10 @@ impl WorldRenderer {
             forward: [fw.x, fw.y, fw.z, 0.0],
             fog_color: [f.color[0], f.color[1], f.color[2], f.max_density],
             fog_range: [f.start, f.end, cam.near, cam.far],
+            clip: match clip {
+                Some(z) => [z, valid, 0.0, 1.0],
+                None => [0.0, valid, 0.0, 0.0],
+            },
         }
     }
 
@@ -2247,7 +2373,7 @@ impl WorldRenderer {
         gpu.queue.write_buffer(
             &self.camera_buffer,
             0,
-            bytemuck::bytes_of(&self.camera_uniform(&cam, aspect, 1.0, None)),
+            bytemuck::bytes_of(&self.camera_uniform(&cam, aspect, 1.0, None, None)),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
@@ -2308,6 +2434,7 @@ impl WorldRenderer {
                 aspect,
                 1.0,
                 if sky { sky_fog } else { self.view_fog(camera) },
+                self.clip_for(sky),
             )),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
@@ -2387,14 +2514,29 @@ impl WorldRenderer {
             .iter()
             .filter(|b| b.sky == sky && b.water)
             .collect();
-        if !water.is_empty() {
+        if !water.is_empty() && self.clip_for(false).is_none() {
+            let state = self.reflect.lock().unwrap();
+            let reflection = match (&state.target, state.valid) {
+                (Some(t), true) => &t.sampled,
+                _ => &self.bump_fallback,
+            };
             let depth_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("scene depth"),
                 layout: &self.depth_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(depth),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(reflection),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.reflect_sampler),
+                    },
+                ],
             });
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("water"),
@@ -2798,7 +2940,13 @@ impl WorldRenderer {
             contents: bytemuck::cast_slice(&idx),
             usage: wgpu::BufferUsages::INDEX,
         });
-        let cam = self.camera_uniform(camera, target.aspect, 1.0, self.view_fog(camera));
+        let cam = self.camera_uniform(
+            camera,
+            target.aspect,
+            1.0,
+            self.view_fog(camera),
+            self.clip_for(false),
+        );
         gpu.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
         let mut enc = device.create_command_encoder(&Default::default());
@@ -3020,7 +3168,13 @@ impl WorldRenderer {
         gpu.queue.write_buffer(
             &self.camera_buffer,
             0,
-            bytemuck::bytes_of(&self.camera_uniform(camera, aspect, alpha, self.view_fog(camera))),
+            bytemuck::bytes_of(&self.camera_uniform(
+                camera,
+                aspect,
+                alpha,
+                self.view_fog(camera),
+                self.clip_for(false),
+            )),
         );
         let mut enc = device.create_command_encoder(&Default::default());
         {
@@ -3215,6 +3369,68 @@ pub fn icon_targets(
 }
 
 /// Create an offscreen color + depth target pair.
+/// `_rt_WaterReflection` width (the engine's default); the height follows the aspect.
+const REFLECT_WIDTH: u32 = 1024;
+
+#[derive(Default)]
+struct ReflectState {
+    target: Option<ReflectTarget>,
+    /// Clip plane z while the reflection pass runs.
+    clip: Option<f32>,
+    /// `target.sampled` holds this frame's reflection.
+    valid: bool,
+}
+
+struct ReflectTarget {
+    size: (u32, u32),
+    color: wgpu::TextureView,
+    resolve: Option<wgpu::TextureView>,
+    depth: wgpu::TextureView,
+    /// The view to sample: the resolve target under MSAA, else the colour target.
+    sampled: wgpu::TextureView,
+}
+
+impl ReflectTarget {
+    fn new(gpu: &Gpu, w: u32, h: u32, format: wgpu::TextureFormat, msaa: u32) -> Self {
+        let size = wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        };
+        let tex = |label, samples, format, usage| {
+            gpu.device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size,
+                    mip_level_count: 1,
+                    sample_count: samples,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
+        };
+        let bind = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        let color = tex("water reflection", msaa, format, bind);
+        let resolve = (msaa > 1).then(|| tex("water reflection resolve", 1, format, bind));
+        let depth = tex(
+            "water reflection depth",
+            msaa,
+            wgpu::TextureFormat::Depth32Float,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let sampled = resolve.clone().unwrap_or_else(|| color.clone());
+        ReflectTarget {
+            size: (w, h),
+            color,
+            resolve,
+            depth,
+            sampled,
+        }
+    }
+}
+
 pub fn offscreen_targets(
     gpu: &Gpu,
     width: u32,

@@ -83,6 +83,12 @@ fn main() -> Result<()> {
     }
     if std::env::var_os("GM_RENDER_LOG").is_some() {
         debug_center_ray(&bsp, &camera);
+        for w in &world.water_volumes {
+            eprintln!(
+                "  water: surface z {} box {:?}..{:?}",
+                w.surface_z, w.min, w.max
+            );
+        }
     }
     let (color, depth) =
         offscreen_targets(&gpu, width, height, wgpu::TextureFormat::Rgba8UnormSrgb, 1);

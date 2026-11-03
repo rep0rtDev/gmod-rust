@@ -8,6 +8,7 @@ struct Camera {
     forward: vec4<f32>,
     fog_color: vec4<f32>,
     fog_range: vec4<f32>,
+    clip: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -36,6 +37,8 @@ struct MaterialParams {
 @group(1) @binding(6) var bump: texture_2d<f32>;
 // water pass only: the depth of the opaque scene (multisampled variant substituted at load)
 @group(2) @binding(0) var scene_depth: texture_depth_2d;
+@group(2) @binding(1) var reflection: texture_2d<f32>;
+@group(2) @binding(2) var reflection_sampler: sampler;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -77,6 +80,10 @@ fn vs_main(in: VsIn) -> VsOut {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    // the water reflection pass sees nothing below the water plane
+    if camera.clip.w > 0.5 && in.world.z < camera.clip.x {
+        discard;
+    }
     // WorldVertexTransition: lerp($basetexture, $basetexture2, displacement vertex alpha)
     let base1 = textureSample(base, base_sampler, in.uv);
     let uv2 = vec2<f32>(
@@ -168,6 +175,13 @@ fn fs_water(in: VsOut) -> @location(0) vec4<f32> {
     let depth = dot(ray, camera.forward.xyz);
     let fspan = max(camera.fog_range.y - camera.fog_range.x, 1.0);
     let fog = min(clamp((depth - camera.fog_range.x) / fspan, 0.0, 1.0), camera.fog_color.w) * camera.eye.w;
-    let col = mix(material.water_color.rgb, camera.fog_color.rgb, fog);
-    return vec4<f32>(col, f);
+    // _rt_WaterReflection, drawn by the mirrored camera and read upside down, over the
+    // water fog by the Schlick fresnel of the flat surface
+    let dims = vec2<f32>(textureDimensions(scene_depth));
+    let suv = in.clip.xy / dims;
+    let refl = textureSample(reflection, reflection_sampler, vec2<f32>(suv.x, 1.0 - suv.y)).rgb;
+    let nv = clamp(-ray.z / surf_len, 0.0, 1.0);
+    let fr = pow(1.0 - nv, 5.0) * camera.clip.y;
+    let col = mix(mix(material.water_color.rgb, refl, fr), camera.fog_color.rgb, fog);
+    return vec4<f32>(col, f + (1.0 - f) * fr);
 }

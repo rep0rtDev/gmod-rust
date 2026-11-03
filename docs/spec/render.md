@@ -166,3 +166,21 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   to the LODs the model has and to the MDL's own root LOD, parses the VVD fixups for that
   level and every mesh builder uses that LOD). Distance-based LOD switching
   (`switch_point`) is not done: like the engine with `r_lod` forced, one LOD per model.
+
+### Water reflection (`_rt_WaterReflection`)
+
+When the eye is above a water volume's surface (the volume nearest the eye among those
+below it), the opaque scene is first drawn into a 1024-wide reflection target (the engine's
+default size, height by aspect) by a real camera at the eye mirrored in the plane (z' =
+2·z_surface − z, pitch and roll negated): a real camera keeps the triangle winding, so the
+image is simply read upside down (v → 1 − v) at the water fragment's screen position.
+Everything below the plane is clipped in the fragment shader (`Camera.clip`), in skybox
+units for the 3D skybox pass, never for the 2D sky; the water itself is skipped in that
+pass. `fs_water` mixes the reflection over the water fog colour by the Schlick fresnel of
+the flat surface, (1 − n·v)^5, and adds that fraction to the volume-fog alpha. Measured on
+construct's pond (surface z −160): the far buildings mirror at the right height, grazing
+views are almost fully mirror. Open: `$refracttexture` (the scene behind the surface is
+still the already-drawn bottom through the fog alpha, no refraction offset), the dudv /
+normal-map distortion (`$bumpmap water_13_dudv`, `$refractamount`, `$reflectamount`),
+the per-pixel fresnel from the normal map, `$reflectentities`, reflection of translucent
+surfaces and models.
