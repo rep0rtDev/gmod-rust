@@ -4061,7 +4061,53 @@ impl App {
                         self.fx_bursts.push((pos, 96.0, now, false));
                     }
                     gm_net::msg::EffectEvent::Splash { pos } => {
-                        self.fx_bursts.push((pos + Vec3::Z * 8.0, 28.0, now, true));
+                        // TE_WaterSplash: a splashwake ring opening on the surface for 1.5 s
+                        // and a handful of droplets thrown up and falling back
+                        if let Some(g) = self.gfx.as_mut() {
+                            for name in [SPLASH_RIPPLE, SPLASH_DROP] {
+                                if !g.rope_mats.contains_key(name) {
+                                    let m = g.world.sprite_material(&g.gpu, &self.mount, name);
+                                    g.rope_mats.insert(name.to_string(), m);
+                                }
+                            }
+                            g.thruster_fx.push(ThrusterParticle {
+                                mat: SPLASH_RIPPLE,
+                                additive: false,
+                                pos: pos + Vec3::Z * 0.5,
+                                vel: Vec3::ZERO,
+                                grav: Vec3::ZERO,
+                                born: now,
+                                life: 1.5,
+                                size: (8.0, 56.0),
+                                alpha: (0.6, 0.0),
+                                color: [1.0; 3],
+                                roll: 0.0,
+                                axis: Some(Vec3::Z),
+                            });
+                            let r = &mut g.fx_rng;
+                            let mut drops = Vec::with_capacity(10);
+                            for _ in 0..10 {
+                                let d = fx_vec_rand(r);
+                                let vel = Vec3::new(d.x, d.y, 0.0).normalize_or_zero()
+                                    * fx_range(r, 20.0, 80.0)
+                                    + Vec3::Z * fx_range(r, 120.0, 220.0);
+                                drops.push(ThrusterParticle {
+                                    mat: SPLASH_DROP,
+                                    additive: false,
+                                    pos: pos + Vec3::Z * 2.0,
+                                    vel,
+                                    grav: Vec3::new(0.0, 0.0, -600.0),
+                                    born: now,
+                                    life: fx_range(r, 0.8, 1.2),
+                                    size: (fx_range(r, 4.0, 8.0), fx_range(r, 8.0, 14.0)),
+                                    alpha: (0.8, 0.0),
+                                    color: [1.0; 3],
+                                    roll: fx_range(r, -1.0, 1.0),
+                                    axis: None,
+                                });
+                            }
+                            g.thruster_fx.extend(drops);
+                        }
                     }
                     gm_net::msg::EffectEvent::PropImpact {
                         ent,
@@ -8420,6 +8466,9 @@ impl App {
 
 /// gmod_thruster.lua `matHeatWave`: the `Refract` beam over the fire effect.
 const HEATWAVE: &str = "sprites/heatwave";
+/// TE_WaterSplash: the ring opening on the surface and the droplets thrown up.
+const SPLASH_RIPPLE: &str = "effects/splashwake1";
+const SPLASH_DROP: &str = "effects/splash2";
 
 /// `ThrusterEffects` (`gmod_thruster.lua`): the beam material of an effect; empty for none.
 fn thruster_fx_material(effect: &str) -> &'static str {
