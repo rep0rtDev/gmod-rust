@@ -12068,6 +12068,7 @@ impl<'w> Server<'w> {
                 a: index(c.ent1),
                 b: index(c.ent2),
                 kind: save::SavedKind::from(&c.kind),
+                color: c.color,
             })
             .collect();
         self.clipboards.insert(
@@ -12241,6 +12242,7 @@ impl<'w> Server<'w> {
                 a,
                 b,
                 gm_sandbox::ConstraintKind::from(&c.kind),
+                c.color,
             );
             self.sandbox.add_count(player, "constraints", id);
             self.sandbox.add_cleanup(player, "constraints", id);
@@ -13404,7 +13406,7 @@ impl<'w> Server<'w> {
                     length,
                     width,
                     material: material.to_string(),
-                    color: [255, 255, 255],
+                    color: c.color,
                 });
             };
             match &c.kind {

@@ -653,6 +653,12 @@ pub struct SavedConstraint {
     pub a: Option<usize>,
     pub b: Option<usize>,
     pub kind: SavedKind,
+    #[serde(default = "white")]
+    pub color: [u8; 3],
+}
+
+fn white() -> [u8; 3] {
+    [255, 255, 255]
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1253,6 +1259,7 @@ impl Server<'_> {
                     a: index(c.ent1),
                     b: index(c.ent2),
                     kind: SavedKind::from(&c.kind),
+                    color: c.color,
                 })
                 .collect(),
             npcs: self
@@ -1353,7 +1360,7 @@ impl Server<'_> {
                 continue;
             };
             self.sandbox
-                .restore_constraint(owner, a, b, ConstraintKind::from(&c.kind));
+                .restore_constraint(owner, a, b, ConstraintKind::from(&c.kind), c.color);
             constraints += 1;
         }
         for d in &save.devices {

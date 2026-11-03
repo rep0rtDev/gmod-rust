@@ -521,6 +521,13 @@ pub struct Constraint {
     pub ent1: Option<u32>,
     pub ent2: Option<u32>,
     pub kind: ConstraintKind,
+    /// Colour of its rope (`keyframe_rope`), from the tool's `*_color_r/g/b`; white otherwise.
+    pub color: [u8; 3],
+}
+
+/// A tool's colour convars (0..255 each) as the rope colour.
+pub fn color_u8(r: f32, g: f32, b: f32) -> [u8; 3] {
+    [r, g, b].map(|c| c.clamp(0.0, 255.0).round() as u8)
 }
 
 /// One object the tool gun has selected (`ToolObj:SetObject`): position and normal are kept
@@ -1944,7 +1951,7 @@ impl Sandbox {
             }
             _ => {}
         }
-        let id = self.restore_constraint(owner, ent1, ent2, kind);
+        let id = self.restore_constraint(owner, ent1, ent2, kind, [255, 255, 255]);
         for (key, bind) in binds {
             self.numpad.entry((owner, key)).or_default().push(bind);
         }
@@ -1992,6 +1999,7 @@ impl Sandbox {
                 friction,
                 nocollide,
             },
+            color: [255, 255, 255],
         });
         let motor_id = self.next_id;
         self.next_id += 1;
@@ -2029,6 +2037,7 @@ impl Sandbox {
         ent1: Option<u32>,
         ent2: Option<u32>,
         kind: ConstraintKind,
+        color: [u8; 3],
     ) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
@@ -2038,6 +2047,7 @@ impl Sandbox {
             ent1,
             ent2,
             kind,
+            color,
         });
         id
     }
@@ -2574,6 +2584,7 @@ impl Sandbox {
             ent1,
             ent2,
             kind: ConstraintKind::NoCollide,
+            color: [255, 255, 255],
         });
         Some(id)
     }
@@ -3117,6 +3128,7 @@ impl Sandbox {
                 ent1: o1.ent,
                 ent2: o2.ent,
                 kind,
+                color: [255, 255, 255],
             });
             // the keyframe rope is its own entity in the undo; none for width <= 0
             let mut undo_ents = vec![id];
@@ -3486,6 +3498,7 @@ impl Sandbox {
                             material: "cable/rope".into(),
                             rigid: false,
                         },
+                        color: [255, 255, 255],
                     });
                     undo_ents.push(rope);
                     self.add_cleanup(player, count, rope);
@@ -3514,6 +3527,7 @@ impl Sandbox {
                         friction: s.wheel_friction,
                         nocollide: s.wheel_nocollide,
                     },
+                    color: [255, 255, 255],
                 });
                 if let Some(Device::Wheel { axis, .. }) = self.devices.get_mut(&id) {
                     *axis = axis_id;
@@ -3689,6 +3703,7 @@ impl Sandbox {
                 ent1: o1.ent,
                 ent2: o2.ent,
                 kind,
+                color: [255, 255, 255],
             });
             for (key, bind) in binds {
                 self.numpad.entry((player, key)).or_default().push(bind);
@@ -3716,6 +3731,7 @@ impl Sandbox {
                         material: String::new(),
                         part_of: Some(id),
                     },
+                    color: [255, 255, 255],
                 });
                 undo_ents.push(slider);
             }
@@ -3774,6 +3790,7 @@ impl Sandbox {
                     material: s.pulley_material.clone(),
                     addlength: wpos3.distance(wpos4),
                 },
+                color: color_u8(s.pulley_color_r, s.pulley_color_g, s.pulley_color_b),
             });
             let mut undo_ents = vec![id];
             if s.pulley_width > 0.0 {
@@ -3846,6 +3863,7 @@ impl Sandbox {
                         friction: s.axis_hingefriction,
                         nocollide: s.axis_nocollide,
                     },
+                    color: [255, 255, 255],
                 });
                 self.push_undo(
                     player,
@@ -3914,6 +3932,7 @@ impl Sandbox {
                         friction: s.motor_friction,
                         nocollide: s.motor_nocollide,
                     },
+                    color: [255, 255, 255],
                 });
                 let motor_id = self.next_id;
                 self.next_id += 1;
@@ -4184,6 +4203,7 @@ impl Sandbox {
                 forcelimit,
                 nocollide,
             },
+            color: [255, 255, 255],
         });
         Some(id)
     }
@@ -4222,6 +4242,7 @@ impl Sandbox {
                 material: s.rope_material.clone(),
                 rigid: s.rope_rigid,
             },
+            color: color_u8(s.rope_color_r, s.rope_color_g, s.rope_color_b),
         });
         Some(id)
     }
