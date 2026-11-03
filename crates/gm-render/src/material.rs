@@ -377,6 +377,36 @@ pub struct Rgba {
     pub mips: Vec<Vec<u8>>,
 }
 
+/// Decode a JPEG (the main menu's `backgrounds/*.jpg`) to RGBA8.
+pub fn load_jpeg(bytes: &[u8]) -> Result<Rgba> {
+    let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
+    let px = decoder.decode()?;
+    let info = decoder
+        .info()
+        .ok_or_else(|| anyhow::anyhow!("jpeg without a frame header"))?;
+    let pixels = match info.pixel_format {
+        jpeg_decoder::PixelFormat::RGB24 => px
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|c| [c[0], c[1], c[2], 255])
+            .collect(),
+        jpeg_decoder::PixelFormat::L8 => px.iter().flat_map(|&l| [l, l, l, 255]).collect(),
+        jpeg_decoder::PixelFormat::L16 => px
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|c| [c[0], c[0], c[0], 255])
+            .collect(),
+        other => anyhow::bail!("jpeg pixel format {other:?} is not supported"),
+    };
+    Ok(Rgba {
+        width: u32::from(info.width),
+        height: u32::from(info.height),
+        pixels,
+        mips: Vec::new(),
+    })
+}
 /// Decode a PNG (any colour type) to RGBA8.
 pub fn load_png(bytes: &[u8]) -> Result<Rgba> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
@@ -430,18 +460,22 @@ pub fn load_texture_lod(mount: &Mount, name: &str, max_side: u32, skip: u32) -> 
         Ok(b) => b,
         Err(e) => {
             // `Material( "x.png" )`: the game also accepts PNG images under materials/
-            let png_path = if base.to_ascii_lowercase().ends_with(".png") {
+            let lower = base.to_ascii_lowercase();
+            let is_png = lower.ends_with(".png");
+            let is_jpeg = lower.ends_with(".jpg") || lower.ends_with(".jpeg");
+            let png_path = if is_png {
                 format!("materials/{base}")
             } else {
                 format!("materials/{base}.png")
             };
-            // or a raw path (`html/img/x.png`, `gamemodes/<gm>/logo.png`)
-            let raw = if base.to_ascii_lowercase().ends_with(".png") {
+            // or a raw path (`html/img/x.png`, `gamemodes/<gm>/logo.png`, `backgrounds/x.jpg`)
+            let raw = if is_png || is_jpeg {
                 mount.read(base).ok()
             } else {
                 None
             };
             return match raw.or_else(|| mount.read(&png_path).ok()) {
+                Some(b) if is_jpeg => load_jpeg(&b),
                 Some(b) => load_png(&b),
                 None => Err(e.into()),
             };

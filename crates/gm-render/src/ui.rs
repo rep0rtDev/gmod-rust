@@ -447,6 +447,8 @@ pub struct UiRenderer {
     fonts: HashMap<String, FontAtlas>,
     /// Loaded images by name; `None` remembers a texture that is not in the content.
     images: HashMap<String, Option<wgpu::BindGroup>>,
+    /// Decoded size of each present image (a background slide's aspect).
+    image_sizes: HashMap<String, (u32, u32)>,
 }
 
 impl UiRenderer {
@@ -623,6 +625,7 @@ impl UiRenderer {
             default,
             fonts: HashMap::new(),
             images: HashMap::new(),
+            image_sizes: HashMap::new(),
         })
     }
 
@@ -703,35 +706,39 @@ impl UiRenderer {
         let texture_name = mat
             .and_then(|m| m.base_texture)
             .unwrap_or_else(|| name.to_string());
-        let loaded = material::load_texture(mount, &texture_name, IMAGE_MAX_SIDE)
+        let decoded = material::load_texture(mount, &texture_name, IMAGE_MAX_SIDE)
             .inspect_err(|e| eprintln!("ui image {name}: {e}"))
-            .ok()
-            .map(|mut img| {
-                if additive {
-                    // one alpha-blended pipeline: an additive sprite keeps its colour and
-                    // fades in by brightness, which is src + dst up to the clamp
-                    for px in img.pixels.as_chunks_mut::<4>().0 {
-                        px[3] = px[0].max(px[1]).max(px[2]);
-                    }
+            .ok();
+        if let Some(img) = &decoded {
+            self.image_sizes
+                .insert(name.to_string(), (img.width, img.height));
+        }
+        let loaded = decoded.map(|mut img| {
+            if additive {
+                // one alpha-blended pipeline: an additive sprite keeps its colour and
+                // fades in by brightness, which is src + dst up to the clamp
+                for px in img.pixels.as_chunks_mut::<4>().0 {
+                    px[3] = px[0].max(px[1]).max(px[2]);
                 }
-                let texture = upload_rgba(
-                    gpu,
-                    &img.pixels,
-                    img.width,
-                    img.height,
-                    wgpu::TextureFormat::Rgba8UnormSrgb,
-                    "ui image",
-                );
-                let view = texture.create_view(&Default::default());
-                texture_bind_group(
-                    gpu,
-                    &self.layout,
-                    &self.sampler,
-                    &self.screen_buffer,
-                    &view,
-                    "ui image",
-                )
-            });
+            }
+            let texture = upload_rgba(
+                gpu,
+                &img.pixels,
+                img.width,
+                img.height,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                "ui image",
+            );
+            let view = texture.create_view(&Default::default());
+            texture_bind_group(
+                gpu,
+                &self.layout,
+                &self.sampler,
+                &self.screen_buffer,
+                &view,
+                "ui image",
+            )
+        });
         let present = loaded.is_some();
         self.images.insert(name.to_string(), loaded);
         present
@@ -755,6 +762,10 @@ impl UiRenderer {
         self.images.insert(name.to_string(), None);
     }
 
+    /// The decoded size of a present image loaded with [`Self::load_image`].
+    pub fn image_size(&self, name: &str) -> Option<(u32, u32)> {
+        self.image_sizes.get(name).copied()
+    }
     /// Whether `name` is a registered image (present or known missing).
     pub fn has_image(&self, name: &str) -> bool {
         self.images.contains_key(name)

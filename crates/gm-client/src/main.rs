@@ -872,6 +872,123 @@ impl Console {
 /// A prop hull for the acoustic occluders (`None`: the model has no usable `.phy`).
 type OccluderHull = Option<(std::sync::Arc<str>, std::sync::Arc<gm_audio::Geometry>)>;
 
+/// `menu/background.lua`: out of game a random image of `backgrounds/` fills the screen
+/// behind the main menu, zooming by 0.3 / 30 per second, replaced after 30 s while the old one
+/// fades out over a second. The game also turns the image 5 / 30 deg/s; image items only
+/// turn by quarters, so that is left out.
+#[derive(Default)]
+struct Backgrounds {
+    images: Option<Vec<String>>,
+    active: Option<Slide>,
+    outgoing: Option<Slide>,
+    seed: u64,
+}
+
+struct Slide {
+    name: String,
+    born: Instant,
+    fading_since: Option<Instant>,
+}
+
+impl Backgrounds {
+    /// Advances the slideshow; the image to load when a new one was chosen.
+    fn tick(&mut self, mount: &gm_content::Mount) -> Option<String> {
+        let images = self.images.get_or_insert_with(|| {
+            let mut v: Vec<String> = mount
+                .find("backgrounds/*.*")
+                .into_iter()
+                .filter(|p| {
+                    let l = p.to_ascii_lowercase();
+                    l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png")
+                })
+                .collect();
+            v.sort();
+            v
+        });
+        if images.is_empty() {
+            return None;
+        }
+        if self.outgoing.as_ref().is_some_and(|o| {
+            o.fading_since
+                .is_some_and(|t| t.elapsed().as_secs_f32() >= 1.0)
+        }) {
+            self.outgoing = None;
+        }
+        let due = self
+            .active
+            .as_ref()
+            .is_none_or(|a| a.born.elapsed().as_secs_f32() >= 30.0);
+        if !due {
+            return None;
+        }
+        if self.seed == 0 {
+            self.seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0x9E37_79B9_7F4A_7C15, |d| d.as_nanos() as u64)
+                | 1;
+        }
+        self.seed ^= self.seed << 13;
+        self.seed ^= self.seed >> 7;
+        self.seed ^= self.seed << 17;
+        let mut i = (self.seed % images.len() as u64) as usize;
+        if images.len() > 1 && self.active.as_ref().is_some_and(|a| a.name == images[i]) {
+            i = (i + 1) % images.len();
+        }
+        let name = images[i].clone();
+        self.outgoing = self.active.take().map(|mut a| {
+            a.fading_since = Some(Instant::now());
+            a
+        });
+        self.active = Some(Slide {
+            name: name.clone(),
+            born: Instant::now(),
+            fading_since: None,
+        });
+        Some(name)
+    }
+    /// The slides over a black screen: `Size` starts at 1 (more when the image is narrower
+    /// than the screen so it still covers it) and grows as `Size += SizeVel / Size` per
+    /// second, drawn centred at `ScrH() * Size` tall.
+    fn items(
+        &self,
+        items: &mut Vec<UiItem>,
+        w: f32,
+        h: f32,
+        size_of: impl Fn(&str) -> Option<(u32, u32)>,
+    ) {
+        items.push(UiItem::Rect {
+            x: 0.0,
+            y: 0.0,
+            w,
+            h,
+            color: [0.0, 0.0, 0.0, 1.0],
+        });
+        for slide in self.outgoing.iter().chain(self.active.iter()) {
+            let Some((iw, ih)) = size_of(&slide.name) else {
+                continue;
+            };
+            let ratio = iw as f32 / ih.max(1) as f32;
+            let size0 = 1.0 + (w / h - ratio).max(0.0);
+            let t = slide.born.elapsed().as_secs_f32();
+            let size = (size0 * size0 + 2.0 * (0.3 / 30.0) * t).sqrt();
+            let sh = h * size;
+            let sw = sh * ratio;
+            let alpha = slide
+                .fading_since
+                .map_or(1.0, |f| (1.0 - f.elapsed().as_secs_f32()).clamp(0.0, 1.0));
+            items.push(UiItem::Image {
+                x: (w - sw) / 2.0,
+                y: (h - sh) / 2.0,
+                w: sw,
+                h: sh,
+                material: slide.name.clone(),
+                color: [1.0, 1.0, 1.0, alpha],
+                rot: 0,
+            });
+        }
+    }
+}
+
 struct App {
     /// HL2 weapon selection (`hud_fastswitch 0`): the highlighted weapon as an index into the
     /// server's class list while the bucket menu is open.
@@ -1018,6 +1135,10 @@ struct App {
     exposure_at: Instant,
     /// The game's main menu over the game (Escape): `menu.html` with the in-game NavBar.
     main_menu: bool,
+    /// A game has been started (a map named on the command line, a server joined, or New
+    /// Game pressed): before that the main menu shows over the background slideshow.
+    started: bool,
+    backgrounds: Backgrounds,
     last: Instant,
     acc: f32,
     frames: u32,
@@ -1351,7 +1472,8 @@ impl App {
             glow2,
             ui,
         });
-        self.set_grab(true);
+        // in the main menu at launch the pointer stays free
+        self.set_grab(!self.main_menu);
         Ok(())
     }
 
@@ -1928,10 +2050,14 @@ impl App {
             has_image: &has_image,
         };
         let mut layout = derma::Layout::default();
+        if !self.started {
+            self.backgrounds
+                .items(&mut layout.items, w, h, |n| g.ui.image_size(n));
+        }
         derma::main_menu(
             &mut layout,
             &ctx,
-            true,
+            self.started,
             self.newgame.is_none()
                 && self.servers.is_none()
                 && self.ugc.is_none()
@@ -3507,6 +3633,11 @@ impl App {
         };
         let fov_x = self.camera_fov();
         let Some(g) = &mut self.gfx else { return };
+        if self.main_menu && !self.started {
+            if let Some(name) = self.backgrounds.tick(&self.mount) {
+                g.ui.load_image(&g.gpu, &self.mount, &name);
+            }
+        }
         if self.menu.is_some() {
             let visible = self.menu_cache.borrow().visible.clone();
             Self::render_spawn_icons(&visible, &self.mount, g);
@@ -5879,6 +6010,7 @@ impl ApplicationHandler for App {
                         KeyCode::Escape if self.servers.is_some() => self.servers = None,
                         KeyCode::Escape if self.ugc.is_some() => self.ugc = None,
                         KeyCode::Escape if self.addons.is_some() => self.addons = None,
+                        KeyCode::Escape if self.main_menu && !self.started => {}
                         KeyCode::Escape if self.main_menu => {
                             self.main_menu = false;
                             self.set_grab(true);
@@ -6128,6 +6260,9 @@ fn main() -> Result<()> {
         .skip(1)
         .find(|(i, a)| !a.starts_with("--") && !argv[i - 1].starts_with("--"))
         .map(|(_, a)| a.clone());
+    // like the game: a map on the command line (`+map`) or a server to join goes straight into
+    // the game, otherwise the main menu comes first
+    let started_at_launch = positional.is_some() || connect.is_some();
     // `--connect host:port`: the server names the map in its Welcome, so ask it first
     let (remote_client, remote_ep, map) = match connect {
         Some(addr) => {
@@ -6376,7 +6511,9 @@ fn main() -> Result<()> {
         screen_clicker: false,
         audio_channels: Default::default(),
         script_servers: Vec::new(),
-        main_menu: false,
+        main_menu: !started_at_launch,
+        started: started_at_launch,
+        backgrounds: Backgrounds::default(),
         settings,
         fov_blend: None,
         hint_queue: Vec::new(),
