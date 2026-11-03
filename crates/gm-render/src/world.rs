@@ -3202,6 +3202,24 @@ impl WorldRenderer {
     /// A `Sprite` / `UnlitGeneric` material (`materials/<name>.vmt`) as a bind group for
     /// [`draw_additive`](Self::draw_additive): the base texture, full bright.
     pub fn sprite_material(&self, gpu: &Gpu, mount: &Mount, name: &str) -> Option<wgpu::BindGroup> {
+        self.sprite_material_fmt(gpu, mount, name, wgpu::TextureFormat::Rgba8UnormSrgb)
+    }
+
+    /// A `DecalModulate` material for [`draw_modulate`](Self::draw_modulate): the texture is
+    /// kept linear, so its 128 grey is the blend's neutral 0.5 (colour * 2 * decal) as in the
+    /// game, which modulates in gamma space; read as sRGB it would darken every decal to a
+    /// square.
+    pub fn decal_material(&self, gpu: &Gpu, mount: &Mount, name: &str) -> Option<wgpu::BindGroup> {
+        self.sprite_material_fmt(gpu, mount, name, wgpu::TextureFormat::Rgba8Unorm)
+    }
+
+    fn sprite_material_fmt(
+        &self,
+        gpu: &Gpu,
+        mount: &Mount,
+        name: &str,
+        format: wgpu::TextureFormat,
+    ) -> Option<wgpu::BindGroup> {
         let mat = crate::material::load(mount, name).ok()?;
         let tex = mat.base_texture.as_deref()?;
         let rgba = crate::material::load_texture(mount, tex, 512).ok()?;
@@ -3225,7 +3243,7 @@ impl WorldRenderer {
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let t = upload_rgba_mips(gpu, &rgba, wgpu::TextureFormat::Rgba8UnormSrgb, name);
+        let t = upload_rgba_mips(gpu, &rgba, format, name);
         Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(name),
             layout: &self.material_layout,

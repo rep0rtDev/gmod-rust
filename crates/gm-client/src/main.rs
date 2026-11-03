@@ -1149,8 +1149,8 @@ impl App {
         let gg_beam = world.sprite_material(&gpu, &self.mount, "sprites/orangelight1");
         let fx_muzzle = world.sprite_material(&gpu, &self.mount, "effects/muzzleflash1");
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
-        let fx_decal = world.sprite_material(&gpu, &self.mount, "decals/concrete/shot1");
-        let fx_decal_metal = world.sprite_material(&gpu, &self.mount, "decals/metal/shot1");
+        let fx_decal = world.decal_material(&gpu, &self.mount, "decals/concrete/shot1");
+        let fx_decal_metal = world.decal_material(&gpu, &self.mount, "decals/metal/shot1");
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
         let fx_splash = world.sprite_material(&gpu, &self.mount, "effects/splash2");
         let ui = UiRenderer::new(&gpu, &self.mount, format, quality.msaa)?;
