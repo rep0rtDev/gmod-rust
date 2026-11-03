@@ -2316,7 +2316,16 @@ impl WorldRenderer {
         reflect_items: &[DrawItem<'_>],
     ) {
         self.draw_reflection(gpu, camera, aspect, reflect_items);
-        self.draw_inner(gpu, camera, color, resolve, depth, aspect, scene_src);
+        self.draw_inner(
+            gpu,
+            camera,
+            color,
+            resolve,
+            depth,
+            aspect,
+            scene_src,
+            reflect_items,
+        );
     }
 
     /// The water surface the eye looks down on, if any: the volume nearest the eye among
@@ -2378,23 +2387,9 @@ impl WorldRenderer {
             &depth,
             aspect,
             None,
+            // `$reflectentities`: the entity models too, still under the clip plane
+            if self.reflect_entities { items } else { &[] },
         );
-        // `$reflectentities`: the entity models too, still under the clip plane
-        if self.reflect_entities && !items.is_empty() {
-            self.draw_models(
-                gpu,
-                &mirrored,
-                &ModelTarget {
-                    color: &color,
-                    resolve: resolve.as_ref(),
-                    depth: &depth,
-                    aspect,
-                    clear_depth: false,
-                    alpha: 1.0,
-                },
-                items,
-            );
-        }
         let mut state = self.reflect.lock().unwrap();
         state.clip = None;
         state.valid = true;
@@ -2421,6 +2416,7 @@ impl WorldRenderer {
         depth: &wgpu::TextureView,
         aspect: f32,
         scene_src: Option<&wgpu::Texture>,
+        items: &[DrawItem<'_>],
     ) {
         let mut clear = true;
         if self.sky2d.is_some() {
@@ -2451,13 +2447,14 @@ impl WorldRenderer {
             };
             self.pass(
                 gpu, &sky_cam, color, resolve, depth, aspect, true, clear, sky_fog, scene_src,
+                items,
             );
             self.pass(
-                gpu, camera, color, resolve, depth, aspect, false, false, None, scene_src,
+                gpu, camera, color, resolve, depth, aspect, false, false, None, scene_src, items,
             );
         } else {
             self.pass(
-                gpu, camera, color, resolve, depth, aspect, false, clear, None, scene_src,
+                gpu, camera, color, resolve, depth, aspect, false, clear, None, scene_src, items,
             );
         }
     }
@@ -2592,20 +2589,19 @@ impl WorldRenderer {
         clear_color: bool,
         sky_fog: Option<Fog>,
         scene_src: Option<&wgpu::Texture>,
+        items: &[DrawItem<'_>],
     ) {
         // the refraction copy is taken in this pass when it has the resolved scene
         self.reflect.lock().unwrap().refr_valid = scene_src.is_some() && !sky;
-        gpu.queue.write_buffer(
-            &self.camera_buffer,
-            0,
-            bytemuck::bytes_of(&self.camera_uniform(
-                camera,
-                aspect,
-                1.0,
-                if sky { sky_fog } else { self.view_fog(camera) },
-                self.clip_for(sky),
-            )),
+        let cam_uniform = self.camera_uniform(
+            camera,
+            aspect,
+            1.0,
+            if sky { sky_fog } else { self.view_fog(camera) },
+            self.clip_for(sky),
         );
+        gpu.queue
+            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam_uniform));
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2657,6 +2653,55 @@ impl WorldRenderer {
                 pass.set_bind_group(1, &b.bind_group, &[]);
                 pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
             }
+            // the frame's entity models go between the opaque world and the translucent
+            // surfaces (glass blends over them, the refraction copy has them); their draw
+            // writes the camera uniform itself, so ours is restored after
+            drop(pass);
+            gpu.queue.submit([enc.finish()]);
+            if !sky && !items.is_empty() {
+                self.draw_models(
+                    gpu,
+                    camera,
+                    &ModelTarget {
+                        color,
+                        resolve,
+                        depth,
+                        aspect,
+                        clear_depth: false,
+                        alpha: 1.0,
+                    },
+                    items,
+                );
+                gpu.queue
+                    .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam_uniform));
+            }
+            enc = gpu.device.create_command_encoder(&Default::default());
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("translucent"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color,
+                    depth_slice: None,
+                    resolve_target: resolve,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             // translucent surfaces after everything opaque, farthest first, no depth write
             let mut trans: Vec<&Batch> = self
                 .batches

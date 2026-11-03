@@ -3638,8 +3638,8 @@ impl App {
             clear_depth: false,
             alpha: 1.0,
         };
-        // the world (with the water reflection, which takes the entity models too) goes
-        // first, then the models over it
+        // the world draws the entity models itself, between its opaque and translucent
+        // surfaces (and into the water reflection)
         g.world.draw(
             &g.gpu,
             &camera,
@@ -3650,7 +3650,6 @@ impl App {
             Some(scene_src),
             &items,
         );
-        g.world.draw_models(&g.gpu, &camera, &target, &items);
         if !additive.is_empty() {
             g.world.draw_additive(&g.gpu, &camera, &target, &additive);
         }

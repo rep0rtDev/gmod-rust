@@ -212,9 +212,10 @@ construct's water): the client hands `draw` the frame's entity models and the re
 pass draws them after the world with the mirrored camera, still under the clip plane
 (static props are world batches and reflect regardless). Translucent world surfaces
 (glass) are in both: a pass draws opaque, then sorted translucent, then water, so the
-mirrored pass has them and the refraction copy is taken after them. Open: entity models
-in the refraction copy (the client draws them after the world), the view model and
-beams/sprites in the reflection.
+mirrored pass has them and the refraction copy is taken after them. Entity models are drawn by
+the world pass itself between its opaque and translucent surfaces (the pass is split and
+the camera uniform restored after them), so glass blends over them and the refraction copy
+holds them. Open: the view model and beams/sprites in the reflection.
 
 ### `$ssbump`
 
