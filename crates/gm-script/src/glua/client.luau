@@ -29,6 +29,7 @@ if not CLIENT then
 	for _, n in ipairs({ "BalloonPopped", "Count", "EatBall", "GetCount", "GetDesc", "GetGoal", "GetName", "IncBaddies", "IncBystander", "IncGoodies", "IsAchieved", "Remover", "SpawnMenuOpen", "SpawnedNPC", "SpawnedProp", "SpawnedRagdoll" }) do achievements[n] = stub("achievements." .. n) end
 	render = render or {}
 	for _, n in ipairs({ "AddBeam", "BlurRenderTarget", "BrushMaterialOverride", "Capture", "CapturePixels", "Clear", "ClearBuffersObeyStencil", "ClearDepth", "ClearRenderTarget", "ClearStencil", "ClearStencilBufferRectangle", "ComputeDynamicLighting", "ComputeLighting", "ComputePixelDiameterOfSphere", "CopyRenderTargetToTexture", "CopyTexture", "CullMode", "DepthRange", "DrawBeam", "DrawBox", "DrawLine", "DrawQuad", "DrawQuadEasy", "DrawScreenQuad", "DrawScreenQuadEx", "DrawSphere", "DrawSprite", "DrawTextureToScreen", "DrawTextureToScreenRect", "DrawWireframeBox", "DrawWireframeSphere", "EnableClipping", "EndBeam", "Fog*", "GetAmbientLightColor", "GetBlend", "GetColorModulation", "GetDXLevel", "GetFogColor", "GetFogDistances", "GetFogMode", "GetLightColor", "GetRenderTarget", "GetScreenEffectTexture", "GetToneMappingScaleLinear", "GetViewSetup", "MaterialOverride", "MaterialOverrideByIndex", "MaxTextureHeight", "MaxTextureWidth", "ModelMaterialOverride", "OverrideAlphaWriteEnable", "OverrideBlend", "OverrideBlendFunc", "OverrideColorWriteEnable", "OverrideDepthEnable", "PerformFullScreenStencilOperation", "PopCustomClipPlane", "PopFilterMag", "PopFilterMin", "PopFlashlightMode", "PopRenderTarget", "PushCustomClipPlane", "PushFilterMag", "PushFilterMin", "PushFlashlightMode", "PushRenderTarget", "ReadPixel", "RedownloadAllLightmaps", "RenderFlashlights", "RenderHUD", "RenderView", "ResetModelLighting", "ResetToneMappingScale", "SetAmbientLight", "SetBlend", "SetColorMaterial", "SetColorMaterialIgnoreZ", "SetColorModulation", "SetFogZ", "SetGoalToneMappingScale", "SetLightingMode", "SetLightingOrigin", "SetLocalModelLights", "SetMaterial", "SetModelLighting", "SetRenderTarget", "SetRenderTargetEx", "SetScissorRect", "SetShadowColor", "SetShadowDirection", "SetShadowDistance", "SetShadowsDisabled", "SetStencilCompareFunction", "SetStencilEnable", "SetStencilFailOperation", "SetStencilPassOperation", "SetStencilReferenceValue", "SetStencilTestMask", "SetStencilWriteMask", "SetStencilZFailOperation", "SetToneMappingScaleLinear", "SetViewPort", "SetWriteDepthToDestAlpha", "Spin", "StartBeam", "SupportsHDR", "SupportsPixelShaders_1_4", "SupportsPixelShaders_2_0", "SupportsVertexShaders_2_0", "SuppressEngineLighting", "UpdateFullScreenDepthTexture", "UpdatePowerOfTwoTexture", "UpdateRefractTexture", "UpdateScreenEffectTexture" }) do if n ~= "Fog*" then render[n] = stub("render." .. n) end end
+	for _, n in ipairs({ "EyePos", "EyeAngles", "EyeVector", "ClientsideModel", "ClientsideRagdoll", "ClientsideScene", "CreateSprite", "ParticleEmitter", "CreateParticleSystem", "CreateParticleSystemNoEntity", "DynamicLight", "ProjectedTexture", "CreateMaterial", "DynamicMaterial", "AddWorldTip", "CreateContextMenu", "DisableClipping", "DrawBloom", "DrawBokehDOF", "DrawColorModify", "DrawMaterialOverlay", "DrawMotionBlur", "DrawSharpen", "DrawSobel", "DrawSunbeams", "DrawTexturize", "DrawToyTown", "DrawBackground", "DOF_Start", "DOF_Kill", "DOFModeHack" }) do _G[n] = stub("Global." .. n) end
 	ScrW = stub("Global.ScrW")
 	ScrH = stub("Global.ScrH")
 	Material = stub("Global.Material")
@@ -322,7 +323,9 @@ end
 
 ------------------------------------------------------------------------ cam
 cam = cam or {}
-function cam.Start3D2D(pos, ang, scale) hostdraw.start3d2d(pos, ang, scale or 1) end
+-- the host reads angles as x/y/z tables (pitch, yaw, roll)
+function __glua_ang_xyz(a) return { x = a.p or a.x or 0, y = a.y or 0, z = a.r or a.z or 0 } end
+function cam.Start3D2D(pos, ang, scale) hostdraw.start3d2d(pos, __glua_ang_xyz(ang), scale or 1) end
 function cam.End3D2D() hostdraw.end3d2d() end
 function cam.Start2D() end
 function cam.End2D() end
@@ -905,6 +908,349 @@ function R.PerformFullScreenStencilOperation() end
 function R.RedownloadAllLightmaps() end
 function cam.Start3D() end
 
+
+------------------------------------------------------------------------ view, client entities, particles, lights
+-- the local view: the local player's eye (the client's own camera is not scripted yet)
+function EyePos() local lp = LocalPlayer(); return IsValid(lp) and lp:EyePos() or Vector() end
+function EyeAngles() local lp = LocalPlayer(); return IsValid(lp) and lp:EyeAngles() or Angle() end
+function EyeVector() return EyeAngles():Forward() end
+local VEC = __glua_classes.Vector
+-- `Vector:ToScreen()`: the point through the view's perspective (fov across the width as the
+-- engine does: tan(fov/2) scaled by the aspect), `visible` when in front of the view
+function VEC:ToScreen()
+	local eye, ang = EyePos(), EyeAngles()
+	local lp = LocalPlayer()
+	local fov = IsValid(lp) and lp:GetFOV() or 90
+	local d = self - eye
+	local fwd, right, up = ang:Forward(), ang:Right(), ang:Up()
+	local z = d:Dot(fwd)
+	local w, h = ScrW(), ScrH()
+	local tan_half = math.tan(math.rad(fov) / 2)
+	if z <= 0.001 then return { x = -1, y = -1, visible = false } end
+	local x = d:Dot(right) / (z * tan_half * (w / h))
+	local y = d:Dot(up) / (z * tan_half)
+	return { x = (x + 1) / 2 * w, y = (1 - y) / 2 * h, visible = x >= -1 and x <= 1 and y >= -1 and y <= 1 }
+end
+
+-- clientside entities: `ClientsideModel` / `ClientsideRagdoll` / `CreateSprite` return a CSEnt
+-- drawn by the client each frame through `draw.model` while it has a model and is not NoDraw
+local CSENT = {}
+CSENT.__index = CSENT
+local csents = {}
+__glua_classes.CSEnt = CSENT
+local function new_csent(model, group)
+	local e = setmetatable({ __model = model or "", __pos = Vector(), __ang = Angle(), __valid = true, __nodraw = false, __color = Color(255, 255, 255, 255), __group = group, __skin = 0, __bodygroups = {}, __parent = nil, __scale = 1, __material = "", __sequence = 0, __cycle = 0, __rate = 1, __rendermode = 0, __fx = 0 }, CSENT)
+	csents[e] = true
+	return e
+end
+function ClientsideModel(model, group) return new_csent(model, group or 0) end
+function ClientsideRagdoll(model, group) local e = new_csent(model, group or 0); e.__ragdoll = true; return e end
+function ClientsideScene(name, target) return new_csent("", 0) end
+function CreateSprite(mat) local e = new_csent("", 0); e.__sprite = mat; return e end
+function CSENT:IsValid() return self.__valid == true end
+function CSENT:Remove() self.__valid = false; csents[self] = nil end
+function CSENT:SetModel(m) self.__model = m end
+function CSENT:GetModel() return self.__model end
+function CSENT:SetPos(p) self.__pos = p end
+function CSENT:GetPos() return self.__pos end
+function CSENT:SetAngles(a) self.__ang = a end
+function CSENT:GetAngles() return self.__ang end
+function CSENT:SetNoDraw(b) self.__nodraw = b == true end
+function CSENT:GetNoDraw() return self.__nodraw end
+function CSENT:SetColor(c) self.__color = c end
+function CSENT:GetColor() return self.__color end
+function CSENT:SetRenderMode(m) self.__rendermode = m end
+function CSENT:GetRenderMode() return self.__rendermode end
+function CSENT:SetRenderFX(f) self.__fx = f end
+function CSENT:SetSkin(s) self.__skin = s end
+function CSENT:GetSkin() return self.__skin end
+function CSENT:SetBodygroup(i, v) self.__bodygroups[i] = v end
+function CSENT:GetBodygroup(i) return self.__bodygroups[i] or 0 end
+function CSENT:SetModelScale(s) self.__scale = s end
+function CSENT:GetModelScale() return self.__scale end
+function CSENT:SetMaterial(m) self.__material = m end
+function CSENT:GetMaterial() return self.__material end
+function CSENT:SetParent(p) self.__parent = p end
+function CSENT:GetParent() return self.__parent end
+function CSENT:SetSequence(s) self.__sequence = s end
+function CSENT:GetSequence() return self.__sequence end
+function CSENT:SetCycle(c) self.__cycle = c end
+function CSENT:GetCycle() return self.__cycle end
+function CSENT:SetPlaybackRate(r) self.__rate = r end
+function CSENT:FrameAdvance(dt) self.__cycle = (self.__cycle + (dt or FrameTime()) * self.__rate) % 1 end
+function CSENT:LookupSequence(name) return -1, 0 end
+function CSENT:LookupBone(name) return nil end
+function CSENT:LookupAttachment(name) return 0 end
+function CSENT:GetBonePosition(i) return self.__pos, self.__ang end
+function CSENT:SetupBones() end
+function CSENT:Spawn() end
+function CSENT:Activate() end
+function CSENT:SetRenderOrigin(p) self.__render_origin = p end
+function CSENT:SetRenderAngles(a) self.__render_angles = a end
+function CSENT:SetRenderBounds(mins, maxs) self.__bounds = { mins, maxs } end
+function CSENT:SetLOD() end
+function CSENT:SetPoseParameter() end
+function CSENT:SetEyeTarget() end
+function CSENT:SetFlexWeight() end
+function CSENT:GetFlexNum() return 0 end
+function CSENT:IsDormant() return false end
+function CSENT:EntIndex() return -1 end
+function CSENT:GetClass() return self.__ragdoll and "class C_ClientRagdoll" or "class C_BaseFlex" end
+function CSENT:GetTable() return self end
+function CSENT:OBBMins() return Vector(-16, -16, 0) end
+function CSENT:OBBMaxs() return Vector(16, 16, 72) end
+function CSENT:WorldSpaceCenter() return self.__pos end
+function CSENT:DrawModel(flags)
+	if self.__model == "" then return end
+	hostdraw.model(self.__model, self.__render_origin or self.__pos, __glua_ang_xyz(self.__render_angles or self.__ang), self.__color.a or 255)
+end
+function CSENT:DrawShadow() end
+function CSENT:CreateShadow() end
+function CSENT:DestroyShadow() end
+local function draw_csents()
+	for e in pairs(csents) do
+		if e.__valid and not e.__nodraw then
+			if e.__sprite then
+				render.SetMaterial(type(e.__sprite) == "string" and Material(e.__sprite) or e.__sprite)
+				render.DrawSprite(e.__pos, 16 * e.__scale, 16 * e.__scale, e.__color)
+			else
+				e:DrawModel()
+			end
+		end
+	end
+end
+
+-- client entity extras over the networked entities (render overrides are kept per entity)
+local ENT = __glua_classes.Entity
+local render_over = setmetatable({}, { __mode = "k" })
+local function ro(self) local r = render_over[self]; if not r then r = {}; render_over[self] = r end return r end
+function ENT:SetRenderOrigin(p) ro(self).origin = p end
+function ENT:GetRenderOrigin() return ro(self).origin end
+function ENT:SetRenderAngles(a) ro(self).angles = a end
+function ENT:GetRenderAngles() return ro(self).angles end
+function ENT:SetRenderBounds(mins, maxs, add) ro(self).bounds = { mins, maxs } end
+function ENT:SetRenderBoundsWS(mins, maxs, add) ro(self).bounds_ws = { mins, maxs } end
+function ENT:GetRenderBounds() local b = ro(self).bounds; if b then return b[1], b[2] end return self:OBBMins(), self:OBBMaxs() end
+function ENT:SetRenderClipPlane(n, d) ro(self).clip = { n, d } end
+function ENT:SetRenderClipPlaneEnabled(b) ro(self).clip_on = b == true end
+function ENT:GetRenderGroup() return ro(self).group or 7 end
+function ENT:DrawModel(flags) hostdraw.model(self:GetModel(), ro(self).origin or self:GetPos(), __glua_ang_xyz(ro(self).angles or self:GetAngles()), 255) end
+function ENT:GetNetworkAngles() return self:GetAngles() end
+function ENT:SetNetworkAngles(a) end
+function ENT:GetPredictable() return false end
+function ENT:SetPredictable(b) end
+function ENT:SetupBones() end
+function ENT:InvalidateBoneCache() end
+function ENT:SetBonePosition(i, pos, ang) end
+function ENT:SetLOD(l) end
+function ENT:SetLegacyTransform(b) end
+function ENT:SetNextClientThink(t) ro(self).next_think = t end
+function ENT:GetAnimTime() return ro(self).anim_time or 0 end
+function ENT:SetAnimTime(t) ro(self).anim_time = t end
+function ENT:GetModelPhysBoneCount() local m = self.GetModel and self:GetModel(); return (m and m:find("ragdoll") and 15) or 1 end
+function ENT:BeingLookedAtByLocalPlayer()
+	local lp = LocalPlayer()
+	if not IsValid(lp) then return false end
+	local tr = util.TraceLine({ start = lp:EyePos(), endpos = lp:EyePos() + lp:GetAimVector() * 1024, filter = lp })
+	return tr.Entity == self
+end
+function ENT:BecomeRagdollOnClient() local e = ClientsideRagdoll(self:GetModel()); e:SetPos(self:GetPos()); e:SetAngles(self:GetAngles()); return e end
+function ENT:InitializeAsClientEntity() end
+function ENT:SnatchModelInstance(other) end
+function ENT:EnableMatrix(name, m) ro(self).matrix = m end
+function ENT:DisableMatrix(name) ro(self).matrix = nil end
+function ENT:CreateShadow() end
+function ENT:DestroyShadow() end
+function ENT:MarkShadowAsDirty() end
+function ENT:SetupPhonemeMappings() end
+function ENT:UpdateShadow() end
+function ENT:UpdateBoneFollowers() end
+function ENT:UpdateRenderInfo() end
+function ENT:CreateParticleEffect(name, attach, options) return CreateParticleSystem(self, name, attach or 0) end
+function ENT:StopParticleEmission() end
+function ENT:StopParticlesNamed(name) end
+function ENT:StopParticlesWithNameAndAttachment(name, attach) end
+function ENT:StopAndDestroyParticles() end
+local PLY = __glua_classes.Player
+local muted, voice_scale, flashlight_colors = {}, {}, {}
+function PLY:IsMuted() return muted[self:SteamID64() or self:EntIndex()] == true end
+function PLY:SetMuted(b) muted[self:SteamID64() or self:EntIndex()] = b == true end
+function PLY:GetVoiceVolumeScale() return voice_scale[self:EntIndex()] or 1 end
+function PLY:SetVoiceVolumeScale(s) voice_scale[self:EntIndex()] = s end
+function PLY:VoiceVolume() return 0 end
+function PLY:IsVoiceAudible() return false end
+function PLY:GetFriendStatus() return "none" end
+function PLY:ShowProfile() if self.SteamID64 then gui.OpenURL("https://steamcommunity.com/profiles/" .. tostring(self:SteamID64())) end end
+function PLY:GetFlashlightColor() return flashlight_colors[self:EntIndex()] or Color(255, 255, 255) end
+function PLY:SetFlashlightColor(c) flashlight_colors[self:EntIndex()] = c end
+function PLY:ShouldDrawLocalPlayer() return hook.Run("ShouldDrawLocalPlayer", self) == true end
+function PLY:AddPlayerOption(name, time, vote_fn, draw_fn) end
+
+-- particles: `ParticleEmitter(pos, use3d)` simulates CLuaParticles here (gravity, air
+-- resistance, roll, colour / alpha / size lerp over life) and draws them as camera-facing
+-- quads in the world each frame
+local EMITTER, PARTICLE = {}, {}
+EMITTER.__index, PARTICLE.__index = EMITTER, PARTICLE
+__glua_classes.CLuaEmitter, __glua_classes.CLuaParticle = EMITTER, PARTICLE
+local emitters = {}
+function ParticleEmitter(pos, use3d) local e = setmetatable({ __pos = pos or Vector(), __3d = use3d == true, __particles = {}, __valid = true, __nodraw = false, __near = 0 }, EMITTER); emitters[e] = true; return e end
+function EMITTER:IsValid() return self.__valid end
+function EMITTER:Finish() self.__finished = true end
+function EMITTER:GetPos() return self.__pos end
+function EMITTER:SetPos(p) self.__pos = p end
+function EMITTER:Is3D() return self.__3d end
+function EMITTER:GetNumActiveParticles() return #self.__particles end
+function EMITTER:SetNoDraw(b) self.__nodraw = b == true end
+function EMITTER:SetNearClip(a, b) self.__near = a end
+function EMITTER:SetBBox(mins, maxs) self.__bbox = { mins, maxs } end
+function EMITTER:SetParticleCullRadius(r) self.__cull = r end
+function EMITTER:Draw() for _, p in ipairs(self.__particles) do p:__draw() end end
+function EMITTER:Add(material, pos)
+	local p = setmetatable({ __mat = material, pos = pos or self.__pos, vel = Vector(), ang = Angle(), angvel = Angle(), die = 1, life = 0, start_alpha = 255, end_alpha = 255, start_size = 1, end_size = 1, start_len = 0, end_len = 0, gravity = Vector(), air = 0, bounce = 0, roll = 0, roll_delta = 0, color = { 255, 255, 255 }, collide = false, lighting = false, vel_scale = true, next_think = 0 }, PARTICLE)
+	self.__particles[#self.__particles + 1] = p
+	return p
+end
+function PARTICLE:SetPos(p) self.pos = p end function PARTICLE:GetPos() return self.pos end
+function PARTICLE:SetVelocity(v) self.vel = v end function PARTICLE:GetVelocity() return self.vel end
+function PARTICLE:SetAngles(a) self.ang = a end function PARTICLE:GetAngles() return self.ang end
+function PARTICLE:SetAngleVelocity(a) self.angvel = a end function PARTICLE:GetAngleVelocity() return self.angvel end
+function PARTICLE:SetDieTime(t) self.die = t end function PARTICLE:GetDieTime() return self.die end
+function PARTICLE:SetLifeTime(t) self.life = t end function PARTICLE:GetLifeTime() return self.life end
+function PARTICLE:SetStartAlpha(a) self.start_alpha = a end function PARTICLE:GetStartAlpha() return self.start_alpha end
+function PARTICLE:SetEndAlpha(a) self.end_alpha = a end function PARTICLE:GetEndAlpha() return self.end_alpha end
+function PARTICLE:SetStartSize(s) self.start_size = s end function PARTICLE:GetStartSize() return self.start_size end
+function PARTICLE:SetEndSize(s) self.end_size = s end function PARTICLE:GetEndSize() return self.end_size end
+function PARTICLE:SetStartLength(l) self.start_len = l end function PARTICLE:GetStartLength() return self.start_len end
+function PARTICLE:SetEndLength(l) self.end_len = l end function PARTICLE:GetEndLength() return self.end_len end
+function PARTICLE:SetGravity(g) self.gravity = g end function PARTICLE:GetGravity() return self.gravity end
+function PARTICLE:SetAirResistance(a) self.air = a end function PARTICLE:GetAirResistance() return self.air end
+function PARTICLE:SetBounce(b) self.bounce = b end function PARTICLE:GetBounce() return self.bounce end
+function PARTICLE:SetRoll(r) self.roll = r end function PARTICLE:GetRoll() return self.roll end
+function PARTICLE:SetRollDelta(r) self.roll_delta = r end function PARTICLE:GetRollDelta() return self.roll_delta end
+function PARTICLE:SetColor(r, g, b) self.color = { r, g, b } end function PARTICLE:GetColor() return self.color[1], self.color[2], self.color[3] end
+function PARTICLE:SetMaterial(m) self.__mat = m end function PARTICLE:GetMaterial() return self.__mat end
+function PARTICLE:SetCollide(b) self.collide = b == true end
+function PARTICLE:SetCollideCallback(fn) self.on_collide = fn end
+function PARTICLE:SetLighting(b) self.lighting = b == true end
+function PARTICLE:SetVelocityScale(b) self.vel_scale = b ~= false end
+function PARTICLE:SetThinkFunction(fn) self.think = fn end
+function PARTICLE:SetNextThink(t) self.next_think = t end
+function PARTICLE:__step(dt)
+	self.life = self.life + dt
+	self.vel = self.vel + self.gravity * dt
+	if self.air > 0 then self.vel = self.vel * math.max(0, 1 - self.air * dt / 100) end
+	self.pos = self.pos + self.vel * dt
+	self.roll = self.roll + self.roll_delta * dt
+	self.ang = self.ang + self.angvel * dt
+	if self.think and CurTime() >= self.next_think then self:think() end
+	return self.life < self.die
+end
+function PARTICLE:__draw()
+	local f = self.die > 0 and math.min(1, self.life / self.die) or 1
+	local a = self.start_alpha + (self.end_alpha - self.start_alpha) * f
+	local size = self.start_size + (self.end_size - self.start_size) * f
+	local c = Color(self.color[1], self.color[2], self.color[3], a)
+	render.SetMaterial(type(self.__mat) == "string" and Material(self.__mat) or self.__mat)
+	local len = self.start_len + (self.end_len - self.start_len) * f
+	if len > 0 and self.vel:Length() > 0 then
+		local d = self.vel:GetNormalized() * (len / 2)
+		render.DrawBeam(self.pos - d, self.pos + d, size, 0, 1, c)
+	else
+		render.DrawQuadEasy(self.pos, -EyeVector(), size * 2, size * 2, c, self.roll)
+	end
+end
+local function step_particles()
+	local dt = FrameTime()
+	for e in pairs(emitters) do
+		if not e.__valid then emitters[e] = nil
+		else
+			local keep = {}
+			for _, p in ipairs(e.__particles) do if p:__step(dt) then keep[#keep + 1] = p end end
+			e.__particles = keep
+			if not e.__nodraw then e:Draw() end
+			if e.__finished and #keep == 0 then e.__valid = false; emitters[e] = nil end
+		end
+	end
+end
+-- particle systems (.pcf): the effect name and attachment are kept; the system itself needs
+-- the client's particle renderer (open) - this object answers the documented interface
+local CNP = {}
+CNP.__index = CNP
+__glua_classes.CNewParticleEffect = CNP
+function CreateParticleSystem(ent, effect, attach, angles, offset) return setmetatable({ __ent = ent, __effect = effect, __attach = attach, __valid = true, __cp = {} }, CNP) end
+function CreateParticleSystemNoEntity(effect, pos, ang) return setmetatable({ __effect = effect, __pos = pos, __ang = ang, __valid = true, __cp = {} }, CNP) end
+function CNP:IsValid() return self.__valid end
+function CNP:StopEmission() self.__stopped = true end
+function CNP:StopEmissionAndDestroyImmediately() self.__valid = false end
+function CNP:Restart() self.__stopped = false end
+function CNP:IsFinished() return self.__stopped == true end
+function CNP:IsViewModelEffect() return false end
+function CNP:GetEffectName() return self.__effect end
+function CNP:GetOwner() return self.__ent end
+function CNP:SetControlPoint(i, v) self.__cp[i] = v end
+function CNP:GetControlPoint(i) return self.__cp[i] end
+function CNP:SetControlPointEntity(i, e) self.__cp[i] = e end
+function CNP:SetControlPointForwardVector() end
+function CNP:SetControlPointRightVector() end
+function CNP:SetControlPointUpVector() end
+function CNP:SetControlPointOrientation() end
+function CNP:SetControlPointParent() end
+function CNP:AddControlPoint(i, ent, attach) self.__cp[i] = ent end
+function CNP:SetIsViewModelEffect() end
+function CNP:SetShouldDraw(b) self.__draw = b end
+function CNP:SetSortOrigin(p) end
+function CNP:GetAutoUpdateBBox() return true end
+function CNP:SetAutoUpdateBBox() end
+function CNP:GetHighestControlPoint() return 0 end
+function CNP:GetRenderBounds() return Vector(), Vector() end
+function CNP:Render() end
+function CNP:StartEmission() self.__stopped = false end
+
+-- lights: DynamicLight / ProjectedTexture keep the documented state; the client's lighting
+-- does not read them yet (open)
+local DLIGHT = {}
+function DynamicLight(index, elight) return { Pos = Vector(), r = 255, g = 255, b = 255, Brightness = 1, Size = 0, Decay = 0, DieTime = 0, Style = 0, Dir = Vector(), InnerAngle = 0, OuterAngle = 0, MinLight = 0, NoModel = false, NoWorld = false, Key = index } end
+local PT = {}
+PT.__index = PT
+__glua_classes.ProjectedTexture = PT
+local pt_fields = { Angles = Angle(), Pos = Vector(), Brightness = 1, Color = Color(255, 255, 255), ConstantAttenuation = 0, LinearAttenuation = 0, QuadraticAttenuation = 0, EnableShadows = false, FarZ = 1000, NearZ = 1, HorizontalFOV = 90, VerticalFOV = 90, LightWorld = true, NoCull = false, Orthographic = false, ShadowDepthBias = 0.0001, ShadowFilter = 0.5, ShadowSlopeScaleDepthBias = 2, SkipShadowUpdates = 0, TargetEntity = NULL, Texture = nil, TextureFrame = 0 }
+function ProjectedTexture() local t = {}; for k, v in pairs(pt_fields) do t[k] = v end t.__valid = true; return setmetatable(t, PT) end
+for k in pairs(pt_fields) do
+	PT["Get" .. k] = function(self) return self[k] end
+	PT["Set" .. k] = function(self, v) self[k] = v end
+end
+function PT:IsValid() return self.__valid end
+function PT:Remove() self.__valid = false end
+function PT:Update() end
+function PT:SetFOV(f) self.HorizontalFOV, self.VerticalFOV = f, f end
+function PT:GetOrthographic() return self.Orthographic end
+function PT:SetOrthographic(b, l, t, r, bt) self.Orthographic = b == true; self.__ortho = { l, t, r, bt } end
+
+-- materials made by scripts and the world tip
+function CreateMaterial(name, shader, data) local m = Material(name, ""); m.__shader, m.__data = shader, data or {}; function m:GetString(k) return self.__data[k] end function m:SetString(k, v) self.__data[k] = v end return m end
+function DynamicMaterial(shader, data) return CreateMaterial("dyn_" .. tostring(SysTime()), shader, data) end
+local world_tip
+function AddWorldTip(id, text, delay, pos, ent) world_tip = { text = text, pos = pos or (IsValid(ent) and ent:GetPos()), ent = ent, time = CurTime() } end
+-- the game's world tip: black-bordered rounded box above the aimed point, DermaDefault text
+local function draw_world_tip()
+	if not world_tip or CurTime() - world_tip.time > 0.1 then return end
+	local pos = world_tip.pos or (IsValid(world_tip.ent) and world_tip.ent:GetPos())
+	if not pos then return end
+	local sp = pos:ToScreen()
+	if not sp.visible then return end
+	surface.SetFont("GModWorldtip")
+	local w, h = surface.GetTextSize(world_tip.text)
+	local x, y = sp.x - w / 2 - 10, sp.y - h - 40
+	draw.RoundedBox(8, x - 1, y - 1, w + 22, h + 22, Color(0, 0, 0, 255))
+	draw.RoundedBox(8, x, y, w + 20, h + 20, Color(250, 250, 200, 255))
+	draw.SimpleText(world_tip.text, "GModWorldtip", x + 10, y + 10, Color(0, 0, 0, 255))
+end
+function CreateContextMenu() hook.Run("OnContextMenuOpen") end
+function DisableClipping(b) return false end
+-- screen-space effects: recorded, not applied (the client's post stack is native; open)
+for _, n in ipairs({ "DrawBloom", "DrawBokehDOF", "DrawColorModify", "DrawMaterialOverlay", "DrawMotionBlur", "DrawSharpen", "DrawSobel", "DrawSunbeams", "DrawTexturize", "DrawToyTown", "DrawBackground", "DOF_Start", "DOF_Kill", "DOFModeHack" }) do _G[n] = function() end end
+function __glua_draw_world_objects() draw_csents(); step_particles(); draw_world_tip() end
+
 ------------------------------------------------------------------------ the frame
 -- the engine HUD elements the game asks `HUDShouldDraw` about (the sandbox hides CHudHealth,
 -- CHudBattery, CHudAmmo, CHudSecondaryAmmo and draws its own; the client applies the answers)
@@ -933,6 +1279,7 @@ if events then
 		hook.Run("PostDrawOpaqueRenderables", false, false, false)
 		hook.Run("PreDrawTranslucentRenderables", false, false, false)
 		hook.Run("PostDrawTranslucentRenderables", false, false, false)
+		__glua_draw_world_objects()
 		hook.Run("PreDrawEffects")
 		hook.Run("PostDrawEffects")
 		hook.Run("RenderScreenspaceEffects")

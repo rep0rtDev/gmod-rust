@@ -1227,3 +1227,58 @@ fn glua_render_world_geometry_reaches_the_client() {
         .iter()
         .all(|(p, _)| p.iter().all(|v| v.abs().max_element() == 8.0)));
 }
+
+/// Client globals: a ClientsideModel is drawn each frame, a particle emitter steps and draws
+/// its particles as world quads, Vector:ToScreen projects, AddWorldTip paints a tip.
+#[test]
+fn glua_client_globals_models_particles_toscreen() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "fx".into(),
+        name: "globals".into(),
+        priority: 0,
+        source: r#"
+            CSM = ClientsideModel("models/props_c17/oildrum001.mdl")
+            CSM:SetPos(Vector(100, 0, 0))
+            EM = ParticleEmitter(Vector(0, 0, 0))
+            local p = EM:Add("effects/yellowflare", Vector(0, 0, 10))
+            p:SetDieTime(5) p:SetStartSize(4) p:SetEndSize(0) p:SetVelocity(Vector(0, 0, 50))
+            SP = Vector(0, 0, 0):ToScreen()
+            PT = ProjectedTexture() PT:SetBrightness(3)
+        "#
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let world = gm_net::ClientWorld::default();
+    let draws = rt.client_render(&world, 1280, 720);
+    assert!(
+        draws.iter().any(|d| matches!(d, gm_script::DrawCmd::Model { model, pos, .. } if model.ends_with("oildrum001.mdl") && pos.x == 100.0)),
+        "the clientside model is drawn: {draws:?}"
+    );
+    assert_eq!(
+        draws
+            .iter()
+            .filter(|d| matches!(d, gm_script::DrawCmd::WorldTri { .. }))
+            .count(),
+        2,
+        "one particle = one quad = two world triangles"
+    );
+    let (n, vis, bright, valid): (f64, bool, f64, bool) = rt.actors()[0]
+        .eval("CSM:Remove() return EM:GetNumActiveParticles(), SP.visible, PT:GetBrightness(), IsValid(CSM)")
+        .expect("eval");
+    assert_eq!(n, 1.0);
+    assert!(!vis, "the origin sits at the eye: not in front of the view");
+    assert_eq!(bright, 3.0);
+    assert!(!valid, "Remove invalidates the CSEnt");
+    let draws = rt.client_render(&world, 1280, 720);
+    assert!(
+        !draws
+            .iter()
+            .any(|d| matches!(d, gm_script::DrawCmd::Model { .. })),
+        "removed model no longer drawn"
+    );
+}
