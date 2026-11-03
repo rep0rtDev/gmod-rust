@@ -347,6 +347,10 @@ pub struct Sequence {
     /// Activity the sequence is tagged with (`ACT_*`, empty for none) and its selection weight.
     pub activity_name: String,
     pub act_weight: i32,
+    /// `fadeintime` / `fadeouttime`: seconds the sequence blends in from / out to the previous
+    /// one (`CSequenceTransitioner`; studiomdl's default 0.2).
+    pub fade_in: f32,
+    pub fade_out: f32,
     pub anim: i16,
     pub autolayers: Vec<AutoLayer>,
     /// Blend grid: `group_size[0]` columns by `group_size[1]` rows of animation indices, row
@@ -584,6 +588,8 @@ pub fn sequences(data: &[u8], header: &Header) -> Vec<Sequence> {
                 .and_then(|off| name_at(data, o + off as usize))
                 .unwrap_or_default(),
             act_weight: i32_at(data, o + 20).unwrap_or(0),
+            fade_in: f(o + 104),
+            fade_out: f(o + 108),
             bbmin,
             bbmax,
             anim,
