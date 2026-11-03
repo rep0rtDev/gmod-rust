@@ -394,6 +394,11 @@ pub struct SkyPaint {
     pub dusk_scale: f32,
     pub dusk_intensity: f32,
     pub dusk_color: Vec3,
+    /// Stars: tiling scale, fade towards the horizon, layers (0 = none), drift so far.
+    pub star_scale: f32,
+    pub star_fade: f32,
+    pub star_layers: f32,
+    pub star_drift: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -669,6 +674,8 @@ struct SkyCube {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     faces: Vec<wgpu::BindGroup>,
+    /// `skybox/starfield` for the painted sky's stars (None when the texture is missing).
+    stars: Option<wgpu::BindGroup>,
 }
 
 /// Face suffix and its axes in the Quake/Source convention: position = sx * s + ty * t + n
@@ -814,6 +821,75 @@ fn build_sky_cube(
         }
         idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
+    // env_skypaint's stars: the tiled starfield of the painted sky (its own repeat sampler)
+    let stars_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("sky stars"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    let stars = (|| {
+        let mat_name = "skybox/starfield".to_string();
+        let mat = material::load(mount, &mat_name).ok()?;
+        let tex = mat.base_texture.as_deref().unwrap_or(&mat_name);
+        let rgba = material::load_texture(mount, tex, 1024).ok()?;
+        let t = upload_rgba(
+            gpu,
+            &rgba.pixels,
+            rgba.width,
+            rgba.height,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            &mat_name,
+        );
+        Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sky stars"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &t.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&stars_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(detail),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(detail),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(detail),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(detail),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+
+                    resource: wgpu::BindingResource::TextureView(detail),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+
+                    resource: wgpu::BindingResource::TextureView(detail),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params.as_entire_binding(),
+                },
+            ],
+        }))
+    })();
     Some(SkyCube {
         vertex_buffer: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("sky vertices"),
@@ -826,6 +902,7 @@ fn build_sky_cube(
             usage: wgpu::BufferUsages::INDEX,
         }),
         faces,
+        stars,
     })
 }
 
@@ -2981,9 +3058,11 @@ impl WorldRenderer {
             sky_top: sp.map_or([0.0; 4], |s| v4(s.top, s.fade_bias)),
             sky_bottom: sp.map_or([0.0; 4], |s| v4(s.bottom, s.hdr_scale)),
             sky_sun: sp.map_or([0.0; 4], |s| v4(s.sun_normal, s.sun_size)),
-            sky_sun_color: sp.map_or([0.0; 4], |s| v4(s.sun_color, 1.0)),
+            sky_sun_color: sp.map_or([0.0; 4], |s| v4(s.sun_color, s.star_drift)),
             sky_dusk: sp.map_or([0.0; 4], |s| v4(s.dusk_color, s.dusk_intensity)),
-            sky_dusk_scale: sp.map_or([0.0; 4], |s| [s.dusk_scale, 0.0, 0.0, 0.0]),
+            sky_dusk_scale: sp.map_or([0.0; 4], |s| {
+                [s.dusk_scale, s.star_scale, s.star_fade, s.star_layers]
+            }),
             view_proj: cam.view_proj(aspect).to_cols_array_2d(),
             alpha,
             gamma: cam.gamma,
@@ -3103,8 +3182,13 @@ impl WorldRenderer {
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_vertex_buffer(0, sky.vertex_buffer.slice(..));
             pass.set_index_buffer(sky.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            let stars = self
+                .sky_paint
+                .is_some_and(|s| s.star_layers > 0.0)
+                .then_some(sky.stars.as_ref())
+                .flatten();
             for (i, bg) in sky.faces.iter().enumerate() {
-                pass.set_bind_group(1, bg, &[]);
+                pass.set_bind_group(1, stars.unwrap_or(bg), &[]);
                 let first = i as u32 * 6;
                 pass.draw_indexed(first..first + 6, 0, 0..1);
             }

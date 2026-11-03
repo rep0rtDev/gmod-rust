@@ -8646,7 +8646,24 @@ fn edit_sky_of(
         dusk_scale: num("duskscale", 1.0),
         dusk_intensity: num("duskintensity", 1.0),
         dusk_color: color("duskcolor", [1.0, 0.2, 0.0]),
+        star_scale: num("starscale", 0.5),
+        star_fade: num("starfade", 1.5),
+        star_layers: if num("drawstars", 1.0) > 0.5 {
+            num("starlayers", 1.0)
+        } else {
+            0.0
+        },
+        star_drift: fx_time() * num("starspeed", 0.01),
     })
+}
+
+/// Seconds since the first call: the drift of effects that scroll with time.
+fn fx_time() -> f32 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f32()
 }
 
 #[cfg(test)]

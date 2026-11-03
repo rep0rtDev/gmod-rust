@@ -16,7 +16,7 @@ struct Camera {
     dlight_dir: array<vec4<f32>, 8>,
     sun: vec4<f32>,
     // env_skypaint: top colour + fade bias, bottom colour + HDR scale, sun normal + size,
-    // sun colour + set flag, dusk colour + intensity, dusk scale
+    // sun colour + star drift, dusk colour + intensity, dusk scale + star scale / fade / layers
     sky_top: vec4<f32>,
     sky_bottom: vec4<f32>,
     sky_sun: vec4<f32>,
@@ -336,6 +336,20 @@ fn fs_skypaint(in: VsOut) -> @location(0) vec4<f32> {
     let s = clamp(dot(dir, sn), 0.0, 1.0);
     let glow = pow(s, 512.0 / max(camera.sky_sun.w, 0.01));
     col = col + camera.sky_sun_color.rgb * glow;
+    // stars: the bound starfield tiled over the upper hemisphere (scale, fading towards the
+    // horizon by the star fade), each layer larger and drifting a little faster
+    let layers = i32(camera.sky_dusk_scale.w + 0.5);
+    if layers > 0 && dir.z > 0.0 {
+        let fade = pow(up, max(camera.sky_dusk_scale.z, 0.01));
+        var stars = vec3<f32>(0.0);
+        for (var i = 0; i < layers; i++) {
+            let k = camera.sky_dusk_scale.y * (1.0 + f32(i) * 0.5);
+            let drift = vec2<f32>(camera.sky_sun_color.w * (1.0 + f32(i) * 0.3), 0.0);
+            let uv = dir.xy / max(dir.z, 0.1) * k + drift;
+            stars = stars + textureSampleLevel(base, base_sampler, uv, 0.0).rgb;
+        }
+        col = col + stars * fade;
+    }
     let out = pow(max(col * camera.exposure, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
     return vec4<f32>(out, camera.alpha);
 }
