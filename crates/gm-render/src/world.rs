@@ -996,6 +996,9 @@ impl AnimSource {
 
 pub struct DynModel {
     parts: Vec<DynPart>,
+    /// Each part's material key and base texture (`write_part_texture` repaints one: the
+    /// toolgun's screen).
+    part_textures: Vec<(String, wgpu::Texture)>,
     /// Axis-aligned bounds of the rest-pose vertices (model space).
     bounds: (Vec3, Vec3),
     /// Drawn at full brightness (beams, markers), not shaded by the sun.
@@ -1003,6 +1006,65 @@ pub struct DynModel {
     skeleton: Option<Skeleton>,
     /// `Entity:GetBodyGroups`: each MDL body part's name and its submodels' names.
     bodygroups: Vec<(String, Vec<String>)>,
+}
+
+impl DynModel {
+    /// Repaints the base texture of every part whose material key contains `key` with
+    /// `rgba` (`w` x `h`, which must be the texture's size); every mip level is rewritten.
+    /// Returns whether a part matched.
+    pub fn write_part_texture(&self, gpu: &Gpu, key: &str, rgba: &[u8], w: u32, h: u32) -> bool {
+        let mut hit = false;
+        for (k, t) in &self.part_textures {
+            if !k.contains(key) || t.width() != w || t.height() != h {
+                continue;
+            }
+            hit = true;
+            let (mut data, mut lw, mut lh) = (rgba.to_vec(), w, h);
+            for level in 0..t.mip_level_count() {
+                gpu.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: t,
+                        mip_level: level,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(lw * 4),
+                        rows_per_image: Some(lh),
+                    },
+                    wgpu::Extent3d {
+                        width: lw,
+                        height: lh,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                if lw == 1 && lh == 1 {
+                    break;
+                }
+                let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
+                let mut next = vec![0u8; (nw * nh * 4) as usize];
+                for y in 0..nh {
+                    for x in 0..nw {
+                        for c in 0..4 {
+                            let mut sum = 0u32;
+                            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                                let sx = (x * 2 + dx).min(lw - 1);
+                                let sy = (y * 2 + dy).min(lh - 1);
+                                sum += data[((sy * lw + sx) * 4 + c) as usize] as u32;
+                            }
+                            next[((y * nw + x) * 4 + c) as usize] = (sum / 4) as u8;
+                        }
+                    }
+                }
+                data = next;
+                lw = nw;
+                lh = nh;
+            }
+        }
+        hit
+    }
 }
 
 /// Where `draw_models` renders: the colour and depth views, the aspect ratio of the colour
@@ -2600,6 +2662,12 @@ impl WorldRenderer {
         }
     }
 
+    /// Rasterizes `text` with a TTF at `px` into an 8-bit coverage bitmap: (width, height,
+    /// coverage, baseline y). For textures painted on the CPU (the toolgun's screen).
+    pub fn raster_text(ttf: &[u8], px: f32, text: &str) -> Option<(u32, u32, Vec<u8>, f32)> {
+        crate::ui::raster_text(ttf, px, text)
+    }
+
     /// The dynamic lights of the next frame (the first `MAX_DLIGHTS` are lit).
     pub fn set_dlights(&mut self, lights: &[DLight]) {
         self.dlights.clear();
@@ -2969,6 +3037,7 @@ impl WorldRenderer {
             })
             .collect();
         let mut parts = Vec::new();
+        let mut part_textures: Vec<(String, wgpu::Texture)> = Vec::new();
         for (bi, bp) in vtx.body_parts.iter().enumerate() {
             let Some(mdl_bp) = mdl.body_parts.get(bi) else {
                 continue;
@@ -3078,6 +3147,7 @@ impl WorldRenderer {
                         },
                     ],
                 });
+                part_textures.push((key.to_string(), t));
                 parts.push((bg, verts, idx, mat.half_lambert));
             }
         }
@@ -3105,6 +3175,7 @@ impl WorldRenderer {
             })
             .collect();
         (!parts.is_empty()).then_some(DynModel {
+            part_textures,
             bounds,
             parts,
             unlit: false,
@@ -3545,6 +3616,7 @@ impl WorldRenderer {
             }
         }
         DynModel {
+            part_textures: Vec::new(),
             bounds: (Vec3::splat(-0.5), Vec3::splat(0.5)),
             parts: vec![(bg, verts, idx, false)],
             unlit,

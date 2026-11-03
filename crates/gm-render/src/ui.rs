@@ -273,7 +273,43 @@ fn texture_bind_group(
 /// A TrueType family of the mounted content: `resource/fonts/<Family>.ttf` (Roboto and its
 /// weights, `Roboto-Bold`), `resource/<FAMILY>.ttf` (the HL2 icon fonts), looked up by the
 /// family name with spaces, hyphens and case ignored; `Roboto` is `Roboto-Regular`.
-fn font_file(mount: &Mount, family: &str) -> Option<Vec<u8>> {
+/// Rasterizes `text` at `px` into an 8-bit coverage bitmap (width, height, coverage,
+/// baseline y from the top), glyphs advanced like the atlas does.
+pub fn raster_text(ttf: &[u8], px: f32, text: &str) -> Option<(u32, u32, Vec<u8>, f32)> {
+    let font = FontArc::try_from_vec(ttf.to_vec()).ok()?;
+    let scaled = font.as_scaled(px);
+    let ascent = scaled.ascent();
+    let height = (scaled.height()).ceil().max(1.0);
+    let width: f32 = text
+        .chars()
+        .map(|c| scaled.h_advance(font.glyph_id(c)))
+        .sum::<f32>()
+        .ceil()
+        .max(1.0);
+    let (w, h) = (width as u32 + 2, height as u32 + 2);
+    let mut cov = vec![0u8; (w * h) as usize];
+    let mut pen = 0.0f32;
+    for c in text.chars() {
+        let id = font.glyph_id(c);
+        let glyph = id.with_scale_and_position(px, point(pen, ascent));
+        pen += scaled.h_advance(id);
+        let Some(outline) = font.outline_glyph(glyph) else {
+            continue;
+        };
+        let b = outline.px_bounds();
+        outline.draw(|x, y, v| {
+            let (px_, py_) = (b.min.x as i32 + x as i32, b.min.y as i32 + y as i32);
+            if px_ >= 0 && py_ >= 0 && (px_ as u32) < w && (py_ as u32) < h {
+                let i = (py_ as u32 * w + px_ as u32) as usize;
+                cov[i] = cov[i].max((v * 255.0) as u8);
+            }
+        });
+    }
+    Some((w, h, cov, ascent))
+}
+
+/// The TTF of a font family: the content's `resource/fonts`, then the system's.
+pub fn font_file(mount: &Mount, family: &str) -> Option<Vec<u8>> {
     let norm = |s: &str| {
         s.chars()
             .filter(|c| !matches!(c, ' ' | '-' | '_'))

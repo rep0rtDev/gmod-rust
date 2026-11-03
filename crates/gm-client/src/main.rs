@@ -805,6 +805,11 @@ struct App {
     fx_bursts: Vec<(Vec3, f32, Instant)>,
     /// Own muzzle flash shows until then.
     fx_muzzle_until: Option<Instant>,
+    /// Toolgun screen: the `screen_bg` pixels (256 x 256), the font and the rasterized name
+    /// of the current tool (mode, width, height, coverage, baseline).
+    tool_screen_bg: Option<gm_render::material::Rgba>,
+    tool_screen_font: Option<Vec<u8>>,
+    tool_screen_text: Option<(String, u32, u32, Vec<u8>, f32)>,
     /// The server was told our starting weapon once we were in the world.
     weapon_synced: bool,
     /// When each airborne player left the ground (their jump sequence runs from there).
@@ -1361,6 +1366,10 @@ impl App {
             m.extend(derma::load_properties(
                 &self.mount,
                 "resource/localization/en/spawnmenu.properties",
+            ));
+            m.extend(derma::load_properties(
+                &self.mount,
+                "resource/localization/en/tool.properties",
             ));
             m
         });
@@ -3010,6 +3019,94 @@ impl App {
         self.settings.binds.get(name).cloned()
     }
 
+    /// The toolgun's screen as the game's `cl_viewscreen.lua` paints its render target: the
+    /// `screen_bg` texture with `#tool.<mode>.name` in a 60 px heavy font (Helvetica there;
+    /// the first of Helvetica / Arial / Roboto-Bold here) scrolling left at 250 px/s, wrapping
+    /// every width + 64 px, a 3 px black shadow under white, centred on y = 104.
+    fn paint_tool_screen(&mut self, g: &Gfx) {
+        if self.weapon != 1 {
+            return;
+        }
+        let Some(Some(model)) = g.models.get(WEAPONS[1].path) else {
+            return;
+        };
+        if self.tool_screen_bg.is_none() {
+            self.tool_screen_bg = gm_render::material::load_texture(
+                &self.mount,
+                "models/weapons/v_toolgun/screen_bg",
+                256,
+            )
+            .ok()
+            .filter(|t| t.pixels.len() == (t.width * t.height * 4) as usize);
+        }
+        let Some(bg) = &self.tool_screen_bg else {
+            return;
+        };
+        if self.tool_screen_font.is_none() {
+            self.tool_screen_font = ["Helvetica", "Arial", "Roboto-Bold", "Verdana"]
+                .iter()
+                .find_map(|f| gm_render::ui::font_file(&self.mount, f));
+        }
+        let Some(font) = &self.tool_screen_font else {
+            return;
+        };
+        if self
+            .tool_screen_text
+            .as_ref()
+            .is_none_or(|t| t.0 != self.tool)
+        {
+            let key = format!("tool.{}.name", self.tool);
+            let name = self
+                .content_lang
+                .as_ref()
+                .and_then(|l| l.get(&key).cloned())
+                .unwrap_or_else(|| self.tool.clone());
+            let px = 60.0 * bg.height as f32 / 256.0;
+            self.tool_screen_text = gm_render::world::WorldRenderer::raster_text(font, px, &name)
+                .map(|(w, h, cov, base)| (self.tool.clone(), w, h, cov, base));
+        }
+        let Some((_, tw, th, cov, _)) = &self.tool_screen_text else {
+            return;
+        };
+        let (w, h) = (bg.width, bg.height);
+        let scale = w as f32 / 256.0;
+        let mut px = bg.pixels.clone();
+        let period = *tw as f32 + 64.0 * scale;
+        let mut x = -(self.fps_at.elapsed().as_secs_f32() * 250.0 * scale) % period;
+        let y = (104.0 * scale - *th as f32 / 2.0).round() as i32;
+        let blit = |px: &mut Vec<u8>, ox: i32, oy: i32, rgb: [u8; 3]| {
+            for ty in 0..*th {
+                let dy = oy + ty as i32;
+                if dy < 0 || dy >= h as i32 {
+                    continue;
+                }
+                for tx in 0..*tw {
+                    let dx = ox + tx as i32;
+                    if dx < 0 || dx >= w as i32 {
+                        continue;
+                    }
+                    let a = cov[(ty * *tw + tx) as usize] as u32;
+                    if a == 0 {
+                        continue;
+                    }
+                    let i = ((dy as u32 * w + dx as u32) * 4) as usize;
+                    for c in 0..3 {
+                        let d = px[i + c] as u32;
+                        px[i + c] = ((rgb[c] as u32 * a + d * (255 - a)) / 255) as u8;
+                    }
+                }
+            }
+        };
+        while x < w as f32 {
+            let ox = x.round() as i32;
+            let sh = (3.0 * scale).round() as i32;
+            blit(&mut px, ox + sh, y + sh, [0, 0, 0]);
+            blit(&mut px, ox, y, [255, 255, 255]);
+            x += period;
+        }
+        model.write_part_texture(&g.gpu, "v_toolgun/screen", &px, w, h);
+    }
+
     fn cmd(&self) -> NetCmd {
         let k = |a: &str| self.down(a);
         let mut b = 0;
@@ -4007,6 +4104,7 @@ impl App {
                 cone: 26.85f32.to_radians().cos(),
             });
         }
+        self.paint_tool_screen(g);
         g.world.set_dlights(&dlights);
         let target = ModelTarget {
             color: &attach,
@@ -5873,6 +5971,9 @@ fn main() -> Result<()> {
         fx_decals: Default::default(),
         fx_bursts: Vec::new(),
         fx_muzzle_until: None,
+        tool_screen_bg: None,
+        tool_screen_font: None,
+        tool_screen_text: None,
         weapon_synced: false,
         air_since: Default::default(),
         anim_time: Default::default(),
