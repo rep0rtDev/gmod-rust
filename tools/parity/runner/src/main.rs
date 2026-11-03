@@ -355,16 +355,16 @@ fn apply_click_settings(
         "thruster" => {
             ts.thruster_force = num("force");
             ts.thruster_model = text("model");
-            ts.thruster_key = num("keygroup") as i32;
-            ts.thruster_key_back = num("keygroup_back") as i32;
+            ts.thruster_keygroup = num("keygroup") as i32;
+            ts.thruster_keygroup_back = num("keygroup_back") as i32;
             ts.thruster_toggle = flag("toggle");
             ts.thruster_collision = flag("collision");
             ts.thruster_soundname = text("soundname");
         }
         "hoverball" => {
-            ts.hoverball_key_up = num("keyup") as i32;
-            ts.hoverball_key_down = num("keydn") as i32;
-            ts.hoverball_key_on = num("keyon") as i32;
+            ts.hoverball_keyup = num("keyup") as i32;
+            ts.hoverball_keydn = num("keydn") as i32;
+            ts.hoverball_keyon = num("keyon") as i32;
             ts.hoverball_speed = num("speed");
             ts.hoverball_resistance = num("resistance");
             ts.hoverball_strength = num("strength");
@@ -446,15 +446,15 @@ fn apply_click_settings(
             ts.hydraulic_speed = num("speed");
             ts.hydraulic_toggle = flag("toggle");
             ts.hydraulic_material = text("material");
-            ts.hydraulic_key = num("group") as i32;
+            ts.hydraulic_group = num("group") as i32;
         }
         "winch" => {
-            ts.winch_width = num("rope_width");
+            ts.winch_rope_width = num("rope_width");
             ts.winch_fwd_speed = num("fwd_speed");
             ts.winch_bwd_speed = num("bwd_speed");
-            ts.winch_fwd_key = num("fwd_group") as i32;
-            ts.winch_bwd_key = num("bwd_group") as i32;
-            ts.winch_material = text("rope_material");
+            ts.winch_fwd_group = num("fwd_group") as i32;
+            ts.winch_bwd_group = num("bwd_group") as i32;
+            ts.winch_rope_material = text("rope_material");
             ts.winch_toggle = flag("toggle");
         }
         "muscle" => {
@@ -464,7 +464,7 @@ fn apply_click_settings(
             ts.muscle_period = num("period");
             ts.muscle_starton = flag("starton");
             ts.muscle_material = text("material");
-            ts.muscle_key = num("group") as i32;
+            ts.muscle_group = num("group") as i32;
         }
         "pulley" => {
             ts.pulley_width = num("width");
@@ -503,7 +503,7 @@ fn apply_click_settings(
             ts.elastic_rdamping = num("rdamping");
             ts.elastic_width = num("width");
             ts.elastic_material = text("material");
-            ts.elastic_stretchonly = flag("stretch_only");
+            ts.elastic_stretch_only = flag("stretch_only");
         }
     }
 }

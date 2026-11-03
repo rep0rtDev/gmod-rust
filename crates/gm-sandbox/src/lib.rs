@@ -550,7 +550,7 @@ pub struct ToolGun {
 pub struct ToolSettings {
     pub axis_forcelimit: f32,
     pub axis_torquelimit: f32,
-    pub axis_friction: f32,
+    pub axis_hingefriction: f32,
     pub axis_nocollide: bool,
     pub weld_forcelimit: f32,
     pub weld_nocollide: bool,
@@ -568,20 +568,20 @@ pub struct ToolSettings {
     pub elastic_rdamping: f32,
     pub elastic_width: f32,
     pub elastic_material: String,
-    pub elastic_stretchonly: bool,
+    pub elastic_stretch_only: bool,
     pub hydraulic_width: f32,
     pub hydraulic_addlength: f32,
     pub hydraulic_fixed: bool,
     pub hydraulic_speed: f32,
     pub hydraulic_toggle: bool,
     pub hydraulic_material: String,
-    pub hydraulic_key: i32,
-    pub winch_width: f32,
+    pub hydraulic_group: i32,
+    pub winch_rope_width: f32,
     pub winch_fwd_speed: f32,
     pub winch_bwd_speed: f32,
-    pub winch_fwd_key: i32,
-    pub winch_bwd_key: i32,
-    pub winch_material: String,
+    pub winch_fwd_group: i32,
+    pub winch_bwd_group: i32,
+    pub winch_rope_material: String,
     pub winch_toggle: bool,
     pub muscle_width: f32,
     pub muscle_addlength: f32,
@@ -589,22 +589,22 @@ pub struct ToolSettings {
     pub muscle_period: f32,
     pub muscle_starton: bool,
     pub muscle_material: String,
-    pub muscle_key: i32,
+    pub muscle_group: i32,
     pub pulley_width: f32,
     pub pulley_forcelimit: f32,
     pub pulley_rigid: bool,
     pub pulley_material: String,
     pub thruster_force: f32,
     pub thruster_model: String,
-    pub thruster_key: i32,
-    pub thruster_key_back: i32,
+    pub thruster_keygroup: i32,
+    pub thruster_keygroup_back: i32,
     pub thruster_toggle: bool,
     pub thruster_collision: bool,
     /// Soundscript of the loop while thrusting; one of [`THRUSTER_SOUNDS`] or nothing.
     pub thruster_soundname: String,
-    pub hoverball_key_up: i32,
-    pub hoverball_key_down: i32,
-    pub hoverball_key_on: i32,
+    pub hoverball_keyup: i32,
+    pub hoverball_keydn: i32,
+    pub hoverball_keyon: i32,
     pub hoverball_speed: f32,
     pub hoverball_resistance: f32,
     pub hoverball_strength: f32,
@@ -722,10 +722,10 @@ impl ToolSettings {
             };
         }
         fields!(
-            axis_forcelimit, axis_torquelimit, axis_friction, weld_forcelimit, rope_forcelimit,
+            axis_forcelimit, axis_torquelimit, axis_hingefriction, weld_forcelimit, rope_forcelimit,
             rope_addlength, rope_width, ballsocket_forcelimit, slider_width, elastic_constant,
             elastic_damping, elastic_rdamping, elastic_width, hydraulic_width, hydraulic_addlength,
-            hydraulic_speed, winch_width, winch_fwd_speed, winch_bwd_speed, muscle_width,
+            hydraulic_speed, winch_rope_width, winch_fwd_speed, winch_bwd_speed, muscle_width,
             muscle_addlength, muscle_period, pulley_width, pulley_forcelimit, thruster_force,
             hoverball_speed, hoverball_resistance, hoverball_strength, balloon_ropelength,
             balloon_force, wheel_torque, wheel_friction, wheel_forcelimit, wheel_rx, wheel_ry,
@@ -735,19 +735,19 @@ impl ToolSettings {
             light_ropelength, colour_r, colour_g, colour_b, colour_a, colour_mode, colour_fx,
             trails_r, trails_g, trails_b, trails_a, trails_length, trails_startsize, trails_endsize,
             emitter_delay, emitter_scale;
-            axis_nocollide, weld_nocollide, rope_rigid, ballsocket_nocollide, elastic_stretchonly,
+            axis_nocollide, weld_nocollide, rope_rigid, ballsocket_nocollide, elastic_stretch_only,
             hydraulic_fixed, hydraulic_toggle, winch_toggle, muscle_fixed, muscle_starton,
             pulley_rigid, thruster_toggle, thruster_collision, wheel_nocollide, wheel_toggle,
             motor_nocollide, motor_toggle,
             button_toggle, dynamite_remove, lamp_toggle, light_toggle, physprop_gravity_toggle,
             emitter_toggle, emitter_starton, camera_toggle, camera_locked;
-            rope_material, slider_material, elastic_material, hydraulic_material, winch_material,
+            rope_material, slider_material, elastic_material, hydraulic_material, winch_rope_material,
             muscle_material, pulley_material, thruster_model, thruster_soundname, hoverball_model,
             balloon_model,
             wheel_model, button_model, dynamite_model, lamp_texture, lamp_model, light_ropematerial,
             material_override, physprop_material, trails_material, emitter_effect;
-            hydraulic_key, winch_fwd_key, winch_bwd_key, muscle_key, thruster_key,
-            thruster_key_back, hoverball_key_up, hoverball_key_down, hoverball_key_on, wheel_fwd,
+            hydraulic_group, winch_fwd_group, winch_bwd_group, muscle_group, thruster_keygroup,
+            thruster_keygroup_back, hoverball_keyup, hoverball_keydn, hoverball_keyon, wheel_fwd,
             wheel_bck, motor_fwd, motor_bwd, button_keygroup, dynamite_group, lamp_key, light_key,
             emitter_key, camera_key
         )
@@ -760,7 +760,7 @@ impl Default for ToolSettings {
         ToolSettings {
             axis_forcelimit: 0.0,
             axis_torquelimit: 0.0,
-            axis_friction: 0.0,
+            axis_hingefriction: 0.0,
             axis_nocollide: false,
             weld_forcelimit: 0.0,
             weld_nocollide: false,
@@ -778,20 +778,20 @@ impl Default for ToolSettings {
             elastic_rdamping: 0.01,
             elastic_width: 2.0,
             elastic_material: "cable/cable".into(),
-            elastic_stretchonly: true,
+            elastic_stretch_only: true,
             hydraulic_width: 3.0,
             hydraulic_addlength: 100.0,
             hydraulic_fixed: true,
             hydraulic_speed: 64.0,
             hydraulic_toggle: true,
             hydraulic_material: "cable/rope".into(),
-            hydraulic_key: 37,
-            winch_width: 3.0,
+            hydraulic_group: 37,
+            winch_rope_width: 3.0,
             winch_fwd_speed: 64.0,
             winch_bwd_speed: 64.0,
-            winch_fwd_key: 44,
-            winch_bwd_key: 41,
-            winch_material: "cable/rope".into(),
+            winch_fwd_group: 44,
+            winch_bwd_group: 41,
+            winch_rope_material: "cable/rope".into(),
             winch_toggle: false,
             muscle_width: 2.0,
             muscle_addlength: 100.0,
@@ -799,21 +799,21 @@ impl Default for ToolSettings {
             muscle_period: 1.0,
             muscle_starton: false,
             muscle_material: "cable/rope".into(),
-            muscle_key: 37,
+            muscle_group: 37,
             pulley_width: 3.0,
             pulley_forcelimit: 0.0,
             pulley_rigid: false,
             pulley_material: "cable/cable".into(),
             thruster_force: 1500.0,
             thruster_model: "models/props_phx2/garbage_metalcan001a.mdl".into(),
-            thruster_key: 45,
-            thruster_key_back: 42,
+            thruster_keygroup: 45,
+            thruster_keygroup_back: 42,
             thruster_toggle: false,
             thruster_soundname: "PhysicsCannister.ThrusterLoop".into(),
             thruster_collision: false,
-            hoverball_key_up: 46,
-            hoverball_key_down: 43,
-            hoverball_key_on: 40,
+            hoverball_keyup: 46,
+            hoverball_keydn: 43,
+            hoverball_keyon: 40,
             hoverball_speed: 5.0,
             hoverball_resistance: 5.0,
             hoverball_strength: 10.0,
@@ -3046,7 +3046,7 @@ impl Sandbox {
                         width: s.elastic_width,
                         material: s.elastic_material.clone(),
                         length: wpos1.distance(wpos2),
-                        stretchonly: s.elastic_stretchonly,
+                        stretchonly: s.elastic_stretch_only,
                     },
                     "Elastic",
                     "elastic",
@@ -3263,8 +3263,8 @@ impl Sandbox {
         let mut binds: Vec<(i32, NumpadBind)> = Vec::new();
         let device = match tool {
             "thruster" => {
-                binds.push((s.thruster_key, NumpadBind::Thruster(id, 1.0)));
-                binds.push((s.thruster_key_back, NumpadBind::Thruster(id, -1.0)));
+                binds.push((s.thruster_keygroup, NumpadBind::Thruster(id, 1.0)));
+                binds.push((s.thruster_keygroup_back, NumpadBind::Thruster(id, -1.0)));
                 Device::Thruster {
                     force: s.thruster_force.clamp(0.0, 1e10),
                     mul: 0.0,
@@ -3277,8 +3277,8 @@ impl Sandbox {
                     on: false,
                     top_z: shape.max.z,
                     bottom_z: shape.min.z,
-                    key: s.thruster_key,
-                    key_back: s.thruster_key_back,
+                    key: s.thruster_keygroup,
+                    key_back: s.thruster_keygroup_back,
                     rear: false,
                 }
             }
@@ -3352,9 +3352,9 @@ impl Sandbox {
                 }
             }
             "hoverball" => {
-                binds.push((s.hoverball_key_up, NumpadBind::HoverballMove(id, 1.0)));
-                binds.push((s.hoverball_key_down, NumpadBind::HoverballMove(id, -1.0)));
-                binds.push((s.hoverball_key_on, NumpadBind::HoverballToggle(id)));
+                binds.push((s.hoverball_keyup, NumpadBind::HoverballMove(id, 1.0)));
+                binds.push((s.hoverball_keydn, NumpadBind::HoverballMove(id, -1.0)));
+                binds.push((s.hoverball_keyon, NumpadBind::HoverballToggle(id)));
                 Device::Hoverball {
                     // the target is the hit point: `SetTargetZ(GetPos().z)` before the offset
                     target_z: hit.pos.z,
@@ -3363,9 +3363,9 @@ impl Sandbox {
                     resistance: s.hoverball_resistance.clamp(0.0, 20.0),
                     strength: s.hoverball_strength.clamp(0.1, 20.0),
                     enabled: true,
-                    key_up: s.hoverball_key_up,
-                    key_down: s.hoverball_key_down,
-                    key_toggle: s.hoverball_key_on,
+                    key_up: s.hoverball_keyup,
+                    key_down: s.hoverball_keydn,
+                    key_toggle: s.hoverball_keyon,
                 }
             }
             "wheel" => {
@@ -3520,9 +3520,9 @@ impl Sandbox {
                     let (constant, damping) = elastic_consts(m1, m2, s.hydraulic_fixed);
                     let length2 = length + s.hydraulic_addlength;
                     if s.hydraulic_toggle {
-                        binds.push((s.hydraulic_key, NumpadBind::HydraulicToggle(id)));
+                        binds.push((s.hydraulic_group, NumpadBind::HydraulicToggle(id)));
                     } else {
-                        binds.push((s.hydraulic_key, NumpadBind::HydraulicDir(id)));
+                        binds.push((s.hydraulic_group, NumpadBind::HydraulicDir(id)));
                     }
                     (
                         ConstraintKind::Hydraulic {
@@ -3532,7 +3532,7 @@ impl Sandbox {
                             length2,
                             width: s.hydraulic_width,
                             material: s.hydraulic_material.clone(),
-                            key: s.hydraulic_key,
+                            key: s.hydraulic_group,
                             fixed: s.hydraulic_fixed,
                             speed: s.hydraulic_speed,
                             toggle: s.hydraulic_toggle,
@@ -3556,20 +3556,20 @@ impl Sandbox {
                 "winch" => {
                     let (constant, damping) = elastic_consts(m1, m2, false);
                     if s.winch_toggle {
-                        binds.push((s.winch_fwd_key, NumpadBind::WinchToggle(id, 1)));
-                        binds.push((s.winch_bwd_key, NumpadBind::WinchToggle(id, -1)));
+                        binds.push((s.winch_fwd_group, NumpadBind::WinchToggle(id, 1)));
+                        binds.push((s.winch_bwd_group, NumpadBind::WinchToggle(id, -1)));
                     } else {
-                        binds.push((s.winch_fwd_key, NumpadBind::WinchDir(id, 1)));
-                        binds.push((s.winch_bwd_key, NumpadBind::WinchDir(id, -1)));
+                        binds.push((s.winch_fwd_group, NumpadBind::WinchDir(id, 1)));
+                        binds.push((s.winch_bwd_group, NumpadBind::WinchDir(id, -1)));
                     }
                     (
                         ConstraintKind::Winch {
                             lpos1: o1.pos,
                             lpos2: o2.pos,
-                            width: s.winch_width,
-                            material: s.winch_material.clone(),
-                            fwd_key: s.winch_fwd_key,
-                            bwd_key: s.winch_bwd_key,
+                            width: s.winch_rope_width,
+                            material: s.winch_rope_material.clone(),
+                            fwd_key: s.winch_fwd_group,
+                            bwd_key: s.winch_bwd_group,
                             fwd_speed: s.winch_fwd_speed,
                             bwd_speed: s.winch_bwd_speed,
                             toggle: s.winch_toggle,
@@ -3586,7 +3586,7 @@ impl Sandbox {
                         },
                         "Winch",
                         "winch",
-                        s.winch_width,
+                        s.winch_rope_width,
                         false,
                     )
                 }
@@ -3595,7 +3595,7 @@ impl Sandbox {
                     // the stool hands the whole added length to the controller as amplitude
                     let amplitude = s.muscle_addlength;
                     let length2 = length + s.muscle_addlength;
-                    binds.push((s.muscle_key, NumpadBind::MuscleToggle(id)));
+                    binds.push((s.muscle_group, NumpadBind::MuscleToggle(id)));
                     (
                         ConstraintKind::Muscle {
                             lpos1: o1.pos,
@@ -3604,7 +3604,7 @@ impl Sandbox {
                             length2,
                             width: s.muscle_width,
                             material: s.muscle_material.clone(),
-                            key: s.muscle_key,
+                            key: s.muscle_group,
                             fixed: s.muscle_fixed,
                             period: s.muscle_period,
                             amplitude,
@@ -3787,7 +3787,7 @@ impl Sandbox {
                         local_axis: lpos1,
                         forcelimit: s.axis_forcelimit,
                         torquelimit: s.axis_torquelimit,
-                        friction: s.axis_friction,
+                        friction: s.axis_hingefriction,
                         nocollide: s.axis_nocollide,
                     },
                 });
