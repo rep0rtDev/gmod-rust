@@ -1164,7 +1164,7 @@ mod tests {
             Vec3::Z * -10.0,
             mins,
             maxs,
-            &[slab.clone()],
+            std::slice::from_ref(&slab),
             0.5,
         );
         assert_eq!(ent, Some(7));
