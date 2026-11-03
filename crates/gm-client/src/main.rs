@@ -4310,12 +4310,12 @@ impl App {
                     .map(|e| {
                         // the `eyes` attachment on its bone's ragdoll part; the root body
                         // when the model has none
-                        let at_eyes = self.gfx.as_ref().and_then(|g| {
+                        let at_eyes = (|| {
                             let m = g.models.get(&e.model)?.as_ref()?;
                             let world =
                                 ragdoll_bone_matrices(m, &e.bones, e.pos, e.angles, &e.manips)?;
                             Some(m.attachment("eyes", &world)?.w_axis.truncate())
-                        });
+                        })();
                         at_eyes.unwrap_or_else(|| e.bones.first().map_or(e.pos, |b| b.pos))
                     })
                     .unwrap_or(origin + Vec3::Z * 64.0);
