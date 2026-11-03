@@ -1563,12 +1563,20 @@ impl WorldRenderer {
             if let Some(disp) = disp_by_face.get(&(fi as u16)) {
                 let mesh = build_disp_mesh(bsp, disp, &dverts)?;
                 let base = vertices.len() as u32;
+                let side = disp.side_verts() as f32 - 1.0;
+                let (lw, lh) = face.lightmap_dims();
                 for (i, p) in mesh.positions.iter().enumerate() {
+                    let gx = (i % disp.side_verts()) as f32 / side;
+                    let gy = (i / disp.side_verts()) as f32 / side;
                     vertices.push(Vertex {
                         position: *p,
                         uv: face_uv(bsp, face, *p, tw, th),
                         lm_uv: if lit {
-                            face_lm_uv(bsp, face, mesh.flat[i], &placement, atlas_size as f32)
+                            atlas.luxel_center(
+                                &placement,
+                                gx * (lw as f32 - 1.0),
+                                gy * (lh as f32 - 1.0),
+                            )
                         } else {
                             white_uv
                         },
