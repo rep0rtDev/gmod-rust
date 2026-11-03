@@ -58,7 +58,11 @@ fn main() -> Result<()> {
         &mount,
         &bsp,
         wgpu::TextureFormat::Rgba8UnormSrgb,
-        gm_render::world::Quality::default(),
+        // GM_HDR: the HDR lighting lumps and .hdr.vtf cubemaps (mat_hdr_level 2)
+        gm_render::world::Quality {
+            hdr: std::env::var_os("GM_HDR").is_some(),
+            ..Default::default()
+        },
     )?;
     eprintln!(
         "world: {} faces ({} in 3D skybox), {} displacements, {} props ({} models), {} triangles, {} materials, {} missing, {} lightmap overflow, built in {:.1}s",

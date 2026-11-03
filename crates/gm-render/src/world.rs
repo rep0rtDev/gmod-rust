@@ -132,7 +132,19 @@ const CUBE_SIDE: u32 = 32;
 /// The map's `LUMP_CUBEMAPS` samples from their pakfile VTFs (`c<x>_<y>_<z>.vtf`, the LDR
 /// faces in D3D order +x -x +y -y +z -z, sampled with the world vector) as one cube array
 /// at the 32-texel mip.
-fn load_cubemaps(gpu: &Gpu, mount: &Mount, bsp: &Bsp<'_>) -> (CubeSet, wgpu::TextureView) {
+fn load_cubemaps(
+    gpu: &Gpu,
+    mount: &Mount,
+    bsp: &Bsp<'_>,
+    hdr: bool,
+) -> (CubeSet, wgpu::TextureView) {
+    // HDR: the `.hdr.vtf` twins are RGBA16161616F - raw little-endian halves of linear
+    // light, uploaded as is (the HDR lightmap atlas holds linear light the same way)
+    let (format, bpp) = if hdr {
+        (wgpu::TextureFormat::Rgba16Float, 8u32)
+    } else {
+        (wgpu::TextureFormat::Rgba8UnormSrgb, 4u32)
+    };
     let files: HashMap<String, String> = mount
         .find("materials/maps/**/*.vtf")
         .into_iter()
@@ -141,7 +153,8 @@ fn load_cubemaps(gpu: &Gpu, mount: &Mount, bsp: &Bsp<'_>) -> (CubeSet, wgpu::Tex
     let mut samples = Vec::new();
     let mut pixels = Vec::new();
     for c in gm_formats::bsp::extra::cubemaps(bsp).unwrap_or_default() {
-        let name = format!("c{}_{}_{}.vtf", c.origin[0], c.origin[1], c.origin[2]);
+        let ext = if hdr { "hdr.vtf" } else { "vtf" };
+        let name = format!("c{}_{}_{}.{ext}", c.origin[0], c.origin[1], c.origin[2]);
         let Some(bytes) = files.get(&name).and_then(|p| mount.read(p).ok()) else {
             continue;
         };
@@ -156,7 +169,13 @@ fn load_cubemaps(gpu: &Gpu, mount: &Mount, bsp: &Bsp<'_>) -> (CubeSet, wgpu::Tex
         let faces: Option<Vec<Vec<u8>>> = (0..6)
             .map(|f| {
                 let slice = vtf::decode::mip_slice(&h, &bytes, mip, 0, f, 0).ok()?;
-                vtf::decode::decode_rgba8(h.high_res_format, CUBE_SIDE, CUBE_SIDE, slice).ok()
+                if hdr {
+                    (h.high_res_format == vtf::ImageFormat::Rgba16161616F
+                        && slice.len() == (CUBE_SIDE * CUBE_SIDE * 8) as usize)
+                        .then(|| slice.to_vec())
+                } else {
+                    vtf::decode::decode_rgba8(h.high_res_format, CUBE_SIDE, CUBE_SIDE, slice).ok()
+                }
             })
             .collect();
         let Some(faces) = faces else { continue };
@@ -169,7 +188,7 @@ fn load_cubemaps(gpu: &Gpu, mount: &Mount, bsp: &Bsp<'_>) -> (CubeSet, wgpu::Tex
     }
     let cubes = samples.len().max(1) as u32;
     if samples.is_empty() {
-        pixels = vec![0; (CUBE_SIDE * CUBE_SIDE * 4 * 6) as usize];
+        pixels = vec![0; (CUBE_SIDE * CUBE_SIDE * bpp * 6) as usize];
     }
     let size = wgpu::Extent3d {
         width: CUBE_SIDE,
@@ -182,7 +201,7 @@ fn load_cubemaps(gpu: &Gpu, mount: &Mount, bsp: &Bsp<'_>) -> (CubeSet, wgpu::Tex
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -196,7 +215,7 @@ fn load_cubemaps(gpu: &Gpu, mount: &Mount, bsp: &Bsp<'_>) -> (CubeSet, wgpu::Tex
         &pixels,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(CUBE_SIDE * 4),
+            bytes_per_row: Some(CUBE_SIDE * bpp),
             rows_per_image: Some(CUBE_SIDE),
         },
         size,
@@ -205,7 +224,11 @@ fn load_cubemaps(gpu: &Gpu, mount: &Mount, bsp: &Bsp<'_>) -> (CubeSet, wgpu::Tex
         dimension: Some(wgpu::TextureViewDimension::CubeArray),
         ..Default::default()
     });
-    eprintln!("env_cubemap: {} samples in the cube array", samples.len());
+    eprintln!(
+        "env_cubemap: {} samples in the cube array ({})",
+        samples.len(),
+        if hdr { "hdr" } else { "ldr" }
+    );
     (CubeSet { samples }, view)
 }
 
@@ -1436,7 +1459,7 @@ impl WorldRenderer {
                 .map(|(_, rgba)| (canon, rgba.width, rgba.height))
         };
 
-        let (cubes, cube_view) = load_cubemaps(gpu, mount, bsp);
+        let (cubes, cube_view) = load_cubemaps(gpu, mount, bsp, hdr);
         let reflect_sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("water reflection"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,

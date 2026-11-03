@@ -121,7 +121,12 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   min + (max − min)·(1 − n·v)^exp from `$envmapfresnelminmaxexp` (default [0 1 2]);
   `$selfillumtint` tints the self-illuminated base. None of construct's world materials
   sets either, so both are implemented from the shader's definition and unexercised by
-  content. Open: HDR cubemaps (`.hdr.vtf`), `$envmapmaskscale` / `$envmapmasktransform`.
+  content. With `mat_hdr_level` 2 (`Quality::hdr`) the `.hdr.vtf` twins are used instead:
+  VTF 7.4, RGBA16161616F (raw little-endian halves of linear light, 8 bytes/texel, 76 536
+  bytes per 32-texel cubemap on construct), uploaded as `Rgba16Float` with no conversion,
+  so they go through the same exposure as the HDR lightmap atlas. Spawn view HDR vs LDR
+  (`GM_HDR=1` on the headless example): 22.8k px differ, max 85, the window reflections
+  softer and warmer. Open: `$envmapmaskscale` / `$envmapmasktransform`.
   Done since: the eye's water volume (`LUMP_LEAFWATERDATA` 36: surface z, min z, surface
   texinfo; its `CONTENTS_WATER` leaves' boxes) switches the view fog of the world, model and
   3D-skybox passes (the latter in skybox units) to the surface material's `$bottommaterial`
