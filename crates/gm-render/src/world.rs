@@ -23,6 +23,8 @@ pub struct Vertex {
     pub lm_uv: [f32; 2],
     /// Multiplier on top of the lightmap: 1 for world faces, baked vertex light for props.
     pub color: [f32; 3],
+    /// `WorldVertexTransition` blend towards `$basetexture2` (displacement vertex alpha / 255).
+    pub alpha: f32,
 }
 
 #[repr(C)]
@@ -33,7 +35,8 @@ struct MaterialParams {
     unlit: u32,
     /// `$translucent`: the base alpha is the output alpha.
     translucent: u32,
-    pad: u32,
+    /// `WorldVertexTransition`: `$basetexture2` is bound and blended by the vertex alpha.
+    blend: u32,
     /// `$detail`: scale, blend factor (0 = none), blend mode, 0.
     detail: [f32; 4],
 }
@@ -292,7 +295,7 @@ fn build_sky_cube(
             alpha_test: 0,
             unlit: 0,
             translucent: 0,
-            pad: 0,
+            blend: 0,
             detail: [0.0; 4],
         }),
         usage: wgpu::BufferUsages::UNIFORM,
@@ -336,6 +339,10 @@ fn build_sky_cube(
                     resource: wgpu::BindingResource::TextureView(detail),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(detail),
+                },
+                wgpu::BindGroupEntry {
                     binding: 2,
                     resource: params.as_entire_binding(),
                 },
@@ -349,6 +356,7 @@ fn build_sky_cube(
                 uv: [(s + 1.0) / 2.0, (1.0 - t) / 2.0],
                 lm_uv: white_uv,
                 color: [1.0; 3],
+                alpha: 0.0,
             });
         }
         idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -1186,6 +1194,7 @@ impl WorldRenderer {
                             white_uv
                         },
                         color: [1.0; 3],
+                        alpha: mesh.alphas.get(i).copied().unwrap_or(0.0) / 255.0,
                     });
                 }
                 indices.extend(mesh.indices.iter().map(|i| base + i));
@@ -1209,6 +1218,7 @@ impl WorldRenderer {
                         white_uv
                     },
                     color: [1.0; 3],
+                    alpha: 0.0,
                 });
             }
             for i in 1..poly.len() as u32 - 1 {
@@ -1328,6 +1338,16 @@ impl WorldRenderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1397,17 +1417,39 @@ impl WorldRenderer {
         )
         .create_view(&Default::default());
         let mut detail_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
+        let mut base2_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
         for (name, idx, sky) in jobs {
             let Some(Some((mat, rgba))) = materials.get(name) else {
                 continue;
             };
+            let base2_view = mat
+                .base_texture2
+                .as_ref()
+                .filter(|_| mat.shader == "worldvertextransition")
+                .and_then(|t| {
+                    base2_cache
+                        .entry(t.clone())
+                        .or_insert_with(|| {
+                            let rgba = material::load_texture(mount, t, 1024).ok()?;
+                            let tex = upload_rgba_mips(
+                                gpu,
+                                &rgba,
+                                wgpu::TextureFormat::Rgba8UnormSrgb,
+                                t,
+                            );
+                            Some(tex.create_view(&Default::default()))
+                        })
+                        .as_ref()
+                });
+            let blend = base2_view.is_some() as u32;
+            let base2_view = base2_view.unwrap_or(&detail_fallback);
             let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("material params"),
                 contents: bytemuck::bytes_of(&MaterialParams {
                     alpha_test: mat.alpha_test as u32,
                     unlit: is_unlit(&mat.shader) as u32,
                     translucent: mat.translucent as u32,
-                    pad: 0,
+                    blend,
                     detail: detail_params(mat),
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
@@ -1449,6 +1491,10 @@ impl WorldRenderer {
                     wgpu::BindGroupEntry {
                         binding: 3,
                         resource: wgpu::BindingResource::TextureView(detail_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(base2_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -1508,7 +1554,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -1955,7 +2001,7 @@ impl WorldRenderer {
                         alpha_test: mat.alpha_test as u32,
                         unlit: is_unlit(&mat.shader) as u32,
                         translucent: mat.translucent as u32,
-                        pad: 0,
+                        blend: 0,
                         detail: detail_params(mat),
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
@@ -1977,6 +2023,10 @@ impl WorldRenderer {
                         },
                         wgpu::BindGroupEntry {
                             binding: 3,
+                            resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
                             resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
                         },
                         wgpu::BindGroupEntry {
@@ -2035,7 +2085,7 @@ impl WorldRenderer {
                 alpha_test: 0,
                 unlit: 1,
                 translucent: 0,
-                pad: 0,
+                blend: 0,
                 detail: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
@@ -2057,6 +2107,10 @@ impl WorldRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
                     resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
                 },
                 wgpu::BindGroupEntry {
@@ -2103,6 +2157,7 @@ impl WorldRenderer {
                     uv: [across, u],
                     lm_uv: self.white_uv,
                     color,
+                    alpha: 0.0,
                 });
             }
             if i > 0 {
@@ -2131,6 +2186,7 @@ impl WorldRenderer {
                 uv: [(x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5],
                 lm_uv: self.white_uv,
                 color,
+                alpha: 0.0,
             })
             .collect();
         (verts, vec![0, 1, 2, 0, 2, 3])
@@ -2217,7 +2273,7 @@ impl WorldRenderer {
                 alpha_test: 0,
                 unlit: 0,
                 translucent: 0,
-                pad: 0,
+                blend: 0,
                 detail: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
@@ -2246,6 +2302,10 @@ impl WorldRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
                     resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
                 },
                 wgpu::BindGroupEntry {
@@ -2345,6 +2405,7 @@ impl WorldRenderer {
                         uv: v.uv,
                         lm_uv: self.white_uv,
                         color: shade.to_array(),
+                        alpha: 0.0,
                     });
                 }
                 let first = idx.len() as u32;

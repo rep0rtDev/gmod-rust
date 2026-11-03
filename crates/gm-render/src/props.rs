@@ -247,6 +247,7 @@ pub fn collect_static_props(
                             uv: v.uv,
                             lm_uv: white_uv,
                             color: (shade * tint).to_array(),
+                            alpha: 0.0,
                         });
                     }
                     local_indices.push(base + li);

@@ -56,6 +56,12 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   `detail/plaster_detail_01` on plaster and the building templates (6.8-8.3, 0.3-1.2),
   `gm_construct/grass_clouds` on the grass (0.005-0.12, 0.5), `maxofs2d/terrain_detail` on
   flatgrass_2. Other blend modes are drawn without detail.
+  `WorldVertexTransition` (`gm_construct/grass_13`: grass1 / grass2; `grass-sand_13`: grass1 /
+  construct_sand with `$basetexturetransform2 "center .5 .5 scale 1.2 1.2 rotate 30"` and
+  `$blendmodulatetexture gm_construct/grass_blendmask`): the base is
+  `lerp($basetexture, $basetexture2, a)` with `a` the displacement vertex alpha / 255 (0 shows
+  the first texture, 255 the second), interpolated across the triangle. Open: the second
+  texture's own transform and the blend-modulate mask (the game sharpens the transition by it).
   Water (`gm_construct/water_13.vmt`, shader `Water`): `$abovewater 1`, `$refracttexture
   _rt_WaterRefraction`, `$reflecttexture _rt_WaterReflection` (`$reflectamount 0.4`,
   `$reflect3dskybox 1`, `$reflectentities 1`), `$bumpmap gm_construct/water_13_dudv`,

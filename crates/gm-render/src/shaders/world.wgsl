@@ -20,17 +20,19 @@ struct MaterialParams {
     alpha_test: u32,
     unlit: u32,
     translucent: u32,
-    pad: u32,
+    blend: u32,
     detail: vec4<f32>,
 };
 @group(1) @binding(2) var<uniform> material: MaterialParams;
 @group(1) @binding(3) var detail: texture_2d<f32>;
+@group(1) @binding(4) var base2: texture_2d<f32>;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) lm_uv: vec2<f32>,
     @location(3) color: vec3<f32>,
+    @location(4) alpha: f32,
 };
 
 struct VsOut {
@@ -39,6 +41,7 @@ struct VsOut {
     @location(1) lm_uv: vec2<f32>,
     @location(2) color: vec3<f32>,
     @location(3) world: vec3<f32>,
+    @location(4) alpha: f32,
 };
 
 @vertex
@@ -49,12 +52,16 @@ fn vs_main(in: VsIn) -> VsOut {
     out.lm_uv = in.lm_uv;
     out.color = in.color;
     out.world = in.position;
+    out.alpha = in.alpha;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let albedo = textureSample(base, base_sampler, in.uv);
+    // WorldVertexTransition: lerp($basetexture, $basetexture2, displacement vertex alpha)
+    let base1 = textureSample(base, base_sampler, in.uv);
+    let base2_s = textureSample(base2, base_sampler, in.uv);
+    let albedo = mix(base1, base2_s, in.alpha * f32(material.blend));
     if material.alpha_test != 0u && albedo.a < 0.5 {
         discard;
     }
