@@ -3978,6 +3978,7 @@ impl App {
                 });
             }
         }
+        let mut vm_flash: Option<Vec3> = None;
         // shot effects: tracers (128 u streak at 5000 u/s), own muzzle flash, impact and
         // explosion flashes, bullet decals (DecalModulate)
         {
@@ -4019,12 +4020,8 @@ impl App {
             }
             self.fx_tracers = keep;
             if self.fx_muzzle_until.is_some_and(|t| now < t) {
-                if let Some(m) = &g.fx_muzzle {
-                    let (v, i) = g
-                        .world
-                        .sprite_quad(own_muzzle, 12.0, [1.0, 0.85, 0.6], &camera);
-                    additive.push((m, v, i));
-                }
+                // the sprite is drawn in the viewmodel pass: the gun covers the world pass
+                vm_flash = Some(own_muzzle);
                 dlights.push(gm_render::world::DLight {
                     pos: own_muzzle,
                     radius: 100.0,
@@ -4225,6 +4222,15 @@ impl App {
                     ..target
                 };
                 g.world.draw_models(&g.gpu, &vm_camera, &target, &vm_items);
+                if let (Some(pos), Some(m)) = (vm_flash, &g.fx_muzzle) {
+                    let (v, i) = g.world.sprite_quad(pos, 12.0, [1.0, 0.85, 0.6], &vm_camera);
+                    let target = ModelTarget {
+                        clear_depth: false,
+                        ..target
+                    };
+                    g.world
+                        .draw_additive(&g.gpu, &vm_camera, &target, &[(m, v, i)]);
+                }
             }
         }
         // 3D2D planes of the previous frame's HUD handlers, on the world's depth
