@@ -72,3 +72,44 @@ fn construct_polygons_are_closed_and_their_adjacency_is_symmetric() {
         polys.len()
     );
 }
+
+#[test]
+fn blocked_polygon_is_avoided_by_the_path() {
+    let Some(data) = load_construct() else {
+        eprintln!("no GMod install, skipping");
+        return;
+    };
+    let bsp = gm_formats::bsp::Bsp::parse(&data).unwrap();
+    let nav = NavMesh::build(&bsp, &NavParams::default()).unwrap();
+    let a = Vec3::new(823.0, -600.0, -140.0);
+    let b = Vec3::new(-300.0, -300.0, -140.0);
+    let ext = Vec3::new(32.0, 32.0, 64.0);
+    let before = nav.find_path(a, b, ext).unwrap();
+    let mid = before.points[before.points.len() / 2];
+    let poly = (0..nav.poly_count())
+        .filter_map(|i| {
+            nav.poly_center(i)
+                .map(|c| (i, c.truncate().distance(mid.truncate())))
+        })
+        .min_by(|x, y| x.1.total_cmp(&y.1))
+        .unwrap()
+        .0;
+    assert!(!nav.is_blocked(poly) && nav.set_blocked(poly, true) && nav.is_blocked(poly));
+    assert_eq!(nav.blocked(), vec![poly]);
+    let centre = nav.poly_center(poly).unwrap();
+    let after = nav.find_path(a, b, ext);
+    let crosses = after.as_ref().is_some_and(|p| {
+        !p.partial
+            && p.points
+                .iter()
+                .any(|q| q.truncate().distance(centre.truncate()) < 8.0)
+    });
+    assert!(
+        !crosses,
+        "the path still runs through the blocked polygon: {after:?}"
+    );
+    assert!(nav.set_blocked(poly, false) && nav.blocked().is_empty());
+    assert!(!nav.set_blocked(nav.poly_count() + 5, true));
+    let again = nav.find_path(a, b, ext).unwrap();
+    assert_eq!(again.points.len(), before.points.len());
+}

@@ -9482,6 +9482,14 @@ impl<'w> Server<'w> {
         self.nav = Some(nav);
     }
 
+    /// `CNavArea:MarkAsBlocked` / `MarkAsUnblocked`: the polygon leaves (rejoins) every path
+    /// query, so NPC and NextBot paths route around it.
+    pub fn nav_set_blocked(&self, poly: u32, on: bool) -> bool {
+        self.nav
+            .as_ref()
+            .is_some_and(|n| n.set_blocked(poly as usize, on))
+    }
+
     pub fn navmesh(&self) -> Option<&gm_nav::NavMesh> {
         self.nav.as_deref()
     }

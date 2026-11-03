@@ -2781,3 +2781,33 @@ fn swep_freeze_movement_pins_the_owner() {
         .unwrap();
     assert!(format!("{reply:?}").contains("fired"), "{reply:?}");
 }
+
+#[test]
+fn nav_area_block_writes() {
+    let mut rt = runtime(
+        "hook.Add('Think', 't', function()
+            local a = setmetatable({ __id = 7, __center = Vector() }, __glua_classes.CNavArea)
+            a:MarkAsBlocked() a:MarkAsUnblocked()
+            state.blocked, state.n = a:IsBlocked(), #navmesh.GetBlockedAreas()
+         end)",
+    );
+    rt.actors_mut()[0]
+        .dispatch(&snapshot(), "tick.pre", &Payload::default(), 3)
+        .unwrap();
+    let text = format!(
+        "{:?}",
+        rt.drain_writes()
+            .into_iter()
+            .map(|w| w.3)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        text.contains("NavBlock { poly: 7, on: true }")
+            && text.contains("NavBlock { poly: 7, on: false }"),
+        "{text}"
+    );
+    let (blocked, n): (bool, f64) = rt.actors()[0]
+        .eval("return state.blocked, state.n")
+        .unwrap();
+    assert_eq!((blocked, n), (false, 0.0));
+}

@@ -347,6 +347,14 @@ impl Snapshot {
         self.nav().and_then(|n| n.nearest(pos, extents))
     }
 
+    pub fn nav_blocked(&self) -> Vec<usize> {
+        self.nav().map(|n| n.blocked()).unwrap_or_default()
+    }
+
+    pub fn nav_is_blocked(&self, poly: usize) -> bool {
+        self.nav().is_some_and(|n| n.is_blocked(poly))
+    }
+
     pub fn nav_path(
         &self,
         a: glam::Vec3,

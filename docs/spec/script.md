@@ -776,6 +776,10 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `CNavArea:MarkAsBlocked()` / `MarkAsUnblocked()` set a blocked flag on the mesh polygon that
+  every path query excludes (Detour exclude flag), so NPC and NextBot paths route around the
+  area; `IsBlocked()` and `navmesh.GetBlockedAreas()` read the set back. Blocking is not
+  persisted with the mesh.
 - `WEAPON:FreezeMovement()` is polled every tick for each carried scripted weapon: true pins the
   owner's walk / run / jump / crouched speeds at 0 through the per-player move overrides, false
   clears them (the player's own SetWalkSpeed etc. are overwritten while frozen). An NPC's

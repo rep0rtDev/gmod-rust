@@ -123,6 +123,10 @@ pub enum QueuedWrite {
         yaw: Option<f32>,
         update: bool,
     },
+    NavBlock {
+        poly: u32,
+        on: bool,
+    },
     NpcRelation {
         ent: u32,
         disp: Option<u8>,
@@ -1677,6 +1681,13 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         update: t.get::<Option<bool>>("update")?.unwrap_or(false),
                     }
                 }
+                "nav_block" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::NavBlock {
+                        poly: t.get::<u32>("poly")?,
+                        on: t.get::<Option<bool>>("on")?.unwrap_or(true),
+                    }
+                }
                 "npc_relation" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::NpcRelation {
@@ -3124,6 +3135,26 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
             Ok(t)
         })?,
     )?;
+    let sh2 = shared.clone();
+    nav.set(
+        "blocked",
+        lua.create_function(move |lua, ()| {
+            let snap = sh2.snapshot.read().unwrap().clone();
+            let t = lua.create_table()?;
+            for (i, p) in snap.nav_blocked().into_iter().enumerate() {
+                t.set(i + 1, p)?;
+            }
+            Ok(t)
+        })?,
+    )?;
+    let sh3 = shared.clone();
+    nav.set(
+        "is_blocked",
+        lua.create_function(move |_, poly: usize| {
+            let snap = sh3.snapshot.read().unwrap().clone();
+            Ok(snap.nav_is_blocked(poly))
+        })?,
+    )?;
     g.set("nav", nav)?;
     // surfaceproperties: index = position in the sorted name list
     let surf = lua.create_table()?;
@@ -3788,6 +3819,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::NpcIdealYaw { ent, yaw, update } => {
             server.npc_set_ideal_yaw(*ent, *yaw, *update)
         }
+        QueuedWrite::NavBlock { poly, on } => server.nav_set_blocked(*poly, *on),
         QueuedWrite::NpcRelation { ent, disp } => server.npc_set_relation(*ent, *disp),
         QueuedWrite::NpcViewOffset { ent, offset } => server.npc_set_view_offset(*ent, *offset),
         QueuedWrite::NpcMoveYawLocked { ent, on } => server.npc_set_move_yaw_locked(*ent, *on),

@@ -229,6 +229,8 @@ pub struct NavMesh {
     query: *mut rc::dtNavMeshQuery,
     filter: Box<rc::dtQueryFilter>,
     poly_count: usize,
+    /// Polygons marked blocked (`set_blocked`); the query filter excludes them.
+    blocked: std::sync::Mutex<std::collections::BTreeSet<usize>>,
     /// Polygon mesh vertices in Source coordinates (for debugging and tests).
     verts: Vec<Vec3>,
     polys: Vec<NavPoly>,
@@ -294,6 +296,8 @@ const DT_SUCCESS: u32 = 1 << 30;
 const DT_PARTIAL_RESULT: u32 = 1 << 6;
 const DT_TILE_FREE_DATA: c_int = 1;
 const WALKABLE_FLAG: c_ushort = 1;
+/// `CNavArea:MarkAsBlocked`: the polygon is excluded from every path query until unblocked.
+const BLOCKED_FLAG: c_ushort = 2;
 const MAX_POLYS: usize = 512;
 
 fn ok(status: rc::dtStatus) -> bool {
@@ -613,7 +617,7 @@ impl NavMesh {
             Box::new(unsafe { MaybeUninit::<rc::dtQueryFilter>::zeroed().assume_init() });
         unsafe { rc::dtQueryFilter_dtQueryFilter(&mut *filter) };
         filter.m_includeFlags = WALKABLE_FLAG;
-        filter.m_excludeFlags = 0;
+        filter.m_excludeFlags = BLOCKED_FLAG;
         Ok(NavMesh {
             mesh,
             query,
@@ -622,7 +626,55 @@ impl NavMesh {
             verts: mesh_verts,
             polys,
             params: *p,
+            blocked: std::sync::Mutex::new(std::collections::BTreeSet::new()),
         })
+    }
+
+    /// Marks polygon `poly` blocked (excluded from path queries) or walkable again; false for an
+    /// index outside the mesh. The flag lives on the Detour polygon, so every query sees it.
+    pub fn set_blocked(&self, poly: usize, on: bool) -> bool {
+        if poly >= self.poly_count {
+            return false;
+        }
+        unsafe {
+            let tile = rc::dtNavMesh_getTile(self.mesh, 0);
+            let base = rc::dtNavMesh_getPolyRefBase(self.mesh, tile);
+            rc::dtNavMesh_setPolyFlags(
+                self.mesh,
+                base | poly as rc::dtPolyRef,
+                WALKABLE_FLAG | if on { BLOCKED_FLAG } else { 0 },
+            );
+        }
+        let mut b = self.blocked.lock().unwrap();
+        if on {
+            b.insert(poly);
+        } else {
+            b.remove(&poly);
+        }
+        true
+    }
+
+    pub fn is_blocked(&self, poly: usize) -> bool {
+        self.blocked.lock().unwrap().contains(&poly)
+    }
+
+    pub fn blocked(&self) -> Vec<usize> {
+        self.blocked.lock().unwrap().iter().copied().collect()
+    }
+
+    /// Centroid of polygon `poly` (Source units).
+    pub fn poly_center(&self, poly: usize) -> Option<Vec3> {
+        let p = self.polys.get(poly)?;
+        if p.verts.is_empty() {
+            return None;
+        }
+        Some(
+            p.verts
+                .iter()
+                .map(|&v| self.verts[v as usize])
+                .sum::<Vec3>()
+                / p.verts.len() as f32,
+        )
     }
 
     pub fn poly_count(&self) -> usize {
