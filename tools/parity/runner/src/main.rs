@@ -5960,7 +5960,26 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
             println!("  op {i}: {} spawned vs {}", ts_.len(), os_.len());
             ok = false;
         } else {
-            for (k, (a, b)) in ts_.iter().zip(&os_).enumerate() {
+            // the game's list is in entity-index order (slots get reused), ours in creation
+            // order: pair each entry with the nearest unmatched one of the same model
+            let mut taken = vec![false; os_.len()];
+            let pairs: Vec<(&serde_json::Value, &serde_json::Value)> = ts_
+                .iter()
+                .map(|a| {
+                    let pick = (0..os_.len())
+                        .filter(|&j| !taken[j] && os_[j]["model"] == a["model"])
+                        .min_by(|&x, &y| {
+                            let dx = (v3(&a["pos"]) - v3(&os_[x]["pos"])).length();
+                            let dy = (v3(&a["pos"]) - v3(&os_[y]["pos"])).length();
+                            dx.total_cmp(&dy)
+                        })
+                        .or_else(|| (0..os_.len()).find(|&j| !taken[j]));
+                    let j = pick.expect("equal lengths");
+                    taken[j] = true;
+                    (a, &os_[j])
+                })
+                .collect();
+            for (k, (a, b)) in pairs.into_iter().enumerate() {
                 let dp = (v3(&a["pos"]) - v3(&b["pos"])).length();
                 let da = gm_sandbox::rotation(v3(&a["ang"]))
                     .angle_between(gm_sandbox::rotation(v3(&b["ang"])))

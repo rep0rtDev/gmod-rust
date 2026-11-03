@@ -8940,10 +8940,7 @@ impl<'w> Server<'w> {
                     script.rear
                 };
                 Wheel {
-                    // the hub sits so that a car resting with its origin 1.8 u under the hit
-                    // point (measured: the jeep's -145.8 on a -144 floor) has every wheel at
-                    // its unloaded rest extension: no hop, no pitch on the spawn tick
-                    hub: Vec3::new(hub.x, hub.y, radius + script.rest + 1.8),
+                    hub: Vec3::new(hub.x, hub.y, radius + 1.0),
                     radius,
                     spring,
                     damping,
@@ -8963,8 +8960,8 @@ impl<'w> Server<'w> {
         let hull_min = self.models.get(&prop.model).map_or(0.0, |m| {
             m.hulls.iter().flatten().fold(f32::MAX, |a, v| a.min(v.z))
         });
-        if hull_min > 1.8 {
-            self.teleport_prop(veh, prop.pos - Vec3::new(0.0, 0.0, 1.8), prop.angles);
+        if hull_min > 1.0 {
+            self.teleport_prop(veh, prop.pos - Vec3::new(0.0, 0.0, 1.0), prop.angles);
         }
         if let Some(v) = self.vehicles.get_mut(&veh) {
             v.wheels = wheels;
@@ -9055,13 +9052,7 @@ impl<'w> Server<'w> {
                 }
                 contacts += 1;
                 let ext = tr.fraction * len - w.radius;
-                // each axle carries the weight its lever arm from the centre of mass gives it
-                // (the jeep's is 38 u rear-ward), so the car is level at rest
-                let com_y = (st.rotation.conjugate() * (com - st.position)).y;
-                let d_this = (w.hub.y - com_y).abs().max(1.0);
-                let d_other = (2.0 * mid_y - w.hub.y - com_y).abs().max(1.0);
-                let load = g_total * d_other / (d_this + d_other) / 2.0;
-                let natural = rest + load / w.spring;
+                let natural = rest + g_total / (4.0 * w.spring);
                 let v_hub = st.velocity + omega.cross(hub - com);
                 let v_up = v_hub.dot(up);
                 // the script's heavier `springDampingCompression` is not applied: one-sided
