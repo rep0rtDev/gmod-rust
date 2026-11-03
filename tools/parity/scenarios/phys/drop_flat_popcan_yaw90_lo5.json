@@ -1,0 +1,1 @@
+{"name": "phys_drop_flat_popcan_yaw90_lo5", "kind": "phys", "map": "gm_construct", "model": "models/props_junk/PopCan01a.mdl", "start": [700.0, -400.0, -135.11], "angles": [0, 90, 0], "ticks": 200}

@@ -1,0 +1,1 @@
+{"name": "phys_drop_flat_lockers_yaw180_lo5", "kind": "phys", "map": "gm_construct", "model": "models/props_c17/lockers001a.mdl", "start": [700.0, -400.0, -102.73], "angles": [0, 180, 0], "ticks": 200}

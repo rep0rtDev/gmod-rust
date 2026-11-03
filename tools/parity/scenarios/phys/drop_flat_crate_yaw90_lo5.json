@@ -1,0 +1,1 @@
+{"name": "phys_drop_flat_crate_yaw90_lo5", "kind": "phys", "map": "gm_construct", "model": "models/props_junk/wood_crate001a.mdl", "start": [700.0, -400.0, -118.604], "angles": [0, 90, 0], "ticks": 200}

@@ -1,0 +1,1 @@
+{"name": "phys_drop_flat_gascan_p1_lo5", "kind": "phys", "map": "gm_construct", "model": "models/props_junk/gascan001a.mdl", "start": [700.0, -400.0, -123.78], "angles": [0, 0, 0], "ticks": 200}
