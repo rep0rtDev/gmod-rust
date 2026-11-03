@@ -776,6 +776,11 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `GM:OnLuaError(error, "server", "", name, 0)` runs at the next tick for every error an actor
+  raised (the addon's label as `name`; no stack text). `GM:LoadGModSave(data, map, timestamp)`
+  runs on `load <name>` before the blobs apply (`data` = the save's script blobs as event text,
+  `timestamp` = the file's modification time), `GM:LoadGModSaveFailed(error)` when the file
+  cannot be read or parsed.
 - `GM:HandlePlayerArmorReduction(ply, dmginfo)` runs when an armoured player takes damage the
   armour absorbs (not fall / drown), after the damage hooks: the player's `Armor()` is the live
   value and `SetArmor` plus `dmginfo:SetDamage` decide the armour left and the health damage;

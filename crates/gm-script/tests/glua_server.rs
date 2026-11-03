@@ -2933,3 +2933,41 @@ fn armor_reduction_hook_answers_the_split_only_when_it_changes_it() {
         .unwrap();
     assert!(armor && set);
 }
+
+#[test]
+fn lua_error_and_load_save_hooks_reach_the_gamemode() {
+    let mut rt = runtime(
+        "state.err, state.load, state.failed = nil, nil, nil
+         hook.Add('OnLuaError', 't', function(err, realm, stack, name, id) state.err = { err, realm, name, id } end)
+         hook.Add('LoadGModSave', 't', function(data, map, ts) state.load = { data, map, ts } end)
+         hook.Add('LoadGModSaveFailed', 't', function(err) state.failed = err end)",
+    );
+    let a = &mut rt.actors_mut()[0];
+    let mut p = Payload::default();
+    p.strs.push(("name", "my_addon".to_string()));
+    p.strs.push(("error", "boom".to_string()));
+    a.dispatch(&snapshot(), "lua.error", &p, 1).unwrap();
+    let mut r = Payload::default();
+    r.strs.push(("data", "G\tX\t[]\n".to_string()));
+    r.strs.push(("map", "gm_construct".to_string()));
+    r.ints.push(("timestamp", 1700000000));
+    a.dispatch(&snapshot(), "game.restore", &r, 2).unwrap();
+    let mut f = Payload::default();
+    f.strs.push(("error", "no such file".to_string()));
+    a.dispatch(&snapshot(), "game.restore_failed", &f, 3)
+        .unwrap();
+    let (err, realm, name, id): (String, String, String, f64) = a
+        .eval("return state.err[1], state.err[2], state.err[3], state.err[4]")
+        .unwrap();
+    assert_eq!(
+        (err.as_str(), realm.as_str(), name.as_str(), id),
+        ("boom", "server", "my_addon", 0.0)
+    );
+    let (data, map, ts, failed): (String, String, f64, String) = a
+        .eval("return state.load[1], state.load[2], state.load[3], state.failed")
+        .unwrap();
+    assert_eq!(
+        (data.as_str(), map.as_str(), ts, failed.as_str()),
+        ("G\tX\t[]\n", "gm_construct", 1700000000.0, "no such file")
+    );
+}

@@ -1508,8 +1508,12 @@ pub trait ServerHooks {
         _server: &mut Server<'_>,
         _globals: &BTreeMap<String, String>,
         _ents: &[(u32, String)],
+        _map: &str,
+        _timestamp: i64,
     ) {
     }
+    /// `load <name>` could not be read or parsed (`GM:LoadGModSaveFailed`).
+    fn restore_failed(&mut self, _server: &mut Server<'_>, _error: &str) {}
     /// A console line a client typed that the client did not know (`concommand.Add` commands):
     /// true when a script command took it.
     fn player_command(

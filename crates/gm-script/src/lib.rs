@@ -52,6 +52,8 @@ pub struct Runtime {
     actors: Vec<Actor>,
     pub tick: u64,
     pub log: Vec<String>,
+    /// Actor errors since the last tick, for `lua.error` (`GM:OnLuaError`).
+    pending_errors: Vec<(String, String)>,
     /// How many of `server.cvar_changes` were already dispatched as `cvar.changed`.
     cvar_seen: usize,
     /// Client realm: the replicated variables as last seen, for `cvar.changed`.
@@ -96,6 +98,7 @@ impl Runtime {
             actors: Vec::new(),
             tick: 0,
             log: Vec::new(),
+            pending_errors: Vec::new(),
             cvar_seen: 0,
             cvars_last: Default::default(),
             data_dir: None,
@@ -600,9 +603,26 @@ impl Runtime {
     }
 
     /// Before the server tick: `tick.pre`.
+    fn actor_failed(&mut self, label: String, error: String) {
+        self.log.push(format!("[{label}] {error}"));
+        self.pending_errors.push((label, error));
+    }
+
+    /// `lua.error {name, error}` for every actor error since the last tick (`GM:OnLuaError`);
+    /// an error inside the handler itself waits for the next tick.
+    fn dispatch_errors(&mut self, server: &mut Server<'_>) {
+        for (name, error) in std::mem::take(&mut self.pending_errors) {
+            let mut p = api::Payload::default();
+            p.strs.push(("name", name));
+            p.strs.push(("error", error));
+            self.run_event(server, "lua.error", p);
+        }
+    }
+
     pub fn pre_tick(&mut self, server: &mut Server<'_>) -> Applied {
         self.tick += 1;
         self.watch_tick(Some(server));
+        self.dispatch_errors(server);
         self.run_event(server, "tick.pre", api::Payload::default())
     }
 
@@ -656,7 +676,10 @@ impl Runtime {
                     break;
                 }
                 Ok(_) => {}
-                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+                Err(e) => {
+                    let label = a.label();
+                    self.actor_failed(label, format!("{e}"));
+                }
             }
         }
         self.serial(server);
@@ -684,7 +707,10 @@ impl Runtime {
             match a.dispatch_reply(&snap, event, &payload, self.tick) {
                 Ok(Reply::Text(t)) => verdict = gm_server::Verdict::Text(t),
                 Ok(_) => {}
-                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+                Err(e) => {
+                    let label = a.label();
+                    self.actor_failed(label, format!("{e}"));
+                }
             }
         }
         self.serial(server);
@@ -714,7 +740,10 @@ impl Runtime {
                 Ok(Reply::Number(n)) => verdict = gm_server::Verdict::Amount(n as f32),
                 Ok(Reply::Text(t)) => verdict = gm_server::Verdict::Text(t),
                 Ok(Reply::Pass) => {}
-                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+                Err(e) => {
+                    let label = a.label();
+                    self.actor_failed(label, format!("{e}"));
+                }
             }
         }
         self.serial(server);
@@ -785,7 +814,10 @@ impl Runtime {
                     break;
                 }
                 Ok(_) => {}
-                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+                Err(e) => {
+                    let label = a.label();
+                    self.actor_failed(label, format!("{e}"));
+                }
             }
         }
         self.serial(server);
@@ -836,7 +868,10 @@ impl Runtime {
                     }
                 }
                 Ok(_) => {}
-                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+                Err(e) => {
+                    let label = a.label();
+                    self.actor_failed(label, format!("{e}"));
+                }
             }
         }
         self.serial(server);
@@ -850,6 +885,8 @@ impl Runtime {
         server: &mut Server<'_>,
         globals: &std::collections::BTreeMap<String, String>,
         ents: &[(u32, String)],
+        map: &str,
+        timestamp: i64,
     ) {
         let mut text = String::new();
         for (k, v) in globals {
@@ -862,6 +899,8 @@ impl Runtime {
         }
         let mut p = api::Payload::default();
         p.strs.push(("data", text));
+        p.strs.push(("map", map.to_string()));
+        p.ints.push(("timestamp", timestamp));
         let snap = self.snapshot(server);
         for i in 0..self.actors.len() {
             let a = &mut self.actors[i];
@@ -869,10 +908,18 @@ impl Runtime {
                 continue;
             }
             if let Err(e) = a.dispatch(&snap, "game.restore", &p, self.tick) {
-                self.log.push(format!("[{}] {e}", a.label()));
+                let label = a.label();
+                self.actor_failed(label, format!("{e}"));
             }
         }
         self.serial(server);
+    }
+
+    /// `load <name>` failed to read or parse the file: `game.restore_failed {error}`.
+    pub fn restore_failed(&mut self, server: &mut Server<'_>, error: &str) {
+        let mut p = api::Payload::default();
+        p.strs.push(("error", error.to_string()));
+        self.run_event(server, "game.restore_failed", p);
     }
 
     pub fn player_chat(
@@ -904,7 +951,10 @@ impl Runtime {
                     out = Some(t);
                 }
                 Ok(_) => {}
-                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+                Err(e) => {
+                    let label = a.label();
+                    self.actor_failed(label, format!("{e}"));
+                }
             }
         }
         self.serial(server);
@@ -1323,7 +1373,9 @@ impl Runtime {
         }
         for (a, r) in self.actors.iter_mut().zip(results) {
             if let Err(e) = r {
-                self.log.push(format!("[{}] {e}", a.label()));
+                let label = a.label();
+                self.log.push(format!("[{label}] {e}"));
+                self.pending_errors.push((label, format!("{e}")));
             }
             for line in a.take_prints() {
                 self.log.push(format!("[{}] {line}", a.label()));
@@ -1854,8 +1906,13 @@ impl gm_server::ServerHooks for Runtime {
         server: &mut Server<'_>,
         globals: &std::collections::BTreeMap<String, String>,
         ents: &[(u32, String)],
+        map: &str,
+        timestamp: i64,
     ) {
-        Runtime::restore_data(self, server, globals, ents)
+        Runtime::restore_data(self, server, globals, ents, map, timestamp)
+    }
+    fn restore_failed(&mut self, server: &mut Server<'_>, error: &str) {
+        Runtime::restore_failed(self, server, error)
     }
     fn tool_before(
         &mut self,
@@ -1951,6 +2008,9 @@ pub fn attach(
 }
 
 impl gm_server::ServerHooks for SharedRuntime {
+    fn restore_failed(&mut self, server: &mut Server<'_>, error: &str) {
+        self.0.lock().unwrap().restore_failed(server, error)
+    }
     fn save_data(
         &mut self,
         server: &mut Server<'_>,
@@ -1966,8 +2026,13 @@ impl gm_server::ServerHooks for SharedRuntime {
         server: &mut Server<'_>,
         globals: &std::collections::BTreeMap<String, String>,
         ents: &[(u32, String)],
+        map: &str,
+        timestamp: i64,
     ) {
-        self.0.lock().unwrap().restore_data(server, globals, ents)
+        self.0
+            .lock()
+            .unwrap()
+            .restore_data(server, globals, ents, map, timestamp)
     }
     fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool {
         self.0

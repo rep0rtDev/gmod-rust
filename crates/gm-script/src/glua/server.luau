@@ -1378,8 +1378,15 @@ local function sr_apply_entity(id, vals)
     if sr_instance(e) then saverestore.LoadEntity(e, sr_reader(vals)) return true end
     return false
 end
+-- @hook GM:LoadGModSave
+-- @hook GM:LoadGModSaveFailed
+events.on("game.restore_failed", function(p) hook.Run("LoadGModSaveFailed", p.error or "") end)
+-- @hook GM:OnLuaError
+-- every actor error the runtime logged last tick (the addon's label as the script name)
+events.on("lua.error", function(p) hook.Run("OnLuaError", p.error or "", "server", "", p.name or "", 0) end)
 events.on("game.restore", function(p)
     saverestore.PreRestore()
+    hook.Run("LoadGModSave", p.data or "", p.map or "", p.timestamp or 0)
     for kind, key, blob in string.gmatch(p.data or "", "([GE])\t([^\t\n]*)\t([^\n]*)") do
         local vals = util.JSONToTable(blob) or {}
         if kind == "G" then

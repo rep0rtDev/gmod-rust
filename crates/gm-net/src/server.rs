@@ -547,11 +547,21 @@ impl ServerNet {
                                     .zip(&save.props)
                                     .filter_map(|(id, sp)| Some(((*id)?, sp.script.clone()?)))
                                     .collect();
-                                h.restore_data(server, &save.script_globals, &ents);
+                                let stamp = std::fs::metadata(&path)
+                                    .ok()
+                                    .and_then(|m| m.modified().ok())
+                                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                    .map_or(0, |d| d.as_secs() as i64);
+                                h.restore_data(server, &save.script_globals, &ents, &save.map, stamp);
                             }
                             vec![format!("load {name}: {p} props {c} constraints (saved on {})", save.map)]
                         }
-                        Err(e) => vec![format!("load {name}: {e}")],
+                        Err(e) => {
+                            if let Some(h) = self.hooks.as_mut() {
+                                h.restore_failed(server, &e.to_string());
+                            }
+                            vec![format!("load {name}: {e}")]
+                        }
                     }
                 }
             }
