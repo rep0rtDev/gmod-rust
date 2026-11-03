@@ -221,7 +221,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // $phong: the Blinn-Phong highlight of the sun through the baked light, $phongexponent /
     // $phongboost, $phongfresnelranges over (1 - n.v)^5, masked by the normal map alpha;
     // a $phongexponenttexture gives the exponent (red, 1..150) and the albedo tint mask
-    // (green) (the local lights are not drawn)
+    // (green); the dynamic lights add their own highlight with the diffuse loop's falloff
     if material.phong.x > 0.5 && material.unlit == 0u && dot(in.normal, in.normal) > 0.0 {
         let nw = normalize(in.normal);
         let v = normalize(camera.eye.xyz - in.world);
@@ -236,6 +236,23 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let spec = pow(max(dot(nw, normalize(l + v)), 0.0), exponent) * material.phong.z;
         let tint = mix(vec3<f32>(1.0), albedo.rgb, material.phong.w * tint_mask);
         shaded = shaded + in.color * (spec * phong_fres * ndl * bump_a) * tint * camera.exposure;
+        var local = vec3<f32>(0.0);
+        for (var i = 0u; i < 8u; i++) {
+            let lp = camera.dlight_pos[i];
+            if lp.w > 0.0 {
+                let dv = lp.xyz - in.world;
+                let d = length(dv);
+                let ld = dv / max(d, 1e-3);
+                var k = clamp(1.0 - d / lp.w, 0.0, 1.0);
+                let sd = camera.dlight_dir[i];
+                if sd.w > 0.0 {
+                    k *= smoothstep(sd.w, min(sd.w + 0.08, 1.0), dot(-ld, sd.xyz));
+                }
+                let h = pow(max(dot(nw, normalize(ld + v)), 0.0), exponent);
+                local += camera.dlight_color[i].rgb * (k * k * max(dot(nw, ld), 0.0) * h);
+            }
+        }
+        shaded = shaded + local * (material.phong.z * phong_fres * bump_a) * tint * camera.exposure;
     }
     // $selfillum: the base alpha lerps towards the unlit base colour
     shaded = mix(shaded, albedo.rgb * material.selfillum_tint.rgb * camera.exposure, albedo.a * material.envmap2.z);
