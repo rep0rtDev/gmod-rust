@@ -117,8 +117,11 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   view: windows darker by up to 59/255 against the linear sample). Keys inside fallback
   blocks (`LightmappedGeneric_DX8 { $envmaptint .25 }`) are ignored, as on the DX9 path.
   `$selfillum` lerps the lit colour towards the unlit base by the base alpha (11 of 60
-  surveyed HL2 prop VMTs use it). Open: HDR cubemaps (`.hdr.vtf`), `$envmapfresnel`,
-  `$selfillumtint`, `$envmapmaskscale` / `$envmapmasktransform`.
+  surveyed HL2 prop VMTs use it). `$envmapfresnel` scales the reflection by
+  min + (max − min)·(1 − n·v)^exp from `$envmapfresnelminmaxexp` (default [0 1 2]);
+  `$selfillumtint` tints the self-illuminated base. None of construct's world materials
+  sets either, so both are implemented from the shader's definition and unexercised by
+  content. Open: HDR cubemaps (`.hdr.vtf`), `$envmapmaskscale` / `$envmapmasktransform`.
   Done since: the eye's water volume (`LUMP_LEAFWATERDATA` 36: surface z, min z, surface
   texinfo; its `CONTENTS_WATER` leaves' boxes) switches the view fog of the world, model and
   3D-skybox passes (the latter in skybox units) to the surface material's `$bottommaterial`
@@ -197,10 +200,11 @@ thickness alpha, now as an opaque surface; without a scene texture the old path 
 through the fog alpha) remains. Measured at construct's pond edge from 45 deg above: only
 the shallow rim changes (the deep water is fog colour either way), and the shore bleeds
 into the rim by the full-strength offset (`$refractamount 1`, no 1/w scaling - whether the
-engine scales the offset with depth is unverified). Open: the `$bumptransform`
-TextureScroll proxy (rate 0.02 at 25 deg; the proxies block is not parsed, `$scroll1`
-stands in), `$reflectentities`, reflection of translucent surfaces and models, the
-refraction of translucent surfaces (they are drawn after the copy).
+engine scales the offset with depth is unverified). The normal map scrolls by the
+`Proxies { TextureScroll }` block on `$bumptransform` when the VMT has one (construct's
+water: rate 0.02 uv/s at 25 deg, i.e. (0.0181, 0.0085) uv/s), else by `$scroll1` xy. Open:
+`$reflectentities`, reflection of translucent surfaces and models, the refraction of
+translucent surfaces (they are drawn after the copy).
 
 ### `$ssbump`
 

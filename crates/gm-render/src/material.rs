@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use gm_content::Mount;
-use gm_formats::keyvalues::{self, Value};
+use gm_formats::keyvalues::{self, Node, Value};
 use gm_formats::vtf;
 
 #[derive(Clone, Debug, Default)]
@@ -48,6 +48,8 @@ pub struct Material {
     pub envmapmask: Option<String>,
     /// `$selfillum`: the base alpha lerps the lit result towards the unlit base.
     pub selfillum: bool,
+    /// `$selfillumtint` (1 1 1 when absent).
+    pub selfillum_tint: [f32; 3],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -66,6 +68,9 @@ pub struct EnvMap {
     /// `$envmapcontrast` (0 = linear, 1 = squared) and `$envmapsaturation` (1 = full colour).
     pub contrast: f32,
     pub saturation: f32,
+    /// `$envmapfresnel`: `$envmapfresnelminmaxexp` [min max exp] scales the reflection by
+    /// min + (max - min)·(1 - n·v)^exp.
+    pub fresnel: Option<[f32; 3]>,
 }
 
 /// `center cx cy scale sx sy rotate deg translate tx ty` -> uv matrix
@@ -236,6 +241,13 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
                 sx,
                 sy,
             ];
+            // the TextureScroll proxy on $bumptransform scrolls the normal map by
+            // texturescrollrate uv/s along texturescrollangle degrees
+            if let Some((rate, angle)) = texture_scroll(params, "$bumptransform") {
+                let a = angle.to_radians();
+                mat.water_dist[2] = rate * a.cos();
+                mat.water_dist[3] = rate * a.sin();
+            }
             let c: Vec<f32> = get("$fogcolor")
                 .map(|v| {
                     v.trim_matches(|c| c == '{' || c == '}' || c == '[' || c == ']')
@@ -267,6 +279,12 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         mat.nocull = matches!(get("$nocull").as_deref(), Some("1"));
         mat.selfillum = matches!(get("$selfillum").as_deref(), Some("1"));
         mat.ssbump = matches!(get("$ssbump").as_deref(), Some("1"));
+        let tint = vec_of(get("$selfillumtint"));
+        mat.selfillum_tint = if tint.len() >= 3 {
+            [tint[0], tint[1], tint[2]]
+        } else {
+            [1.0; 3]
+        };
         mat.base2_transform = get("$basetexturetransform2")
             .as_deref()
             .and_then(texture_transform);
@@ -305,6 +323,14 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
                 mask,
                 contrast: numv("$envmapcontrast", 0.0),
                 saturation: numv("$envmapsaturation", 1.0),
+                fresnel: one("$envmapfresnel").then(|| {
+                    let v = vec_of(get("$envmapfresnelminmaxexp"));
+                    if v.len() >= 3 {
+                        [v[0], v[1], v[2]]
+                    } else {
+                        [0.0, 1.0, 2.0]
+                    }
+                }),
             });
         }
         if let Some(texture) = get("$detail") {
@@ -441,6 +467,48 @@ pub fn load_texture_lod(mount: &Mount, name: &str, max_side: u32, skip: u32) -> 
     })
 }
 
+/// Numbers of a `[x y z]` / `{x y z}` / `x y z` value.
+fn vec_of(v: Option<String>) -> Vec<f32> {
+    v.map(|v| {
+        v.trim_matches(|c| c == '{' || c == '}' || c == '[' || c == ']')
+            .split_whitespace()
+            .filter_map(|x| x.parse::<f32>().ok())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// The `Proxies { TextureScroll { texturescrollvar <var> rate angle } }` block of a VMT for
+/// `var`: (texturescrollrate, texturescrollangle in degrees).
+fn texture_scroll(params: &[Node], var: &str) -> Option<(f32, f32)> {
+    let proxies = params.iter().find_map(|n| match &n.value {
+        Value::Block(b) if n.key.eq_ignore_ascii_case("proxies") => Some(b),
+        _ => None,
+    })?;
+    proxies.iter().find_map(|n| {
+        let Value::Block(b) = &n.value else {
+            return None;
+        };
+        if !n.key.eq_ignore_ascii_case("texturescroll") {
+            return None;
+        }
+        let get = |k: &str| {
+            b.iter().find_map(|m| match &m.value {
+                Value::Str(s) if m.key.eq_ignore_ascii_case(k) => Some(s.clone()),
+                _ => None,
+            })
+        };
+        if !get("texturescrollvar")?.eq_ignore_ascii_case(var) {
+            return None;
+        }
+        let rate = get("texturescrollrate")?.parse::<f32>().ok()?;
+        let angle = get("texturescrollangle")
+            .and_then(|a| a.parse::<f32>().ok())
+            .unwrap_or(0.0);
+        Some((rate, angle))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::canonical_name;
@@ -472,5 +540,21 @@ mod tests {
             canonical_name("maps/gm_construct/water_13_beneath"),
             "water_13_beneath"
         );
+    }
+
+    #[test]
+    fn texture_scroll_proxy() {
+        let doc = gm_formats::keyvalues::parse(
+            r#""Water" { "$bumpmap" "x" "Proxies" { "TextureScroll" { "texturescrollvar" "$bumptransform" "texturescrollrate" "0.02" "texturescrollangle" "25.00" } } }"#,
+        )
+        .unwrap();
+        let gm_formats::keyvalues::Value::Block(params) = &doc.nodes[0].value else {
+            panic!()
+        };
+        assert_eq!(
+            super::texture_scroll(params, "$bumptransform"),
+            Some((0.02, 25.0))
+        );
+        assert_eq!(super::texture_scroll(params, "$basetexturetransform"), None);
     }
 }

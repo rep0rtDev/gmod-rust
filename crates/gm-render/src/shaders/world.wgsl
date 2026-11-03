@@ -30,6 +30,8 @@ struct MaterialParams {
     water_range: vec4<f32>,
     envmap: vec4<f32>,
     envmap2: vec4<f32>,
+    envmap3: vec4<f32>,
+    selfillum_tint: vec4<f32>,
 };
 @group(1) @binding(2) var<uniform> material: MaterialParams;
 @group(1) @binding(3) var detail: texture_2d<f32>;
@@ -157,10 +159,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // $envmapcontrast squares, $envmapsaturation desaturates towards the luminance
         env = mix(env, env * env, material.envmap2.x);
         env = mix(vec3<f32>(dot(env, vec3<f32>(0.299, 0.587, 0.114))), env, material.envmap2.y);
+        // $envmapfresnel: min + (max - min) * (1 - n.v)^exp
+        if material.envmap3.w > 0.5 {
+            let nv = clamp(dot(normalize(camera.eye.xyz - in.world), normalize(in.normal)), 0.0, 1.0);
+            env = env * (material.envmap3.x + (material.envmap3.y - material.envmap3.x) * pow(1.0 - nv, material.envmap3.z));
+        }
         shaded = shaded + env * material.envmap.rgb * mask * camera.exposure;
     }
     // $selfillum: the base alpha lerps towards the unlit base colour
-    shaded = mix(shaded, albedo.rgb * camera.exposure, albedo.a * material.envmap2.z);
+    shaded = mix(shaded, albedo.rgb * material.selfillum_tint.rgb * camera.exposure, albedo.a * material.envmap2.z);
     // mat_monitorgamma: 2.2 is neutral, lower brightens
     let out = pow(max(shaded, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
     // env_fog_controller: linear in the view depth from fogstart to fogend, capped at

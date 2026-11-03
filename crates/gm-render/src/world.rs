@@ -59,6 +59,10 @@ struct MaterialParams {
     envmap: [f32; 4],
     /// `$envmapcontrast`, `$envmapsaturation`, `$selfillum` on.
     envmap2: [f32; 4],
+    /// `$envmapfresnelminmaxexp` (xyz) and `$envmapfresnel` on (w).
+    envmap3: [f32; 4],
+    /// `$selfillumtint` (rgb).
+    selfillum_tint: [f32; 4],
 }
 
 fn envmap_params(mat: &material::Material) -> [f32; 4] {
@@ -85,6 +89,18 @@ fn envmap2_params(mat: &material::Material) -> [f32; 4] {
         .envmap
         .map_or((0.0, 1.0), |e| (e.contrast, e.saturation));
     [c, s, if mat.selfillum { 1.0 } else { 0.0 }, 0.0]
+}
+
+fn envmap3_params(mat: &material::Material) -> [f32; 4] {
+    match mat.envmap.and_then(|e| e.fresnel) {
+        Some(f) => [f[0], f[1], f[2], 1.0],
+        None => [0.0; 4],
+    }
+}
+
+fn selfillum_tint(mat: &material::Material) -> [f32; 4] {
+    let t = mat.selfillum_tint;
+    [t[0], t[1], t[2], 0.0]
 }
 
 /// Nearest baked `env_cubemap` sample: (origin, layer in the cube array).
@@ -558,6 +574,8 @@ fn build_sky_cube(
             water_range: [0.0; 4],
             envmap: [0.0; 4],
             envmap2: [0.0; 4],
+            envmap3: [0.0; 4],
+            selfillum_tint: [1.0; 4],
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });
@@ -1903,6 +1921,8 @@ impl WorldRenderer {
                     water_range: water.1,
                     envmap: envmap_params(mat),
                     envmap2: envmap2_params(mat),
+                    envmap3: envmap3_params(mat),
+                    selfillum_tint: selfillum_tint(mat),
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -2829,6 +2849,8 @@ impl WorldRenderer {
                         water_range: [0.0; 4],
                         envmap: envmap_params(mat),
                         envmap2: envmap2_params(mat),
+                        envmap3: envmap3_params(mat),
+                        selfillum_tint: selfillum_tint(mat),
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
@@ -2932,6 +2954,8 @@ impl WorldRenderer {
                 water_range: [0.0; 4],
                 envmap: [0.0; 4],
                 envmap2: [0.0; 4],
+                envmap3: [0.0; 4],
+                selfillum_tint: [1.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -3151,6 +3175,8 @@ impl WorldRenderer {
                 water_range: [0.0; 4],
                 envmap: [0.0; 4],
                 envmap2: [0.0; 4],
+                envmap3: [0.0; 4],
+                selfillum_tint: [1.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
