@@ -804,9 +804,16 @@ public:
 		// them launched rolling and sliding bodies (`phys_push_drum_v10..v40` and ten more
 		// harnesses flipped); a point approaching slower than the face threshold is settling
 		// (`phys_drop_flat_crate_*` 261103)
+		// the floor's level is the body's: over seven boxes (crate 28 u/s, long crate 24.5,
+		// cardboard boxes 22-23, hard drive 20.5, ammo can 17.8) it is linear in the lever
+		// product b*h over the square radius of gyration about the body's first tangent axis
+		// (b: half extent along the other tangent axis, h: mass centre height over the face),
+		// with the friction on the slope; the crate's 0.417 + 0.467 f is this rule at b*h/k^2 =
+		// 2.1 (`phys_drop_flat_{crate2,cardbox1,cardbox3,harddrive,ammocan}_lo*` 261103)
+		float face_floor = 0.417f + 0.467f * friction;
 		auto separation = [&](float restitution_speed, float approach) {
 			if (approach <= 0.3f) return restitution_speed;
-			return std::max(restitution_speed, 0.417f + 0.467f * friction);
+			return std::max(restitution_speed, face_floor);
 		};
 		auto rel = [&](JPH::RVec3Arg p) { return point_velocity(b1, p) - point_velocity(b2, p); };
 		// a speculative manifold whose closest pair is farther than the fastest vertex travels
@@ -1040,6 +1047,26 @@ public:
 				bool edge_pair = face.size() == 2 && (face[0]->p - face[1]->p).Length() > 0.2f;
 				bool spawned_in = first_touch && face.size() >= 3 && d_face <= 0.0f && face_slip < 3.0f;
 				if (((face.size() >= 3 || edge_pair) && fastest > 0.3f && (d_face > 0.02f || (first_touch && d_face > 0.0f)) && face_slip < 3.0f) || spawned_in) {
+					if (face.size() >= 3 && !ring) {
+						const JPH::Body &fb = b1.IsDynamic() ? b1 : b2;
+						const JPH::MotionProperties *fmp = fb.GetMotionProperties();
+						JPH::Quat irot = fb.GetRotation().Conjugated();
+						JPH::Vec3 nl = irot * n;
+						int up = 0;
+						for (int ax = 1; ax < 3; ++ax) if (std::fabs(nl[ax]) > std::fabs(nl[up])) up = ax;
+						int rock = up == 0 ? 1 : 0;
+						int lever = 3 - up - rock;
+						float h = 0.0f, bext = 0.0f;
+						for (Pt *f : face) {
+							JPH::Vec3 r = irot * JPH::Vec3(f->p - fb.GetCenterOfMassPosition());
+							h += std::fabs(r[up]);
+							bext = std::max(bext, std::fabs(r[lever]));
+						}
+						h /= (float)face.size();
+						JPH::Mat44 ii = fmp->GetLocalSpaceInverseInertia();
+						float k2 = fmp->GetInverseMass() / std::max(ii(rock, rock), 1e-9f);
+						face_floor = 0.36f + 0.264f * friction * (bext * h / k2);
+					}
 					std::vector<float> acc(face.size(), 0.0f);
 					// the drum's ring is struck in sequence: the hull +x rim vertex as a free single
 					// vertex, then its antipode by the approach the first impact left it
