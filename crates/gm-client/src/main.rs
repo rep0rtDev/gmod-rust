@@ -4878,11 +4878,12 @@ impl App {
                                     axis: Some(n),
                                 },
                                 _ => {
-                                    // the normal from a point 32 u out, jittered by 3 u; the
-                                    // thruster's own velocity (which slows the smoke) is not known
+                                    // the normal from a point 32 u out, jittered by 3 u; a
+                                    // thruster moving faster than 200 u/s slows its smoke
                                     let nr = (off + n * 32.0 + fx_vec_rand(r) * 3.0 - e.pos)
                                         .normalize_or_zero();
-                                    let speed = fx_range(r, 10.0, 30.0) * 10.0;
+                                    let speed = fx_range(r, 10.0, 30.0) * 10.0
+                                        / (e.vel.length() / 200.0).clamp(1.0, 10.0);
                                     ThrusterParticle {
                                         mat: name,
                                         additive: false,
