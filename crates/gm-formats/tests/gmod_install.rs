@@ -104,7 +104,12 @@ fn gm_construct_lumps_parse() {
         if f.light_ofs >= 0 {
             let lm = bsp.face_lightmap(f, false).unwrap();
             let (w, h) = f.lightmap_dims();
-            assert_eq!(lm.len(), (w * h) as usize * f.light_styles());
+            // SURF_BUMPLIGHT faces carry four pages per style (flat + three bump basis)
+            let bumped = bsp.tex_infos[f.tex_info as usize].flags
+                & gm_formats::bsp::lumps::surf::BUMPLIGHT
+                != 0;
+            let pages = if bumped { 4 } else { 1 };
+            assert_eq!(lm.len(), (w * h) as usize * f.light_styles() * pages);
             lit += 1;
         }
     }

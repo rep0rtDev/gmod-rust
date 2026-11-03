@@ -33,6 +33,11 @@ pub enum Provider {
         root: PathBuf,
         index: BTreeMap<String, PathBuf>,
     },
+    /// A BSP pakfile (`LUMP_PAKFILE`, a zip): per-map cubemaps, patched VMTs, vhv files.
+    Pak {
+        label: String,
+        entries: BTreeMap<String, Vec<u8>>,
+    },
 }
 
 impl Provider {
@@ -40,6 +45,7 @@ impl Provider {
         match self {
             Provider::Vpk(a) => a.dir_path().display().to_string(),
             Provider::Dir { root, .. } => root.display().to_string(),
+            Provider::Pak { label, .. } => label.clone(),
         }
     }
 
@@ -47,6 +53,7 @@ impl Provider {
         match self {
             Provider::Vpk(a) => a.directory.get(path).is_some(),
             Provider::Dir { index, .. } => index.contains_key(path),
+            Provider::Pak { entries, .. } => entries.contains_key(path),
         }
     }
 
@@ -59,6 +66,10 @@ impl Provider {
                     .ok_or_else(|| ContentError::NotFound(path.to_string()))?;
                 Ok(std::fs::read(root.join(rel))?)
             }
+            Provider::Pak { entries, .. } => entries
+                .get(path)
+                .cloned()
+                .ok_or_else(|| ContentError::NotFound(path.to_string())),
         }
     }
 
@@ -66,6 +77,7 @@ impl Provider {
         match self {
             Provider::Vpk(a) => Box::new(a.directory.entries.keys().map(String::as_str)),
             Provider::Dir { index, .. } => Box::new(index.keys().map(String::as_str)),
+            Provider::Pak { entries, .. } => Box::new(entries.keys().map(String::as_str)),
         }
     }
 }
@@ -150,6 +162,33 @@ impl Mount {
 
     pub fn providers(&self) -> &[Provider] {
         &self.providers
+    }
+
+    /// Mount a map's pakfile (`LUMP_PAKFILE` bytes, a zip) in front of everything else, as
+    /// the engine does: its patched materials and baked cubemaps override the install.
+    pub fn add_pak(&mut self, label: &str, zip_bytes: &[u8]) -> Result<()> {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes))
+            .map_err(|e| std::io::Error::other(format!("{label}: {e}")))?;
+        let mut entries = BTreeMap::new();
+        for i in 0..archive.len() {
+            let mut f = archive
+                .by_index(i)
+                .map_err(|e| std::io::Error::other(format!("{label}: {e}")))?;
+            if f.is_dir() {
+                continue;
+            }
+            let mut bytes = Vec::with_capacity(f.size() as usize);
+            std::io::Read::read_to_end(&mut f, &mut bytes)?;
+            entries.insert(vpk::normalize(f.name()), bytes);
+        }
+        self.providers.insert(
+            0,
+            Provider::Pak {
+                label: label.to_string(),
+                entries,
+            },
+        );
+        Ok(())
     }
 
     pub fn exists(&self, path: &str) -> bool {
@@ -237,6 +276,30 @@ fn name_matches(pat: &str, name: &str) -> bool {
         }
     }
     rec(pat.as_bytes(), name.as_bytes())
+}
+
+#[cfg(test)]
+mod pak_tests {
+    use super::*;
+
+    #[test]
+    fn map_pakfile_mounts_in_front() {
+        let Some(install) = find_install() else {
+            return;
+        };
+        let mut mount = Mount::for_install(&install).unwrap();
+        let Ok(data) = mount.read("maps/gm_construct.bsp") else {
+            return;
+        };
+        let pak = gm_formats::bsp::pakfile(&data).unwrap();
+        mount.add_pak("gm_construct pak", pak).unwrap();
+        let cubes = mount.find("materials/maps/gm_construct/*.vtf");
+        assert_eq!(cubes.len(), 56, "{cubes:?}");
+        let one = cubes.iter().find(|c| c.ends_with(".hdr.vtf")).unwrap();
+        let bytes = mount.read(one).unwrap();
+        assert_eq!(&bytes[..4], b"VTF\0");
+        assert_eq!(mount.resolve(one), Some(0));
+    }
 }
 
 #[cfg(test)]

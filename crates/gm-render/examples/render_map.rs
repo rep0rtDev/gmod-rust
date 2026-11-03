@@ -15,8 +15,11 @@ fn main() -> Result<()> {
 
     let install = gm_content::find_install()
         .ok_or_else(|| anyhow!("GMod install not found; set GMOD_DIR"))?;
-    let mount = gm_content::Mount::for_install(&install)?;
+    let mut mount = gm_content::Mount::for_install(&install)?;
     let data = mount.read(&format!("maps/{map}.bsp"))?;
+    if let Ok(pak) = gm_formats::bsp::pakfile(&data) {
+        mount.add_pak(&format!("maps/{map}.bsp pak"), pak)?;
+    }
     let bsp = gm_formats::bsp::Bsp::parse(&data)?;
 
     let camera = if args.len() >= 7 {

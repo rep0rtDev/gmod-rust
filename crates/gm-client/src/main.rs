@@ -5130,7 +5130,7 @@ fn main() -> Result<()> {
     };
     let inst =
         gm_content::find_install().ok_or_else(|| anyhow!("no GMod install (set GMOD_DIR)"))?;
-    let mount = gm_content::Mount::for_install(&inst)?;
+    let mut mount = gm_content::Mount::for_install(&inst)?;
     let sounds = gm_audio::Sounds::new(&mount);
     eprintln!(
         "audio: {} ({} script entries)",
@@ -5138,6 +5138,9 @@ fn main() -> Result<()> {
         sounds.scripts.len()
     );
     let bsp_data = mount.read(&format!("maps/{map}.bsp"))?;
+    if let Ok(pak) = gm_formats::bsp::pakfile(&bsp_data) {
+        mount.add_pak(&format!("maps/{map}.bsp pak"), pak)?;
+    }
     let (spawn, yaw) = {
         let bsp = gm_formats::bsp::Bsp::parse(&bsp_data)?;
         let e = bsp

@@ -1328,6 +1328,7 @@ dependencies = [
  "gm-formats",
  "thiserror 2.0.21",
  "walkdir",
+ "zip",
 ]
 
 [[package]]

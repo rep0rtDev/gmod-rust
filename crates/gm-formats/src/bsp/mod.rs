@@ -277,6 +277,12 @@ impl<'a> Bsp<'a> {
     }
 }
 
+/// The map's pakfile lump (`LUMP_PAKFILE`, a zip archive) straight from the file bytes.
+pub fn pakfile(data: &[u8]) -> Result<&[u8]> {
+    let bsp = Bsp::parse(data)?;
+    bsp.header.lump_data(data, Lump::PakFile)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
