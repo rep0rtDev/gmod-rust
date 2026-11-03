@@ -1192,6 +1192,16 @@ impl App {
             }
             // TargetID / TargetIDSmall: Verdana 12 / 11 bold (the 480-599 line variants)
             ui.register_font(&gpu, &self.mount, "HL2MPTypeDeath", "csd", 64.0 * fs);
+            // gmod_tool/cl_init.lua: the toolgun HUD's fonts (Roboto Bk 80 / 24 / 17)
+            for (name, px) in [
+                ("GModToolName", 80.0),
+                ("GModToolSubtitle", 24.0),
+                ("GModToolHelp", 17.0),
+            ] {
+                if !ui.register_font(&gpu, &self.mount, name, "Roboto Black", px) {
+                    ui.register_font(&gpu, &self.mount, name, "Roboto-Bold", px);
+                }
+            }
             // DermaDefaultBold: Tahoma 13 weight 800 (derma/init.lua), not scaled by yres
             if !ui.register_font(&gpu, &self.mount, "DermaDefaultBold", "Tahoma", 13.0) {
                 ui.register_font(&gpu, &self.mount, "DermaDefaultBold", "Roboto-Bold", 13.0);
@@ -4896,6 +4906,112 @@ impl App {
                         text: "Q".to_string(),
                         color: [1.0, 208.0 / 255.0, 64.0 / 255.0, 1.0],
                     });
+                }
+                // gmod_tool SWEP:DrawHUD: the tool's name and description on a dark panel
+                // at (50, 40), then its Information rows (LMB/RMB/R/E icons, text from
+                // tool.<mode>.<row>) filtered by stage and operation
+                if self.weapon == 1 && p.alive && self.menu.is_none() && !self.main_menu {
+                    let mode = self.tool.clone();
+                    let loc = |k: String| self.lang.get(&k).cloned();
+                    let name = loc(format!("tool.{mode}.name")).unwrap_or_else(|| mode.clone());
+                    let desc = loc(format!("tool.{mode}.desc")).unwrap_or_default();
+                    let (x, y) = (50.0, 40.0);
+                    let nm = g.ui.font_metrics(Some("GModToolName"));
+                    let sm = g.ui.font_metrics(Some("GModToolSubtitle"));
+                    let hm = g.ui.font_metrics(Some("GModToolHelp"));
+                    let white = [1.0, 1.0, 1.0, 1.0];
+                    let dark = |a: f32| [10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, a / 255.0];
+                    let title_h =
+                        nm.line_height + if desc.is_empty() { 0.0 } else { sm.line_height };
+                    items.push(UiItem::Rect {
+                        x: x - 10.0,
+                        y: y - 8.0,
+                        w: 600.0,
+                        h: title_h + 16.0,
+                        color: dark(180.0),
+                    });
+                    items.push(UiItem::Text {
+                        font: Some("GModToolName".to_string()),
+                        x,
+                        y,
+                        text: name,
+                        color: white,
+                    });
+                    if !desc.is_empty() {
+                        items.push(UiItem::Text {
+                            font: Some("GModToolSubtitle".to_string()),
+                            x,
+                            y: y + nm.line_height,
+                            text: desc,
+                            color: white,
+                        });
+                    }
+                    let rows: Vec<(String, &str, bool)> = gm_server::tool_panels::panel(&mode)
+                        .map(|pan| pan.info)
+                        .unwrap_or(&[])
+                        .iter()
+                        .filter(|(_, stage, op)| *stage <= 0 && *op <= 0)
+                        .filter_map(|(row, _, _)| {
+                            let text = loc(format!("tool.{mode}.{row}"))?;
+                            let icon = if row.starts_with("left") {
+                                "gui/lmb.png"
+                            } else if row.starts_with("right") {
+                                "gui/rmb.png"
+                            } else if row.starts_with("reload") {
+                                "gui/r.png"
+                            } else if row.starts_with("use") {
+                                "gui/e.png"
+                            } else {
+                                "gui/info"
+                            };
+                            let use_too = !row.starts_with("use") && row.ends_with("use");
+                            Some((text, icon, use_too))
+                        })
+                        .collect();
+                    if !rows.is_empty() {
+                        let lh = hm.line_height.max(18.0) + 4.0;
+                        let ry = y + title_h + 16.0;
+                        items.push(UiItem::Rect {
+                            x: x - 10.0,
+                            y: ry,
+                            w: 600.0,
+                            h: rows.len() as f32 * lh + 8.0,
+                            color: dark(230.0),
+                        });
+                        for (i, (text, icon, use_too)) in rows.iter().enumerate() {
+                            let yy = ry + 4.0 + i as f32 * lh;
+                            let iy = yy + (lh - 4.0 - 16.0) / 2.0;
+                            items.push(UiItem::Image {
+                                x,
+                                y: iy,
+                                w: 16.0,
+                                h: 16.0,
+                                material: (*icon).to_string(),
+                                color: white,
+                                rot: 0,
+                            });
+                            let mut tx = x + 21.0;
+                            if *use_too {
+                                items.push(UiItem::Image {
+                                    x: tx,
+                                    y: iy,
+                                    w: 16.0,
+                                    h: 16.0,
+                                    material: "gui/e.png".to_string(),
+                                    color: white,
+                                    rot: 0,
+                                });
+                                tx += 21.0;
+                            }
+                            items.push(UiItem::Text {
+                                font: Some("GModToolHelp".to_string()),
+                                x: tx,
+                                y: yy,
+                                text: text.clone(),
+                                color: white,
+                            });
+                        }
+                    }
                 }
                 // CHudDamageIndicator (hudlayout.res: dmg_xpos 30, dmg_ypos 100, dmg_wide 36,
                 // dmg_tall1 240 outer / dmg_tall2 200 inner, DmgColor 255 0 0, alpha from the attack
