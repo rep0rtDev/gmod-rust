@@ -878,6 +878,7 @@ fn device_simulate(
     body: gm_physics::BodyHandle,
     d: &mut gm_sandbox::Device,
     dt: f32,
+    welds: &[(gm_physics::BodyHandle, gm_physics::BodyHandle)],
 ) {
     let device_mass = d.mass();
     use glam::Vec3;
@@ -895,7 +896,18 @@ fn device_simulate(
             if *on && *mul != 0.0 {
                 let top = st.position + st.rotation * Vec3::new(0.0, 0.0, *top_z);
                 let dir = st.rotation * Vec3::new(0.0, 0.0, -*top_z);
-                world.add_impulse_at(body, top, dir * (*force * *mul * 50.0 * dt));
+                // the game's weld is rigid: the thrust moves the welded assembly as one body
+                let target =
+                    gm_sandbox::weld_group(welds, body)
+                        .into_iter()
+                        .fold(body, |best, b| {
+                            if world.mass(b) > world.mass(best) {
+                                b
+                            } else {
+                                best
+                            }
+                        });
+                world.add_impulse_at(target, top, dir * (*force * *mul * 50.0 * dt));
             }
         }
         Device::Hoverball {
@@ -1822,6 +1834,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
     }
     // the probe's devices follow the props in the trace: their bodies, then their state
     let mut devices: Vec<(gm_physics::BodyHandle, gm_sandbox::Device)> = Vec::new();
+    let mut welds: Vec<(gm_physics::BodyHandle, gm_physics::BodyHandle)> = Vec::new();
     for ds in &scn.devices {
         let model = ds.model();
         let shape = model_shape(&mount, &model)?;
@@ -2059,6 +2072,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
                 if c.nocollide {
                     world.set_pair_collision(a, b, false);
                 }
+                welds.push((a, b));
                 world.weld(a, b).is_some()
             }
             "rope" => {
@@ -2331,7 +2345,7 @@ fn run_constraint(scn: &Scenario) -> Result<Value> {
                     *target_z += *zvel * dt * *speed;
                 }
             }
-            device_simulate(&mut world, *body, d, dt);
+            device_simulate(&mut world, *body, d, dt, &welds);
         }
         world.step();
     }

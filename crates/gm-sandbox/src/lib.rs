@@ -490,6 +490,30 @@ pub fn elastic_consts(mass1: Option<f32>, mass2: Option<f32>, fixed: bool) -> (f
     }
 }
 
+/// Every member of the rigid assembly `start` belongs to through weld constraints (transitive;
+/// the game's weld is a rigid IVP constraint, so a force on one member moves them all as one body).
+pub fn weld_group<T: Copy + PartialEq>(welds: &[(T, T)], start: T) -> Vec<T> {
+    let mut group = vec![start];
+    let mut i = 0;
+    while i < group.len() {
+        let cur = group[i];
+        i += 1;
+        for &(a, b) in welds {
+            let other = if a == cur {
+                b
+            } else if b == cur {
+                a
+            } else {
+                continue;
+            };
+            if !group.contains(&other) {
+                group.push(other);
+            }
+        }
+    }
+    group
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Constraint {
     pub id: u32,

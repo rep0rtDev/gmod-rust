@@ -11989,8 +11989,28 @@ impl<'w> Server<'w> {
                     }
                     let top = st.position + st.rotation * Vec3::new(0.0, 0.0, top_z);
                     let dir = st.rotation * Vec3::new(0.0, 0.0, -top_z);
+                    // the game's weld is a rigid constraint, so the thrust moves the welded
+                    // assembly as one body; ours is soft, so push the heaviest welded body
+                    // at the thruster's point instead of the 1 kg thruster itself
+                    let welds: Vec<(u32, u32)> = self
+                        .sandbox
+                        .constraints()
+                        .iter()
+                        .filter(|c| matches!(c.kind, gm_sandbox::ConstraintKind::Weld { .. }))
+                        .filter_map(|c| Some((c.ent1?, c.ent2?)))
+                        .collect();
+                    let target = gm_sandbox::weld_group(&welds, driven)
+                        .into_iter()
+                        .filter_map(|e| self.bodies.get(&e).copied())
+                        .fold(body, |best, b| {
+                            if self.physics.mass(b) > self.physics.mass(best) {
+                                b
+                            } else {
+                                best
+                            }
+                        });
                     self.physics
-                        .add_impulse_at(body, top, dir * (force * mul * 50.0 * dt));
+                        .add_impulse_at(target, top, dir * (force * mul * 50.0 * dt));
                 }
                 gm_sandbox::Device::Hoverball {
                     target_z,

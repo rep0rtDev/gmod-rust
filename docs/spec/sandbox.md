@@ -191,3 +191,7 @@ skin and body with the model index; the native client draws other players with
 ## Not yet measured
 
 Spawning onto other props (the spawn ray only hits the world in our trace), ragdolls and effects, `gmod_undonum`, `gmod_admin_cleanup`, cleanup of one type, `sbox_maxragdolls` and the other limits, prop spawn effects and sounds.
+
+### Devices on welded assemblies
+
+The game's weld is a rigid IVP constraint: a thruster's force moves the welded assembly as one body. Our weld is soft (60 Hz translation / 15 Hz rotation, tuned on `constraint_weld_pair`), so a 25 kN thrust on the 1 kg thruster body tore it off its crate (`constraint_device_thruster_crate`: crate tumbled at t26, thruster flew at 3500 u/s, 4225 u error). The thrust impulse is therefore applied at the thruster's point to the heaviest body of the thruster's weld group (`gm_sandbox::weld_group`, transitive over weld constraints; the thruster itself when not welded). Lift now tracks the game within 3.5 % (z 491 vs 509 at t100), error 679 -> 69 u. Open: our pitch rate is twice the game's (-27 vs -14 deg/s at t50) while our lateral drift is smaller (-7 vs -23 u/s) at the same tilt - the game's application point / angular drag differ; one record only, not derivable yet.
