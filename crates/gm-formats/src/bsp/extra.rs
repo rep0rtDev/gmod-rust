@@ -262,6 +262,9 @@ impl Record for DispVert {
 #[derive(Clone, Debug, Default)]
 pub struct DispMesh {
     pub positions: Vec<[f32; 3]>,
+    /// The vertex on the flat base face before its displacement (the game maps the
+    /// lightmap through these, so the luxel grid follows the texinfo axes, not the grid's).
+    pub flat: Vec<[f32; 3]>,
     pub alphas: Vec<f32>,
     pub indices: Vec<u32>,
 }
@@ -329,12 +332,15 @@ pub fn build_disp_mesh(bsp: &Bsp<'_>, disp: &DispInfo, verts: &[DispVert]) -> Re
                 needed: 1,
             })?;
             let mut p = [0f32; 3];
+            let mut flat = [0f32; 3];
             for k in 0..3 {
                 let left = c0[k] + (c1[k] - c0[k]) * ty;
                 let right = c3[k] + (c2[k] - c3[k]) * ty;
-                p[k] = left + (right - left) * tx + dv.vec[k] * dv.dist;
+                flat[k] = left + (right - left) * tx;
+                p[k] = flat[k] + dv.vec[k] * dv.dist;
             }
             mesh.positions.push(p);
+            mesh.flat.push(flat);
             mesh.alphas.push(dv.alpha);
         }
     }

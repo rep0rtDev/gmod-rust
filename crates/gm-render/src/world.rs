@@ -1319,6 +1319,7 @@ impl WorldRenderer {
         // the float atlas holds linear light as is (lm_scale stays for the uniform layout)
         let lm_scale: f32 = 1.0;
         let mut atlas = Atlas::new(atlas_size);
+        let style_scale = crate::lightmap::style_brightness(bsp);
         // the map's env_tonemap_controller (set by logic_auto OnMapSpawn): the exposure the
         // auto path may use lies between its min and max; without a luminance readback we
         // hold mat_hdr_tonemapscale 1 clamped into that range
@@ -1485,11 +1486,31 @@ impl WorldRenderer {
             let mut lm_page = 0.0f32;
             let (placement, lit) = if face.light_ofs >= 0 && face.light_styles() > 0 {
                 let (w, h) = face.lightmap_dims();
-                let samples = bsp.face_lightmap(face, hdr)?;
+                let raw = bsp.face_lightmap(face, hdr)?;
                 let page = (w * h) as usize;
+                let bumped = bsp.tex_infos[face.tex_info as usize].flags & surf::BUMPLIGHT != 0;
+                let nb = if bumped { 4 } else { 1 };
+                // the lump holds one block per light style (each block its bump pages); the
+                // styles sum at their brightness (gm_construct's sun is named: style 33)
+                let mut samples = vec![[0f32; 3]; nb * page];
+                for (si, &style) in face.styles.iter().enumerate().take(face.light_styles()) {
+                    let k = style_scale[style as usize];
+                    for b in 0..nb {
+                        let o = (si * nb + b) * page;
+                        if let Some(block) = raw.get(o..o + page) {
+                            for (dst, src) in
+                                samples[b * page..(b + 1) * page].iter_mut().zip(block)
+                            {
+                                let l = src.to_linear();
+                                for c in 0..3 {
+                                    dst[c] += l[c] * k;
+                                }
+                            }
+                        }
+                    }
+                }
                 // bumped faces: the four pages side by side, page 0 (flat) first
-                let bumped = samples.len() >= 4 * page
-                    && bsp.tex_infos[face.tex_info as usize].flags & surf::BUMPLIGHT != 0;
+                let bumped = bumped && samples.len() >= 4 * page;
                 let placed = if bumped {
                     let mut strip = Vec::with_capacity(4 * page);
                     for row in 0..h as usize {
@@ -1542,20 +1563,12 @@ impl WorldRenderer {
             if let Some(disp) = disp_by_face.get(&(fi as u16)) {
                 let mesh = build_disp_mesh(bsp, disp, &dverts)?;
                 let base = vertices.len() as u32;
-                let side = disp.side_verts() as f32 - 1.0;
-                let (lw, lh) = face.lightmap_dims();
                 for (i, p) in mesh.positions.iter().enumerate() {
-                    let gx = (i % disp.side_verts()) as f32 / side;
-                    let gy = (i / disp.side_verts()) as f32 / side;
                     vertices.push(Vertex {
                         position: *p,
                         uv: face_uv(bsp, face, *p, tw, th),
                         lm_uv: if lit {
-                            atlas.luxel_center(
-                                &placement,
-                                gx * (lw as f32 - 1.0),
-                                gy * (lh as f32 - 1.0),
-                            )
+                            face_lm_uv(bsp, face, mesh.flat[i], &placement, atlas_size as f32)
                         } else {
                             white_uv
                         },
