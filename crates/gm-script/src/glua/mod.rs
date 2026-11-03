@@ -184,13 +184,32 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
     if let Value::Table(classes) = g.get::<Value>("__glua_classes")? {
         for pair in classes.pairs::<String, Table>() {
             let (class, meta) = pair?;
-            for inner in meta.pairs::<String, Value>() {
-                let (k, iv) = inner?;
-                if matches!(iv, Value::Function(_)) && !k.starts_with("__") {
-                    present.push(format!("{class}:{k}"));
+            // a control inherits its base's methods through the metatable's `__index` chain
+            // (DFrame:SetPos is Panel's): those count for the class too
+            let mut table = Some(meta);
+            let mut depth = 0;
+            while let Some(t) = table.take() {
+                for inner in t.pairs::<String, Value>() {
+                    let (k, iv) = inner?;
+                    if matches!(iv, Value::Function(_)) && !k.starts_with("__") {
+                        present.push(format!("{class}:{k}"));
+                    }
                 }
+                depth += 1;
+                if depth > 16 {
+                    break;
+                }
+                table = t
+                    .metatable()
+                    .and_then(|m| m.get::<Value>("__index").ok())
+                    .and_then(|v| match v {
+                        Value::Table(b) => Some(b),
+                        _ => None,
+                    });
             }
         }
+        present.sort();
+        present.dedup();
     }
     let mut stubs = Vec::new();
     if let Value::Table(t) = g.get::<Value>("__glua_stubs")? {

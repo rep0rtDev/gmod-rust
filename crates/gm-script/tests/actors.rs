@@ -1038,3 +1038,90 @@ fn glua_derma_frame_button_click_and_typing() {
     let valid: bool = rt.actors()[0].eval("return IsValid(FRAME)").expect("eval");
     assert!(!valid, "Close() removes a DFrame that deletes on close");
 }
+
+/// Derma controls: list view lines / sorting / selection, property sheet tabs, tree nodes,
+/// colour mixer and a form all build, lay out and paint without errors.
+#[test]
+fn glua_derma_controls_build_and_lay_out() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "ui".into(),
+        name: "controls".into(),
+        priority: 0,
+        source: r#"
+            F = vgui.Create("DFrame")
+            F:SetSize(600, 500)
+            LV = vgui.Create("DListView", F)
+            LV:SetPos(10, 30) LV:SetSize(280, 150)
+            LV:AddColumn("Name") LV:AddColumn("Size")
+            LV:AddLine("b", "20") LV:AddLine("a", "3") LV:AddLine("c", "100")
+            LV:SortByColumn(2)
+            SEL = nil
+            LV.OnRowSelected = function(_, id, line) SEL = line:GetColumnText(1) end
+            LV:SelectFirstItem()
+            PS = vgui.Create("DPropertySheet", F)
+            PS:SetPos(300, 30) PS:SetSize(280, 150)
+            P1 = vgui.Create("DPanel") P2 = vgui.Create("DPanel")
+            PS:AddSheet("One", P1) PS:AddSheet("Two", P2)
+            PS:SwitchToName("Two")
+            T = vgui.Create("DTree", F)
+            T:SetPos(10, 200) T:SetSize(280, 150)
+            N = T:AddNode("root") N2 = N:AddNode("child") N:SetExpanded(true)
+            PICKED = nil
+            T.OnNodeSelected = function(_, n) PICKED = n:GetText() end
+            N2:InternalDoClick(MOUSE_LEFT)
+            CM = vgui.Create("DColorMixer", F)
+            CM:SetPos(300, 200) CM:SetSize(280, 200)
+            CM:SetColor(Color(10, 20, 30, 200))
+            FORM = vgui.Create("DForm", F)
+            FORM:SetPos(10, 360) FORM:SetSize(280, 130)
+            FORM:SetName("Form")
+            FORM:CheckBox("box") FORM:NumSlider("slider", nil, 0, 10, 1) FORM:TextEntry("entry") FORM:ComboBox("combo") FORM:Button("btn")
+            CB = vgui.Create("DComboBox", F) CB:SetPos(10, 480) CB:AddChoice("x", 1) CB:AddChoice("y", 2, true)
+            NW = vgui.Create("DNumberWang", F) NW:SetMinMax(0, 10) NW:SetValue(7)
+            F:MakePopup()
+        "#
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let world = gm_net::ClientWorld::default();
+    rt.cursor = Some((5.0, 5.0));
+    let draws = rt.client_render(&world, 1280, 720);
+    let err: String = rt.actors()[0]
+        .eval("local ok, e = pcall(__derma_paint) return ok and '' or tostring(e)")
+        .expect("eval");
+    assert_eq!(err, "", "the vgui layer paints without a script error");
+    assert!(draws.len() > 50, "the controls paint: {}", draws.len());
+    let (sorted, sel, active, picked, color, choice, wang, errors): (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        f64,
+        String,
+    ) = rt.actors()[0]
+        .eval(
+            r#"
+            local s = {}
+            for i = 1, 3 do s[#s + 1] = LV.Sorted[i]:GetColumnText(1) end
+            local c = CM:GetColor()
+            return table.concat(s, ","), SEL or "", PS:GetActiveTab():GetText(), PICKED or "",
+                c.r .. "," .. c.g .. "," .. c.b .. "," .. c.a, CB:GetValue(), NW:GetValue(), ""
+        "#,
+        )
+        .expect("eval");
+    assert_eq!(sorted, "a,b,c", "numeric sort by the size column");
+    assert_eq!(sel, "a", "SelectFirstItem selects the first sorted line");
+    assert_eq!(active, "Two", "SwitchToName activates the tab");
+    assert_eq!(picked, "child", "clicking a tree node selects it");
+    assert_eq!(color, "10,20,30,200", "the mixer keeps the colour set");
+    assert_eq!(choice, "y", "AddChoice with select chooses it");
+    assert_eq!(wang, 7.0);
+    assert_eq!(errors, "");
+}
