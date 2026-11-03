@@ -1,4 +1,5 @@
 -- GLua client drawing surface over the host's `draw.*` command list (own implementation from
+-- tables this realm builds or reads as documented: @struct ToScreenData @struct ViewSetup @struct FontData @struct DynamicLight @struct TextData
 -- the documented behaviour): `surface`, `draw`, `cam` (3D2D), `ScrW` / `ScrH`, `Material`, and
 -- the HUD hook chain the game runs each frame (`PreDrawHUD`, `HUDShouldDraw`,
 -- `HUDPaintBackground`, `HUDPaint`, `PostDrawHUD`, `DrawOverlay`). On the server realm the

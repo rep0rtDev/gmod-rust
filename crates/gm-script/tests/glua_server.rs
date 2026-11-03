@@ -2433,7 +2433,7 @@ fn npc_shoot_params_ask_the_swep() {
     let (prof, dx): (f64, f64) = rt.actors()[0]
         .eval("return state.prof, state.dir.x")
         .unwrap();
-    assert_eq!((prof, dx), (2.0, 1.0));
+    assert_eq!((prof, dx), (1.0, 1.0), "WEAPON_PROFICIENCY_AVERAGE is 1");
 }
 
 #[test]

@@ -1282,3 +1282,25 @@ fn glua_client_globals_models_particles_toscreen() {
         "removed model no longer drawn"
     );
 }
+
+/// The documented enumerations exist with the game's values, and a constant another runtime
+/// file defines keeps its value.
+#[test]
+fn glua_enums_from_the_documented_tables() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "e".into(),
+        name: "e".into(),
+        priority: 0,
+        source: "".into(),
+        config: ActorConfig::default(),
+    })
+    .expect("actor");
+    let (mask, jump, blast, key_space, mt): (f64, f64, f64, f64, f64) = rt.actors()[0]
+        .eval("return MASK_SHOT, IN_JUMP, DMG_BLAST, KEY_SPACE, MOVETYPE_VPHYSICS")
+        .expect("eval");
+    assert_eq!(
+        (mask, jump, blast, key_space, mt),
+        (1174421507.0, 2.0, 64.0, 65.0, 6.0)
+    );
+}

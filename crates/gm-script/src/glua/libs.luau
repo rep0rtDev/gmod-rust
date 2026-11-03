@@ -1,4 +1,5 @@
 -- Shared / server libraries without an engine object behind them: pure-Lua state (team, list,
+-- trace tables as documented: @struct Trace @struct HullTrace @struct TraceResult @struct Color
 -- numpad, player_manager, duplicator registries, Tool state), thin wrappers over what the host
 -- has (umsg over net, physenv over cvars), honest stubs for the rest (lists come from the manifest).
 local stub = __glua_stub

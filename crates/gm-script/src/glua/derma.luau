@@ -1,4 +1,10 @@
 -- GLua vgui / Derma over the client drawing surface (own implementation from the documented
+-- panel hooks this tree calls on its panels:
+-- @hook PANEL:Init @hook PANEL:Paint @hook PANEL:PaintOver @hook PANEL:Think @hook PANEL:PerformLayout
+-- @hook PANEL:AnimationThink @hook PANEL:ApplySchemeSettings @hook PANEL:OnChildAdded @hook PANEL:OnChildRemoved
+-- @hook PANEL:OnCursorEntered @hook PANEL:OnCursorExited @hook PANEL:OnCursorMoved @hook PANEL:OnFocusChanged
+-- @hook PANEL:OnKeyCodePressed @hook PANEL:OnKeyCodeReleased @hook PANEL:OnMousePressed @hook PANEL:OnMouseReleased
+-- @hook PANEL:OnMouseWheeled @hook PANEL:OnRemove @hook PANEL:OnScreenSizeChanged @hook PANEL:OnSizeChanged @hook PANEL:OnVScroll
 -- behaviour): a panel tree with docking, z order, hover / click / keyboard routing from the
 -- client's cursor and key edges, painted each frame after `HUDPaint` through `surface.*`
 -- in panel coordinates; the default skin's colours (docs/spec/ui.md). Server realm: stubs.

@@ -709,7 +709,7 @@ local prev_move = {}
     events.on("npc.shoot_params", function(p)
         local w = weapons.__ensure and weapons.__ensure(p.weapon, p.npc)
         if not w then return end
-        local spread = w.GetNPCBulletSpread and tonumber(w:GetNPCBulletSpread(WEAPON_PROFICIENCY_AVERAGE or 2))
+        local spread = w.GetNPCBulletSpread and tonumber(w:GetNPCBulletSpread(WEAPON_PROFICIENCY_AVERAGE))
         local fired = false
         -- @hook WEAPON:GetCapabilities
         -- a SWEP without the range-attack capability is never fired by the NPC

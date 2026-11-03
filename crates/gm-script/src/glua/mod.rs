@@ -30,6 +30,7 @@ const CLASSES: &str = include_str!("classes.luau");
 /// scripted_ents / weapons / baseclass: ENT and SWEP tables over the host scripted classes.
 const SCRIPTED: &str = include_str!("scripted.luau");
 const LIBS: &str = include_str!("libs.luau");
+const ENUMS: &str = include_str!("enums.luau");
 const CLIENT: &str = include_str!("client.luau");
 const DERMA: &str = include_str!("derma.luau");
 
@@ -108,6 +109,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         lua.create_function(|lua, address: String| stub(lua, &address))?,
     )?;
     lua.load(CORE).set_name("glua/core").exec()?;
+    lua.load(ENUMS).set_name("glua/enums").exec()?;
     lua.load(ACT).set_name("glua/act").exec()?;
     lua.load(ENTITY).set_name("glua/entity").exec()?;
     lua.load(SERVER).set_name("glua/server").exec()?;
@@ -159,9 +161,14 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
     // (`hook.Run("Name"`), a scripted ENTITY / WEAPON callback when the dispatcher that calls it
     // is annotated `-- @hook CLASS:Name`.
     for src in [
-        CORE, ACT, ENTITY, SERVER, CLASSES, SCRIPTED, LIBS, CLIENT, DERMA,
+        CORE, ENUMS, ACT, ENTITY, SERVER, CLASSES, SCRIPTED, LIBS, CLIENT, DERMA,
     ] {
-        for (marker, prefix) in [("hook.Run(\"", "GM:"), ("@hook ", "")] {
+        for (marker, prefix) in [
+            ("hook.Run(\"", "GM:"),
+            ("@hook ", ""),
+            ("@enum ", "Enums/"),
+            ("@struct ", "Structures/"),
+        ] {
             let mut rest = src;
             while let Some(i) = rest.find(marker) {
                 rest = &rest[i + marker.len()..];
