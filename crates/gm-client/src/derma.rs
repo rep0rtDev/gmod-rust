@@ -206,6 +206,8 @@ pub(crate) fn inside((cx, cy): (f32, f32), x: f32, y: f32, w: f32, h: f32) -> bo
 
 /// One `settings/spawnlist_default/NNN-name.txt` (or an addon list the server sent).
 pub struct SpawnList {
+    /// The file's id (its `NNN-` prefix / `id` key); 0 for addon lists.
+    pub id: u32,
     pub name: String,
     pub icon: String,
     pub models: Vec<String>,
@@ -216,16 +218,31 @@ pub struct SpawnList {
 pub fn load_spawnlists(mount: &Mount) -> Vec<SpawnList> {
     let mut out = Vec::new();
     // the engine reads the player's `settings/spawnlist/`, seeded from `spawnlist_default`
-    let mut paths = mount.find("settings/spawnlist/*.txt");
-    if paths.is_empty() {
-        paths = mount.find("settings/spawnlist_default/*.txt");
+    // the player's edited lists on disk (written by `save_spawnlists`) come first
+    let mut docs: Vec<(String, String)> = std::fs::read_dir(spawnlist_dir())
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "txt"))
+                .filter_map(|p| {
+                    let text = std::fs::read_to_string(&p).ok()?;
+                    Some((p.to_string_lossy().replace('\\', "/"), text))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if docs.is_empty() {
+        let mut paths = mount.find("settings/spawnlist/*.txt");
+        if paths.is_empty() {
+            paths = mount.find("settings/spawnlist_default/*.txt");
+        }
+        docs = paths
+            .into_iter()
+            .filter_map(|p| mount.read_string(&p).ok().map(|t| (p, t)))
+            .collect();
     }
-    for path in paths {
-        let Some(doc) = mount
-            .read_string(&path)
-            .ok()
-            .and_then(|t| keyvalues::parse(&t).ok())
-        else {
+    for (path, text) in docs {
+        let Some(doc) = keyvalues::parse(&text).ok() else {
             continue;
         };
         let Some(root) = doc.root() else { continue };
@@ -264,6 +281,7 @@ pub fn load_spawnlists(mount: &Mount) -> Vec<SpawnList> {
         out.push((
             id,
             SpawnList {
+                id,
                 name,
                 icon,
                 models,
@@ -273,6 +291,55 @@ pub fn load_spawnlists(mount: &Mount) -> Vec<SpawnList> {
     }
     out.sort_by_key(|(id, _)| *id);
     out.into_iter().map(|(_, l)| l).collect()
+}
+
+/// The player's `settings/spawnlist/` (the engine's; edits copy the defaults there).
+pub fn spawnlist_dir() -> std::path::PathBuf {
+    crate::settings::home_dir()
+        .join("settings")
+        .join("spawnlist")
+}
+
+/// Writes every non-addon list as `NNN-name.txt` (`TableToKeyValues`, like the game's
+/// `spawnmenu.SaveToTextFiles`), replacing the directory's contents.
+pub fn save_spawnlists(lists: &[SpawnList]) -> std::io::Result<()> {
+    let dir = spawnlist_dir();
+    std::fs::create_dir_all(&dir)?;
+    for e in std::fs::read_dir(&dir)?.flatten() {
+        if e.path().extension().is_some_and(|x| x == "txt") {
+            std::fs::remove_file(e.path())?;
+        }
+    }
+    for (i, l) in lists.iter().filter(|l| !l.addon).enumerate() {
+        let id = if l.id > 0 { l.id } else { i as u32 + 1 };
+        let mut out = String::from("\"TableToKeyValues\"\n{\n");
+        out.push_str(&format!("\t\"name\"\t\t\"{}\"\n", l.name));
+        out.push_str("\t\"parentid\"\t\t\"0\"\n");
+        out.push_str(&format!("\t\"icon\"\t\t\"{}\"\n", l.icon));
+        out.push_str(&format!("\t\"id\"\t\t\"{id}\"\n"));
+        out.push_str("\t\"version\"\t\t\"3\"\n\t\"contents\"\n\t{\n");
+        for (n, m) in l.models.iter().enumerate() {
+            out.push_str(&format!(
+                "\t\t\"{}\"\n\t\t{{\n\t\t\t\"type\"\t\t\"model\"\n\t\t\t\"model\"\t\t\"{m}\"\n\t\t}}\n",
+                n + 1
+            ));
+        }
+        out.push_str("\t}\n}\n");
+        let file: String = l
+            .name
+            .to_lowercase()
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == ' ' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        std::fs::write(dir.join(format!("{id:03}-{file}.txt")), out)?;
+    }
+    Ok(())
 }
 
 fn title_case(s: &str) -> String {
@@ -398,6 +465,8 @@ pub struct MenuState {
     pub collapsed: [bool; 4],
     /// Spawn icons selected with shift-click (the content container's selection canvas).
     pub selected: Vec<String>,
+    /// The icons' right-click `DermaMenu` (cursor position, the models it acts on).
+    pub ctx_menu: Option<((f32, f32), Vec<String>)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -524,6 +593,61 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
     );
     if st.tool_tab == 0 {
         tools(&mut out, ctx, st, tx, ty, tw, th);
+    }
+    // contenticon.lua `OpenGenericSpawnmenuRightClickMenu` / the selection's "Delete %i items"
+    if let Some((at, models)) = &st.ctx_menu {
+        let label = if models.len() > 1 {
+            format!("Delete {} items", models.len())
+        } else {
+            "Delete".to_string()
+        };
+        let (x, y) = (at.0, at.1);
+        let w = dmenu_width(ctx.font, std::slice::from_ref(&label));
+        nine(&mut out.items, &MENU_BG, x, y, w, MENU_OPTION_H, WHITE);
+        let hovered = inside(ctx.cursor, x, y, w, MENU_OPTION_H);
+        if hovered {
+            nine(
+                &mut out.items,
+                &MENU_BG_HOVER,
+                x,
+                y,
+                w,
+                MENU_OPTION_H,
+                WHITE,
+            );
+        }
+        if (ctx.has_image)("icon16/bin_closed.png") {
+            image(
+                &mut out.items,
+                "icon16/bin_closed.png",
+                x + 4.0,
+                y + 3.0,
+                16.0,
+                16.0,
+            );
+        }
+        let color = if hovered {
+            BUTTON_TEXT_HOVER
+        } else {
+            BUTTON_TEXT
+        };
+        text(
+            &mut out.items,
+            FONT,
+            ctx.font,
+            x + 32.0,
+            y,
+            MENU_OPTION_H,
+            &label,
+            color,
+        );
+        out.hits.push(Hit {
+            x,
+            y,
+            w,
+            h: MENU_OPTION_H,
+            action: Action::Menu("spawnlist_delete"),
+        });
     }
     out
 }

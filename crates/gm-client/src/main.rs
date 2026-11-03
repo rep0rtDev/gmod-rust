@@ -1590,6 +1590,7 @@ impl App {
             self.spawnlists.retain(|l| !l.addon);
             for (category, models) in lists {
                 self.spawnlists.push(derma::SpawnList {
+                    id: 0,
                     name: category.clone(),
                     icon: "icon16/folder_database.png".to_string(),
                     models: models.clone(),
@@ -2833,6 +2834,49 @@ impl App {
         }
     }
 
+    /// Right click in the spawn menu: the icons' `DermaMenu` on a spawn icon of an editable
+    /// (non-addon) spawnlist, over the shift-selection when the icon is part of it.
+    fn menu_right_click(&mut self) {
+        if self.panel_click() {
+            return;
+        }
+        let Some((menu, g)) = self.menu.as_mut().zip(self.gfx.as_ref()) else {
+            return;
+        };
+        let (w, h) = (g.config.width as f32, g.config.height as f32);
+        let font = g.ui.font_metrics(Some(derma::FONT));
+        let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+        let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
+        let has_image = |name: &str| g.ui.has_image(name);
+        let ctx = derma::Ctx {
+            w,
+            h,
+            cursor: self.cursor,
+            font: &font,
+            bold: &bold,
+            header: &header,
+            lists: &self.spawnlists,
+            content: [&self.content[0], &self.content[1]],
+            results: &self.search_results,
+            tool: &self.tool,
+            has_image: &has_image,
+        };
+        let action = derma::build(&ctx, &menu.st).hit(self.cursor).cloned();
+        menu.st.ctx_menu = None;
+        if let Some(derma::Action::Spawn(model)) = action {
+            let editable = menu.st.creation_tab == 0
+                && self.spawnlists.get(menu.st.node).is_some_and(|l| !l.addon);
+            if editable {
+                let models = if menu.st.selected.contains(&model) {
+                    menu.st.selected.clone()
+                } else {
+                    vec![model]
+                };
+                menu.st.ctx_menu = Some((self.cursor, models));
+            }
+        }
+    }
+
     fn menu_click(&mut self) {
         if self.panel_click() {
             return;
@@ -2859,6 +2903,18 @@ impl App {
             has_image: &has_image,
         };
         let action = derma::build(&ctx, &menu.st).hit(self.cursor).cloned();
+        if let Some((_, models)) = menu.st.ctx_menu.take() {
+            if matches!(action, Some(derma::Action::Menu("spawnlist_delete"))) {
+                if let Some(l) = self.spawnlists.get_mut(menu.st.node) {
+                    l.models.retain(|m| !models.contains(m));
+                }
+                menu.st.selected.clear();
+                if let Err(e) = derma::save_spawnlists(&self.spawnlists) {
+                    eprintln!("spawnlist: {e}");
+                }
+            }
+            return;
+        }
         if !matches!(action, Some(derma::Action::SearchFocus)) {
             menu.st.search_focus = false;
         }
@@ -6424,6 +6480,10 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if self.menu.is_some() {
+                    if state == ElementState::Pressed && button == MouseButton::Right {
+                        self.menu_right_click();
+                        return;
+                    }
                     if state == ElementState::Pressed && button == MouseButton::Left {
                         self.menu_click();
                     }
