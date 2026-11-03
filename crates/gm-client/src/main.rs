@@ -4576,6 +4576,9 @@ impl App {
             if let Some(st) = &self.options {
                 items.extend(self.options_layout(g, st).items);
             }
+            if self.console.open {
+                self.console_items(g, w, h, lh, &mut items);
+            }
             return items;
         }
         if self.context_held || self.context.is_some() {
@@ -4720,6 +4723,9 @@ impl App {
                         color: [0.1, 0.1, 0.1, 1.0],
                     });
                 }
+            }
+            if self.console.open {
+                self.console_items(g, w, h, lh, &mut items);
             }
             return items;
         }
@@ -5461,6 +5467,16 @@ impl App {
             }
             return items;
         }
+        if self.console.open {
+            self.console_items(g, w, h, lh, &mut items);
+        }
+        items
+    }
+
+    /// The developer console over everything else (menus included): the top half of the
+    /// screen, the log lines above the input line.
+    fn console_items(&self, g: &Gfx, w: f32, h: f32, lh: f32, items: &mut Vec<UiItem>) {
+        let white = [0.92, 0.92, 0.92, 1.0];
         let panel = (h * 0.5).round();
         items.push(UiItem::Rect {
             x: 0.0,
@@ -5511,7 +5527,6 @@ impl App {
             text: format!("{shown}{}", if blink { "_" } else { "" }),
             color: white,
         });
-        items
     }
 
     fn toggle_console(&mut self) {
@@ -5520,7 +5535,8 @@ impl App {
         self.keys.clear();
         self.mouse.clear();
         let open = self.console.open;
-        self.set_grab(!open);
+        // closing it under an open menu leaves the mouse to the menu
+        self.set_grab(!open && self.menu.is_none() && !self.context_held && !self.main_menu);
     }
 
     fn console_key(&mut self, el: &ActiveEventLoop, code: Option<KeyCode>, text: Option<&str>) {
