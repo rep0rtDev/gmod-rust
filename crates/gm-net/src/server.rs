@@ -1202,6 +1202,7 @@ impl ServerNet {
                 alive: p.alive,
                 frags: p.frags.min(u16::MAX as u32) as u16,
                 deaths: p.deaths.min(u16::MAX as u32) as u16,
+                ragdoll: p.ragdoll_ent.unwrap_or(0),
                 health: p.health.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
                 armor: p.armor.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
                 fov: p.fov.map_or(0.0, |f| f.0),

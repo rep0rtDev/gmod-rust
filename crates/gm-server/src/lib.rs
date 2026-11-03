@@ -4105,6 +4105,9 @@ pub struct Player {
     pub frags: u32,
     /// The ragdoll of the last death, while the player is dead.
     pub ragdoll: Option<Ragdoll>,
+    /// The `hl2mp_ragdoll` entity of the last death (`CreateRagdollEntity`): the body stays
+    /// through the respawn and goes when the next death makes a new one.
+    pub ragdoll_ent: Option<u32>,
     /// Tick of the last death: the player respawns `respawn_ticks` later.
     death_tick: Option<u64>,
     /// `RESPAWN_TICKS` for a death in the command phase (bullets, falls), one less for a death
@@ -4239,6 +4242,7 @@ impl Player {
             deaths: 0,
             frags: 0,
             ragdoll: None,
+            ragdoll_ent: None,
             death_tick: None,
             respawn_ticks: RESPAWN_TICKS,
             damage_acc: 0.0,
@@ -6616,6 +6620,51 @@ impl<'w> Server<'w> {
         script.hull_planes = info.hull_planes.clone();
         self.model_scripts.insert(name.to_string(), script);
         self.models.insert(name.to_string(), info);
+        self.spawn_death_ragdolls();
+    }
+
+    /// `CBasePlayer::CreateRagdollEntity` for every death recorded since the last call: the
+    /// previous death's body goes, an `hl2mp_ragdoll` of the player's model stands at the
+    /// death origin facing the view yaw and every piece carries the player's velocity; it
+    /// is a networked ragdoll like `prop_ragdoll`, so the client skins it from the bodies.
+    fn spawn_death_ragdolls(&mut self) {
+        let pending: Vec<(u32, Ragdoll, f32, Option<u32>)> = self
+            .players
+            .iter()
+            .filter(|(_, p)| !p.alive)
+            .filter_map(|(&id, p)| {
+                p.ragdoll
+                    .clone()
+                    .map(|r| (id, r, p.view_angles.y, p.ragdoll_ent))
+            })
+            .collect();
+        for (id, rag, yaw, previous) in pending {
+            if let Some(prev) = previous {
+                self.remove_prop(prev);
+            }
+            if !self.models.contains_key(&rag.model) {
+                if let Some(loaded) = self.model_loader.as_mut().and_then(|f| f(&rag.model)) {
+                    self.register_model(&rag.model, loaded);
+                }
+            }
+            let ent = self.sandbox.restore_prop(
+                id,
+                &rag.model,
+                rag.origin,
+                Vec3::new(0.0, yaw, 0.0),
+                false,
+            );
+            self.sync_physics();
+            if let Some(r) = self.ragdoll_bodies.get(&ent) {
+                for &b in &r.bodies.clone() {
+                    self.physics.set_velocity(b, rag.velocity, Vec3::ZERO);
+                }
+            }
+            if let Some(p) = self.players.get_mut(&id) {
+                p.ragdoll = None;
+                p.ragdoll_ent = Some(ent);
+            }
+        }
     }
 
     /// The player leaves: whatever the physgun held is released, the entry goes; props,
@@ -6873,6 +6922,9 @@ impl<'w> Server<'w> {
         }
         if let Some(n) = self.npcs.get(&id) {
             return n.class.clone();
+        }
+        if self.players.values().any(|p| p.ragdoll_ent == Some(id)) {
+            return RAGDOLL_CLASS.to_owned();
         }
         if self.ragdoll_bodies.contains_key(&id) {
             return "prop_ragdoll".to_owned();
@@ -13098,6 +13150,7 @@ impl<'w> Server<'w> {
                 }
             }
         }
+        self.spawn_death_ragdolls();
         for id in respawn {
             if self.ask(Request::Respawn { player: id }) == Verdict::Cancel {
                 continue;

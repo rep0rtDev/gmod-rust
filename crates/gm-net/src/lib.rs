@@ -82,6 +82,7 @@ mod tests {
                 alive: true,
                 frags: 0,
                 deaths: 0,
+                ragdoll: 0,
                 health: 100,
                 armor: 0,
                 fov: 0.0,

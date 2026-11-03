@@ -800,6 +800,10 @@ struct App {
     context_held: bool,
     /// `+showscores` held (TAB): the sandbox scoreboard.
     scoreboard: bool,
+    /// When the local player died (first dead snapshot) and the view angles at that moment:
+    /// the death camera keeps them while it pulls back.
+    death_at: Option<Instant>,
+    death_view: Vec3,
     context: Option<ContextMenu>,
     /// Scripted weapons as last seen (`ClientWorld::weapon_defs`) and their viewmodel / world
     /// model entries after the stock table (leaked once per change: the table is `'static`).
@@ -3186,6 +3190,51 @@ impl App {
             let fwd = Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin());
             camera.position = ent.pos - fwd * 160.0 + Vec3::Z * 24.0;
         }
+        // dead: C_BasePlayer::CalcDeathCamView (Source SDK, srcds cannot show it) - the view
+        // angles freeze at death, the eye starts at the ragdoll (its root body; the game uses
+        // the eyes attachment) and over DEATH_ANIMTIME 1.5 s pulls back CHASE_CAM_DISTANCE_MAX
+        // 96 u along -forward, a 12 u hull trace against the world keeping it out of walls
+        let me_snap = self
+            .sim
+            .client
+            .world
+            .players
+            .iter()
+            .find(|p| Some(p.id) == self.sim.client.player_id)
+            .map(|s| (s.alive, s.ragdoll, s.origin));
+        match me_snap {
+            Some((false, ragdoll, origin)) => {
+                let at = *self.death_at.get_or_insert_with(|| {
+                    self.death_view = self.view;
+                    Instant::now()
+                });
+                let eye = self
+                    .sim
+                    .client
+                    .world
+                    .entities
+                    .get(&ragdoll)
+                    .map(|e| e.bones.first().map_or(e.pos, |b| b.pos))
+                    .unwrap_or(origin + Vec3::Z * 64.0);
+                let t = (at.elapsed().as_secs_f32() / 1.5).clamp(0.0, 1.0);
+                let (p, y) = (
+                    self.death_view.x.to_radians(),
+                    self.death_view.y.to_radians(),
+                );
+                let fwd = Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin());
+                let want = eye - fwd * (96.0 * t);
+                let tr = self.sim.collision.trace_box(
+                    eye,
+                    want,
+                    Vec3::splat(-6.0),
+                    Vec3::splat(6.0),
+                    gm_collision::MASK_SOLID,
+                );
+                camera.position = if tr.start_solid { eye } else { tr.end };
+                camera.angles = self.death_view;
+            }
+            _ => self.death_at = None,
+        }
         let ghost_draws = match &ghost_tool {
             Some((tool, settings)) => {
                 let (p, y) = (self.view.x.to_radians(), self.view.y.to_radians());
@@ -5436,6 +5485,8 @@ fn main() -> Result<()> {
         menu_cache: Default::default(),
         context_held: false,
         scoreboard: false,
+        death_at: None,
+        death_view: Vec3::ZERO,
         context: None,
         scripted_defs: Vec::new(),
         scripted_vms: Vec::new(),

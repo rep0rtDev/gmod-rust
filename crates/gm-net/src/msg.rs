@@ -257,6 +257,8 @@ pub struct PlayerSnap {
     /// `Player:Frags()` / `Player:Deaths()` for the scoreboard.
     pub frags: u16,
     pub deaths: u16,
+    /// Entity of the player's death ragdoll (`hl2mp_ragdoll`), 0 for none; protocol 15.
+    pub ragdoll: u32,
     pub health: i16,
     pub armor: i16,
     /// `Player:SetFOV`: the server-set field of view (0: the client's own) and its blend time.
@@ -502,7 +504,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 14;
+pub const PROTOCOL: u16 = 15;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -983,6 +985,7 @@ impl ServerMsg {
                     w.bool(p.alive);
                     w.u16(p.frags);
                     w.u16(p.deaths);
+                    w.u32(p.ragdoll);
                     w.i16(p.health);
                     w.i16(p.armor);
                     w.f32(p.fov);
@@ -1306,6 +1309,7 @@ impl ServerMsg {
                         alive: r.bool()?,
                         frags: r.u16()?,
                         deaths: r.u16()?,
+                        ragdoll: r.u32()?,
                         health: r.i16()?,
                         armor: r.i16()?,
                         fov: r.f32()?,
