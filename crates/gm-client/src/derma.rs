@@ -476,6 +476,8 @@ pub struct MenuState {
     pub ctx_menu: Option<((f32, f32), Vec<String>)>,
     /// The spawnlist tree's right-click `DermaMenu` (cursor position, the list's index).
     pub list_menu: Option<((f32, f32), usize)>,
+    /// A press on a spawn icon that may become a drag onto a tree list: where, which models.
+    pub drag: Option<((f32, f32), Vec<String>)>,
     /// A spawnlist being renamed in its tree row (index, the typed name).
     pub rename: Option<(usize, String)>,
 }
