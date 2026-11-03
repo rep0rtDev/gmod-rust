@@ -81,6 +81,9 @@ pub fn tool_click_settings(
 pub struct Interpolator {
     pub interp_ticks: f32,
     snapshots: VecDeque<(u32, BTreeMap<u32, EntityState>)>,
+    /// The render clock in ticks: runs on frame time and is steered towards
+    /// `newest snapshot - interp_ticks`, so it does not step with the snapshot cadence.
+    clock: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -99,6 +102,7 @@ impl Interpolator {
         Interpolator {
             interp_ticks,
             snapshots: VecDeque::new(),
+            clock: None,
         }
     }
 
@@ -113,9 +117,35 @@ impl Interpolator {
         }
     }
 
-    /// The render time for the client's tick `now`.
+    /// Advances the render clock by a frame of `dt` seconds. Snapshots arrive every
+    /// `snapshot_every` ticks, so `newest - interp_ticks` is a staircase; sampling that plus
+    /// the local tick fraction walked backwards on the ticks without a snapshot and every
+    /// interpolated entity shook. The clock runs on frame time and is pulled towards the
+    /// staircase with a 0.3 s time constant (snapping when more than a second off).
+    pub fn advance(&mut self, dt: f32) {
+        let Some((newest, _)) = self.snapshots.back() else {
+            return;
+        };
+        let target = *newest as f32 - self.interp_ticks;
+        let tick = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        match &mut self.clock {
+            None => self.clock = Some(target),
+            Some(c) => {
+                *c += dt.max(0.0) / tick;
+                let err = target - *c;
+                if err.abs() * tick > 1.0 {
+                    *c = target;
+                } else {
+                    *c += err * (1.0 - (-dt.max(0.0) / 0.3).exp());
+                }
+            }
+        }
+    }
+
+    /// The render time for the client's tick `now` (the steered clock once
+    /// [`advance`](Self::advance) runs, else `now - interp_ticks`).
     pub fn render_tick(&self, now: u32) -> f32 {
-        now as f32 - self.interp_ticks
+        self.clock.unwrap_or(now as f32 - self.interp_ticks)
     }
 
     pub fn sample(&self, id: u32, render_tick: f32) -> Option<InterpPose> {
@@ -659,5 +689,40 @@ impl ClientNet {
 
     pub fn stats(&self) -> &crate::channel::Stats {
         &self.channel.stats
+    }
+}
+
+#[cfg(test)]
+mod interp_clock_tests {
+    use super::Interpolator;
+    use std::collections::BTreeMap;
+
+    /// Snapshots every second tick, frames at four per tick: the render clock never runs
+    /// backwards and stays within a tick of the staircase target.
+    #[test]
+    fn render_clock_is_monotonic_with_snapshot_every_two() {
+        let mut it = Interpolator::new(4.0);
+        let tick = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        let mut last = f32::MIN;
+        let mut max_err: f32 = 0.0;
+        for t in 1..200u32 {
+            if t % 2 == 0 {
+                it.push(t, &BTreeMap::new());
+            }
+            for _ in 0..4 {
+                it.advance(tick / 4.0);
+                let rt = it.render_tick(t);
+                assert!(
+                    rt >= last - 1e-4,
+                    "clock went back at tick {t}: {last} -> {rt}"
+                );
+                last = rt;
+                if t > 40 {
+                    let target = (t - t % 2) as f32 - 4.0;
+                    max_err = max_err.max((rt - target).abs());
+                }
+            }
+        }
+        assert!(max_err < 1.5, "render clock {max_err} ticks off the target");
     }
 }

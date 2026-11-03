@@ -3014,8 +3014,11 @@ impl App {
 
     fn step(&mut self) {
         let now = Instant::now();
-        self.acc += (now - self.last).as_secs_f32().min(0.25);
+        let frame = (now - self.last).as_secs_f32().min(0.25);
+        self.acc += frame;
         self.last = now;
+        self.sim.interp.advance(frame);
+        self.sim.player_interp.advance(frame);
         let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
         while self.acc >= dt {
             let mut cmd = self.cmd();
