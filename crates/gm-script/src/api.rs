@@ -746,6 +746,26 @@ pub fn text_size(text: &str, font: Option<&str>) -> (f32, f32) {
 
 /// A 2D draw command of a client actor's `render.hud` handler, screen pixels, colors 0..1.
 #[derive(Clone, Debug, PartialEq)]
+pub enum AudioOp {
+    /// Start a sample-backed channel (`sound.PlayFile`); `paused` is the game's `noplay`.
+    Play {
+        path: String,
+        volume: f32,
+        pitch: f32,
+        looping: bool,
+        paused: bool,
+        pos: Option<Vec3>,
+    },
+    Stop,
+    Pause(bool),
+    Volume(f32),
+    Pitch(f32),
+    Seek(f64),
+    Pos(Option<Vec3>),
+    Loop(bool),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum DrawCmd {
     Rect {
         x: f32,
@@ -804,6 +824,11 @@ pub enum DrawCmd {
     /// `gui.OpenURL(url)`: the client opens the URL in the system browser.
     OpenUrl {
         url: String,
+    },
+    /// A script audio channel operation (`IGModAudioChannel`), by the script's channel id.
+    Audio {
+        id: u32,
+        op: AudioOp,
     },
     /// `draw.model`: a model drawn in the world, translucent (alpha 0..1); tool ghosts.
     Model {
@@ -1505,6 +1530,48 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         "open_url",
         lua.create_function(move |_, url: String| {
             sh.draws.lock().unwrap().push(DrawCmd::OpenUrl { url });
+            Ok(())
+        })?,
+    )?;
+    let sh = shared.clone();
+    draw.set(
+        "audio",
+        lua.create_function(move |lua, (id, op, t): (u32, String, Option<Table>)| {
+            let t = match t {
+                Some(t) => t,
+                None => lua.create_table()?,
+            };
+            let pos = |t: &Table| -> Option<Vec3> {
+                let p: Option<Table> = t.get("pos").ok().flatten();
+                p.map(|p| {
+                    Vec3::new(
+                        p.get("x").unwrap_or(0.0),
+                        p.get("y").unwrap_or(0.0),
+                        p.get("z").unwrap_or(0.0),
+                    )
+                })
+            };
+            let op = match op.as_str() {
+                "play" => AudioOp::Play {
+                    path: t.get("path").unwrap_or_default(),
+                    volume: t.get("volume").unwrap_or(1.0),
+                    pitch: t.get("pitch").unwrap_or(100.0),
+                    looping: t.get("looping").unwrap_or(false),
+                    paused: t.get("paused").unwrap_or(false),
+                    pos: pos(&t),
+                },
+                "stop" => AudioOp::Stop,
+                "pause" => AudioOp::Pause(t.get("paused").unwrap_or(true)),
+                "volume" => AudioOp::Volume(t.get("volume").unwrap_or(1.0)),
+                "pitch" => AudioOp::Pitch(t.get("pitch").unwrap_or(100.0)),
+                "seek" => AudioOp::Seek(t.get("time").unwrap_or(0.0)),
+                "pos" => AudioOp::Pos(pos(&t)),
+                "loop" => AudioOp::Loop(t.get("looping").unwrap_or(false)),
+                other => {
+                    return Err(mlua::Error::runtime(format!("unknown audio op {other}")));
+                }
+            };
+            sh.draws.lock().unwrap().push(DrawCmd::Audio { id, op });
             Ok(())
         })?,
     )?;

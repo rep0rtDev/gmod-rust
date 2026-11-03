@@ -20,7 +20,7 @@ pub mod storage;
 pub mod wasm;
 
 pub use actor::{Actor, ActorConfig, ActorStatus, QueuedWrite, Reply};
-pub use api::{set_font_metrics, text_size, DrawCmd, TextMetrics};
+pub use api::{set_font_metrics, text_size, AudioOp, DrawCmd, TextMetrics};
 pub use manifest::Manifest;
 pub use package::Package;
 pub use registry::Registry;
@@ -39,6 +39,21 @@ pub struct ActorSpec {
     pub priority: i32,
     pub source: String,
     pub config: ActorConfig,
+}
+
+/// One script audio channel as the host's mixer sees it (`Runtime::client_audio`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AudioState {
+    /// The script's channel id (`DrawCmd::Audio`).
+    pub id: u32,
+    /// `GMOD_CHANNEL_*`: 0 stopped, 1 playing, 2 paused, 3 stalled (not yet started).
+    pub state: i64,
+    pub time: f64,
+    pub length: f64,
+    /// Sample rate in Hz (0 when unknown).
+    pub rate: i64,
+    /// BASS error code when the channel could not start (2 file open, 41 file format), else 0.
+    pub err: i64,
 }
 
 pub struct Runtime {
@@ -361,6 +376,29 @@ impl Runtime {
             p.strs.push(("key", key.clone()));
             p.bools.push(("down", *down));
             self.parallel(&snap, "input.key", &p);
+        }
+        self.release_snapshots();
+        for a in self.actors.iter_mut() {
+            a.take_queue();
+        }
+    }
+
+    /// Client realm: what the host's mixer says about the script audio channels, dispatched
+    /// as `audio.state` per channel (`sound.PlayFile` callbacks, `IGModAudioChannel` getters).
+    pub fn client_audio(&mut self, world: &gm_net::ClientWorld, states: &[AudioState]) {
+        if states.is_empty() {
+            return;
+        }
+        let snap = self.client_snapshot(world);
+        for s in states {
+            let mut p = api::Payload::default();
+            p.ints.push(("id", s.id as i64));
+            p.ints.push(("state", s.state));
+            p.ints.push(("rate", s.rate));
+            p.ints.push(("err", s.err));
+            p.floats.push(("time", s.time));
+            p.floats.push(("length", s.length));
+            self.parallel(&snap, "audio.state", &p);
         }
         self.release_snapshots();
         for a in self.actors.iter_mut() {

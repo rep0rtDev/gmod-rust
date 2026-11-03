@@ -1526,3 +1526,103 @@ function RestoreCursorPosition() if saved_cursor then gui.SetMousePos(saved_curs
 for _, n in ipairs({ "RenderDoF", "RenderStereoscopy", "RenderSuperDoF", "JS_Language", "JS_Utility", "JS_Workshop", "WorkshopFileBase", "VisualizeLayout" }) do
 	_G[n] = stub(n)
 end
+
+-- ---------------------------------------------------------------------------------------------
+-- sound.PlayFile / IGModAudioChannel: sample-backed channels on the host mixer. The channel
+-- id goes out as an audio command; the host reports state/time/length back each frame.
+-- URL streaming has no decoder here - PlayURL fails with BASS_ERROR_NOTAVAIL (open).
+-- ---------------------------------------------------------------------------------------------
+local channels = {}
+local next_channel = 0
+local CHAN = {}
+CHAN.__index = CHAN
+CHAN.MetaName = "IGModAudioChannel"
+local bass_errors = { [2] = "BASS_ERROR_FILEOPEN", [37] = "BASS_ERROR_NOTAVAIL", [41] = "BASS_ERROR_FILEFORM" }
+local function audio(c, op, t) hostdraw.audio(c.__id, op, t or {}) end
+local function new_channel(path, flags, cb)
+	next_channel = next_channel + 1
+	local c = setmetatable({
+		__id = next_channel, __file = path, __cb = cb, __valid = true, __ready = false,
+		__volume = 1, __rate = 1, __time = 0, __length = 0, __hz = 0, __loop = false,
+		__3d = flags:find("3d") ~= nil, __pos = Vector(), __fade = { 200, 1000000000 }, __cone = { 360, 360, 1 }, __pan = 0,
+		__paused = flags:find("noplay") ~= nil, __stopped = false,
+	}, CHAN)
+	c.__state = c.__paused and GMOD_CHANNEL_PAUSED or GMOD_CHANNEL_STALLED
+	channels[c.__id] = c
+	return c
+end
+local function start(c)
+	audio(c, "play", { path = c.__file, volume = c.__volume, pitch = c.__rate * 100, looping = c.__loop, paused = c.__paused, pos = c.__3d and c.__pos or nil })
+end
+function sound.PlayFile(path, flags, cb)
+	local c = new_channel(tostring(path), tostring(flags or ""), cb)
+	start(c)
+end
+function sound.PlayURL(url, flags, cb) if cb then cb(nil, 37, bass_errors[37]) end end
+events.on("audio.state", function(p)
+	local c = channels[p.id]
+	if not c then return end
+	if p.err ~= 0 then
+		channels[p.id] = nil
+		c.__valid = false
+		if c.__cb then local cb = c.__cb c.__cb = nil cb(nil, p.err, bass_errors[p.err] or "BASS_ERROR_UNKNOWN") end
+		return
+	end
+	if p.state == GMOD_CHANNEL_STALLED then return end
+	c.__time, c.__hz = p.time, p.rate
+	if p.length > 0 then c.__length = p.length end
+	if c.__stopped then c.__state = GMOD_CHANNEL_STOPPED else c.__state = p.state end
+	if not c.__ready then
+		c.__ready = true
+		if c.__cb then local cb = c.__cb c.__cb = nil cb(c, 0, nil) end
+	end
+end)
+function CHAN:IsValid() return self.__valid == true end
+function CHAN:__tostring() return "IGModAudioChannel: " .. self.__file end
+function CHAN:GetFileName() return self.__file end
+function CHAN:Play()
+	if not self.__valid then return end
+	if self.__stopped or self.__state == GMOD_CHANNEL_STOPPED then self.__stopped, self.__paused = false, false; self.__time = 0; start(self) return end
+	self.__paused = false; self.__state = GMOD_CHANNEL_PLAYING; audio(self, "pause", { paused = false })
+end
+function CHAN:Pause() if not self.__valid then return end self.__paused = true; self.__state = GMOD_CHANNEL_PAUSED; audio(self, "pause", { paused = true }) end
+function CHAN:Stop() if not self.__valid then return end self.__stopped = true; self.__state = GMOD_CHANNEL_STOPPED; self.__time = 0; audio(self, "stop") end
+function CHAN:SetVolume(v) self.__volume = math.max(tonumber(v) or 1, 0); audio(self, "volume", { volume = self.__volume }) end
+function CHAN:GetVolume() return self.__volume end
+function CHAN:SetPlaybackRate(r) self.__rate = math.max(tonumber(r) or 1, 0); audio(self, "pitch", { pitch = self.__rate * 100 }) end
+function CHAN:GetPlaybackRate() return self.__rate end
+function CHAN:SetTime(t, dont_decode) self.__time = math.max(tonumber(t) or 0, 0); audio(self, "seek", { time = self.__time }) end
+function CHAN:GetTime() return self.__time end
+function CHAN:GetLength() return self.__length end
+function CHAN:GetState() return self.__state end
+function CHAN:EnableLooping(b) self.__loop = b == true; audio(self, "loop", { looping = self.__loop }) end
+function CHAN:IsLooping() return self.__loop end
+function CHAN:Is3D() return self.__3d end
+function CHAN:Set3DEnabled(b) self.__3d = b == true; audio(self, "pos", { pos = self.__3d and self.__pos or nil }) end
+function CHAN:Get3DEnabled() return self.__3d end
+function CHAN:SetPos(pos, dir) self.__pos = pos; self.__dir = dir; if self.__3d then audio(self, "pos", { pos = pos }) end end
+function CHAN:GetPos() return self.__pos, self.__dir or Vector() end
+function CHAN:Set3DFadeDistance(min, max) self.__fade = { min, max } end
+function CHAN:Get3DFadeDistance() return self.__fade[1], self.__fade[2] end
+function CHAN:Set3DCone(inner, outer, vol) self.__cone = { inner, outer, vol } end
+function CHAN:Get3DCone() return self.__cone[1], self.__cone[2], self.__cone[3] end
+function CHAN:SetPan(p) self.__pan = math.Clamp(tonumber(p) or 0, -1, 1) end
+function CHAN:GetPan() return self.__pan end
+function CHAN:GetSamplingRate() return self.__hz end
+function CHAN:GetBitsPerSample() return 16 end
+function CHAN:GetAverageBitRate() return self.__hz * 16 / 1000 end
+function CHAN:GetBufferedTime() return self.__length end
+function CHAN:IsBlockStreamed() return false end
+function CHAN:IsOnline() return false end
+function CHAN:GetLevel() return 0, 0 end
+function CHAN:FFT(tbl, size) return 0 end
+function CHAN:GetTagsHTTP() return nil end
+function CHAN:GetTagsICY() return nil end
+function CHAN:GetTagsID3() return nil end
+function CHAN:GetTagsMP4() return nil end
+function CHAN:GetTagsMeta() return nil end
+function CHAN:GetTagsOGG() return nil end
+function CHAN:GetTagsVendor() return nil end
+function CHAN:GetTagsWMA() return nil end
+__glua_metatables = __glua_metatables or {}
+__glua_metatables.IGModAudioChannel = CHAN

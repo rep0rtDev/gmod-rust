@@ -5,14 +5,14 @@
 
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use audionimbus::{Context, ContextSettings};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use glam::Vec3;
 
 use crate::acoustics::{self, Acoustics, Occluder, Shared};
-use crate::engine::{Engine, Play, FRAME};
+use crate::engine::{Engine, Play, VoiceState, FRAME};
 use crate::scene::Geometry;
 
 /// Where sounds are heard from: eye position and the view frame (unit vectors).
@@ -75,6 +75,10 @@ pub enum Cmd {
     StopChannel(u32, Option<u8>, f32),
     Move(u32, Vec3),
     Volume(u32, f32),
+    Pitch(u32, f32),
+    Seek(u32, f64),
+    Pause(u32, bool),
+    Loop(u32, bool),
     Feed(u32, Vec<f32>),
     Listener(Listener),
     Master(f32),
@@ -93,6 +97,10 @@ fn apply(engine: &mut Engine, cmd: Cmd) {
         Cmd::StopChannel(ent, ch, fade) => engine.stop_channel(ent, ch, fade),
         Cmd::Move(id, p) => engine.set_position(id, p),
         Cmd::Volume(id, v) => engine.set_volume(id, v),
+        Cmd::Pitch(id, p) => engine.set_pitch(id, p),
+        Cmd::Seek(id, t) => engine.seek(id, t),
+        Cmd::Pause(id, b) => engine.set_paused(id, b),
+        Cmd::Loop(id, b) => engine.set_looping(id, b),
         Cmd::Feed(id, s) => engine.feed(id, &s),
         Cmd::Listener(l) => engine.listener = l,
         Cmd::Master(m) => engine.master = m.clamp(0.0, 1.0),
@@ -108,6 +116,7 @@ struct Stream {
     fifo: Vec<f32>,
     block: Vec<f32>,
     voices: Arc<AtomicUsize>,
+    states: Arc<Mutex<Vec<VoiceState>>>,
 }
 
 impl Stream {
@@ -143,6 +152,7 @@ impl Stream {
         self.fifo.drain(..frames * 2);
         self.voices
             .store(self.engine.voices().len(), Ordering::Relaxed);
+        *self.states.lock().unwrap() = self.engine.states();
     }
 }
 
@@ -151,6 +161,7 @@ pub struct Mixer {
     context: Option<Context>,
     tx: Sender<Cmd>,
     voices: Arc<AtomicUsize>,
+    states: Arc<Mutex<Vec<VoiceState>>>,
     next_id: AtomicU32,
     pub out_rate: f64,
     _stream: Option<cpal::Stream>,
@@ -188,12 +199,14 @@ impl Mixer {
         };
         let (tx, rx) = channel();
         let voices = Arc::new(AtomicUsize::new(0));
+        let states = Arc::new(Mutex::new(Vec::new()));
         let mut stream = Stream {
             engine,
             rx,
             fifo: Vec::with_capacity(FRAME * 8),
             block: vec![0.0; FRAME * 2],
             voices: voices.clone(),
+            states: states.clone(),
         };
         let built = device.build_output_stream(
             &cfg.config(),
@@ -210,6 +223,7 @@ impl Mixer {
                     context: Some(context),
                     tx,
                     voices,
+                    states,
                     next_id: AtomicU32::new(1),
                     out_rate: out_rate as f64,
                     _stream: Some(s),
@@ -231,10 +245,12 @@ impl Mixer {
         let engine = Engine::new(&context, rate)?;
         let (tx, rx) = channel();
         let voices = Arc::new(AtomicUsize::new(0));
+        let states = Arc::new(Mutex::new(Vec::new()));
         Ok(Mixer {
             context: Some(context),
             tx,
             voices: voices.clone(),
+            states: states.clone(),
             next_id: AtomicU32::new(1),
             out_rate: rate as f64,
             _stream: None,
@@ -244,6 +260,7 @@ impl Mixer {
                 fifo: Vec::new(),
                 block: vec![0.0; FRAME * 2],
                 voices,
+                states,
             }),
             acoustics: None,
             shared: None,
@@ -264,6 +281,7 @@ impl Mixer {
                     context: None,
                     tx,
                     voices: Arc::new(AtomicUsize::new(0)),
+                    states: Arc::new(Mutex::new(Vec::new())),
                     next_id: AtomicU32::new(1),
                     out_rate: 48000.0,
                     _stream: None,
@@ -388,6 +406,27 @@ impl Mixer {
     }
 
     /// Change a playing voice's gain (soundscape fades).
+    pub fn set_pitch(&self, id: u32, pitch: f32) {
+        let _ = self.tx.send(Cmd::Pitch(id, pitch));
+    }
+
+    pub fn seek(&self, id: u32, secs: f64) {
+        let _ = self.tx.send(Cmd::Seek(id, secs));
+    }
+
+    pub fn set_paused(&self, id: u32, paused: bool) {
+        let _ = self.tx.send(Cmd::Pause(id, paused));
+    }
+
+    pub fn set_looping(&self, id: u32, looping: bool) {
+        let _ = self.tx.send(Cmd::Loop(id, looping));
+    }
+
+    /// The sample-backed voices as of the last rendered block.
+    pub fn voice_states(&self) -> Vec<VoiceState> {
+        self.states.lock().unwrap().clone()
+    }
+
     pub fn set_volume(&self, id: u32, volume: f32) {
         let _ = self.tx.send(Cmd::Volume(id, volume));
     }

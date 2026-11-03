@@ -45,6 +45,19 @@ pub fn dir_sa(v: Vec3) -> Vector3 {
 }
 
 /// One sound to start.
+/// A playing voice's position in its sample, as the mixer reports it each block.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VoiceState {
+    pub id: u32,
+    /// Seconds into the sample.
+    pub time: f64,
+    /// The sample's length in seconds.
+    pub length: f64,
+    /// The sample's rate in Hz.
+    pub rate: u32,
+    pub paused: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct Play {
     pub pcm: Arc<Pcm>,
@@ -90,6 +103,7 @@ pub struct Voice {
     pcm: Arc<Pcm>,
     cursor: f64,
     step: f64,
+    paused: bool,
     gain: f32,
     pub position: Option<Vec3>,
     level: f32,
@@ -232,6 +246,7 @@ impl Engine {
             step: p.pitch as f64 / 100.0 * p.pcm.rate as f64 / self.rate as f64,
             pcm: p.pcm,
             cursor: 0.0,
+            paused: false,
             gain: p.volume,
             position: p.position,
             level: p.level,
@@ -290,6 +305,51 @@ impl Engine {
         if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
             v.gain = volume.max(0.0);
         }
+    }
+
+    /// Change a voice's pitch (percent, 100 = as recorded).
+    pub fn set_pitch(&mut self, id: u32, pitch: f32) {
+        let rate = self.rate as f64;
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
+            v.step = pitch.max(0.0) as f64 / 100.0 * v.pcm.rate as f64 / rate;
+        }
+    }
+
+    /// Jump a voice to `secs` into its sample (clamped to the end).
+    pub fn seek(&mut self, id: u32, secs: f64) {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
+            let last = v.pcm.samples.len().saturating_sub(1) as f64;
+            v.cursor = (secs.max(0.0) * v.pcm.rate as f64).min(last);
+            v.done = false;
+        }
+    }
+
+    /// Hold a voice silent in place (`true`) or let it run (`false`).
+    pub fn set_paused(&mut self, id: u32, paused: bool) {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
+            v.paused = paused;
+        }
+    }
+
+    pub fn set_looping(&mut self, id: u32, looping: bool) {
+        if let Some(v) = self.voices.iter_mut().find(|v| v.id == id) {
+            v.looping = looping;
+        }
+    }
+
+    /// Where every sample-backed voice is, for script audio channels.
+    pub fn states(&self) -> Vec<VoiceState> {
+        self.voices
+            .iter()
+            .filter(|v| v.stream.is_none())
+            .map(|v| VoiceState {
+                id: v.id,
+                time: v.cursor / v.pcm.rate as f64,
+                length: v.pcm.samples.len() as f64 / v.pcm.rate as f64,
+                rate: v.pcm.rate,
+                paused: v.paused,
+            })
+            .collect()
     }
 
     /// Move a looping voice with its entity.
@@ -461,6 +521,10 @@ impl Voice {
     /// Next `FRAME` source samples at the voice's pitch (linear interpolation), zero past
     /// the end of a one-shot; a loop wraps to the cue point.
     fn fill(&mut self, mono: &mut [f32]) {
+        if self.paused {
+            mono.fill(0.0);
+            return;
+        }
         if let Some(q) = &mut self.stream {
             for m in mono.iter_mut() {
                 *m = q.pop_front().unwrap_or(0.0);

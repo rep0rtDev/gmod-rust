@@ -825,6 +825,8 @@ struct App {
     grabbed: bool,
     /// `gui.EnableScreenClicker` from a script: the cursor stays visible over the game.
     screen_clicker: bool,
+    /// Script audio channels (`sound.PlayFile`) by the script's id: the mixer voice behind each.
+    audio_channels: std::collections::BTreeMap<u32, AudioChan>,
     /// Options dialog cvars and binds (`cfg/config.cfg`).
     settings: settings::Settings,
     /// The camera FOV being blended toward the server's `Player:SetFOV` target (value, last frame).
@@ -3734,18 +3736,24 @@ impl App {
             let g = self.gfx.as_ref().unwrap();
             let (w, h) = (g.config.width, g.config.height);
             self.sim.script.cursor = (!self.grabbed).then_some(self.cursor);
+            self.report_audio();
             self.sim.hud_draws = self.sim.script.client_render(&self.sim.client.world, w, h);
             // `gui.EnableScreenClicker`: a script shows the cursor over the game (the mouse
             // look stops) until it turns it off again
             let mut clicker = None;
+            let mut audio = Vec::new();
             for d in &self.sim.hud_draws {
                 match d {
                     gm_script::DrawCmd::ScreenClicker { on } => clicker = Some(*on),
+                    gm_script::DrawCmd::Audio { id, op } => audio.push((*id, op.clone())),
                     gm_script::DrawCmd::OpenUrl { url } => {
                         let _ = std::process::Command::new("xdg-open").arg(url).spawn();
                     }
                     _ => {}
                 }
+            }
+            for (id, op) in audio {
+                self.apply_audio(id, &op);
             }
             if let Some(on) = clicker.filter(|on| *on != self.screen_clicker) {
                 self.screen_clicker = on;
@@ -4022,7 +4030,8 @@ impl App {
                     gm_script::DrawCmd::HideHud { .. } => continue,
                     gm_script::DrawCmd::WorldTri { .. } => continue,
                     gm_script::DrawCmd::ScreenClicker { .. }
-                    | gm_script::DrawCmd::OpenUrl { .. } => continue,
+                    | gm_script::DrawCmd::OpenUrl { .. }
+                    | gm_script::DrawCmd::Audio { .. } => continue,
                     gm_script::DrawCmd::Begin3D2D { .. } | gm_script::DrawCmd::End3D2D => continue,
                     // fonts and images were prepared before the frame
                     gm_script::DrawCmd::Font { .. } => continue,
@@ -5314,6 +5323,7 @@ fn main() -> Result<()> {
         panel_text: None,
         grabbed: false,
         screen_clicker: false,
+        audio_channels: Default::default(),
         main_menu: false,
         settings,
         fov_blend: None,
@@ -6039,5 +6049,135 @@ mod fade_tests {
         assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 0.5), Some(0.8));
         assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 2.0), Some(0.4));
         assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 3.1), None);
+    }
+}
+
+/// A script audio channel: the mixer voice playing it, or why it could not start.
+struct AudioChan {
+    voice: u32,
+    /// BASS error code (2 file open, 41 file format) reported once, then the channel is dropped.
+    err: Option<i64>,
+    /// Frames since `play` without the voice showing up in the mixer's states yet.
+    pending: u32,
+}
+
+impl App {
+    /// `DrawCmd::Audio`: a script channel operation onto the mixer.
+    fn apply_audio(&mut self, id: u32, op: &gm_script::AudioOp) {
+        use gm_script::AudioOp;
+        if let AudioOp::Play {
+            path,
+            volume,
+            pitch,
+            looping,
+            paused,
+            pos,
+        } = op
+        {
+            // the game's paths are game-relative (`sound/...`); the mixer's are under sound/
+            let wave = path.trim_start_matches('/').trim_start_matches("sound/");
+            let chan = match self.sounds.wave(&self.mount, wave) {
+                Some(pcm) => {
+                    let voice = self.sounds.mixer.play(gm_audio::Play {
+                        pcm,
+                        volume: *volume,
+                        pitch: *pitch,
+                        position: *pos,
+                        level: 75.0,
+                        looping: *looping,
+                        ent: 0,
+                        channel: 0,
+                        stream: false,
+                    });
+                    if *paused {
+                        self.sounds.mixer.set_paused(voice, true);
+                    }
+                    AudioChan {
+                        voice,
+                        err: None,
+                        pending: 0,
+                    }
+                }
+                None => AudioChan {
+                    voice: 0,
+                    err: Some(if self.mount.read(&format!("sound/{wave}")).is_ok() {
+                        41
+                    } else {
+                        2
+                    }),
+                    pending: 0,
+                },
+            };
+            self.audio_channels.insert(id, chan);
+            return;
+        }
+        let Some(ch) = self.audio_channels.get(&id) else {
+            return;
+        };
+        let mixer = &self.sounds.mixer;
+        match op {
+            AudioOp::Stop => mixer.stop(ch.voice),
+            AudioOp::Pause(b) => mixer.set_paused(ch.voice, *b),
+            AudioOp::Volume(v) => mixer.set_volume(ch.voice, *v),
+            AudioOp::Pitch(p) => mixer.set_pitch(ch.voice, *p),
+            AudioOp::Seek(t) => mixer.seek(ch.voice, *t),
+            AudioOp::Pos(Some(p)) => mixer.move_voice(ch.voice, *p),
+            AudioOp::Pos(None) => {}
+            AudioOp::Loop(b) => mixer.set_looping(ch.voice, *b),
+            AudioOp::Play { .. } => {}
+        }
+    }
+
+    /// Once per frame before the HUD: what the mixer says about every script channel.
+    fn report_audio(&mut self) {
+        if self.audio_channels.is_empty() {
+            return;
+        }
+        let states = self.sounds.mixer.voice_states();
+        let mut reports = Vec::new();
+        self.audio_channels.retain(|id, ch| {
+            if let Some(err) = ch.err {
+                reports.push(gm_script::AudioState {
+                    id: *id,
+                    state: 0,
+                    time: 0.0,
+                    length: 0.0,
+                    rate: 0,
+                    err,
+                });
+                return false;
+            }
+            let found = states.iter().find(|v| v.id == ch.voice);
+            let (state, time, length, rate) = match found {
+                Some(v) => (
+                    if v.paused { 2 } else { 1 },
+                    v.time,
+                    v.length,
+                    v.rate as i64,
+                ),
+                // the audio thread has not taken the play yet: stalled for a few frames, then
+                // the voice really is gone (finished or the mixer is silent)
+                None if ch.pending < 30 => {
+                    ch.pending += 1;
+                    (3, 0.0, 0.0, 0)
+                }
+                None => (0, 0.0, 0.0, 0),
+            };
+            if found.is_some() {
+                ch.pending = 30;
+            }
+            reports.push(gm_script::AudioState {
+                id: *id,
+                state,
+                time,
+                length,
+                rate,
+                err: 0,
+            });
+            true
+        });
+        self.sim
+            .script
+            .client_audio(&self.sim.client.world, &reports);
     }
 }

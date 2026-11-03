@@ -1366,3 +1366,101 @@ fn glua_client_globals_scale_mesh_require() {
         .expect("skins");
     assert!(skins >= 0.0);
 }
+
+/// `sound.PlayFile` opens a channel on the host (an audio command with the script's channel
+/// id), the host's state report fires the callback and feeds the getters, and the channel's
+/// methods go back out as commands; a file the host cannot open fails the callback with the
+/// BASS code; URLs are not streamed.
+#[test]
+fn glua_audio_channel_round_trip() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "a".into(),
+        name: "a".into(),
+        priority: 0,
+        source: r##"
+            got = {}
+            hook.Add("HUDPaint", "a", function()
+                if not got.started then
+                    got.started = true
+                    sound.PlayFile("sound/music/hl1_song3.wav", "noplay", function(ch, err, name) got.ch, got.err, got.name = ch, err, name end)
+                    sound.PlayFile("sound/missing.wav", "", function(ch, err, name) got.err2, got.name2 = err, name end)
+                    sound.PlayURL("http://x/y.mp3", "", function(ch, err, name) got.err3 = err end)
+                elseif got.ch and not got.done then
+                    got.done = true
+                    got.ch:Play()
+                    got.ch:SetVolume(0.5)
+                    got.ch:SetTime(1.25)
+                end
+            end)
+        "##
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let world = gm_net::ClientWorld::default();
+    let draws = rt.client_render(&world, 800, 600);
+    let plays: Vec<(u32, String, bool)> = draws
+        .iter()
+        .filter_map(|d| match d {
+            gm_script::DrawCmd::Audio {
+                id,
+                op: gm_script::AudioOp::Play { path, paused, .. },
+            } => Some((*id, path.clone(), *paused)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        plays,
+        vec![
+            (1, "sound/music/hl1_song3.wav".to_string(), true),
+            (2, "sound/missing.wav".to_string(), false)
+        ]
+    );
+    let err3: f64 = rt.actors()[0].eval("return got.err3").expect("err3");
+    assert_eq!(err3, 37.0);
+    rt.client_audio(
+        &world,
+        &[
+            gm_script::AudioState {
+                id: 1,
+                state: 2,
+                time: 0.0,
+                length: 3.5,
+                rate: 44100,
+                err: 0,
+            },
+            gm_script::AudioState {
+                id: 2,
+                state: 0,
+                time: 0.0,
+                length: 0.0,
+                rate: 0,
+                err: 2,
+            },
+        ],
+    );
+    let (len, state, hz, err2, name2): (f64, f64, f64, f64, String) = rt.actors()[0]
+        .eval("return got.ch:GetLength(), got.ch:GetState(), got.ch:GetSamplingRate(), got.err2, got.name2")
+        .expect("eval");
+    assert_eq!(
+        (len, state, hz, err2, name2.as_str()),
+        (3.5, 2.0, 44100.0, 2.0, "BASS_ERROR_FILEOPEN")
+    );
+    let draws = rt.client_render(&world, 800, 600);
+    let ops: Vec<String> = draws
+        .iter()
+        .filter_map(|d| match d {
+            gm_script::DrawCmd::Audio { id: 1, op } => Some(format!("{op:?}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ops, vec!["Pause(false)", "Volume(0.5)", "Seek(1.25)"]);
+    let state: f64 = rt.actors()[0]
+        .eval("return got.ch:GetState()")
+        .expect("state");
+    assert_eq!(state, 1.0);
+}
