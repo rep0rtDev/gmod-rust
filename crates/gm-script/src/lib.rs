@@ -939,6 +939,18 @@ impl Runtime {
                 }
                 self.ask_amount(server, "player.damage", p)
             }
+            gm_server::Request::PlayerArmor {
+                player,
+                amount,
+                dmg_type,
+                armor,
+            } => {
+                p.ints.push(("player", *player as i64));
+                p.floats.push(("amount", *amount as f64));
+                p.ints.push(("type", *dmg_type as i64));
+                p.ints.push(("armor", *armor as i64));
+                self.ask_amount(server, "player.armor", p)
+            }
             gm_server::Request::Loadout { player } => {
                 p.ints.push(("player", *player as i64));
                 if self.ask(server, "player.loadout", p) {

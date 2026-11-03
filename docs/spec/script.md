@@ -776,6 +776,10 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `GM:HandlePlayerArmorReduction(ply, dmginfo)` runs when an armoured player takes damage the
+  armour absorbs (not fall / drown), after the damage hooks: the player's `Armor()` is the live
+  value and `SetArmor` plus `dmginfo:SetDamage` decide the armour left and the health damage;
+  a hook that changes nothing leaves the measured split (80 % to armour, capped by it).
 - `saverestore`: `save <name>` asks the runtime for one blob per `saverestore.AddSaveHook`
   (`WriteVar` / `WriteTable` into the save object) and one per scripted entity (its writable
   fields, `SaveEntity`), stored in the save file; `load <name>` re-creates SENTs by class (a

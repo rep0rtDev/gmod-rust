@@ -754,6 +754,21 @@ local prev_move = {}
         if d:IsDamageType(DMG_BLAST) then hook.Run("OnDamagedByExplosion", ply, d) end
         if d:GetDamage() ~= (p.amount or 0) then return d:GetDamage() end
     end)
+    -- @hook GM:HandlePlayerArmorReduction
+    -- the hook sees the player's live armour and sets the new one / the damage left for health;
+    -- the wrapper's Armor / SetArmor are captured for the reply (no change = the measured split)
+    events.on("player.armor", function(p)
+        local ply = Player(p.player)
+        local d = dmginfo_for(p)
+        local armor0, armor = p.armor or 0, p.armor or 0
+        rawset(ply, "Armor", function() return armor end)
+        rawset(ply, "GetArmor", function() return armor end)
+        rawset(ply, "SetArmor", function(_, v) armor = tonumber(v) or armor end)
+        hook.Run("HandlePlayerArmorReduction", ply, d)
+        rawset(ply, "Armor", nil) rawset(ply, "GetArmor", nil) rawset(ply, "SetArmor", nil)
+        if d:GetDamage() == (p.amount or 0) and armor == armor0 then return end
+        return string.format("%.4f,%d", d:GetDamage(), math.floor(armor))
+    end)
     events.on("player.fall_damage", function(p)
         local r = hook.Run("GetFallDamage", Player(p.player), p.speed)
         if isnumber(r) then return r end

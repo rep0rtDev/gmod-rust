@@ -2385,7 +2385,7 @@
 {"address":"GM:HUDPaintBackground","kind":"hook","parent":"GM","name":"HUDPaintBackground","realms":["client"],"args":[],"rets":[],"status":"stub"},
 {"address":"GM:HUDShouldDraw","kind":"hook","parent":"GM","name":"HUDShouldDraw","realms":["client"],"args":[{"name":"name","type":"string"}],"rets":[{"name":"","type":"boolean"}],"status":"stub"},
 {"address":"GM:HUDWeaponPickedUp","kind":"hook","parent":"GM","name":"HUDWeaponPickedUp","realms":["client"],"args":[{"name":"weapon","type":"Weapon"}],"rets":[],"status":"stub"},
-{"address":"GM:HandlePlayerArmorReduction","kind":"hook","parent":"GM","name":"HandlePlayerArmorReduction","realms":["server"],"args":[{"name":"ply","type":"Player"},{"name":"dmginfo","type":"CTakeDamageInfo"}],"rets":[],"status":"stub"},
+{"address":"GM:HandlePlayerArmorReduction","kind":"hook","parent":"GM","name":"HandlePlayerArmorReduction","realms":["server"],"args":[{"name":"ply","type":"Player"},{"name":"dmginfo","type":"CTakeDamageInfo"}],"rets":[],"status":"implemented"},
 {"address":"GM:HandlePlayerDriving","kind":"hook","parent":"GM","name":"HandlePlayerDriving","realms":["client","server"],"args":[{"name":"ply","type":"Player"}],"rets":[{"name":"","type":"boolean"}],"status":"stub"},
 {"address":"GM:HandlePlayerDucking","kind":"hook","parent":"GM","name":"HandlePlayerDucking","realms":["client","server"],"args":[{"name":"ply","type":"Player"},{"name":"velocity","type":"Vector"}],"rets":[{"name":"","type":"boolean"}],"status":"stub"},
 {"address":"GM:HandlePlayerJumping","kind":"hook","parent":"GM","name":"HandlePlayerJumping","realms":["client","server"],"args":[{"name":"ply","type":"Player"},{"name":"velocity","type":"Vector"}],"rets":[{"name":"","type":"boolean"}],"status":"stub"},

@@ -2901,3 +2901,35 @@ fn saverestore_round_trips_global_hooks_and_runs_the_gm_hooks() {
         (1.0, 1.0, 42.0, "x", 2.0)
     );
 }
+
+#[test]
+fn armor_reduction_hook_answers_the_split_only_when_it_changes_it() {
+    let mut rt = runtime(
+        "hook.Add('HandlePlayerArmorReduction', 't', function(ply, dmginfo)
+             if state.off then return end
+             local a, dmg = ply:Armor(), dmginfo:GetDamage()
+             local toArmor = math.min(a, dmg * 0.5)
+             ply:SetArmor(a - toArmor)
+             dmginfo:SetDamage(dmg - toArmor)
+         end)",
+    );
+    let a = &mut rt.actors_mut()[0];
+    let mut p = Payload::default();
+    p.ints.push(("player", 1));
+    p.floats.push(("amount", 40.0));
+    p.ints.push(("type", 2));
+    p.ints.push(("armor", 50));
+    let reply = a
+        .dispatch_reply(&snapshot(), "player.armor", &p, 1)
+        .unwrap();
+    assert_eq!(format!("{reply:?}"), "Text(\"20.0000,30\")");
+    a.eval::<()>("state.off = true").unwrap();
+    let reply = a
+        .dispatch_reply(&snapshot(), "player.armor", &p, 2)
+        .unwrap();
+    assert_eq!(format!("{reply:?}"), "Pass");
+    let (armor, set): (bool, bool) = a
+        .eval("local p = Player(1) return rawget(p, 'Armor') == nil, rawget(p, 'SetArmor') == nil")
+        .unwrap();
+    assert!(armor && set);
+}

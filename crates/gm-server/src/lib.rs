@@ -996,6 +996,15 @@ pub enum Request {
         player: u32,
         model: String,
     },
+    /// `GM:HandlePlayerArmorReduction`: a player with armour takes damage of a type the armour
+    /// absorbs; `Text("health,armor")` is the health damage and the armour left in place of the
+    /// measured 80 % split, anything else keeps the split.
+    PlayerArmor {
+        player: u32,
+        amount: f32,
+        dmg_type: u32,
+        armor: i32,
+    },
     /// `PlayerLoadout`: the player (re)spawned with an empty inventory; `Cancel` skips the
     /// default loadout (the hook gives its own with `player.give_weapon`).
     Loadout {
@@ -4126,6 +4135,30 @@ pub const DMG_DROWN: u32 = 16384;
 /// Measured (`damage_hits`): armour takes 80 % of a hit up to what it has, health the rest;
 /// fall and drowning damage ignore armour.
 pub const ARMOR_SHARE: f32 = 0.8;
+
+/// `Verdict::Text` of `Request::PlayerArmor`: "health damage,armour left" (both finite, clamped
+/// at zero; the armour truncated like the game reads it).
+pub fn parse_armor_split(text: &str) -> Option<(f32, i32)> {
+    let mut it = text.split(',').map(|s| s.trim().parse::<f32>());
+    match (it.next(), it.next()) {
+        (Some(Ok(h)), Some(Ok(a))) if h.is_finite() && a.is_finite() => {
+            Some((h.max(0.0), a.max(0.0).floor() as i32))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod armor_split_tests {
+    #[test]
+    fn parses_health_and_armor_or_rejects() {
+        assert_eq!(super::parse_armor_split("20.5, 30"), Some((20.5, 30)));
+        assert_eq!(super::parse_armor_split("-3,29.9"), Some((0.0, 29)));
+        assert_eq!(super::parse_armor_split("20"), None);
+        assert_eq!(super::parse_armor_split("nan,1"), None);
+        assert_eq!(super::parse_armor_split("x,y"), None);
+    }
+}
 /// Measured (`damage_fall_*`): landing with the previous tick's downward speed above this
 /// hurts, 10 flat with `mp_falldamage 0`, `(v - threshold) * 25/99` with `mp_falldamage 1`
 /// (fits 540 to 1197 u/s to 0.01; 522 u/s is safe, 540 is not).
@@ -4787,6 +4820,25 @@ impl<'w> Server<'w> {
             Verdict::Allow => amount,
             Verdict::Text(_) => amount,
         };
+        let armor_now = self
+            .players
+            .get(&id)
+            .filter(|p| p.alive)
+            .map_or(0, |p| p.armor);
+        let armored = amount > 0.0 && armor_now > 0 && dmg_type & (DMG_FALL | DMG_DROWN) == 0;
+        let scripted_split = if armored {
+            match self.ask(Request::PlayerArmor {
+                player: id,
+                amount,
+                dmg_type,
+                armor: armor_now,
+            }) {
+                Verdict::Text(t) => parse_armor_split(&t),
+                _ => None,
+            }
+        } else {
+            None
+        };
         let Some(p) = self.players.get_mut(&id) else {
             return 0.0;
         };
@@ -4794,7 +4846,10 @@ impl<'w> Server<'w> {
             return 0.0;
         }
         let mut to_health = amount;
-        if p.armor > 0 && dmg_type & (DMG_FALL | DMG_DROWN) == 0 {
+        if let Some((health, armor)) = scripted_split {
+            to_health = health;
+            p.armor = armor.min(p.max_armor);
+        } else if armored {
             let mut to_armor = amount * ARMOR_SHARE;
             if to_armor > p.armor as f32 {
                 to_armor = p.armor as f32;
