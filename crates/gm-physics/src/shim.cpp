@@ -515,7 +515,7 @@ public:
 	// the game integrates up to the moment of impact with the old velocity and the rest of the
 	// step with the new one; Jolt integrates the whole step with the new one, so after the step
 	// every impacted body is moved by (v_old - v_new) * t_impact (and turned likewise)
-	struct Offset { JPH::Vec3 dpos; JPH::Vec3 drot; bool has_target = false; JPH::RVec3 target_pos; JPH::Quat target_rot; };
+	struct Offset { JPH::Vec3 dpos; JPH::Vec3 drot; JPH::Vec3 dpos_ccd; JPH::Vec3 drot_ccd; bool seen = false; JPH::RVec3 p0; JPH::Vec3 lv0; JPH::Vec3 lv1; float t_first = 0.0f; bool has_target = false; JPH::RVec3 target_pos; JPH::Quat target_rot; };
 	std::unordered_map<JPH::uint32, Offset> offsets;
 	std::mutex offsets_mutex;
 	std::unordered_map<JPH::uint32, bool> skip; // bodies under a shadow controller (physgun) keep Jolt's contact
@@ -1159,12 +1159,27 @@ public:
 			}
 		}
 		if (t_impact > 0.0f) {
-			JPH::Vec3 dl = face_done ? lv0 * (t_impact - step_dt) : (lv0 - dyn.GetLinearVelocity()) * t_impact;
-			JPH::Vec3 da = face_done ? av0 * (t_impact - step_dt) : (av0 - dyn.GetAngularVelocity()) * t_impact;
+			JPH::Vec3 lv1 = dyn.GetLinearVelocity(), av1 = dyn.GetAngularVelocity();
+			// Jolt reaches this callback on two paths. Speculative contacts: the step is integrated
+			// afterwards with the velocities set here, so the body overshoots by (v1 - v0) * t_impact.
+			// Linear-cast CCD (a body crossing more than its inner radius): the step was already
+			// integrated with the pre-impact velocities (position clamped to the time of impact,
+			// rotation with av0) and the new velocities only act next step, so the post-impact motion
+			// for the rest of the step is missing. Which path ran is read off the end pose in
+			// apply_offsets (`use_chair`: a chair dropped flat lands through the cast; the
+			// speculative-path offset alone tilted it 9 deg).
+			JPH::Vec3 dl = face_done ? lv0 * (t_impact - step_dt) : (lv0 - lv1) * t_impact;
+			JPH::Vec3 da = face_done ? av0 * (t_impact - step_dt) : (av0 - av1) * t_impact;
 			std::lock_guard<std::mutex> lock(offsets_mutex);
 			Offset &o = offsets[dyn.GetID().GetIndexAndSequenceNumber()];
 			o.dpos += dl;
 			o.drot += da;
+			if (!face_done) {
+				o.dpos_ccd += lv1 * (step_dt - t_impact);
+				o.drot_ccd += (av1 - av0) * (step_dt - t_impact);
+				if (!o.seen) { o.seen = true; o.p0 = dyn.GetPosition(); o.lv0 = lv0; o.t_first = t_impact; }
+				o.lv1 = lv1;
+			}
 			if (face_done) {
 				// Jolt integrates this step with whatever velocity the island solve leaves (the
 				// bounce alone for a free crate, the weld's share for a welded one), so the
@@ -1193,9 +1208,15 @@ public:
 			}
 			JPH::RVec3 p = bi.GetPosition(bid);
 			JPH::Quat r = bi.GetRotation(bid);
-			float ang = o.drot.Length();
-			if (ang > 1e-9f) r = (JPH::Quat::sRotation(o.drot / ang, ang) * r).Normalized();
-			bi.SetPositionAndRotation(bid, p + o.dpos, r, JPH::EActivation::DontActivate);
+			// speculative path: integrated past the callback with the new velocity; CCD path: left at
+			// the time of impact with the old one (see the offsets' computation)
+			bool ccd = o.seen && (p - (o.p0 + JPH::RVec3(o.lv0 * o.t_first))).LengthSq() < (p - (o.p0 + JPH::RVec3(o.lv1 * step_dt))).LengthSq();
+			const JPH::Vec3 &dpos = ccd ? o.dpos_ccd : o.dpos;
+			const JPH::Vec3 &drot = ccd ? o.drot_ccd : o.drot;
+			if (getenv("GMP_IMPACT_DEBUG")) fprintf(stderr, "APPLYOFF id=%u ccd=%d\n", id, (int)ccd);
+			float ang = drot.Length();
+			if (ang > 1e-9f) r = (JPH::Quat::sRotation(drot / ang, ang) * r).Normalized();
+			bi.SetPositionAndRotation(bid, p + dpos, r, JPH::EActivation::DontActivate);
 		}
 		offsets.clear();
 	}
