@@ -25,6 +25,19 @@ pub struct Material {
     /// `Water`: `$fogcolor` (display-space 0..1), `$fogstart`, `$fogend` of the volume fog
     /// seen through the surface (`$abovewater 1`) or from inside (`$bottommaterial`).
     pub water_fog: Option<([f32; 3], f32, f32)>,
+    /// `$detail`: a tiling texture multiplied into the base.
+    pub detail: Option<Detail>,
+}
+
+/// `$detail` / `$detailscale` / `$detailblendfactor` / `$detailblendmode`: the detail
+/// texture sampled at `base uv * scale`, blended into the base by `factor`; mode 0 (the
+/// default, `mod2x`) gives `base * lerp(1, 2 * detail, factor)`.
+#[derive(Clone, Debug)]
+pub struct Detail {
+    pub texture: String,
+    pub scale: f32,
+    pub factor: f32,
+    pub mode: u32,
 }
 
 /// `maps/<map>/<mat>_<x>_<y>_<z>` is a per-cubemap patch written by vbsp;
@@ -134,6 +147,15 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         mat.translucent = matches!(get("$translucent").as_deref(), Some("1")) && !mat.alpha_test;
         mat.additive = matches!(get("$additive").as_deref(), Some("1"));
         mat.nocull = matches!(get("$nocull").as_deref(), Some("1"));
+        if let Some(texture) = get("$detail") {
+            let num = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
+            mat.detail = Some(Detail {
+                texture,
+                scale: num("$detailscale", 4.0),
+                factor: num("$detailblendfactor", 1.0),
+                mode: num("$detailblendmode", 0.0) as u32,
+            });
+        }
         mat.no_draw = matches!(get("%compilenodraw").as_deref(), Some("1"))
             || matches!(get("%compilesky").as_deref(), Some("1"))
             || matches!(get("%compile2dsky").as_deref(), Some("1"))

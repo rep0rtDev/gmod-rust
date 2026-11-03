@@ -49,6 +49,13 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   coplanar faces at z -160 - `water_13` facing up and `water_13_beneath` facing down - so
   without culling the last-drawn one won from both sides); `$nocull 1` materials (foliage
   sheets, fences) are drawn two-sided; the 2D sky cube is seen from inside and never culled.
+  Detail textures (`$detail`, `$detailscale`, `$detailblendfactor`, `$detailblendmode`): the
+  detail texture is sampled at base uv x scale and, in mode 0 (`mod2x`, the only mode on
+  gm_construct), the base becomes `base * lerp(1, 2 * detail, factor)` before lighting.
+  gm_construct: `detail/noise_detail_01` on concrete / brick (scale 4-18, factor 0.6-0.8),
+  `detail/plaster_detail_01` on plaster and the building templates (6.8-8.3, 0.3-1.2),
+  `gm_construct/grass_clouds` on the grass (0.005-0.12, 0.5), `maxofs2d/terrain_detail` on
+  flatgrass_2. Other blend modes are drawn without detail.
   Water (`gm_construct/water_13.vmt`, shader `Water`): `$abovewater 1`, `$refracttexture
   _rt_WaterRefraction`, `$reflecttexture _rt_WaterReflection` (`$reflectamount 0.4`,
   `$reflect3dskybox 1`, `$reflectentities 1`), `$bumpmap gm_construct/water_13_dudv`,

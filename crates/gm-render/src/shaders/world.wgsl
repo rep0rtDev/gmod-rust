@@ -21,8 +21,10 @@ struct MaterialParams {
     unlit: u32,
     translucent: u32,
     pad: u32,
+    detail: vec4<f32>,
 };
 @group(1) @binding(2) var<uniform> material: MaterialParams;
+@group(1) @binding(3) var detail: texture_2d<f32>;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -61,7 +63,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if material.unlit != 0u {
         light = vec3<f32>(1.0);
     }
-    let shaded = albedo.rgb * light * in.color * camera.exposure;
+    // $detail mod2x: base * lerp(1, 2 * detail, $detailblendfactor) at base uv * $detailscale
+    let d = textureSample(detail, base_sampler, in.uv * material.detail.x).rgb;
+    let base = albedo.rgb * mix(vec3<f32>(1.0), d * 2.0, material.detail.y);
+    let shaded = base * light * in.color * camera.exposure;
     // mat_monitorgamma: 2.2 is neutral, lower brightens
     let out = pow(max(shaded, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
     // env_fog_controller: linear in the view depth from fogstart to fogend, capped at
