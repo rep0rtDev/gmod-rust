@@ -467,6 +467,8 @@ pub struct MenuState {
     pub selected: Vec<String>,
     /// The icons' right-click `DermaMenu` (cursor position, the models it acts on).
     pub ctx_menu: Option<((f32, f32), Vec<String>)>,
+    /// The spawnlist tree's right-click `DermaMenu` (cursor position, the list's index).
+    pub list_menu: Option<((f32, f32), usize)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -601,9 +603,51 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
         } else {
             "Delete".to_string()
         };
-        let (x, y) = (at.0, at.1);
-        let w = dmenu_width(ctx.font, std::slice::from_ref(&label));
-        nine(&mut out.items, &MENU_BG, x, y, w, MENU_OPTION_H, WHITE);
+        context_menu(
+            &mut out,
+            ctx,
+            *at,
+            &[(label, "icon16/bin_closed.png", "spawnlist_delete")],
+        );
+    }
+    // the tree's menu (contentsidebar.lua): New, and Delete for an editable list
+    if let Some((at, i)) = &st.list_menu {
+        let editable = ctx.lists.iter().filter(|l| !l.addon).count() > 1
+            && ctx.lists.get(*i).is_some_and(|l| !l.addon);
+        let mut opts = vec![("New".to_string(), "icon16/add.png", "spawnlist_new")];
+        if editable {
+            opts.push((
+                "Delete".to_string(),
+                "icon16/bin_closed.png",
+                "spawnlist_remove",
+            ));
+        }
+        context_menu(&mut out, ctx, *at, &opts);
+    }
+    out
+}
+
+/// A `DermaMenu` of options (label, icon, `Action::Menu` id) at `at`, in the dmenu look.
+fn context_menu(
+    out: &mut Layout,
+    ctx: &Ctx,
+    at: (f32, f32),
+    opts: &[(String, &str, &'static str)],
+) {
+    let labels: Vec<String> = opts.iter().map(|(l, _, _)| l.clone()).collect();
+    let (x, y0) = at;
+    let w = dmenu_width(ctx.font, &labels);
+    nine(
+        &mut out.items,
+        &MENU_BG,
+        x,
+        y0,
+        w,
+        MENU_OPTION_H * opts.len() as f32,
+        WHITE,
+    );
+    for (i, (label, icon, id)) in opts.iter().enumerate() {
+        let y = y0 + i as f32 * MENU_OPTION_H;
         let hovered = inside(ctx.cursor, x, y, w, MENU_OPTION_H);
         if hovered {
             nine(
@@ -616,15 +660,8 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
                 WHITE,
             );
         }
-        if (ctx.has_image)("icon16/bin_closed.png") {
-            image(
-                &mut out.items,
-                "icon16/bin_closed.png",
-                x + 4.0,
-                y + 3.0,
-                16.0,
-                16.0,
-            );
+        if (ctx.has_image)(icon) {
+            image(&mut out.items, icon, x + 4.0, y + 3.0, 16.0, 16.0);
         }
         let color = if hovered {
             BUTTON_TEXT_HOVER
@@ -638,7 +675,7 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
             x + 32.0,
             y,
             MENU_OPTION_H,
-            &label,
+            label,
             color,
         );
         out.hits.push(Hit {
@@ -646,10 +683,9 @@ pub fn build(ctx: &Ctx, st: &MenuState) -> Layout {
             y,
             w,
             h: MENU_OPTION_H,
-            action: Action::Menu("spawnlist_delete"),
+            action: Action::Menu(id),
         });
     }
-    out
 }
 
 /// `DPropertySheet`: padding 8, tabs in a 3 px inset bar overlapping by 5, the active tab 28 tall

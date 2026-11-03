@@ -2989,6 +2989,12 @@ impl App {
         };
         let action = derma::build(&ctx, &menu.st).hit(self.cursor).cloned();
         menu.st.ctx_menu = None;
+        menu.st.list_menu = None;
+        if let Some(derma::Action::Node(i)) = action {
+            if menu.st.creation_tab == 0 && self.spawnlists.get(i).is_some_and(|l| !l.addon) {
+                menu.st.list_menu = Some((self.cursor, i));
+            }
+        }
         if let Some(derma::Action::Spawn(model)) = action {
             let editable = menu.st.creation_tab == 0
                 && self.spawnlists.get(menu.st.node).is_some_and(|l| !l.addon);
@@ -3029,6 +3035,40 @@ impl App {
             has_image: &has_image,
         };
         let action = derma::build(&ctx, &menu.st).hit(self.cursor).cloned();
+        if let Some((_, i)) = menu.st.list_menu.take() {
+            match action {
+                Some(derma::Action::Menu("spawnlist_new")) => {
+                    let at = self.spawnlists.iter().filter(|l| !l.addon).count();
+                    let id = self.spawnlists.iter().map(|l| l.id).max().unwrap_or(0) + 1;
+                    self.spawnlists.insert(
+                        at,
+                        derma::SpawnList {
+                            id,
+                            name: "New Spawnlist".into(),
+                            icon: "icon16/page.png".into(),
+                            models: Vec::new(),
+                            addon: false,
+                        },
+                    );
+                    menu.st.node = at;
+                }
+                Some(derma::Action::Menu("spawnlist_remove")) => {
+                    let editable = self.spawnlists.iter().filter(|l| !l.addon).count() > 1
+                        && self.spawnlists.get(i).is_some_and(|l| !l.addon);
+                    if editable {
+                        self.spawnlists.remove(i);
+                        menu.st.node = menu.st.node.min(self.spawnlists.len().saturating_sub(1));
+                    }
+                }
+                _ => return,
+            }
+            menu.st.selected.clear();
+            menu.st.scroll = 0.0;
+            if let Err(e) = derma::save_spawnlists(&self.spawnlists) {
+                eprintln!("spawnlist: {e}");
+            }
+            return;
+        }
         if let Some((_, models)) = menu.st.ctx_menu.take() {
             if matches!(action, Some(derma::Action::Menu("spawnlist_delete"))) {
                 if let Some(l) = self.spawnlists.get_mut(menu.st.node) {
