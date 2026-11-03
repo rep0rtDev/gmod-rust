@@ -769,6 +769,28 @@ public:
 					float a = JPH::Vec3(pt.p - c).Dot(dir);
 					if (a > best) { best = a; lead = &pt; }
 				}
+				// the leading edge is every touching vertex level with the foremost one (a crate
+				// sliding square has two front corners): anchoring one corner alone spun the
+				// shot crate -50 deg/s and 17.6 u/s sideways (`shoot_prop_crowbar_crate`)
+				// (box-like bodies only: a round can's tied rim vertices form an arc whose mean
+				// sits inside the hull, `phys_drop_flat_paintcan_lo5`)
+				Pt lead_mid;
+				if (lead) {
+					std::vector<const Pt *> tied;
+					for (const Pt &pt : pts) {
+						if (pt.d > 0.001f) continue;
+						if (JPH::Vec3(pt.p - c).Dot(dir) >= best - 0.005f) tied.push_back(&pt);
+					}
+					int touching_now = 0;
+					for (const Pt &pt : pts) if (pt.d <= 0.001f) ++touching_now;
+					// a face resting on the floor (a can on its side touches along a line and
+					// keeps its own vertex, `phys_drop_flat_paintcan_lo5`)
+					if (touching_now >= 4 && tied.size() == 2 && (tied[0]->p - tied[1]->p).Length() > 0.2f) {
+						lead_mid = *lead;
+						lead_mid.p = 0.5f * (tied[0]->p + tied[1]->p);
+						lead = &lead_mid;
+					}
+				}
 				if (lead) {
 					// the resting face carries the weight: cancel this step's fall into the rest gap
 					// first, the anchor's lift then comes out whole (the game's 13.7 u/s on the drum)
