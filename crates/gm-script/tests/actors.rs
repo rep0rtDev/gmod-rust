@@ -857,3 +857,39 @@ fn registry_publishes_signed_packages_and_resolves_the_highest_fitting_versions(
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Client realm GLua: a `HUDPaint` hook draws through `surface` / `draw`; the frame's
+/// `render.hud` runs the game's hook chain and the calls come back as draw commands.
+#[test]
+fn glua_client_hud_paint_draws_through_surface() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "hud".into(),
+        name: "paint".into(),
+        priority: 0,
+        source: r#"
+            assert(CLIENT and not SERVER, "client realm globals")
+            hook.Add("HUDPaint", "test", function()
+                surface.SetDrawColor(10, 20, 30, 255)
+                surface.DrawRect(5, 6, 70, 80)
+                draw.SimpleText("hi", "DermaDefault", ScrW() / 2, 0, Color(255, 255, 255), TEXT_ALIGN_CENTER)
+            end)
+            hook.Add("HUDShouldDraw", "test", function(name) return name ~= "CHudHealth" end)
+        "#
+        .into(),
+        config: ActorConfig::default(),
+    })
+    .expect("actor");
+    let world = gm_net::ClientWorld::default();
+    let draws = rt.client_render(&world, 1280, 720);
+    assert!(
+        draws.iter().any(|d| matches!(d, gm_script::DrawCmd::Rect { x, y, w, h, .. } if *x == 5.0 && *y == 6.0 && *w == 70.0 && *h == 80.0)),
+        "HUDPaint's DrawRect reaches the client: {draws:?}"
+    );
+    assert!(
+        draws
+            .iter()
+            .any(|d| matches!(d, gm_script::DrawCmd::Text { text, .. } if text == "hi")),
+        "draw.SimpleText reaches the client: {draws:?}"
+    );
+}

@@ -6,6 +6,12 @@ use gm_script::{ActorConfig, ActorSpec, Runtime};
 fn main() {
     let stubs = std::env::args().any(|a| a == "--stubs");
     let mut rt = Runtime::new();
+    // `--realm client`: list the client realm's surface (the realm globals pick the
+    // implementations / stubs of `glua/client.luau`)
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--realm") {
+        rt.realm = args[i + 1].clone();
+    }
     rt.load(ActorSpec {
         addon: "glua".into(),
         name: "list".into(),

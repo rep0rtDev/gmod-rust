@@ -485,3 +485,7 @@ in the 640x480 proportional space of the sheet page.
   `SentState`, replicated whole and reliably as `EntityOverlays` (version bumped on change or
   removal); the client picks the closest overlay entity whose model-bounds box the aim ray hits
   within 256 u (before the world), draws with `gui/corner8` corners and `UiItem::Tri`.
+
+## Client GLua drawing (`glua/client.luau`)
+
+`surface.*`, `draw.*`, `cam.Start3D2D` / `End3D2D`, `ScrW` / `ScrH` and `Material` exist in the client realm over the host's draw command list (rect, text, texture, font, 3D2D plane); the frame runs the game's HUD hook chain from `render.hud`: `PreDrawHUD`, `HUDShouldDraw("CHudGMod")`, `HUDPaintBackground`, `HUDPaint`, `PostDrawHUD`, `DrawOverlay`, with the surface state reset (white, DermaDefault, no material) before each frame. Lines are thin rectangles (diagonals as one-pixel steps), polygons scanline-filled, rounded boxes cut per row, the game's default fonts (DermaDefault 13, DermaLarge 32, Trebuchet18/24, ...) are declared at first use. On the server realm the same names are stubs. `SERVER` / `CLIENT` / `MENU_DLL` come from the actor's realm.
