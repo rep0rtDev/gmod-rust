@@ -15013,6 +15013,10 @@ impl<'w> Server<'w> {
         const FINGERS: [&str; 5] = ["Thumb", "Index", "Middle", "Ring", "Pinky"];
         let mut rows = builtin_tool_schema("finger");
         for i in 0..15 {
+            // mitten hands (fewer finger bones) get only the rows that move something
+            if self.finger_bone(ent, i / 3, i % 3, ps.hand).is_none() {
+                continue;
+            }
             for (axis, what, max) in [("x", "spread", 100.0_f32), ("y", "bend", 100.0_f32)] {
                 rows.push(ToolSetting {
                     name: format!("finger_{i}_{axis}"),
@@ -15690,19 +15694,54 @@ impl<'w> Server<'w> {
         } else {
             format!("ValveBiped.Bip01_{side}_Finger{finger}{part}")
         };
-        rd.bones.iter().position(|b| b.name == name)
+        let find = |n: &str| rd.bones.iter().position(|b| b.name == n);
+        find(&name).or_else(|| {
+            // the other skeletons' names (TF2, Portal, Zeno Clash, dog, vortigaunt, ...)
+            finger_skeletons::FINGER_SKELETONS.iter().find_map(|sk| {
+                sk.bones
+                    .iter()
+                    .find(|(from, _)| *from == name)
+                    .and_then(|(_, to)| find(to))
+            })
+        })
+    }
+
+    /// finger.lua `HasTF2Hands` / `HasP2Hands`: "tf2" when a TF2 skeleton's left wrist bone
+    /// exists, "portal2" when a Portal 2 skeleton's wrist and every translated finger bone
+    /// exist (the BallBot / Chell overlap), "" for ValveBiped and the rest.
+    fn hand_kind(&self, ent: u32) -> &'static str {
+        let Some(rd) = self.ragdoll_of(ent) else {
+            return "";
+        };
+        let has = |n: &str| rd.bones.iter().any(|b| b.name == n);
+        for sk in &finger_skeletons::FINGER_SKELETONS {
+            match sk.hand_type {
+                "tf2" if has(sk.left_hand) => return "tf2",
+                "portal2" if has(sk.left_hand) && sk.bones.iter().all(|(_, to)| has(to)) => {
+                    return "portal2"
+                }
+                _ => {}
+            }
+        }
+        ""
     }
 
     /// finger.lua `ApplyValues`: the 15 "x y" sliders of one hand become bone angles - the
-    /// thumb (first three parts) as (y, x, 0), the other fingers as (x, y, 0).
+    /// thumb (first three parts) as (y, x, 0), the other fingers as (x, y, 0); Portal 2 hands
+    /// take (x, y, 0) / (-y, x, 0) and TF2 hands (0, y, x) / (0, x, -y).
     fn finger_apply(&mut self, ent: u32, hand: u8) {
         let n = self.ragdoll_of(ent).map_or(0, |rd| rd.bones.len());
         let vals = self.sandbox.tool_settings.finger.clone();
+        let kind = self.hand_kind(ent);
         for (i, v) in vals.iter().enumerate().take(15) {
-            let ang = if i < 3 {
-                Vec3::new(v[1], v[0], 0.0)
-            } else {
-                Vec3::new(v[0], v[1], 0.0)
+            let (x, y) = (v[0], v[1]);
+            let ang = match (kind, i < 3) {
+                ("portal2", true) => Vec3::new(x, y, 0.0),
+                ("portal2", false) => Vec3::new(-y, x, 0.0),
+                ("tf2", true) => Vec3::new(0.0, y, x),
+                ("tf2", false) => Vec3::new(0.0, x, -y),
+                (_, true) => Vec3::new(y, x, 0.0),
+                (_, false) => Vec3::new(x, y, 0.0),
             };
             if let Some(bone) = self.finger_bone(ent, i / 3, i % 3, hand) {
                 let angles = self
