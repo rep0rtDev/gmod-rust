@@ -76,6 +76,7 @@ mod tests {
                 view_angles: Vec3::Y,
                 ducked: true,
                 on_ground: true,
+                flashlight: false,
                 model: 0,
                 held: Some(2),
                 driving: None,

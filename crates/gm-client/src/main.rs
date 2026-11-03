@@ -3776,11 +3776,13 @@ impl App {
                     pos: end,
                     radius: 160.0,
                     color: Vec3::from(color),
+                    ..Default::default()
                 });
                 dlights.push(gm_render::world::DLight {
                     pos: start,
                     radius: 48.0,
                     color: Vec3::from(color) * 0.5,
+                    ..Default::default()
                 });
                 // cubic bezier: out along the barrel for half the distance, into the end point
                 let (p0, p1, p2, p3) = (start, start + fwd * (len * 0.5), end, end);
@@ -3862,6 +3864,7 @@ impl App {
                     pos: core,
                     radius: 128.0,
                     color: Vec3::from(orange),
+                    ..Default::default()
                 });
             }
         }
@@ -3916,6 +3919,7 @@ impl App {
                     pos: own_muzzle,
                     radius: 100.0,
                     color: Vec3::new(1.0, 0.7, 0.4),
+                    ..Default::default()
                 });
             }
             self.fx_bursts
@@ -3937,6 +3941,7 @@ impl App {
                         pos,
                         radius: 300.0 * k,
                         color: Vec3::new(1.0, 0.6, 0.3) * k,
+                        ..Default::default()
                     });
                 }
             }
@@ -3953,6 +3958,33 @@ impl App {
                     modulate.push((m, v, i));
                 }
             }
+        }
+        // flashlights (`r_flashlightfov` 53.7, `r_flashlightfar` 750): a spot from each lit
+        // player's eye along the view
+        for p in &self.sim.client.world.players {
+            if !p.flashlight {
+                continue;
+            }
+            let (pos, dir) = if Some(p.id) == me {
+                (camera.position, camera.forward())
+            } else {
+                let (pitch, yaw) = (p.view_angles.x.to_radians(), p.view_angles.y.to_radians());
+                (
+                    p.origin + Vec3::new(0.0, 0.0, 64.0),
+                    Vec3::new(
+                        pitch.cos() * yaw.cos(),
+                        pitch.cos() * yaw.sin(),
+                        -pitch.sin(),
+                    ),
+                )
+            };
+            dlights.push(gm_render::world::DLight {
+                pos,
+                radius: 750.0,
+                color: Vec3::new(1.0, 1.0, 0.95) * 1.5,
+                dir,
+                cone: 26.85f32.to_radians().cos(),
+            });
         }
         g.world.set_dlights(&dlights);
         let target = ModelTarget {

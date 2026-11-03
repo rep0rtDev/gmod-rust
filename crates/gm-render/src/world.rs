@@ -293,10 +293,15 @@ struct CameraUniform {
     /// ... and seconds since start (z) for scrolling water normals.
     clip: [f32; 4],
     /// Dynamic lights: position (xyz) and radius in units (w, 0 = none).
-    dlight_pos: [[f32; 4]; 4],
+    dlight_pos: [[f32; 4]; MAX_DLIGHTS],
     /// Their linear colours (rgb).
-    dlight_color: [[f32; 4]; 4],
+    dlight_color: [[f32; 4]; MAX_DLIGHTS],
+    /// Spot direction (xyz) and the cosine of the cone half-angle (w, 0 = a point light).
+    dlight_dir: [[f32; 4]; MAX_DLIGHTS],
 }
+
+/// Dynamic lights lit per frame.
+pub const MAX_DLIGHTS: usize = 8;
 
 /// A dynamic point light for this frame (the physgun beam's end, a muzzle flash): colour times
 /// `(1 - d / radius)^2` times the surface's facing, added to the baked light.
@@ -305,6 +310,9 @@ pub struct DLight {
     pub pos: Vec3,
     pub radius: f32,
     pub color: Vec3,
+    /// Spot light: its direction and the cosine of the cone half-angle (0 = point light).
+    pub dir: Vec3,
+    pub cone: f32,
 }
 
 /// `cl_weaponcolor` default: the physgun's glow and beam.
@@ -2578,6 +2586,10 @@ impl WorldRenderer {
                 Some(l) => [l.color.x, l.color.y, l.color.z, 0.0],
                 None => [0.0; 4],
             }),
+            dlight_dir: std::array::from_fn(|i| match self.dlights.get(i) {
+                Some(l) => [l.dir.x, l.dir.y, l.dir.z, l.cone],
+                None => [0.0; 4],
+            }),
             clip: {
                 let t = self.t0.elapsed().as_secs_f32();
                 match clip {
@@ -2588,11 +2600,11 @@ impl WorldRenderer {
         }
     }
 
-    /// The dynamic lights of the next frame (at most four are lit).
+    /// The dynamic lights of the next frame (the first `MAX_DLIGHTS` are lit).
     pub fn set_dlights(&mut self, lights: &[DLight]) {
         self.dlights.clear();
         self.dlights
-            .extend(lights.iter().filter(|l| l.radius > 0.0).take(4));
+            .extend(lights.iter().filter(|l| l.radius > 0.0).take(MAX_DLIGHTS));
     }
 
     /// The 2D sky cube around an eye at the origin, clearing colour and depth.

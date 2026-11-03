@@ -243,6 +243,8 @@ pub struct PlayerSnap {
     pub ducked: bool,
     /// Standing on something (false in the air: jump / fall animation).
     pub on_ground: bool,
+    /// `Player:FlashlightIsOn` (impulse 100).
+    pub flashlight: bool,
     /// `gm_server::player_models` index of the player model (255: not in the table).
     pub model: u8,
     /// Skin family and `SetBodyGroups` digits of the player model, as set (unclamped).
@@ -528,7 +530,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 16;
+pub const PROTOCOL: u16 = 17;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1000,6 +1002,7 @@ impl ServerMsg {
                     w.qang(p.view_angles);
                     w.bool(p.ducked);
                     w.bool(p.on_ground);
+                    w.bool(p.flashlight);
                     w.u8(p.model);
                     w.u8(p.skin);
                     w.str(&p.body);
@@ -1348,6 +1351,7 @@ impl ServerMsg {
                         view_angles: r.qang()?,
                         ducked: r.bool()?,
                         on_ground: r.bool()?,
+                        flashlight: r.bool()?,
                         model: r.u8()?,
                         skin: r.u8()?,
                         body: r.str()?,

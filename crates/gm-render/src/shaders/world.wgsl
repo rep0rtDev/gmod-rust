@@ -9,8 +9,9 @@ struct Camera {
     fog_color: vec4<f32>,
     fog_range: vec4<f32>,
     clip: vec4<f32>,
-    dlight_pos: array<vec4<f32>, 4>,
-    dlight_color: array<vec4<f32>, 4>,
+    dlight_pos: array<vec4<f32>, 8>,
+    dlight_color: array<vec4<f32>, 8>,
+    dlight_dir: array<vec4<f32>, 8>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -137,12 +138,18 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     light = light * camera.lm_scale;
     // dynamic lights: colour * (1 - d / r)^2 * facing (unlit surfaces skip them)
-    for (var i = 0u; i < 4u; i++) {
+    for (var i = 0u; i < 8u; i++) {
         let lp = camera.dlight_pos[i];
         if lp.w > 0.0 {
             let dv = lp.xyz - in.world;
             let d = length(dv);
-            let k = clamp(1.0 - d / lp.w, 0.0, 1.0);
+            var k = clamp(1.0 - d / lp.w, 0.0, 1.0);
+            let sd = camera.dlight_dir[i];
+            if sd.w > 0.0 {
+                // spot: full inside the cone, soft 0.08 (cosine) edge
+                let c = dot(-dv / max(d, 1e-3), sd.xyz);
+                k *= smoothstep(sd.w, min(sd.w + 0.08, 1.0), c);
+            }
             var facing = 1.0;
             if dot(in.normal, in.normal) > 0.0 {
                 facing = max(dot(normalize(in.normal), dv / max(d, 1e-3)), 0.0);
