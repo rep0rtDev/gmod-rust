@@ -222,6 +222,12 @@ struct Gfx {
     gg_core: Option<wgpu::BindGroup>,
     gg_glow: Option<wgpu::BindGroup>,
     gg_beam: Option<wgpu::BindGroup>,
+    /// Shot effects: `effects/muzzleflash1` (muzzle flash, impact and explosion flashes),
+    /// `effects/spark` (tracer streak), `decals/concrete|metal/shot1` (bullet holes).
+    fx_muzzle: Option<wgpu::BindGroup>,
+    fx_spark: Option<wgpu::BindGroup>,
+    fx_decal: Option<wgpu::BindGroup>,
+    fx_decal_metal: Option<wgpu::BindGroup>,
     ui: UiRenderer,
 }
 
@@ -655,6 +661,14 @@ fn gesture_for(act: u8, hold: &str) -> Option<&'static str> {
     })
 }
 
+/// Loadout weapons whose shot shows a muzzle flash (the game's `MuzzleFlash` effect).
+fn fires_bullets(active: u8) -> bool {
+    matches!(
+        gm_server::LOADOUT.get(active as usize),
+        Some(&("weapon_pistol" | "weapon_357" | "weapon_smg1" | "weapon_ar2" | "weapon_shotgun"))
+    )
+}
+
 /// Soundscript entry for a server viewmodel event (`VmAct`) on a loadout weapon, as the
 /// game's weapons emit them: `.Single` on a shot (`.Launch` for the gravity gun), `.Reload`
 /// when a one-go reload starts, the shotgun's `.Reload` per shell and `.Special1` (cock) at
@@ -778,6 +792,14 @@ struct App {
     vm_anim: Option<(&'static str, Instant)>,
     /// `PlayerSnap::vm_serial` of the last server viewmodel event played.
     vm_serial_seen: u8,
+    /// Tracers in flight: shooter, end, birth (a 128 u streak at 5000 u/s from the muzzle).
+    fx_tracers: Vec<(u32, Vec3, Instant)>,
+    /// Bullet decals: position, normal, metal, birth (the newest 256).
+    fx_decals: std::collections::VecDeque<(Vec3, Vec3, bool, Instant)>,
+    /// Flashes: position, size, birth (impact sparks, explosions).
+    fx_bursts: Vec<(Vec3, f32, Instant)>,
+    /// Own muzzle flash shows until then.
+    fx_muzzle_until: Option<Instant>,
     /// The server was told our starting weapon once we were in the world.
     weapon_synced: bool,
     /// When each airborne player left the ground (their jump sequence runs from there).
@@ -1026,6 +1048,10 @@ impl App {
         let gg_core = world.sprite_material(&gpu, &self.mount, "sprites/orangecore1");
         let gg_glow = world.sprite_material(&gpu, &self.mount, "sprites/glow04_noz");
         let gg_beam = world.sprite_material(&gpu, &self.mount, "sprites/orangelight1");
+        let fx_muzzle = world.sprite_material(&gpu, &self.mount, "effects/muzzleflash1");
+        let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
+        let fx_decal = world.sprite_material(&gpu, &self.mount, "decals/concrete/shot1");
+        let fx_decal_metal = world.sprite_material(&gpu, &self.mount, "decals/metal/shot1");
         let ui = UiRenderer::new(&gpu, &self.mount, format, quality.msaa)?;
         let mut ui = ui;
         {
@@ -1171,6 +1197,10 @@ impl App {
             gg_core,
             gg_glow,
             gg_beam,
+            fx_muzzle,
+            fx_spark,
+            fx_decal,
+            fx_decal_metal,
             beam_active_mat,
             glow1,
             glow2,
@@ -2854,6 +2884,10 @@ impl App {
                 if let Some(seq) = seq {
                     self.vm_anim = Some((seq, Instant::now()));
                 }
+                if act == 6 && fires_bullets(active) {
+                    self.fx_muzzle_until =
+                        Some(Instant::now() + std::time::Duration::from_millis(60));
+                }
                 if let Some(name) = weapon_sound(act, active) {
                     self.sounds.emit(&self.mount, &name, None);
                 }
@@ -3132,6 +3166,30 @@ impl App {
                 }
                 println!("{e}");
                 self.console.log(e);
+            }
+            let now = Instant::now();
+            for e in std::mem::take(&mut self.sim.client.effects) {
+                match e {
+                    gm_net::msg::EffectEvent::Impact {
+                        pos,
+                        normal,
+                        surface,
+                        ..
+                    } => {
+                        if self.fx_decals.len() >= 256 {
+                            self.fx_decals.pop_front();
+                        }
+                        self.fx_decals
+                            .push_back((pos, normal, surface == "metal", now));
+                        self.fx_bursts.push((pos + normal * 1.5, 5.0, now));
+                    }
+                    gm_net::msg::EffectEvent::Tracer { player, end } => {
+                        self.fx_tracers.push((player, end, now));
+                    }
+                    gm_net::msg::EffectEvent::Explosion { pos } => {
+                        self.fx_bursts.push((pos, 96.0, now));
+                    }
+                }
             }
             for s in std::mem::take(&mut self.sim.client.sounds) {
                 if s.stop {
@@ -3668,6 +3726,8 @@ impl App {
         let mut additive: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
             Vec::new();
         let mut dlights: Vec<gm_render::world::DLight> = Vec::new();
+        let mut modulate: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
+            Vec::new();
         // a viewmodel attachment in world space (the viewmodel sits at the eye)
         let vm_attach = |name: &str| -> Option<Vec3> {
             let (Some(vm), Some((seq, t))) = (vm, vm_seq) else {
@@ -3805,6 +3865,95 @@ impl App {
                 });
             }
         }
+        // shot effects: tracers (128 u streak at 5000 u/s), own muzzle flash, impact and
+        // explosion flashes, bullet decals (DecalModulate)
+        {
+            let now = Instant::now();
+            let fwd = camera.forward();
+            let right = fwd.cross(Vec3::Z).normalize_or_zero();
+            let own_muzzle = vm_attach("muzzle")
+                .unwrap_or(camera.position + fwd * 16.0 + right * 6.0 - Vec3::Z * 4.0);
+            let players = &self.sim.client.world.players;
+            let mut keep = Vec::new();
+            for &(player, end, born) in &self.fx_tracers {
+                let start = if Some(player) == me {
+                    own_muzzle
+                } else {
+                    match players.iter().find(|p| p.id == player) {
+                        Some(p) => p.origin + Vec3::new(0.0, 0.0, 60.0),
+                        None => continue,
+                    }
+                };
+                let total = (end - start).length();
+                let head = now.duration_since(born).as_secs_f32() * 5000.0;
+                if total < 1.0 || head >= total {
+                    continue;
+                }
+                keep.push((player, end, born));
+                if let Some(m) = &g.fx_spark {
+                    let dir = (end - start) / total;
+                    let tail = (head - 128.0).max(0.0);
+                    let (v, i) = g.world.beam_strip(
+                        &[start + dir * tail, start + dir * head],
+                        1.5,
+                        [1.0, 0.9, 0.6],
+                        camera.position,
+                        0.0,
+                        1.0 / 128.0,
+                    );
+                    additive.push((m, v, i));
+                }
+            }
+            self.fx_tracers = keep;
+            if self.fx_muzzle_until.is_some_and(|t| now < t) {
+                if let Some(m) = &g.fx_muzzle {
+                    let (v, i) = g
+                        .world
+                        .sprite_quad(own_muzzle, 12.0, [1.0, 0.85, 0.6], &camera);
+                    additive.push((m, v, i));
+                }
+                dlights.push(gm_render::world::DLight {
+                    pos: own_muzzle,
+                    radius: 100.0,
+                    color: Vec3::new(1.0, 0.7, 0.4),
+                });
+            }
+            self.fx_bursts
+                .retain(|(_, _, born)| now.duration_since(*born).as_secs_f32() < 0.35);
+            for &(pos, size, born) in &self.fx_bursts {
+                let age = now.duration_since(born).as_secs_f32() / 0.35;
+                let k = 1.0 - age;
+                if let Some(m) = &g.fx_muzzle {
+                    let (v, i) = g.world.sprite_quad(
+                        pos,
+                        size * (0.6 + age),
+                        [k, k * 0.7, k * 0.4],
+                        &camera,
+                    );
+                    additive.push((m, v, i));
+                }
+                if size > 32.0 {
+                    dlights.push(gm_render::world::DLight {
+                        pos,
+                        radius: 300.0 * k,
+                        color: Vec3::new(1.0, 0.6, 0.3) * k,
+                    });
+                }
+            }
+            self.fx_decals
+                .retain(|(_, _, _, born)| now.duration_since(*born).as_secs_f32() < 120.0);
+            for &(pos, normal, metal, _) in &self.fx_decals {
+                let m = if metal {
+                    &g.fx_decal_metal
+                } else {
+                    &g.fx_decal
+                };
+                if let Some(m) = m {
+                    let (v, i) = g.world.decal_quad(pos, normal, 6.4, [1.0; 3]);
+                    modulate.push((m, v, i));
+                }
+            }
+        }
         g.world.set_dlights(&dlights);
         let target = ModelTarget {
             color: &attach,
@@ -3826,6 +3975,9 @@ impl App {
             Some(scene_src),
             &items,
         );
+        if !modulate.is_empty() {
+            g.world.draw_modulate(&g.gpu, &camera, &target, &modulate);
+        }
         if !additive.is_empty() {
             g.world.draw_additive(&g.gpu, &camera, &target, &additive);
         }
@@ -5664,6 +5816,10 @@ fn main() -> Result<()> {
         impulse: 0,
         vm_anim: None,
         vm_serial_seen: 0,
+        fx_tracers: Vec::new(),
+        fx_decals: Default::default(),
+        fx_bursts: Vec::new(),
+        fx_muzzle_until: None,
         weapon_synced: false,
         air_since: Default::default(),
         anim_time: Default::default(),

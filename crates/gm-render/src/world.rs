@@ -541,6 +541,8 @@ pub struct WorldRenderer {
     depth_layout: wgpu::BindGroupLayout,
     /// Additive, no depth write: beams and glow sprites.
     additive_pipeline: wgpu::RenderPipeline,
+    /// DecalModulate: colour * 2 * decal (bullet holes).
+    modulate_pipeline: wgpu::RenderPipeline,
     /// Alpha-blended, no depth write: models drawn with `ModelTarget::alpha` below 1 (ghosts).
     translucent_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
@@ -2286,6 +2288,19 @@ impl WorldRenderer {
             false,
             true,
         );
+        let modulate_pipeline = make_pipeline(
+            "modulate",
+            Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Dst,
+                    dst_factor: wgpu::BlendFactor::Src,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent::OVER,
+            }),
+            false,
+            true,
+        );
 
         let sky2d = build_sky_cube(
             gpu,
@@ -2325,6 +2340,7 @@ impl WorldRenderer {
             water_pipeline,
             depth_layout,
             additive_pipeline,
+            modulate_pipeline,
             translucent_pipeline,
             camera_buffer,
             camera_bind_group,
@@ -3234,6 +3250,37 @@ impl WorldRenderer {
         (verts, vec![0, 1, 2, 0, 2, 3])
     }
 
+    /// A quad of `size` lying on the surface at `pos` with `normal`, lifted 0.3 u off it
+    /// (decals).
+    pub fn decal_quad(
+        &self,
+        pos: Vec3,
+        normal: Vec3,
+        size: f32,
+        color: [f32; 3],
+    ) -> (Vec<Vertex>, Vec<u32>) {
+        let n = normal.normalize_or_zero();
+        let helper = if n.z.abs() < 0.9 { Vec3::Z } else { Vec3::X };
+        let right = n.cross(helper).normalize_or_zero();
+        let up = right.cross(n).normalize_or_zero();
+        let h = size * 0.5;
+        let p = pos + n * 0.3;
+        let verts = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .into_iter()
+            .map(|(x, y)| Vertex {
+                position: (p + right * (x * h) + up * (y * h)).to_array(),
+                uv: [(x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5],
+                lm_uv: self.white_uv,
+                color,
+                alpha: 0.0,
+                lm_page: 0.0,
+                normal: n.to_array(),
+                cube: -1.0,
+            })
+            .collect();
+        (verts, vec![0, 1, 2, 0, 2, 3])
+    }
+
     /// Draws additive geometry (beams, glows) over the current colour with the current depth
     /// (tested, not written): each item is a material bind group with world-space vertices.
     pub fn draw_additive(
@@ -3302,6 +3349,86 @@ impl WorldRenderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.additive_pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            for (bg, first, count) in draws {
+                pass.set_bind_group(1, bg, &[]);
+                pass.draw_indexed(first..first + count, 0, 0..1);
+            }
+        }
+        gpu.queue.submit([enc.finish()]);
+    }
+
+    /// Draws modulated geometry (DecalModulate decals: colour * 2 * texel) over the current
+    /// colour with the current depth
+    /// (tested, not written): each item is a material bind group with world-space vertices.
+    pub fn draw_modulate(
+        &self,
+        gpu: &Gpu,
+        camera: &Camera,
+        target: &ModelTarget<'_>,
+        items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
+    ) {
+        let mut verts: Vec<Vertex> = Vec::new();
+        let mut idx: Vec<u32> = Vec::new();
+        let mut draws = Vec::new();
+        for (bg, v, i) in items {
+            let base = verts.len() as u32;
+            let first = idx.len() as u32;
+            verts.extend_from_slice(v);
+            idx.extend(i.iter().map(|k| k + base));
+            draws.push((*bg, first, i.len() as u32));
+        }
+        if idx.is_empty() {
+            return;
+        }
+        let device = &gpu.device;
+        let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("additive vertices"),
+            contents: bytemuck::cast_slice(&verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("additive indices"),
+            contents: bytemuck::cast_slice(&idx),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let cam = self.camera_uniform(
+            camera,
+            target.aspect,
+            1.0,
+            self.view_fog(camera),
+            self.clip_for(false),
+        );
+        gpu.queue
+            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
+        let mut enc = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("additive"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target.color,
+                    depth_slice: None,
+                    resolve_target: target.resolve,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: target.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.modulate_pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_vertex_buffer(0, vb.slice(..));
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);

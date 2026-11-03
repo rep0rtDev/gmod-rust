@@ -437,6 +437,11 @@ pub enum ServerMsg {
         tick: u32,
         list: Vec<SoundEvent>,
     },
+    /// Unreliable, with the snapshot: visual effects the server dispatched this tick.
+    Effects {
+        tick: u32,
+        list: Vec<EffectEvent>,
+    },
     /// Reliable: the addons' spawn menu categories, whole, whenever the server's version changes.
     SpawnLists {
         version: u32,
@@ -469,6 +474,25 @@ pub enum ServerMsg {
 }
 
 /// A world sound: script name, where, and a volume factor on the script's own.
+#[derive(Clone, Debug, PartialEq)]
+pub enum EffectEvent {
+    /// Bullet / crowbar hit on the world: decal and impact particles.
+    Impact {
+        pos: Vec3,
+        normal: Vec3,
+        surface: String,
+        melee: bool,
+    },
+    /// Tracer from `player`'s muzzle to `end`.
+    Tracer {
+        player: u32,
+        end: Vec3,
+    },
+    Explosion {
+        pos: Vec3,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct SoundEvent {
     pub name: String,
@@ -504,7 +528,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 15;
+pub const PROTOCOL: u16 = 16;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1269,6 +1293,36 @@ impl ServerMsg {
                     w.f32(s.fade);
                 }
             }
+            ServerMsg::Effects { tick, list } => {
+                w.u8(21);
+                w.u32(*tick);
+                w.varint(list.len() as u64);
+                for e in list {
+                    match e {
+                        EffectEvent::Impact {
+                            pos,
+                            normal,
+                            surface,
+                            melee,
+                        } => {
+                            w.u8(0);
+                            w.vec3(*pos);
+                            w.vec3(*normal);
+                            w.str(surface);
+                            w.u8(u8::from(*melee));
+                        }
+                        EffectEvent::Tracer { player, end } => {
+                            w.u8(1);
+                            w.varint(*player as u64);
+                            w.vec3(*end);
+                        }
+                        EffectEvent::Explosion { pos } => {
+                            w.u8(2);
+                            w.vec3(*pos);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1547,6 +1601,28 @@ impl ServerMsg {
                     lists.push((category, models));
                 }
                 ServerMsg::SpawnLists { version, lists }
+            }
+            21 => {
+                let tick = r.u32()?;
+                let n = r.varint()?.min(4096) as usize;
+                let mut list = Vec::with_capacity(n);
+                for _ in 0..n {
+                    list.push(match r.u8()? {
+                        0 => EffectEvent::Impact {
+                            pos: r.vec3()?,
+                            normal: r.vec3()?,
+                            surface: r.str()?,
+                            melee: r.u8()? != 0,
+                        },
+                        1 => EffectEvent::Tracer {
+                            player: r.varint()? as u32,
+                            end: r.vec3()?,
+                        },
+                        2 => EffectEvent::Explosion { pos: r.vec3()? },
+                        _ => return Err(Truncated),
+                    });
+                }
+                ServerMsg::Effects { tick, list }
             }
             20 => ServerMsg::Voice {
                 player: r.u32()?,

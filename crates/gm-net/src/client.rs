@@ -3,8 +3,8 @@
 
 use crate::channel::Channel;
 use crate::msg::{
-    auth_message, server_message, ClientMsg, Command, EntityState, LocalPlayer, NetCmd, OwnSandbox,
-    PlayerSnap, ServerMsg, SoundEvent, PROTOCOL,
+    auth_message, server_message, ClientMsg, Command, EffectEvent, EntityState, LocalPlayer,
+    NetCmd, OwnSandbox, PlayerSnap, ServerMsg, SoundEvent, PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -331,6 +331,8 @@ pub struct ClientNet {
     pub addon_msgs: Vec<(String, Vec<u8>)>,
     /// World sounds the server played (`ServerMsg::Sounds`), drained by the game.
     pub sounds: Vec<SoundEvent>,
+    /// Visual effects the server dispatched (`ServerMsg::Effects`), drained by the game.
+    pub effects: Vec<EffectEvent>,
     /// Other players' voice frames (player, seq, opus), drained by the game.
     pub voice: Vec<(u32, u16, Vec<u8>)>,
     /// Our voice frames to send with the next tick.
@@ -366,6 +368,7 @@ impl ClientNet {
             events: Vec::new(),
             addon_msgs: Vec::new(),
             sounds: Vec::new(),
+            effects: Vec::new(),
             voice: Vec::new(),
             pending_voice: Vec::new(),
             models: Vec::new(),
@@ -586,6 +589,7 @@ impl ClientNet {
                     }
                     ServerMsg::Event { text, .. } => self.events.push(text),
                     ServerMsg::Sounds { list, .. } => self.sounds.extend(list),
+                    ServerMsg::Effects { list, .. } => self.effects.extend(list),
                     ServerMsg::Voice { player, seq, data } => self.voice.push((player, seq, data)),
                     ServerMsg::Addon { name, data, .. } => self.addon_msgs.push((name, data)),
                     ServerMsg::Cvar { name, value, .. } => {

@@ -557,6 +557,24 @@ pub const DMG_DIRECT: u32 = 0x1000_0000;
 pub const PROPERTY_IGNITE_SECONDS: f32 = 360.0;
 
 /// A sound the server tells every client to play in the world this tick.
+/// A visual effect the server dispatched this tick (`DispatchEffect` / `UTIL_ImpactTrace`),
+/// sent to the clients with the snapshot.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorldEffect {
+    /// A bullet or crowbar hit on the world: decal and impact particles at `pos`. `surface`
+    /// is the surface property name ("concrete" when unknown).
+    Impact {
+        pos: Vec3,
+        normal: Vec3,
+        surface: String,
+        melee: bool,
+    },
+    /// A bullet tracer from `player`'s muzzle to `end`.
+    Tracer { player: u32, end: Vec3 },
+    /// The `Explosion` effect at `pos`.
+    Explosion { pos: Vec3 },
+}
+
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct WorldSound {
     /// Sound script name.
@@ -4543,6 +4561,8 @@ pub struct Server<'w> {
     pub bounds_override: BTreeMap<u32, (Vec3, Vec3)>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
     sounds: Vec<WorldSound>,
+    /// Visual effects of this tick (`take_effects`).
+    effects: Vec<WorldEffect>,
     /// Thrusters whose loop is playing (`StartThrustSound` happened, no stop since).
     thruster_loops: BTreeSet<u32>,
     /// Props whose scrape loop is playing (the volume factor it started with).
@@ -4733,6 +4753,7 @@ impl<'w> Server<'w> {
             poses: BTreeMap::new(),
             bounds_override: BTreeMap::new(),
             sounds: Vec::new(),
+            effects: Vec::new(),
             scrapes: BTreeMap::new(),
             thruster_loops: BTreeSet::new(),
             clipboards: BTreeMap::new(),
@@ -5842,6 +5863,10 @@ impl<'w> Server<'w> {
         let world = self
             .collision
             .trace_ray(eye, end, gm_collision::MASK_PLAYERSOLID);
+        self.effects.push(WorldEffect::Tracer {
+            player: attacker,
+            end: world.end,
+        });
         let d = end - eye;
         let prop = gm_sandbox::trace_line(self.collision, &self.prop_bodies(), eye, end)
             .filter(|h| h.ent.is_some());
@@ -5975,9 +6000,13 @@ impl<'w> Server<'w> {
             }
         }
         let Some((target, frac)) = best else {
+            if world.fraction < 1.0 {
+                self.world_impact(&world, false);
+            }
             return;
         };
         if world.fraction < frac {
+            self.world_impact(&world, false);
             return;
         }
         let (frac, group, pos) = match &self.hit_model {
@@ -5998,6 +6027,7 @@ impl<'w> Server<'w> {
             }
         };
         if world.fraction < frac {
+            self.world_impact(&world, false);
             return;
         }
         let damage = base * weapons::hitgroup_scale(group) * shot.pellets as f32;
@@ -6117,12 +6147,24 @@ impl<'w> Server<'w> {
                 return;
             }
         }
+        // `Weapon_Crowbar.Melee_HitWorld` / `.Melee_Hit` on top of the swing's `.Single`
         let Some((target, t)) = best else {
+            if world.fraction < 1.0 {
+                self.melee_world_hit(attacker, &world);
+            }
             return;
         };
         if world.fraction * weapons::MELEE_RANGE < t {
+            self.melee_world_hit(attacker, &world);
             return;
         }
+        self.sounds.push(WorldSound {
+            name: "Weapon_Crowbar.Melee_Hit".to_owned(),
+            pos: eye + forward * t,
+            volume: 1.0,
+            ent: attacker,
+            ..Default::default()
+        });
         let damage = weapons::MELEE_DAMAGE;
         self.hits.push(Hit {
             tick: self.tick_count,
@@ -6145,6 +6187,17 @@ impl<'w> Server<'w> {
             t.last_damage = (attacker, "weapon_crowbar");
         }
         self.damage_player(target, damage, weapons::DMG_CLUB);
+    }
+
+    fn melee_world_hit(&mut self, attacker: u32, world: &gm_collision::Trace) {
+        self.world_impact(world, true);
+        self.sounds.push(WorldSound {
+            name: "Weapon_Crowbar.Melee_HitWorld".to_owned(),
+            pos: world.end,
+            volume: 1.0,
+            ent: attacker,
+            ..Default::default()
+        });
     }
 
     /// Knockback of a hit from `from` (the inflictor's position): see `weapons::PUSH_PER_DAMAGE`.
@@ -6175,6 +6228,7 @@ impl<'w> Server<'w> {
             volume: 1.0,
             ..Default::default()
         });
+        self.effects.push(WorldEffect::Explosion { pos: src });
         let bodies = self.prop_bodies();
         let targets: Vec<(u32, Vec3)> = self
             .sandbox
@@ -14846,6 +14900,20 @@ impl<'w> Server<'w> {
     }
 
     /// The world sounds of the last tick.
+    pub fn take_effects(&mut self) -> Vec<WorldEffect> {
+        std::mem::take(&mut self.effects)
+    }
+
+    /// A shot or swing that ended on the world: the impact effect at the trace end.
+    fn world_impact(&mut self, world: &gm_collision::Trace, melee: bool) {
+        self.effects.push(WorldEffect::Impact {
+            pos: world.end,
+            normal: world.normal,
+            surface: "concrete".to_owned(),
+            melee,
+        });
+    }
+
     pub fn take_sounds(&mut self) -> Vec<WorldSound> {
         let sounds = std::mem::take(&mut self.sounds);
         let mut out = Vec::with_capacity(sounds.len());

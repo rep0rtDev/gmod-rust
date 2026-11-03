@@ -3,8 +3,8 @@
 
 use crate::channel::Channel;
 use crate::msg::{
-    auth_message, server_message, ClientMsg, Command, EntityState, LocalPlayer, OwnSandbox,
-    PlayerSnap, ServerMsg, SoundEvent, UndoEntry, PROTOCOL,
+    auth_message, server_message, ClientMsg, Command, EffectEvent, EntityState, LocalPlayer,
+    OwnSandbox, PlayerSnap, ServerMsg, SoundEvent, UndoEntry, PROTOCOL,
 };
 use crate::transport::Transport;
 use crate::wire::{Reader, Writer};
@@ -107,6 +107,7 @@ pub struct ServerNet {
     pub timeout_ticks: u32,
     /// World sounds of the last tick, sent with the next snapshots.
     pending_sounds: Vec<SoundEvent>,
+    pending_effects: Vec<EffectEvent>,
     /// Voice frames received this tick (speaker, seq, opus), relayed to everyone else.
     pending_voice: Vec<(u32, u16, Vec<u8>)>,
     /// Human-readable connection events (joins, leaves, kicks) since the last `take_log`.
@@ -161,6 +162,7 @@ impl ServerNet {
             max_players: 64,
             timeout_ticks: DEFAULT_TIMEOUT_TICKS,
             pending_sounds: Vec::new(),
+            pending_effects: Vec::new(),
             pending_voice: Vec::new(),
             log: Vec::new(),
             saves_dir: None,
@@ -741,6 +743,24 @@ impl ServerNet {
                 stop: s.stop,
                 fade: s.fade,
             }));
+        self.pending_effects
+            .extend(server.take_effects().into_iter().map(|e| match e {
+                gm_server::WorldEffect::Impact {
+                    pos,
+                    normal,
+                    surface,
+                    melee,
+                } => EffectEvent::Impact {
+                    pos,
+                    normal,
+                    surface,
+                    melee,
+                },
+                gm_server::WorldEffect::Tracer { player, end } => {
+                    EffectEvent::Tracer { player, end }
+                }
+                gm_server::WorldEffect::Explosion { pos } => EffectEvent::Explosion { pos },
+            }));
         let events = std::mem::take(&mut server.game_events);
         for e in &events {
             if let gm_server::GameEvent::PlayerDied {
@@ -1249,6 +1269,11 @@ impl ServerNet {
         } else {
             Vec::new()
         };
+        let effects = if snapshot_tick {
+            std::mem::take(&mut self.pending_effects)
+        } else {
+            Vec::new()
+        };
         for (&endpoint, slot) in self.clients.iter_mut() {
             for text in std::mem::take(&mut slot.pending_events) {
                 slot.event_seq += 1;
@@ -1511,6 +1536,15 @@ impl ServerNet {
                     ServerMsg::Sounds {
                         tick: self.tick,
                         list: sounds.clone(),
+                    }
+                    .write(&mut w);
+                    unreliable.push(w.buf);
+                }
+                if !effects.is_empty() {
+                    let mut w = Writer::default();
+                    ServerMsg::Effects {
+                        tick: self.tick,
+                        list: effects.clone(),
                     }
                     .write(&mut w);
                     unreliable.push(w.buf);
