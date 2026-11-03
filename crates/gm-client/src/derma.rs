@@ -20,6 +20,8 @@ const ATLAS_SIZE: f32 = 512.0;
 /// game (Roboto from the content when it is missing).
 pub const FONT: &str = "DermaDefault";
 pub const FONT_BOLD: &str = "DermaDefaultBold";
+/// `ContentHeader`: Helvetica 50 weight 1000, bright with a 2 px shadow, on its own 64 px line.
+pub const HEADER_FONT: &str = "ContentHeader";
 /// SpawnIcon's hover overlay.
 pub const HOVER_MAT: &str = "vgui/spawnmenu/hover";
 /// icon16 images the menu frame needs (spawnlist icons are loaded with the lists).
@@ -372,6 +374,8 @@ pub struct ContentList {
     pub category: String,
     pub icon: String,
     pub items: Vec<(String, String)>,
+    /// A `ContentHeader` (sub-category) before the item at the index.
+    pub headers: Vec<(usize, String)>,
 }
 
 /// What the player has clicked around in the menu.
@@ -464,6 +468,7 @@ pub struct Ctx<'a> {
     pub h: f32,
     pub cursor: (f32, f32),
     pub font: &'a FontMetrics,
+    pub header: &'a FontMetrics,
     pub bold: &'a FontMetrics,
     pub lists: &'a [SpawnList],
     /// Weapons and Entities tab categories.
@@ -860,15 +865,64 @@ fn content(
     let Some(list) = lists.get(node) else {
         return;
     };
+    const HEADER_H: f32 = 64.0;
     let cols = ((cw - 15.0 - 4.0) / ICON).floor().max(1.0) as usize;
-    let content_h = list.items.len().div_ceil(cols) as f32 * ICON + 4.0;
+    let mut slots: Vec<(f32, f32)> = Vec::with_capacity(list.items.len());
+    let mut headers: Vec<(f32, &str)> = Vec::new();
+    let (mut cur, mut col) = (0.0f32, 0usize);
+    for i in 0..list.items.len() {
+        if let Some((_, label)) = list.headers.iter().find(|(at, _)| *at == i) {
+            if col != 0 {
+                col = 0;
+                cur += ICON;
+            }
+            headers.push((cur, label.as_str()));
+            cur += HEADER_H;
+        }
+        slots.push((cx + 2.0 + col as f32 * ICON, y + 2.0 + cur));
+        col += 1;
+        if col == cols {
+            col = 0;
+            cur += ICON;
+        }
+    }
+    if col != 0 {
+        cur += ICON;
+    }
+    let content_h = cur + 4.0;
     out.max_scroll = ((content_h - h) / ICON).ceil().max(0.0) * ICON;
     let scroll = st.scroll.min(out.max_scroll);
     let line_h = ctx.font.line_height;
+    for (hy, label) in headers {
+        let hy = y + 2.0 + hy - scroll;
+        if hy + HEADER_H < y || hy > y + h {
+            continue;
+        }
+        let hx = cx + 2.0 + 8.0;
+        text(
+            &mut out.items,
+            HEADER_FONT,
+            ctx.header,
+            hx + 2.0,
+            hy + 2.0,
+            HEADER_H,
+            label,
+            [0.0, 0.0, 0.0, 130.0 / 255.0],
+        );
+        text(
+            &mut out.items,
+            HEADER_FONT,
+            ctx.header,
+            hx,
+            hy,
+            HEADER_H,
+            label,
+            WHITE,
+        );
+    }
     for (i, (class, name)) in list.items.iter().enumerate() {
-        let (r, c) = (i / cols, i % cols);
-        let ix = cx + 2.0 + c as f32 * ICON;
-        let iy = y + 2.0 + r as f32 * ICON - scroll;
+        let (ix, iy) = slots[i];
+        let iy = iy - scroll;
         if iy < y {
             continue;
         }

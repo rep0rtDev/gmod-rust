@@ -1333,6 +1333,10 @@ impl App {
             if !ui.register_font(&gpu, &self.mount, "DermaDefaultBold", "Tahoma", 13.0) {
                 ui.register_font(&gpu, &self.mount, "DermaDefaultBold", "Roboto-Bold", 13.0);
             }
+            // ContentHeader: Helvetica 50 weight 1000 (contentheader.lua)
+            if !ui.register_font(&gpu, &self.mount, "ContentHeader", "Helvetica", 50.0) {
+                ui.register_font(&gpu, &self.mount, "ContentHeader", "Roboto-Bold", 50.0);
+            }
             ui.load_image(&gpu, &self.mount, "gui/corner8");
             // GModNotify: Arial max(12, ceil(ScreenScaleH(9))) weight 500
             let text_h = (9.0 * config.height as f32 / 480.0).ceil().max(12.0);
@@ -1645,29 +1649,59 @@ impl App {
                 _ => default.into(),
             }
         };
-        let build = |entries: &[gm_server::ContentEntry], default_icon: &str| {
-            let mut lists: Vec<derma::ContentList> = Vec::new();
+        // `content.lua`: items grouped by category, within it by `SubCategory` (phrase; the
+        // empty one first), a `ContentHeader` before each named sub-category.
+        let build = |entries: &[gm_server::ContentEntry],
+                     default_icon: &str,
+                     sub: &dyn Fn(&str) -> &'static str| {
+            // (sub-category, localised name, class)
+            type SubItem = (String, String, String);
+            let mut lists: Vec<(derma::ContentList, Vec<SubItem>)> = Vec::new();
             for e in entries {
                 let category = localize(&e.category);
-                let item = (e.class.clone(), localize(&e.name));
-                match lists.iter_mut().find(|l| l.category == category) {
-                    Some(l) => l.items.push(item),
-                    None => lists.push(derma::ContentList {
-                        icon: category_icon(&e.category, default_icon),
-                        category,
-                        items: vec![item],
-                    }),
+                let sub_name = match sub(&e.class) {
+                    "" => String::new(),
+                    phrase => localize(phrase),
+                };
+                let item = (sub_name, localize(&e.name), e.class.clone());
+                match lists.iter_mut().find(|(l, _)| l.category == category) {
+                    Some((_, items)) => items.push(item),
+                    None => lists.push((
+                        derma::ContentList {
+                            icon: category_icon(&e.category, default_icon),
+                            category,
+                            items: Vec::new(),
+                            headers: Vec::new(),
+                        },
+                        vec![item],
+                    )),
                 }
             }
-            for l in &mut lists {
-                l.items.sort_by(|a, b| a.1.cmp(&b.1));
+            let mut out: Vec<derma::ContentList> = Vec::new();
+            for (mut l, mut items) in lists {
+                items.sort();
+                let mut last = String::new();
+                for (i, (sub_name, name, class)) in items.into_iter().enumerate() {
+                    if !sub_name.is_empty() && sub_name != last {
+                        l.headers.push((i, sub_name.clone()));
+                    }
+                    last = sub_name;
+                    l.items.push((class, name));
+                }
+                out.push(l);
             }
-            lists.sort_by(|a, b| a.category.cmp(&b.category));
-            lists
+            out.sort_by(|a, b| a.category.cmp(&b.category));
+            out
         };
         self.content = [
-            build(&world.content_weapons, "icon16/gun.png"),
-            build(&world.content_entities, "icon16/bricks.png"),
+            build(&world.content_weapons, "icon16/gun.png", &|_| ""),
+            build(&world.content_entities, "icon16/bricks.png", &|class| {
+                if gm_server::hl2_item_pickup(class).is_some() {
+                    "#spawnmenu.category.ammo_items"
+                } else {
+                    ""
+                }
+            }),
         ];
     }
 
@@ -2033,6 +2067,7 @@ impl App {
         let (w, h) = (g.config.width as f32, g.config.height as f32);
         let font = g.ui.font_metrics(Some(derma::FONT));
         let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+        let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
         let opt_font = if w > 1280.0 {
             derma::MENU_FONT_23
         } else {
@@ -2047,6 +2082,7 @@ impl App {
             cursor: self.cursor,
             font: &font,
             bold: &bold,
+            header: &header,
             lists: &self.spawnlists,
             content: [&self.content[0], &self.content[1]],
             results: &self.search_results,
@@ -2538,6 +2574,7 @@ impl App {
         let (w, h) = (g.config.width as f32, g.config.height as f32);
         let font = g.ui.font_metrics(Some(derma::FONT));
         let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+        let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
         let default = g.ui.font_metrics(Some(options::FONT));
         let sbold = g.ui.font_metrics(Some(options::FONT_BOLD));
         let large = g.ui.font_metrics(Some(options::FONT_LARGE));
@@ -2548,6 +2585,7 @@ impl App {
             cursor: self.cursor,
             font: &font,
             bold: &bold,
+            header: &header,
             lists: &self.spawnlists,
             content: [&self.content[0], &self.content[1]],
             results: &self.search_results,
@@ -2794,6 +2832,7 @@ impl App {
         let (w, h) = (g.config.width as f32, g.config.height as f32);
         let font = g.ui.font_metrics(Some(derma::FONT));
         let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+        let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
         let has_image = |name: &str| g.ui.has_image(name);
         let ctx = derma::Ctx {
             w,
@@ -2801,6 +2840,7 @@ impl App {
             cursor: self.cursor,
             font: &font,
             bold: &bold,
+            header: &header,
             lists: &self.spawnlists,
             content: [&self.content[0], &self.content[1]],
             results: &self.search_results,
@@ -4787,6 +4827,7 @@ impl App {
             // contextmenu.lua: the tool's ControlPanel moves into a 320 wide canvas bottom-right
             let font = g.ui.font_metrics(Some(derma::FONT));
             let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+            let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
             let has_image = |name: &str| g.ui.has_image(name);
             let dctx = derma::Ctx {
                 w,
@@ -4794,6 +4835,7 @@ impl App {
                 cursor: self.cursor,
                 font: &font,
                 bold: &bold,
+                header: &header,
                 lists: &self.spawnlists,
                 content: [&self.content[0], &self.content[1]],
                 results: &self.search_results,
@@ -4835,6 +4877,7 @@ impl App {
         if let Some(menu) = &self.menu {
             let font = g.ui.font_metrics(Some(derma::FONT));
             let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
+            let header = g.ui.font_metrics(Some(derma::HEADER_FONT));
             let has_image = |name: &str| g.ui.has_image(name);
             let ctx = derma::Ctx {
                 w,
@@ -4842,6 +4885,7 @@ impl App {
                 cursor: self.cursor,
                 font: &font,
                 bold: &bold,
+                header: &header,
                 lists: &self.spawnlists,
                 content: [&self.content[0], &self.content[1]],
                 results: &self.search_results,
