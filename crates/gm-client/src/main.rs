@@ -5288,6 +5288,12 @@ impl App {
         // an edit_fog entity's SetupWorldFog hook: the newest one's fog replaces the map's
         g.world.fog_override =
             edit_fog_of(&self.sim.client.world.classes, &self.sim.client.world.edits);
+        // an edit_sky entity (env_skypaint's vars): a painted sky instead of the skybox
+        g.world.sky_paint = edit_sky_of(
+            &self.sim.client.world.classes,
+            &self.sim.client.world.edits,
+            g.world.env_sun.as_ref().map_or(g.world.sun, |s| s.dir),
+        );
         // the world draws the entity models itself, between its opaque and translucent
         // surfaces (and into the water reflection)
         g.world.draw(
@@ -8556,6 +8562,41 @@ fn edit_sun_of(
         color("suncolor"),
         color("overlaycolor"),
     )
+}
+
+/// env_skypaint's vars of the newest `edit_sky` entity (defaults of its `Initialize`); the
+/// sun normal is the map's sun (`env_sun`, else `light_environment`), as its `Think` copies.
+fn edit_sky_of(
+    classes: &[(u32, String)],
+    edits: &[(u32, Vec<(String, String)>)],
+    sun: Vec3,
+) -> Option<gm_render::world::SkyPaint> {
+    let ent = classes
+        .iter()
+        .filter(|(_, c)| c == "edit_sky")
+        .map(|(id, _)| *id)
+        .max()?;
+    let vars = edit_values_of(edits, ent);
+    let num = |k: &str, d: f32| vars.get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
+    let color = |k: &str, d: [f32; 3]| {
+        Vec3::new(
+            num(&format!("{k}_r"), d[0] * 255.0),
+            num(&format!("{k}_g"), d[1] * 255.0),
+            num(&format!("{k}_b"), d[2] * 255.0),
+        ) / 255.0
+    };
+    Some(gm_render::world::SkyPaint {
+        top: color("topcolor", [0.2, 0.5, 1.0]),
+        bottom: color("bottomcolor", [0.8, 1.0, 1.0]),
+        fade_bias: num("fadebias", 1.0),
+        hdr_scale: num("hdrscale", 0.66),
+        sun_normal: sun,
+        sun_size: num("sunsize", 2.0),
+        sun_color: color("suncolor", [0.2, 0.1, 0.0]),
+        dusk_scale: num("duskscale", 1.0),
+        dusk_intensity: num("duskintensity", 1.0),
+        dusk_color: color("duskcolor", [1.0, 0.2, 0.0]),
+    })
 }
 
 #[cfg(test)]

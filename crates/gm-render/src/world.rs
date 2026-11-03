@@ -337,6 +337,14 @@ struct CameraUniform {
     dlight_dir: [[f32; 4]; MAX_DLIGHTS],
     /// Direction towards the sun (`light_environment`), for `$phong`.
     sun: [f32; 4],
+    /// `SkyPaint` (zero when none): top colour + fade bias, bottom colour + HDR scale, sun
+    /// normal + size, sun colour + 1 (set), dusk colour + intensity, dusk scale.
+    sky_top: [f32; 4],
+    sky_bottom: [f32; 4],
+    sky_sun: [f32; 4],
+    sky_sun_color: [f32; 4],
+    sky_dusk: [f32; 4],
+    sky_dusk_scale: [f32; 4],
 }
 
 /// Dynamic lights lit per frame.
@@ -362,6 +370,22 @@ pub const DEFAULT_WEAPON_COLOR: Vec3 = Vec3::new(0.3, 1.8, 2.1);
 /// colour, clamped to `max_density`, where depth is the view-space distance.
 /// A water volume (`LUMP_LEAFWATERDATA` + its `CONTENTS_WATER` leaves): an eye inside it
 /// sees the `$bottommaterial`'s fog instead of the map's.
+/// `env_skypaint`'s painted sky: the colours at the zenith and the horizon faded by
+/// `pow(up, fade_bias)`, a dusk band along the horizon and a sun glow around `sun_normal`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyPaint {
+    pub top: Vec3,
+    pub bottom: Vec3,
+    pub fade_bias: f32,
+    pub hdr_scale: f32,
+    pub sun_normal: Vec3,
+    pub sun_size: f32,
+    pub sun_color: Vec3,
+    pub dusk_scale: f32,
+    pub dusk_intensity: f32,
+    pub dusk_color: Vec3,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct WaterVolume {
     pub min: Vec3,
@@ -572,6 +596,8 @@ pub struct WorldRenderer {
     pipeline: wgpu::RenderPipeline,
     /// The 2D sky cube: no back-face culling (the eye is inside it).
     sky_pipeline: wgpu::RenderPipeline,
+    /// The 2D sky as an `env_skypaint` gradient (`fs_skypaint`) while `sky_paint` is set.
+    skypaint_pipeline: wgpu::RenderPipeline,
     /// Bound as the detail texture of materials without `$detail` (factor 0).
     detail_fallback: wgpu::TextureView,
     /// Flat normal bound as the bump map of materials without `$bumpmap`.
@@ -612,6 +638,8 @@ pub struct WorldRenderer {
     /// An `edit_fog` entity's fog (its `SetupWorldFog` hook returns true): replaces the map's
     /// and the water's while it exists.
     pub fog_override: Option<Fog>,
+    /// An `edit_sky` entity's painted sky (`env_skypaint`), drawn instead of the skybox.
+    pub sky_paint: Option<SkyPaint>,
     pub water_volumes: Vec<WaterVolume>,
     /// `func_reflective_glass` faces (LightmappedReflective): plane and bounds.
     mirrors: Vec<Mirror>,
@@ -2330,6 +2358,7 @@ impl WorldRenderer {
             ..Default::default()
         });
         let make_pipeline = |label: &str,
+                             fs: &str,
                              blend: Option<wgpu::BlendState>,
                              depth_write: bool,
                              cull: bool| {
@@ -2367,7 +2396,7 @@ impl WorldRenderer {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(fs),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,
@@ -2379,9 +2408,10 @@ impl WorldRenderer {
             cache: None,
         })
         };
-        let pipeline = make_pipeline("world", None, true, true);
-        let sky_pipeline = make_pipeline("sky", None, true, false);
-        let nocull_pipeline = make_pipeline("world nocull", None, true, false);
+        let pipeline = make_pipeline("world", "fs_main", None, true, true);
+        let sky_pipeline = make_pipeline("sky", "fs_main", None, true, false);
+        let skypaint_pipeline = make_pipeline("skypaint", "fs_skypaint", None, true, false);
+        let nocull_pipeline = make_pipeline("world nocull", "fs_main", None, true, false);
         // water: the scene depth of the main pass, read in a second pass with a read-only
         // depth attachment
         let depth_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2538,20 +2568,28 @@ impl WorldRenderer {
 ;
         let translucent_nocull_pipeline = make_pipeline(
             "translucent nocull",
+            "fs_main",
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
             false,
         );
         let translucent_pipeline = make_pipeline(
             "models translucent",
+            "fs_main",
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
             true,
         );
-        let alpha_pipeline =
-            make_pipeline("alpha", Some(wgpu::BlendState::ALPHA_BLENDING), false, true);
+        let alpha_pipeline = make_pipeline(
+            "alpha",
+            "fs_main",
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+            true,
+        );
         let additive_pipeline = make_pipeline(
             "additive",
+            "fs_main",
             Some(wgpu::BlendState {
                 color: wgpu::BlendComponent {
                     src_factor: wgpu::BlendFactor::One,
@@ -2565,6 +2603,7 @@ impl WorldRenderer {
         );
         let modulate_pipeline = make_pipeline(
             "modulate",
+            "fs_main",
             Some(wgpu::BlendState {
                 color: wgpu::BlendComponent {
                     src_factor: wgpu::BlendFactor::Dst,
@@ -2603,6 +2642,7 @@ impl WorldRenderer {
             tm_bloom,
             pipeline,
             sky_pipeline,
+            skypaint_pipeline,
             detail_fallback,
             bump_fallback,
             white_fallback,
@@ -2630,6 +2670,7 @@ impl WorldRenderer {
             fog,
             sky_fog,
             fog_override: None,
+            sky_paint: None,
             water_volumes,
             mirrors,
             stats,
@@ -2886,8 +2927,16 @@ impl WorldRenderer {
             max_density: 0.0,
         });
         let fw = cam.forward();
+        let sp = self.sky_paint;
+        let v4 = |v: Vec3, w: f32| [v.x, v.y, v.z, w];
         CameraUniform {
             sun: [self.sun.x, self.sun.y, self.sun.z, 0.0],
+            sky_top: sp.map_or([0.0; 4], |s| v4(s.top, s.fade_bias)),
+            sky_bottom: sp.map_or([0.0; 4], |s| v4(s.bottom, s.hdr_scale)),
+            sky_sun: sp.map_or([0.0; 4], |s| v4(s.sun_normal, s.sun_size)),
+            sky_sun_color: sp.map_or([0.0; 4], |s| v4(s.sun_color, 1.0)),
+            sky_dusk: sp.map_or([0.0; 4], |s| v4(s.dusk_color, s.dusk_intensity)),
+            sky_dusk_scale: sp.map_or([0.0; 4], |s| [s.dusk_scale, 0.0, 0.0, 0.0]),
             view_proj: cam.view_proj(aspect).to_cols_array_2d(),
             alpha,
             gamma: cam.gamma,
@@ -2999,7 +3048,11 @@ impl WorldRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.sky_pipeline);
+            pass.set_pipeline(if self.sky_paint.is_some() {
+                &self.skypaint_pipeline
+            } else {
+                &self.sky_pipeline
+            });
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_vertex_buffer(0, sky.vertex_buffer.slice(..));
             pass.set_index_buffer(sky.index_buffer.slice(..), wgpu::IndexFormat::Uint32);

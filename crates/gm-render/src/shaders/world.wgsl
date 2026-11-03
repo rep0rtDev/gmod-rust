@@ -15,6 +15,14 @@ struct Camera {
     dlight_color: array<vec4<f32>, 8>,
     dlight_dir: array<vec4<f32>, 8>,
     sun: vec4<f32>,
+    // env_skypaint: top colour + fade bias, bottom colour + HDR scale, sun normal + size,
+    // sun colour + set flag, dusk colour + intensity, dusk scale
+    sky_top: vec4<f32>,
+    sky_bottom: vec4<f32>,
+    sky_sun: vec4<f32>,
+    sky_sun_color: vec4<f32>,
+    sky_dusk: vec4<f32>,
+    sky_dusk_scale: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -298,4 +306,27 @@ fn fs_refract(in: VsOut) -> @location(0) vec4<f32> {
     let a = max(in.color.r, max(in.color.g, in.color.b));
     let ruv = in.clip.xy / dims + nm.xy * material.envmap.y * a;
     return vec4<f32>(textureSample(refraction, reflection_sampler, ruv).rgb, 1.0);
+}
+
+// env_skypaint (an edit_sky entity): an approximation of the game's Sky_Painted shader - the
+// bottom colour fades to the top one by pow(up, fade bias), a dusk band sits along the
+// horizon (wider with the dusk scale), a glow surrounds the sun normal (wider with the sun
+// size); the stars and the HDR scale are not drawn
+@fragment
+fn fs_skypaint(in: VsOut) -> @location(0) vec4<f32> {
+    let dir = normalize(in.world - camera.eye.xyz);
+    let up = clamp(dir.z, 0.0, 1.0);
+    let t = pow(up, max(camera.sky_top.w, 0.01));
+    var col = mix(camera.sky_bottom.rgb, camera.sky_top.rgb, t);
+    let band = pow(1.0 - clamp(abs(dir.z), 0.0, 1.0), 4.0 / max(camera.sky_dusk_scale.x, 0.01));
+    col = col + camera.sky_dusk.rgb * camera.sky_dusk.w * band;
+    var sn = vec3<f32>(0.0, 0.0, 1.0);
+    if dot(camera.sky_sun.xyz, camera.sky_sun.xyz) > 1e-6 {
+        sn = normalize(camera.sky_sun.xyz);
+    }
+    let s = clamp(dot(dir, sn), 0.0, 1.0);
+    let glow = pow(s, 512.0 / max(camera.sky_sun.w, 0.01));
+    col = col + camera.sky_sun_color.rgb * glow;
+    let out = pow(max(col * camera.exposure, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
+    return vec4<f32>(out, camera.alpha);
 }
