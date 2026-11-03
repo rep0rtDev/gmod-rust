@@ -38,6 +38,8 @@ pub struct ClientWorld {
     pub content_entities: Vec<gm_server::ContentEntry>,
     /// Scripted entities' world tips (`SetOverlayText`) by entity id, latest version whole.
     pub overlays: Vec<(u32, String)>,
+    /// Scripted / sandbox entity classes by entity id (`ServerMsg::EntityClasses`), whole.
+    pub classes: Vec<(u32, String)>,
 }
 
 /// The settings a click of `tool` carries: the schema's defaults overlaid with the player's
@@ -599,6 +601,7 @@ impl ClientNet {
                             content_weapons: std::mem::take(&mut self.world.content_weapons),
                             content_entities: std::mem::take(&mut self.world.content_entities),
                             overlays: std::mem::take(&mut self.world.overlays),
+                            classes: std::mem::take(&mut self.world.classes),
                         };
                         self.server_tick = tick;
                     }
@@ -620,6 +623,7 @@ impl ClientNet {
                         self.world.content_entities = entities;
                     }
                     ServerMsg::EntityOverlays { items, .. } => self.world.overlays = items,
+                    ServerMsg::EntityClasses { items } => self.world.classes = items,
                     ServerMsg::Properties { ent, names } => {
                         self.properties = Some((ent, names));
                     }

@@ -4932,6 +4932,8 @@ pub struct Server<'w> {
     pub game_events: Vec<GameEvent>,
     /// HL2 items spawned from the Entities tab (entity id -> class), picked up on touch.
     pub hl2_items: BTreeMap<u32, String>,
+    /// The `SANDBOX_SPAWNABLE_ENTITIES` spawned (`sent_ball`, the editors) by prop id.
+    pub sandbox_sents: BTreeMap<u32, String>,
     /// `item_healthcharger` / `item_suitcharger` units by entity id.
     pub chargers: BTreeMap<u32, Charger>,
     pub request_hook: Option<RequestHook>,
@@ -5131,6 +5133,7 @@ impl<'w> Server<'w> {
             events: Vec::new(),
             game_events: Vec::new(),
             hl2_items: BTreeMap::new(),
+            sandbox_sents: BTreeMap::new(),
             chargers: BTreeMap::new(),
             request_hook: None,
             physgun_params: PhysgunParams::default(),
@@ -8203,6 +8206,38 @@ impl<'w> Server<'w> {
         true
     }
 
+    /// The classes of the scripted, HL2 and sandbox entities by id (`ServerMsg::EntityClasses`):
+    /// what the clients render specially (`sent_ball`'s sprite).
+    pub fn entity_classes(&self) -> Vec<(u32, String)> {
+        let mut out: Vec<(u32, String)> = self
+            .sents
+            .iter()
+            .map(|(id, s)| (*id, s.class.clone()))
+            .chain(self.hl2_items.iter().map(|(id, c)| (*id, c.clone())))
+            .chain(self.sandbox_sents.iter().map(|(id, c)| (*id, c.clone())))
+            .collect();
+        out.sort_unstable_by_key(|(id, _)| *id);
+        out
+    }
+
+    /// `sent_ball` `PhysicsCollide`: an impact faster than 60 u/s pops the balloon sound
+    /// (volume `speed / 150`) and the ball keeps 90 % of the greater of its old speed and the
+    /// approach speed along its new direction - it never settles.
+    fn ball_bounce(&mut self, ent: u32, speed: f32) {
+        let Some(st) = self.prop_state(ent) else {
+            return;
+        };
+        let Some(body) = self.bodies.get(&ent).copied() else {
+            return;
+        };
+        let last = st.velocity.length().max(speed);
+        let dir = st.velocity.normalize_or_zero();
+        self.physics
+            .set_velocity(body, dir * last * 0.9, st.angular_velocity);
+        let volume = (speed / 150.0).clamp(0.0, 1.0);
+        self.emit_sound(ent, "garrysmod/balloon_pop_cute.wav".into(), volume);
+    }
+
     /// Every scripted entity with a non-empty overlay text, by id.
     pub fn overlays(&self) -> Vec<(u32, String)> {
         let mut out: Vec<(u32, String)> = self
@@ -8302,6 +8337,7 @@ impl<'w> Server<'w> {
             SANDBOX_SPAWNABLE_ENTITIES.iter().find(|e| e.0 == class)
         {
             let id = self.spawn_hl2_item(player, class, model, *offset)?;
+            self.sandbox_sents.insert(id, class.to_string());
             if class == "sent_ball" {
                 // sent_ball.lua SpawnFunction: a random 16..48 size and colour
                 let size = 16.0 + self.next_random() * 32.0;
@@ -14918,6 +14954,7 @@ impl<'w> Server<'w> {
 
     pub fn remove_prop(&mut self, id: u32) -> bool {
         self.hl2_items.remove(&id);
+        self.sandbox_sents.remove(&id);
         self.chargers.remove(&id);
         if !self.sandbox.props().iter().any(|p| p.id == id) {
             return false;
@@ -16267,6 +16304,18 @@ impl<'w> Server<'w> {
                     .map(|(id, _)| *id)
             };
             let ids = [prop_of(imp.bodies[0]), prop_of(imp.bodies[1])];
+            if imp.speed > 60.0 {
+                for ent in ids.into_iter().flatten() {
+                    if ent != 0
+                        && self
+                            .sandbox_sents
+                            .get(&ent)
+                            .is_some_and(|c| c == "sent_ball")
+                    {
+                        self.ball_bounce(ent, imp.speed);
+                    }
+                }
+            }
             for (me, other) in [(ids[0], ids[1]), (ids[1], ids[0])] {
                 if let (Some(ent), Some(other)) = (me, other) {
                     if ent != 0 {

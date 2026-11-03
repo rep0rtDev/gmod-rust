@@ -47,6 +47,7 @@ pub struct ClientSlot {
     spawn_lists_sent: u32,
     content_lists_sent: u32,
     overlays_sent: u32,
+    classes_sent: Option<Vec<(u32, String)>>,
     tool_schemas_sent: u32,
     /// The face entity whose faceposer sliders this client has (None: the plain panel).
     face_schema_sent: Option<u32>,
@@ -270,6 +271,7 @@ impl ServerNet {
                         spawn_lists_sent: 0,
                         content_lists_sent: u32::MAX,
                         overlays_sent: u32::MAX,
+                        classes_sent: None,
                         tool_schemas_sent: 0,
                         face_schema_sent: None,
                         hand_schema_sent: None,
@@ -1386,6 +1388,16 @@ impl ServerNet {
                 .write(&mut w);
                 slot.channel.send_reliable(w.buf);
                 slot.overlays_sent = server.overlay_version;
+            }
+            let classes = server.entity_classes();
+            if slot.classes_sent.as_ref() != Some(&classes) {
+                let mut w = Writer::default();
+                ServerMsg::EntityClasses {
+                    items: classes.clone(),
+                }
+                .write(&mut w);
+                slot.channel.send_reliable(w.buf);
+                slot.classes_sent = Some(classes);
             }
             if slot.weapon_defs_sent != server.scripted_weapons_version {
                 let mut w = Writer::default();

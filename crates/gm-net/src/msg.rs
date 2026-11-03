@@ -501,6 +501,11 @@ pub enum ServerMsg {
         version: u32,
         items: Vec<(u32, String)>,
     },
+    /// The classes of the scripted / sandbox entities (`sent_ball` draws as a sprite), by
+    /// entity id, whole; sent reliably whenever the set changes.
+    EntityClasses {
+        items: Vec<(u32, String)>,
+    },
 }
 
 /// A world sound: script name, where, and a volume factor on the script's own.
@@ -568,7 +573,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 25;
+pub const PROTOCOL: u16 = 26;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1001,6 +1006,7 @@ impl ServerMsg {
                 | ServerMsg::WeaponDefs { .. }
                 | ServerMsg::ContentLists { .. }
                 | ServerMsg::EntityOverlays { .. }
+                | ServerMsg::EntityClasses { .. }
         )
     }
 
@@ -1304,6 +1310,14 @@ impl ServerMsg {
                 for (ent, text) in items {
                     w.u32(*ent);
                     w.str(text);
+                }
+            }
+            ServerMsg::EntityClasses { items } => {
+                w.u8(22);
+                w.varint(items.len() as u64);
+                for (ent, class) in items {
+                    w.u32(*ent);
+                    w.str(class);
                 }
             }
             ServerMsg::WeaponDefs { version, defs } => {
@@ -1756,6 +1770,14 @@ impl ServerMsg {
                     items.push((r.u32()?, r.str()?));
                 }
                 ServerMsg::EntityOverlays { version, items }
+            }
+            22 => {
+                let n = r.varint()?.min(4096) as usize;
+                let mut items = Vec::with_capacity(n);
+                for _ in 0..n {
+                    items.push((r.u32()?, r.str()?));
+                }
+                ServerMsg::EntityClasses { items }
             }
             18 => {
                 let version = r.u32()?;

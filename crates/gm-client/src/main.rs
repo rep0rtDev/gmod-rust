@@ -245,6 +245,8 @@ struct Gfx {
     fx_decal_mats: std::collections::HashMap<String, Option<wgpu::BindGroup>>,
     /// `sprites/redglow1`: the RPG's laser dot.
     fx_laserdot: Option<wgpu::BindGroup>,
+    /// `sprites/sent_ball`: the bouncy ball's look (sent_ball.lua `Draw`, a sprite of its size).
+    fx_ball: Option<wgpu::BindGroup>,
     /// `effects/splash2`: the water splash.
     fx_splash: Option<wgpu::BindGroup>,
     ui: UiRenderer,
@@ -1314,6 +1316,7 @@ impl App {
         let fx_explosion = world.sprite_frames(&gpu, &self.mount, "sprites/zerogxplode");
         let fx_spark = world.sprite_material(&gpu, &self.mount, "effects/spark");
         let fx_laserdot = world.sprite_material(&gpu, &self.mount, "sprites/redglow1");
+        let fx_ball = world.sprite_material(&gpu, &self.mount, "sprites/sent_ball");
         let fx_splash = world.sprite_material(&gpu, &self.mount, "effects/splash2");
         let ui = UiRenderer::new(&gpu, &self.mount, format, quality.msaa)?;
         let mut ui = ui;
@@ -1484,6 +1487,7 @@ impl App {
             fx_spark,
             fx_decal_mats: Default::default(),
             fx_laserdot,
+            fx_ball,
             fx_splash,
             beam_active_mat,
             glow1,
@@ -4446,9 +4450,14 @@ impl App {
                 Some((e.id, m.skin_matrices(&world)))
             })
             .collect();
+        let classes = &self.sim.client.world.classes;
+        let is_ball = |id: u32| classes.iter().any(|(i, c)| *i == id && c == "sent_ball");
         let mut items: Vec<_> = ents
             .values()
             .filter_map(|e| {
+                if is_ball(e.id) {
+                    return None;
+                }
                 let (pos, ang) = match self.sim.interp.sample(e.id, rt) {
                     Some(p) => (p.pos, p.angles),
                     None => (e.pos, e.angles),
@@ -5040,6 +5049,22 @@ impl App {
             self.fx_bursts.retain(|(_, size, born, _)| {
                 now.duration_since(*born).as_secs_f32() < burst_life(*size)
             });
+            // sent_ball.lua `Draw`: a sprite of the ball's size in its colour where its body is
+            if let Some(bm) = &g.fx_ball {
+                for e in ents.values().filter(|e| is_ball(e.id)) {
+                    let pos = self.sim.interp.sample(e.id, rt).map_or(e.pos, |p| p.pos);
+                    let c = |v: u8| v as f32 / 255.0;
+                    let (v, i) = g.world.sprite_quad_var(
+                        pos,
+                        32.0 * e.model_scale,
+                        [c(e.color[0]), c(e.color[1]), c(e.color[2]), 1.0],
+                        0.0,
+                        None,
+                        &camera,
+                    );
+                    alpha.push((bm, v, i));
+                }
+            }
             for &(pos, size, born, splash) in &self.fx_bursts {
                 let age = now.duration_since(born).as_secs_f32() / burst_life(size);
                 let k = 1.0 - age;
