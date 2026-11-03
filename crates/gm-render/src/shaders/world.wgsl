@@ -41,6 +41,7 @@ struct MaterialParams {
 @group(2) @binding(0) var scene_depth: texture_depth_2d;
 @group(2) @binding(1) var reflection: texture_2d<f32>;
 @group(2) @binding(2) var reflection_sampler: sampler;
+@group(2) @binding(3) var refraction: texture_2d<f32>;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -199,10 +200,19 @@ fn fs_water(in: VsOut) -> @location(0) vec4<f32> {
     let nuv = in.uv + material.envmap.zw * camera.clip.z;
     let n = normalize(textureSample(bump, base_sampler, nuv).xyz * 2.0 - 1.0);
     let dims = vec2<f32>(textureDimensions(scene_depth));
+    let flags = u32(camera.clip.y + 0.5);
+    let has_refl = f32((flags & 1u) != 0u);
+    let has_refr = f32((flags & 2u) != 0u);
     let suv = in.clip.xy / dims + n.xy * material.envmap.x;
     let refl = textureSample(reflection, reflection_sampler, vec2<f32>(suv.x, 1.0 - suv.y)).rgb;
+    // _rt_WaterRefraction: the scene behind the surface offset by $refractamount, under the
+    // water fog; without the copy the already-drawn bottom shows through the fog alpha
+    let ruv = in.clip.xy / dims + n.xy * material.envmap.y;
+    let refr = textureSample(refraction, reflection_sampler, ruv).rgb;
     let nv = clamp(dot(-ray / surf_len, n), 0.0, 1.0);
-    let fr = pow(1.0 - nv, 5.0) * camera.clip.y;
-    let col = mix(mix(material.water_color.rgb, refl, fr), camera.fog_color.rgb, fog);
-    return vec4<f32>(col, f + (1.0 - f) * fr);
+    let fr = pow(1.0 - nv, 5.0) * has_refl;
+    let under = mix(material.water_color.rgb, mix(refr, material.water_color.rgb, f), has_refr);
+    let col = mix(mix(under, refl, fr), camera.fog_color.rgb, fog);
+    let alpha = mix(f + (1.0 - f) * fr, 1.0, has_refr);
+    return vec4<f32>(col, alpha);
 }

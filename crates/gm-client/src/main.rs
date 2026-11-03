@@ -3140,6 +3140,12 @@ impl App {
         };
         // with MSAA the passes draw into the multisampled target and resolve into `scene`
         let attach = g.msaa_color.clone().unwrap_or_else(|| scene.clone());
+        // the resolved scene the water copies for its refraction
+        let scene_src: &wgpu::Texture = if bloom {
+            g.post.scene_texture()
+        } else {
+            &frame.texture
+        };
         let resolve = g.msaa_color.as_ref().map(|_| &scene);
         let o = self
             .sim
@@ -3218,8 +3224,15 @@ impl App {
                 .update(&mut self.sounds, &self.mount, camera.position, &sees);
         }
         let aspect = g.config.width as f32 / g.config.height as f32;
-        g.world
-            .draw(&g.gpu, &camera, &attach, resolve, &g.depth, aspect);
+        g.world.draw(
+            &g.gpu,
+            &camera,
+            &attach,
+            resolve,
+            &g.depth,
+            aspect,
+            Some(scene_src),
+        );
         let ents = &self.sim.client.world.entities;
         let me = self.sim.client.player_id;
         let held_models = self

@@ -244,7 +244,8 @@ struct CameraUniform {
     fog_color: [f32; 4],
     /// `fogstart`, `fogend` in units.
     fog_range: [f32; 4],
-    /// Water reflection pass: clip plane z (x), reflection texture valid (y), clip on (w).
+    /// Water reflection pass: clip plane z (x), bit 1 reflection / bit 2 refraction texture
+    /// valid (y), clip on (w).
     /// ... and seconds since start (z) for scrolling water normals.
     clip: [f32; 4],
 }
@@ -2089,6 +2090,16 @@ impl WorldRenderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let water_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2243,6 +2254,7 @@ impl WorldRenderer {
 
     /// Render one frame into `color` (cleared to sky grey) and `depth`.
     /// The 3D skybox, if any, is drawn first from the sky camera and the depth cleared after it.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
         gpu: &Gpu,
@@ -2251,9 +2263,10 @@ impl WorldRenderer {
         resolve: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
         aspect: f32,
+        scene_src: Option<&wgpu::Texture>,
     ) {
         self.draw_reflection(gpu, camera, aspect);
-        self.draw_inner(gpu, camera, color, resolve, depth, aspect);
+        self.draw_inner(gpu, camera, color, resolve, depth, aspect, scene_src);
     }
 
     /// The water surface the eye looks down on, if any: the volume nearest the eye among
@@ -2307,7 +2320,15 @@ impl WorldRenderer {
             let t = state.target.as_ref().unwrap();
             (t.color.clone(), t.resolve.clone(), t.depth.clone())
         };
-        self.draw_inner(gpu, &mirrored, &color, resolve.as_ref(), &depth, aspect);
+        self.draw_inner(
+            gpu,
+            &mirrored,
+            &color,
+            resolve.as_ref(),
+            &depth,
+            aspect,
+            None,
+        );
         let mut state = self.reflect.lock().unwrap();
         state.clip = None;
         state.valid = true;
@@ -2324,6 +2345,7 @@ impl WorldRenderer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_inner(
         &self,
         gpu: &Gpu,
@@ -2332,6 +2354,7 @@ impl WorldRenderer {
         resolve: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
         aspect: f32,
+        scene_src: Option<&wgpu::Texture>,
     ) {
         let mut clear = true;
         if self.sky2d.is_some() {
@@ -2361,14 +2384,14 @@ impl WorldRenderer {
                 None => self.sky_fog,
             };
             self.pass(
-                gpu, &sky_cam, color, resolve, depth, aspect, true, clear, sky_fog,
+                gpu, &sky_cam, color, resolve, depth, aspect, true, clear, sky_fog, scene_src,
             );
             self.pass(
-                gpu, camera, color, resolve, depth, aspect, false, false, None,
+                gpu, camera, color, resolve, depth, aspect, false, false, None, scene_src,
             );
         } else {
             self.pass(
-                gpu, camera, color, resolve, depth, aspect, false, clear, None,
+                gpu, camera, color, resolve, depth, aspect, false, clear, None, scene_src,
             );
         }
     }
@@ -2394,10 +2417,9 @@ impl WorldRenderer {
         fog: Option<Fog>,
         clip: Option<f32>,
     ) -> CameraUniform {
-        let valid = if self.reflect.lock().unwrap().valid {
-            1.0
-        } else {
-            0.0
+        let valid = {
+            let st = self.reflect.lock().unwrap();
+            (st.valid as u32 | ((st.refr_valid as u32) << 1)) as f32
         };
         let f = fog.unwrap_or(Fog {
             color: [0.0; 3],
@@ -2503,7 +2525,10 @@ impl WorldRenderer {
         sky: bool,
         clear_color: bool,
         sky_fog: Option<Fog>,
+        scene_src: Option<&wgpu::Texture>,
     ) {
+        // the refraction copy is taken in this pass when it has the resolved scene
+        self.reflect.lock().unwrap().refr_valid = scene_src.is_some() && !sky;
         gpu.queue.write_buffer(
             &self.camera_buffer,
             0,
@@ -2593,10 +2618,40 @@ impl WorldRenderer {
             .filter(|b| b.sky == sky && b.water)
             .collect();
         if !water.is_empty() && self.clip_for(false).is_none() {
-            let state = self.reflect.lock().unwrap();
+            let mut state = self.reflect.lock().unwrap();
+            if let Some(src) = scene_src {
+                // `_rt_WaterRefraction`: the opaque scene behind the surface, copied before
+                // the water is drawn over it
+                let size = src.size();
+                if state
+                    .refraction
+                    .as_ref()
+                    .is_none_or(|(t, _)| t.size() != size || t.format() != src.format())
+                {
+                    let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("water refraction"),
+                        size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: src.format(),
+                        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    });
+                    let view = tex.create_view(&Default::default());
+                    state.refraction = Some((tex, view));
+                }
+                let (tex, _) = state.refraction.as_ref().unwrap();
+                enc.copy_texture_to_texture(src.as_image_copy(), tex.as_image_copy(), size);
+            }
+            let state = &*state;
             let reflection = match (&state.target, state.valid) {
                 (Some(t), true) => &t.sampled,
                 _ => &self.bump_fallback,
+            };
+            let refraction = match (&state.refraction, scene_src) {
+                (Some((_, v)), Some(_)) => v,
+                _ => &self.white_fallback,
             };
             let depth_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("scene depth"),
@@ -2613,6 +2668,10 @@ impl WorldRenderer {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&self.reflect_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(refraction),
                     },
                 ],
             });
@@ -3475,6 +3534,10 @@ struct ReflectState {
     clip: Option<f32>,
     /// `target.sampled` holds this frame's reflection.
     valid: bool,
+    /// `_rt_WaterRefraction`: a copy of the resolved scene, same size and format.
+    refraction: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// The running pass has a scene to copy for refraction.
+    refr_valid: bool,
 }
 
 struct ReflectTarget {

@@ -189,11 +189,18 @@ construct's pond (surface z −160): the far buildings mirror at the right heigh
 views are almost fully mirror. The Water shader's expensive path is followed for the
 surface normal: `$normalmap` (`water_13_normal`, falling back to `$bumpmap`) sampled at the
 face uv scrolled by `$scroll1` xy per second, its xy times `$reflectamount` (0.4) offsets
-the reflection lookup in screen space and the fresnel uses n·v of that normal. Open:
-`$refracttexture` (the scene behind the surface is still the already-drawn bottom through
-the fog alpha, no `$refractamount` offset), the `$bumptransform` TextureScroll proxy (rate
-0.02 at 25 deg; the proxies block is not parsed, `$scroll1` stands in), `$reflectentities`,
-reflection of translucent surfaces and models.
+the reflection lookup in screen space and the fresnel uses n·v of that normal. `$refracttexture` (`_rt_WaterRefraction`): the
+renderer is handed the resolved scene texture (`draw(.., scene_src)`: the headless target,
+the swapchain frame, or the bloom scene target), copies it right before the water pass and
+the surface shows that copy offset by `n.xy · $refractamount`, under the water fog by the
+thickness alpha, now as an opaque surface; without a scene texture the old path (bottom
+through the fog alpha) remains. Measured at construct's pond edge from 45 deg above: only
+the shallow rim changes (the deep water is fog colour either way), and the shore bleeds
+into the rim by the full-strength offset (`$refractamount 1`, no 1/w scaling - whether the
+engine scales the offset with depth is unverified). Open: the `$bumptransform`
+TextureScroll proxy (rate 0.02 at 25 deg; the proxies block is not parsed, `$scroll1`
+stands in), `$reflectentities`, reflection of translucent surfaces and models, the
+refraction of translucent surfaces (they are drawn after the copy).
 
 ### `$ssbump`
 

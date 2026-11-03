@@ -24,6 +24,7 @@ pub struct Post {
     composite: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     scene_view: wgpu::TextureView,
+    scene_tex: wgpu::Texture,
     quarter: [wgpu::TextureView; 2],
     params: [wgpu::Buffer; 4],
     groups: [wgpu::BindGroup; 4],
@@ -127,7 +128,7 @@ impl Post {
                 mapped_at_creation: false,
             })
         });
-        let (scene_view, quarter, groups, bloom_group) = Self::targets(
+        let (scene_tex, scene_view, quarter, groups, bloom_group) = Self::targets(
             gpu,
             format,
             width,
@@ -146,6 +147,7 @@ impl Post {
             composite,
             sampler,
             scene_view,
+            scene_tex,
             quarter,
             params,
             groups,
@@ -164,6 +166,7 @@ impl Post {
         sampler: &wgpu::Sampler,
         params: &[wgpu::Buffer; 4],
     ) -> (
+        wgpu::Texture,
         wgpu::TextureView,
         [wgpu::TextureView; 2],
         [wgpu::BindGroup; 4],
@@ -171,29 +174,29 @@ impl Post {
     ) {
         let device = &gpu.device;
         let make = |label: &str, w: u32, h: u32, f| {
-            device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: w.max(1),
-                        height: h.max(1),
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: f,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: w.max(1),
+                    height: h.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: f,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            })
         };
-        let scene = make("post scene", width, height, format);
+        let scene_tex = make("post scene", width, height, format);
+        let scene = scene_tex.create_view(&Default::default());
         let (qw, qh) = (width.div_ceil(4), height.div_ceil(4));
         let quarter = [
-            make("post quarter 0", qw, qh, QUARTER_FORMAT),
-            make("post quarter 1", qw, qh, QUARTER_FORMAT),
+            make("post quarter 0", qw, qh, QUARTER_FORMAT).create_view(&Default::default()),
+            make("post quarter 1", qw, qh, QUARTER_FORMAT).create_view(&Default::default()),
         ];
         let texel = [1.0 / qw.max(1) as f32, 1.0 / qh.max(1) as f32];
         let all = [
@@ -261,11 +264,11 @@ impl Post {
                 },
             ],
         });
-        (scene, quarter, groups, bloom_group)
+        (scene_tex, scene, quarter, groups, bloom_group)
     }
 
     pub fn resize(&mut self, gpu: &Gpu, width: u32, height: u32) {
-        let (scene_view, quarter, groups, bloom_group) = Self::targets(
+        let (scene_tex, scene_view, quarter, groups, bloom_group) = Self::targets(
             gpu,
             self.format,
             width,
@@ -276,6 +279,7 @@ impl Post {
             &self.params,
         );
         self.scene_view = scene_view;
+        self.scene_tex = scene_tex;
         self.quarter = quarter;
         self.groups = groups;
         self.bloom_group = bloom_group;
@@ -284,6 +288,10 @@ impl Post {
     /// The offscreen colour target the scene draws into when bloom is on.
     pub fn scene_view(&self) -> &wgpu::TextureView {
         &self.scene_view
+    }
+    /// The same target as a texture (the water refraction copies it).
+    pub fn scene_texture(&self) -> &wgpu::Texture {
+        &self.scene_tex
     }
 
     /// Bright pass -> blur -> composite the scene plus `scale` x bloom onto `target`.

@@ -100,6 +100,12 @@ fn main() -> Result<()> {
         None,
         &depth.create_view(&Default::default()),
         width as f32 / height as f32,
+        // GM_NO_REFRACT: draw the water without the refraction copy (to compare)
+        if std::env::var_os("GM_NO_REFRACT").is_some() {
+            None
+        } else {
+            Some(&color)
+        },
     );
     let rgba = gpu.read_texture(&color, width, height)?;
     eprintln!("frame in {:.0} ms", t1.elapsed().as_secs_f32() * 1000.0);
