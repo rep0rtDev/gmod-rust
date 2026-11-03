@@ -48,9 +48,11 @@ turn, E again). This is the public SDK's player pickup (`CPlayerPickupController
   to 0.00 u); what differs is the rest pose before the pickup (the can pitched 9 deg at
   (823.8, -542.4) against ours yawed -10 deg at (822.7, -539.9), the drum pitched -17 against
   -27 - the spawn drop's landing) and the landing after the drop (t303: can 34 u, drum 16 u) -
-  both the flat-landing family. `use_locker` is different and open: the 2000 kg locker is never
-  carried in the game but rocks along x between 819.7 and 827.6 with pitch +-6 deg at a period of
-  about 100 ticks for the whole trace, ours never moves - +use on an overweight prop pushes it.
+  both the flat-landing family. `use_locker`: the 2000 kg locker is never carried in either
+  engine; in the game it is already rocking along x before the first +use (t28: -16.7 u/s,
+  -27 deg/s pitch, between 819.7 and 827.6 with pitch +-6 deg, period about 100 ticks, undamped
+  for the whole trace) - the tip from its spawn-drop landing (the locker row of the flat-landing
+  asymmetry above), ours lands flat and never moves. Not a +use law.
 - Hold point: the centre of the prop's collision bounds (its `WorldSpaceCenter`, the half-sum
   of the PHY hull's extents in the body frame) goes to `eye + forward * (24 + radius)` where `forward`
   is the view with the pitch clamped to -75..75 and `radius = 22.63 + extent`, 22.63 the
