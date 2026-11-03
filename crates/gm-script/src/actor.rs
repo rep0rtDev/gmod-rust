@@ -84,8 +84,10 @@ impl Actor {
         spec: ActorSpec,
         store: Option<Arc<Mutex<crate::storage::Store>>>,
         sound_duration: Option<crate::api::SoundDuration>,
+        realm: &str,
     ) -> mlua::Result<Self> {
         let shared = Arc::new(Shared {
+            realm: realm.to_owned(),
             snapshot: std::sync::RwLock::new(Arc::new(Snapshot::default())),
             queue: Mutex::new(Vec::new()),
             queued: Mutex::new(0),

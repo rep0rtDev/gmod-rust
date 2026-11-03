@@ -498,7 +498,7 @@ impl Runtime {
     pub fn load(&mut self, spec: ActorSpec) -> Result<usize, mlua::Error> {
         let id = self.actors.len() as u32;
         let store = spec.config.can_storage.then(|| self.store_of(&spec.addon));
-        let actor = Actor::new(id, spec, store, self.sound_duration.clone())?;
+        let actor = Actor::new(id, spec, store, self.sound_duration.clone(), &self.realm)?;
         self.actors.push(actor);
         let mut addons: Vec<String> = self.actors.iter().map(|a| a.spec.addon.clone()).collect();
         addons.dedup();

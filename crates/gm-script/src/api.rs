@@ -801,6 +801,8 @@ pub enum DrawCmd {
 pub type SoundDuration = Arc<dyn Fn(&str) -> Option<f32> + Send + Sync>;
 
 pub struct Shared {
+    /// `server`, `client` or `menu`: the realm this actor runs in (`CLIENT` / `SERVER` in GLua).
+    pub realm: String,
     pub snapshot: RwLock<Arc<Snapshot>>,
     pub queue: Mutex<Vec<(u64, QueuedWrite)>>,
     pub queued: Mutex<u64>,

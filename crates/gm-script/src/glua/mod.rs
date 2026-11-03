@@ -71,8 +71,12 @@ pub fn stub(lua: &Lua, address: &str) -> Result<mlua::Function> {
     })
 }
 
-pub fn install(lua: &Lua, _shared: Arc<Shared>) -> Result<()> {
+pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
     let g = lua.globals();
+    // realm globals: `CLIENT` / `SERVER` / `MENU_DLL` as the game defines them
+    g.set("SERVER", shared.realm == "server")?;
+    g.set("CLIENT", shared.realm == "client" || shared.realm == "menu")?;
+    g.set("MENU_DLL", shared.realm == "menu")?;
     let start = Instant::now();
     g.set(
         "__glua_datestamp",

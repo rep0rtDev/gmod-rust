@@ -1301,9 +1301,7 @@ function include(path) end
 function AddCSLuaFile(path) end
 function IncludeCS(path) end
 function SERVER_() return true end
-SERVER = true
-CLIENT = false
-MENU_DLL = false
+-- SERVER / CLIENT / MENU_DLL come from the host (`glua::install`) by the actor's realm
 GAMEMODE_NAME = "sandbox"
 VERSION = 240000
 VERSIONSTR = "gmod-rust"
