@@ -91,6 +91,71 @@ struct CameraUniform {
 /// Linear distance fog of an `env_fog_controller` (the world) or a `sky_camera` (its 3D
 /// skybox, in skybox units): the fraction `(depth - start) / (end - start)` of the fog
 /// colour, clamped to `max_density`, where depth is the view-space distance.
+/// A water volume (`LUMP_LEAFWATERDATA` + its `CONTENTS_WATER` leaves): an eye inside it
+/// sees the `$bottommaterial`'s fog instead of the map's.
+#[derive(Clone, Copy, Debug)]
+pub struct WaterVolume {
+    pub min: Vec3,
+    pub max: Vec3,
+    pub surface_z: f32,
+    pub fog: Option<Fog>,
+}
+
+fn water_volumes(bsp: &Bsp<'_>, mount: &Mount) -> Vec<WaterVolume> {
+    let data = gm_formats::bsp::extra::leaf_water_data(bsp).unwrap_or_default();
+    let mut boxes: HashMap<usize, (Vec3, Vec3)> = HashMap::new();
+    for leaf in &bsp.leafs {
+        if leaf.contents & 0x20 == 0 || leaf.leaf_water_data_id < 0 {
+            continue;
+        }
+        let lo = Vec3::new(
+            leaf.mins[0] as f32,
+            leaf.mins[1] as f32,
+            leaf.mins[2] as f32,
+        );
+        let hi = Vec3::new(
+            leaf.maxs[0] as f32,
+            leaf.maxs[1] as f32,
+            leaf.maxs[2] as f32,
+        );
+        let e = boxes
+            .entry(leaf.leaf_water_data_id as usize)
+            .or_insert((lo, hi));
+        e.0 = e.0.min(lo);
+        e.1 = e.1.max(hi);
+    }
+    let mut out = Vec::new();
+    for (id, (min, max)) in boxes {
+        let Some(d) = data.get(id) else { continue };
+        let name = bsp
+            .tex_infos
+            .get(d.surface_tex_info as usize)
+            .and_then(|ti| bsp.tex_datas.get(usize::try_from(ti.tex_data).ok()?))
+            .and_then(|td| {
+                bsp.tex_names
+                    .get(usize::try_from(td.name_string_table_id).ok()?)
+            });
+        let fog = name
+            .and_then(|n| material::load(mount, &material::canonical_name(n)).ok())
+            .and_then(|m| m.bottom_material)
+            .and_then(|b| material::load(mount, &material::canonical_name(&b)).ok())
+            .and_then(|m| m.water_fog)
+            .map(|(color, start, end)| Fog {
+                color,
+                start,
+                end,
+                max_density: 1.0,
+            });
+        out.push(WaterVolume {
+            min,
+            max,
+            surface_z: d.surface_z,
+            fog,
+        });
+    }
+    out
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Fog {
     pub color: [f32; 3],
@@ -245,6 +310,7 @@ pub struct WorldRenderer {
     /// The map's `env_fog_controller` fog, and the `sky_camera`'s for the 3D skybox.
     pub fog: Option<Fog>,
     pub sky_fog: Option<Fog>,
+    pub water_volumes: Vec<WaterVolume>,
     pub stats: Stats,
     material_layout: wgpu::BindGroupLayout,
     base_sampler: wgpu::Sampler,
@@ -1081,6 +1147,7 @@ impl WorldRenderer {
             .iter()
             .filter(|e| e.classname() == "env_fog_controller")
             .find_map(Fog::from_entity);
+        let water_volumes = water_volumes(bsp, mount);
         let sky_fog = bsp
             .entities
             .iter()
@@ -1708,6 +1775,7 @@ impl WorldRenderer {
             sky_camera,
             fog,
             sky_fog,
+            water_volumes,
             stats,
             sky2d,
             material_layout,
@@ -1746,11 +1814,44 @@ impl WorldRenderer {
                 far: camera.far / sky.scale * 4.0,
                 ..*camera
             };
-            self.pass(gpu, &sky_cam, color, resolve, depth, aspect, true, clear);
-            self.pass(gpu, camera, color, resolve, depth, aspect, false, false);
+            // under water the skybox takes the water fog too, in skybox units
+            let view = self.view_fog(camera);
+            let under = view.filter(|v| {
+                self.fog
+                    .is_none_or(|f| v.start != f.start || v.end != f.end || v.color != f.color)
+            });
+            let sky_fog = match under {
+                Some(u) => Some(Fog {
+                    start: u.start / sky.scale,
+                    end: u.end / sky.scale,
+                    ..u
+                }),
+                None => self.sky_fog,
+            };
+            self.pass(
+                gpu, &sky_cam, color, resolve, depth, aspect, true, clear, sky_fog,
+            );
+            self.pass(
+                gpu, camera, color, resolve, depth, aspect, false, false, None,
+            );
         } else {
-            self.pass(gpu, camera, color, resolve, depth, aspect, false, clear);
+            self.pass(
+                gpu, camera, color, resolve, depth, aspect, false, clear, None,
+            );
         }
+    }
+
+    /// The fog an eye at `camera.position` sees: the `$bottommaterial`'s when it is inside a
+    /// water volume below its surface, else the map's.
+    pub fn view_fog(&self, camera: &Camera) -> Option<Fog> {
+        let p = camera.position;
+        self.water_volumes
+            .iter()
+            .find(|w| {
+                p.z < w.surface_z && p.cmpge(w.min).all() && p.cmple(w.max).all() && w.fog.is_some()
+            })
+            .and_then(|w| w.fog)
+            .or(self.fog)
     }
 
     fn camera_uniform(
@@ -1856,6 +1957,7 @@ impl WorldRenderer {
         aspect: f32,
         sky: bool,
         clear_color: bool,
+        sky_fog: Option<Fog>,
     ) {
         gpu.queue.write_buffer(
             &self.camera_buffer,
@@ -1864,7 +1966,7 @@ impl WorldRenderer {
                 camera,
                 aspect,
                 1.0,
-                if sky { self.sky_fog } else { self.fog },
+                if sky { sky_fog } else { self.view_fog(camera) },
             )),
         );
         let mut enc = gpu.device.create_command_encoder(&Default::default());
@@ -2291,7 +2393,7 @@ impl WorldRenderer {
             contents: bytemuck::cast_slice(&idx),
             usage: wgpu::BufferUsages::INDEX,
         });
-        let cam = self.camera_uniform(camera, target.aspect, 1.0, self.fog);
+        let cam = self.camera_uniform(camera, target.aspect, 1.0, self.view_fog(camera));
         gpu.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&cam));
         let mut enc = device.create_command_encoder(&Default::default());
@@ -2502,7 +2604,7 @@ impl WorldRenderer {
         gpu.queue.write_buffer(
             &self.camera_buffer,
             0,
-            bytemuck::bytes_of(&self.camera_uniform(camera, aspect, alpha, self.fog)),
+            bytemuck::bytes_of(&self.camera_uniform(camera, aspect, alpha, self.view_fog(camera))),
         );
         let mut enc = device.create_command_encoder(&Default::default());
         {

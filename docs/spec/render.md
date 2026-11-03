@@ -73,9 +73,15 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   `$fogenable 1`, `$fogcolor {7 58 66}`, `$fogstart 0`, `$fogend 1024`; `$bottommaterial
   gm_construct/water_13_beneath` (`$abovewater 0`, `$fogcolor {24 64 72}`, `$fogstart -1024`,
   `$fogend 2048`). Done: the surface is drawn flat in its `$fogcolor` (the colour the volume fog
-  converges to). Open: refraction/reflection render targets with the dudv/normal distortion,
-  the depth-based volume fog through the surface, and the view fog switching to the
-  `$bottommaterial` keys when the eye is in a water leaf. On gm_construct the world fog is 0.4 % at 2000 u and 3.6 %
+  converges to). Open: refraction/reflection render targets with the dudv/normal distortion and
+  the depth-based volume fog through the surface; the view fog switching to the
+  `$bottommaterial` keys when the eye is in a water leaf.
+  Done since: the eye's water volume (`LUMP_LEAFWATERDATA` 36: surface z, min z, surface
+  texinfo; its `CONTENTS_WATER` leaves' boxes) switches the view fog of the world, model and
+  3D-skybox passes (the latter in skybox units) to the surface material's `$bottommaterial`
+  `$fogcolor` / `$fogstart` / `$fogend` (gm_construct pond: {24 64 72}, -1024..2048, so a
+  third of the fog colour already at the eye); the surface itself is the bottom face by
+  culling. On gm_construct the world fog is 0.4 % at 2000 u and 3.6 %
   at 10 000 u - faint, as in the game.
 - `env_tonemap_controller` "TonemapController" set by `logic_auto` OnMapSpawn:
   SetAutoExposureMax 1.8, SetAutoExposureMin 0.7, SetBloomScale 0.3, SetTonemapRate 0.2.

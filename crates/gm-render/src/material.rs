@@ -25,6 +25,8 @@ pub struct Material {
     /// `Water`: `$fogcolor` (display-space 0..1), `$fogstart`, `$fogend` of the volume fog
     /// seen through the surface (`$abovewater 1`) or from inside (`$bottommaterial`).
     pub water_fog: Option<([f32; 3], f32, f32)>,
+    /// `Water`: `$bottommaterial`, the material of the same volume seen from inside.
+    pub bottom_material: Option<String>,
     /// `$detail`: a tiling texture multiplied into the base.
     pub detail: Option<Detail>,
     /// `$basetexturetransform2` as a 2x3 uv matrix (row-major 2x2 then translation).
@@ -168,6 +170,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         }
         mat.water = shader == "water";
         if mat.water {
+            mat.bottom_material = get("$bottommaterial");
             let c: Vec<f32> = get("$fogcolor")
                 .map(|v| {
                     v.trim_matches(|c| c == '{' || c == '}' || c == '[' || c == ']')

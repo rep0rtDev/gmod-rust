@@ -55,6 +55,28 @@ impl Record for Plane {
     }
 }
 
+/// `LUMP_LEAFWATERDATA` (36): one per water volume, referenced by `Leaf::leaf_water_data_id`.
+#[derive(Clone, Copy, Debug)]
+pub struct LeafWaterData {
+    pub surface_z: f32,
+    pub min_z: f32,
+    /// Texinfo of the surface material (`Water` shader, `$bottommaterial` for the inside).
+    pub surface_tex_info: u16,
+}
+
+impl Record for LeafWaterData {
+    const SIZE: usize = 12;
+    fn read(r: &mut Reader<'_>) -> Result<Self> {
+        let d = LeafWaterData {
+            surface_z: r.f32()?,
+            min_z: r.f32()?,
+            surface_tex_info: r.u16()?,
+        };
+        r.skip(2)?;
+        Ok(d)
+    }
+}
+
 pub type Vertex = [f32; 3];
 
 impl Record for [f32; 3] {
