@@ -752,12 +752,19 @@ impl ToolSettings {
                         Ok(v) => { self.$ints = v as i32; true }
                         Err(_) => false,
                     })*
-                    _ => false,
+                    // faceposer_flex<i>: the face entity's flex controller sliders
+                    _ => match key.strip_prefix("faceposer_flex").and_then(|i| i.parse::<usize>().ok()) {
+                        Some(i) if i < self.faceposer_flex.len() => match value.trim().parse::<f32>() {
+                            Ok(v) => { self.faceposer_flex[i] = v; true }
+                            Err(_) => false,
+                        },
+                        _ => false,
+                    },
                 }
             };
         }
         fields!(
-            axis_forcelimit, axis_torquelimit, axis_hingefriction, weld_forcelimit, rope_forcelimit,
+            faceposer_scale, axis_forcelimit, axis_torquelimit, axis_hingefriction, weld_forcelimit, rope_forcelimit,
             rope_addlength, rope_width, ballsocket_forcelimit, slider_width, elastic_constant,
             elastic_damping, elastic_rdamping, elastic_width, hydraulic_width, hydraulic_addlength,
             hydraulic_speed, winch_rope_width, winch_fwd_speed, winch_bwd_speed, muscle_width,

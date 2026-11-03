@@ -14724,6 +14724,30 @@ impl<'w> Server<'w> {
 
     /// Thrusters that are on with a visible effect: `(ent, GetOffset() in model space, effect)`
     /// for the client's `ThrusterEffects` draw.
+    /// faceposer.lua `BuildCPanel`: the panel for the player's face entity, the tool's rows plus
+    /// a slider per flex controller (`GetFlexName` / `GetFlexBounds`, `faceposer_flex<i>`);
+    /// None without a face entity with flexes. Returns the entity with the rows.
+    pub fn faceposer_schema(&self, player: u32) -> Option<(u32, Vec<ToolSetting>)> {
+        let ent = self.posers.get(&player)?.face_ent?;
+        let rd = self.ragdoll_of(ent)?;
+        if rd.flex_controllers.is_empty() {
+            return None;
+        }
+        let mut rows = builtin_tool_schema("faceposer");
+        for (i, fc) in rd.flex_controllers.iter().enumerate().take(96) {
+            rows.push(ToolSetting {
+                name: format!("faceposer_flex{i}"),
+                kind: ToolSettingKind::Number,
+                min: fc.min,
+                max: fc.max,
+                default: "0".into(),
+                label: fc.name.clone(),
+                options: Vec::new(),
+            });
+        }
+        Some((ent, rows))
+    }
+
     pub fn thruster_visuals(&self) -> Vec<(u32, Vec3, String)> {
         self.sandbox
             .devices()
