@@ -1270,6 +1270,10 @@ pub enum Device {
         sound: String,
         /// `ThrusterEffects` key drawn by the client while on (`none`: nothing).
         effect: String,
+        /// `thruster_damageable`: damage switches it on for 5 s (`ActivateOnDamage`).
+        damageable: bool,
+        /// `SwitchOffTime`: the time it switches off again after damage (0: none).
+        off_at: f32,
         toggle: bool,
         on: bool,
         top_z: f32,
@@ -3346,6 +3350,8 @@ impl Sandbox {
                         String::new()
                     },
                     effect: s.thruster_effect.clone(),
+                    damageable: s.thruster_damageable,
+                    off_at: 0.0,
                     toggle: s.thruster_toggle,
                     on: false,
                     top_z: shape.max.z,
@@ -4324,6 +4330,48 @@ impl Sandbox {
         }
         self.numpad.retain(|_, b| !b.is_empty());
         self.numpad.entry((player, key)).or_default().push(bind);
+    }
+
+    /// `gmod_thruster:OnTakeDamage` with `thruster_damageable`: `Switch(true)` and
+    /// `SwitchOffTime = CurTime() + 5`; false when the entity is not such a thruster.
+    pub fn thruster_damaged(&mut self, id: u32, now: f32) -> bool {
+        let Some(Device::Thruster {
+            damageable,
+            mul,
+            on,
+            rear,
+            off_at,
+            ..
+        }) = self.devices.get_mut(&id)
+        else {
+            return false;
+        };
+        if !*damageable {
+            return false;
+        }
+        if *mul == 0.0 {
+            *mul = 1.0;
+        }
+        *on = true;
+        *rear = *mul <= 0.0;
+        *off_at = now + 5.0;
+        true
+    }
+
+    /// The thruster think: `Switch(false)` once `SwitchOffTime` has passed.
+    pub fn thruster_timeouts(&mut self, now: f32) {
+        for d in self.devices.values_mut() {
+            if let Device::Thruster {
+                on, mul, off_at, ..
+            } = d
+            {
+                if *off_at > 0.0 && now > *off_at {
+                    *off_at = 0.0;
+                    *on = false;
+                    *mul = 0.0;
+                }
+            }
+        }
     }
 
     pub fn numpad(&mut self, player: u32, key: i32, down: bool) {

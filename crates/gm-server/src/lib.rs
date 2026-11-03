@@ -5461,6 +5461,8 @@ impl<'w> Server<'w> {
             return false;
         }
         self.sent_event(ent, "damage", 0, 0, amount);
+        let now = self.cur_time();
+        self.sandbox.thruster_damaged(ent, now);
         let data = self
             .models
             .get(&prop.model)
@@ -12580,6 +12582,8 @@ impl<'w> Server<'w> {
     /// The powered stool entities' `PhysicsSimulate` for this tick: thruster impulse at its top
     /// along its -z, hoverball hover acceleration and mass / gravity state, balloon lift.
     fn tick_devices(&mut self) {
+        let now = self.cur_time();
+        self.sandbox.thruster_timeouts(now);
         let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
         self.sandbox.tick_devices(dt);
         for id in self.sandbox.tick_removals(dt) {

@@ -52,6 +52,8 @@ pub enum SavedDeviceKind {
         sound: String,
         #[serde(default = "fire_effect")]
         effect: String,
+        #[serde(default)]
+        damageable: bool,
     },
     Hoverball {
         target_z: f32,
@@ -155,6 +157,7 @@ impl From<&Device> for SavedDeviceKind {
                 key_back,
                 sound,
                 effect,
+                damageable,
                 ..
             } => SavedDeviceKind::Thruster {
                 force,
@@ -164,6 +167,7 @@ impl From<&Device> for SavedDeviceKind {
                 bottom_z,
                 sound,
                 effect,
+                damageable,
                 key,
                 key_back,
             },
@@ -345,12 +349,15 @@ impl SavedDeviceKind {
                 key_back,
                 sound,
                 effect,
+                damageable,
             } => (
                 Device::Thruster {
                     force,
                     mul,
                     sound,
                     effect,
+                    damageable,
+                    off_at: 0.0,
                     toggle,
                     on: mul != 0.0,
                     top_z,

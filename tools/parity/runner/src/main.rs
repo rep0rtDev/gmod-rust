@@ -658,6 +658,8 @@ impl DeviceSpec {
         match self.kind.as_str() {
             "thruster" => gm_sandbox::Device::Thruster {
                 effect: "fire".into(),
+                damageable: false,
+                off_at: 0.0,
                 force: self.force.unwrap_or(1500.0),
                 mul: 0.0,
                 sound: String::new(),
