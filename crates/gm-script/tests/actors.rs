@@ -1304,3 +1304,65 @@ fn glua_enums_from_the_documented_tables() {
         (1174421507.0, 2.0, 64.0, 65.0, 6.0)
     );
 }
+
+/// Screen scale follows the frame size, a Mesh built from triangles draws through the client,
+/// `RealFrameTime()` comes from the frame clock, and `require` loads includes/modules.
+#[test]
+fn glua_client_globals_scale_mesh_require() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "g".into(),
+        name: "g".into(),
+        priority: 0,
+        source: r##"
+            m = Mesh()
+            m:BuildFromTriangles({ { pos = Vector(0,0,0) }, { pos = Vector(10,0,0) }, { pos = Vector(0,10,0) } })
+            drawn = 0
+            hook.Add("PostDrawOpaqueRenderables", "mesh", function()
+                m:Draw()
+                mesh.Begin(MATERIAL_QUADS, 1)
+                mesh.Position(Vector(0,0,0)) mesh.AdvanceVertex()
+                mesh.Position(Vector(1,0,0)) mesh.AdvanceVertex()
+                mesh.Position(Vector(1,1,0)) mesh.AdvanceVertex()
+                mesh.Position(Vector(0,1,0)) mesh.AdvanceVertex()
+                mesh.End()
+                scale = ScreenScale(10)
+                dt = RealFrameTime()
+            end)
+            language.Add("mytoken", "Hello")
+        "##
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let world = gm_net::ClientWorld::default();
+    rt.client_render(&world, 1280, 720);
+    std::thread::sleep(Duration::from_millis(5));
+    let draws = rt.client_render(&world, 1280, 720);
+    let tris = draws
+        .iter()
+        .filter(|d| matches!(d, gm_script::DrawCmd::WorldTri { .. }))
+        .count();
+    assert_eq!(
+        tris, 3,
+        "one mesh triangle plus two from the quad: {draws:?}"
+    );
+    let (scale, dt, phrase, loc, err): (f64, f64, String, String, bool) = rt.actors()[0]
+        .eval(
+            "return scale, dt, language.GetPhrase('#mytoken'), Localize('nothing', 'dflt'), pcall(require, 'no_such_module')",
+        )
+        .expect("eval");
+    assert_eq!(scale, 20.0);
+    assert!(dt > 0.0 && dt < 1.0, "{dt}");
+    assert_eq!(
+        (phrase.as_str(), loc.as_str(), err),
+        ("Hello", "dflt", false)
+    );
+    let skins: f64 = rt.actors()[0]
+        .eval("return NumModelSkins('models/props_c17/oildrum001.mdl')")
+        .expect("skins");
+    assert!(skins >= 0.0);
+}

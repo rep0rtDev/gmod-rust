@@ -489,6 +489,7 @@ end
 function __glua_input_frame(p)
 	pressed_this_frame, released_this_frame, typed_this_frame, double_pressed = {}, {}, {}, {}
 	if p.mx then cursor_mx, cursor_my = p.mx, p.my end
+	__glua_real_dt = p.dt or 0
 end
 
 ------------------------------------------------------------------------ killicon
@@ -1316,4 +1317,212 @@ if events then
 			end
 		end
 	end)
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- remaining client globals: screen scale, frame time, view, model info, scheme colours,
+-- language, render targets, Mesh, require/module, presets, spawn icons
+-- ---------------------------------------------------------------------------------------------
+__glua_real_dt = 0
+function RealFrameTime() return __glua_real_dt end
+function ScreenScale(n) return n * (ScrW() / 640) end
+function ScreenScaleH(n) return n * (ScrH() / 480) end
+SScale = ScreenScale
+function GetViewEntity() local lp = LocalPlayer() return IsValid(lp) and lp:GetViewEntity() or lp end
+function MainEyePos() return EyePos() end
+function MainEyeAngles() return EyeAngles() end
+function RenderAngles() return EyeAngles() end
+function NumModelSkins(model)
+	local ok, info = pcall(game.info, model)
+	return ok and type(info) == "table" and tonumber(info.skins) or 0
+end
+function GetTimeoutInfo() return false, 0 end
+function Error(...) local t = {} for i = 1, select("#", ...) do t[i] = tostring(select(i, ...)) end error(table.concat(t), 0) end
+
+-- named colours of the client scheme (resource/ClientScheme.res)
+local scheme_colors = {
+	White = Color(255, 255, 255), OffWhite = Color(221, 221, 221), DullWhite = Color(190, 190, 190), Black = Color(0, 0, 0),
+	TransparentBlack = Color(0, 0, 0, 128), Blank = Color(0, 0, 0, 0), Red = Color(255, 0, 0), Green = Color(0, 255, 0),
+	Blue = Color(0, 0, 255), Yellow = Color(255, 255, 0), Gray = Color(136, 136, 136), DarkGray = Color(72, 72, 72),
+	Orange = Color(255, 176, 0), Cyan = Color(0, 255, 255), Magenta = Color(255, 0, 255), LightGray = Color(200, 200, 200),
+	HudIcon_Green = Color(0, 160, 0), HudIcon_Red = Color(255, 64, 64), HudStatusBg = Color(0, 0, 0, 100),
+}
+function NamedColor(name) local c = scheme_colors[name] return c and Color(c.r, c.g, c.b, c.a) or nil end
+
+-- language: '#token' phrases, addons add their own
+language = language or {}
+local phrases = {}
+function language.Add(token, translation) phrases[token] = translation end
+function language.GetPhrase(token)
+	local t = tostring(token or ""):gsub("^#", "")
+	return phrases[t] or token
+end
+function Localize(token, default) local t = tostring(token or ""):gsub("^#", "") return phrases[t] or default or token end
+
+-- render targets: ITexture objects by name (the client has no RT storage - open)
+local render_targets = {}
+local TEX = {}
+TEX.__index = TEX
+function TEX:GetName() return self.__name end
+function TEX:Width() return self.__w end
+function TEX:Height() return self.__h end
+function TEX:GetMappingWidth() return self.__w end
+function TEX:GetMappingHeight() return self.__h end
+function TEX:IsError() return false end
+function TEX:IsErrorTexture() return false end
+function TEX:GetNumAnimationFrames() return 1 end
+function TEX:GetColor(x, y) return Color(0, 0, 0, 255) end
+function TEX:Download() end
+function TEX:GetFlags() return self.__flags or 0 end
+function TEX:GetImageFormat() return IMAGE_FORMAT_RGBA8888 end
+function GetRenderTargetEx(name, w, h, size_mode, depth_mode, flags, rt_flags, format)
+	local t = render_targets[name]
+	if not t then
+		t = setmetatable({ __name = name, __w = w, __h = h, __flags = flags or 0, __format = format }, TEX)
+		render_targets[name] = t
+	end
+	return t
+end
+function GetRenderTarget(name, w, h) return GetRenderTargetEx(name, w, h, RT_SIZE_NO_CHANGE, MATERIAL_RT_DEPTH_SEPARATE, 0, 0, IMAGE_FORMAT_RGBA8888) end
+function AddonMaterial(path) return Material(path) end
+
+-- Mesh / mesh.*: vertices collected in Lua, drawn through the same world triangles render.* uses
+local MESH = {}
+MESH.__index = MESH
+local building
+local function mesh_triangles(prim, verts)
+	local tris = {}
+	local n = #verts
+	if prim == MATERIAL_TRIANGLES or prim == nil then
+		for i = 1, n - 2, 3 do tris[#tris + 1] = { verts[i], verts[i + 1], verts[i + 2] } end
+	elseif prim == MATERIAL_TRIANGLE_STRIP then
+		for i = 1, n - 2 do
+			if i % 2 == 1 then tris[#tris + 1] = { verts[i], verts[i + 1], verts[i + 2] } else tris[#tris + 1] = { verts[i + 1], verts[i], verts[i + 2] } end
+		end
+	elseif prim == MATERIAL_QUADS then
+		for i = 1, n - 3, 4 do
+			tris[#tris + 1] = { verts[i], verts[i + 1], verts[i + 2] }
+			tris[#tris + 1] = { verts[i], verts[i + 2], verts[i + 3] }
+		end
+	elseif prim == MATERIAL_POLYGON then
+		for i = 2, n - 1 do tris[#tris + 1] = { verts[1], verts[i], verts[i + 1] } end
+	elseif prim == MATERIAL_LINES or prim == MATERIAL_LINE_STRIP or prim == MATERIAL_LINE_LOOP or prim == MATERIAL_POINTS then
+		-- lines and points have no area: nothing to draw as triangles
+	end
+	return tris
+end
+local function draw_tris(tris)
+	for _, t in ipairs(tris) do
+		local c = t[1].color or { r = 255, g = 255, b = 255, a = 255 }
+		hostdraw.world_tri(t[1].pos, t[2].pos, t[3].pos, { c.r / 255, c.g / 255, c.b / 255, (c.a or 255) / 255 })
+	end
+end
+function Mesh(mat) return setmetatable({ __valid = true, __material = mat, __tris = {} }, MESH) end
+function MESH:IsValid() return self.__valid == true end
+function MESH:Destroy() self.__valid = false; self.__tris = {} end
+function MESH:Draw() if self.__valid then draw_tris(self.__tris) end end
+function MESH:BuildFromTriangles(verts)
+	local vs = {}
+	for i, v in ipairs(verts) do vs[i] = { pos = v.pos, normal = v.normal, u = v.u, v = v.v, color = v.color } end
+	self.__tris = mesh_triangles(MATERIAL_TRIANGLES, vs)
+end
+mesh = mesh or {}
+function mesh.Begin(target, prim, count)
+	if type(target) == "table" and getmetatable(target) == MESH then
+		building = { mesh = target, prim = prim, verts = {}, cur = {} }
+	else
+		building = { mesh = nil, prim = target, verts = {}, cur = {} }
+	end
+end
+function mesh.Position(p) if building then building.cur.pos = p end end
+function mesh.Normal(n) if building then building.cur.normal = n end end
+function mesh.Color(r, g, b, a) if building then building.cur.color = Color(r, g, b, a) end end
+function mesh.TexCoord(stage, u, v) if building then building.cur.u, building.cur.v = u, v end end
+function mesh.TangentS(t) if building then building.cur.tangent_s = t end end
+function mesh.TangentT(t) if building then building.cur.tangent_t = t end end
+function mesh.Specular(r, g, b, a) if building then building.cur.specular = Color(r, g, b, a) end end
+function mesh.UserData(x, y, z, w) if building then building.cur.userdata = { x, y, z, w } end end
+function mesh.AdvanceVertex()
+	if not building then return end
+	building.verts[#building.verts + 1] = building.cur
+	building.cur = {}
+end
+function mesh.VertexCount() return building and #building.verts or 0 end
+function mesh.End()
+	if not building then return end
+	local tris = mesh_triangles(building.prim, building.verts)
+	if building.mesh then building.mesh.__tris = tris else draw_tris(tris) end
+	building = nil
+end
+function mesh.Quad(a, b, c, d) if building then for _, p in ipairs({ a, b, c, d }) do building.verts[#building.verts + 1] = { pos = p, color = building.cur.color } end end end
+function mesh.QuadEasy(pos, normal, w, h)
+	if not building then return end
+	local n = normal:GetNormalized()
+	local right = n:Angle():Right() * (w / 2)
+	local up = n:Angle():Up() * (h / 2)
+	mesh.Quad(pos - right + up, pos + right + up, pos + right - up, pos - right - up)
+end
+
+-- require / module: GMod's includes/modules/<name>.lua; binary modules are not a thing here
+local required = {}
+function require(name)
+	if required[name] ~= nil then return required[name] end
+	-- actors are single packages: a module is a table `module(name)` registered in this realm
+	local t = _G[name]
+	if type(t) == "table" and t._NAME == name then required[name] = t return t end
+	error("Module not found: " .. tostring(name), 2)
+end
+function module(name, ...)
+	local t = _G[name]
+	if type(t) ~= "table" then t = {}; _G[name] = t end
+	t._NAME = name
+	for i = 1, select("#", ...) do local f = select(i, ...) if type(f) == "function" then f(t) end end
+	return t
+end
+package = package or {}
+function package.seeall(t) setmetatable(t, { __index = _G }) end
+
+-- control presets (settings/presets/<name>.txt in the game): stored in the addon store
+local presets_cache
+local function presets_load()
+	if presets_cache then return presets_cache end
+	presets_cache = {}
+	if file and file.Read then local raw = file.Read("presets.json", "DATA") if raw then presets_cache = util.JSONToTable(raw) or {} end end
+	return presets_cache
+end
+function LoadPresets() return presets_load() end
+function SavePresets(p) presets_cache = p or {} if file and file.Write then file.Write("presets.json", util.TableToJSON(presets_cache)) end end
+
+-- spawn icon camera for a model: the game frames the model's bounds (open: no model bounds without the host)
+function PositionSpawnIcon(model, pos, noAngles)
+	local mins, maxs = model.GetRenderBounds and model:GetRenderBounds() or Vector(-16, -16, -16), Vector(16, 16, 16)
+	if type(mins) ~= "table" then mins, maxs = Vector(-16, -16, -16), Vector(16, 16, 16) end
+	local size = math.max(maxs.x - mins.x, maxs.y - mins.y, maxs.z - mins.z, 1)
+	local center = (mins + maxs) / 2
+	local ang = noAngles and Angle(0, 0, 0) or Angle(25, 220, 0)
+	local dist = size * 1.5
+	return { origin = center - ang:Forward() * dist, angles = ang, fov = 45, znear = 1, zfar = dist * 4 }
+end
+function OnModelLoaded(model, nummeshes, numtris, numverts, numbones, numbodyparts, numvertices) end
+function AddPropsOfParent(pnlContent, node, parentid, customProps)
+	local props = customProps or spawnmenu.GetPropTable()
+	for cat, v in SortedPairs(props) do
+		if v.parentid == parentid then
+			local n = node:AddNode(v.name or cat, v.icon)
+			n.DoPopulate = function(self)
+				if self.PropPanel then return end
+				self.PropPanel = vgui.Create("ContentContainer", pnlContent)
+				self.PropPanel:SetVisible(false)
+				for _, c in ipairs(v.contents or {}) do spawnmenu.CreateContentIcon(c.type or "model", self.PropPanel, c) end
+			end
+			n.DoClick = function(self) self:DoPopulate(); pnlContent:SwitchPanel(self.PropPanel) end
+			AddPropsOfParent(pnlContent, n, v.id or cat, customProps)
+		end
+	end
+end
+local saved_cursor
+function RememberCursorPosition() saved_cursor = { gui.MousePos() } end
+function RestoreCursorPosition() if saved_cursor then gui.SetMousePos(saved_cursor[1], saved_cursor[2]) end end
+for _, n in ipairs({ "RenderDoF", "RenderStereoscopy", "RenderSuperDoF", "JS_Language", "JS_Utility", "JS_Workshop", "WorkshopFileBase", "VisualizeLayout" }) do
+	_G[n] = stub(n)
 end

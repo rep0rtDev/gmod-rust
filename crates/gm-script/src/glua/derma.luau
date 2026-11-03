@@ -2446,6 +2446,35 @@ local function tooltip_think()
 end
 if events then events.on("render.hud", function() tooltip_think() end) end
 
+-- tooltip globals (the game's tooltip helpers over the same tooltip)
+function FindTooltip(panel)
+	local target = panel
+	while target and not target.__tooltip do target = target.parent end
+	return target and tooltip and tooltip.__valid and tooltip.__target == target and tooltip or nil
+end
+function ChangeTooltip(panel)
+	if tooltip and tooltip.__valid then tooltip:Remove() end
+	tooltip = vgui.Create("DTooltip"); tooltip:OpenForPanel(panel)
+end
+function EndTooltip(panel) if tooltip and tooltip.__valid and (panel == nil or tooltip.__target == panel) then tooltip:Remove(); tooltip = nil end end
+function RemoveTooltip(panel) EndTooltip(panel) end
+
+-- the HUD panel: a screen-sized, mouse-transparent child of the world panel that addons parent HUD elements to
+local hud_panel
+function GetHUDPanel()
+	if not hud_panel or not hud_panel.__valid then
+		hud_panel = vgui.Create("DPanel", world_panel); hud_panel:SetPos(0, 0); hud_panel:SetSize(ScrW(), ScrH())
+		hud_panel.mouse_input = false; hud_panel.Paint = function() end; hud_panel.__is_hud = true
+	end
+	hud_panel:SetSize(ScrW(), ScrH())
+	return hud_panel
+end
+function GetOverlayPanel() return GetHUDPanel() end
+function TextEntryLoseFocus() if focused and focused.__class == "DTextEntry" then focused:KillFocus() end end
+function ValidPanel(p) return IsValid(p) end
+function Label(text, parent) local l = vgui.Create("DLabel", parent); l:SetText(text or ""); l:SizeToContents(); return l end
+function VGUIRect(x, y, w, h) local p = vgui.Create("DPanel"); p:SetPos(x, y); p:SetSize(w, h); return p end
+
 -- DPanelList (legacy list of panels), DIconLayout, DGrid, DTileLayout
 local DPanelList = derma.DefineControl("DPanelList", "Panel list", {}, "DScrollPanel")
 function DPanelList:Init() DScrollPanel.Init(self); self.Items = {}; self.__list_pad, self.__spacing, self.__autosize = 0, 0, false end

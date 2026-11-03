@@ -47,6 +47,8 @@ pub struct Runtime {
     /// Client realm: the cursor in screen pixels while it is visible (menus / vgui), `None`
     /// while the mouse looks; `render.hud` carries it as `mx`, `my`, `cursor`.
     pub cursor: Option<(f32, f32)>,
+    /// Client realm: when the previous frame was rendered, for `RealFrameTime()` (`dt`).
+    last_frame: Option<std::time::Instant>,
     /// Where every loaded addon came from (directory or `.gmr`), for reloads by id.
     pub addon_paths: std::collections::BTreeMap<String, std::path::PathBuf>,
     /// Client-realm packages built by `load_addon`/`check_reloads` on the server, until the
@@ -97,6 +99,7 @@ impl Runtime {
         Runtime {
             realm: "server".into(),
             cursor: None,
+            last_frame: None,
             addon_paths: std::collections::BTreeMap::new(),
             published: Vec::new(),
             actors: Vec::new(),
@@ -379,6 +382,13 @@ impl Runtime {
             p.floats.push(("my", my as f64));
         }
         p.bools.push(("cursor", self.cursor.is_some()));
+        let now = std::time::Instant::now();
+        let dt = self
+            .last_frame
+            .map(|t| now.duration_since(t).as_secs_f64())
+            .unwrap_or(0.0);
+        self.last_frame = Some(now);
+        p.floats.push(("dt", dt));
         self.parallel(&snap, "render.hud", &p);
         self.release_snapshots();
         let mut out = Vec::new();

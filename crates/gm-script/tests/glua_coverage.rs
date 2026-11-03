@@ -39,6 +39,18 @@ fn manifest_claims_only_what_the_vm_provides() {
     for e in manifest["functions"].as_array().unwrap() {
         let addr = e["address"].as_str().unwrap();
         addresses.insert(addr.to_owned());
+        // a documented alias page (`Global.error(lowercase)`) is probed by its real name
+        let probe = if addr.contains('(') {
+            let sep = if e["kind"] == "libraryfunc" { "." } else { ":" };
+            format!(
+                "{}{sep}{}",
+                e["parent"].as_str().unwrap(),
+                e["name"].as_str().unwrap()
+            )
+        } else {
+            addr.to_owned()
+        };
+        let addr = probe.as_str();
         match e["status"].as_str().unwrap() {
             "implemented" => {
                 claimed += 1;

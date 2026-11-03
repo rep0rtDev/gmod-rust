@@ -91,6 +91,10 @@ if present is not None:
     stubs = stubs or set()
     for e in entries:
         a = e['address']
+        if '(' in a:
+            # a documented alias page (`Global.error(lowercase)`): probe the real name
+            sep = '.' if e['kind'] == 'libraryfunc' else ':'
+            a = f"{e['parent']}{sep}{e['name']}"
         if e['kind'] in ('enum', 'structure', 'type'):
             e['status'] = 'implemented' if a in present else e['status']
             continue
