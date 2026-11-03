@@ -254,6 +254,9 @@ pub struct PlayerSnap {
     /// The prop the player is driving (the `drive` property), if any.
     pub driving: Option<u32>,
     pub alive: bool,
+    /// `Player:Frags()` / `Player:Deaths()` for the scoreboard.
+    pub frags: u16,
+    pub deaths: u16,
     pub health: i16,
     pub armor: i16,
     /// `Player:SetFOV`: the server-set field of view (0: the client's own) and its blend time.
@@ -499,7 +502,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 13;
+pub const PROTOCOL: u16 = 14;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -978,6 +981,8 @@ impl ServerMsg {
                     w.u32(p.held.unwrap_or(0));
                     w.u32(p.driving.unwrap_or(0));
                     w.bool(p.alive);
+                    w.u16(p.frags);
+                    w.u16(p.deaths);
                     w.i16(p.health);
                     w.i16(p.armor);
                     w.f32(p.fov);
@@ -1299,6 +1304,8 @@ impl ServerMsg {
                             h => Some(h),
                         },
                         alive: r.bool()?,
+                        frags: r.u16()?,
+                        deaths: r.u16()?,
                         health: r.i16()?,
                         armor: r.i16()?,
                         fov: r.f32()?,

@@ -80,6 +80,8 @@ mod tests {
                 held: Some(2),
                 driving: None,
                 alive: true,
+                frags: 0,
+                deaths: 0,
                 health: 100,
                 armor: 0,
                 fov: 0.0,

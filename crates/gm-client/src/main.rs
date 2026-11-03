@@ -798,6 +798,8 @@ struct App {
     menu_cache: std::cell::RefCell<MenuCache>,
     /// C held: the cursor is free and a right-click asks a prop for its properties.
     context_held: bool,
+    /// `+showscores` held (TAB): the sandbox scoreboard.
+    scoreboard: bool,
     context: Option<ContextMenu>,
     /// Scripted weapons as last seen (`ClientWorld::weapon_defs`) and their viewmodel / world
     /// model entries after the stock table (leaked once per change: the table is `'static`).
@@ -2839,6 +2841,7 @@ impl App {
                 "invnext" => self.wsel_step(1),
                 "invprev" => self.wsel_step(-1),
                 "+menu" => self.open_menu(),
+                "+showscores" => self.scoreboard = true,
                 "+voicerecord" => self.voice.start(),
                 "+menu_context" => {
                     if self.menu.is_none() && !self.context_held {
@@ -2864,6 +2867,7 @@ impl App {
             }
         } else {
             match cmd {
+                "+showscores" => self.scoreboard = false,
                 "+menu" if self.menu.is_some() => {
                     self.menu = None;
                     self.panel_drag = None;
@@ -4001,6 +4005,105 @@ impl App {
             };
             items.extend(layout.items);
             return items;
+        }
+        if self.scoreboard && !self.console.open {
+            // sandbox scoreboard (`scoreboard.lua`): dark panel centred near the top,
+            // one row per player - name, kills, deaths
+            let lh = g.ui.line_height();
+            let players = &self.sim.client.world.players;
+            let bw = (w * 0.5).clamp(480.0, 900.0);
+            let x0 = ((w - bw) * 0.5).floor();
+            let y0 = (h * 0.08).floor();
+            let rows = players.len() as f32;
+            let bh = lh * (rows + 2.0) + 24.0;
+            let dim = [0.0, 0.0, 0.0, 0.6];
+            items.push(UiItem::Rect {
+                x: x0,
+                y: y0,
+                w: bw,
+                h: bh,
+                color: [0.0, 0.0, 0.0, 0.8],
+            });
+            items.push(UiItem::Rect {
+                x: x0,
+                y: y0,
+                w: bw,
+                h: lh + 10.0,
+                color: [0.0, 0.0, 0.0, 0.5],
+            });
+            let title = format!(
+                "{}  -  {} player{}",
+                self.map_name,
+                players.len(),
+                if players.len() == 1 { "" } else { "s" }
+            );
+            items.push(UiItem::Text {
+                font: None,
+                x: x0 + 12.0,
+                y: y0 + 5.0,
+                text: title,
+                color: white,
+            });
+            let col_k = x0 + bw - 200.0;
+            let col_d = x0 + bw - 100.0;
+            let mut y = y0 + lh + 16.0;
+            for (label, x) in [("Name", x0 + 12.0), ("Kills", col_k), ("Deaths", col_d)] {
+                items.push(UiItem::Text {
+                    font: None,
+                    x,
+                    y,
+                    text: label.to_string(),
+                    color: [0.7, 0.7, 0.7, 1.0],
+                });
+            }
+            y += lh + 4.0;
+            let mut sorted: Vec<_> = players.iter().collect();
+            sorted.sort_by(|a, b| {
+                b.frags
+                    .cmp(&a.frags)
+                    .then(a.deaths.cmp(&b.deaths))
+                    .then(a.id.cmp(&b.id))
+            });
+            for (i, p) in sorted.iter().enumerate() {
+                if i % 2 == 1 {
+                    items.push(UiItem::Rect {
+                        x: x0 + 4.0,
+                        y,
+                        w: bw - 8.0,
+                        h: lh,
+                        color: dim,
+                    });
+                }
+                let me = Some(p.id) == self.sim.client.player_id;
+                let c = if me { [1.0, 0.9, 0.5, 1.0] } else { white };
+                let name = if p.alive {
+                    p.name.clone()
+                } else {
+                    format!("{} (dead)", p.name)
+                };
+                items.push(UiItem::Text {
+                    font: None,
+                    x: x0 + 12.0,
+                    y,
+                    text: name,
+                    color: c,
+                });
+                items.push(UiItem::Text {
+                    font: None,
+                    x: col_k,
+                    y,
+                    text: p.frags.to_string(),
+                    color: c,
+                });
+                items.push(UiItem::Text {
+                    font: None,
+                    x: col_d,
+                    y,
+                    text: p.deaths.to_string(),
+                    color: c,
+                });
+                y += lh;
+            }
         }
         if !self.console.open {
             let hud = format!(
@@ -5332,6 +5435,7 @@ fn main() -> Result<()> {
         lang,
         menu_cache: Default::default(),
         context_held: false,
+        scoreboard: false,
         context: None,
         scripted_defs: Vec::new(),
         scripted_vms: Vec::new(),
