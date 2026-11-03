@@ -92,6 +92,15 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   space. Materials without `$bumpmap` (or faces vrad did not bump) use the flat page. Open:
   `$ssbump` (self-shadowed bump: the texture holds the three weights directly), `$normalmap`
   on water.
+  `$envmap` (open): gm_construct bakes 28 `env_cubemap` samples (`LUMP_CUBEMAPS` 42, 16-byte
+  records: origin x y z, size; e.g. (1280, 2432, 32, 6)) into 56 pakfile VTFs
+  `materials/maps/gm_construct/c<x>_<y>_<z>.vtf` and `.hdr.vtf`; vbsp also patches each
+  envmapped material per sample (`maps/gm_construct/<mat>_<x>_<y>_<z>`, which
+  `canonical_name` already folds back). The map's own world materials keep `$envmap`
+  commented out, so the visible users are props (`VertexLitGeneric` `$envmap env_cubemap`
+  with `$envmaptint` / `$basealphaenvmapmask` / `$normalmapalphaenvmapmask`). Prerequisite:
+  the content mount does not yet list BSP pakfile entries (`find` returns none), so the
+  cubemap VTFs are unreachable through `material::load_texture`.
   Done since: the eye's water volume (`LUMP_LEAFWATERDATA` 36: surface z, min z, surface
   texinfo; its `CONTENTS_WATER` leaves' boxes) switches the view fog of the world, model and
   3D-skybox passes (the latter in skybox units) to the surface material's `$bottommaterial`
