@@ -1147,6 +1147,16 @@ impl App {
         let beam_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeam");
         let beam_active_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeama");
         let glow1 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow1");
+        eprintln!(
+            "physgun beam materials: beam {} active {} glow {}",
+            if beam_mat.is_some() { "ok" } else { "MISSING" },
+            if beam_active_mat.is_some() {
+                "ok"
+            } else {
+                "MISSING"
+            },
+            if glow1.is_some() { "ok" } else { "MISSING" }
+        );
         let glow2 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow2");
         let gg_core = world.sprite_material(&gpu, &self.mount, "sprites/orangecore1");
         let gg_glow = world.sprite_material(&gpu, &self.mount, "sprites/glow04_noz");
@@ -3948,6 +3958,18 @@ impl App {
                 } else {
                     g.beam_mat.as_ref()
                 };
+                if std::env::var_os("GM_BEAM_LOG").is_some() {
+                    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                    if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        .is_multiple_of(60)
+                    {
+                        eprintln!(
+                            "physgun beam: start {start:?} end {end:?} len {len:.0} held {} mat {}",
+                            held.is_some(),
+                            mat.is_some()
+                        );
+                    }
+                }
                 if let Some(bm) = mat {
                     let (v, i) = g.world.beam_strip(
                         &points,
