@@ -217,6 +217,11 @@ struct Gfx {
     beam_active_mat: Option<wgpu::BindGroup>,
     glow1: Option<wgpu::BindGroup>,
     glow2: Option<wgpu::BindGroup>,
+    /// Gravity gun: `sprites/orangecore1` at the muzzle, `glow04_noz` on the fork tips,
+    /// `orangelight1` beams from the tips to the held prop (the game's physcannon sprites).
+    gg_core: Option<wgpu::BindGroup>,
+    gg_glow: Option<wgpu::BindGroup>,
+    gg_beam: Option<wgpu::BindGroup>,
     ui: UiRenderer,
 }
 
@@ -1018,6 +1023,9 @@ impl App {
         let beam_active_mat = world.sprite_material(&gpu, &self.mount, "sprites/physbeama");
         let glow1 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow1");
         let glow2 = world.sprite_material(&gpu, &self.mount, "sprites/physg_glow2");
+        let gg_core = world.sprite_material(&gpu, &self.mount, "sprites/orangecore1");
+        let gg_glow = world.sprite_material(&gpu, &self.mount, "sprites/glow04_noz");
+        let gg_beam = world.sprite_material(&gpu, &self.mount, "sprites/orangelight1");
         let ui = UiRenderer::new(&gpu, &self.mount, format, quality.msaa)?;
         let mut ui = ui;
         {
@@ -1160,6 +1168,9 @@ impl App {
             models: Default::default(),
             player_box,
             beam_mat,
+            gg_core,
+            gg_glow,
+            gg_beam,
             beam_active_mat,
             glow1,
             glow2,
@@ -3656,36 +3667,36 @@ impl App {
         // additive with the game's `sprites/physbeam`, a glow at each end
         let mut additive: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
             Vec::new();
+        let mut dlights: Vec<gm_render::world::DLight> = Vec::new();
+        // a viewmodel attachment in world space (the viewmodel sits at the eye)
+        let vm_attach = |name: &str| -> Option<Vec3> {
+            let (Some(vm), Some((seq, t))) = (vm, vm_seq) else {
+                return None;
+            };
+            let m = g.models.get(vm.path)?.as_ref()?;
+            let w = m.bone_world(seq, t, None, &[])?;
+            let a = m.attachment(name, &w)?;
+            Some(
+                gm_render::world::model_transform(camera.position, self.view)
+                    .transform_point3(a.w_axis.truncate()),
+            )
+        };
+        let held_pos = self
+            .sim
+            .client
+            .world
+            .players
+            .iter()
+            .find(|p| Some(p.id) == me)
+            .and_then(|p| p.held)
+            .and_then(|id| ents.get(&id))
+            .map(|e| e.pos);
         if self.weapon == 0 && self.mouse.contains(&0) {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
-            let muzzle = match (vm, vm_seq) {
-                (Some(vm), Some((seq, t))) => g
-                    .models
-                    .get(vm.path)
-                    .and_then(|m| m.as_ref())
-                    .and_then(|m| {
-                        let w = m.bone_world(seq, t, None, &[])?;
-                        let a = m.attachment("muzzle", &w)?;
-                        Some(
-                            gm_render::world::model_transform(camera.position, self.view)
-                                .transform_point3(a.w_axis.truncate()),
-                        )
-                    }),
-                _ => None,
-            };
-            let start =
-                muzzle.unwrap_or(camera.position + right * 6.0 - Vec3::Z * 6.0 + fwd * 12.0);
-            let held = self
-                .sim
-                .client
-                .world
-                .players
-                .iter()
-                .find(|p| Some(p.id) == me)
-                .and_then(|p| p.held)
-                .and_then(|id| ents.get(&id))
-                .map(|e| e.pos);
+            let start = vm_attach("muzzle")
+                .unwrap_or(camera.position + right * 6.0 - Vec3::Z * 6.0 + fwd * 12.0);
+            let held = held_pos;
             let end = held.unwrap_or_else(|| {
                 self.sim
                     .collision
@@ -3700,6 +3711,17 @@ impl App {
             let len = d.length();
             if len > 1.0 {
                 let color = PHYSGUN_BEAM_COLOR;
+                // the beam lights its end and the muzzle (the game's physgun dlights)
+                dlights.push(gm_render::world::DLight {
+                    pos: end,
+                    radius: 160.0,
+                    color: Vec3::from(color),
+                });
+                dlights.push(gm_render::world::DLight {
+                    pos: start,
+                    radius: 48.0,
+                    color: Vec3::from(color) * 0.5,
+                });
                 // cubic bezier: out along the barrel for half the distance, into the end point
                 let (p0, p1, p2, p3) = (start, start + fwd * (len * 0.5), end, end);
                 let n = 24;
@@ -3740,6 +3762,50 @@ impl App {
                 }
             }
         }
+        // gravity gun: the core glows at the muzzle, the fork tips glow, and while a prop is
+        // held the tips beam to it and the gun lights its surroundings orange
+        if self.weapon == 6 {
+            let fwd = camera.forward();
+            let right = fwd.cross(Vec3::Z).normalize_or_zero();
+            let core = vm_attach("muzzle")
+                .unwrap_or(camera.position + right * 6.0 - Vec3::Z * 5.0 + fwd * 14.0);
+            let holding = held_pos.is_some();
+            let orange = [1.0f32, 0.45, 0.1];
+            if let Some(m) = &g.gg_core {
+                let size = if holding { 10.0 } else { 6.0 };
+                let (v, i) = g.world.sprite_quad(core, size, orange, &camera);
+                additive.push((m, v, i));
+            }
+            for tip in ["fork1t", "fork2t"] {
+                let Some(p) = vm_attach(tip) else {
+                    continue;
+                };
+                if let Some(m) = &g.gg_glow {
+                    let (v, i) = g.world.sprite_quad(p, 4.0, orange, &camera);
+                    additive.push((m, v, i));
+                }
+                if let (Some(m), Some(end)) = (&g.gg_beam, held_pos) {
+                    let scroll = -self.fps_at.elapsed().as_secs_f32() * 4.0;
+                    let (v, i) = g.world.beam_strip(
+                        &[p, end],
+                        2.5,
+                        orange,
+                        camera.position,
+                        scroll,
+                        1.0 / 32.0,
+                    );
+                    additive.push((m, v, i));
+                }
+            }
+            if holding {
+                dlights.push(gm_render::world::DLight {
+                    pos: core,
+                    radius: 128.0,
+                    color: Vec3::from(orange),
+                });
+            }
+        }
+        g.world.set_dlights(&dlights);
         let target = ModelTarget {
             color: &attach,
             resolve,

@@ -98,8 +98,12 @@ fn envmap3_params(mat: &material::Material) -> [f32; 4] {
     }
 }
 
-fn selfillum_tint(mat: &material::Material) -> [f32; 4] {
-    let t = mat.selfillum_tint;
+fn selfillum_tint(mat: &material::Material, weapon_color: Vec3) -> [f32; 4] {
+    let t = if mat.weapon_color_tint {
+        weapon_color.to_array()
+    } else {
+        mat.selfillum_tint
+    };
     // w: `$envmapmaskscale` (the mask texture's uv scale)
     [t[0], t[1], t[2], mat.envmapmask_scale.max(1e-3)]
 }
@@ -288,7 +292,23 @@ struct CameraUniform {
     /// valid (y), clip on (w).
     /// ... and seconds since start (z) for scrolling water normals.
     clip: [f32; 4],
+    /// Dynamic lights: position (xyz) and radius in units (w, 0 = none).
+    dlight_pos: [[f32; 4]; 4],
+    /// Their linear colours (rgb).
+    dlight_color: [[f32; 4]; 4],
 }
+
+/// A dynamic point light for this frame (the physgun beam's end, a muzzle flash): colour times
+/// `(1 - d / radius)^2` times the surface's facing, added to the baked light.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DLight {
+    pub pos: Vec3,
+    pub radius: f32,
+    pub color: Vec3,
+}
+
+/// `cl_weaponcolor` default: the physgun's glow and beam.
+pub const DEFAULT_WEAPON_COLOR: Vec3 = Vec3::new(0.3, 1.8, 2.1);
 
 /// Linear distance fog of an `env_fog_controller` (the world) or a `sky_camera` (its 3D
 /// skybox, in skybox units): the fraction `(depth - start) / (end - start)` of the fog
@@ -493,6 +513,11 @@ pub struct WorldRenderer {
     pub tm_rate: f32,
     /// The controller's `SetBloomScale` (bloom strength added in the post pass).
     pub tm_bloom: f32,
+    /// The local player's `cl_weaponcolor`: `$selfillumtint` of materials with the
+    /// PlayerWeaponColor proxy (set before the physgun's model loads).
+    pub weapon_color: Vec3,
+    /// This frame's dynamic lights (the first four count).
+    dlights: Vec<DLight>,
     pipeline: wgpu::RenderPipeline,
     /// The 2D sky cube: no back-face culling (the eye is inside it).
     sky_pipeline: wgpu::RenderPipeline,
@@ -1971,7 +1996,7 @@ impl WorldRenderer {
                     envmap: envmap_params(mat),
                     envmap2: envmap2_params(mat),
                     envmap3: envmap3_params(mat),
-                    selfillum_tint: selfillum_tint(mat),
+                    selfillum_tint: selfillum_tint(mat, DEFAULT_WEAPON_COLOR),
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -2272,6 +2297,8 @@ impl WorldRenderer {
         );
 
         Ok(WorldRenderer {
+            weapon_color: DEFAULT_WEAPON_COLOR,
+            dlights: Vec::new(),
             lm_scale,
 
             exposure,
@@ -2527,6 +2554,14 @@ impl WorldRenderer {
             forward: [fw.x, fw.y, fw.z, 0.0],
             fog_color: [f.color[0], f.color[1], f.color[2], f.max_density],
             fog_range: [f.start, f.end, cam.near, cam.far],
+            dlight_pos: std::array::from_fn(|i| match self.dlights.get(i) {
+                Some(l) => [l.pos.x, l.pos.y, l.pos.z, l.radius],
+                None => [0.0; 4],
+            }),
+            dlight_color: std::array::from_fn(|i| match self.dlights.get(i) {
+                Some(l) => [l.color.x, l.color.y, l.color.z, 0.0],
+                None => [0.0; 4],
+            }),
             clip: {
                 let t = self.t0.elapsed().as_secs_f32();
                 match clip {
@@ -2535,6 +2570,13 @@ impl WorldRenderer {
                 }
             },
         }
+    }
+
+    /// The dynamic lights of the next frame (at most four are lit).
+    pub fn set_dlights(&mut self, lights: &[DLight]) {
+        self.dlights.clear();
+        self.dlights
+            .extend(lights.iter().filter(|l| l.radius > 0.0).take(4));
     }
 
     /// The 2D sky cube around an eye at the origin, clearing colour and depth.
@@ -2962,7 +3004,7 @@ impl WorldRenderer {
                         envmap: envmap_params(mat),
                         envmap2: envmap2_params(mat),
                         envmap3: envmap3_params(mat),
-                        selfillum_tint: selfillum_tint(mat),
+                        selfillum_tint: selfillum_tint(mat, self.weapon_color),
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });

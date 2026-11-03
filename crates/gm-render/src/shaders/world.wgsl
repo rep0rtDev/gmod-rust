@@ -9,6 +9,8 @@ struct Camera {
     fog_color: vec4<f32>,
     fog_range: vec4<f32>,
     clip: vec4<f32>,
+    dlight_pos: array<vec4<f32>, 4>,
+    dlight_color: array<vec4<f32>, 4>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -134,6 +136,20 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         light = bumped;
     }
     light = light * camera.lm_scale;
+    // dynamic lights: colour * (1 - d / r)^2 * facing (unlit surfaces skip them)
+    for (var i = 0u; i < 4u; i++) {
+        let lp = camera.dlight_pos[i];
+        if lp.w > 0.0 {
+            let dv = lp.xyz - in.world;
+            let d = length(dv);
+            let k = clamp(1.0 - d / lp.w, 0.0, 1.0);
+            var facing = 1.0;
+            if dot(in.normal, in.normal) > 0.0 {
+                facing = max(dot(normalize(in.normal), dv / max(d, 1e-3)), 0.0);
+            }
+            light += camera.dlight_color[i].rgb * (k * k * facing);
+        }
+    }
     if material.unlit != 0u {
         light = vec3<f32>(1.0);
     }

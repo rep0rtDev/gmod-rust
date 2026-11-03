@@ -54,6 +54,9 @@ pub struct Material {
     pub selfillum: bool,
     /// `$selfillumtint` (1 1 1 when absent).
     pub selfillum_tint: [f32; 3],
+    /// `Proxies { PlayerWeaponColor { resultVar $selfillumtint } }`: the tint is the player's
+    /// weapon colour (`cl_weaponcolor`) - the physgun's glowing parts.
+    pub weapon_color_tint: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -283,6 +286,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         mat.additive = matches!(get("$additive").as_deref(), Some("1"));
         mat.nocull = matches!(get("$nocull").as_deref(), Some("1"));
         mat.selfillum = matches!(get("$selfillum").as_deref(), Some("1"));
+        mat.weapon_color_tint = player_weapon_color(params);
         mat.ssbump = matches!(get("$ssbump").as_deref(), Some("1"));
         let tint = vec_of(get("$selfillumtint"));
         mat.selfillum_tint = if tint.len() >= 3 {
@@ -484,6 +488,27 @@ fn vec_of(v: Option<String>) -> Vec<f32> {
             .collect()
     })
     .unwrap_or_default()
+}
+
+/// Whether the VMT's `Proxies` block has `PlayerWeaponColor` writing `$selfillumtint`.
+fn player_weapon_color(params: &[Node]) -> bool {
+    let Some(proxies) = params.iter().find_map(|n| match &n.value {
+        Value::Block(b) if n.key.eq_ignore_ascii_case("proxies") => Some(b),
+        _ => None,
+    }) else {
+        return false;
+    };
+    proxies.iter().any(|n| match &n.value {
+        Value::Block(b) if n.key.eq_ignore_ascii_case("playerweaponcolor") => {
+            b.iter().any(|m| match &m.value {
+                Value::Str(s) if m.key.eq_ignore_ascii_case("resultvar") => {
+                    s.eq_ignore_ascii_case("$selfillumtint")
+                }
+                _ => false,
+            })
+        }
+        _ => false,
+    })
 }
 
 /// The `Proxies { TextureScroll { texturescrollvar <var> rate angle } }` block of a VMT for
