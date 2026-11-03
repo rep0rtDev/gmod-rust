@@ -39,6 +39,20 @@ struct MaterialParams {
     blend: u32,
     /// `$detail`: scale, blend factor (0 = none), blend mode, 0.
     detail: [f32; 4],
+    /// `$basetexturetransform2` 2x2 (row-major).
+    uv2_m: [f32; 4],
+    /// `$basetexturetransform2` translation, whether `$blendmodulatetexture` is bound, 0.
+    uv2_t: [f32; 4],
+}
+
+fn uv2_params(mat: &material::Material, modulate: bool) -> ([f32; 4], [f32; 4]) {
+    let t = mat
+        .base2_transform
+        .unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+    (
+        [t[0], t[1], t[2], t[3]],
+        [t[4], t[5], modulate as u32 as f32, 0.0],
+    )
 }
 
 fn detail_params(mat: &material::Material) -> [f32; 4] {
@@ -297,6 +311,8 @@ fn build_sky_cube(
             translucent: 0,
             blend: 0,
             detail: [0.0; 4],
+            uv2_m: [1.0, 0.0, 0.0, 1.0],
+            uv2_t: [0.0; 4],
         }),
         usage: wgpu::BufferUsages::UNIFORM,
     });
@@ -340,6 +356,10 @@ fn build_sky_cube(
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
+                    resource: wgpu::BindingResource::TextureView(detail),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
                     resource: wgpu::BindingResource::TextureView(detail),
                 },
                 wgpu::BindGroupEntry {
@@ -1348,6 +1368,16 @@ impl WorldRenderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1418,6 +1448,7 @@ impl WorldRenderer {
         .create_view(&Default::default());
         let mut detail_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
         let mut base2_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
+        let mut modulate_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
         for (name, idx, sky) in jobs {
             let Some(Some((mat, rgba))) = materials.get(name) else {
                 continue;
@@ -1443,6 +1474,23 @@ impl WorldRenderer {
                 });
             let blend = base2_view.is_some() as u32;
             let base2_view = base2_view.unwrap_or(&detail_fallback);
+            let modulate_view = mat
+                .blend_modulate
+                .as_ref()
+                .filter(|_| blend != 0)
+                .and_then(|t| {
+                    modulate_cache
+                        .entry(t.clone())
+                        .or_insert_with(|| {
+                            let rgba = material::load_texture(mount, t, 1024).ok()?;
+                            let tex =
+                                upload_rgba_mips(gpu, &rgba, wgpu::TextureFormat::Rgba8Unorm, t);
+                            Some(tex.create_view(&Default::default()))
+                        })
+                        .as_ref()
+                });
+            let uv2 = uv2_params(mat, modulate_view.is_some());
+            let modulate_view = modulate_view.unwrap_or(&detail_fallback);
             let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("material params"),
                 contents: bytemuck::bytes_of(&MaterialParams {
@@ -1451,6 +1499,8 @@ impl WorldRenderer {
                     translucent: mat.translucent as u32,
                     blend,
                     detail: detail_params(mat),
+                    uv2_m: uv2.0,
+                    uv2_t: uv2.1,
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -1495,6 +1545,10 @@ impl WorldRenderer {
                     wgpu::BindGroupEntry {
                         binding: 4,
                         resource: wgpu::BindingResource::TextureView(base2_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(modulate_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -2003,6 +2057,8 @@ impl WorldRenderer {
                         translucent: mat.translucent as u32,
                         blend: 0,
                         detail: detail_params(mat),
+                        uv2_m: [1.0, 0.0, 0.0, 1.0],
+                        uv2_t: [0.0; 4],
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
@@ -2027,6 +2083,10 @@ impl WorldRenderer {
                         },
                         wgpu::BindGroupEntry {
                             binding: 4,
+                            resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
                             resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
                         },
                         wgpu::BindGroupEntry {
@@ -2087,6 +2147,8 @@ impl WorldRenderer {
                 translucent: 0,
                 blend: 0,
                 detail: [0.0; 4],
+                uv2_m: [1.0, 0.0, 0.0, 1.0],
+                uv2_t: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -2111,6 +2173,10 @@ impl WorldRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
                     resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
                 },
                 wgpu::BindGroupEntry {
@@ -2275,6 +2341,8 @@ impl WorldRenderer {
                 translucent: 0,
                 blend: 0,
                 detail: [0.0; 4],
+                uv2_m: [1.0, 0.0, 0.0, 1.0],
+                uv2_t: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -2306,6 +2374,10 @@ impl WorldRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
                     resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
                 },
                 wgpu::BindGroupEntry {

@@ -60,8 +60,12 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   construct_sand with `$basetexturetransform2 "center .5 .5 scale 1.2 1.2 rotate 30"` and
   `$blendmodulatetexture gm_construct/grass_blendmask`): the base is
   `lerp($basetexture, $basetexture2, a)` with `a` the displacement vertex alpha / 255 (0 shows
-  the first texture, 255 the second), interpolated across the triangle. Open: the second
-  texture's own transform and the blend-modulate mask (the game sharpens the transition by it).
+  the first texture, 255 the second), interpolated across the triangle; `$basetexturetransform2`
+  (`T(translate) T(center) R(rotate) S(scale) T(-center)` on the second texture's uv) and
+  `$blendmodulatetexture` (sampled at the base uv: `blend = smoothstep(max(0, g - r),
+  min(1, g + r), alpha)`, the mask's r a half-width and g the centre of the band, so the
+  transition follows the mask instead of the smooth vertex ramp) as in the game's
+  `lightmappedgeneric`.
   Water (`gm_construct/water_13.vmt`, shader `Water`): `$abovewater 1`, `$refracttexture
   _rt_WaterRefraction`, `$reflecttexture _rt_WaterReflection` (`$reflectamount 0.4`,
   `$reflect3dskybox 1`, `$reflectentities 1`), `$bumpmap gm_construct/water_13_dudv`,

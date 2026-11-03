@@ -22,10 +22,13 @@ struct MaterialParams {
     translucent: u32,
     blend: u32,
     detail: vec4<f32>,
+    uv2_m: vec4<f32>,
+    uv2_t: vec4<f32>,
 };
 @group(1) @binding(2) var<uniform> material: MaterialParams;
 @group(1) @binding(3) var detail: texture_2d<f32>;
 @group(1) @binding(4) var base2: texture_2d<f32>;
+@group(1) @binding(5) var blend_modulate: texture_2d<f32>;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -60,8 +63,20 @@ fn vs_main(in: VsIn) -> VsOut {
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // WorldVertexTransition: lerp($basetexture, $basetexture2, displacement vertex alpha)
     let base1 = textureSample(base, base_sampler, in.uv);
-    let base2_s = textureSample(base2, base_sampler, in.uv);
-    let albedo = mix(base1, base2_s, in.alpha * f32(material.blend));
+    let uv2 = vec2<f32>(
+        material.uv2_m.x * in.uv.x + material.uv2_m.y * in.uv.y + material.uv2_t.x,
+        material.uv2_m.z * in.uv.x + material.uv2_m.w * in.uv.y + material.uv2_t.y,
+    );
+    let base2_s = textureSample(base2, base_sampler, uv2);
+    // $blendmodulatetexture: r = half-width, g = centre of the alpha band that transitions
+    let modt = textureSample(blend_modulate, base_sampler, in.uv).rg;
+    let minb = max(0.0, modt.g - modt.r);
+    let maxb = min(1.0, modt.g + modt.r);
+    var factor = in.alpha;
+    if material.uv2_t.z > 0.5 {
+        factor = smoothstep(minb, maxb, in.alpha);
+    }
+    let albedo = mix(base1, base2_s, factor * f32(material.blend));
     if material.alpha_test != 0u && albedo.a < 0.5 {
         discard;
     }

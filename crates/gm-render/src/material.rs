@@ -27,6 +27,56 @@ pub struct Material {
     pub water_fog: Option<([f32; 3], f32, f32)>,
     /// `$detail`: a tiling texture multiplied into the base.
     pub detail: Option<Detail>,
+    /// `$basetexturetransform2` as a 2x3 uv matrix (row-major 2x2 then translation).
+    pub base2_transform: Option<[f32; 6]>,
+    /// `$blendmodulatetexture`: its r/g sharpen the `WorldVertexTransition` blend.
+    pub blend_modulate: Option<String>,
+}
+
+/// `center cx cy scale sx sy rotate deg translate tx ty` -> uv matrix
+/// `T(translate) T(center) R(rotate) S(scale) T(-center)` (Source `TextureTransform`).
+pub fn texture_transform(spec: &str) -> Option<[f32; 6]> {
+    let w: Vec<&str> = spec.split_whitespace().collect();
+    let mut cx = 0.5f32;
+    let mut cy = 0.5f32;
+    let mut sx = 1.0f32;
+    let mut sy = 1.0f32;
+    let mut rot = 0.0f32;
+    let mut tx = 0.0f32;
+    let mut ty = 0.0f32;
+    let mut i = 0;
+    let num = |k: &str| k.parse::<f32>().ok();
+    while i < w.len() {
+        match w[i] {
+            "center" if i + 2 < w.len() => {
+                cx = num(w[i + 1])?;
+                cy = num(w[i + 2])?;
+                i += 3;
+            }
+            "scale" if i + 2 < w.len() => {
+                sx = num(w[i + 1])?;
+                sy = num(w[i + 2])?;
+                i += 3;
+            }
+            "rotate" if i + 1 < w.len() => {
+                rot = num(w[i + 1])?;
+                i += 2;
+            }
+            "translate" if i + 2 < w.len() => {
+                tx = num(w[i + 1])?;
+                ty = num(w[i + 2])?;
+                i += 3;
+            }
+            _ => return None,
+        }
+    }
+    let (sn, cs) = rot.to_radians().sin_cos();
+    // M = R * S
+    let m = [cs * sx, -sn * sy, sn * sx, cs * sy];
+    // t = translate + center - M * center
+    let ox = tx + cx - (m[0] * cx + m[1] * cy);
+    let oy = ty + cy - (m[2] * cx + m[3] * cy);
+    Some([m[0], m[1], m[2], m[3], ox, oy])
 }
 
 /// `$detail` / `$detailscale` / `$detailblendfactor` / `$detailblendmode`: the detail
@@ -147,6 +197,10 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         mat.translucent = matches!(get("$translucent").as_deref(), Some("1")) && !mat.alpha_test;
         mat.additive = matches!(get("$additive").as_deref(), Some("1"));
         mat.nocull = matches!(get("$nocull").as_deref(), Some("1"));
+        mat.base2_transform = get("$basetexturetransform2")
+            .as_deref()
+            .and_then(texture_transform);
+        mat.blend_modulate = get("$blendmodulatetexture");
         if let Some(texture) = get("$detail") {
             let num = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
             mat.detail = Some(Detail {
@@ -284,6 +338,17 @@ pub fn load_texture_lod(mount: &Mount, name: &str, max_side: u32, skip: u32) -> 
 #[cfg(test)]
 mod tests {
     use super::canonical_name;
+
+    #[test]
+    fn transform2() {
+        let t = super::texture_transform("center .5 .5 scale 2 2 rotate 0 translate 0 0").unwrap();
+        // uv (1, 1) about the centre scaled by 2 -> (1.5, 1.5)
+        assert!((t[0] * 1.0 + t[1] * 1.0 + t[4] - 1.5).abs() < 1e-5);
+        assert!((t[2] * 1.0 + t[3] * 1.0 + t[5] - 1.5).abs() < 1e-5);
+        let r = super::texture_transform("center 0 0 scale 1 1 rotate 90 translate 0 0").unwrap();
+        // (1, 0) rotated 90 deg -> (0, 1)
+        assert!((r[0] - 0.0).abs() < 1e-5 && (r[2] - 1.0).abs() < 1e-5);
+    }
 
     #[test]
     fn patched_names() {
