@@ -8306,6 +8306,13 @@ impl<'w> Server<'w> {
                 // sent_ball.lua SpawnFunction: a random 16..48 size and colour
                 let size = 16.0 + self.next_random() * 32.0;
                 self.set_model_scale(id, size / 32.0);
+                let c = [
+                    (self.next_random() * 255.0) as u8,
+                    (self.next_random() * 255.0) as u8,
+                    (self.next_random() * 255.0) as u8,
+                    255,
+                ];
+                self.sandbox.set_render(id, "", c, 0, 0);
             }
             return Some(id);
         }
