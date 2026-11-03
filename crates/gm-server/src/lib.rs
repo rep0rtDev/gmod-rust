@@ -1648,6 +1648,9 @@ pub struct Npc {
     pub sight: f32,
     /// `IgnoreEnemyUntil`: players this NPC does not target until the tick.
     pub ignore: Vec<(u32, u64)>,
+    /// A physics-driven NPC (floor turret, rollermine: VPhysics objects in the game) follows
+    /// this sandbox body; the hull never moves on its own.
+    pub body: Option<u32>,
     pub burst_left: u8,
     pub next_shot: u64,
     pub shots: u32,
@@ -1959,6 +1962,12 @@ pub fn npc_weapon_shot_in(weapon: &str, scripted: &[ScriptedWeapon]) -> Option<(
 
 /// Whether an NPC hunts players: a scripted relationship toward players (`D_HT` hates, any
 /// other disposition does not) overrides the class table.
+/// NPC classes that are VPhysics objects in the game (measured `server_npc_spawn`: the floor
+/// turret sinks and tilts after its spawn, the rollermine rolls off its spawn height).
+pub fn npc_physics_class(class: &str) -> bool {
+    matches!(class, "npc_turret_floor" | "npc_rollermine")
+}
+
 pub fn npc_hostile_to_players(n: &Npc) -> bool {
     match n.relation {
         Some(d) => d == 1,
@@ -7358,6 +7367,11 @@ impl<'w> Server<'w> {
         true
     }
 
+    /// Whether a sandbox prop is the physics body of an NPC (not a prop of its own).
+    pub fn is_npc_body(&self, prop: u32) -> bool {
+        self.npcs.values().any(|n| n.body == Some(prop))
+    }
+
     /// The player an NPC currently targets.
     pub fn npc_current_target(&self, id: u32) -> Option<u32> {
         self.npcs.get(&id).and_then(|n| n.target)
@@ -9272,6 +9286,7 @@ impl<'w> Server<'w> {
             target_first_seen: 0,
             last_enemy_damage: 0,
             sight: NPC_SIGHT_RANGE,
+            body: None,
             ignore: Vec::new(),
             burst_left: 0,
             next_shot: 0,
@@ -9370,6 +9385,24 @@ impl<'w> Server<'w> {
             .insert(id, self.fresh_npc(&def, model, pos, angles, weapon, settle));
         self.sandbox.add_count(player, "npcs", id);
         self.sandbox.add_cleanup(player, "npcs", id);
+        if npc_physics_class(def.class) {
+            let (model, pos, angles) = {
+                let n = &self.npcs[&id];
+                (n.model.clone(), n.pos, n.angles)
+            };
+            if !self.models.contains_key(&model) {
+                if let Some(loaded) = self.model_loader.as_mut().and_then(|f| f(&model)) {
+                    self.register_model(&model, loaded);
+                }
+            }
+            let body = self
+                .sandbox
+                .restore_prop(player, &model, pos, angles, false);
+            self.sync_physics();
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.body = Some(body);
+            }
+        }
         let name = format!("#{key}");
         self.push_undo(
             player,
@@ -9527,7 +9560,9 @@ impl<'w> Server<'w> {
             .map(|(id, _)| *id)
             .collect();
         for id in gone {
-            self.npcs.remove(&id);
+            if let Some(body) = self.npcs.remove(&id).and_then(|n| n.body) {
+                self.remove_prop(body);
+            }
             self.sandbox.remove_entity(id);
         }
     }
@@ -9875,7 +9910,7 @@ impl<'w> Server<'w> {
         let ids: Vec<u32> = self
             .npcs
             .iter()
-            .filter(|(_, n)| n.dead_at.is_none())
+            .filter(|(_, n)| n.dead_at.is_none() && n.body.is_none())
             .map(|(id, _)| *id)
             .collect();
         let now = self.tick_count;
@@ -11164,6 +11199,7 @@ impl<'w> Server<'w> {
                 target_first_seen: 0,
                 last_enemy_damage: 0,
                 sight: NPC_SIGHT_RANGE,
+                body: None,
                 ignore: Vec::new(),
                 burst_left: 0,
                 next_shot: 0,
@@ -11213,7 +11249,16 @@ impl<'w> Server<'w> {
 
     /// NPCs whose undo / cleanup entry went: the sandbox no longer lists them as foreign.
     fn prune_npcs(&mut self) {
+        let dropped_bodies: Vec<u32> = self
+            .npcs
+            .iter()
+            .filter(|(id, _)| !self.sandbox.is_foreign(**id))
+            .filter_map(|(_, n)| n.body)
+            .collect();
         self.npcs.retain(|id, _| self.sandbox.is_foreign(*id));
+        for body in dropped_bodies {
+            self.remove_prop(body);
+        }
         let live: std::collections::BTreeSet<u32> =
             self.sandbox.props().iter().map(|p| p.id).collect();
         self.vehicles.retain(|id, _| live.contains(id));
@@ -13237,6 +13282,19 @@ impl<'w> Server<'w> {
         self.weapon_pickups();
         self.settle_npcs();
         self.tick_npc_move();
+        let bodied: Vec<(u32, u32)> = self
+            .npcs
+            .iter()
+            .filter_map(|(id, n)| n.body.map(|b| (*id, b)))
+            .collect();
+        for (id, body) in bodied {
+            if let Some(st) = self.prop_state(body) {
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.pos = st.position;
+                    n.angles = Vec3::new(st.angles.0, st.angles.1, st.angles.2);
+                }
+            }
+        }
         self.tick_npc_melee_hits();
         self.tick_npc_jumps();
         self.tick_npc_flight();

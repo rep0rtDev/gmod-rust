@@ -4470,7 +4470,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
     let snapshot = |server: &gm_server::Server| -> Value {
         let sb = &server.sandbox;
         json!({
-            "props": sb.props().iter().filter(|p| server.world_weapon_class(p.id).is_none() && !server.vehicles.contains_key(&p.id) && if all_props { p.owner == 0 } else { p.owner == player }).map(|p| json!({
+            "props": sb.props().iter().filter(|p| server.world_weapon_class(p.id).is_none() && !server.vehicles.contains_key(&p.id) && !server.is_npc_body(p.id) && if all_props { p.owner == 0 } else { p.owner == player }).map(|p| json!({
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z], "frozen": p.frozen,
                 "bone_scales": server.bone_scales(p.id).iter().map(|(b, s)| json!({ "bone": b, "s": [s.x, s.y, s.z] })).collect::<Vec<_>>(),
                 "bone_angles": server.bone_angles(p.id).iter().map(|(b, a)| json!({ "bone": b, "a": [a.x, a.y, a.z] })).collect::<Vec<_>>(),
