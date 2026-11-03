@@ -4137,3 +4137,59 @@ realm = "server"
 crates = ["gm-server", "gm-nav"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "phys_drop_flat_lockers"
+scenario = "phys/drop_flat_lockers"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_lockers_hi"
+scenario = "phys/drop_flat_lockers_hi"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_drum"
+scenario = "phys/drop_flat_drum"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_drum_hi"
+scenario = "phys/drop_flat_drum_hi"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_popcan"
+scenario = "phys/drop_flat_popcan"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_popcan_hi"
+scenario = "phys/drop_flat_popcan_hi"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_gascan"
+scenario = "phys/drop_flat_gascan"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_gascan_hi"
+scenario = "phys/drop_flat_gascan_hi"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
