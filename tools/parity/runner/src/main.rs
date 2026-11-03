@@ -116,6 +116,11 @@ struct Scenario {
     segments: Vec<Segment>,
     #[serde(default)]
     model: Option<String>,
+    /// phys: override the PHY mass / surfaceprop (the probe's `SetMass` / `SetMaterial`)
+    #[serde(default)]
+    mass: Option<f32>,
+    #[serde(default)]
+    material: Option<String>,
     #[serde(default)]
     platform: Option<Platform>,
     /// player scenarios: ticks at which the bot is killed
@@ -2384,7 +2389,14 @@ fn phys_setup(scn: &Scenario) -> Result<PhysSetup> {
         &mount.read("scripts/surfaceproperties.txt")?,
     )]);
     let world_sp = table.get("concrete");
-    let prop_sp = table.get(&props.surfaceprop);
+    let surfaceprop = scn
+        .material
+        .clone()
+        .unwrap_or_else(|| props.surfaceprop.clone());
+    let prop_sp = table.get(&surfaceprop);
+    let prop_mass = scn
+        .mass
+        .unwrap_or(if props.mass > 0.0 { props.mass } else { 1.0 });
     let mut world = World::new(600.0, gm_core::tick::DEFAULT_TICK_INTERVAL, 0);
     tune_solver(&mut world);
     world.add_static_hulls(
@@ -2413,7 +2425,7 @@ fn phys_setup(scn: &Scenario) -> Result<PhysSetup> {
     );
     let body = world.add_prop(&PropDesc {
         hulls: &hulls,
-        mass: if props.mass > 0.0 { props.mass } else { 1.0 },
+        mass: prop_mass,
         volume: props.volume,
         position: Vec3::from(scn.start.unwrap_or([0.0; 3])),
         angles,
@@ -2441,8 +2453,8 @@ fn phys_setup(scn: &Scenario) -> Result<PhysSetup> {
     Ok(PhysSetup {
         world,
         body,
-        mass: props.mass,
-        material: props.surfaceprop.clone(),
+        mass: prop_mass,
+        material: surfaceprop,
         volume: props.volume,
         convexes: solid.convexes.len(),
         model: model.to_string(),

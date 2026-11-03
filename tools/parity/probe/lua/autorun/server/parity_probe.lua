@@ -305,6 +305,9 @@ SCENARIOS.phys = function(scn, done)
 		return
 	end
 	phys:Wake()
+	-- mass / material overrides separate the body's mass from its surface in the rebound laws
+	if scn.mass then phys:SetMass(scn.mass) end
+	if scn.material then phys:SetMaterial(scn.material) end
 	-- push_tick: the body rests first and gets its velocity at that tick (a push on a resting body)
 	if scn.velocity and not scn.push_tick then phys:SetVelocity(Vector(scn.velocity[1], scn.velocity[2], scn.velocity[3])) end
 	if scn.angular and not scn.push_tick then phys:AddAngleVelocity(Vector(scn.angular[1], scn.angular[2], scn.angular[3])) end
