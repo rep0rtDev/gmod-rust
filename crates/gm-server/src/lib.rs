@@ -15152,9 +15152,12 @@ impl<'w> Server<'w> {
     }
 
     /// `.phy` `animatedfriction` -> Jolt joint friction torque. Measured on kleiner hung by a
-    /// frozen pelvis (`phys_ragdoll_kleiner_hang`): the head sags from -75 to -3 pitch over 1.5 s;
-    /// 0.15..0.3 track that, 1.0 locks every joint, 0 drops the head in 10 ticks.
-    const RAGDOLL_FRICTION_SCALE: f32 = 0.25;
+    /// frozen pelvis (`phys_ragdoll_kleiner_hang`, `_hang_side`, the physgun grabs): 0.25 fit the
+    /// head sag (-75 to -3 pitch over 1.5 s) but locked the light arms mid-swing after 18 ticks
+    /// (the game's keep swinging until they hang); 0.05 frees the arms (worst part 25 -> 16 u,
+    /// mean 6.4 -> 4.7 u) and leaves the head 8.7 u off instead of 5.8; 0 drops the head in
+    /// 10 ticks and loses the side hang; 1.0 locks every joint.
+    const RAGDOLL_FRICTION_SCALE: f32 = 0.05;
 
     /// Physgun hold on a ragdoll part: the shadow controller's force limit, as velocity change
     /// per tick times the part's mass. Measured on kleiner hung by a frozen pelvis
