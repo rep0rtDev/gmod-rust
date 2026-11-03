@@ -35,6 +35,8 @@ pub struct Material {
     pub blend_modulate: Option<String>,
     /// `$bumpmap`: tangent-space normal map lit by the bumped lightmap pages.
     pub bumpmap: Option<String>,
+    /// `$ssbump`: the bump map stores the three basis-light weights directly.
+    pub ssbump: bool,
     /// Water: `$reflectamount`, `$refractamount` (screen-space offset per unit of normal xy)
     /// and the `$scroll1` xy rate of the normal map, in uv per second.
     pub water_dist: [f32; 4],
@@ -264,6 +266,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
         mat.additive = matches!(get("$additive").as_deref(), Some("1"));
         mat.nocull = matches!(get("$nocull").as_deref(), Some("1"));
         mat.selfillum = matches!(get("$selfillum").as_deref(), Some("1"));
+        mat.ssbump = matches!(get("$ssbump").as_deref(), Some("1"));
         mat.base2_transform = get("$basetexturetransform2")
             .as_deref()
             .and_then(texture_transform);

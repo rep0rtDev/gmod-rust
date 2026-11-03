@@ -194,3 +194,11 @@ the reflection lookup in screen space and the fresnel uses n·v of that normal. 
 the fog alpha, no `$refractamount` offset), the `$bumptransform` TextureScroll proxy (rate
 0.02 at 25 deg; the proxies block is not parsed, `$scroll1` stands in), `$reflectentities`,
 reflection of translucent surfaces and models.
+
+### `$ssbump`
+
+A self-shadowed bump map stores, per texel, the three basis-light weights themselves
+(radiosity-normal-mapped, pre-shadowed by the tool) instead of a normal, so the lightmap
+is `lm1·r + lm2·g + lm3·b` with no dot products, squaring or normalisation. Implemented as
+`uv2_t.w = 2` in the material params; none of construct's 74 world materials uses it
+(20 `$envmap`, 17 `$bumpmap`), so it is exercised by no content yet.

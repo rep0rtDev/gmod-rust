@@ -119,7 +119,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         max(dot(nrm, vec3<f32>(-0.40824829, -0.70710678, 0.57735027)), 0.0),
     );
     bw = bw * bw;
-    let bumped = (l1 * bw.x + l2 * bw.y + l3 * bw.z) / max(bw.x + bw.y + bw.z, 1e-4);
+    // $ssbump: the texel is the three weights, pre-shadowed by the tool, summed unnormalised
+    if material.uv2_t.w > 1.5 {
+        bw = textureSample(bump, base_sampler, in.uv).rgb;
+    }
+    var bumped = (l1 * bw.x + l2 * bw.y + l3 * bw.z) / max(bw.x + bw.y + bw.z, 1e-4);
+    if material.uv2_t.w > 1.5 {
+        bumped = l1 * bw.x + l2 * bw.y + l3 * bw.z;
+    }
     if material.uv2_t.w > 0.5 && in.lm_page > 0.0 {
         light = bumped;
     }

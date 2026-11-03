@@ -199,7 +199,17 @@ fn uv2_params(mat: &material::Material, modulate: bool, bump: bool) -> ([f32; 4]
         .unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
     (
         [t[0], t[1], t[2], t[3]],
-        [t[4], t[5], modulate as u32 as f32, bump as u32 as f32],
+        // bump: 0 none, 1 normal map, 2 self-shadowed (`$ssbump`) basis weights
+        [
+            t[4],
+            t[5],
+            modulate as u32 as f32,
+            if bump && mat.ssbump {
+                2.0
+            } else {
+                bump as u32 as f32
+            },
+        ],
     )
 }
 
