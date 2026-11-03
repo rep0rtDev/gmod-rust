@@ -4466,3 +4466,276 @@ scenario = "phys/drop_flat_crate_popcan_lo10"
 compare = "rigid"
 realm = "server"
 crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_plastic_lo2"
+scenario = "phys/drop_flat_crate_plastic_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_plastic_lo5"
+scenario = "phys/drop_flat_crate_plastic_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_plastic_lo10"
+scenario = "phys/drop_flat_crate_plastic_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_dirt_lo2"
+scenario = "phys/drop_flat_crate_dirt_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_dirt_lo5"
+scenario = "phys/drop_flat_crate_dirt_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_dirt_lo10"
+scenario = "phys/drop_flat_crate_dirt_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_ice_lo2"
+scenario = "phys/drop_flat_crate_ice_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_ice_lo5"
+scenario = "phys/drop_flat_crate_ice_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_ice_lo10"
+scenario = "phys/drop_flat_crate_ice_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_glass_lo2"
+scenario = "phys/drop_flat_crate_glass_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_glass_lo5"
+scenario = "phys/drop_flat_crate_glass_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_glass_lo10"
+scenario = "phys/drop_flat_crate_glass_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_tile_lo2"
+scenario = "phys/drop_flat_crate_tile_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_tile_lo5"
+scenario = "phys/drop_flat_crate_tile_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_tile_lo10"
+scenario = "phys/drop_flat_crate_tile_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_gravel_lo2"
+scenario = "phys/drop_flat_crate_gravel_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_gravel_lo5"
+scenario = "phys/drop_flat_crate_gravel_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_gravel_lo10"
+scenario = "phys/drop_flat_crate_gravel_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_rubber_lo2"
+scenario = "phys/drop_flat_crate_rubber_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_rubber_lo5"
+scenario = "phys/drop_flat_crate_rubber_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_rubber_lo10"
+scenario = "phys/drop_flat_crate_rubber_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_slime_lo2"
+scenario = "phys/drop_flat_crate_slime_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_slime_lo5"
+scenario = "phys/drop_flat_crate_slime_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_slime_lo10"
+scenario = "phys/drop_flat_crate_slime_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_snow_lo2"
+scenario = "phys/drop_flat_crate_snow_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_snow_lo5"
+scenario = "phys/drop_flat_crate_snow_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_snow_lo10"
+scenario = "phys/drop_flat_crate_snow_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_metalgrate_lo2"
+scenario = "phys/drop_flat_crate_metalgrate_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_metalgrate_lo5"
+scenario = "phys/drop_flat_crate_metalgrate_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_metalgrate_lo10"
+scenario = "phys/drop_flat_crate_metalgrate_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_mud_lo2"
+scenario = "phys/drop_flat_crate_mud_lo2"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_mud_lo5"
+scenario = "phys/drop_flat_crate_mud_lo5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_mud_lo10"
+scenario = "phys/drop_flat_crate_mud_lo10"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_wood_lo0_5"
+scenario = "phys/drop_flat_crate_wood_lo0_5"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_wood_lo1"
+scenario = "phys/drop_flat_crate_wood_lo1"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_wood_lo20"
+scenario = "phys/drop_flat_crate_wood_lo20"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_wood_lo40"
+scenario = "phys/drop_flat_crate_wood_lo40"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_popcan_lo20"
+scenario = "phys/drop_flat_crate_popcan_lo20"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]
+
+[[harness]]
+name = "phys_drop_flat_crate_popcan_lo40"
+scenario = "phys/drop_flat_crate_popcan_lo40"
+compare = "rigid"
+realm = "server"
+crates = ["gm-physics", "gm-formats"]

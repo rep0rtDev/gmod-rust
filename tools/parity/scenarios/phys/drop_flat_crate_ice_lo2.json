@@ -1,0 +1,1 @@
+{"name": "phys_drop_flat_crate_ice_lo2", "kind": "phys", "map": "gm_construct", "model": "models/props_junk/wood_crate001a.mdl", "start": [823.235, -540.0, -121.604], "angles": [0, 0, 0], "ticks": 200, "material": "ice"}
