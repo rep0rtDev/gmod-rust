@@ -277,6 +277,8 @@ struct MenuCache {
     /// New Game icon grid max scroll of the last frame.
     ng_max_scroll: f32,
     ugc_per_page: usize,
+    /// The hovered spawn icon's tooltip and when the hover began.
+    tip: Option<(String, std::time::Instant)>,
 }
 
 struct SpawnMenu {
@@ -935,6 +937,7 @@ struct App {
     /// Spawn menu while Q is held: the prop models to pick from and the scroll offset in rows.
     menu: Option<SpawnMenu>,
     spawnlists: Vec<derma::SpawnList>,
+    shift_held: bool,
     /// `tool.properties`: tool and setting labels.
     lang: BTreeMap<String, String>,
     /// From the last laid-out menu frame: visible spawn icons, the ControlPanel rect, max scroll.
@@ -2680,8 +2683,19 @@ impl App {
         }
         match action {
             Some(derma::Action::Spawn(model)) => {
-                self.console.log(format!("spawn {model}"));
-                self.sim.client.command(Command::Spawn { model });
+                if self.shift_held {
+                    // shift-click selects icons (the content container's selection canvas)
+                    match menu.st.selected.iter().position(|m| *m == model) {
+                        Some(i) => {
+                            menu.st.selected.remove(i);
+                        }
+                        None => menu.st.selected.push(model),
+                    }
+                } else {
+                    menu.st.selected.clear();
+                    self.console.log(format!("spawn {model}"));
+                    self.sim.client.command(Command::Spawn { model });
+                }
             }
             Some(derma::Action::CreationTab(i)) => {
                 menu.st.creation_tab = i;
@@ -4657,6 +4671,16 @@ impl App {
                 }
                 None => Vec::new(),
             };
+            let (cx, cy) = self.cursor;
+            let hovered = layout
+                .tips
+                .iter()
+                .find(|(x, y, tw, th, _)| cx >= *x && cy >= *y && cx < x + tw && cy < y + th)
+                .map(|t| t.4.clone());
+            let tip = hovered.map(|n| match self.menu_cache.borrow().tip.clone() {
+                Some((prev, t0)) if prev == n => (n, t0),
+                _ => (n, std::time::Instant::now()),
+            });
             *self.menu_cache.borrow_mut() = MenuCache {
                 visible: layout.visible.clone(),
                 max_scroll: layout.max_scroll,
@@ -4664,8 +4688,39 @@ impl App {
                 opt_bars: Vec::new(),
                 ng_max_scroll: 0.0,
                 ugc_per_page: 0,
+                tip: tip.clone(),
             };
             items.extend(layout.items);
+            // DTooltip after a short hover: the text in a light box above the cursor
+            if let Some((name, t0)) = &tip {
+                if t0.elapsed().as_secs_f32() >= 0.3 {
+                    let tw = ctx.font.text_width(name) + 16.0;
+                    let th = ctx.font.line_height + 8.0;
+                    let x = (cx - tw / 2.0).clamp(0.0, (w - tw).max(0.0));
+                    let y = (cy - th - 12.0).max(0.0);
+                    items.push(UiItem::Rect {
+                        x: x - 1.0,
+                        y: y - 1.0,
+                        w: tw + 2.0,
+                        h: th + 2.0,
+                        color: [0.0, 0.0, 0.0, 1.0],
+                    });
+                    items.push(UiItem::Rect {
+                        x,
+                        y,
+                        w: tw,
+                        h: th,
+                        color: [250.0 / 255.0, 250.0 / 255.0, 250.0 / 255.0, 1.0],
+                    });
+                    items.push(UiItem::Text {
+                        font: Some(derma::FONT.to_string()),
+                        x: x + 8.0,
+                        y: y + 4.0,
+                        text: name.clone(),
+                        color: [0.1, 0.1, 0.1, 1.0],
+                    });
+                }
+            }
             return items;
         }
         if self.scoreboard && !self.console.open {
@@ -5673,6 +5728,9 @@ impl ApplicationHandler for App {
                     _ => None,
                 };
                 let down = event.state == ElementState::Pressed;
+                if matches!(code, Some(KeyCode::ShiftLeft | KeyCode::ShiftRight)) {
+                    self.shift_held = down;
+                }
                 if down && !event.repeat && code == Some(KeyCode::Backquote) {
                     self.toggle_console();
                     return;
@@ -6273,6 +6331,7 @@ fn main() -> Result<()> {
         last_render: Instant::now(),
         menu: None,
         spawnlists: Vec::new(),
+        shift_held: false,
         lang,
         menu_cache: Default::default(),
         context_held: false,

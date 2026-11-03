@@ -211,7 +211,12 @@ pub struct SpawnList {
 /// The client's default spawnlists in id order.
 pub fn load_spawnlists(mount: &Mount) -> Vec<SpawnList> {
     let mut out = Vec::new();
-    for path in mount.find("settings/spawnlist_default/*.txt") {
+    // the engine reads the player's `settings/spawnlist/`, seeded from `spawnlist_default`
+    let mut paths = mount.find("settings/spawnlist/*.txt");
+    if paths.is_empty() {
+        paths = mount.find("settings/spawnlist_default/*.txt");
+    }
+    for path in paths {
         let Some(doc) = mount
             .read_string(&path)
             .ok()
@@ -385,6 +390,8 @@ pub struct MenuState {
     /// Content scroll in px (a row of icons per wheel notch).
     pub scroll: f32,
     pub collapsed: [bool; 4],
+    /// Spawn icons selected with shift-click (the content container's selection canvas).
+    pub selected: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -437,6 +444,8 @@ pub struct Layout {
     /// Models whose spawn icons are on screen (to render the missing ones).
     pub visible: Vec<String>,
     pub max_scroll: f32,
+    /// Tooltip rects `(x, y, w, h, text)` of the spawn icons (`SpawnIcon:SetTooltip`).
+    pub tips: Vec<(f32, f32, f32, f32, String)>,
 }
 
 impl Layout {
@@ -745,6 +754,16 @@ fn spawnlists(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w: f3
                 });
             }
         }
+        if st.selected.iter().any(|m| m == model) {
+            out.items.push(UiItem::Rect {
+                x: ix,
+                y: iy,
+                w: ICON,
+                h: ICON,
+                color: SELECTED_ICON,
+            });
+        }
+        out.tips.push((ix, iy, ICON, ICON, tip_name(model)));
         out.hits.push(Hit {
             x: ix,
             y: iy,
@@ -990,6 +1009,16 @@ fn search_results(out: &mut Layout, ctx: &Ctx, st: &MenuState, x: f32, y: f32, w
         if inside(ctx.cursor, ix, iy, SMALL, SMALL) && (ctx.has_image)(HOVER_MAT) {
             image(&mut out.items, HOVER_MAT, ix, iy, SMALL, SMALL);
         }
+        if st.selected.iter().any(|m| m == model) {
+            out.items.push(UiItem::Rect {
+                x: ix,
+                y: iy,
+                w: SMALL,
+                h: SMALL,
+                color: SELECTED_ICON,
+            });
+        }
+        out.tips.push((ix, iy, SMALL, SMALL, tip_name(model)));
         out.hits.push(Hit {
             x: ix,
             y: iy,
@@ -1944,6 +1973,17 @@ pub fn dmenu(
 }
 
 /// The name a numpad KeyBinder shows for a key code (`KEY_PAD_0..9` = 37..46; 0 = none).
+/// `contenttypes/model.lua`: a spawn icon's tooltip is the model's file name without `.mdl`.
+pub fn tip_name(model: &str) -> String {
+    model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .trim_end_matches(".mdl")
+        .to_string()
+}
+/// Overlay of a shift-selected spawn icon (approximation of the selection canvas's highlight).
+const SELECTED_ICON: [f32; 4] = rgba(255, 216, 0, 90);
 pub fn pad_key_name(code: &str) -> String {
     match code.trim().parse::<i32>().unwrap_or(0) {
         0 => "NONE".into(),
