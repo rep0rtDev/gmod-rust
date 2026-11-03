@@ -4284,8 +4284,8 @@ impl App {
             camera.position = ent.pos - fwd * 160.0 + Vec3::Z * 24.0;
         }
         // dead: C_BasePlayer::CalcDeathCamView (Source SDK, srcds cannot show it) - the view
-        // angles freeze at death, the eye starts at the ragdoll (its root body; the game uses
-        // the eyes attachment) and over DEATH_ANIMTIME 1.5 s pulls back CHASE_CAM_DISTANCE_MAX
+        // angles freeze at death, the eye starts at the ragdoll's `eyes` attachment (the root
+        // body when the model has none) and over DEATH_ANIMTIME 1.5 s pulls back CHASE_CAM_DISTANCE_MAX
         // 96 u along -forward, a 12 u hull trace against the world keeping it out of walls
         let me_snap = self
             .sim
@@ -4307,7 +4307,17 @@ impl App {
                     .world
                     .entities
                     .get(&ragdoll)
-                    .map(|e| e.bones.first().map_or(e.pos, |b| b.pos))
+                    .map(|e| {
+                        // the `eyes` attachment on its bone's ragdoll part; the root body
+                        // when the model has none
+                        let at_eyes = self.gfx.as_ref().and_then(|g| {
+                            let m = g.models.get(&e.model)?.as_ref()?;
+                            let world =
+                                ragdoll_bone_matrices(m, &e.bones, e.pos, e.angles, &e.manips)?;
+                            Some(m.attachment("eyes", &world)?.w_axis.truncate())
+                        });
+                        at_eyes.unwrap_or_else(|| e.bones.first().map_or(e.pos, |b| b.pos))
+                    })
                     .unwrap_or(origin + Vec3::Z * 64.0);
                 let t = (at.elapsed().as_secs_f32() / 1.5).clamp(0.0, 1.0);
                 let (p, y) = (
