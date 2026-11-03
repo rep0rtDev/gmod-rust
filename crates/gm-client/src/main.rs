@@ -39,6 +39,7 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 const PHYSGUN_BEAM_COLOR: [f32; 3] = [0.3, 1.0, 1.0];
 /// Slots in `WEAPONS` of the weapons with their own effects.
 const RPG_SLOT: u8 = 9;
+const GRAVGUN_SLOT: u8 = 10;
 
 const SPAWN_MODEL: &str = "models/props_c17/oildrum001.mdl";
 
@@ -3973,10 +3974,7 @@ impl App {
         }
         // gravity gun: the core glows at the muzzle, the fork tips glow, and while a prop is
         // held the tips beam to it and the gun lights its surroundings orange
-        let gravgun_out = gm_server::LOADOUT
-            .get(self.weapon as usize)
-            .is_some_and(|c| *c == "weapon_physcannon");
-        if gravgun_out {
+        if self.weapon == GRAVGUN_SLOT {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
             let core = vm_attach("muzzle")
