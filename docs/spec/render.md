@@ -44,6 +44,11 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   alpha blending and no depth write, batches ordered farthest first by the distance from the eye
   to the batch's vertex centroid, output alpha = base alpha (gm_construct: the reflective glass
   and the skybox foliage/antenna sheets). Water is still an opaque placeholder.
+  Culling (`gm-render`): BSP faces wind clockwise seen from their front, and the world, 3D
+  skybox and translucent passes cull back faces (every water tile on gm_construct is two
+  coplanar faces at z -160 - `water_13` facing up and `water_13_beneath` facing down - so
+  without culling the last-drawn one won from both sides); `$nocull 1` materials (foliage
+  sheets, fences) are drawn two-sided; the 2D sky cube is seen from inside and never culled.
   Water (`gm_construct/water_13.vmt`, shader `Water`): `$abovewater 1`, `$refracttexture
   _rt_WaterRefraction`, `$reflecttexture _rt_WaterReflection` (`$reflectamount 0.4`,
   `$reflect3dskybox 1`, `$reflectentities 1`), `$bumpmap gm_construct/water_13_dudv`,

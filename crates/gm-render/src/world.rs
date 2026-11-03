@@ -171,6 +171,8 @@ struct Batch {
     sky: bool,
     /// `$translucent`: blended after the opaque batches, back to front by `centre`.
     translucent: bool,
+    /// `$nocull`: drawn with the two-sided pipelines.
+    nocull: bool,
     centre: Vec3,
 }
 
@@ -197,6 +199,11 @@ pub struct WorldRenderer {
     /// The controller's `SetBloomScale` (bloom strength added in the post pass).
     pub tm_bloom: f32,
     pipeline: wgpu::RenderPipeline,
+    /// The 2D sky cube: no back-face culling (the eye is inside it).
+    sky_pipeline: wgpu::RenderPipeline,
+    /// `$nocull` variants of `pipeline` / `translucent_pipeline`.
+    nocull_pipeline: wgpu::RenderPipeline,
+    translucent_nocull_pipeline: wgpu::RenderPipeline,
     /// Additive, no depth write: beams and glow sprites.
     additive_pipeline: wgpu::RenderPipeline,
     /// Alpha-blended, no depth write: models drawn with `ModelTarget::alpha` below 1 (ghosts).
@@ -1400,6 +1407,7 @@ impl WorldRenderer {
                 material: name.clone(),
                 sky,
                 translucent: mat.translucent,
+                nocull: mat.nocull,
                 centre,
             });
             indices_all.extend_from_slice(idx);
@@ -1422,7 +1430,10 @@ impl WorldRenderer {
             bind_group_layouts: &[Some(&camera_layout), Some(&material_layout)],
             ..Default::default()
         });
-        let make_pipeline = |label: &str, blend: Option<wgpu::BlendState>, depth_write: bool| {
+        let make_pipeline = |label: &str,
+                             blend: Option<wgpu::BlendState>,
+                             depth_write: bool,
+                             cull: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&layout),
@@ -1438,7 +1449,10 @@ impl WorldRenderer {
             },
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
+                // BSP faces wind clockwise seen from their front; the 2D sky cube is seen
+                // from inside, so it is the one pass without back-face culling
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: if cull { Some(wgpu::Face::Back) } else { None },
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -1466,11 +1480,20 @@ impl WorldRenderer {
             cache: None,
         })
         };
-        let pipeline = make_pipeline("world", None, true);
+        let pipeline = make_pipeline("world", None, true, true);
+        let sky_pipeline = make_pipeline("sky", None, true, false);
+        let nocull_pipeline = make_pipeline("world nocull", None, true, false);
+        let translucent_nocull_pipeline = make_pipeline(
+            "translucent nocull",
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            false,
+            false,
+        );
         let translucent_pipeline = make_pipeline(
             "models translucent",
             Some(wgpu::BlendState::ALPHA_BLENDING),
             false,
+            true,
         );
         let additive_pipeline = make_pipeline(
             "additive",
@@ -1483,6 +1506,7 @@ impl WorldRenderer {
                 alpha: wgpu::BlendComponent::OVER,
             }),
             false,
+            true,
         );
 
         Ok(WorldRenderer {
@@ -1497,6 +1521,9 @@ impl WorldRenderer {
             tm_rate,
             tm_bloom,
             pipeline,
+            sky_pipeline,
+            nocull_pipeline,
+            translucent_nocull_pipeline,
             additive_pipeline,
             translucent_pipeline,
             camera_buffer,
@@ -1631,7 +1658,7 @@ impl WorldRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(&self.sky_pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_vertex_buffer(0, sky.vertex_buffer.slice(..));
             pass.set_index_buffer(sky.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -1709,6 +1736,11 @@ impl WorldRenderer {
                 .iter()
                 .filter(|b| b.sky == sky && !b.translucent)
             {
+                pass.set_pipeline(if b.nocull {
+                    &self.nocull_pipeline
+                } else {
+                    &self.pipeline
+                });
                 pass.set_bind_group(1, &b.bind_group, &[]);
                 pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
             }
@@ -1723,12 +1755,14 @@ impl WorldRenderer {
                 let db = b.centre.distance_squared(camera.position);
                 db.total_cmp(&da)
             });
-            if !trans.is_empty() {
-                pass.set_pipeline(&self.translucent_pipeline);
-                for b in trans {
-                    pass.set_bind_group(1, &b.bind_group, &[]);
-                    pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
-                }
+            for b in trans {
+                pass.set_pipeline(if b.nocull {
+                    &self.translucent_nocull_pipeline
+                } else {
+                    &self.translucent_pipeline
+                });
+                pass.set_bind_group(1, &b.bind_group, &[]);
+                pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
             }
         }
         gpu.queue.submit([enc.finish()]);
