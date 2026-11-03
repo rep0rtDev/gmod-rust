@@ -49,6 +49,10 @@ pub struct MoveConfig {
     /// 0.97 u above the floor is grounded, 1.32 u (landing a jump at 191.5 u/s) and 1.66 u
     /// (settling at 63 u/s) are not; every value from 1.1 to 1.3 reproduces all recordings.
     pub ground_probe: f32,
+    /// Shorter ground reach over world brushes: a player falling 1.13 u above the floor
+    /// is still airborne in the game (move_ladder_jump) while 0.65 u (move_settle_*) and the
+    /// ~0.8 u a spawned player stands at are grounded; entities keep `ground_probe`.
+    pub world_ground_probe: f32,
     pub tick_interval: f32,
     /// `Player:SprintEnable` / `SprintDisable`: whether the sprint button raises the speed cap.
     pub sprint_enabled: bool,
@@ -87,6 +91,7 @@ impl Default for MoveConfig {
             duck_eye: 28.0,
             ground_normal_z: 0.7,
             ground_probe: 1.2,
+            world_ground_probe: 1.0,
             tick_interval: gm_core::tick::DEFAULT_TICK_INTERVAL,
             sprint_enabled: true,
             force_sprint: false,
@@ -660,7 +665,15 @@ impl<'a> Mover<'a> {
         }
         st.ground_push = false;
         let (t, ent) = self.trace_ent(st, st.origin, st.origin - Vec3::Z * self.cfg.ground_probe);
-        if !t.hit() || t.normal.z < self.cfg.ground_normal_z {
+        let world_gap = if ent.is_none() {
+            t.fraction * self.cfg.ground_probe
+        } else {
+            0.0
+        };
+        if !t.hit()
+            || t.normal.z < self.cfg.ground_normal_z
+            || world_gap > self.cfg.world_ground_probe
+        {
             st.on_ground = false;
             st.ground_ent = 0;
             st.ground_friction = 1.0;
