@@ -934,6 +934,28 @@ fn glua_client_hud_paint_draws_through_surface() {
         .eval("return THOUGHT, SIZES and table.concat(SIZES, \",\") or \"\"")
         .expect("eval");
     assert_eq!(thought, 1.0, "Think runs once per client tick");
+    // input / gui / killicon state from the key edges and the frame
+    rt.client_input(&world, &[("KeyW".into(), true), ("MouseLeft".into(), true)]);
+    let (down, pressed_w, name, code, bind, icon): (bool, bool, String, f64, String, bool) = rt.actors()[0]
+        .eval(r#"return input.IsKeyDown(KEY_W), input.WasKeyPressed(KEY_W), input.GetKeyName(MOUSE_LEFT), input.GetKeyCode("SPACE"), input.LookupBinding("+jump"), killicon.Exists("weapon_crowbar")"#)
+        .expect("eval");
+    assert!(
+        down && pressed_w,
+        "KeyW down is KEY_W down / pressed this frame"
+    );
+    assert_eq!(name, "MOUSE1");
+    assert_eq!(code, 65.0, "SPACE is KEY_SPACE");
+    assert_eq!(bind, "space");
+    assert!(icon, "the game's default kill icons exist");
+    rt.client_input(&world, &[("KeyW".into(), false)]);
+    let _ = rt.client_render(&world, 1920, 1080);
+    let (down, pressed_w, mouse): (bool, bool, bool) = rt.actors()[0]
+        .eval("return input.IsKeyDown(KEY_W), input.WasKeyPressed(KEY_W), input.IsMouseDown(MOUSE_LEFT)")
+        .expect("eval");
+    assert!(
+        !down && !pressed_w && mouse,
+        "released key is up, the frame clears the edge, the mouse stays down"
+    );
     assert_eq!(
         sizes, "1280,720,1920,1080",
         "OnScreenSizeChanged on a new screen size"

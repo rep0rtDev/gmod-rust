@@ -13,7 +13,6 @@ if not CLIENT then
 	return
 end
 
-MOUSE_LEFT, MOUSE_RIGHT, MOUSE_MIDDLE, MOUSE_4, MOUSE_5, MOUSE_WHEEL_UP, MOUSE_WHEEL_DOWN = 107, 108, 109, 110, 111, 112, 113
 NODOCK, FILL, LEFT, RIGHT, TOP, BOTTOM = 0, 1, 2, 3, 4, 5
 
 ------------------------------------------------------------------------ skin (default.lua colours)
@@ -682,35 +681,9 @@ function __derma_paint()
 end
 
 ------------------------------------------------------------------------ input
--- the client's physical key names -> the game's KEY_ / MOUSE_ codes and typed characters
-local KEYNAMES = { Enter = "KEY_ENTER", NumpadEnter = "KEY_PAD_ENTER", Space = "KEY_SPACE", Backspace = "KEY_BACKSPACE", Tab = "KEY_TAB", Escape = "KEY_ESCAPE", Delete = "KEY_DELETE", Insert = "KEY_INSERT", Home = "KEY_HOME", End = "KEY_END", PageUp = "KEY_PAGEUP", PageDown = "KEY_PAGEDOWN", ArrowUp = "KEY_UP", ArrowDown = "KEY_DOWN", ArrowLeft = "KEY_LEFT", ArrowRight = "KEY_RIGHT", ShiftLeft = "KEY_LSHIFT", ShiftRight = "KEY_RSHIFT", ControlLeft = "KEY_LCONTROL", ControlRight = "KEY_RCONTROL", AltLeft = "KEY_LALT", AltRight = "KEY_RALT", CapsLock = "KEY_CAPSLOCK", Minus = "KEY_MINUS", Equal = "KEY_EQUAL", BracketLeft = "KEY_LBRACKET", BracketRight = "KEY_RBRACKET", Semicolon = "KEY_SEMICOLON", Quote = "KEY_APOSTROPHE", Backquote = "KEY_BACKQUOTE", Comma = "KEY_COMMA", Period = "KEY_PERIOD", Slash = "KEY_SLASH", Backslash = "KEY_BACKSLASH", MouseLeft = "MOUSE_LEFT", MouseRight = "MOUSE_RIGHT", MouseMiddle = "MOUSE_MIDDLE", MouseBack = "MOUSE_4", MouseForward = "MOUSE_5", WheelUp = "MOUSE_WHEEL_UP", WheelDown = "MOUSE_WHEEL_DOWN" }
-local SHIFTED = { ["1"] = "!", ["2"] = "@", ["3"] = "#", ["4"] = "$", ["5"] = "%", ["6"] = "^", ["7"] = "&", ["8"] = "*", ["9"] = "(", ["0"] = ")", ["-"] = "_", ["="] = "+", ["["] = "{", ["]"] = "}", [";"] = ":", ["'"] = '"', ["`"] = "~", [","] = "<", ["."] = ">", ["/"] = "?", ["\\"] = "|" }
-local PUNCT = { Minus = "-", Equal = "=", BracketLeft = "[", BracketRight = "]", Semicolon = ";", Quote = "'", Backquote = "`", Comma = ",", Period = ".", Slash = "/", Backslash = "\\", Space = " " }
-local shift_down = false
-local function key_code(name)
-	local k = KEYNAMES[name]
-	if k then return _G[k] end
-	local letter = name:match("^Key(%a)$")
-	if letter then return _G["KEY_" .. letter:upper()] end
-	local digit = name:match("^Digit(%d)$")
-	if digit then return _G["KEY_" .. digit] end
-	local fkey = name:match("^F(%d+)$")
-	if fkey then return _G["KEY_F" .. fkey] end
-	local pad = name:match("^Numpad(%d)$")
-	if pad then return _G["KEY_PAD_" .. pad] end
-end
-local function key_char(name)
-	local letter = name:match("^Key(%a)$")
-	if letter then return shift_down and letter:upper() or letter:lower() end
-	local digit = name:match("^Digit(%d)$")
-	if digit then return shift_down and SHIFTED[digit] or digit end
-	local pad = name:match("^Numpad(%d)$")
-	if pad then return pad end
-	local p = PUNCT[name]
-	if p then return shift_down and SHIFTED[p] or p end
-end
+-- key names / codes / characters: client.luau's tables
+local key_code, key_char = __glua_key_code, __glua_key_char
 function __derma_key(name, down)
-	if name == "ShiftLeft" or name == "ShiftRight" then shift_down = down end
 	local code = key_code(name)
 	if not code then return false end
 	if code >= MOUSE_LEFT and code <= MOUSE_5 then

@@ -792,6 +792,14 @@ pub enum DrawCmd {
     HideHud {
         name: String,
     },
+    /// `gui.EnableScreenClicker(on)`: the client shows the cursor and stops mouse look.
+    ScreenClicker {
+        on: bool,
+    },
+    /// `gui.OpenURL(url)`: the client opens the URL in the system browser.
+    OpenUrl {
+        url: String,
+    },
     /// `draw.model`: a model drawn in the world, translucent (alpha 0..1); tool ghosts.
     Model {
         model: String,
@@ -1463,6 +1471,22 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 Ok(())
             },
         )?,
+    )?;
+    let sh = shared.clone();
+    draw.set(
+        "screen_clicker",
+        lua.create_function(move |_, on: bool| {
+            sh.draws.lock().unwrap().push(DrawCmd::ScreenClicker { on });
+            Ok(())
+        })?,
+    )?;
+    let sh = shared.clone();
+    draw.set(
+        "open_url",
+        lua.create_function(move |_, url: String| {
+            sh.draws.lock().unwrap().push(DrawCmd::OpenUrl { url });
+            Ok(())
+        })?,
     )?;
     let sh = shared.clone();
     draw.set(

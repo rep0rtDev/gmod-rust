@@ -823,6 +823,8 @@ struct App {
     /// A text row with the keyboard focus and the text typed so far.
     panel_text: Option<(usize, String)>,
     grabbed: bool,
+    /// `gui.EnableScreenClicker` from a script: the cursor stays visible over the game.
+    screen_clicker: bool,
     /// Options dialog cvars and binds (`cfg/config.cfg`).
     settings: settings::Settings,
     /// The camera FOV being blended toward the server's `Player:SetFOV` target (value, last frame).
@@ -3733,6 +3735,22 @@ impl App {
             let (w, h) = (g.config.width, g.config.height);
             self.sim.script.cursor = (!self.grabbed).then_some(self.cursor);
             self.sim.hud_draws = self.sim.script.client_render(&self.sim.client.world, w, h);
+            // `gui.EnableScreenClicker`: a script shows the cursor over the game (the mouse
+            // look stops) until it turns it off again
+            for d in &self.sim.hud_draws {
+                match d {
+                    gm_script::DrawCmd::ScreenClicker { on } if *on != self.screen_clicker => {
+                        self.screen_clicker = *on;
+                        if self.menu.is_none() && !self.context_held && !self.main_menu {
+                            self.set_grab(!*on);
+                        }
+                    }
+                    gm_script::DrawCmd::OpenUrl { url } => {
+                        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                    }
+                    _ => {}
+                }
+            }
             if let Some(gm) = self.gfx.as_mut() {
                 // `draw.font` builds its atlas now and reports the metrics to the runtime;
                 // `draw.texture` decodes its VTF once
@@ -4000,6 +4018,8 @@ impl App {
                     gm_script::DrawCmd::Model { .. } => continue,
                     // answered `HUDShouldDraw`: applied when the native HUD is built
                     gm_script::DrawCmd::HideHud { .. } => continue,
+                    gm_script::DrawCmd::ScreenClicker { .. }
+                    | gm_script::DrawCmd::OpenUrl { .. } => continue,
                     gm_script::DrawCmd::Begin3D2D { .. } | gm_script::DrawCmd::End3D2D => continue,
                     // fonts and images were prepared before the frame
                     gm_script::DrawCmd::Font { .. } => continue,
@@ -5290,6 +5310,7 @@ fn main() -> Result<()> {
         player_body: String::new(),
         panel_text: None,
         grabbed: false,
+        screen_clicker: false,
         main_menu: false,
         settings,
         fov_blend: None,

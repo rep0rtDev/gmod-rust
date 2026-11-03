@@ -15,6 +15,18 @@ if not CLIENT then
 	for _, n in ipairs({ "SimpleText", "SimpleTextOutlined", "DrawText", "RoundedBox", "RoundedBoxEx", "WordBox", "Text", "TextShadow", "NoTexture", "GetFontHeight", "TexturedQuad" }) do draw[n] = stub("draw." .. n) end
 	cam = cam or {}
 	for _, n in ipairs({ "Start2D", "End2D", "Start3D", "End3D", "Start3D2D", "End3D2D", "IgnoreZ", "Start", "End", "PushModelMatrix", "PopModelMatrix", "StartOrthoView", "EndOrthoView" }) do cam[n] = stub("cam." .. n) end
+	input = input or {}
+	for _, n in ipairs({ "CheckKeyTrapping", "GetAnalogValue", "GetCursorPos", "GetKeyCode", "GetKeyName", "IsButtonDown", "IsControlDown", "IsKeyDown", "IsKeyTrapping", "IsMouseDown", "IsShiftDown", "LookupBinding", "LookupKeyBinding", "SelectWeapon", "SetCursorPos", "StartKeyTrapping", "TranslateAlias", "WasKeyPressed", "WasKeyReleased", "WasKeyTyped", "WasMouseDoublePressed", "WasMousePressed", "WasMouseReleased" }) do input[n] = stub("input." .. n) end
+	gui = gui or {}
+	for _, n in ipairs({ "ActivateGameUI", "AddCaption", "EnableScreenClicker", "HideGameUI", "InternalCursorMoved", "InternalKeyCodePressed", "InternalKeyCodeReleased", "InternalKeyCodeTyped", "InternalKeyTyped", "InternalMouseDoublePressed", "InternalMousePressed", "InternalMouseReleased", "InternalMouseWheeled", "IsConsoleVisible", "IsGameUIVisible", "MousePos", "MouseX", "MouseY", "OpenURL", "ScreenToVector", "SetMousePos", "ShowConsole" }) do gui[n] = stub("gui." .. n) end
+	killicon = killicon or {}
+	for _, n in ipairs({ "Add", "AddAlias", "AddFont", "AddTexCoord", "Draw", "Exists", "GetSize", "Render" }) do killicon[n] = stub("killicon." .. n) end
+	dragndrop = dragndrop or {}
+	for _, n in ipairs({ "CallReceiverFunction", "Clear", "Drop", "GetDroppable", "HandleDroppedInGame", "HoverThink", "IsDragging", "StartDragging", "StopDragging", "Think", "UpdateReceiver" }) do dragndrop[n] = stub("dragndrop." .. n) end
+	spawnmenu = spawnmenu or {}
+	for _, n in ipairs({ "ActivateTool", "ActivateToolPanel", "ActiveControlPanel", "AddContentType", "AddCreationTab", "AddPropCategory", "AddToolCategory", "AddToolMenuOption", "AddToolTab", "ClearToolMenus", "CreateContentIcon", "DoSaveToTextFiles", "GetContentType", "GetCreationTabs", "GetCustomPropTable", "GetPropTable", "GetToolMenu", "GetTools", "PopulateFromEngineTextFiles", "PopulateFromTextFiles", "SaveToTextFiles", "SetActiveControlPanel", "SwitchCreationTab", "SwitchToolTab" }) do spawnmenu[n] = stub("spawnmenu." .. n) end
+	achievements = achievements or {}
+	for _, n in ipairs({ "BalloonPopped", "Count", "EatBall", "GetCount", "GetDesc", "GetGoal", "GetName", "IncBaddies", "IncBystander", "IncGoodies", "IsAchieved", "Remover", "SpawnMenuOpen", "SpawnedNPC", "SpawnedProp", "SpawnedRagdoll" }) do achievements[n] = stub("achievements." .. n) end
 	ScrW = stub("Global.ScrW")
 	ScrH = stub("Global.ScrH")
 	Material = stub("Global.Material")
@@ -322,6 +334,218 @@ function cam.PopModelMatrix() end
 function cam.StartOrthoView() end
 function cam.EndOrthoView() end
 
+
+------------------------------------------------------------------------ keys: names, codes, state
+-- the client's physical key names (winit) -> the game's KEY_ / MOUSE_ codes, typed characters,
+-- and the game's button names (`input.GetKeyName`: "a", "SPACE", "MOUSE1", ...)
+local KEYNAMES = { Enter = "KEY_ENTER", NumpadEnter = "KEY_PAD_ENTER", Space = "KEY_SPACE", Backspace = "KEY_BACKSPACE", Tab = "KEY_TAB", Escape = "KEY_ESCAPE", Delete = "KEY_DELETE", Insert = "KEY_INSERT", Home = "KEY_HOME", End = "KEY_END", PageUp = "KEY_PAGEUP", PageDown = "KEY_PAGEDOWN", ArrowUp = "KEY_UP", ArrowDown = "KEY_DOWN", ArrowLeft = "KEY_LEFT", ArrowRight = "KEY_RIGHT", ShiftLeft = "KEY_LSHIFT", ShiftRight = "KEY_RSHIFT", ControlLeft = "KEY_LCONTROL", ControlRight = "KEY_RCONTROL", AltLeft = "KEY_LALT", AltRight = "KEY_RALT", CapsLock = "KEY_CAPSLOCK", NumLock = "KEY_NUMLOCK", ScrollLock = "KEY_SCROLLLOCK", Minus = "KEY_MINUS", Equal = "KEY_EQUAL", BracketLeft = "KEY_LBRACKET", BracketRight = "KEY_RBRACKET", Semicolon = "KEY_SEMICOLON", Quote = "KEY_APOSTROPHE", Backquote = "KEY_BACKQUOTE", Comma = "KEY_COMMA", Period = "KEY_PERIOD", Slash = "KEY_SLASH", Backslash = "KEY_BACKSLASH", NumpadDivide = "KEY_PAD_DIVIDE", NumpadMultiply = "KEY_PAD_MULTIPLY", NumpadSubtract = "KEY_PAD_MINUS", NumpadAdd = "KEY_PAD_PLUS", NumpadDecimal = "KEY_PAD_DECIMAL", SuperLeft = "KEY_LWIN", SuperRight = "KEY_RWIN", ContextMenu = "KEY_APP", MouseLeft = "MOUSE_LEFT", MouseRight = "MOUSE_RIGHT", MouseMiddle = "MOUSE_MIDDLE", MouseBack = "MOUSE_4", MouseForward = "MOUSE_5", WheelUp = "MOUSE_WHEEL_UP", WheelDown = "MOUSE_WHEEL_DOWN" }
+local SHIFTED = { ["1"] = "!", ["2"] = "@", ["3"] = "#", ["4"] = "$", ["5"] = "%", ["6"] = "^", ["7"] = "&", ["8"] = "*", ["9"] = "(", ["0"] = ")", ["-"] = "_", ["="] = "+", ["["] = "{", ["]"] = "}", [";"] = ":", ["'"] = '"', ["`"] = "~", [","] = "<", ["."] = ">", ["/"] = "?", ["\\"] = "|" }
+local PUNCT = { Minus = "-", Equal = "=", BracketLeft = "[", BracketRight = "]", Semicolon = ";", Quote = "'", Backquote = "`", Comma = ",", Period = ".", Slash = "/", Backslash = "\\", Space = " " }
+-- the game's button names per KEY_ constant name (source's `ButtonCode_t` names)
+local BUTTON_NAMES = { KEY_ENTER = "ENTER", KEY_PAD_ENTER = "KP_ENTER", KEY_SPACE = "SPACE", KEY_BACKSPACE = "BACKSPACE", KEY_TAB = "TAB", KEY_ESCAPE = "ESCAPE", KEY_DELETE = "DEL", KEY_INSERT = "INS", KEY_HOME = "HOME", KEY_END = "END", KEY_PAGEUP = "PGUP", KEY_PAGEDOWN = "PGDN", KEY_UP = "UPARROW", KEY_DOWN = "DOWNARROW", KEY_LEFT = "LEFTARROW", KEY_RIGHT = "RIGHTARROW", KEY_LSHIFT = "SHIFT", KEY_RSHIFT = "RSHIFT", KEY_LCONTROL = "CTRL", KEY_RCONTROL = "RCTRL", KEY_LALT = "ALT", KEY_RALT = "RALT", KEY_CAPSLOCK = "CAPSLOCK", KEY_NUMLOCK = "NUMLOCK", KEY_SCROLLLOCK = "SCROLLLOCK", KEY_MINUS = "-", KEY_EQUAL = "=", KEY_LBRACKET = "[", KEY_RBRACKET = "]", KEY_SEMICOLON = "SEMICOLON", KEY_APOSTROPHE = "'", KEY_BACKQUOTE = "`", KEY_COMMA = ",", KEY_PERIOD = ".", KEY_SLASH = "/", KEY_BACKSLASH = "\\", KEY_PAD_DIVIDE = "KP_SLASH", KEY_PAD_MULTIPLY = "KP_MULTIPLY", KEY_PAD_MINUS = "KP_MINUS", KEY_PAD_PLUS = "KP_PLUS", KEY_PAD_DECIMAL = "KP_DEL", KEY_LWIN = "LWIN", KEY_RWIN = "RWIN", KEY_APP = "APP", KEY_PAUSE = "PAUSE", MOUSE_LEFT = "MOUSE1", MOUSE_RIGHT = "MOUSE2", MOUSE_MIDDLE = "MOUSE3", MOUSE_4 = "MOUSE4", MOUSE_5 = "MOUSE5", MOUSE_WHEEL_UP = "MWHEELUP", MOUSE_WHEEL_DOWN = "MWHEELDOWN" }
+for i = 0, 9 do BUTTON_NAMES["KEY_" .. i] = tostring(i); BUTTON_NAMES["KEY_PAD_" .. i] = "KP_INS" end
+for i = 1, 12 do BUTTON_NAMES["KEY_F" .. i] = "F" .. i end
+for c = string.byte("A"), string.byte("Z") do BUTTON_NAMES["KEY_" .. string.char(c)] = string.char(c):lower() end
+local PAD_NAMES = { "KP_END", "KP_DOWNARROW", "KP_PGDN", "KP_LEFTARROW", "KP_5", "KP_RIGHTARROW", "KP_HOME", "KP_UPARROW", "KP_PGUP" }
+for i = 1, 9 do BUTTON_NAMES["KEY_PAD_" .. i] = PAD_NAMES[i] end
+local code_to_name, name_to_code = {}, {}
+for const, bname in pairs(BUTTON_NAMES) do
+	local code = _G[const]
+	if code then code_to_name[code] = bname; name_to_code[bname:lower()] = code end
+end
+MOUSE_LEFT, MOUSE_RIGHT, MOUSE_MIDDLE, MOUSE_4, MOUSE_5, MOUSE_WHEEL_UP, MOUSE_WHEEL_DOWN = 107, 108, 109, 110, 111, 112, 113
+for const, code in pairs({ MOUSE_LEFT = 107, MOUSE_RIGHT = 108, MOUSE_MIDDLE = 109, MOUSE_4 = 110, MOUSE_5 = 111, MOUSE_WHEEL_UP = 112, MOUSE_WHEEL_DOWN = 113 }) do code_to_name[code] = BUTTON_NAMES[const]; name_to_code[BUTTON_NAMES[const]:lower()] = code end
+local shift_down = false
+function __glua_key_code(name)
+	local k = KEYNAMES[name]
+	if k then return _G[k] end
+	local letter = name:match("^Key(%a)$")
+	if letter then return _G["KEY_" .. letter:upper()] end
+	local digit = name:match("^Digit(%d)$")
+	if digit then return _G["KEY_" .. digit] end
+	local fkey = name:match("^F(%d+)$")
+	if fkey then return _G["KEY_F" .. fkey] end
+	local pad = name:match("^Numpad(%d)$")
+	if pad then return _G["KEY_PAD_" .. pad] end
+end
+function __glua_key_char(name)
+	local letter = name:match("^Key(%a)$")
+	if letter then return shift_down and letter:upper() or letter:lower() end
+	local digit = name:match("^Digit(%d)$")
+	if digit then return shift_down and SHIFTED[digit] or digit end
+	local pad = name:match("^Numpad(%d)$")
+	if pad then return pad end
+	local p = PUNCT[name]
+	if p then return shift_down and SHIFTED[p] or p end
+end
+
+input = input or {}
+local keys_down, pressed_this_frame, released_this_frame, typed_this_frame = {}, {}, {}, {}
+local last_press_time, double_pressed = {}, {}
+local trapping, trapped = false, nil
+local cursor_mx, cursor_my = 0, 0
+function input.IsKeyDown(code) return keys_down[code] == true end
+function input.IsMouseDown(code) return keys_down[code] == true end
+function input.IsButtonDown(code) return keys_down[code] == true end
+function input.IsShiftDown() return keys_down[KEY_LSHIFT] == true or keys_down[KEY_RSHIFT] == true end
+function input.IsControlDown() return keys_down[KEY_LCONTROL] == true or keys_down[KEY_RCONTROL] == true end
+function input.WasKeyPressed(code) return pressed_this_frame[code] == true end
+function input.WasKeyReleased(code) return released_this_frame[code] == true end
+function input.WasKeyTyped(code) return typed_this_frame[code] == true end
+function input.WasMousePressed(code) return pressed_this_frame[code] == true end
+function input.WasMouseReleased(code) return released_this_frame[code] == true end
+function input.WasMouseDoublePressed(code) return double_pressed[code] == true end
+function input.GetKeyName(code) return code_to_name[code] end
+function input.GetKeyCode(name) return name_to_code[tostring(name):lower()] or 0 end
+function input.GetCursorPos() return cursor_mx, cursor_my end
+function input.SetCursorPos(x, y) cursor_mx, cursor_my = x, y end
+function input.GetAnalogValue(code) return 0 end
+function input.SelectWeapon(wep) if wep and wep.GetClass then RunConsoleCommand("use", wep:GetClass()) end end
+function input.StartKeyTrapping() trapping, trapped = true, nil end
+function input.IsKeyTrapping() return trapping end
+function input.CheckKeyTrapping() if trapped then local k = trapped; trapped, trapping = nil, false; return k end end
+-- the game's default binds (config/config_default.cfg); the client's own config layer is not
+-- scripted yet, so lookups answer from these
+local DEFAULT_BINDS = { ["+attack"] = "MOUSE1", ["+attack2"] = "MOUSE2", ["+jump"] = "SPACE", ["+duck"] = "CTRL", ["+use"] = "e", ["+forward"] = "w", ["+back"] = "s", ["+moveleft"] = "a", ["+moveright"] = "d", ["+speed"] = "SHIFT", ["+walk"] = "ALT", ["+reload"] = "r", ["+menu"] = "q", ["+menu_context"] = "c", ["+zoom"] = "z", ["+voicerecord"] = "x", ["impulse 100"] = "f", ["gm_showhelp"] = "F1", ["gm_showteam"] = "F2", ["gm_showspare1"] = "F3", ["gm_showspare2"] = "F4", ["jpeg"] = "F5", ["toggleconsole"] = "`", ["messagemode"] = "y", ["messagemode2"] = "u", ["+showscores"] = "TAB", ["noclip"] = "v", ["undo"] = "z", ["invnext"] = "MWHEELDOWN", ["invprev"] = "MWHEELUP", ["lastinv"] = "q", ["slot1"] = "1", ["slot2"] = "2", ["slot3"] = "3", ["slot4"] = "4", ["slot5"] = "5", ["slot6"] = "6", ["phys_swap"] = "MOUSE3", ["cancelselect"] = "ESCAPE" }
+function input.LookupBinding(cmd, strict)
+	local k = DEFAULT_BINDS[cmd]
+	if k then return k:lower() end
+	if not strict then for c, key in pairs(DEFAULT_BINDS) do if c:find(cmd, 1, true) then return key:lower() end end end
+end
+function input.LookupKeyBinding(code)
+	local name = code_to_name[code]
+	if not name then return end
+	for c, key in pairs(DEFAULT_BINDS) do if key:lower() == name:lower() then return c end end
+end
+function input.TranslateAlias(cmd) return cmd end
+
+gui = gui or {}
+local screen_clicker = false
+function gui.MousePos() return cursor_mx, cursor_my end
+function gui.MouseX() return cursor_mx end
+function gui.MouseY() return cursor_my end
+function gui.SetMousePos(x, y) cursor_mx, cursor_my = x, y end
+function gui.EnableScreenClicker(b)
+	screen_clicker = b == true
+	-- the client shows / grabs the cursor from this command (DrawCmd::ScreenClicker)
+	if hostdraw.screen_clicker then hostdraw.screen_clicker(screen_clicker) end
+end
+function gui.IsGameUIVisible() return false end
+function gui.ActivateGameUI() end
+function gui.HideGameUI() end
+function gui.IsConsoleVisible() return false end
+function gui.ShowConsole() end
+function gui.OpenURL(url) if hostdraw.open_url then hostdraw.open_url(url) end end
+function gui.AddCaption(text, duration) end
+function gui.ScreenToVector(x, y)
+	-- the ray through a screen pixel from the view: the client's view angles / fov via the
+	-- local player's eye angles; a unit vector in world space
+	local lp = LocalPlayer and LocalPlayer()
+	local ang = lp and lp.EyeAngles and lp:EyeAngles() or Angle()
+	local fov = lp and lp.GetFOV and lp:GetFOV() or 90
+	local w, h = ScrW(), ScrH()
+	local tan_half = math.tan(math.rad(fov) / 2)
+	local nx, ny = (x / w * 2 - 1) * tan_half * (w / h), (1 - y / h * 2) * tan_half
+	local fwd, right, up = ang:Forward(), ang:Right(), ang:Up()
+	local v = fwd + right * nx + up * ny
+	v:Normalize()
+	return v
+end
+function gui.InternalCursorMoved(x, y) cursor_mx, cursor_my = x, y end
+function gui.InternalKeyCodePressed(code) keys_down[code] = true; pressed_this_frame[code] = true end
+function gui.InternalKeyCodeReleased(code) keys_down[code] = nil; released_this_frame[code] = true end
+function gui.InternalKeyCodeTyped(code) typed_this_frame[code] = true end
+function gui.InternalKeyTyped(ch) end
+function gui.InternalMousePressed(code) gui.InternalKeyCodePressed(code) end
+function gui.InternalMouseReleased(code) gui.InternalKeyCodeReleased(code) end
+function gui.InternalMouseDoublePressed(code) double_pressed[code] = true end
+function gui.InternalMouseWheeled(d) end
+
+-- every key edge updates the state before the vgui layer and the hooks see it
+function __glua_key_edge(name, down)
+	if name == "ShiftLeft" or name == "ShiftRight" then shift_down = down end
+	local code = __glua_key_code(name)
+	if not code then return end
+	if down then
+		if trapping and code ~= MOUSE_LEFT then trapped = code end
+		keys_down[code] = true
+		pressed_this_frame[code] = true
+		typed_this_frame[code] = true
+		local now = SysTime()
+		if last_press_time[code] and now - last_press_time[code] < 0.3 then double_pressed[code] = true end
+		last_press_time[code] = now
+	else
+		keys_down[code] = nil
+		released_this_frame[code] = true
+	end
+	return code
+end
+function __glua_input_frame(p)
+	pressed_this_frame, released_this_frame, typed_this_frame, double_pressed = {}, {}, {}, {}
+	if p.mx then cursor_mx, cursor_my = p.mx, p.my end
+end
+
+------------------------------------------------------------------------ killicon
+killicon = killicon or {}
+local icons, icon_aliases = {}, {}
+function killicon.Add(class, material, color) icons[class] = { material = material, color = color or Color(255, 80, 0, 255) } end
+function killicon.AddFont(class, font, symbol, color) icons[class] = { font = font, symbol = symbol, color = color or Color(255, 80, 0, 255) } end
+function killicon.AddTexCoord(class, material, color, x, y, w, h) icons[class] = { material = material, color = color or Color(255, 80, 0, 255), tex = { x, y, w, h } } end
+function killicon.AddAlias(class, alias) icon_aliases[class] = alias end
+local function icon_of(class) return icons[class] or (icon_aliases[class] and icons[icon_aliases[class]]) or icons.default end
+function killicon.Exists(class) return icon_of(class) ~= nil end
+function killicon.GetSize(class)
+	local ic = icon_of(class)
+	if not ic then return 0, 0 end
+	if ic.font then surface.SetFont(ic.font); return surface.GetTextSize(ic.symbol) end
+	return ic.tex and ic.tex[3] or 64, ic.tex and ic.tex[4] or 32
+end
+function killicon.Render(x, y, class, alpha)
+	local ic = icon_of(class)
+	if not ic then return end
+	local c = Color(ic.color.r, ic.color.g, ic.color.b, alpha or 255)
+	if ic.font then
+		surface.SetFont(ic.font)
+		surface.SetTextColor(c)
+		surface.SetTextPos(x, y)
+		surface.DrawText(ic.symbol)
+	else
+		local w, h = killicon.GetSize(class)
+		surface.SetMaterial(Material(ic.material))
+		surface.SetDrawColor(c)
+		surface.DrawTexturedRect(x, y, w, h)
+	end
+end
+function killicon.Draw(x, y, class, alpha)
+	local w, h = killicon.GetSize(class)
+	killicon.Render(x - w / 2, y - h / 2, class, alpha)
+end
+-- the game's icons from `lua/includes/extensions/client/killicon.lua`: the HL2 weapon glyphs
+-- in the HL2MPTypeDeath font and the generic death icon
+killicon.AddFont("default", "HL2MPTypeDeath", "0")
+for class, symbol in pairs({ weapon_pistol = "-", weapon_357 = ".", weapon_smg1 = "/", weapon_ar2 = "2", weapon_shotgun = "0", weapon_crossbow = "1", weapon_frag = "4", weapon_rpg = "3", weapon_crowbar = "6", weapon_stunstick = "!", weapon_physcannon = ",", weapon_physgun = ",", prop_physics = "9", worldspawn = "6", npc_grenade_frag = "4", grenade_ar2 = "2", rpg_missile = "3", crossbow_bolt = "1", prop_combine_ball = "8", env_explosion = "*" }) do killicon.AddFont(class, "HL2MPTypeDeath", symbol) end
+
+------------------------------------------------------------------------ dragndrop
+dragndrop = dragndrop or {}
+local drag = { panels = nil, name = nil, hover = nil, droppable = nil, start = nil, moved = false }
+function dragndrop.IsDragging() return drag.panels ~= nil end
+function dragndrop.GetDroppable(name) if not drag.panels then return end if name and drag.name ~= name then return end return drag.panels end
+function dragndrop.StartDragging() drag.moved = true end
+function dragndrop.StopDragging() drag.panels, drag.name, drag.hover, drag.droppable, drag.start, drag.moved = nil, nil, nil, nil, nil, false end
+function dragndrop.Clear() dragndrop.StopDragging() end
+function dragndrop.Think() end
+function dragndrop.HoverThink() end
+function dragndrop.UpdateReceiver() end
+function dragndrop.CallReceiverFunction(receiver, dropped, cmd, x, y)
+	local rc = receiver.__receivers and receiver.__receivers[drag.name]
+	if rc then rc.fn(receiver, drag.panels, dropped, cmd, x, y) end
+end
+function dragndrop.Drop() if drag.panels then drag.panels = nil end end
+function dragndrop.HandleDroppedInGame() end
+-- Panel:Droppable(name) starts a drag of the panel when the mouse moves with the button down
+-- on it; Panel:Receiver(name, fn, menu) takes the drop: fn(receiver, panels, dropped, cmd, x, y)
+__glua_dnd = drag
+
 ------------------------------------------------------------------------ the frame
 -- the engine HUD elements the game asks `HUDShouldDraw` about (the sandbox hides CHudHealth,
 -- CHudBattery, CHudAmmo, CHudSecondaryAmmo and draws its own; the client applies the answers)
@@ -333,6 +557,7 @@ if events then
 	-- `Think` / `Tick` run once per client frame (the game calls the client's Think every frame)
 	events.on("tick.client", function() hook.Run("Think"); hook.Run("Tick") end)
 	events.on("render.hud", function(p)
+		__glua_input_frame(p)
 		local w, h = p.w or scr_w, p.h or scr_h
 		if w ~= scr_w or h ~= scr_h then
 			local ow, oh = scr_w, scr_h
@@ -359,6 +584,19 @@ if events then
 	end)
 	-- key edges: the vgui layer takes the mouse / keyboard first, then `PlayerBindPress`-style hooks
 	events.on("input.key", function(p)
+		local code = __glua_key_edge(p.key, p.down)
 		if __derma_key and __derma_key(p.key, p.down) then return end
+		if code then
+			-- the game's key hooks: PlayerButtonDown / Up for every key, PlayerBindPress for a
+			-- bound command (returning true eats the bind)
+			local lp = LocalPlayer()
+			if p.down then
+				hook.Run("PlayerButtonDown", lp, code)
+				local bind = input.LookupKeyBinding(code)
+				if bind then hook.Run("PlayerBindPress", lp, bind, true, code) end
+			else
+				hook.Run("PlayerButtonUp", lp, code)
+			end
+		end
 	end)
 end
