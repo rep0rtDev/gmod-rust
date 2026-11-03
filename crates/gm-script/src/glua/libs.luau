@@ -862,7 +862,6 @@ for _, n in ipairs({ "OnScreenClick", "OpenEntityMenu" }) do if properties[n] ==
 resource = resource or {}
 for _, n in ipairs({ "AddFile", "AddSingleFile", "AddWorkshop" }) do if resource[n] == nil then resource[n] = stub("resource." .. n) end end
 saverestore = saverestore or {}
-for _, n in ipairs({ "AddRestoreHook", "AddSaveHook", "LoadEntity", "LoadGlobal", "PreRestore", "PreSave", "ReadTable", "ReadVar", "SaveEntity", "SaveGlobal", "WritableKeysInTable", "WriteTable", "WriteVar" }) do if saverestore[n] == nil then saverestore[n] = stub("saverestore." .. n) end end
 sound = sound or {}
 for _, n in ipairs({ "AddSoundOverrides", "GetLoudestSoundHint", "SetActorGender" }) do if sound[n] == nil then sound[n] = stub("sound." .. n) end end
 sql = sql or {}

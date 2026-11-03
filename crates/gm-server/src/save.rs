@@ -27,6 +27,9 @@ pub struct Save {
     pub dupe_mins: [f32; 3],
     #[serde(default)]
     pub dupe_maxs: [f32; 3],
+    /// The script runtime's global blobs (`saverestore` save hooks by name); absent before.
+    #[serde(default)]
+    pub script_globals: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -594,6 +597,12 @@ pub struct SavedProp {
     /// Vehicle list key when the prop is a vehicle (`Spawn_Vehicle`: `VehicleName`).
     #[serde(default)]
     pub vehicle: Option<String>,
+    /// Scripted entity class (`sents`) so a load re-creates the SENT, not a bare prop.
+    #[serde(default)]
+    pub sent: Option<String>,
+    /// The script runtime's blob for this entity (its save table); absent before.
+    #[serde(default)]
+    pub script: Option<String>,
 }
 
 /// An NPC in a save: the spawnmenu key, its class / model and state (`npc.NPCName`, health, weapon).
@@ -1225,6 +1234,7 @@ impl Server<'_> {
             dupe_yaw: 0.0,
             dupe_mins: [0.0; 3],
             dupe_maxs: [0.0; 3],
+            script_globals: Default::default(),
             format: 1,
             map: map.to_string(),
             props: props
@@ -1278,6 +1288,12 @@ impl Server<'_> {
     /// built by the physics sync. Returns (props, constraints) added; a prop whose model does
     /// not load is skipped with its constraints.
     pub fn load_world(&mut self, save: &Save, owner: u32) -> (usize, usize) {
+        let (ids, constraints) = self.load_world_ids(save, owner);
+        (ids.iter().filter(|i| i.is_some()).count(), constraints)
+    }
+
+    /// `load_world` returning the new id of every saved prop (None = model missing).
+    pub fn load_world_ids(&mut self, save: &Save, owner: u32) -> (Vec<Option<u32>>, usize) {
         let mut ids: Vec<Option<u32>> = Vec::with_capacity(save.props.len());
         for p in &save.props {
             if !self.models.contains_key(&p.model) {
@@ -1309,6 +1325,22 @@ impl Server<'_> {
             }
             self.sandbox.set_body(id, p.body.clone());
             self.apply_saved_state(id, p, Vec3::ZERO);
+            if let Some(class) = p.sent.as_deref() {
+                if self.scripted_entities.iter().any(|e| e.class == class) {
+                    self.sents.insert(
+                        id,
+                        crate::SentState {
+                            class: class.to_string(),
+                            next_think: self.tick_count + crate::SENT_FIRST_THINK_TICKS,
+                            last_think: None,
+                            overlay: String::new(),
+                            trigger: true,
+                            trigger_pad: None,
+                        },
+                    );
+                    self.sent_event(id, "init", 0, 0, 0.0);
+                }
+            }
             ids.push(Some(id));
         }
         let mut constraints = 0;
@@ -1336,10 +1368,34 @@ impl Server<'_> {
             self.restore_npc(owner, n, Vec3::ZERO);
         }
         self.sync_after_script();
-        (ids.iter().filter(|i| i.is_some()).count(), constraints)
+        (ids, constraints)
     }
 }
 
 fn one() -> f32 {
     1.0
+}
+
+#[cfg(test)]
+mod script_fields {
+    #[test]
+    fn older_saves_without_script_fields_still_parse() {
+        let text = r#"{"format":1,"map":"gm_construct","props":[{"model":"m.mdl","pos":[0,0,0],"angles":[0,0,0],"frozen":true,"skin":0,"body":"","material":"","color":null,"render_mode":0,"render_fx":0,"phys_material":"","gravity":null,"parts":[],"bone_manips":[],"flex":null,"eye_target":null,"decals":[],"weapon":null,"vehicle":null}],"constraints":[]}"#;
+        let save: super::Save = serde_json::from_str(text).unwrap();
+        assert!(save.script_globals.is_empty());
+        assert_eq!(
+            (
+                save.props[0].sent.as_deref(),
+                save.props[0].script.as_deref()
+            ),
+            (None, None)
+        );
+        let mut save = save;
+        save.props[0].sent = Some("my_sent".into());
+        save.props[0].script = Some("{\"a\":1}".into());
+        save.script_globals.insert("h".into(), "[]".into());
+        let back: super::Save =
+            serde_json::from_slice(&serde_json::to_vec(&save).unwrap()).unwrap();
+        assert_eq!(back, save);
+    }
 }

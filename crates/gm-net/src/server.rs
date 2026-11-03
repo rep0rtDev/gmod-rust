@@ -512,7 +512,17 @@ impl ServerNet {
                 };
                 let path = dir.join(format!("{name}.{}", gm_server::save::EXTENSION));
                 if verb == "save" {
-                    let save = server.save_world(&self.map);
+                    let mut save = server.save_world(&self.map);
+                    if let Some(h) = self.hooks.as_mut() {
+                        let ids: Vec<u32> = server.sandbox.props().iter().map(|p| p.id).collect();
+                        let (globals, per) = h.save_data(server, &ids);
+                        save.script_globals = globals;
+                        for (i, id) in ids.iter().enumerate() {
+                            if let Some(sp) = save.props.get_mut(i) {
+                                sp.script = per.get(id).cloned();
+                            }
+                        }
+                    }
                     match std::fs::create_dir_all(&dir)
                         .and_then(|_| serde_json::to_vec_pretty(&save).map_err(std::io::Error::other))
                         .and_then(|bytes| std::fs::write(&path, bytes))
@@ -529,7 +539,16 @@ impl ServerNet {
                         .and_then(|b| serde_json::from_slice::<gm_server::save::Save>(&b).map_err(std::io::Error::other))
                     {
                         Ok(save) => {
-                            let (p, c) = server.load_world(&save, admin);
+                            let (ids, c) = server.load_world_ids(&save, admin);
+                            let p = ids.iter().filter(|i| i.is_some()).count();
+                            if let Some(h) = self.hooks.as_mut() {
+                                let ents: Vec<(u32, String)> = ids
+                                    .iter()
+                                    .zip(&save.props)
+                                    .filter_map(|(id, sp)| Some(((*id)?, sp.script.clone()?)))
+                                    .collect();
+                                h.restore_data(server, &save.script_globals, &ents);
+                            }
                             vec![format!("load {name}: {p} props {c} constraints (saved on {})", save.map)]
                         }
                         Err(e) => vec![format!("load {name}: {e}")],

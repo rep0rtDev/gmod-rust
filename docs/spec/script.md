@@ -776,6 +776,12 @@ every entity's `class` (`prop_physics`, `prop_ragdoll`, the vehicle / world-weap
   impulse and ground wish-speed cap (defaults: the player's effective config and max speed). The
   movement-constraint fields and `SetAbsMoveAngles` stay stubs (no movement constraint in our
   mover).
+- `saverestore`: `save <name>` asks the runtime for one blob per `saverestore.AddSaveHook`
+  (`WriteVar` / `WriteTable` into the save object) and one per scripted entity (its writable
+  fields, `SaveEntity`), stored in the save file; `load <name>` re-creates SENTs by class (a
+  `sents` entry, not a bare prop) and hands the blobs back (`AddRestoreHook` / `ReadVar` /
+  `ReadTable`, `LoadEntity` -> `ENTITY:OnRestore` once the instance exists); `GM:Saved` /
+  `GM:Restored` run around them. Blobs are JSON: Vectors / Angles come back as plain tables.
 - `CNavArea:IsPotentiallyVisible(area)` is the world's PVS between the two centres lifted 36 u
   (the server's NPC interest test); `GetVisibleAreas()` filters every area with it
   (`IsPartiallyVisible` / `IsCompletelyVisible` stay line-of-sight traces to a position).

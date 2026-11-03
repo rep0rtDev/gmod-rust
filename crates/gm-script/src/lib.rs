@@ -792,6 +792,89 @@ impl Runtime {
         taken
     }
 
+    /// `save <name>`: every actor answers `game.save` with lines `G<TAB>name<TAB>blob`
+    /// (a `saverestore` save hook) and `E<TAB>id<TAB>blob` (a scripted entity's save table).
+    pub fn save_data(
+        &mut self,
+        server: &mut Server<'_>,
+        ents: &[u32],
+    ) -> (
+        std::collections::BTreeMap<String, String>,
+        std::collections::BTreeMap<u32, String>,
+    ) {
+        let mut p = api::Payload::default();
+        let list: Vec<String> = ents.iter().map(|e| e.to_string()).collect();
+        p.strs.push(("ents", list.join(",")));
+        let snap = self.snapshot(server);
+        let mut globals = std::collections::BTreeMap::new();
+        let mut per: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
+        for i in 0..self.actors.len() {
+            let a = &mut self.actors[i];
+            if !a.may_run(self.tick) {
+                continue;
+            }
+            match a.dispatch_reply(&snap, "game.save", &p, self.tick) {
+                Ok(Reply::Text(t)) => {
+                    for line in t.lines() {
+                        let mut it = line.splitn(3, '\t');
+                        match (it.next(), it.next(), it.next()) {
+                            (Some("G"), Some(k), Some(v)) => {
+                                globals.insert(k.to_string(), v.to_string());
+                            }
+                            (Some("E"), Some(id), Some(v)) => {
+                                if let Ok(id) = id.parse::<u32>() {
+                                    per.entry(id)
+                                        .and_modify(|s| {
+                                            s.push('\n');
+                                            s.push_str(v);
+                                        })
+                                        .or_insert_with(|| v.to_string());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => self.log.push(format!("[{}] {e}", a.label())),
+            }
+        }
+        self.serial(server);
+        (globals, per)
+    }
+
+    /// `load <name>`: the blobs back as one `game.restore` event (same line format, entities
+    /// by their new ids); the Lua side applies entity blobs once the SENT instances exist.
+    pub fn restore_data(
+        &mut self,
+        server: &mut Server<'_>,
+        globals: &std::collections::BTreeMap<String, String>,
+        ents: &[(u32, String)],
+    ) {
+        let mut text = String::new();
+        for (k, v) in globals {
+            text.push_str(&format!("G\t{k}\t{v}\n"));
+        }
+        for (id, v) in ents {
+            for line in v.lines() {
+                text.push_str(&format!("E\t{id}\t{line}\n"));
+            }
+        }
+        let mut p = api::Payload::default();
+        p.strs.push(("data", text));
+        let snap = self.snapshot(server);
+        for i in 0..self.actors.len() {
+            let a = &mut self.actors[i];
+            if !a.may_run(self.tick) {
+                continue;
+            }
+            if let Err(e) = a.dispatch(&snap, "game.restore", &p, self.tick) {
+                self.log.push(format!("[{}] {e}", a.label()));
+            }
+        }
+        self.serial(server);
+    }
+
     pub fn player_chat(
         &mut self,
         server: &mut Server<'_>,
@@ -1744,6 +1827,24 @@ impl gm_server::ServerHooks for Runtime {
     ) -> bool {
         Runtime::player_command(self, server, player, cmd, args)
     }
+    fn save_data(
+        &mut self,
+        server: &mut Server<'_>,
+        ents: &[u32],
+    ) -> (
+        std::collections::BTreeMap<String, String>,
+        std::collections::BTreeMap<u32, String>,
+    ) {
+        Runtime::save_data(self, server, ents)
+    }
+    fn restore_data(
+        &mut self,
+        server: &mut Server<'_>,
+        globals: &std::collections::BTreeMap<String, String>,
+        ents: &[(u32, String)],
+    ) {
+        Runtime::restore_data(self, server, globals, ents)
+    }
     fn tool_before(
         &mut self,
         server: &mut Server<'_>,
@@ -1838,6 +1939,24 @@ pub fn attach(
 }
 
 impl gm_server::ServerHooks for SharedRuntime {
+    fn save_data(
+        &mut self,
+        server: &mut Server<'_>,
+        ents: &[u32],
+    ) -> (
+        std::collections::BTreeMap<String, String>,
+        std::collections::BTreeMap<u32, String>,
+    ) {
+        self.0.lock().unwrap().save_data(server, ents)
+    }
+    fn restore_data(
+        &mut self,
+        server: &mut Server<'_>,
+        globals: &std::collections::BTreeMap<String, String>,
+        ents: &[(u32, String)],
+    ) {
+        self.0.lock().unwrap().restore_data(server, globals, ents)
+    }
     fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool {
         self.0
             .lock()

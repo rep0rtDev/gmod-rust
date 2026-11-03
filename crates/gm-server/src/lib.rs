@@ -1484,6 +1484,23 @@ pub trait ServerHooks {
     ) -> Option<String> {
         Some(text.to_owned())
     }
+    /// `save <name>`: the runtime's data for the file - global blobs (`saverestore` save hooks
+    /// by name) and one blob per scripted entity (by id); empty by default.
+    fn save_data(
+        &mut self,
+        _server: &mut Server<'_>,
+        _ents: &[u32],
+    ) -> (BTreeMap<String, String>, BTreeMap<u32, String>) {
+        Default::default()
+    }
+    /// `load <name>`: the blobs back, entities by their new ids.
+    fn restore_data(
+        &mut self,
+        _server: &mut Server<'_>,
+        _globals: &BTreeMap<String, String>,
+        _ents: &[(u32, String)],
+    ) {
+    }
     /// A console line a client typed that the client did not know (`concommand.Add` commands):
     /// true when a script command took it.
     fn player_command(
@@ -11366,6 +11383,7 @@ impl<'w> Server<'w> {
                     npcs: vec![npc],
                     dupe_yaw: yaw,
                     dupe_mins: (local + n.mins).to_array(),
+                    script_globals: Default::default(),
                     dupe_maxs: (local + n.maxs).to_array(),
                 },
             );
@@ -11441,6 +11459,7 @@ impl<'w> Server<'w> {
                 npcs: Vec::new(),
                 dupe_yaw: yaw,
                 dupe_mins: mins.to_array(),
+                script_globals: Default::default(),
                 dupe_maxs: maxs.to_array(),
             },
         );
@@ -13845,6 +13864,8 @@ impl<'w> Server<'w> {
             eye_target: self.eye_targets.get(&p.id).map(|t| arr(*t)),
             weapon: self.world_weapons.get(&p.id).cloned(),
             vehicle: self.vehicles.get(&p.id).map(|v| v.key.clone()),
+            sent: self.sents.get(&p.id).map(|s| s.class.clone()),
+            script: None,
             decals: self
                 .decals(p.id)
                 .iter()

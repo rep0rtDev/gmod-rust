@@ -1283,3 +1283,103 @@ end
 NAV_MESH_INVALID, NAV_MESH_CROUCH, NAV_MESH_JUMP, NAV_MESH_PRECISE, NAV_MESH_NO_JUMP, NAV_MESH_STOP, NAV_MESH_RUN, NAV_MESH_WALK, NAV_MESH_AVOID, NAV_MESH_TRANSIENT, NAV_MESH_DONT_HIDE, NAV_MESH_STAND, NAV_MESH_NO_HOSTAGES, NAV_MESH_STAIRS, NAV_MESH_NO_MERGE, NAV_MESH_OBSTACLE_TOP, NAV_MESH_CLIFF = 0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768
 NAV_MESH_FUNC_COST, NAV_MESH_HAS_ELEVATOR, NAV_MESH_NAV_BLOCKER = 536870912, 1073741824, -2147483648
 NORTH, EAST, SOUTH, WEST = 0, 1, 2, 3
+
+-- saverestore: a save file carries one blob per scripted entity (its save table) and one per
+-- global save hook; the server asks for them on `save <name>` (game.save) and hands them back
+-- after `load <name>` (game.restore), where SENTs come back as their class (sents entry) and
+-- their blobs apply once the instance exists (OnRestore).
+saverestore = saverestore or {}
+local sr_save_hooks, sr_restore_hooks, sr_pending = {}, {}, {}
+local function sr_blob(t) return (util.TableToJSON(t) or "[]"):gsub("[\r\n]", "") end
+local function sr_writer()
+    local w = { __vals = {} }
+    function w:WriteVar(v) self.__vals[#self.__vals + 1] = { v = v } end
+    function w:WriteTable(t) self.__vals[#self.__vals + 1] = { t = t } end
+    return w
+end
+local function sr_reader(vals)
+    local r = { __vals = vals or {}, __i = 0 }
+    function r:ReadVar() self.__i = self.__i + 1; local e = self.__vals[self.__i]; if e == nil then return nil end if e.v ~= nil then return e.v end return e.t end
+    function r:ReadTable() self.__i = self.__i + 1; local e = self.__vals[self.__i]; return e and (e.t or e.v) or {} end
+    return r
+end
+function saverestore.AddSaveHook(name, fn) sr_save_hooks[name] = fn end
+function saverestore.AddRestoreHook(name, fn) sr_restore_hooks[name] = fn end
+function saverestore.WritableKeysInTable(t)
+    local out = {}
+    for k, v in pairs(t or {}) do
+        local tv = type(v)
+        if type(k) == "string" and k:sub(1, 2) ~= "__" and tv ~= "function" and tv ~= "userdata" and tv ~= "thread" then out[#out + 1] = k end
+    end
+    return out
+end
+function saverestore.WriteVar(v, save) if save and save.WriteVar then save:WriteVar(v) end end
+function saverestore.ReadVar(save) if save and save.ReadVar then return save:ReadVar() end return nil end
+function saverestore.WriteTable(t, save) if save and save.WriteTable then save:WriteTable(t) end end
+function saverestore.ReadTable(save) if save and save.ReadTable then return save:ReadTable() end return {} end
+local function sr_instance(e)
+    if not (IsValid(e) and scripted_ents.__instance) then return nil end
+    return scripted_ents.__instance(e:EntIndex())
+end
+function saverestore.SaveEntity(e, save)
+    local i = sr_instance(e)
+    if not (i and save) then return end
+    local t = {}
+    for _, k in ipairs(saverestore.WritableKeysInTable(i)) do t[k] = rawget(i, k) end
+    save:WriteTable(t)
+end
+-- @hook ENTITY:OnRestore
+function saverestore.LoadEntity(e, save)
+    local i = sr_instance(e)
+    if not (i and save) then return end
+    for k, v in pairs(saverestore.ReadTable(save) or {}) do rawset(i, k, v) end
+    if i.OnRestore then i:OnRestore() end
+end
+function saverestore.SaveGlobal(save) for name, fn in pairs(sr_save_hooks) do fn(save, name) end end
+function saverestore.LoadGlobal(save) for name, fn in pairs(sr_restore_hooks) do fn(save, name) end end
+function saverestore.PreSave() hook.Run("PreSave") end
+function saverestore.PreRestore() sr_pending = {} hook.Run("PreRestore") end
+events.on("game.save", function(p)
+    saverestore.PreSave()
+    local out = {}
+    for name, fn in pairs(sr_save_hooks) do
+        local w = sr_writer()
+        fn(w, name)
+        out[#out + 1] = "G\t" .. name .. "\t" .. sr_blob(w.__vals)
+    end
+    for id in string.gmatch(p.ents or "", "[^,]+") do
+        local e = Entity(tonumber(id) or 0)
+        if sr_instance(e) then
+            local w = sr_writer()
+            saverestore.SaveEntity(e, w)
+            out[#out + 1] = "E\t" .. id .. "\t" .. sr_blob(w.__vals)
+        end
+    end
+    hook.Run("Saved")
+    return table.concat(out, "\n")
+end)
+local function sr_apply_entity(id, vals)
+    local e = Entity(id)
+    if sr_instance(e) then saverestore.LoadEntity(e, sr_reader(vals)) return true end
+    return false
+end
+events.on("game.restore", function(p)
+    saverestore.PreRestore()
+    for kind, key, blob in string.gmatch(p.data or "", "([GE])\t([^\t\n]*)\t([^\n]*)") do
+        local vals = util.JSONToTable(blob) or {}
+        if kind == "G" then
+            local fn = sr_restore_hooks[key]
+            if fn then fn(sr_reader(vals), key) end
+        else
+            local id = tonumber(key) or 0
+            if not sr_apply_entity(id, vals) then sr_pending[id] = { vals = vals, ttl = 300 } end
+        end
+    end
+    hook.Run("Restored")
+end)
+events.on("tick.pre", function()
+    for id, pend in pairs(sr_pending) do
+        pend.ttl = pend.ttl - 1
+        if sr_apply_entity(id, pend.vals) or pend.ttl <= 0 then sr_pending[id] = nil end
+    end
+end)

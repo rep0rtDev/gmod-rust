@@ -2863,3 +2863,41 @@ fn nav_area_visibility_and_water() {
     let r: Vec<bool> = a.eval("return state.r").unwrap();
     assert_eq!((r[2], r[3], r[6]), (false, false, false), "{r:?}");
 }
+
+#[test]
+fn saverestore_round_trips_global_hooks_and_runs_the_gm_hooks() {
+    let mut rt = runtime(
+        "state.saved, state.restored, state.got = 0, 0, nil
+         hook.Add('Saved', 't', function() state.saved = state.saved + 1 end)
+         hook.Add('Restored', 't', function() state.restored = state.restored + 1 end)
+         saverestore.AddSaveHook('MyAddon', function(save)
+             saverestore.WriteVar(42, save)
+             saverestore.WriteTable({ name = 'x', list = { 1, 2 } }, save)
+         end)
+         saverestore.AddRestoreHook('MyAddon', function(save)
+             state.got = { saverestore.ReadVar(save), saverestore.ReadTable(save) }
+         end)",
+    );
+    let a = &mut rt.actors_mut()[0];
+    let mut p = Payload::default();
+    p.strs.push(("ents", "7,8".to_string()));
+    let reply = a.dispatch_reply(&snapshot(), "game.save", &p, 1).unwrap();
+    let text = match reply {
+        gm_script::actor::Reply::Text(t) => t,
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        text.starts_with("G\tMyAddon\t") && !text.contains("E\t"),
+        "{text}"
+    );
+    let mut r = Payload::default();
+    r.strs.push(("data", format!("{text}\n")));
+    a.dispatch(&snapshot(), "game.restore", &r, 2).unwrap();
+    let (saved, restored, v, name, n): (f64, f64, f64, String, f64) = a
+        .eval("return state.saved, state.restored, state.got[1], state.got[2].name, #state.got[2].list")
+        .unwrap();
+    assert_eq!(
+        (saved, restored, v, name.as_str(), n),
+        (1.0, 1.0, 42.0, "x", 2.0)
+    );
+}
