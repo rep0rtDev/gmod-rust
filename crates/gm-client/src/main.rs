@@ -906,15 +906,28 @@ fn msaa_view(
     })
 }
 
-/// `mat_antialias` clamped to a sample count the adapter supports for the colour and depth
-/// formats (8 -> 4 -> 2 -> 1).
-fn pick_msaa(adapter: &wgpu::Adapter, format: wgpu::TextureFormat, want: u32) -> u32 {
-    let color = adapter.get_texture_format_features(format).flags;
-    let depth = adapter
+/// `mat_antialias` clamped to a sample count the device supports for the colour and depth
+/// formats (8 -> 4 -> 2 -> 1): without `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` on the device
+/// only 1 and 4 are guaranteed whatever the adapter reports.
+fn pick_msaa(gpu: &gm_render::Gpu, format: wgpu::TextureFormat, want: u32) -> u32 {
+    let specific = gpu
+        .device
+        .features()
+        .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
+    let color = gpu.adapter.get_texture_format_features(format).flags;
+    let depth = gpu
+        .adapter
         .get_texture_format_features(wgpu::TextureFormat::Depth32Float)
         .flags;
+    let ok = |n: u32| {
+        if specific {
+            color.sample_count_supported(n) && depth.sample_count_supported(n)
+        } else {
+            n == 1 || n == 4
+        }
+    };
     let mut n = want.clamp(1, 8).next_power_of_two();
-    while n > 1 && !(color.sample_count_supported(n) && depth.sample_count_supported(n)) {
+    while n > 1 && !ok(n) {
         n /= 2;
     }
     n
@@ -960,7 +973,7 @@ impl App {
             trilinear: self.settings.mat_trilinear,
             aniso: self.settings.mat_forceaniso,
             root_lod: self.settings.r_rootlod.max(0) as u32,
-            msaa: pick_msaa(&gpu.adapter, format, self.settings.mat_antialias),
+            msaa: pick_msaa(&gpu, format, self.settings.mat_antialias),
         };
         let world = WorldRenderer::new(&gpu, &self.mount, &bsp, format, quality)?;
         if hdr {

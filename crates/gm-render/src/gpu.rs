@@ -26,7 +26,10 @@ impl Gpu {
         ));
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("gm-render"),
-            required_features: wgpu::Features::empty(),
+            // sample counts beyond the guaranteed 1 / 4 (mat_antialias 8) need the adapter's
+            // per-format features on the device too
+            required_features: adapter.features()
+                & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
             required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
             ..Default::default()
         }))
@@ -50,7 +53,10 @@ impl Gpu {
         .map_err(|e| anyhow!("no GPU adapter for the window: {e}"))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("gm-render"),
-            required_features: wgpu::Features::empty(),
+            // sample counts beyond the guaranteed 1 / 4 (mat_antialias 8) need the adapter's
+            // per-format features on the device too
+            required_features: adapter.features()
+                & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
             required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
             ..Default::default()
         }))
