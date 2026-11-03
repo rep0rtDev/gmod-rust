@@ -39,6 +39,10 @@ pub struct MoveConfig {
     pub max_velocity: f32,
     pub step_size: f32,
     pub jump_power: f32,
+    /// `sv_noclipspeed`: noclip's cap is max speed times this; `sv_noclipaccelerate` is its
+    /// acceleration (`FullNoClipMove`).
+    pub noclip_speed: f32,
+    pub noclip_accelerate: f32,
     pub walk_speed: f32,
     pub run_speed: f32,
     /// `Player:SetSlowWalkSpeed`: the cap with the walk button held (`move_prop_*_slow`:
@@ -88,6 +92,8 @@ impl Default for MoveConfig {
             max_velocity: 3500.0,
             step_size: 18.0,
             jump_power: 200.0,
+            noclip_speed: 5.0,
+            noclip_accelerate: 5.0,
             walk_speed: 200.0,
             run_speed: 400.0,
             slow_walk_speed: 100.0,
@@ -1055,15 +1061,40 @@ impl<'a> Mover<'a> {
         st.duck_timer = 0.0;
     }
 
+    /// `FullNoClipMove(sv_noclipspeed, sv_noclipaccelerate)`: the wish is the input times
+    /// the speed factor, capped at max speed (run speed with +speed) times the factor; the
+    /// velocity accelerates towards it and bleeds `sv_friction` of itself each second (at
+    /// least a quarter of the cap), so flight glides and tops out near accelerate / friction
+    /// of the cap less the tick's friction share: cap * (5 / 8) * (1 - 8 / 66), 1099 u/s
+    /// sprinting and 549 walking with the game's 5 / 5 / 8 at 66 Hz. No clipping.
+    /// Law from the engine's movement code with the game's cvar defaults; not measured on
+    /// srcds (noclip needs a connected player there).
     fn noclip(&self, st: &mut PlayerState, cmd: &UserCmd, dt: f32) {
+        let factor = self.cfg.noclip_speed;
+        let max_speed = self.max_speed(st, cmd) * factor;
         let (forward, right) = angle_vectors(cmd.view_angles);
-        let speed: f32 = if cmd.buttons & buttons::SPEED != 0 {
-            1000.0
+        let mut wish = forward.normalize_or_zero() * (cmd.forward_move * factor)
+            + right.normalize_or_zero() * (cmd.side_move * factor)
+            + Vec3::Z * (cmd.up_move * factor);
+        let mut wish_speed = wish.length();
+        if wish_speed > max_speed {
+            wish *= max_speed / wish_speed;
+            wish_speed = max_speed;
+        }
+        let wish_dir = wish.normalize_or_zero();
+        let add = wish_speed - st.velocity.dot(wish_dir);
+        if add > 0.0 {
+            let accel = (self.cfg.noclip_accelerate * dt * wish_speed).min(add);
+            st.velocity += wish_dir * accel;
+        }
+        let speed = st.velocity.length();
+        if speed < 1.0 {
+            st.velocity = Vec3::ZERO;
         } else {
-            400.0
-        };
-        let wish = forward * cmd.forward_move + right * cmd.side_move + Vec3::Z * cmd.up_move;
-        st.velocity = wish.normalize_or_zero() * speed.min(wish.length());
+            let control = speed.max(max_speed / 4.0);
+            let drop = control * self.cfg.friction * dt;
+            st.velocity *= (speed - drop).max(0.0) / speed;
+        }
         st.origin += st.velocity * dt;
         st.on_ground = false;
     }
@@ -1867,6 +1898,47 @@ mod tests {
             assert!(ticks < 200);
         }
         assert!(ticks > 5, "stopped in {ticks} ticks");
+    }
+
+    #[test]
+    fn noclip_glides_to_accelerate_over_friction_of_the_cap() {
+        let w = flat_world();
+        let m = Mover::new(MoveConfig::default(), &w);
+        let mut st = PlayerState {
+            origin: Vec3::new(0.0, 0.0, 200.0),
+            move_type: MoveType::Noclip,
+            ..Default::default()
+        };
+        let mut cmd = UserCmd {
+            buttons: buttons::FORWARD,
+            forward_move: 10000.0,
+            view_angles: Vec3::new(0.0, 90.0, 0.0),
+            ..Default::default()
+        };
+        for _ in 0..200 {
+            m.tick(&mut st, &cmd);
+        }
+        // walking: the 200 * 5 cap; per tick accelerate adds a*dt*cap and friction takes
+        // f*dt of the result, so flight settles at cap * (a / f) * (1 - f * dt)
+        let settle = |cap: f32| cap * (5.0 / 8.0) * (1.0 - 8.0 / 66.0);
+        let walk = st.velocity.length();
+        assert!((walk - settle(1000.0)).abs() < 6.0, "{walk}");
+        cmd.buttons |= buttons::SPEED;
+        for _ in 0..200 {
+            m.tick(&mut st, &cmd);
+        }
+        let sprint = st.velocity.length();
+        assert!((sprint - settle(2000.0)).abs() < 12.0, "{sprint}");
+        // letting go glides: still fast after one tick, well down after a quarter second
+        cmd.forward_move = 0.0;
+        cmd.buttons = 0;
+        m.tick(&mut st, &cmd);
+        assert!(st.velocity.length() > 1000.0);
+        for _ in 0..16 {
+            m.tick(&mut st, &cmd);
+        }
+        let v = st.velocity.length();
+        assert!((100.0..700.0).contains(&v), "{v}");
     }
 
     #[test]
