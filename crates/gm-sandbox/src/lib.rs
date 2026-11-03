@@ -3084,7 +3084,7 @@ impl Sandbox {
                     ConstraintKind::Ballsocket {
                         lpos: o2.pos,
                         forcelimit: s.ballsocket_forcelimit,
-                        torquelimit: 0.0,
+                        torquelimit: s.ballsocket_torquelimit,
                         nocollide: s.ballsocket_nocollide,
                     },
                     "BallSocket",
