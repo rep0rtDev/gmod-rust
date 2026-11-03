@@ -44,7 +44,8 @@ turn, E again). This is the public SDK's player pickup (`CPlayerPickupController
   is not, nor 150..300. When the line finds nothing, seven 16 u box sweeps of 72 u tilted
   down from the view (45, 30, 20, 15, 10, -10, -15 degrees) look for props at the feet: the
   gas can and the pop can below the view ray are used that way (`use_gascan`, `use_popcan`).
-- Hold point: the prop's mass centre goes to `eye + forward * (24 + radius)` where `forward`
+- Hold point: the centre of the prop's collision bounds (its `WorldSpaceCenter`, the half-sum
+  of the PHY hull's extents in the body frame) goes to `eye + forward * (24 + radius)` where `forward`
   is the view with the pitch clamped to -75..75 and `radius = 22.63 + extent`, 22.63 the
   player hull's horizontal half-diagonal and `extent` the prop hull's support distance along
   the view
@@ -52,8 +53,10 @@ turn, E again). This is the public SDK's player pickup (`CPlayerPickupController
   `fraction <= 1` branch holds the prop at `distance - radius`; a wall closer than half the
   trace pulls it in to `radius / 2`). The crate (half extent 19.8) sits 72.0 u out at pitch
   20 (67.7 ahead, 24.5 below the eyes) and 66.4 u out at pitch 0 once turned with the player;
-  the gas can 58.7, the chair 59.5 (its origin 2.9 u above the mass centre, so it hangs that
-  much above the ray), the pop can 49.6. The point is kept at least `radius` from the
+  the gas can 58.7, the chair 59.5 (its origin 2.84 u above its bounds centre - hull z
+  -19.86..14.18 - so it hangs that much above the ray at any pitch; its mass centre at
+  (-1.47, 0, -3.9) would put it 1.5 u to the side and 1.06 u higher than the game), the pop can
+  49.6. The point is kept at least `radius` from the
   player's vertical axis.
 - Rotation: at pickup the prop's axes snap to the player's yaw frame when within 30 degrees
   (`DOT_30DEGREE`: the drum's 3.5 degree tilt goes to 0), then the prop turns only with the

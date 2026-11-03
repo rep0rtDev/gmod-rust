@@ -1691,7 +1691,6 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
                     eye,
                     view,
                     &hulls,
-                    Vec3::from(solid.mass_center),
                     st.rotation,
                     player.origin,
                     hull_height,

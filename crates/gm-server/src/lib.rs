@@ -6835,16 +6835,7 @@ impl<'w> Server<'w> {
         let collision = self.collision;
         let brush = |a: Vec3, b: Vec3| collision.trace_ray(a, b, gm_collision::MASK_SOLID).fraction;
         let st = self.physics.state(b);
-        let (tp, tr) = carry.target(
-            eye,
-            view,
-            &info.hulls,
-            info.mass_center,
-            st.rotation,
-            origin,
-            hull,
-            &brush,
-        );
+        let (tp, tr) = carry.target(eye, view, &info.hulls, st.rotation, origin, hull, &brush);
         self.physics.hold(
             b,
             tp,

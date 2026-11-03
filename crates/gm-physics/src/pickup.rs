@@ -198,17 +198,18 @@ impl Carry {
     }
 
     /// Where the prop's origin should be this tick. `hulls` are the PHY convexes in the body
-    /// frame, `com` the PHY mass centre in it (the game puts the mass centre on the hold
-    /// point: the chair, whose origin is 2.9 u above its mass centre, hangs that much above
-    /// the view ray), `brush` traces the world from `a` to `b` and returns the hit fraction (1
-    /// for none), `origin`/`hull_height` describe the player's hull for the keep-out clamp.
+    /// frame; the centre of their bounds goes on the hold point (`CGrabController` carries the
+    /// entity's `WorldSpaceCenter`, not its mass centre: the chair's origin stays 2.84 u above
+    /// the view ray at any pitch, the half-sum of its hull z range -19.86..14.18, where its mass
+    /// centre at (-1.47, 0, -3.9) would hang it 1.5 u to the side and 3.9 u up), `brush` traces
+    /// the world from `a` to `b` and returns the hit fraction (1 for none), `origin`/`hull_height`
+    /// describe the player's hull for the keep-out clamp.
     #[allow(clippy::too_many_arguments)]
     pub fn target(
         &self,
         eye: Vec3,
         view: Vec3,
         hulls: &[Vec<Vec3>],
-        com: Vec3,
         body_rot: Quat,
         origin: Vec3,
         hull_height: f32,
@@ -226,6 +227,11 @@ impl Carry {
             .flatten()
             .map(|&p| (body_rot * p).dot(-forward))
             .fold(0.0_f32, f32::max);
+        let (lo, hi) = hulls.iter().flatten().fold(
+            (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
+            |(lo, hi), &p| (lo.min(p), hi.max(p)),
+        );
+        let center = (lo + hi) * 0.5;
         let radius = PLAYER_RADIUS + extent.abs();
         let distance = HOLD_BASE + radius * 2.0;
         let fraction = brush(eye, eye + forward * distance);
@@ -245,7 +251,7 @@ impl Carry {
             end = line + delta * (radius / len);
         }
         let rot = Quat::from_rotation_z((view.y - self.yaw).to_radians()) * self.rotation;
-        (end - rot * com, rot)
+        (end - rot * center, rot)
     }
 }
 
@@ -279,7 +285,6 @@ mod tests {
             eye,
             Vec3::new(20.0, 90.0, 0.0),
             &hull,
-            Vec3::ZERO,
             Quat::IDENTITY,
             origin,
             72.0,
@@ -295,7 +300,6 @@ mod tests {
             eye,
             Vec3::new(0.0, 150.0, 0.0),
             &hull,
-            Vec3::ZERO,
             turned,
             origin,
             72.0,
