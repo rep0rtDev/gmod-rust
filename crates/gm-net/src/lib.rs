@@ -77,6 +77,7 @@ mod tests {
                 ducked: true,
                 on_ground: true,
                 flashlight: false,
+                tool_stage: 0,
                 model: 0,
                 held: Some(2),
                 driving: None,

@@ -1253,6 +1253,7 @@ impl ServerNet {
                 ducked: p.state.ducked,
                 on_ground: p.state.on_ground,
                 flashlight: p.flashlight,
+                tool_stage: server.tool_stage(*id),
                 model: gm_server::player_models::index_of(&p.model),
                 skin: p.skin,
                 body: p.body.clone(),

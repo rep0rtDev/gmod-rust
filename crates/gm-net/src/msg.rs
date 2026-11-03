@@ -245,6 +245,8 @@ pub struct PlayerSnap {
     pub on_ground: bool,
     /// `Player:FlashlightIsOn` (impulse 100).
     pub flashlight: bool,
+    /// The tool gun's stage (`TOOL:GetStage`), for the HUD's Information rows.
+    pub tool_stage: u8,
     /// `gm_server::player_models` index of the player model (255: not in the table).
     pub model: u8,
     /// Skin family and `SetBodyGroups` digits of the player model, as set (unclamped).
@@ -533,7 +535,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
     Ok(out)
 }
 
-pub const PROTOCOL: u16 = 19;
+pub const PROTOCOL: u16 = 20;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1006,6 +1008,7 @@ impl ServerMsg {
                     w.bool(p.ducked);
                     w.bool(p.on_ground);
                     w.bool(p.flashlight);
+                    w.u8(p.tool_stage);
                     w.u8(p.model);
                     w.u8(p.skin);
                     w.str(&p.body);
@@ -1365,6 +1368,7 @@ impl ServerMsg {
                         ducked: r.bool()?,
                         on_ground: r.bool()?,
                         flashlight: r.bool()?,
+                        tool_stage: r.u8()?,
                         model: r.u8()?,
                         skin: r.u8()?,
                         body: r.str()?,

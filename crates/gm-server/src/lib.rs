@@ -13367,6 +13367,10 @@ impl<'w> Server<'w> {
     /// `impulse 100` from the player's command: the addon runtime may refuse
     /// (`PlayerSwitchFlashlight`); a dead player has no flashlight. Script `Player:Flashlight`
     /// does not ask, as in the game.
+    /// The player's tool gun stage (`TOOL:GetStage`), 0 when idle.
+    pub fn tool_stage(&self, player: u32) -> u8 {
+        self.sandbox.tool(player).stage.min(255) as u8
+    }
     pub fn use_flashlight(&mut self, player: u32) -> bool {
         let Some(on) = self
             .players

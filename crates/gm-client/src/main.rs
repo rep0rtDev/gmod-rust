@@ -5162,7 +5162,9 @@ impl App {
                         .map(|pan| pan.info)
                         .unwrap_or(&[])
                         .iter()
-                        .filter(|(_, stage, op)| *stage <= 0 && *op <= 0)
+                        .filter(|(_, stage, op)| {
+                            (*stage < 0 || i64::from(*stage) == i64::from(p.tool_stage)) && *op <= 0
+                        })
                         .filter_map(|(row, _, _)| {
                             let text = loc(format!("tool.{mode}.{row}"))?;
                             let icon = if row.starts_with("left") {
