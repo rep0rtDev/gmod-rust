@@ -20,6 +20,8 @@ Oracle: `prop_physics` spawned by the probe on a dedicated server, `PhysObj` tra
 
 ## Constraints (weld, rope)
 
+`constraint_weld_pair` (two crates welded 41 u apart in y, the lower 20 u below, dropped from 84 u): on the tick the lower crate meets the floor (31, stopped at -123.7 exactly) the game's weld transmits nothing - the upper crate is still in free fall (-105.6) and only from the next tick swings down 4-5 deg/tick ahead of the lower one; ours pulls the upper crate on the contact tick itself (-104.9, -3 deg), so the swing runs one tick early (max 3.0 u), rest 0.5-0.9 u and roll -26 against the game's -23/-24. With `nocollide` the game's pair slides 31 u along +y after the swing where ours slides 16 (contact between the crates' faces during the swing is what we no longer have; the game slides further without it). Open: a constraint impulse lagging the contact by one tick is IVP's ordering, not a weld stiffness.
+
 Harness group `constraint_*` (3 traces on 2026.09.17: `weld_pair` two crates welded side by side and dropped, `rope_hang` a crate on an 80 u rope under a frozen crate, `stack_pair` a crate dropped on a resting crate). The probe spawns several props, applies `constraint.Weld` / `constraint.Rope` (the game creates `phys_constraint` / `phys_lengthconstraint`) and records every prop per tick.
 
 - gm-physics: JoltC 0.3.1 has no constraint bindings, so the shim creates Jolt `FixedConstraint` (weld, auto detected point) and `DistanceConstraint` (rope, world space points, min 0 or the length when rigid) on the raw `PhysicsSystem`; `World::weld`, `World::rope`, `World::remove_constraint`.
