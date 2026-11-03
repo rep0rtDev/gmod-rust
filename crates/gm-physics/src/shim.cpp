@@ -698,6 +698,16 @@ public:
 			const JPH::Body &dyn0 = b1.IsDynamic() ? b1 : b2;
 			if (it != rest.end() && it->second.phase == 3 && it->second.landed_tick == tick - 1 && it->second.land_vn > 2.0f && dyn0.GetAngularVelocity().Length() > 0.5f)
 				for (const Pt *t : touch) if ((point_velocity(b1, t->p) - point_velocity(b2, t->p)).Dot(n) < -0.3f) arriving = true;
+			// a pair that has never landed, every touching point still descending faster than
+			// the rest threshold, is arriving level, however close its points already are: the crate dropped
+			// 2 u sits inside the speculative distance from its spawn, so its manifold is
+			// persisted (not added) and its face reaches the plane with 0.8 mm to go at
+			// 1.37 m/s - the game rebounds it 28 u/s, the resting rules parked it
+			if ((it == rest.end() || it->second.landed_tick < 0) && !touch.empty()) {
+				bool level = true;
+				for (const Pt *t : touch) if ((point_velocity(b1, t->p) - point_velocity(b2, t->p)).Dot(n) >= -0.3f) level = false;
+				if (level) arriving = true;
+			}
 		}
 		if (touching >= 3 && !arriving) {
 			// resting contact anchors (`phys_push_drum_*`, `shoot_prop_*_drum`): a sliding resting
@@ -712,6 +722,9 @@ public:
 			RestState &rs = rest[key];
 			// a face that was just solved as an impact this step is bouncing, not resting
 			if (rs.landed_tick == tick) return;
+			// a body resting here (spawned on the floor) has landed as far as later arrivals are
+			// concerned: only a pair that never touched takes the arriving-level rule above
+			if (rs.landed_tick < 0) rs.landed_tick = tick;
 			JPH::Vec3 nd = b1.IsDynamic() ? n : -n; // away from the surface, whichever body is dynamic
 			JPH::Vec3 v = dyn.GetLinearVelocity();
 			JPH::Vec3 vt_vec = v - nd * v.Dot(nd);
@@ -913,6 +926,7 @@ public:
 		// a pair meeting for the first time with the face already through the plane is a body
 		// spawned in the floor (the thruster can, 0.08 u deep): the game settles it upright
 		bool fresh_pair = rest.find(pair_key) == rest.end();
+		bool first_touch = fresh_pair || rest[pair_key].landed_tick < 0;
 		// a landed body still turning is rocking: the next feature coming down is a pivot switch
 		// (angular momentum about the new contact is kept, the old one lifts), not Jolt's face
 		// contact that flattens it in a tick (`use_locker`: the locker on its two foot rows rocks
@@ -1011,8 +1025,8 @@ public:
 					face.push_back(b);
 				}
 				bool edge_pair = face.size() == 2 && (face[0]->p - face[1]->p).Length() > 0.2f;
-				bool spawned_in = fresh_pair && face.size() >= 3 && d_face <= 0.0f && face_slip < 3.0f;
-				if (((face.size() >= 3 || edge_pair) && fastest > 0.3f && (d_face > 0.02f || (fresh_pair && d_face > 0.0f)) && face_slip < 3.0f) || spawned_in) {
+				bool spawned_in = first_touch && face.size() >= 3 && d_face <= 0.0f && face_slip < 3.0f;
+				if (((face.size() >= 3 || edge_pair) && fastest > 0.3f && (d_face > 0.02f || (first_touch && d_face > 0.0f)) && face_slip < 3.0f) || spawned_in) {
 					std::vector<float> acc(face.size(), 0.0f);
 					// the drum's ring is struck in sequence: the hull +x rim vertex as a free single
 					// vertex, then its antipode by the approach the first impact left it
