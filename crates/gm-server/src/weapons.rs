@@ -514,6 +514,23 @@ pub const SPAWN_AMMO: [(&str, i32); 8] = [
     ("XBowBolt", 32),
 ];
 
+/// The carry limit of an ammo type (HL2's `sk_max_*`).
+pub fn ammo_max(kind: &str) -> i32 {
+    match kind {
+        "Pistol" => 150,
+        "SMG1" => 225,
+        "SMG1_Grenade" => 3,
+        "AR2" => 60,
+        "AR2AltFire" => 3,
+        "357" => 12,
+        "XBowBolt" => 10,
+        "Buckshot" => 30,
+        "RPG_Round" => 3,
+        "Grenade" => 5,
+        _ => i32::MAX,
+    }
+}
+
 pub fn def(class: &str) -> Option<&'static WeaponDef> {
     WEAPONS.iter().find(|w| w.class == class)
 }

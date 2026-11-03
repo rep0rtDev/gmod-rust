@@ -4693,6 +4693,46 @@ fn ray_box_entry(start: Vec3, dir: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
     Some(t0)
 }
 
+/// What an HL2 item gives on touch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Pickup {
+    Health(i32),
+    Armor(i32),
+    Ammo(&'static str, i32),
+}
+
+/// `sk_healthkit` 25, `sk_healthvial` 10, `sk_battery` 15 and the `SIZE_AMMO_*` box values.
+pub fn hl2_item_pickup(class: &str) -> Option<Pickup> {
+    Some(match class {
+        "item_healthkit" => Pickup::Health(25),
+        "item_healthvial" => Pickup::Health(10),
+        "item_battery" => Pickup::Armor(15),
+        "item_ammo_pistol" => Pickup::Ammo("Pistol", 20),
+        "item_ammo_pistol_large" => Pickup::Ammo("Pistol", 100),
+        "item_ammo_smg1" => Pickup::Ammo("SMG1", 45),
+        "item_ammo_smg1_large" => Pickup::Ammo("SMG1", 225),
+        "item_ammo_smg1_grenade" => Pickup::Ammo("SMG1_Grenade", 1),
+        "item_ammo_ar2" => Pickup::Ammo("AR2", 20),
+        "item_ammo_ar2_large" => Pickup::Ammo("AR2", 100),
+        "item_ammo_ar2_altfire" => Pickup::Ammo("AR2AltFire", 1),
+        "item_ammo_357" => Pickup::Ammo("357", 6),
+        "item_ammo_357_large" => Pickup::Ammo("357", 20),
+        "item_ammo_crossbow" => Pickup::Ammo("XBowBolt", 6),
+        "item_box_buckshot" => Pickup::Ammo("Buckshot", 20),
+        "item_rpg_round" => Pickup::Ammo("RPG_Round", 1),
+        _ => return None,
+    })
+}
+
+fn class_sound(class: &str, pickup: Pickup) -> &'static str {
+    match pickup {
+        Pickup::Health(_) if class == "item_healthvial" => "HealthVial.Touch",
+        Pickup::Health(_) => "HealthKit.Touch",
+        Pickup::Armor(_) => "ItemBattery.Touch",
+        Pickup::Ammo(..) => "BaseCombatCharacter.AmmoPickup",
+    }
+}
+
 pub struct Server<'w> {
     /// `scripts/surfaceproperties.txt`, for the physprop stool's `PhysObj:SetMaterial`.
     pub surface_table: Option<gm_physics::surface::SurfaceTable>,
@@ -4763,6 +4803,8 @@ pub struct Server<'w> {
     hull_planes: BTreeMap<String, Vec<Vec<(Vec3, f32)>>>,
     pub events: Vec<Event>,
     pub game_events: Vec<GameEvent>,
+    /// HL2 items spawned from the Entities tab (entity id -> class), picked up on touch.
+    pub hl2_items: BTreeMap<u32, String>,
     pub request_hook: Option<RequestHook>,
     pub physgun_params: PhysgunParams,
     pub projectiles: Vec<projectile::Projectile>,
@@ -4954,6 +4996,7 @@ impl<'w> Server<'w> {
             hull_planes: BTreeMap::new(),
             events: Vec::new(),
             game_events: Vec::new(),
+            hl2_items: BTreeMap::new(),
             request_hook: None,
             physgun_params: PhysgunParams::default(),
             projectiles: Vec::new(),
@@ -8140,6 +8183,9 @@ impl<'w> Server<'w> {
             .sandbox
             .restore_prop(player, model, pos, Vec3::ZERO, false);
         self.sandbox.add_cleanup(player, "sents", id);
+        if hl2_item_pickup(class).is_some() {
+            self.hl2_items.insert(id, class.to_string());
+        }
         self.sync_physics();
         self.game_events.push(GameEvent::Spawned {
             player,
@@ -13617,6 +13663,7 @@ impl<'w> Server<'w> {
         let events_at_start = self.events.len();
         self.fire_tick();
         self.sent_tick();
+        self.item_tick();
         let upright: Vec<(BodyHandle, Vec3)> = self
             .sandbox
             .props()
@@ -14452,7 +14499,74 @@ impl<'w> Server<'w> {
     }
 
     /// `Entity:Remove` from a script: constraints on it go too, like the sandbox's own removal.
+    /// HL2 items touched by a player (`CItem::ItemTouch` -> `MyTouch`): a health kit / vial heals
+    /// up to 100, a battery charges the suit up to its max, an ammo box gives its ammo up to the
+    /// type's carry limit; an item that would give nothing stays on the ground.
+    fn item_tick(&mut self) {
+        if self.hl2_items.is_empty() {
+            return;
+        }
+        let players: Vec<(u32, Vec3)> = self
+            .players
+            .iter()
+            .filter(|(_, p)| p.alive)
+            .map(|(id, p)| (*id, p.state.origin))
+            .collect();
+        let mut taken: Vec<(u32, u32, &'static str)> = Vec::new();
+        for (ent, class) in &self.hl2_items {
+            let Some(pickup) = hl2_item_pickup(class) else {
+                continue;
+            };
+            let Some(prop) = self.sandbox.props().iter().find(|p| p.id == *ent) else {
+                continue;
+            };
+            for (player, origin) in &players {
+                let d = prop.pos - *origin;
+                if d.x.abs() > 32.0 || d.y.abs() > 32.0 || d.z < -8.0 || d.z > 72.0 {
+                    continue;
+                }
+                let Some(pl) = self.players.get(player) else {
+                    continue;
+                };
+                let gives = match pickup {
+                    Pickup::Health(_) => pl.health < 100,
+                    Pickup::Armor(_) => pl.armor < pl.max_armor.max(100),
+                    Pickup::Ammo(kind, _) => {
+                        pl.inventory.ammo.get(kind).copied().unwrap_or(0) < weapons::ammo_max(kind)
+                    }
+                };
+                if gives {
+                    taken.push((*ent, *player, class_sound(class, pickup)));
+                    break;
+                }
+            }
+        }
+        for (ent, player, sound) in taken {
+            let class = self.hl2_items.remove(&ent).unwrap_or_default();
+            let Some(pickup) = hl2_item_pickup(&class) else {
+                continue;
+            };
+            if let Some(pl) = self.players.get_mut(&player) {
+                match pickup {
+                    Pickup::Health(n) => pl.health = (pl.health + n).min(100),
+                    Pickup::Armor(n) => {
+                        let max = pl.max_armor.max(100);
+                        pl.armor = (pl.armor + n).min(max);
+                    }
+                    Pickup::Ammo(kind, n) => {
+                        let max = weapons::ammo_max(kind);
+                        let e = pl.inventory.ammo.entry(kind.to_string()).or_insert(0);
+                        *e = (*e + n).min(max);
+                    }
+                }
+            }
+            self.emit_sound(player, sound.to_string(), 1.0);
+            self.remove_prop(ent);
+        }
+    }
+
     pub fn remove_prop(&mut self, id: u32) -> bool {
+        self.hl2_items.remove(&id);
         if !self.sandbox.props().iter().any(|p| p.id == id) {
             return false;
         }
