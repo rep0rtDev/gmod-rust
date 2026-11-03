@@ -761,7 +761,10 @@ impl DynVertex {
 
 /// One mesh of a `DynModel`: material, vertices, indices.
 /// Material bind group, vertices, indices, `$halflambert`.
-type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>, bool);
+/// A drawable piece of a [`DynModel`]: material bind group, vertices, indices, `$halflambert`,
+/// and whether the material's shader is unlit (`UnlitGeneric`: the toolgun screen) - such parts
+/// skip the model's origin lighting instead of only the shader's per-pixel light.
+type DynPart = (wgpu::BindGroup, Vec<DynVertex>, Vec<u32>, bool, bool);
 
 /// The bones of a `DynModel` and where its animations come from.
 struct Skeleton {
@@ -3226,7 +3229,7 @@ impl WorldRenderer {
                     ],
                 });
                 part_textures.push((key.to_string(), t));
-                parts.push((bg, verts, idx, mat.half_lambert));
+                parts.push((bg, verts, idx, mat.half_lambert, is_unlit(&mat.shader)));
             }
         }
         let skeleton = mount.read(path).ok().map(|bytes| Skeleton {
@@ -3235,7 +3238,7 @@ impl WorldRenderer {
             anims: AnimSource::for_model(mount, bytes, &mdl),
         });
         let mut bounds = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-        for (_, verts, _, _) in &parts {
+        for (_, verts, _, _, _) in &parts {
             for v in verts {
                 let p = Vec3::from(v.position);
                 bounds.0 = bounds.0.min(p);
@@ -3714,7 +3717,7 @@ impl WorldRenderer {
         DynModel {
             part_textures: Vec::new(),
             bounds: (Vec3::splat(-0.5), Vec3::splat(0.5)),
-            parts: vec![(bg, verts, idx, false)],
+            parts: vec![(bg, verts, idx, false, false)],
             unlit,
             skeleton: None,
             bodygroups: Vec::new(),
@@ -3765,7 +3768,7 @@ impl WorldRenderer {
                         .clone(),
                 )
             };
-            for (bg, pv, pi, half_lambert) in &m.parts {
+            for (bg, pv, pi, half_lambert, part_unlit) in &m.parts {
                 let base = verts.len() as u32;
                 for v in pv {
                     let (p, n) = match item.bones {
@@ -3774,8 +3777,8 @@ impl WorldRenderer {
                     };
                     let n = xf.transform_vector3(n).normalize_or_zero();
                     let shade = match &local {
-                        None => Vec3::ONE,
-                        Some(l) => l.shade(n, *half_lambert),
+                        Some(l) if !*part_unlit => l.shade(n, *half_lambert),
+                        _ => Vec3::ONE,
                     };
                     verts.push(Vertex {
                         position: xf.transform_point3(p).to_array(),
