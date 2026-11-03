@@ -34,6 +34,8 @@ physics step.
 
 ## Open
 
+`server_physgun_hold_crate`: the crate released with yaw 30 lands flat at 233 u/s (tick 289); the game then slides it 7.5 u (-y / +x) and turns it to yaw 21.5 with a 2-3 deg pitch/roll wobble over 20 ticks, ours lands dead flat and stays (7.9 u, 8.5 deg) - the flat-landing asymmetry family of sandbox.md (sequential vertex chain), not a hold defect.
+
 More grab geometry (rotated and off axis props, grabbing a moving prop), the E rotate mode, freeze, the hold on ragdolls and multi solid models, and the player moving while holding (the eye moves). A shadow controller on the Jolt body: each tick the target is the aim ray point at the grab distance plus the grab offset rotated by the view delta, velocity and angular velocity are set to reach it within `timeToArrive`, clamped to `maxSpeed` / `maxAngular`, damped by `dampingFactor`, gravity off while held. The `physgun_*` harnesses compare the held prop's position and angles per tick; tolerances per harness in `tools/parity/harnesses.toml` once the implementation exists.
 
 ## Ragdoll bones (measured `physgun_ragdoll_head_grab` / `physgun_ragdoll_foot_grab`, kleiner with the pelvis frozen)
