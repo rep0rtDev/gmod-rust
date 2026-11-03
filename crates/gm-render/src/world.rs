@@ -25,6 +25,8 @@ pub struct Vertex {
     pub color: [f32; 3],
     /// `WorldVertexTransition` blend towards `$basetexture2` (displacement vertex alpha / 255).
     pub alpha: f32,
+    /// Bumped faces: atlas u stride between the four lightmap pages (0 when unbumped).
+    pub lm_page: f32,
 }
 
 #[repr(C)]
@@ -49,13 +51,13 @@ struct MaterialParams {
     water_range: [f32; 4],
 }
 
-fn uv2_params(mat: &material::Material, modulate: bool) -> ([f32; 4], [f32; 4]) {
+fn uv2_params(mat: &material::Material, modulate: bool, bump: bool) -> ([f32; 4], [f32; 4]) {
     let t = mat
         .base2_transform
         .unwrap_or([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
     (
         [t[0], t[1], t[2], t[3]],
-        [t[4], t[5], modulate as u32 as f32, 0.0],
+        [t[4], t[5], modulate as u32 as f32, bump as u32 as f32],
     )
 }
 
@@ -300,6 +302,8 @@ pub struct WorldRenderer {
     sky_pipeline: wgpu::RenderPipeline,
     /// Bound as the detail texture of materials without `$detail` (factor 0).
     detail_fallback: wgpu::TextureView,
+    /// Flat normal bound as the bump map of materials without `$bumpmap`.
+    bump_fallback: wgpu::TextureView,
     /// `$nocull` variants of `pipeline` / `translucent_pipeline`.
     nocull_pipeline: wgpu::RenderPipeline,
     translucent_nocull_pipeline: wgpu::RenderPipeline,
@@ -440,6 +444,10 @@ fn build_sky_cube(
                     resource: wgpu::BindingResource::TextureView(detail),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(detail),
+                },
+                wgpu::BindGroupEntry {
                     binding: 2,
                     resource: params.as_entire_binding(),
                 },
@@ -454,6 +462,7 @@ fn build_sky_cube(
                 lm_uv: white_uv,
                 color: [1.0; 3],
                 alpha: 0.0,
+                lm_page: 0.0,
             });
         }
         idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -1249,11 +1258,33 @@ impl WorldRenderer {
                 continue;
             };
             let (tw, th) = (tw as f32, th as f32);
+            let mut lm_page = 0.0f32;
             let (placement, lit) = if face.light_ofs >= 0 && face.light_styles() > 0 {
                 let (w, h) = face.lightmap_dims();
                 let samples = bsp.face_lightmap(face, hdr)?;
-                match atlas.place(w, h, &samples[..(w * h) as usize]) {
-                    Some(p) => (p, true),
+                let page = (w * h) as usize;
+                // bumped faces: the four pages side by side, page 0 (flat) first
+                let bumped = samples.len() >= 4 * page
+                    && bsp.tex_infos[face.tex_info as usize].flags & surf::BUMPLIGHT != 0;
+                let placed = if bumped {
+                    let mut strip = Vec::with_capacity(4 * page);
+                    for row in 0..h as usize {
+                        for k in 0..4 {
+                            let o = k * page + row * w as usize;
+                            strip.extend_from_slice(&samples[o..o + w as usize]);
+                        }
+                    }
+                    atlas.place(4 * w, h, &strip)
+                } else {
+                    atlas.place(w, h, &samples[..page])
+                };
+                match placed {
+                    Some(p) => {
+                        if bumped {
+                            lm_page = w as f32 / atlas_size as f32;
+                        }
+                        (p, true)
+                    }
                     None => {
                         stats.lightmap_overflow += 1;
                         (white, false)
@@ -1293,6 +1324,7 @@ impl WorldRenderer {
                         },
                         color: [1.0; 3],
                         alpha: mesh.alphas.get(i).copied().unwrap_or(0.0) / 255.0,
+                        lm_page,
                     });
                 }
                 indices.extend(mesh.indices.iter().map(|i| base + i));
@@ -1317,6 +1349,7 @@ impl WorldRenderer {
                     },
                     color: [1.0; 3],
                     alpha: 0.0,
+                    lm_page,
                 });
             }
             for i in 1..poly.len() as u32 - 1 {
@@ -1456,6 +1489,16 @@ impl WorldRenderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1527,6 +1570,19 @@ impl WorldRenderer {
         let mut detail_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
         let mut base2_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
         let mut modulate_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
+        let mut bump_cache: HashMap<String, Option<wgpu::TextureView>> = HashMap::new();
+        let bump_fallback = upload_rgba_mips(
+            gpu,
+            &material::Rgba {
+                width: 1,
+                height: 1,
+                pixels: vec![128, 128, 255, 255],
+                mips: Vec::new(),
+            },
+            wgpu::TextureFormat::Rgba8Unorm,
+            "bump fallback",
+        )
+        .create_view(&Default::default());
         for (name, idx, sky) in jobs {
             let Some(Some((mat, rgba))) = materials.get(name) else {
                 continue;
@@ -1567,7 +1623,18 @@ impl WorldRenderer {
                         })
                         .as_ref()
                 });
-            let uv2 = uv2_params(mat, modulate_view.is_some());
+            let bump_view = mat.bumpmap.as_ref().and_then(|t| {
+                bump_cache
+                    .entry(t.clone())
+                    .or_insert_with(|| {
+                        let rgba = material::load_texture(mount, t, 1024).ok()?;
+                        let tex = upload_rgba_mips(gpu, &rgba, wgpu::TextureFormat::Rgba8Unorm, t);
+                        Some(tex.create_view(&Default::default()))
+                    })
+                    .as_ref()
+            });
+            let uv2 = uv2_params(mat, modulate_view.is_some(), bump_view.is_some());
+            let bump_view = bump_view.unwrap_or(&bump_fallback);
             let modulate_view = modulate_view.unwrap_or(&detail_fallback);
             let water = match mat.water_fog {
                 Some((c, start, end)) => {
@@ -1638,6 +1705,10 @@ impl WorldRenderer {
                         resource: wgpu::BindingResource::TextureView(modulate_view),
                     },
                     wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(bump_view),
+                    },
+                    wgpu::BindGroupEntry {
                         binding: 2,
                         resource: params.as_entire_binding(),
                     },
@@ -1696,7 +1767,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -1779,7 +1850,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -1864,6 +1935,7 @@ impl WorldRenderer {
             pipeline,
             sky_pipeline,
             detail_fallback,
+            bump_fallback,
             nocull_pipeline,
             translucent_nocull_pipeline,
             water_pipeline,
@@ -2341,6 +2413,10 @@ impl WorldRenderer {
                             resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
                         },
                         wgpu::BindGroupEntry {
+                            binding: 6,
+                            resource: wgpu::BindingResource::TextureView(&self.bump_fallback),
+                        },
+                        wgpu::BindGroupEntry {
                             binding: 2,
                             resource: params.as_entire_binding(),
                         },
@@ -2433,6 +2509,10 @@ impl WorldRenderer {
                     resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&self.bump_fallback),
+                },
+                wgpu::BindGroupEntry {
                     binding: 2,
                     resource: params.as_entire_binding(),
                 },
@@ -2477,6 +2557,7 @@ impl WorldRenderer {
                     lm_uv: self.white_uv,
                     color,
                     alpha: 0.0,
+                    lm_page: 0.0,
                 });
             }
             if i > 0 {
@@ -2506,6 +2587,7 @@ impl WorldRenderer {
                 lm_uv: self.white_uv,
                 color,
                 alpha: 0.0,
+                lm_page: 0.0,
             })
             .collect();
         (verts, vec![0, 1, 2, 0, 2, 3])
@@ -2636,6 +2718,10 @@ impl WorldRenderer {
                     resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&self.bump_fallback),
+                },
+                wgpu::BindGroupEntry {
                     binding: 2,
                     resource: params.as_entire_binding(),
                 },
@@ -2733,6 +2819,7 @@ impl WorldRenderer {
                         lm_uv: self.white_uv,
                         color: shade.to_array(),
                         alpha: 0.0,
+                        lm_page: 0.0,
                     });
                 }
                 let first = idx.len() as u32;

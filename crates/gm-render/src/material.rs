@@ -33,6 +33,8 @@ pub struct Material {
     pub base2_transform: Option<[f32; 6]>,
     /// `$blendmodulatetexture`: its r/g sharpen the `WorldVertexTransition` blend.
     pub blend_modulate: Option<String>,
+    /// `$bumpmap`: tangent-space normal map lit by the bumped lightmap pages.
+    pub bumpmap: Option<String>,
 }
 
 /// `center cx cy scale sx sy rotate deg translate tx ty` -> uv matrix
@@ -215,6 +217,7 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
             .as_deref()
             .and_then(texture_transform);
         mat.blend_modulate = get("$blendmodulatetexture");
+        mat.bumpmap = get("$bumpmap");
         if let Some(texture) = get("$detail") {
             let num = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
             mat.detail = Some(Detail {

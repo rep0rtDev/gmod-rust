@@ -82,6 +82,16 @@ Sequences are sampled between the two neighbouring frames (position lerp, quater
   linearised as `far * near / (far - ndc * (far - near))`), colour = `$fogcolor` under the
   view fog - the game's volume fog through the water without its refraction/reflection
   textures (open).
+  Bump maps (`$bumpmap` on `LightmappedGeneric`, `SURF_BUMPLIGHT` 0x800 faces): vrad stores
+  four lightmap pages per style for such faces - the flat one, then one per bump basis vector
+  `(0.8165, 0, 0.5774)`, `(-0.4082, 0.7071, 0.5774)`, `(-0.4082, -0.7071, 0.5774)` in the
+  face's texture space. `gm-render` packs the four pages side by side in the atlas (`Vertex::
+  lm_page` = page stride in u) and lights a bumped texel by the three basis pages weighted by
+  `max(dot(n, basis_k), 0)^2` (normalised by their sum), `n` the tangent-space normal map -
+  no world tangent frame is needed because the normal map and the basis share the texture
+  space. Materials without `$bumpmap` (or faces vrad did not bump) use the flat page. Open:
+  `$ssbump` (self-shadowed bump: the texture holds the three weights directly), `$normalmap`
+  on water.
   Done since: the eye's water volume (`LUMP_LEAFWATERDATA` 36: surface z, min z, surface
   texinfo; its `CONTENTS_WATER` leaves' boxes) switches the view fog of the world, model and
   3D-skybox passes (the latter in skybox units) to the surface material's `$bottommaterial`

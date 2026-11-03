@@ -248,6 +248,7 @@ pub fn collect_static_props(
                             lm_uv: white_uv,
                             color: (shade * tint).to_array(),
                             alpha: 0.0,
+                            lm_page: 0.0,
                         });
                     }
                     local_indices.push(base + li);

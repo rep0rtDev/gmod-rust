@@ -244,7 +244,13 @@ impl<'a> Bsp<'a> {
             return Ok(Vec::new());
         }
         let (w, h) = face.lightmap_dims();
-        let count = (w * h) as usize * face.light_styles();
+        // SURF_BUMPLIGHT faces store four pages per style: the flat lightmap, then one per
+        // bump basis vector
+        let bumped = self
+            .tex_infos
+            .get(usize::try_from(face.tex_info).unwrap_or(usize::MAX))
+            .is_some_and(|ti| ti.flags & lumps::surf::BUMPLIGHT != 0);
+        let count = (w * h) as usize * face.light_styles() * if bumped { 4 } else { 1 };
         let lump = if hdr {
             Lump::LightingHdr
         } else {

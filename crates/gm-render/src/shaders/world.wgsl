@@ -31,6 +31,7 @@ struct MaterialParams {
 @group(1) @binding(3) var detail: texture_2d<f32>;
 @group(1) @binding(4) var base2: texture_2d<f32>;
 @group(1) @binding(5) var blend_modulate: texture_2d<f32>;
+@group(1) @binding(6) var bump: texture_2d<f32>;
 // water pass only: the depth of the opaque scene (multisampled variant substituted at load)
 @group(2) @binding(0) var scene_depth: texture_depth_2d;
 
@@ -40,6 +41,7 @@ struct VsIn {
     @location(2) lm_uv: vec2<f32>,
     @location(3) color: vec3<f32>,
     @location(4) alpha: f32,
+    @location(5) lm_page: f32,
 };
 
 struct VsOut {
@@ -49,6 +51,7 @@ struct VsOut {
     @location(2) color: vec3<f32>,
     @location(3) world: vec3<f32>,
     @location(4) alpha: f32,
+    @location(5) lm_page: f32,
 };
 
 @vertex
@@ -60,6 +63,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.color = in.color;
     out.world = in.position;
     out.alpha = in.alpha;
+    out.lm_page = in.lm_page;
     return out;
 }
 
@@ -85,7 +89,24 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     // lightmap atlas: linear light (Rgba16Float), lm_scale 1
-    var light = textureSample(lightmap, lightmap_sampler, in.lm_uv).rgb * camera.lm_scale;
+    var light = textureSample(lightmap, lightmap_sampler, in.lm_uv).rgb;
+    // $bumpmap: the three bumped lightmap pages weighted by the squared dot of the
+    // tangent-space normal with the bump basis (both live in the face's texture space)
+    let nrm = normalize(textureSample(bump, base_sampler, in.uv).xyz * 2.0 - 1.0);
+    let l1 = textureSample(lightmap, lightmap_sampler, in.lm_uv + vec2<f32>(in.lm_page, 0.0)).rgb;
+    let l2 = textureSample(lightmap, lightmap_sampler, in.lm_uv + vec2<f32>(2.0 * in.lm_page, 0.0)).rgb;
+    let l3 = textureSample(lightmap, lightmap_sampler, in.lm_uv + vec2<f32>(3.0 * in.lm_page, 0.0)).rgb;
+    var bw = vec3<f32>(
+        max(dot(nrm, vec3<f32>(0.81649658, 0.0, 0.57735027)), 0.0),
+        max(dot(nrm, vec3<f32>(-0.40824829, 0.70710678, 0.57735027)), 0.0),
+        max(dot(nrm, vec3<f32>(-0.40824829, -0.70710678, 0.57735027)), 0.0),
+    );
+    bw = bw * bw;
+    let bumped = (l1 * bw.x + l2 * bw.y + l3 * bw.z) / max(bw.x + bw.y + bw.z, 1e-4);
+    if material.uv2_t.w > 0.5 && in.lm_page > 0.0 {
+        light = bumped;
+    }
+    light = light * camera.lm_scale;
     if material.unlit != 0u {
         light = vec3<f32>(1.0);
     }
