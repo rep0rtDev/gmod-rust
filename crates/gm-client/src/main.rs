@@ -3896,7 +3896,10 @@ impl App {
             .and_then(|p| p.held)
             .and_then(|id| ents.get(&id))
             .map(|e| e.pos);
-        if self.weapon == 0 && self.mouse.contains(&0) {
+        let physgun_out = gm_server::LOADOUT
+            .get(self.weapon as usize)
+            .is_some_and(|c| *c == "weapon_physgun");
+        if physgun_out && self.mouse.contains(&0) {
             let fwd = camera.forward();
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
             let start = vm_attach("muzzle")
