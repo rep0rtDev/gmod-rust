@@ -4236,3 +4236,6 @@ function frame_blend.DrawPreview() end
 function vgui.CreateX(class, parent, name) return vgui.Create(class, parent, name) end
 function vgui.Exists(class) return vgui.GetControlTable(class) ~= nil end
 function vgui.RegisterFile(path) end
+
+-- every control registered above is a class for FindMetaTable and the coverage listing
+for name, tbl in pairs(classes) do __glua_classes[name] = tbl end
