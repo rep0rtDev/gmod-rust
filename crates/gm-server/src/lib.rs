@@ -6817,13 +6817,14 @@ impl<'w> Server<'w> {
     }
 
     /// A used prop becomes the player's carry when it is light and small enough
-    /// (`CanPickupObject(35, 128)`), nobody physguns it and `Request::PlayerPickup` allows.
+    /// (`CanPickupObject(35, 128)`), moveable (a frozen one is not: `IsMoveable`), nobody
+    /// physguns it and `Request::PlayerPickup` allows.
     fn try_pickup(&mut self, player: u32, ent: u32, yaw: f32) {
         let Some(model) = self
             .sandbox
             .props()
             .iter()
-            .find(|p| p.id == ent)
+            .find(|p| p.id == ent && !p.frozen)
             .map(|p| p.model.clone())
         else {
             return;
