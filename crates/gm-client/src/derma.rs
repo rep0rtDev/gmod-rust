@@ -2270,7 +2270,8 @@ pub fn main_menu(
     );
     right = button(out, right, None, "resource/localization/en.png", "language");
     right = button(out, right, None, "html/img/games.png", "games");
-    right = button(out, right, None, "html/img/error.png", "problems");
+    // the Problems button (`html/img/error.png`) only appears when the menu has problems to
+    // list; there is no problems list yet, so it is left out
     // the centre group fills between the groups with 10 % margins and packs to its end
     if in_game {
         let mut c = right - w * 0.1;
