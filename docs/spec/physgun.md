@@ -22,6 +22,16 @@ Crate (`wood_crate001a`, mass 30) resting at (823.2, -480, -123.6), bot eye at (
 - Freeze (`IN_ATTACK2` while holding): the prop stops dead where it is, `IsPlayerHolding` false and `IsMotionEnabled` false from the next tick, no settling at all. gm-physics switches the Jolt body to kinematic with zero velocity (0.52 u max error, the pre freeze hold error).
 - Walking while holding (forward 200 u/s): the prop follows the moving eye with the controller's lag, 5.6 u behind the static hold distance at 200 u/s, and catches up after the player stops; ours lags 3 u more during the acceleration ticks and matches at rest (0.5 u).
 
+## Walking while holding (measured `server_physgun_walk_hold`, crate held 126.4 u ahead, +forward 200 u/s)
+
+The hold target is taken from the player's eye *after* this tick's move (the game's weapon
+post-frame runs after player movement): at a steady 200 u/s walk the game's held crate trails
+the eye by 121.4 u against 126.4 at rest - a lag of 5.0 u, 1.65 ticks of the walk - and on the
+first moving tick it has covered 8.84 of the eye's 12.4 u. Targeting from the pre-move eye put
+the crate one tick further behind (118.4 u, 8.0 u lag); with the post-move eye the whole walk
+is within 0.49 u of the game. `Server::hold_targets` runs between the player moves and the
+physics step.
+
 ## Open
 
 More grab geometry (rotated and off axis props, grabbing a moving prop), the E rotate mode, freeze, the hold on ragdolls and multi solid models, and the player moving while holding (the eye moves). A shadow controller on the Jolt body: each tick the target is the aim ray point at the grab distance plus the grab offset rotated by the view delta, velocity and angular velocity are set to reach it within `timeToArrive`, clamped to `maxSpeed` / `maxAngular`, damped by `dampingFactor`, gravity off while held. The `physgun_*` harnesses compare the held prop's position and angles per tick; tolerances per harness in `tools/parity/harnesses.toml` once the implementation exists.

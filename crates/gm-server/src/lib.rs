@@ -12812,9 +12812,8 @@ impl<'w> Server<'w> {
                     if use_key {
                         g.rotate(pc.mouse_x, pc.mouse_y, right);
                     }
-                    let st = self.physics.state(b);
-                    let (tp, tr) = g.target(eye, forward, view.y, st.rotation);
-                    self.physics.hold(b, tp, tr, &self.physgun_params);
+                    // the target itself is set in `hold_targets` after this tick's move
+                    let _ = b;
                     Some((ent, g))
                 } else {
                     None
@@ -12826,6 +12825,42 @@ impl<'w> Server<'w> {
             p.held = held;
         }
         self.carry_tick(player, eye, view);
+    }
+
+    /// Physgun hold targets read the eye after this tick's move, like the weapon's post-frame
+    /// in the game: at a 200 u/s walk the held crate trails the eye by 121.4 u against 126.4 at
+    /// rest (`server_physgun_walk_hold`); targeting from the pre-move eye lagged one tick more.
+    fn hold_targets(&mut self, cmds: &BTreeMap<u32, PlayerCmd>) {
+        let holders: Vec<u32> = self
+            .players
+            .iter()
+            .filter(|(_, p)| p.held.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in holders {
+            let Some((eye, _)) = self.eye(id) else {
+                continue;
+            };
+            let view = match cmds.get(&id) {
+                Some(pc) => pc.cmd.view_angles,
+                None => match self.players.get(&id) {
+                    Some(p) => p.view_angles,
+                    None => continue,
+                },
+            };
+            let forward = gm_sandbox::forward(view.x, view.y);
+            let Some((ent, g)) = self.players.get_mut(&id).and_then(|p| p.held.take()) else {
+                continue;
+            };
+            if let Some(b) = self.part_body(ent, g.bone) {
+                let st = self.physics.state(b);
+                let (tp, tr) = g.target(eye, forward, view.y, st.rotation);
+                self.physics.hold(b, tp, tr, &self.physgun_params);
+            }
+            if let Some(p) = self.players.get_mut(&id) {
+                p.held = Some((ent, g));
+            }
+        }
     }
 
     /// Moves one player by one usercmd outside the tick (catching up a usercmd backlog).
@@ -13247,6 +13282,7 @@ impl<'w> Server<'w> {
         for (id, feet, step, material) in steps {
             self.footstep(id, feet, step, material.as_deref());
         }
+        self.hold_targets(cmds);
         // entities after the players' moves: a projectile's hit or blast this tick pushes and
         // hurts a target that has already moved (its velocity shows the push raw)
         self.tick_projectiles(launches);
