@@ -4166,6 +4166,8 @@ impl App {
         // additive with the game's `sprites/physbeam`, a glow at each end
         let mut additive: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
             Vec::new();
+        let mut alpha: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
+            Vec::new();
         let mut dlights: Vec<gm_render::world::DLight> = Vec::new();
         let mut modulate: Vec<(&wgpu::BindGroup, Vec<gm_render::world::Vertex>, Vec<u32>)> =
             Vec::new();
@@ -4337,7 +4339,7 @@ impl App {
                 0.0,
                 1.0 / 32.0,
             );
-            additive.push((bm, v, i));
+            alpha.push((bm, v, i));
         }
         // gravity gun: the core glows at the muzzle, the fork tips glow, and while a prop is
         // held the tips beam to it and the gun lights its surroundings orange
@@ -4550,6 +4552,7 @@ impl App {
             g.world.draw_modulate(&g.gpu, &camera, &target, &modulate);
         }
         if !additive.is_empty() {
+            g.world.draw_alpha(&g.gpu, &camera, &target, &alpha);
             g.world.draw_additive(&g.gpu, &camera, &target, &additive);
         }
         for d in &ghost_draws {

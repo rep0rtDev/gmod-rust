@@ -565,6 +565,8 @@ pub struct WorldRenderer {
     depth_layout: wgpu::BindGroupLayout,
     /// Additive, no depth write: beams and glow sprites.
     additive_pipeline: wgpu::RenderPipeline,
+    /// Alpha-blended ad-hoc geometry (constraint ropes: `keyframe_rope` cables).
+    alpha_pipeline: wgpu::RenderPipeline,
     /// DecalModulate: colour * 2 * decal (bullet holes).
     modulate_pipeline: wgpu::RenderPipeline,
     /// Alpha-blended, no depth write: models drawn with `ModelTarget::alpha` below 1 (ghosts).
@@ -2464,6 +2466,8 @@ impl WorldRenderer {
             false,
             true,
         );
+        let alpha_pipeline =
+            make_pipeline("alpha", Some(wgpu::BlendState::ALPHA_BLENDING), false, true);
         let additive_pipeline = make_pipeline(
             "additive",
             Some(wgpu::BlendState {
@@ -2529,6 +2533,7 @@ impl WorldRenderer {
             water_pipeline,
             depth_layout,
             additive_pipeline,
+            alpha_pipeline,
             modulate_pipeline,
             translucent_pipeline,
             camera_buffer,
@@ -3574,6 +3579,29 @@ impl WorldRenderer {
         target: &ModelTarget<'_>,
         items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
     ) {
+        self.draw_blended(gpu, camera, target, items, &self.additive_pipeline);
+    }
+
+    /// Alpha-blended geometry over the current colour with the current depth (constraint
+    /// ropes); each item is a material bind group with world-space vertices.
+    pub fn draw_alpha(
+        &self,
+        gpu: &Gpu,
+        camera: &Camera,
+        target: &ModelTarget<'_>,
+        items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
+    ) {
+        self.draw_blended(gpu, camera, target, items, &self.alpha_pipeline);
+    }
+
+    fn draw_blended(
+        &self,
+        gpu: &Gpu,
+        camera: &Camera,
+        target: &ModelTarget<'_>,
+        items: &[(&wgpu::BindGroup, Vec<Vertex>, Vec<u32>)],
+        pipeline: &wgpu::RenderPipeline,
+    ) {
         let mut verts: Vec<Vertex> = Vec::new();
         let mut idx: Vec<u32> = Vec::new();
         let mut draws = Vec::new();
@@ -3632,7 +3660,7 @@ impl WorldRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.additive_pipeline);
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_vertex_buffer(0, vb.slice(..));
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
