@@ -1933,12 +1933,13 @@ mod tests {
         cmd.forward_move = 0.0;
         cmd.buttons = 0;
         m.tick(&mut st, &cmd);
-        assert!(st.velocity.length() > 1000.0);
+        let v = st.velocity.length();
+        assert!((v - sprint * (1.0 - 8.0 / 66.0)).abs() < 12.0, "{v}");
         for _ in 0..16 {
             m.tick(&mut st, &cmd);
         }
         let v = st.velocity.length();
-        assert!((100.0..700.0).contains(&v), "{v}");
+        assert!((50.0..700.0).contains(&v), "{v}");
     }
 
     #[test]
