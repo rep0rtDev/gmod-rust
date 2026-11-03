@@ -1522,20 +1522,6 @@ impl ServerMsg {
                     });
                 }
                 let n = r.varint()? as usize;
-                let mut removed = Vec::with_capacity(n);
-                for _ in 0..n {
-                    removed.push(r.u32()?);
-                }
-                let count = r.u32()?;
-                let constraints = r.u32()?;
-                let max_props = r.u32()? as i32;
-                let undos = Vec::new();
-                let local = if r.u8()? != 0 {
-                    Some(LocalPlayer { state: r_state(r)? })
-                } else {
-                    None
-                };
-                let n = r.varint()? as usize;
                 let mut ropes = Vec::with_capacity(n.min(4096));
                 for _ in 0..n {
                     ropes.push(RopeSnap {
@@ -1549,6 +1535,20 @@ impl ServerMsg {
                         color: [r.u8()?, r.u8()?, r.u8()?],
                     });
                 }
+                let n = r.varint()? as usize;
+                let mut removed = Vec::with_capacity(n);
+                for _ in 0..n {
+                    removed.push(r.u32()?);
+                }
+                let count = r.u32()?;
+                let constraints = r.u32()?;
+                let max_props = r.u32()? as i32;
+                let undos = Vec::new();
+                let local = if r.u8()? != 0 {
+                    Some(LocalPlayer { state: r_state(r)? })
+                } else {
+                    None
+                };
                 ServerMsg::Snapshot {
                     tick,
                     baseline,
