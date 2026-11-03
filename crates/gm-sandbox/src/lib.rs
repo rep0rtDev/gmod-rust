@@ -1344,6 +1344,8 @@ pub enum Device {
         toggle: bool,
         on: bool,
         user: Option<u32>,
+        /// `button_description`: the label shown as its world tip (`GetOverlayText`).
+        description: String,
     },
     /// `gmod_dynamite`: `util.BlastDamage(radius 300, clamp(damage, 0, 1500))` on the key, after
     /// `delay` seconds when set (queued, fired by a 0.05 s think), removed when `remove`.
@@ -3457,6 +3459,7 @@ impl Sandbox {
                 }
             }
             "button" => Device::Button {
+                description: s.button_description.clone(),
                 key: s.button_keygroup,
                 toggle: s.button_toggle,
                 on: false,
@@ -4564,6 +4567,7 @@ impl Sandbox {
             toggle,
             on: is_on,
             user,
+            ..
         }) = self.devices.get_mut(&prop)
         else {
             return false;

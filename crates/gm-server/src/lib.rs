@@ -4889,6 +4889,8 @@ pub struct Server<'w> {
     pub content_version: u32,
     /// Bumped whenever a scripted entity's overlay text changes or such an entity goes away.
     pub overlay_version: u32,
+    /// Buttons with a description (their world tips ride on the overlay list).
+    pub button_tips: BTreeSet<u32>,
     /// Setting schemas of scripted stools (`tool.register` with `settings`), by tool name;
     /// `tool_schemas_version` grows with every change so the net layer resends them.
     pub tool_schemas: Vec<(String, Vec<ToolSetting>)>,
@@ -5060,6 +5062,7 @@ impl<'w> Server<'w> {
             spawn_lists_version: 0,
             content_version: 0,
             overlay_version: 0,
+            button_tips: BTreeSet::new(),
             tool_schemas: Vec::new(),
             tool_schemas_version: 0,
             scripted_weapons: Vec::new(),
@@ -8080,6 +8083,15 @@ impl<'w> Server<'w> {
             .filter(|(_, s)| !s.overlay.is_empty())
             .map(|(id, s)| (*id, s.overlay.clone()))
             .collect();
+        // gmod_button `GetOverlayText`: the label without backslashes, 20 chars, in quotes
+        for (id, d) in self.sandbox.devices() {
+            if let gm_sandbox::Device::Button { description, .. } = d {
+                let label: String = description.replace('\\', "").chars().take(20).collect();
+                if !label.is_empty() {
+                    out.push((*id, format!("\"{label}\"")));
+                }
+            }
+        }
         out.sort_by_key(|(id, _)| *id);
         out
     }
@@ -12579,6 +12591,17 @@ impl<'w> Server<'w> {
             .iter()
             .map(|(id, d)| (*id, d.clone()))
             .collect();
+        let buttons: BTreeSet<u32> = devices
+            .iter()
+            .filter(|(_, d)| {
+                matches!(d, gm_sandbox::Device::Button { description, .. } if !description.is_empty())
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        if buttons != self.button_tips {
+            self.button_tips = buttons;
+            self.overlay_version = self.overlay_version.wrapping_add(1);
+        }
         let gone: Vec<u32> = self
             .thruster_loops
             .iter()

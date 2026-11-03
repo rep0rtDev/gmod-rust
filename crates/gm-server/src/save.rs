@@ -91,6 +91,8 @@ pub enum SavedDeviceKind {
     Button {
         key: i32,
         toggle: bool,
+        #[serde(default)]
+        description: String,
     },
     Dynamite {
         damage: f32,
@@ -227,7 +229,16 @@ impl From<&Device> for SavedDeviceKind {
                 key_r,
                 local_axis: arr(local_axis),
             },
-            Device::Button { key, toggle, .. } => SavedDeviceKind::Button { key, toggle },
+            Device::Button {
+                key,
+                toggle,
+                description,
+                ..
+            } => SavedDeviceKind::Button {
+                key,
+                toggle,
+                description,
+            },
             Device::Dynamite {
                 damage,
                 delay,
@@ -440,9 +451,14 @@ impl SavedDeviceKind {
                     (key_r, NumpadBind::Motor(id, -1.0)),
                 ],
             ),
-            SavedDeviceKind::Button { key, toggle } => (
+            SavedDeviceKind::Button {
+                key,
+                toggle,
+                description,
+            } => (
                 Device::Button {
                     key,
+                    description,
                     toggle,
                     on: false,
                     user: None,

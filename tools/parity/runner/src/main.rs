@@ -694,6 +694,7 @@ impl DeviceSpec {
                 applied: 0.0,
             },
             "button" => gm_sandbox::Device::Button {
+                description: String::new(),
                 key: self.key.unwrap_or(37),
                 toggle: self.toggle,
                 on: false,
