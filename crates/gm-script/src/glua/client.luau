@@ -1421,6 +1421,8 @@ function Mesh(mat) return setmetatable({ __valid = true, __material = mat, __tri
 function MESH:IsValid() return self.__valid == true end
 function MESH:Destroy() self.__valid = false; self.__tris = {} end
 function MESH:Draw() if self.__valid then draw_tris(self.__tris) end end
+function MESH:DrawSkinned(bones, count) self:Draw() end
+__glua_classes.IMesh = MESH
 function MESH:BuildFromTriangles(verts)
 	local vs = {}
 	for i, v in ipairs(verts) do vs[i] = { pos = v.pos, normal = v.normal, u = v.u, v = v.v, color = v.color } end

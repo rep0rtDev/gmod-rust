@@ -1577,3 +1577,113 @@ fn glua_panel_hooks_drag_richtext_cookies_servers() {
         ("sig", true, "v", true, true, "srv", 3.0, 40.0)
     );
 }
+
+/// The tool control surface and the remaining controls: ControlPanel:AddControl builds the
+/// legacy controls, presets persist through the preset store, a DHScrollBar scales its grip,
+/// a GWEN layout string builds children with their properties, box selection selects the
+/// children in the rectangle, DHTML keeps a history and raises the loading hooks, a
+/// DFileBrowser lists the data files, chat/notification draw on the HUD.
+#[test]
+fn glua_controls_remainder() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "c".into(),
+        name: "c".into(),
+        priority: 0,
+        source: r##"
+            got = {}
+            CP = vgui.Create("ControlPanel")
+            CP:AddControl("Slider", { Label = "Force", Command = "mytool_force", Min = 0, Max = 100 })
+            CP:AddControl("CheckBox", { Label = "On", Command = "mytool_on" })
+            CP:AddControl("ComboBox", { Label = "Mode", Options = { A = { mytool_mode = "1" } } })
+            got.controls = #CP.Items
+            presets.Add("mytool", "fast", { mytool_force = "90" })
+            got.preset = presets.Exists("mytool", "fast") and presets.GetTable("mytool").fast.mytool_force
+            PR = vgui.Create("ControlPresets") PR:SetPreset("mytool") PR:AddConVar("mytool_force")
+            got.options = PR.Options.fast ~= nil
+            HS = vgui.Create("DHScrollBar") HS:SetSize(200, 15) HS:SetUp(100, 400) HS:SetScroll(150)
+            got.hscroll = HS:GetScroll()
+            G = vgui.Create("DPanel") G:SetSize(300, 300)
+            G:LoadGWENString(util.TableToJSON({ Page = { Children = { { Type = "Button", Properties = { Position = { x = 10, y = 20 }, Size = { w = 80, h = 30 }, Text = "Go", ControlName = "go" } } } } }))
+            got.gwen = (#G.children == 1) and G.children[1]:GetClassName() .. ":" .. G.children[1].x .. ":" .. G.children[1].w .. ":" .. G.children[1]:GetName()
+            SEL = vgui.Create("DPanel") SEL:SetPos(400, 400) SEL:SetSize(200, 200) SEL:SetSelectionCanvas(true)
+            for i = 1, 3 do local c = vgui.Create("DPanel", SEL) c:SetPos(10 + (i - 1) * 60, 10) c:SetSize(40, 40) end
+            H = vgui.Create("DHTML") H.OnDocumentReady = function(self, url) got.ready = url end
+            H:OpenURL("http://a") H:OpenURL("http://b") H:GoBack()
+            got.hist = H.__url .. ":" .. tostring(H:IsLoading())
+            file.Write("browse/one.txt", "1") file.Write("browse/two.txt", "2")
+            FB = vgui.Create("DFileBrowser") FB:SetPath("DATA") FB:SetBaseFolder("browse") FB:SetFileTypes("*.txt") FB:SetOpen(true)
+            got.files = #FB.Files.Lines
+            chat.AddText(Color(255, 0, 0), "hello")
+            notification.AddLegacy("saved", NOTIFY_GENERIC, 5)
+            M = Mesh() got.imesh = tostring(FindMetaTable("IMesh") ~= nil and M.DrawSkinned ~= nil)
+        "##
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let world = gm_net::ClientWorld::default();
+    rt.cursor = Some((405.0, 405.0));
+    rt.client_render(&world, 1280, 720);
+    rt.actors()[0]
+        .eval::<()>("SEL:StartBoxSelection()")
+        .expect("start");
+    rt.cursor = Some((520.0, 460.0));
+    rt.client_render(&world, 1280, 720);
+    let selected: f64 = rt.actors()[0]
+        .eval("return SEL:EndBoxSelection()")
+        .expect("end");
+    assert_eq!(selected, 2.0, "two of the three children lie in the box");
+    let draws = rt.client_render(&world, 1280, 720);
+    let texts: Vec<String> = draws
+        .iter()
+        .filter_map(|d| match d {
+            gm_script::DrawCmd::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        texts.iter().any(|t| t == "hello") && texts.iter().any(|t| t == "saved"),
+        "{texts:?}"
+    );
+    let (controls, preset, options, hscroll, gwen, ready, hist, files, imesh): (
+        f64,
+        String,
+        bool,
+        f64,
+        String,
+        String,
+        String,
+        f64,
+        String,
+    ) = rt.actors()[0]
+        .eval("return got.controls, tostring(got.preset), got.options, got.hscroll, tostring(got.gwen), tostring(got.ready), got.hist, got.files, got.imesh")
+        .expect("eval");
+    assert_eq!(
+        (
+            controls,
+            preset.as_str(),
+            options,
+            hscroll,
+            gwen.as_str(),
+            ready.as_str(),
+            hist.as_str(),
+            files,
+            imesh.as_str()
+        ),
+        (
+            3.0,
+            "90",
+            true,
+            150.0,
+            "DButton:10:80:go",
+            "http://a",
+            "http://a:false",
+            2.0,
+            "true"
+        )
+    );
+}

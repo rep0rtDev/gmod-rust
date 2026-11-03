@@ -3507,3 +3507,728 @@ if events then
 	events.on("addon.reloaded", function() for p in pairs(all_panels) do if p.__valid then p:PreAutoRefresh() end end end, 0)
 	events.on("addon.reloaded", function() for p in pairs(all_panels) do if p.__valid then p:PostAutoRefresh() end end end, 1e9)
 end
+
+------------------------------------------------------------------------ Panel: remaining documented methods
+function Panel:GetBGColor() return self.__bg end
+function Panel:GetFGColor() return self.__fg or self.__text_color end
+function Panel:SetFGColor(r, g, b, a) self.__fg = IsColor(r) and r or Color(r, g, b, a); self.__text_color = self.__fg end
+function Panel:MoveBy(dx, dy, len, delay, ease, cb) self:MoveTo(self.x + dx, self.y + dy, len or 0, delay, ease, cb) end
+function Panel:SetMinimumSize(w, h) self.__min_w, self.__min_h = w, h end
+function Panel:StretchRightTo(w) self:SetWide(w - self.x) end
+function Panel:StretchBottomTo(h) self:SetTall(h - self.y) end
+function Panel:SlideDown(len) self.__slide = "down"; self:SetVisible(true) end
+function Panel:SlideUp(len) self.__slide = "up"; self:SetVisible(false) end
+function Panel:GetTooltipDelay() return self.__tooltip_delay or 0.5 end
+function Panel:SetTooltipDelay(d) self.__tooltip_delay = d end
+function Panel:PositionLabel(w, x, y, label, control) label:SetPos(x, y); control:SetPos(x + w, y) end
+function Panel:PaintAt(x, y) self:PaintManual() end
+function Panel:PaintManual(skip_children) if self.Paint then self:Paint(self.w, self.h) end if self.PaintOver then self:PaintOver(self.w, self.h) end end
+function Panel:AnimTail() end
+function Panel:AnimationThinkInternal() self:AnimationThink() end
+function Panel:DisableLerp() self.__no_lerp = true end
+function Panel:LoadTGAImage(path, dir) self.__image = Material(path) end
+function Panel:Prepare() end
+function Panel:ResetAllFades(hold, expired, time) end
+function Panel:DoModal() self.__modal = true; self:MakePopup() end
+function Panel:IsModal() return self.__modal == true end
+-- drag internals
+function Panel:SetDragParent(p) self.__drag_parent = p end
+function Panel:IsDraggable() return self.__droppable ~= nil end
+function Panel:DragClick(code) return self:DragMousePress(code) end
+function Panel:PaintingDragging() return dragndrop.IsDragging() and dragndrop.GetDroppable() and dragndrop.GetDroppable()[1] == self end
+function Panel:GetValidReceiverSlot()
+	local panels = dragndrop.GetDroppable()
+	if not panels or not self.__receivers then return nil end
+	for name, r in pairs(self.__receivers) do if panels[1] and panels[1].__droppable == name then return r end end
+end
+-- text entry internals (the text is `__text`, the caret `__caret`, the selection `__sel`)
+function Panel:AddText(...) local t = {} for i = 1, select("#", ...) do t[i] = tostring(select(i, ...)) end self.__text = (self.__text or "") .. table.concat(t); self.__caret = #self.__text end
+function Panel:AppendTextWithURLs(t) self:AppendText(t) end
+function Panel:GetNumLines() local _, n = string.gsub(self.__text or "", "\n", "") return n + 1 end
+function Panel:GetLineHeight() return self.__line_h or 16 end
+function Panel:SetLineHeight(h) self.__line_h = h end
+function Panel:GetMaximumCharCount() return self.__max_chars or -1 end
+function Panel:SetTextHidden(b) self.__hidden_text = b == true end
+function Panel:SelectAll() self.__sel = { 0, #(self.__text or "") } end
+function Panel:SelectAllText(b) if b ~= false then self:SelectAll() end end
+function Panel:SelectAllOnFocus(b) self.__select_on_focus = b ~= false end
+function Panel:SelectNone() self.__sel = nil end
+function Panel:UnselectAll() self.__sel = nil end
+function Panel:GetSelectedTextRange() if not self.__sel then return 0, 0 end return self.__sel[1], self.__sel[2] end
+function Panel:CutSelected()
+	if not self.__sel then return end
+	local t = self.__text or ""
+	self.__clip = string.sub(t, self.__sel[1] + 1, self.__sel[2])
+	self.__text = string.sub(t, 1, self.__sel[1]) .. string.sub(t, self.__sel[2] + 1)
+	self.__caret, self.__sel = self.__sel[1], nil
+end
+function Panel:CopyBase() if self.__sel then self.__clip = string.sub(self.__text or "", self.__sel[1] + 1, self.__sel[2]) end end
+function Panel:SaveUndoState() self.__undo = self.__undo or {}; self.__undo[#self.__undo + 1] = self.__text or "" end
+function Panel:Undo() if self.__undo and #self.__undo > 0 then self.__text = table.remove(self.__undo); self.__caret = #self.__text end end
+function Panel:DrawTextEntryText(text_color, highlight_color, cursor_color)
+	surface.SetFont(self.__font or "DermaDefault")
+	local t = self.__hidden_text and string.rep("*", #(self.__text or "")) or (self.__text or "")
+	if self.__sel then
+		local a = surface.GetTextSize(string.sub(t, 1, self.__sel[1]))
+		local b = surface.GetTextSize(string.sub(t, 1, self.__sel[2]))
+		surface.SetDrawColor(highlight_color); surface.DrawRect(3 + a, 2, b - a, self.h - 4)
+	end
+	surface.SetTextColor(text_color); surface.SetTextPos(3, (self.h - select(2, surface.GetTextSize("W"))) / 2); surface.DrawText(t)
+	if focused == self then local cx = surface.GetTextSize(string.sub(t, 1, self.__caret or #t)) surface.SetDrawColor(cursor_color); surface.DrawRect(3 + cx, 3, 1, self.h - 6) end
+end
+function Panel:GetScrollStartIndexes() return 0, 0 end
+-- selection canvas: box-select children by dragging over the canvas
+function Panel:SetSelectionCanvas(b) self.__selection_canvas = b == true end
+function Panel:IsSelectionCanvas() return self.__selection_canvas == true end
+function Panel:GetSelectionCanvas() local p = self while p do if p.__selection_canvas then return p end p = p.parent end end
+function Panel:StartBoxSelection() self.__box = { cursor_x, cursor_y } end
+function Panel:GetChildrenInRect(x, y, w, h)
+	local out = {}
+	for _, c in ipairs(self.children or {}) do
+		if c.visible and c.x < x + w and c.x + c.w > x and c.y < y + h and c.y + c.h > y then out[#out + 1] = c end
+	end
+	return out
+end
+function Panel:EndBoxSelection()
+	if not self.__box then return 0 end
+	local sx, sy = self:ScreenToLocal(self.__box[1], self.__box[2])
+	local ex, ey = self:ScreenToLocal(cursor_x, cursor_y)
+	self.__box = nil
+	local x, y, w, h = math.min(sx, ex), math.min(sy, ey), math.abs(ex - sx), math.abs(ey - sy)
+	local hit = self:GetChildrenInRect(x, y, w, h)
+	for _, c in ipairs(hit) do c:SetSelected(true) end
+	return #hit
+end
+function Panel:GetSelectedChildren() local out = {} for _, c in ipairs(self.children or {}) do if c.__selected then out[#out + 1] = c end end return out end
+function Panel:NumSelectedChildren() return #self:GetSelectedChildren() end
+-- GWEN layouts (the designer's JSON): children by control type with their properties
+local gwen_controls = { Button = "DButton", Label = "DLabel", CheckBox = "DCheckBox", CheckBoxWithLabel = "DCheckBoxLabel", TextBox = "DTextEntry", ComboBox = "DComboBox", HorizontalSlider = "DSlider", NumericUpDown = "DNumberWang", ImagePanel = "DImage", ListBox = "DListBox", TabControl = "DPropertySheet", ProgressBar = "DProgress", Base = "DPanel", Rectangle = "DPanel", GroupBox = "DPanel", ScrollControl = "DScrollPanel", TreeControl = "DTree", CollapsibleList = "DCategoryList", PanelListPanel = "DPanelList" }
+local function gwen_apply(p, props)
+	for k, v in pairs(props or {}) do
+		local fn = p["GWEN_Set" .. k]
+		if fn then fn(p, v) end
+	end
+end
+local function gwen_build(parent, node)
+	if type(node) ~= "table" then return end
+	local class = gwen_controls[node.Type] or node.Type or "DPanel"
+	local p = vgui.Create(class, parent) or vgui.Create("DPanel", parent)
+	gwen_apply(p, node.Properties)
+	for _, c in ipairs(node.Children or {}) do gwen_build(p, c) end
+	return p
+end
+function Panel:LoadGWENString(json)
+	local t = util.JSONToTable(json)
+	if not t then return end
+	local root = t.Page or t
+	gwen_apply(self, root.Properties)
+	for _, c in ipairs(root.Children or {}) do gwen_build(self, c) end
+end
+function Panel:LoadGWENFile(path, dir) local raw = file.Read(path, dir or "GAME") if raw then self:LoadGWENString(raw) end end
+function Panel:LoadControlsFromString(s) self:LoadGWENString(s) end
+function Panel:LoadControlsFromFile(path) self:LoadGWENFile(path) end
+function Panel:GWEN_SetPosition(p) self:SetPos(p.x or 0, p.y or 0) end
+function Panel:GWEN_SetSize(p) self:SetSize(p.w or self.w, p.h or self.h) end
+function Panel:GWEN_SetText(t) if self.SetText then self:SetText(t) end end
+function Panel:GWEN_SetControlName(n) self:SetName(n) end
+function Panel:GWEN_SetDock(d) local docks = { Fill = FILL, Left = LEFT, Right = RIGHT, Top = TOP, Bottom = BOTTOM } if docks[d] then self:Dock(docks[d]) end end
+function Panel:GWEN_SetMargin(m) self:DockMargin(m.left or 0, m.top or 0, m.right or 0, m.bottom or 0) end
+function Panel:GWEN_SetMin(v) if self.SetMin then self:SetMin(tonumber(v)) end end
+function Panel:GWEN_SetMax(v) if self.SetMax then self:SetMax(tonumber(v)) end end
+function Panel:GWEN_SetHorizontalAlign(a) local al = { Left = TEXT_ALIGN_LEFT, Center = TEXT_ALIGN_CENTER, Right = TEXT_ALIGN_RIGHT } if al[a] and self.SetContentAlignment then self:SetContentAlignment(a == "Left" and 4 or a == "Center" and 5 or 6) end end
+function Panel:GWEN_SetCheckboxText(t) if self.SetText then self:SetText(t) end end
+-- HTML panel surface on the base (the DHTML control keeps the state); no browser: documents
+-- "load" at once and the loading hooks fire in the game's order
+local function html_load(p, url)
+	p.__history = p.__history or {}
+	if not p.__history_nav then
+		for i = #p.__history, (p.__history_pos or 0) + 1, -1 do p.__history[i] = nil end
+		p.__history[#p.__history + 1] = url; p.__history_pos = #p.__history
+	end
+	p.__history_nav = nil
+	p.__url, p.__loading = url, true
+	if p.OnBeginLoadingDocument then p:OnBeginLoadingDocument(url) end
+	if p.OnChangeAddressBar then p:OnChangeAddressBar(url) end
+	if p.OnChangeTitle then p:OnChangeTitle(url) end
+	p.__loading = false
+	if p.OnDocumentReady then p:OnDocumentReady(url) end
+	if p.OnFinishLoadingDocument then p:OnFinishLoadingDocument(url) end
+end
+function Panel:OpenURL(url) html_load(self, tostring(url)) end
+function Panel:SetURL(url) self:OpenURL(url) end
+function Panel:SetHTML(html) self.__html = html; html_load(self, "about:blank") end
+function Panel:GoToHistoryOffset(off)
+	local h = self.__history or {}
+	local i = (self.__history_pos or 0) + off
+	if i < 1 or i > #h then return end
+	self.__history_pos, self.__history_nav = i, true
+	html_load(self, h[i])
+end
+function Panel:GoBack() self:GoToHistoryOffset(-1) end
+function Panel:GoForward() self:GoToHistoryOffset(1) end
+function Panel:IsLoading() return self.__loading == true end
+function Panel:StopLoading() self.__loading = false end
+function Panel:Refresh() if self.__url then self.__history_nav = true; html_load(self, self.__url) end end
+function Panel:RunJavascript(js) end
+function Panel:NewObject(name) self.__js_objects = self.__js_objects or {}; self.__js_objects[name] = {} end
+function Panel:NewObjectCallback(obj, fn) end
+function Panel:GetHTMLMaterial() return nil end
+function Panel:UpdateHTMLTexture() end
+function DHTML:OpenURL(u) Panel.OpenURL(self, u) end
+function DHTML:SetHTML(h) Panel.SetHTML(self, h) end
+function DHTML:ConsoleMessage(msg) end
+function DHTML:OnBeginLoadingDocument(url) end
+function DHTML:OnFinishLoadingDocument(url) end
+function DHTML:OnDocumentReady(url) end
+function DHTML:OnChangeAddressBar(url) end
+function DHTML:OnChangeTitle(title) end
+function DHTML:OnChangeTargetURL(url) end
+function DHTML:OnCallback(lib, name, args) local fn = self.__functions[lib .. "." .. name] if fn then return fn(unpack(args or {})) end end
+function DHTML:OnChildViewCreated(url, target, popup) end
+-- @hook HTML:OnBeginLoadingDocument @hook HTML:OnFinishLoadingDocument @hook HTML:OnDocumentReady @hook HTML:OnChangeAddressBar @hook HTML:OnChangeTitle @hook HTML:OnCallback
+
+------------------------------------------------------------------------ DHScrollBar
+local DHScrollBar = derma.DefineControl("DHScrollBar", "Horizontal scroll bar", {}, "DPanel")
+function DHScrollBar:Init()
+	self.__paint_bg = false
+	self.Offset, self.Scroll, self.CanvasSize, self.BarSize, self.__hide_buttons = 0, 0, 1, 1, false
+	self:SetTall(15)
+	self.btnLeft = vgui.Create("DButton", self); self.btnLeft:SetText(""); self.btnLeft.DoClick = function() self:AddScroll(-1) end
+	self.btnRight = vgui.Create("DButton", self); self.btnRight:SetText(""); self.btnRight.DoClick = function() self:AddScroll(1) end
+	self.btnGrip = vgui.Create("DButton", self); self.btnGrip:SetText("")
+	self.btnGrip.OnMousePressed = function(g) g.__drag = (g:CursorPos()); g:MouseCapture(true) end
+	self.btnGrip.OnMouseReleased = function(g) g.__drag = nil; g:MouseCapture(false) end
+	self.btnGrip.Think = function(g)
+		if not g.__drag then return end
+		local lx = self:CursorPos()
+		local track = self.w - (self.__hide_buttons and 0 or self.h * 2)
+		local f = (lx - (self.__hide_buttons and 0 or self.h) - g.__drag) / math.max(1, track - g.w)
+		self:SetScroll(f * (self.CanvasSize - self.BarSize))
+	end
+end
+function DHScrollBar:SetEnabled(b) self.__enabled = b ~= false end
+function DHScrollBar:SetHideButtons(b) self.__hide_buttons = b == true; self:InvalidateLayout() end
+function DHScrollBar:GetHideButtons() return self.__hide_buttons end
+function DHScrollBar:SetUp(bar, canvas) self.BarSize, self.CanvasSize = bar, math.max(canvas - bar, 1); self:SetEnabled(canvas > bar); self:InvalidateLayout() end
+function DHScrollBar:BarScale() local track = self.w - (self.__hide_buttons and 0 or self.h * 2) return math.max(track / math.max(self.BarSize + self.CanvasSize, 1), 0) end
+function DHScrollBar:GetScroll() return self.Scroll end
+function DHScrollBar:GetOffset() return -self.Scroll end
+function DHScrollBar:SetScroll(s)
+	self.Scroll = math.max(0, math.min(s, self.CanvasSize))
+	self:InvalidateLayout()
+	if self.parent and self.parent.OnHScroll then self.parent:OnHScroll(self:GetOffset()) end
+end
+function DHScrollBar:AddScroll(d) self:SetScroll(self.Scroll + d * 25) end
+function DHScrollBar:AnimateTo(s, len, delay, ease) self:SetScroll(s) end
+function DHScrollBar:Grip() return self.btnGrip end
+function DHScrollBar:OnMouseWheeled(d) self:AddScroll(-d) return true end
+function DHScrollBar:OnMousePressed(code) local x = self:CursorPos() if x < self.btnGrip.x then self:AddScroll(-4) else self:AddScroll(4) end end
+function DHScrollBar:PerformLayout(w, h)
+	local bw = self.__hide_buttons and 0 or h
+	self.btnLeft:SetVisible(not self.__hide_buttons); self.btnRight:SetVisible(not self.__hide_buttons)
+	self.btnLeft:SetPos(0, 0); self.btnLeft:SetSize(bw, h)
+	self.btnRight:SetPos(w - bw, 0); self.btnRight:SetSize(bw, h)
+	local track = w - bw * 2
+	local gw = math.max(math.floor(track * self.BarSize / math.max(self.BarSize + self.CanvasSize, 1)), 10)
+	local gx = bw + (track - gw) * (self.CanvasSize > 0 and self.Scroll / self.CanvasSize or 0)
+	self.btnGrip:SetPos(math.floor(gx), 0); self.btnGrip:SetSize(gw, h)
+end
+function DHScrollBar:Paint(w, h) surface.SetDrawColor(Color(0, 0, 0, 100)); surface.DrawRect(0, 0, w, h) end
+
+------------------------------------------------------------------------ DPanPanel / DColumnSheet / ContextBase
+local DPanPanel = derma.DefineControl("DPanPanel", "Pannable canvas", {}, "DPanel")
+function DPanPanel:Init() self.pnlCanvas = vgui.Create("DPanel", self); self.pnlCanvas.__paint_bg = false; self.__pan_drag = nil end
+function DPanPanel:GetCanvas() return self.pnlCanvas end
+function DPanPanel:SetCanvas(c) self.pnlCanvas = c; c:SetParent(self) end
+function DPanPanel:AddItem(p) p:SetParent(self.pnlCanvas) end
+function DPanPanel:ScrollToChild(p) self.pnlCanvas:SetPos(-p.x + self.w / 2 - p.w / 2, -p.y + self.h / 2 - p.h / 2); self:OnScroll() end
+function DPanPanel:OnScroll() end
+function DPanPanel:OnMousePressed(code) self.__pan_drag = { cursor_x, cursor_y, self.pnlCanvas.x, self.pnlCanvas.y }; self:MouseCapture(true) end
+function DPanPanel:OnMouseReleased(code) self.__pan_drag = nil; self:MouseCapture(false) end
+function DPanPanel:Think() if self.__pan_drag then local d = self.__pan_drag self.pnlCanvas:SetPos(d[3] + cursor_x - d[1], d[4] + cursor_y - d[2]); self:OnScroll() end end
+local DColumnSheet = derma.DefineControl("DColumnSheet", "Column sheet", {}, "DPanel")
+function DColumnSheet:Init() self.__paint_bg = false; self.Navigation = vgui.Create("DPanel", self); self.Navigation:Dock(LEFT); self.Navigation:SetWide(120); self.Content = vgui.Create("DPanel", self); self.Content:Dock(FILL); self.Items = {} end
+function DColumnSheet:AddSheet(label, panel, material)
+	local b = vgui.Create("DButton", self.Navigation); b:SetText(label); b:Dock(TOP); b:SetTall(32)
+	panel:SetParent(self.Content); panel:Dock(FILL); panel:SetVisible(false)
+	local item = { Button = b, Panel = panel, Name = label }
+	b.DoClick = function() self:SetActiveButton(b) end
+	self.Items[#self.Items + 1] = item
+	if #self.Items == 1 then self:SetActiveButton(b) end
+	return item
+end
+function DColumnSheet:SetActiveButton(b) self.__active = b for _, it in ipairs(self.Items) do it.Panel:SetVisible(it.Button == b) end end
+function DColumnSheet:GetActiveButton() return self.__active end
+function DColumnSheet:UseButtonOnlyStyle() self.__buttons_only = true end
+local ContextBase = derma.DefineControl("ContextBase", "Property control base", {}, "DPanel")
+function ContextBase:SetConVar(c) self.__convar = c end
+function ContextBase:ConVar() return self.__convar end
+function ContextBase:ControlValues(data) self.__data = data if data.convar then self:SetConVar(data.convar) end end
+function ContextBase:TestForChanges() if not self.__convar then return end local v = GetConVarString(self.__convar) if v ~= self.__last then self.__last = v if self.OnConVarChanged then self:OnConVarChanged(v) end end end
+function ContextBase:Think() self:TestForChanges() end
+
+------------------------------------------------------------------------ presets / ControlPresets
+presets = presets or {}
+local function all_presets() return LoadPresets() or {} end
+function presets.GetTable(group) return all_presets()[group] or {} end
+function presets.Exists(group, name) return all_presets()[group] ~= nil and all_presets()[group][name] ~= nil end
+function presets.Add(group, name, values) local all = all_presets(); all[group] = all[group] or {}; all[group][name] = values; SavePresets(all) end
+function presets.Remove(group, name) local all = all_presets(); if all[group] then all[group][name] = nil; SavePresets(all) end end
+function presets.Rename(group, old, new) local all = all_presets(); if all[group] and all[group][old] then all[group][new], all[group][old] = all[group][old], nil; SavePresets(all) end end
+function presets.BadNameAlert() Derma_Message("#preset.invalidname", "#preset.badname", "#preset.ok") end
+function presets.OverwritePresetPrompt(cb) Derma_Query("#preset.overwrite", "#preset.exists", "#preset.yes", cb, "#preset.no") end
+local ControlPresets = derma.DefineControl("ControlPresets", "Tool presets", {}, "DPanel")
+function ControlPresets:Init()
+	self.__paint_bg = false
+	self:SetTall(22)
+	self.ConVars, self.Options = {}, {}
+	self.DropDown = vgui.Create("DComboBox", self); self.DropDown:Dock(FILL)
+	self.DropDown.OnSelect = function(_, idx, value) self:OnSelect(idx, value, self.Options[value]) end
+	self.SaveButton = vgui.Create("DButton", self); self.SaveButton:Dock(RIGHT); self.SaveButton:SetWide(22); self.SaveButton:SetText("+")
+	self.SaveButton.DoClick = function() self:QuickSavePreset() end
+	self.EditButton = vgui.Create("DButton", self); self.EditButton:Dock(RIGHT); self.EditButton:SetWide(22); self.EditButton:SetText("...")
+	self.EditButton.DoClick = function() self:OpenPresetEditor() end
+end
+function ControlPresets:SetLabel(l) self.__label = l end
+function ControlPresets:SetPreset(group) self.__group = group; self:ReloadPresets() end
+function ControlPresets:AddConVar(c) self.ConVars[#self.ConVars + 1] = c end
+function ControlPresets:GetConVars() return self.ConVars end
+function ControlPresets:AddOption(name, values) self.Options[name] = values; self.DropDown:AddChoice(name) end
+function ControlPresets:SetOptions(t) self.Options = {} self.DropDown:Clear() for name, values in SortedPairs(t) do self:AddOption(name, values) end end
+function ControlPresets:ReloadPresets() self:SetOptions(presets.GetTable(self.__group)) end
+function ControlPresets:Update() self:ReloadPresets() end
+function ControlPresets:OnSelect(index, value, data) if type(data) == "table" then for cvar, v in pairs(data) do RunConsoleCommand(cvar, tostring(v)) end end end
+function ControlPresets:QuickSaveInternal(name)
+	if name == nil or name == "" then presets.BadNameAlert() return end
+	local values = {}
+	for _, c in ipairs(self.ConVars) do values[c] = GetConVarString(c) end
+	local save = function() presets.Add(self.__group, name, values); self:ReloadPresets() end
+	if presets.Exists(self.__group, name) then presets.OverwritePresetPrompt(save) else save() end
+end
+function ControlPresets:QuickSavePreset() Derma_StringRequest("#preset.quicksave", "#preset.entername", "", function(name) self:QuickSaveInternal(name) end) end
+function ControlPresets:OpenPresetEditor()
+	local f = vgui.Create("DFrame"); f:SetTitle("#preset.editor"); f:SetSize(300, 300); f:Center(); f:MakePopup()
+	local list = vgui.Create("DListView", f); list:Dock(FILL); list:AddColumn("#preset.name")
+	for name in SortedPairs(presets.GetTable(self.__group)) do list:AddLine(name) end
+	local del = vgui.Create("DButton", f); del:Dock(BOTTOM); del:SetText("#preset.delete")
+	del.DoClick = function() local line = list:GetSelectedLine() and list:GetLine(list:GetSelectedLine()) if line then presets.Remove(self.__group, line:GetValue(1)); list:RemoveLine(list:GetSelectedLine()); self:ReloadPresets() end end
+	return f
+end
+
+------------------------------------------------------------------------ CtrlNumPad / MatSelect / DIconBrowser
+local CtrlNumPad = derma.DefineControl("CtrlNumPad", "Two key binders", {}, "DPanel")
+function CtrlNumPad:Init()
+	self.__paint_bg = false; self:SetTall(80)
+	self.NumPad1 = vgui.Create("DBinder", self); self.NumPad1:SetPos(0, 20); self.NumPad1:SetSize(120, 40)
+	self.NumPad2 = vgui.Create("DBinder", self); self.NumPad2:SetPos(130, 20); self.NumPad2:SetSize(120, 40)
+	self.Label1 = vgui.Create("DLabel", self); self.Label1:SetPos(0, 0); self.Label1:SetSize(120, 20)
+	self.Label2 = vgui.Create("DLabel", self); self.Label2:SetPos(130, 0); self.Label2:SetSize(120, 20)
+end
+function CtrlNumPad:SetConVar1(c) self.NumPad1:SetConVar(c) end
+function CtrlNumPad:SetConVar2(c) self.NumPad2:SetConVar(c); self.NumPad2:SetVisible(true); self.Label2:SetVisible(true) end
+function CtrlNumPad:SetLabel1(t) self.Label1:SetText(t) end
+function CtrlNumPad:SetLabel2(t) self.Label2:SetText(t) end
+function CtrlNumPad:GetValue1() return self.NumPad1:GetValue() end
+function CtrlNumPad:GetValue2() return self.NumPad2:GetValue() end
+local MatSelect = derma.DefineControl("MatSelect", "Material picker", {}, "ContextBase")
+function MatSelect:Init()
+	self.__paint_bg = false
+	self.List = vgui.Create("DIconLayout", self); self.List:Dock(FILL)
+	self.Controls, self.__item_w, self.__item_h, self.__rows, self.__auto_h = {}, 32, 32, 2, true
+end
+function MatSelect:SetItemWidth(w) self.__item_w = w end
+function MatSelect:SetItemHeight(h) self.__item_h = h end
+function MatSelect:SetNumRows(n) self.__rows = n end
+function MatSelect:SetAutoHeight(b) self.__auto_h = b ~= false end
+function MatSelect:GetAutoHeight() return self.__auto_h end
+function MatSelect:AddMaterialEx(label, material, value, cvars)
+	local b = vgui.Create("DImageButton", self.List); b:SetSize(self.__item_w, self.__item_h); b:SetImage(material); b:SetTooltip(label)
+	b.Value, b.AutoCVars = value, cvars
+	b.DoClick = function() self:SelectMaterial(b) end
+	b.DoRightClick = function() self:OnRightClick(b) end
+	b.PaintOver = function(pnl, w, h) if self.SelectedMaterial == pnl then self:SelectedItemPaintOver(pnl, w, h) end end
+	self.Controls[#self.Controls + 1] = b
+	if self.__auto_h then self:SetTall(math.ceil(#self.Controls / math.max(1, math.floor(math.max(self.w, 1) / self.__item_w))) * self.__item_h) end
+	return b
+end
+function MatSelect:AddMaterial(label, value) return self:AddMaterialEx(label, value, value, { [self:ConVar() or ""] = value }) end
+function MatSelect:SelectMaterial(mat)
+	self.SelectedMaterial = mat
+	if mat.AutoCVars then for cvar, v in pairs(mat.AutoCVars) do if cvar ~= "" then RunConsoleCommand(cvar, tostring(v)) end end end
+	self:OnSelect(mat.Value, mat)
+end
+function MatSelect:FindMaterialByValue(v) for _, b in ipairs(self.Controls) do if b.Value == v then return b end end end
+function MatSelect:FindAndSelectMaterial(v) local b = self:FindMaterialByValue(v) if b then self.SelectedMaterial = b end end
+function MatSelect:SelectedItemPaintOver(pnl, w, h) surface.SetDrawColor(SKIN.colButtonBorder); surface.DrawOutlinedRect(0, 0, w, h) end
+function MatSelect:OnSelect(value, pnl) end
+function MatSelect:OnRightClick(pnl) end
+function MatSelect:TestForChanges() if self:ConVar() then local v = GetConVarString(self:ConVar()) if v ~= self.__last then self.__last = v; self:FindAndSelectMaterial(v) end end end
+local DIconBrowser = derma.DefineControl("DIconBrowser", "Icon browser", {}, "DScrollPanel")
+function DIconBrowser:Init() DScrollPanel.Init(self); self.__manual, self.__icons, self.__filter = false, {}, "" end
+function DIconBrowser:SetManual(b) self.__manual = b == true end
+function DIconBrowser:GetManual() return self.__manual end
+function DIconBrowser:Fill()
+	for _, b in ipairs(self.__icons) do b:Remove() end
+	self.__icons = {}
+	local x, y, n = 0, 0, 0
+	for _, path in ipairs(self.__list or {}) do
+		if self.__filter == "" or string.find(string.lower(path), string.lower(self.__filter), 1, true) then
+			local b = vgui.Create("DImageButton", self.pnlCanvas); b:SetSize(16, 16); b:SetPos(x, y); b:SetImage(path); b.__icon = path
+			b.DoClick = function() self:SelectIcon(b) end
+			self.__icons[#self.__icons + 1] = b
+			n = n + 1; x = x + 18; if x + 16 > math.max(self.w, 18) then x, y = 0, y + 18 end
+		end
+	end
+	self:InvalidateLayout()
+end
+function DIconBrowser:SetList(list) self.__list = list; self:Fill() end
+function DIconBrowser:FilterByText(t) self.__filter = t or ""; self:Fill() end
+function DIconBrowser:SelectIcon(b) self.__selected = b; self:OnChangeInternal() end
+function DIconBrowser:SetSelectedIcon(path) for _, b in ipairs(self.__icons) do if b.__icon == path then self.__selected = b end end end
+function DIconBrowser:GetSelectedIcon() return self.__selected and self.__selected.__icon end
+function DIconBrowser:ScrollToSelected() if self.__selected then self.VBar.Scroll = self.__selected.y end end
+function DIconBrowser:OnChangeInternal() self:OnChange() end
+function DIconBrowser:OnChange() end
+
+------------------------------------------------------------------------ ControlPanel: a tool's DForm with the legacy AddControl surface
+local ControlPanel = derma.DefineControl("ControlPanel", "Tool control panel", {}, "DForm")
+function ControlPanel:Init() DForm.Init(self); self:SetName(""); self.__controls = {} end
+function ControlPanel:GetEmbeddedPanel() return self end
+function ControlPanel:ClearControls() for _, c in ipairs(self.__controls) do if c.__valid then c:Remove() end end self.__controls = {}; self.Items = {} end
+function ControlPanel:AddPanel(p) self:AddItem(p); self.__controls[#self.__controls + 1] = p; return p end
+function ControlPanel:FillViaFunction(fn) self:ClearControls(); fn(self) end
+function ControlPanel:ColorPicker(label, r, g, b, a)
+	local m = vgui.Create("DColorMixer"); m:SetLabel(label); m:SetConVarR(r); m:SetConVarG(g); m:SetConVarB(b); m:SetConVarA(a)
+	return self:AddPanel(m)
+end
+function ControlPanel:KeyBinder(label1, cvar1, label2, cvar2)
+	local k = vgui.Create("CtrlNumPad"); k:SetLabel1(label1); k:SetConVar1(cvar1)
+	if label2 then k:SetLabel2(label2); k:SetConVar2(cvar2) end
+	return self:AddPanel(k)
+end
+function ControlPanel:MatSelect(cvar, options, autostretch, w, h)
+	local m = vgui.Create("MatSelect"); m:SetConVar(cvar); m:SetItemWidth(w or 32); m:SetItemHeight(h or 32); m:SetAutoHeight(autostretch ~= false)
+	if options then for label, value in SortedPairs(options) do m:AddMaterial(label, value) end end
+	return self:AddPanel(m)
+end
+function ControlPanel:ToolPresets(group, cvars)
+	local p = vgui.Create("ControlPresets"); p:SetPreset(group)
+	for cvar in pairs(cvars or {}) do p:AddConVar(cvar) end
+	return self:AddPanel(p)
+end
+local legacy_controls = {
+	slider = function(self, d) return self:NumSlider(d.Label or d.label or "", d.Command or d.command, tonumber(d.Min or d.min) or 0, tonumber(d.Max or d.max) or 1, tonumber(d.Decimals or d.decimals) or 2) end,
+	checkbox = function(self, d) return self:CheckBox(d.Label or d.label or "", d.Command or d.command) end,
+	textbox = function(self, d) return self:TextEntry(d.Label or d.label or "", d.Command or d.command) end,
+	combobox = function(self, d)
+		local c, l = self:ComboBox(d.Label or d.label or "", d.Command or d.command)
+		for k, v in SortedPairs(d.Options or d.options or {}) do c:AddChoice(k, v) end
+		return c, l
+	end,
+	listbox = function(self, d)
+		local c, l = self:ListBox(d.Label or d.label or "", d.Command or d.command)
+		for k, v in SortedPairs(d.Options or d.options or {}) do c:AddItem(k) end
+		return c, l
+	end,
+	numpad = function(self, d) return self:KeyBinder(d.Label or d.label or "", d.Command or d.command, d.Label2 or d.label2, d.Command2 or d.command2) end,
+	color = function(self, d) return self:ColorPicker(d.Label or d.label or "", d.Red or d.red, d.Green or d.green, d.Blue or d.blue, d.Alpha or d.alpha) end,
+	label = function(self, d) return self:Help(d.Text or d.text or "") end,
+	header = function(self, d) return self:Help(d.Description or d.description or "") end,
+	button = function(self, d) return self:Button(d.Label or d.label or d.Text or d.text or "", d.Command or d.command) end,
+	matselect = function(self, d) return self:MatSelect(d.ConVar or d.convar, d.Options or d.options, d.AutoStretch or d.autostretch, d.ItemWidth or d.itemwidth, d.ItemHeight or d.itemheight) end,
+	propselect = function(self, d) return self:PropSelect(d.Label or d.label or "", d.ConVar or d.convar, d.Models or d.models or {}, d.Height or d.height) end,
+	toolpresets = function(self, d) return self:ToolPresets(d.Group or d.group or "", d.CVars or d.cvars or {}) end,
+	controlpresets = function(self, d) return self:ToolPresets(d.Group or d.group or "", d.CVars or d.cvars or {}) end,
+}
+function ControlPanel:AddControl(kind, data)
+	local make = legacy_controls[string.lower(tostring(kind))]
+	if not make then return end
+	local c = make(self, data or {})
+	if c then self.__controls[#self.__controls + 1] = c end
+	return c
+end
+function ControlPanel:ControlValues(data)
+	if data.Description or data.description then self:Help(data.Description or data.description) end
+	if data.Text or data.text then self:Help(data.Text or data.text) end
+	if data.Items or data.items then for _, item in ipairs(data.Items or data.items) do if item.Type or item.type then self:AddControl(item.Type or item.type, item) end end end
+end
+if TOOL then function TOOL:BuildCPanel(cpanel) end end
+Tool = Tool or {}
+function Tool:RebuildControlPanel() local cp = spawnmenu.ActiveControlPanel and spawnmenu.ActiveControlPanel() if cp and self.BuildCPanel then cp:ClearControls(); self.BuildCPanel(cp) end end
+
+------------------------------------------------------------------------ ContentIcon / SpawnIcon
+local ContentIcon = derma.DefineControl("ContentIcon", "Spawnmenu content icon", {}, "DButton")
+function ContentIcon:Init() self:SetSize(128, 128); self:SetText(""); self.__type, self.__spawn, self.__weapon, self.__admin = "", "", "", false; self:Droppable("content") end
+function ContentIcon:SetContentType(t) self.__type = t end
+function ContentIcon:GetContentType() return self.__type end
+function ContentIcon:SetSpawnName(n) self.__spawn = n end
+function ContentIcon:GetSpawnName() return self.__spawn end
+function ContentIcon:SetNPCWeapon(w) self.__weapon = w end
+function ContentIcon:GetNPCWeapon() return self.__weapon end
+function ContentIcon:SetAdminOnly(b) self.__admin = b == true end
+function ContentIcon:SetName(n) self.__name = n; self:SetTooltip(n) end
+function ContentIcon:SetMaterial(m) self.__material = m end
+function ContentIcon:SetColor(c) self.__icon_color = c end
+function ContentIcon:DoRightClick() self:OpenMenu() end
+function ContentIcon:OpenMenu()
+	local m = DermaMenu()
+	m:AddOption("#spawnmenu.menu.copy", function() SetClipboardText(self.__spawn) end)
+	if self.__weapon ~= "" then m:AddOption("#spawnmenu.menu.copy_weapon", function() SetClipboardText(self.__weapon) end) end
+	m:AddSpacer()
+	m:AddOption("#spawnmenu.menu.delete", function() self:Remove(); hook.Run("SpawnlistContentChanged", self) end)
+	m:Open()
+	return m
+end
+function ContentIcon:Paint(w, h) surface.SetDrawColor(SKIN.colButton or Color(100, 100, 100)); surface.DrawRect(0, 0, w, h); if self.__name then surface.SetFont("DermaDefault"); surface.SetTextColor(SKIN.Colours.Label.Default or Color(255, 255, 255)); surface.SetTextPos(4, h - 18); surface.DrawText(self.__name) end end
+local SpawnIcon = derma.DefineControl("SpawnIcon", "Model spawn icon", {}, "DButton")
+function SpawnIcon:Init() self:SetSize(64, 64); self:SetText(""); self.__model, self.__skin, self.__bodygroups = "", 0, "000000000"; self:Droppable("model") end
+function SpawnIcon:SetModel(model, skin, bodygroups) self.__model, self.__skin, self.__bodygroups = model, skin or 0, bodygroups or "000000000"; self:SetTooltip(model) end
+function SpawnIcon:SetModelName(n) self.__model = n end
+function SpawnIcon:GetModelName() return self.__model end
+function SpawnIcon:SetSkinID(s) self.__skin = s end
+function SpawnIcon:GetSkinID() return self.__skin end
+function SpawnIcon:SetBodyGroup(b) self.__bodygroups = b end
+function SpawnIcon:GetBodyGroup() return self.__bodygroups end
+function SpawnIcon:DoRightClick() self:OpenMenu() end
+function SpawnIcon:OpenMenu()
+	local m = DermaMenu()
+	m:AddOption("#spawnmenu.menu.copy", function() SetClipboardText(self.__model) end)
+	m:AddOption("#spawnmenu.menu.rerender", function() self:RebuildSpawnIcon() end)
+	m:AddSpacer()
+	m:AddOption("#spawnmenu.menu.delete", function() self:Remove(); hook.Run("SpawnlistContentChanged", self) end)
+	m:Open()
+	return m
+end
+function SpawnIcon:RebuildSpawnIcon() end
+function SpawnIcon:Paint(w, h) surface.SetDrawColor(SKIN.colButton or Color(100, 100, 100)); surface.DrawRect(0, 0, w, h) end
+
+------------------------------------------------------------------------ DFileBrowser: folders in a tree, files in a list, over file.Find
+local DFileBrowser = derma.DefineControl("DFileBrowser", "File browser", {}, "DPanel")
+function DFileBrowser:Init()
+	self.__paint_bg = false
+	self.__base, self.__path, self.__current, self.__types, self.__search, self.__models, self.__open = "", "GAME", "", "*.*", "", false, false
+	self.Divider = vgui.Create("DHorizontalDivider", self); self.Divider:Dock(FILL)
+end
+function DFileBrowser:SetBaseFolder(f) self.__base = f end
+function DFileBrowser:GetBaseFolder() return self.__base end
+function DFileBrowser:SetPath(p) self.__path = p end
+function DFileBrowser:GetPath() return self.__path end
+function DFileBrowser:SetCurrentFolder(f) self.__current = f; if self.__open then self:ShowFolder(f) end end
+function DFileBrowser:GetCurrentFolder() return self.__current end
+function DFileBrowser:SetFileTypes(t) self.__types = t end
+function DFileBrowser:GetFileTypes() return self.__types end
+function DFileBrowser:SetSearch(s) self.__search = s; if self.__open then self:ShowFolder(self.__current) end end
+function DFileBrowser:GetSearch() return self.__search end
+function DFileBrowser:SetModels(b) self.__models = b == true end
+function DFileBrowser:GetModels() return self.__models end
+function DFileBrowser:SetOpen(b) self.__open = b == true; if self.__open then self:Setup() end end
+function DFileBrowser:GetOpen() return self.__open end
+function DFileBrowser:GetFolderNode() return self.__root_node end
+function DFileBrowser:Setup() self:SetupTree(); self:SetupFiles(); self:ShowFolder(self.__current ~= "" and self.__current or self.__base) return true end
+function DFileBrowser:SetupTree()
+	if self.Tree and self.Tree.__valid then self.Tree:Remove() end
+	self.Tree = vgui.Create("DTree", self.Divider); self.Divider:SetLeft(self.Tree)
+	self.__root_node = self.Tree:AddNode(self.__base ~= "" and self.__base or "/")
+	local function fill(node, folder)
+		local _, dirs = file.Find((folder ~= "" and folder .. "/" or "") .. "*", self.__path)
+		for _, d in ipairs(dirs or {}) do
+			local sub = (folder ~= "" and folder .. "/" or "") .. d
+			local n = node:AddNode(d)
+			n.DoClick = function() self:ShowFolder(sub) end
+			fill(n, sub)
+		end
+	end
+	fill(self.__root_node, self.__base)
+	self.__root_node.DoClick = function() self:ShowFolder(self.__base) end
+	return self.Tree
+end
+function DFileBrowser:SetupFiles()
+	if self.Files and self.Files.__valid then self.Files:Remove() end
+	self.Files = vgui.Create("DListView", self.Divider); self.Divider:SetRight(self.Files)
+	self.Files:AddColumn("#filebrowser.name")
+	self.Files.OnRowSelected = function(_, idx, line) self:OnSelect(line.__path, line) end
+	self.Files.DoDoubleClick = function(_, idx, line) self:OnDoubleClick(line.__path, line) end
+	self.Files.OnRowRightClick = function(_, idx, line) self:OnRightClick(line.__path, line) end
+	return self.Files
+end
+function DFileBrowser:SortFiles(files) table.sort(files, function(a, b) return string.lower(a) < string.lower(b) end) return files end
+function DFileBrowser:ShowFolder(folder)
+	self.__current = folder or ""
+	if not self.Files or not self.Files.__valid then return end
+	self.Files:Clear()
+	local prefix = self.__current ~= "" and self.__current .. "/" or ""
+	for _, pattern in ipairs(string.Explode(" ", self.__types)) do
+		if pattern ~= "" then
+			local files = file.Find(prefix .. pattern, self.__path) or {}
+			for _, f in ipairs(self:SortFiles(files)) do
+				if self.__search == "" or string.find(string.lower(f), string.lower(self.__search), 1, true) then
+					local line = self.Files:AddLine(f); line.__path = prefix .. f
+				end
+			end
+		end
+	end
+end
+function DFileBrowser:OnSelect(path, pnl) end
+function DFileBrowser:OnDoubleClick(path, pnl) end
+function DFileBrowser:OnRightClick(path, pnl) end
+
+------------------------------------------------------------------------ model panels: adjustable camera, icon editor (no model rendering - state and layout only)
+local DAdjustableModelPanel = derma.DefineControl("DAdjustableModelPanel", "Model view with a movable camera", {}, "DModelPanel")
+function DAdjustableModelPanel:Init() DModelPanel.Init(self); self.__first_person, self.__move_scale, self.__capture = false, 1, false end
+function DAdjustableModelPanel:SetFirstPerson(b) self.__first_person = b == true end
+function DAdjustableModelPanel:GetFirstPerson() return self.__first_person end
+function DAdjustableModelPanel:SetMovementScale(s) self.__move_scale = s end
+function DAdjustableModelPanel:GetMovementScale() return self.__move_scale end
+function DAdjustableModelPanel:CaptureMouse() self.__capture = true; self:MouseCapture(true) end
+function DAdjustableModelPanel:FirstPersonControls()
+	if not self.__first_person then return end
+	local ang = self.__look_ang or Angle()
+	local fwd, right = ang:Forward(), ang:Right()
+	local speed = (input.IsShiftDown() and 4 or 1) * 100 * self.__move_scale * FrameTime()
+	local cam = self.__cam or Vector()
+	if input.IsKeyDown(KEY_W) then cam = cam + fwd * speed end
+	if input.IsKeyDown(KEY_S) then cam = cam - fwd * speed end
+	if input.IsKeyDown(KEY_D) then cam = cam + right * speed end
+	if input.IsKeyDown(KEY_A) then cam = cam - right * speed end
+	self.__cam = cam
+end
+function DAdjustableModelPanel:Think() self:FirstPersonControls() end
+local IconEditor = derma.DefineControl("IconEditor", "Spawn icon editor", {}, "DFrame")
+function IconEditor:Init()
+	DFrame.Init(self)
+	self:SetTitle("#spawnicon.edit"); self:SetSize(480, 320)
+	self.ModelPanel = vgui.Create("DAdjustableModelPanel", self); self.ModelPanel:Dock(FILL)
+	self.AnimList = vgui.Create("DListView", self); self.AnimList:Dock(RIGHT); self.AnimList:SetWide(120); self.AnimList:AddColumn("#spawnicon.anim")
+	self.__requests = {}
+end
+function IconEditor:SetIcon(icon) self.__icon = icon; if icon.GetModelName then self.ModelPanel:SetModel(icon:GetModelName()) end self:Refresh() end
+function IconEditor:SetFromEntity(ent) self.__entity = ent; if IsValid(ent) then self.ModelPanel:SetModel(ent:GetModel()) end self:Refresh() end
+function IconEditor:UpdateEntity(ent) if IsValid(ent) and self.ModelPanel.Entity then self.ModelPanel.Entity.__skin = ent.GetSkin and ent:GetSkin() or 0 end end
+function IconEditor:SetDefaultLighting() self.ModelPanel:SetAmbientLight(Color(50, 50, 50)); self.ModelPanel.__lights = { Color(255, 255, 255) } end
+function IconEditor:Refresh() self:FillAnimations(self.ModelPanel.Entity); self:BestGuessLayout() end
+function IconEditor:FillAnimations(ent)
+	self.AnimList:Clear()
+	local ok, info = pcall(game.info, self.ModelPanel:GetModel() or "")
+	for _, seq in ipairs(ok and type(info) == "table" and info.sequences or {}) do self.AnimList:AddLine(type(seq) == "table" and seq.name or tostring(seq)) end
+end
+local function icon_layout(self, dir, dist)
+	self.ModelPanel:SetCamPos(dir * (dist or 100)); self.ModelPanel:SetLookAt(Vector(0, 0, 0)); self.ModelPanel:SetFOV(45)
+end
+function IconEditor:BestGuessLayout() icon_layout(self, Vector(-1, -1, 0.5):GetNormalized(), 80) end
+function IconEditor:FullFrontalLayout() icon_layout(self, Vector(-1, 0, 0), 80) end
+function IconEditor:AboveLayout() icon_layout(self, Vector(0, 0, 1), 80) end
+function IconEditor:RightLayout() icon_layout(self, Vector(0, -1, 0), 80) end
+function IconEditor:OriginLayout() icon_layout(self, Vector(-1, 0, 0), 0) end
+function IconEditor:RenderIcon()
+	-- no offline model renderer yet: the request is recorded for the icon's rebuild (open)
+	self.__requests[#self.__requests + 1] = { model = self.ModelPanel:GetModel(), cam = self.ModelPanel:GetCamPos(), fov = self.ModelPanel:GetFOV() }
+	if self.__icon and self.__icon.RebuildSpawnIcon then self.__icon:RebuildSpawnIcon() end
+end
+local DHTMLControls = derma.DefineControl("DHTMLControls", "HTML navigation bar", {}, "DPanel")
+function DHTMLControls:Init()
+	self:SetTall(26)
+	self.BackButton = vgui.Create("DButton", self); self.BackButton:Dock(LEFT); self.BackButton:SetWide(26); self.BackButton:SetText("<"); self.BackButton.DoClick = function() if self.HTML then self.HTML:GoBack() end end
+	self.ForwardButton = vgui.Create("DButton", self); self.ForwardButton:Dock(LEFT); self.ForwardButton:SetWide(26); self.ForwardButton:SetText(">"); self.ForwardButton.DoClick = function() if self.HTML then self.HTML:GoForward() end end
+	self.RefreshButton = vgui.Create("DButton", self); self.RefreshButton:Dock(LEFT); self.RefreshButton:SetWide(26); self.RefreshButton:SetText("R"); self.RefreshButton.DoClick = function() if self.HTML then self.HTML:Refresh() end end
+	self.AddressBar = vgui.Create("DTextEntry", self); self.AddressBar:Dock(FILL)
+	self.AddressBar.OnEnter = function() if self.HTML then self.HTML:OpenURL(self.AddressBar:GetText()) end end
+end
+function DHTMLControls:SetHTML(html)
+	self.HTML = html
+	local me = self
+	local began, finished, addr = html.OnBeginLoadingDocument, html.OnFinishLoadingDocument, html.OnChangeAddressBar
+	html.OnBeginLoadingDocument = function(h, url) me:StartedLoading() if began then began(h, url) end end
+	html.OnFinishLoadingDocument = function(h, url) me:FinishedLoading() if finished then finished(h, url) end end
+	html.OnChangeAddressBar = function(h, url) me.AddressBar:SetText(url); me:UpdateHistory(url) if addr then addr(h, url) end end
+	self:UpdateNavButtonStatus()
+end
+function DHTMLControls:SetButtonColor(c) self.__button_color = c end
+function DHTMLControls:StartedLoading() self.__loading = true end
+function DHTMLControls:FinishedLoading() self.__loading = false; self:UpdateNavButtonStatus() end
+function DHTMLControls:UpdateHistory(url) self:UpdateNavButtonStatus() end
+function DHTMLControls:UpdateNavButtonStatus()
+	local h = self.HTML
+	local hist, pos = h and h.__history or {}, h and h.__history_pos or 0
+	self.BackButton:SetEnabled(pos > 1); self.ForwardButton:SetEnabled(pos < #hist)
+end
+local UGCPublishWindow = derma.DefineControl("UGCPublishWindow", "Workshop publish window (Steam only)", {}, "DFrame")
+for _, n in ipairs({ "CheckInput", "DisplayError", "DoPublish", "FitContents", "GetChosenTag", "OnPublishFinished", "Setup", "UpdateWorkshopItems" }) do UGCPublishWindow[n] = stub("UGCPublishWindow:" .. n) end
+
+------------------------------------------------------------------------ chat / notification / frame_blend
+chat = chat or {}
+local chat_lines, chat_entry = {}, nil
+function chat.AddText(...)
+	local parts, col = {}, Color(255, 255, 255)
+	for i = 1, select("#", ...) do
+		local v = select(i, ...)
+		if IsColor(v) then col = v elseif IsEntity(v) and v.Nick then parts[#parts + 1] = { text = v:Nick(), color = Color(255, 200, 0) } else parts[#parts + 1] = { text = tostring(v), color = col } end
+	end
+	chat_lines[#chat_lines + 1] = { parts = parts, time = RealTime() }
+	if #chat_lines > 10 then table.remove(chat_lines, 1) end
+	hook.Run("ChatText", 0, "", table.concat((function() local t = {} for i, p in ipairs(parts) do t[i] = p.text end return t end)()), "none")
+end
+function chat.GetChatBoxPos() return 8, ScrH() - 300 end
+function chat.GetChatBoxSize() return math.min(ScrW() * 0.4, 600), 180 end
+function chat.PlaySound() if surface.PlaySound then surface.PlaySound("common/talk.wav") end end
+function chat.Open(mode)
+	if chat_entry and chat_entry.__valid then return end
+	local x, y = chat.GetChatBoxPos()
+	local w, h = chat.GetChatBoxSize()
+	chat_entry = vgui.Create("DTextEntry"); chat_entry:SetPos(x, y + h - 24); chat_entry:SetSize(w, 22); chat_entry:MakePopup(); chat_entry:RequestFocus()
+	chat_entry.__team = mode == 2
+	chat_entry.OnEnter = function(e) local t = e:GetText() if t ~= "" and hook.Run("OnPlayerChat", LocalPlayer(), t, e.__team, false) ~= true then RunConsoleCommand(e.__team and "say_team" or "say", t) end chat.Close() end
+	hook.Run("StartChat", chat_entry.__team)
+end
+function chat.Close() if chat_entry and chat_entry.__valid then chat_entry:Remove() end chat_entry = nil; hook.Run("FinishChat") end
+if events then events.on("render.hud", function()
+	if #chat_lines == 0 then return end
+	local x, y = chat.GetChatBoxPos()
+	surface.SetFont("ChatFont")
+	for i, line in ipairs(chat_lines) do
+		if RealTime() - line.time < 12 or (chat_entry and chat_entry.__valid) then
+			local cx = x
+			for _, p in ipairs(line.parts) do surface.SetTextColor(p.color); surface.SetTextPos(cx, y + (i - 1) * 18); surface.DrawText(p.text); cx = cx + math.max(surface.GetTextSize(p.text), #p.text * 7) end
+		end
+	end
+end, 5e5) end
+notification = notification or {}
+local notices = {}
+local function notice_panel(text, kind)
+	local n = vgui.Create("DPanel"); n:SetSize(math.max(140, #tostring(text) * 8 + 40), 36)
+	n.__text, n.__kind = tostring(text), kind
+	n.Paint = function(p, w, h) surface.SetDrawColor(Color(0, 0, 0, 200)); surface.DrawRect(0, 0, w, h); surface.SetFont("DermaDefault"); surface.SetTextColor(Color(255, 255, 255)); surface.SetTextPos(32, 10); surface.DrawText(p.__text) end
+	return n
+end
+local function layout_notices()
+	local y = ScrH() - 60
+	for i = #notices, 1, -1 do local n = notices[i].panel if n.__valid then n:SetPos(ScrW() - n.w - 20, y); y = y - n.h - 6 end end
+end
+function notification.AddLegacy(text, kind, length)
+	local n = notice_panel(text, kind or NOTIFY_GENERIC)
+	notices[#notices + 1] = { panel = n, until_ = RealTime() + (length or 5) }
+	layout_notices()
+	return n
+end
+function notification.AddProgress(id, text, frac)
+	for _, e in ipairs(notices) do if e.id == id then e.panel.__text = tostring(text); e.frac = frac return e.panel end end
+	local n = notice_panel(text, NOTIFY_GENERIC)
+	notices[#notices + 1] = { panel = n, id = id, frac = frac }
+	layout_notices()
+	return n
+end
+function notification.Kill(id) for i = #notices, 1, -1 do if notices[i].id == id then notices[i].panel:Remove(); table.remove(notices, i) end end layout_notices() end
+if events then events.on("render.hud", function()
+	local changed = false
+	for i = #notices, 1, -1 do local e = notices[i] if (e.until_ and RealTime() > e.until_) or not e.panel.__valid then if e.panel.__valid then e.panel:Remove() end table.remove(notices, i); changed = true end end
+	if changed then layout_notices() end
+end) end
+frame_blend = frame_blend or {}
+local fb = { active = false, frames = 0, done = 0 }
+function frame_blend.IsActive() return fb.active end
+function frame_blend.RenderableFrames() return fb.frames end
+function frame_blend.ShouldSkipFrame() return false end
+function frame_blend.IsLastFrame() return fb.done >= fb.frames end
+function frame_blend.AddFrame() fb.done = fb.done + 1 end
+function frame_blend.BlendFrame() end
+function frame_blend.CompleteFrame() fb.done = 0 end
+function frame_blend.DrawPreview() end
