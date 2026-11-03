@@ -222,3 +222,7 @@ The stool is a client panel (`DEntityProperties`) over the `editvariable` net me
 side is `GM:VariableEdited` -> `CanEditVariable` (admin or single player) -> `Entity:EditValue`.
 No stock sandbox or base entity declares an `edit` table on a NetworkVar, so on a dedicated server
 there is nothing for it to change; nothing to build server-side until an entity has editable vars.
+
+## Motor on a hanging drum (measured `constraint_device_motor_drum`, oil drum on an x axis 60 u from a frozen crate, torque 3000, friction 1, nocollide)
+
+Both engines spin the drum up identically (42 / 100 / 253 / 578 deg/s at t25 / 30 / 40 / 54, the drum sagging 0.44 u along the axis) and both kill it on tick 56 with the key still held - the drum never turns again, the back key at t180 does nothing in either. The difference is the stop itself: the game snaps back with one tick of -407 deg/s and rests at 139-141 deg from then on; ours dips 1.9 u in z, keeps 48-88 deg/s for a few ticks and rests at 152 (max spin err 359 deg/s on tick 56, rest angle 11.8 deg). Open: what the game does on the stop tick (a constraint-limit event, not the motor's own friction).
