@@ -54,6 +54,9 @@ enum Cmd {
         #[arg(long, default_value_t = 3)]
         ticks: usize,
     },
+    /// Rocket law residual against a golden: per ignited tick, the game's turn minus ours
+    /// from the game's own heading, with the angle and distance to the laser dot
+    RocketResidual { golden: PathBuf },
     /// Compare traces from the real game (`--theirs`, e.g. `<srcds>/garrysmod/data/parity/out`) with ours
     Compare {
         #[arg(long)]
@@ -7803,6 +7806,10 @@ fn main() -> Result<()> {
             from,
             ticks,
         } => replay_phys(&scenario, from, ticks)?,
+        Cmd::RocketResidual { golden } => {
+            rocket_residual(&golden)?;
+            return Ok(());
+        }
         Cmd::Compare {
             theirs,
             ours,
@@ -7876,6 +7883,103 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
         }
+    }
+    Ok(())
+}
+
+/// `rocket-residual <golden.json>`: see `Cmd::RocketResidual`.
+fn rocket_residual(golden: &std::path::Path) -> Result<()> {
+    use glam::{Vec2, Vec3};
+    let g: Value = serde_json::from_slice(&std::fs::read(golden)?)?;
+    let res = &g["result"];
+    let v3 = |v: &Value| {
+        Vec3::new(
+            v[0].as_f64().unwrap_or(0.0) as f32,
+            v[1].as_f64().unwrap_or(0.0) as f32,
+            v[2].as_f64().unwrap_or(0.0) as f32,
+        )
+    };
+    let eye = v3(&res["eye"]);
+    let scn_name = g["scenario"].as_str().or(g["name"].as_str()).unwrap_or("");
+    let scn_path = format!(
+        "tools/parity/scenarios/hit/{}.json",
+        scn_name.trim_start_matches("hit_")
+    );
+    let scn: Value =
+        serde_json::from_slice(&std::fs::read(&scn_path).with_context(|| scn_path.clone())?)?;
+    let pitch = scn["pitch"].as_f64().unwrap_or(0.0) as f32;
+    let yaw = scn["yaw"].as_f64().unwrap_or(0.0) as f32;
+    let inst = gm_content::find_install().context("no Garry's Mod install found (set GMOD_DIR)")?;
+    let mount = gm_content::Mount::for_install(&inst)?;
+    let data = mount.read("maps/gm_construct.bsp")?;
+    let bsp = gm_formats::bsp::Bsp::parse(&data)?;
+    let collision = gm_collision::World::from_bsp(&bsp);
+    let pr = gm_server::projectile::spawn(
+        gm_server::weapons::Launch::Rocket,
+        1,
+        eye,
+        pitch,
+        yaw,
+        &collision,
+        None,
+    )
+    .context("spawn")?;
+    let ticks = res["ticks"].as_array().context("ticks")?;
+    let heading = |v: Vec3| {
+        Vec2::new(
+            (-v.z).atan2(v.truncate().length()).to_degrees(),
+            v.y.atan2(v.x).to_degrees(),
+        )
+    };
+    let wrap = |mut e: Vec2| {
+        e.y = (e.y + 180.0).rem_euclid(360.0) - 180.0;
+        e
+    };
+    let mut rows: Vec<(u32, Vec3, Vec3, Option<Vec3>)> = Vec::new();
+    for row in ticks {
+        let ps = row["projectiles"].as_array().cloned().unwrap_or_default();
+        let m = ps.iter().find(|p| p["class"] == "rpg_missile");
+        let d = ps.iter().find(|p| p["class"] == "env_laserdot");
+        if let Some(m) = m {
+            rows.push((
+                row["t"].as_u64().unwrap_or(0) as u32,
+                v3(&m["pos"]),
+                v3(&m["vel"]),
+                d.map(|d| v3(&d["pos"])),
+            ));
+        }
+    }
+    let t0 = rows.first().map_or(0, |r| r.0);
+    let ign: Vec<_> = rows.iter().filter(|r| r.2.length() > 1000.0).collect();
+    println!("name,t,age,dist,err_pitch,err_yaw,res_pitch,res_yaw,turn_pitch,turn_yaw,home_pitch,home_yaw,head_pitch,head_yaw");
+    let mut prev: Option<Vec2> = None;
+    for w in ign.windows(2) {
+        let (t, p, v, dot) = (w[0].0, w[0].1, w[0].2, w[0].3);
+        if w[1].0 != t + 1 {
+            prev = None;
+            continue;
+        }
+        let h = heading(v);
+        let gturn = wrap(heading(w[1].2) - h);
+        let age = t - t0;
+        let first = age == 20;
+        let pred = match (first, prev) {
+            (true, _) => Some(gm_server::projectile::rocket_turn(
+                Vec2::ZERO,
+                h,
+                pr.home,
+                true,
+            )),
+            (false, Some(pt)) => Some(gm_server::projectile::rocket_turn(pt, h, pr.home, false)),
+            _ => None,
+        };
+        if let (Some(pred), Some(dot)) = (pred, dot) {
+            let dd = dot - p;
+            let err = wrap(heading(dd) - h);
+            let r = gturn - pred;
+            println!("{scn_name},{t},{age},{:.2},{:.4},{:.4},{:.5},{:.5},{:.4},{:.4},{:.3},{:.3},{:.3},{:.3}", dd.length(), err.x, err.y, r.x, r.y, gturn.x, gturn.y, pr.home.x, pr.home.y, h.x, h.y);
+        }
+        prev = Some(gturn);
     }
     Ok(())
 }
