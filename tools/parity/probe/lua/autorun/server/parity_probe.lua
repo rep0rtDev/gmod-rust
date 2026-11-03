@@ -846,7 +846,7 @@ SCENARIOS.sandbox = function(scn, done)
 	hook.Add("EntityTakeDamage", "parity_sandbox_npcdmg", function(ent, dmg)
 		if not (ent:IsNPC() or ent:IsPlayer()) then return end
 		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { index = ent:EntIndex(), player = ent:IsPlayer() or nil, class = ent:GetClass(), amount = dmg:GetDamage(), types = dmg:GetDamageType(),
-			hitgroup = ent:LastHitGroup(), attacker = IsValid(dmg:GetAttacker()) and dmg:GetAttacker():GetClass() or "", inflictor = IsValid(dmg:GetInflictor()) and dmg:GetInflictor():GetClass() or "",
+			hitgroup = ent.LastHitGroup and ent:LastHitGroup() or -1, attacker = IsValid(dmg:GetAttacker()) and dmg:GetAttacker():GetClass() or "", inflictor = IsValid(dmg:GetInflictor()) and dmg:GetInflictor():GetClass() or "",
 			health = ent:Health(), tick = engine.TickCount(), force = vec(dmg:GetDamageForce()) }
 	end)
 	hook.Add("EntityFireBullets", "parity_sandbox_npcdmg", function(ent, data)
@@ -990,7 +990,7 @@ SCENARIOS.toolgun = function(scn, done)
 	hook.Add("EntityTakeDamage", "parity_sandbox_npcdmg", function(ent, dmg)
 		if not (ent:IsNPC() or ent:IsPlayer()) then return end
 		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { index = ent:EntIndex(), player = ent:IsPlayer() or nil, class = ent:GetClass(), amount = dmg:GetDamage(), types = dmg:GetDamageType(),
-			hitgroup = ent:LastHitGroup(), attacker = IsValid(dmg:GetAttacker()) and dmg:GetAttacker():GetClass() or "", inflictor = IsValid(dmg:GetInflictor()) and dmg:GetInflictor():GetClass() or "",
+			hitgroup = ent.LastHitGroup and ent:LastHitGroup() or -1, attacker = IsValid(dmg:GetAttacker()) and dmg:GetAttacker():GetClass() or "", inflictor = IsValid(dmg:GetInflictor()) and dmg:GetInflictor():GetClass() or "",
 			health = ent:Health(), tick = engine.TickCount(), force = v3(dmg:GetDamageForce()) }
 	end)
 	hook.Add("EntityFireBullets", "parity_sandbox_npcdmg", function(ent, data)

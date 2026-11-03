@@ -2344,7 +2344,7 @@ const NPC_STEP_LIFT: f32 = 18.0;
 
 /// Ticks a dead NPC stays on the server before it is removed (measured 66..106 for the
 /// metropolice, 76..96 for the headcrab); the corpse itself is the client's ragdoll.
-pub const NPC_CORPSE_TICKS: u64 = 90;
+pub const NPC_CORPSE_TICKS: u64 = 133;
 /// The remover's `timer.Simple(1)` on an NPC, in ticks.
 pub const NPC_REMOVER_TICKS: u64 = 66;
 /// Vehicle exit point height over the vehicle origin and the "all sides blocked" top exit
@@ -9491,8 +9491,9 @@ impl<'w> Server<'w> {
             self.register_model(&model, loaded);
         }
         let fwd = gm_sandbox::rotation(Vec3::new(0.0, yaw, 0.0)) * Vec3::X;
+        // no creator: the game's cleanup and undo leave it alone, the probe does not list it
         let id = self.sandbox.restore_prop(
-            owner,
+            0,
             &model,
             pos + Vec3::new(0.0, 0.0, 24.0),
             Vec3::new(0.0, yaw, 0.0),
