@@ -2417,10 +2417,10 @@ pub const NPC_FIRST_BURST_GAP_TICKS: u64 = 55;
 pub const NPC_BURST_GAP_TICKS: u64 = 28;
 /// The crouched body's gap (49-tick volley period against 56 standing).
 pub const NPC_BURST_GAP_LOW_TICKS: u64 = 21;
-/// From the think the cover goal clears (within `NPC_COVER_ARRIVE`, two thinks before the body
-/// stops) to the reload sequence: the game stands idle three thinks after stopping
-/// (server_npc_grenade_soldier: stop op670, reload op691).
-pub const NPC_RELOAD_DELAY_TICKS: u64 = 35;
+/// From the think the cover goal clears to the reload sequence: two thinks after the body
+/// stops (server_npc_grenade_soldier_wall: stop op572, reload op586; squad mate op885 -> op899;
+/// server_npc_grenade_soldier crawls its last unit for four more thinks first: op649 -> op691).
+pub const NPC_RELOAD_DELAY_TICKS: u64 = 14;
 pub const NPC_RELOAD_TICKS: u64 = 133;
 
 /// The NPC clip of a weapon (HL2 weapon scripts' clip_size).
