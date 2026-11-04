@@ -2458,18 +2458,18 @@ fn squad_first_member_stands_and_skips_the_volley() {
     }
     let (na, nb) = (&server.npcs[&a], &server.npcs[&b]);
     assert!(
-        na.combat_moved && !nb.combat_moved,
-        "the first member stands, the mate crouches"
+        na.combat_moved && nb.combat_moved,
+        "both squad members fight standing, without the volley"
     );
     // (the standing / crouched sequence names need the model's activity table, which this
     // test world does not mount; server_npc_squad_soldier checks them)
     assert!(!seqs[0].is_empty() && !seqs[1].is_empty());
     let (sa, sb) = (first_shot[0].unwrap(), first_shot[1].unwrap());
-    let volley = 7 * gm_server::NPC_FIRST_BURST_SHOTS as u64 + gm_server::NPC_FIRST_BURST_GAP_TICKS;
-    // the mate's volley starts a think after its spawn (3 ticks after the leader's sighting);
-    // the leader's first round comes volley + 55 ticks after its own sighting
+    // the leader fires from its second think, the mate 59 ticks after its own sighting
+    // (game: t332 and t385 after sightings at t323 / t326)
+    let mate = gm_server::NPC_MATE_FIRST_BURST_TICKS;
     assert!(
-        sa > sb + 40 && sa <= sb + volley,
-        "leader's first round {sa}, mate's volley {sb} (want the leader {volley} after its sighting)"
+        sb > sa + 40 && sb <= sa + mate + 7,
+        "leader's first round {sa}, mate's {sb} (want the mate ~{mate} after its sighting)"
     );
 }

@@ -2429,6 +2429,8 @@ pub const NPC_MUZZLE_UP_STANDING: f32 = 57.0;
 /// think t320), the first full burst 55 ticks after the second (t385), then every 49.
 pub const NPC_FIRST_BURST_SHOTS: u8 = 2;
 pub const NPC_FIRST_BURST_GAP_TICKS: u64 = 55;
+/// A squad mate's first burst: 59 ticks after its sighting think (server_npc_squad_soldier).
+pub const NPC_MATE_FIRST_BURST_TICKS: u64 = 59;
 /// From the opening volley's last round to the first full burst: t357 -> t385 in
 /// server_npc_grenade_soldier (the game's shot probes), the 49-tick cycle from there.
 pub const NPC_VOLLEY_BURST_GAP_TICKS: u64 = 28;
@@ -14334,6 +14336,14 @@ impl<'w> Server<'w> {
             return;
         };
         let leads = self.npc_leads_squad(id);
+        let has_mate = self.npcs.get(&id).is_some_and(|n| {
+            self.npcs.iter().any(|(i, o)| {
+                *i != id
+                    && o.dead_at.is_none()
+                    && o.key == n.key
+                    && o.pos.distance(n.pos) <= NPC_SQUAD_RANGE
+            })
+        });
         let cover_fire = !blind && self.npc_sight_occluder_destroyable(id, chest);
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
@@ -14379,14 +14389,19 @@ impl<'w> Server<'w> {
         // member too (server_npc_squad_soldier: the second soldier spawns one op after the
         // first sights the bot, and the first never fires its volley)
         if leads && !n.combat_moved && n.last_shot < n.target_first_seen.max(1) {
+            // the squad's first member fires five rounds from its second think
+            // (server_npc_squad_soldier: sighting t323, rounds t332..360), standing
             let think = n.think_interval as u64;
             n.combat_moved = true;
             n.burst_left = NPC_BURST_SHOTS;
-            n.next_shot = n.next_shot.max(
-                n.target_first_seen
-                    + think * NPC_FIRST_BURST_SHOTS as u64
-                    + NPC_FIRST_BURST_GAP_TICKS,
-            );
+            n.next_shot = (n.target_first_seen + think).max(now);
+        } else if !leads && has_mate && !n.combat_moved && n.last_shot < n.target_first_seen.max(1)
+        {
+            // the mate fires no volley either: its first full burst 59 ticks after its
+            // sighting think (t385 after t326), with 28-tick rests
+            n.combat_moved = true;
+            n.burst_left = NPC_BURST_SHOTS;
+            n.next_shot = (n.target_first_seen + NPC_MATE_FIRST_BURST_TICKS).max(now);
         }
         if n.target_seen != 0 && now > n.target_seen + n.think_interval as u64 {
             n.reacquired_at = now;
