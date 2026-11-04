@@ -6602,6 +6602,19 @@ pub struct AiGraph {
 
 /// Index into the graph's hull tables for an NPC class (HULL_HUMAN 0, HULL_SMALL_CENTERED 1
 /// for headcrabs, HULL_WIDE_SHORT 4 for antlions).
+/// The graph links an NPC class may cross (the HL2 classes' CapabilitiesAdd: antlions jump,
+/// fast zombies jump and climb, everyone else walks).
+pub fn npc_move_caps(class: &str) -> u8 {
+    use gm_formats::ain::{CAP_MOVE_CLIMB, CAP_MOVE_GROUND, CAP_MOVE_JUMP};
+    match class {
+        "npc_antlion" => CAP_MOVE_GROUND | CAP_MOVE_JUMP,
+        "npc_fastzombie" | "npc_fastzombie_torso" => {
+            CAP_MOVE_GROUND | CAP_MOVE_JUMP | CAP_MOVE_CLIMB
+        }
+        _ => CAP_MOVE_GROUND,
+    }
+}
+
 pub fn npc_hull_index(class: &str) -> usize {
     match class {
         c if c.starts_with("npc_headcrab") => 1,
@@ -6685,6 +6698,48 @@ impl AiGraph {
 
     /// A* over the links `hull` can walk (CAP_MOVE_GROUND), node indices from `from` to `to`.
     pub fn route(&self, from: usize, to: usize, hull: usize) -> Option<Vec<usize>> {
+        self.route_caps(from, to, hull, gm_formats::ain::CAP_MOVE_GROUND)
+            .map(|r| r.into_iter().map(|(i, _)| i).collect())
+    }
+
+    /// `route` over every link `hull` may cross with the movement `caps` of the NPC class
+    /// (`npc_move_caps`: jump links for antlions and fast zombies, climb links and climb nodes
+    /// for the latter), each node with the CAP_MOVE bit of the link that reached it (0 at
+    /// `from`).
+    pub fn route_caps(
+        &self,
+        from: usize,
+        to: usize,
+        hull: usize,
+        caps: u8,
+    ) -> Option<Vec<(usize, u8)>> {
+        let climb = caps & gm_formats::ain::CAP_MOVE_CLIMB != 0;
+        self.route_inner(from, to, hull, |moves, node_type| {
+            let m = moves & caps;
+            if m == 0 {
+                return None;
+            }
+            match node_type {
+                gm_formats::ain::NODE_GROUND => {
+                    Some(if m & gm_formats::ain::CAP_MOVE_GROUND != 0 {
+                        gm_formats::ain::CAP_MOVE_GROUND
+                    } else {
+                        m.isolate_lowest_one()
+                    })
+                }
+                gm_formats::ain::NODE_CLIMB if climb => Some(gm_formats::ain::CAP_MOVE_CLIMB),
+                _ => None,
+            }
+        })
+    }
+
+    fn route_inner(
+        &self,
+        from: usize,
+        to: usize,
+        hull: usize,
+        mut allow: impl FnMut(u8, u8) -> Option<u8>,
+    ) -> Option<Vec<(usize, u8)>> {
         use std::cmp::Ordering;
         use std::collections::BinaryHeap;
         // equal costs resolve in insertion order (the engine's queue; the corner scene's two
@@ -6707,31 +6762,31 @@ impl AiGraph {
         let goal = self.node_pos(to, hull);
         let mut best = vec![f32::INFINITY; self.nodes.len()];
         let mut prev = vec![usize::MAX; self.nodes.len()];
+        let mut via = vec![0u8; self.nodes.len()];
         let mut open = BinaryHeap::new();
         best[from] = 0.0;
         open.push(Item(self.node_pos(from, hull).distance(goal), seq, from));
         while let Some(Item(_, _, i)) = open.pop() {
             if i == to {
-                let mut out = vec![to];
+                let mut out = vec![(to, via[to])];
                 let mut c = to;
                 while c != from {
                     c = prev[c];
-                    out.push(c);
+                    out.push((c, via[c]));
                 }
                 out.reverse();
                 return Some(out);
             }
             let pi = self.node_pos(i, hull);
             for &(j, moves) in &self.adj[i] {
-                if moves[hull] & gm_formats::ain::CAP_MOVE_GROUND == 0
-                    || self.nodes[j].node_type != gm_formats::ain::NODE_GROUND
-                {
+                let Some(bit) = allow(moves[hull], self.nodes[j].node_type) else {
                     continue;
-                }
+                };
                 let g = best[i] + pi.distance(self.node_pos(j, hull));
                 if g < best[j] {
                     best[j] = g;
                     prev[j] = i;
+                    via[j] = bit;
                     seq += 1;
                     open.push(Item(g + self.node_pos(j, hull).distance(goal), seq, j));
                 }
@@ -21063,5 +21118,38 @@ mod ai_node_hint_tests {
         n.ignore_facing = 0;
         n.node_fov = 360.0;
         assert!(n.hint_usable_from(c, Vec3::new(0.0, -100.0, 0.0)));
+    }
+
+    #[test]
+    fn jump_links_route_only_for_jumping_classes() {
+        use gm_formats::ain::{Ain, AinLink, AinNode, CAP_MOVE_GROUND, CAP_MOVE_JUMP, NODE_GROUND};
+        let node = |x: f32| AinNode {
+            pos: [x, 0.0, 0.0],
+            yaw: 0.0,
+            offsets: [0.0; 10],
+            node_type: NODE_GROUND,
+            info: 0,
+            zone: 0,
+        };
+        let link = |a: u16, b: u16, m: u8| AinLink {
+            src: a,
+            dst: b,
+            moves: [m; 10],
+        };
+        // 0 -- walk -- 1 -- jump (a gap) -- 2
+        let ain = Ain {
+            version: 37,
+            map_version: 0,
+            nodes: vec![node(0.0), node(100.0), node(300.0)],
+            links: vec![link(0, 1, CAP_MOVE_GROUND), link(1, 2, CAP_MOVE_JUMP)],
+            wc_ids: vec![0, 1, 2],
+        };
+        let g = AiGraph::from_ain(&ain);
+        assert_eq!(g.route(0, 2, 0), None);
+        assert_eq!(
+            g.route_caps(0, 2, 0, npc_move_caps("npc_antlion")),
+            Some(vec![(0, 0), (1, CAP_MOVE_GROUND), (2, CAP_MOVE_JUMP)])
+        );
+        assert_eq!(g.route_caps(0, 2, 0, npc_move_caps("npc_zombie")), None);
     }
 }
