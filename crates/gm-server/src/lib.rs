@@ -14313,12 +14313,10 @@ impl<'w> Server<'w> {
             n.target_seen = now;
         }
         n.last_known = Some(chest);
-        if n.flank_until > now && n.goal.is_some() {
-            // SCHED_ESTABLISH_LINE_OF_FIRE runs to its node even when the enemy comes back into
-            // view on the way (server_npc_grenade_soldier_wall: RunAIMALL1 from (772,-689) at
-            // t1602, the first standing burst only at the node (729,-726), t1665)
-            return;
-        }
+        // SCHED_ESTABLISH_LINE_OF_FIRE runs to its node even when the enemy comes back into
+        // view on the way, and fires on the move (server_npc_grenade_soldier_wall: RunAIMALL1
+        // from (772,-689) at t1602, a full burst t1623..1651 42 ticks before node (729,-726))
+        let aim_run = n.flank_until > now && n.goal.is_some();
         if n.flank_until > 0 && n.goal.is_none() {
             n.flank_until = 0;
         }
@@ -14420,7 +14418,7 @@ impl<'w> Server<'w> {
                 n.sequence = seq.clone();
             }
         }
-        if err.abs() > NPC_FIRE_FACING_DEG || now < n.next_shot {
+        if (!aim_run && err.abs() > NPC_FIRE_FACING_DEG) || now < n.next_shot {
             return;
         }
         if slots_taken && now.saturating_sub(n.last_shot) > 33 {
@@ -14459,7 +14457,7 @@ impl<'w> Server<'w> {
             n.cover_wanted = true;
             n.burst_left = 0;
         }
-        if let Some((shoot, _)) = shoot_seqs.as_ref() {
+        if let Some((shoot, _)) = shoot_seqs.as_ref().filter(|_| n.goal.is_none()) {
             n.sequence = shoot.clone();
         }
         // measured volley period: 49 ticks crouched (shootSMG1c), 56 standing (shootSMG1s)
