@@ -3,6 +3,12 @@ fn main() {
     let vpk = gm_formats::vpk::Archive::open(args.next().unwrap()).unwrap();
     for path in args {
         let phy = gm_formats::phy::Phy::parse(&vpk.read(&path).unwrap()).unwrap();
+        for p in &phy.props {
+            println!(
+                "{path} props {}: mass {} surfaceprop {}",
+                p.index, p.mass, p.surfaceprop
+            );
+        }
         for (i, s) in phy.solids.iter().enumerate() {
             println!(
                 "{path} solid {i}: mass_center {:?} inertia {:?}",
