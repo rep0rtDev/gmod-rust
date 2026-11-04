@@ -5258,6 +5258,29 @@ impl<'w> Server<'w> {
                     self.npc_set_run(id, task != ai::TASK_WALK_PATH);
                     done = true;
                 }
+                ai::TASK_RANGE_ATTACK2 => match target {
+                    Some(p) if elapsed <= 0.0 => {
+                        let chest = self
+                            .players
+                            .get(&p)
+                            .map(|pl| pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT));
+                        match chest {
+                            Some(chest) if self.npc_start_grenade(id, now, eye, chest) => {}
+                            _ => fail = true,
+                        }
+                    }
+                    Some(_) => {
+                        if let Some(n) = self.npcs.get_mut(&id) {
+                            if n.grenade.is_some_and(|(_, until, _)| now >= until) {
+                                n.grenade = None;
+                                n.burst_left = NPC_BURST_SHOTS;
+                                n.next_shot = now + n.think_interval as u64;
+                            }
+                            done = n.grenade.is_none();
+                        }
+                    }
+                    None => fail = true,
+                },
                 ai::TASK_FIND_COVER_FROM_ENEMY => match target {
                     Some(p) => {
                         if self.npc_take_cover(id, p) {
@@ -13688,6 +13711,39 @@ impl<'w> Server<'w> {
     /// shots one per think with `NPC_BURST_GAP_TICKS` between bursts. Losing sight sends it
     /// chasing the player's last position; `NPC_TARGET_LOSE_TICKS` without sight drops the
     /// target. A chase/goto issued by an addon is left alone while the target is visible.
+    /// Starts a soldier's frag toss at `player` when it has grenades left and the player is
+    /// NPC_GRENADE_MIN_DIST..=NPC_GRENADE_MAX_DIST away: the run in progress stops (the game
+    /// threw right after its run), `grenThrow` plays and the grenade leaves at
+    /// NPC_GRENADE_RELEASE_TICK (server_npc_grenade_soldier_wall).
+    /// `eye` is the NPC's eye, `chest` the enemy's chest (the toss lands at its feet).
+    pub fn npc_start_grenade(&mut self, id: u32, now: u64, eye: Vec3, chest: Vec3) -> bool {
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        let dist = chest.distance(eye);
+        if n.class != "npc_combine_s"
+            || n.grenades_used >= NPC_SOLDIER_GRENADES
+            || n.grenade.is_some()
+            || !(NPC_GRENADE_MIN_DIST..=NPC_GRENADE_MAX_DIST).contains(&dist)
+        {
+            return false;
+        }
+        n.goal = None;
+        n.next_goal = None;
+        n.chase = None;
+        n.move_speed = 0.0;
+        n.grenades_used += 1;
+        n.next_grenade = now + NPC_GRENADE_PERIOD_TICKS;
+        n.grenade = Some((
+            now + NPC_GRENADE_RELEASE_TICK,
+            now + NPC_GRENADE_THROW_TICKS,
+            chest - Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT),
+        ));
+        n.sequence = "grenThrow".to_string();
+        n.burst_left = 0;
+        true
+    }
+
     fn npc_combat_think(&mut self, id: u32, now: u64) {
         let Some(n) = self.npcs.get(&id) else {
             return;
@@ -13912,30 +13968,13 @@ impl<'w> Server<'w> {
         }
         // a soldier lobs a frag at a visible enemy 256..1024 u away ~12 s into the fight
         // (server_npc_grenade_soldier_wall: grenThrow at t719, released 42 ticks in)
-        let dist = chest.distance(eye);
-        if n.class == "npc_combine_s"
-            && n.grenades_used < NPC_SOLDIER_GRENADES
-            && n.next_grenade != 0
-            && now >= n.next_grenade
-            && n.cover_at.is_none()
-            && (NPC_GRENADE_MIN_DIST..=NPC_GRENADE_MAX_DIST).contains(&dist)
-        {
-            // a run in progress stops for the throw (the game threw right after its run)
-            n.goal = None;
-            n.next_goal = None;
-            n.chase = None;
-            n.move_speed = 0.0;
-            n.grenades_used += 1;
-            n.next_grenade = now + NPC_GRENADE_PERIOD_TICKS;
-            n.grenade = Some((
-                now + NPC_GRENADE_RELEASE_TICK,
-                now + NPC_GRENADE_THROW_TICKS,
-                chest - Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT),
-            ));
-            n.sequence = "grenThrow".to_string();
-            n.burst_left = 0;
+        let grenade_due = n.next_grenade != 0 && now >= n.next_grenade && n.cover_at.is_none();
+        if grenade_due && self.npc_start_grenade(id, now, eye, chest) {
             return;
         }
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
         if n.chase == Some(player) {
             n.chase = None;
             n.goal = None;

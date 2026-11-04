@@ -373,6 +373,7 @@ pub const TASK_FACE_BESTSOUND_: u16 = 44;
 pub const TASK_FACE_TARGET: u16 = 49;
 pub const TASK_FACE_LASTPOSITION: u16 = 50;
 pub const TASK_RANGE_ATTACK1: u16 = 54;
+pub const TASK_RANGE_ATTACK2: u16 = 55;
 pub const TASK_MELEE_ATTACK1: u16 = 56;
 pub const TASK_RELOAD: u16 = 58;
 pub const TASK_SET_ACTIVITY: u16 = 73;
@@ -916,6 +917,26 @@ pub fn schedule_tasks(id: u16) -> Option<(&'static [(u16, f32)], &'static [u8])>
                 COND_LIGHT_DAMAGE,
                 COND_HEAVY_DAMAGE,
                 COND_ENEMY_OCCLUDED,
+            ],
+        ),
+        // the grenade toss: the native body's throw (npc_start_grenade) started by the task,
+        // the schedule lasting its 63 ticks
+        SCHED_RANGE_ATTACK2 => (
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_FACE_ENEMY, 0.0),
+                (TASK_RANGE_ATTACK2, 0.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_ENEMY_DEAD,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_ENEMY_OCCLUDED,
+                COND_NO_PRIMARY_AMMO,
+                COND_HEAR_DANGER,
+                COND_WEAPON_BLOCKED_BY_FRIEND_,
+                COND_WEAPON_SIGHT_OCCLUDED_,
             ],
         ),
         SCHED_RANGE_ATTACK1 => (

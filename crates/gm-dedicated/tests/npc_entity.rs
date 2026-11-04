@@ -2303,3 +2303,93 @@ fn npcs_hear_only_the_sound_types_their_class_listens_to() {
     );
     assert!(!server.npcs[&zombie].ai.has(gm_server::ai::COND_SMELL));
 }
+
+#[test]
+fn scripted_range_attack2_tosses_a_grenade() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.register_model(
+        gm_server::projectile::GRENADE_MODEL,
+        gm_dedicated::model_info(&mount, gm_server::projectile::GRENADE_MODEL).unwrap(),
+    );
+    server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(12.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(12.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    let spos = server.npcs[&id].pos;
+    server.teleport_player(1, Vec3::new(spos.x - 400.0, -500.0, -143.0));
+    // like the game's TASK_FACE_ENEMY (FAIL_NO_ENEMY) the schedule needs an enemy first
+    for _ in 0..300 {
+        server.tick(&idle);
+        if server.npcs[&id].target_first_seen > 0 {
+            break;
+        }
+    }
+    assert!(
+        server.npcs[&id].target_first_seen > 0,
+        "never saw the player"
+    );
+    assert!(server.npc_set_schedule(id, Some(gm_server::ai::SCHED_RANGE_ATTACK2)));
+    let sched = server.npc_schedule_id(id);
+    let mut thrown = None;
+    let mut toss = None;
+    let mut ended = None;
+    for t in 0..120usize {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if n.grenade.is_some() && thrown.is_none() {
+            thrown = Some((t, n.sequence.clone()));
+        }
+        if toss.is_none() {
+            if let Some(pr) = server
+                .projectiles
+                .iter()
+                .find(|p| p.kind == gm_server::weapons::Launch::Grenade)
+            {
+                toss = Some((t, pr.origin));
+            }
+        }
+        if thrown.is_some() && ended.is_none() && server.npc_schedule_id(id) != sched {
+            ended = Some(t);
+        }
+    }
+    let (throw_tick, seq) = thrown.expect("the scripted RANGE_ATTACK2 never started a toss");
+    assert!(throw_tick < 30, "toss started at t{throw_tick}");
+    assert_eq!(seq, "grenThrow");
+    let (toss_tick, origin) = toss.expect("no grenade left the hand");
+    // the schedule's first think ran inside npc_set_schedule, a tick before the loop
+    assert!(
+        (toss_tick - throw_tick).abs_diff(gm_server::NPC_GRENADE_RELEASE_TICK as usize) <= 1,
+        "released {} ticks into the toss",
+        toss_tick - throw_tick
+    );
+    assert!(
+        origin.distance(spos) < 80.0,
+        "released at {origin} for {spos}"
+    );
+    let ended = ended.expect("the schedule never ended");
+    assert!(
+        ended >= throw_tick + gm_server::NPC_GRENADE_THROW_TICKS as usize - 8
+            && ended <= throw_tick + gm_server::NPC_GRENADE_THROW_TICKS as usize + 8,
+        "schedule ended at t{ended} after a toss at t{throw_tick}"
+    );
+    assert_eq!(server.npcs[&id].grenades_used, 1);
+}
