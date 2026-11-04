@@ -2287,6 +2287,8 @@ pub const NPC_THINK_TICKS_FAR: u8 = 13;
 /// Outside a player's view cone an NPC farther than this, with no enemy, thinks every `NPC_THINK_TICKS_FAR`
 /// (in the walk recordings the deciding think at ~292 u still ran at 7 ticks, at ~300 u at 13).
 pub const NPC_EFFICIENT_DIST: f32 = 296.0;
+/// An NPC's wide view field (VIEW_FIELD_WIDE): a player inside it keeps the normal think.
+pub const NPC_SEE_PLAYER_COS: f32 = -0.7;
 /// cos of the player's half field of view the efficiency test uses (VIEW_FIELD_WIDE).
 pub const NPC_VIEW_CONE_COS: f32 = 0.766;
 /// A chasing NPC comes to rest this far from its target and re-paths once the target has
@@ -14074,6 +14076,13 @@ impl<'w> Server<'w> {
             // cone) and more than NPC_EFFICIENT_DIST away, the game thinks every 13 ticks
             // instead of 7 (AIE_EFFICIENT; walk recordings switch between 271 and 308 u)
             let cluster = self.collision.cluster_at(n.pos + Vec3::new(0.0, 0.0, 36.0));
+            // ... and only while the NPC itself sees no player: the lead citizen running
+            // toward the bot 544 u away and behind its view keeps the 7-tick think
+            // (server_npc_lead_citizen t3830..), the walk recordings had the player behind
+            // the NPC (COND_SEE_PLAYER keeps AIE_NORMAL; the NPC's wide field, cos -0.7,
+            // occlusion not traced)
+            let (nsy, ncy) = n.angles.y.to_radians().sin_cos();
+            let fwd = glam::Vec2::new(ncy, nsy);
             let far = eyes.iter().all(|&(e, eye, yaw)| {
                 if !self.collision.visible(e, cluster) {
                     return true;
@@ -14082,7 +14091,8 @@ impl<'w> Server<'w> {
                 let (sy, cy) = yaw.to_radians().sin_cos();
                 let in_cone =
                     to.normalize_or_zero().dot(glam::Vec2::new(cy, sy)) >= NPC_VIEW_CONE_COS;
-                !in_cone && to.length() > NPC_EFFICIENT_DIST
+                let seen = (-to).normalize_or_zero().dot(fwd) > NPC_SEE_PLAYER_COS;
+                !in_cone && !seen && to.length() > NPC_EFFICIENT_DIST
             });
             // a fighting NPC keeps the normal think wherever the players look: the soldier's
             // cover and line-of-fire runs step every 7 ticks 500 u behind the bot
