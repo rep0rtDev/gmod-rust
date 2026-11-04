@@ -295,7 +295,7 @@ pub fn raster_text(ttf: &[u8], px: f32, text: &str) -> Option<(u32, u32, Vec<u8>
     for c in text.chars() {
         let id = font.glyph_id(c);
         let glyph = id.with_scale_and_position(px, point(pen, ascent));
-        pen += scaled.h_advance(id);
+        pen += scaled.h_advance(id).round().max(1.0);
         let Some(outline) = font.outline_glyph(glyph) else {
             continue;
         };
