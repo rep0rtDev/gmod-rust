@@ -1263,3 +1263,318 @@ do
         end
     end
 end
+
+------------------------------------------------------------------------ drive (the game's includes/modules/drive.lua): driving methods over entities
+drive = drive or {}
+do
+    local Type = {}
+    local ids, names = {}, {}
+    local function id_of(name)
+        if util and util.NetworkStringToID and util.AddNetworkString then
+            if SERVER then util.AddNetworkString(name) end
+            local id = util.NetworkStringToID(name)
+            if id and id ~= 0 then return id end
+        end
+        if not ids[name] then ids[name] = #names + 1; names[ids[name]] = name end
+        return ids[name]
+    end
+    local function name_of(id) return names[id] or (util and util.NetworkIDToString and util.NetworkIDToString(id)) end
+    function drive.Register(name, tbl, base)
+        Type[name] = tbl
+        if base then
+            Type[base] = Type[base] or (baseclass and baseclass.Get and baseclass.Get(base))
+            if Type[base] then setmetatable(Type[name], { __index = Type[base] }) end
+        end
+        id_of(name)
+        if baseclass and baseclass.Set then baseclass.Set(name, Type[name]) end
+    end
+    function drive.PlayerStartDriving(ply, ent, mode)
+        if not Type[mode] then ErrorNoHalt("Unknown drive type " .. tostring(mode) .. "!\n") return end
+        ply:SetDrivingEntity(ent, id_of(mode))
+    end
+    function drive.PlayerStopDriving(ply) ply:SetDrivingEntity(nil) end
+    function drive.GetMethod(ply)
+        if not IsValid(ply) or not ply:IsDrivingEntity() then return end
+        local ent, modeid = ply:GetDrivingEntity(), ply:GetDrivingMode()
+        if not IsValid(ent) or (modeid or 0) == 0 then return end
+        local method = ply.m_CurrentDriverMethod
+        if method and method.Entity == ent and method.ModeID == modeid then return method end
+        local tbl = Type[name_of(modeid) or ""]
+        if not tbl then return end
+        method = setmetatable({ Entity = ent, Player = ply, ModeID = modeid }, { __index = tbl })
+        ply.m_CurrentDriverMethod = method
+        if method.Init then method:Init() end
+        return method
+    end
+    function drive.DestroyMethod(ply) if IsValid(ply) then ply.m_CurrentDriverMethod = nil end end
+    function drive.Start(ply, ent)
+        if SERVER then
+            ply:SetViewEntity(ent)
+            ply.m_PreDriveEyeAngles = ply:EyeAngles()
+            ply.m_PreDriveObserveMode = ply:GetObserverMode()
+            ply:SetEyeAngles(ent:GetAngles())
+            ply:DrawWorldModel(false)
+        end
+    end
+    function drive.CreateMove(cmd) local m = drive.GetMethod(LocalPlayer()); if not m then return end if m.SetupControls then m:SetupControls(cmd) end return true end
+    function drive.CalcView(ply, view) local m = drive.GetMethod(ply); if not m then return end if m.CalcView then m:CalcView(view) end return true end
+    function drive.StartMove(ply, mv, cmd) local m = drive.GetMethod(ply); if not m then return end if m.StartMove then m:StartMove(mv, cmd) end return true end
+    function drive.Move(ply, mv) local m = drive.GetMethod(ply); if not m then return end if m.Move then m:Move(mv) end return true end
+    function drive.FinishMove(ply, mv)
+        local m = drive.GetMethod(ply); if not m then return end
+        if m.FinishMove then m:FinishMove(mv) end
+        if m.StopDriving then drive.PlayerStopDriving(ply) end
+        return true
+    end
+    function drive.End(ply, ent)
+        if SERVER and IsValid(ply) then
+            if ply.m_PreDriveEyeAngles ~= nil then ply:SetEyeAngles(ply.m_PreDriveEyeAngles); ply.m_PreDriveEyeAngles = nil end
+            if ply.m_PreDriveObserveMode ~= nil then ply:SetObserverMode(ply.m_PreDriveObserveMode); ply.m_PreDriveObserveMode = nil end
+            ply:SetViewEntity(nil); ply:DrawWorldModel(true)
+        end
+        drive.DestroyMethod(ply)
+    end
+    local PL = __glua_classes.Player
+    if PL then
+        if not PL.IsDrivingEntity then function PL:IsDrivingEntity() return IsValid(self:GetDrivingEntity()) end end
+        if not PL.GetDrivingMode then function PL:GetDrivingMode() local v = rawget(self, "__vars"); return v and v.__driving_mode or 0 end end
+    end
+end
+
+------------------------------------------------------------------------ debugoverlay: shapes kept with their lifetime (read back with debugoverlay.__shapes; no world drawing from Lua here)
+debugoverlay = debugoverlay or {}
+do
+    local shapes = {}
+    local function add(kind, lifetime, t) t.kind = kind; t.until_ = CurTime() + (lifetime or 1); shapes[#shapes + 1] = t return t end
+    function debugoverlay.Axis(origin, ang, size, lifetime, ignoreZ) add("axis", lifetime, { origin = origin, angles = ang, size = size, ignoreZ = ignoreZ }) end
+    function debugoverlay.Box(origin, mins, maxs, lifetime, color, ignoreZ) add("box", lifetime, { origin = origin, mins = mins, maxs = maxs, color = color, ignoreZ = ignoreZ }) end
+    function debugoverlay.BoxAngles(origin, mins, maxs, ang, lifetime, color, ignoreZ) add("box_angles", lifetime, { origin = origin, mins = mins, maxs = maxs, angles = ang, color = color, ignoreZ = ignoreZ }) end
+    function debugoverlay.Cross(pos, size, lifetime, color, ignoreZ) add("cross", lifetime, { origin = pos, size = size, color = color, ignoreZ = ignoreZ }) end
+    function debugoverlay.EntityTextAtPosition(pos, line, text, lifetime, color) add("entity_text", lifetime, { origin = pos, line = line, text = text, color = color }) end
+    function debugoverlay.Grid(pos) add("grid", 1, { origin = pos }) end
+    function debugoverlay.Line(a, b, lifetime, color, ignoreZ) add("line", lifetime, { a = a, b = b, color = color, ignoreZ = ignoreZ }) end
+    function debugoverlay.ScreenText(x, y, text, lifetime, color) add("screen_text", lifetime, { x = x, y = y, text = text, color = color }) end
+    function debugoverlay.Sphere(origin, size, lifetime, color, ignoreZ) add("sphere", lifetime, { origin = origin, size = size, color = color, ignoreZ = ignoreZ }) end
+    function debugoverlay.SweptBox(start, endp, mins, maxs, ang, lifetime, color) add("swept_box", lifetime, { a = start, b = endp, mins = mins, maxs = maxs, angles = ang, color = color }) end
+    function debugoverlay.Text(pos, text, lifetime, viewCheck) add("text", lifetime, { origin = pos, text = text, viewCheck = viewCheck }) end
+    function debugoverlay.Triangle(a, b, c, lifetime, color, ignoreZ) add("triangle", lifetime, { a = a, b = b, c = c, color = color, ignoreZ = ignoreZ }) end
+    function debugoverlay.__shapes()
+        local now = CurTime()
+        for i = #shapes, 1, -1 do if shapes[i].until_ < now then table.remove(shapes, i) end end
+        return shapes
+    end
+end
+
+------------------------------------------------------------------------ navmesh editing, CNavArea attributes / places / spots / connections, CNavLadder, PathFollower / locomotion / NextBot extras
+do
+    local NAV = __glua_classes.CNavArea
+    local attrs, places, hiding, damaging, extra_links, cut_links, corner_moves, removed = {}, {}, {}, {}, {}, {}, {}, {}
+    local function id(a) return a.__id end
+    if NAV then
+        function NAV:GetAttributes() return attrs[id(self)] or 0 end
+        function NAV:SetAttributes(f) attrs[id(self)] = f end
+        function NAV:AddAttributes(f) attrs[id(self)] = bit.bor(attrs[id(self)] or 0, f) end
+        function NAV:RemoveAttributes(f) attrs[id(self)] = bit.band(attrs[id(self)] or 0, bit.bnot(f)) end
+        function NAV:HasAttributes(f) return bit.band(attrs[id(self)] or 0, f) ~= 0 end
+        function NAV:GetPlace() return places[id(self)] end
+        function NAV:SetPlace(p) places[id(self)] = p return true end
+        function NAV:AddHidingSpot(pos, flags) local h = hiding[id(self)] or {}; hiding[id(self)] = h; h[#h + 1] = { pos = pos, flags = flags or 0 } end
+        function NAV:GetHidingSpots(flag)
+            local out = {}
+            for _, h in ipairs(hiding[id(self)] or {}) do if flag == nil or flag == 0 or bit.band(h.flags, flag) ~= 0 then out[#out + 1] = h.pos end end
+            return out
+        end
+        function NAV:GetExposedSpots() return self:GetHidingSpots(8) end
+        function NAV:GetSpotEncounters() return {} end
+        function NAV:IsDamaging() return (damaging[id(self)] or 0) > CurTime() end
+        function NAV:MarkAsDamaging(duration) damaging[id(self)] = CurTime() + (duration or 1) end
+        function NAV:GetLightIntensity() return 1 end
+        function NAV:IsCoplanar(other) return math.abs(self:GetCenter().z - other:GetCenter().z) < 1 end
+        function NAV:PlaceOnGround(corner) return true end
+        function NAV:SetCorner(corner, pos) corner_moves[id(self)] = corner_moves[id(self)] or {}; corner_moves[id(self)][corner] = pos end
+        local base_corner = NAV.GetCorner
+        function NAV:GetCorner(c) local m = corner_moves[id(self)]; if m and m[c] then return m[c] end return base_corner(self, c) end
+        function NAV:Remove() removed[id(self)] = true end
+        local base_valid = NAV.IsValid
+        function NAV:IsValid() if removed[id(self)] then return false end return base_valid and base_valid(self) or true end
+        function NAV:ConnectTo(other) local l = extra_links[id(self)] or {}; extra_links[id(self)] = l; l[id(other)] = other; if cut_links[id(self)] then cut_links[id(self)][id(other)] = nil end end
+        function NAV:Disconnect(other) local c = cut_links[id(self)] or {}; cut_links[id(self)] = c; c[id(other)] = true; if extra_links[id(self)] then extra_links[id(self)][id(other)] = nil end end
+        local base_adj = NAV.GetAdjacentAreas
+        function NAV:GetAdjacentAreas()
+            local out = {}
+            local cut = cut_links[id(self)] or {}
+            for _, a in ipairs(base_adj(self)) do if not cut[id(a)] and not removed[id(a)] then out[#out + 1] = a end end
+            for _, a in pairs(extra_links[id(self)] or {}) do out[#out + 1] = a end
+            return out
+        end
+        local base_conn = NAV.IsConnected
+        function NAV:IsConnected(other)
+            if cut_links[id(self)] and cut_links[id(self)][id(other)] then return false end
+            if extra_links[id(self)] and extra_links[id(self)][id(other)] then return true end
+            return base_conn(self, other)
+        end
+        function NAV:GetIncomingConnectionDistances(dir) local out = {}; for _, a in ipairs(self:GetIncomingConnections(dir)) do out[#out + 1] = a:GetCenter():Distance(self:GetCenter()) end return out end
+        function NAV:GetLadders() local out = {}; for _, l in pairs(navmesh.__ladders or {}) do if l.__top_area == self or l.__bottom_area == self then out[#out + 1] = l end end return out end
+        function NAV:GetLaddersAtSide(side) local out = {}; for _, l in ipairs(self:GetLadders()) do if (side == 0) == (l.__top_area == self) then out[#out + 1] = l end end return out end
+        function NAV:Draw() debugoverlay.Box(self:GetCenter(), Vector(-self:GetSizeX() / 2, -self:GetSizeY() / 2, 0), Vector(self:GetSizeX() / 2, self:GetSizeY() / 2, 2), 0.1, Color(0, 255, 0, 60), true) end
+        function NAV:DrawSpots() for _, p in ipairs(self:GetHidingSpots()) do debugoverlay.Cross(p, 8, 0.1, Color(255, 255, 0), true) end end
+    end
+    -- CNavLadder: Lua-created ladders (the mesh has none of its own)
+    local LADDER = {}
+    LADDER.__index = LADDER
+    LADDER.__tostring = function(l) return "CNavLadder [" .. l.__id .. "]" end
+    __glua_classes.CNavLadder = LADDER
+    navmesh = navmesh or {}
+    navmesh.__ladders = {}
+    local next_ladder = 1
+    function LADDER:IsValid() return navmesh.__ladders[self.__id] == self end
+    function LADDER:Remove() navmesh.__ladders[self.__id] = nil end
+    function LADDER:GetID() return self.__id end
+    function LADDER:GetTop() return self.__top end
+    function LADDER:GetBottom() return self.__bottom end
+    function LADDER:GetLength() return self.__top:Distance(self.__bottom) end
+    function LADDER:GetWidth() return self.__width end
+    function LADDER:GetNormal() return self.__normal end
+    function LADDER:GetPosAtHeight(h) local f = math.Clamp((h - self.__bottom.z) / math.max(self.__top.z - self.__bottom.z, 1e-3), 0, 1); return self.__bottom + (self.__top - self.__bottom) * f end
+    for _, side in ipairs({ "TopForward", "TopLeft", "TopRight", "TopBehind", "Bottom" }) do
+        LADDER["Get" .. side .. "Area"] = function(self) return self["__" .. string.lower(side) .. "_area"] end
+        LADDER["Set" .. side .. "Area"] = function(self, a) self["__" .. string.lower(side) .. "_area"] = a; if side ~= "Bottom" then self.__top_area = a end end
+    end
+    function LADDER:ConnectTo(area, side) if side == 0 then self:SetTopForwardArea(area) elseif side == 1 then self:SetTopLeftArea(area) elseif side == 2 then self:SetTopRightArea(area) elseif side == 3 then self:SetTopBehindArea(area) else self:SetBottomArea(area) end end
+    function LADDER:Disconnect(area) for _, k in ipairs({ "__topforward_area", "__topleft_area", "__topright_area", "__topbehind_area", "__bottom_area" }) do if self[k] == area then self[k] = nil end end if self.__top_area == area then self.__top_area = nil end end
+    function LADDER:IsConnectedAtSide(area, side) if side == 4 then return self.__bottom_area == area end return self.__top_area == area end
+    function navmesh.CreateNavLadder(top, bottom, forward, width)
+        local l = setmetatable({ __id = next_ladder, __top = top, __bottom = bottom, __normal = forward, __width = width or 32 }, LADDER)
+        navmesh.__ladders[next_ladder] = l; next_ladder = next_ladder + 1
+        return l
+    end
+    function navmesh.GetNavLadderByID(i) return navmesh.__ladders[i] or NULL end
+    -- navmesh editing state: seeds, marks, generation and the file are kept, generation is the server's own mesh build
+    local seeds, marked_area, marked_ladder, spawn_name, generating = {}, nil, nil, "info_player_start", false
+    function navmesh.AddWalkableSeed(pos, normal) seeds[#seeds + 1] = { pos = pos, normal = normal } end
+    function navmesh.ClearWalkableSeeds() seeds = {} end
+    function navmesh.BeginGeneration() generating = true; timer.Simple(0, function() generating = false end) return true end
+    function navmesh.IsGenerating() return generating end
+    function navmesh.Load() return navmesh.IsLoaded() end
+    function navmesh.Save() return navmesh.IsLoaded() end
+    function navmesh.Reset() attrs, places, hiding, extra_links, cut_links, corner_moves, removed = {}, {}, {}, {}, {}, {}, {}; navmesh.__ladders = {} end
+    function navmesh.GetMarkedArea() return marked_area end
+    function navmesh.SetMarkedArea(a) marked_area = a end
+    function navmesh.GetMarkedLadder() return marked_ladder end
+    function navmesh.SetMarkedLadder(l) marked_ladder = l end
+    function navmesh.GetPlayerSpawnName() return spawn_name end
+    function navmesh.SetPlayerSpawnName(n) spawn_name = n end
+    function navmesh.GetEditCursorPosition()
+        local ply = player and player.GetAll and player.GetAll()[1]
+        if IsValid(ply) then local tr = ply:GetEyeTrace(); if tr and tr.Hit then return tr.HitPos end end
+        return Vector(0, 0, 0)
+    end
+    -- a Lua-made area: a flat rectangle between two corners with the game's area interface
+    local LUANAV = {}
+    LUANAV.__index = LUANAV
+    LUANAV.__tostring = function(a) return "CNavArea [" .. a.__id .. "]" end
+    local next_lua_area = -1
+    local lua_areas = {}
+    function navmesh.CreateNavArea(c1, c2)
+        local mins = Vector(math.min(c1.x, c2.x), math.min(c1.y, c2.y), math.min(c1.z, c2.z))
+        local maxs = Vector(math.max(c1.x, c2.x), math.max(c1.y, c2.y), math.max(c1.z, c2.z))
+        local a = setmetatable({ __id = next_lua_area, __mins = mins, __maxs = maxs, __links = {} }, LUANAV)
+        lua_areas[next_lua_area] = a; next_lua_area = next_lua_area - 1
+        return a
+    end
+    function LUANAV:IsValid() return lua_areas[self.__id] == self end
+    function LUANAV:Remove() lua_areas[self.__id] = nil end
+    function LUANAV:GetID() return self.__id end
+    function LUANAV:GetCenter() return (self.__mins + self.__maxs) / 2 end
+    function LUANAV:GetSizeX() return self.__maxs.x - self.__mins.x end
+    function LUANAV:GetSizeY() return self.__maxs.y - self.__mins.y end
+    function LUANAV:GetZ(pos) return self.__mins.z end
+    function LUANAV:GetCorner(c) local m, M = self.__mins, self.__maxs; if c == 0 then return Vector(m.x, m.y, m.z) elseif c == 1 then return Vector(M.x, m.y, m.z) elseif c == 2 then return Vector(M.x, M.y, m.z) end return Vector(m.x, M.y, m.z) end
+    function LUANAV:SetCorner(c, pos) if c == 0 then self.__mins = Vector(pos.x, pos.y, pos.z) elseif c == 2 then self.__maxs = Vector(pos.x, pos.y, pos.z) end end
+    function LUANAV:Contains(pos) return pos.x >= self.__mins.x and pos.x <= self.__maxs.x and pos.y >= self.__mins.y and pos.y <= self.__maxs.y end
+    function LUANAV:GetClosestPointOnArea(pos) return Vector(math.Clamp(pos.x, self.__mins.x, self.__maxs.x), math.Clamp(pos.y, self.__mins.y, self.__maxs.y), self.__mins.z) end
+    function LUANAV:GetRandomPoint() return Vector(math.Rand(self.__mins.x, self.__maxs.x), math.Rand(self.__mins.y, self.__maxs.y), self.__mins.z) end
+    function LUANAV:ConnectTo(other) self.__links[other] = true end
+    function LUANAV:Disconnect(other) self.__links[other] = nil end
+    function LUANAV:IsConnected(other) return self.__links[other] == true end
+    function LUANAV:GetAdjacentAreas() local out = {}; for a in pairs(self.__links) do out[#out + 1] = a end return out end
+    function LUANAV:GetAdjacentCount() return #self:GetAdjacentAreas() end
+    function LUANAV:IsFlat() return true end
+    function LUANAV:IsBlocked() return false end
+    function LUANAV:IsUnderwater() return false end
+    function LUANAV:GetAttributes() return self.__attrs or 0 end
+    function LUANAV:SetAttributes(f) self.__attrs = f end
+    function LUANAV:HasAttributes(f) return bit.band(self.__attrs or 0, f) ~= 0 end
+    function LUANAV:PlaceOnGround() return true end
+    function LUANAV:Draw() debugoverlay.Box(self:GetCenter(), self.__mins - self:GetCenter(), self.__maxs - self:GetCenter() + Vector(0, 0, 2), 0.1, Color(0, 255, 0, 60), true) end
+    -- PathFollower drawing / hindrance, locomotion and NextBot extras
+    local PF = __glua_classes.PathFollower
+    if PF then
+        function PF:Draw() local segs = self.segs or {}; for i = 2, #segs do debugoverlay.Line(Vector(segs[i - 1].pos.x, segs[i - 1].pos.y, segs[i - 1].pos.z), Vector(segs[i].pos.x, segs[i].pos.y, segs[i].pos.z), 0.1, Color(255, 255, 0), true) end end
+        function PF:GetHindrance() local g = self.GetCurrentGoal and self:GetCurrentGoal(); if not g or not g.pos then return NULL end for _, e in ipairs(ents.FindInSphere(Vector(g.pos.x, g.pos.y, g.pos.z), 24)) do if IsValid(e) and not e:IsPlayer() and not e:IsWorld() and e:GetMoveType() == MOVETYPE_VPHYSICS then return e end end return NULL end
+    end
+    local LOCO = __glua_classes.CLuaLocomotion
+    if LOCO then
+        function LOCO:GetCurrentAcceleration() local v = self:GetVelocity(); local last = rawget(self, "__last_vel") or v; rawset(self, "__last_vel", v); return (v - last) / math.max(FrameTime(), 1e-3) end
+        function LOCO:GetNextBot() return self.__ent and self.__ent.Entity or NULL end
+        function LOCO:IsUsingLadder() return rawget(self, "__on_ladder") == true end
+    end
+    local NB = __glua_classes.NextBot
+    if NB then
+        function NB:GetSolidMask() local v = rawget(self, "__vars"); return v and v.__solid_mask or MASK_NPCSOLID end
+        function NB:SetSolidMask(m) local v = rawget(self, "__vars"); if v then v.__solid_mask = m end end
+        function NB:BecomeRagdoll(dmg)
+            local r = ents.Create("prop_ragdoll")
+            if not IsValid(r) then return NULL end
+            r:SetModel(self:GetModel()); r:SetPos(self:GetPos()); r:SetAngles(self:GetAngles()); r:SetSkin(self:GetSkin()); r:Spawn()
+            if dmg and dmg.GetDamageForce then local p = r:GetPhysicsObject(); if IsValid(p) then p:SetVelocity(dmg:GetDamageForce() / 100) end end
+            self:Remove()
+            return r
+        end
+        function NB:FindSpots(spec)
+            spec = spec or {}
+            local pos = spec.pos or self:GetPos()
+            local radius = spec.radius or 1000
+            local out = {}
+            local area = navmesh.GetNavArea(pos, 200)
+            local areas = IsValid(area) and navmesh.Find(pos, radius, 100, 100) or {}
+            for _, a in ipairs(areas) do
+                local spots = spec.type == "hiding" and a:GetHidingSpots() or { a:GetCenter() }
+                for _, p in ipairs(spots) do
+                    local d = p:Distance(pos)
+                    if d <= radius then out[#out + 1] = { vector = p, distance = d, area = a } end
+                end
+            end
+            table.sort(out, function(a, b) return a.distance < b.distance end)
+            return out
+        end
+        function NB:FindSpot(kind, spec) local spots = self:FindSpots(spec); if kind == "random" and #spots > 0 then return spots[math.random(#spots)].vector end if kind == "far" and #spots > 0 then return spots[#spots].vector end return spots[1] and spots[1].vector end
+    end
+    if SERVER then
+        -- NEXTBOT:OnKilled / OnOtherKilled / OnTraceAttack from the server's NPC events
+        events.on("npc.killed", function(p)
+            local victim = Entity(p.npc or 0)
+            local attacker = (p.attacker or 0) ~= 0 and Player(p.attacker) or NULL
+            local inst = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(p.npc or 0)
+            local d = DamageInfo and DamageInfo() or nil
+            if d then d:SetAttacker(attacker); d:SetDamage(p.damage or 0) end
+            -- @hook NEXTBOT:OnKilled
+            if inst and inst.OnKilled then inst:OnKilled(d) end
+            -- @hook NEXTBOT:OnOtherKilled
+            for _, e in ipairs(ents.GetAll()) do
+                if e ~= victim and e.IsNextBot and e:IsNextBot() then
+                    local i = scripted_ents.__instance(e:EntIndex())
+                    if i and i.OnOtherKilled then i:OnOtherKilled(victim, d) end
+                end
+            end
+        end)
+        events.on("npc.damage", function(p)
+            local inst = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(p.npc or p.entity or 0)
+            -- @hook NEXTBOT:OnTraceAttack
+            if inst and inst.OnTraceAttack and DamageInfo then
+                local d = DamageInfo(); d:SetDamage(p.damage or 0); d:SetAttacker((p.attacker or 0) ~= 0 and Player(p.attacker) or NULL)
+                inst:OnTraceAttack(d, p.dir and Vector(p.dir.x, p.dir.y, p.dir.z) or Vector(0, 0, 0), { HitPos = p.pos and Vector(p.pos.x, p.pos.y, p.pos.z) or Entity(p.npc or 0):GetPos(), HitGroup = p.hitgroup or 0 })
+            end
+        end)
+    end
+end

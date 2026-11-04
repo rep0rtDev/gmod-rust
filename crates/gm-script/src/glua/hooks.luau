@@ -278,7 +278,6 @@ if SERVER then
         hook.Run("PlayerSetHandsModel", ply, ply:GetHands())
         hook.Run("SetPlayerSpeed", ply, ply:GetWalkSpeed(), ply:GetRunSpeed())
     end))
-    util.AddNetworkString("__gm_deathnotice"); util.AddNetworkString("__gm_pickup")
     events.on("player.death", safe(function(p)
         local ply = Player(p.player)
         local attacker = p.attacker ~= 0 and Player(p.attacker) or NULL
@@ -288,6 +287,7 @@ if SERVER then
         timer.Simple(0, function() local r = IsValid(ply) and ply:GetRagdollEntity(); if IsValid(r) then hook.Run("CreateEntityRagdoll", ply, r) end end)
     end))
     function GM:SendDeathNotice(attacker, victim, flags)
+        util.AddNetworkString("__gm_deathnotice")
         net.Start("__gm_deathnotice")
         net.WriteString(IsValid(attacker) and attacker:IsPlayer() and attacker:Nick() or (IsValid(attacker) and attacker:GetClass() or ""))
         net.WriteInt(IsValid(attacker) and attacker:IsPlayer() and attacker:Team() or -1, 16)
@@ -298,6 +298,7 @@ if SERVER then
     end
     local function pickup_msg(ply, kind, a, b)
         if not IsValid(ply) then return end
+        util.AddNetworkString("__gm_pickup")
         net.Start("__gm_pickup"); net.WriteString(kind); net.WriteString(tostring(a or "")); net.WriteInt(tonumber(b) or 0, 32); net.Send(ply)
     end
     events.on("player.pickup_request", safe(function(p)
@@ -394,9 +395,9 @@ if SERVER then
     end))
     -- GM:SetupMove / Move / FinishMove hand the player class its turn (PLAYER:StartMove / Move / FinishMove)
     local base_setup, base_move, base_finish = GM.SetupMove, GM.Move, GM.FinishMove
-    function GM:SetupMove(ply, mv, cmd) if base_setup then base_setup(self, ply, mv, cmd) end run_class(ply, "StartMove", mv, cmd) end -- @hook PLAYER:StartMove
-    function GM:Move(ply, mv) if base_move and base_move(self, ply, mv) then return true end return run_class(ply, "Move", mv) end -- @hook PLAYER:Move
-    function GM:FinishMove(ply, mv) if base_finish then base_finish(self, ply, mv) end return run_class(ply, "FinishMove", mv) end -- @hook PLAYER:FinishMove
+    function GM:SetupMove(ply, mv, cmd) if base_setup then base_setup(self, ply, mv, cmd) end if drive.StartMove(ply, mv, cmd) then return end run_class(ply, "StartMove", mv, cmd) end -- @hook PLAYER:StartMove
+    function GM:Move(ply, mv) if base_move and base_move(self, ply, mv) then return true end if drive.Move(ply, mv) then return true end return run_class(ply, "Move", mv) end -- @hook PLAYER:Move
+    function GM:FinishMove(ply, mv) if base_finish then base_finish(self, ply, mv) end if drive.FinishMove(ply, mv) then return true end return run_class(ply, "FinishMove", mv) end -- @hook PLAYER:FinishMove
     function GM:PlayerSetHandsModel(ply, hands)
         local info = run_class(ply, "GetHandsModel") -- @hook PLAYER:GetHandsModel
         if not info and player_manager and player_manager.TranslatePlayerHands then info = player_manager.TranslatePlayerHands(player_manager.TranslateToPlayerModelName(ply:GetModel())) end
@@ -512,6 +513,7 @@ if CLIENT then
     function GM:StartGame() end
     function GM:CalcView(ply, origin, angles, fov, znear, zfar)
         local view = { origin = origin, angles = angles, fov = fov, znear = znear, zfar = zfar, drawviewer = false }
+        if drive.CalcView(ply, view) then return view end
         if ply:InVehicle() then return hook.Run("CalcVehicleView", ply:GetVehicle(), ply, view) or view end
         local wep = ply:GetActiveWeapon()
         if IsValid(wep) and wep.CalcView then local o, a, f = wep:CalcView(ply, origin * 1, angles * 1, fov); view.origin, view.angles, view.fov = o or view.origin, a or view.angles, f or view.fov end -- @hook WEAPON:CalcView
@@ -523,7 +525,7 @@ if CLIENT then
         if IsValid(wep) and wep.CalcViewModelView then local p, a = wep:CalcViewModelView(vm, oldPos, oldAng, pos, ang); pos, ang = p or pos, a or ang end -- @hook WEAPON:CalcViewModelView
         return pos, ang
     end
-    function GM:CreateMove(cmd) local wep = LocalPlayer():GetActiveWeapon(); if IsValid(wep) and wep.FreezeMovement and wep:FreezeMovement() then cmd:ClearMovement() end end
+    function GM:CreateMove(cmd) if drive.CreateMove(cmd) then return end local wep = LocalPlayer():GetActiveWeapon(); if IsValid(wep) and wep.FreezeMovement and wep:FreezeMovement() then cmd:ClearMovement() end end
     function GM:AdjustMouseSensitivity(fov) local wep = LocalPlayer():GetActiveWeapon(); if IsValid(wep) and wep.AdjustMouseSensitivity then return wep:AdjustMouseSensitivity() end return nil end -- @hook WEAPON:AdjustMouseSensitivity
     function GM:InputMouseApply(cmd, x, y, ang) return false end
     function GM:GetMotionBlurValues(h, v, fwd, rot) return h, v, fwd, rot end

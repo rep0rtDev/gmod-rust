@@ -399,7 +399,6 @@ do
     function M:GetFinalIdealVelocity() return self.ideal or self.maxspeed end
     function M:SetFinalIdealVelocity(v) self.ideal = math.max(0, tonumber(v) or 0) end
 end
-for _, n in ipairs({ "ConnectTo", "Disconnect", "GetBottom", "GetBottomArea", "GetID", "GetLength", "GetNormal", "GetPosAtHeight", "GetTop", "GetTopBehindArea", "GetTopForwardArea", "GetTopLeftArea", "GetTopRightArea", "GetWidth", "IsConnectedAtSide", "IsValid", "Remove", "SetBottomArea", "SetTopBehindArea", "SetTopForwardArea", "SetTopLeftArea", "SetTopRightArea" }) do if __glua_classes.CNavLadder[n] == nil then __glua_classes.CNavLadder[n] = stub("CNavLadder:" .. n) end end
 -- PathFollower: a polyline from our navmesh path query (nav.path) with the game's segment
 -- table and cursor. Update / Chase need a NextBot's locomotion, Draw the client: stubs.
 do
@@ -523,10 +522,8 @@ function PF:Chase(bot, ent)
     self:Update(bot)
 end
 function Path(kind) return setmetatable({ kind = kind or "Follow", segs = {}, length = 0, cursor = 0 }, __glua_classes.PathFollower) end
-for _, n in ipairs({ "Compute", "Draw", "FirstSegment", "GetAge", "GetAllSegments", "GetClosestPosition", "GetCurrentGoal", "GetCursorData", "GetCursorPosition", "GetEnd", "GetGoalTolerance", "GetHindrance", "GetLength", "GetMinLookAheadDistance", "GetPositionOnPath", "GetStart", "Invalidate", "IsValid", "LastSegment", "MoveCursor", "MoveCursorTo", "MoveCursorToClosestPosition", "MoveCursorToEnd", "MoveCursorToStart", "NextSegment", "PriorSegment", "ResetAge", "SetGoalTolerance", "SetMinLookAheadDistance"}) do if __glua_classes.PathFollower[n] == nil then __glua_classes.PathFollower[n] = stub("PathFollower:" .. n) end end
-for _, n in ipairs({ "GetCurrentAcceleration", "GetNextBot", "IsUsingLadder"}) do if __glua_classes.CLuaLocomotion[n] == nil then __glua_classes.CLuaLocomotion[n] = stub("CLuaLocomotion:" .. n) end end
+for _, n in ipairs({ "Compute", "FirstSegment", "GetAge", "GetAllSegments", "GetClosestPosition", "GetCurrentGoal", "GetCursorData", "GetCursorPosition", "GetEnd", "GetGoalTolerance", "GetLength", "GetMinLookAheadDistance", "GetPositionOnPath", "GetStart", "Invalidate", "IsValid", "LastSegment", "MoveCursor", "MoveCursorTo", "MoveCursorToClosestPosition", "MoveCursorToEnd", "MoveCursorToStart", "NextSegment", "PriorSegment", "ResetAge", "SetGoalTolerance", "SetMinLookAheadDistance" }) do if __glua_classes.PathFollower[n] == nil then __glua_classes.PathFollower[n] = stub("PathFollower:" .. n) end end
 drive = drive or {}
-for _, n in ipairs({ "CalcView", "CreateMove", "DestroyMethod", "End", "FinishMove", "GetMethod", "Move", "PlayerStartDriving", "PlayerStopDriving", "Register", "Start", "StartMove" }) do if drive[n] == nil then drive[n] = stub("drive." .. n) end end
 
 -- KEY_ enum (documented button codes; the numpad library keys on them)
 KEY_NONE = 0
@@ -767,7 +764,6 @@ __glua_classes["IRestore"] = __glua_classes["IRestore"] or {}
 __glua_classes["ISave"] = __glua_classes["ISave"] or {}
 __glua_classes["ITexture"] = __glua_classes["ITexture"] or {}
 __glua_classes["NextBot"] = __glua_classes["NextBot"] or {}
-for _, n in ipairs({ "BecomeRagdoll", "FindSpot", "FindSpots", "GetSolidMask", "SetSolidMask"}) do if __glua_classes["NextBot"][n] == nil then __glua_classes["NextBot"][n] = stub("NextBot:" .. n) end end
 __glua_classes["PhysCollide"] = __glua_classes["PhysCollide"] or {}
 -- PhysCollide: a set of convex hulls (outward planes in its own frame); TraceBox sweeps a box
 -- against them posed at origin / angles through the server's prop hull sweep
@@ -823,7 +819,6 @@ construct = construct or {}
 coroutine = coroutine or {}
 debug = debug or {}
 debugoverlay = debugoverlay or {}
-for _, n in ipairs({ "Axis", "Box", "BoxAngles", "Cross", "EntityTextAtPosition", "Grid", "Line", "ScreenText", "Sphere", "SweptBox", "Text", "Triangle" }) do if debugoverlay[n] == nil then debugoverlay[n] = stub("debugoverlay." .. n) end end
 ents = ents or {}
 gameevent = gameevent or {}
 gmsave = gmsave or {}

@@ -315,6 +315,27 @@ function scripted_ents.__nextbot_think(i)
             if old ~= nil and old ~= a and old:GetID() ~= a:GetID() and i.OnNavAreaChanged then i:OnNavAreaChanged(old, a) end
         end
     end
+    -- @hook NEXTBOT:BodyUpdate
+    if i.BodyUpdate then i:BodyUpdate() end
+    -- sight: every entity that comes into / leaves the bot's vision cone (OnEntitySight / OnEntitySightLost)
+    if i.OnEntitySight or i.OnEntitySightLost then
+        local seen = rawget(i, "__seen") or {}
+        local now = {}
+        for _, e in ipairs(ents.GetAll()) do
+            if IsValid(e) and e ~= i.Entity and (e:IsPlayer() or e:IsNPC() or e.IsNextBot and e:IsNextBot()) and i.Entity.IsAbleToSee and i.Entity:IsAbleToSee(e) then
+                now[e:EntIndex()] = e
+                -- @hook NEXTBOT:OnEntitySight
+                if not seen[e:EntIndex()] and i.OnEntitySight then i:OnEntitySight(e) end
+            end
+        end
+        -- @hook NEXTBOT:OnEntitySightLost
+        for id, e in pairs(seen) do if not now[id] and i.OnEntitySightLost then i:OnEntitySightLost(e) end end
+        rawset(i, "__seen", now)
+    end
+    -- @hook NEXTBOT:OnIgnite
+    local burning = i.Entity.IsOnFire and i.Entity:IsOnFire() or false
+    if burning and not rawget(i, "__was_burning") and i.OnIgnite then i:OnIgnite() end
+    rawset(i, "__was_burning", burning)
     -- the mover's state this think against the last one: stuck / ground flips are the callbacks
     local loco = rawget(i, "loco")
     local stuck, ground = loco:IsStuck(), loco:IsOnGround()
@@ -516,3 +537,6 @@ events.on("tick.pre", function()
         end
     end
 end)
+
+-- the scripted instance behind an entity index (hook bridges outside this chunk)
+function scripted_ents.__instance(id) return by_id[id] end

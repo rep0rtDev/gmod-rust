@@ -1242,7 +1242,7 @@ function NAVAREA:GetTotalCost() return nav_search.total[self.__id] or 0 end
 function NAVAREA:SetParent(parent, how) if parent then nav_search.area[parent.__id] = parent end nav_search.parent[self.__id] = parent and parent.__id or nil; nav_search.how[self.__id] = how end
 function NAVAREA:GetParent() local p = nav_search.parent[self.__id]; if p then return nav_search.area[p] or area_of(p) end return nil end
 function NAVAREA:GetParentHow() return nav_search.how[self.__id] or 9 end
-for _, name in ipairs({ "AddAttributes", "AddHidingSpot", "ComputeAdjacentConnectionHeightChange", "ComputeDirection", "ConnectTo", "Disconnect", "Draw", "DrawSpots", "GetAdjacentAreaDistances", "GetAdjacentAreas", "GetAdjacentAreasAtSide", "GetAdjacentCount", "GetAdjacentCountAtSide", "GetAttributes", "GetCorner", "GetExposedSpots", "GetExtentInfo", "GetHidingSpots", "GetIncomingConnectionDistances", "GetIncomingConnections", "GetIncomingConnectionsAtSide", "GetLadders", "GetLaddersAtSide", "GetLightIntensity", "GetPlace", "GetRandomAdjacentAreaAtSide", "GetRandomPoint", "GetSizeX", "GetSizeY", "GetSpotEncounters", "HasAttributes", "IsConnected", "IsConnectedAtSide", "IsCoplanar", "IsDamaging", "IsFlat", "IsOverlapping", "IsOverlappingArea", "IsRoughlySquare", "MarkAsDamaging", "PlaceOnGround", "Remove", "RemoveAttributes", "SetAttributes", "SetCorner", "SetPlace" }) do
+for _, name in ipairs({ "ComputeAdjacentConnectionHeightChange", "ComputeDirection", "GetAdjacentAreaDistances", "GetAdjacentAreas", "GetAdjacentAreasAtSide", "GetAdjacentCount", "GetAdjacentCountAtSide", "GetCorner", "GetExtentInfo", "GetIncomingConnections", "GetIncomingConnectionsAtSide", "GetRandomAdjacentAreaAtSide", "GetRandomPoint", "GetSizeX", "GetSizeY", "IsConnected", "IsConnectedAtSide", "IsFlat", "IsOverlapping", "IsOverlappingArea", "IsRoughlySquare" }) do
     if NAVAREA[name] == nil then NAVAREA[name] = stub("CNavArea:" .. name) end
 end
 __glua_classes.CNavArea = NAVAREA
@@ -1291,7 +1291,7 @@ function navmesh.GetAllNavAreas()
     return out
 end
 function navmesh.GetNavAreaByID(id) return area_of(math.floor(tonumber(id) or 0)) end
-for _, name in ipairs({ "AddWalkableSeed", "BeginGeneration", "ClearWalkableSeeds", "CreateNavArea", "CreateNavLadder", "GetEditCursorPosition", "GetMarkedArea", "GetMarkedLadder", "GetNavArea", "GetNavLadderByID", "GetPlayerSpawnName", "IsGenerating", "Load", "Reset", "Save", "SetMarkedArea", "SetMarkedLadder", "SetPlayerSpawnName" }) do
+for _, name in ipairs({ "GetNavArea" }) do
     if navmesh[name] == nil then navmesh[name] = stub("navmesh." .. name) end
 end
 NAV_MESH_INVALID, NAV_MESH_CROUCH, NAV_MESH_JUMP, NAV_MESH_PRECISE, NAV_MESH_NO_JUMP, NAV_MESH_STOP, NAV_MESH_RUN, NAV_MESH_WALK, NAV_MESH_AVOID, NAV_MESH_TRANSIENT, NAV_MESH_DONT_HIDE, NAV_MESH_STAND, NAV_MESH_NO_HOSTAGES, NAV_MESH_STAIRS, NAV_MESH_NO_MERGE, NAV_MESH_OBSTACLE_TOP, NAV_MESH_CLIFF = 0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768
