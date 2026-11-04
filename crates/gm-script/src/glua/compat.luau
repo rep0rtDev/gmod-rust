@@ -1593,8 +1593,16 @@ do
     function steamworks.GetPlayerName(steamid) local lp = LocalPlayer and LocalPlayer(); if IsValid(lp) and (steamid == nil or steamid == lp:SteamID64()) then return lp:Nick() end return "" end
     function steamworks.RequestPlayerInfo(steamid, cb) if cb then cb(steamworks.GetPlayerName(steamid)) end end
     function steamworks.IsSubscribed(id) if subscribed[tostring(id)] ~= nil then return subscribed[tostring(id)] end for _, a in ipairs(addon_list()) do if tostring(a.wsid) == tostring(id) then return true end end return false end
-    function steamworks.Subscribe(id) subscribed[tostring(id)] = true end
-    function steamworks.Unsubscribe(id) subscribed[tostring(id)] = false end
+    -- (un)subscribing runs the menu's subscription-update callbacks at once: the registry is local
+    -- @hook GM:WorkshopSubscriptionsChanged @hook GM:WorkshopSubscriptionsProgress @hook GM:WorkshopSubscriptionsMessage
+    local function subs_changed(id, on)
+        local function run(n, ...) if hook and hook.Run then hook.Run(n, ...) end end
+        run("WorkshopSubscriptionsMessage", on and ("Subscribed to " .. tostring(id)) or ("Unsubscribed from " .. tostring(id)))
+        run("WorkshopSubscriptionsProgress", 1, 1)
+        run("WorkshopSubscriptionsChanged")
+    end
+    function steamworks.Subscribe(id) if subscribed[tostring(id)] ~= true then subscribed[tostring(id)] = true subs_changed(id, true) end end
+    function steamworks.Unsubscribe(id) if subscribed[tostring(id)] ~= false then subscribed[tostring(id)] = false subs_changed(id, false) end end
     function steamworks.SetShouldMountAddon(id, on) mount[tostring(id)] = on ~= false end
     function steamworks.ShouldMountAddon(id) local m = mount[tostring(id)]; if m ~= nil then return m end for _, a in ipairs(addon_list()) do if tostring(a.wsid) == tostring(id) then return a.mounted ~= false end end return false end
     function steamworks.ApplyAddons() end

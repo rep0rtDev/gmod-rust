@@ -656,7 +656,8 @@ function PLY:SetPos(v) qwrite("player.teleport", self.__pid, v3(v)) end
 function PLY:SetHealth(h) qwrite("player.set_health", self.__pid, h) end
 function PLY:SetArmor(a) qwrite("player.set_armor", self.__pid, a) end
 function PLY:Kill() qwrite("player.kill", self.__pid, nil) end
-function PLY:KillSilent() qwrite("player.kill", self.__pid, nil) end
+-- @hook GM:PlayerSilentDeath
+function PLY:KillSilent() qwrite("player.kill", self.__pid, nil) if hook and hook.Run then hook.Run("PlayerSilentDeath", self) end end
 function PLY:Give(class) qwrite("player.give_weapon", self.__pid, class) return WEP.__from(class, self.__pid) end
 function PLY:SelectWeapon(class) qwrite("player.select_weapon", self.__pid, class) end
 function PLY:TakeDamage(amount, attacker, inflictor)

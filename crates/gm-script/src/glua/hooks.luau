@@ -159,6 +159,13 @@ local IdleActivityTranslate = {
 }
 function GM:TranslateActivity(ply, act)
     local newact = ply:TranslateWeaponActivity(act)
+    -- a scripted weapon may retranslate the player's activity
+    -- @hook WEAPON:TranslateActivity
+    local wep = ply.GetActiveWeapon and ply:GetActiveWeapon()
+    if IsValid(wep) and wep.TranslateActivity then
+        local t = wep:TranslateActivity(act)
+        if type(t) == "number" and t ~= -1 then newact = t end
+    end
     if act == newact then return IdleActivityTranslate[act] end
     return newact
 end
@@ -538,7 +545,13 @@ if CLIENT then
     function GM:PostDraw2DSkyBox() end
     function GM:PreDrawViewModels() end
     function GM:PreDrawViewModel(vm, ply, wep) if IsValid(wep) and wep.PreDrawViewModel then return wep:PreDrawViewModel(vm, wep, ply) end return false end -- @hook WEAPON:PreDrawViewModel
-    function GM:PostDrawViewModel(vm, ply, wep) if IsValid(wep) and wep.PostDrawViewModel then wep:PostDrawViewModel(vm, wep, ply) end if IsValid(wep) and wep.ViewModelDrawn then wep:ViewModelDrawn(vm) end end -- @hook WEAPON:PostDrawViewModel / WEAPON:ViewModelDrawn
+    local function pdvm_wep(vm, ply, wep) if IsValid(wep) and wep.PostDrawViewModel then wep:PostDrawViewModel(vm, wep, ply) end if IsValid(wep) and wep.ViewModelDrawn then wep:ViewModelDrawn(vm) end end -- @hook WEAPON:PostDrawViewModel / WEAPON:ViewModelDrawn
+    -- @hook WEAPON:ViewModelDrawn @hook PLAYER:PostDrawViewModel
+    function GM:PostDrawViewModel(vm, ply, wep)
+        pdvm_wep(vm, ply, wep)
+        if IsValid(wep) and wep.ViewModelDrawn then wep:ViewModelDrawn(vm) end
+        if player_manager and player_manager.RunClass then player_manager.RunClass(ply, "PostDrawViewModel", vm, wep) end
+    end
     function GM:PreDrawPlayerHands(hands, vm, ply, wep) return false end
     function GM:PostDrawPlayerHands(hands, vm, ply, wep) end
     function GM:PrePlayerDraw(ply, flags) return false end

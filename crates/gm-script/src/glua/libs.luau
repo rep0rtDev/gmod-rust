@@ -64,7 +64,13 @@ function player_manager.AddValidHands(name, model, skin, body, matchBodySkin) pm
 function player_manager.TranslatePlayerHands(name) return pm_hands[name] or { model = "models/weapons/c_arms_citizen.mdl", skin = 0, body = "0000000" } end
 function player_manager.RegisterClass(name, tbl, base) tbl.Base = base; tbl.ClassName = name; pm_classes[name] = tbl end
 function player_manager.GetPlayerClasses() return pm_classes end
-function player_manager.SetPlayerClass(ply, name) pm_player_class[ply:UserID()] = name; ply:SetNWString("__pm_class", name); player_manager.RunClass(ply, "ClassChanged") end
+local function pm_set_class_raw(ply, name) pm_player_class[ply:UserID()] = name; ply:SetNWString("__pm_class", name); player_manager.RunClass(ply, "ClassChanged") end
+-- @hook GM:PlayerClassChanged
+function player_manager.SetPlayerClass(ply, name)
+    local old = pm_player_class[ply:UserID()]
+    pm_set_class_raw(ply, name)
+    if old ~= name and hook and hook.Run then hook.Run("PlayerClassChanged", ply, name) end
+end
 function player_manager.GetPlayerClass(ply) return pm_player_class[ply:UserID()] end
 function player_manager.ClearPlayerClass(ply) pm_player_class[ply:UserID()] = nil end
 function player_manager.GetPlayerClassTable(ply) local n = pm_player_class[ply:UserID()]; return n and pm_classes[n] or nil end
