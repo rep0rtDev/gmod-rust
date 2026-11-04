@@ -4511,6 +4511,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }).collect::<Vec<_>>(),
             "bot": server.players.get(&player).map(|pl| json!({
                 "pos": [pl.state.origin.x, pl.state.origin.y, pl.state.origin.z],
+                "health": pl.health,
                 "ang": [pl.view_angles.x, pl.view_angles.y, pl.view_angles.z],
                 "invehicle": pl.seat.is_some(),
                 "vehicle": pl.seat.map(|v| v as i64).unwrap_or(-1),
@@ -4520,7 +4521,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 "pos": [n.pos.x, n.pos.y, n.pos.z], "ang": [n.angles.x, n.angles.y, n.angles.z],
                 "mins": [n.mins.x, n.mins.y, n.mins.z], "maxs": [n.maxs.x, n.maxs.y, n.maxs.z],
                 "health": n.health.round() as i32, "maxhealth": n.max_health, "weapon": n.weapon, "movetype": n.movetype, "solid": n.solid,
-                "npcstate": n.ai.state, "sched": server.npc_schedule_id(*id),
+                "npcstate": n.ai.state, "sched": server.npc_schedule_id(*id), "sequence": n.sequence,
             })).collect::<Vec<_>>(),
             "weapons": server.players.get(&player).map(|pl| {
                 let mut w: Vec<Value> = pl.weapons.iter().map(|c| {

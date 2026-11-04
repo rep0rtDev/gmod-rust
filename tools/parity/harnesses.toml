@@ -5281,3 +5281,57 @@ realm = "server"
 crates = ["gm-server", "gm-nav", "gm-physics"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_npc_melee_antlion"
+scenario = "server/npc_melee_antlion"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_melee_fastzombie"
+scenario = "server/npc_melee_fastzombie"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_melee_headcrab"
+scenario = "server/npc_melee_headcrab"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_melee_poisonzombie"
+scenario = "server/npc_melee_poisonzombie"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_melee_poisonzombie_long"
+scenario = "server/npc_melee_poisonzombie_long"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_melee_zombie"
+scenario = "server/npc_melee_zombie"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
