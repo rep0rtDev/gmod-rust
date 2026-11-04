@@ -14152,8 +14152,14 @@ impl<'w> Server<'w> {
         // spot (server_npc_grenade_soldier_wall: the volley's rounds t1469..1483 after the
         // teleport at t1468, the line-of-fire run only at t1490)
         let think = n.think_interval as u64;
+        // the suppress volley is a full burst cut short by the switch to RANGE_ATTACK1, which
+        // needs a visible enemy: lost mid-volley, the burst runs to five rounds blind
+        // (server_npc_grenade_soldier_wall: t1455, t1462, teleport t1468, t1469..t1483)
+        let volley_cut = n.burst_left == 0
+            && n.shots == NPC_FIRST_BURST_SHOTS as u32
+            && now <= n.target_first_seen + NPC_SUPPRESS_TICKS + think;
         let blind = target.is_none()
-            && n.burst_left > 0
+            && (n.burst_left > 0 || volley_cut)
             && n.last_shot > 0
             && now <= n.last_shot + 2 * think
             && n.goal.is_none()
@@ -14261,6 +14267,10 @@ impl<'w> Server<'w> {
             return;
         };
         n.blind_fire = blind;
+        if blind && n.burst_left == 0 {
+            n.burst_left = NPC_BURST_SHOTS - NPC_FIRST_BURST_SHOTS;
+            n.next_shot = now;
+        }
         if cover_fire && !prev_cover && n.burst_left == 0 && n.last_shot > 0 {
             // the cover schedule keeps the volley's 49-tick cycle (t350 volley -> t399) instead
             // of the first full burst's 55-tick gap

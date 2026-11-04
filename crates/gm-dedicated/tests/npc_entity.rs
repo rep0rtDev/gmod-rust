@@ -422,9 +422,9 @@ fn soldier_chases_a_target_out_of_sight_then_gives_up() {
     );
     server.teleport_player(1, hidden);
     // the game's soldier goes after a lost enemy a think later: a line-of-fire point when the
-    // navmesh offers one, else the chase
+    // navmesh offers one, else the chase - after the cut volley completes blind
     let mut chasing = None;
-    for t in 0..40 {
+    for t in 0..70 {
         server.tick(&idle);
         let n = &server.npcs[&id];
         if n.goal.is_some() && (n.chase == Some(1) || n.flank_until > 0) {
@@ -433,6 +433,17 @@ fn soldier_chases_a_target_out_of_sight_then_gives_up() {
         }
     }
     assert!(chasing.is_some(), "never went after the hidden player");
+    // the suppress volley cut by losing sight completes blind (three more rounds), then
+    // nothing is fired without sight
+    let shots = server.npcs[&id].shots;
+    for _ in 0..21 {
+        server.tick(&idle);
+    }
+    let blind = server.npcs[&id].shots - shots;
+    assert!(
+        blind <= (gm_server::NPC_BURST_SHOTS - gm_server::NPC_FIRST_BURST_SHOTS) as u32,
+        "fired without sight: {blind}"
+    );
     let shots = server.npcs[&id].shots;
     for _ in 0..21 {
         server.tick(&idle);
