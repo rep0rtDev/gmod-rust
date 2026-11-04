@@ -13,6 +13,7 @@ pub struct LoadedWorld {
     /// The map's `info_player_start` points (`Server::spawn_points`).
     pub spawn_points: Vec<gm_server::SpawnPoint>,
     pub ai_nodes: Vec<gm_server::AiNode>,
+    pub func_tanks: Vec<gm_server::FuncTank>,
     /// The compiled node graph `maps/graphs/<map>.ain`, when the install has one.
     pub ai_graph: Option<gm_formats::ain::Ain>,
     /// BSP header revision (`game.GetMapVersion`) and the direction towards the sun from
@@ -60,6 +61,7 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
         nav: std::sync::Arc::new(nav),
         spawn_points: gm_server::spawn_points_from_bsp(&bsp),
         ai_nodes: gm_server::ai_nodes_from_bsp(&bsp),
+        func_tanks: gm_server::func_tanks_from_bsp(&bsp),
         ai_graph: mount
             .read(&format!("maps/graphs/{map}.ain"))
             .ok()

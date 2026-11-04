@@ -4919,6 +4919,10 @@ impl<'w> Server<'w> {
             }
             return;
         }
+        if n.ai.func_tank.is_some() {
+            self.func_tank_npc_step(id, now);
+            return;
+        }
         let eye = n.pos + n.view_offset.unwrap_or(Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT));
         let target = n.target;
         let sight = n.sight;
@@ -5555,7 +5559,7 @@ impl<'w> Server<'w> {
     }
     /// `ent_fire <name> EnableHint|DisableHint` / a map output at a hint node (CAI_Hint inputs).
     pub fn ai_hint_input(&mut self, name: &str, input: &str) -> bool {
-        ai_hint_input_nodes(&mut self.ai_nodes, name, input)
+        ai_hint_input_nodes(&mut self.ai_nodes, name, input) || self.func_tank_input(name, input)
     }
     pub fn npc_set_save_position(&mut self, id: u32, pos: Vec3) -> bool {
         match self.npcs.get_mut(&id) {
@@ -6983,6 +6987,148 @@ pub fn ai_hint_input_nodes(nodes: &mut [AiNode], name: &str, input: &str) -> boo
     hit
 }
 
+/// A map's `func_tank`: a mounted gun an NPC with the FuncTank behaviour mans (and, with the
+/// control spawnflag, a player). Angles / rates in degrees; `yaw` / `pitch` are the rest
+/// direction the arcs are centred on. Nothing here is measured against the game: no oracle map
+/// carries a func_tank.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FuncTank {
+    pub name: String,
+    pub pos: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub yaw_range: f32,
+    pub pitch_range: f32,
+    pub yaw_rate: f32,
+    pub pitch_rate: f32,
+    pub yaw_tolerance: f32,
+    pub pitch_tolerance: f32,
+    /// Shots per second.
+    pub fire_rate: f32,
+    pub damage: f32,
+    pub barrel: f32,
+    pub barrel_height: f32,
+    /// `npc_man_point`: where the manning NPC stands (the tank's origin without one).
+    pub man_point: Option<Vec3>,
+    /// SF_TANK_ACTIVE (1) or the Activate input.
+    pub active: bool,
+    /// SF_TANK_NPC_CONTROLLABLE (0x400).
+    pub npc_controllable: bool,
+    pub cur_yaw: f32,
+    pub cur_pitch: f32,
+    pub controller: Option<u32>,
+    pub mounted: bool,
+    pub next_fire: u64,
+    pub idle_since: u64,
+}
+
+pub const FUNCTANK_CONTROL_RANGE: f32 = 1024.0;
+pub const FUNCTANK_TARGET_RANGE: f32 = 2048.0;
+pub const FUNCTANK_MOUNT_REACH: f32 = 24.0;
+/// Ticks without a target before the NPC leaves the gun (5 s, unmeasured).
+pub const FUNCTANK_LOSE_TICKS: u64 = 333;
+
+/// `bullet_damage` 0 means the ammo type's damage in the game; we fall back to this.
+const FUNCTANK_DEFAULT_DAMAGE: f32 = 5.0;
+
+pub fn func_tanks_from_bsp(bsp: &gm_formats::bsp::Bsp) -> Vec<FuncTank> {
+    let num = |e: &gm_formats::bsp::lumps::Entity, k: &str, d: f32| -> f32 {
+        e.get(k).and_then(|v| v.trim().parse().ok()).unwrap_or(d)
+    };
+    bsp.entities
+        .iter()
+        .filter(|e| e.classname() == "func_tank")
+        .map(|e| {
+            let pos = e.origin().map(Vec3::from).or_else(|| {
+                let idx: usize = e.get("model")?.strip_prefix('*')?.parse().ok()?;
+                let m = bsp.models.get(idx)?;
+                Some((Vec3::from(m.mins) + Vec3::from(m.maxs)) * 0.5)
+            });
+            let ang = e.angles().unwrap_or([0.0; 3]);
+            let flags: u32 = e
+                .get("spawnflags")
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0);
+            let man_point = e.get("npc_man_point").and_then(|name| {
+                bsp.entities
+                    .iter()
+                    .find(|m| m.get("targetname") == Some(name))
+                    .and_then(|m| m.origin())
+                    .map(Vec3::from)
+            });
+            let damage = num(e, "bullet_damage", 0.0);
+            FuncTank {
+                name: e.get("targetname").unwrap_or("").to_string(),
+                pos: pos.unwrap_or(Vec3::ZERO),
+                yaw: ang[1],
+                pitch: ang[0],
+                yaw_range: num(e, "yawrange", 180.0),
+                pitch_range: num(e, "pitchrange", 0.0),
+                yaw_rate: num(e, "yawrate", 30.0),
+                pitch_rate: num(e, "pitchrate", 0.0),
+                yaw_tolerance: num(e, "yawtolerance", 15.0),
+                pitch_tolerance: num(e, "pitchtolerance", 20.0),
+                fire_rate: num(e, "firerate", 1.0),
+                damage: if damage > 0.0 {
+                    damage
+                } else {
+                    FUNCTANK_DEFAULT_DAMAGE
+                },
+                barrel: num(e, "barrel", 0.0),
+                barrel_height: num(e, "barrelheight", 0.0),
+                man_point,
+                active: flags & 0x0001 != 0,
+                npc_controllable: flags & 0x0400 != 0,
+                cur_yaw: ang[1],
+                cur_pitch: ang[0],
+                controller: None,
+                mounted: false,
+                next_fire: 0,
+                idle_since: 0,
+            }
+        })
+        .collect()
+}
+
+/// `a - b` in degrees wrapped to -180..180.
+fn angle_diff(a: f32, b: f32) -> f32 {
+    ((a - b + 180.0).rem_euclid(360.0)) - 180.0
+}
+
+/// The forward vector of Source angles (pitch positive downward, yaw about +z).
+fn func_tank_forward(pitch: f32, yaw: f32) -> Vec3 {
+    let (sp, cp) = pitch.to_radians().sin_cos();
+    let (sy, cy) = yaw.to_radians().sin_cos();
+    Vec3::new(cp * cy, cp * sy, -sp)
+}
+
+/// Yaw / pitch (degrees, pitch positive downward like Source angles) from `from` to `to`.
+pub fn func_tank_angles_to(from: Vec3, to: Vec3) -> (f32, f32) {
+    let d = to - from;
+    let yaw = d.y.atan2(d.x).to_degrees();
+    let pitch = -d.z.atan2(d.truncate().length()).to_degrees();
+    (yaw, pitch)
+}
+
+/// Whether `angle` lies within `range` degrees either side of `center` (a range of 360 or more
+/// is unlimited).
+pub fn func_tank_in_arc(center: f32, range: f32, angle: f32) -> bool {
+    range >= 360.0 || angle_diff(angle, center).abs() <= range
+}
+
+/// One tick of the gun turning from `cur` toward `want` by at most `step` degrees, clamped to
+/// the arc.
+pub fn func_tank_turn(center: f32, range: f32, cur: f32, want: f32, step: f32) -> f32 {
+    let want = if range >= 360.0 {
+        want
+    } else {
+        center + angle_diff(want, center).clamp(-range, range)
+    };
+    let d = angle_diff(want, cur);
+    let next = cur + d.clamp(-step.abs(), step.abs());
+    ((next + 180.0).rem_euclid(360.0)) - 180.0
+}
+
 /// The map's `info_player_start` entities as spawn points.
 pub fn spawn_points_from_bsp(bsp: &gm_formats::bsp::Bsp) -> Vec<SpawnPoint> {
     bsp.entities
@@ -7193,6 +7339,8 @@ pub struct Server<'w> {
     ai_graph: Option<AiGraph>,
     /// The map's `info_node` / `info_node_hint` entities (the game's nodegraph positions).
     ai_nodes: Vec<AiNode>,
+    /// The map's `func_tank` mounted guns (`func_tanks_from_bsp`).
+    func_tanks: Vec<FuncTank>,
     /// Live sound-entity sounds / scents: position, radius, SOUND_* bits, the tick they end,
     /// the NPC that made them (never hears its own).
     ai_sounds: Vec<(Vec3, f32, u16, u64, Option<u32>)>,
@@ -7513,6 +7661,7 @@ impl<'w> Server<'w> {
             class_sched_bases: BTreeMap::new(),
             ai_graph: None,
             ai_nodes: Vec::new(),
+            func_tanks: Vec::new(),
             ai_sounds: Vec::new(),
             next_class_sched: ai::FIRST_CLASS_SCHEDULE,
             world_weapons: HashMap::new(),
@@ -13129,6 +13278,206 @@ impl<'w> Server<'w> {
         self.ai_nodes = nodes;
     }
 
+    /// The map's `func_tank` guns (`func_tanks_from_bsp`).
+    pub fn set_func_tanks(&mut self, tanks: Vec<FuncTank>) {
+        self.func_tanks = tanks;
+    }
+
+    pub fn func_tanks(&self) -> &[FuncTank] {
+        &self.func_tanks
+    }
+
+    /// `Activate` / `Deactivate` at a `func_tank` by targetname.
+    fn func_tank_input(&mut self, name: &str, input: &str) -> bool {
+        let active = match input {
+            "Activate" => true,
+            "Deactivate" => false,
+            _ => return false,
+        };
+        let mut hit = false;
+        for t in self
+            .func_tanks
+            .iter_mut()
+            .filter(|t| !name.is_empty() && t.name == name)
+        {
+            t.active = active;
+            hit = true;
+        }
+        if !active {
+            self.release_func_tank_controllers(name);
+        }
+        hit
+    }
+
+    fn release_func_tank_controllers(&mut self, name: &str) {
+        let ids: Vec<(usize, u32)> = self
+            .func_tanks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.name == name && !t.active)
+            .filter_map(|(i, t)| t.controller.map(|c| (i, c)))
+            .collect();
+        for (i, c) in ids {
+            self.func_tanks[i].controller = None;
+            if let Some(n) = self.npcs.get_mut(&c) {
+                n.ai.func_tank = None;
+            }
+        }
+    }
+
+    /// NPC-controllable, active, unmanned tanks pick a FuncTank-behaviour NPC within
+    /// FUNCTANK_CONTROL_RANGE (CFuncTank::NPC_FindController); a manned tank turns toward the
+    /// nearest visible player inside its arcs at yawrate / pitchrate and fires at firerate once
+    /// aimed within its tolerances (unmeasured: no func_tank on any oracle map).
+    fn tick_func_tanks(&mut self) {
+        let now = self.tick_count;
+        let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+        for i in 0..self.func_tanks.len() {
+            let t = self.func_tanks[i].clone();
+            if let Some(c) = t.controller {
+                let alive = self
+                    .npcs
+                    .get(&c)
+                    .is_some_and(|n| n.dead_at.is_none() && n.ai.func_tank == Some(i));
+                if !alive || !t.active {
+                    self.func_tanks[i].controller = None;
+                    self.func_tanks[i].mounted = false;
+                    if let Some(n) = self.npcs.get_mut(&c) {
+                        if n.ai.func_tank == Some(i) {
+                            n.ai.func_tank = None;
+                        }
+                    }
+                    continue;
+                }
+            } else {
+                if !t.active || !t.npc_controllable {
+                    continue;
+                }
+                let pick = self
+                    .npcs
+                    .iter()
+                    .filter(|(_, n)| {
+                        n.dead_at.is_none()
+                            && n.ai.behavior.as_deref() == Some("FuncTank")
+                            && n.ai.func_tank.is_none()
+                            && n.pos.distance(t.pos) <= FUNCTANK_CONTROL_RANGE
+                    })
+                    .min_by(|a, b| a.1.pos.distance(t.pos).total_cmp(&b.1.pos.distance(t.pos)))
+                    .map(|(id, _)| *id);
+                if let Some(id) = pick {
+                    self.func_tanks[i].controller = Some(id);
+                    self.func_tanks[i].mounted = false;
+                    self.func_tanks[i].idle_since = now;
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.ai.func_tank = Some(i);
+                    }
+                }
+                continue;
+            }
+            if !t.mounted {
+                continue;
+            }
+            let controller = t.controller.unwrap_or_default();
+            // the nearest living player the gun can see from its muzzle and reach with its arcs
+            let fwd0 = func_tank_forward(t.cur_pitch, t.cur_yaw);
+            let muzzle0 = t.pos + fwd0 * t.barrel + Vec3::new(0.0, 0.0, t.barrel_height);
+            let mut best: Option<(f32, Vec3)> = None;
+            for p in self.players.values().filter(|p| p.alive) {
+                let eye =
+                    p.state.origin + Vec3::new(0.0, 0.0, if p.state.ducked { 28.0 } else { 64.0 });
+                let d = eye.distance(t.pos);
+                if d > FUNCTANK_TARGET_RANGE || best.is_some_and(|(bd, _)| bd <= d) {
+                    continue;
+                }
+                let (yaw, pitch) = func_tank_angles_to(t.pos, eye);
+                if !func_tank_in_arc(t.yaw, t.yaw_range, yaw)
+                    || !func_tank_in_arc(t.pitch, t.pitch_range, pitch)
+                {
+                    continue;
+                }
+                if self
+                    .collision
+                    .trace_ray(muzzle0, eye, gm_collision::MASK_PLAYERSOLID)
+                    .fraction
+                    < 1.0
+                {
+                    continue;
+                }
+                best = Some((d, eye));
+            }
+            let tank = &mut self.func_tanks[i];
+            let Some((_, aim)) = best else {
+                if now.saturating_sub(tank.idle_since) >= FUNCTANK_LOSE_TICKS {
+                    tank.controller = None;
+                    tank.mounted = false;
+                    if let Some(n) = self.npcs.get_mut(&controller) {
+                        n.ai.func_tank = None;
+                    }
+                }
+                continue;
+            };
+            tank.idle_since = now;
+            let (yaw, pitch) = func_tank_angles_to(tank.pos, aim);
+            tank.cur_yaw = func_tank_turn(
+                tank.yaw,
+                tank.yaw_range,
+                tank.cur_yaw,
+                yaw,
+                tank.yaw_rate * dt,
+            );
+            tank.cur_pitch = func_tank_turn(
+                tank.pitch,
+                tank.pitch_range,
+                tank.cur_pitch,
+                pitch,
+                tank.pitch_rate * dt,
+            );
+            let aimed = angle_diff(tank.cur_yaw, yaw).abs() <= tank.yaw_tolerance
+                && angle_diff(tank.cur_pitch, pitch).abs() <= tank.pitch_tolerance;
+            if aimed && now >= tank.next_fire && tank.fire_rate > 0.0 {
+                let fwd = func_tank_forward(tank.cur_pitch, tank.cur_yaw);
+                let muzzle = tank.pos + fwd * tank.barrel + Vec3::new(0.0, 0.0, tank.barrel_height);
+                let dmg = tank.damage;
+                let period = ((1.0 / tank.fire_rate) / dt).round().max(1.0) as u64;
+                tank.next_fire = now + period;
+                self.npc_fire_bullet(controller, muzzle, fwd, dmg);
+            }
+        }
+    }
+
+    /// The FuncTank behaviour's body: run to the man point, then stand there facing the gun
+    /// while `tick_func_tanks` aims and fires it.
+    fn func_tank_npc_step(&mut self, id: u32, now: u64) {
+        let Some(n) = self.npcs.get(&id) else { return };
+        let Some(i) = n.ai.func_tank else { return };
+        let Some(t) = self.func_tanks.get(i).cloned() else {
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.ai.func_tank = None;
+            }
+            return;
+        };
+        let man = t.man_point.unwrap_or(t.pos);
+        let pos = n.pos;
+        let moving = n.goal.is_some();
+        if pos.truncate().distance(man.truncate()) > FUNCTANK_MOUNT_REACH {
+            if !moving {
+                self.npc_goto(id, man, true);
+            }
+            return;
+        }
+        if moving {
+            self.npc_stop(id);
+        }
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.ideal_yaw = Some(t.cur_yaw);
+            n.ai.state = ai::NPC_STATE_ALERT;
+        }
+        if !t.mounted {
+            self.func_tanks[i].mounted = true;
+            self.func_tanks[i].idle_since = now;
+        }
+    }
+
     pub fn ai_nodes(&self) -> &[AiNode] {
         &self.ai_nodes
     }
@@ -18606,6 +18955,7 @@ impl<'w> Server<'w> {
         self.tick_npc_swats();
         self.tick_npc_jumps();
         self.tick_npc_flight();
+        self.tick_func_tanks();
         self.remove_dead_npcs();
         self.ride_vehicles();
         // undo.lua counts ticks with removals (its EntityRemoved hook coalesces them through a
@@ -21352,6 +21702,24 @@ mod ai_node_hint_tests {
         assert!(!nodes[0].hint_usable(c));
         assert!(nodes[1].hint_usable(c));
         assert!(!ai_hint_input_nodes(&mut nodes, "", "DisableHint"));
+    }
+
+    #[test]
+    fn func_tank_turns_inside_its_arc() {
+        let (yaw, pitch) = func_tank_angles_to(Vec3::ZERO, Vec3::new(100.0, 100.0, -100.0));
+        assert!((yaw - 45.0).abs() < 1e-3);
+        assert!((pitch - 35.264).abs() < 1e-2);
+        assert!(func_tank_in_arc(0.0, 90.0, 80.0));
+        assert!(!func_tank_in_arc(0.0, 90.0, 100.0));
+        assert!(func_tank_in_arc(170.0, 30.0, -170.0));
+        assert!(func_tank_in_arc(0.0, 360.0, 180.0));
+        // 30 deg/s for a 0.1 s step moves 3 deg toward the target
+        assert!((func_tank_turn(0.0, 90.0, 0.0, 45.0, 3.0) - 3.0).abs() < 1e-5);
+        // the target beyond the arc is clamped to its edge
+        assert!((func_tank_turn(0.0, 90.0, 85.0, 120.0, 3.0) - 88.0).abs() < 1e-5);
+        assert!((func_tank_turn(0.0, 90.0, 89.0, 120.0, 3.0) - 90.0).abs() < 1e-5);
+        // wrap-around keeps the result in -180..180
+        assert!((func_tank_turn(170.0, 30.0, 179.0, -175.0, 3.0) - (-178.0)).abs() < 1e-5);
     }
 
     #[test]

@@ -1822,8 +1822,8 @@ function ENT:TriggerOutput(name, activator, data)
         if o.entities == "!self" then targets = { self }
         elseif o.entities == "!activator" then targets = { activator }
         else targets = (ents.FindByName and ents.FindByName(o.entities)) or {} end
-        -- info_node_hint nodes are not entities here: their inputs go to the nodegraph by name
-        if o.input == "EnableHint" or o.input == "DisableHint" then qwrite("ai_hint_input", self.__id, { name = o.entities, input = o.input }) end
+        -- info_node_hint nodes and func_tank guns are not entities here: their inputs go to the server by name
+        if o.input == "EnableHint" or o.input == "DisableHint" or o.input == "Activate" or o.input == "Deactivate" then qwrite("ai_hint_input", self.__id, { name = o.entities, input = o.input }) end
         for _, t in ipairs(targets) do
             if IsValid(t) then t:Fire(o.input, o.param ~= "" and o.param or data, o.delay, activator, self) end
         end

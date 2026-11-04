@@ -7230,6 +7230,7 @@ fn main() -> Result<()> {
         nav,
         spawn_points,
         ai_nodes,
+        func_tanks,
         ai_graph,
         map_revision,
         sun_direction,
@@ -7238,6 +7239,7 @@ fn main() -> Result<()> {
     let mut server = gm_server::Server::new(collision, physics, world_body);
     server.set_navmesh(nav);
     server.set_ai_nodes(ai_nodes);
+    server.set_func_tanks(func_tanks);
     if let Some(g) = &ai_graph {
         server.set_ai_graph(gm_server::AiGraph::from_ain(g));
     }

@@ -1333,6 +1333,8 @@ pub struct AiState {
     pub proficiency: u8,
     pub expression: String,
     pub behavior: Option<String>,
+    /// The `func_tank` (index into the server's tanks) a FuncTank-behaviour NPC mans.
+    pub func_tank: Option<usize>,
     /// The goal the behaviour works on (`ai_goal_assault` / `ai_goal_lead` / `ai_goal_actbusy`).
     pub goal: Option<NpcGoal>,
     /// A `scripted_sequence` owning the body (moves to its mark, plays entry / action / post idle).

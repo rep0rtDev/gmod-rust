@@ -121,6 +121,7 @@ fn main() -> Result<()> {
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
     server.set_ai_nodes(world.ai_nodes.clone());
+    server.set_func_tanks(world.func_tanks.clone());
     if let Some(g) = &world.ai_graph {
         server.set_ai_graph(gm_server::AiGraph::from_ain(g));
     }
