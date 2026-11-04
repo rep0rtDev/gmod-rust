@@ -5414,3 +5414,21 @@ crates = ["gm-server", "gm-nav", "gm-physics"]
 
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_npc_squad_soldier"
+scenario = "server/npc_squad_soldier"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_prop_rest"
+scenario = "server/npc_prop_rest"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-physics"]
+[harness.tolerance]
+pos = 2.0

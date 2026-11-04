@@ -2087,6 +2087,9 @@ pub struct Npc {
     pub target_seen: u64,
     /// Tick the current target was first seen (`GetEnemyFirstTimeSeen`), 0 for never.
     pub target_first_seen: u64,
+    /// Tick the current target came back into view after at least a think out of it
+    /// (`timeLastReacquired`): the aim refocuses from there.
+    pub reacquired_at: u64,
     /// Tick of the last damage taken from the current target (`GetLastTimeTookDamageFromEnemy`).
     pub last_enemy_damage: u64,
     /// `SetMaxLookDistance`: how far this NPC looks for a target (default `NPC_SIGHT_RANGE`).
@@ -2403,6 +2406,11 @@ pub fn npc_clip_size(weapon: &str) -> u8 {
 pub const NPC_TARGET_LOSE_TICKS: u64 = 330;
 /// Half-angle of the aim cone, degrees (the game's soldier passes ~15 u beside a player at 178 u).
 pub const NPC_AIM_CONE_DEG: f32 = 5.0;
+/// ai_spread_cone_focus_time 0.6 s / ai_spread_defocused_cone_multiplier 3 /
+/// ai_spread_pattern_focus_time 0.8 s (engine defaults).
+pub const NPC_SPREAD_DEFOCUS_TICKS: u64 = 40;
+pub const NPC_SPREAD_DEFOCUS_MULT: f32 = 3.0;
+pub const NPC_SPREAD_FOCUS_TICKS: u64 = 53;
 /// The NPC fires once its body yaw is within this many degrees of the target.
 const NPC_FIRE_FACING_DEG: f32 = 15.0;
 const NPC_EYE_HEIGHT: f32 = 64.0;
@@ -2872,6 +2880,39 @@ fn cone_dir(axis: Vec3, half_deg: f32, seed: u64) -> Vec3 {
     let right = axis.cross(up).normalize();
     let fwd_up = right.cross(axis);
     (axis * ang.cos() + (right * phi.cos() + fwd_up * phi.sin()) * ang.sin()).normalize()
+}
+
+/// `CShotManipulator::ApplySpread` with `ai_shot_bias_min/max` -1..1: the offsets inside the
+/// unit disc are the sum of two uniform draws weighted by `flatness` = |shot bias| / 2, and a
+/// negative shot bias (bias < 0.5) folds them out towards the rim; the disc is scaled by the
+/// tangent of `half_deg` across `axis`.
+fn spread_dir(axis: Vec3, half_deg: f32, bias: f32, seed: u64) -> Vec3 {
+    let mut x = seed ^ 0xD1B5_4A32_D192_ED03;
+    let mut next = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        (x >> 11) as f32 / (1u64 << 53) as f32 * 2.0 - 1.0
+    };
+    let shot_bias = 2.0 * bias.clamp(0.0, 1.0) - 1.0;
+    let flatness = shot_bias.abs() * 0.5;
+    let (mut sx, mut sy);
+    loop {
+        sx = next() * flatness + next() * (1.0 - flatness);
+        sy = next() * flatness + next() * (1.0 - flatness);
+        if shot_bias < 0.0 {
+            sx = if sx > 0.0 { 1.0 - sx } else { -1.0 - sx };
+            sy = if sy > 0.0 { 1.0 - sy } else { -1.0 - sy };
+        }
+        if sx * sx + sy * sy <= 1.0 {
+            break;
+        }
+    }
+    let up = if axis.z.abs() < 0.9 { Vec3::Z } else { Vec3::X };
+    let right = axis.cross(up).normalize();
+    let fwd_up = right.cross(axis);
+    let t = half_deg.to_radians().tan();
+    (axis + right * (sx * t) + fwd_up * (sy * t)).normalize()
 }
 
 /// Distance from `p` to the segment `a..a + d`.
@@ -12456,6 +12497,7 @@ impl<'w> Server<'w> {
             target: None,
             target_seen: 0,
             target_first_seen: 0,
+            reacquired_at: 0,
             last_enemy_damage: 0,
             sight: NPC_SIGHT_RANGE,
             body: None,
@@ -14025,6 +14067,9 @@ impl<'w> Server<'w> {
             n.burst_left = NPC_FIRST_BURST_SHOTS;
             n.next_shot = now + n.think_interval as u64;
         }
+        if n.target_seen != 0 && now > n.target_seen + n.think_interval as u64 {
+            n.reacquired_at = now;
+        }
         n.target_seen = now;
         n.last_known = Some(chest);
         if n.flank_until > 0 {
@@ -14189,13 +14234,28 @@ impl<'w> Server<'w> {
         };
         // the measured cone is the class's default proficiency; SetCurrentWeaponProficiency
         // scales it by the engine's proficiency table
-        let prof = self
+        let (prof, acquired) = self
             .npcs
             .get(&id)
-            .map(|n| (n.ai.proficiency, ai::default_proficiency(&n.class)))
-            .unwrap_or((1, 1));
+            .map(|n| {
+                (
+                    (n.ai.proficiency, ai::default_proficiency(&n.class)),
+                    n.target_first_seen.max(n.reacquired_at),
+                )
+            })
+            .unwrap_or(((1, 1), 0));
         let mut cone =
             NPC_AIM_CONE_DEG * ai::proficiency_spread(prof.0) / ai::proficiency_spread(prof.1);
+        // GetSpreadBias / GetAttackSpread: for ai_spread_cone_focus_time (0.6 s) after the
+        // enemy is acquired or reacquired the cone is ai_spread_defocused_cone_multiplier (3)
+        // wide, and the shot bias grows 0 -> 1 over ai_spread_pattern_focus_time (0.8 s) -
+        // below 1 CShotManipulator pushes the rounds out to the cone's rim (the game's first
+        // volley sails 16 deg over the bot's head at 169 u; no round of 175 hit the bot)
+        let since = now.saturating_sub(acquired);
+        if since < NPC_SPREAD_DEFOCUS_TICKS {
+            cone *= NPC_SPREAD_DEFOCUS_MULT;
+        }
+        let bias = (since as f32 / NPC_SPREAD_FOCUS_TICKS as f32).min(1.0);
         // a scripted SWEP is asked for its NPC spread and may fire itself (`NPCShoot_Primary`)
         if npc_weapon_shot(&n_weapon).is_none() {
             if let Verdict::Text(t) = self.ask(Request::NpcShoot {
@@ -14216,7 +14276,7 @@ impl<'w> Server<'w> {
             }
         }
         for k in 0..pellets {
-            let dir = cone_dir(aim, cone, seed.wrapping_add(k as u64 * 7919));
+            let dir = spread_dir(aim, cone, bias, seed.wrapping_add(k as u64 * 7919));
             self.npc_fire_bullet(id, muzzle, dir, dmg);
         }
     }
@@ -15449,6 +15509,7 @@ impl<'w> Server<'w> {
                 target: None,
                 target_seen: 0,
                 target_first_seen: 0,
+                reacquired_at: 0,
                 last_enemy_damage: 0,
                 sight: NPC_SIGHT_RANGE,
                 body: None,
