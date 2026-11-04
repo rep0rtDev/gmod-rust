@@ -7322,12 +7322,14 @@ fn main() -> Result<()> {
         world_body,
         nav,
         spawn_points,
+        ai_nodes,
         map_revision,
         sun_direction,
     } = gm_dedicated::load_world(&mount, &map)?;
     let collision: &'static gm_collision::World = Box::leak(Box::new(collision));
     let mut server = gm_server::Server::new(collision, physics, world_body);
     server.set_navmesh(nav);
+    server.set_ai_nodes(ai_nodes);
     server.spawn_points = spawn_points;
     server.map_revision = map_revision;
     server.sun_direction = sun_direction;

@@ -4378,6 +4378,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         let nav = gm_nav::NavMesh::build(&bsp, &gm_nav::NavParams::default())
             .map_err(|e| anyhow::anyhow!("navmesh for {map}: {e}"))?;
         server.set_navmesh(std::sync::Arc::new(nav));
+        server.set_ai_nodes(gm_server::ai_nodes_from_bsp(&bsp));
     }
     let loader_mount = gm_content::Mount::for_install(&inst)?;
     let loader: gm_server::ModelLoader =

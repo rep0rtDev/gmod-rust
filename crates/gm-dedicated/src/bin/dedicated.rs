@@ -120,6 +120,7 @@ fn main() -> Result<()> {
     let world = gm_dedicated::load_world(&mount, &args.map)?;
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     server.spawn_points = world.spawn_points.clone();
     server.map_revision = world.map_revision;
     server.sun_direction = world.sun_direction;

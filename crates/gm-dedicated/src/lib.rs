@@ -12,6 +12,7 @@ pub struct LoadedWorld {
     pub nav: std::sync::Arc<gm_nav::NavMesh>,
     /// The map's `info_player_start` points (`Server::spawn_points`).
     pub spawn_points: Vec<gm_server::SpawnPoint>,
+    pub ai_nodes: Vec<gm_server::AiNode>,
     /// BSP header revision (`game.GetMapVersion`) and the direction towards the sun from
     /// `light_environment` (`game.GetSunInfo`), if the map has one.
     pub map_revision: i32,
@@ -56,6 +57,7 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
         world_body,
         nav: std::sync::Arc::new(nav),
         spawn_points: gm_server::spawn_points_from_bsp(&bsp),
+        ai_nodes: gm_server::ai_nodes_from_bsp(&bsp),
         map_revision: bsp.header.map_revision,
         sun_direction: bsp
             .entities

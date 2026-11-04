@@ -5326,6 +5326,16 @@ impl<'w> Server<'w> {
         let Ok(w) = serde_json::from_str::<GoalWire>(json) else {
             return false;
         };
+        // an act-busy goal without hints of its own uses the map's work-position hints
+        let map_hints: Vec<ai::ActBusyHint> = self
+            .ai_nodes
+            .iter()
+            .filter(|n| n.hint == HINT_WORLD_WORK_POSITION)
+            .map(|n| ai::ActBusyHint {
+                pos: n.pos,
+                sequence: (!n.activity.is_empty()).then(|| n.activity.clone()),
+            })
+            .collect();
         let Some(n) = self.npcs.get_mut(&id) else {
             return false;
         };
@@ -5396,14 +5406,17 @@ impl<'w> Server<'w> {
             ),
             "actbusy" => (
                 ai::NpcGoal::ActBusy(ai::ActBusyGoal {
-                    hints: w
-                        .hints
-                        .into_iter()
-                        .map(|h| ai::ActBusyHint {
-                            pos: v3(h.pos),
-                            sequence: h.sequence,
-                        })
-                        .collect(),
+                    hints: if w.hints.is_empty() {
+                        map_hints
+                    } else {
+                        w.hints
+                            .into_iter()
+                            .map(|h| ai::ActBusyHint {
+                                pos: v3(h.pos),
+                                sequence: h.sequence,
+                            })
+                            .collect()
+                    },
                     range: w.range,
                     busy_ticks: w
                         .busy_time
@@ -6162,6 +6175,46 @@ pub struct SpawnPoint {
     pub angles: Vec3,
 }
 
+/// An `info_node` / `info_node_hint` of the map: where the game's nodegraph puts a node, and
+/// the hint it carries (`hinttype`, 0 for a plain node).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AiNode {
+    pub pos: Vec3,
+    pub yaw: f32,
+    pub hint: u16,
+    pub activity: String,
+    pub group: String,
+}
+
+pub const HINT_WORLD_WORK_POSITION: u16 = 12;
+pub const HINT_TACTICAL_COVER_MED: u16 = 100;
+pub const HINT_TACTICAL_COVER_LOW: u16 = 101;
+/// A tactical cover hint counts at half its path length against plain nodes.
+pub const NPC_COVER_HINT_BONUS: f32 = 0.5;
+/// A plain node over a navmesh vertex at the same path length.
+pub const NPC_COVER_NODE_BONUS: f32 = 0.8;
+
+/// The map's ground AI nodes and hint nodes (`info_node_air` is left out: nothing flies yet).
+pub fn ai_nodes_from_bsp(bsp: &gm_formats::bsp::Bsp) -> Vec<AiNode> {
+    bsp.entities
+        .iter()
+        .filter(|e| matches!(e.classname(), "info_node" | "info_node_hint"))
+        .filter_map(|e| {
+            let o = e.origin()?;
+            Some(AiNode {
+                pos: Vec3::from(o),
+                yaw: e.angles().map_or(0.0, |a| a[1]),
+                hint: e
+                    .get("hinttype")
+                    .and_then(|h| h.trim().parse().ok())
+                    .unwrap_or(0),
+                activity: e.get("hintactivity").unwrap_or("").to_string(),
+                group: e.get("Group").unwrap_or("").to_string(),
+            })
+        })
+        .collect()
+}
+
 /// The map's `info_player_start` entities as spawn points.
 pub fn spawn_points_from_bsp(bsp: &gm_formats::bsp::Bsp) -> Vec<SpawnPoint> {
     bsp.entities
@@ -6368,6 +6421,8 @@ pub struct Server<'w> {
     /// First id of each class family's private schedules, handed out in spawn order like the
     /// game's schedule namespace.
     class_sched_bases: BTreeMap<String, u16>,
+    /// The map's `info_node` / `info_node_hint` entities (the game's nodegraph positions).
+    ai_nodes: Vec<AiNode>,
     next_class_sched: u16,
     /// prop_ragdoll: every bone body (the root is also in `bodies`) and the joints between them.
     ragdoll_bodies: BTreeMap<u32, RagdollRuntime>,
@@ -6683,6 +6738,7 @@ impl<'w> Server<'w> {
             scripted_entities: Vec::new(),
             sents: HashMap::new(),
             class_sched_bases: BTreeMap::new(),
+            ai_nodes: Vec::new(),
             next_class_sched: ai::FIRST_CLASS_SCHEDULE,
             world_weapons: HashMap::new(),
             ai_disabled: false,
@@ -12155,6 +12211,16 @@ impl<'w> Server<'w> {
 
     /// Walkers that appeared above the floor stand on it the next tick.
     /// Navigation mesh for NPC locomotion (built by the host from the map).
+    /// The map's AI nodes and hints (`ai_nodes_from_bsp`): cover candidates (tactical cover
+    /// hints preferred) and the act-busy hints a map-less goal falls back to.
+    pub fn set_ai_nodes(&mut self, nodes: Vec<AiNode>) {
+        self.ai_nodes = nodes;
+    }
+
+    pub fn ai_nodes(&self) -> &[AiNode] {
+        &self.ai_nodes
+    }
+
     pub fn set_navmesh(&mut self, nav: std::sync::Arc<gm_nav::NavMesh>) {
         self.nav = Some(nav);
     }
@@ -13344,16 +13410,31 @@ impl<'w> Server<'w> {
             .collect();
         let extents = Vec3::new(32.0, 32.0, 72.0);
         let mut best: Option<(f32, Vec3)> = None;
-        for v in nav.vertices() {
+        // the map's AI nodes first (the game picks cover from its nodegraph, tactical cover
+        // hints before plain nodes), navmesh vertices where the nodes are sparse
+        let candidates: Vec<(Vec3, f32)> = self
+            .ai_nodes
+            .iter()
+            .map(|n| {
+                let w = if matches!(n.hint, HINT_TACTICAL_COVER_MED | HINT_TACTICAL_COVER_LOW) {
+                    NPC_COVER_HINT_BONUS
+                } else {
+                    NPC_COVER_NODE_BONUS
+                };
+                (n.pos, w)
+            })
+            .chain(nav.vertices().iter().map(|v| (*v, 1.0)))
+            .collect();
+        for (v, weight) in candidates {
             let d = v.truncate().distance(feet.truncate());
             if d < 48.0 || d > NPC_COVER_RANGE {
                 continue;
             }
             // ranked by path length (a point 65 u away across a wall can be 1000 u on foot)
-            if best.is_some_and(|b| d >= b.0) {
+            if best.is_some_and(|b| d * weight >= b.0) {
                 continue;
             }
-            let Some(p) = nav.nearest(*v, extents) else {
+            let Some(p) = nav.nearest(v, extents) else {
                 continue;
             };
             if taken.iter().any(|t| t.distance(p) < NPC_COVER_SPACING) {
@@ -13369,8 +13450,8 @@ impl<'w> Server<'w> {
             }
             if let Some(path) = nav.find_path(feet, p, extents).filter(|path| !path.partial) {
                 let len: f32 = path.points.windows(2).map(|w| w[0].distance(w[1])).sum();
-                if len <= NPC_COVER_RANGE * 1.5 && best.is_none_or(|b| len < b.0) {
-                    best = Some((len, p));
+                if len <= NPC_COVER_RANGE * 1.5 && best.is_none_or(|b| len * weight < b.0) {
+                    best = Some((len * weight, p));
                 }
             }
         }

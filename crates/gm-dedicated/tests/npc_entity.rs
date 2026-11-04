@@ -120,6 +120,7 @@ fn npc_walks_the_navmesh_to_a_goal() {
     let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     let start = Vec3::new(823.235, -500.0, -143.0);
     server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
     server.set_weapons(1, &["gmod_tool"]);
@@ -221,6 +222,7 @@ fn npc_chases_a_moving_player() {
     let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     let start = Vec3::new(823.235, -500.0, -143.0);
     server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
     server.set_weapons(1, &["gmod_tool"]);
@@ -294,6 +296,7 @@ macro_rules! combat_server {
         let mut server =
             gm_server::Server::new(&$world.collision, $world.physics, $world.world_body);
         server.set_navmesh($world.nav.clone());
+        server.set_ai_nodes($world.ai_nodes.clone());
         let start = Vec3::new(823.235, -500.0, -143.0);
         server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
         server.set_weapons(1, &["gmod_tool"]);
@@ -1399,6 +1402,7 @@ fn npc_runs_a_scripted_engine_schedule() {
     let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     let start = Vec3::new(823.235, -500.0, -143.0);
     server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
     server.set_weapons(1, &["gmod_tool"]);
@@ -1487,6 +1491,7 @@ fn npc_hears_gunfire_and_forgets_it() {
     let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     let start = Vec3::new(823.235, -500.0, -143.0);
     server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
     server.set_weapons(1, &["weapon_pistol"]);
@@ -1538,6 +1543,7 @@ fn npc_follow_behaviour_keeps_up_with_the_player() {
     let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     let start = Vec3::new(823.235, -500.0, -143.0);
     server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
     server.set_weapons(1, &["gmod_tool"]);
@@ -1618,6 +1624,7 @@ fn npc_sequence_playback_fires_the_models_animation_events() {
     let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     let m2 = gm_content::Mount::for_install(&inst).unwrap();
     server.model_loader = Some(Box::new(move |m: &str| {
         gm_dedicated::model_info(&m2, m).ok()
@@ -1717,6 +1724,7 @@ fn zombie_swats_a_crate_at_the_player() {
         gm_dedicated::model_info(&m2, m).ok()
     }));
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     let start = Vec3::new(823.235, -500.0, -143.0);
     server.add_player(1, start, Vec3::new(12.0, 0.0, 0.0));
     server.set_weapons(1, &["gmod_tool"]);
@@ -1821,6 +1829,7 @@ fn soldier_tosses_a_grenade_at_a_visible_player() {
         gm_dedicated::model_info(&mount, gm_server::projectile::GRENADE_MODEL).unwrap(),
     );
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     let start = Vec3::new(823.235, -500.0, -143.0);
     server.add_player(1, start, Vec3::new(12.0, 0.0, 0.0));
     server.set_weapons(1, &["gmod_tool"]);
@@ -1922,6 +1931,7 @@ fn npc_walk_is_blocked_by_a_frozen_crate_wall() {
     let model = "models/props_junk/wood_crate001a.mdl";
     server.register_model(model, gm_dedicated::model_info(&mount, model).unwrap());
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     server.add_player(1, Vec3::new(823.235, -500.0, -143.0), Vec3::ZERO);
     let mut wall = Vec::new();
     for y in [-575.0, -545.0, -515.0, -485.0, -455.0, -425.0] {
@@ -1971,6 +1981,7 @@ fn assault_goal_runs_rally_then_the_point_chain() {
     let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     server.add_player(1, Vec3::new(823.235, -500.0, -143.0), Vec3::ZERO);
     let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
     for _ in 0..20 {
@@ -2046,6 +2057,7 @@ fn lead_goal_retrieves_then_waits_for_a_player_who_stays() {
     let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     server.add_player(1, Vec3::new(823.235, -500.0, -143.0), Vec3::ZERO);
     let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
     for _ in 0..20 {
@@ -2095,6 +2107,7 @@ fn scripted_sequence_walks_to_the_mark_plays_and_cancels() {
     let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
+    server.set_ai_nodes(world.ai_nodes.clone());
     server.add_player(1, Vec3::new(823.235, -500.0, -143.0), Vec3::ZERO);
     let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
     for _ in 0..20 {
