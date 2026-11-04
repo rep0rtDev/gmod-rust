@@ -1328,6 +1328,8 @@ pub struct AiState {
     pub conditions: u128,
     pub ignore_conditions: u128,
     pub squad: Option<String>,
+    /// `hintgroup` / NPC:SetHintGroup: only hints of this group serve the NPC.
+    pub hint_group: Option<String>,
     pub proficiency: u8,
     pub expression: String,
     pub behavior: Option<String>,

@@ -192,6 +192,10 @@ pub enum QueuedWrite {
         ent: u32,
         name: Option<String>,
     },
+    NpcAiHintGroup {
+        ent: u32,
+        name: Option<String>,
+    },
     NpcAiSavePos {
         ent: u32,
         pos: Vec3,
@@ -2115,6 +2119,14 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     },
                 },
                 "npc_ai_squad" => QueuedWrite::NpcAiSquad {
+                    ent,
+                    name: match &arg {
+                        Value::String(s) => Some(s.to_str()?.to_string()),
+                        Value::Table(t) => t.get::<Option<String>>("name")?,
+                        _ => None,
+                    },
+                },
+                "npc_ai_hint_group" => QueuedWrite::NpcAiHintGroup {
                     ent,
                     name: match &arg {
                         Value::String(s) => Some(s.to_str()?.to_string()),
@@ -4392,6 +4404,9 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::NpcAiState { ent, state } => server.npc_set_state(*ent, *state),
         QueuedWrite::NpcAiProficiency { ent, level } => server.npc_set_proficiency(*ent, *level),
         QueuedWrite::NpcAiSquad { ent, name } => server.npc_set_squad(*ent, name.as_deref()),
+        QueuedWrite::NpcAiHintGroup { ent, name } => {
+            server.npc_set_hint_group(*ent, name.as_deref())
+        }
         QueuedWrite::NpcAiSavePos { ent, pos } => server.npc_set_save_position(*ent, *pos),
         QueuedWrite::NpcAiGoal { ent, json } => server.npc_set_goal(*ent, json),
         QueuedWrite::NpcAiScript { ent, json } => server.npc_set_script(*ent, json),

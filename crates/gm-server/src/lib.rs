@@ -5544,6 +5544,15 @@ impl<'w> Server<'w> {
         }
         true
     }
+    pub fn npc_set_hint_group(&mut self, id: u32, name: Option<&str>) -> bool {
+        match self.npcs.get_mut(&id) {
+            Some(n) => {
+                n.ai.hint_group = name.filter(|g| !g.is_empty()).map(str::to_string);
+                true
+            }
+            None => false,
+        }
+    }
     pub fn npc_set_save_position(&mut self, id: u32, pos: Vec3) -> bool {
         match self.npcs.get_mut(&id) {
             Some(n) => {
@@ -5596,10 +5605,14 @@ impl<'w> Server<'w> {
             return false;
         };
         // an act-busy goal without hints of its own uses the map's work-position hints
+        let group = self.npcs.get(&id).and_then(|n| n.ai.hint_group.clone());
         let map_hints: Vec<ai::ActBusyHint> = self
             .ai_nodes
             .iter()
-            .filter(|n| n.hint == HINT_WORLD_WORK_POSITION && n.hint_usable(ai::NPC_STATE_IDLE))
+            .filter(|n| {
+                n.hint == HINT_WORLD_WORK_POSITION
+                    && n.hint_usable_by(ai::NPC_STATE_IDLE, group.as_deref())
+            })
             .map(|n| ai::ActBusyHint {
                 pos: n.pos,
                 sequence: (!n.activity.is_empty()).then(|| n.activity.clone()),
@@ -6581,6 +6594,16 @@ impl AiNode {
 
     /// `hint_usable` plus the facing cone (CAI_Hint::IsInNodeFOV): `from` must lie within
     /// `nodeFOV` about the hint's yaw unless `IgnoreFacing` is 2 or the cone is the full circle.
+    /// `hint_usable` for an NPC with a hint group: a grouped NPC only takes hints of its
+    /// group, an ungrouped one any (CAI_Hint::HintMatchesCriteria).
+    pub fn hint_usable_by(&self, state: u8, group: Option<&str>) -> bool {
+        self.hint_usable(state) && group.is_none_or(|g| self.group == g)
+    }
+
+    pub fn hint_usable_from_by(&self, state: u8, from: Vec3, group: Option<&str>) -> bool {
+        group.is_none_or(|g| self.group == g) && self.hint_usable_from(state, from)
+    }
+
     pub fn hint_usable_from(&self, state: u8, from: Vec3) -> bool {
         if !self.hint_usable(state) {
             return false;
@@ -15023,16 +15046,18 @@ impl<'w> Server<'w> {
         let mut best: Option<(f32, Vec3)> = None;
         // then the map's AI nodes by path length (tactical cover hints before plain nodes),
         // navmesh vertices where the nodes are sparse
-        let (state, from) = self
+        let (state, from, group) = self
             .npcs
             .get(&id)
-            .map_or((ai::NPC_STATE_COMBAT, Vec3::ZERO), |n| (n.ai.state, n.pos));
+            .map_or((ai::NPC_STATE_COMBAT, Vec3::ZERO, None), |n| {
+                (n.ai.state, n.pos, n.ai.hint_group.clone())
+            });
         let candidates: Vec<(Vec3, f32)> = self
             .ai_nodes
             .iter()
             .map(|n| {
                 let w = if matches!(n.hint, HINT_TACTICAL_COVER_MED | HINT_TACTICAL_COVER_LOW)
-                    && n.hint_usable_from(state, from)
+                    && n.hint_usable_from_by(state, from, group.as_deref())
                 {
                     NPC_COVER_HINT_BONUS
                 } else {
@@ -21257,6 +21282,30 @@ mod ai_node_hint_tests {
         n.ignore_facing = 0;
         n.node_fov = 360.0;
         assert!(n.hint_usable_from(c, Vec3::new(0.0, -100.0, 0.0)));
+    }
+
+    #[test]
+    fn hint_groups_bind_grouped_npcs_only() {
+        let mut n = AiNode {
+            pos: Vec3::ZERO,
+            yaw: 90.0,
+            hint: HINT_TACTICAL_COVER_MED,
+            activity: String::new(),
+            group: "roof".to_string(),
+            min_state: ai::NPC_STATE_IDLE,
+            max_state: ai::NPC_STATE_COMBAT,
+            disabled: false,
+            node_fov: 180.0,
+            ignore_facing: 2,
+        };
+        let c = ai::NPC_STATE_COMBAT;
+        assert!(n.hint_usable_by(c, None));
+        assert!(n.hint_usable_by(c, Some("roof")));
+        assert!(!n.hint_usable_by(c, Some("yard")));
+        n.group.clear();
+        assert!(!n.hint_usable_by(c, Some("yard")));
+        assert!(n.hint_usable_from_by(c, Vec3::new(0.0, -100.0, 0.0), None));
+        assert!(!n.hint_usable_from_by(c, Vec3::new(0.0, -100.0, 0.0), Some("yard")));
     }
 
     #[test]

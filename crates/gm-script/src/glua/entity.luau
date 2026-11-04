@@ -1985,6 +1985,8 @@ function NPC:ClearEnemyMemory(e) self:SetEnemy(NULL) end
 function NPC:IsInViewCone(v) local p = IsEntity(v) and v:GetPos() or v; return (p - self:GetPos()):GetNormalized():Dot(self:GetEyeDirection()) > 0 end
 function NPC:GetSquad() local s = snap(self.__id); if s and s.npc_ai_squad then return s.npc_ai_squad end return rawget(self, "__squad") end
 function NPC:SetSquad(name) rawset(self, "__squad", name); qwrite("npc_ai_squad", self.__id, { name = name }) end
+function NPC:GetHintGroup() return rawget(self, "__hint_group") or "" end
+function NPC:SetHintGroup(name) rawset(self, "__hint_group", name); qwrite("npc_ai_hint_group", self.__id, { name = name }) end
 function NPC:IsSquadLeader() return false end
 function NPC:GetNearestSquadMember() return NULL end
 function NPC:GetStepHeight() return 18 end
