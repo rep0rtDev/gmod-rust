@@ -5554,6 +5554,8 @@ pub struct Server<'w> {
     undo_purge_ticks: u32,
     /// (player, scripted entity) pairs whose hulls overlapped last tick, for the touch edges.
     pub sent_player_touch: std::collections::HashSet<(u32, u32)>,
+    /// Last tick each prop hurt a player (one hit per PROP_HIT_COOLDOWN).
+    pub prop_hit_at: BTreeMap<u32, u64>,
     pub scripted_weapons_version: u32,
     /// Names created since the last `take_cvar_new` (replicated to connected clients).
     pub cvar_new: Vec<String>,
@@ -5724,6 +5726,7 @@ impl<'w> Server<'w> {
             vehicles: BTreeMap::new(),
             undo_purge_ticks: 0,
             sent_player_touch: std::collections::HashSet::new(),
+            prop_hit_at: BTreeMap::new(),
             cvar_new: Vec::new(),
         }
     }
@@ -15376,6 +15379,7 @@ impl<'w> Server<'w> {
         self.scrape_sounds(&contacts);
         self.sent_touches(contacts);
         self.sent_player_touches();
+        self.prop_player_impacts();
         self.weapon_pickups();
         self.settle_npcs();
         self.tick_npc_move();
@@ -17414,6 +17418,102 @@ impl<'w> Server<'w> {
     /// test after the move: the player hull (16 x 16 x 72, 36 ducked) against the entity's
     /// convex AABBs; a new pair is start_touch + touch, a kept one touch, a lost one end_touch
     /// (`player` names the player, `other` is 0).
+    /// A flying prop that reaches a player's hull hurts it: the game's physics impact damage
+    /// (gDefaultPlayerImpactDamageTable read at the speed a player would have with the prop's
+    /// kinetic energy; a zombie-swatted crate takes 20 hp, server_npc_zombie_swat), slows the
+    /// prop and nudges the player. Props do not collide with player hulls in our physics, so
+    /// this is a hull overlap test per tick, one hit per prop per PROP_HIT_COOLDOWN.
+    fn prop_player_impacts(&mut self) {
+        let now = self.tick_count;
+        let mut players: Vec<(u32, Vec3, Vec3)> = Vec::new();
+        for pid in self.players.keys().copied() {
+            if !self.players.get(&pid).is_some_and(|p| p.alive) {
+                continue;
+            }
+            let (origin, h) = self.player_hull(pid);
+            players.push((
+                pid,
+                origin + Vec3::new(-16.0, -16.0, 0.0),
+                origin + Vec3::new(16.0, 16.0, h),
+            ));
+        }
+        if players.is_empty() {
+            return;
+        }
+        let mut hits: Vec<(u32, u32, Vec3, Vec3, f32)> = Vec::new();
+        let props: Vec<(u32, String)> = self
+            .sandbox
+            .props()
+            .iter()
+            .filter(|p| !p.frozen)
+            .map(|p| (p.id, p.model.clone()))
+            .collect();
+        for (id, model) in props {
+            if self
+                .prop_hit_at
+                .get(&id)
+                .is_some_and(|&t| now < t + PROP_HIT_COOLDOWN)
+            {
+                continue;
+            }
+            let (Some(&b), Some(info)) = (self.bodies.get(&id), self.models.get(&model)) else {
+                continue;
+            };
+            let st = self.physics.state(b);
+            let speed = st.velocity.length();
+            if speed < PROP_HIT_MIN_SPEED {
+                continue;
+            }
+            let aabbs: Vec<(Vec3, Vec3)> = info
+                .hull_planes
+                .iter()
+                .zip(&info.hulls)
+                .map(|(pl, pts)| {
+                    gm_physics::pickup::world_convex(pl, pts, st.rotation, st.position).1
+                })
+                .collect();
+            for &(pid, lo, hi) in &players {
+                let hit = aabbs.iter().any(|(a, b)| {
+                    lo.x <= b.x
+                        && hi.x >= a.x
+                        && lo.y <= b.y
+                        && hi.y >= a.y
+                        && lo.z <= b.z
+                        && hi.z >= a.z
+                });
+                if hit {
+                    hits.push((id, pid, st.velocity, st.angular_velocity, self.physics.mass(b)));
+                    break;
+                }
+            }
+        }
+        for (id, pid, velocity, angular, mass) in hits {
+            if mass < PROP_HIT_MIN_MASS {
+                continue;
+            }
+            let speed = velocity.length();
+            let damage = player_impact_damage(mass, speed);
+            self.prop_hit_at.insert(id, now);
+            if let Some(&b) = self.bodies.get(&id) {
+                let slowed = Vec3::new(
+                    velocity.x * PROP_HIT_KEEP,
+                    velocity.y * PROP_HIT_KEEP,
+                    velocity.z,
+                );
+                self.physics.set_velocity(b, slowed, angular);
+            }
+            if damage <= 0.0 {
+                continue;
+            }
+            if let Some(p) = self.players.get_mut(&pid) {
+                let push = Vec3::new(velocity.x, velocity.y, 0.0) * (mass / PLAYER_MASS);
+                p.state.impulse += push.clamp_length_max(PROP_HIT_PUSH_MAX);
+                p.last_damage = (0, "prop_physics");
+            }
+            self.damage_player(pid, damage, weapons::DMG_CRUSH);
+        }
+    }
+
     fn sent_player_touches(&mut self) {
         if self.sents.is_empty() {
             if !self.sent_player_touch.is_empty() {
@@ -17884,3 +17984,29 @@ pub const NPC_GRENADE_THROW_TICKS: u64 = 63;
 pub const NPC_GRENADE_RELEASE_TICK: u64 = 42;
 pub const NPC_GRENADE_HAND: (f32, f32) = (35.0, -22.0);
 pub const NPC_GRENADE_APEX: f32 = 255.0;
+
+/// The game's default player impact damage table: damage by the speed a player (85 kg) would
+/// have carrying the prop's kinetic energy, interpolated between the entries.
+pub fn player_impact_damage(mass: f32, speed: f32) -> f32 {
+    let table: [(f32, f32); 4] = [(150.0, 5.0), (250.0, 10.0), (450.0, 20.0), (700.0, 100.0)];
+    let eq = (mass * speed * speed / PLAYER_MASS).sqrt();
+    if eq < table[0].0 {
+        return 0.0;
+    }
+    for w in table.windows(2) {
+        let ((s0, d0), (s1, d1)) = (w[0], w[1]);
+        if eq <= s1 {
+            return d0 + (d1 - d0) * (eq - s0) / (s1 - s0);
+        }
+    }
+    table[3].1
+}
+
+pub const PLAYER_MASS: f32 = 85.0;
+pub const PROP_HIT_MIN_SPEED: f32 = 100.0;
+pub const PROP_HIT_MIN_MASS: f32 = 2.0;
+pub const PROP_HIT_COOLDOWN: u64 = 33;
+/// Horizontal speed a prop keeps after hitting a player (the swatted crate left the bot at
+/// 130 u/s of its ~780).
+pub const PROP_HIT_KEEP: f32 = 0.17;
+pub const PROP_HIT_PUSH_MAX: f32 = 150.0;

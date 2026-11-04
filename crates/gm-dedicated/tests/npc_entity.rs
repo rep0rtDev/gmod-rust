@@ -1715,6 +1715,8 @@ fn zombie_swats_a_crate_at_the_player() {
     let mut chased_as = 0;
     let mut swat_at = None;
     let mut launched = None;
+    let start_hp = server.players[&1].health;
+    let mut hurt = None;
     for t in 0..700 {
         server.tick(&idle);
         let n = &server.npcs[&id];
@@ -1728,7 +1730,11 @@ fn zombie_swats_a_crate_at_the_player() {
         if v.length() > 300.0 && launched.is_none() {
             launched = Some((t, v));
         }
-        if launched.is_some() && n.swat.is_none() {
+        let hp = server.players[&1].health;
+        if hp < start_hp && hurt.is_none() {
+            hurt = Some((t, start_hp - hp));
+        }
+        if launched.is_some() && n.swat.is_none() && hurt.is_some() {
             break;
         }
     }
@@ -1740,6 +1746,10 @@ fn zombie_swats_a_crate_at_the_player() {
     assert_eq!(hit_tick - swat_tick, gm_server::ZOMBIE_SWAT_HIT_TICK as usize);
     assert!(v.x < -600.0 && v.z > 250.0 && v.z < 450.0 && v.y.abs() < 60.0, "launch velocity {v:?}");
     assert!((v.length() - 843.0).abs() < 60.0, "launch speed {}", v.length());
+    // the crate reaches the player: the game's impact damage is 20 hp (server_npc_zombie_swat)
+    let (hurt_tick, dmg) = hurt.expect("the crate never hurt the player");
+    assert!(hurt_tick > hit_tick && hurt_tick - hit_tick < 40, "hurt at {hurt_tick}, launched at {hit_tick}");
+    assert!((dmg as f32 - 20.0).abs() <= 3.0, "crate damage {dmg}");
 }
 
 #[test]
