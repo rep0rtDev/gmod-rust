@@ -5146,3 +5146,111 @@ realm = "server"
 crates = ["gm-server", "gm-nav"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat"
+scenario = "server/npc_zombie_swat"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat_far"
+scenario = "server/npc_zombie_swat_far"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat2_crate"
+scenario = "server/npc_zombie_swat2_crate"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat2_drum"
+scenario = "server/npc_zombie_swat2_drum"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat2_can"
+scenario = "server/npc_zombie_swat2_can"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat2_heavy"
+scenario = "server/npc_zombie_swat2_heavy"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat2_drumside"
+scenario = "server/npc_zombie_swat2_drumside"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat2_plastic"
+scenario = "server/npc_zombie_swat2_plastic"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat2_bluebarrel"
+scenario = "server/npc_zombie_swat2_bluebarrel"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat2_gascan"
+scenario = "server/npc_zombie_swat2_gascan"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat3_a_drum875"
+scenario = "server/npc_zombie_swat3_a_drum875"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_zombie_swat3_c_drumside930"
+scenario = "server/npc_zombie_swat3_c_drumside930"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0

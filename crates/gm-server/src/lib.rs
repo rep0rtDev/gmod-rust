@@ -2106,6 +2106,12 @@ pub struct Npc {
     pub melee_move: usize,
     pub melee_swing: Option<NpcMelee>,
     pub melee_dash: f32,
+    /// A zombie's swat of a physics prop at its enemy (SCHED_ZOMBIE_SWATITEM).
+    pub swat: Option<NpcSwat>,
+    /// Next tick the zombie looks for a prop to swat (every 2 s of a chase).
+    pub next_swat_scan: u64,
+    /// SCHED_WAKE_ANGRY: a zombie that just found its enemy stands one think before chasing.
+    pub wake_until: u64,
     /// Leap attack (headcrabs): velocity while airborne, the tick a hang on the player's hull
     /// ends, and the earliest tick of the next leap.
     pub flight: Option<Vec3>,
@@ -4629,6 +4635,13 @@ impl<'w> Server<'w> {
     /// goto / chase / cover / stop operations; otherwise the schedule mirrors what the native
     /// brain is doing so `GetCurrentSchedule` / `HasCondition` describe it.
     fn ai_step(&mut self, id: u32, now: u64) {
+        if let Some(fam) = self.npcs.get(&id).and_then(|n| ai::class_sched_family(&n.class)) {
+            if !self.class_sched_bases.contains_key(fam) {
+                let base = self.next_class_sched;
+                self.next_class_sched += ai::CLASS_SCHED_RESERVE;
+                self.class_sched_bases.insert(fam.to_string(), base);
+            }
+        }
         let Some(n) = self.npcs.get(&id) else { return };
         if n.dead_at.is_some() {
             if let Some(n) = self.npcs.get_mut(&id) {
@@ -4750,7 +4763,18 @@ impl<'w> Server<'w> {
         let a = &mut n.ai;
         if !a.scripted {
             // the mirror: name the schedule the native body is running
-            let sched = if n.cover_at.is_some() {
+            let sched = if n.swat.is_some() {
+                ai::SCHED_ZOMBIE_SWATITEM
+            } else if now < n.wake_until + NPC_WAKE_ANGRY_TICKS && target.is_some() && !target_dead {
+                // the first think after the sighting only gathers senses (idle), the next
+                // one wakes angry, the chase shows from the third
+                if now < n.wake_until {
+                    a.state = ai::NPC_STATE_IDLE;
+                    ai::SCHED_IDLE_STAND
+                } else {
+                    ai::SCHED_WAKE_ANGRY
+                }
+            } else if n.cover_at.is_some() {
                 ai::SCHED_TAKE_COVER_FROM_ENEMY
             } else if n.chase.is_some() {
                 ai::SCHED_CHASE_ENEMY
@@ -5363,6 +5387,10 @@ pub struct Server<'w> {
     pub players: BTreeMap<u32, Player>,
     mover: gm_move::Mover<'w>,
     bodies: BTreeMap<u32, BodyHandle>,
+    /// First id of each class family's private schedules, handed out in spawn order like the
+    /// game's schedule namespace.
+    class_sched_bases: BTreeMap<String, u16>,
+    next_class_sched: u16,
     /// prop_ragdoll: every bone body (the root is also in `bodies`) and the joints between them.
     ragdoll_bodies: BTreeMap<u32, RagdollRuntime>,
     /// `Entity:ManipulateBoneScale` per model bone (inflator stool), absent = all 1.
@@ -5674,6 +5702,8 @@ impl<'w> Server<'w> {
             scripted_weapons_version: 0,
             scripted_entities: Vec::new(),
             sents: HashMap::new(),
+            class_sched_bases: BTreeMap::new(),
+            next_class_sched: ai::FIRST_CLASS_SCHEDULE,
             world_weapons: HashMap::new(),
             ai_disabled: false,
             npcs: BTreeMap::new(),
@@ -10809,6 +10839,9 @@ impl<'w> Server<'w> {
             melee_hits_left: 0,
             melee_move: 0,
             melee_swing: None,
+            swat: None,
+            next_swat_scan: 0,
+            wake_until: 0,
             melee_dash: 0.0,
             flight: None,
             hung_until: 0,
@@ -12009,6 +12042,9 @@ impl<'w> Server<'w> {
             }
             return;
         };
+        if self.npc_swat_think(id, now, player, origin) {
+            return;
+        }
         let dist = origin.truncate().distance(feet.truncate());
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
@@ -12021,6 +12057,18 @@ impl<'w> Server<'w> {
         n.target_seen = now;
         if n.target_first_seen == 0 {
             n.target_first_seen = now;
+            if ai::class_sched_family(&n.class) == Some("zombie") {
+                // the game: a new enemy in combat runs SCHED_WAKE_ANGRY for one think (7 ticks)
+                // before the chase starts (server_npc_zombie_swat2_*: sched 4 at tick 12, 93 at 19)
+                n.wake_until = now + NPC_WAKE_ANGRY_TICKS;
+                // the swat scan runs at the wake think and every 2 s after it
+                n.next_swat_scan = now + NPC_WAKE_ANGRY_TICKS;
+                n.swing_until = n.swing_until.max(n.wake_until);
+                if !n.ai.scripted {
+                    n.ai.start(ai::SCHED_IDLE_STAND, now);
+                }
+                return;
+            }
         }
         n.chase_reach = m.start_range.min(m.reach) - 3.0;
         if let Some(j) = npc_jump(&n.class) {
@@ -12556,6 +12604,146 @@ impl<'w> Server<'w> {
 
     /// The tick a melee swing lands: the target still inside the reach in front of the NPC
     /// takes the damage as DMG_SLASH and is launched away at `punch`.
+    /// The game-visible id of the schedule an NPC runs (`NPC:GetCurrentSchedule`): shared
+    /// schedules keep their enum value, a class's private ones (and the shared ones its class
+    /// translates) report from the family's table, allocated when the family first thinks.
+    pub fn npc_schedule_id(&self, id: u32) -> i64 {
+        let Some(n) = self.npcs.get(&id) else {
+            return 0;
+        };
+        let Some(s) = n.ai.schedule else {
+            return 0;
+        };
+        let translated = ai::class_sched_family(&n.class)
+            .and_then(|fam| Some((self.class_sched_bases.get(fam)?, ai::class_schedule(fam, s)?)))
+            .map(|(base, off)| base + off);
+        translated.unwrap_or(s) as i64
+    }
+
+    /// A zombie in a chase looks for a prop to swat at its enemy every ZOMBIE_SWAT_SCAN_TICKS:
+    /// the nearest movable prop_physics of 5..=200 kg within ZOMBIE_SWAT_SEARCH that lies
+    /// between it and the enemy (within 0.8 of the enemy's direction, nearer than the enemy).
+    /// One within ZOMBIE_SWAT_DIST starts the swat: the body stops, the swat sequence plays
+    /// ZOMBIE_SWAT_TICKS and the prop is launched at ZOMBIE_SWAT_HIT_TICK (`tick_npc_swats`).
+    /// True while a swat is running or just started.
+    fn npc_swat_think(&mut self, id: u32, now: u64, _player: u32, origin: Vec3) -> bool {
+        let Some(n) = self.npcs.get(&id) else {
+            return false;
+        };
+        if ai::class_sched_family(&n.class) != Some("zombie") {
+            return false;
+        }
+        if n.swat.is_some() {
+            return true;
+        }
+        if n.next_swat_scan == 0 || now < n.next_swat_scan {
+            return false;
+        }
+        let (feet, yaw) = (n.pos, n.angles.y);
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.next_swat_scan = now + ZOMBIE_SWAT_SCAN_TICKS;
+        }
+        let to_enemy = (origin - feet).truncate();
+        let enemy_dist = to_enemy.length();
+        if enemy_dist < 1e-3 {
+            return false;
+        }
+        let enemy_dir = to_enemy / enemy_dist;
+        let mut best: Option<(f32, u32, Vec3)> = None;
+        for p in self.sandbox.props() {
+            if p.frozen || self.ragdoll_bodies.contains_key(&p.id) {
+                continue;
+            }
+            let Some(&b) = self.bodies.get(&p.id) else {
+                continue;
+            };
+            let mass = self.physics.mass(b);
+            if !(ZOMBIE_SWAT_MIN_MASS..=ZOMBIE_SWAT_MAX_MASS).contains(&mass) {
+                continue;
+            }
+            let center = self.physics.state(b).position;
+            let to = (center - feet).truncate();
+            let d = to.length();
+            if d < 1e-3 || d > ZOMBIE_SWAT_SEARCH || d >= enemy_dist {
+                continue;
+            }
+            if (to / d).dot(enemy_dir) < 0.8 {
+                continue;
+            }
+            if best.is_none_or(|(bd, _, _)| d < bd) {
+                best = Some((d, p.id, center));
+            }
+        }
+        let Some((d, prop, center)) = best else {
+            return false;
+        };
+        if !(ZOMBIE_SWAT_MIN_DIST..=ZOMBIE_SWAT_DIST).contains(&d) {
+            return false;
+        }
+        self.npc_stop(id);
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        n.chase = None;
+        n.goal = None;
+        n.next_goal = None;
+        n.move_speed = 0.0;
+        n.swing_until = now + ZOMBIE_SWAT_TICKS;
+        n.swat = Some(NpcSwat {
+            prop,
+            hit_at: now + ZOMBIE_SWAT_HIT_TICK,
+            until: now + ZOMBIE_SWAT_TICKS,
+        });
+        if !n.ai.scripted {
+            n.ai.start(ai::SCHED_ZOMBIE_SWATITEM, now);
+        }
+        let (sy, cy) = yaw.to_radians().sin_cos();
+        let right = glam::Vec2::new(sy, -cy);
+        let side = if (center - feet).truncate().dot(right) >= 0.0 { "right" } else { "left" };
+        let height = if center.z - feet.z > ZOMBIE_SWAT_HIGH { "high" } else { "low" };
+        if n.rest_sequence.is_none() {
+            n.rest_sequence = Some(n.sequence.clone());
+        }
+        n.sequence = format!("swat{side}{height}");
+        true
+    }
+
+    /// The swat's hit frame launches the prop at the enemy's centre: 800 u/s along the
+    /// line from the prop's centre plus 200 u/s up (measured on the game within 2%: a crate
+    /// 79 u from the player left at 843 u/s, 23 degrees up). The sequence over, the zombie
+    /// resumes its chase.
+    fn tick_npc_swats(&mut self) {
+        let now = self.tick_count;
+        let due: Vec<(u32, NpcSwat, Option<u32>)> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| n.dead_at.is_none())
+            .filter_map(|(id, n)| n.swat.map(|s| (*id, s, n.target)))
+            .collect();
+        for (id, s, target) in due {
+            if s.hit_at == now {
+                let body = self.bodies.get(&s.prop).copied();
+                let enemy = target.and_then(|t| self.players.get(&t)).filter(|p| p.alive);
+                if let (Some(b), Some(p)) = (body, enemy) {
+                    let st = self.physics.state(b);
+                    let center = p.state.origin + Vec3::new(0.0, 0.0, PLAYER_CENTER_HEIGHT);
+                    let dir = (center - st.position).normalize_or_zero();
+                    let v = dir * ZOMBIE_SWAT_SPEED + Vec3::new(0.0, 0.0, ZOMBIE_SWAT_LIFT);
+                    self.physics.set_asleep(b, false);
+                    self.physics.set_velocity(b, v, st.angular_velocity);
+                }
+            }
+            if now >= s.until {
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.swat = None;
+                    if let Some(rest) = n.rest_sequence.take() {
+                        n.sequence = rest;
+                    }
+                }
+            }
+        }
+    }
+
     fn tick_npc_melee_hits(&mut self) {
         let now = self.tick_count;
         let due: Vec<(u32, u32, NpcMelee)> = self
@@ -12752,6 +12940,9 @@ impl<'w> Server<'w> {
                 melee_hits_left: 0,
                 melee_move: 0,
                 melee_swing: None,
+                swat: None,
+                next_swat_scan: 0,
+                wake_until: 0,
                 melee_dash: 0.0,
                 flight: None,
                 hung_until: 0,
@@ -15022,6 +15213,7 @@ impl<'w> Server<'w> {
             }
         }
         self.tick_npc_melee_hits();
+        self.tick_npc_swats();
         self.tick_npc_jumps();
         self.tick_npc_flight();
         self.remove_dead_npcs();
@@ -17454,3 +17646,39 @@ fn parse_floats<const N: usize>(text: &str) -> Option<[f32; N]> {
         .collect::<Option<Vec<f32>>>()?;
     v.try_into().ok()
 }
+
+/// A zombie's running prop swat (`Npc::swat`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NpcSwat {
+    pub prop: u32,
+    /// Tick the prop is launched.
+    pub hit_at: u64,
+    /// Tick the swat sequence ends.
+    pub until: u64,
+}
+
+/// Zombie swat rules measured on the game (server_npc_zombie_swat*): the scan runs at the
+/// wake-angry think and at the first think more than 2.0 s after the last one; the swat
+/// sequence lasts 98 ticks with the launch at tick 35.
+pub const ZOMBIE_SWAT_SCAN_TICKS: u64 = 134;
+/// A prop nearer than this at the scan is left alone (game: swats at 41.5/46/48/61 u, none at
+/// 30-36 u with the same props).
+pub const ZOMBIE_SWAT_MIN_DIST: f32 = 40.0;
+pub const ZOMBIE_SWAT_TICKS: u64 = 98;
+pub const ZOMBIE_SWAT_HIT_TICK: u64 = 35;
+/// ZOMBIE_FARTHEST_PHYSICS_OBJECT / ZOMBIE_PHYSOBJ_SWATDIST of the game.
+pub const ZOMBIE_SWAT_SEARCH: f32 = 480.0;
+pub const ZOMBIE_SWAT_DIST: f32 = 80.0;
+/// A 1 kg can is left alone, a fridge too (ZOMBIE_MAX_PHYSOBJ_MASS).
+pub const ZOMBIE_SWAT_MIN_MASS: f32 = 5.0;
+pub const ZOMBIE_SWAT_MAX_MASS: f32 = 200.0;
+/// A prop whose centre sits this far above the zombie's feet takes the high swing.
+pub const ZOMBIE_SWAT_HIGH: f32 = 40.0;
+pub const ZOMBIE_SWAT_SPEED: f32 = 800.0;
+pub const ZOMBIE_SWAT_LIFT: f32 = 200.0;
+/// WorldSpaceCenter of a standing player above its origin.
+pub const PLAYER_CENTER_HEIGHT: f32 = 36.0;
+/// One NPC think (0.1 s): a zombie sighting its enemy idles one think, wakes angry the next
+/// (SCHED_WAKE_ANGRY) and chases from the third (server_npc_zombie_swat2_*: sched 1 at tick
+/// 5, 4 at 12, 93 at 19).
+pub const NPC_WAKE_ANGRY_TICKS: u64 = 7;

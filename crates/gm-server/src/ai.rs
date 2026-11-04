@@ -181,6 +181,15 @@ pub const SCHED_SCRIPTED_RUN: u16 = 58;
 pub const SCHED_SCRIPTED_WAIT: u16 = 60;
 pub const SCHED_SCRIPTED_FACE: u16 = 61;
 pub const SCHED_FORCED_GO: u16 = 71;
+/// Class-private schedules of the base zombie (npc_BaseZombie): the game registers them per
+/// class after the shared ones, so their ids are session-dependent (see `class_schedule`).
+pub const SCHED_ZOMBIE_MOVE_SWATITEM: u16 = 1001;
+pub const SCHED_ZOMBIE_SWATITEM: u16 = 1002;
+/// The first id the game hands a class's private schedules on a fresh server (measured: a
+/// zombie spawned first reports CHASE_ENEMY as 93, SWATITEM 95, MELEE_ATTACK1 103).
+pub const FIRST_CLASS_SCHEDULE: u16 = 93;
+/// Ids reserved per class family once it has spawned.
+pub const CLASS_SCHED_RESERVE: u16 = 12;
 pub const SCHED_FORCED_GO_RUN: u16 = 72;
 pub const SCHED_NPC_FREEZE: u16 = 73;
 pub const SCHED_PATROL_WALK: u16 = 74;
@@ -223,6 +232,30 @@ pub fn cond_name(id: u8) -> Option<&'static str> {
 }
 pub fn sched_id(name: &str) -> Option<u16> {
     SCHED_NAMES.iter().find(|(n, _)| *n == name).map(|(_, id)| *id)
+}
+
+/// The class family whose private schedule table a class reports through (None: only shared
+/// schedules).
+pub fn class_sched_family(class: &str) -> Option<&'static str> {
+    match class {
+        "npc_zombie" | "npc_zombie_torso" | "npc_zombine" | "npc_poisonzombie" => Some("zombie"),
+        _ => None,
+    }
+}
+
+/// Offset of a schedule inside a family's private table, when the family translates it
+/// (TranslateSchedule): measured on the game with `SetSchedule(shared)` / `GetCurrentSchedule`.
+pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
+    match family {
+        "zombie" => match shared {
+            SCHED_CHASE_ENEMY => Some(0),
+            SCHED_ZOMBIE_MOVE_SWATITEM => Some(1),
+            SCHED_ZOMBIE_SWATITEM => Some(2),
+            SCHED_MELEE_ATTACK1 => Some(10),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// The engine's shared schedules: the task list each runs and the conditions that interrupt

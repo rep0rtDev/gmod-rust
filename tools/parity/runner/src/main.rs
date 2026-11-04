@@ -4520,7 +4520,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 "pos": [n.pos.x, n.pos.y, n.pos.z], "ang": [n.angles.x, n.angles.y, n.angles.z],
                 "mins": [n.mins.x, n.mins.y, n.mins.z], "maxs": [n.maxs.x, n.maxs.y, n.maxs.z],
                 "health": n.health.round() as i32, "maxhealth": n.max_health, "weapon": n.weapon, "movetype": n.movetype, "solid": n.solid,
-                "npcstate": n.ai.state, "sched": n.ai.schedule.map(|s| s as i64).unwrap_or(0),
+                "npcstate": n.ai.state, "sched": server.npc_schedule_id(*id),
             })).collect::<Vec<_>>(),
             "weapons": server.players.get(&player).map(|pl| {
                 let mut w: Vec<Value> = pl.weapons.iter().map(|c| {

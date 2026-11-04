@@ -1,0 +1,45 @@
+{
+ "kind": "server",
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 20,
+ "name": "server_npc_sched_translate_fisherman",
+ "ops": [
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "concmd",
+   "cmd": "sbox_maxnpcs",
+   "value": "100"
+  },
+  {
+   "op": "concmd",
+   "cmd": "ai_disabled",
+   "value": "1"
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_fisherman",
+   "weapon": "none",
+   "pitch": 15.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "wait",
+   "ticks": 5
+  },
+  {
+   "op": "lua",
+   "code": "local z=ents.FindByClass('npc_fisherman')[1] local pl=player.GetAll()[1] if not IsValid(z) then pl:SendLua('nonpc') return end local t={} for i=0,87 do z:SetSchedule(i) local g=z:GetCurrentSchedule() if g~=i then t[#t+1]=i..'>'..g end if #t>=12 then pl:SendLua(table.concat(t,',')) t={} end end if #t>0 then pl:SendLua(table.concat(t,',')) end pl:SendLua('end')"
+  },
+  {
+   "op": "wait",
+   "ticks": 2
+  }
+ ]
+}

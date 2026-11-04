@@ -1665,3 +1665,77 @@ fn npc_sequence_playback_fires_the_models_animation_events() {
     );
     assert_eq!(steps.len(), feet.len(), "{steps:?}");
 }
+
+/// server_npc_zombie_swat2_crate on the game: a zombie chasing the player past a wooden crate
+/// stops 2 s into the chase (schedule 95 = its SWATITEM, CHASE_ENEMY reporting as 93 on a
+/// fresh server; idle one think, SCHED_WAKE_ANGRY the next) and 35 ticks later the crate
+/// leaves at ~840 u/s toward the player's centre, 23 degrees up.
+#[test]
+fn zombie_swats_a_crate_at_the_player() {
+    use gm_server::ai;
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| gm_dedicated::model_info(&m2, m).ok()));
+    server.set_navmesh(world.nav.clone());
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(12.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(12.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let crate_id = server
+        .spawn_prop(1, "models/props_junk/wood_crate001a.mdl")
+        .unwrap();
+    assert!(server.teleport_prop(crate_id, Vec3::new(865.0, -500.0, -123.7), Vec3::ZERO));
+    for _ in 0..40 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_zombie", "none").unwrap();
+    let zpos = server.npcs[&id].pos;
+    assert!(zpos.x > 950.0, "zombie spawned at {zpos:?}, the crate must lie between it and the player");
+    // our zombie walks straight at the player (no steering around the crate), so the player
+    // stands back far enough for the crate to be 40..80 u ahead of the zombie at the 2 s scan
+    server.teleport_player(1, Vec3::new(760.0, -500.0, -143.0));
+    let mut chased_as = 0;
+    let mut swat_at = None;
+    let mut launched = None;
+    for t in 0..700 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if n.ai.schedule == Some(ai::SCHED_CHASE_ENEMY) && chased_as == 0 {
+            chased_as = server.npc_schedule_id(id);
+        }
+        if n.swat.is_some() && swat_at.is_none() {
+            swat_at = Some((t, server.npc_schedule_id(id), n.sequence.clone()));
+        }
+        let v = server.prop_state(crate_id).unwrap().velocity;
+        if v.length() > 300.0 && launched.is_none() {
+            launched = Some((t, v));
+        }
+        if launched.is_some() && n.swat.is_none() {
+            break;
+        }
+    }
+    assert_eq!(chased_as, ai::FIRST_CLASS_SCHEDULE as i64, "CHASE_ENEMY reports as the zombie's own id");
+    let (swat_tick, swat_id, seq) = swat_at.expect("the zombie never swatted the crate");
+    assert_eq!(swat_id, ai::FIRST_CLASS_SCHEDULE as i64 + 2);
+    assert!(seq.starts_with("swat") && seq.ends_with("low"), "{seq}");
+    let (hit_tick, v) = launched.expect("the crate was never launched");
+    assert_eq!(hit_tick - swat_tick, gm_server::ZOMBIE_SWAT_HIT_TICK as usize);
+    assert!(v.x < -600.0 && v.z > 250.0 && v.z < 450.0 && v.y.abs() < 60.0, "launch velocity {v:?}");
+    assert!((v.length() - 843.0).abs() < 60.0, "launch speed {}", v.length());
+}
