@@ -134,6 +134,7 @@ function scripted_ents.Register(ENT, class)
 end
 function scripted_ents.__instance(id) return by_id[id] end
 function scripted_ents.Get(class)
+    if scripted_ents.__ensure_ai_goal then scripted_ents.__ensure_ai_goal(class) end
     local def = ent_defs[class] or (ent_aliases[class] and ent_defs[ent_aliases[class]])
     if not def then return nil end
     return inherit(def, ent_defs)
@@ -636,3 +637,170 @@ end)
 
 -- the scripted instance behind an entity index (hook bridges outside this chunk)
 function scripted_ents.__instance(id) return by_id[id] end
+
+-- The HL2 goal entities behind NPC:UseAssaultBehavior / UseLeadBehavior / UseActBusyBehavior:
+-- ai_goal_assault (+ assault_rallypoint / assault_assaultpoint), ai_goal_lead, ai_goal_actbusy
+-- (+ info_node_hint). Registered as point entities so ents.Create / map logic can place them;
+-- Activate resolves the actor NPCs by targetname and hands the server the goal
+-- (NPC:__SetAiGoal), which drives the native behaviour. Outputs come from the goal stage the
+-- server reports (OnArrival / OnSuccess for a lead, OnAssaultStart etc. not raised yet).
+do
+    local function flag(v) return v == true or v == 1 or v == "1" or v == "true" end
+    local function num(v, d) return tonumber(v) or d end
+    local function kvs(e)
+        local t = {}
+        for k, v in pairs(e.GetKeyValues and e:GetKeyValues() or {}) do t[string.lower(k)] = v end
+        local i = scripted_ents.__instance(e.__id)
+        for k, v in pairs(i and i.kv or {}) do t[k] = v end
+        return t
+    end
+    local function vec(p) return { p.x, p.y, p.z } end
+    local function by_name(name)
+        if not name or name == "" then return {} end
+        return ents.FindByName(name)
+    end
+    local function actors(self)
+        local out = {}
+        for _, e in ipairs(by_name(kvs(self.Entity).actor)) do if e.IsNPC and e:IsNPC() then out[#out + 1] = e end end
+        return out
+    end
+    -- registered on first use (ents.Create / scripted_ents.Get) so an addon-free runtime queues
+    -- no entity registrations of its own
+    local lazy = {}
+    function scripted_ents.__ensure_ai_goal(class)
+        local reg = lazy[class]
+        if reg then lazy[class] = nil; reg() end
+    end
+    local function point_base(name)
+        lazy[name] = function()
+            local ENT = { Type = "point", Spawnable = false, Model = "" }
+            function ENT:KeyValue(k, v) self.kv = self.kv or {}; self.kv[string.lower(k)] = v end
+            function ENT:Initialize() self.kv = self.kv or {} end
+            scripted_ents.Register(ENT, name)
+        end
+    end
+    point_base("assault_rallypoint")
+    point_base("assault_assaultpoint")
+    point_base("info_node_hint")
+
+    local function goal_base(name, behavior, build)
+        lazy[name] = function() scripted_ents.__register_ai_goal(name, behavior, build) end
+    end
+    function scripted_ents.__register_ai_goal(name, behavior, build)
+        local ENT = { Type = "point", Spawnable = false, Model = "", ThinkInterval = 0.2 }
+        function ENT:KeyValue(k, v) self.kv = self.kv or {}; self.kv[string.lower(k)] = v end
+        function ENT:Initialize()
+            self.kv = self.kv or {}
+            self.active = false
+            if flag(kvs(self.Entity).startactive) then self:Start() end
+        end
+        function ENT:Start()
+            self.active = true
+            self.actors = actors(self)
+            self.stages = {}
+            for i, npc in ipairs(self.actors) do
+                local goal = build(self, npc, i)
+                if goal then
+                    goal.kind = goal.kind or string.lower(behavior)
+                    npc["Use" .. behavior .. "Behavior"](npc)
+                    npc:__SetAiGoal(goal)
+                end
+            end
+        end
+        function ENT:Stop()
+            self.active = false
+            for _, npc in ipairs(self.actors or {}) do if IsValid(npc) then npc:__SetAiGoal({ kind = "clear" }) npc:UseNoBehavior() end end
+        end
+        function ENT:AcceptInput(input, activator, caller, data)
+            local n = string.lower(input)
+            if n == "activate" then self:Start() return true end
+            if n == "deactivate" then self:Stop() return true end
+            if n == "beginassault" and behavior == "Assault" then
+                for _, npc in ipairs(self.actors or {}) do if IsValid(npc) then npc:__SetAiGoal({ kind = "begin" }) end end
+                return true
+            end
+            if (n == "setsuccess" or n == "setfailure") and behavior == "Lead" then
+                self:Stop()
+                self.Entity:TriggerOutput(n == "setsuccess" and "OnSuccess" or "OnFailure", activator)
+                return true
+            end
+            if behavior == "ActBusy" and (n == "forcenpctoactbusy" or n == "forcethisnpctoactbusy") then
+                if not self.active then self:Start() end
+                return true
+            end
+            if behavior == "ActBusy" and n == "forcethisnpctoleave" then self:Stop() return true end
+            return false
+        end
+        function ENT:Think()
+            if not self.active then return end
+            for i, npc in ipairs(self.actors or {}) do
+                if IsValid(npc) then
+                    local st = npc:__GetAiGoalStage()
+                    if st ~= self.stages[i] then
+                        self.stages[i] = st
+                        if behavior == "Lead" and st == 4 then
+                            self.Entity:TriggerOutput("OnArrival", npc)
+                            self.Entity:TriggerOutput("OnSuccess", npc)
+                        elseif behavior == "Assault" and st == 4 then
+                            self.Entity:TriggerOutput("OnAssaultEnd", npc)
+                        end
+                    end
+                end
+            end
+        end
+        scripted_ents.Register(ENT, name)
+    end
+
+    -- the rally point per actor (priority order, or random), its assault point chain
+    goal_base("ai_goal_assault", "Assault", function(self, npc, i)
+        local kv = kvs(self.Entity)
+        local rallies = by_name(kv.rallypoint)
+        table.sort(rallies, function(a, b) return num(kvs(a).priority, 0) < num(kvs(b).priority, 0) end)
+        if kv.rallyselectmethod == "1" and #rallies > 0 then
+            local r = rallies[math.random(#rallies)]
+            table.remove(rallies, i) rallies = { r }
+        end
+        local rally = rallies[((i - 1) % math.max(#rallies, 1)) + 1]
+        if not rally then return nil end
+        local rk = kvs(rally)
+        local points, seen, p = {}, {}, by_name(rk.assaultpoint)[1]
+        while p and not seen[p] and #points < 32 do
+            seen[p] = true
+            local pk = kvs(p)
+            points[#points + 1] = {
+                pos = vec(p:GetPos()), tolerance = num(pk.assaulttolerance, 36), timeout = num(pk.assaulttimeout, 0),
+                clear_on_contact = flag(pk.clearoncontact), force_crouch = flag(pk.forcecrouch), urgent = flag(pk.urgent),
+            }
+            p = by_name(pk.nextassaultpoint)[1]
+        end
+        -- AssaultCue: 1 entity input (BeginAssault), 2 gunfire (treated as the input), 3 none
+        return {
+            rally = vec(rally:GetPos()), rally_yaw = rally:GetAngles().y, rally_sequence = rk.rallysequence ~= "" and rk.rallysequence or nil,
+            delay = num(rk.assaultdelay, 0), cue = kv.assaultcue == "3", points = points,
+        }
+    end)
+
+    goal_base("ai_goal_lead", "Lead", function(self)
+        local kv = kvs(self.Entity)
+        local goal = by_name(kv.goal)[1]
+        if not goal then return nil end
+        return {
+            goal = vec(goal:GetPos()), lead_distance = num(kv.leaddistance, 64), retrieve_distance = num(kv.retrievedistance, 128),
+            success_distance = num(kv.successdistance, 32), run = flag(kv.run),
+        }
+    end)
+
+    -- hint nodes of the act-busy type (12), their activity as the busy sequence
+    goal_base("ai_goal_actbusy", "ActBusy", function(self)
+        local kv = kvs(self.Entity)
+        local hints = {}
+        for _, h in ipairs(ents.FindByClass("info_node_hint")) do
+            local hk = kvs(h)
+            if hk.hinttype == nil or hk.hinttype == "12" or hk.hinttype == "" then
+                hints[#hints + 1] = { pos = vec(h:GetPos()), sequence = hk.hintactivity ~= "" and hk.hintactivity or nil }
+            end
+        end
+        return { hints = hints, range = num(kv.busysearchrange, 0), busy_time = num(kv.busytime, 0) }
+    end)
+end
+

@@ -1047,6 +1047,78 @@ pub fn default_disposition(a: u8, b: u8) -> u8 {
     }
 }
 
+/// An `assault_assaultpoint`: where to go, how close counts as there, how long to hold it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssaultPoint {
+    pub pos: glam::Vec3,
+    pub tolerance: f32,
+    pub timeout: f32,
+    pub clear_on_contact: bool,
+    pub force_crouch: bool,
+    pub urgent: bool,
+}
+
+/// `ai_goal_assault`: run to the rally point, wait for the cue (and the rally delay), then
+/// run the assault point chain, holding each until its timeout or contact clears it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssaultGoal {
+    pub rally: glam::Vec3,
+    pub rally_yaw: Option<f32>,
+    pub rally_sequence: Option<String>,
+    pub delay: f32,
+    pub cue: bool,
+    pub points: Vec<AssaultPoint>,
+    pub point: usize,
+    pub stage: u8,
+    pub stage_since: u64,
+}
+
+pub const ASSAULT_TO_RALLY: u8 = 0;
+pub const ASSAULT_AT_RALLY: u8 = 1;
+pub const ASSAULT_TO_POINT: u8 = 2;
+pub const ASSAULT_AT_POINT: u8 = 3;
+pub const ASSAULT_DONE: u8 = 4;
+
+/// `ai_goal_lead`: walk the player to the goal, waiting when they fall more than the lead
+/// distance behind and going back for them past the retrieve distance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeadGoal {
+    pub goal: glam::Vec3,
+    pub lead_distance: f32,
+    pub retrieve_distance: f32,
+    pub success_distance: f32,
+    pub run: bool,
+    pub waiting: bool,
+    pub done: bool,
+}
+
+/// An `info_node_hint` an ActBusy goal may use: where to stand and what to play there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActBusyHint {
+    pub pos: glam::Vec3,
+    pub sequence: Option<String>,
+}
+
+/// `ai_goal_actbusy`: walk to the nearest hint in range, play its busy sequence for the busy
+/// time, pick another.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActBusyGoal {
+    pub hints: Vec<ActBusyHint>,
+    pub range: f32,
+    pub busy_ticks: u64,
+    pub current: Option<usize>,
+    pub stage: u8,
+    pub stage_since: u64,
+    pub next_search: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum NpcGoal {
+    Assault(AssaultGoal),
+    Lead(LeadGoal),
+    ActBusy(ActBusyGoal),
+}
+
 /// Per-NPC brain state surfaced to scripts.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AiState {
@@ -1063,6 +1135,8 @@ pub struct AiState {
     pub proficiency: u8,
     pub expression: String,
     pub behavior: Option<String>,
+    /// The goal the behaviour works on (`ai_goal_assault` / `ai_goal_lead` / `ai_goal_actbusy`).
+    pub goal: Option<NpcGoal>,
     pub unforgettable: bool,
     pub max_route_rebuild: f32,
     pub move_delay: f32,

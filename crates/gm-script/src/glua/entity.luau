@@ -790,6 +790,7 @@ end
 local spawn_seq = 0
 local pending_by_tag = {}
 function ents.Create(class)
+    if scripted_ents and scripted_ents.__ensure_ai_goal then scripted_ents.__ensure_ai_goal(class) end
     spawn_seq += 1
     local tag = "glua:" .. tostring(game and game.tick and game.tick() or 0) .. ":" .. spawn_seq
     local e = setmetatable({ __id = 0, __vars = {}, __class_meta = class_meta(class), __tables = {}, __pending = { class = class, tag = tag } }, ENT)
@@ -2750,6 +2751,9 @@ function NPC:UseFollowBehavior() use_behavior(self, "Follow") end
 function NPC:UseFuncTankBehavior() use_behavior(self, "FuncTank") end
 function NPC:UseLeadBehavior() use_behavior(self, "Lead") end
 function NPC:UseNoBehavior() use_behavior(self, nil) end
+-- the ai_goal_* logic entities (scripted.luau) hand the server a goal for the behaviour
+function NPC:__SetAiGoal(goal) qwrite("npc_ai_goal", self.__id, { json = util.TableToJSON(goal) }) end
+function NPC:__GetAiGoalStage() return ai_snap(self).npc_ai_goal_stage end
 function NPC:CapabilitiesAdd(c) qwrite("npc_caps", self.__id, { caps = bit.bor(self:CapabilitiesGet(), c or 0) }) end
 function NPC:CapabilitiesRemove(c) qwrite("npc_caps", self.__id, { caps = bit.band(self:CapabilitiesGet(), bit.bnot(c or 0)) }) end
 function NPC:CapabilitiesClear() qwrite("npc_caps", self.__id, { caps = 0 }) end

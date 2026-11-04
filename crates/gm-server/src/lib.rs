@@ -4873,6 +4873,14 @@ impl<'w> Server<'w> {
             }
             return;
         }
+        if self
+            .npcs
+            .get(&id)
+            .is_some_and(|n| !n.ai.scripted && n.ai.goal.is_some())
+            && self.ai_goal_step(id, now, target)
+        {
+            return;
+        }
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
@@ -5268,6 +5276,384 @@ impl<'w> Server<'w> {
             None => false,
         }
     }
+    /// `ai_goal_*` for an NPC (JSON from the goal entity): "assault" / "lead" / "actbusy" set
+    /// the goal (and the behaviour when none is chosen), "begin" is the assault cue, "clear"
+    /// drops it.
+    pub fn npc_set_goal(&mut self, id: u32, json: &str) -> bool {
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct PointWire {
+            pos: [f32; 3],
+            tolerance: f32,
+            timeout: f32,
+            clear_on_contact: bool,
+            force_crouch: bool,
+            urgent: bool,
+        }
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct HintWire {
+            pos: [f32; 3],
+            sequence: Option<String>,
+        }
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct GoalWire {
+            kind: String,
+            rally: Option<[f32; 3]>,
+            rally_yaw: Option<f32>,
+            rally_sequence: Option<String>,
+            delay: f32,
+            cue: Option<bool>,
+            points: Vec<PointWire>,
+            goal: Option<[f32; 3]>,
+            lead_distance: Option<f32>,
+            retrieve_distance: Option<f32>,
+            success_distance: Option<f32>,
+            run: bool,
+            hints: Vec<HintWire>,
+            range: f32,
+            busy_time: Option<f32>,
+        }
+        let Ok(w) = serde_json::from_str::<GoalWire>(json) else {
+            return false;
+        };
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        let v3 = |a: [f32; 3]| Vec3::new(a[0], a[1], a[2]);
+        let (goal, behavior) = match w.kind.as_str() {
+            "clear" => {
+                n.ai.goal = None;
+                n.ideal_yaw = None;
+                n.force_crouch = None;
+                return true;
+            }
+            "begin" => {
+                if let Some(ai::NpcGoal::Assault(g)) = n.ai.goal.as_mut() {
+                    g.cue = true;
+                    return true;
+                }
+                return false;
+            }
+            "assault" => (
+                ai::NpcGoal::Assault(ai::AssaultGoal {
+                    rally: w.rally.map(v3).unwrap_or(n.pos),
+                    rally_yaw: w.rally_yaw,
+                    rally_sequence: w.rally_sequence,
+                    delay: w.delay,
+                    cue: w.cue.unwrap_or(true),
+                    points: w
+                        .points
+                        .into_iter()
+                        .map(|p| ai::AssaultPoint {
+                            pos: v3(p.pos),
+                            tolerance: if p.tolerance > 0.0 {
+                                p.tolerance
+                            } else {
+                                NPC_GOAL_ARRIVE
+                            },
+                            timeout: p.timeout,
+                            clear_on_contact: p.clear_on_contact,
+                            force_crouch: p.force_crouch,
+                            urgent: p.urgent,
+                        })
+                        .collect(),
+                    point: 0,
+                    stage: ai::ASSAULT_TO_RALLY,
+                    stage_since: 0,
+                }),
+                "Assault",
+            ),
+            "lead" => (
+                ai::NpcGoal::Lead(ai::LeadGoal {
+                    goal: w.goal.map(v3).unwrap_or(n.pos),
+                    lead_distance: w
+                        .lead_distance
+                        .filter(|d| *d > 0.0)
+                        .unwrap_or(NPC_LEAD_DISTANCE),
+                    retrieve_distance: w
+                        .retrieve_distance
+                        .filter(|d| *d > 0.0)
+                        .unwrap_or(NPC_RETRIEVE_DISTANCE),
+                    success_distance: w
+                        .success_distance
+                        .filter(|d| *d > 0.0)
+                        .unwrap_or(NPC_LEAD_SUCCESS),
+                    run: w.run,
+                    waiting: false,
+                    done: false,
+                }),
+                "Lead",
+            ),
+            "actbusy" => (
+                ai::NpcGoal::ActBusy(ai::ActBusyGoal {
+                    hints: w
+                        .hints
+                        .into_iter()
+                        .map(|h| ai::ActBusyHint {
+                            pos: v3(h.pos),
+                            sequence: h.sequence,
+                        })
+                        .collect(),
+                    range: w.range,
+                    busy_ticks: w
+                        .busy_time
+                        .filter(|t| *t > 0.0)
+                        .map_or(NPC_ACTBUSY_TICKS, |t| (t * 66.0) as u64),
+                    current: None,
+                    stage: 0,
+                    stage_since: 0,
+                    next_search: 0,
+                }),
+                "ActBusy",
+            ),
+            _ => return false,
+        };
+        n.ai.goal = Some(goal);
+        if n.ai.behavior.is_none() {
+            n.ai.behavior = Some(behavior.to_string());
+        }
+        true
+    }
+
+    /// Where the goal stands for scripts: the assault stage, 0 / 1 (waiting) / 4 (done) for a
+    /// lead, the act-busy stage.
+    pub fn npc_goal_stage(&self, id: u32) -> Option<u8> {
+        match self.npcs.get(&id)?.ai.goal.as_ref()? {
+            ai::NpcGoal::Assault(g) => Some(g.stage),
+            ai::NpcGoal::Lead(g) => Some(if g.done {
+                ai::ASSAULT_DONE
+            } else {
+                g.waiting as u8
+            }),
+            ai::NpcGoal::ActBusy(g) => Some(g.stage),
+        }
+    }
+
+    /// The Assault / Lead / ActBusy behaviours: drive the body through the goal and mirror the
+    /// schedule; true while the goal owns the NPC this think.
+    fn ai_goal_step(&mut self, id: u32, now: u64, target: Option<u32>) -> bool {
+        let Some(n) = self.npcs.get(&id) else {
+            return false;
+        };
+        let Some(goal) = n.ai.goal.clone() else {
+            return false;
+        };
+        let behavior = n.ai.behavior.clone();
+        let pos = n.pos;
+        let moving = n.goal.is_some();
+        let chase = n.chase;
+        let dist = move |p: Vec3| pos.truncate().distance(p.truncate());
+        let (goal, state, sched) = match (behavior.as_deref(), goal) {
+            (Some("Assault"), ai::NpcGoal::Assault(mut g)) => {
+                let urgent = g.points.get(g.point).is_some_and(|p| p.urgent);
+                let mut sched = ai::SCHED_IDLE_STAND;
+                match g.stage {
+                    ai::ASSAULT_TO_RALLY | ai::ASSAULT_TO_POINT if target.is_some() && !urgent => {
+                        return false;
+                    }
+                    ai::ASSAULT_TO_RALLY => {
+                        if dist(g.rally) <= NPC_GOAL_ARRIVE {
+                            self.npc_stop(id);
+                            if let Some(n) = self.npcs.get_mut(&id) {
+                                n.ideal_yaw = g.rally_yaw;
+                            }
+                            if let Some(seq) = g.rally_sequence.clone() {
+                                self.set_sequence(id, &seq);
+                            }
+                            g.stage = ai::ASSAULT_AT_RALLY;
+                            g.stage_since = now;
+                        } else {
+                            if !moving {
+                                self.npc_goto(id, g.rally, true);
+                            }
+                            sched = ai::SCHED_FORCED_GO_RUN;
+                        }
+                    }
+                    ai::ASSAULT_AT_RALLY => {
+                        if g.cue && now >= g.stage_since + (g.delay * 66.0) as u64 {
+                            g.stage = if g.points.is_empty() {
+                                ai::ASSAULT_DONE
+                            } else {
+                                ai::ASSAULT_TO_POINT
+                            };
+                            g.stage_since = now;
+                            if let Some(n) = self.npcs.get_mut(&id) {
+                                n.ideal_yaw = None;
+                            }
+                        }
+                    }
+                    ai::ASSAULT_TO_POINT => {
+                        let p = g.points[g.point.min(g.points.len() - 1)].clone();
+                        if dist(p.pos) <= p.tolerance {
+                            self.npc_stop(id);
+                            if let Some(n) = self.npcs.get_mut(&id) {
+                                n.force_crouch = p.force_crouch.then_some(true);
+                            }
+                            g.stage = ai::ASSAULT_AT_POINT;
+                            g.stage_since = now;
+                        } else {
+                            if !moving {
+                                self.npc_goto(id, p.pos, true);
+                            }
+                            sched = ai::SCHED_FORCED_GO_RUN;
+                        }
+                    }
+                    ai::ASSAULT_AT_POINT => {
+                        let p = g.points[g.point.min(g.points.len() - 1)].clone();
+                        let timed_out =
+                            p.timeout > 0.0 && now >= g.stage_since + (p.timeout * 66.0) as u64;
+                        if timed_out || (p.clear_on_contact && target.is_some()) {
+                            if let Some(n) = self.npcs.get_mut(&id) {
+                                n.force_crouch = None;
+                            }
+                            g.point += 1;
+                            g.stage = if g.point >= g.points.len() {
+                                ai::ASSAULT_DONE
+                            } else {
+                                ai::ASSAULT_TO_POINT
+                            };
+                            g.stage_since = now;
+                        } else if target.is_some() {
+                            // holding the point in contact: the body fights from it
+                            if let Some(n) = self.npcs.get_mut(&id) {
+                                n.ai.goal = Some(ai::NpcGoal::Assault(g));
+                            }
+                            return false;
+                        }
+                    }
+                    _ => {
+                        return false;
+                    }
+                }
+                (ai::NpcGoal::Assault(g), ai::NPC_STATE_ALERT, sched)
+            }
+            (Some("Lead"), ai::NpcGoal::Lead(mut g)) => {
+                if g.done {
+                    return false;
+                }
+                let player = target
+                    .filter(|p| self.players.get(p).is_some_and(|pl| pl.alive))
+                    .or_else(|| {
+                        self.players
+                            .iter()
+                            .filter(|(_, pl)| pl.alive)
+                            .min_by(|x, y| {
+                                dist(x.1.state.origin)
+                                    .total_cmp(&dist(y.1.state.origin))
+                                    .then(x.0.cmp(y.0))
+                            })
+                            .map(|(i, _)| *i)
+                    });
+                let Some(p) = player else {
+                    return false;
+                };
+                let ppos = self.players[&p].state.origin;
+                let (d_player, d_goal) = (dist(ppos), dist(g.goal));
+                let sched;
+                if d_goal <= g.success_distance && d_player <= g.retrieve_distance {
+                    self.npc_stop(id);
+                    g.done = true;
+                    sched = ai::SCHED_IDLE_STAND;
+                } else if d_player > g.retrieve_distance {
+                    // the player fell too far behind: go back for them
+                    if chase != Some(p) {
+                        self.npc_chase(id, p, true);
+                    }
+                    g.waiting = false;
+                    sched = ai::SCHED_TARGET_CHASE;
+                } else if d_player > g.lead_distance {
+                    if moving {
+                        self.npc_stop(id);
+                    }
+                    let to = ppos - pos;
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.ideal_yaw = Some(to.y.atan2(to.x).to_degrees());
+                    }
+                    g.waiting = true;
+                    sched = ai::SCHED_TARGET_FACE;
+                } else {
+                    if !moving || g.waiting || chase.is_some() {
+                        if let Some(n) = self.npcs.get_mut(&id) {
+                            n.ideal_yaw = None;
+                        }
+                        self.npc_goto(id, g.goal, g.run);
+                    }
+                    g.waiting = false;
+                    sched = if g.run {
+                        ai::SCHED_FORCED_GO_RUN
+                    } else {
+                        ai::SCHED_FORCED_GO
+                    };
+                }
+                (ai::NpcGoal::Lead(g), ai::NPC_STATE_ALERT, sched)
+            }
+            (Some("ActBusy"), ai::NpcGoal::ActBusy(mut g)) => {
+                if target.is_some() || g.hints.is_empty() {
+                    return false;
+                }
+                let mut sched = ai::SCHED_IDLE_STAND;
+                match g.stage {
+                    0 => {
+                        if now >= g.next_search {
+                            let pick = g
+                                .hints
+                                .iter()
+                                .enumerate()
+                                .filter(|(i, h)| {
+                                    (g.hints.len() == 1 || Some(*i) != g.current)
+                                        && (g.range <= 0.0 || dist(h.pos) <= g.range)
+                                })
+                                .min_by(|a, b| dist(a.1.pos).total_cmp(&dist(b.1.pos)))
+                                .map(|(i, _)| i);
+                            match pick {
+                                Some(i) => {
+                                    g.current = Some(i);
+                                    g.stage = 1;
+                                    g.stage_since = now;
+                                    self.npc_goto(id, g.hints[i].pos, false);
+                                    sched = ai::SCHED_FORCED_GO;
+                                }
+                                None => g.next_search = now + NPC_ACTBUSY_SEARCH_TICKS,
+                            }
+                        }
+                    }
+                    1 => {
+                        let h = g.hints[g.current.unwrap_or(0).min(g.hints.len() - 1)].clone();
+                        if dist(h.pos) <= NPC_GOAL_ARRIVE || !moving {
+                            self.npc_stop(id);
+                            if let Some(seq) = h.sequence.clone() {
+                                self.set_sequence(id, &seq);
+                            }
+                            g.stage = 2;
+                            g.stage_since = now;
+                        } else {
+                            sched = ai::SCHED_FORCED_GO;
+                        }
+                    }
+                    _ => {
+                        if now >= g.stage_since + g.busy_ticks {
+                            g.stage = 0;
+                            g.next_search = now + NPC_ACTBUSY_SEARCH_TICKS;
+                        }
+                    }
+                }
+                (ai::NpcGoal::ActBusy(g), ai::NPC_STATE_IDLE, sched)
+            }
+            _ => return false,
+        };
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        n.ai.goal = Some(goal);
+        n.ai.state = state;
+        if n.ai.schedule != Some(sched) {
+            n.ai.start(sched, now);
+        }
+        true
+    }
+
     pub fn npc_set_misc(
         &mut self,
         id: u32,
@@ -18632,3 +19018,12 @@ pub const NPC_DETOUR_MARGIN: f32 = 4.0;
 pub const NPC_DETOUR_REACH: f32 = 12.0;
 pub const NPC_DETOUR_TICKS: u64 = 200;
 pub const NPC_DETOUR_FALLBACK_RADIUS: f32 = 24.0;
+/// `ai_goal_*` defaults: how close counts as reaching a rally / assault point or a hint
+/// (`assaulttolerance` 36), the lead behaviour's lead / retrieve / success distances
+/// (`ai_goal_lead` 64 / 128 / 32), and the act-busy search period and default busy time.
+pub const NPC_GOAL_ARRIVE: f32 = 36.0;
+pub const NPC_LEAD_DISTANCE: f32 = 64.0;
+pub const NPC_RETRIEVE_DISTANCE: f32 = 128.0;
+pub const NPC_LEAD_SUCCESS: f32 = 32.0;
+pub const NPC_ACTBUSY_SEARCH_TICKS: u64 = 66;
+pub const NPC_ACTBUSY_TICKS: u64 = 660;

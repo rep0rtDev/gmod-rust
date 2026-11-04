@@ -155,19 +155,72 @@ pub enum QueuedWrite {
         ent: u32,
         dist: f32,
     },
-    NpcAiSchedule { ent: u32, sched: Option<u16> },
-    NpcAiCaps { ent: u32, caps: u32 },
-    NpcAiCondition { ent: u32, cond: u8, on: bool },
-    NpcAiIgnoreConds { ent: u32, conds: Vec<u8>, clear: bool },
-    NpcAiTaskStatus { ent: u32, status: u8 },
-    NpcAiTaskFail { ent: u32 },
-    NpcAiState { ent: u32, state: u8 },
-    NpcAiProficiency { ent: u32, level: u8 },
-    NpcAiSquad { ent: u32, name: Option<String> },
-    NpcAiSavePos { ent: u32, pos: Vec3 },
-    NpcAiMisc { ent: u32, expression: Option<String>, behavior: Option<Option<String>>, unforgettable: Option<bool>, route_rebuild: Option<f32>, move_delay: Option<f32>, npc_class: Option<u8> },
-    NpcAiRelationship { ent: u32, other: Option<u32>, class: Option<String>, disp: u8, prio: i32 },
-    NpcAiHear { pos: Vec3, radius: f32, cond: u8 },
+    NpcAiSchedule {
+        ent: u32,
+        sched: Option<u16>,
+    },
+    NpcAiCaps {
+        ent: u32,
+        caps: u32,
+    },
+    NpcAiCondition {
+        ent: u32,
+        cond: u8,
+        on: bool,
+    },
+    NpcAiIgnoreConds {
+        ent: u32,
+        conds: Vec<u8>,
+        clear: bool,
+    },
+    NpcAiTaskStatus {
+        ent: u32,
+        status: u8,
+    },
+    NpcAiTaskFail {
+        ent: u32,
+    },
+    NpcAiState {
+        ent: u32,
+        state: u8,
+    },
+    NpcAiProficiency {
+        ent: u32,
+        level: u8,
+    },
+    NpcAiSquad {
+        ent: u32,
+        name: Option<String>,
+    },
+    NpcAiSavePos {
+        ent: u32,
+        pos: Vec3,
+    },
+    NpcAiMisc {
+        ent: u32,
+        expression: Option<String>,
+        behavior: Option<Option<String>>,
+        unforgettable: Option<bool>,
+        route_rebuild: Option<f32>,
+        move_delay: Option<f32>,
+        npc_class: Option<u8>,
+    },
+    NpcAiGoal {
+        ent: u32,
+        json: String,
+    },
+    NpcAiRelationship {
+        ent: u32,
+        other: Option<u32>,
+        class: Option<String>,
+        disp: u8,
+        prio: i32,
+    },
+    NpcAiHear {
+        pos: Vec3,
+        radius: f32,
+        cond: u8,
+    },
     NpcTarget {
         ent: u32,
         player: Option<u32>,
@@ -1215,9 +1268,12 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("npc_ai_proficiency", e.npc_ai_proficiency)?;
     t.set("npc_ai_expression", e.npc_ai_expression.clone())?;
     t.set("npc_ai_behavior", e.npc_ai_behavior.clone())?;
+    t.set("npc_ai_goal_stage", e.npc_ai_goal_stage)?;
     t.set("npc_ai_fail_schedule", e.npc_ai_fail_schedule)?;
     t.set("npc_ai_unforgettable", e.npc_ai_unforgettable)?;
-    if let Some(p) = e.npc_ai_save_position { t.set("npc_ai_save_position", vec3_table(lua, p)?)?; }
+    if let Some(p) = e.npc_ai_save_position {
+        t.set("npc_ai_save_position", vec3_table(lua, p)?)?;
+    }
     t.set("npc_stuck", e.npc_stuck)?;
     t.set("npc_chase_reach", e.npc_chase_reach)?;
     t.set("npc_max_yaw", e.npc_max_yaw)?;
@@ -1987,19 +2043,134 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         dist: t.get::<Option<f32>>("dist")?.unwrap_or(0.0),
                     }
                 }
-                "npc_caps" => { let Value::Table(t) = &arg else { return Err(mlua::Error::runtime("npc_caps needs a table")) }; QueuedWrite::NpcAiCaps { ent, caps: t.get::<u32>("caps")? } }
-                "npc_ai_schedule" => QueuedWrite::NpcAiSchedule { ent, sched: match &arg { Value::Table(t) => t.get::<Option<u16>>("sched")?, Value::Integer(i) => Some(*i as u16), _ => None } },
-                "npc_ai_condition" => { let Value::Table(t) = &arg else { return Err(mlua::Error::runtime("npc_ai_condition needs a table")) }; QueuedWrite::NpcAiCondition { ent, cond: t.get::<u8>("cond")?, on: t.get::<Option<bool>>("on")?.unwrap_or(true) } }
-                "npc_ai_ignore_conds" => { let Value::Table(t) = &arg else { return Err(mlua::Error::runtime("npc_ai_ignore_conds needs a table")) }; QueuedWrite::NpcAiIgnoreConds { ent, conds: t.get::<Vec<u8>>("conds")?, clear: t.get::<Option<bool>>("clear")?.unwrap_or(false) } }
-                "npc_ai_task_status" => QueuedWrite::NpcAiTaskStatus { ent, status: match &arg { Value::Integer(i) => *i as u8, Value::Table(t) => t.get::<u8>("status")?, _ => 0 } },
+                "npc_caps" => {
+                    let Value::Table(t) = &arg else {
+                        return Err(mlua::Error::runtime("npc_caps needs a table"));
+                    };
+                    QueuedWrite::NpcAiCaps {
+                        ent,
+                        caps: t.get::<u32>("caps")?,
+                    }
+                }
+                "npc_ai_schedule" => QueuedWrite::NpcAiSchedule {
+                    ent,
+                    sched: match &arg {
+                        Value::Table(t) => t.get::<Option<u16>>("sched")?,
+                        Value::Integer(i) => Some(*i as u16),
+                        _ => None,
+                    },
+                },
+                "npc_ai_condition" => {
+                    let Value::Table(t) = &arg else {
+                        return Err(mlua::Error::runtime("npc_ai_condition needs a table"));
+                    };
+                    QueuedWrite::NpcAiCondition {
+                        ent,
+                        cond: t.get::<u8>("cond")?,
+                        on: t.get::<Option<bool>>("on")?.unwrap_or(true),
+                    }
+                }
+                "npc_ai_ignore_conds" => {
+                    let Value::Table(t) = &arg else {
+                        return Err(mlua::Error::runtime("npc_ai_ignore_conds needs a table"));
+                    };
+                    QueuedWrite::NpcAiIgnoreConds {
+                        ent,
+                        conds: t.get::<Vec<u8>>("conds")?,
+                        clear: t.get::<Option<bool>>("clear")?.unwrap_or(false),
+                    }
+                }
+                "npc_ai_task_status" => QueuedWrite::NpcAiTaskStatus {
+                    ent,
+                    status: match &arg {
+                        Value::Integer(i) => *i as u8,
+                        Value::Table(t) => t.get::<u8>("status")?,
+                        _ => 0,
+                    },
+                },
                 "npc_ai_task_fail" => QueuedWrite::NpcAiTaskFail { ent },
-                "npc_ai_state" => QueuedWrite::NpcAiState { ent, state: match &arg { Value::Integer(i) => *i as u8, Value::Table(t) => t.get::<u8>("state")?, _ => 0 } },
-                "npc_ai_proficiency" => QueuedWrite::NpcAiProficiency { ent, level: match &arg { Value::Integer(i) => *i as u8, Value::Table(t) => t.get::<u8>("level")?, _ => 0 } },
-                "npc_ai_squad" => QueuedWrite::NpcAiSquad { ent, name: match &arg { Value::String(s) => Some(s.to_str()?.to_string()), Value::Table(t) => t.get::<Option<String>>("name")?, _ => None } },
-                "npc_ai_save_pos" => { let Value::Table(t) = &arg else { return Err(mlua::Error::runtime("npc_ai_save_pos needs a table")) }; QueuedWrite::NpcAiSavePos { ent, pos: Vec3::new(t.get("x")?, t.get("y")?, t.get("z")?) } }
-                "npc_ai_misc" => { let Value::Table(t) = &arg else { return Err(mlua::Error::runtime("npc_ai_misc needs a table")) }; QueuedWrite::NpcAiMisc { ent, expression: t.get::<Option<String>>("expression")?, behavior: if t.contains_key("behavior_set")? { Some(t.get::<Option<String>>("behavior")?) } else { None }, unforgettable: t.get::<Option<bool>>("unforgettable")?, route_rebuild: t.get::<Option<f32>>("route_rebuild")?, move_delay: t.get::<Option<f32>>("move_delay")?, npc_class: t.get::<Option<u8>>("npc_class")? } }
-                "npc_ai_relationship" => { let Value::Table(t) = &arg else { return Err(mlua::Error::runtime("npc_ai_relationship needs a table")) }; QueuedWrite::NpcAiRelationship { ent, other: t.get::<Option<u32>>("other")?, class: t.get::<Option<String>>("class")?, disp: t.get::<u8>("disp")?, prio: t.get::<Option<i32>>("prio")?.unwrap_or(0) } }
-                "npc_ai_hear" => { let Value::Table(t) = &arg else { return Err(mlua::Error::runtime("npc_ai_hear needs a table")) }; QueuedWrite::NpcAiHear { pos: Vec3::new(t.get("x")?, t.get("y")?, t.get("z")?), radius: t.get::<Option<f32>>("radius")?.unwrap_or(1024.0), cond: t.get::<u8>("cond")? } }
+                "npc_ai_state" => QueuedWrite::NpcAiState {
+                    ent,
+                    state: match &arg {
+                        Value::Integer(i) => *i as u8,
+                        Value::Table(t) => t.get::<u8>("state")?,
+                        _ => 0,
+                    },
+                },
+                "npc_ai_proficiency" => QueuedWrite::NpcAiProficiency {
+                    ent,
+                    level: match &arg {
+                        Value::Integer(i) => *i as u8,
+                        Value::Table(t) => t.get::<u8>("level")?,
+                        _ => 0,
+                    },
+                },
+                "npc_ai_squad" => QueuedWrite::NpcAiSquad {
+                    ent,
+                    name: match &arg {
+                        Value::String(s) => Some(s.to_str()?.to_string()),
+                        Value::Table(t) => t.get::<Option<String>>("name")?,
+                        _ => None,
+                    },
+                },
+                "npc_ai_save_pos" => {
+                    let Value::Table(t) = &arg else {
+                        return Err(mlua::Error::runtime("npc_ai_save_pos needs a table"));
+                    };
+                    QueuedWrite::NpcAiSavePos {
+                        ent,
+                        pos: Vec3::new(t.get("x")?, t.get("y")?, t.get("z")?),
+                    }
+                }
+                "npc_ai_goal" => {
+                    let Value::Table(t) = &arg else {
+                        return Err(mlua::Error::runtime("npc_ai_goal needs a table"));
+                    };
+                    QueuedWrite::NpcAiGoal {
+                        ent,
+                        json: t.get::<String>("json")?,
+                    }
+                }
+                "npc_ai_misc" => {
+                    let Value::Table(t) = &arg else {
+                        return Err(mlua::Error::runtime("npc_ai_misc needs a table"));
+                    };
+                    QueuedWrite::NpcAiMisc {
+                        ent,
+                        expression: t.get::<Option<String>>("expression")?,
+                        behavior: if t.contains_key("behavior_set")? {
+                            Some(t.get::<Option<String>>("behavior")?)
+                        } else {
+                            None
+                        },
+                        unforgettable: t.get::<Option<bool>>("unforgettable")?,
+                        route_rebuild: t.get::<Option<f32>>("route_rebuild")?,
+                        move_delay: t.get::<Option<f32>>("move_delay")?,
+                        npc_class: t.get::<Option<u8>>("npc_class")?,
+                    }
+                }
+                "npc_ai_relationship" => {
+                    let Value::Table(t) = &arg else {
+                        return Err(mlua::Error::runtime("npc_ai_relationship needs a table"));
+                    };
+                    QueuedWrite::NpcAiRelationship {
+                        ent,
+                        other: t.get::<Option<u32>>("other")?,
+                        class: t.get::<Option<String>>("class")?,
+                        disp: t.get::<u8>("disp")?,
+                        prio: t.get::<Option<i32>>("prio")?.unwrap_or(0),
+                    }
+                }
+                "npc_ai_hear" => {
+                    let Value::Table(t) = &arg else {
+                        return Err(mlua::Error::runtime("npc_ai_hear needs a table"));
+                    };
+                    QueuedWrite::NpcAiHear {
+                        pos: Vec3::new(t.get("x")?, t.get("y")?, t.get("z")?),
+                        radius: t.get::<Option<f32>>("radius")?.unwrap_or(1024.0),
+                        cond: t.get::<u8>("cond")?,
+                    }
+                }
                 "npc_target" => QueuedWrite::NpcTarget {
                     ent,
                     player: match &arg {
@@ -3232,7 +3403,13 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
     lua.globals().set(
         "__http",
         lua.create_function(
-            |lua, (method, url, body, headers): (String, String, Option<mlua::LuaString>, Option<Table>)| {
+            |lua,
+             (method, url, body, headers): (
+                String,
+                String,
+                Option<mlua::LuaString>,
+                Option<Table>,
+            )| {
                 let mut hs = Vec::new();
                 if let Some(h) = headers {
                     for pair in h.pairs::<String, String>() {
@@ -3247,9 +3424,17 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         for (k, v) in rh {
                             ht.set(k, v)?;
                         }
-                        Ok((Value::Integer(status as i64), Value::String(lua.create_string(&out)?), Value::Table(ht)))
+                        Ok((
+                            Value::Integer(status as i64),
+                            Value::String(lua.create_string(&out)?),
+                            Value::Table(ht),
+                        ))
                     }
-                    Err(e) => Ok((Value::Nil, Value::String(lua.create_string(e.to_string())?), Value::Nil)),
+                    Err(e) => Ok((
+                        Value::Nil,
+                        Value::String(lua.create_string(e.to_string())?),
+                        Value::Nil,
+                    )),
                 }
             },
         )?,
@@ -4173,16 +4358,44 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::NpcAiSchedule { ent, sched } => server.npc_set_schedule(*ent, *sched),
         QueuedWrite::NpcAiCaps { ent, caps } => server.npc_set_caps(*ent, *caps),
         QueuedWrite::NpcAiCondition { ent, cond, on } => server.npc_set_condition(*ent, *cond, *on),
-        QueuedWrite::NpcAiIgnoreConds { ent, conds, clear } => server.npc_set_ignore_conditions(*ent, conds, *clear),
+        QueuedWrite::NpcAiIgnoreConds { ent, conds, clear } => {
+            server.npc_set_ignore_conditions(*ent, conds, *clear)
+        }
         QueuedWrite::NpcAiTaskStatus { ent, status } => server.npc_task_status(*ent, *status),
         QueuedWrite::NpcAiTaskFail { ent } => server.npc_task_fail(*ent),
         QueuedWrite::NpcAiState { ent, state } => server.npc_set_state(*ent, *state),
         QueuedWrite::NpcAiProficiency { ent, level } => server.npc_set_proficiency(*ent, *level),
         QueuedWrite::NpcAiSquad { ent, name } => server.npc_set_squad(*ent, name.as_deref()),
         QueuedWrite::NpcAiSavePos { ent, pos } => server.npc_set_save_position(*ent, *pos),
-        QueuedWrite::NpcAiMisc { ent, expression, behavior, unforgettable, route_rebuild, move_delay, npc_class } => server.npc_set_misc(*ent, expression.clone(), behavior.clone(), *unforgettable, *route_rebuild, *move_delay, *npc_class),
-        QueuedWrite::NpcAiRelationship { ent, other, class, disp, prio } => server.npc_add_relationship(*ent, *other, class.as_deref(), *disp, *prio),
-        QueuedWrite::NpcAiHear { pos, radius, cond } => { server.npc_hear(*pos, *radius, *cond, None); true }
+        QueuedWrite::NpcAiGoal { ent, json } => server.npc_set_goal(*ent, json),
+        QueuedWrite::NpcAiMisc {
+            ent,
+            expression,
+            behavior,
+            unforgettable,
+            route_rebuild,
+            move_delay,
+            npc_class,
+        } => server.npc_set_misc(
+            *ent,
+            expression.clone(),
+            behavior.clone(),
+            *unforgettable,
+            *route_rebuild,
+            *move_delay,
+            *npc_class,
+        ),
+        QueuedWrite::NpcAiRelationship {
+            ent,
+            other,
+            class,
+            disp,
+            prio,
+        } => server.npc_add_relationship(*ent, *other, class.as_deref(), *disp, *prio),
+        QueuedWrite::NpcAiHear { pos, radius, cond } => {
+            server.npc_hear(*pos, *radius, *cond, None);
+            true
+        }
         QueuedWrite::NpcTarget { ent, player } => server.npc_target(*ent, *player),
         QueuedWrite::NpcStop { ent } => {
             if !server.npcs.contains_key(ent) {

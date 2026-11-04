@@ -55,7 +55,21 @@ fn snapshot() -> Arc<Snapshot> {
             weapon: "weapon_smg1".into(),
             blood: 0,
             npc_target_seen: 200,
-            npc_target_first_seen: 0, npc_ai_state: 0, npc_ai_schedule: None, npc_ai_task: None, npc_ai_task_status: 0, npc_ai_scripted: false, npc_ai_conditions: Vec::new(), npc_ai_squad: None, npc_ai_proficiency: 0, npc_ai_expression: String::new(), npc_ai_behavior: None, npc_ai_save_position: None, npc_ai_fail_schedule: None, npc_ai_unforgettable: false,
+            npc_target_first_seen: 0,
+            npc_ai_state: 0,
+            npc_ai_schedule: None,
+            npc_ai_task: None,
+            npc_ai_task_status: 0,
+            npc_ai_scripted: false,
+            npc_ai_conditions: Vec::new(),
+            npc_ai_squad: None,
+            npc_ai_proficiency: 0,
+            npc_ai_expression: String::new(),
+            npc_ai_behavior: None,
+            npc_ai_goal_stage: None,
+            npc_ai_save_position: None,
+            npc_ai_fail_schedule: None,
+            npc_ai_unforgettable: false,
             npc_stuck: 0,
             npc_chase_reach: 0.0,
             npc_max_yaw: 0.0,
@@ -124,7 +138,21 @@ fn snapshot() -> Arc<Snapshot> {
             weapon: "weapon_smg1".into(),
             blood: 0,
             npc_target_seen: 200,
-            npc_target_first_seen: 0, npc_ai_state: 0, npc_ai_schedule: None, npc_ai_task: None, npc_ai_task_status: 0, npc_ai_scripted: false, npc_ai_conditions: Vec::new(), npc_ai_squad: None, npc_ai_proficiency: 0, npc_ai_expression: String::new(), npc_ai_behavior: None, npc_ai_save_position: None, npc_ai_fail_schedule: None, npc_ai_unforgettable: false,
+            npc_target_first_seen: 0,
+            npc_ai_state: 0,
+            npc_ai_schedule: None,
+            npc_ai_task: None,
+            npc_ai_task_status: 0,
+            npc_ai_scripted: false,
+            npc_ai_conditions: Vec::new(),
+            npc_ai_squad: None,
+            npc_ai_proficiency: 0,
+            npc_ai_expression: String::new(),
+            npc_ai_behavior: None,
+            npc_ai_goal_stage: None,
+            npc_ai_save_position: None,
+            npc_ai_fail_schedule: None,
+            npc_ai_unforgettable: false,
             npc_stuck: 0,
             npc_chase_reach: 0.0,
             npc_max_yaw: 0.0,
@@ -2619,7 +2647,9 @@ fn npc_relationship_write_and_disposition() {
     // one relationship row per call; a player row is the "player" class row
     assert_eq!(text.matches("NpcAiRelationship").count(), 3, "{text}");
     assert!(
-        text.contains("NpcAiRelationship { ent: 5, other: None, class: Some(\"player\"), disp: 1, prio: 99 }"),
+        text.contains(
+            "NpcAiRelationship { ent: 5, other: None, class: Some(\"player\"), disp: 1, prio: 99 }"
+        ),
         "{text}"
     );
     assert!(
@@ -2627,7 +2657,9 @@ fn npc_relationship_write_and_disposition() {
         "{text}"
     );
     assert!(
-        text.contains("NpcAiRelationship { ent: 5, other: None, class: Some(\"player\"), disp: 3, prio: 99 }"),
+        text.contains(
+            "NpcAiRelationship { ent: 5, other: None, class: Some(\"player\"), disp: 3, prio: 99 }"
+        ),
         "{text}"
     );
     let disp: f64 = rt.actors()[0].eval("return state.disp").unwrap();
@@ -3052,7 +3084,10 @@ fn bone_positions_sub_materials_flags_and_drag_coefficients() {
     let (flag, flag2, fx, sub, gf): (bool, bool, bool, String, bool) = rt.actors()[0]
         .eval("return state.flag, state.flag2, state.fx, state.sub, state.gf")
         .unwrap();
-    assert_eq!((flag, flag2, fx, sub.as_str(), gf), (true, false, true, "", true));
+    assert_eq!(
+        (flag, flag2, fx, sub.as_str(), gf),
+        (true, false, true, "", true)
+    );
     let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
     assert!(
         matches!(&writes[0], QueuedWrite::SetBoneManip { ent: 5, bone: 1, scale: None, angles: None, pos: Some(p) } if p.z == 3.0)
@@ -3060,7 +3095,14 @@ fn bone_positions_sub_materials_flags_and_drag_coefficients() {
     assert!(
         matches!(&writes[1], QueuedWrite::SetSubMaterial { ent: 5, index: Some(2), material: Some(m) } if m == "models/debug/debugwhite")
     );
-    assert!(matches!(&writes[2], QueuedWrite::SetSubMaterial { ent: 5, index: None, material: None }));
+    assert!(matches!(
+        &writes[2],
+        QueuedWrite::SetSubMaterial {
+            ent: 5,
+            index: None,
+            material: None
+        }
+    ));
     assert!(
         matches!(&writes[3], QueuedWrite::SetDragCoefficient { ent: 5, linear: Some(l), angular: None } if *l == 2.5)
     );

@@ -1954,13 +1954,131 @@ fn npc_walk_is_blocked_by_a_frozen_crate_wall() {
                 "went through the wall at {p:?} (t{t})"
             );
         }
-        if t % 25 == 0 {
-            eprintln!(
-                "t{t} {p:?} goal {} detour {:?}",
-                server.npcs[&id].goal.is_some(),
-                server.npcs[&id].detour
-            );
-        }
     }
     assert!(min_x < 700.0, "never got round the wall (min x {min_x})");
+}
+
+/// `ai_goal_assault` through the native Assault behaviour: the citizen runs to the rally
+/// point, waits out the rally delay, runs the assault point chain holding each until its
+/// timeout, and reports the stages the goal entity turns into outputs.
+#[test]
+fn assault_goal_runs_rally_then_the_point_chain() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_navmesh(world.nav.clone());
+    server.add_player(1, Vec3::new(823.235, -500.0, -143.0), Vec3::ZERO);
+    let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_citizen", "none").unwrap();
+    let start = server.npcs[&id].pos;
+    assert!(server.npc_set_goal(
+        id,
+        r#"{"kind":"assault","rally":[900,-400,-143],"rally_yaw":90,"delay":0.5,
+            "points":[{"pos":[760,-300,-143],"timeout":1.0,"force_crouch":true},
+                      {"pos":[650,-450,-143]}]}"#
+    ));
+    assert_eq!(server.npcs[&id].ai.behavior.as_deref(), Some("Assault"));
+    let mut stages = Vec::new();
+    for t in 0..700u64 {
+        server.tick(&idle);
+        let st = server.npc_goal_stage(id).unwrap();
+        if stages.last().map(|(_, s)| *s) != Some(st) {
+            stages.push((t, st));
+        }
+    }
+    let at = |stage: u8| stages.iter().find(|(_, s)| *s == stage).map(|(t, _)| *t);
+    eprintln!(
+        "stages {stages:?} start {start:?} end {:?}",
+        server.npcs[&id].pos
+    );
+    let (rally, to_point, at_point) = (
+        at(gm_server::ai::ASSAULT_AT_RALLY).expect("never reached the rally point"),
+        at(gm_server::ai::ASSAULT_TO_POINT).expect("never left the rally point"),
+        at(gm_server::ai::ASSAULT_AT_POINT).expect("never reached the assault point"),
+    );
+    // the rally delay is 0.5 s, the first point is held for its 1 s timeout
+    assert!(
+        (30..=40).contains(&(to_point - rally)),
+        "rally wait {}",
+        to_point - rally
+    );
+    let hold = stages
+        .iter()
+        .skip_while(|(t, _)| *t < at_point)
+        .nth(1)
+        .map(|(t, _)| t - at_point)
+        .unwrap();
+    assert!(
+        (64..=72).contains(&hold),
+        "held the first point {hold} ticks"
+    );
+    // the last point has no timeout: it is held (the game holds an assault point until it is
+    // cleared or timed out), so the chain never reports done
+    assert_eq!(
+        stages.last().map(|(_, s)| *s),
+        Some(gm_server::ai::ASSAULT_AT_POINT)
+    );
+    assert_eq!(stages.len(), 6, "{stages:?}");
+    let end = server.npcs[&id].pos;
+    assert!(
+        end.truncate().distance(glam::Vec2::new(650.0, -450.0)) <= 36.0,
+        "ended at {end:?}"
+    );
+    assert_eq!(server.npcs[&id].force_crouch, None);
+}
+
+/// `ai_goal_lead`: a citizen leading a player who does not follow goes back for them past
+/// the retrieve distance, then waits facing them once within it but beyond the lead distance.
+#[test]
+fn lead_goal_retrieves_then_waits_for_a_player_who_stays() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_navmesh(world.nav.clone());
+    server.add_player(1, Vec3::new(823.235, -500.0, -143.0), Vec3::ZERO);
+    let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_citizen", "none").unwrap();
+    assert!(server.npcs[&id].pos.x > 950.0);
+    assert!(server.npc_set_goal(id, r#"{"kind":"lead","goal":[600,-500,-143],"run":true}"#));
+    let mut min_d = f32::MAX;
+    let mut waited_at = None;
+    for t in 0..300u64 {
+        server.tick(&idle);
+        let d = server.npcs[&id]
+            .pos
+            .truncate()
+            .distance(server.players[&1].state.origin.truncate());
+        min_d = min_d.min(d);
+        if waited_at.is_none() && server.npc_goal_stage(id) == Some(1) {
+            waited_at = Some((t, d));
+        }
+    }
+    let (t, d) = waited_at.expect("never waited for the player");
+    // retrieved to inside 128 u of the player (started 169 u away), then waited there
+    assert!(d <= 128.0 && d > 64.0, "waited at {d} u (t{t})");
+    assert!(min_d > 60.0, "walked onto the player ({min_d} u)");
+    assert!(
+        server.npcs[&id].goal.is_none(),
+        "still moving while waiting"
+    );
+    let yaw = server.npcs[&id].ideal_yaw.expect("not facing the player");
+    assert!(
+        (yaw.abs() - 180.0).abs() < 5.0,
+        "faces {yaw} deg, the player is at -x"
+    );
+    assert_eq!(server.npc_goal_stage(id), Some(1));
 }
