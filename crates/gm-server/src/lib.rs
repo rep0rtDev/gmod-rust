@@ -14043,9 +14043,12 @@ impl<'w> Server<'w> {
             return 0;
         };
         let Some(s) = n.ai.schedule else {
-            // an assault goal just took the NPC: no schedule until its next think (the game
-            // reads -1 there, while a lead goal's citizen still reads its idle stand)
-            return if matches!(n.ai.goal, Some(ai::NpcGoal::Assault(_))) {
+            // an assault / act-busy goal just took the NPC: no schedule until its next think
+            // (the game reads -1 there, while a lead goal's citizen still reads its idle stand)
+            return if matches!(
+                n.ai.goal,
+                Some(ai::NpcGoal::Assault(_) | ai::NpcGoal::ActBusy(_))
+            ) {
                 -1
             } else if n.ai.goal.is_some() {
                 i64::from(ai::SCHED_IDLE_STAND)

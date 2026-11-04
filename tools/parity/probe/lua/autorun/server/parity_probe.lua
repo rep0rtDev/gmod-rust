@@ -1384,6 +1384,33 @@ SCENARIOS.toolgun = function(scn, done)
 				g:Activate()
 				g:Fire("Activate")
 				rec.goal = { npc = npc:EntIndex(), points = -2 }
+			elseif IsValid(npc) and st.hints then
+				-- ai_goal_actbusy: the actor picks one of st.hints (info_node_hint, hinttype 12 with
+				-- the actbusy.txt entry as hintactivity) within busysearchrange and acts busy there
+				npc:SetName("parity_act")
+				for i, h in ipairs(st.hints) do
+					local e = ents.Create(h.class or "info_node_hint")
+					e:SetName("parity_hint" .. i)
+					e:SetPos(Vector(h.pos[1], h.pos[2], h.pos[3]))
+					e:SetAngles(Angle(0, h.yaw or 0, 0))
+					e:SetKeyValue("hinttype", "12")
+					e:SetKeyValue("hintactivity", h.sequence or "ACT_BUSY_SIT_GROUND")
+					e:SetKeyValue("nodeFOV", "360")
+					e:SetKeyValue("StartHintDisabled", "0")
+					e:Spawn()
+				end
+				local g = ents.Create("ai_goal_actbusy")
+				g:SetName("parity_goal")
+				g:SetKeyValue("Actor", "parity_act")
+				g:SetKeyValue("busysearchrange", tostring(st.range or 2048))
+				g:SetKeyValue("visibleonly", "0")
+				g:SetKeyValue("type", tostring(st.type or 0))
+				g:SetKeyValue("allowteleport", "0")
+				g:SetKeyValue("StartActive", "1")
+				g:Spawn()
+				g:Activate()
+				g:Fire("Activate")
+				rec.goal = { npc = npc:EntIndex(), points = -3 }
 			elseif IsValid(npc) and st.rally then
 				npc:SetName("parity_act")
 				local pts = st.points or {}

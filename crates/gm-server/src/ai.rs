@@ -453,13 +453,13 @@ pub const SCHED_FAIL_NOSTOP: u16 = 82;
 /// CAI_AssaultBehavior's private schedules, mirrored while an assault goal owns the NPC: a
 /// class block translates them (`class_schedule`), elsewhere they read as the shared move /
 /// stand (`shared_alias`).
-pub const SCHED_ASSAULT_MOVE_TO_RALLY: u16 = 1001;
-pub const SCHED_ASSAULT_MOVE_TO_POINT: u16 = 1002;
-pub const SCHED_ASSAULT_HOLD_RALLY: u16 = 1003;
-pub const SCHED_ASSAULT_WAIT_AND_CLEAR: u16 = 1004;
+pub const SCHED_ASSAULT_MOVE_TO_RALLY: u16 = 1011;
+pub const SCHED_ASSAULT_MOVE_TO_POINT: u16 = 1012;
+pub const SCHED_ASSAULT_HOLD_RALLY: u16 = 1013;
+pub const SCHED_ASSAULT_WAIT_AND_CLEAR: u16 = 1014;
 /// CAI_LeadBehavior's first two schedules (its block starts with them in the game's enum).
-pub const SCHED_LEAD_RETRIEVE: u16 = 1005;
-pub const SCHED_LEAD_RETRIEVE_WAIT: u16 = 1006;
+pub const SCHED_LEAD_RETRIEVE: u16 = 1015;
+pub const SCHED_LEAD_RETRIEVE_WAIT: u16 = 1016;
 
 /// The shared schedule a behaviour-private one stands for on a class without a measured block.
 pub fn shared_alias(s: u16) -> u16 {

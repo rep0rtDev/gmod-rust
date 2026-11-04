@@ -4725,6 +4725,8 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                     if let Some(st) = &op.settings {
                         if st.contains_key("goal") {
                             kind = "lead";
+                        } else if st.contains_key("hints") {
+                            kind = "actbusy";
                         }
                         for (k, v) in st {
                             goal.insert(k.clone(), v.clone());
