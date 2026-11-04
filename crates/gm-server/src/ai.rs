@@ -391,6 +391,8 @@ pub const TASK_WANDER: u16 = 120;
 // --- schedules (Enums/SCHED)
 pub const SCHED_NONE: u16 = 0;
 pub const SCHED_IDLE_STAND: u16 = 1;
+/// The scripted-sequence driver schedule; SetSchedule of it reads back SCHED_IDLE_STAND.
+pub const SCHED_AISCRIPT: u16 = 56;
 pub const SCHED_IDLE_WALK: u16 = 2;
 pub const SCHED_IDLE_WANDER: u16 = 3;
 pub const SCHED_WAKE_ANGRY: u16 = 4;
@@ -457,6 +459,10 @@ pub const SCHED_RUN_RANDOM: u16 = 77;
 /// SCHED_FALL_TO_GROUND: the body is not on the ground - here, a hull spawned overlapping a
 /// physics prop while the prop is pushed clear.
 pub const SCHED_FALL_TO_GROUND: u16 = 78;
+pub const SCHED_VICTORY_DANCE: u16 = 19;
+pub const SCHED_ESTABLISH_LINE_OF_FIRE_FALLBACK: u16 = 36;
+pub const SCHED_FAIL_ESTABLISH_LINE_OF_FIRE: u16 = 38;
+pub const SCHED_COWER: u16 = 40;
 pub const SCHED_FAIL: u16 = 81;
 pub const SCHED_FAIL_NOSTOP: u16 = 82;
 /// CAI_AssaultBehavior's private schedules, mirrored while an assault goal owns the NPC: a
@@ -477,6 +483,43 @@ pub const SCHED_COMBINE_SUPPRESS: u16 = 1021;
 pub const SCHED_COMBINE_WAIT_IN_COVER: u16 = 1022;
 
 /// The shared schedule a behaviour-private one stands for on a class without a measured block.
+/// A class's TranslateSchedule onto another shared schedule, as the game reads back from
+/// `SetSchedule` (server_npc_sched_translate_*): the allies take cover when a chase fails,
+/// the monk and Alyx reload in place, the crabs face instead of failing cover, ...
+pub fn class_shared_alias(class: &str, s: u16) -> u16 {
+    let ally = matches!(
+        class,
+        "npc_citizen"
+            | "npc_barney"
+            | "npc_fisherman"
+            | "npc_gman"
+            | "npc_mossman"
+            | "npc_monk"
+            | "npc_alyx"
+            | "npc_vortigaunt"
+    );
+    let crab = matches!(
+        class,
+        "npc_headcrab" | "npc_headcrab_black" | "npc_headcrab_fast"
+    );
+    match (class, s) {
+        (_, SCHED_CHASE_ENEMY_FAILED) if ally => SCHED_TAKE_COVER_FROM_ENEMY,
+        ("npc_monk" | "npc_alyx", SCHED_HIDE_AND_RELOAD) => SCHED_RELOAD,
+        (_, SCHED_FAIL_TAKE_COVER) if crab => SCHED_ALERT_FACE,
+        ("npc_poisonzombie", SCHED_MOVE_TO_WEAPON_RANGE) => SCHED_CHASE_ENEMY,
+        ("npc_metropolice" | "npc_stalker", SCHED_FAIL_TAKE_COVER) => SCHED_RUN_RANDOM,
+        ("npc_stalker", SCHED_FAIL_ESTABLISH_LINE_OF_FIRE) => SCHED_COMBAT_STAND,
+        ("npc_strider", SCHED_ESTABLISH_LINE_OF_FIRE_FALLBACK) => SCHED_COMBAT_PATROL,
+        ("npc_vortigaunt", SCHED_COWER) => SCHED_COMBAT_FACE,
+        ("npc_alyx", SCHED_COWER) => SCHED_FAIL,
+        ("npc_manhack", SCHED_WAKE_ANGRY | SCHED_COMBAT_FACE | SCHED_CHASE_ENEMY_FAILED) => {
+            SCHED_CHASE_ENEMY
+        }
+        ("npc_headcrab_fast", SCHED_IDLE_STAND) => SCHED_PATROL_WALK,
+        _ => s,
+    }
+}
+
 pub fn shared_alias(s: u16) -> u16 {
     match s {
         SCHED_ASSAULT_MOVE_TO_RALLY | SCHED_ASSAULT_MOVE_TO_POINT => SCHED_FORCED_GO_RUN,
@@ -649,6 +692,8 @@ pub fn family_sched_blended(family: &str) -> bool {
 pub fn class_sched_ext_reserve(class: &str) -> u16 {
     match class {
         "npc_fastzombie" | "npc_fastzombie_torso" | "npc_poisonzombie" => 2,
+        // the fast headcrab's own range attack (SetSchedule(RANGE_ATTACK1) reads family + 18)
+        "npc_headcrab_fast" => 1,
         _ => 0,
     }
 }
@@ -657,20 +702,35 @@ pub fn class_sched_ext_reserve(class: &str) -> u16 {
 pub fn class_ext_schedule(class: &str, shared: u16) -> Option<u16> {
     match (class, shared) {
         ("npc_fastzombie" | "npc_fastzombie_torso", SCHED_MELEE_ATTACK1) => Some(0),
+        // the poison zombie's crab throw first, then its own range attack 1
+        ("npc_poisonzombie", SCHED_RANGE_ATTACK2) => Some(0),
+        ("npc_poisonzombie", SCHED_RANGE_ATTACK1) => Some(1),
+        ("npc_headcrab_fast", SCHED_RANGE_ATTACK1) => Some(0),
         _ => None,
     }
 }
 
 /// Offset of a schedule inside a family's private table, when the family translates it
 /// (TranslateSchedule): measured on the game with `SetSchedule(shared)` / `GetCurrentSchedule`.
-pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
+pub fn class_schedule(family: &str, class: &str, shared: u16) -> Option<u16> {
     match family {
         "zombie" => match shared {
             SCHED_CHASE_ENEMY => Some(0),
             SCHED_ZOMBIE_MOVE_SWATITEM => Some(1),
             SCHED_ZOMBIE_SWATITEM => Some(2),
             SCHED_ZOMBIE_WANDER_MEDIUM => Some(7),
+            // SetSchedule(STANDOFF) reads the family's ninth (server_npc_sched_translate_zombie*)
+            SCHED_STANDOFF => Some(9),
             SCHED_MELEE_ATTACK1 => Some(10),
+            _ => None,
+        },
+        // SetSchedule on the game: RANGE_ATTACK1 the jump (first of the block), WAKE_ANGRY the
+        // third (second for the black and fast crabs), FALL_TO_GROUND the eleventh
+        "headcrab" => match shared {
+            SCHED_RANGE_ATTACK1 => Some(0),
+            SCHED_WAKE_ANGRY if class == "npc_headcrab" => Some(2),
+            SCHED_WAKE_ANGRY => Some(1),
+            SCHED_FALL_TO_GROUND => Some(10),
             _ => None,
         },
         // measured on a soldier: 88 while shooting, 92 running to reload, 97 running to a line
@@ -684,6 +744,10 @@ pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
             SCHED_TAKE_COVER_FROM_BEST_SOUND => Some(15),
             SCHED_ESTABLISH_LINE_OF_FIRE => Some(9),
             SCHED_RANGE_ATTACK2 => Some(13),
+            // SetSchedule on the game: VICTORY_DANCE the third of the block,
+            // FAIL_ESTABLISH_LINE_OF_FIRE the twenty-second
+            SCHED_VICTORY_DANCE => Some(2),
+            SCHED_FAIL_ESTABLISH_LINE_OF_FIRE => Some(21),
             _ => None,
         },
         // measured on a citizen under ai_goal_assault (server_npc_assault_citizen): 91 running
@@ -1350,6 +1414,9 @@ pub struct AiState {
     pub scripted: bool,
     pub damage_ticks: Vec<u64>,
     pub schedule_done: bool,
+    /// `SetSchedule` landed on another shared schedule through the class alias: it reads
+    /// back as that shared id, not the class's private one (poison zombie 34 > 17).
+    pub shared_alias: bool,
     pub relationships: Vec<(u32, u8, i32)>,
     pub class_relationships: Vec<(String, u8, i32)>,
     pub npc_class: Option<u8>,
@@ -1383,6 +1450,7 @@ impl AiState {
             .collect()
     }
     pub fn start(&mut self, sched: u16, now: u64) {
+        self.shared_alias = false;
         self.schedule = Some(sched);
         self.task_index = 0;
         self.task_status = TASKSTATUS_NEW;

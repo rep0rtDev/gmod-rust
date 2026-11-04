@@ -5476,8 +5476,17 @@ impl<'w> Server<'w> {
         }
         match sched {
             Some(s) => {
+                // SetSchedule(SCHED_NONE / SCHED_AISCRIPT) reads SCHED_IDLE_STAND on every class
+                // (server_npc_sched_translate_*: 0>1, 56>1)
+                let aliased = ai::class_shared_alias(&n.class, s);
+                let s = if aliased == ai::SCHED_NONE || aliased == ai::SCHED_AISCRIPT {
+                    ai::SCHED_IDLE_STAND
+                } else {
+                    aliased
+                };
                 n.ai.scripted = true;
                 n.ai.start(s, now);
+                n.ai.shared_alias = aliased != sched.unwrap_or(aliased);
                 if ai::schedule_tasks(s).is_none() {
                     n.ai.schedule_done = true;
                 }
@@ -5489,7 +5498,9 @@ impl<'w> Server<'w> {
         }
         // the new schedule's immediate tasks run now (a path set by SetSchedule starts on the
         // NPC's next think, as measured on the game's FORCED_GO walks)
-        if sched.is_some() {
+        // one our body has no task list for stays the current schedule until that think (the
+        // game reads the id back as set for every shared schedule)
+        if sched.is_some_and(|s| ai::schedule_tasks(s).is_some()) {
             self.ai_step(id, now);
         }
         true
@@ -16287,6 +16298,9 @@ impl<'w> Server<'w> {
                 0
             };
         };
+        if n.ai.shared_alias {
+            return i64::from(ai::shared_alias(s));
+        }
         let translated = ai::class_sched_family(&n.class).and_then(|fam| {
             let base = *self.class_sched_bases.get(fam)?;
             let ext = self
@@ -16313,7 +16327,7 @@ impl<'w> Server<'w> {
                 }
                 _ => ext
                     .and_then(|e| ai::class_ext_schedule(&n.class, s).map(|o| e + o))
-                    .or_else(|| ai::class_schedule(fam, s).map(|o| base + o)),
+                    .or_else(|| ai::class_schedule(fam, &n.class, s).map(|o| base + o)),
             }
         });
         translated.unwrap_or(ai::shared_alias(s)) as i64
