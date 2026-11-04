@@ -942,7 +942,12 @@ impl World {
 
     /// `PhysObj:SetDragCoefficient` / `SetAngleDragCoefficient`: scale the linear / angular
     /// air drag of a body (`None` keeps that part).
-    pub fn set_drag_coefficient(&mut self, body: BodyHandle, linear: Option<f32>, angular: Option<f32>) {
+    pub fn set_drag_coefficient(
+        &mut self,
+        body: BodyHandle,
+        linear: Option<f32>,
+        angular: Option<f32>,
+    ) {
         for d in self.drags.iter_mut().filter(|d| d.body == body.0) {
             if let Some(l) = linear {
                 d.lin_coef = l.max(0.0);

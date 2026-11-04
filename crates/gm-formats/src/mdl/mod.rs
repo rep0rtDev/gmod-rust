@@ -604,7 +604,10 @@ pub fn sequences(data: &[u8], header: &Header) -> Vec<Sequence> {
                     cycle: f(p),
                     event: i32_at(data, p + 4)?,
                     kind: i32_at(data, p + 8)?,
-                    options: cstr_at(data, p + 12).ok().map(str::to_owned).unwrap_or_default(),
+                    options: cstr_at(data, p + 12)
+                        .ok()
+                        .map(str::to_owned)
+                        .unwrap_or_default(),
                     name: (name_off > 0)
                         .then(|| name_at(data, p + name_off as usize))
                         .flatten()

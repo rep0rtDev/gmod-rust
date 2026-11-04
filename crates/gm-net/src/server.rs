@@ -1087,7 +1087,12 @@ impl ServerNet {
             if let Some(text) = text {
                 let line = format!("{name}: {text}");
                 self.log.push(format!("chat {line}"));
-                let listeners: Vec<u32> = self.clients.values().filter(|c| c.welcomed && !c.closing).map(|c| c.player).collect();
+                let listeners: Vec<u32> = self
+                    .clients
+                    .values()
+                    .filter(|c| c.welcomed && !c.closing)
+                    .map(|c| c.player)
+                    .collect();
                 let mut hidden = Vec::new();
                 if let Some(h) = self.hooks.as_mut() {
                     for &l in &listeners {
@@ -1108,7 +1113,12 @@ impl ServerNet {
             let mut talkers: Vec<u32> = self.pending_voice.iter().map(|v| v.0).collect();
             talkers.sort_unstable();
             talkers.dedup();
-            let listeners: Vec<u32> = self.clients.values().filter(|c| c.welcomed && !c.closing && c.player != 0).map(|c| c.player).collect();
+            let listeners: Vec<u32> = self
+                .clients
+                .values()
+                .filter(|c| c.welcomed && !c.closing && c.player != 0)
+                .map(|c| c.player)
+                .collect();
             if let Some(h) = self.hooks.as_mut() {
                 for &t in &talkers {
                     for &l in &listeners {
@@ -1496,7 +1506,10 @@ impl ServerNet {
             }
             let mut unreliable = Vec::new();
             for (speaker, seq, data) in &voice {
-                if *speaker != slot.player && slot.player != 0 && !self.voice_muted.contains(&(slot.player, *speaker)) {
+                if *speaker != slot.player
+                    && slot.player != 0
+                    && !self.voice_muted.contains(&(slot.player, *speaker))
+                {
                     let mut w = Writer::default();
                     ServerMsg::Voice {
                         player: *speaker,
