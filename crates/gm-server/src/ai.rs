@@ -1119,6 +1119,31 @@ pub enum NpcGoal {
     ActBusy(ActBusyGoal),
 }
 
+/// A `scripted_sequence`: how to reach the mark (`m_fMoveTo`: 0 none, 1 walk, 2 run,
+/// 4 teleport, 5 turn to face), the mark, the three sequences and the stage reached
+/// (SCRIPT_MOVING .. SCRIPT_DONE).
+#[derive(Clone, Debug, PartialEq)]
+pub struct NpcScript {
+    pub move_to: u8,
+    pub pos: glam::Vec3,
+    pub yaw: f32,
+    pub radius: f32,
+    pub entry: Option<String>,
+    pub play: Option<String>,
+    pub post_idle: Option<String>,
+    pub loop_action: bool,
+    pub stage: u8,
+    pub stage_since: u64,
+    pub saved: Option<String>,
+    pub cancelled: bool,
+}
+
+pub const SCRIPT_MOVING: u8 = 0;
+pub const SCRIPT_ENTRY: u8 = 1;
+pub const SCRIPT_PLAY: u8 = 2;
+pub const SCRIPT_POST_IDLE: u8 = 3;
+pub const SCRIPT_DONE: u8 = 4;
+
 /// Per-NPC brain state surfaced to scripts.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AiState {
@@ -1137,6 +1162,8 @@ pub struct AiState {
     pub behavior: Option<String>,
     /// The goal the behaviour works on (`ai_goal_assault` / `ai_goal_lead` / `ai_goal_actbusy`).
     pub goal: Option<NpcGoal>,
+    /// A `scripted_sequence` owning the body (moves to its mark, plays entry / action / post idle).
+    pub script: Option<NpcScript>,
     pub unforgettable: bool,
     pub max_route_rebuild: f32,
     pub move_delay: f32,

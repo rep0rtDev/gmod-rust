@@ -205,6 +205,10 @@ pub enum QueuedWrite {
         move_delay: Option<f32>,
         npc_class: Option<u8>,
     },
+    NpcAiScript {
+        ent: u32,
+        json: String,
+    },
     NpcAiGoal {
         ent: u32,
         json: String,
@@ -1269,6 +1273,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("npc_ai_expression", e.npc_ai_expression.clone())?;
     t.set("npc_ai_behavior", e.npc_ai_behavior.clone())?;
     t.set("npc_ai_goal_stage", e.npc_ai_goal_stage)?;
+    t.set("npc_ai_script_stage", e.npc_ai_script_stage)?;
     t.set("npc_ai_fail_schedule", e.npc_ai_fail_schedule)?;
     t.set("npc_ai_unforgettable", e.npc_ai_unforgettable)?;
     if let Some(p) = e.npc_ai_save_position {
@@ -2120,6 +2125,15 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     QueuedWrite::NpcAiSavePos {
                         ent,
                         pos: Vec3::new(t.get("x")?, t.get("y")?, t.get("z")?),
+                    }
+                }
+                "npc_ai_script" => {
+                    let Value::Table(t) = &arg else {
+                        return Err(mlua::Error::runtime("npc_ai_script needs a table"));
+                    };
+                    QueuedWrite::NpcAiScript {
+                        ent,
+                        json: t.get::<String>("json")?,
                     }
                 }
                 "npc_ai_goal" => {
@@ -4368,6 +4382,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::NpcAiSquad { ent, name } => server.npc_set_squad(*ent, name.as_deref()),
         QueuedWrite::NpcAiSavePos { ent, pos } => server.npc_set_save_position(*ent, *pos),
         QueuedWrite::NpcAiGoal { ent, json } => server.npc_set_goal(*ent, json),
+        QueuedWrite::NpcAiScript { ent, json } => server.npc_set_script(*ent, json),
         QueuedWrite::NpcAiMisc {
             ent,
             expression,

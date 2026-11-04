@@ -2082,3 +2082,76 @@ fn lead_goal_retrieves_then_waits_for_a_player_who_stays() {
     );
     assert_eq!(server.npc_goal_stage(id), Some(1));
 }
+
+/// `scripted_sequence`: the citizen walks to the mark (m_fMoveTo 1), turns to its yaw and plays
+/// the action sequence (looped while m_bLoopActionSequence); CancelSequence restores the idle.
+#[test]
+fn scripted_sequence_walks_to_the_mark_plays_and_cancels() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_navmesh(world.nav.clone());
+    server.add_player(1, Vec3::new(823.235, -500.0, -143.0), Vec3::ZERO);
+    let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_citizen", "none").unwrap();
+    let rest = server.npcs[&id].sequence.clone();
+    // the action: a looping sequence of the citizen's own model other than its idle
+    let model = server.npcs[&id].model.clone();
+    let npc_info = gm_dedicated::model_info(&mount, &model).unwrap();
+    let shoot = npc_info
+        .script
+        .sequences
+        .iter()
+        .zip(&npc_info.script.sequence_anim)
+        .find(|(n, (fps, frames, flags))| {
+            **n != rest && *fps > 0.0 && *frames > 10 && flags & 1 != 0
+        })
+        .map(|(n, _)| n.clone())
+        .expect("a looping citizen sequence");
+    server.register_model(&model, npc_info);
+    assert!(server.npc_set_script(
+        id,
+        &format!(
+            r#"{{"kind":"begin","move_to":1,"pos":[900,-400,-143],"yaw":90,"play":"{shoot}","loop_action":true}}"#
+        )
+    ));
+    let mut stages = Vec::new();
+    let mut began = None;
+    for t in 0..300u64 {
+        server.tick(&idle);
+        let st = server.npc_script_stage(id).unwrap();
+        if stages.last() != Some(&st) {
+            stages.push(st);
+        }
+        if st == gm_server::ai::SCRIPT_PLAY && began.is_none() {
+            began = Some(t);
+        }
+    }
+    let began = began.expect("never reached the action");
+    let n = &server.npcs[&id];
+    assert_eq!(
+        stages,
+        vec![gm_server::ai::SCRIPT_MOVING, gm_server::ai::SCRIPT_PLAY]
+    );
+    assert!(
+        n.pos.truncate().distance(glam::Vec2::new(900.0, -400.0)) <= 16.0,
+        "at {:?}",
+        n.pos
+    );
+    assert_eq!(n.ideal_yaw, Some(90.0));
+    assert_eq!(n.sequence, shoot, "plays the action (began t{began})");
+    assert_eq!(n.ai.state, gm_server::ai::NPC_STATE_SCRIPT);
+    assert!(server.npc_set_script(id, r#"{"kind":"cancel"}"#));
+    server.tick(&idle);
+    let n = &server.npcs[&id];
+    assert_eq!(server.npc_script_stage(id), Some(5));
+    assert_eq!(n.sequence, rest);
+    assert_eq!(n.ideal_yaw, None);
+}

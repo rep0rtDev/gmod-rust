@@ -751,6 +751,52 @@ do
         scripted_ents.Register(ENT, name)
     end
 
+    -- scripted_sequence: the actor (m_iszEntity) moves to the entity the way m_fMoveTo says and
+    -- plays m_iszEntry / m_iszPlay / m_iszPostIdle; BeginSequence / MoveToPosition /
+    -- CancelSequence, outputs OnBeginSequence / OnEndSequence / OnCancelSequence from the stage
+    lazy.scripted_sequence = function()
+        local ENT = { Type = "point", Spawnable = false, Model = "", ThinkInterval = 0.1 }
+        function ENT:KeyValue(k, v) self.kv = self.kv or {}; self.kv[string.lower(k)] = v end
+        function ENT:Initialize() self.kv = self.kv or {}; self.stages = {} end
+        local function script(self, kind)
+            local kv = kvs(self.Entity)
+            local p, a = self.Entity:GetPos(), self.Entity:GetAngles()
+            return {
+                kind = kind, move_to = num(kv.m_fmoveto, 0), pos = vec(p), yaw = a.y, radius = num(kv.m_flradius, 0),
+                entry = kv.m_iszentry, play = kv.m_iszplay, post_idle = kv.m_iszpostidle, loop_action = flag(kv.m_bloopactionsequence),
+            }
+        end
+        local function send(self, kind)
+            self.actors = {}
+            for _, e in ipairs(by_name(kvs(self.Entity).m_iszentity)) do
+                if e.IsNPC and e:IsNPC() then self.actors[#self.actors + 1] = e; e:__SetAiScript(script(self, kind)) end
+            end
+            self.stages = {}
+        end
+        function ENT:AcceptInput(input, activator)
+            local n = string.lower(input)
+            if n == "beginsequence" then send(self, "begin") return true end
+            if n == "movetoposition" then send(self, "move") return true end
+            if n == "cancelsequence" then send(self, "cancel") return true end
+            return false
+        end
+        function ENT:Think()
+            for i, npc in ipairs(self.actors or {}) do
+                if IsValid(npc) then
+                    local st = npc:__GetAiScriptStage()
+                    if st ~= self.stages[i] then
+                        local was = self.stages[i]
+                        self.stages[i] = st
+                        if st == 2 then self.Entity:TriggerOutput("OnBeginSequence", npc) end
+                        if st == 4 and was ~= nil then self.Entity:TriggerOutput("OnEndSequence", npc) end
+                        if st == 5 then self.Entity:TriggerOutput("OnCancelSequence", npc) end
+                    end
+                end
+            end
+        end
+        scripted_ents.Register(ENT, "scripted_sequence")
+    end
+
     -- the rally point per actor (priority order, or random), its assault point chain
     goal_base("ai_goal_assault", "Assault", function(self, npc, i)
         local kv = kvs(self.Entity)

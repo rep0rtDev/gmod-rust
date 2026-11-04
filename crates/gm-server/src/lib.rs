@@ -4873,6 +4873,14 @@ impl<'w> Server<'w> {
             }
             return;
         }
+        if self.npcs.get(&id).is_some_and(|n| {
+            n.ai.script
+                .as_ref()
+                .is_some_and(|s| s.stage < ai::SCRIPT_DONE)
+        }) && self.ai_script_step(id, now)
+        {
+            return;
+        }
         if self
             .npcs
             .get(&id)
@@ -5415,6 +5423,199 @@ impl<'w> Server<'w> {
             n.ai.behavior = Some(behavior.to_string());
         }
         true
+    }
+
+    /// A `scripted_sequence` for an NPC (JSON from the entity): "begin" starts it (BeginSequence),
+    /// "move" only walks to the mark (MoveToPosition), "cancel" ends it and restores the idle.
+    pub fn npc_set_script(&mut self, id: u32, json: &str) -> bool {
+        #[derive(Default, serde::Deserialize)]
+        #[serde(default)]
+        struct ScriptWire {
+            kind: String,
+            move_to: u8,
+            pos: Option<[f32; 3]>,
+            yaw: f32,
+            radius: f32,
+            entry: Option<String>,
+            play: Option<String>,
+            post_idle: Option<String>,
+            loop_action: bool,
+        }
+        let Ok(w) = serde_json::from_str::<ScriptWire>(json) else {
+            return false;
+        };
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        if w.kind == "cancel" {
+            let Some(sc) = n.ai.script.as_mut() else {
+                return false;
+            };
+            if sc.stage < ai::SCRIPT_DONE {
+                sc.cancelled = true;
+                sc.stage = ai::SCRIPT_DONE;
+                sc.stage_since = 0;
+                if let Some(saved) = sc.saved.take() {
+                    n.sequence = saved;
+                }
+                n.ideal_yaw = None;
+                self.npc_stop(id);
+            }
+            return true;
+        }
+        let clean = |s: Option<String>| s.filter(|s| !s.is_empty());
+        let (play, move_only) = match w.kind.as_str() {
+            "begin" => (clean(w.play), false),
+            "move" => (None, true),
+            _ => return false,
+        };
+        let pos = w.pos.map(|a| Vec3::new(a[0], a[1], a[2])).unwrap_or(n.pos);
+        n.ai.script = Some(ai::NpcScript {
+            move_to: if move_only && w.move_to == 0 {
+                1
+            } else {
+                w.move_to
+            },
+            pos,
+            yaw: w.yaw,
+            radius: w.radius,
+            entry: if move_only { None } else { clean(w.entry) },
+            play,
+            post_idle: if move_only { None } else { clean(w.post_idle) },
+            loop_action: w.loop_action,
+            stage: ai::SCRIPT_MOVING,
+            stage_since: 0,
+            saved: Some(n.sequence.clone()),
+            cancelled: false,
+        });
+        n.ai.scripted = false;
+        true
+    }
+
+    /// Where the script stands for its entity: the NpcScript stage, 5 once cancelled.
+    pub fn npc_script_stage(&self, id: u32) -> Option<u8> {
+        let sc = self.npcs.get(&id)?.ai.script.as_ref()?;
+        Some(if sc.cancelled { 5 } else { sc.stage })
+    }
+
+    /// One think of a `scripted_sequence`: reach the mark the way `m_fMoveTo` says, turn to
+    /// its yaw, then the entry, the action (looped while `m_bLoopActionSequence`) and the post
+    /// idle; true while the script owns the body.
+    fn ai_script_step(&mut self, id: u32, now: u64) -> bool {
+        let Some(n) = self.npcs.get(&id) else {
+            return false;
+        };
+        let Some(mut sc) = n.ai.script.clone() else {
+            return false;
+        };
+        let pos = n.pos;
+        let moving = n.goal.is_some();
+        let finished = self.anims.get(&id).is_some_and(|a| a.finished);
+        let mut sched = ai::SCHED_SCRIPTED_WAIT;
+        match sc.stage {
+            ai::SCRIPT_MOVING => {
+                let reach = sc.radius.max(NPC_SCRIPT_ARRIVE);
+                let there = pos.truncate().distance(sc.pos.truncate()) <= reach;
+                match sc.move_to {
+                    1 | 2 if !there => {
+                        if !moving {
+                            self.npc_goto(id, sc.pos, sc.move_to == 2);
+                        }
+                        sched = if sc.move_to == 2 {
+                            ai::SCHED_SCRIPTED_RUN
+                        } else {
+                            ai::SCHED_SCRIPTED_WALK
+                        };
+                    }
+                    _ => {
+                        self.npc_stop(id);
+                        if let Some(n) = self.npcs.get_mut(&id) {
+                            if sc.move_to == 4 {
+                                n.pos = sc.pos;
+                                n.angles.y = sc.yaw;
+                            }
+                            if sc.move_to != 0 {
+                                n.ideal_yaw = Some(sc.yaw);
+                            }
+                        }
+                        // a move-only script ends at the mark
+                        sc.stage =
+                            if sc.play.is_none() && sc.entry.is_none() && sc.post_idle.is_none() {
+                                ai::SCRIPT_DONE
+                            } else if sc.entry.is_some() {
+                                ai::SCRIPT_ENTRY
+                            } else {
+                                ai::SCRIPT_PLAY
+                            };
+                        sc.stage_since = now;
+                        let seq = match sc.stage {
+                            ai::SCRIPT_ENTRY => sc.entry.clone(),
+                            ai::SCRIPT_PLAY => sc.play.clone(),
+                            _ => None,
+                        };
+                        if let Some(seq) = seq {
+                            self.set_sequence(id, &seq);
+                        }
+                        if sc.stage == ai::SCRIPT_PLAY && sc.play.is_none() {
+                            sc.stage = ai::SCRIPT_POST_IDLE;
+                            if let Some(seq) = sc.post_idle.clone() {
+                                self.set_sequence(id, &seq);
+                            }
+                        }
+                    }
+                }
+            }
+            ai::SCRIPT_ENTRY => {
+                if finished || now >= sc.stage_since + NPC_SCRIPT_MAX_TICKS {
+                    sc.stage = ai::SCRIPT_PLAY;
+                    sc.stage_since = now;
+                    match sc.play.clone() {
+                        Some(seq) => {
+                            self.set_sequence(id, &seq);
+                        }
+                        None => {
+                            sc.stage = ai::SCRIPT_POST_IDLE;
+                            if let Some(seq) = sc.post_idle.clone() {
+                                self.set_sequence(id, &seq);
+                            }
+                        }
+                    }
+                }
+            }
+            ai::SCRIPT_PLAY => {
+                if (finished && !sc.loop_action) || now >= sc.stage_since + NPC_SCRIPT_MAX_TICKS {
+                    sc.stage_since = now;
+                    match sc.post_idle.clone() {
+                        Some(seq) => {
+                            sc.stage = ai::SCRIPT_POST_IDLE;
+                            self.set_sequence(id, &seq);
+                        }
+                        None => {
+                            sc.stage = ai::SCRIPT_DONE;
+                            if let (Some(n), Some(saved)) =
+                                (self.npcs.get_mut(&id), sc.saved.take())
+                            {
+                                n.sequence = saved;
+                                n.ideal_yaw = None;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
+        let owns = sc.stage < ai::SCRIPT_DONE;
+        n.ai.script = Some(sc);
+        if owns {
+            n.ai.state = ai::NPC_STATE_SCRIPT;
+            if n.ai.schedule != Some(sched) {
+                n.ai.start(sched, now);
+            }
+        }
+        owns
     }
 
     /// Where the goal stands for scripts: the assault stage, 0 / 1 (waiting) / 4 (done) for a
@@ -19027,3 +19228,7 @@ pub const NPC_RETRIEVE_DISTANCE: f32 = 128.0;
 pub const NPC_LEAD_SUCCESS: f32 = 32.0;
 pub const NPC_ACTBUSY_SEARCH_TICKS: u64 = 66;
 pub const NPC_ACTBUSY_TICKS: u64 = 660;
+/// `scripted_sequence`: how close counts as at the mark when its radius is 0, and the longest
+/// an entry / action waits for its sequence to finish.
+pub const NPC_SCRIPT_ARRIVE: f32 = 16.0;
+pub const NPC_SCRIPT_MAX_TICKS: u64 = 66 * 60;

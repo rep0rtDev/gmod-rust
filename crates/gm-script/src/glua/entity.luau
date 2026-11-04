@@ -2754,6 +2754,8 @@ function NPC:UseNoBehavior() use_behavior(self, nil) end
 -- the ai_goal_* logic entities (scripted.luau) hand the server a goal for the behaviour
 function NPC:__SetAiGoal(goal) qwrite("npc_ai_goal", self.__id, { json = util.TableToJSON(goal) }) end
 function NPC:__GetAiGoalStage() return ai_snap(self).npc_ai_goal_stage end
+function NPC:__SetAiScript(script) qwrite("npc_ai_script", self.__id, { json = util.TableToJSON(script) }) end
+function NPC:__GetAiScriptStage() return ai_snap(self).npc_ai_script_stage end
 function NPC:CapabilitiesAdd(c) qwrite("npc_caps", self.__id, { caps = bit.bor(self:CapabilitiesGet(), c or 0) }) end
 function NPC:CapabilitiesRemove(c) qwrite("npc_caps", self.__id, { caps = bit.band(self:CapabilitiesGet(), bit.bnot(c or 0)) }) end
 function NPC:CapabilitiesClear() qwrite("npc_caps", self.__id, { caps = 0 }) end
