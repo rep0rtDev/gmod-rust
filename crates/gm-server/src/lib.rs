@@ -11873,12 +11873,25 @@ impl<'w> Server<'w> {
         if props.is_empty() {
             return tr;
         }
-        let Some(h) = gm_sandbox::trace_hull(self.collision, props, start, end, mins, maxs) else {
+        let prop_hit = gm_sandbox::trace_hull(self.collision, props, start, end, mins, maxs)
+            .filter(|h| h.ent.is_some());
+        let Some(h) = prop_hit else {
+            // a hull a hair outside a prop's face is missed by the grown-hull sweep: retry
+            // from a step back, and a face right at the start blocks the move
+            let dir = (end - start).normalize_or_zero();
+            let back = start - dir * NPC_SWEEP_BACKOFF;
+            if let Some(h2) = gm_sandbox::sweep_hull_props(props, back, end, mins, maxs) {
+                if h2.ent.is_some()
+                    && h2.fraction > 0.0
+                    && h2.pos.distance(start) <= NPC_SWEEP_BACKOFF + 0.5
+                {
+                    tr.fraction = 0.0;
+                    tr.end = start;
+                    tr.normal = h2.normal;
+                }
+            }
             return tr;
         };
-        if h.ent.is_none() {
-            return tr;
-        }
         if h.fraction > 0.0 {
             if h.fraction < tr.fraction {
                 tr.fraction = h.fraction;
@@ -11887,17 +11900,17 @@ impl<'w> Server<'w> {
             }
             return tr;
         }
-        // the hull starts touching a prop: pressed against a face it stays blocked and slides
-        // along it (the sweep is retried from a step back), while a hull well inside a prop
-        // (spawned onto it) walks out as before
-        let dir = (end - start).normalize_or_zero();
-        let back = start - dir * NPC_SWEEP_BACKOFF;
-        if let Some(h2) = gm_sandbox::sweep_hull_props(props, back, end, mins, maxs) {
-            if h2.fraction > 0.0 && h2.pos.distance(start) <= NPC_SWEEP_BACKOFF + 0.5 {
-                tr.fraction = 0.0;
-                tr.end = start;
-                tr.normal = h2.normal;
-            }
+        // the hull starts touching a prop (the previous step ended on its face, which the
+        // grown-hull sweep then misses by a hair): it stays blocked, unless its centre is well
+        // inside the prop (spawned onto it), when it walks out as before
+        let centre = start + (mins + maxs) * 0.5;
+        let inside = gm_sandbox::trace_line(self.collision, props, centre, centre)
+            .is_some_and(|t| t.ent.is_some() && t.fraction <= 0.0);
+        if !inside {
+            let dir = (end - start).normalize_or_zero();
+            tr.fraction = 0.0;
+            tr.end = start;
+            tr.normal = -dir;
         }
         tr
     }
@@ -18492,5 +18505,5 @@ pub const PROP_HIT_COOLDOWN: u64 = 33;
 /// 130 u/s of its ~780).
 pub const PROP_HIT_KEEP: f32 = 0.17;
 pub const PROP_HIT_PUSH_MAX: f32 = 150.0;
-/// How far an NPC hull sweep steps back to find the face of a prop it already touches.
+/// How far an NPC hull sweep steps back to find the face of a prop it is touching.
 pub const NPC_SWEEP_BACKOFF: f32 = 4.0;

@@ -1905,3 +1905,49 @@ fn soldier_tosses_a_grenade_at_a_visible_player() {
         "toss velocity {v:?} for {range:.0} u"
     );
 }
+
+#[test]
+fn npc_walk_is_blocked_by_a_frozen_crate_wall() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let model = "models/props_junk/wood_crate001a.mdl";
+    server.register_model(model, gm_dedicated::model_info(&mount, model).unwrap());
+    server.set_navmesh(world.nav.clone());
+    server.add_player(1, Vec3::new(823.235, -500.0, -143.0), Vec3::ZERO);
+    let mut wall = Vec::new();
+    for y in [-575.0, -545.0, -515.0, -485.0, -455.0, -425.0] {
+        for z in [-123.7, -83.7, -43.7] {
+            wall.push((model.to_string(), Vec3::new(760.0, y, z), Vec3::ZERO, true));
+        }
+    }
+    server.add_existing_props(&wall);
+    let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_citizen", "none").unwrap();
+    assert!(
+        server.npcs[&id].pos.x > 950.0,
+        "spawned at {:?}",
+        server.npcs[&id].pos
+    );
+    assert!(server.npc_goto(id, Vec3::new(610.0, -500.0, -143.0), true));
+    let mut min_x = f32::MAX;
+    for t in 0..300 {
+        server.tick(&idle);
+        let p = server.npcs[&id].pos;
+        min_x = min_x.min(p.x);
+        if t % 50 == 0 {
+            eprintln!("t{t} {p:?} goal {}", server.npcs[&id].goal.is_some());
+        }
+    }
+    assert!(
+        min_x > 760.0 + 20.0 + 13.0 - 2.0,
+        "walked through the wall to x={min_x}"
+    );
+}
