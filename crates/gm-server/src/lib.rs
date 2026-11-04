@@ -2674,6 +2674,8 @@ pub const NPC_LEAP_RANGE: f32 = 256.0;
 /// the NPC stays NPC_COVER_TICKS once there and waits NPC_COVER_COOLDOWN before the next run.
 /// Squadmates are NPCs of the same spawn key within NPC_SQUAD_RANGE.
 pub const NPC_COVER_RANGE: f32 = 512.0;
+/// CAI_BaseNPC::CoverRadius: how far from the threat the node graph is searched for cover.
+pub const NPC_COVER_RADIUS: f32 = 1024.0;
 pub const NPC_COVER_HEALTH: f32 = 0.4;
 pub const NPC_COVER_SPACING: f32 = 32.0;
 pub const NPC_COVER_TICKS: u64 = 200;
@@ -6498,6 +6500,37 @@ impl AiGraph {
             .collect();
         v.sort_by(|a, b| a.0.total_cmp(&b.0));
         v.into_iter().map(|(_, i)| i).collect()
+    }
+
+    /// The engine's cover search (CAI_TacticalServices::FindCoverNode): from the ground node
+    /// nearest `from`, the graph is walked over the links `hull` can cross on the ground,
+    /// always the undiscovered node nearest `from` next, and the first ground node `ok`
+    /// accepts is the cover (server_npc_grenade_soldier: the soldier at (823,-500) hides at
+    /// node (1201,72) - the nearer hidden node (1437,-491) is only reached later).
+    pub fn cover_node(
+        &self,
+        from: Vec3,
+        hull: usize,
+        mut ok: impl FnMut(Vec3) -> bool,
+    ) -> Option<Vec3> {
+        let start = self.ground_near(from, hull, f32::MAX).into_iter().next()?;
+        let mut seen = vec![false; self.nodes.len()];
+        let mut queue: Vec<(f32, usize)> = vec![(self.node_pos(start, hull).distance(from), start)];
+        seen[start] = true;
+        while let Some(at) = (0..queue.len()).min_by(|&a, &b| queue[a].0.total_cmp(&queue[b].0)) {
+            let (_, i) = queue.swap_remove(at);
+            let p = self.node_pos(i, hull);
+            if self.nodes[i].node_type == gm_formats::ain::NODE_GROUND && ok(p) {
+                return Some(p);
+            }
+            for &(j, moves) in &self.adj[i] {
+                if !seen[j] && moves[hull] & gm_formats::ain::CAP_MOVE_GROUND != 0 {
+                    seen[j] = true;
+                    queue.push((self.node_pos(j, hull).distance(from), j));
+                }
+            }
+        }
+        None
     }
 
     /// A* over the links `hull` can walk (CAP_MOVE_GROUND), node indices from `from` to `to`.
@@ -14260,8 +14293,8 @@ impl<'w> Server<'w> {
     /// cannot see (chest height), reachable, and not already a squadmate's cover; the NPC runs
     /// there. False when no such point exists.
     fn npc_take_cover(&mut self, id: u32, player: u32) -> bool {
-        let (Some(n), Some(nav), Some((eye, _))) =
-            (self.npcs.get(&id), self.nav.as_deref(), self.eye(player))
+        let (Some(n), true, Some((eye, _))) =
+            (self.npcs.get(&id), self.nav.is_some(), self.eye(player))
         else {
             return false;
         };
@@ -14273,9 +14306,36 @@ impl<'w> Server<'w> {
             .filter_map(|(_, o)| o.cover_at)
             .collect();
         let extents = Vec3::new(32.0, 32.0, 72.0);
+        // the compiled node graph first, searched as the engine does: the first ground node
+        // out from the NPC's own whose eye position the threat cannot see, within
+        // CoverRadius (1024 u) of the threat
+        let hull = npc_hull_index(&n.class);
+        let from_graph = self.ai_graph.as_ref().and_then(|g| {
+            g.cover_node(feet, hull, |p| {
+                p.distance(eye) <= NPC_COVER_RADIUS
+                    && p.truncate().distance(feet.truncate()) >= 48.0
+                    && !taken.iter().any(|t| t.distance(p) < NPC_COVER_SPACING)
+                    && !self.npc_los(eye, p + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT))
+            })
+        });
+        if let Some(p) = from_graph {
+            if self.npc_goto(id, p, true) {
+                let now = self.tick_count;
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.cover_at = Some(p);
+                    n.cover_until = 0;
+                    n.cover_cooldown = now + NPC_COVER_COOLDOWN;
+                    n.chase = None;
+                }
+                return true;
+            }
+        }
+        let Some(nav) = self.nav.as_deref() else {
+            return false;
+        };
         let mut best: Option<(f32, Vec3)> = None;
-        // the map's AI nodes first (the game picks cover from its nodegraph, tactical cover
-        // hints before plain nodes), navmesh vertices where the nodes are sparse
+        // then the map's AI nodes by path length (tactical cover hints before plain nodes),
+        // navmesh vertices where the nodes are sparse
         let candidates: Vec<(Vec3, f32)> = self
             .ai_nodes
             .iter()
