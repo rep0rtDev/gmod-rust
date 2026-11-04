@@ -141,6 +141,7 @@ extern "C" {
         xyz: *const f32,
         count: u32,
     );
+    fn gmp_set_hull_convexes(system: *mut JPC_PhysicsSystem, body_id: u32, count: u32);
     fn gmp_set_inertia(
         system: *mut JPC_PhysicsSystem,
         body_id: u32,
@@ -836,6 +837,7 @@ impl World {
                 verts.as_ptr(),
                 (verts.len() / 3) as u32,
             );
+            gmp_set_hull_convexes(self.system.as_raw(), id, desc.hulls.len() as u32);
             if let Some(i) = desc.inertia {
                 self.inertias.insert(id, i);
                 gmp_set_inertia(

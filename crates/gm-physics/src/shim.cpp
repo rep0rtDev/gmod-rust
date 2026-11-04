@@ -479,6 +479,13 @@ public:
 		contacts.push_back(GmpContactRec{id1, id2, kind});
 	}
 	std::unordered_map<JPH::uint32, std::vector<JPH::Vec3>> hulls;
+	// convex pieces per body: the game's impact system works per ledge, so a body of several
+	// pieces (the locker's feet) lands and rests piece by piece where one piece's face is a face
+	std::unordered_map<JPH::uint32, unsigned int> hull_convexes;
+	unsigned int convexes_of(const JPH::Body &b) const {
+		auto it = hull_convexes.find(b.GetID().GetIndexAndSequenceNumber());
+		return it == hull_convexes.end() ? 1u : it->second;
+	}
 	bool enabled = true;
 	// body pairs that never collide (constraint.NoCollide); key is (min id << 32 | max id)
 	std::unordered_set<unsigned long long> nocollide;
@@ -695,6 +702,58 @@ public:
 				off = std::max(off, (r - dir * r.Dot(dir)).Length());
 			}
 			if (off < 0.03f) touching = 2;
+		}
+		// touching points the centre of mass does not stand over are a pivot, not a resting
+		// face: the locker landed on one row of feet rocks back under its weight in the game
+		// (`phys_drop_flat_lockers_lo5`: -34 deg/s of pitch gone in 13 ticks, then back)
+		if (touching >= 3 && convexes_of(b1.IsDynamic() ? b1 : b2) > 1) {
+			const JPH::Body &sb = b1.IsDynamic() ? b1 : b2;
+			JPH::Vec3 e1 = n.GetNormalizedPerpendicular(), e2 = n.Cross(e1);
+			JPH::Vec3 c3 = JPH::Vec3(sb.GetCenterOfMassPosition());
+			std::vector<std::pair<float, float>> q;
+			for (const Pt *u : touch) q.emplace_back(JPH::Vec3(u->p).Dot(e1), JPH::Vec3(u->p).Dot(e2));
+			std::sort(q.begin(), q.end());
+			auto cross = [](const std::pair<float, float> &o, const std::pair<float, float> &a, const std::pair<float, float> &b) {
+				return (a.first - o.first) * (b.second - o.second) - (a.second - o.second) * (b.first - o.first);
+			};
+			std::vector<std::pair<float, float>> h(2 * q.size());
+			size_t k = 0;
+			for (size_t i2 = 0; i2 < q.size(); ++i2) {
+				while (k >= 2 && cross(h[k - 2], h[k - 1], q[i2]) <= 0.0f) --k;
+				h[k++] = q[i2];
+			}
+			for (size_t i2 = q.size() - 1, t2 = k + 1; i2 > 0; --i2) {
+				while (k >= t2 && cross(h[k - 2], h[k - 1], q[i2 - 1]) <= 0.0f) --k;
+				h[k++] = q[i2 - 1];
+			}
+			h.resize(k > 0 ? k - 1 : 0);
+			std::pair<float, float> cp(c3.Dot(e1), c3.Dot(e2));
+			bool inside = h.size() >= 3;
+			for (size_t i2 = 0; inside && i2 < h.size(); ++i2) {
+				const auto &a = h[i2], &b = h[(i2 + 1) % h.size()];
+				float len = std::hypot(b.first - a.first, b.second - a.second);
+				if (len > 1e-6f && cross(a, b, cp) / len < 0.0f) inside = false;
+			}
+			if (!inside) {
+				// the pivot row carries the body like a hinge: the inelastic normal impulse at the
+				// row stops its fall (Jolt's soft contact let the 2000 kg locker sink 17 mm) and
+				// its lever to the centre of mass is the restoring torque the game shows (the
+				// locker's -34 deg/s of pitch gone in 13 ticks: m g d / I)
+				JPH::Vec3 cen3 = JPH::Vec3::sZero();
+				for (const Pt *u : touch) cen3 += JPH::Vec3(u->p);
+				cen3 /= float(touch.size());
+				JPH::Vec3 nd0 = b1.IsDynamic() ? n : -n;
+				const JPH::Body &other0 = b1.IsDynamic() ? b2 : b1;
+				float vn0 = (point_velocity(sb, cen3) - point_velocity(other0, cen3)).Dot(nd0);
+				if (vn0 < 0.0f) {
+					JPH::Vec3 r0 = cen3 - JPH::Vec3(sb.GetCenterOfMassPosition());
+					JPH::Vec3 rn = r0.Cross(nd0);
+					float k0 = sb.GetMotionProperties()->GetInverseMass() + rn.Dot(sb.GetInverseInertia().Multiply3x3(rn));
+					if (k0 > 1e-9f) push(sb, cen3, nd0 * (-vn0 / k0));
+				}
+				touching = 2;
+			}
+			if (debug) fprintf(stderr, "support t=%d n_touch=%zu hull=%zu inside=%d\n", tick, touch.size(), h.size(), (int)inside);
 		}
 		// a landing still in progress (vertex impacts last step) whose touching points keep
 		// arriving fast is the next impact, not a rest: the upright drum's -x rim a tick after
@@ -1063,6 +1122,13 @@ public:
 				// upright drum of `device_dynamite_push` lands on its +x rim: -63 u/s of slip
 				// stuck, -175 deg/s, the centre nearly stopped, the antipode a tick later); the
 				// two-vertex rule below is the yaw-spinning drum's
+				// many coplanar vertices that are not a ring are the feet of several convexes (the
+				// locker: ten feet, 40 vertices) and do not land as a face in the game either: one
+				// vertex is struck, the hull-local +x extreme nearest the x axis (`phys_drop_flat_lockers_*`:
+				// from 72 u/s the game leaves at (-15.8, -1.2, 13.2) u/s hull-local with 34 deg/s
+				// of pitch whatever the yaw - yaw90/yaw180 rotate the velocity with the hull - and
+				// from 207 u/s at (-42, -3, 35) with 92 deg/s, enough to topple it)
+				if (face.size() > 8 && !ring && convexes_of(b1.IsDynamic() ? b1 : b2) > 1) face.clear();
 				if (ring) {
 					const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
 					if (dyn.GetAngularVelocity().Length() < 0.5f) {
@@ -1188,6 +1254,9 @@ public:
 			// the previous impact added); ties keep hull order
 			Pt *pick = nullptr;
 			float best_t = 0.0f;
+			const JPH::Body &tie_body = b1.IsDynamic() ? b1 : b2;
+			JPH::Quat tie_inv_rot = tie_body.GetRotation().Conjugated();
+			JPH::RVec3 tie_com = tie_body.GetCenterOfMassPosition();
 			for (Pt &pt : pts) {
 				float vn = rel(pt.p).Dot(n);
 				if (vn >= -threshold) continue;
@@ -1199,10 +1268,19 @@ public:
 				// ties: the game took the +x corner of the crate and the +x rim vertex of the barrel
 				// vertices already through the plane all reach it at t = 0: the deepest is the
 				// closest feature (the landed drum's -x rim, not a side vertex), +x only on equal depth
+				// the +x is the hull's own (the yawed locker is struck on its local +x foot) and an
+				// equal x (the locker's twenty +x foot vertices) takes the one nearest the x axis
+				auto plus_x = [&](const Pt &q) {
+					JPH::Vec3 rq = tie_inv_rot * JPH::Vec3(q.p - tie_com);
+					JPH::Vec3 rp = tie_inv_rot * JPH::Vec3(pick->p - tie_com);
+					if (rq.GetX() > rp.GetX() + 0.002f) return true;
+					if (rq.GetX() < rp.GetX() - 0.002f) return false;
+					return std::fabs(rq.GetZ()) < std::fabs(rp.GetZ()) - 1e-5f; // hull y is Jolt z
+				};
 				bool better = pick == nullptr || t < best_t - tie_eps * 0.01f ||
 					(std::fabs(t - best_t) <= tie_eps * 0.01f &&
-					 (landing_in_progress ? (pt.d < pick->d - 1e-5f || (std::fabs(pt.d - pick->d) <= 1e-5f && pt.p.GetX() > pick->p.GetX()))
-					                      : pt.p.GetX() > pick->p.GetX()));
+					 (landing_in_progress ? (pt.d < pick->d - 1e-5f || (std::fabs(pt.d - pick->d) <= 1e-5f && plus_x(pt)))
+					                      : plus_x(pt)));
 				if (better) { pick = &pt; best_t = t; }
 			}
 			if (pick == nullptr) break;
@@ -1391,6 +1469,10 @@ void gmp_set_surface(void *system, unsigned int body_id, float friction, float e
 
 void gmp_deactivate(void *system, unsigned int body_id) {
 	reinterpret_cast<JPH::PhysicsSystem *>(system)->GetBodyInterface().DeactivateBody(JPH::BodyID(body_id));
+}
+
+void gmp_set_hull_convexes(void *system, unsigned int body_id, unsigned int count) {
+	if (auto *l = listener_of(system)) l->hull_convexes[body_id] = count;
 }
 
 void gmp_set_hull_points(void *system, unsigned int body_id, const float *xyz, unsigned int count) {
