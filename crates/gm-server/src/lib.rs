@@ -13415,8 +13415,9 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
+        // a scripted engine schedule (NPC:SetSchedule FORCED_GO...) still shows the gait its
+        // movement task sets (walk_all in server_npc_walk_citizen_corner_seen)
         if n.dead_at.is_some()
-            || n.ai.scripted
             || n.ai.goal.is_some()
             || n.ai
                 .script
