@@ -2864,24 +2864,6 @@ const NPC_MOVE_METROPOLICE: NpcMoveDef = NpcMoveDef {
 };
 
 /// Angle difference folded into (-180, 180].
-/// A unit vector inside the cone of `half_deg` around `axis`, picked by a small hash of `seed`.
-fn cone_dir(axis: Vec3, half_deg: f32, seed: u64) -> Vec3 {
-    let mut x = seed ^ 0xD1B5_4A32_D192_ED03;
-    let mut next = || {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        (x >> 11) as f32 / (1u64 << 53) as f32
-    };
-    let (u, v) = (next(), next());
-    let ang = half_deg.to_radians() * u.sqrt();
-    let phi = v * std::f32::consts::TAU;
-    let up = if axis.z.abs() < 0.9 { Vec3::Z } else { Vec3::X };
-    let right = axis.cross(up).normalize();
-    let fwd_up = right.cross(axis);
-    (axis * ang.cos() + (right * phi.cos() + fwd_up * phi.sin()) * ang.sin()).normalize()
-}
-
 /// `CShotManipulator::ApplySpread` with `ai_shot_bias_min/max` -1..1: the offsets inside the
 /// unit disc are the sum of two uniform draws weighted by `flatness` = |shot bias| / 2, and a
 /// negative shot bias (bias < 0.5) folds them out towards the rim; the disc is scaled by the
@@ -5094,7 +5076,10 @@ impl<'w> Server<'w> {
                 ai::SCHED_CHASE_ENEMY
             } else if target.is_some() && !target_dead && ranged && los {
                 // the first volley is the suppress schedule (88), later ones RANGE_ATTACK1 (100)
-                if n.target_first_seen > 0 && now < n.target_first_seen + NPC_SUPPRESS_TICKS {
+                if n.target_first_seen > 0
+                    && now < n.target_first_seen + NPC_SUPPRESS_TICKS
+                    && !n.combat_moved
+                {
                     ai::SCHED_COMBINE_SUPPRESS
                 } else {
                     ai::SCHED_RANGE_ATTACK1
@@ -14053,6 +14038,7 @@ impl<'w> Server<'w> {
             }
             return;
         };
+        let leads = self.npc_leads_squad(id);
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
@@ -14062,10 +14048,35 @@ impl<'w> Server<'w> {
                 n.last_enemy_damage = 0;
             }
             n.target = Some(player);
-            // the game opens fire one think after it enters combat: the suppress volley is
-            // two rounds (server_npc_grenade_soldier: t323, t330; the first full burst t385)
-            n.burst_left = NPC_FIRST_BURST_SHOTS;
-            n.next_shot = now + n.think_interval as u64;
+            let think = n.think_interval as u64;
+            if leads {
+                // the squad's first member fights standing (CombatIdle1_SMG1 / shootSMG1s,
+                // 56-tick bursts) without the volley; its first burst lands with its mates'
+                // first full one (server_npc_squad_soldier: t385 after the t320 sighting)
+                n.combat_moved = true;
+                n.burst_left = NPC_BURST_SHOTS;
+                n.next_shot =
+                    now + think * NPC_FIRST_BURST_SHOTS as u64 + NPC_FIRST_BURST_GAP_TICKS;
+            } else {
+                // the game opens fire one think after it enters combat: the suppress volley
+                // is two rounds (server_npc_grenade_soldier: t323, t330; the first full burst
+                // t385)
+                n.burst_left = NPC_FIRST_BURST_SHOTS;
+                n.next_shot = now + think;
+            }
+        }
+        // a mate that joins before the first round is fired makes this one the standing
+        // member too (server_npc_squad_soldier: the second soldier spawns one op after the
+        // first sights the bot, and the first never fires its volley)
+        if leads && !n.combat_moved && n.last_shot < n.target_first_seen.max(1) {
+            let think = n.think_interval as u64;
+            n.combat_moved = true;
+            n.burst_left = NPC_BURST_SHOTS;
+            n.next_shot = n.next_shot.max(
+                n.target_first_seen
+                    + think * NPC_FIRST_BURST_SHOTS as u64
+                    + NPC_FIRST_BURST_GAP_TICKS,
+            );
         }
         if n.target_seen != 0 && now > n.target_seen + n.think_interval as u64 {
             n.reacquired_at = now;
@@ -14589,6 +14600,32 @@ impl<'w> Server<'w> {
         slots
     }
 
+    /// The first member (lowest id) of a squad of at least two: NPCs of one kind within
+    /// NPC_SQUAD_RANGE or of one named squad.
+    fn npc_leads_squad(&self, id: u32) -> bool {
+        let Some(n) = self.npcs.get(&id) else {
+            return false;
+        };
+        let (pos, key) = (n.pos, n.key.clone());
+        let squad = self.squads.of(id).map(str::to_string);
+        let mut mates = self.npcs.iter().filter(|(i, o)| {
+            **i != id
+                && o.dead_at.is_none()
+                && ((o.key == key && o.pos.distance(pos) <= NPC_SQUAD_RANGE)
+                    || squad
+                        .as_deref()
+                        .is_some_and(|sq| self.squads.of(**i) == Some(sq)))
+        });
+        let mut any = false;
+        for (i, _) in mates.by_ref() {
+            any = true;
+            if *i < id {
+                return false;
+            }
+        }
+        any
+    }
+
     fn npc_share_targets(&mut self, thought: &[u32], now: u64) {
         for &id in thought {
             let Some(n) = self.npcs.get(&id) else {
@@ -14617,6 +14654,7 @@ impl<'w> Server<'w> {
                         .is_some_and(|pl| pl.alive && !pl.no_target)
                 })
             });
+            let leads = shared.is_some() && self.npc_leads_squad(id);
             if let (Some(p), Some(n)) = (shared, self.npcs.get_mut(&id)) {
                 if n.target != Some(p) {
                     n.target_first_seen = 0;
@@ -14627,8 +14665,18 @@ impl<'w> Server<'w> {
                 if n.target_first_seen == 0 {
                     n.target_first_seen = now;
                 }
-                n.burst_left = NPC_BURST_SHOTS;
-                n.next_shot = now + n.think_interval as u64;
+                let think = n.think_interval as u64;
+                if leads {
+                    // the squad's first member stands and opens with a full burst when its
+                    // mates fire theirs (see npc_combat_think)
+                    n.combat_moved = true;
+                    n.burst_left = NPC_BURST_SHOTS;
+                    n.next_shot =
+                        now + think * NPC_FIRST_BURST_SHOTS as u64 + NPC_FIRST_BURST_GAP_TICKS;
+                } else {
+                    n.burst_left = NPC_FIRST_BURST_SHOTS;
+                    n.next_shot = now + think;
+                }
             }
         }
     }

@@ -2414,3 +2414,49 @@ fn scripted_range_attack2_tosses_a_grenade() {
     );
     assert_eq!(server.npcs[&id].grenades_used, 1);
 }
+
+/// Measured on two sandbox soldiers (server_npc_squad_soldier, both in the `overwatch`
+/// squad): the first-spawned member fights standing - CombatIdle1_SMG1 / shootSMG1s, no
+/// two-round volley, its first burst 65 ticks after it sighted the bot, when its mate's first
+/// full burst comes - while the mate opens as a lone soldier does (crouched volley, then
+/// bursts).
+#[test]
+fn squad_first_member_stands_and_skips_the_volley() {
+    let world = combat_server!(world);
+    let (mut server, idle, _start) = combat_server!(world, server);
+    let a = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    for _ in 0..3 {
+        server.tick(&idle);
+    }
+    let b = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    let mut first_shot = [None, None];
+    let mut seqs = [Vec::new(), Vec::new()];
+    for tick in 0..160u64 {
+        server.tick(&idle);
+        for (k, id) in [a, b].iter().enumerate() {
+            let n = &server.npcs[id];
+            if n.shots > 0 && first_shot[k].is_none() {
+                first_shot[k] = Some(tick);
+            }
+            if seqs[k].last() != Some(&n.sequence) {
+                seqs[k].push(n.sequence.clone());
+            }
+        }
+    }
+    let (na, nb) = (&server.npcs[&a], &server.npcs[&b]);
+    assert!(
+        na.combat_moved && !nb.combat_moved,
+        "the first member stands, the mate crouches"
+    );
+    // (the standing / crouched sequence names need the model's activity table, which this
+    // test world does not mount; server_npc_squad_soldier checks them)
+    assert!(!seqs[0].is_empty() && !seqs[1].is_empty());
+    let (sa, sb) = (first_shot[0].unwrap(), first_shot[1].unwrap());
+    let volley = 7 * gm_server::NPC_FIRST_BURST_SHOTS as u64 + gm_server::NPC_FIRST_BURST_GAP_TICKS;
+    // the mate's volley starts a think after its spawn (3 ticks after the leader's sighting);
+    // the leader's first round comes volley + 55 ticks after its own sighting
+    assert!(
+        sa > sb + 40 && sa <= sb + volley,
+        "leader's first round {sa}, mate's volley {sb} (want the leader {volley} after its sighting)"
+    );
+}
