@@ -2429,6 +2429,9 @@ pub const NPC_MUZZLE_UP_STANDING: f32 = 57.0;
 /// think t320), the first full burst 55 ticks after the second (t385), then every 49.
 pub const NPC_FIRST_BURST_SHOTS: u8 = 2;
 pub const NPC_FIRST_BURST_GAP_TICKS: u64 = 55;
+/// From the opening volley's last round to the first full burst: t357 -> t385 in
+/// server_npc_grenade_soldier (the game's shot probes), the 49-tick cycle from there.
+pub const NPC_VOLLEY_BURST_GAP_TICKS: u64 = 28;
 pub const NPC_BURST_GAP_TICKS: u64 = 28;
 /// The crouched body's gap (49-tick volley period against 56 standing).
 pub const NPC_BURST_GAP_LOW_TICKS: u64 = 21;
@@ -14346,7 +14349,7 @@ impl<'w> Server<'w> {
             let think = n.think_interval as u64;
             n.next_shot = n.last_shot
                 + NPC_BURST_GAP_LOW_TICKS
-                + think * (NPC_BURST_SHOTS - NPC_COVER_BURST_SHOTS + 1) as u64;
+                + think * (NPC_BURST_SHOTS - NPC_COVER_BURST_SHOTS) as u64;
         }
         n.cover_fire = cover_fire;
         if n.target != Some(player) {
@@ -14365,11 +14368,11 @@ impl<'w> Server<'w> {
                 n.next_shot =
                     now + think * NPC_FIRST_BURST_SHOTS as u64 + NPC_FIRST_BURST_GAP_TICKS;
             } else {
-                // the game opens fire three thinks after it enters combat: the suppress volley
-                // is two rounds (server_npc_grenade_soldier: sighting think t330, shots t350
-                // and t357; the first full burst t385, 55 ticks after the sighting)
+                // the game opens fire four thinks after it enters combat: the suppress volley
+                // is two rounds (server_npc_grenade_soldier: sighting think t323, shots t350
+                // and t357; the first full burst t385, 28 ticks after the volley's last round)
                 n.burst_left = NPC_FIRST_BURST_SHOTS;
-                n.next_shot = now + think * 3;
+                n.next_shot = now + think * 4;
             }
         }
         // a mate that joins before the first round is fired makes this one the standing
@@ -14563,7 +14566,7 @@ impl<'w> Server<'w> {
         // measured volley period: 49 ticks crouched (shootSMG1c), 56 standing (shootSMG1s)
         n.next_shot = if n.burst_left == 0 {
             now + if now < n.target_first_seen + NPC_SUPPRESS_TICKS {
-                NPC_FIRST_BURST_GAP_TICKS
+                NPC_VOLLEY_BURST_GAP_TICKS
             } else if n.combat_moved {
                 NPC_BURST_GAP_TICKS
             } else {

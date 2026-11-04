@@ -4776,6 +4776,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }
         }
         rec["immediate"] = snapshot(&server);
+        rec["tick"] = serde_json::json!(server.tick_count());
         // the probe's wait/think default (`op.ticks or 10`)
         let ticks = if matches!(op.op.as_str(), "wait" | "think") {
             op.ticks.unwrap_or(10)

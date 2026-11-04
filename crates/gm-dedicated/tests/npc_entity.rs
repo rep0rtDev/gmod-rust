@@ -344,14 +344,15 @@ fn armed_soldier_fires_bursts_at_a_visible_player() {
         "the player died inside the window"
     );
     assert!(shots.len() >= 20, "only {} shots in 300 ticks", shots.len());
-    // the opening volley is two rounds and the first full burst follows two thinks later
-    // (game: op5, op12, op26); from there bursts of NPC_BURST_SHOTS with the crouched gap
+    // the opening volley is two rounds four thinks after the sighting and the first full burst
+    // follows 28 ticks later (game: t350, t357, t385); from there bursts of NPC_BURST_SHOTS
+    // with the crouched gap
     let burst = gm_server::NPC_BURST_SHOTS as usize;
     let first = gm_server::NPC_FIRST_BURST_SHOTS as usize;
     for (i, g) in gaps.iter().enumerate() {
         if i + 1 == first {
             // the volley gap lands on the next think
-            let want = gm_server::NPC_FIRST_BURST_GAP_TICKS;
+            let want = gm_server::NPC_VOLLEY_BURST_GAP_TICKS;
             assert!((want..want + 7).contains(g), "gap {i} of {gaps:?}");
             continue;
         }
@@ -691,7 +692,7 @@ fn soldier_hit_mid_burst_ends_it_and_crouches() {
     // opening volley of 2, burst 1: 5 shots, burst 2 cut to 3, burst 3: 5 shots, then the
     // delayed burst 4
     assert_eq!(gaps[0], 7);
-    let want = gm_server::NPC_FIRST_BURST_GAP_TICKS;
+    let want = gm_server::NPC_VOLLEY_BURST_GAP_TICKS;
     assert!((want..want + 7).contains(&gaps[1]), "volley gap {gaps:?}");
     assert_eq!(&gaps[2..6], &[7, 7, 7, 7]);
     assert_eq!(gaps[6], gm_server::NPC_BURST_GAP_LOW_TICKS);
