@@ -2660,7 +2660,8 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         },
         NpcMelee {
             damage: 5.0,
-            reach: 55.0,
+            // the chase stops at min(start_range, reach) - 3: the game pounces from ~90 u
+            reach: 100.0,
             swing_ticks: 63,
             hit_tick: 34,
             punch: 280.0,
