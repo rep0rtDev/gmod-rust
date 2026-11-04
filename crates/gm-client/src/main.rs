@@ -166,6 +166,7 @@ impl Sim {
                             color: [255; 4],
                             render_mode: 0,
                             render_fx: 0,
+                            sub_materials: Vec::new(),
                             model_scale: 1.0,
                             bones: Vec::new(),
                             manips: Vec::new(),
@@ -399,7 +400,7 @@ fn ragdoll_bone_matrices(
     for mp in manips {
         if let Some(w) = world.get_mut(mp.bone as usize) {
             *w = *w
-                * gm_render::world::model_transform(Vec3::ZERO, mp.angles)
+                * gm_render::world::model_transform(mp.pos, mp.angles)
                 * glam::Mat4::from_scale(mp.scale);
         }
     }

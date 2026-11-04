@@ -1216,3 +1216,50 @@ do
     function sql.Begin() in_tx = true end
     function sql.Commit() in_tx = false; if dirty then save() end end
 end
+
+------------------------------------------------------------------------ Tool ghost entities (stool preview: a non-solid translucent prop at the owner's eye trace)
+do
+    local TL = __glua_classes.Tool
+    if TL then
+        function TL:ReleaseGhostEntity()
+            if IsValid(self.GhostEntity) then self.GhostEntity:Remove() end
+            self.GhostEntity = nil
+        end
+        function TL:MakeGhostEntity(model, pos, ang)
+            self:ReleaseGhostEntity()
+            if not model or model == "" then return end
+            local g
+            if CLIENT and ClientsideModel then g = ClientsideModel(model, RENDERGROUP_TRANSLUCENT) else g = ents.Create("prop_physics") end
+            if not IsValid(g) then return end
+            if g.SetModel then g:SetModel(model) end
+            g:SetPos(pos or Vector(0, 0, 0)); g:SetAngles(ang or Angle(0, 0, 0))
+            if g.Spawn and SERVER then g:Spawn() end
+            if g.SetNotSolid then g:SetNotSolid(true) end
+            if g.SetMoveType then g:SetMoveType(MOVETYPE_NONE) end
+            if g.SetCollisionGroup then g:SetCollisionGroup(COLLISION_GROUP_WORLD) end
+            g:SetRenderMode(RENDERMODE_TRANSCOLOR)
+            g:SetColor(Color(255, 255, 255, 150))
+            local p = g.GetPhysicsObject and g:GetPhysicsObject()
+            if IsValid(p) then p:EnableMotion(false); p:EnableCollisions(false) end
+            self.GhostEntity = g
+        end
+        function TL:StartGhostEntity(ent)
+            if not IsValid(ent) then return end
+            self:MakeGhostEntity(ent:GetModel(), ent:GetPos(), ent:GetAngles())
+        end
+        function TL:UpdateGhostEntity()
+            local g = self.GhostEntity
+            if not IsValid(g) then return end
+            local owner = self:GetOwner()
+            if not IsValid(owner) then return end
+            local tr = owner:GetEyeTrace()
+            if not tr or not tr.Hit then return end
+            local ang = tr.HitNormal:Angle(); ang.p = ang.p + 90
+            g:SetPos(tr.HitPos); g:SetAngles(ang)
+        end
+        function TL:UpdateData()
+            if self.CheckObjects then self:CheckObjects() end
+            self:UpdateGhostEntity()
+        end
+    end
+end

@@ -1920,7 +1920,7 @@ function ENT:RestartGesture(act, add, autokill)
     return -1
 end
 
-for _, name in ipairs({ "AddFlags", "AddToMotionController", "AlignAngles", "Blocked", "BodyTarget", "BoneHasFlag", "BoneLength", "BoundingRadius", "CopyBoneMatrix", "CreateBoneFollowers", "DestroyBoneFollowers", "DrawShadow", "EnableConstraints", "FindBodygroupByName", "FindTransitionSequence", "FollowBone", "ForcePlayerDrop", "GetAnimCount", "GetAnimInfo", "GetAttachment", "GetAttachments", "GetBodyGroups", "GetBodygroupCount", "GetBodygroupName", "GetBoneController", "GetBoneCount", "GetBoneName", "GetBoneParent", "GetBrushPlane", "GetBrushPlaneCount", "GetBrushSurfaces", "GetColor", "GetColor4Part", "GetEditingData", "GetElasticity", "GetFlexIDByName", "GetFlexName", "GetFlexNum", "GetFlexScale", "GetFlexWeight", "GetFriction", "GetHitBoxCount", "GetHitboxSetCount", "GetLightingOriginEntity", "GetManipulateBoneAngles", "GetManipulateBoneJiggle", "GetManipulateBonePosition", "GetManipulateBoneScale", "GetMaterial", "GetModelBounds", "GetModelRadius", "GetModelRenderBounds", "GetModelScale", "GetMomentaryRotButtonPos", "GetNoDraw", "GetNumBodyGroups", "GetParentWorldTransformMatrix", "GetPreferredCarryAngles", "GetRagdollOwner", "GetRenderFX", "GetRenderMode", "GetRotatedAABB", "GetSequence", "GetSequenceCount", "GetSequenceInfo", "GetSequenceList", "GetSequenceName", "GetShouldPlayPickupSound", "GetShouldServerRagdoll", "GetSpawnEffect", "GetSubMaterial", "GetWorldTransformMatrix", "GibBreakClient", "GibBreakServer", "HasBoneManipulations", "HasFlexManipulatior", "HeadTarget", "IsOnFire", "IsPointInBounds", "LookupAttachment", "LookupBone", "LookupSequence", "MakePhysicsObjectAShadow", "ManipulateBoneAngles", "ManipulateBoneJiggle", "ManipulateBonePosition", "ManipulateBoneScale", "MuzzleFlash", "NearestPoint", "OBBMaxs", "OBBMins", "PhysicsFromMesh", "PhysicsInitConvex", "PhysicsInitMultiConvex", "PlayScene", "PrecacheGibs", "RagdollSolve", "RagdollStopControlling", "RagdollUpdatePhysics", "RemoveFlags", "RemoveFromMotionController", "RemoveInternalConstraint", "SendViewModelMatchingSequence", "SequenceDuration", "SetAttachment", "SetBodyGroups", "SetBoneController", "SetBoneMatrix", "SetColor", "SetColor4Part", "SetElasticity", "SetEntity", "SetEyeTarget", "SetFlexScale", "SetFlexWeight", "SetFriction", "SetHitboxSet", "SetIK", "SetLayerBlendIn", "SetLayerBlendOut", "SetLightingOriginEntity", "SetMaterial", "SetMoveParent", "SetNoDraw", "SetParent", "SetParentPhysNum", "SetPhysConstraintObjects", "SetRagdollAng", "SetRagdollBuildFunction", "SetRagdollPos", "SetRenderFX", "SetRenderMode", "SetShouldPlayPickupSound", "SetShouldServerRagdoll", "SetSpawnEffect", "SetSubMaterial", "SetSurroundingBounds", "SetSurroundingBoundsType", "StartMotionController", "StopMotionController", "UpdateBoneFollowers", "UseClientSideAnimation", "ViewModelIndex", "WorldSpaceAABB" }) do
+for _, name in ipairs({ "BoundingRadius", "FindBodygroupByName", "ForcePlayerDrop", "GetAnimCount", "GetAnimInfo", "GetAttachment", "GetAttachments", "GetBodyGroups", "GetBodygroupCount", "GetBodygroupName", "GetBoneCount", "GetBoneName", "GetBoneParent", "GetColor", "GetColor4Part", "GetElasticity", "GetFlexIDByName", "GetFlexName", "GetFlexNum", "GetFlexScale", "GetFlexWeight", "GetFriction", "GetHitBoxCount", "GetHitboxSetCount", "GetManipulateBoneAngles", "GetManipulateBoneScale", "GetMaterial", "GetModelBounds", "GetModelRadius", "GetModelRenderBounds", "GetModelScale", "GetNoDraw", "GetNumBodyGroups", "GetParentWorldTransformMatrix", "GetRenderFX", "GetRenderMode", "GetRotatedAABB", "GetSequence", "GetSequenceCount", "GetSequenceInfo", "GetSequenceList", "GetSequenceName", "GetWorldTransformMatrix", "HasBoneManipulations", "HasFlexManipulatior", "IsOnFire", "IsPointInBounds", "LookupAttachment", "LookupBone", "LookupSequence", "ManipulateBoneAngles", "ManipulateBoneScale", "NearestPoint", "OBBMaxs", "OBBMins", "SequenceDuration", "SetBodyGroups", "SetColor", "SetColor4Part", "SetElasticity", "SetEyeTarget", "SetFlexScale", "SetFlexWeight", "SetFriction", "SetMaterial", "SetMoveParent", "SetNoDraw", "SetParent", "SetRenderFX", "SetRenderMode", "WorldSpaceAABB" }) do
     if ENT[name] == nil then ENT[name] = stub("Entity:" .. name) end
 end
 
@@ -2085,9 +2085,6 @@ function PHYS:IsGravityEnabled() local g = rawget(self.__ent, "__pgravity"); if 
 function PHYS:IsCollisionEnabled() local c = rawget(self.__ent, "__pcollide"); if c == nil then return true end return c end
 function PHYS:GetName() return self.__ent:GetClass() end
 function PHYS:OutputDebugInfo() print(string.format("PhysObj[%d] mass %.2f pos %s vel %s", self.__ent:EntIndex(), self:GetMass(), tostring(self:GetPos()), tostring(self:GetVelocity()))) end
-for _, name in ipairs({ "AddGameFlag", "ClearGameFlag", "ComputeShadowControl", "GetBuoyancyRatio", "GetContents", "GetFrictionSnapshot", "GetShadowAngles", "GetShadowPos", "GetStress", "HasGameFlag", "IsPenetrating", "RecheckCollisionFilter", "SetAngleDragCoefficient", "SetBuoyancyRatio", "SetContents", "SetDragCoefficient", "UpdateShadow" }) do
-    if PHYS[name] == nil then PHYS[name] = stub("PhysObj:" .. name) end
-end
 
 ------------------------------------------------------------------------ Player: the rest
 -- Movement constants are the engine's measured ones (hull 32x32x72 / 36 ducked, eyes 64 / 28,
@@ -2198,7 +2195,7 @@ function WEP:GetNextSecondaryFire() return rawget(self, "__next2") or 0 end
 function WEP:SetNextSecondaryFire(t) rawset(self, "__next2", t) end
 function WEP:LastShootTime() return rawget(self, "__lastshot") or 0 end
 function WEP:SetLastShootTime(t) rawset(self, "__lastshot", t or CurTime()) end
-for _, name in ipairs({ "CallOnClient", "GetActivity", "IsWeaponVisible", "SendWeaponAnim", "SetActivity", "SetClip1", "SetClip2" }) do
+for _, name in ipairs({ "SetClip1", "SetClip2" }) do
     if WEP[name] == nil then WEP[name] = stub("Weapon:" .. name) end
 end
 
@@ -2214,9 +2211,6 @@ function VEH:IsBoosting() local v = vinfo(self); return v ~= nil and v.engine ==
 function VEH:SetBoost(b) qwrite("vehicle.boost", self.__id, tonumber(b) or 0) end
 function VEH:BoostTimeLeft() return 0 end
 function VEH:IsVehicleBodyInWater() return false end
-for _, name in ipairs({ "GetAmmo", "GetCameraDistance", "GetThirdPersonMode", "GetWheel", "HasBrakePedal", "SetCameraDistance", "SetHasBrakePedal", "SetThirdPersonMode", "SetVehicleClass", "SetVehicleEntryAnim" }) do
-    if VEH[name] == nil then VEH[name] = stub("Vehicle:" .. name) end
-end
 
 function WEP:GetMaxClip1() local d = wdef(self); local n = d and d.Primary and d.Primary.ClipSize; return n or -1 end
 function WEP:GetMaxClip2() local d = wdef(self); local n = d and d.Secondary and d.Secondary.ClipSize; return n or -1 end
@@ -2298,4 +2292,203 @@ function ENT:GetBoneMatrix(i)
     mtx:SetAngles(ang)
     mtx:SetTranslation(pos)
     return mtx
+end
+
+------------------------------------------------------------------------ bones, sub-materials, flags, drag, shadows and the smaller Entity / PhysObj / Vehicle / Weapon methods
+local function evars(self) local v = rawget(self, "__vars"); if not v then v = {}; rawset(self, "__vars", v) end return v end
+function ENT:ManipulateBonePosition(b, p) qwrite("set_bone_manip", self.__id, { bone = b, pos = v3(p) }) end
+function ENT:GetManipulateBonePosition(b) local sn = snap(self.__id); local v = sn and sn.bone_positions and sn.bone_positions[b]; return v and Vector(v.x, v.y, v.z) or Vector(0, 0, 0) end
+function ENT:ManipulateBoneJiggle(b, on) local v = evars(self); v.__jiggle = v.__jiggle or {}; v.__jiggle[b] = on end
+function ENT:GetManipulateBoneJiggle(b) local j = evars(self).__jiggle; return j and j[b] or 0 end
+local base_has_manip = ENT.HasBoneManipulations
+function ENT:HasBoneManipulations() if base_has_manip(self) then return true end local sn = snap(self.__id); return sn ~= nil and sn.bone_positions ~= nil and next(sn.bone_positions) ~= nil end
+function ENT:SetSubMaterial(i, m) if i == nil then qwrite("set_sub_material", self.__id, {}) else qwrite("set_sub_material", self.__id, { index = i, material = m or "" }) end end
+function ENT:GetSubMaterial(i) local sn = snap(self.__id); return sn and sn.sub_materials and sn.sub_materials[i] or "" end
+local base_flags = ENT.GetFlags
+function ENT:GetFlags() local f = base_flags(self); local v = rawget(self, "__vars"); if v then f = bit.band(bit.bor(f, v.__flags_add or 0), bit.bnot(v.__flags_rem or 0)) end return f end
+function ENT:AddFlags(f)
+    local v = evars(self); v.__flags_add = bit.bor(v.__flags_add or 0, f); v.__flags_rem = bit.band(v.__flags_rem or 0, bit.bnot(f))
+    if bit.band(f, FL_FROZEN) ~= 0 then local p = self:GetPhysicsObject(); if IsValid(p) then p:EnableMotion(false) end end
+end
+function ENT:RemoveFlags(f)
+    local v = evars(self); v.__flags_rem = bit.bor(v.__flags_rem or 0, f); v.__flags_add = bit.band(v.__flags_add or 0, bit.bnot(f))
+    if bit.band(f, FL_FROZEN) ~= 0 then local p = self:GetPhysicsObject(); if IsValid(p) then p:EnableMotion(true) end end
+end
+-- plain per-entity settings the engine only stores
+local function setter(name, key) ENT["Set" .. name] = function(self, val) evars(self)[key] = val end end
+local function getter(name, key, default) ENT["Get" .. name] = function(self) local v = evars(self)[key]; if v == nil then return default end return v end end
+setter("SpawnEffect", "__spawn_effect"); getter("SpawnEffect", "__spawn_effect", false)
+setter("ShouldPlayPickupSound", "__pickup_sound"); getter("ShouldPlayPickupSound", "__pickup_sound", true)
+setter("ShouldServerRagdoll", "__server_ragdoll"); getter("ShouldServerRagdoll", "__server_ragdoll", false)
+setter("LightingOriginEntity", "__lighting_origin"); getter("LightingOriginEntity", "__lighting_origin", NULL)
+setter("BoneController", "__bone_controller")
+function ENT:SetBoneController(i, v) local t = evars(self); t.__bone_controllers = t.__bone_controllers or {}; t.__bone_controllers[i] = v end
+function ENT:GetBoneController(i) local t = evars(self).__bone_controllers; return t and t[i] or 0 end
+function ENT:DrawShadow(on) evars(self).__draw_shadow = on ~= false end
+function ENT:SetIK(on) evars(self).__ik = on ~= false end
+function ENT:UseClientSideAnimation(on) evars(self).__client_anim = on ~= false end
+function ENT:EnableConstraints(on) evars(self).__constraints_enabled = on ~= false end
+function ENT:SetSurroundingBounds(mins, maxs) local v = evars(self); v.__surround_mins, v.__surround_maxs = mins, maxs end
+function ENT:SetSurroundingBoundsType(t) evars(self).__surround_type = t end
+function ENT:SetParentPhysNum(n) evars(self).__parent_phys = n end
+function ENT:SetPhysConstraintObjects(a, b) local v = evars(self); v.__constraint_objs = { a, b } end
+function ENT:SetRagdollPos(p) evars(self).__ragdoll_pos = p end
+function ENT:SetRagdollAng(a) evars(self).__ragdoll_ang = a end
+function ENT:SetRagdollBuildFunction(fn) evars(self).__ragdoll_build = fn end
+function ENT:SetEntity(name, ent) local v = evars(self); v.__named_ents = v.__named_ents or {}; v.__named_ents[name] = ent end
+function ENT:GetEditingData() return evars(self).__edit or {} end
+function ENT:SetHitboxSet(set) evars(self).__hitbox_set = set end
+local base_hitbox_set = ENT.GetHitboxSet
+function ENT:GetHitboxSet() local s = evars(self).__hitbox_set; if s ~= nil then return tonumber(s) or 0, tostring(s) end return base_hitbox_set(self) end
+function ENT:SetLayerBlendIn(layer, t) local v = evars(self); v.__layer_blend_in = v.__layer_blend_in or {}; v.__layer_blend_in[layer] = t end
+function ENT:SetLayerBlendOut(layer, t) local v = evars(self); v.__layer_blend_out = v.__layer_blend_out or {}; v.__layer_blend_out[layer] = t end
+function ENT:MakePhysicsObjectAShadow(allowMove, allowRot) local v = evars(self); v.__shadow = { move = allowMove, rot = allowRot }; local p = self:GetPhysicsObject(); if IsValid(p) then p:EnableGravity(false) end end
+function ENT:SetAttachment(parent, attachment) self:SetParent(parent); evars(self).__parent_attachment = attachment end
+function ENT:FollowBone(parent, bone) self:SetParent(parent); evars(self).__follow_bone = bone end
+function ENT:GetPreferredCarryAngles() return evars(self).__carry_angles or (self.PreferredCarryAngles) or Angle(0, 0, 0) end
+function ENT:GetRagdollOwner() return self:GetOwner() end
+function ENT:GetMomentaryRotButtonPos() return evars(self).__rot_button_pos or 0 end
+function ENT:BodyTarget(origin, noisy) return self:WorldSpaceCenter() end
+function ENT:HeadTarget(origin) if self.EyePos then return self:EyePos() end return self:WorldSpaceCenter() end
+function ENT:AlignAngles(from, to) self:SetAngles(self:GetAngles() + (to - from)) end
+function ENT:Blocked(other) end
+function ENT:BoneLength(b)
+    local p = self:GetBoneParent(b)
+    if p == nil or p < 0 then return 0 end
+    local a, c = self:GetBonePosition(b), self:GetBonePosition(p)
+    if a and c then return a:Distance(c) end
+    return 0
+end
+function ENT:BoneHasFlag(b, flag) return b ~= nil and b >= 0 and b < self:GetBoneCount() and flag ~= 0 end
+function ENT:GetBrushPlaneCount() return 0 end
+function ENT:GetBrushPlane(i) return nil end
+function ENT:GetBrushSurfaces() return {} end
+function ENT:FindTransitionSequence(current, goal) return goal end
+function ENT:MuzzleFlash()
+    if util and util.Effect and EffectData then
+        local ed = EffectData(); ed:SetEntity(self); ed:SetAttachment(1); ed:SetOrigin(self:GetPos())
+        util.Effect("MuzzleFlash", ed)
+    end
+end
+function ENT:GibBreakClient(force, clr) evars(self).__gibbed = true end
+function ENT:GibBreakServer(force) evars(self).__gibbed = true end
+function ENT:PrecacheGibs() return 0 end
+function ENT:PlayScene(scene, delay) evars(self).__scene = scene; return 0, 0 end
+function ENT:RagdollSolve() end
+function ENT:RagdollStopControlling() end
+function ENT:RagdollUpdatePhysics() end
+function ENT:CreateBoneFollowers() end
+function ENT:DestroyBoneFollowers() end
+function ENT:UpdateBoneFollowers() end
+function ENT:RemoveInternalConstraint(i) local v = evars(self); v.__removed_internal = v.__removed_internal or {}; v.__removed_internal[i or 0] = true end
+function ENT:SetBoneMatrix(b, m) local v = evars(self); v.__bone_matrix = v.__bone_matrix or {}; v.__bone_matrix[b] = m end
+function ENT:CopyBoneMatrix(b, m) local src = self:GetBoneMatrix(b); if src and m and m.Set then m:Set(src) end end
+local base_bone_matrix = ENT.GetBoneMatrix
+function ENT:GetBoneMatrix(b) local v = rawget(self, "__vars"); local m = v and v.__bone_matrix and v.__bone_matrix[b]; if m then return m end return base_bone_matrix(self, b) end
+function ENT:SendViewModelMatchingSequence(seq) if type(seq) == "number" and seq >= 0 then self:SetSequence(seq) end end
+function ENT:ViewModelIndex() return evars(self).__vm_index or 0 end
+-- motion controller: `PhysicsSimulate` runs for every registered object each tick and its
+-- angular / linear results are applied as the SIM_* mode says (the game's IMotionEvent)
+function ENT:AddToMotionController(phys) local v = evars(self); v.__motion_objs = v.__motion_objs or {}; table.insert(v.__motion_objs, phys) end
+function ENT:RemoveFromMotionController(phys) local v = evars(self); if not v.__motion_objs then return end for i, p in ipairs(v.__motion_objs) do if p == phys then table.remove(v.__motion_objs, i) return end end end
+function ENT:StartMotionController()
+    local v = evars(self); v.__motion = true
+    if not v.__motion_objs or #v.__motion_objs == 0 then v.__motion_objs = { self:GetPhysicsObject() } end
+    local me = self
+    hook.Add("Tick", "__motion_" .. tostring(self.__id), function()
+        if not IsValid(me) or not evars(me).__motion then hook.Remove("Tick", "__motion_" .. tostring(me.__id)) return end
+        local dt = FrameTime()
+        for _, p in ipairs(evars(me).__motion_objs or {}) do
+            if IsValid(p) and me.PhysicsSimulate then
+                local ang, lin, mode = me:PhysicsSimulate(p, dt)
+                mode = mode or SIM_LOCAL_FORCE or 0
+                if lin and lin ~= 0 then
+                    if mode == (SIM_GLOBAL_ACCELERATION or 3) then p:AddVelocity(lin * dt)
+                    elseif mode == (SIM_GLOBAL_FORCE or 2) then p:ApplyForceCenter(lin)
+                    elseif mode == (SIM_LOCAL_ACCELERATION or 1) then p:AddVelocity(p:LocalToWorldVector(lin) * dt)
+                    else p:ApplyForceCenter(p:LocalToWorldVector(lin)) end
+                end
+                if ang and ang ~= 0 then
+                    if mode == (SIM_GLOBAL_ACCELERATION or 3) or mode == (SIM_LOCAL_ACCELERATION or 1) then p:AddAngleVelocity(ang * dt)
+                    else p:AddAngleVelocity(ang / math.max(p:GetMass(), 1e-3) * dt) end
+                end
+            end
+        end
+    end)
+end
+function ENT:StopMotionController() local v = evars(self); v.__motion = false; hook.Remove("Tick", "__motion_" .. tostring(self.__id)) end
+local function points_bounds(points)
+    local mins, maxs = Vector(math.huge, math.huge, math.huge), Vector(-math.huge, -math.huge, -math.huge)
+    local n = 0
+    for _, p in ipairs(points) do
+        if type(p) == "table" and p[1] then for _, q in ipairs(p) do mins.x = math.min(mins.x, q.x); mins.y = math.min(mins.y, q.y); mins.z = math.min(mins.z, q.z); maxs.x = math.max(maxs.x, q.x); maxs.y = math.max(maxs.y, q.y); maxs.z = math.max(maxs.z, q.z); n = n + 1 end
+        else local q = p.pos or p; mins.x = math.min(mins.x, q.x); mins.y = math.min(mins.y, q.y); mins.z = math.min(mins.z, q.z); maxs.x = math.max(maxs.x, q.x); maxs.y = math.max(maxs.y, q.y); maxs.z = math.max(maxs.z, q.z); n = n + 1 end
+    end
+    if n == 0 then return Vector(-1, -1, -1), Vector(1, 1, 1) end
+    return mins, maxs
+end
+-- convex / mesh collision falls back to the hull's box (the physics backend builds convex hulls from the model only)
+function ENT:PhysicsInitConvex(points) local mins, maxs = points_bounds(points or {}); evars(self).__phys_points = points; return self:PhysicsInitBox(mins, maxs) end
+function ENT:PhysicsInitMultiConvex(groups) local mins, maxs = points_bounds(groups or {}); evars(self).__phys_points = groups; return self:PhysicsInitBox(mins, maxs) end
+function ENT:PhysicsFromMesh(verts) local mins, maxs = points_bounds(verts or {}); evars(self).__phys_mesh = verts; return self:PhysicsInitBox(mins, maxs) end
+
+local function pvars(self) local v = rawget(self, "__pv"); if not v then v = {}; rawset(self, "__pv", v) end return v end
+function P:SetDragCoefficient(c) qwrite("set_drag_coef", self.__ent.__id, { linear = tonumber(c) or 0 }) end
+function P:SetAngleDragCoefficient(c) qwrite("set_drag_coef", self.__ent.__id, { angular = tonumber(c) or 0 }) end
+function P:AddGameFlag(f) local v = pvars(self); v.flags = bit.bor(v.flags or 0, f) end
+function P:ClearGameFlag(f) local v = pvars(self); v.flags = bit.band(v.flags or 0, bit.bnot(f)) end
+function P:HasGameFlag(f) return bit.band(pvars(self).flags or 0, f) ~= 0 end
+function P:GetContents() local c = pvars(self).contents; if c == nil then return CONTENTS_SOLID end return c end
+function P:SetContents(c) pvars(self).contents = c end
+function P:GetBuoyancyRatio() return pvars(self).buoyancy or 1 end
+function P:SetBuoyancyRatio(r) pvars(self).buoyancy = r end
+function P:GetShadowPos() local v = pvars(self); return v.shadow_pos or self:GetPos() end
+function P:GetShadowAngles() local v = pvars(self); return v.shadow_ang or self:GetAngles() end
+function P:UpdateShadow(pos, ang, dt) local v = pvars(self); v.shadow_pos, v.shadow_ang = pos, ang end
+function P:ComputeShadowControl(params)
+    local v = pvars(self)
+    local dt = params.deltatime or FrameTime()
+    local arrive = math.max(params.secondstoarrive or dt, 1e-3)
+    local pos, ang = params.pos or self:GetPos(), params.angle or self:GetAngles()
+    v.shadow_pos, v.shadow_ang = pos, ang
+    local cur = self:GetPos()
+    local delta = pos - cur
+    if (params.teleportdistance or 0) > 0 and delta:Length() > params.teleportdistance then self:SetPos(pos); self:SetAngles(ang); self:SetVelocity(Vector(0, 0, 0)); self:SetAngleVelocity(Vector(0, 0, 0)); return 0 end
+    local vel = delta / arrive
+    local maxs = params.maxspeed or 0
+    if maxs > 0 and vel:Length() > maxs then vel = vel:GetNormalized() * maxs end
+    local damp = math.Clamp(params.dampfactor or 1, 0, 1)
+    self:SetVelocity(self:GetVelocity() * (1 - damp) + vel * damp)
+    local ca = self:GetAngles()
+    local da = Vector(math.AngleDifference(ang.p, ca.p), math.AngleDifference(ang.y, ca.y), math.AngleDifference(ang.r, ca.r)) / arrive
+    local maxa = params.maxangular or 0
+    if maxa > 0 and da:Length() > maxa then da = da:GetNormalized() * maxa end
+    self:SetAngleVelocity(self:GetAngleVelocity() * (1 - damp) + da * damp)
+    return arrive
+end
+function P:GetStress() return 0, 0 end
+function P:IsPenetrating() return false end
+function P:GetFrictionSnapshot() return {} end
+function P:RecheckCollisionFilter() end
+
+function VEH:GetAmmo() return -1, 0, 0 end
+function VEH:GetCameraDistance() return evars(self).__cam_dist or -1 end
+function VEH:SetCameraDistance(d) evars(self).__cam_dist = d end
+function VEH:GetThirdPersonMode() return evars(self).__third_person == true end
+function VEH:SetThirdPersonMode(on) evars(self).__third_person = on == true end
+function VEH:GetWheel(i) return nil end
+function VEH:HasBrakePedal() local v = evars(self).__brake_pedal; if v == nil then return true end return v end
+function VEH:SetHasBrakePedal(on) evars(self).__brake_pedal = on ~= false end
+local base_vehicle_class = VEH.GetVehicleClass
+function VEH:SetVehicleClass(c) evars(self).__vehicle_class = c end
+function VEH:GetVehicleClass() local c = evars(self).__vehicle_class; if c then return c end return base_vehicle_class and base_vehicle_class(self) or "" end
+function VEH:SetVehicleEntryAnim(on) evars(self).__entry_anim = on ~= false end
+
+function WEP:CallOnClient(fn, args) local f = self[fn]; if type(f) == "function" then f(self, args) end end
+function WEP:GetActivity() return evars(self).__activity or ACT_INVALID or -1 end
+function WEP:SetActivity(a) evars(self).__activity = a end
+function WEP:IsWeaponVisible() local o = self:GetOwner(); if not IsValid(o) then return true end return o:Alive() and o:GetActiveWeapon() == self end
+function WEP:SendWeaponAnim(act)
+    evars(self).__activity = act
+    if self.SelectWeightedSequence and self.SetSequence then local s = self:SelectWeightedSequence(act); if s and s >= 0 then self:SetSequence(s) end end
 end

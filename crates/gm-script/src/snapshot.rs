@@ -55,6 +55,8 @@ pub struct EntitySnap {
     /// Poser state: non-identity bone scales / angles `(bone, value)`, flex weights + scale, eye target.
     pub bone_scales: Vec<(u32, Vec3)>,
     pub bone_angles: Vec<(u32, Vec3)>,
+    pub bone_positions: Vec<(u32, Vec3)>,
+    pub sub_materials: Vec<(u8, String)>,
     pub flex: Option<(Vec<f32>, f32)>,
     pub eye_target: Option<Vec3>,
     /// NPC weapon class, empty for none / non-NPCs.
@@ -472,6 +474,8 @@ impl Snapshot {
                             }),
                             bone_scales: Vec::new(),
                             bone_angles: Vec::new(),
+                            bone_positions: Vec::new(),
+                            sub_materials: Vec::new(),
                             flex: e.flex.as_ref().map(|f| (f.weights.clone(), f.scale)),
                             eye_target: e.eye_target,
                             weapon: String::new(),
@@ -609,6 +613,12 @@ impl Snapshot {
                                 .into_iter()
                                 .map(|(i, v)| (i as u32, v))
                                 .collect(),
+                            bone_positions: server
+                                .bone_positions(p.id)
+                                .into_iter()
+                                .map(|(i, v)| (i as u32, v))
+                                .collect(),
+                            sub_materials: server.sub_materials(p.id),
                             flex: server.flex_state(p.id),
                             eye_target: server.eye_target(p.id),
                             weapon: String::new(),
@@ -683,6 +693,8 @@ impl Snapshot {
                             gesture: server.anim(id).and_then(|a| a.gesture.clone()),
                             bone_scales: Vec::new(),
                             bone_angles: Vec::new(),
+                            bone_positions: Vec::new(),
+                            sub_materials: Vec::new(),
                             flex: None,
                             eye_target: None,
                             weapon: n.weapon.clone(),

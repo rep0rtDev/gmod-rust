@@ -4969,6 +4969,10 @@ pub struct Server<'w> {
     bone_scales: BTreeMap<u32, Vec<Vec3>>,
     /// `Entity:ManipulateBoneAngles` per model bone (finger poser), absent = all zero.
     bone_angles: BTreeMap<u32, Vec<Vec3>>,
+    /// `Entity:ManipulateBonePosition` per model bone, absent = all zero.
+    bone_positions: BTreeMap<u32, Vec<Vec3>>,
+    /// `Entity:SetSubMaterial`: (material index, override path) per prop.
+    sub_materials: BTreeMap<u32, Vec<(u8, String)>>,
     /// `Entity:SetEyeTarget` (eyeposer, local to the `eyes` attachment); the duplicator's
     /// `eyetarget` modifier, cleared by `vector_origin`.
     eye_targets: BTreeMap<u32, Vec3>,
@@ -5194,6 +5198,8 @@ impl<'w> Server<'w> {
             ragdoll_bodies: BTreeMap::new(),
             bone_scales: BTreeMap::new(),
             bone_angles: BTreeMap::new(),
+            bone_positions: BTreeMap::new(),
+            sub_materials: BTreeMap::new(),
             eye_targets: BTreeMap::new(),
             flexes: BTreeMap::new(),
             posers: BTreeMap::new(),
@@ -8001,6 +8007,7 @@ impl<'w> Server<'w> {
         bone: usize,
         scale: Option<Vec3>,
         angles: Option<Vec3>,
+        pos: Option<Vec3>,
     ) -> bool {
         let Some(prop) = self.sandbox.props().iter().find(|p| p.id == ent) else {
             return false;
@@ -8028,7 +8035,56 @@ impl<'w> Server<'w> {
             v.resize(bones, Vec3::ZERO);
             v[bone] = an;
         }
+        if let Some(po) = pos {
+            let v = self
+                .bone_positions
+                .entry(ent)
+                .or_insert_with(|| vec![Vec3::ZERO; bones]);
+            v.resize(bones, Vec3::ZERO);
+            v[bone] = po;
+        }
         true
+    }
+
+    /// `Entity:SetSubMaterial`: override one material slot of a prop's model (`None` / empty
+    /// clears it; no index clears them all).
+    pub fn set_sub_material(&mut self, ent: u32, index: Option<u8>, material: Option<&str>) -> bool {
+        if !self.sandbox.props().iter().any(|p| p.id == ent) {
+            return false;
+        }
+        let Some(index) = index else {
+            self.sub_materials.remove(&ent);
+            return true;
+        };
+        let v = self.sub_materials.entry(ent).or_default();
+        v.retain(|(i, _)| *i != index);
+        if let Some(m) = material.filter(|m| !m.is_empty()) {
+            v.push((index, m.to_string()));
+            v.sort_by_key(|(i, _)| *i);
+        }
+        if v.is_empty() {
+            self.sub_materials.remove(&ent);
+        }
+        true
+    }
+
+    /// `Entity:GetSubMaterial`: the overridden material slots of `prop`.
+    pub fn sub_materials(&self, prop: u32) -> Vec<(u8, String)> {
+        self.sub_materials.get(&prop).cloned().unwrap_or_default()
+    }
+
+    /// Bone position manipulations of `prop`, non-zero ones only.
+    pub fn bone_positions(&self, prop: u32) -> Vec<(usize, Vec3)> {
+        self.bone_positions
+            .get(&prop)
+            .map(|v| {
+                v.iter()
+                    .enumerate()
+                    .filter(|(_, a)| a.abs().max_element() > 1e-6)
+                    .map(|(i, a)| (i, *a))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Script `SetFlexWeight` (`Some(id)`) / `SetFlexScale` (`id` None, `value` is the scale).
@@ -13279,6 +13335,8 @@ impl<'w> Server<'w> {
             } else {
                 self.bone_scales.remove(&id);
                 self.bone_angles.remove(&id);
+                self.bone_positions.remove(&id);
+                self.sub_materials.remove(&id);
                 self.eye_targets.remove(&id);
                 self.flexes.remove(&id);
                 self.decals.remove(&id);

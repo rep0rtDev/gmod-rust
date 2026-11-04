@@ -207,6 +207,8 @@ pub struct EntityState {
     pub color: [u8; 4],
     pub render_mode: u8,
     pub render_fx: u8,
+    /// `Entity:SetSubMaterial` overrides: (material index, path).
+    pub sub_materials: Vec<(u8, String)>,
     /// `Entity:SetModelScale` (render only).
     pub model_scale: f32,
     /// prop_ragdoll: pose of every physics object (`GetPhysicsObjectNum(i)`), empty on a prop.
@@ -255,6 +257,7 @@ pub struct BoneManip {
     pub bone: u16,
     pub scale: Vec3,
     pub angles: Vec3,
+    pub pos: Vec3,
 }
 
 /// `SetFlexWeight` per controller and `SetFlexScale`.
@@ -589,7 +592,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
 /// The editor entities' vars by entity id: key / value pairs (`ServerMsg::EntityEdits`).
 pub type EditVars = Vec<(u32, Vec<(String, String)>)>;
 
-pub const PROTOCOL: u16 = 28;
+pub const PROTOCOL: u16 = 29;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1118,6 +1121,11 @@ impl ServerMsg {
                     }
                     w.u8(e.render_mode);
                     w.u8(e.render_fx);
+                    w.varint(e.sub_materials.len() as u64);
+                    for (i, m) in &e.sub_materials {
+                        w.u8(*i);
+                        w.str(m);
+                    }
                     w.f32(e.model_scale);
                     w.varint(e.bones.len() as u64);
                     for b in &e.bones {
@@ -1128,7 +1136,7 @@ impl ServerMsg {
                     w.varint(e.manips.len() as u64);
                     for m in &e.manips {
                         w.u16(m.bone);
-                        for v in [m.scale, m.angles] {
+                        for v in [m.scale, m.angles, m.pos] {
                             w.f32(v.x);
                             w.f32(v.y);
                             w.f32(v.z);
@@ -1539,6 +1547,14 @@ impl ServerMsg {
                         color: [r.u8()?, r.u8()?, r.u8()?, r.u8()?],
                         render_mode: r.u8()?,
                         render_fx: r.u8()?,
+                        sub_materials: {
+                            let n = r.varint()? as usize;
+                            let mut v = Vec::with_capacity(n);
+                            for _ in 0..n {
+                                v.push((r.u8()?, r.str()?));
+                            }
+                            v
+                        },
                         model_scale: r.f32()?,
                         bones: {
                             let n = r.varint()? as usize;
@@ -1560,6 +1576,7 @@ impl ServerMsg {
                                     bone: r.u16()?,
                                     scale: Vec3::new(r.f32()?, r.f32()?, r.f32()?),
                                     angles: Vec3::new(r.f32()?, r.f32()?, r.f32()?),
+                                    pos: Vec3::new(r.f32()?, r.f32()?, r.f32()?),
                                 });
                             }
                             manips

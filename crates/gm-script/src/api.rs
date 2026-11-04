@@ -584,12 +584,26 @@ pub enum QueuedWrite {
         player: u32,
         vehicle: Option<u32>,
     },
-    /// `ManipulateBoneScale` / `ManipulateBoneAngles`: each `Some` replaces that part.
+    /// `ManipulateBoneScale` / `ManipulateBoneAngles` / `ManipulateBonePosition`: each `Some`
+    /// replaces that part.
     SetBoneManip {
         ent: u32,
         bone: u32,
         scale: Option<Vec3>,
         angles: Option<Vec3>,
+        pos: Option<Vec3>,
+    },
+    /// `Entity:SetSubMaterial`: one material slot override (`None` index clears all).
+    SetSubMaterial {
+        ent: u32,
+        index: Option<u8>,
+        material: Option<String>,
+    },
+    /// `PhysObj:SetDragCoefficient` / `SetAngleDragCoefficient`.
+    SetDragCoefficient {
+        ent: u32,
+        linear: Option<f32>,
+        angular: Option<f32>,
     },
     /// `SetFlexWeight` (`Some(id)`) / `SetFlexScale` (`None`).
     SetFlex {
@@ -1227,6 +1241,16 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
         ba.set(*b, vec3_table(lua, *v)?)?;
     }
     t.set("bone_angles", ba)?;
+    let bp = lua.create_table()?;
+    for (b, v) in &e.bone_positions {
+        bp.set(*b, vec3_table(lua, *v)?)?;
+    }
+    t.set("bone_positions", bp)?;
+    let sm = lua.create_table()?;
+    for (i, m) in &e.sub_materials {
+        sm.set(*i, m.as_str())?;
+    }
+    t.set("sub_materials", sm)?;
     if let Some((w, sc)) = &e.flex {
         t.set("flex_weights", w.clone())?;
         t.set("flex_scale", *sc)?;
@@ -2793,6 +2817,22 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         _ => Some(int_arg(&arg)?.max(0) as u32),
                     },
                 },
+                "set_sub_material" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::SetSubMaterial {
+                        ent,
+                        index: t.get::<Option<u8>>("index")?,
+                        material: t.get::<Option<String>>("material")?,
+                    }
+                }
+                "set_drag_coef" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::SetDragCoefficient {
+                        ent,
+                        linear: t.get::<Option<f32>>("linear")?,
+                        angular: t.get::<Option<f32>>("angular")?,
+                    }
+                }
                 "set_bone_manip" => {
                     let t = table_arg(&arg)?;
                     QueuedWrite::SetBoneManip {
@@ -2803,6 +2843,10 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                             None => None,
                         },
                         angles: match t.get::<Option<Table>>("angles")? {
+                            Some(v) => Some(table_vec3(&v)?),
+                            None => None,
+                        },
+                        pos: match t.get::<Option<Table>>("pos")? {
                             Some(v) => Some(table_vec3(&v)?),
                             None => None,
                         },
@@ -4550,7 +4594,24 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             bone,
             scale,
             angles,
-        } => server.set_bone_manip(*ent, *bone as usize, *scale, *angles),
+            pos,
+        } => server.set_bone_manip(*ent, *bone as usize, *scale, *angles, *pos),
+        QueuedWrite::SetSubMaterial {
+            ent,
+            index,
+            material,
+        } => server.set_sub_material(*ent, *index, material.as_deref()),
+        QueuedWrite::SetDragCoefficient {
+            ent,
+            linear,
+            angular,
+        } => match server.body_of(*ent) {
+            Some(body) => {
+                server.physics.set_drag_coefficient(body, *linear, *angular);
+                true
+            }
+            None => false,
+        },
         QueuedWrite::SetFlex { ent, id, value } => {
             server.set_flex(*ent, id.map(|i| i as usize), *value)
         }

@@ -228,7 +228,6 @@ function TOOL:GetClientBool(prop, default) local cv = GetConVar(tostring(self.Mo
 function TOOL:GetServerInfo(prop) local cv = GetConVar(tostring(self.Mode) .. "_" .. prop); return cv and cv:GetString() or "" end
 function TOOL:BuildConVarList() local out = {}; local m = tostring(self.Mode) .. "_"; for k, v in pairs(self.ClientConVar) do out[m .. k] = v end return out end
 function TOOL:CreateConVars() for k, v in pairs(self.ClientConVar) do CreateConVar(tostring(self.Mode) .. "_" .. k, v, FCVAR_REPLICATED) end end
-for _, n in ipairs({ "MakeGhostEntity", "ReleaseGhostEntity", "StartGhostEntity", "UpdateData", "UpdateGhostEntity" }) do if TOOL[n] == nil then TOOL[n] = stub("Tool:" .. n) end end
 __glua_classes.Tool = TOOL
 ToolObj = TOOL
 local function tool_trace(ctx)
@@ -309,7 +308,6 @@ function duplicator.DoGenericPhysics(ent, ply, data) local p = data.PhysicsObjec
 function duplicator.Paste(ply, entities, constraints) local created = {}
     for id, data in pairs(entities) do local d = table.Copy(data); if dup_local_pos then d.Pos = d.Pos + dup_local_pos end; local e = duplicator.CreateEntityFromTable(ply, d); if IsValid(e) then created[id] = e; duplicator.ApplyEntityModifiers(ply, e); local si = scripted_ents.__instance(e:EntIndex()); if si then if si.OnDuplicated then si:OnDuplicated(d) end if si.PostEntityPaste then si:PostEntityPaste(ply, e, created) end end end end
     return created, {} end
-for _, n in ipairs({ "CreateConstraintFromTable", "DoBoneManipulator", "DoFlex", "FigureOutRequiredAddons", "GetAllConstrainedEntitiesAndConstraints", "RemoveMapCreatedEntities" }) do if duplicator[n] == nil then duplicator[n] = stub("duplicator." .. n) end end
 
 -- Classes the own server has no object for yet: every documented method is a stub.
 for _, cls in ipairs({ "CUserCmd", "CMoveData", "CNavLadder", "PathFollower", "CLuaLocomotion" }) do
@@ -822,13 +820,11 @@ for _, n in ipairs({ "Fetch", "FetchSubscribed", "FillFileInfo", "Publish", "Ret
 ai = ai or {}
 for _, n in ipairs({ "GetNodeCount", "GetScheduleID", "GetSquadLeader", "GetSquadMemberCount", "GetSquadMembers", "GetTaskID" }) do if ai[n] == nil then ai[n] = stub("ai." .. n) end end
 construct = construct or {}
-for _, n in ipairs({ "Magnet", "SetPhysProp" }) do if construct[n] == nil then construct[n] = stub("construct." .. n) end end
 coroutine = coroutine or {}
 debug = debug or {}
 debugoverlay = debugoverlay or {}
 for _, n in ipairs({ "Axis", "Box", "BoxAngles", "Cross", "EntityTextAtPosition", "Grid", "Line", "ScreenText", "Sphere", "SweptBox", "Text", "Triangle" }) do if debugoverlay[n] == nil then debugoverlay[n] = stub("debugoverlay." .. n) end end
 ents = ents or {}
-for _, n in ipairs({ "FindInPVS", "FireTargets" }) do if ents[n] == nil then ents[n] = stub("ents." .. n) end end
 gameevent = gameevent or {}
 gmsave = gmsave or {}
 for _, n in ipairs({ "LoadMap", "PlayerLoad", "PlayerSave", "SaveMap", "ShouldSaveEntity" }) do if gmsave[n] == nil then gmsave[n] = stub("gmsave." .. n) end end

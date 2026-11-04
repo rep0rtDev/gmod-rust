@@ -48,6 +48,8 @@ fn snapshot() -> Arc<Snapshot> {
             maxs: glam::Vec3::ZERO,
             bone_scales: vec![(1, Vec3::new(2.0, 2.0, 2.0))],
             bone_angles: vec![],
+            bone_positions: vec![],
+            sub_materials: vec![],
             flex: Some((vec![0.5], 1.0)),
             eye_target: None,
             weapon: "weapon_smg1".into(),
@@ -115,6 +117,8 @@ fn snapshot() -> Arc<Snapshot> {
             maxs: glam::Vec3::ZERO,
             bone_scales: vec![(1, Vec3::new(2.0, 2.0, 2.0))],
             bone_angles: vec![],
+            bone_positions: vec![],
+            sub_materials: vec![],
             flex: Some((vec![0.5], 1.0)),
             eye_target: None,
             weapon: "weapon_smg1".into(),
@@ -931,7 +935,7 @@ fn poser_state_reads_and_writes() {
     assert_eq!(r, vec![2.0, 1.0, 0.0, 1.0, 0.5, 0.0, 1.0, 1.0, 1.0]);
     let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
     assert!(
-        matches!(&writes[0], QueuedWrite::SetBoneManip { ent: 5, bone: 1, scale: Some(s), angles: None } if s.x == 3.0)
+        matches!(&writes[0], QueuedWrite::SetBoneManip { ent: 5, bone: 1, scale: Some(s), angles: None, .. } if s.x == 3.0)
     );
     assert!(
         matches!(&writes[1], QueuedWrite::SetBoneManip { bone: 2, scale: None, angles: Some(a), .. } if a.y == 20.0)
@@ -3015,4 +3019,46 @@ fn compat_sql_debug_digests_and_materials() {
         .eval("return state.what, state.alpha, state.flag, state.ev")
         .unwrap();
     assert_eq!((what.as_str(), alpha, flag, ev), ("Lua", 0.5, 1, 2050));
+}
+
+#[test]
+fn bone_positions_sub_materials_flags_and_drag_coefficients() {
+    let mut rt = runtime(
+        "state = {}
+         local e = Entity(5)
+         e:ManipulateBonePosition(1, Vector(0, 0, 3))
+         e:SetSubMaterial(2, 'models/debug/debugwhite')
+         e:SetSubMaterial()
+         e:GetPhysicsObject():SetDragCoefficient(2.5)
+         e:GetPhysicsObject():SetAngleDragCoefficient(0)
+         e:AddFlags(FL_NOTARGET)
+         state.flag = e:IsFlagSet(FL_NOTARGET)
+         e:RemoveFlags(FL_NOTARGET)
+         state.flag2 = e:IsFlagSet(FL_NOTARGET)
+         e:SetSpawnEffect(true)
+         state.fx = e:GetSpawnEffect()
+         state.sub = e:GetSubMaterial(0)
+         local p = e:GetPhysicsObject()
+         p:AddGameFlag(FVPHYSICS_NO_IMPACT_DMG)
+         state.gf = p:HasGameFlag(FVPHYSICS_NO_IMPACT_DMG)
+         state.len = e:BoneLength(0)",
+    );
+    let (flag, flag2, fx, sub, gf): (bool, bool, bool, String, bool) = rt.actors()[0]
+        .eval("return state.flag, state.flag2, state.fx, state.sub, state.gf")
+        .unwrap();
+    assert_eq!((flag, flag2, fx, sub.as_str(), gf), (true, false, true, "", true));
+    let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
+    assert!(
+        matches!(&writes[0], QueuedWrite::SetBoneManip { ent: 5, bone: 1, scale: None, angles: None, pos: Some(p) } if p.z == 3.0)
+    );
+    assert!(
+        matches!(&writes[1], QueuedWrite::SetSubMaterial { ent: 5, index: Some(2), material: Some(m) } if m == "models/debug/debugwhite")
+    );
+    assert!(matches!(&writes[2], QueuedWrite::SetSubMaterial { ent: 5, index: None, material: None }));
+    assert!(
+        matches!(&writes[3], QueuedWrite::SetDragCoefficient { ent: 5, linear: Some(l), angular: None } if *l == 2.5)
+    );
+    assert!(
+        matches!(&writes[4], QueuedWrite::SetDragCoefficient { ent: 5, linear: None, angular: Some(a) } if *a == 0.0)
+    );
 }

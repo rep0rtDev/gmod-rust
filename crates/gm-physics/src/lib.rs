@@ -450,6 +450,9 @@ struct Drag {
     ang: Vec3,
     /// `PhysObj:EnableDrag(false)`: kept, not applied.
     disabled: bool,
+    /// `PhysObj:SetDragCoefficient` / `SetAngleDragCoefficient` multipliers (1 = the model's).
+    lin_coef: f32,
+    ang_coef: f32,
 }
 
 /// An explicit `phys_spring`: integrated as an impulse per tick like the game's (a Jolt soft
@@ -806,6 +809,8 @@ impl World {
             self.drags.push(Drag {
                 body: id,
                 disabled: false,
+                lin_coef: 1.0,
+                ang_coef: 1.0,
                 areas: Self::drag_factors(desc.hulls, desc.mass, desc.drag_axis_areas),
                 ang: Self::angular_drag_factors(
                     desc.hulls,
@@ -932,6 +937,19 @@ impl World {
     pub fn set_drag(&mut self, body: BodyHandle, on: bool) {
         for d in self.drags.iter_mut().filter(|d| d.body == body.0) {
             d.disabled = !on;
+        }
+    }
+
+    /// `PhysObj:SetDragCoefficient` / `SetAngleDragCoefficient`: scale the linear / angular
+    /// air drag of a body (`None` keeps that part).
+    pub fn set_drag_coefficient(&mut self, body: BodyHandle, linear: Option<f32>, angular: Option<f32>) {
+        for d in self.drags.iter_mut().filter(|d| d.body == body.0) {
+            if let Some(l) = linear {
+                d.lin_coef = l.max(0.0);
+            }
+            if let Some(a) = angular {
+                d.ang_coef = a.max(0.0);
+            }
         }
     }
 
@@ -1641,7 +1659,7 @@ impl World {
                 let v = from_jolt(gv(lv));
                 if d.ang != Vec3::ZERO {
                     let w = rot.inverse() * dir_from_jolt(gv(av));
-                    let loss = d.ang * w * w.abs() * dt;
+                    let loss = d.ang * d.ang_coef * w * w.abs() * dt;
                     let w = w - loss.clamp(-w.abs(), w.abs());
                     JPC_BodyInterface_SetAngularVelocity(bi, d.body, jv(dir_to_jolt(rot * w)));
                 }
@@ -1651,7 +1669,7 @@ impl World {
                     continue;
                 }
                 let dir = (rot.inverse() * predicted) / speed;
-                let k = d.areas.dot(dir.abs());
+                let k = d.areas.dot(dir.abs()) * d.lin_coef;
                 let loss = predicted * (k * speed * dt).min(1.0);
                 JPC_BodyInterface_SetLinearVelocity(bi, d.body, jv(to_jolt(v - loss)));
             }

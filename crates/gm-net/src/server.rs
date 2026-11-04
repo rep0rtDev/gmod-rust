@@ -1161,6 +1161,7 @@ impl ServerNet {
                     color: [255; 4],
                     render_mode: 0,
                     render_fx: 0,
+                    sub_materials: Vec::new(),
                     model_scale: 1.0,
                     bones: Vec::new(),
                     manips: Vec::new(),
@@ -1220,6 +1221,7 @@ impl ServerNet {
                     color: p.color,
                     render_mode: p.render_mode,
                     render_fx: p.render_fx,
+                    sub_materials: server.sub_materials(p.id),
                     model_scale: server.model_scale(p.id),
                     bones: server.ragdoll_bone_poses(p.id),
                     manips: {
@@ -1231,6 +1233,7 @@ impl ServerNet {
                                     bone: b as u16,
                                     scale: Vec3::ONE,
                                     angles: Vec3::ZERO,
+                                    pos: Vec3::ZERO,
                                 })
                                 .scale = s;
                         }
@@ -1240,8 +1243,19 @@ impl ServerNet {
                                     bone: b as u16,
                                     scale: Vec3::ONE,
                                     angles: Vec3::ZERO,
+                                    pos: Vec3::ZERO,
                                 })
                                 .angles = a;
+                        }
+                        for (b, po) in server.bone_positions(p.id) {
+                            m.entry(b as u16)
+                                .or_insert(crate::msg::BoneManip {
+                                    bone: b as u16,
+                                    scale: Vec3::ONE,
+                                    angles: Vec3::ZERO,
+                                    pos: Vec3::ZERO,
+                                })
+                                .pos = po;
                         }
                         m.into_values().collect()
                     },

@@ -585,9 +585,6 @@ function constraint.Motor(ent1, ent2, bone1, bone2, lpos1, lpos2, friction, torq
     world.queue("motor", IsValid(ent1) and ent1:EntIndex() or 0, { ent2 = IsValid(ent2) and ent2:EntIndex() or 0, owner = IsValid(owner) and owner:UserID() or 0, lpos1 = l1, lpos2 = cvec(lpos2), axis_point = { x = l1.x + axis.x, y = l1.y + axis.y, z = l1.z + axis.z }, friction = friction or 0, torque = torque or 0, forcetime = forcetime or 0, nocollide = (nocollide or 0) ~= 0 and nocollide ~= false, toggle = toggle == true or toggle == 1, forcelimit = forcelimit or 0, key_f = numpadkey_fwd or -1, key_r = numpadkey_bwd or -1, direction = direction or 1 })
     return remember("Motor", ent1, ent2, { friction = friction, torque = torque, forcetime = forcetime, nocollide = nocollide, toggle = toggle, forcelimit = forcelimit, numpadkey_fwd = numpadkey_fwd, numpadkey_bwd = numpadkey_bwd, direction = direction }), remember("Axis", ent1, ent2, { friction = friction, forcelimit = forcelimit, nocollide = nocollide })
 end
-for _, kind in ipairs({ "AdvBallsocket", "Keepupright" }) do
-    constraint[kind] = stub("constraint." .. kind)
-end
 
 ------------------------------------------------------------------------ GM hook bridge
 GM = GM or {}
@@ -1405,3 +1402,91 @@ events.on("tick.pre", function()
         if sr_apply_entity(id, pend.vals) or pend.ttl <= 0 then sr_pending[id] = nil end
     end
 end)
+
+------------------------------------------------------------------------ constraint.AdvBallsocket / Keepupright, construct, duplicator extras, ents.FireTargets / FindInPVS
+function constraint.AdvBallsocket(ent1, ent2, bone1, bone2, lpos1, lpos2, forcelimit, torquelimit, xmin, ymin, zmin, xmax, ymax, zmax, xfric, yfric, zfric, onlyrotation, nocollide)
+    cqueue("Ballsocket", ent1, ent2, { lpos = cvec(lpos2), forcelimit = forcelimit or 0, torquelimit = torquelimit or 0, nocollide = nocollide == 1 or nocollide == true })
+    return remember("AdvBallsocket", ent1, ent2, { forcelimit = forcelimit, torquelimit = torquelimit, xmin = xmin, ymin = ymin, zmin = zmin, xmax = xmax, ymax = ymax, zmax = zmax, xfric = xfric, yfric = yfric, zfric = zfric, onlyrotation = onlyrotation, nocollide = nocollide, LPos1 = lpos1, LPos2 = lpos2 })
+end
+function constraint.Keepupright(ent, ang, bone, angularlimit)
+    if not IsValid(ent) or not world or not world.queue then return false end
+    if (angularlimit or 0) <= 0 then return false end
+    world.queue("keep_upright", ent:EntIndex(), true)
+    local c = remember("Keepupright", ent, nil, { Ang = ang, Bone = bone, angularlimit = angularlimit })
+    return c
+end
+construct = construct or {}
+function construct.SetPhysProp(ply, ent, bone, phys, data)
+    if not IsValid(ent) then return end
+    local p = phys
+    if not IsValid(p) then p = ent.GetPhysicsObjectNum and ent:GetPhysicsObjectNum(bone or 0) or ent:GetPhysicsObject() end
+    if IsValid(p) then
+        if data.Material then p:SetMaterial(data.Material) end
+        if data.GravityToggle ~= nil then p:EnableGravity(data.GravityToggle) end
+    end
+    if duplicator and duplicator.StoreEntityModifier then duplicator.StoreEntityModifier(ent, "physprops", data) end
+end
+function construct.Magnet(ply, pos, ang, model, material, key, maxobjects, strength, nopull, allowrot, ...)
+    local e = ents.Create("prop_physics")
+    if not IsValid(e) then return NULL end
+    e:SetModel(model or "models/maxofs2d/hover_classic.mdl"); e:SetPos(pos); e:SetAngles(ang); e:Spawn()
+    if material and material ~= "" then e:SetMaterial(material) end
+    if IsValid(ply) then e:SetOwner(ply) end
+    local v = rawget(e, "__vars") or {}; rawset(e, "__vars", v)
+    v.__magnet = { key = key, maxobjects = maxobjects, strength = strength, nopull = nopull, allowrot = allowrot }
+    return e
+end
+duplicator = duplicator or {}
+function duplicator.DoBoneManipulator(ent, bones)
+    if not IsValid(ent) then return end
+    for b, t in pairs(bones or {}) do
+        if t.s then ent:ManipulateBoneScale(b, t.s) end
+        if t.a then ent:ManipulateBoneAngles(b, t.a) end
+        if t.p then ent:ManipulateBonePosition(b, t.p) end
+    end
+end
+function duplicator.DoFlex(ent, flex, scale)
+    if not IsValid(ent) then return end
+    for i, w in pairs(flex or {}) do ent:SetFlexWeight(i, w) end
+    if scale then ent:SetFlexScale(scale) end
+end
+function duplicator.CreateConstraintFromTable(tbl, entityList, ply)
+    local reg = duplicator.ConstraintType and duplicator.ConstraintType[tbl.Type]
+    if not reg then return nil end
+    local args = {}
+    for i, key in ipairs(reg.Args or {}) do
+        local v = tbl[key]
+        if string.sub(key, 1, 3) == "Ent" and v ~= nil and not isentity(v) then v = entityList[v] or (tonumber(v) and Entity(tonumber(v))) end
+        if key == "pl" then v = ply end
+        args[i] = v
+    end
+    local ok, c = pcall(reg.Func, unpack(args, 1, #(reg.Args or {})))
+    if ok then return c end
+    return nil
+end
+function duplicator.GetAllConstrainedEntitiesAndConstraints(ent, entTable, constTable)
+    entTable, constTable = entTable or {}, constTable or {}
+    if not IsValid(ent) or entTable[ent:EntIndex()] then return entTable, constTable end
+    entTable[ent:EntIndex()] = ent
+    for _, c in ipairs(constraint.GetTable(ent)) do
+        local key = tostring(c.Constraint or c)
+        if not constTable[key] then
+            constTable[key] = c
+            for i = 1, 6 do local e = c["Ent" .. i]; if IsValid(e) then duplicator.GetAllConstrainedEntitiesAndConstraints(e, entTable, constTable) end end
+        end
+    end
+    return entTable, constTable
+end
+function duplicator.FigureOutRequiredAddons(dupe) dupe.RequiredAddons = dupe.RequiredAddons or {}; return dupe end
+function duplicator.RemoveMapCreatedEntities()
+    for _, e in ipairs(ents.GetAll()) do if IsValid(e) and e.CreatedByMap and e:CreatedByMap() and not e:IsWorld() then e:Remove() end end
+end
+function ents.FireTargets(name, activator, caller, input, value)
+    for _, e in ipairs(ents.FindByName(name)) do e:Fire(input, value, 0, activator, caller) end
+end
+function ents.FindInPVS(viewpoint)
+    local pos = isentity(viewpoint) and viewpoint:GetPos() or viewpoint
+    local out = {}
+    for _, e in ipairs(ents.GetAll()) do if IsValid(e) and e:GetPos():DistToSqr(pos) < 8192 * 8192 then out[#out + 1] = e end end
+    return out
+end

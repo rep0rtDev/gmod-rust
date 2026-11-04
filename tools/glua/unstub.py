@@ -14,7 +14,29 @@ removed = set()
 for f in files:
     src = open(f).read().split('\n')
     out = []
-    for line in src:
+    i = -1
+    while i + 1 < len(src):
+        i += 1
+        line = src[i]
+        # multi-line list: `for _, name in ipairs({ ... }) do` / `if T[name] == nil then T[name] = stub("P:" .. name) end` / `end`
+        m = re.search(r'for _, (\w+) in ipairs\(\{([^}]*)\}\) do\s*$', line)
+        if m and i + 2 < len(src):
+            mb = re.search(r'stub\("([^"]*)" \.\. ' + m.group(1) + r'\)', src[i + 1])
+            if mb and src[i + 2].strip() == 'end':
+                prefix = mb.group(1)
+                names = re.findall(r'"([^"]*)"', m.group(2))
+                keep = [n for n in names if prefix + n not in want]
+                for n in names:
+                    if prefix + n in want: removed.add(prefix + n)
+                if len(keep) == len(names):
+                    out.append(line)
+                elif keep:
+                    out.append(line[:m.start(2)] + ' ' + ', '.join('"%s"' % n for n in keep) + ' ' + line[m.end(2):])
+                else:
+                    i += 2
+                    continue
+                out.append(src[i + 1]); out.append(src[i + 2]); i += 2
+                continue
         m = re.search(r'ipairs\(\{([^}]*)\}\)(.*?stub\("([^"]*)" \.\. n\))', line)
         if m and 'stub(' in line:
             prefix = m.group(3)

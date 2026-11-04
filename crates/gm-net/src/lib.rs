@@ -117,6 +117,7 @@ mod tests {
                 color: [255; 4],
                 render_mode: 0,
                 render_fx: 0,
+                sub_materials: vec![(1, "models/debug/debugwhite".into())],
                 model_scale: 1.0,
                 bones: vec![BonePose {
                     pos: Vec3::new(4.0, 5.0, 6.0),
@@ -127,6 +128,7 @@ mod tests {
                     bone: 3,
                     scale: Vec3::new(1.0, 1.02, 1.02),
                     angles: Vec3::new(10.0, -5.0, 0.0),
+                    pos: Vec3::new(0.0, 0.0, 2.0),
                 }],
                 flex: Some(FlexState {
                     weights: vec![0.5, 1.0, 0.0],
