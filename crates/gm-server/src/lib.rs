@@ -4661,8 +4661,7 @@ impl<'w> Server<'w> {
             Some(pl) if pl.alive => {
                 let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
                 let d = chest.distance(eye);
-                let tr = self.collision.trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
-                let los = tr.fraction >= 1.0 && !tr.start_solid;
+                let los = self.npc_los(eye, chest);
                 (los && d <= sight, los, d > sight, d)
             }
             _ => (false, false, false, 0.0),
@@ -4671,8 +4670,7 @@ impl<'w> Server<'w> {
             pl.alive && {
                 let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
                 chest.distance(eye) <= sight && {
-                    let tr = self.collision.trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
-                    tr.fraction >= 1.0 && !tr.start_solid
+                    self.npc_los(eye, chest)
                 }
             }
         });
@@ -11805,10 +11803,7 @@ impl<'w> Server<'w> {
             if chest.distance(eye) > sight {
                 return None;
             }
-            let tr = server
-                .collision
-                .trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
-            (tr.fraction >= 1.0 && !tr.start_solid).then_some(chest)
+            server.npc_los(eye, chest).then_some(chest)
         };
         // keep the current target while visible, otherwise the nearest visible player
         let mut target = n.target.and_then(|p| sees(self, p).map(|c| (p, c)));
@@ -12063,10 +12058,7 @@ impl<'w> Server<'w> {
             if chest.distance(eye) > sight {
                 return None;
             }
-            let tr = server
-                .collision
-                .trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
-            (tr.fraction >= 1.0 && !tr.start_solid).then_some(pl.state.origin)
+            server.npc_los(eye, chest).then_some(pl.state.origin)
         };
         let mut target = n.target.and_then(|p| sees(self, p).map(|o| (p, o)));
         if target.is_none() {
@@ -12368,10 +12360,7 @@ impl<'w> Server<'w> {
             if chest.distance(eye) > sight {
                 return None;
             }
-            let tr = server
-                .collision
-                .trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
-            (tr.fraction >= 1.0 && !tr.start_solid).then_some(pl.state.origin)
+            server.npc_los(eye, chest).then_some(pl.state.origin)
         };
         let mut target = n.target.and_then(|p| sees(self, p).map(|o| (p, o)));
         if target.is_none() {
@@ -12791,6 +12780,18 @@ impl<'w> Server<'w> {
                 }
             }
         }
+    }
+
+    /// An NPC's line of sight from `eye` to `chest`: the world and the sandbox props both block
+    /// it (the game loses a player behind a frozen crate wall).
+    fn npc_los(&self, eye: Vec3, chest: Vec3) -> bool {
+        let tr = self.collision.trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
+        if tr.fraction < 1.0 || tr.start_solid {
+            return false;
+        }
+        gm_sandbox::trace_line(self.collision, &self.prop_bodies(), eye, chest)
+            .filter(|h| h.ent.is_some())
+            .is_none_or(|h| h.fraction >= 1.0)
     }
 
     fn tick_npc_melee_hits(&mut self) {
