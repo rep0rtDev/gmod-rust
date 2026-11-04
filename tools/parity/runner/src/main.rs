@@ -4370,6 +4370,7 @@ fn run_server(scn: &Scenario) -> Result<Value> {
         physics.add_static_mesh(&disp_pos, &disp_idx, world_surface)?;
     }
     let mut server = gm_server::Server::new(&collision, physics, world_body);
+    server.set_spawn_points_from_bsp(&bsp);
     // the game always has its node graph: any scenario with an NPC gets the mesh (a hostile
     // NPC shot from across the room walks at the shooter, `server_npc_damage`)
     if scn
