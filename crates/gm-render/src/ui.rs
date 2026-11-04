@@ -152,7 +152,10 @@ impl FontAtlas {
             if id.0 == 0 && c != ' ' {
                 continue;
             }
-            let advance = scaled.h_advance(id);
+            // whole-pixel advances like VGUI's hinted fonts: a fractional pen puts every
+            // glyph after the first on a fractional pixel, which the linear sampler smears
+            // (the blurry text of the Windows report)
+            let advance = scaled.h_advance(id).round().max(1.0);
             let glyph = id.with_scale_and_position(px, point(0.0, 0.0));
             let Some(outline) = font.outline_glyph(glyph) else {
                 glyphs.insert(
