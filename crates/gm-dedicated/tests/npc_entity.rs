@@ -409,10 +409,10 @@ fn soldier_chases_a_target_out_of_sight_then_gives_up() {
         hidden.distance(npc_pos)
     );
     server.teleport_player(1, hidden);
-    // the game's soldier first suppresses the last known position (NPC_SUPPRESS_TICKS), then
-    // goes after the enemy: a line-of-fire point when the navmesh offers one, else the chase
+    // the game's soldier goes after a lost enemy a think later: a line-of-fire point when the
+    // navmesh offers one, else the chase
     let mut chasing = None;
-    for t in 0..(gm_server::NPC_SUPPRESS_TICKS as usize + 40) {
+    for t in 0..40 {
         server.tick(&idle);
         let n = &server.npcs[&id];
         if n.goal.is_some() && (n.chase == Some(1) || n.flank_until > 0) {
@@ -420,8 +420,7 @@ fn soldier_chases_a_target_out_of_sight_then_gives_up() {
             break;
         }
     }
-    let chasing = chasing.expect("never went after the hidden player");
-    assert!(chasing >= gm_server::NPC_SUPPRESS_TICKS as usize - 7, "left the suppression early at {chasing}");
+    assert!(chasing.is_some(), "never went after the hidden player");
     let shots = server.npcs[&id].shots;
     for _ in 0..21 {
         server.tick(&idle);
@@ -445,15 +444,14 @@ fn soldier_chases_a_target_out_of_sight_then_gives_up() {
     server.teleport_player(1, far);
     let seen_at = server.npcs[&id].target_seen;
     let mut dropped = None;
-    // suppression of the last known position first, then the memory runs out
-    for t in 0..(gm_server::NPC_SUPPRESS_TICKS + gm_server::NPC_TARGET_LOSE_TICKS + 40) {
+    for t in 0..(gm_server::NPC_TARGET_LOSE_TICKS + 40) {
         server.tick(&idle);
         let n = &server.npcs[&id];
         if n.target.is_none() {
             dropped = Some(t);
             break;
         }
-        assert!(n.target_seen == seen_at || n.flank_until > 0, "saw the player at {far}");
+        assert_eq!(n.target_seen, seen_at, "saw the player at {far}");
     }
     let n = &server.npcs[&id];
     eprintln!(
@@ -1742,4 +1740,93 @@ fn zombie_swats_a_crate_at_the_player() {
     assert_eq!(hit_tick - swat_tick, gm_server::ZOMBIE_SWAT_HIT_TICK as usize);
     assert!(v.x < -600.0 && v.z > 250.0 && v.z < 450.0 && v.y.abs() < 60.0, "launch velocity {v:?}");
     assert!((v.length() - 843.0).abs() < 60.0, "launch speed {}", v.length());
+}
+
+#[test]
+fn soldier_tosses_a_grenade_at_a_visible_player() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.register_model(
+        gm_server::projectile::GRENADE_MODEL,
+        gm_dedicated::model_info(&mount, gm_server::projectile::GRENADE_MODEL).unwrap(),
+    );
+    server.set_navmesh(world.nav.clone());
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(12.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(12.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    let spos = server.npcs[&id].pos;
+    // in the open, far enough that the soldier is still 256+ u away when the toss is due
+    // (our soldier presses the attack on a passive player before then)
+    server.teleport_player(1, Vec3::new(spos.x - 600.0, -500.0, -143.0));
+    let mut first_seen = None;
+    let mut thrown = None;
+    let mut toss = None;
+    for t in 0..900 {
+        server.tick(&idle);
+        let n = &server.npcs[&id];
+        if n.target_first_seen > 0 && first_seen.is_none() {
+            first_seen = Some(t);
+        }
+        if n.grenade.is_some() && thrown.is_none() {
+            thrown = Some((t, n.sequence.clone()));
+        }
+        if let Some(pr) = server
+            .projectiles
+            .iter()
+            .find(|p| p.kind == gm_server::weapons::Launch::Grenade)
+        {
+            toss = Some((t, pr.origin, pr.velocity));
+            break;
+        }
+    }
+    let first_seen = first_seen.expect("never saw the player");
+    let n = &server.npcs[&id];
+    let (throw_tick, seq) = thrown.unwrap_or_else(|| {
+        panic!(
+            "never started a toss: sched {} goal {:?} cover {:?} next_grenade {} first_seen {} dist {:.0}",
+            server.npc_schedule_id(id),
+            n.goal,
+            n.cover_at,
+            n.next_grenade,
+            n.target_first_seen,
+            n.pos.distance(server.players[&1].state.origin)
+        )
+    });
+    assert_eq!(seq, "grenThrow");
+    let late = throw_tick - first_seen;
+    let first = gm_server::NPC_GRENADE_FIRST_TICKS as usize;
+    assert!((first..=first + 14).contains(&late), "toss {late} ticks after the sighting");
+    let (hit_tick, origin, v) = toss.expect("no grenade was released");
+    assert_eq!(hit_tick - throw_tick, gm_server::NPC_GRENADE_RELEASE_TICK as usize);
+    let n = &server.npcs[&id];
+    assert!(
+        (origin.x - (n.pos.x - 35.0)).abs() < 2.0 && (origin.z - (n.pos.z + 42.0)).abs() < 2.0,
+        "released at {origin} for {}",
+        n.pos
+    );
+    let range = (server.players[&1].state.origin - origin).truncate().length();
+    assert!((256.0..=1024.0).contains(&range), "released {range:.0} u from the player");
+    // apex 255 u: vz 553, 1.84 s of flight, the horizontal speed lands it on the player
+    let flight = 2.0 * 553.0 / 600.0;
+    assert!(
+        v.x < 0.0 && v.y.abs() < 10.0 && (v.z - 553.0).abs() < 10.0 && (v.x.abs() - range / flight).abs() < 10.0,
+        "toss velocity {v:?} for {range:.0} u"
+    );
 }

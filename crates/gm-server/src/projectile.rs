@@ -8,7 +8,7 @@ use gm_collision::{World, MASK_SOLID};
 use gm_physics::{BodyHandle, PropDesc};
 
 pub const DT: f32 = 0.015;
-const GRAVITY: f32 = 600.0;
+pub const GRAVITY: f32 = 600.0;
 /// Rocket: muzzle offset from the eye (forward, right, up), launch speed along the aim plus the
 /// upward kick, ticks of free fall before ignition, flight speed afterwards. The rocket moves
 /// one tick from the muzzle in its spawn tick (recorded 16.5 forward, 1.15 below the eye).

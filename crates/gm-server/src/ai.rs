@@ -172,6 +172,7 @@ pub const SCHED_MOVE_TO_WEAPON_RANGE: u16 = 34;
 pub const SCHED_ESTABLISH_LINE_OF_FIRE: u16 = 35;
 pub const SCHED_MELEE_ATTACK1: u16 = 41;
 pub const SCHED_RANGE_ATTACK1: u16 = 43;
+pub const SCHED_RANGE_ATTACK2: u16 = 44;
 pub const SCHED_STANDOFF: u16 = 47;
 pub const SCHED_HIDE_AND_RELOAD: u16 = 50;
 pub const SCHED_RELOAD: u16 = 51;

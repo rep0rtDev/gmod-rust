@@ -2114,8 +2114,13 @@ pub struct Npc {
     pub wake_until: u64,
     /// Where the enemy's chest was last seen (suppression fire / flank target).
     pub last_known: Option<Vec3>,
-    /// Non-zero once the suppression of the last known position is over (cleared on sight).
+    /// A run for a line of fire (SCHED_ESTABLISH_LINE_OF_FIRE) is under way until this tick.
     pub flank_until: u64,
+    /// Frag grenades tossed so far (`Numgrenades` 5 for a soldier) and the next toss check.
+    pub grenades_used: u8,
+    pub next_grenade: u64,
+    /// A toss under way: (release tick, end of the sequence, target feet).
+    pub grenade: Option<(u64, u64, Vec3)>,
     /// Leap attack (headcrabs): velocity while airborne, the tick a hang on the player's hull
     /// ends, and the earliest tick of the next leap.
     pub flight: Option<Vec3>,
@@ -4776,6 +4781,10 @@ impl<'w> Server<'w> {
                 } else {
                     ai::SCHED_WAKE_ANGRY
                 }
+            } else if n.grenade.is_some() {
+                ai::SCHED_RANGE_ATTACK2
+            } else if now < n.flank_until && n.goal.is_some() {
+                ai::SCHED_ESTABLISH_LINE_OF_FIRE
             } else if n.cover_at.is_some() {
                 ai::SCHED_TAKE_COVER_FROM_ENEMY
             } else if n.chase.is_some() {
@@ -10846,6 +10855,9 @@ impl<'w> Server<'w> {
             wake_until: 0,
             last_known: None,
             flank_until: 0,
+            grenades_used: 0,
+            next_grenade: 0,
+            grenade: None,
             melee_dash: 0.0,
             flight: None,
             hung_until: 0,
@@ -11815,44 +11827,30 @@ impl<'w> Server<'w> {
                 .filter_map(|p| sees(self, p).map(|c| (p, c)))
                 .min_by(|a, b| a.1.distance(eye).total_cmp(&b.1.distance(eye)));
         }
-        // the game's soldier keeps firing at the enemy's last known position for a while after
-        // losing sight of it (server_npc_grenade_soldier*: crouched bursts 5-12 s), then runs
-        // for a point with a line of fire to it
-        let mut suppressing = false;
-        if target.is_none() {
-            if let (Some(p), Some(known)) = (n.target, n.last_known) {
-                let since = now.saturating_sub(n.target_seen);
-                if npc_combat_sequences(&n.class).is_some()
-                    && n.cover_at.is_none()
-                    && n.goal.is_none()
-                    && n.flank_until == 0
-                    && since <= NPC_SUPPRESS_TICKS
-                    && known.distance(eye) <= NPC_SUPPRESS_RANGE
-                    && self.players.get(&p).is_some_and(|pl| pl.alive)
-                {
-                    target = Some((p, known));
-                    suppressing = true;
-                }
-            }
-        }
         let Some((player, chest)) = target else {
             let (old, seen) = (n.target, n.target_seen);
             if let (Some(p), Some(known)) = (old, n.last_known) {
-                // suppression over: the enemy memory runs from here, the chase follows
+                // the game's soldier runs for a point with a line of fire to the enemy's last
+                // known position one think after losing sight (server_npc_grenade_soldier_wall)
                 if npc_combat_sequences(&n.class).is_some()
                     && n.flank_until == 0
-                    && known.distance(eye) <= NPC_SUPPRESS_RANGE
-                    && now.saturating_sub(seen) > NPC_SUPPRESS_TICKS
+                    && n.cover_at.is_none()
+                    && known.distance(eye) <= NPC_LOF_RANGE
                     && self.players.get(&p).is_some_and(|pl| pl.alive)
                 {
-                    if let Some(n) = self.npcs.get_mut(&id) {
-                        n.flank_until = 1;
-                        n.target_seen = now;
-                        n.burst_left = 0;
-                        if let Some(rest) = n.rest_sequence.take() {
-                            n.sequence = rest;
+                    if let Some(v) = self.npc_flank_point(id, known) {
+                        self.npc_goto(id, v, true);
+                        if let Some(n) = self.npcs.get_mut(&id) {
+                            n.flank_until = now + NPC_FLANK_TICKS;
+                            n.burst_left = 0;
+                            if let Some(rest) = n.rest_sequence.take() {
+                                n.sequence = rest;
+                            }
                         }
+                        return;
                     }
+                }
+                if now < n.flank_until && n.goal.is_some() {
                     return;
                 }
             }
@@ -11918,13 +11916,54 @@ impl<'w> Server<'w> {
             // the game opens fire one think after it enters combat
             n.next_shot = now + n.think_interval as u64;
         }
-        if !suppressing {
-            n.target_seen = now;
-            n.last_known = Some(chest);
+        n.target_seen = now;
+        n.last_known = Some(chest);
+        if n.flank_until > 0 {
+            // the line of fire is there: the run ends where the soldier stands
             n.flank_until = 0;
+            n.goal = None;
+            n.next_goal = None;
+            n.move_speed = 0.0;
         }
         if n.target_first_seen == 0 {
             n.target_first_seen = now;
+        }
+        if n.next_grenade == 0 {
+            n.next_grenade = n.target_first_seen + NPC_GRENADE_FIRST_TICKS;
+        }
+        if let Some((_, until, _)) = n.grenade {
+            if now < until {
+                return;
+            }
+            n.grenade = None;
+            n.burst_left = NPC_BURST_SHOTS;
+            n.next_shot = now + n.think_interval as u64;
+        }
+        // a soldier lobs a frag at a visible enemy 256..1024 u away ~12 s into the fight
+        // (server_npc_grenade_soldier_wall: grenThrow at t719, released 42 ticks in)
+        let dist = chest.distance(eye);
+        if n.class == "npc_combine_s"
+            && n.grenades_used < NPC_SOLDIER_GRENADES
+            && n.next_grenade != 0
+            && now >= n.next_grenade
+            && n.cover_at.is_none()
+            && (NPC_GRENADE_MIN_DIST..=NPC_GRENADE_MAX_DIST).contains(&dist)
+        {
+            // a run in progress stops for the throw (the game threw right after its run)
+            n.goal = None;
+            n.next_goal = None;
+            n.chase = None;
+            n.move_speed = 0.0;
+            n.grenades_used += 1;
+            n.next_grenade = now + NPC_GRENADE_PERIOD_TICKS;
+            n.grenade = Some((
+                now + NPC_GRENADE_RELEASE_TICK,
+                now + NPC_GRENADE_THROW_TICKS,
+                chest - Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT),
+            ));
+            n.sequence = "grenThrow".to_string();
+            n.burst_left = 0;
+            return;
         }
         if n.chase == Some(player) {
             n.chase = None;
@@ -12794,6 +12833,88 @@ impl<'w> Server<'w> {
             .is_none_or(|h| h.fraction >= 1.0)
     }
 
+    /// SCHED_ESTABLISH_LINE_OF_FIRE: the nearest navmesh vertex at least NPC_FLANK_MIN_STEP from
+    /// the NPC and within NPC_FLANK_RANGE whose eye point sees `known`.
+    fn npc_flank_point(&self, id: u32, known: Vec3) -> Option<Vec3> {
+        let n = self.npcs.get(&id)?;
+        let nav = self.nav.as_deref()?;
+        let feet = n.pos;
+        let mut best: Option<(f32, Vec3)> = None;
+        for v in nav.vertices() {
+            let d = v.truncate().distance(feet.truncate());
+            if d < NPC_FLANK_MIN_STEP || d > NPC_FLANK_RANGE {
+                continue;
+            }
+            if best.is_some_and(|(bd, _)| d >= bd) {
+                continue;
+            }
+            let eye = *v + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT);
+            if self.npc_los(eye, known) {
+                best = Some((d, *v));
+            }
+        }
+        best.map(|(_, v)| v)
+    }
+
+    /// Releases the frag of a `grenThrow` in progress: it leaves the hand 35 u ahead of and
+    /// 22 u below the eye on an arc with a 255 u apex that lands on the target (game toss
+    /// (-127, 92, 553) u/s over 293 u).
+    fn tick_npc_grenades(&mut self) {
+        let now = self.tick_count;
+        let due: Vec<(u32, Vec3, Vec3)> = self
+            .npcs
+            .iter()
+            .filter_map(|(id, n)| {
+                let (release, _, target) = n.grenade?;
+                (now >= release).then_some((*id, n.pos, target))
+            })
+            .collect();
+        for (id, pos, target) in due {
+            if let Some(n) = self.npcs.get_mut(&id) {
+                if let Some(g) = n.grenade.as_mut() {
+                    g.0 = u64::MAX;
+                }
+            }
+            let flat = (target - pos).truncate();
+            let yaw = flat.y.atan2(flat.x).to_degrees();
+            let fwd = gm_sandbox::forward(0.0, yaw);
+            let origin = pos
+                + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT + NPC_GRENADE_HAND.1)
+                + fwd * NPC_GRENADE_HAND.0;
+            let g = projectile::GRAVITY;
+            let vz = (2.0 * g * NPC_GRENADE_APEX).sqrt();
+            let flight = 2.0 * vz / g;
+            let range = (target - origin).truncate().length();
+            let velocity = fwd * (range / flight) + Vec3::Z * vz;
+            let mut phys = projectile::Physics {
+                world: &mut self.physics,
+                grenade: self.models.get(projectile::GRENADE_MODEL),
+                rng: &mut self.spawn_rng,
+            };
+            let Some(mut pr) = projectile::spawn(
+                weapons::Launch::Grenade,
+                0,
+                origin,
+                0.0,
+                yaw,
+                self.collision,
+                Some(&mut phys),
+            ) else {
+                continue;
+            };
+            pr.origin = origin;
+            pr.velocity = velocity;
+            if let Some(body) = pr.body {
+                self.physics
+                    .teleport(body, origin, glam::Quat::from_rotation_z(yaw.to_radians()));
+                self.physics.set_velocity(body, velocity, Vec3::ZERO);
+            }
+            pr.id = self.next_projectile_id;
+            self.next_projectile_id += 1;
+            self.projectiles.push(pr);
+        }
+    }
+
     fn tick_npc_melee_hits(&mut self) {
         let now = self.tick_count;
         let due: Vec<(u32, u32, NpcMelee)> = self
@@ -12995,6 +13116,9 @@ impl<'w> Server<'w> {
                 wake_until: 0,
                 last_known: None,
                 flank_until: 0,
+                grenades_used: 0,
+                next_grenade: 0,
+                grenade: None,
                 melee_dash: 0.0,
                 flight: None,
                 hung_until: 0,
@@ -15265,6 +15389,7 @@ impl<'w> Server<'w> {
             }
         }
         self.tick_npc_melee_hits();
+        self.tick_npc_grenades();
         self.tick_npc_swats();
         self.tick_npc_jumps();
         self.tick_npc_flight();
@@ -17734,10 +17859,23 @@ pub const PLAYER_CENTER_HEIGHT: f32 = 36.0;
 /// (SCHED_WAKE_ANGRY) and chases from the third (server_npc_zombie_swat2_*: sched 1 at tick
 /// 5, 4 at 12, 93 at 19).
 pub const NPC_WAKE_ANGRY_TICKS: u64 = 7;
-/// A soldier keeps firing at the enemy's last known position this long after losing sight
-/// (game: 335 ticks in server_npc_grenade_soldier, 783 in _low), two thinks short of the
-/// NPC_TARGET_LOSE_TICKS memory measured on a vanished target, which then drops it.
-pub const NPC_SUPPRESS_TICKS: u64 = 316;
-/// Suppression / line-of-fire hunting only for an enemy lost within this range (measured at
-/// 290 u; a target that vanished 1120 u away is chased as before).
-pub const NPC_SUPPRESS_RANGE: f32 = 1024.0;
+/// A soldier that loses sight of an enemy within this range runs for a line of fire to its
+/// last known position (server_npc_grenade_soldier_wall: one think after, 263 u to a point
+/// past the wall's end); the run is given the enemy memory's length.
+pub const NPC_LOF_RANGE: f32 = 1024.0;
+pub const NPC_FLANK_TICKS: u64 = 330;
+pub const NPC_FLANK_MIN_STEP: f32 = 200.0;
+pub const NPC_FLANK_RANGE: f32 = 1200.0;
+/// Soldier frag tosses: `Numgrenades` 5, the first ~12 s after the enemy was first seen
+/// (measured once: grenThrow at t719 for a t5 sighting), at a visible enemy 256..1024 u away;
+/// the sequence lasts 63 ticks and releases at tick 42 from the hand 35 u ahead / 22 u below
+/// the eye on an arc with a 255 u apex.
+pub const NPC_SOLDIER_GRENADES: u8 = 5;
+pub const NPC_GRENADE_FIRST_TICKS: u64 = 714;
+pub const NPC_GRENADE_PERIOD_TICKS: u64 = 714;
+pub const NPC_GRENADE_MIN_DIST: f32 = 256.0;
+pub const NPC_GRENADE_MAX_DIST: f32 = 1024.0;
+pub const NPC_GRENADE_THROW_TICKS: u64 = 63;
+pub const NPC_GRENADE_RELEASE_TICK: u64 = 42;
+pub const NPC_GRENADE_HAND: (f32, f32) = (35.0, -22.0);
+pub const NPC_GRENADE_APEX: f32 = 255.0;
