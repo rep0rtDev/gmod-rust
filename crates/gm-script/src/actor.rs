@@ -29,7 +29,9 @@ pub struct ActorConfig {
 impl Default for ActorConfig {
     fn default() -> Self {
         ActorConfig {
-            cpu_budget: Duration::from_millis(2),
+            // wall time: an unoptimised build interprets the GLua bridge ~10x slower, so its
+            // budget is scaled or the first think of a test actor alone would exceed it
+            cpu_budget: Duration::from_millis(if cfg!(debug_assertions) { 20 } else { 2 }),
             overruns_to_throttle: 5,
             memory_limit: 256 << 20,
             can_write: true,
