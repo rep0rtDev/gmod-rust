@@ -14163,24 +14163,35 @@ impl<'w> Server<'w> {
         let nav = self.nav.as_deref()?;
         let feet = n.pos;
         let mut best: Option<(f32, Vec3)> = None;
-        for v in nav.vertices() {
+        // the map's AI nodes (where the game's search runs) and the navmesh vertices
+        let candidates: Vec<Vec3> = self
+            .ai_nodes
+            .iter()
+            .map(|a| a.pos)
+            .chain(nav.vertices().iter().copied())
+            .collect();
+        for v in &candidates {
             let d = v.truncate().distance(feet.truncate());
             if d < NPC_FLANK_MIN_STEP || d > NPC_FLANK_RANGE {
                 continue;
             }
             // the game's point kept its distance (255 u from the enemy for a 150 u wall) but
             // closed in (263 u out, 256 u from the enemy that had been 382 u away)
+            // the game's point sits at the minimum range from the enemy (256 u for a soldier
+            // that stood 381 u away, server_npc_grenade_soldier_wall): the candidate closest
+            // to the enemy that keeps the minimum, the nearer to the soldier on a tie
             let to_enemy = v.truncate().distance(known.truncate());
             let own = feet.truncate().distance(known.truncate());
             if to_enemy < NPC_LOF_MIN_ENEMY || to_enemy >= own.max(NPC_LOF_MIN_ENEMY * 1.5) {
                 continue;
             }
-            if best.is_some_and(|(bd, _)| d >= bd) {
+            let cost = to_enemy + d * 0.01;
+            if best.is_some_and(|(bd, _)| cost >= bd) {
                 continue;
             }
             let eye = *v + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT);
             if self.npc_los(eye, known) {
-                best = Some((d, *v));
+                best = Some((cost, *v));
             }
         }
         best.map(|(_, v)| v)
