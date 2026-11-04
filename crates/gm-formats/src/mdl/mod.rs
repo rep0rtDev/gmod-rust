@@ -339,11 +339,24 @@ pub fn hitboxes(data: &[u8], header: &Header) -> Vec<HitBox> {
     out
 }
 
+/// An animation event of a sequence (`mstudioevent_t`, 80 bytes): fired when playback passes
+/// `cycle`. Old-style events carry a numeric `event`; new-style ones (`kind` bit 10) are
+/// named (`name`, e.g. `AE_NPC_LEFTFOOT`) and resolved by the game's event list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimEvent {
+    pub cycle: f32,
+    pub event: i32,
+    pub kind: i32,
+    pub options: String,
+    pub name: String,
+}
+
 /// A sequence of the model (`mstudioseqdesc_t`, 212 bytes): its label, the first animation
 /// of its blend grid and the layers it adds on top.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sequence {
     pub name: String,
+    pub events: Vec<AnimEvent>,
     /// Activity the sequence is tagged with (`ACT_*`, empty for none) and its selection weight.
     pub activity_name: String,
     pub act_weight: i32,
@@ -581,8 +594,27 @@ pub fn sequences(data: &[u8], header: &Header) -> Vec<Sequence> {
         let f = |p: usize| f32::from_bits(i32_at(data, p).unwrap_or(0) as u32);
         let bbmin = [f(o + 32), f(o + 36), f(o + 40)];
         let bbmax = [f(o + 44), f(o + 48), f(o + 52)];
+        let event_count = i32_at(data, o + 24).unwrap_or(0).max(0) as usize;
+        let event_off = i32_at(data, o + 28).unwrap_or(0);
+        let events = (0..event_count)
+            .filter_map(|e| {
+                let p = o.checked_add_signed(event_off as isize)? + e * 80;
+                let name_off = i32_at(data, p + 76)?;
+                Some(AnimEvent {
+                    cycle: f(p),
+                    event: i32_at(data, p + 4)?,
+                    kind: i32_at(data, p + 8)?,
+                    options: cstr_at(data, p + 12).ok().map(str::to_owned).unwrap_or_default(),
+                    name: (name_off > 0)
+                        .then(|| name_at(data, p + name_off as usize))
+                        .flatten()
+                        .unwrap_or_default(),
+                })
+            })
+            .collect();
         out.push(Sequence {
             name,
+            events,
             activity_name: i32_at(data, o + 8)
                 .filter(|off| *off > 0)
                 .and_then(|off| name_at(data, o + off as usize))

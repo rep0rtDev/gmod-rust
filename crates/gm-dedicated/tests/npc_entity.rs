@@ -1555,3 +1555,101 @@ fn npc_follow_behaviour_keeps_up_with_the_player() {
     }
     eprintln!("followed in {ticks} ticks");
 }
+
+/// Animation events: the model's sequence events are parsed (a human's walk has its footstep
+/// events) and server-side playback raises `GameEvent::AnimEvent` as it passes them.
+#[test]
+fn npc_sequence_playback_fires_the_models_animation_events() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let info = gm_dedicated::model_info(&mount, "models/humans/group01/male_07.mdl").unwrap();
+    let walk = info
+        .script
+        .sequences
+        .iter()
+        .position(|s| s.eq_ignore_ascii_case("walk_all"))
+        .expect("walk_all sequence");
+    let events = &info.script.sequence_events[walk];
+    // NPC_EVENT_LEFTFOOT / NPC_EVENT_RIGHTFOOT (old-style numbers of npcevent.h, the options
+    // string is the footstep sound prefix) or the named new-style AE_NPC_*FOOT
+    let is_foot =
+        |e: &(f32, i32, i32, String, String)| e.4.contains("FOOT") || e.1 == 6006 || e.1 == 6007;
+    assert!(events.iter().any(is_foot), "walk_all events: {events:?}");
+    assert!(
+        events.iter().all(|e| (0.0..=1.0).contains(&e.0)),
+        "{events:?}"
+    );
+
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_navmesh(world.nav.clone());
+    let m2 = gm_content::Mount::for_install(&inst).unwrap();
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
+    server.add_player(
+        1,
+        Vec3::new(823.235, -500.0, -143.0),
+        Vec3::new(20.0, 0.0, 0.0),
+    );
+    let idle = std::collections::BTreeMap::new();
+    for _ in 0..5 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_citizen", "none").unwrap();
+    server.tick(&idle);
+    let model = server.npcs[&id].model.clone();
+    let npc_info = gm_dedicated::model_info(&mount, &model).unwrap();
+    let walk_name = npc_info
+        .script
+        .sequences
+        .iter()
+        .find(|s| s.eq_ignore_ascii_case("walk_all"))
+        .cloned()
+        .expect("npc walk_all");
+    server.register_model(&model, npc_info);
+    assert!(
+        server.set_sequence(id, &walk_name),
+        "set_sequence {walk_name} on {model}"
+    );
+    server.game_events.clear();
+    let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+    let mut fired = Vec::new();
+    for _ in 0..200 {
+        assert!(server.frame_advance(id, dt));
+        fired.extend(server.game_events.drain(..).filter_map(|e| match e {
+            gm_server::GameEvent::AnimEvent {
+                ent,
+                player,
+                event,
+                name,
+                cycle,
+                time,
+                ..
+            } if ent == id => {
+                assert!(!player);
+                Some((event, name, cycle, time))
+            }
+            _ => None,
+        }));
+    }
+    let feet: Vec<_> = fired
+        .iter()
+        .filter(|(event, name, _, _)| name.contains("FOOT") || *event == 6006 || *event == 6007)
+        .collect();
+    assert!(feet.len() >= 2, "fired {fired:?}");
+    // each pass of the (looping) walk fires every event once
+    let per_loop = events.iter().filter(|e| is_foot(e)).count();
+    assert!(
+        feet.len() >= per_loop,
+        "{} feet in {} loops: {feet:?}",
+        feet.len(),
+        200
+    );
+    for (_, _, cycle, time) in &feet {
+        assert!((0.0..=1.0).contains(cycle) && *time >= 0.0);
+    }
+}

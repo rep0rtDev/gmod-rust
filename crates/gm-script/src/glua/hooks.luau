@@ -371,6 +371,25 @@ if SERVER then
         hook.Run("GameContentChanged")
         for _, e in ipairs(ents.GetAll()) do if e.OnReloaded then e:OnReloaded() end end -- @hook ENTITY:OnReloaded
     end))
+    -- an animation event the server's sequence playback passed: new-style events are named
+    -- and resolved through the game's event list (util.GetAnimEventIDByName)
+    local function anim_event_id(p)
+        if bit.band(p.type or 0, 1024) ~= 0 and p.name and p.name ~= "" then
+            local id = util.GetAnimEventIDByName(p.name)
+            if id and id >= 0 then return id end
+        end
+        return p.event or 0
+    end
+    -- @hook ENTITY:HandleAnimEvent
+    events.on("entity.anim_event", safe(function(p)
+        local e = Entity(p.entity or 0)
+        if IsValid(e) and e.HandleAnimEvent then e:HandleAnimEvent(anim_event_id(p), p.time or 0, p.cycle or 0, p.type or 0, p.options or "") end
+    end))
+    -- @hook GM:PlayerHandleAnimEvent
+    events.on("player.anim_event", safe(function(p)
+        local ply = Player(p.entity or 0)
+        if IsValid(ply) then hook.Run("PlayerHandleAnimEvent", ply, anim_event_id(p), p.time or 0, p.cycle or 0, p.type or 0, p.options or "") end
+    end))
     events.on("entity.fired_bullets", safe(function(p)
         local e = Entity(p.entity or p.attacker or 0)
         if IsValid(e) and e.DoImpactEffect and p.tr then e:DoImpactEffect(p.tr, p.damage_type or DMG_BULLET) end -- @hook ENTITY:DoImpactEffect

@@ -181,6 +181,8 @@ pub struct ModelScriptData {
     pub sequence_anim: Vec<(f32, i32, i32)>,
     /// Per sequence: root movement over its first animation (model units).
     pub sequence_move: Vec<[f32; 3]>,
+    /// Per sequence: its animation events `(cycle, event, type, options, name)` in file order.
+    pub sequence_events: Vec<Vec<(f32, i32, i32, String, String)>>,
     /// Flex controllers: `(name, min, max, kind)`.
     pub flex_info: Vec<(String, f32, f32, String)>,
     /// Model materials as `dir/name` (first texture directory).
@@ -249,6 +251,13 @@ pub fn phys_mesh(hulls: &[Vec<Vec3>], planes: &[Vec<(Vec3, f32)>]) -> Vec<Vec<[V
             }
             tris
         })
+        .collect()
+}
+
+fn seq_events(q: &gm_formats::mdl::Sequence) -> Vec<(f32, i32, i32, String, String)> {
+    q.events
+        .iter()
+        .map(|e| (e.cycle, e.event, e.kind, e.options.clone(), e.name.clone()))
         .collect()
 }
 
@@ -344,6 +353,7 @@ impl ModelScriptData {
                         .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
                         .map_or([0.0; 3], |a| a.movement),
                 );
+                out.sequence_events.push(seq_events(q));
             }
         }
         out
@@ -401,6 +411,7 @@ impl ModelScriptData {
                         .map_or([0.0; 3], |a| a.movement)
                 })
                 .collect(),
+            sequence_events: seqs.iter().map(seq_events).collect(),
             bone_props: mdl
                 .bones
                 .iter()
@@ -689,6 +700,18 @@ pub enum GameEvent {
     /// A prop's health reached zero (fire, so far): it is gone after this.
     PropBreak {
         ent: u32,
+    },
+    /// Server-side sequence playback passed an animation event of the model (`HandleAnimEvent`):
+    /// the event's number and type, its time into the sequence and cycle, options and name.
+    AnimEvent {
+        ent: u32,
+        player: bool,
+        event: i32,
+        kind: i32,
+        time: f32,
+        cycle: f32,
+        options: String,
+        name: String,
     },
     /// A player's property-sheet edit of an editable entity's variable was applied.
     EntityEdited {
@@ -3838,6 +3861,15 @@ pub struct GesturePatch {
     pub looping: Option<bool>,
     pub autokill: Option<bool>,
     pub priority: Option<i32>,
+}
+
+struct FiredAnimEvent {
+    event: i32,
+    kind: i32,
+    time: f32,
+    cycle: f32,
+    options: String,
+    name: String,
 }
 
 /// An entity's animator: the sequence it plays, the cycle `tick_anims` advances from the
@@ -9565,16 +9597,26 @@ impl<'w> Server<'w> {
     /// One animator step of `dt` seconds: the cycle moves by `rate * dt / duration`, loops wrap,
     /// one-shots clamp at 1 (either marks finished); the gesture layer the same, an autokill
     /// layer goes away at its end.
-    fn advance_anim(&self, model: &str, a: &mut EntAnim, dt: f32) {
+    fn advance_anim(&self, model: &str, a: &mut EntAnim, dt: f32) -> Vec<FiredAnimEvent> {
+        let mut fired = Vec::new();
         if let Some((dur, looping)) = self.seq_duration(model, &a.sequence) {
+            let from = a.cycle;
             a.cycle += a.rate * dt / dur;
-            if a.cycle >= 1.0 {
+            let wrapped = a.cycle >= 1.0;
+            if wrapped {
                 a.finished = true;
                 a.cycle = if looping {
                     a.cycle.rem_euclid(1.0)
                 } else {
                     1.0
                 };
+            }
+            if a.rate > 0.0 {
+                let to = if wrapped { 1.0 } else { a.cycle };
+                fired = self.anim_events_between(model, &a.sequence, dur, from, to, wrapped);
+                if wrapped && looping && a.cycle > 0.0 {
+                    fired.extend(self.anim_events_between(model, &a.sequence, dur, -1.0, a.cycle, false));
+                }
             }
         }
         if let Some(g) = a.gesture.as_mut() {
@@ -9592,6 +9634,58 @@ impl<'w> Server<'w> {
             if g.finished && g.autokill {
                 a.gesture = None;
             }
+        }
+        fired
+    }
+
+    /// The events of `seq` with a cycle in `(from, to]` (`to` inclusive only at the end of a
+    /// pass, `at_end`), as the game's `DispatchAnimEvents` scans them each frame.
+    fn anim_events_between(
+        &self,
+        model: &str,
+        seq: &str,
+        dur: f32,
+        from: f32,
+        to: f32,
+        at_end: bool,
+    ) -> Vec<FiredAnimEvent> {
+        let Some(m) = self.models.get(model) else {
+            return Vec::new();
+        };
+        let Some(i) = m.script.sequences.iter().position(|q| q == seq) else {
+            return Vec::new();
+        };
+        m.script
+            .sequence_events
+            .get(i)
+            .map(|evs| {
+                evs.iter()
+                    .filter(|e| e.0 > from && (e.0 < to || (at_end && e.0 <= to)))
+                    .map(|e| FiredAnimEvent {
+                        event: e.1,
+                        kind: e.2,
+                        time: e.0 * dur,
+                        cycle: e.0,
+                        options: e.3.clone(),
+                        name: e.4.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn push_anim_events(&mut self, ent: u32, player: bool, fired: Vec<FiredAnimEvent>) {
+        for e in fired {
+            self.game_events.push(GameEvent::AnimEvent {
+                ent,
+                player,
+                event: e.event,
+                kind: e.kind,
+                time: e.time,
+                cycle: e.cycle,
+                options: e.options,
+                name: e.name,
+            });
         }
     }
 
@@ -9620,8 +9714,9 @@ impl<'w> Server<'w> {
                 a.sequence = n.sequence.clone();
             }
         }
-        self.advance_anim(&model, &mut a, dt);
+        let fired = self.advance_anim(&model, &mut a, dt);
         self.anims.insert(ent, a);
+        self.push_anim_events(ent, false, fired);
         true
     }
 
@@ -9636,10 +9731,11 @@ impl<'w> Server<'w> {
                 continue;
             };
             let mut a = self.player_anims.remove(&id).unwrap_or_default();
-            self.advance_anim(&model, &mut a, dt);
+            let fired = self.advance_anim(&model, &mut a, dt);
             if a.gesture.is_some() {
                 self.player_anims.insert(id, a);
             }
+            self.push_anim_events(id, true, fired);
         }
     }
 
@@ -9988,8 +10084,9 @@ impl<'w> Server<'w> {
                     a.finished = false;
                 }
             }
-            self.advance_anim(&model, &mut a, dt);
+            let fired = self.advance_anim(&model, &mut a, dt);
             self.anims.insert(id, a);
+            self.push_anim_events(id, false, fired);
         }
     }
 

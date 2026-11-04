@@ -1914,6 +1914,20 @@ impl Runtime {
                     p.ints.push(("entity", ent as i64));
                     "entity.break"
                 }
+                E::AnimEvent { ent, player, event, kind, time, cycle, options, name } => {
+                    p.ints.push(("entity", ent as i64));
+                    p.ints.push(("event", event as i64));
+                    p.ints.push(("type", kind as i64));
+                    p.floats.push(("time", f64::from(time)));
+                    p.floats.push(("cycle", f64::from(cycle)));
+                    p.strs.push(("options", options));
+                    p.strs.push(("name", name));
+                    if player {
+                        "player.anim_event"
+                    } else {
+                        "entity.anim_event"
+                    }
+                }
                 E::EntityEdited { player, ent, key, value } => {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("entity", ent as i64));

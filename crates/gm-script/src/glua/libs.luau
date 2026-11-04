@@ -658,7 +658,7 @@ hook.Add("PlayerSetModel", "__player_manager", function(ply) player_manager.RunC
 
 -- Documented callbacks the server never calls yet (AI schedules / tasks, movement, animation,
 -- client-side effects): acknowledged as stubs, not claimed.
-for _, n in ipairs({ "CalcAbsolutePosition", "CanEditVariables", "FireAnimationEvent", "GetRenderMesh", "GetShadowCastDirection", "GravGunPunt", "HandleAnimEvent", "ImpactTrace", "OnTraceAttack", "RenderOverride", "ResolveCustomFlyCollision", "TestCollision" }) do stub("ENTITY:" .. n) end
+for _, n in ipairs({ "CalcAbsolutePosition", "CanEditVariables", "FireAnimationEvent", "GetRenderMesh", "GetShadowCastDirection", "GravGunPunt", "ImpactTrace", "OnTraceAttack", "RenderOverride", "ResolveCustomFlyCollision", "TestCollision" }) do stub("ENTITY:" .. n) end
 for _, n in ipairs({ "CaptureVideo", "GetDeathNoticeEntityName", "GravGunPunt", "OnCloseCaptionEmit", "OnNotifyAddonConflict", "OnPauseMenuBlockedTooManyTimes", "OnPermissionsChanged", "PlayerFireAnimationEvent", "PlayerHandleAnimEvent", "PostProcessPermitted", "SpawniconGenerated", "WorkshopDownloadFile", "WorkshopDownloadProgress", "WorkshopDownloadTotals", "WorkshopDownloadedFile", "WorkshopEnd", "WorkshopExtractProgress", "WorkshopStart", "WorkshopSubscriptionsChanged", "WorkshopSubscriptionsMessage", "WorkshopSubscriptionsProgress" }) do stub("GM:" .. n) end
 for _, n in ipairs({ "PostDrawViewModel" }) do stub("PLAYER:" .. n) end
 for _, n in ipairs({ "ContextMenuShowTool", "OnRevertSpawnlist", "OnSaveSpawnlist", "OpenToolbox", "PreRegisterTOOL", "SpawnlistOpenGenericMenu", "SpawnmenuIconMenuOpen" }) do stub("SANDBOX:" .. n) end
