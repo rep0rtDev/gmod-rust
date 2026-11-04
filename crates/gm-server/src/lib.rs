@@ -704,6 +704,11 @@ pub enum GameEvent {
     PropBreak {
         ent: u32,
     },
+    /// The gravity gun of `player` punted `ent` (after the launch).
+    GravGunPunt {
+        player: u32,
+        ent: u32,
+    },
     /// Server-side sequence playback passed an animation event of the model (`HandleAnimEvent`):
     /// the event's number and type, its time into the sequence and cycle, options and name.
     AnimEvent {
@@ -9914,6 +9919,10 @@ impl<'w> Server<'w> {
                 let st = self.physics.state(b);
                 self.physics
                     .set_velocity(b, forward * speed, st.angular_velocity);
+                if let Some(e) = target {
+                    self.game_events
+                        .push(GameEvent::GravGunPunt { player, ent: e });
+                }
                 snd(self, "Launch");
             }
             weapons::CannonIntent::Grab => {

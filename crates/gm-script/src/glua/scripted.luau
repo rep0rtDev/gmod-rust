@@ -15,6 +15,7 @@
 -- @hook WEAPON:Think
 -- @hook ENTITY:SetupDataTables
 -- @hook ENTITY:KeyValue
+-- @hook WEAPON:KeyValue
 -- @hook ENTITY:AcceptInput
 -- @hook ENTITY:PreEntityCopy
 -- @hook ENTITY:PostEntityCopy
@@ -43,6 +44,14 @@ weapons = {}
 -- weapon_base behaviour every SWEP inherits unless it overrides it
 weapons.__base = {}
 local WB = weapons.__base
+
+-- engine-side WEAPON callbacks with the base weapon's defaults
+-- @hook WEAPON:FireAnimationEvent
+function WB:FireAnimationEvent(pos, ang, event, options) return false end
+-- @hook WEAPON:GetTracerOrigin
+function WB:GetTracerOrigin() return nil end
+-- @hook WEAPON:OnRestore
+function WB:OnRestore() end
 function WB:CanPrimaryAttack() local c = rawget(self, "__clip1"); if c ~= nil and c <= 0 then return false end return true end
 function WB:CanSecondaryAttack() local c = rawget(self, "__clip2"); if c ~= nil and c <= 0 then return false end return true end
 function WB:TakePrimaryAmmo(n) local c = rawget(self, "__clip1") or (self.Primary and self.Primary.DefaultClip) or 0; rawset(self, "__clip1", math.max(0, c - (n or 1))) end

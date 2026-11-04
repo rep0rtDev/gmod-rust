@@ -406,6 +406,17 @@ impl Runtime {
         }
     }
 
+    /// Client realm: one event of the native UI (`spawnmenu.icon_menu`, `spawnmenu.toolbox`...),
+    /// dispatched read-only like `input.key`.
+    pub fn client_event(&mut self, world: &gm_net::ClientWorld, name: &str, p: &api::Payload) {
+        let snap = self.client_snapshot(world);
+        self.parallel(&snap, name, p);
+        self.release_snapshots();
+        for a in self.actors.iter_mut() {
+            a.take_queue();
+        }
+    }
+
     /// Client realm: server browser replies, dispatched as `servers.entry` / `servers.done`.
     pub fn client_servers(&mut self, world: &gm_net::ClientWorld, reports: &[ServerReport]) {
         if reports.is_empty() {
@@ -1931,6 +1942,11 @@ impl Runtime {
                 E::PropBreak { ent } => {
                     p.ints.push(("entity", ent as i64));
                     "entity.break"
+                }
+                E::GravGunPunt { player, ent } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("entity", ent as i64));
+                    "gravgun.punt"
                 }
                 E::AnimEvent {
                     ent,

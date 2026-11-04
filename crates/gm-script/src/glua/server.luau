@@ -1358,7 +1358,7 @@ function saverestore.SaveEntity(e, save)
     for _, k in ipairs(saverestore.WritableKeysInTable(i)) do t[k] = rawget(i, k) end
     save:WriteTable(t)
 end
--- @hook ENTITY:OnRestore
+-- @hook ENTITY:OnRestore @hook WEAPON:OnRestore
 function saverestore.LoadEntity(e, save)
     local i = sr_instance(e)
     if not (i and save) then return end

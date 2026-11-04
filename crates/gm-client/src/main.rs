@@ -3004,9 +3004,20 @@ impl App {
         if self.panel_click() {
             return;
         }
-        let Some((menu, g)) = self.menu.as_mut().zip(self.gfx.as_ref()) else {
-            return;
-        };
+        let pending = self.menu_right_click_inner();
+        if let Some((event, kind)) = pending {
+            let mut p = gm_script::api::Payload::default();
+            p.strs.push(("kind", kind.to_string()));
+            self.sim
+                .script
+                .client_event(&self.sim.client.world, event, &p);
+        }
+    }
+
+    /// The right click's menu; the sandbox hook event it opens (SpawnmenuIconMenuOpen /
+    /// SpawnlistOpenGenericMenu), if any.
+    fn menu_right_click_inner(&mut self) -> Option<(&'static str, &'static str)> {
+        let (menu, g) = self.menu.as_mut().zip(self.gfx.as_ref())?;
         let (w, h) = (g.config.width as f32, g.config.height as f32);
         let font = g.ui.font_metrics(Some(derma::FONT));
         let bold = g.ui.font_metrics(Some(derma::FONT_BOLD));
@@ -3031,6 +3042,7 @@ impl App {
         if let Some(derma::Action::Node(i)) = action {
             if menu.st.creation_tab == 0 && self.spawnlists.get(i).is_some_and(|l| !l.addon) {
                 menu.st.list_menu = Some((self.cursor, i));
+                return Some(("spawnmenu.generic_menu", ""));
             }
         }
         if let Some(derma::Action::Spawn(model)) = action {
@@ -3042,8 +3054,10 @@ impl App {
                     vec![model]
                 };
                 menu.st.ctx_menu = Some((self.cursor, models));
+                return Some(("spawnmenu.icon_menu", "model"));
             }
         }
+        None
     }
 
     fn menu_click(&mut self) {
@@ -3207,7 +3221,15 @@ impl App {
                 self.console.log(format!("gm_spawnsent {class}"));
                 self.sim.client.command(Command::SpawnSent { class });
             }
-            Some(derma::Action::ToolTab(i)) => menu.st.tool_tab = i,
+            Some(derma::Action::ToolTab(i)) => {
+                menu.st.tool_tab = i;
+                if i == 0 {
+                    let p = gm_script::api::Payload::default();
+                    self.sim
+                        .script
+                        .client_event(&self.sim.client.world, "spawnmenu.toolbox", &p);
+                }
+            }
             Some(derma::Action::Node(i)) => {
                 menu.st.node = i;
                 menu.st.scroll = 0.0;

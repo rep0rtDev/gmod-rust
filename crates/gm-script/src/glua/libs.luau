@@ -658,11 +658,6 @@ hook.Add("PlayerSetModel", "__player_manager", function(ply) player_manager.RunC
 
 -- Documented callbacks the server never calls yet (AI schedules / tasks, movement, animation,
 -- client-side effects): acknowledged as stubs, not claimed.
-for _, n in ipairs({ "CalcAbsolutePosition", "FireAnimationEvent", "GetRenderMesh", "GetShadowCastDirection", "GravGunPunt", "ImpactTrace", "OnTraceAttack", "ResolveCustomFlyCollision", "TestCollision" }) do stub("ENTITY:" .. n) end
-for _, n in ipairs({ "CaptureVideo", "GravGunPunt", "OnCloseCaptionEmit", "OnNotifyAddonConflict", "OnPauseMenuBlockedTooManyTimes", "OnPermissionsChanged", "PlayerFireAnimationEvent", "PlayerHandleAnimEvent", "PostProcessPermitted", "SpawniconGenerated", "WorkshopDownloadFile", "WorkshopDownloadProgress", "WorkshopDownloadTotals", "WorkshopDownloadedFile", "WorkshopEnd", "WorkshopExtractProgress", "WorkshopStart", "WorkshopSubscriptionsChanged", "WorkshopSubscriptionsMessage", "WorkshopSubscriptionsProgress" }) do stub("GM:" .. n) end
-for _, n in ipairs({ "PostDrawViewModel" }) do stub("PLAYER:" .. n) end
-for _, n in ipairs({ "ContextMenuShowTool", "OnRevertSpawnlist", "OnSaveSpawnlist", "OpenToolbox", "PreRegisterTOOL", "SpawnlistOpenGenericMenu", "SpawnmenuIconMenuOpen" }) do stub("SANDBOX:" .. n) end
-for _, n in ipairs({ "AcceptInput", "DoImpactEffect", "FireAnimationEvent", "GetTracerOrigin", "KeyValue", "OnRestore", "TranslateActivity", "ViewModelDrawn" }) do stub("WEAPON:" .. n) end
 
 
 -- Shared / server tail. Stack and CSoundPatch are own objects; cookie persists through the addon's

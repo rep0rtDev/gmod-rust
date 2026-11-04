@@ -1570,7 +1570,7 @@ do
         end)
         events.on("npc.damage", function(p)
             local inst = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(p.npc or p.entity or 0)
-            -- @hook NEXTBOT:OnTraceAttack
+            -- @hook NEXTBOT:OnTraceAttack @hook ENTITY:OnTraceAttack (any scripted instance hit)
             if inst and inst.OnTraceAttack and DamageInfo then
                 local d = DamageInfo(); d:SetDamage(p.damage or 0); d:SetAttacker((p.attacker or 0) ~= 0 and Player(p.attacker) or NULL)
                 inst:OnTraceAttack(d, p.dir and Vector(p.dir.x, p.dir.y, p.dir.z) or Vector(0, 0, 0), { HitPos = p.pos and Vector(p.pos.x, p.pos.y, p.pos.z) or Entity(p.npc or 0):GetPos(), HitGroup = p.hitgroup or 0 })

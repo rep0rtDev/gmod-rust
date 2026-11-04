@@ -644,7 +644,7 @@ function spawnmenu.PopulateFromTextFiles(fn)
 	for file, t in pairs(prop_tables) do fn(t.name, t.icon, t.id, t.parentid, t.needsapp, t.contents) end
 end
 function spawnmenu.PopulateFromEngineTextFiles() hook.Run("PopulatePropMenu") end
-function spawnmenu.SaveToTextFiles(tbl) custom_props = tbl or custom_props; hook.Run("SpawnlistContentChanged") end
+function spawnmenu.SaveToTextFiles(tbl) hook.Run("OnSaveSpawnlist"); custom_props = tbl or custom_props; hook.Run("SpawnlistContentChanged") end
 function spawnmenu.DoSaveToTextFiles(tbl) spawnmenu.SaveToTextFiles(tbl) end
 -- the game's own tabs so scripts can add next to them (sandbox `spawnmenu.AddCreationTab`)
 spawnmenu.AddCreationTab("#spawnmenu.content_tab", function() return vgui.Create("SpawnmenuContentPanel") end, "icon16/application_view_tile.png", 10)
@@ -675,8 +675,12 @@ function achievements.GetDesc(i) local a = ACH[(i or 0) + 1]; return a and a[3] 
 function achievements.GetGoal(i) local a = ACH[(i or 0) + 1]; return a and a[4] or 0 end
 function achievements.GetCount(i) local a = ACH[(i or 0) + 1]; return a and (ach_counts[a[1]] or 0) or 0 end
 function achievements.IsAchieved(i) local a = ACH[(i or 0) + 1]; return a ~= nil and (ach_counts[a[1]] or 0) >= a[4] end
-for _, a in ipairs(ACH) do
-	achievements[a[1]] = function() ach_counts[a[1]] = (ach_counts[a[1]] or 0) + 1 end
+for i, a in ipairs(ACH) do
+	achievements[a[1]] = function()
+		ach_counts[a[1]] = (ach_counts[a[1]] or 0) + 1
+		-- the count reaching the goal earns the achievement (GM:OnAchievementAchieved, base: chat line)
+		if ach_counts[a[1]] == a[4] then hook.Run("OnAchievementAchieved", LocalPlayer(), i - 1) end
+	end
 end
 
 
@@ -1639,7 +1643,8 @@ function UpdateAddonDisabledState() local d = disabled_set() for _, a in ipairs(
 function UpdateSubscribedAddon(wsid) end
 function UpdateAddonMapList() end
 function RefreshAddonConflicts() end
-function FireAddonConflicts(json) end
+-- the engine reports two mounted addons shipping the same file: { { addon1 = wsid, addon2 = wsid, file = path }, ... }
+function FireAddonConflicts(json) for _, c in ipairs(util.JSONToTable(json or "") or {}) do hook.Run("OnNotifyAddonConflict", c.addon1 or "", c.addon2 or "", c.file or "") end end
 -- addon presets: name -> { enabled = {wsid...}, disabled = {...}, newAction = ... }
 function ListAddonPresets() local names = {} for n in SortedPairs(json_cookie("menu.addons.presets", {})) do names[#names + 1] = n end return names end
 function LoadAddonPresets() return json_cookie("menu.addons.presets", {}) end
@@ -1734,7 +1739,7 @@ local permission_list = {
 local function grants() return json_cookie("menu.permissions", {}) end
 function permissions.GetAll() local out = {} for i, p in ipairs(permission_list) do out[i] = { name = p.name, desc = p.desc, granted = grants()[p.name] == true } end return out end
 function permissions.IsGranted(name) return grants()[name] == true end
-function permissions.Grant(name, granted) local g = grants(); g[name] = granted ~= false and true or nil; set_json_cookie("menu.permissions", g); hook.Run("PermissionsChanged") end
+function permissions.Grant(name, granted) local g = grants(); local was = g[name]; g[name] = granted ~= false and true or nil; if was ~= g[name] then hook.Run("OnPermissionsChanged") end set_json_cookie("menu.permissions", g); hook.Run("PermissionsChanged") end
 function permissions.Revoke(name) permissions.Grant(name, false) end
 function permissions.Connect(address) RunConsoleCommand("connect", address) end
 function permissions.AskToConnect(address)

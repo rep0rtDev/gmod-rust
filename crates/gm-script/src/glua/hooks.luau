@@ -390,7 +390,17 @@ if SERVER then
     -- @hook GM:PlayerHandleAnimEvent
     events.on("player.anim_event", safe(function(p)
         local ply = Player(p.entity or 0)
-        if IsValid(ply) then hook.Run("PlayerHandleAnimEvent", ply, anim_event_id(p), p.time or 0, p.cycle or 0, p.type or 0, p.options or "") end
+        if IsValid(ply) then
+            hook.Run("PlayerFireAnimationEvent", ply, anim_event_id(p))
+            hook.Run("PlayerHandleAnimEvent", ply, anim_event_id(p), p.time or 0, p.cycle or 0, p.type or 0, p.options or "")
+        end
+    end))
+    -- the gravity gun's punt: GM:GravGunPunt then the punted scripted entity's own callback
+    -- (the server has launched the entity already; a false return cannot stop it here)
+    events.on("gravgun.punt", safe(function(p)
+        local ply, ent = Player(p.player or 0), Entity(p.entity or 0)
+        hook.Run("GravGunPunt", ply, ent)
+        if IsValid(ent) and ent.GravGunPunt then ent:GravGunPunt(ply) end -- @hook ENTITY:GravGunPunt
     end))
     events.on("entity.fired_bullets", safe(function(p)
         local e = Entity(p.entity or p.attacker or 0)
@@ -682,7 +692,15 @@ if CLIENT then
                 if hook.Run("ContextMenuEnabled") ~= false and hook.Run("ContextMenuOpen") ~= false then hook.Run("OnContextMenuOpen"); hook.Run("ContextMenuOpened") end
             else hook.Run("OnContextMenuClose"); hook.Run("ContextMenuClosed") end
         elseif bind == "cancelselect" or p.key == "Escape" then
-            if p.down then hook.Run("OnPauseMenuShow") end
+            if p.down then
+                -- a gamemode blocking the pause menu three times running is overruled (GM:OnPauseMenuBlockedTooManyTimes)
+                if hook.Run("OnPauseMenuShow") == false then
+                    __pause_blocked = (__pause_blocked or 0) + 1
+                    if __pause_blocked >= 3 then __pause_blocked = 0; hook.Run("OnPauseMenuBlockedTooManyTimes") end
+                else
+                    __pause_blocked = 0
+                end
+            end
         elseif bind == "messagemode" or bind == "messagemode2" then
             if p.down and hook.Run("StartChat", bind == "messagemode2") ~= true then lp.__chat_open = true end
         elseif bind == "invprev" or bind == "invnext" or bind == "lastinv" or string.sub(bind, 1, 4) == "slot" then
@@ -770,4 +788,12 @@ if __glua_classes and __glua_classes.Entity then
     function __glua_classes.Entity:SetAutomaticFrameAdvance(on) local v = rawget(self, "__vars"); if v then v.__auto_frame = on ~= false end end -- @hook ENTITY:SetAutomaticFrameAdvance
     function __glua_classes.Entity:SetCustomCollisionCheck(on) local v = rawget(self, "__vars"); if v then v.__custom_collide = on == true end end
     function __glua_classes.Entity:GetCustomCollisionCheck() local v = rawget(self, "__vars"); return v ~= nil and v.__custom_collide == true end
+end
+
+-- the native spawn menu's own menus reach the sandbox hooks; the panels are the engine's, not
+-- Lua panels, so the panel arguments are nil
+if CLIENT then
+    events.on("spawnmenu.icon_menu", function(p) hook.Run("SpawnmenuIconMenuOpen", nil, nil, p.kind or "") end)
+    events.on("spawnmenu.generic_menu", function() hook.Run("SpawnlistOpenGenericMenu", nil) end)
+    events.on("spawnmenu.toolbox", function() hook.Run("OpenToolbox") end)
 end

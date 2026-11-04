@@ -1795,6 +1795,7 @@ function ENT:StopLoopingSound(id) end
 function ENT:StartLoopingSound(name) return 0 end
 function ENT:StopParticles() end
 function ENT:RemoveAllDecals() end
+-- @hook ENTITY:AcceptInput @hook WEAPON:AcceptInput (a scripted weapon instance takes the input the same way)
 function ENT:Input(name, activator, caller, data) if hook.Run("AcceptInput", self, name, activator, caller, data) == true then return end local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(self.__id); if si and si.AcceptInput and si:AcceptInput(name, activator or NULL, caller or NULL, data) == true then return true end if name == "Kill" then self:Remove() return true end return false end
 function ENT:Fire(input, param, delay, activator, caller)
     if (delay or 0) > 0 then local me = self; timer.Simple(delay, function() if IsValid(me) then me:Input(input, activator, caller, param) end end) else self:Input(input, activator, caller, param) end
@@ -2825,3 +2826,21 @@ function NPC:StartEngineTask(task, data) qwrite("npc_ai_task_status", self.__id,
 function NPC:RunEngineTask(task, data) end
 -- schedule-local save position the FORCED_GO / SAVEPOSITION tasks walk to
 function NPC:SetLastPosition(pos) rawset(self, "__last_pos", pos); qwrite("npc_ai_save_pos", self.__id, { x = pos.x, y = pos.y, z = pos.z }) end
+
+-- engine-side ENTITY callbacks: the defaults keep the engine behaviour (no custom position, mesh, collision or impact)
+-- @hook ENTITY:CalcAbsolutePosition
+function ENT:CalcAbsolutePosition(pos, ang) return pos, ang end
+-- @hook ENTITY:FireAnimationEvent
+function ENT:FireAnimationEvent(pos, ang, event, name, caller) return false end
+-- @hook ENTITY:GetRenderMesh
+function ENT:GetRenderMesh() return nil end
+-- @hook ENTITY:GetShadowCastDirection
+function ENT:GetShadowCastDirection(dir) return dir end
+-- @hook ENTITY:ImpactTrace
+function ENT:ImpactTrace(tr, damageType, customImpactName) return false end
+-- @hook ENTITY:OnTraceAttack
+function ENT:OnTraceAttack(dmginfo, dir, tr) end
+-- @hook ENTITY:ResolveCustomFlyCollision
+function ENT:ResolveCustomFlyCollision(tr) end
+-- @hook ENTITY:TestCollision
+function ENT:TestCollision(startpos, delta, isbox, extents, mask) return nil end
