@@ -2176,6 +2176,8 @@ pub struct Npc {
     /// ends, and the earliest tick of the next leap.
     pub flight: Option<Vec3>,
     pub hung_until: u64,
+    /// The flight crosses a jump link of the route; landing resumes the route.
+    pub link_jump: bool,
     pub next_leap: u64,
     /// The tick a wound-up jump (antlion) leaves the ground.
     pub jump_at: Option<u64>,
@@ -2230,6 +2232,8 @@ pub struct Npc {
 #[derive(Clone, Debug, PartialEq)]
 pub struct NpcPath {
     pub points: Vec<Vec3>,
+    /// `points[i]` is reached from `points[i - 1]` over a jump link (empty: none are).
+    pub jumps: Vec<bool>,
     pub idx: usize,
     pub partial: bool,
     pub braking: bool,
@@ -6818,14 +6822,31 @@ pub fn npc_find_path(
     hull: usize,
     local_max: f32,
 ) -> Option<gm_nav::Path> {
+    let caps = gm_formats::ain::CAP_MOVE_GROUND;
+    npc_find_route(nav, graph, from, to, extents, hull, local_max, caps).map(|(p, _)| p)
+}
+
+/// `npc_find_path` over the graph links the class `caps` (`npc_move_caps`) may cross, with
+/// a flag per point set where the route jumps a link (`NpcPath::jumps`).
+#[allow(clippy::too_many_arguments)]
+pub fn npc_find_route(
+    nav: Option<&gm_nav::NavMesh>,
+    graph: Option<&AiGraph>,
+    from: Vec3,
+    to: Vec3,
+    extents: Vec3,
+    hull: usize,
+    local_max: f32,
+    caps: u8,
+) -> Option<(gm_nav::Path, Vec<bool>)> {
     let nav = nav?;
     let direct = nav.find_path(from, to, extents)?;
     let local = from.truncate().distance(to.truncate()) <= local_max;
     if direct.partial || (local && direct.points.len() <= 2) {
-        return Some(direct);
+        return Some((direct, Vec::new()));
     }
     let Some(g) = graph.filter(|g| !g.is_empty()) else {
-        return Some(direct);
+        return Some((direct, Vec::new()));
     };
     let straight = |a: Vec3, b: Vec3| {
         nav.find_path(a, b, extents)
@@ -6842,20 +6863,32 @@ pub fn npc_find_path(
         .take(NPC_GRAPH_NODE_TRIES)
         .find(|&i| straight(g.node_pos(i, hull), to));
     let (Some(s), Some(e)) = (start, end) else {
-        return Some(direct);
+        return Some((direct, Vec::new()));
     };
-    let Some(chain) = g.route(s, e, hull) else {
-        return Some(direct);
+    let Some(chain) = g.route_caps(s, e, hull, caps) else {
+        return Some((direct, Vec::new()));
     };
     let mut points = vec![from];
-    points.extend(chain.iter().map(|&i| g.node_pos(i, hull)));
+    points.extend(chain.iter().map(|&(i, _)| g.node_pos(i, hull)));
     points.push(to);
-    Some(gm_nav::Path {
-        points,
-        partial: false,
-    })
+    let mut jumps = vec![false];
+    jumps.extend(
+        chain
+            .iter()
+            .map(|&(_, bit)| bit == gm_formats::ain::CAP_MOVE_JUMP),
+    );
+    jumps.push(false);
+    Some((
+        gm_nav::Path {
+            points,
+            partial: false,
+        },
+        jumps,
+    ))
 }
 
+/// Horizontal speed of a route jump for classes without a leap (u/s, unmeasured).
+pub const NPC_LINK_JUMP_SPEED: f32 = 350.0;
 pub const HINT_WORLD_WORK_POSITION: u16 = 12;
 pub const HINT_TACTICAL_COVER_MED: u16 = 100;
 pub const HINT_TACTICAL_COVER_LOW: u16 = 101;
@@ -12722,6 +12755,7 @@ impl<'w> Server<'w> {
             grenade: None,
             melee_dash: 0.0,
             flight: None,
+            link_jump: false,
             hung_until: 0,
             next_leap: 0,
             jump_at: None,
@@ -13118,7 +13152,9 @@ impl<'w> Server<'w> {
             return false;
         }
         let extents = Vec3::new(32.0, 32.0, 72.0);
-        let Some(path) = npc_find_path(
+        // climb links wait for a climb in the mover: a climber walks the ground ones
+        let caps = npc_move_caps(&n.class) & !gm_formats::ain::CAP_MOVE_CLIMB;
+        let Some((path, jumps)) = npc_find_route(
             Some(nav),
             self.ai_graph.as_ref(),
             n.pos,
@@ -13126,6 +13162,7 @@ impl<'w> Server<'w> {
             extents,
             npc_hull_index(&n.class),
             NPC_LOCAL_ROUTE_GOAL,
+            caps,
         ) else {
             return false;
         };
@@ -13142,6 +13179,7 @@ impl<'w> Server<'w> {
             }
             n.goal = Some(NpcPath {
                 points: path.points,
+                jumps,
                 idx: 1,
                 partial,
                 braking: false,
@@ -13543,6 +13581,7 @@ impl<'w> Server<'w> {
                             ) {
                                 n.goal = Some(NpcPath {
                                     points: path.points,
+                                    jumps: Vec::new(),
                                     idx: 1,
                                     partial: path.partial,
                                     braking: false,
@@ -13556,12 +13595,16 @@ impl<'w> Server<'w> {
             }
             let chasing = n.chase.is_some();
             let chase_reach = n.chase_reach;
+            if n.flight.is_some() {
+                continue;
+            }
             let Some(goal) = n.goal.as_mut() else {
                 continue;
             };
             let braking = goal.braking;
             let halt = goal.halt;
             let points = goal.points.clone();
+            let jumps = goal.jumps.clone();
             let next_goal = n.next_goal;
             let max_yaw = n.max_yaw;
             let mut idx = goal.idx.min(points.len() - 1);
@@ -13594,9 +13637,19 @@ impl<'w> Server<'w> {
                 .map(|k| k.truncate());
             // a corner within reach is passed only when the hull can already sweep to the
             // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
+            let mut jumped = false;
             while idx + 1 < points.len()
                 && points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
             {
+                if jumps.get(idx + 1).copied().unwrap_or(false) {
+                    // the launch node of a jump link: fly to the far node, walk on from there
+                    if let Some(g) = self.npcs.get_mut(&id).and_then(|n| n.goal.as_mut()) {
+                        g.idx = idx + 1;
+                    }
+                    self.launch_link_jump(id, points[idx + 1]);
+                    jumped = true;
+                    break;
+                }
                 let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
                 let next = points[idx + 1];
                 let to = Vec3::new(next.x, next.y, pos.z) + lift;
@@ -13605,6 +13658,9 @@ impl<'w> Server<'w> {
                     break;
                 }
                 idx += 1;
+            }
+            if jumped {
+                continue;
             }
             let head = points[idx].truncate() - pos.truncate();
             let yaw_err = if head.length_squared() > 1e-6 {
@@ -15274,6 +15330,26 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// Flies an NPC over a jump link of its route to `land`: the route and chase survive the
+    /// flight and resume where it touches down (`link_jump`). The horizontal speed is the
+    /// class's leap speed, else NPC_LINK_JUMP_SPEED (not measured against the game).
+    fn launch_link_jump(&mut self, id: u32, land: Vec3) {
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        let speed = npc_leap(&n.class)
+            .or_else(|| npc_jump(&n.class).map(|j| j.leap))
+            .map_or(NPC_LINK_JUMP_SPEED, |l| l.speed);
+        let (goal, next_goal, chase) = (n.goal.clone(), n.next_goal, n.chase);
+        self.launch_npc(id, land, speed, 0.0);
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.goal = goal;
+            n.next_goal = next_goal;
+            n.chase = chase;
+            n.link_jump = true;
+        }
+    }
+
     /// Puts an NPC on the arc from its feet to `land` (constant horizontal `speed`, the
     /// vertical speed that meets `land` + `aim_height`), facing the way it flies.
     fn launch_npc(&mut self, id: u32, land: Vec3, speed: f32, aim_height: f32) {
@@ -15367,6 +15443,43 @@ impl<'w> Server<'w> {
         self.launch_npc(id, land, flight.max(1.0), 0.0);
     }
 
+    /// One tick of a route jump: the arc under gravity swept against the world; the floor
+    /// ends it with the route intact, a wall drops the NPC down it.
+    fn tick_link_jump(&mut self, id: u32, dt: f32) {
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        let (Some(mut vel), pos, mins, maxs) = (n.flight, n.pos, n.mins, n.maxs) else {
+            return;
+        };
+        vel.z -= NPC_GRAVITY * dt;
+        let want = pos + vel * dt;
+        let tr = self
+            .collision
+            .trace_box(pos, want, mins, maxs, gm_collision::MASK_PLAYERSOLID);
+        let next = if tr.start_solid { want } else { tr.end };
+        let landed = tr.fraction < 1.0 && tr.normal.z > 0.7 && vel.z <= 0.0;
+        if tr.fraction < 1.0 && !landed {
+            vel.x = 0.0;
+            vel.y = 0.0;
+        }
+        let floor = if landed {
+            self.npc_floor(next, mins, maxs).unwrap_or(next)
+        } else {
+            next
+        };
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.pos = floor;
+            if landed {
+                n.flight = None;
+                n.link_jump = false;
+                n.move_speed = 0.0;
+            } else {
+                n.flight = Some(vel);
+            }
+        }
+    }
+
     /// Airborne NPCs each tick: the arc under gravity, swept against the world; touching the
     /// target's hull lands the leap's damage and hangs the NPC on it before it drops; the
     /// floor ends the flight and starts the run-away, with the next leap after the rest.
@@ -15383,6 +15496,10 @@ impl<'w> Server<'w> {
             let Some(n) = self.npcs.get(&id) else {
                 continue;
             };
+            if n.link_jump {
+                self.tick_link_jump(id, dt);
+                continue;
+            }
             let Some(l) = npc_leap(&n.class).or_else(|| npc_jump(&n.class).map(|j| j.leap)) else {
                 continue;
             };
@@ -16134,6 +16251,7 @@ impl<'w> Server<'w> {
                 grenade: None,
                 melee_dash: 0.0,
                 flight: None,
+                link_jump: false,
                 hung_until: 0,
                 next_leap: 0,
                 jump_at: None,
