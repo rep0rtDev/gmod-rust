@@ -116,9 +116,97 @@ pub const COND_ENEMY_DEAD: u8 = 28;
 pub const COND_ENEMY_UNREACHABLE: u8 = 29;
 pub const COND_ENEMY_TOO_FAR: u8 = 30;
 pub const COND_HEAR_DANGER: u8 = 31;
+pub const COND_HEAR_THUMPER: u8 = 32;
+pub const COND_HEAR_BUGBAIT: u8 = 33;
 pub const COND_HEAR_COMBAT: u8 = 34;
+pub const COND_HEAR_WORLD: u8 = 35;
 pub const COND_HEAR_PLAYER: u8 = 36;
 pub const COND_HEAR_BULLET_IMPACT: u8 = 37;
+pub const COND_HEAR_PHYSICS_DANGER: u8 = 38;
+pub const COND_HEAR_MOVE_AWAY: u8 = 39;
+pub const COND_SMELL: u8 = 41;
+
+/// Sound-entity sound / scent types (`SOUND_*`, soundent.h).
+pub const SOUND_COMBAT: u16 = 1;
+pub const SOUND_WORLD: u16 = 2;
+pub const SOUND_PLAYER: u16 = 4;
+pub const SOUND_DANGER: u16 = 8;
+pub const SOUND_BULLET_IMPACT: u16 = 16;
+pub const SOUND_CARCASS: u16 = 32;
+pub const SOUND_MEAT: u16 = 64;
+pub const SOUND_GARBAGE: u16 = 128;
+pub const SOUND_THUMPER: u16 = 256;
+pub const SOUND_BUGBAIT: u16 = 512;
+pub const SOUND_PHYSICS_DANGER: u16 = 1024;
+pub const SOUND_MOVE_AWAY: u16 = 4096;
+pub const SOUND_PLAYER_VEHICLE: u16 = 8192;
+pub const SOUND_SCENTS: u16 = SOUND_CARCASS | SOUND_MEAT | SOUND_GARBAGE;
+
+/// The condition a heard sound type raises (`CAI_BaseNPC::OnListened`): any scent is
+/// COND_SMELL, a player vehicle counts as the player.
+pub fn sound_condition(sound: u16) -> Option<u8> {
+    Some(match sound {
+        SOUND_COMBAT => COND_HEAR_COMBAT,
+        SOUND_WORLD => COND_HEAR_WORLD,
+        SOUND_PLAYER | SOUND_PLAYER_VEHICLE => COND_HEAR_PLAYER,
+        SOUND_DANGER => COND_HEAR_DANGER,
+        SOUND_BULLET_IMPACT => COND_HEAR_BULLET_IMPACT,
+        SOUND_THUMPER => COND_HEAR_THUMPER,
+        SOUND_BUGBAIT => COND_HEAR_BUGBAIT,
+        SOUND_PHYSICS_DANGER => COND_HEAR_PHYSICS_DANGER,
+        SOUND_MOVE_AWAY => COND_HEAR_MOVE_AWAY,
+        s if s & SOUND_SCENTS != 0 => COND_SMELL,
+        _ => return None,
+    })
+}
+
+/// The sound type behind a hearing condition the native events raise directly.
+pub fn condition_sound(cond: u8) -> u16 {
+    match cond {
+        COND_HEAR_COMBAT => SOUND_COMBAT,
+        COND_HEAR_WORLD => SOUND_WORLD,
+        COND_HEAR_PLAYER => SOUND_PLAYER,
+        COND_HEAR_DANGER => SOUND_DANGER,
+        COND_HEAR_BULLET_IMPACT => SOUND_BULLET_IMPACT,
+        COND_HEAR_THUMPER => SOUND_THUMPER,
+        COND_HEAR_BUGBAIT => SOUND_BUGBAIT,
+        COND_HEAR_PHYSICS_DANGER => SOUND_PHYSICS_DANGER,
+        COND_HEAR_MOVE_AWAY => SOUND_MOVE_AWAY,
+        COND_SMELL => SOUND_SCENTS,
+        _ => 0,
+    }
+}
+
+/// The sound types a class listens to (`GetSoundInterests` of the HL2 classes): zombies and
+/// headcrabs ignore bullet impacts, soldiers mind physics danger and move-away, antlions
+/// thumpers and bugbait; no HL2 class is interested in scents, so COND_SMELL only reaches
+/// scripted classes that ask for it (`ENT.SoundInterests`).
+pub fn class_sound_interests(class: &str) -> u16 {
+    let base = SOUND_WORLD | SOUND_COMBAT | SOUND_PLAYER | SOUND_DANGER;
+    match class {
+        c if class_sched_family(c) == Some("zombie")
+            || class_sched_family(c) == Some("headcrab") =>
+        {
+            base
+        }
+        "npc_combine_s" => base | SOUND_PHYSICS_DANGER | SOUND_BULLET_IMPACT | SOUND_MOVE_AWAY,
+        "npc_metropolice" => {
+            base | SOUND_PHYSICS_DANGER
+                | SOUND_BULLET_IMPACT
+                | SOUND_MOVE_AWAY
+                | SOUND_PLAYER_VEHICLE
+        }
+        "npc_antlion" | "npc_antlionguard" => {
+            base | SOUND_PHYSICS_DANGER | SOUND_THUMPER | SOUND_BUGBAIT
+        }
+        "npc_citizen" | "npc_alyx" | "npc_barney" | "npc_kleiner" | "npc_eli" | "npc_mossman"
+        | "npc_monk" | "npc_gman" | "npc_breen" | "npc_dog" | "npc_vortigaunt"
+        | "npc_magnusson" | "npc_fisherman" => {
+            base | SOUND_BULLET_IMPACT | SOUND_MOVE_AWAY | SOUND_PLAYER_VEHICLE
+        }
+        _ => base | SOUND_BULLET_IMPACT | SOUND_PLAYER_VEHICLE,
+    }
+}
 pub const COND_TOO_CLOSE_TO_ATTACK: u8 = 42;
 pub const COND_TOO_FAR_TO_ATTACK: u8 = 43;
 pub const COND_NOT_FACING_ATTACK: u8 = 44;
@@ -1181,6 +1269,8 @@ pub struct AiState {
     /// The loudest sound heard lately (origin, COND_HEAR_* kind, tick): what INVESTIGATE_SOUND
     /// / ALERT_FACE_BESTSOUND walk to or face (the engine's best sound, kept ~3 s).
     pub last_sound: Option<(glam::Vec3, u8, u64)>,
+    /// Sound types this NPC listens to when a script overrides the class's (`ENT.SoundInterests`).
+    pub sound_interests: Option<u16>,
 }
 
 impl AiState {

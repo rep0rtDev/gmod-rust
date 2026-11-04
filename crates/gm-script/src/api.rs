@@ -204,6 +204,7 @@ pub enum QueuedWrite {
         route_rebuild: Option<f32>,
         move_delay: Option<f32>,
         npc_class: Option<u8>,
+        sound_interests: Option<Option<u16>>,
     },
     NpcAiScript {
         ent: u32,
@@ -224,6 +225,9 @@ pub enum QueuedWrite {
         pos: Vec3,
         radius: f32,
         cond: u8,
+        sound: Option<u16>,
+        duration: f32,
+        owner: Option<u32>,
     },
     NpcTarget {
         ent: u32,
@@ -2161,6 +2165,11 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         route_rebuild: t.get::<Option<f32>>("route_rebuild")?,
                         move_delay: t.get::<Option<f32>>("move_delay")?,
                         npc_class: t.get::<Option<u8>>("npc_class")?,
+                        sound_interests: if t.contains_key("sound_interests_set")? {
+                            Some(t.get::<Option<u16>>("sound_interests")?)
+                        } else {
+                            None
+                        },
                     }
                 }
                 "npc_ai_relationship" => {
@@ -2182,7 +2191,10 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     QueuedWrite::NpcAiHear {
                         pos: Vec3::new(t.get("x")?, t.get("y")?, t.get("z")?),
                         radius: t.get::<Option<f32>>("radius")?.unwrap_or(1024.0),
-                        cond: t.get::<u8>("cond")?,
+                        cond: t.get::<Option<u8>>("cond")?.unwrap_or(0),
+                        sound: t.get::<Option<u16>>("sound")?,
+                        duration: t.get::<Option<f32>>("duration")?.unwrap_or(0.0),
+                        owner: t.get::<Option<u32>>("owner")?.filter(|o| *o != 0),
                     }
                 }
                 "npc_target" => QueuedWrite::NpcTarget {
@@ -4391,6 +4403,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             route_rebuild,
             move_delay,
             npc_class,
+            sound_interests,
         } => server.npc_set_misc(
             *ent,
             expression.clone(),
@@ -4399,6 +4412,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             *route_rebuild,
             *move_delay,
             *npc_class,
+            *sound_interests,
         ),
         QueuedWrite::NpcAiRelationship {
             ent,
@@ -4407,8 +4421,18 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
             disp,
             prio,
         } => server.npc_add_relationship(*ent, *other, class.as_deref(), *disp, *prio),
-        QueuedWrite::NpcAiHear { pos, radius, cond } => {
-            server.npc_hear(*pos, *radius, *cond, None);
+        QueuedWrite::NpcAiHear {
+            pos,
+            radius,
+            cond,
+            sound,
+            duration,
+            owner,
+        } => {
+            match sound {
+                Some(sn) => server.npc_emit_sound(*pos, *radius, *sn, *duration, *owner),
+                None => server.npc_hear(*pos, *radius, *cond, None),
+            }
             true
         }
         QueuedWrite::NpcTarget { ent, player } => server.npc_target(*ent, *player),

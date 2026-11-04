@@ -1567,6 +1567,7 @@ fn npc_follow_behaviour_keeps_up_with_the_player() {
         None,
         None,
         None,
+        None,
         None
     ));
     let from = server.npcs[&id].pos;
@@ -2167,4 +2168,74 @@ fn scripted_sequence_walks_to_the_mark_plays_and_cancels() {
     assert_eq!(server.npc_script_stage(id), Some(5));
     assert_eq!(n.sequence, rest);
     assert_eq!(n.ideal_yaw, None);
+}
+
+/// Sound interests and scents (`sound.EmitHint`): a zombie never hears a bullet impact, a
+/// soldier does; a scent reaches only an NPC whose interests include it and stays heard
+/// while the sound lives.
+#[test]
+fn npcs_hear_only_the_sound_types_their_class_listens_to() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_navmesh(world.nav.clone());
+    server.add_player(1, Vec3::new(823.235, -500.0, -143.0), Vec3::ZERO);
+    let idle = std::collections::BTreeMap::from([(1, gm_server::PlayerCmd::default())]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let zombie = server.spawn_npc(1, "npc_zombie", "none").unwrap();
+    let soldier = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
+    let at = server.npcs[&zombie].pos;
+    server.npc_emit_sound(at, 512.0, gm_server::ai::SOUND_BULLET_IMPACT, 0.0, None);
+    assert!(!server.npcs[&zombie]
+        .ai
+        .has(gm_server::ai::COND_HEAR_BULLET_IMPACT));
+    assert!(server.npcs[&soldier]
+        .ai
+        .has(gm_server::ai::COND_HEAR_BULLET_IMPACT));
+    // both hear combat; neither smells (no HL2 class is interested in scents)
+    server.npc_emit_sound(
+        at,
+        512.0,
+        gm_server::ai::SOUND_COMBAT | gm_server::ai::SOUND_CARCASS,
+        0.0,
+        None,
+    );
+    assert!(server.npcs[&zombie].ai.has(gm_server::ai::COND_HEAR_COMBAT));
+    assert!(server.npcs[&soldier]
+        .ai
+        .has(gm_server::ai::COND_HEAR_COMBAT));
+    assert!(!server.npcs[&zombie].ai.has(gm_server::ai::COND_SMELL));
+    // a scripted class that asks for scents smells the carcass for as long as the scent lives
+    assert!(server.npc_set_misc(
+        zombie,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(Some(
+            gm_server::ai::SOUND_SCENTS | gm_server::ai::SOUND_DANGER
+        ))
+    ));
+    server.npc_emit_sound(at, 512.0, gm_server::ai::SOUND_CARCASS, 0.5, None);
+    assert!(server.npcs[&zombie].ai.has(gm_server::ai::COND_SMELL));
+    let mut smelled = 0;
+    for _ in 0..66 {
+        server.tick(&idle);
+        if server.npcs[&zombie].ai.has(gm_server::ai::COND_SMELL) {
+            smelled += 1;
+        }
+    }
+    assert!(
+        (25..=40).contains(&smelled),
+        "smelled on {smelled} of 66 ticks"
+    );
+    assert!(!server.npcs[&zombie].ai.has(gm_server::ai::COND_SMELL));
 }

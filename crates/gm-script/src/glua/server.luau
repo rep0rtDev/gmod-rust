@@ -406,7 +406,12 @@ function sound.GetTable() local o = {}; for n in pairs(sound_table) do o[#o + 1]
 function sound.GetProperties(name) return sound_table[name] end
 function sound.GetLoopingSounds() return {} end
 function sound.Generate() end
-function sound.EmitHint() end
+-- a sound-entity sound / scent NPCs in range hear (their class's sound interests apply) for
+-- `duration` seconds; `volume` is the radius as in the game
+function sound.EmitHint(hint, pos, volume, duration, owner)
+    if not pos then return end
+    world.queue("npc_ai_hear", 0, { x = pos.x, y = pos.y, z = pos.z, radius = tonumber(volume) or 1024, sound = tonumber(hint) or 0, duration = tonumber(duration) or 0, owner = IsValid(owner) and owner.EntIndex and owner:EntIndex() or 0 })
+end
 function sound.Play(name, pos, level, pitch, volume, ent)
     local s = sound_table[name]
     local file_ = name

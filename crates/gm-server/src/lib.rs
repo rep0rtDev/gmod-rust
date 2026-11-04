@@ -5877,6 +5877,7 @@ impl<'w> Server<'w> {
         route_rebuild: Option<f32>,
         move_delay: Option<f32>,
         npc_class: Option<u8>,
+        sound_interests: Option<Option<u16>>,
     ) -> bool {
         let Some(n) = self.npcs.get_mut(&id) else {
             return false;
@@ -5895,6 +5896,9 @@ impl<'w> Server<'w> {
         }
         if let Some(d) = move_delay {
             n.ai.move_delay = d;
+        }
+        if let Some(si) = sound_interests {
+            n.ai.sound_interests = si;
         }
         if let Some(c) = npc_class {
             n.ai.npc_class = Some(c);
@@ -5944,11 +5948,57 @@ impl<'w> Server<'w> {
             );
         }
     }
-    /// A loud event near NPCs: the matching COND_HEAR_* condition for this think.
+    /// `sound.EmitHint`: a sound-entity sound (`SOUND_*` bits) that lives `duration` seconds;
+    /// every tick it is heard again by the NPCs in range whose interests include it, so a
+    /// scent keeps COND_SMELL set while it lasts.
+    pub fn npc_emit_sound(
+        &mut self,
+        pos: Vec3,
+        radius: f32,
+        sound: u16,
+        duration: f32,
+        owner: Option<u32>,
+    ) {
+        let until = self.tick_count + (duration.max(0.0) * 66.0) as u64;
+        self.ai_sounds.push((pos, radius, sound, until, owner));
+        self.npc_hear_sound(pos, radius, sound, owner);
+    }
+
+    /// The sounds / scents still alive this tick reach the NPCs in range again.
+    fn tick_ai_sounds(&mut self) {
+        let now = self.tick_count;
+        self.ai_sounds.retain(|s| s.3 > now);
+        let live = self.ai_sounds.clone();
+        for (pos, radius, sound, _, owner) in live {
+            self.npc_hear_sound(pos, radius, sound, owner);
+        }
+    }
+
+    fn npc_hear_sound(&mut self, pos: Vec3, radius: f32, sound: u16, except: Option<u32>) {
+        for bit in 0..16u16 {
+            let one = sound & (1 << bit);
+            if one == 0 {
+                continue;
+            }
+            if let Some(cond) = ai::sound_condition(one) {
+                self.npc_hear(pos, radius, cond, except);
+            }
+        }
+    }
+
+    /// A loud event near NPCs: the matching COND_HEAR_* condition for this think, for the NPCs
+    /// whose sound interests include the sound type behind it.
     pub fn npc_hear(&mut self, pos: Vec3, radius: f32, cond: u8, except: Option<u32>) {
         let tick = self.tick_count;
+        let sound = ai::condition_sound(cond);
         for (id, n) in self.npcs.iter_mut() {
             if Some(*id) == except || n.dead_at.is_some() || n.pos.distance(pos) > radius {
+                continue;
+            }
+            let interests =
+                n.ai.sound_interests
+                    .unwrap_or_else(|| ai::class_sound_interests(&n.class));
+            if sound != 0 && interests & sound == 0 {
                 continue;
             }
             n.ai.set(cond, true);
@@ -6423,6 +6473,9 @@ pub struct Server<'w> {
     class_sched_bases: BTreeMap<String, u16>,
     /// The map's `info_node` / `info_node_hint` entities (the game's nodegraph positions).
     ai_nodes: Vec<AiNode>,
+    /// Live sound-entity sounds / scents: position, radius, SOUND_* bits, the tick they end,
+    /// the NPC that made them (never hears its own).
+    ai_sounds: Vec<(Vec3, f32, u16, u64, Option<u32>)>,
     next_class_sched: u16,
     /// prop_ragdoll: every bone body (the root is also in `bodies`) and the joints between them.
     ragdoll_bodies: BTreeMap<u32, RagdollRuntime>,
@@ -6739,6 +6792,7 @@ impl<'w> Server<'w> {
             sents: HashMap::new(),
             class_sched_bases: BTreeMap::new(),
             ai_nodes: Vec::new(),
+            ai_sounds: Vec::new(),
             next_class_sched: ai::FIRST_CLASS_SCHEDULE,
             world_weapons: HashMap::new(),
             ai_disabled: false,
@@ -16628,6 +16682,7 @@ impl<'w> Server<'w> {
         self.tick_projectiles(launches);
         self.tick_devices();
         self.tick_vehicles();
+        self.tick_ai_sounds();
         self.tick_anims();
         self.tick_player_anims();
         self.tick_nextbots();
