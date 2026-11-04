@@ -432,6 +432,10 @@ pub const SCHED_FORCED_GO: u16 = 71;
 /// class after the shared ones, so their ids are session-dependent (see `class_schedule`).
 pub const SCHED_ZOMBIE_MOVE_SWATITEM: u16 = 1001;
 pub const SCHED_ZOMBIE_SWATITEM: u16 = 1002;
+/// SCHED_ZOMBIE_WANDER_MEDIUM: the wander after the enemy died (TASK_WANDER 48..384 u, then
+/// TASK_WAIT_PVS), measured as walk4 / Walk in NPC_STATE_ALERT until the player respawns
+/// (server_npc_melee_zombie / _poisonzombie: id 146 = the family block + 7).
+pub const SCHED_ZOMBIE_WANDER_MEDIUM: u16 = 1003;
 /// The first id the game hands class-private schedules on a fresh server: blocks are handed
 /// out in the order the classes first think (measured: a soldier spawned first reports its
 /// block from 88; a zombie or antlion spawned first from 93 - the blended-animation classes
@@ -468,6 +472,7 @@ pub fn shared_alias(s: u16) -> u16 {
         SCHED_ASSAULT_HOLD_RALLY | SCHED_ASSAULT_WAIT_AND_CLEAR => SCHED_IDLE_STAND,
         SCHED_LEAD_RETRIEVE => SCHED_FORCED_GO,
         SCHED_LEAD_RETRIEVE_WAIT => SCHED_IDLE_STAND,
+        SCHED_ZOMBIE_WANDER_MEDIUM => SCHED_IDLE_WANDER,
         _ => s,
     }
 }
@@ -651,6 +656,7 @@ pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
             SCHED_CHASE_ENEMY => Some(0),
             SCHED_ZOMBIE_MOVE_SWATITEM => Some(1),
             SCHED_ZOMBIE_SWATITEM => Some(2),
+            SCHED_ZOMBIE_WANDER_MEDIUM => Some(7),
             SCHED_MELEE_ATTACK1 => Some(10),
             _ => None,
         },

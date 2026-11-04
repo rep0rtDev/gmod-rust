@@ -4513,6 +4513,8 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             "bot": server.players.get(&player).map(|pl| json!({
                 "pos": [pl.state.origin.x, pl.state.origin.y, pl.state.origin.z],
                 "health": pl.health,
+                "alive": pl.alive,
+                "deaths": pl.deaths,
                 "ang": [pl.view_angles.x, pl.view_angles.y, pl.view_angles.z],
                 "invehicle": pl.seat.is_some(),
                 "vehicle": pl.seat.map(|v| v as i64).unwrap_or(-1),

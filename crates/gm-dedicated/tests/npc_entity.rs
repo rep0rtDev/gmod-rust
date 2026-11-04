@@ -526,6 +526,60 @@ fn zombie_closes_in_and_claws_the_player() {
     );
 }
 
+/// The game's zombie after a kill (server_npc_melee_zombie): SCHED_ZOMBIE_WANDER_MEDIUM (the
+/// family block + 7 = 100 on a fresh server) in NPC_STATE_ALERT from the kill tick, a walk to
+/// a spot 48..384 u away, standing there until the player is back.
+#[test]
+fn zombie_wanders_after_killing_the_player_until_the_respawn() {
+    let world = combat_server!(world);
+    let (mut server, idle, _start) = combat_server!(world, server);
+    let id = server.spawn_npc(1, "npc_zombie", "none").unwrap();
+    server.players.get_mut(&1).unwrap().health = 20;
+    let mut died_at = None;
+    let mut from = None;
+    let mut scheds = Vec::new();
+    let mut states = Vec::new();
+    let mut max_d = 0.0f32;
+    let mut respawned_at = None;
+    for tick in 0..900u64 {
+        server.tick(&idle);
+        let p = &server.players[&1];
+        let n = &server.npcs[&id];
+        if died_at.is_none() && !p.alive {
+            died_at = Some(tick);
+            from = Some(n.pos);
+        }
+        if let (Some(d), Some(f)) = (died_at, from) {
+            if respawned_at.is_none() {
+                max_d = max_d.max(n.pos.truncate().distance(f.truncate()));
+                if tick > d + 7 {
+                    scheds.push(server.npc_schedule_id(id));
+                    states.push(n.ai.state);
+                }
+                if p.alive {
+                    respawned_at = Some(tick);
+                }
+            }
+        }
+    }
+    eprintln!("died {died_at:?} respawned {respawned_at:?} wandered {max_d} u");
+    let died = died_at.expect("the zombie never killed the 20 hp player");
+    let respawned = respawned_at.expect("no respawn");
+    assert!(respawned > died + 100, "respawn at {respawned}");
+    assert!(
+        scheds.iter().all(|s| *s == 100),
+        "wander schedule ids {:?}",
+        scheds.iter().collect::<std::collections::BTreeSet<_>>()
+    );
+    assert!(
+        states.iter().all(|s| *s == gm_server::ai::NPC_STATE_ALERT),
+        "states {:?}",
+        states.iter().collect::<std::collections::BTreeSet<_>>()
+    );
+    assert!(max_d >= 40.0 && max_d <= 400.0, "wandered {max_d} u");
+    assert!(server.npcs[&id].wander.is_some() || server.npcs[&id].target.is_some());
+}
+
 /// Addon control: `npc_target` clear makes an engaged soldier passive (no fire, no chase)
 /// until the next `npc_target`, which can also force a farther player over the nearest.
 #[test]

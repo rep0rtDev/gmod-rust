@@ -2117,6 +2117,12 @@ pub struct Npc {
     pub next_swat_scan: u64,
     /// SCHED_WAKE_ANGRY: a zombie that just found its enemy stands one think before chasing.
     pub wake_until: u64,
+    /// Where a zombie wanders after its enemy died (SCHED_ZOMBIE_WANDER_MEDIUM), until a live
+    /// enemy shows up again.
+    pub wander: Option<Vec3>,
+    /// The sequence the body's own animation layer last chose (`npc_anim_step`), so it only
+    /// replaces its own choices.
+    pub auto_seq: Option<String>,
     /// Where the enemy's chest was last seen (suppression fire / flank target).
     pub last_known: Option<Vec3>,
     /// A run for a line of fire (SCHED_ESTABLISH_LINE_OF_FIRE) is under way until this tick.
@@ -2465,8 +2471,12 @@ pub struct NpcMelee {
 }
 
 const NPC_LUNGE_TICKS: u64 = 21;
+/// TASK_WANDER 480384 of SCHED_ZOMBIE_WANDER_MEDIUM: 48..384 u.
+const ZOMBIE_WANDER_MIN: u32 = 48;
+const ZOMBIE_WANDER_MAX: u32 = 384;
 /// Poison on top of the bite (the game's poison headcrab leaves the player at 1 hp).
 const NPC_POISON_DAMAGE: f32 = 94.0;
+const NPC_POISON_WARNING_TICKS: u64 = 77;
 
 const MELEE_PLAIN: NpcMelee = NpcMelee {
     damage: 0.0,
@@ -4811,10 +4821,11 @@ impl<'w> Server<'w> {
         if !a.scripted || a.schedule.is_none() {
             a.state = if a.state == ai::NPC_STATE_SCRIPT && a.scripted {
                 ai::NPC_STATE_SCRIPT
-            } else if target.is_some() && !target_dead {
+            } else if target.is_some() && !target_dead && n.target_first_seen != now {
                 ai::NPC_STATE_COMBAT
             } else if a.has(ai::COND_HEAR_COMBAT)
                 || a.has(ai::COND_HEAR_DANGER)
+                || n.wander.is_some()
                 || now.saturating_sub(n.target_seen) < 66 * 20 && n.target_seen > 0
             {
                 ai::NPC_STATE_ALERT
@@ -4900,6 +4911,15 @@ impl<'w> Server<'w> {
             // the mirror: name the schedule the native body is running
             let sched = if n.swat.is_some() {
                 ai::SCHED_ZOMBIE_SWATITEM
+            } else if target.is_some() && n.target_first_seen == now {
+                // the think that first sees the enemy only gathers senses: the game reads
+                // SCHED_IDLE_STAND in NPC_STATE_IDLE there for every class
+                a.state = ai::NPC_STATE_IDLE;
+                ai::SCHED_IDLE_STAND
+            } else if n.melee_swing.is_some() && now < n.swing_until && !target_dead {
+                // the swing's schedule lasts the whole sequence (the fast zombie's roar after
+                // its scratches, the zombie's follow-through): 167 / 149 until the chase resumes
+                ai::SCHED_MELEE_ATTACK1
             } else if now < n.wake_until + NPC_WAKE_ANGRY_TICKS && target.is_some() && !target_dead
             {
                 // the first think after the sighting only gathers senses (idle), the next
@@ -4928,6 +4948,8 @@ impl<'w> Server<'w> {
                 ai::SCHED_MELEE_ATTACK1
             } else if target.is_some() && !target_dead {
                 ai::SCHED_COMBAT_FACE
+            } else if n.wander.is_some() {
+                ai::SCHED_ZOMBIE_WANDER_MEDIUM
             } else if moving {
                 // the native brain never wanders: a goal without an enemy is a scripted / console
                 // go-to, which the game runs as SCHED_FORCED_GO in whatever state it was in
@@ -12019,6 +12041,8 @@ impl<'w> Server<'w> {
             swat: None,
             next_swat_scan: 0,
             wake_until: 0,
+            wander: None,
+            auto_seq: None,
             last_known: None,
             flank_until: 0,
             detour: None,
@@ -13058,9 +13082,142 @@ impl<'w> Server<'w> {
         }
         self.npc_share_targets(&thought, now);
         for id in thought {
-            self.ai_step(id, now);
+            // the body decides first so the brain's mirror names this think's schedule, as the
+            // game's SelectSchedule and the task that starts the attack fall in one think
             self.npc_combat_think(id, now);
+            self.ai_step(id, now);
+            self.npc_anim_step(id, now);
         }
+    }
+
+    /// The body's own animation, as the game's activity translation: the melee swing plays
+    /// ACT_MELEE_ATTACK1, movement ACT_RUN / ACT_WALK, standing again ACT_IDLE. Only its own
+    /// choices are replaced; goal-owned, scripted, leaping, swatting, throwing and firing
+    /// bodies keep the sequences those set.
+    fn npc_anim_step(&mut self, id: u32, now: u64) {
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        if n.dead_at.is_some()
+            || n.ai.scripted
+            || n.ai.goal.is_some()
+            || n.ai
+                .script
+                .as_ref()
+                .is_some_and(|s| s.stage < ai::SCRIPT_DONE)
+            || n.flight.is_some()
+            || n.swat.is_some()
+            || n.grenade.is_some()
+            || n.jump_at.is_some()
+            || now < n.hung_until
+        {
+            return;
+        }
+        let model = n.model.clone();
+        if !self.ensure_model(&model) {
+            return;
+        }
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        let swinging = n.melee_swing.is_some() && now < n.swing_until;
+        let moving = n.goal.is_some() && n.move_speed > 0.0;
+        let own = n.auto_seq.as_deref() == Some(n.sequence.as_str());
+        // classes whose swings are measured by name (server_npc_melee_*): the antlion's
+        // pounce2 / pounce / attack3, the poison zombie's ThrowWarning then Throw, the fast
+        // zombie's BR2_Roar once both scratches landed
+        let named = n.melee_swing.filter(|_| swinging).and_then(|m| {
+            match ai::class_sched_family(&n.class) {
+                Some("antlion") if m.lunge > 0.0 && m.damage == 0.0 => Some("pounce2"),
+                Some("antlion") if m.lunge > 0.0 => Some("pounce"),
+                Some("antlion") => Some("attack3"),
+                // the warning plays NPC_POISON_WARNING_TICKS, then the throw (t669 / t746)
+                Some("zombie") if m.poison => Some(
+                    if now < n.swing_until.saturating_sub(m.swing_ticks) + NPC_POISON_WARNING_TICKS
+                    {
+                        "ThrowWarning"
+                    } else {
+                        "Throw"
+                    },
+                ),
+                Some("zombie")
+                    if n.class.starts_with("npc_fastzombie") && n.melee_hits_left == 0 =>
+                {
+                    Some("BR2_Roar")
+                }
+                _ => None,
+            }
+        });
+        if let Some(seq) = named {
+            if let Some(n) = self.npcs.get_mut(&id) {
+                if n.sequence != seq {
+                    n.sequence = seq.to_string();
+                }
+                n.auto_seq = Some(seq.to_string());
+            }
+            return;
+        }
+        let act = if swinging {
+            "ACT_MELEE_ATTACK1"
+        } else if moving {
+            if n.run {
+                "ACT_RUN"
+            } else {
+                "ACT_WALK"
+            }
+        } else if own {
+            "ACT_IDLE"
+        } else {
+            return;
+        };
+        if !swinging && !moving && npc_combat_sequences(&n.class).is_some() && n.target.is_some() {
+            // a firing body's shoot / between-bursts sequences take over when it stands
+            return;
+        }
+        let Some(seq) = self.npc_activity_sequence(id, act) else {
+            return;
+        };
+        let idle = (act != "ACT_IDLE")
+            .then(|| self.npc_activity_sequence(id, "ACT_IDLE"))
+            .flatten();
+        if let Some(n) = self.npcs.get_mut(&id) {
+            if n.sequence != seq {
+                n.sequence = seq.clone();
+            }
+            if let (Some(rest), Some(idle)) = (n.rest_sequence.as_mut(), idle) {
+                if Some(rest.as_str()) == n.auto_seq.as_deref() {
+                    *rest = idle;
+                }
+            }
+            n.auto_seq = Some(seq);
+        }
+    }
+
+    /// A zombie's wander destination after its enemy died: the game's TASK_WANDER picks a
+    /// spot ZOMBIE_WANDER_MIN..ZOMBIE_WANDER_MAX u away; ours tries hashed directions on the
+    /// navmesh until one is reachable.
+    fn npc_wander_point(&self, id: u32, now: u64) -> Option<Vec3> {
+        let n = self.npcs.get(&id)?;
+        let nav = self.nav.as_deref()?;
+        let extents = Vec3::new(32.0, 32.0, 72.0);
+        let mut h = (u64::from(id)).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ now.wrapping_mul(0xD1B5_4A32_D192_ED03);
+        for _ in 0..8 {
+            h ^= h >> 29;
+            h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            h ^= h >> 32;
+            let ang = (h % 360) as f32;
+            let span = (ZOMBIE_WANDER_MAX - ZOMBIE_WANDER_MIN) as u64;
+            let dist = ZOMBIE_WANDER_MIN as f32 + ((h >> 16) % span) as f32;
+            let (sn, cs) = ang.to_radians().sin_cos();
+            let p = n.pos + Vec3::new(cs * dist, sn * dist, 0.0);
+            if let Some(path) = nav.find_path(n.pos, p, extents) {
+                if !path.partial {
+                    return path.points.last().copied();
+                }
+            }
+        }
+        None
     }
 
     /// One combat decision per think, after the body moved. A hostile NPC with a hitscan
@@ -13076,6 +13233,49 @@ impl<'w> Server<'w> {
         if n.dead_at.is_some() || n.passive || !npc_hostile_to_players(n) || n.ai.scripted {
             return;
         }
+        if ai::class_sched_family(&n.class) == Some("zombie") {
+            // the game's zombie, its enemy dead: SCHED_ZOMBIE_WANDER_MEDIUM from the kill tick
+            // (the swing ends there), NPC_STATE_ALERT, a walk to a spot 48..384 u away, then it
+            // stands until the player respawns (server_npc_melee_zombie: walk4 t333..t438)
+            let enemy_dead = n
+                .target
+                .is_some_and(|p| self.players.get(&p).is_some_and(|pl| !pl.alive));
+            let enemy_alive = n
+                .target
+                .is_some_and(|p| self.players.get(&p).is_some_and(|pl| pl.alive));
+            if enemy_dead && n.wander.is_none() && n.swat.is_none() {
+                let dest = self.npc_wander_point(id, now);
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.chase = None;
+                    n.goal = None;
+                    n.next_goal = None;
+                    n.move_speed = 0.0;
+                    n.swing_until = now;
+                    n.melee_hit_at = None;
+                    n.melee_swing = None;
+                    n.wander = Some(dest.unwrap_or(n.pos));
+                    n.ai.state = ai::NPC_STATE_ALERT;
+                }
+                if let Some(d) = dest {
+                    self.npc_goto(id, d, false);
+                }
+                return;
+            }
+            if n.wander.is_some() {
+                if !enemy_alive {
+                    return;
+                }
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.wander = None;
+                    n.goal = None;
+                    n.next_goal = None;
+                    n.move_speed = 0.0;
+                }
+            }
+        }
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
         if let Some(l) = npc_leap(&n.class) {
             self.npc_leap_think(id, now, l);
             return;
@@ -14535,6 +14735,8 @@ impl<'w> Server<'w> {
                 swat: None,
                 next_swat_scan: 0,
                 wake_until: 0,
+                wander: None,
+                auto_seq: None,
                 last_known: None,
                 flank_until: 0,
                 detour: None,
