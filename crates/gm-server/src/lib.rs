@@ -2142,6 +2142,8 @@ pub struct Npc {
     pub last_known: Option<Vec3>,
     /// A run for a line of fire (SCHED_ESTABLISH_LINE_OF_FIRE) is under way until this tick.
     pub flank_until: u64,
+    /// SCHED_SHOOT_ENEMY_COVER: the enemy is out of sight and the body shoots its cover.
+    pub cover_fire: bool,
     /// Local detour round a prop that blocked the move: the corner aimed at, which side of the
     /// path it lies (kept while skirting a wall of props) and when it is given up.
     pub detour: Option<Vec3>,
@@ -2384,6 +2386,9 @@ impl MoveOverride {
     }
 }
 pub const NPC_BURST_SHOTS: u8 = 5;
+/// SCHED_SHOOT_ENEMY_COVER fires two rounds a cycle (server_npc_grenade_soldier_low: every
+/// burst t399/406, t448/455, ... while the bot stood behind the crates).
+pub const NPC_COVER_BURST_SHOTS: u8 = 2;
 /// Where an armed NPC's round starts (the SMG1 muzzle in the game's shot records).
 pub const NPC_MUZZLE_RIGHT: f32 = 8.0;
 pub const NPC_MUZZLE_UP_CROUCHED: f32 = 36.0;
@@ -4878,7 +4883,11 @@ impl<'w> Server<'w> {
             Some(pl) if pl.alive => {
                 let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
                 let d = chest.distance(eye);
-                let los = self.npc_los(eye, chest);
+                // FVisible looks at the enemy's eyes: a head above a crate is seen, a line that
+                // only grazes its chest over the lower crate is not (server_npc_grenade_soldier_low)
+                let los = target
+                    .and_then(|p| self.eye(p))
+                    .is_some_and(|(e, _)| self.npc_los(eye, e));
                 (los && d <= sight, los, d > sight, d)
             }
             _ => (false, false, false, 0.0),
@@ -5082,6 +5091,8 @@ impl<'w> Server<'w> {
                 ai::SCHED_TAKE_COVER_FROM_ENEMY
             } else if n.chase.is_some() {
                 ai::SCHED_CHASE_ENEMY
+            } else if n.cover_fire && target.is_some() && !target_dead {
+                ai::SCHED_SHOOT_ENEMY_COVER
             } else if target.is_some() && !target_dead && ranged && los {
                 // the first volley is the suppress schedule (88), later ones RANGE_ATTACK1 (100)
                 if n.target_first_seen > 0
@@ -12501,6 +12512,7 @@ impl<'w> Server<'w> {
             ignore: Vec::new(),
             burst_left: 0,
             next_shot: 0,
+            cover_fire: false,
             shots: 0,
             chase_reach: NPC_CHASE_REACH,
             max_yaw: None,
@@ -13844,6 +13856,10 @@ impl<'w> Server<'w> {
     }
 
     fn npc_combat_think(&mut self, id: u32, now: u64) {
+        let prev_cover = self.npcs.get(&id).is_some_and(|n| n.cover_fire);
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.cover_fire = false;
+        }
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
@@ -13976,7 +13992,8 @@ impl<'w> Server<'w> {
             if chest.distance(eye) > sight {
                 return None;
             }
-            server.npc_los(eye, chest).then_some(chest)
+            let (enemy_eye, _) = server.eye(p)?;
+            server.npc_los(eye, enemy_eye).then_some(chest)
         };
         // keep the current target while visible, otherwise the nearest visible player
         let mut target = n.target.and_then(|p| sees(self, p).map(|c| (p, c)));
@@ -14065,9 +14082,19 @@ impl<'w> Server<'w> {
             return;
         };
         let leads = self.npc_leads_squad(id);
+        let cover_fire = self.npc_sight_occluder_destroyable(id, chest);
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
+        if cover_fire && !prev_cover && n.burst_left == 0 && n.last_shot > 0 {
+            // the cover schedule keeps the volley's 49-tick cycle (t350 volley -> t399) instead
+            // of the first full burst's 55-tick gap
+            let think = n.think_interval as u64;
+            n.next_shot = n.last_shot
+                + NPC_BURST_GAP_LOW_TICKS
+                + think * (NPC_BURST_SHOTS - NPC_COVER_BURST_SHOTS) as u64;
+        }
+        n.cover_fire = cover_fire;
         if n.target != Some(player) {
             if n.target != Some(player) {
                 n.target_first_seen = 0;
@@ -14139,7 +14166,7 @@ impl<'w> Server<'w> {
             && now >= n.next_grenade
             && n.cover_at.is_none()
             && n.goal.is_none();
-        if grenade_due && self.npc_start_grenade(id, now, eye, chest) {
+        if grenade_due && !cover_fire && self.npc_start_grenade(id, now, eye, chest) {
             return;
         }
         let Some(n) = self.npcs.get_mut(&id) else {
@@ -14221,7 +14248,11 @@ impl<'w> Server<'w> {
             return;
         }
         if n.burst_left == 0 {
-            n.burst_left = NPC_BURST_SHOTS;
+            n.burst_left = if cover_fire {
+                NPC_COVER_BURST_SHOTS
+            } else {
+                NPC_BURST_SHOTS
+            };
         }
         n.burst_left -= 1;
         n.shots += 1;
@@ -14260,6 +14291,11 @@ impl<'w> Server<'w> {
                 NPC_BURST_GAP_TICKS
             } else {
                 NPC_BURST_GAP_LOW_TICKS
+            } + if cover_fire {
+                // the two-round burst keeps the five-round period (t406 -> t448)
+                n.think_interval as u64 * (NPC_BURST_SHOTS - NPC_COVER_BURST_SHOTS) as u64
+            } else {
+                0
             }
         } else {
             now + n.think_interval as u64
@@ -15230,9 +15266,54 @@ impl<'w> Server<'w> {
         if tr.fraction < 1.0 || tr.start_solid {
             return false;
         }
+        // a zero-width line like the engine's: in server_npc_grenade_soldier_low the soldier
+        // keeps seeing the bot's eyes through the 0.25 u seam between two crate hulls
+        // (wood_crate001a's .phy is +-19.87 u wide on a 40 u grid) while its muzzle line is blocked
         gm_sandbox::trace_line(self.collision, &self.prop_bodies(), eye, chest)
             .filter(|h| h.ent.is_some())
             .is_none_or(|h| h.fraction >= 1.0)
+    }
+
+    /// COND_WEAPON_SIGHT_OCCLUDED with a destroyable occluder: the enemy is in sight, but the
+    /// weapon's line from the muzzle to its chest is stopped by a prop that has health. The
+    /// Combine then runs SCHED_SHOOT_ENEMY_COVER ("hiding behind something that we can destroy,
+    /// start shooting at it"): it stays put and fires two-round bursts at the enemy through the
+    /// cover (server_npc_grenade_soldier_low: the bot's eyes stay visible through the seam of
+    /// the crate wall, the muzzle line hits a crate - sched 39 until the reload). A brush or an
+    /// unbreakable prop in the way leaves the normal attack.
+    fn npc_sight_occluder_destroyable(&self, id: u32, chest: Vec3) -> bool {
+        let Some(n) = self.npcs.get(&id) else {
+            return false;
+        };
+        if npc_combat_sequences(&n.class).is_none() || n.goal.is_some() || n.grenade.is_some() {
+            return false;
+        }
+        let yaw = n.angles.y.to_radians();
+        let muzzle = n.pos
+            + Vec3::new(yaw.sin(), -yaw.cos(), 0.0) * NPC_MUZZLE_RIGHT
+            + Vec3::new(
+                0.0,
+                0.0,
+                if n.combat_moved {
+                    NPC_MUZZLE_UP_STANDING
+                } else {
+                    NPC_MUZZLE_UP_CROUCHED
+                },
+            );
+        let tr = self
+            .collision
+            .trace_ray(muzzle, chest, gm_collision::MASK_PLAYERSOLID);
+        let world = (tr.fraction < 1.0 || tr.start_solid).then_some(tr.fraction);
+        let Some(ent) = gm_sandbox::trace_line(self.collision, &self.prop_bodies(), muzzle, chest)
+            .filter(|h| h.fraction < 1.0 && world.is_none_or(|w| h.fraction < w))
+            .and_then(|h| h.ent)
+        else {
+            return false;
+        };
+        self.sandbox
+            .props()
+            .iter()
+            .any(|q| q.id == ent && q.health > 0)
     }
 
     /// SCHED_ESTABLISH_LINE_OF_FIRE: the nearest navmesh vertex at least NPC_FLANK_MIN_STEP from
@@ -15588,6 +15669,7 @@ impl<'w> Server<'w> {
                 ignore: Vec::new(),
                 burst_left: 0,
                 next_shot: 0,
+                cover_fire: false,
                 shots: 0,
                 chase_reach: NPC_CHASE_REACH,
                 max_yaw: None,
