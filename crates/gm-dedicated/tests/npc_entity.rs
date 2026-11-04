@@ -439,10 +439,11 @@ fn soldier_chases_a_target_out_of_sight_then_gives_up() {
     }
     assert_eq!(server.npcs[&id].shots, shots, "fired without sight");
     assert!(server.npcs[&id].move_speed > 0.0, "did not move");
-    // the player comes back into view: the chase ends and fire resumes
+    // the player comes back into view: a chase ends at once, a line-of-fire run finishes
+    // first (the game keeps SCHED_ESTABLISH_LINE_OF_FIRE to its node), then fire resumes
     server.teleport_player(1, start);
     let mut seen = false;
-    for _ in 0..60 {
+    for _ in 0..(gm_server::NPC_FLANK_TICKS + 120) {
         server.tick(&idle);
         let n = &server.npcs[&id];
         if n.chase.is_none() && n.shots > shots {

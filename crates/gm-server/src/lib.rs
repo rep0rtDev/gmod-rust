@@ -14294,12 +14294,14 @@ impl<'w> Server<'w> {
             n.target_seen = now;
         }
         n.last_known = Some(chest);
-        if n.flank_until > 0 {
-            // the line of fire is there: the run ends where the soldier stands
+        if n.flank_until > now && n.goal.is_some() {
+            // SCHED_ESTABLISH_LINE_OF_FIRE runs to its node even when the enemy comes back into
+            // view on the way (server_npc_grenade_soldier_wall: RunAIMALL1 from (772,-689) at
+            // t1602, the first standing burst only at the node (729,-726), t1665)
+            return;
+        }
+        if n.flank_until > 0 && n.goal.is_none() {
             n.flank_until = 0;
-            n.goal = None;
-            n.next_goal = None;
-            n.move_speed = 0.0;
         }
         if n.target_first_seen == 0 {
             n.target_first_seen = now;
