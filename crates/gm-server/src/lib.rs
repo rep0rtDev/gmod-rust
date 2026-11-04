@@ -2660,6 +2660,9 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
             reach: 100.0,
             swing_ticks: 98,
             hit_tick: 34,
+            // the game knocks the player 30 u on every hit after the first (attack3 as much
+            // as pounce: server_npc_melee_antlion dx -30 / -59 / -89 / -118)
+            punch: 280.0,
             run: true,
             start_range: 100.0,
             ..MELEE_PLAIN
