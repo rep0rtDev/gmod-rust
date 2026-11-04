@@ -223,6 +223,8 @@ struct OpSpec {
     yaw: f32,
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    code: Option<String>,
     /// `concmd`: the console command (`ai_disabled`, `ai_ignoreplayers`, ...).
     #[serde(default)]
     cmd: Option<String>,
@@ -4759,6 +4761,32 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 }
             }
             "press" => {}
+            // the probe's free Lua: only the `ents.FindByClass('<class>') ... SetAngles(Angle(p,
+            // y, r))` form (the face180 walks) is understood here
+            "lua" => {
+                let code = op.code.clone().unwrap_or_default();
+                let class = code
+                    .split_once("FindByClass('")
+                    .and_then(|(_, r)| r.split_once('\''))
+                    .map(|(c, _)| c.to_string());
+                let ang = code
+                    .split_once("SetAngles(Angle(")
+                    .and_then(|(_, r)| r.split_once(')'))
+                    .map(|(a, _)| {
+                        a.split(',')
+                            .filter_map(|v| v.trim().parse::<f32>().ok())
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|v| v.len() == 3);
+                match (class, ang) {
+                    (Some(class), Some(ang)) => {
+                        for n in server.npcs.values_mut().filter(|n| n.class == class) {
+                            n.angles = Vec3::new(ang[0], ang[1], ang[2]);
+                        }
+                    }
+                    _ => bail!("unknown server op lua"),
+                }
+            }
             "undo" => server.undo(player),
             "cleanup" => server.cleanup(player),
             "wait" | "think" => {}
