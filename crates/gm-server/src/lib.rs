@@ -13332,9 +13332,8 @@ impl<'w> Server<'w> {
             // the game's point kept its distance (255 u from the enemy for a 150 u wall) but
             // closed in (263 u out, 256 u from the enemy that had been 382 u away)
             let to_enemy = v.truncate().distance(known.truncate());
-            if to_enemy < NPC_LOF_MIN_ENEMY
-                || to_enemy >= feet.truncate().distance(known.truncate())
-            {
+            let own = feet.truncate().distance(known.truncate());
+            if to_enemy < NPC_LOF_MIN_ENEMY || to_enemy >= own.max(NPC_LOF_MIN_ENEMY * 1.5) {
                 continue;
             }
             if best.is_some_and(|(bd, _)| d >= bd) {
