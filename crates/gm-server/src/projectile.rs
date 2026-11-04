@@ -70,7 +70,7 @@ const GRENADE_KICK: f32 = 110.0;
 const GRENADE_OFFSET: Vec3 = Vec3::new(8.0, 33.69, 13.91);
 const GRENADE_ROLL: f32 = 600.0;
 const GRENADE_SPIN: f32 = 700.0;
-const GRENADE_FUSE_TICKS: u32 = 175;
+pub const GRENADE_FUSE_TICKS: u32 = 175;
 
 /// The rigid-body world grenades live in, with their model and the server's random stream.
 pub struct Physics<'a> {

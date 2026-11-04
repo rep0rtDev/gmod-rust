@@ -2148,6 +2148,8 @@ pub struct Npc {
     pub reload_in_place: bool,
     /// The burst in progress is finished at the enemy's last known spot after sight was lost.
     pub blind_fire: bool,
+    /// The cover run was triggered by a danger sound (a live grenade), not the enemy.
+    pub cover_from_sound: bool,
     /// Last tick a movement sweep was stopped by another NPC's hull.
     pub npc_blocked_at: u64,
     /// Local detour round a prop that blocked the move: the corner aimed at, which side of the
@@ -2395,6 +2397,10 @@ pub const NPC_BURST_SHOTS: u8 = 5;
 /// SCHED_SHOOT_ENEMY_COVER fires two rounds a cycle (server_npc_grenade_soldier_low: every
 /// burst t399/406, t448/455, ... while the bot stood behind the crates).
 pub const NPC_COVER_BURST_SHOTS: u8 = 2;
+/// A live frag warns the NPCs around it (SOUND_DANGER, 400 u) over the last 1.5 s of its fuse;
+/// the wall recording's soldier ran from its own grenade 35 ticks before the blast.
+pub const NPC_GRENADE_WARN_TICKS: u32 = 99;
+pub const NPC_GRENADE_DANGER_RADIUS: f32 = 400.0;
 /// sv_gravity the toss check assumes.
 pub const NPC_GRENADE_GRAVITY: f32 = 600.0;
 /// NPC hulls enter the movement sweeps as prop bodies with ids from here (`NPC_BODY_ID_BASE + id`):
@@ -5100,6 +5106,8 @@ impl<'w> Server<'w> {
                 ai::SCHED_RELOAD
             } else if n.reloading {
                 ai::SCHED_HIDE_AND_RELOAD
+            } else if n.cover_at.is_some() && n.cover_from_sound {
+                ai::SCHED_TAKE_COVER_FROM_BEST_SOUND
             } else if n.cover_at.is_some() {
                 ai::SCHED_TAKE_COVER_FROM_ENEMY
             } else if n.chase.is_some() {
@@ -9110,7 +9118,11 @@ impl<'w> Server<'w> {
         let threats: Vec<(u32, Vec3)> = self
             .projectiles
             .iter()
-            .filter(|p| weapons::explosion(p.kind).is_some())
+            .filter(|p| {
+                weapons::explosion(p.kind).is_some()
+                    && (p.kind != weapons::Launch::Grenade
+                        || p.age + NPC_GRENADE_WARN_TICKS >= projectile::GRENADE_FUSE_TICKS)
+            })
             .map(|p| (p.owner, p.origin))
             .chain(
                 died.iter()
@@ -9125,12 +9137,17 @@ impl<'w> Server<'w> {
                 .filter(|(_, n)| {
                     n.dead_at.is_none()
                         && npc_weapon_shot_in(&n.weapon, &self.scripted_weapons).is_some()
-                        && n.pos.distance(at) <= NPC_GRENADE_RANGE
+                        && n.pos.distance(at) <= NPC_GRENADE_DANGER_RADIUS
                 })
                 .map(|(i, _)| *i)
                 .collect();
             for id in ids {
                 self.npc_threatened(id, owner, self.tick_count);
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    if n.cover_wanted {
+                        n.cover_from_sound = true;
+                    }
+                }
             }
         }
         for (kind, owner, at) in died {
@@ -12528,6 +12545,7 @@ impl<'w> Server<'w> {
             cover_fire: false,
             reload_in_place: false,
             blind_fire: false,
+            cover_from_sound: false,
             npc_blocked_at: 0,
             shots: 0,
             chase_reach: NPC_CHASE_REACH,
@@ -14017,6 +14035,7 @@ impl<'w> Server<'w> {
             if n.cover_at.is_some() && now >= n.cover_until && n.cover_until != 0 {
                 n.cover_at = None;
                 n.cover_until = 0;
+                n.cover_from_sound = false;
             }
         }
         if stop_for_reload {
@@ -15832,6 +15851,7 @@ impl<'w> Server<'w> {
                 cover_fire: false,
                 reload_in_place: false,
                 blind_fire: false,
+                cover_from_sound: false,
                 npc_blocked_at: 0,
                 shots: 0,
                 chase_reach: NPC_CHASE_REACH,
