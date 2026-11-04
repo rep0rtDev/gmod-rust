@@ -1003,8 +1003,9 @@ fn poison_zombie_throws_then_claws() {
     }
     eprintln!("throw {throw_at:?} crab {crab_at:?} claw {claw_at:?} events {events:?}");
     let (t0, d0) = throw_at.expect("never threw");
+    // the game walks in from 179 u and throws at 141 u (server_npc_melee_poisonzombie)
     assert!(
-        d0 <= gm_server::NPC_CRAB_THROW_RANGE && d0 > 170.0,
+        d0 <= gm_server::NPC_CRAB_THROW_RANGE && d0 > 125.0,
         "threw from {d0}"
     );
     let crab = crab_at.expect("no crab");

@@ -2541,9 +2541,12 @@ pub const NPC_JUMP_COOLDOWN: u64 = 660;
 /// per 859 ticks seen in server_npc_melee_poisonzombie_long, the zombie busy in between).
 pub const NPC_POISON_CRABS: u8 = 3;
 pub const NPC_CRAB_THROW_COOLDOWN: u64 = 860;
-pub const NPC_CRAB_THROW_RANGE: f32 = 1000.0;
+/// The throw starts once the enemy is this close: the game's zombie walks in from 179 u and
+/// throws at 141 u (server_npc_melee_poisonzombie).
+pub const NPC_CRAB_THROW_RANGE: f32 = 145.0;
 /// The thrown crab lands this far short of the player and leaps from there.
 const NPC_CRAB_THROW_SHORT: f32 = 48.0;
+const NPC_CRAB_FLIGHT_TICKS: u64 = 23;
 
 pub const NPC_LEAP_RANGE: f32 = 256.0;
 /// Cover and squads (our rules): a cover point lies within this of the NPC, is a navmesh
@@ -12581,7 +12584,10 @@ impl<'w> Server<'w> {
         crab.target_seen = now;
         crab.thrown = true;
         self.npcs.insert(id, crab);
-        self.launch_npc(id, land, 380.0, 0.0);
+        // the bite lands 187-188 ticks after the throw starts whether thrown from 179 u or
+        // 141 u (server_npc_melee_poisonzombie*): the flight takes NPC_CRAB_FLIGHT_TICKS
+        let flight = (land - start).truncate().length() / (NPC_CRAB_FLIGHT_TICKS as f32 / 66.0);
+        self.launch_npc(id, land, flight.max(1.0), 0.0);
     }
 
     /// Airborne NPCs each tick: the arc under gravity, swept against the world; touching the
