@@ -14286,11 +14286,11 @@ impl<'w> Server<'w> {
                 n.next_shot =
                     now + think * NPC_FIRST_BURST_SHOTS as u64 + NPC_FIRST_BURST_GAP_TICKS;
             } else {
-                // the game opens fire one think after it enters combat: the suppress volley
-                // is two rounds (server_npc_grenade_soldier: t323, t330; the first full burst
-                // t385)
+                // the game opens fire three thinks after it enters combat: the suppress volley
+                // is two rounds (server_npc_grenade_soldier: sighting think t330, shots t350
+                // and t357; the first full burst t385, 55 ticks after the sighting)
                 n.burst_left = NPC_FIRST_BURST_SHOTS;
-                n.next_shot = now + think;
+                n.next_shot = now + think * 3;
             }
         }
         // a mate that joins before the first round is fired makes this one the standing
