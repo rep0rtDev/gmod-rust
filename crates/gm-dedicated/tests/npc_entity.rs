@@ -1379,3 +1379,78 @@ fn npc_ignores_a_player_until_the_tick() {
     assert!(!server.npc_ignores(id, 2, 0));
     assert!(!server.npc_ignore_until(99_999, 1, 1));
 }
+
+// A script-owned schedule (NPC:SetSchedule(SCHED_FORCED_GO) after SetLastPosition) walks the
+// engine's task list - GET_PATH_TO_SAVEPOSITION, WALK_PATH, WAIT_FOR_MOVEMENT, STOP_MOVING -
+// over the native mover, ends with COND_SCHEDULE_DONE and hands the brain back; without a
+// script schedule the brain mirrors the native body (IDLE_STAND while standing).
+#[test]
+fn npc_runs_a_scripted_engine_schedule() {
+    use gm_server::ai;
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_navmesh(world.nav.clone());
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_citizen", "none").unwrap();
+    for _ in 0..8 {
+        server.tick(&idle);
+    }
+    let n = &server.npcs[&id];
+    assert!(!n.ai.scripted);
+    assert_eq!(n.ai.schedule, Some(ai::SCHED_IDLE_STAND), "mirror of a standing body");
+    assert_eq!(n.ai.state, ai::NPC_STATE_IDLE);
+    let from = n.pos;
+    let goal = from + Vec3::new(-400.0, 0.0, 0.0);
+    assert!(server.npc_set_save_position(id, goal));
+    assert!(server.npc_set_schedule(id, Some(ai::SCHED_FORCED_GO)));
+    let mut ticks = 0;
+    let mut seen_tasks = Vec::new();
+    while server.npcs[&id].ai.scripted && !server.npcs[&id].ai.schedule_done {
+        server.tick(&idle);
+        ticks += 1;
+        let a = &server.npcs[&id].ai;
+        if let Some((t, _)) = a.current_task() {
+            if seen_tasks.last() != Some(&t) {
+                seen_tasks.push(t);
+            }
+        }
+        assert!(ticks < 1000, "schedule never finished: {a:?}");
+    }
+    let n = &server.npcs[&id];
+    assert!(n.ai.has(ai::COND_SCHEDULE_DONE), "{:?}", n.ai);
+    assert!(n.goal.is_none(), "still moving after STOP_MOVING");
+    assert!(
+        n.pos.truncate().distance(goal.truncate()) < 0.5,
+        "ended {} for goal {goal}",
+        n.pos
+    );
+    assert!(
+        seen_tasks.contains(&ai::TASK_WALK_PATH) && seen_tasks.contains(&ai::TASK_WAIT_FOR_MOVEMENT),
+        "tasks seen: {seen_tasks:?}"
+    );
+    eprintln!("forced go in {ticks} ticks through {seen_tasks:?}");
+    assert!(server.npc_set_schedule(id, None));
+    for _ in 0..8 {
+        server.tick(&idle);
+    }
+    let n = &server.npcs[&id];
+    assert!(!n.ai.scripted && n.ai.schedule == Some(ai::SCHED_IDLE_STAND), "{:?}", n.ai);
+}
