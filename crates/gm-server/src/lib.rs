@@ -8449,7 +8449,7 @@ impl<'w> Server<'w> {
                 n.suppress_hits += 1;
                 if n.suppress_hits >= NPC_SUPPRESS_SHOTS {
                     n.suppress_hits = 0;
-                    self.npc_threatened(id, attacker, tick);
+                    self.npc_threatened(id, attacker, tick, false);
                 }
             }
         }
@@ -9142,7 +9142,7 @@ impl<'w> Server<'w> {
                 .map(|(i, _)| *i)
                 .collect();
             for id in ids {
-                self.npc_threatened(id, owner, self.tick_count);
+                self.npc_threatened(id, owner, self.tick_count, true);
                 if let Some(n) = self.npcs.get_mut(&id) {
                     if n.cover_wanted {
                         n.cover_from_sound = true;
@@ -14776,7 +14776,9 @@ impl<'w> Server<'w> {
     /// A threat that is not a hit (suppressing fire, a live grenade): an armed hostile NPC
     /// off cooldown and not already in cover wants cover on its next think, from `by` if it
     /// had no target yet.
-    fn npc_threatened(&mut self, id: u32, by: u32, tick: u64) {
+    /// A danger sound (a live grenade about to go off) is not held back by the cover
+    /// cooldown: COND_HEAR_DANGER interrupts whatever the NPC is doing.
+    fn npc_threatened(&mut self, id: u32, by: u32, tick: u64, danger: bool) {
         let alive = self.players.get(&by).is_some_and(|p| p.alive);
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
@@ -14785,7 +14787,7 @@ impl<'w> Server<'w> {
             || n.passive
             || !npc_hostile_to_players(n)
             || n.cover_at.is_some()
-            || tick < n.cover_cooldown
+            || (tick < n.cover_cooldown && !danger)
         {
             return;
         }
@@ -15636,6 +15638,9 @@ impl<'w> Server<'w> {
             let flight = 2.0 * vz / g;
             let range = (target - origin).truncate().length();
             let velocity = fwd * (range / flight) + Vec3::Z * vz;
+            // the frag's model carries its physics hull; a server that has not seen a player
+            // frag yet has not loaded it
+            self.ensure_model(projectile::GRENADE_MODEL);
             let mut phys = projectile::Physics {
                 world: &mut self.physics,
                 grenade: self.models.get(projectile::GRENADE_MODEL),
