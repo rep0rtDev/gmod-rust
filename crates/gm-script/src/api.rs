@@ -196,6 +196,10 @@ pub enum QueuedWrite {
         ent: u32,
         name: Option<String>,
     },
+    AiHintInput {
+        name: String,
+        input: String,
+    },
     NpcAiSavePos {
         ent: u32,
         pos: Vec3,
@@ -2126,6 +2130,16 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                         _ => None,
                     },
                 },
+                "ai_hint_input" => {
+                    let (name, input) = match &arg {
+                        Value::Table(t) => (
+                            t.get::<Option<String>>("name")?.unwrap_or_default(),
+                            t.get::<Option<String>>("input")?.unwrap_or_default(),
+                        ),
+                        _ => (String::new(), String::new()),
+                    };
+                    QueuedWrite::AiHintInput { name, input }
+                }
                 "npc_ai_hint_group" => QueuedWrite::NpcAiHintGroup {
                     ent,
                     name: match &arg {
@@ -4407,6 +4421,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::NpcAiHintGroup { ent, name } => {
             server.npc_set_hint_group(*ent, name.as_deref())
         }
+        QueuedWrite::AiHintInput { name, input } => server.ai_hint_input(name, input),
         QueuedWrite::NpcAiSavePos { ent, pos } => server.npc_set_save_position(*ent, *pos),
         QueuedWrite::NpcAiGoal { ent, json } => server.npc_set_goal(*ent, json),
         QueuedWrite::NpcAiScript { ent, json } => server.npc_set_script(*ent, json),

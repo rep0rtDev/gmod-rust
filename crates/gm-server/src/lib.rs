@@ -5553,6 +5553,10 @@ impl<'w> Server<'w> {
             None => false,
         }
     }
+    /// `ent_fire <name> EnableHint|DisableHint` / a map output at a hint node (CAI_Hint inputs).
+    pub fn ai_hint_input(&mut self, name: &str, input: &str) -> bool {
+        ai_hint_input_nodes(&mut self.ai_nodes, name, input)
+    }
     pub fn npc_set_save_position(&mut self, id: u32, pos: Vec3) -> bool {
         match self.npcs.get_mut(&id) {
             Some(n) => {
@@ -6583,6 +6587,8 @@ pub struct AiNode {
     /// and `IgnoreFacing` (2 = the cone is not checked).
     pub node_fov: f32,
     pub ignore_facing: u8,
+    /// `targetname`: the EnableHint / DisableHint inputs find the node by it.
+    pub name: String,
 }
 
 impl AiNode {
@@ -6952,9 +6958,29 @@ pub fn ai_nodes_from_bsp(bsp: &gm_formats::bsp::Bsp) -> Vec<AiNode> {
                     .get("IgnoreFacing")
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(0),
+                name: e.get("targetname").unwrap_or("").to_string(),
             })
         })
         .collect()
+}
+
+/// Applies `EnableHint` / `DisableHint` to every hint node named `name`; false when the input
+/// is neither or no node has the name.
+pub fn ai_hint_input_nodes(nodes: &mut [AiNode], name: &str, input: &str) -> bool {
+    let disabled = match input {
+        "EnableHint" => false,
+        "DisableHint" => true,
+        _ => return false,
+    };
+    let mut hit = false;
+    for n in nodes
+        .iter_mut()
+        .filter(|n| !name.is_empty() && n.name == name)
+    {
+        n.disabled = disabled;
+        hit = true;
+    }
+    hit
 }
 
 /// The map's `info_player_start` entities as spawn points.
@@ -21248,6 +21274,7 @@ mod ai_node_hint_tests {
             disabled: false,
             node_fov: 360.0,
             ignore_facing: 0,
+            name: String::new(),
         };
         assert!(!n.hint_usable(ai::NPC_STATE_IDLE));
         assert!(n.hint_usable(ai::NPC_STATE_ALERT));
@@ -21272,6 +21299,7 @@ mod ai_node_hint_tests {
             disabled: false,
             node_fov: 180.0,
             ignore_facing: 0,
+            name: String::new(),
         };
         let c = ai::NPC_STATE_COMBAT;
         assert!(n.hint_usable_from(c, Vec3::new(0.0, 100.0, 0.0)));
@@ -21282,6 +21310,48 @@ mod ai_node_hint_tests {
         n.ignore_facing = 0;
         n.node_fov = 360.0;
         assert!(n.hint_usable_from(c, Vec3::new(0.0, -100.0, 0.0)));
+    }
+
+    #[test]
+    fn hint_inputs_toggle_nodes_by_targetname() {
+        let mut nodes = vec![
+            AiNode {
+                pos: Vec3::ZERO,
+                yaw: 0.0,
+                hint: HINT_TACTICAL_COVER_MED,
+                activity: String::new(),
+                group: String::new(),
+                min_state: ai::NPC_STATE_IDLE,
+                max_state: ai::NPC_STATE_COMBAT,
+                disabled: true,
+                node_fov: 360.0,
+                ignore_facing: 2,
+                name: "roof_hint".to_string(),
+            },
+            AiNode {
+                pos: Vec3::ZERO,
+                yaw: 0.0,
+                hint: HINT_TACTICAL_COVER_MED,
+                activity: String::new(),
+                group: String::new(),
+                min_state: ai::NPC_STATE_IDLE,
+                max_state: ai::NPC_STATE_COMBAT,
+                disabled: false,
+                node_fov: 360.0,
+                ignore_facing: 2,
+                name: String::new(),
+            },
+        ];
+        let c = ai::NPC_STATE_COMBAT;
+        assert!(!nodes[0].hint_usable(c));
+        assert!(!ai_hint_input_nodes(&mut nodes, "nobody", "EnableHint"));
+        assert!(!ai_hint_input_nodes(&mut nodes, "roof_hint", "Kill"));
+        assert!(ai_hint_input_nodes(&mut nodes, "roof_hint", "EnableHint"));
+        assert!(nodes[0].hint_usable(c));
+        assert!(ai_hint_input_nodes(&mut nodes, "roof_hint", "DisableHint"));
+        assert!(!nodes[0].hint_usable(c));
+        assert!(nodes[1].hint_usable(c));
+        assert!(!ai_hint_input_nodes(&mut nodes, "", "DisableHint"));
     }
 
     #[test]
@@ -21297,6 +21367,7 @@ mod ai_node_hint_tests {
             disabled: false,
             node_fov: 180.0,
             ignore_facing: 2,
+            name: String::new(),
         };
         let c = ai::NPC_STATE_COMBAT;
         assert!(n.hint_usable_by(c, None));
