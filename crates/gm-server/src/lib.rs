@@ -2154,6 +2154,9 @@ pub struct Npc {
     pub blind_fire: bool,
     /// The cover run was triggered by a danger sound (a live grenade), not the enemy.
     pub cover_from_sound: bool,
+    /// Origin of the danger sound (a live frag) the next cover is taken from, in place of
+    /// the enemy.
+    pub danger_at: Option<Vec3>,
     /// Last tick a movement sweep was stopped by another NPC's hull.
     pub npc_blocked_at: u64,
     /// Local detour round a prop that blocked the move: the corner aimed at, which side of the
@@ -9166,6 +9169,7 @@ impl<'w> Server<'w> {
                 if let Some(n) = self.npcs.get_mut(&id) {
                     if n.cover_wanted {
                         n.cover_from_sound = true;
+                        n.danger_at = Some(at);
                     }
                 }
             }
@@ -12566,6 +12570,7 @@ impl<'w> Server<'w> {
             reload_in_place: false,
             blind_fire: false,
             cover_from_sound: false,
+            danger_at: None,
             npc_blocked_at: 0,
             shots: 0,
             chase_reach: NPC_CHASE_REACH,
@@ -14076,6 +14081,7 @@ impl<'w> Server<'w> {
                 n.cover_at = None;
                 n.cover_until = 0;
                 n.cover_from_sound = false;
+                n.danger_at = None;
             }
         }
         if stop_for_reload {
@@ -14742,6 +14748,14 @@ impl<'w> Server<'w> {
             return false;
         };
         let (feet, key) = (n.pos, n.key.clone());
+        // a danger sound is fled from its own origin to the first graph node hidden from it,
+        // with no minimum distance and no lateral step (server_npc_grenade_soldier_wall: from
+        // its frag at (631,-503) the soldier at (829,-698) runs straight for node (965,-491)
+        // behind the crate line, heading 57 deg, still braking toward it as the recording ends)
+        let (eye, lateral) = match n.danger_at {
+            Some(d) => (d, false),
+            None => (eye, true),
+        };
         let taken: Vec<Vec3> = self
             .npcs
             .iter()
@@ -14759,7 +14773,9 @@ impl<'w> Server<'w> {
         };
         // FindLateralCover runs before the node search (server_npc_grenade_soldier_low: the
         // first step, 48 u north, is already out of the enemy's sight)
-        let from_lateral = self.npc_lateral_point(feet, eye, hidden);
+        let from_lateral = lateral
+            .then(|| self.npc_lateral_point(feet, eye, hidden))
+            .flatten();
         let from_graph = from_lateral.or_else(|| {
             self.ai_graph.as_ref().and_then(|g| {
                 g.cover_node(feet, hull, |p| {
@@ -15934,6 +15950,7 @@ impl<'w> Server<'w> {
                 reload_in_place: false,
                 blind_fire: false,
                 cover_from_sound: false,
+                danger_at: None,
                 npc_blocked_at: 0,
                 shots: 0,
                 chase_reach: NPC_CHASE_REACH,
