@@ -2666,7 +2666,7 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
             hit_tick: 34,
             punch: 280.0,
             run: true,
-            start_range: 120.0,
+            start_range: 95.0,
             lunge: 63.0,
             ..MELEE_PLAIN
         },
