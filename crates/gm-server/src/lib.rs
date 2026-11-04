@@ -2146,6 +2146,8 @@ pub struct Npc {
     pub cover_fire: bool,
     /// SCHED_RELOAD: the run to the reload cover was blocked by another NPC, reload in place.
     pub reload_in_place: bool,
+    /// The burst in progress is finished at the enemy's last known spot after sight was lost.
+    pub blind_fire: bool,
     /// Last tick a movement sweep was stopped by another NPC's hull.
     pub npc_blocked_at: u64,
     /// Local detour round a prop that blocked the move: the corner aimed at, which side of the
@@ -2393,6 +2395,8 @@ pub const NPC_BURST_SHOTS: u8 = 5;
 /// SCHED_SHOOT_ENEMY_COVER fires two rounds a cycle (server_npc_grenade_soldier_low: every
 /// burst t399/406, t448/455, ... while the bot stood behind the crates).
 pub const NPC_COVER_BURST_SHOTS: u8 = 2;
+/// sv_gravity the toss check assumes.
+pub const NPC_GRENADE_GRAVITY: f32 = 600.0;
 /// NPC hulls enter the movement sweeps as prop bodies with ids from here (`NPC_BODY_ID_BASE + id`):
 /// NPCs are solid to each other, a mate on the cover node stops the runner 34 u short.
 pub const NPC_BODY_ID_BASE: u32 = u32::MAX - 0x10000;
@@ -5102,7 +5106,7 @@ impl<'w> Server<'w> {
                 ai::SCHED_CHASE_ENEMY
             } else if n.cover_fire && target.is_some() && !target_dead {
                 ai::SCHED_SHOOT_ENEMY_COVER
-            } else if target.is_some() && !target_dead && ranged && los {
+            } else if target.is_some() && !target_dead && ranged && (los || n.blind_fire) {
                 // the first volley is the suppress schedule (88), later ones RANGE_ATTACK1 (100)
                 if n.target_first_seen > 0
                     && now < n.target_first_seen + NPC_SUPPRESS_TICKS
@@ -12523,6 +12527,7 @@ impl<'w> Server<'w> {
             next_shot: 0,
             cover_fire: false,
             reload_in_place: false,
+            blind_fire: false,
             npc_blocked_at: 0,
             shots: 0,
             chase_reach: NPC_CHASE_REACH,
@@ -13880,8 +13885,44 @@ impl<'w> Server<'w> {
     /// threw right after its run), `grenThrow` plays and the grenade leaves at
     /// NPC_GRENADE_RELEASE_TICK (server_npc_grenade_soldier_wall).
     /// `eye` is the NPC's eye, `chest` the enemy's chest (the toss lands at its feet).
+    /// VecCheckToss: the lob's arc (apex NPC_GRENADE_APEX above the higher end, gravity
+    /// NPC_GRENADE_GRAVITY) must be clear of world and props, else there is no throw (the wall
+    /// scene lobs over the crates at 293 u; from the reload cover of the main scene, 760 u from
+    /// the hidden bot, the game ran for a line of fire instead).
+    fn npc_lob_clear(&self, from: Vec3, to: Vec3) -> bool {
+        let apex = from.z.max(to.z) + NPC_GRENADE_APEX;
+        let t_up = ((apex - from.z).max(1.0) * 2.0 / NPC_GRENADE_GRAVITY).sqrt();
+        let t_down = ((apex - to.z).max(1.0) * 2.0 / NPC_GRENADE_GRAVITY).sqrt();
+        let total = t_up + t_down;
+        let flat = (to - from).truncate();
+        let vz = NPC_GRENADE_GRAVITY * t_up;
+        let steps = 16;
+        let mut prev = from;
+        let props = self.prop_bodies();
+        for i in 1..=steps {
+            let t = total * i as f32 / steps as f32;
+            let p = Vec3::new(
+                from.x + flat.x * t / total,
+                from.y + flat.y * t / total,
+                from.z + vz * t - 0.5 * NPC_GRENADE_GRAVITY * t * t,
+            );
+            let tr = self.collision.trace_ray(prev, p, gm_collision::MASK_SOLID);
+            if tr.fraction < 1.0 && i < steps {
+                return false;
+            }
+            if i < steps
+                && gm_sandbox::trace_line(self.collision, &props, prev, p)
+                    .is_some_and(|h| h.ent.is_some() && h.fraction < 1.0)
+            {
+                return false;
+            }
+            prev = p;
+        }
+        true
+    }
+
     pub fn npc_start_grenade(&mut self, id: u32, now: u64, eye: Vec3, chest: Vec3) -> bool {
-        let Some(n) = self.npcs.get_mut(&id) else {
+        let Some(n) = self.npcs.get(&id) else {
             return false;
         };
         let dist = chest.distance(eye);
@@ -13892,6 +13933,12 @@ impl<'w> Server<'w> {
         {
             return false;
         }
+        if !self.npc_lob_clear(eye, chest - Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT)) {
+            return false;
+        }
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return false;
+        };
         n.goal = None;
         n.next_goal = None;
         n.chase = None;
@@ -13912,6 +13959,7 @@ impl<'w> Server<'w> {
         let prev_cover = self.npcs.get(&id).is_some_and(|n| n.cover_fire);
         if let Some(n) = self.npcs.get_mut(&id) {
             n.cover_fire = false;
+            n.blind_fire = false;
         }
         let Some(n) = self.npcs.get(&id) else {
             return;
@@ -14081,8 +14129,38 @@ impl<'w> Server<'w> {
                 .filter_map(|p| sees(self, p).map(|c| (p, c)))
                 .min_by(|a, b| a.1.distance(eye).total_cmp(&b.1.distance(eye)));
         }
-        let Some((player, chest)) = target else {
+        // a burst under way when the enemy drops out of sight is finished at its last known
+        // spot (server_npc_grenade_soldier_wall: the volley's rounds t1469..1483 after the
+        // teleport at t1468, the line-of-fire run only at t1490)
+        let think = n.think_interval as u64;
+        let blind = target.is_none()
+            && n.burst_left > 0
+            && n.last_shot > 0
+            && now <= n.last_shot + 2 * think
+            && n.goal.is_none()
+            && !n.reloading
+            && n.target
+                .is_some_and(|p| self.players.get(&p).is_some_and(|pl| pl.alive));
+        let blind_target = n.target.zip(n.last_known).filter(|_| blind);
+        let Some((player, chest)) = target.or(blind_target) else {
             let (old, seen) = (n.target, n.target_seen);
+            if let (Some(p), Some(known)) = (old, n.last_known) {
+                // the enemy hiding in grenade range gets the frag at its last known spot as
+                // soon as the body is free (wall: the throw the think the reload ended, t2183,
+                // from the cover spot 293 u away)
+                if n.goal.is_none()
+                    && !n.reloading
+                    && n.cover_at.is_none()
+                    && now >= n.next_grenade
+                    && self.players.get(&p).is_some_and(|pl| pl.alive)
+                    && self.npc_start_grenade(id, now, eye, known)
+                {
+                    return;
+                }
+            }
+            let Some(n) = self.npcs.get(&id) else {
+                return;
+            };
             if let (Some(p), Some(known)) = (old, n.last_known) {
                 // the game's soldier runs for a point with a line of fire to the enemy's last
                 // known position one think after losing sight (server_npc_grenade_soldier_wall)
@@ -14159,10 +14237,11 @@ impl<'w> Server<'w> {
             return;
         };
         let leads = self.npc_leads_squad(id);
-        let cover_fire = self.npc_sight_occluder_destroyable(id, chest);
+        let cover_fire = !blind && self.npc_sight_occluder_destroyable(id, chest);
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
+        n.blind_fire = blind;
         if cover_fire && !prev_cover && n.burst_left == 0 && n.last_shot > 0 {
             // the cover schedule keeps the volley's 49-tick cycle (t350 volley -> t399) instead
             // of the first full burst's 55-tick gap
@@ -14211,7 +14290,9 @@ impl<'w> Server<'w> {
         if n.target_seen != 0 && now > n.target_seen + n.think_interval as u64 {
             n.reacquired_at = now;
         }
-        n.target_seen = now;
+        if !blind {
+            n.target_seen = now;
+        }
         n.last_known = Some(chest);
         if n.flank_until > 0 {
             // the line of fire is there: the run ends where the soldier stands
@@ -14243,7 +14324,7 @@ impl<'w> Server<'w> {
             && now >= n.next_grenade
             && n.cover_at.is_none()
             && n.goal.is_none();
-        if grenade_due && !cover_fire && self.npc_start_grenade(id, now, eye, chest) {
+        if grenade_due && !cover_fire && !blind && self.npc_start_grenade(id, now, eye, chest) {
             return;
         }
         let Some(n) = self.npcs.get_mut(&id) else {
@@ -15748,6 +15829,7 @@ impl<'w> Server<'w> {
                 next_shot: 0,
                 cover_fire: false,
                 reload_in_place: false,
+                blind_fire: false,
                 npc_blocked_at: 0,
                 shots: 0,
                 chase_reach: NPC_CHASE_REACH,
