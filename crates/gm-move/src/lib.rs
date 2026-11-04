@@ -281,6 +281,9 @@ pub const WATER_MATERIAL: &str = "surfaceprop:water";
 pub struct WaterCache(pub [Option<(Vec3, i32)>; 3]);
 
 pub struct Mover<'a> {
+    /// The prop the hull was stopped by this tick, with the plane normal and the hull's
+    /// approach speed along it (the input of the touch sound; one touch per tick).
+    last_touch: std::cell::Cell<Option<(u32, Vec3, f32)>>,
     pub cfg: MoveConfig,
     pub world: &'a World,
     /// Props the player collides with this tick (`set_props`), in world space.
@@ -334,6 +337,7 @@ pub fn clip_velocity(v: Vec3, normal: Vec3, overbounce: f32) -> Vec3 {
 impl<'a> Mover<'a> {
     pub fn new(cfg: MoveConfig, world: &'a World) -> Self {
         Mover {
+            last_touch: std::cell::Cell::new(None),
             cfg,
             world,
             props: Vec::new(),
@@ -353,6 +357,11 @@ impl<'a> Mover<'a> {
     /// prop blocks and carries like a brush, but a teleported one does not drag the player.
     pub fn set_props(&mut self, props: Vec<gm_collision::Convex>) {
         self.props = props;
+    }
+
+    /// The prop the last `tick` ran the hull into: `(entity, plane normal, approach speed)`.
+    pub fn last_touch(&self) -> Option<(u32, Vec3, f32)> {
+        self.last_touch.get()
     }
 
     fn trace(&self, st: &PlayerState, start: Vec3, end: Vec3) -> Trace {
@@ -391,6 +400,7 @@ impl<'a> Mover<'a> {
 
     /// Advance one tick.
     pub fn tick(&self, st: &mut PlayerState, cmd: &UserCmd) {
+        self.last_touch.set(None);
         decay_punch(st, self.cfg.tick_interval);
         let (was_ground, fall_speed) = (st.on_ground, -st.velocity.z);
         self.tick_move(st, cmd);
@@ -835,7 +845,15 @@ impl<'a> Mover<'a> {
             up.origin = t.end;
         }
         self.slide_move(&mut up, dt);
-        let t = self.trace(&up, up.origin, up.origin - Vec3::Z * self.cfg.step_size);
+        let skin = if up.on_ground { 0.0 } else { PROP_SKIN };
+        let (t, step_ent) = self.trace_ent(
+            &up,
+            up.origin,
+            up.origin - Vec3::Z * self.cfg.step_size,
+            skin,
+        );
+        let step_ent = step_ent.filter(|_| t.fraction < 1.0 && t.normal.z > 0.7);
+        let step_normal = t.normal;
         if !t.start_solid && !t.all_solid {
             up.origin = t.end;
         }
@@ -847,6 +865,11 @@ impl<'a> Mover<'a> {
         if flat_dist > up_dist {
             *st = down;
         } else {
+            // the landing on top is the touch, not the side the hull met on the way up
+            if let Some(ent) = step_ent {
+                self.last_touch
+                    .set(Some((ent, step_normal, st.velocity.truncate().length())));
+            }
             *st = up;
             st.velocity.z = down.velocity.z;
         }
@@ -862,7 +885,12 @@ impl<'a> Mover<'a> {
                 break;
             }
             let end = st.origin + st.velocity * time_left;
-            let t = self.trace(st, st.origin, end);
+            let skin = if st.on_ground { 0.0 } else { PROP_SKIN };
+            let (t, ent) = self.trace_ent(st, st.origin, end, skin);
+            if let Some(ent) = ent.filter(|_| t.fraction < 1.0 && self.last_touch.get().is_none()) {
+                self.last_touch
+                    .set(Some((ent, t.normal, (-st.velocity.dot(t.normal)).max(0.0))));
+            }
             if t.all_solid {
                 st.velocity = Vec3::ZERO;
                 return;

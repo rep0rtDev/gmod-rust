@@ -1617,6 +1617,22 @@ impl MoveData {
 
 pub type RequestHook = Box<dyn FnMut(&mut Server<'_>, &Request) -> Verdict>;
 
+/// The volume of a hull's touch on a prop from its approach speed: the game's walking player
+/// plays plastic_box_impact_soft2 at 0.061 (100 u/s) and 0.267 (296 u/s, `move_prop_step_*`)
+/// - `0.061 * (speed / 100)^1.36` through both; the wood crate at a sprint reads 0.6, its
+///   script's own cap.
+pub fn touch_volume(speed: f32) -> f32 {
+    (0.061 * (speed / 100.0).powf(1.36)).min(1.0)
+}
+
+/// Whether a hull's touch on a prop is heard: stepping onto it always is (`move_prop_step_*`,
+/// the tile plate at 100 and ~300 u/s), running into its side only at speed (the wood crate
+/// is silent at a 100 u/s walk and plays at a 400 u/s sprint, `move_prop_block_*`; the
+/// threshold between is not measured).
+pub fn touch_sounds(normal: Vec3, speed: f32) -> bool {
+    normal.z > 0.7 || speed >= IMPACT_SOUND_FULL_SPEED
+}
+
 /// `(speed / IMPACT_SOUND_FULL_SPEED)^2` capped at 1; `None` under the audible threshold.
 pub fn impact_volume(speed: f32) -> Option<f32> {
     (speed >= IMPACT_SOUND_MIN_SPEED).then(|| (speed / IMPACT_SOUND_FULL_SPEED).powi(2).min(1.0))
@@ -7576,6 +7592,9 @@ pub struct Server<'w> {
     undo_purge_ticks: u32,
     /// (player, scripted entity) pairs whose hulls overlapped last tick, for the touch edges.
     pub sent_player_touch: std::collections::HashSet<(u32, u32)>,
+    /// `(player, prop)` pairs whose hull the player's move is resting against: the soft
+    /// impact plays once, when the pair appears.
+    pub prop_touch: std::collections::HashSet<(u32, u32)>,
     /// Last tick each prop hurt a player (one hit per PROP_HIT_COOLDOWN).
     pub prop_hit_at: BTreeMap<u32, u64>,
     pub scripted_weapons_version: u32,
@@ -7752,6 +7771,7 @@ impl<'w> Server<'w> {
             vehicles: BTreeMap::new(),
             undo_purge_ticks: 0,
             sent_player_touch: std::collections::HashSet::new(),
+            prop_touch: std::collections::HashSet::new(),
             prop_hit_at: BTreeMap::new(),
             cvar_new: Vec::new(),
         }
@@ -19082,6 +19102,7 @@ impl<'w> Server<'w> {
         }
         self.drive_tick(cmds);
         let mut steps: Vec<(u32, Vec3, gm_move::Step, Option<String>)> = Vec::new();
+        let mut touches: Vec<(u32, u32, Vec3, f32)> = Vec::new();
         for (id, p) in self.players.iter_mut() {
             if !p.alive {
                 continue;
@@ -19114,6 +19135,11 @@ impl<'w> Server<'w> {
                 p.move_override.apply(&mut self.mover.cfg);
                 self.mover.tick(&mut p.state, &cmd);
                 self.mover.cfg = saved_cfg;
+                if let Some((ent, normal, speed)) = self.mover.last_touch() {
+                    if touch_sounds(normal, speed) {
+                        touches.push((*id, ent, p.state.origin - normal * 16.0, speed));
+                    }
+                }
                 p.prev_vz = prev_vz;
                 p.prev_on_ground = !was_airborne;
                 if let Some((name, volume)) = p.steps.water_sound(prev_level, &p.state, &cmd) {
@@ -19186,6 +19212,31 @@ impl<'w> Server<'w> {
             self.footstep(id, feet, step, material.as_deref());
         }
         self.hold_targets(cmds);
+        // the hull running into a free prop plays the prop's soft impact once per touch
+        // (`move_prop_step_slow`: plastic_box_impact_soft2 the tick the hull reaches the crate)
+        let now_touch: std::collections::HashSet<(u32, u32)> =
+            touches.iter().map(|&(pid, ent, _, _)| (pid, ent)).collect();
+        for (pid, ent, pos, speed) in touches {
+            if self.prop_touch.contains(&(pid, ent)) {
+                continue;
+            }
+            let name = self
+                .sandbox
+                .props()
+                .iter()
+                .find(|pr| pr.id == ent)
+                .and_then(|pr| self.models.get(&pr.model))
+                .and_then(|m| m.impact_soft.clone().or_else(|| m.impact_hard.clone()));
+            if let Some(name) = name {
+                self.sounds.push(WorldSound {
+                    name,
+                    pos,
+                    volume: touch_volume(speed),
+                    ..Default::default()
+                });
+            }
+        }
+        self.prop_touch = now_touch;
         // entities after the players' moves: a projectile's hit or blast this tick pushes and
         // hurts a target that has already moved (its velocity shows the push raw)
         self.tick_projectiles(launches);
@@ -21529,6 +21580,12 @@ impl<'w> Server<'w> {
 #[cfg(test)]
 mod scrape_sound_tests {
     use super::scrape_volume;
+
+    #[test]
+    fn a_touch_plays_at_the_measured_volumes() {
+        assert!((super::touch_volume(100.0) - 0.061).abs() < 0.001);
+        assert!((super::touch_volume(296.0) - 0.267).abs() < 0.01);
+    }
 
     #[test]
     fn the_loop_starts_from_40_and_caps_at_half() {

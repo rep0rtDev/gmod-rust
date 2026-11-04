@@ -1314,6 +1314,7 @@ fn run_move(scn: &Scenario) -> Result<Value> {
     let scripts = gm_audio::load_scripts(&mount);
     let mut steps = gm_move::Footsteps::default();
     let mut sounds = Vec::new();
+    let mut touching = false;
     let mut t = 0u32;
     for seg in &scn.segments {
         let cmd = UserCmd {
@@ -1343,6 +1344,27 @@ fn run_move(scn: &Scenario) -> Result<Value> {
                 }
             }
             mover.tick(&mut st, &cmd);
+            // the hull running into the prop plays its soft impact once per touch
+            match mover.last_touch() {
+                Some((_, normal, speed)) if !touching && gm_server::touch_sounds(normal, speed) => {
+                    touching = true;
+                    let name = platform.as_ref().and_then(|(_, info, _, _)| {
+                        table
+                            .sound(&info.surfaceprop, "impactsoft")
+                            .or_else(|| table.sound("default", "impactsoft"))
+                    });
+                    let e = name.as_deref().and_then(|n| scripts.get(n));
+                    sounds.push(serde_json::json!({
+                        "t": t,
+                        "name": name,
+                        "waves": e.map(|e| e.waves.iter().map(|w| gm_audio::script::wave_path(w).to_ascii_lowercase()).collect::<Vec<_>>()).unwrap_or_default(),
+                        "alt_waves": [],
+                        "vol": gm_server::touch_volume(speed),
+                    }));
+                }
+                Some(_) => {}
+                None => touching = false,
+            }
             let ladder_step = steps.ladder_step(prev_move, prev_vz_l, &st, 15.0);
             if let Some((name, vol)) = steps.water_sound(prev_level, &st, &cmd) {
                 let e = scripts.get(name);
