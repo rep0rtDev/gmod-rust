@@ -11052,6 +11052,52 @@ impl<'w> Server<'w> {
         m.script.sequences.get(best?.1).cloned()
     }
 
+    /// The game's SelectWeightedSequence: one of the model's sequences tagged `act`, drawn by
+    /// weight (hashed on the NPC and the tick) - and the current one kept while it already
+    /// carries the activity, so a running pick is not re-rolled every think.
+    fn npc_activity_sequence_weighted(&self, id: u32, act: &str, now: u64) -> Option<String> {
+        let n = self.npcs.get(&id)?;
+        let m = self.models.get(&n.model)?;
+        let cands: Vec<(usize, u32)> = m
+            .script
+            .sequence_activity
+            .iter()
+            .enumerate()
+            .filter(|(_, (a, _))| a == act)
+            .map(|(i, (_, w))| (i, (*w).max(1) as u32))
+            .collect();
+        if cands
+            .iter()
+            .any(|(i, _)| m.script.sequences.get(*i) == Some(&n.sequence))
+        {
+            return Some(n.sequence.clone());
+        }
+        let total: u32 = cands.iter().map(|(_, w)| *w).sum();
+        if total == 0 {
+            return None;
+        }
+        let mut h = u64::from(id).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ now.wrapping_mul(0xD1B5_4A32_D192_ED03);
+        h ^= h >> 31;
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        let mut roll = (h >> 20) as u32 % total;
+        for (i, w) in &cands {
+            if roll < *w {
+                return m.script.sequences.get(*i).cloned();
+            }
+            roll -= w;
+        }
+        None
+    }
+
+    /// `npc_translated_sequence` with the weighted draw.
+    fn npc_translated_sequence_weighted(&self, id: u32, act: &str, now: u64) -> Option<String> {
+        let n = self.npcs.get(&id)?;
+        npc_weapon_activity(&n.weapon, act)
+            .and_then(|t| self.npc_activity_sequence_weighted(id, t, now))
+            .or_else(|| self.npc_activity_sequence_weighted(id, act, now))
+    }
+
     /// `act` through the NPC's weapon table (`npc_weapon_activity`) when the model carries the
     /// translated activity, else the base one.
     fn npc_translated_sequence(&self, id: u32, act: &str) -> Option<String> {
@@ -13503,14 +13549,17 @@ impl<'w> Server<'w> {
             // a firing body's shoot / between-bursts sequences take over when it stands
             return;
         }
-        let Some(seq) = self.npc_translated_sequence(id, act).or_else(|| {
-            // RUN_AIM / WALK_AIM fall back to the plain gait
-            match act {
-                "ACT_RUN_AIM" => self.npc_translated_sequence(id, "ACT_RUN"),
-                "ACT_WALK_AIM" => self.npc_translated_sequence(id, "ACT_WALK"),
-                _ => None,
-            }
-        }) else {
+        let Some(seq) = self
+            .npc_translated_sequence_weighted(id, act, now)
+            .or_else(|| {
+                // RUN_AIM / WALK_AIM fall back to the plain gait
+                match act {
+                    "ACT_RUN_AIM" => self.npc_translated_sequence_weighted(id, "ACT_RUN", now),
+                    "ACT_WALK_AIM" => self.npc_translated_sequence_weighted(id, "ACT_WALK", now),
+                    _ => None,
+                }
+            })
+        else {
             return;
         };
         let idle = (act != "ACT_IDLE")
