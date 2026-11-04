@@ -14414,8 +14414,8 @@ impl<'w> Server<'w> {
                         // a zombie against the swattable prop it was spawned into aims past
                         // it (the far corner) and stays pressed on its face, sliding along it
                         // (the game's zombie drifts 19 u down its crate in 100 ticks until the
-                        // swat scan picks it); blocked by any other prop it stands and melees
-                        // it as before (the swat2 records)
+                        // swat scan picks it); any other prop is skirted as before (the
+                        // swat2 records: the zombie walks round the drum and melees the bot)
                         let near_limit = if swattable { m } else { -m };
                         if (detour_side != 0.0 && side != detour_side)
                             || rel.dot(dir) < near_limit
@@ -21695,7 +21695,7 @@ pub const NPC_PUSH_PROP_SPEED: f32 = 45.0;
 pub const NPC_PUSH_PROP_GAP: f32 = 4.0;
 pub const ZOMBIE_SWAT_SCAN_TICKS: u64 = 134;
 /// A prop nearer than this at the scan is left alone (game: swats at 41.6/46/48/61 u, none at
-/// 30-36 u with the same props - the bound lies in 36..41.6; 38 lets the zombie pressed on
+/// 30-36 u with the same props on the scans that pass them - bound 36..41.6; 38 lets the zombie pressed on
 /// its spawn crate swat it at 38.6 u as the game does at 41.6 with its 3 u standoff).
 pub const ZOMBIE_SWAT_MIN_DIST: f32 = 38.0;
 pub const ZOMBIE_SWAT_TICKS: u64 = 98;
