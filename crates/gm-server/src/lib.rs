@@ -2217,6 +2217,8 @@ pub struct Npc {
     /// through two more thinks before its idle (21 / 14 ticks after arrival in the walk and
     /// assault recordings, `server_npc_walk_*`, `server_npc_assault_citizen`).
     pub gait_until: u64,
+    /// A sequence a goal set on arrival, shown from this tick on (the gait plays out first).
+    pub pending_seq: Option<(String, u64)>,
     /// The flight crosses a jump link of the route; landing resumes the route.
     pub link_jump: bool,
     pub next_leap: u64,
@@ -6047,7 +6049,11 @@ impl<'w> Server<'w> {
                                 .clone()
                                 .or_else(|| self.npc_activity_sequence(id, "ACT_IDLE"))
                             {
-                                self.set_sequence(id, &seq);
+                                // the run plays on two thinks past the stop (14 ticks, server_npc_assault_citizen)
+                                if let Some(n) = self.npcs.get_mut(&id) {
+                                    n.pending_seq =
+                                        Some((seq, now + 2 * u64::from(n.think_interval)));
+                                }
                             }
                             g.stage = ai::ASSAULT_AT_RALLY;
                             g.stage_since = now;
@@ -6091,7 +6097,11 @@ impl<'w> Server<'w> {
                                 .flatten()
                                 .or_else(|| self.npc_activity_sequence(id, "ACT_IDLE"))
                             {
-                                self.set_sequence(id, &seq);
+                                // the run plays on two thinks past the stop (14 ticks, server_npc_assault_citizen)
+                                if let Some(n) = self.npcs.get_mut(&id) {
+                                    n.pending_seq =
+                                        Some((seq, now + 2 * u64::from(n.think_interval)));
+                                }
                             }
                             g.stage = ai::ASSAULT_AT_POINT;
                             g.stage_since = now;
@@ -13067,6 +13077,7 @@ impl<'w> Server<'w> {
             link_jump: false,
             hung_until: 0,
             gait_until: 0,
+            pending_seq: None,
             next_leap: 0,
             jump_at: None,
             thrown: false,
@@ -14634,6 +14645,16 @@ impl<'w> Server<'w> {
     /// choices are replaced; goal-owned, scripted, leaping, swatting, throwing and firing
     /// bodies keep the sequences those set.
     fn npc_anim_step(&mut self, id: u32, now: u64) {
+        if let Some((seq, at)) = self.npcs.get(&id).and_then(|n| n.pending_seq.clone()) {
+            if now >= at {
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.pending_seq = None;
+                }
+                if self.npcs.get(&id).is_some_and(|n| n.goal.is_none()) {
+                    self.set_sequence(id, &seq);
+                }
+            }
+        }
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
@@ -16990,6 +17011,7 @@ impl<'w> Server<'w> {
                 link_jump: false,
                 hung_until: 0,
                 gait_until: 0,
+                pending_seq: None,
                 next_leap: 0,
                 jump_at: None,
                 thrown: false,
