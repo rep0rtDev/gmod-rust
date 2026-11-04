@@ -1158,7 +1158,8 @@ local function step_particles()
 			local keep = {}
 			for _, p in ipairs(e.__particles) do if p:__step(dt) then keep[#keep + 1] = p end end
 			e.__particles = keep
-			if not e.__nodraw then e:Draw() end
+			-- @hook ENTITY:RenderOverride
+			if not e.__nodraw then if e.RenderOverride then e:RenderOverride(0) else e:Draw() end end
 			if e.__finished and #keep == 0 then e.__valid = false; emitters[e] = nil end
 		end
 	end

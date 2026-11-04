@@ -250,6 +250,7 @@ function GM:ShowSpare2(ply) end
 function GM:PlayerDriveAnimate(ply) end
 function GM:StartEntityDriving(ent, ply) if drive and drive.Start then drive.Start(ply, ent) end end
 function GM:EndEntityDriving(ent, ply) if drive and drive.End then drive.End(ply, ent) end end
+-- @hook ENTITY:CanEditVariables
 function GM:VariableEdited(ent, ply, key, val, editor) if hook.Run("CanEditVariable", ent, ply, key, val, editor) and (not ent.CanEditVariables or ent:CanEditVariables(ply)) then ent:SetNetworkKeyValue(key, val) end end
 
 ------------------------------------------------------------------------ server bridges
@@ -296,7 +297,8 @@ if SERVER then
     function GM:SendDeathNotice(attacker, victim, flags)
         util.AddNetworkString("__gm_deathnotice")
         net.Start("__gm_deathnotice")
-        net.WriteString(IsValid(attacker) and attacker:IsPlayer() and attacker:Nick() or (IsValid(attacker) and attacker:GetClass() or ""))
+        -- @hook GM:GetDeathNoticeEntityName
+        net.WriteString(IsValid(attacker) and attacker:IsPlayer() and attacker:Nick() or (IsValid(attacker) and hook.Run("GetDeathNoticeEntityName", attacker) or ""))
         net.WriteInt(IsValid(attacker) and attacker:IsPlayer() and attacker:Team() or -1, 16)
         net.WriteString(IsValid(attacker) and attacker:IsPlayer() and (IsValid(attacker:GetActiveWeapon()) and attacker:GetActiveWeapon():GetClass() or "") or "")
         net.WriteString(IsValid(victim) and victim:IsPlayer() and victim:Nick() or (IsValid(victim) and victim:GetClass() or ""))
