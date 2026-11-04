@@ -29,20 +29,75 @@ pub const TASKSTATUS_COMPLETE: u8 = 4;
 
 /// Condition ids in the engine's order (ai_condition.h).
 pub const COND_NAMES: &[&str] = &[
-    "COND_NONE", "COND_IN_PVS", "COND_IDLE_INTERRUPT", "COND_LOW_PRIMARY_AMMO", "COND_NO_PRIMARY_AMMO",
-    "COND_NO_SECONDARY_AMMO", "COND_NO_WEAPON", "COND_SEE_HATE", "COND_SEE_FEAR", "COND_SEE_DISLIKE",
-    "COND_SEE_ENEMY", "COND_LOST_ENEMY", "COND_ENEMY_WENT_NULL", "COND_ENEMY_OCCLUDED", "COND_TARGET_OCCLUDED",
-    "COND_HAVE_ENEMY_LOS", "COND_HAVE_TARGET_LOS", "COND_LIGHT_DAMAGE", "COND_HEAVY_DAMAGE", "COND_PHYSICS_DAMAGE",
-    "COND_REPEATED_DAMAGE", "COND_NPC_FREEZE", "COND_NPC_UNFREEZE", "COND_TALKER_RESPOND_TO_QUESTION", "COND_NO_CUSTOM_INTERRUPTS",
-    "COND_BEHIND_ENEMY", "COND_SEE_PLAYER", "COND_ENEMY_FACING_ME", "COND_ENEMY_DEAD", "COND_ENEMY_UNREACHABLE",
-    "COND_ENEMY_TOO_FAR", "COND_HEAR_DANGER", "COND_HEAR_THUMPER", "COND_HEAR_BUGBAIT", "COND_HEAR_COMBAT",
-    "COND_HEAR_WORLD", "COND_HEAR_PLAYER", "COND_HEAR_BULLET_IMPACT", "COND_HEAR_PHYSICS_DANGER", "COND_HEAR_MOVE_AWAY",
-    "COND_HEAR_SPOOKY", "COND_SMELL", "COND_TOO_CLOSE_TO_ATTACK", "COND_TOO_FAR_TO_ATTACK", "COND_NOT_FACING_ATTACK",
-    "COND_WEAPON_HAS_LOS", "COND_WEAPON_BLOCKED_BY_FRIEND", "COND_WEAPON_PLAYER_IN_SPREAD", "COND_WEAPON_PLAYER_NEAR_TARGET", "COND_WEAPON_SIGHT_OCCLUDED",
-    "COND_BETTER_WEAPON_AVAILABLE", "COND_HEALTH_ITEM_AVAILABLE", "COND_GIVE_WAY", "COND_WAY_CLEAR", "COND_PROVOKED",
-    "COND_RECEIVED_ORDERS", "COND_PLAYER_ADDED_TO_SQUAD", "COND_PLAYER_REMOVED_FROM_SQUAD", "COND_PLAYER_PUSHING", "COND_TASK_FAILED",
-    "COND_SCHEDULE_DONE", "COND_CAN_RANGE_ATTACK1", "COND_CAN_RANGE_ATTACK2", "COND_CAN_MELEE_ATTACK1", "COND_CAN_MELEE_ATTACK2",
-    "COND_MOBBED_BY_ENEMIES", "COND_FLOATING_OFF_GROUND", "COND_NEW_ENEMY", "COND_ENEMY_WENT_NULL_",
+    "COND_NONE",
+    "COND_IN_PVS",
+    "COND_IDLE_INTERRUPT",
+    "COND_LOW_PRIMARY_AMMO",
+    "COND_NO_PRIMARY_AMMO",
+    "COND_NO_SECONDARY_AMMO",
+    "COND_NO_WEAPON",
+    "COND_SEE_HATE",
+    "COND_SEE_FEAR",
+    "COND_SEE_DISLIKE",
+    "COND_SEE_ENEMY",
+    "COND_LOST_ENEMY",
+    "COND_ENEMY_WENT_NULL",
+    "COND_ENEMY_OCCLUDED",
+    "COND_TARGET_OCCLUDED",
+    "COND_HAVE_ENEMY_LOS",
+    "COND_HAVE_TARGET_LOS",
+    "COND_LIGHT_DAMAGE",
+    "COND_HEAVY_DAMAGE",
+    "COND_PHYSICS_DAMAGE",
+    "COND_REPEATED_DAMAGE",
+    "COND_NPC_FREEZE",
+    "COND_NPC_UNFREEZE",
+    "COND_TALKER_RESPOND_TO_QUESTION",
+    "COND_NO_CUSTOM_INTERRUPTS",
+    "COND_BEHIND_ENEMY",
+    "COND_SEE_PLAYER",
+    "COND_ENEMY_FACING_ME",
+    "COND_ENEMY_DEAD",
+    "COND_ENEMY_UNREACHABLE",
+    "COND_ENEMY_TOO_FAR",
+    "COND_HEAR_DANGER",
+    "COND_HEAR_THUMPER",
+    "COND_HEAR_BUGBAIT",
+    "COND_HEAR_COMBAT",
+    "COND_HEAR_WORLD",
+    "COND_HEAR_PLAYER",
+    "COND_HEAR_BULLET_IMPACT",
+    "COND_HEAR_PHYSICS_DANGER",
+    "COND_HEAR_MOVE_AWAY",
+    "COND_HEAR_SPOOKY",
+    "COND_SMELL",
+    "COND_TOO_CLOSE_TO_ATTACK",
+    "COND_TOO_FAR_TO_ATTACK",
+    "COND_NOT_FACING_ATTACK",
+    "COND_WEAPON_HAS_LOS",
+    "COND_WEAPON_BLOCKED_BY_FRIEND",
+    "COND_WEAPON_PLAYER_IN_SPREAD",
+    "COND_WEAPON_PLAYER_NEAR_TARGET",
+    "COND_WEAPON_SIGHT_OCCLUDED",
+    "COND_BETTER_WEAPON_AVAILABLE",
+    "COND_HEALTH_ITEM_AVAILABLE",
+    "COND_GIVE_WAY",
+    "COND_WAY_CLEAR",
+    "COND_PROVOKED",
+    "COND_RECEIVED_ORDERS",
+    "COND_PLAYER_ADDED_TO_SQUAD",
+    "COND_PLAYER_REMOVED_FROM_SQUAD",
+    "COND_PLAYER_PUSHING",
+    "COND_TASK_FAILED",
+    "COND_SCHEDULE_DONE",
+    "COND_CAN_RANGE_ATTACK1",
+    "COND_CAN_RANGE_ATTACK2",
+    "COND_CAN_MELEE_ATTACK1",
+    "COND_CAN_MELEE_ATTACK2",
+    "COND_MOBBED_BY_ENEMIES",
+    "COND_FLOATING_OFF_GROUND",
+    "COND_NEW_ENEMY",
+    "COND_ENEMY_WENT_NULL_",
 ];
 pub const COND_LOW_PRIMARY_AMMO: u8 = 3;
 pub const COND_NO_PRIMARY_AMMO: u8 = 4;
@@ -76,32 +131,135 @@ pub const COND_NEW_ENEMY: u8 = 67;
 
 /// Task ids in the engine's order (ai_task.h); `ai.GetTaskID` maps the names.
 pub const TASK_NAMES: &[&str] = &[
-    "TASK_INVALID", "TASK_RESET_ACTIVITY", "TASK_WAIT", "TASK_ANNOUNCE_ATTACK", "TASK_WAIT_FACE_ENEMY",
-    "TASK_WAIT_FACE_ENEMY_RANDOM", "TASK_WAIT_PVS", "TASK_SUGGEST_STATE", "TASK_TARGET_PLAYER", "TASK_SCRIPT_WALK_TO_TARGET",
-    "TASK_SCRIPT_RUN_TO_TARGET", "TASK_SCRIPT_CUSTOM_MOVE_TO_TARGET", "TASK_MOVE_TO_TARGET_RANGE", "TASK_MOVE_TO_GOAL_RANGE", "TASK_MOVE_AWAY_PATH",
-    "TASK_GET_PATH_AWAY_FROM_BEST_SOUND", "TASK_GET_PATH_TO_ENEMY", "TASK_GET_PATH_TO_ENEMY_LKP", "TASK_GET_CHASE_PATH_TO_ENEMY", "TASK_GET_PATH_TO_ENEMY_LKP_LOS",
-    "TASK_GET_FLANK_RADIUS_PATH_TO_ENEMY_LOS", "TASK_GET_FLANK_ARC_PATH_TO_ENEMY_LOS", "TASK_GET_PATH_TO_ENEMY_LOS", "TASK_GET_PATH_TO_ENEMY_CORPSE", "TASK_GET_PATH_TO_PLAYER",
-    "TASK_GET_PATH_TO_SAVEPOSITION", "TASK_GET_PATH_TO_TARGET", "TASK_GET_PATH_TO_RANDOM_NODE", "TASK_GET_PATH_TO_BESTSOUND", "TASK_GET_PATH_TO_BESTSCENT",
-    "TASK_RUN_PATH", "TASK_WALK_PATH", "TASK_WALK_PATH_TIMED", "TASK_WALK_PATH_WITHIN_DIST", "TASK_WALK_PATH_FOR_UNITS",
-    "TASK_RUN_PATH_FLEE", "TASK_RUN_PATH_TIMED", "TASK_RUN_PATH_FOR_UNITS", "TASK_RUN_PATH_WITHIN_DIST", "TASK_STRAFE_PATH",
-    "TASK_CLEAR_MOVE_WAIT", "TASK_SMALL_FLINCH", "TASK_BIG_FLINCH", "TASK_FACE_IDEAL", "TASK_FACE_REASONABLE",
-    "TASK_FACE_PATH", "TASK_FACE_PLAYER", "TASK_FACE_ENEMY", "TASK_FACE_HINTNODE", "TASK_FACE_TARGET",
-    "TASK_FACE_LASTPOSITION", "TASK_FACE_SAVEPOSITION", "TASK_FACE_AWAY_FROM_SAVEPOSITION", "TASK_SET_IDEAL_YAW_TO_CURRENT", "TASK_RANGE_ATTACK1",
-    "TASK_RANGE_ATTACK2", "TASK_MELEE_ATTACK1", "TASK_MELEE_ATTACK2", "TASK_RELOAD", "TASK_SPECIAL_ATTACK1",
-    "TASK_SPECIAL_ATTACK2", "TASK_FIND_HINTNODE", "TASK_FIND_LOCK_HINTNODE", "TASK_CLEAR_HINTNODE", "TASK_LOCK_HINTNODE",
-    "TASK_SOUND_ANGRY", "TASK_SOUND_DEATH", "TASK_SOUND_IDLE", "TASK_SOUND_WAKE", "TASK_SOUND_PAIN",
-    "TASK_SOUND_DIE", "TASK_SPEAK_SENTENCE", "TASK_WAIT_FOR_SPEAK_FINISH", "TASK_SET_ACTIVITY", "TASK_RANDOMIZE_FRAMERATE",
-    "TASK_SET_SCHEDULE", "TASK_SET_FAIL_SCHEDULE", "TASK_SET_TOLERANCE_DISTANCE", "TASK_SET_ROUTE_SEARCH_TIME", "TASK_CLEAR_FAIL_SCHEDULE",
-    "TASK_PLAY_SEQUENCE", "TASK_PLAY_PRIVATE_SEQUENCE", "TASK_PLAY_PRIVATE_SEQUENCE_FACE_ENEMY", "TASK_PLAY_SEQUENCE_FACE_ENEMY", "TASK_PLAY_SEQUENCE_FACE_TARGET",
-    "TASK_FIND_COVER_FROM_BEST_SOUND", "TASK_FIND_COVER_FROM_ENEMY", "TASK_FIND_LATERAL_COVER_FROM_ENEMY", "TASK_FIND_BACKAWAY_FROM_SAVEPOSITION", "TASK_FIND_NODE_COVER_FROM_ENEMY",
-    "TASK_FIND_NEAR_NODE_COVER_FROM_ENEMY", "TASK_FIND_FAR_NODE_COVER_FROM_ENEMY", "TASK_FIND_COVER_FROM_ORIGIN", "TASK_DIE", "TASK_WAIT_FOR_SCRIPT",
-    "TASK_PUSH_SCRIPT_ARRIVAL_ACTIVITY", "TASK_PLAY_SCRIPT", "TASK_PLAY_SCRIPT_POST_IDLE", "TASK_ENABLE_SCRIPT", "TASK_PLANT_ON_SCRIPT",
-    "TASK_FACE_SCRIPT", "TASK_PLAY_SCENE", "TASK_WAIT_RANDOM", "TASK_WAIT_INDEFINITE", "TASK_STOP_MOVING",
-    "TASK_TURN_LEFT", "TASK_TURN_RIGHT", "TASK_REMEMBER", "TASK_FORGET", "TASK_WAIT_FOR_MOVEMENT",
-    "TASK_WAIT_FOR_MOVEMENT_STEP", "TASK_WAIT_UNTIL_NO_DANGER_SOUND", "TASK_WEAPON_FIND", "TASK_WEAPON_PICKUP", "TASK_WEAPON_RUN_PATH",
-    "TASK_WEAPON_CREATE", "TASK_ITEM_PICKUP", "TASK_ITEM_RUN_PATH", "TASK_USE_SMALL_HULL", "TASK_FALL_TO_GROUND",
-    "TASK_WANDER", "TASK_FREEZE", "TASK_GATHER_CONDITIONS", "TASK_IGNORE_OLD_ENEMIES", "TASK_DEBUG_BREAK",
-    "TASK_ADD_HEALTH", "TASK_ADD_GESTURE_WAIT", "TASK_ADD_GESTURE", "TASK_GET_PATH_TO_INTERACTION_PARTNER",
+    "TASK_INVALID",
+    "TASK_RESET_ACTIVITY",
+    "TASK_WAIT",
+    "TASK_ANNOUNCE_ATTACK",
+    "TASK_WAIT_FACE_ENEMY",
+    "TASK_WAIT_FACE_ENEMY_RANDOM",
+    "TASK_WAIT_PVS",
+    "TASK_SUGGEST_STATE",
+    "TASK_TARGET_PLAYER",
+    "TASK_SCRIPT_WALK_TO_TARGET",
+    "TASK_SCRIPT_RUN_TO_TARGET",
+    "TASK_SCRIPT_CUSTOM_MOVE_TO_TARGET",
+    "TASK_MOVE_TO_TARGET_RANGE",
+    "TASK_MOVE_TO_GOAL_RANGE",
+    "TASK_MOVE_AWAY_PATH",
+    "TASK_GET_PATH_AWAY_FROM_BEST_SOUND",
+    "TASK_GET_PATH_TO_ENEMY",
+    "TASK_GET_PATH_TO_ENEMY_LKP",
+    "TASK_GET_CHASE_PATH_TO_ENEMY",
+    "TASK_GET_PATH_TO_ENEMY_LKP_LOS",
+    "TASK_GET_FLANK_RADIUS_PATH_TO_ENEMY_LOS",
+    "TASK_GET_FLANK_ARC_PATH_TO_ENEMY_LOS",
+    "TASK_GET_PATH_TO_ENEMY_LOS",
+    "TASK_GET_PATH_TO_ENEMY_CORPSE",
+    "TASK_GET_PATH_TO_PLAYER",
+    "TASK_GET_PATH_TO_SAVEPOSITION",
+    "TASK_GET_PATH_TO_TARGET",
+    "TASK_GET_PATH_TO_RANDOM_NODE",
+    "TASK_GET_PATH_TO_BESTSOUND",
+    "TASK_GET_PATH_TO_BESTSCENT",
+    "TASK_RUN_PATH",
+    "TASK_WALK_PATH",
+    "TASK_WALK_PATH_TIMED",
+    "TASK_WALK_PATH_WITHIN_DIST",
+    "TASK_WALK_PATH_FOR_UNITS",
+    "TASK_RUN_PATH_FLEE",
+    "TASK_RUN_PATH_TIMED",
+    "TASK_RUN_PATH_FOR_UNITS",
+    "TASK_RUN_PATH_WITHIN_DIST",
+    "TASK_STRAFE_PATH",
+    "TASK_CLEAR_MOVE_WAIT",
+    "TASK_SMALL_FLINCH",
+    "TASK_BIG_FLINCH",
+    "TASK_FACE_IDEAL",
+    "TASK_FACE_REASONABLE",
+    "TASK_FACE_PATH",
+    "TASK_FACE_PLAYER",
+    "TASK_FACE_ENEMY",
+    "TASK_FACE_HINTNODE",
+    "TASK_FACE_TARGET",
+    "TASK_FACE_LASTPOSITION",
+    "TASK_FACE_SAVEPOSITION",
+    "TASK_FACE_AWAY_FROM_SAVEPOSITION",
+    "TASK_SET_IDEAL_YAW_TO_CURRENT",
+    "TASK_RANGE_ATTACK1",
+    "TASK_RANGE_ATTACK2",
+    "TASK_MELEE_ATTACK1",
+    "TASK_MELEE_ATTACK2",
+    "TASK_RELOAD",
+    "TASK_SPECIAL_ATTACK1",
+    "TASK_SPECIAL_ATTACK2",
+    "TASK_FIND_HINTNODE",
+    "TASK_FIND_LOCK_HINTNODE",
+    "TASK_CLEAR_HINTNODE",
+    "TASK_LOCK_HINTNODE",
+    "TASK_SOUND_ANGRY",
+    "TASK_SOUND_DEATH",
+    "TASK_SOUND_IDLE",
+    "TASK_SOUND_WAKE",
+    "TASK_SOUND_PAIN",
+    "TASK_SOUND_DIE",
+    "TASK_SPEAK_SENTENCE",
+    "TASK_WAIT_FOR_SPEAK_FINISH",
+    "TASK_SET_ACTIVITY",
+    "TASK_RANDOMIZE_FRAMERATE",
+    "TASK_SET_SCHEDULE",
+    "TASK_SET_FAIL_SCHEDULE",
+    "TASK_SET_TOLERANCE_DISTANCE",
+    "TASK_SET_ROUTE_SEARCH_TIME",
+    "TASK_CLEAR_FAIL_SCHEDULE",
+    "TASK_PLAY_SEQUENCE",
+    "TASK_PLAY_PRIVATE_SEQUENCE",
+    "TASK_PLAY_PRIVATE_SEQUENCE_FACE_ENEMY",
+    "TASK_PLAY_SEQUENCE_FACE_ENEMY",
+    "TASK_PLAY_SEQUENCE_FACE_TARGET",
+    "TASK_FIND_COVER_FROM_BEST_SOUND",
+    "TASK_FIND_COVER_FROM_ENEMY",
+    "TASK_FIND_LATERAL_COVER_FROM_ENEMY",
+    "TASK_FIND_BACKAWAY_FROM_SAVEPOSITION",
+    "TASK_FIND_NODE_COVER_FROM_ENEMY",
+    "TASK_FIND_NEAR_NODE_COVER_FROM_ENEMY",
+    "TASK_FIND_FAR_NODE_COVER_FROM_ENEMY",
+    "TASK_FIND_COVER_FROM_ORIGIN",
+    "TASK_DIE",
+    "TASK_WAIT_FOR_SCRIPT",
+    "TASK_PUSH_SCRIPT_ARRIVAL_ACTIVITY",
+    "TASK_PLAY_SCRIPT",
+    "TASK_PLAY_SCRIPT_POST_IDLE",
+    "TASK_ENABLE_SCRIPT",
+    "TASK_PLANT_ON_SCRIPT",
+    "TASK_FACE_SCRIPT",
+    "TASK_PLAY_SCENE",
+    "TASK_WAIT_RANDOM",
+    "TASK_WAIT_INDEFINITE",
+    "TASK_STOP_MOVING",
+    "TASK_TURN_LEFT",
+    "TASK_TURN_RIGHT",
+    "TASK_REMEMBER",
+    "TASK_FORGET",
+    "TASK_WAIT_FOR_MOVEMENT",
+    "TASK_WAIT_FOR_MOVEMENT_STEP",
+    "TASK_WAIT_UNTIL_NO_DANGER_SOUND",
+    "TASK_WEAPON_FIND",
+    "TASK_WEAPON_PICKUP",
+    "TASK_WEAPON_RUN_PATH",
+    "TASK_WEAPON_CREATE",
+    "TASK_ITEM_PICKUP",
+    "TASK_ITEM_RUN_PATH",
+    "TASK_USE_SMALL_HULL",
+    "TASK_FALL_TO_GROUND",
+    "TASK_WANDER",
+    "TASK_FREEZE",
+    "TASK_GATHER_CONDITIONS",
+    "TASK_IGNORE_OLD_ENEMIES",
+    "TASK_DEBUG_BREAK",
+    "TASK_ADD_HEALTH",
+    "TASK_ADD_GESTURE_WAIT",
+    "TASK_ADD_GESTURE",
+    "TASK_GET_PATH_TO_INTERACTION_PARTNER",
 ];
 pub const TASK_WAIT: u16 = 2;
 pub const TASK_WAIT_FACE_ENEMY: u16 = 4;
@@ -201,25 +359,94 @@ pub const SCHED_FAIL: u16 = 81;
 pub const SCHED_FAIL_NOSTOP: u16 = 82;
 
 pub const SCHED_NAMES: &[(&str, u16)] = &[
-    ("SCHED_NONE", 0), ("SCHED_IDLE_STAND", 1), ("SCHED_IDLE_WALK", 2), ("SCHED_IDLE_WANDER", 3), ("SCHED_WAKE_ANGRY", 4), ("SCHED_ALERT_FACE", 5),
-    ("SCHED_ALERT_FACE_BESTSOUND", 6), ("SCHED_ALERT_REACT_TO_COMBAT_SOUND", 7), ("SCHED_ALERT_SCAN", 8), ("SCHED_ALERT_STAND", 9),
-    ("SCHED_ALERT_WALK", 10), ("SCHED_INVESTIGATE_SOUND", 11), ("SCHED_COMBAT_FACE", 12), ("SCHED_COMBAT_SWEEP", 13), ("SCHED_FEAR_FACE", 14),
-    ("SCHED_COMBAT_STAND", 15), ("SCHED_COMBAT_WALK", 16), ("SCHED_CHASE_ENEMY", 17), ("SCHED_CHASE_ENEMY_FAILED", 18), ("SCHED_VICTORY_DANCE", 19),
-    ("SCHED_TARGET_FACE", 20), ("SCHED_TARGET_CHASE", 21), ("SCHED_SMALL_FLINCH", 22), ("SCHED_BIG_FLINCH", 23), ("SCHED_BACK_AWAY_FROM_ENEMY", 24),
-    ("SCHED_MOVE_AWAY_FROM_ENEMY", 25), ("SCHED_BACK_AWAY_FROM_SAVE_POSITION", 26), ("SCHED_TAKE_COVER_FROM_ENEMY", 27),
-    ("SCHED_TAKE_COVER_FROM_BEST_SOUND", 28), ("SCHED_FLEE_FROM_BEST_SOUND", 29), ("SCHED_TAKE_COVER_FROM_ORIGIN", 30), ("SCHED_FAIL_TAKE_COVER", 31),
-    ("SCHED_RUN_FROM_ENEMY", 32), ("SCHED_RUN_FROM_ENEMY_FALLBACK", 33), ("SCHED_MOVE_TO_WEAPON_RANGE", 34), ("SCHED_ESTABLISH_LINE_OF_FIRE", 35),
-    ("SCHED_ESTABLISH_LINE_OF_FIRE_FALLBACK", 36), ("SCHED_PRE_FAIL_ESTABLISH_LINE_OF_FIRE", 37), ("SCHED_FAIL_ESTABLISH_LINE_OF_FIRE", 38),
-    ("SCHED_SHOOT_ENEMY_COVER", 39), ("SCHED_COWER", 40), ("SCHED_MELEE_ATTACK1", 41), ("SCHED_MELEE_ATTACK2", 42), ("SCHED_RANGE_ATTACK1", 43),
-    ("SCHED_RANGE_ATTACK2", 44), ("SCHED_SPECIAL_ATTACK1", 45), ("SCHED_SPECIAL_ATTACK2", 46), ("SCHED_STANDOFF", 47), ("SCHED_ARM_WEAPON", 48),
-    ("SCHED_DISARM_WEAPON", 49), ("SCHED_HIDE_AND_RELOAD", 50), ("SCHED_RELOAD", 51), ("SCHED_AMBUSH", 52), ("SCHED_DIE", 53), ("SCHED_DIE_RAGDOLL", 54),
-    ("SCHED_WAIT_FOR_SCRIPT", 55), ("SCHED_AISCRIPT", 56), ("SCHED_SCRIPTED_WALK", 57), ("SCHED_SCRIPTED_RUN", 58), ("SCHED_SCRIPTED_CUSTOM_MOVE", 59),
-    ("SCHED_SCRIPTED_WAIT", 60), ("SCHED_SCRIPTED_FACE", 61), ("SCHED_SCENE_GENERIC", 62), ("SCHED_NEW_WEAPON", 63), ("SCHED_NEW_WEAPON_CHEAT", 64),
-    ("SCHED_SWITCH_TO_PENDING_WEAPON", 65), ("SCHED_GET_HEALTHKIT", 66), ("SCHED_WAIT_FOR_SPEAK_FINISH", 67), ("SCHED_MOVE_AWAY", 68),
-    ("SCHED_MOVE_AWAY_FAIL", 69), ("SCHED_MOVE_AWAY_END", 70), ("SCHED_FORCED_GO", 71), ("SCHED_FORCED_GO_RUN", 72), ("SCHED_NPC_FREEZE", 73),
-    ("SCHED_PATROL_WALK", 74), ("SCHED_COMBAT_PATROL", 75), ("SCHED_PATROL_RUN", 76), ("SCHED_RUN_RANDOM", 77), ("SCHED_FALL_TO_GROUND", 78),
-    ("SCHED_DROPSHIP_DUSTOFF", 79), ("SCHED_FLINCH_PHYSICS", 80), ("SCHED_FAIL", 81), ("SCHED_FAIL_NOSTOP", 82), ("SCHED_RUN_FROM_ENEMY_MOB", 83),
-    ("SCHED_DUCK_DODGE", 84), ("SCHED_INTERACTION_MOVE_TO_PARTNER", 85), ("SCHED_INTERACTION_WAIT_FOR_PARTNER", 86), ("SCHED_SLEEP", 87),
+    ("SCHED_NONE", 0),
+    ("SCHED_IDLE_STAND", 1),
+    ("SCHED_IDLE_WALK", 2),
+    ("SCHED_IDLE_WANDER", 3),
+    ("SCHED_WAKE_ANGRY", 4),
+    ("SCHED_ALERT_FACE", 5),
+    ("SCHED_ALERT_FACE_BESTSOUND", 6),
+    ("SCHED_ALERT_REACT_TO_COMBAT_SOUND", 7),
+    ("SCHED_ALERT_SCAN", 8),
+    ("SCHED_ALERT_STAND", 9),
+    ("SCHED_ALERT_WALK", 10),
+    ("SCHED_INVESTIGATE_SOUND", 11),
+    ("SCHED_COMBAT_FACE", 12),
+    ("SCHED_COMBAT_SWEEP", 13),
+    ("SCHED_FEAR_FACE", 14),
+    ("SCHED_COMBAT_STAND", 15),
+    ("SCHED_COMBAT_WALK", 16),
+    ("SCHED_CHASE_ENEMY", 17),
+    ("SCHED_CHASE_ENEMY_FAILED", 18),
+    ("SCHED_VICTORY_DANCE", 19),
+    ("SCHED_TARGET_FACE", 20),
+    ("SCHED_TARGET_CHASE", 21),
+    ("SCHED_SMALL_FLINCH", 22),
+    ("SCHED_BIG_FLINCH", 23),
+    ("SCHED_BACK_AWAY_FROM_ENEMY", 24),
+    ("SCHED_MOVE_AWAY_FROM_ENEMY", 25),
+    ("SCHED_BACK_AWAY_FROM_SAVE_POSITION", 26),
+    ("SCHED_TAKE_COVER_FROM_ENEMY", 27),
+    ("SCHED_TAKE_COVER_FROM_BEST_SOUND", 28),
+    ("SCHED_FLEE_FROM_BEST_SOUND", 29),
+    ("SCHED_TAKE_COVER_FROM_ORIGIN", 30),
+    ("SCHED_FAIL_TAKE_COVER", 31),
+    ("SCHED_RUN_FROM_ENEMY", 32),
+    ("SCHED_RUN_FROM_ENEMY_FALLBACK", 33),
+    ("SCHED_MOVE_TO_WEAPON_RANGE", 34),
+    ("SCHED_ESTABLISH_LINE_OF_FIRE", 35),
+    ("SCHED_ESTABLISH_LINE_OF_FIRE_FALLBACK", 36),
+    ("SCHED_PRE_FAIL_ESTABLISH_LINE_OF_FIRE", 37),
+    ("SCHED_FAIL_ESTABLISH_LINE_OF_FIRE", 38),
+    ("SCHED_SHOOT_ENEMY_COVER", 39),
+    ("SCHED_COWER", 40),
+    ("SCHED_MELEE_ATTACK1", 41),
+    ("SCHED_MELEE_ATTACK2", 42),
+    ("SCHED_RANGE_ATTACK1", 43),
+    ("SCHED_RANGE_ATTACK2", 44),
+    ("SCHED_SPECIAL_ATTACK1", 45),
+    ("SCHED_SPECIAL_ATTACK2", 46),
+    ("SCHED_STANDOFF", 47),
+    ("SCHED_ARM_WEAPON", 48),
+    ("SCHED_DISARM_WEAPON", 49),
+    ("SCHED_HIDE_AND_RELOAD", 50),
+    ("SCHED_RELOAD", 51),
+    ("SCHED_AMBUSH", 52),
+    ("SCHED_DIE", 53),
+    ("SCHED_DIE_RAGDOLL", 54),
+    ("SCHED_WAIT_FOR_SCRIPT", 55),
+    ("SCHED_AISCRIPT", 56),
+    ("SCHED_SCRIPTED_WALK", 57),
+    ("SCHED_SCRIPTED_RUN", 58),
+    ("SCHED_SCRIPTED_CUSTOM_MOVE", 59),
+    ("SCHED_SCRIPTED_WAIT", 60),
+    ("SCHED_SCRIPTED_FACE", 61),
+    ("SCHED_SCENE_GENERIC", 62),
+    ("SCHED_NEW_WEAPON", 63),
+    ("SCHED_NEW_WEAPON_CHEAT", 64),
+    ("SCHED_SWITCH_TO_PENDING_WEAPON", 65),
+    ("SCHED_GET_HEALTHKIT", 66),
+    ("SCHED_WAIT_FOR_SPEAK_FINISH", 67),
+    ("SCHED_MOVE_AWAY", 68),
+    ("SCHED_MOVE_AWAY_FAIL", 69),
+    ("SCHED_MOVE_AWAY_END", 70),
+    ("SCHED_FORCED_GO", 71),
+    ("SCHED_FORCED_GO_RUN", 72),
+    ("SCHED_NPC_FREEZE", 73),
+    ("SCHED_PATROL_WALK", 74),
+    ("SCHED_COMBAT_PATROL", 75),
+    ("SCHED_PATROL_RUN", 76),
+    ("SCHED_RUN_RANDOM", 77),
+    ("SCHED_FALL_TO_GROUND", 78),
+    ("SCHED_DROPSHIP_DUSTOFF", 79),
+    ("SCHED_FLINCH_PHYSICS", 80),
+    ("SCHED_FAIL", 81),
+    ("SCHED_FAIL_NOSTOP", 82),
+    ("SCHED_RUN_FROM_ENEMY_MOB", 83),
+    ("SCHED_DUCK_DODGE", 84),
+    ("SCHED_INTERACTION_MOVE_TO_PARTNER", 85),
+    ("SCHED_INTERACTION_WAIT_FOR_PARTNER", 86),
+    ("SCHED_SLEEP", 87),
 ];
 
 pub fn task_id(name: &str) -> Option<u16> {
@@ -232,7 +459,10 @@ pub fn cond_name(id: u8) -> Option<&'static str> {
     COND_NAMES.get(id as usize).copied()
 }
 pub fn sched_id(name: &str) -> Option<u16> {
-    SCHED_NAMES.iter().find(|(n, _)| *n == name).map(|(_, id)| *id)
+    SCHED_NAMES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, id)| *id)
 }
 
 /// The class family whose private schedule table a class reports through (None: only shared
@@ -266,63 +496,337 @@ pub fn schedule_tasks(id: u16) -> Option<(&'static [(u16, f32)], &'static [u8])>
     use self::*;
     Some(match id {
         SCHED_IDLE_STAND => (
-            &[(TASK_STOP_MOVING, 0.0), (TASK_SET_ACTIVITY, 1.0), (TASK_WAIT, 5.0)],
-            &[COND_NEW_ENEMY, COND_SEE_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_HEAR_COMBAT, COND_HEAR_DANGER, COND_HEAR_PLAYER, COND_HEAR_BULLET_IMPACT, COND_SEE_HATE, COND_PROVOKED_],
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_SET_ACTIVITY, 1.0),
+                (TASK_WAIT, 5.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_SEE_ENEMY,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_HEAR_COMBAT,
+                COND_HEAR_DANGER,
+                COND_HEAR_PLAYER,
+                COND_HEAR_BULLET_IMPACT,
+                COND_SEE_HATE,
+                COND_PROVOKED_,
+            ],
         ),
         SCHED_IDLE_WALK | SCHED_IDLE_WANDER => (
-            &[(TASK_WANDER, 480.0), (TASK_WALK_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0), (TASK_STOP_MOVING, 0.0), (TASK_WAIT_RANDOM, 3.0)],
-            &[COND_NEW_ENEMY, COND_SEE_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_HEAR_COMBAT, COND_HEAR_DANGER, COND_HEAR_PLAYER, COND_SEE_HATE],
+            &[
+                (TASK_WANDER, 480.0),
+                (TASK_WALK_PATH, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_WAIT_RANDOM, 3.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_SEE_ENEMY,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_HEAR_COMBAT,
+                COND_HEAR_DANGER,
+                COND_HEAR_PLAYER,
+                COND_SEE_HATE,
+            ],
         ),
         SCHED_WAKE_ANGRY => (&[(TASK_STOP_MOVING, 0.0), (TASK_FACE_ENEMY, 0.0)], &[]),
         SCHED_ALERT_FACE | SCHED_ALERT_FACE_BESTSOUND | SCHED_ALERT_REACT_TO_COMBAT_SOUND => (
             &[(TASK_STOP_MOVING, 0.0), (TASK_FACE_REASONABLE, 0.0)],
-            &[COND_NEW_ENEMY, COND_SEE_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_PROVOKED_],
+            &[
+                COND_NEW_ENEMY,
+                COND_SEE_ENEMY,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_PROVOKED_,
+            ],
         ),
         SCHED_ALERT_SCAN | SCHED_ALERT_STAND => (
             &[(TASK_STOP_MOVING, 0.0), (TASK_WAIT, 20.0)],
-            &[COND_NEW_ENEMY, COND_SEE_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_HEAR_COMBAT, COND_HEAR_DANGER, COND_HEAR_PLAYER, COND_HEAR_BULLET_IMPACT, COND_PROVOKED_],
+            &[
+                COND_NEW_ENEMY,
+                COND_SEE_ENEMY,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_HEAR_COMBAT,
+                COND_HEAR_DANGER,
+                COND_HEAR_PLAYER,
+                COND_HEAR_BULLET_IMPACT,
+                COND_PROVOKED_,
+            ],
         ),
         SCHED_ALERT_WALK | SCHED_PATROL_WALK => (
-            &[(TASK_WANDER, 640.0), (TASK_WALK_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0)],
-            &[COND_NEW_ENEMY, COND_SEE_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_HEAR_DANGER, COND_PROVOKED_],
+            &[
+                (TASK_WANDER, 640.0),
+                (TASK_WALK_PATH, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_SEE_ENEMY,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_HEAR_DANGER,
+                COND_PROVOKED_,
+            ],
         ),
         SCHED_INVESTIGATE_SOUND => (
-            &[(TASK_STOP_MOVING, 0.0), (TASK_GET_PATH_TO_BESTSOUND, 0.0), (TASK_WALK_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0), (TASK_WAIT, 5.0)],
-            &[COND_NEW_ENEMY, COND_SEE_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_HEAR_DANGER],
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_GET_PATH_TO_BESTSOUND, 0.0),
+                (TASK_WALK_PATH, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+                (TASK_WAIT, 5.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_SEE_ENEMY,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_HEAR_DANGER,
+            ],
         ),
-        SCHED_COMBAT_FACE => (&[(TASK_STOP_MOVING, 0.0), (TASK_FACE_ENEMY, 0.0), (TASK_WAIT, 1.5)], &[COND_CAN_RANGE_ATTACK1, COND_CAN_MELEE_ATTACK1, COND_NEW_ENEMY, COND_ENEMY_DEAD]),
-        SCHED_COMBAT_STAND => (&[(TASK_STOP_MOVING, 0.0), (TASK_WAIT_INDEFINITE, 0.0)], &[COND_NEW_ENEMY, COND_ENEMY_DEAD, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_CAN_RANGE_ATTACK1, COND_CAN_MELEE_ATTACK1]),
+        SCHED_COMBAT_FACE => (
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_FACE_ENEMY, 0.0),
+                (TASK_WAIT, 1.5),
+            ],
+            &[
+                COND_CAN_RANGE_ATTACK1,
+                COND_CAN_MELEE_ATTACK1,
+                COND_NEW_ENEMY,
+                COND_ENEMY_DEAD,
+            ],
+        ),
+        SCHED_COMBAT_STAND => (
+            &[(TASK_STOP_MOVING, 0.0), (TASK_WAIT_INDEFINITE, 0.0)],
+            &[
+                COND_NEW_ENEMY,
+                COND_ENEMY_DEAD,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_CAN_RANGE_ATTACK1,
+                COND_CAN_MELEE_ATTACK1,
+            ],
+        ),
         SCHED_CHASE_ENEMY | SCHED_MOVE_TO_WEAPON_RANGE | SCHED_ESTABLISH_LINE_OF_FIRE => (
-            &[(TASK_GET_CHASE_PATH_TO_ENEMY, 300.0), (TASK_RUN_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0), (TASK_FACE_ENEMY, 0.0)],
-            &[COND_NEW_ENEMY, COND_ENEMY_DEAD, COND_ENEMY_UNREACHABLE, COND_CAN_RANGE_ATTACK1, COND_CAN_MELEE_ATTACK1, COND_TOO_CLOSE_TO_ATTACK, COND_TASK_FAILED, COND_LOST_ENEMY, COND_HEAR_DANGER],
+            &[
+                (TASK_GET_CHASE_PATH_TO_ENEMY, 300.0),
+                (TASK_RUN_PATH, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+                (TASK_FACE_ENEMY, 0.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_ENEMY_DEAD,
+                COND_ENEMY_UNREACHABLE,
+                COND_CAN_RANGE_ATTACK1,
+                COND_CAN_MELEE_ATTACK1,
+                COND_TOO_CLOSE_TO_ATTACK,
+                COND_TASK_FAILED,
+                COND_LOST_ENEMY,
+                COND_HEAR_DANGER,
+            ],
         ),
-        SCHED_CHASE_ENEMY_FAILED => (&[(TASK_STOP_MOVING, 0.0), (TASK_WAIT, 0.2), (TASK_FACE_ENEMY, 0.0)], &[COND_NEW_ENEMY, COND_CAN_RANGE_ATTACK1]),
-        SCHED_TARGET_FACE => (&[(TASK_STOP_MOVING, 0.0), (TASK_FACE_TARGET, 0.0), (TASK_WAIT, 0.5)], &[COND_NEW_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_PROVOKED_]),
-        SCHED_TARGET_CHASE => (&[(TASK_GET_PATH_TO_TARGET, 0.0), (TASK_MOVE_TO_TARGET_RANGE, 128.0), (TASK_WAIT_FOR_MOVEMENT, 0.0)], &[COND_NEW_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_PROVOKED_]),
-        SCHED_SMALL_FLINCH | SCHED_BIG_FLINCH => (&[(TASK_STOP_MOVING, 0.0), (TASK_WAIT, 0.4)], &[]),
+        SCHED_CHASE_ENEMY_FAILED => (
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_WAIT, 0.2),
+                (TASK_FACE_ENEMY, 0.0),
+            ],
+            &[COND_NEW_ENEMY, COND_CAN_RANGE_ATTACK1],
+        ),
+        SCHED_TARGET_FACE => (
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_FACE_TARGET, 0.0),
+                (TASK_WAIT, 0.5),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_PROVOKED_,
+            ],
+        ),
+        SCHED_TARGET_CHASE => (
+            &[
+                (TASK_GET_PATH_TO_TARGET, 0.0),
+                (TASK_MOVE_TO_TARGET_RANGE, 128.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_PROVOKED_,
+            ],
+        ),
+        SCHED_SMALL_FLINCH | SCHED_BIG_FLINCH => {
+            (&[(TASK_STOP_MOVING, 0.0), (TASK_WAIT, 0.4)], &[])
+        }
         SCHED_BACK_AWAY_FROM_ENEMY | SCHED_RUN_FROM_ENEMY | SCHED_FLEE_FROM_BEST_SOUND => (
-            &[(TASK_STOP_MOVING, 0.0), (TASK_FIND_COVER_FROM_ENEMY, 0.0), (TASK_RUN_PATH_FLEE, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0), (TASK_FACE_ENEMY, 0.0)],
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_FIND_COVER_FROM_ENEMY, 0.0),
+                (TASK_RUN_PATH_FLEE, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+                (TASK_FACE_ENEMY, 0.0),
+            ],
             &[COND_NEW_ENEMY, COND_ENEMY_DEAD, COND_TASK_FAILED],
         ),
         SCHED_TAKE_COVER_FROM_ENEMY | SCHED_TAKE_COVER_FROM_BEST_SOUND | SCHED_HIDE_AND_RELOAD => (
-            &[(TASK_STOP_MOVING, 0.0), (TASK_FIND_COVER_FROM_ENEMY, 0.0), (TASK_RUN_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0), (TASK_RELOAD, 0.0), (TASK_FACE_ENEMY, 0.0), (TASK_WAIT, 1.0)],
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_FIND_COVER_FROM_ENEMY, 0.0),
+                (TASK_RUN_PATH, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+                (TASK_RELOAD, 0.0),
+                (TASK_FACE_ENEMY, 0.0),
+                (TASK_WAIT, 1.0),
+            ],
             &[COND_NEW_ENEMY, COND_ENEMY_DEAD, COND_TASK_FAILED],
         ),
-        SCHED_FAIL_TAKE_COVER => (&[(TASK_STOP_MOVING, 0.0), (TASK_FACE_ENEMY, 0.0), (TASK_WAIT, 1.0)], &[COND_NEW_ENEMY, COND_CAN_RANGE_ATTACK1, COND_CAN_MELEE_ATTACK1]),
-        SCHED_MELEE_ATTACK1 => (&[(TASK_STOP_MOVING, 0.0), (TASK_FACE_ENEMY, 0.0), (TASK_MELEE_ATTACK1, 0.0)], &[COND_NEW_ENEMY, COND_ENEMY_DEAD, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_ENEMY_OCCLUDED]),
-        SCHED_RANGE_ATTACK1 => (&[(TASK_STOP_MOVING, 0.0), (TASK_FACE_ENEMY, 0.0), (TASK_RANGE_ATTACK1, 0.0)], &[COND_NEW_ENEMY, COND_ENEMY_DEAD, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_ENEMY_OCCLUDED, COND_NO_PRIMARY_AMMO, COND_HEAR_DANGER, COND_WEAPON_BLOCKED_BY_FRIEND_, COND_WEAPON_SIGHT_OCCLUDED_]),
-        SCHED_STANDOFF => (&[(TASK_STOP_MOVING, 0.0), (TASK_FACE_ENEMY, 0.0), (TASK_WAIT_FACE_ENEMY, 2.0)], &[COND_NEW_ENEMY, COND_ENEMY_DEAD, COND_CAN_RANGE_ATTACK1, COND_CAN_MELEE_ATTACK1, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE]),
-        SCHED_RELOAD => (&[(TASK_STOP_MOVING, 0.0), (TASK_RELOAD, 0.0)], &[COND_HEAVY_DAMAGE, COND_HEAR_DANGER]),
+        SCHED_FAIL_TAKE_COVER => (
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_FACE_ENEMY, 0.0),
+                (TASK_WAIT, 1.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_CAN_RANGE_ATTACK1,
+                COND_CAN_MELEE_ATTACK1,
+            ],
+        ),
+        SCHED_MELEE_ATTACK1 => (
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_FACE_ENEMY, 0.0),
+                (TASK_MELEE_ATTACK1, 0.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_ENEMY_DEAD,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_ENEMY_OCCLUDED,
+            ],
+        ),
+        SCHED_RANGE_ATTACK1 => (
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_FACE_ENEMY, 0.0),
+                (TASK_RANGE_ATTACK1, 0.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_ENEMY_DEAD,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_ENEMY_OCCLUDED,
+                COND_NO_PRIMARY_AMMO,
+                COND_HEAR_DANGER,
+                COND_WEAPON_BLOCKED_BY_FRIEND_,
+                COND_WEAPON_SIGHT_OCCLUDED_,
+            ],
+        ),
+        SCHED_STANDOFF => (
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_FACE_ENEMY, 0.0),
+                (TASK_WAIT_FACE_ENEMY, 2.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_ENEMY_DEAD,
+                COND_CAN_RANGE_ATTACK1,
+                COND_CAN_MELEE_ATTACK1,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+            ],
+        ),
+        SCHED_RELOAD => (
+            &[(TASK_STOP_MOVING, 0.0), (TASK_RELOAD, 0.0)],
+            &[COND_HEAVY_DAMAGE, COND_HEAR_DANGER],
+        ),
         SCHED_DIE => (&[(TASK_STOP_MOVING, 0.0)], &[]),
-        SCHED_SCRIPTED_WALK => (&[(TASK_GET_PATH_TO_TARGET, 0.0), (TASK_WALK_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0)], &[]),
-        SCHED_SCRIPTED_RUN => (&[(TASK_GET_PATH_TO_TARGET, 0.0), (TASK_RUN_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0)], &[]),
-        SCHED_SCRIPTED_WAIT | SCHED_NPC_FREEZE => (&[(TASK_STOP_MOVING, 0.0), (TASK_WAIT_INDEFINITE, 0.0)], &[]),
-        SCHED_SCRIPTED_FACE => (&[(TASK_STOP_MOVING, 0.0), (TASK_FACE_TARGET, 0.0), (TASK_WAIT_INDEFINITE, 0.0)], &[]),
-        SCHED_FORCED_GO => (&[(TASK_GET_PATH_TO_SAVEPOSITION, 0.0), (TASK_WALK_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0), (TASK_STOP_MOVING, 0.0)], &[]),
-        SCHED_FORCED_GO_RUN => (&[(TASK_GET_PATH_TO_SAVEPOSITION, 0.0), (TASK_RUN_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0), (TASK_STOP_MOVING, 0.0)], &[]),
-        SCHED_COMBAT_PATROL | SCHED_PATROL_RUN | SCHED_RUN_RANDOM => (&[(TASK_WANDER, 640.0), (TASK_RUN_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0)], &[COND_NEW_ENEMY, COND_SEE_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_HEAR_DANGER]),
-        SCHED_FAIL => (&[(TASK_STOP_MOVING, 0.0), (TASK_SET_ACTIVITY, 1.0), (TASK_WAIT, 1.0), (TASK_WAIT_PVS_, 0.0)], &[COND_CAN_RANGE_ATTACK1, COND_CAN_MELEE_ATTACK1]),
-        SCHED_FAIL_NOSTOP => (&[(TASK_WAIT, 1.0)], &[COND_CAN_RANGE_ATTACK1, COND_CAN_MELEE_ATTACK1]),
+        SCHED_SCRIPTED_WALK => (
+            &[
+                (TASK_GET_PATH_TO_TARGET, 0.0),
+                (TASK_WALK_PATH, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+            ],
+            &[],
+        ),
+        SCHED_SCRIPTED_RUN => (
+            &[
+                (TASK_GET_PATH_TO_TARGET, 0.0),
+                (TASK_RUN_PATH, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+            ],
+            &[],
+        ),
+        SCHED_SCRIPTED_WAIT | SCHED_NPC_FREEZE => {
+            (&[(TASK_STOP_MOVING, 0.0), (TASK_WAIT_INDEFINITE, 0.0)], &[])
+        }
+        SCHED_SCRIPTED_FACE => (
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_FACE_TARGET, 0.0),
+                (TASK_WAIT_INDEFINITE, 0.0),
+            ],
+            &[],
+        ),
+        SCHED_FORCED_GO => (
+            &[
+                (TASK_GET_PATH_TO_SAVEPOSITION, 0.0),
+                (TASK_WALK_PATH, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+                (TASK_STOP_MOVING, 0.0),
+            ],
+            &[],
+        ),
+        SCHED_FORCED_GO_RUN => (
+            &[
+                (TASK_GET_PATH_TO_SAVEPOSITION, 0.0),
+                (TASK_RUN_PATH, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+                (TASK_STOP_MOVING, 0.0),
+            ],
+            &[],
+        ),
+        SCHED_COMBAT_PATROL | SCHED_PATROL_RUN | SCHED_RUN_RANDOM => (
+            &[
+                (TASK_WANDER, 640.0),
+                (TASK_RUN_PATH, 0.0),
+                (TASK_WAIT_FOR_MOVEMENT, 0.0),
+            ],
+            &[
+                COND_NEW_ENEMY,
+                COND_SEE_ENEMY,
+                COND_LIGHT_DAMAGE,
+                COND_HEAVY_DAMAGE,
+                COND_HEAR_DANGER,
+            ],
+        ),
+        SCHED_FAIL => (
+            &[
+                (TASK_STOP_MOVING, 0.0),
+                (TASK_SET_ACTIVITY, 1.0),
+                (TASK_WAIT, 1.0),
+                (TASK_WAIT_PVS_, 0.0),
+            ],
+            &[COND_CAN_RANGE_ATTACK1, COND_CAN_MELEE_ATTACK1],
+        ),
+        SCHED_FAIL_NOSTOP => (
+            &[(TASK_WAIT, 1.0)],
+            &[COND_CAN_RANGE_ATTACK1, COND_CAN_MELEE_ATTACK1],
+        ),
         _ => return None,
     })
 }
@@ -355,19 +859,42 @@ pub fn default_proficiency(class: &str) -> u8 {
 /// The HL2 class an NPC class name belongs to (Enums/CLASS, as the game's Classify()).
 pub fn classify(class: &str) -> u8 {
     match class {
-        "npc_combine_s" | "npc_combinedropship" | "npc_combinegunship" | "npc_helicopter" | "npc_strider" | "npc_turret_floor" | "npc_turret_ceiling" | "npc_rollermine" | "npc_cscanner" | "npc_clawscanner" | "npc_hunter" | "npc_stalker" | "npc_manhack" | "npc_sniper" | "npc_combine_camera" | "npc_turret_ground" | "npc_apcdriver" | "npc_combinegunship_" => 7, // CLASS_COMBINE
-        "npc_metropolice" => 16,       // CLASS_METROPOLICE
-        "npc_zombie" | "npc_fastzombie" | "npc_poisonzombie" | "npc_zombine" | "npc_fastzombie_torso" | "npc_zombie_torso" => 20, // CLASS_ZOMBIE
+        "npc_combine_s"
+        | "npc_combinedropship"
+        | "npc_combinegunship"
+        | "npc_helicopter"
+        | "npc_strider"
+        | "npc_turret_floor"
+        | "npc_turret_ceiling"
+        | "npc_rollermine"
+        | "npc_cscanner"
+        | "npc_clawscanner"
+        | "npc_hunter"
+        | "npc_stalker"
+        | "npc_manhack"
+        | "npc_sniper"
+        | "npc_combine_camera"
+        | "npc_turret_ground"
+        | "npc_apcdriver"
+        | "npc_combinegunship_" => 7, // CLASS_COMBINE
+        "npc_metropolice" => 16, // CLASS_METROPOLICE
+        "npc_zombie"
+        | "npc_fastzombie"
+        | "npc_poisonzombie"
+        | "npc_zombine"
+        | "npc_fastzombie_torso"
+        | "npc_zombie_torso" => 20, // CLASS_ZOMBIE
         "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" | "npc_headcrab_poison" => 11, // CLASS_HEADCRAB
         "npc_antlion" | "npc_antlion_worker" => 2, // CLASS_ANTLION
         "npc_antlionguard" => 2,
-        "npc_barnacle" => 3,            // CLASS_BARNACLE
-        "npc_citizen" => 18,            // CLASS_PLAYER_ALLY
-        "npc_alyx" | "npc_barney" | "npc_kleiner" | "npc_eli" | "npc_mossman" | "npc_magnusson" | "npc_monk" | "npc_gman" | "npc_breen" | "npc_odessa" | "npc_fisherman" => 19, // CLASS_PLAYER_ALLY_VITAL
-        "npc_vortigaunt" => 24,         // CLASS_VORTIGAUNT
+        "npc_barnacle" => 3, // CLASS_BARNACLE
+        "npc_citizen" => 18, // CLASS_PLAYER_ALLY
+        "npc_alyx" | "npc_barney" | "npc_kleiner" | "npc_eli" | "npc_mossman" | "npc_magnusson"
+        | "npc_monk" | "npc_gman" | "npc_breen" | "npc_odessa" | "npc_fisherman" => 19, // CLASS_PLAYER_ALLY_VITAL
+        "npc_vortigaunt" => 24, // CLASS_VORTIGAUNT
         "npc_dog" => 19,
         "npc_crow" | "npc_pigeon" | "npc_seagull" => 9, // CLASS_EARTH_FAUNA
-        "npc_bullseye" => 6,            // CLASS_BULLSEYE
+        "npc_bullseye" => 6,                            // CLASS_BULLSEYE
         "npc_stalker_" => 23,
         _ if class.starts_with("npc_") => 17, // CLASS_NONE? -> CLASS_PLAYER_ALLY? no: CLASS_NONE
         _ => 0,
@@ -377,7 +904,9 @@ pub fn classify(class: &str) -> u8 {
 /// actors (npc_alyx and friends set it in Spawn) - measured with `ai_disabled 1`.
 pub fn spawn_state(class: &str) -> u8 {
     match class {
-        "npc_alyx" | "npc_barney" | "npc_kleiner" | "npc_eli" | "npc_mossman" | "npc_magnusson" | "npc_monk" | "npc_gman" | "npc_breen" | "npc_odessa" | "npc_fisherman" | "npc_dog" | "npc_vortigaunt" => NPC_STATE_IDLE,
+        "npc_alyx" | "npc_barney" | "npc_kleiner" | "npc_eli" | "npc_mossman" | "npc_magnusson"
+        | "npc_monk" | "npc_gman" | "npc_breen" | "npc_odessa" | "npc_fisherman" | "npc_dog"
+        | "npc_vortigaunt" => NPC_STATE_IDLE,
         _ => NPC_STATE_NONE,
     }
 }
@@ -503,7 +1032,9 @@ impl AiState {
         }
     }
     pub fn condition_list(&self) -> Vec<u8> {
-        (0..COND_NAMES.len() as u8).filter(|c| self.has(*c)).collect()
+        (0..COND_NAMES.len() as u8)
+            .filter(|c| self.has(*c))
+            .collect()
     }
     pub fn start(&mut self, sched: u16, now: u64) {
         self.schedule = Some(sched);
@@ -551,16 +1082,40 @@ impl AiState {
     }
     /// Disposition toward another entity: a per-entity override, a class override, else the
     /// game's table (players are CLASS_PLAYER).
-    pub fn disposition(&self, own_class: &str, other: u32, other_class: Option<&str>, is_player: bool) -> u8 {
-        if let Some((_, d, _)) = self.relationships.iter().rev().find(|(e, _, _)| *e == other) {
+    pub fn disposition(
+        &self,
+        own_class: &str,
+        other: u32,
+        other_class: Option<&str>,
+        is_player: bool,
+    ) -> u8 {
+        if let Some((_, d, _)) = self
+            .relationships
+            .iter()
+            .rev()
+            .find(|(e, _, _)| *e == other)
+        {
             return *d;
         }
-        let oc = if is_player { "player".to_string() } else { other_class.unwrap_or("").to_string() };
-        if let Some((_, d, _)) = self.class_relationships.iter().rev().find(|(c, _, _)| *c == oc) {
+        let oc = if is_player {
+            "player".to_string()
+        } else {
+            other_class.unwrap_or("").to_string()
+        };
+        if let Some((_, d, _)) = self
+            .class_relationships
+            .iter()
+            .rev()
+            .find(|(c, _, _)| *c == oc)
+        {
             return *d;
         }
         let a = self.npc_class.unwrap_or_else(|| classify(own_class));
-        let b = if is_player { CLASS_PLAYER } else { classify(other_class.unwrap_or("")) };
+        let b = if is_player {
+            CLASS_PLAYER
+        } else {
+            classify(other_class.unwrap_or(""))
+        };
         default_disposition(a, b)
     }
 }
@@ -584,7 +1139,10 @@ impl Squads {
         self.members.retain(|_, m| !m.is_empty());
     }
     pub fn of(&self, id: u32) -> Option<&str> {
-        self.members.iter().find(|(_, m)| m.contains(&id)).map(|(n, _)| n.as_str())
+        self.members
+            .iter()
+            .find(|(_, m)| m.contains(&id))
+            .map(|(n, _)| n.as_str())
     }
     pub fn leader(&self, name: &str) -> Option<u32> {
         self.members.get(name).and_then(|m| m.first().copied())
@@ -600,14 +1158,29 @@ mod tests {
     #[test]
     fn ids_follow_the_engine_tables() {
         assert_eq!(task_id("TASK_WAIT"), Some(TASK_WAIT));
-        assert_eq!(task_id("TASK_WAIT_FOR_MOVEMENT"), Some(TASK_WAIT_FOR_MOVEMENT));
+        assert_eq!(
+            task_id("TASK_WAIT_FOR_MOVEMENT"),
+            Some(TASK_WAIT_FOR_MOVEMENT)
+        );
         assert_eq!(cond_id("COND_SEE_ENEMY"), Some(COND_SEE_ENEMY));
         assert_eq!(cond_name(COND_TASK_FAILED), Some("COND_TASK_FAILED"));
         assert_eq!(sched_id("SCHED_CHASE_ENEMY"), Some(SCHED_CHASE_ENEMY));
-        assert_eq!(default_disposition(classify("npc_combine_s"), CLASS_PLAYER), D_HT);
-        assert_eq!(default_disposition(classify("npc_citizen"), CLASS_PLAYER), D_LI);
-        assert_eq!(default_disposition(classify("npc_zombie"), classify("npc_combine_s")), D_HT);
-        assert_eq!(default_disposition(classify("npc_zombie"), classify("npc_headcrab")), D_LI);
+        assert_eq!(
+            default_disposition(classify("npc_combine_s"), CLASS_PLAYER),
+            D_HT
+        );
+        assert_eq!(
+            default_disposition(classify("npc_citizen"), CLASS_PLAYER),
+            D_LI
+        );
+        assert_eq!(
+            default_disposition(classify("npc_zombie"), classify("npc_combine_s")),
+            D_HT
+        );
+        assert_eq!(
+            default_disposition(classify("npc_zombie"), classify("npc_headcrab")),
+            D_LI
+        );
     }
     #[test]
     fn schedule_steps_and_interrupts() {

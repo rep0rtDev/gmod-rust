@@ -4720,7 +4720,8 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 if let Some(&id) = server.npcs.keys().last() {
                     // as the probe: SetLastPosition + SetSchedule(SCHED_FORCED_GO) through the brain
                     server.npc_set_save_position(id, target);
-                    rec["started"] = json!(server.npc_set_schedule(id, Some(gm_server::ai::SCHED_FORCED_GO)));
+                    rec["started"] =
+                        json!(server.npc_set_schedule(id, Some(gm_server::ai::SCHED_FORCED_GO)));
                     if op.name.as_deref() == Some("run") {
                         pending_npc_run = Some((id, server.npcs[&id].pos));
                     }
@@ -5978,7 +5979,9 @@ fn compare_server(theirs: &Value, ours: &Value, tol: &toml::Table) -> bool {
                     || a["weapon"] != b["weapon"]
                     || a["movetype"] != b["movetype"]
                     || a["solid"] != b["solid"]
-                    || (!a["npcstate"].is_null() && !b["npcstate"].is_null() && a["npcstate"] != b["npcstate"])
+                    || (!a["npcstate"].is_null()
+                        && !b["npcstate"].is_null()
+                        && a["npcstate"] != b["npcstate"])
                     || (!a["sched"].is_null() && !b["sched"].is_null() && a["sched"] != b["sched"])
                 {
                     println!("  op {i}: npc {} {} pos err {dp:.3} angle err {da:.2} {} hp {}/{} wep {} state {} sched {} vs {} {} {} hp {}/{} wep {} state {} sched {}", a["key"], a["class"], ma, a["health"], a["maxhealth"], a["weapon"], a["npcstate"], a["sched"], b["class"], mb, if hull_same { "" } else { "HULL" }, b["health"], b["maxhealth"], b["weapon"], b["npcstate"], b["sched"]);

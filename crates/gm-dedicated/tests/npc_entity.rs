@@ -1418,7 +1418,11 @@ fn npc_runs_a_scripted_engine_schedule() {
     }
     let n = &server.npcs[&id];
     assert!(!n.ai.scripted);
-    assert_eq!(n.ai.schedule, Some(ai::SCHED_IDLE_STAND), "mirror of a standing body");
+    assert_eq!(
+        n.ai.schedule,
+        Some(ai::SCHED_IDLE_STAND),
+        "mirror of a standing body"
+    );
     assert_eq!(n.ai.state, ai::NPC_STATE_IDLE);
     let from = n.pos;
     let goal = from + Vec3::new(-400.0, 0.0, 0.0);
@@ -1427,7 +1431,10 @@ fn npc_runs_a_scripted_engine_schedule() {
     // GET_PATH / WALK_PATH chain at once (the engine's MaintainSchedule): the path exists
     // right after SetSchedule and the schedule waits for the movement
     assert!(server.npcs[&id].goal.is_some(), "{:?}", server.npcs[&id].ai);
-    assert_eq!(server.npcs[&id].ai.current_task().map(|t| t.0), Some(ai::TASK_WAIT_FOR_MOVEMENT));
+    assert_eq!(
+        server.npcs[&id].ai.current_task().map(|t| t.0),
+        Some(ai::TASK_WAIT_FOR_MOVEMENT)
+    );
     let mut ticks = 0;
     let mut seen_tasks = Vec::new();
     while server.npcs[&id].ai.scripted && !server.npcs[&id].ai.schedule_done {
@@ -1449,14 +1456,21 @@ fn npc_runs_a_scripted_engine_schedule() {
         "ended {} for goal {goal}",
         n.pos
     );
-    assert!(seen_tasks.contains(&ai::TASK_WAIT_FOR_MOVEMENT), "tasks seen: {seen_tasks:?}");
+    assert!(
+        seen_tasks.contains(&ai::TASK_WAIT_FOR_MOVEMENT),
+        "tasks seen: {seen_tasks:?}"
+    );
     eprintln!("forced go in {ticks} ticks through {seen_tasks:?}");
     assert!(server.npc_set_schedule(id, None));
     for _ in 0..8 {
         server.tick(&idle);
     }
     let n = &server.npcs[&id];
-    assert!(!n.ai.scripted && n.ai.schedule == Some(ai::SCHED_IDLE_STAND), "{:?}", n.ai);
+    assert!(
+        !n.ai.scripted && n.ai.schedule == Some(ai::SCHED_IDLE_STAND),
+        "{:?}",
+        n.ai
+    );
 }
 
 // Gunfire is a combat sound: an NPC in the weapon's hearing radius gets COND_HEAR_COMBAT and
@@ -1504,7 +1518,10 @@ fn npc_hears_gunfire_and_forgets_it() {
         server.tick(&idle);
     }
     let a = &server.npcs[&id].ai;
-    assert!(!a.has(ai::COND_HEAR_COMBAT) && a.last_sound.is_none(), "{a:?}");
+    assert!(
+        !a.has(ai::COND_HEAR_COMBAT) && a.last_sound.is_none(),
+        "{a:?}"
+    );
 }
 
 // UseFollowBehavior: an ally keeps 128..200 u behind its leader - TARGET_CHASE while far,
@@ -1536,7 +1553,15 @@ fn npc_follow_behaviour_keeps_up_with_the_player() {
     }
     let id = server.spawn_npc(1, "npc_citizen", "none").unwrap();
     server.tick(&idle);
-    assert!(server.npc_set_misc(id, None, Some(Some("Follow".into())), None, None, None, None));
+    assert!(server.npc_set_misc(
+        id,
+        None,
+        Some(Some("Follow".into())),
+        None,
+        None,
+        None,
+        None
+    ));
     let from = server.npcs[&id].pos;
     server.teleport_player(1, from + Vec3::new(-500.0, 0.0, 0.0));
     let mut ticks = 0;
@@ -1548,7 +1573,10 @@ fn npc_follow_behaviour_keeps_up_with_the_player() {
         if n.ai.schedule == Some(ai::SCHED_TARGET_CHASE) {
             chased = true;
         }
-        let d = n.pos.truncate().distance(server.players[&1].state.origin.truncate());
+        let d = n
+            .pos
+            .truncate()
+            .distance(server.players[&1].state.origin.truncate());
         if chased && n.goal.is_none() && n.ai.schedule == Some(ai::SCHED_TARGET_FACE) {
             assert!(d <= 200.0 + 16.0, "stopped {d} u away after {ticks} ticks");
             assert!(d >= 100.0, "crowding the player at {d} u");
@@ -1684,7 +1712,9 @@ fn zombie_swats_a_crate_at_the_player() {
     let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     let m2 = gm_content::Mount::for_install(&inst).unwrap();
-    server.model_loader = Some(Box::new(move |m: &str| gm_dedicated::model_info(&m2, m).ok()));
+    server.model_loader = Some(Box::new(move |m: &str| {
+        gm_dedicated::model_info(&m2, m).ok()
+    }));
     server.set_navmesh(world.nav.clone());
     let start = Vec3::new(823.235, -500.0, -143.0);
     server.add_player(1, start, Vec3::new(12.0, 0.0, 0.0));
@@ -1709,7 +1739,10 @@ fn zombie_swats_a_crate_at_the_player() {
     }
     let id = server.spawn_npc(1, "npc_zombie", "none").unwrap();
     let zpos = server.npcs[&id].pos;
-    assert!(zpos.x > 950.0, "zombie spawned at {zpos:?}, the crate must lie between it and the player");
+    assert!(
+        zpos.x > 950.0,
+        "zombie spawned at {zpos:?}, the crate must lie between it and the player"
+    );
     // our zombie walks straight at the player (no steering around the crate), so the player
     // stands back far enough for the crate to be 40..80 u ahead of the zombie at the 2 s scan
     server.teleport_player(1, Vec3::new(760.0, -500.0, -143.0));
@@ -1739,17 +1772,34 @@ fn zombie_swats_a_crate_at_the_player() {
             break;
         }
     }
-    assert_eq!(chased_as, ai::FIRST_CLASS_SCHEDULE as i64, "CHASE_ENEMY reports as the zombie's own id");
+    assert_eq!(
+        chased_as,
+        ai::FIRST_CLASS_SCHEDULE as i64,
+        "CHASE_ENEMY reports as the zombie's own id"
+    );
     let (swat_tick, swat_id, seq) = swat_at.expect("the zombie never swatted the crate");
     assert_eq!(swat_id, ai::FIRST_CLASS_SCHEDULE as i64 + 2);
     assert!(seq.starts_with("swat") && seq.ends_with("low"), "{seq}");
     let (hit_tick, v) = launched.expect("the crate was never launched");
-    assert_eq!(hit_tick - swat_tick, gm_server::ZOMBIE_SWAT_HIT_TICK as usize);
-    assert!(v.x < -600.0 && v.z > 250.0 && v.z < 450.0 && v.y.abs() < 60.0, "launch velocity {v:?}");
-    assert!((v.length() - 843.0).abs() < 60.0, "launch speed {}", v.length());
+    assert_eq!(
+        hit_tick - swat_tick,
+        gm_server::ZOMBIE_SWAT_HIT_TICK as usize
+    );
+    assert!(
+        v.x < -600.0 && v.z > 250.0 && v.z < 450.0 && v.y.abs() < 60.0,
+        "launch velocity {v:?}"
+    );
+    assert!(
+        (v.length() - 843.0).abs() < 60.0,
+        "launch speed {}",
+        v.length()
+    );
     // the crate reaches the player: the game's impact damage is 20 hp (server_npc_zombie_swat)
     let (hurt_tick, dmg) = hurt.expect("the crate never hurt the player");
-    assert!(hurt_tick > hit_tick && hurt_tick - hit_tick < 40, "hurt at {hurt_tick}, launched at {hit_tick}");
+    assert!(
+        hurt_tick > hit_tick && hurt_tick - hit_tick < 40,
+        "hurt at {hurt_tick}, launched at {hit_tick}"
+    );
     assert!((dmg as f32 - 20.0).abs() <= 3.0, "crate damage {dmg}");
 }
 
@@ -1823,21 +1873,35 @@ fn soldier_tosses_a_grenade_at_a_visible_player() {
     assert_eq!(seq, "grenThrow");
     let late = throw_tick - first_seen;
     let first = gm_server::NPC_GRENADE_FIRST_TICKS as usize;
-    assert!((first..=first + 14).contains(&late), "toss {late} ticks after the sighting");
+    assert!(
+        (first..=first + 14).contains(&late),
+        "toss {late} ticks after the sighting"
+    );
     let (hit_tick, origin, v) = toss.expect("no grenade was released");
-    assert_eq!(hit_tick - throw_tick, gm_server::NPC_GRENADE_RELEASE_TICK as usize);
+    assert_eq!(
+        hit_tick - throw_tick,
+        gm_server::NPC_GRENADE_RELEASE_TICK as usize
+    );
     let n = &server.npcs[&id];
     assert!(
         (origin.x - (n.pos.x - 35.0)).abs() < 2.0 && (origin.z - (n.pos.z + 42.0)).abs() < 2.0,
         "released at {origin} for {}",
         n.pos
     );
-    let range = (server.players[&1].state.origin - origin).truncate().length();
-    assert!((256.0..=1024.0).contains(&range), "released {range:.0} u from the player");
+    let range = (server.players[&1].state.origin - origin)
+        .truncate()
+        .length();
+    assert!(
+        (256.0..=1024.0).contains(&range),
+        "released {range:.0} u from the player"
+    );
     // apex 255 u: vz 553, 1.84 s of flight, the horizontal speed lands it on the player
     let flight = 2.0 * 553.0 / 600.0;
     assert!(
-        v.x < 0.0 && v.y.abs() < 10.0 && (v.z - 553.0).abs() < 10.0 && (v.x.abs() - range / flight).abs() < 10.0,
+        v.x < 0.0
+            && v.y.abs() < 10.0
+            && (v.z - 553.0).abs() < 10.0
+            && (v.x.abs() - range / flight).abs() < 10.0,
         "toss velocity {v:?} for {range:.0} u"
     );
 }
