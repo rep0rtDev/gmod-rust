@@ -672,6 +672,8 @@ pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
             SCHED_COMBINE_SUPPRESS => Some(0),
             SCHED_RANGE_ATTACK1 => Some(12),
             SCHED_HIDE_AND_RELOAD => Some(4),
+            SCHED_TAKE_COVER_FROM_ENEMY => Some(14),
+            SCHED_TAKE_COVER_FROM_BEST_SOUND => Some(15),
             SCHED_ESTABLISH_LINE_OF_FIRE => Some(9),
             SCHED_RANGE_ATTACK2 => Some(13),
             _ => None,
