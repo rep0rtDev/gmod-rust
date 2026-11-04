@@ -98,6 +98,9 @@ pub struct Projectile {
     pub movetype: MoveType,
     /// Ticks since launch (0 in the launch tick).
     pub age: u32,
+    /// Ticks after which a grenade explodes (`GRENADE_FUSE_TICKS` for a player's throw,
+    /// 3.5 s for an NPC's).
+    pub fuse: u32,
     /// Where the rocket homes: the aim point on the world at launch.
     pub target: Vec3,
     /// The aim direction at launch: the rocket ignites along it.
@@ -194,6 +197,7 @@ pub fn spawn(
             velocity: forward * ROCKET_LAUNCH + Vec3::new(0.0, 0.0, ROCKET_KICK),
             movetype: MoveType::FlyGravity,
             age: 0,
+            fuse: GRENADE_FUSE_TICKS,
             target,
             aim: forward,
             home,
@@ -211,6 +215,7 @@ pub fn spawn(
             velocity: forward * BOLT_SPEED,
             movetype: MoveType::FlyGravity,
             age: 0,
+            fuse: GRENADE_FUSE_TICKS,
             target,
             aim: forward,
             home,
@@ -228,6 +233,7 @@ pub fn spawn(
             velocity: forward * AR2_GRENADE_SPEED,
             movetype: MoveType::FlyGravity,
             age: 0,
+            fuse: GRENADE_FUSE_TICKS,
             target,
             aim: forward,
             home,
@@ -245,6 +251,7 @@ pub fn spawn(
             velocity: forward * BALL_SPEED,
             movetype: MoveType::VPhysics,
             age: 0,
+            fuse: GRENADE_FUSE_TICKS,
             target,
             aim: forward,
             home,
@@ -291,6 +298,7 @@ pub fn spawn(
                 velocity,
                 movetype: MoveType::VPhysics,
                 age: 0,
+                fuse: GRENADE_FUSE_TICKS,
                 target: origin,
                 aim: forward,
                 home,
@@ -370,7 +378,7 @@ impl Projectile {
         let st = phys.world.state(body);
         self.origin = st.position;
         self.velocity = st.velocity;
-        if self.age >= GRENADE_FUSE_TICKS {
+        if self.age >= self.fuse {
             phys.world.remove_body(body);
             self.body = None;
             return Event::Removed(self.origin);

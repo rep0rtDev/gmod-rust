@@ -469,6 +469,9 @@ pub const SCHED_LEAD_RETRIEVE_WAIT: u16 = 1016;
 /// SCHED_COMBINE_SUPPRESS: the soldier's first volley, the think after it first saw the enemy
 /// (server_npc_grenade_soldier*: 88 at t5, then 100 = SCHED_COMBINE_RANGE_ATTACK1).
 pub const SCHED_COMBINE_SUPPRESS: u16 = 1021;
+/// SCHED_COMBINE_WAIT_IN_COVER: the think after a grenade throw ends (class id +11), followed by
+/// one think of SCHED_COMBAT_FACE (server_npc_grenade_soldier_wall t2246/t2253).
+pub const SCHED_COMBINE_WAIT_IN_COVER: u16 = 1022;
 
 /// The shared schedule a behaviour-private one stands for on a class without a measured block.
 pub fn shared_alias(s: u16) -> u16 {
@@ -479,6 +482,7 @@ pub fn shared_alias(s: u16) -> u16 {
         SCHED_LEAD_RETRIEVE_WAIT => SCHED_IDLE_STAND,
         SCHED_ZOMBIE_WANDER_MEDIUM => SCHED_IDLE_WANDER,
         SCHED_COMBINE_SUPPRESS => SCHED_RANGE_ATTACK1,
+        SCHED_COMBINE_WAIT_IN_COVER => SCHED_COMBAT_FACE,
         _ => s,
     }
 }
@@ -670,6 +674,7 @@ pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
         // of fire, 101 the grenade toss
         "combine" => match shared {
             SCHED_COMBINE_SUPPRESS => Some(0),
+            SCHED_COMBINE_WAIT_IN_COVER => Some(11),
             SCHED_RANGE_ATTACK1 => Some(12),
             SCHED_HIDE_AND_RELOAD => Some(4),
             SCHED_TAKE_COVER_FROM_ENEMY => Some(14),

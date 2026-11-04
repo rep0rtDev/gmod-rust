@@ -2172,6 +2172,8 @@ pub struct Npc {
     /// In flight because it was thrown (a poison zombie's crab): the landing is a plain
     /// landing, no rest or run-away.
     pub thrown: bool,
+    /// Tick a grenade throw ended: one think of WAIT_IN_COVER and one of COMBAT_FACE follow.
+    pub throw_done: u64,
     /// Headcrabs left to throw (poison zombie).
     pub crabs: u8,
     /// Cover: a hit asks for it, the point chosen, the tick the stay there ends, the earliest
@@ -5100,6 +5102,12 @@ impl<'w> Server<'w> {
                 }
             } else if n.grenade.is_some() {
                 ai::SCHED_RANGE_ATTACK2
+            } else if n.throw_done > 0 && now < n.throw_done + 2 * n.think_interval as u64 {
+                if now < n.throw_done + n.think_interval as u64 {
+                    ai::SCHED_COMBINE_WAIT_IN_COVER
+                } else {
+                    ai::SCHED_COMBAT_FACE
+                }
             } else if now < n.flank_until && n.goal.is_some() {
                 ai::SCHED_ESTABLISH_LINE_OF_FIRE
             } else if n.reloading && n.reload_in_place {
@@ -9122,7 +9130,7 @@ impl<'w> Server<'w> {
             .filter(|p| {
                 weapons::explosion(p.kind).is_some()
                     && (p.kind != weapons::Launch::Grenade
-                        || p.age + NPC_GRENADE_WARN_TICKS >= projectile::GRENADE_FUSE_TICKS)
+                        || p.age + NPC_GRENADE_WARN_TICKS >= p.fuse)
             })
             .map(|p| (p.owner, p.origin))
             .chain(
@@ -12584,6 +12592,7 @@ impl<'w> Server<'w> {
             next_leap: 0,
             jump_at: None,
             thrown: false,
+            throw_done: 0,
             crabs: npc_crabs(def.class),
             cover_wanted: false,
             cover_at: None,
@@ -14187,6 +14196,23 @@ impl<'w> Server<'w> {
             let Some(n) = self.npcs.get(&id) else {
                 return;
             };
+            // the body stands through its grenade throw and the WAIT_IN_COVER / COMBAT_FACE
+            // thinks after it (server_npc_grenade_soldier_wall: throw t2183..2246, run t2260)
+            if let Some((_, until, _)) = n.grenade {
+                if now < until {
+                    return;
+                }
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.grenade = None;
+                    n.throw_done = now;
+                    n.burst_left = NPC_BURST_SHOTS;
+                    n.next_shot = now + 3 * n.think_interval as u64;
+                }
+                return;
+            }
+            if now < n.throw_done + 2 * n.think_interval as u64 {
+                return;
+            }
             if let (Some(p), Some(known)) = (old, n.last_known) {
                 // the game's soldier runs for a point with a line of fire to the enemy's last
                 // known position one think after losing sight (server_npc_grenade_soldier_wall)
@@ -14194,6 +14220,8 @@ impl<'w> Server<'w> {
                     && n.flank_until == 0
                     && n.cover_at.is_none()
                     && !n.reloading
+                    && n.grenade.is_none()
+                    && now >= n.throw_done + 2 * n.think_interval as u64
                     && known.distance(eye) <= NPC_LOF_RANGE
                     && self.players.get(&p).is_some_and(|pl| pl.alive)
                 {
@@ -14342,8 +14370,9 @@ impl<'w> Server<'w> {
                 return;
             }
             n.grenade = None;
+            n.throw_done = now;
             n.burst_left = NPC_BURST_SHOTS;
-            n.next_shot = now + n.think_interval as u64;
+            n.next_shot = now + 3 * n.think_interval as u64;
         }
         // a soldier lobs a frag at a visible enemy 256..1024 u away ~12 s into the fight
         // (server_npc_grenade_soldier_wall: grenThrow at t719, released 42 ticks in)
@@ -15666,6 +15695,7 @@ impl<'w> Server<'w> {
             ) else {
                 continue;
             };
+            pr.fuse = NPC_GRENADE_FUSE_TICKS;
             pr.origin = origin;
             pr.velocity = velocity;
             if let Some(body) = pr.body {
@@ -15903,6 +15933,7 @@ impl<'w> Server<'w> {
                 next_leap: 0,
                 jump_at: None,
                 thrown: false,
+                throw_done: 0,
                 crabs: npc_crabs(def.class),
                 cover_wanted: false,
                 cover_at: None,
@@ -20768,6 +20799,10 @@ pub const NPC_GRENADE_FIRST_TICKS: u64 = 714;
 pub const NPC_GRENADE_PERIOD_TICKS: u64 = 714;
 pub const NPC_GRENADE_MIN_DIST: f32 = 256.0;
 pub const NPC_GRENADE_MAX_DIST: f32 = 1024.0;
+/// COMBINE_GRENADE_TIMER 3.5 s: the game's frag warns the NPCs at 2.0 s (TAKE_COVER_FROM_BEST_SOUND
+/// 140 ticks after the release in server_npc_grenade_soldier_wall); its explosion lies past the
+/// recording (the grenade is still listed 245 ticks after the release).
+pub const NPC_GRENADE_FUSE_TICKS: u32 = 233;
 pub const NPC_GRENADE_THROW_TICKS: u64 = 63;
 pub const NPC_GRENADE_RELEASE_TICK: u64 = 42;
 pub const NPC_GRENADE_HAND: (f32, f32) = (35.0, -22.0);
