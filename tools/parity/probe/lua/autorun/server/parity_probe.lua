@@ -830,7 +830,7 @@ SCENARIOS.sandbox = function(scn, done)
 	-- a fresh bot wanders a few frames: pin it at `start` for the run
 	local pin = Vector(scn.start[1], scn.start[2], scn.start[3])
 	-- `press`: buttons the bot holds down until a tick (IN_USE pickup)
-	local pressButtons, pressUntil, pressMove = 0, -1, { forward = 0, side = 0 }
+	local pressButtons, pressUntil, pressMove, pressYaw = 0, -1, { forward = 0, side = 0 }, 0
 	hook.Add("StartCommand", "parity_sandbox_press", function(ply, cmd)
 		if ply ~= bot then return end
 		cmd:ClearButtons()
@@ -857,10 +857,31 @@ SCENARIOS.sandbox = function(scn, done)
 	hook.Add("ScaleNPCDamage", "parity_sandbox_npcdmg", function(npc, hitgroup, dmg)
 		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { scale = true, index = npc:EntIndex(), hitgroup = hitgroup, amount = dmg:GetDamage(), tick = engine.TickCount() }
 	end)
+	local function pressing()
+		return engine.TickCount() <= pressUntil and (pressMove.forward ~= 0 or pressMove.side ~= 0)
+	end
 	hook.Add("SetupMove", "parity_sandbox_pin", function(ply, mv)
 		if ply ~= bot then return end
+		if pressing() then
+			-- a `press` with movement walks the bot along its view yaw; the pin follows it
+			local yaw = pressYaw or 0
+			mv:SetMaxSpeed(math.max(mv:GetMaxSpeed(), math.abs(pressMove.forward), math.abs(pressMove.side)))
+			mv:SetMaxClientSpeed(math.max(mv:GetMaxClientSpeed(), math.abs(pressMove.forward), math.abs(pressMove.side)))
+			local dir = Angle(0, yaw, 0):Forward() * pressMove.forward + Angle(0, yaw, 0):Right() * pressMove.side
+			mv:SetMoveAngles(Angle(0, yaw, 0))
+			mv:SetAngles(Angle(0, yaw, 0))
+			mv:SetButtons(pressButtons)
+			mv:SetForwardSpeed(pressMove.forward)
+			mv:SetSideSpeed(pressMove.side)
+			mv:SetVelocity(Vector(dir.x, dir.y, mv:GetVelocity().z))
+			return
+		end
 		mv:SetOrigin(pin)
 		mv:SetVelocity(Vector(0, 0, 0))
+	end)
+	hook.Add("FinishMove", "parity_sandbox_pin", function(ply, mv)
+		if ply ~= bot then return end
+		if pressing() then pin = mv:GetOrigin() end
 	end)
 	for _, e in ipairs(ents.FindByClass("prop_physics")) do e:Remove() end
 	undo.GetTable()[bot:UniqueID()] = nil
@@ -989,6 +1010,35 @@ SCENARIOS.toolgun = function(scn, done)
 	-- NPC/player damage and NPC shots for server-kind scenarios (same drained list as sandbox)
 	local function v3(v) return { v.x, v.y, v.z } end
 	PARITY_NPC_DAMAGE = {}
+	-- `press`: buttons / movement the bot holds until a tick; movement walks it along op.yaw
+	local pressButtons, pressUntil, pressMove, pressYaw = 0, -1, { forward = 0, side = 0 }, 0
+	local function pressing()
+		return engine.TickCount() <= pressUntil and (pressMove.forward ~= 0 or pressMove.side ~= 0)
+	end
+	hook.Add("StartCommand", "parity_tool_press", function(ply, cmd)
+		if ply ~= bot then return end
+		cmd:ClearButtons()
+		cmd:ClearMovement()
+		if engine.TickCount() <= pressUntil then
+			cmd:SetButtons(pressButtons)
+			cmd:SetForwardMove(pressMove.forward)
+			cmd:SetSideMove(pressMove.side)
+			cmd:SetViewAngles(Angle(0, pressYaw, 0))
+		end
+	end)
+	hook.Add("SetupMove", "parity_tool_press", function(ply, mv)
+		if ply ~= bot or not pressing() then return end
+		local a = Angle(0, pressYaw, 0)
+		local dir = a:Forward() * pressMove.forward + a:Right() * pressMove.side
+		mv:SetMoveAngles(a)
+		mv:SetAngles(a)
+		mv:SetButtons(pressButtons)
+		mv:SetMaxSpeed(math.max(mv:GetMaxSpeed(), dir:Length()))
+		mv:SetMaxClientSpeed(math.max(mv:GetMaxClientSpeed(), dir:Length()))
+		mv:SetForwardSpeed(pressMove.forward)
+		mv:SetSideSpeed(pressMove.side)
+		mv:SetVelocity(Vector(dir.x, dir.y, mv:GetVelocity().z))
+	end)
 	hook.Add("EntityTakeDamage", "parity_sandbox_npcdmg", function(ent, dmg)
 		if not (ent:IsNPC() or ent:IsPlayer()) then return end
 		PARITY_NPC_DAMAGE[#PARITY_NPC_DAMAGE + 1] = { index = ent:EntIndex(), player = ent:IsPlayer() or nil, class = ent:GetClass(), amount = dmg:GetDamage(), types = dmg:GetDamageType(),
@@ -1312,7 +1362,29 @@ SCENARIOS.toolgun = function(scn, done)
 				if e:GetCreator() == bot and (not IsValid(npc) or e:EntIndex() > npc:EntIndex()) then npc = e end
 			end
 			local st = op.settings or {}
-			if IsValid(npc) and st.rally then
+			if IsValid(npc) and st.goal then
+				-- ai_goal_lead: the actor leads the nearest player to an info_target at st.goal
+				npc:SetName("parity_act")
+				local t = ents.Create("info_target")
+				t:SetName("parity_leadgoal")
+				t:SetPos(Vector(st.goal[1], st.goal[2], st.goal[3]))
+				t:Spawn()
+				local g = ents.Create("ai_goal_lead")
+				g:SetName("parity_goal")
+				g:SetKeyValue("Actor", "parity_act")
+				g:SetKeyValue("goal", "parity_leadgoal")
+				g:SetKeyValue("SearchType", "0")
+				g:SetKeyValue("StartActive", "1")
+				g:SetKeyValue("LeadDistance", tostring(st.lead_distance or 64))
+				g:SetKeyValue("RetrieveDistance", tostring(st.retrieve_distance or 0))
+				g:SetKeyValue("SuccessDistance", tostring(st.success_distance or 0))
+				g:SetKeyValue("Run", st.run and "1" or "0")
+				g:SetKeyValue("Retrieve", "1")
+				g:Spawn()
+				g:Activate()
+				g:Fire("Activate")
+				rec.goal = { npc = npc:EntIndex(), points = -2 }
+			elseif IsValid(npc) and st.rally then
 				npc:SetName("parity_act")
 				local pts = st.points or {}
 				for i, pt in ipairs(pts) do
@@ -1450,6 +1522,7 @@ SCENARIOS.toolgun = function(scn, done)
 			pressButtons = 0
 			for _, b in ipairs(type(op.buttons) == "table" and op.buttons or { op.buttons }) do pressButtons = bit.bor(pressButtons, names[b] or 0) end
 			pressMove = { forward = op.forward or 0, side = op.side or 0 }
+			pressYaw = op.yaw or 0
 			pressUntil = engine.TickCount() + (op.ticks or 1)
 			rec.active = IsValid(bot:GetActiveWeapon()) and { class = bot:GetActiveWeapon():GetClass(), next = bot:GetActiveWeapon():GetNextPrimaryFire() - CurTime() } or nil
 		elseif op.op == "teleport" then

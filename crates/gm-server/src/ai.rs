@@ -457,12 +457,17 @@ pub const SCHED_ASSAULT_MOVE_TO_RALLY: u16 = 1001;
 pub const SCHED_ASSAULT_MOVE_TO_POINT: u16 = 1002;
 pub const SCHED_ASSAULT_HOLD_RALLY: u16 = 1003;
 pub const SCHED_ASSAULT_WAIT_AND_CLEAR: u16 = 1004;
+/// CAI_LeadBehavior's first two schedules (its block starts with them in the game's enum).
+pub const SCHED_LEAD_RETRIEVE: u16 = 1005;
+pub const SCHED_LEAD_RETRIEVE_WAIT: u16 = 1006;
 
 /// The shared schedule a behaviour-private one stands for on a class without a measured block.
 pub fn shared_alias(s: u16) -> u16 {
     match s {
         SCHED_ASSAULT_MOVE_TO_RALLY | SCHED_ASSAULT_MOVE_TO_POINT => SCHED_FORCED_GO_RUN,
         SCHED_ASSAULT_HOLD_RALLY | SCHED_ASSAULT_WAIT_AND_CLEAR => SCHED_IDLE_STAND,
+        SCHED_LEAD_RETRIEVE => SCHED_FORCED_GO,
+        SCHED_LEAD_RETRIEVE_WAIT => SCHED_IDLE_STAND,
         _ => s,
     }
 }
@@ -659,12 +664,15 @@ pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
             _ => None,
         },
         // measured on a citizen under ai_goal_assault (server_npc_assault_citizen): 91 running
-        // to the rally point, 96 holding it, 94 running to an assault point, 98 holding one
+        // to the rally point, 96 holding it, 94 running to an assault point, 98 holding one;
+        // under ai_goal_lead (server_npc_lead_citizen*): 114 retrieving the player, 115 waiting
         "citizen" => match shared {
             SCHED_ASSAULT_MOVE_TO_RALLY => Some(3),
             SCHED_ASSAULT_MOVE_TO_POINT => Some(6),
             SCHED_ASSAULT_HOLD_RALLY => Some(8),
             SCHED_ASSAULT_WAIT_AND_CLEAR => Some(10),
+            SCHED_LEAD_RETRIEVE => Some(26),
+            SCHED_LEAD_RETRIEVE_WAIT => Some(27),
             _ => None,
         },
         _ => None,
@@ -1196,8 +1204,10 @@ pub const ASSAULT_TO_POINT: u8 = 2;
 pub const ASSAULT_AT_POINT: u8 = 3;
 pub const ASSAULT_DONE: u8 = 4;
 
-/// `ai_goal_lead`: walk the player to the goal, waiting when they fall more than the lead
-/// distance behind and going back for them past the retrieve distance.
+/// `ai_goal_lead`: the actor retrieves the nearest player to within the lead distance and
+/// waits facing them, retrieving again when they lag past it (measured on a dedicated
+/// server, see `Server::ai_goal_step`); `retrieve_to` is the (point, running) of the retrieve
+/// path in flight.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LeadGoal {
     pub goal: glam::Vec3,
@@ -1207,6 +1217,7 @@ pub struct LeadGoal {
     pub run: bool,
     pub waiting: bool,
     pub done: bool,
+    pub retrieve_to: Option<(glam::Vec3, bool)>,
 }
 
 /// An `info_node_hint` an ActBusy goal may use: where to stand and what to play there.

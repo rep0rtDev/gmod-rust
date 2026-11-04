@@ -4721,12 +4721,16 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 // activates it on the latest NPC; ours hands the same goal to the brain
                 if let Some(&id) = server.npcs.keys().last() {
                     let mut goal = serde_json::Map::new();
-                    goal.insert("kind".into(), json!("assault"));
+                    let mut kind = "assault";
                     if let Some(st) = &op.settings {
+                        if st.contains_key("goal") {
+                            kind = "lead";
+                        }
                         for (k, v) in st {
                             goal.insert(k.clone(), v.clone());
                         }
                     }
+                    goal.insert("kind".into(), json!(kind));
                     rec["started"] =
                         json!(server.npc_set_goal(id, &Value::Object(goal).to_string()));
                 }
@@ -4761,8 +4765,9 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }
         }
         rec["immediate"] = snapshot(&server);
+        // the probe's wait/think default (`op.ticks or 10`)
         let ticks = if matches!(op.op.as_str(), "wait" | "think") {
-            op.ticks.unwrap_or(3)
+            op.ticks.unwrap_or(10)
         } else {
             op.wait.unwrap_or(3)
         };

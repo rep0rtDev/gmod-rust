@@ -1,0 +1,953 @@
+{
+ "name": "server_npc_assault_citizen",
+ "kind": "server",
+ "ops": [
+  {
+   "op": "cleanup"
+  },
+  {
+   "op": "concmd",
+   "cmd": "sbox_godmode",
+   "value": "0"
+  },
+  {
+   "op": "concmd",
+   "cmd": "ai_disabled",
+   "value": "0"
+  },
+  {
+   "op": "concmd",
+   "cmd": "ai_ignoreplayers",
+   "value": "1"
+  },
+  {
+   "op": "spawnnpc",
+   "class": "npc_citizen",
+   "weapon": "none",
+   "pitch": 20.0,
+   "yaw": 0.0
+  },
+  {
+   "op": "npcgoal",
+   "settings": {
+    "goal": [
+     1002.0,
+     100.0,
+     -144.0
+    ],
+    "lead_distance": 64.0,
+    "retrieve_distance": 0.0,
+    "success_distance": 0.0,
+    "run": false
+   }
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  },
+  {
+   "op": "wait"
+  }
+ ],
+ "map": "gm_construct",
+ "start": [
+  823.235,
+  -500.0,
+  -143.0
+ ],
+ "settle": 40,
+ "props": []
+}

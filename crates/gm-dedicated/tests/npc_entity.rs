@@ -2081,9 +2081,10 @@ fn lead_goal_retrieves_then_waits_for_a_player_who_stays() {
         }
     }
     let (t, d) = waited_at.expect("never waited for the player");
-    // retrieved to inside 128 u of the player (started 169 u away), then waited there
-    assert!(d <= 128.0 && d > 64.0, "waited at {d} u (t{t})");
-    assert!(min_d > 60.0, "walked onto the player ({min_d} u)");
+    // retrieved from 169 u to 24 u inside the default lead distance (64), as the game's citizen
+    // stops at 40 / 103 / 176 u for lead distances 64 / 128 / 200, then waited there
+    assert!((d - 40.0).abs() < 2.0, "waited at {d} u (t{t})");
+    assert!(min_d > 36.0, "walked onto the player ({min_d} u)");
     assert!(
         server.npcs[&id].goal.is_none(),
         "still moving while waiting"

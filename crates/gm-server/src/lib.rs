@@ -5389,6 +5389,7 @@ impl<'w> Server<'w> {
             "lead" => (
                 ai::NpcGoal::Lead(ai::LeadGoal {
                     goal: w.goal.map(v3).unwrap_or(n.pos),
+                    retrieve_to: None,
                     lead_distance: w
                         .lead_distance
                         .filter(|d| *d > 0.0)
@@ -5664,7 +5665,6 @@ impl<'w> Server<'w> {
         let behavior = n.ai.behavior.clone();
         let pos = n.pos;
         let moving = n.goal.is_some();
-        let chase = n.chase;
         let dist = move |p: Vec3| pos.truncate().distance(p.truncate());
         let (goal, state, sched) = match (behavior.as_deref(), goal) {
             (Some("Assault"), ai::NpcGoal::Assault(mut g)) => {
@@ -5792,6 +5792,13 @@ impl<'w> Server<'w> {
                 (ai::NpcGoal::Assault(g), state, sched)
             }
             (Some("Lead"), ai::NpcGoal::Lead(mut g)) => {
+                // measured on srcds (server_npc_lead_citizen*): the citizen retrieves to
+                // lead_distance - 24 of the nearest player (SCHED_LEAD_RETRIEVE: walk_all, or
+                // run_all while far with Run set) and then holds SCHED_LEAD_RETRIEVE_WAIT facing
+                // them, NPC_STATE_IDLE throughout; a player standing by or walking up never
+                // ends the wait, one lagging past the lead distance is retrieved again, and
+                // the goal position is never walked to on a dedicated server, so SetSuccess is
+                // the only way the goal completes.
                 if g.done {
                     return false;
                 }
@@ -5812,44 +5819,45 @@ impl<'w> Server<'w> {
                     return false;
                 };
                 let ppos = self.players[&p].state.origin;
-                let (d_player, d_goal) = (dist(ppos), dist(g.goal));
+                let d_player = dist(ppos);
+                let range = (g.lead_distance - NPC_LEAD_RANGE_SLACK).max(0.0);
                 let sched;
-                if d_goal <= g.success_distance && d_player <= g.retrieve_distance {
+                if g.waiting && d_player <= g.lead_distance {
+                    sched = ai::SCHED_LEAD_RETRIEVE_WAIT;
+                } else if !g.waiting && d_player <= range + 1.0 {
                     self.npc_stop(id);
-                    g.done = true;
-                    sched = ai::SCHED_IDLE_STAND;
-                } else if d_player > g.retrieve_distance {
-                    // the player fell too far behind: go back for them
-                    if chase != Some(p) {
-                        self.npc_chase(id, p, true);
+                    g.waiting = true;
+                    g.retrieve_to = None;
+                    if let Some(seq) = self.npc_activity_sequence(id, "ACT_IDLE") {
+                        self.set_sequence(id, &seq);
                     }
+                    sched = ai::SCHED_LEAD_RETRIEVE_WAIT;
+                } else {
                     g.waiting = false;
-                    sched = ai::SCHED_TARGET_CHASE;
-                } else if d_player > g.lead_distance {
-                    if moving {
-                        self.npc_stop(id);
+                    let run = g.run && d_player > g.lead_distance * NPC_LEAD_RUN_FACTOR;
+                    let to = pos + (ppos - pos).normalize_or_zero() * (d_player - range);
+                    if !moving
+                        || g.retrieve_to
+                            .map_or(true, |(t, r)| r != run || t.distance(to) > 16.0)
+                    {
+                        self.npc_goto(id, to, run);
+                        let act = if run { "ACT_RUN" } else { "ACT_WALK" };
+                        if let Some(seq) = self.npc_activity_sequence(id, act) {
+                            self.set_sequence(id, &seq);
+                        }
+                        g.retrieve_to = Some((to, run));
                     }
+                    sched = ai::SCHED_LEAD_RETRIEVE;
+                }
+                if g.waiting {
                     let to = ppos - pos;
                     if let Some(n) = self.npcs.get_mut(&id) {
                         n.ideal_yaw = Some(to.y.atan2(to.x).to_degrees());
                     }
-                    g.waiting = true;
-                    sched = ai::SCHED_TARGET_FACE;
-                } else {
-                    if !moving || g.waiting || chase.is_some() {
-                        if let Some(n) = self.npcs.get_mut(&id) {
-                            n.ideal_yaw = None;
-                        }
-                        self.npc_goto(id, g.goal, g.run);
-                    }
-                    g.waiting = false;
-                    sched = if g.run {
-                        ai::SCHED_FORCED_GO_RUN
-                    } else {
-                        ai::SCHED_FORCED_GO
-                    };
+                } else if let Some(n) = self.npcs.get_mut(&id) {
+                    n.ideal_yaw = None;
                 }
-                (ai::NpcGoal::Lead(g), ai::NPC_STATE_ALERT, sched)
+                (ai::NpcGoal::Lead(g), ai::NPC_STATE_IDLE, sched)
             }
             (Some("ActBusy"), ai::NpcGoal::ActBusy(mut g)) => {
                 if target.is_some() || g.hints.is_empty() {
@@ -14035,8 +14043,15 @@ impl<'w> Server<'w> {
             return 0;
         };
         let Some(s) = n.ai.schedule else {
-            // a goal just took the NPC: no schedule until its next think (the game reads -1)
-            return if n.ai.goal.is_some() { -1 } else { 0 };
+            // an assault goal just took the NPC: no schedule until its next think (the game
+            // reads -1 there, while a lead goal's citizen still reads its idle stand)
+            return if matches!(n.ai.goal, Some(ai::NpcGoal::Assault(_))) {
+                -1
+            } else if n.ai.goal.is_some() {
+                i64::from(ai::SCHED_IDLE_STAND)
+            } else {
+                0
+            };
         };
         let translated = ai::class_sched_family(&n.class).and_then(|fam| {
             let base = *self.class_sched_bases.get(fam)?;
@@ -19436,6 +19451,11 @@ pub const NPC_GOAL_ARRIVE: f32 = 36.0;
 pub const NPC_GOAL_EXACT: f32 = 4.0;
 pub const NPC_LEAD_DISTANCE: f32 = 64.0;
 pub const NPC_RETRIEVE_DISTANCE: f32 = 128.0;
+/// A retrieving leader stops this far inside the lead distance (game: 103 u at 128, 40 at
+/// 64, 176 at 200) and runs, with Run set, only while farther than this many lead distances
+/// (game: run_all at 560 u, walk_all from 165 u at a lead distance of 128).
+const NPC_LEAD_RANGE_SLACK: f32 = 24.0;
+const NPC_LEAD_RUN_FACTOR: f32 = 1.5;
 pub const NPC_LEAD_SUCCESS: f32 = 32.0;
 pub const NPC_ACTBUSY_SEARCH_TICKS: u64 = 66;
 pub const NPC_ACTBUSY_TICKS: u64 = 660;

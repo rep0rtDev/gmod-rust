@@ -5344,3 +5344,63 @@ realm = "server"
 crates = ["gm-server", "gm-nav", "gm-physics"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_npc_lead_citizen"
+scenario = "server/npc_lead_citizen"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_lead_citizen_close"
+scenario = "server/npc_lead_citizen_close"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_lead_citizen_close2"
+scenario = "server/npc_lead_citizen_close2"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_lead_citizen_d64"
+scenario = "server/npc_lead_citizen_d64"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_lead_citizen_d200"
+scenario = "server/npc_lead_citizen_d200"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_lead_citizen_walk"
+scenario = "server/npc_lead_citizen_walk"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+
+[harness.tolerance]
+pos = 2.0
