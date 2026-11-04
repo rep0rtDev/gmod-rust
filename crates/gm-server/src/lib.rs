@@ -2144,6 +2144,10 @@ pub struct Npc {
     pub flank_until: u64,
     /// SCHED_SHOOT_ENEMY_COVER: the enemy is out of sight and the body shoots its cover.
     pub cover_fire: bool,
+    /// SCHED_RELOAD: the run to the reload cover was blocked by another NPC, reload in place.
+    pub reload_in_place: bool,
+    /// Last tick a movement sweep was stopped by another NPC's hull.
+    pub npc_blocked_at: u64,
     /// Local detour round a prop that blocked the move: the corner aimed at, which side of the
     /// path it lies (kept while skirting a wall of props) and when it is given up.
     pub detour: Option<Vec3>,
@@ -2389,6 +2393,9 @@ pub const NPC_BURST_SHOTS: u8 = 5;
 /// SCHED_SHOOT_ENEMY_COVER fires two rounds a cycle (server_npc_grenade_soldier_low: every
 /// burst t399/406, t448/455, ... while the bot stood behind the crates).
 pub const NPC_COVER_BURST_SHOTS: u8 = 2;
+/// NPC hulls enter the movement sweeps as prop bodies with ids from here (`NPC_BODY_ID_BASE + id`):
+/// NPCs are solid to each other, a mate on the cover node stops the runner 34 u short.
+pub const NPC_BODY_ID_BASE: u32 = u32::MAX - 0x10000;
 /// Where an armed NPC's round starts (the SMG1 muzzle in the game's shot records).
 pub const NPC_MUZZLE_RIGHT: f32 = 8.0;
 pub const NPC_MUZZLE_UP_CROUCHED: f32 = 36.0;
@@ -5085,6 +5092,8 @@ impl<'w> Server<'w> {
                 ai::SCHED_RANGE_ATTACK2
             } else if now < n.flank_until && n.goal.is_some() {
                 ai::SCHED_ESTABLISH_LINE_OF_FIRE
+            } else if n.reloading && n.reload_in_place {
+                ai::SCHED_RELOAD
             } else if n.reloading {
                 ai::SCHED_HIDE_AND_RELOAD
             } else if n.cover_at.is_some() {
@@ -12513,6 +12522,8 @@ impl<'w> Server<'w> {
             burst_left: 0,
             next_shot: 0,
             cover_fire: false,
+            reload_in_place: false,
+            npc_blocked_at: 0,
             shots: 0,
             chase_reach: NPC_CHASE_REACH,
             max_yaw: None,
@@ -13255,6 +13266,32 @@ impl<'w> Server<'w> {
 
     fn tick_npc_move(&mut self) {
         let prop_bodies = self.prop_bodies();
+        // the other NPCs' hulls block a move like props (COLLISION_GROUP_NPC is solid to NPCs)
+        let npc_bodies: Vec<(u32, gm_sandbox::PropBody)> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| n.dead_at.is_none() && n.body.is_none())
+            .map(|(&i, n)| {
+                let hulls = vec![vec![
+                    (Vec3::X, n.maxs.x),
+                    (Vec3::NEG_X, -n.mins.x),
+                    (Vec3::Y, n.maxs.y),
+                    (Vec3::NEG_Y, -n.mins.y),
+                    (Vec3::Z, n.maxs.z),
+                    (Vec3::NEG_Z, -n.mins.z),
+                ]];
+                (
+                    i,
+                    gm_sandbox::PropBody {
+                        id: NPC_BODY_ID_BASE + i,
+                        bone: 0,
+                        pos: n.pos,
+                        angles: Vec3::ZERO,
+                        hulls,
+                    },
+                )
+            })
+            .collect();
         if self.ai_disabled {
             return;
         }
@@ -13364,6 +13401,16 @@ impl<'w> Server<'w> {
                 (def.walk, def.walk_accel)
             };
             let (pos, mins, maxs, v0, yaw0) = (n.pos, n.mins, n.maxs, n.move_speed, n.angles.y);
+            let prop_bodies: Vec<gm_sandbox::PropBody> = prop_bodies
+                .iter()
+                .cloned()
+                .chain(
+                    npc_bodies
+                        .iter()
+                        .filter(|(i, _)| *i != id)
+                        .map(|(_, b)| b.clone()),
+                )
+                .collect();
             let mut reversal = n.reversal;
             // a corner within reach is passed only when the hull can already sweep to the
             // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
@@ -13526,7 +13573,13 @@ impl<'w> Server<'w> {
                 let back = pos + lift - (dir * NPC_SWEEP_BACKOFF).extend(0.0);
                 let hit = gm_sandbox::sweep_hull_props(&prop_bodies, back, want + lift, mins, maxs)
                     .filter(|h| h.ent.is_some());
-                if let Some(pb) = hit.and_then(|h| prop_bodies.iter().find(|p| Some(p.id) == h.ent))
+                if hit.is_some_and(|h| h.ent.is_some_and(|e| e >= NPC_BODY_ID_BASE)) {
+                    // another NPC in the way: no skirting, the move just stops against it
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.npc_blocked_at = now;
+                    }
+                } else if let Some(pb) =
+                    hit.and_then(|h| prop_bodies.iter().find(|p| Some(p.id) == h.ent))
                 {
                     let r = self
                         .sandbox
@@ -13868,6 +13921,7 @@ impl<'w> Server<'w> {
         }
         // cover and reload timers run whether or not the enemy is in sight (the run to the
         // reload cover usually loses it)
+        let mut stop_for_reload = false;
         if let Some(n) = self.npcs.get_mut(&id) {
             if n.cover_at.is_some() && n.goal.is_none() && n.cover_until == 0 {
                 n.cover_until = now + NPC_COVER_TICKS;
@@ -13877,6 +13931,24 @@ impl<'w> Server<'w> {
             let at_cover = n
                 .cover_at
                 .is_some_and(|c| c.truncate().distance(n.pos.truncate()) < NPC_COVER_ARRIVE);
+            if n.reloading
+                && n.reload_until == 0
+                && n.cover_at.is_some()
+                && !at_cover
+                && n.npc_blocked_at != 0
+                && now <= n.npc_blocked_at + 2 * n.think_interval as u64
+            {
+                // HIDE_AND_RELOAD's run stopped by a squadmate on the cover: the schedule fails to
+                // SCHED_RELOAD and the body reloads where it stands, one think later
+                // (server_npc_squad_soldier: the mate halts 34 u short of the leader's node at
+                // t1253, `reload` from t1260)
+                stop_for_reload = true;
+                n.cover_at = None;
+                n.cover_until = 0;
+                n.cover_wanted = false;
+                n.reload_in_place = true;
+                n.reload_until = now + n.think_interval as u64 + NPC_RELOAD_TICKS;
+            }
             if n.reloading
                 && n.reload_until == 0
                 && !n.cover_wanted
@@ -13891,12 +13963,16 @@ impl<'w> Server<'w> {
             if n.reloading && n.reload_until != 0 && now >= n.reload_until {
                 n.clip = npc_clip_size(&n.weapon);
                 n.reloading = false;
+                n.reload_in_place = false;
                 n.reload_until = 0;
             }
             if n.cover_at.is_some() && now >= n.cover_until && n.cover_until != 0 {
                 n.cover_at = None;
                 n.cover_until = 0;
             }
+        }
+        if stop_for_reload {
+            self.npc_stop(id);
         }
         let Some(n) = self.npcs.get(&id) else {
             return;
@@ -14013,6 +14089,7 @@ impl<'w> Server<'w> {
                 if npc_combat_sequences(&n.class).is_some()
                     && n.flank_until == 0
                     && n.cover_at.is_none()
+                    && !n.reloading
                     && known.distance(eye) <= NPC_LOF_RANGE
                     && self.players.get(&p).is_some_and(|pl| pl.alive)
                 {
@@ -15670,6 +15747,8 @@ impl<'w> Server<'w> {
                 burst_left: 0,
                 next_shot: 0,
                 cover_fire: false,
+                reload_in_place: false,
+                npc_blocked_at: 0,
                 shots: 0,
                 chase_reach: NPC_CHASE_REACH,
                 max_yaw: None,
