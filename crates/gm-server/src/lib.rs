@@ -2255,6 +2255,9 @@ pub const NPC_VIEW_CONE_COS: f32 = 0.766;
 pub const NPC_CHASE_REACH: f32 = 64.0;
 const NPC_CHASE_REPATH: f32 = 16.0;
 const NPC_YAW_RATE: f32 = 150.0;
+/// A fighting NPC turning toward a sighted enemy while it runs: 44..46 deg per think
+/// (server_npc_grenade_soldier_wall: yaw 221 -> 177 -> 131 over t1602..1616).
+const NPC_AIM_YAW_RATE: f32 = 430.0;
 /// Our combat model. Only the fire cadence and the per-hit damage come from the game
 /// (server_npc_fire_soldier: one shot per 7-tick think, 5 per burst, 28 ticks between bursts,
 /// `sk_npc_dmg_*`); target choice, sight range, aim cone and loss handling are our own rules.
@@ -13458,6 +13461,15 @@ impl<'w> Server<'w> {
                 )
                 .collect();
             let mut reversal = n.reversal;
+            // a fighting NPC that sees its enemy runs facing it: no body turn toward the path
+            // and none of the reversal's lost thinks (server_npc_grenade_soldier_wall: the
+            // t1490 run faces its path (yaw 221) from 382 u down to 250 u and turns to the bot
+            // the think it clears the wall's end (t1602); the t2260 run faces it throughout)
+            let enemy_face = n
+                .target
+                .and(n.last_known)
+                .filter(|_| n.target_seen + n.think_interval as u64 >= now)
+                .map(|k| k.truncate());
             // a corner within reach is passed only when the hull can already sweep to the
             // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
             while idx + 1 < points.len()
@@ -13478,6 +13490,7 @@ impl<'w> Server<'w> {
             } else {
                 0.0
             };
+            let yaw_err = if enemy_face.is_some() { 0.0 } else { yaw_err };
             let turning = yaw_err > 0.5;
             if v0 <= 0.0 && yaw_err > NPC_REVERSAL_DEG && reversal == 0 {
                 // measured (corner_seen, y180): a start that reverses the body loses its first
@@ -13673,6 +13686,10 @@ impl<'w> Server<'w> {
                 Some(g) if g.truncate().distance_squared(floor.truncate()) > 1e-6 => (
                     (g.truncate() - floor.truncate()).normalize(),
                     max_yaw.unwrap_or(NPC_YAW_RATE + NPC_YAW_RATE_PER_SPEED * v0),
+                ),
+                _ if enemy_face.is_some_and(|k| k.distance_squared(floor.truncate()) > 1e-6) => (
+                    (enemy_face.unwrap() - floor.truncate()).normalize(),
+                    max_yaw.unwrap_or(NPC_AIM_YAW_RATE),
                 ),
                 // through a reversal the body turns 15.7 / 31.5 deg on alternate thinks
                 _ if reversal > 1 && reversal % 2 == 1 => {
@@ -14360,6 +14377,13 @@ impl<'w> Server<'w> {
         }
         if n.target_seen != 0 && now > n.target_seen + n.think_interval as u64 {
             n.reacquired_at = now;
+            // an enemy sighted again gets a full burst three thinks later, as the first one
+            // (server_npc_grenade_soldier_wall: seen from the run t1602, rounds t1623..1651;
+            // main: seen from the node t2421, rounds t2442..)
+            if n.burst_left == 0 && !blind && n.last_shot > 0 {
+                n.burst_left = NPC_BURST_SHOTS;
+                n.next_shot = now + 3 * n.think_interval as u64;
+            }
         }
         if !blind {
             n.target_seen = now;
