@@ -732,7 +732,9 @@ public:
 			for (size_t i2 = 0; inside && i2 < h.size(); ++i2) {
 				const auto &a = h[i2], &b = h[(i2 + 1) % h.size()];
 				float len = std::hypot(b.first - a.first, b.second - a.second);
-				if (len > 1e-6f && cross(a, b, cp) / len < 0.0f) inside = false;
+				// 3 cm of margin: Jolt reports part of a lying body's face touching, the centre
+				// of mass a hair outside it (the locker on its side, `phys_slip_lockers_v50`)
+				if (len > 1e-6f && cross(a, b, cp) / len < -0.03f) inside = false;
 			}
 			if (!inside) {
 				// the pivot row carries the body like a hinge: the inelastic normal impulse at the
