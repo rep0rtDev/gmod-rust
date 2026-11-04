@@ -6154,7 +6154,25 @@ impl<'w> Server<'w> {
                     g.waiting = false;
                     let run = g.run && d_player > g.lead_distance * NPC_LEAD_RUN_FACTOR;
                     let to = pos + (ppos - pos).normalize_or_zero() * (d_player - range);
-                    if !moving
+                    let gait_only = moving
+                        && g.retrieve_to
+                            .is_some_and(|(t, r)| r != run && t.distance(to) <= 16.0);
+                    if gait_only {
+                        // run -> walk on the same leg: the game changes gait in place (the
+                        // walk's ground speed from that think, 40.9 -> ~8 u per think in
+                        // server_npc_lead_citizen) - no redirect halt, no new path
+                        if let Some(n) = self.npcs.get_mut(&id) {
+                            n.run = run;
+                            if !run {
+                                n.move_speed = n.move_speed.min(npc_move_def(&n.class).walk);
+                            }
+                        }
+                        let act = if run { "ACT_RUN" } else { "ACT_WALK" };
+                        if let Some(seq) = self.npc_activity_sequence(id, act) {
+                            self.set_sequence(id, &seq);
+                        }
+                        g.retrieve_to = Some((to, run));
+                    } else if !moving
                         || g.retrieve_to
                             .is_none_or(|(t, r)| r != run || t.distance(to) > 16.0)
                     {
