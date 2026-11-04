@@ -2373,6 +2373,10 @@ impl MoveOverride {
     }
 }
 pub const NPC_BURST_SHOTS: u8 = 5;
+/// Where an armed NPC's round starts (the SMG1 muzzle in the game's shot records).
+pub const NPC_MUZZLE_RIGHT: f32 = 8.0;
+pub const NPC_MUZZLE_UP_CROUCHED: f32 = 36.0;
+pub const NPC_MUZZLE_UP_STANDING: f32 = 57.0;
 /// The suppress volley on first contact: two rounds (game: t323 and t330 after the sight
 /// think t320), the first full burst 55 ticks after the second (t385), then every 49.
 pub const NPC_FIRST_BURST_SHOTS: u8 = 2;
@@ -14141,6 +14145,21 @@ impl<'w> Server<'w> {
         n.shots += 1;
         n.clip = n.clip.saturating_sub(1);
         n.last_shot = now;
+        // the round leaves the weapon's muzzle, not the eye: 8 u to the right of the body,
+        // 36 u up crouched / 57 u standing (every game soldier shot's `src`), so a sight line
+        // through a gap does not carry the bullet
+        let yaw = n.angles.y.to_radians();
+        let muzzle = n.pos
+            + Vec3::new(yaw.sin(), -yaw.cos(), 0.0) * NPC_MUZZLE_RIGHT
+            + Vec3::new(
+                0.0,
+                0.0,
+                if n.combat_moved {
+                    NPC_MUZZLE_UP_STANDING
+                } else {
+                    NPC_MUZZLE_UP_CROUCHED
+                },
+            );
         // COND_LOW_PRIMARY_AMMO: a quarter of the magazine left ends the burst and sends the
         // body to reload (game: the 34th of 45 SMG1 rounds, mid-burst, in every scene)
         if n.clip as u16 * 4 <= npc_clip_size(&n.weapon) as u16 && !n.reloading {
@@ -14182,7 +14201,7 @@ impl<'w> Server<'w> {
             if let Verdict::Text(t) = self.ask(Request::NpcShoot {
                 npc: id,
                 weapon: n_weapon.clone(),
-                pos: eye,
+                pos: muzzle,
                 dir: aim,
             }) {
                 let mut parts = t.split(',');
@@ -14198,7 +14217,7 @@ impl<'w> Server<'w> {
         }
         for k in 0..pellets {
             let dir = cone_dir(aim, cone, seed.wrapping_add(k as u64 * 7919));
-            self.npc_fire_bullet(id, eye, dir, dmg);
+            self.npc_fire_bullet(id, muzzle, dir, dmg);
         }
     }
 
