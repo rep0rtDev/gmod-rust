@@ -2232,8 +2232,10 @@ pub struct Npc {
 #[derive(Clone, Debug, PartialEq)]
 pub struct NpcPath {
     pub points: Vec<Vec3>,
-    /// `points[i]` is reached from `points[i - 1]` over a jump link (empty: none are).
-    pub jumps: Vec<bool>,
+    /// The CAP_MOVE bit of the graph link that reaches `points[i]` from `points[i - 1]`
+    /// (CAP_MOVE_GROUND / 0 for walking, JUMP for a flight, CLIMB for a ladder; empty: all
+    /// walked).
+    pub links: Vec<u8>,
     pub idx: usize,
     pub partial: bool,
     pub braking: bool,
@@ -6723,15 +6725,14 @@ impl AiGraph {
             if m == 0 {
                 return None;
             }
+            let bit = if m & gm_formats::ain::CAP_MOVE_GROUND != 0 {
+                gm_formats::ain::CAP_MOVE_GROUND
+            } else {
+                m.isolate_lowest_one()
+            };
             match node_type {
-                gm_formats::ain::NODE_GROUND => {
-                    Some(if m & gm_formats::ain::CAP_MOVE_GROUND != 0 {
-                        gm_formats::ain::CAP_MOVE_GROUND
-                    } else {
-                        m.isolate_lowest_one()
-                    })
-                }
-                gm_formats::ain::NODE_CLIMB if climb => Some(gm_formats::ain::CAP_MOVE_CLIMB),
+                gm_formats::ain::NODE_GROUND => Some(bit),
+                gm_formats::ain::NODE_CLIMB if climb => Some(bit),
                 _ => None,
             }
         })
@@ -6827,7 +6828,7 @@ pub fn npc_find_path(
 }
 
 /// `npc_find_path` over the graph links the class `caps` (`npc_move_caps`) may cross, with
-/// a flag per point set where the route jumps a link (`NpcPath::jumps`).
+/// the CAP_MOVE bit of the link that reaches each point (`NpcPath::links`).
 #[allow(clippy::too_many_arguments)]
 pub fn npc_find_route(
     nav: Option<&gm_nav::NavMesh>,
@@ -6838,7 +6839,7 @@ pub fn npc_find_route(
     hull: usize,
     local_max: f32,
     caps: u8,
-) -> Option<(gm_nav::Path, Vec<bool>)> {
+) -> Option<(gm_nav::Path, Vec<u8>)> {
     let nav = nav?;
     let direct = nav.find_path(from, to, extents)?;
     let local = from.truncate().distance(to.truncate()) <= local_max;
@@ -6871,24 +6872,22 @@ pub fn npc_find_route(
     let mut points = vec![from];
     points.extend(chain.iter().map(|&(i, _)| g.node_pos(i, hull)));
     points.push(to);
-    let mut jumps = vec![false];
-    jumps.extend(
-        chain
-            .iter()
-            .map(|&(_, bit)| bit == gm_formats::ain::CAP_MOVE_JUMP),
-    );
-    jumps.push(false);
+    let mut links = vec![0];
+    links.extend(chain.iter().map(|&(_, bit)| bit));
+    links.push(0);
     Some((
         gm_nav::Path {
             points,
             partial: false,
         },
-        jumps,
+        links,
     ))
 }
 
 /// Horizontal speed of a route jump for classes without a leap (u/s, unmeasured).
 pub const NPC_LINK_JUMP_SPEED: f32 = 350.0;
+/// Vertical speed up / down a climb link (u/s, unmeasured: no ladder scene on the oracle).
+pub const NPC_CLIMB_SPEED: f32 = 100.0;
 pub const HINT_WORLD_WORK_POSITION: u16 = 12;
 pub const HINT_TACTICAL_COVER_MED: u16 = 100;
 pub const HINT_TACTICAL_COVER_LOW: u16 = 101;
@@ -13152,9 +13151,8 @@ impl<'w> Server<'w> {
             return false;
         }
         let extents = Vec3::new(32.0, 32.0, 72.0);
-        // climb links wait for a climb in the mover: a climber walks the ground ones
-        let caps = npc_move_caps(&n.class) & !gm_formats::ain::CAP_MOVE_CLIMB;
-        let Some((path, jumps)) = npc_find_route(
+        let caps = npc_move_caps(&n.class);
+        let Some((path, links)) = npc_find_route(
             Some(nav),
             self.ai_graph.as_ref(),
             n.pos,
@@ -13179,7 +13177,7 @@ impl<'w> Server<'w> {
             }
             n.goal = Some(NpcPath {
                 points: path.points,
-                jumps,
+                links,
                 idx: 1,
                 partial,
                 braking: false,
@@ -13581,7 +13579,7 @@ impl<'w> Server<'w> {
                             ) {
                                 n.goal = Some(NpcPath {
                                     points: path.points,
-                                    jumps: Vec::new(),
+                                    links: Vec::new(),
                                     idx: 1,
                                     partial: path.partial,
                                     braking: false,
@@ -13604,7 +13602,7 @@ impl<'w> Server<'w> {
             let braking = goal.braking;
             let halt = goal.halt;
             let points = goal.points.clone();
-            let jumps = goal.jumps.clone();
+            let links = goal.links.clone();
             let next_goal = n.next_goal;
             let max_yaw = n.max_yaw;
             let mut idx = goal.idx.min(points.len() - 1);
@@ -13641,7 +13639,8 @@ impl<'w> Server<'w> {
             while idx + 1 < points.len()
                 && points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
             {
-                if jumps.get(idx + 1).copied().unwrap_or(false) {
+                let link = links.get(idx + 1).copied().unwrap_or(0);
+                if link == gm_formats::ain::CAP_MOVE_JUMP {
                     // the launch node of a jump link: fly to the far node, walk on from there
                     if let Some(g) = self.npcs.get_mut(&id).and_then(|n| n.goal.as_mut()) {
                         g.idx = idx + 1;
@@ -13650,8 +13649,30 @@ impl<'w> Server<'w> {
                     jumped = true;
                     break;
                 }
-                let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
                 let next = points[idx + 1];
+                if link == gm_formats::ain::CAP_MOVE_CLIMB
+                    && next.truncate().distance(points[idx].truncate()) < NPC_CORNER_REACH
+                {
+                    // a ladder: the climb nodes stand over each other, the body goes straight
+                    // up or down at NPC_CLIMB_SPEED and walks on from the top / bottom
+                    let dz = next.z - pos.z;
+                    let step = NPC_CLIMB_SPEED * dt;
+                    let z = if dz.abs() <= step {
+                        next.z
+                    } else {
+                        pos.z + step.copysign(dz)
+                    };
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.pos = Vec3::new(next.x, next.y, z);
+                        n.move_speed = 0.0;
+                        if let Some(g) = n.goal.as_mut() {
+                            g.idx = if z == next.z { idx + 1 } else { idx };
+                        }
+                    }
+                    jumped = true;
+                    break;
+                }
+                let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
                 let to = Vec3::new(next.x, next.y, pos.z) + lift;
                 let tr = self.npc_sweep(&prop_bodies, pos + lift, to, mins, maxs);
                 if tr.fraction < 0.999 && !tr.start_solid {
@@ -21269,5 +21290,51 @@ mod ai_node_hint_tests {
             Some(vec![(0, 0), (1, CAP_MOVE_GROUND), (2, CAP_MOVE_JUMP)])
         );
         assert_eq!(g.route_caps(0, 2, 0, npc_move_caps("npc_zombie")), None);
+        // a ladder: ground 0 -- walk -- climb 1 (bottom) -- climb -- climb 2 (top) -- walk -- 3
+        let climb = |x: f32, z: f32| {
+            AinNode {
+                node_type: gm_formats::ain::NODE_CLIMB,
+                ..node(x)
+            }
+            .with_z(z)
+        };
+        let ain = Ain {
+            version: 37,
+            map_version: 0,
+            nodes: vec![
+                node(0.0),
+                climb(100.0, 0.0),
+                climb(100.0, 208.0),
+                node(200.0).with_z(208.0),
+            ],
+            links: vec![
+                link(0, 1, CAP_MOVE_GROUND),
+                link(1, 2, gm_formats::ain::CAP_MOVE_CLIMB),
+                link(2, 3, CAP_MOVE_GROUND),
+            ],
+            wc_ids: vec![0, 1, 2, 3],
+        };
+        let g = AiGraph::from_ain(&ain);
+        assert_eq!(g.route(0, 3, 0), None);
+        assert_eq!(g.route_caps(0, 3, 0, npc_move_caps("npc_antlion")), None);
+        assert_eq!(
+            g.route_caps(0, 3, 0, npc_move_caps("npc_fastzombie")),
+            Some(vec![
+                (0, 0),
+                (1, CAP_MOVE_GROUND),
+                (2, gm_formats::ain::CAP_MOVE_CLIMB),
+                (3, CAP_MOVE_GROUND)
+            ])
+        );
+    }
+
+    trait WithZ {
+        fn with_z(self, z: f32) -> Self;
+    }
+    impl WithZ for gm_formats::ain::AinNode {
+        fn with_z(mut self, z: f32) -> Self {
+            self.pos[2] = z;
+            self
+        }
     }
 }
