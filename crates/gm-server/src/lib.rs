@@ -11834,6 +11834,7 @@ impl<'w> Server<'w> {
                     && n.goal.is_none()
                     && n.flank_until == 0
                     && since <= NPC_SUPPRESS_TICKS
+                    && known.distance(eye) <= NPC_SUPPRESS_RANGE
                     && self.players.get(&p).is_some_and(|pl| pl.alive)
                 {
                     target = Some((p, known));
@@ -11848,13 +11849,13 @@ impl<'w> Server<'w> {
                     && n.flank_until == 0
                     && n.cover_at.is_none()
                     && now.saturating_sub(seen) <= NPC_SUPPRESS_TICKS + NPC_TARGET_LOSE_TICKS
+                    && known.distance(eye) <= NPC_SUPPRESS_RANGE
                     && self.players.get(&p).is_some_and(|pl| pl.alive)
                 {
                     if let Some(v) = self.npc_flank_point(id, known) {
                         self.npc_goto(id, v, true);
                         if let Some(n) = self.npcs.get_mut(&id) {
                             n.flank_until = now + NPC_FLANK_TICKS;
-                            n.target_seen = now;
                             n.burst_left = 0;
                             if let Some(rest) = n.rest_sequence.take() {
                                 n.sequence = rest;
@@ -11893,7 +11894,7 @@ impl<'w> Server<'w> {
                 return;
             }
             if let Some(p) = old {
-                if now.saturating_sub(seen) > NPC_TARGET_LOSE_TICKS {
+                if now.saturating_sub(seen) > NPC_TARGET_LOSE_TICKS && now >= n.flank_until {
                     self.npc_stop(id);
                     if let Some(n) = self.npcs.get_mut(&id) {
                         n.target = None;
@@ -17767,3 +17768,6 @@ pub const NPC_SUPPRESS_TICKS: u64 = 335;
 pub const NPC_FLANK_TICKS: u64 = 660;
 pub const NPC_FLANK_MIN_STEP: f32 = 200.0;
 pub const NPC_FLANK_RANGE: f32 = 1200.0;
+/// Suppression / line-of-fire hunting only for an enemy lost within this range (measured at
+/// 290 u; a target that vanished 1120 u away is chased as before).
+pub const NPC_SUPPRESS_RANGE: f32 = 1024.0;
