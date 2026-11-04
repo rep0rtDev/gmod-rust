@@ -2142,6 +2142,10 @@ pub struct Npc {
     pub last_known: Option<Vec3>,
     /// A run for a line of fire (SCHED_ESTABLISH_LINE_OF_FIRE) is under way until this tick.
     pub flank_until: u64,
+    /// Tick the line-of-fire run reached its node: the game crawls its last unit there for
+    /// three more thinks of ESTABLISH_LINE_OF_FIRE before RANGE_ATTACK1 (wall t2316..2330,
+    /// main t2400..2414), the first burst 42 ticks after arriving in both.
+    pub lof_arrived: u64,
     /// SCHED_SHOOT_ENEMY_COVER: the enemy is out of sight and the body shoots its cover.
     pub cover_fire: bool,
     /// SCHED_RELOAD: the run to the reload cover was blocked by another NPC, reload in place.
@@ -5108,7 +5112,11 @@ impl<'w> Server<'w> {
                 } else {
                     ai::SCHED_COMBAT_FACE
                 }
-            } else if now < n.flank_until && n.goal.is_some() {
+            } else if (now < n.flank_until && n.goal.is_some())
+                || (n.goal.is_none()
+                    && n.lof_arrived > 0
+                    && now < n.lof_arrived + 3 * n.think_interval as u64)
+            {
                 ai::SCHED_ESTABLISH_LINE_OF_FIRE
             } else if n.reloading && n.reload_in_place {
                 ai::SCHED_RELOAD
@@ -12580,6 +12588,7 @@ impl<'w> Server<'w> {
             auto_seq: None,
             last_known: None,
             flank_until: 0,
+            lof_arrived: 0,
             detour: None,
             detour_side: 0.0,
             detour_until: 0,
@@ -14358,6 +14367,7 @@ impl<'w> Server<'w> {
         let aim_run = n.flank_until > now && n.goal.is_some();
         if n.flank_until > 0 && n.goal.is_none() {
             n.flank_until = 0;
+            n.lof_arrived = now;
         }
         if n.target_first_seen == 0 {
             n.target_first_seen = now;
@@ -15921,6 +15931,7 @@ impl<'w> Server<'w> {
                 auto_seq: None,
                 last_known: None,
                 flank_until: 0,
+                lof_arrived: 0,
                 detour: None,
                 detour_side: 0.0,
                 detour_until: 0,
