@@ -6560,6 +6560,10 @@ pub struct AiNode {
     pub max_state: u8,
     /// `StartHintDisabled`: the hint is ignored until an input enables it.
     pub disabled: bool,
+    /// `nodeFOV`: the cone about the hint's yaw an NPC must stand in to use it (360 = any),
+    /// and `IgnoreFacing` (2 = the cone is not checked).
+    pub node_fov: f32,
+    pub ignore_facing: u8,
 }
 
 impl AiNode {
@@ -6567,6 +6571,24 @@ impl AiNode {
     /// state range and the disabled flag; a plain node carries no hint).
     pub fn hint_usable(&self, state: u8) -> bool {
         self.hint != 0 && !self.disabled && (self.min_state..=self.max_state).contains(&state)
+    }
+
+    /// `hint_usable` plus the facing cone (CAI_Hint::IsInNodeFOV): `from` must lie within
+    /// `nodeFOV` about the hint's yaw unless `IgnoreFacing` is 2 or the cone is the full circle.
+    pub fn hint_usable_from(&self, state: u8, from: Vec3) -> bool {
+        if !self.hint_usable(state) {
+            return false;
+        }
+        if self.ignore_facing == 2 || self.node_fov >= 360.0 {
+            return true;
+        }
+        let to = (from - self.pos).truncate();
+        if to.length_squared() < 1.0 {
+            return true;
+        }
+        let (sy, cy) = self.yaw.to_radians().sin_cos();
+        let dot = to.normalize().dot(glam::Vec2::new(cy, sy));
+        dot >= (self.node_fov / 2.0).to_radians().cos()
     }
 }
 
@@ -6812,6 +6834,14 @@ pub fn ai_nodes_from_bsp(bsp: &gm_formats::bsp::Bsp) -> Vec<AiNode> {
                     .and_then(|v| v.trim().parse().ok())
                     .unwrap_or(ai::NPC_STATE_COMBAT),
                 disabled: e.get("StartHintDisabled").is_some_and(|v| v.trim() == "1"),
+                node_fov: e
+                    .get("nodeFOV")
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(360.0),
+                ignore_facing: e
+                    .get("IgnoreFacing")
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0),
             })
         })
         .collect()
@@ -14861,16 +14891,16 @@ impl<'w> Server<'w> {
         let mut best: Option<(f32, Vec3)> = None;
         // then the map's AI nodes by path length (tactical cover hints before plain nodes),
         // navmesh vertices where the nodes are sparse
-        let state = self
+        let (state, from) = self
             .npcs
             .get(&id)
-            .map_or(ai::NPC_STATE_COMBAT, |n| n.ai.state);
+            .map_or((ai::NPC_STATE_COMBAT, Vec3::ZERO), |n| (n.ai.state, n.pos));
         let candidates: Vec<(Vec3, f32)> = self
             .ai_nodes
             .iter()
             .map(|n| {
                 let w = if matches!(n.hint, HINT_TACTICAL_COVER_MED | HINT_TACTICAL_COVER_LOW)
-                    && n.hint_usable(state)
+                    && n.hint_usable_from(state, from)
                 {
                     NPC_COVER_HINT_BONUS
                 } else {
@@ -20997,6 +21027,8 @@ mod ai_node_hint_tests {
             min_state: ai::NPC_STATE_ALERT,
             max_state: ai::NPC_STATE_COMBAT,
             disabled: false,
+            node_fov: 360.0,
+            ignore_facing: 0,
         };
         assert!(!n.hint_usable(ai::NPC_STATE_IDLE));
         assert!(n.hint_usable(ai::NPC_STATE_ALERT));
@@ -21006,5 +21038,30 @@ mod ai_node_hint_tests {
         n.disabled = false;
         n.hint = 0;
         assert!(!n.hint_usable(ai::NPC_STATE_COMBAT));
+    }
+
+    #[test]
+    fn hint_facing_cone_follows_node_fov_and_ignore_facing() {
+        let mut n = AiNode {
+            pos: Vec3::ZERO,
+            yaw: 90.0,
+            hint: HINT_TACTICAL_COVER_MED,
+            activity: String::new(),
+            group: String::new(),
+            min_state: ai::NPC_STATE_IDLE,
+            max_state: ai::NPC_STATE_COMBAT,
+            disabled: false,
+            node_fov: 180.0,
+            ignore_facing: 0,
+        };
+        let c = ai::NPC_STATE_COMBAT;
+        assert!(n.hint_usable_from(c, Vec3::new(0.0, 100.0, 0.0)));
+        assert!(n.hint_usable_from(c, Vec3::new(90.0, 10.0, 0.0)));
+        assert!(!n.hint_usable_from(c, Vec3::new(0.0, -100.0, 0.0)));
+        n.ignore_facing = 2;
+        assert!(n.hint_usable_from(c, Vec3::new(0.0, -100.0, 0.0)));
+        n.ignore_facing = 0;
+        n.node_fov = 360.0;
+        assert!(n.hint_usable_from(c, Vec3::new(0.0, -100.0, 0.0)));
     }
 }
