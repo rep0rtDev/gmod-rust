@@ -5117,9 +5117,10 @@ impl<'w> Server<'w> {
             } else if target.is_some() && !target_dead && ranged && (los || n.blind_fire) {
                 // the first volley is the suppress schedule (88), later ones RANGE_ATTACK1 (100)
                 if n.target_first_seen > 0
-                    && now < n.target_first_seen + NPC_SUPPRESS_TICKS
-                    && !n.combat_moved
+                    && ((now < n.target_first_seen + NPC_SUPPRESS_TICKS && !n.combat_moved)
+                        || (n.blind_fire && n.shots <= NPC_BURST_SHOTS as u32))
                 {
+                    // a volley cut by losing sight completes blind under the same schedule
                     ai::SCHED_COMBINE_SUPPRESS
                 } else {
                     ai::SCHED_RANGE_ATTACK1
