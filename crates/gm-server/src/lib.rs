@@ -14073,6 +14073,7 @@ impl<'w> Server<'w> {
             .collect();
         let slots = self.formation_slots();
         let mut thought = Vec::new();
+        let mut pre = Vec::new();
         for id in ids {
             let Some(n) = self.npcs.get_mut(&id) else {
                 continue;
@@ -14080,6 +14081,22 @@ impl<'w> Server<'w> {
             if now < n.next_think {
                 continue;
             }
+            // an idle brain decides before the body moves: a route it issues this think is
+            // walked from this think (the game's lead citizen covers 0.7 u in the think that
+            // picks LEAD_RETRIEVE, server_npc_lead_citizen_close t326; ours used to start a
+            // think later); armed and fighting bodies keep deciding after the move (their
+            // combat think acquires the enemy before the brain mirrors the schedule)
+            if n.goal.is_none()
+                && n.chase.is_none()
+                && n.target.is_none()
+                && (n.weapon.is_empty() || n.weapon == "none")
+            {
+                self.ai_step(id, now);
+                pre.push(id);
+            }
+            let Some(n) = self.npcs.get_mut(&id) else {
+                continue;
+            };
             // out of every player's PVS, or behind every player (outside the +-40 deg view
             // cone) and more than NPC_EFFICIENT_DIST away, the game thinks every 13 ticks
             // instead of 7 (AIE_EFFICIENT; walk recordings switch between 271 and 308 u)
@@ -14563,7 +14580,9 @@ impl<'w> Server<'w> {
             // the body decides first so the brain's mirror names this think's schedule, as the
             // game's SelectSchedule and the task that starts the attack fall in one think
             self.npc_combat_think(id, now);
-            self.ai_step(id, now);
+            if !pre.contains(&id) {
+                self.ai_step(id, now);
+            }
             self.npc_anim_step(id, now);
         }
     }
