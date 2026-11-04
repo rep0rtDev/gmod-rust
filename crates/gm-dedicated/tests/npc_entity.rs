@@ -1502,3 +1502,55 @@ fn npc_hears_gunfire_and_forgets_it() {
     let a = &server.npcs[&id].ai;
     assert!(!a.has(ai::COND_HEAR_COMBAT) && a.last_sound.is_none(), "{a:?}");
 }
+
+// UseFollowBehavior: an ally keeps 128..200 u behind its leader - TARGET_CHASE while far,
+// TARGET_FACE once close, and it stops rather than crowding the player.
+#[test]
+fn npc_follow_behaviour_keeps_up_with_the_player() {
+    use gm_server::ai;
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_navmesh(world.nav.clone());
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.set_weapons(1, &["gmod_tool"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_citizen", "none").unwrap();
+    server.tick(&idle);
+    assert!(server.npc_set_misc(id, None, Some(Some("Follow".into())), None, None, None, None));
+    let from = server.npcs[&id].pos;
+    server.teleport_player(1, from + Vec3::new(-500.0, 0.0, 0.0));
+    let mut ticks = 0;
+    let mut chased = false;
+    loop {
+        server.tick(&idle);
+        ticks += 1;
+        let n = &server.npcs[&id];
+        if n.ai.schedule == Some(ai::SCHED_TARGET_CHASE) {
+            chased = true;
+        }
+        let d = n.pos.truncate().distance(server.players[&1].state.origin.truncate());
+        if chased && n.goal.is_none() && n.ai.schedule == Some(ai::SCHED_TARGET_FACE) {
+            assert!(d <= 200.0 + 16.0, "stopped {d} u away after {ticks} ticks");
+            assert!(d >= 100.0, "crowding the player at {d} u");
+            break;
+        }
+        assert!(ticks < 1500, "never caught up: {d} u, {:?}", n.ai);
+    }
+    eprintln!("followed in {ticks} ticks");
+}

@@ -4666,6 +4666,35 @@ impl<'w> Server<'w> {
                 ai::NPC_STATE_IDLE
             };
         }
+        let follow = (!a.scripted && !hostile && a.behavior.as_deref() == Some("Follow")).then(|| {
+            target.filter(|p| self.players.get(p).is_some_and(|pl| pl.alive)).or_else(|| {
+                let mut ids: Vec<u32> = self.players.iter().filter(|(_, pl)| pl.alive).map(|(i, _)| *i).collect();
+                ids.sort_unstable();
+                ids.into_iter().min_by(|x, y| {
+                    self.players[x].state.origin.distance(n.pos).total_cmp(&self.players[y].state.origin.distance(n.pos))
+                })
+            })
+        }).flatten();
+        if let Some(p) = follow {
+            // the follow behaviour: stay 128..200 u from the leader, run when far behind
+            let d = self.players[&p].state.origin.truncate().distance(n.pos.truncate());
+            let (goal_some, chasing) = (n.goal.is_some(), n.chase == Some(p));
+            if d > 200.0 && !chasing {
+                self.npc_chase(id, p, d > 400.0);
+            } else if d < 128.0 && goal_some {
+                self.npc_stop(id);
+            }
+            let Some(n) = self.npcs.get_mut(&id) else { return };
+            let a = &mut n.ai;
+            a.state = if d > 200.0 { ai::NPC_STATE_ALERT } else { ai::NPC_STATE_IDLE };
+            let sched = if d > 200.0 { ai::SCHED_TARGET_CHASE } else { ai::SCHED_TARGET_FACE };
+            if a.schedule != Some(sched) {
+                a.start(sched, now);
+            }
+            return;
+        }
+        let Some(n) = self.npcs.get_mut(&id) else { return };
+        let a = &mut n.ai;
         if !a.scripted {
             // the mirror: name the schedule the native body is running
             let sched = if n.cover_at.is_some() {
@@ -12000,11 +12029,14 @@ impl<'w> Server<'w> {
                 continue;
             }
             let (pos, key) = (n.pos, n.key.clone());
+            // a named squad (NPC:SetSquad) shares its enemy at any range, like the game's
+            // squad memory; otherwise NPCs of one kind share within NPC_SQUAD_RANGE
+            let squad = self.squads.of(id).map(str::to_string);
             let shared = self.npcs.iter().find_map(|(i, o)| {
                 (*i != id
-                    && o.key == key
                     && o.dead_at.is_none()
-                    && o.pos.distance(pos) <= NPC_SQUAD_RANGE)
+                    && ((o.key == key && o.pos.distance(pos) <= NPC_SQUAD_RANGE)
+                        || squad.as_deref().is_some_and(|sq| self.squads.of(*i) == Some(sq))))
                     .then_some(o.target)
                     .flatten()
                     .filter(|p| {
