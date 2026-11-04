@@ -2489,6 +2489,10 @@ pub struct NpcLeap {
     pub poison: bool,
     /// Ticks the NPC stands where it landed before its next decision (the antlion jump).
     pub stand_ticks: u64,
+    /// Sequences played in flight, on the hull / the floor, and on the run-away.
+    pub leap_sequence: Option<&'static str>,
+    pub land_sequence: Option<&'static str>,
+    pub run_sequence: Option<&'static str>,
 }
 
 /// A long jump that closes distance (the antlion's `fly_in`): wound up for `windup_ticks`
@@ -2527,6 +2531,9 @@ pub fn npc_jump(class: &str) -> Option<NpcJump> {
                 rest_ticks: NPC_JUMP_COOLDOWN,
                 poison: false,
                 stand_ticks: 70,
+                leap_sequence: None,
+                land_sequence: None,
+                run_sequence: None,
             },
             min_range: 300.0,
             max_range: 600.0,
@@ -2575,7 +2582,8 @@ const NPC_GRAVITY: f32 = 600.0;
 
 /// Measured on the game's headcrab (server_npc_melee_headcrab): 379.5 u/s horizontal, 272 u/s
 /// up from 178 u (an aim point ~62 u above the player's origin), 5 DMG_SLASH on touch, ~12
-/// ticks hanging on the hull, then a 150 u run-away, a turn and the next leap 328 ticks later.
+/// ticks hanging on the hull, then a 120 u run-away (Run1), a turn and the next leap 252 ticks
+/// after the landing (328 after the previous leap; run14 goldens).
 pub fn npc_leap(class: &str) -> Option<NpcLeap> {
     match class {
         "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => Some(NpcLeap {
@@ -2584,10 +2592,13 @@ pub fn npc_leap(class: &str) -> Option<NpcLeap> {
             damage: 5.0,
             punch: 25.0,
             hang_ticks: 12,
-            retreat: 150.0,
-            rest_ticks: 238,
+            retreat: 120.0,
+            rest_ticks: 252,
             poison: class == "npc_headcrab_black",
             stand_ticks: 0,
+            leap_sequence: Some("jumpattack_broadcast"),
+            land_sequence: Some("IdleB"),
+            run_sequence: Some("Run1"),
         }),
         _ => None,
     }
@@ -2619,13 +2630,25 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         start_range: 52.0,
         ..MELEE_PLAIN
     }];
-    const ANTLION: [NpcMelee; 2] = [
+    // server_npc_melee_antlion: a `pounce2` jump-in from 133 u (49 ticks, 28 u of ground, no
+    // hit) opens the fight, then `attack3` (98 ticks, 5 hp at tick 35, no push) alternates
+    // with `pounce` (63 ticks, 5 hp at tick 35, the player knocked back 30 u) forever
+    const ANTLION: [NpcMelee; 3] = [
+        NpcMelee {
+            damage: 0.0,
+            reach: 140.0,
+            swing_ticks: 49,
+            hit_tick: 49,
+            run: true,
+            start_range: 140.0,
+            lunge: 28.0,
+            ..MELEE_PLAIN
+        },
         NpcMelee {
             damage: 5.0,
             reach: 100.0,
             swing_ticks: 98,
             hit_tick: 34,
-            punch: 250.0,
             run: true,
             start_range: 100.0,
             ..MELEE_PLAIN
@@ -2635,7 +2658,7 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
             reach: 55.0,
             swing_ticks: 63,
             hit_tick: 34,
-            punch: 250.0,
+            punch: 280.0,
             run: true,
             start_range: 120.0,
             lunge: 84.0,
@@ -2668,7 +2691,7 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
     match class {
         "npc_zombie" | "npc_zombine" => Some((&ZOMBIE, 0)),
         "npc_fastzombie" => Some((&FAST, 0)),
-        "npc_antlion" => Some((&ANTLION, 0)),
+        "npc_antlion" => Some((&ANTLION, 1)),
         "npc_poisonzombie" => Some((&POISON, 1)),
         _ => None,
     }
@@ -12458,6 +12481,9 @@ impl<'w> Server<'w> {
         n.target_seen = now;
         if n.target_first_seen == 0 {
             n.target_first_seen = now;
+            // the game's headcrab idles the sighting think and an alert think, leaping on the
+            // third (server_npc_melee_headcrab: t4 / t11 / t18)
+            n.next_leap = n.next_leap.max(now + 2 * n.think_interval as u64);
         }
         if now < n.next_leap {
             return;
@@ -12483,6 +12509,9 @@ impl<'w> Server<'w> {
         n.next_goal = None;
         n.chase = None;
         n.move_speed = 0.0;
+        if let Some(seq) = l.leap_sequence {
+            n.sequence = seq.to_string();
+        }
         if !n.move_yaw_locked {
             n.angles.y = dir.y.atan2(dir.x).to_degrees();
         }
@@ -12670,6 +12699,9 @@ impl<'w> Server<'w> {
                     n.pos = next;
                     n.flight = Some(Vec3::ZERO);
                     n.hung_until = now + l.hang_ticks;
+                    if let Some(seq) = l.land_sequence {
+                        n.sequence = seq.to_string();
+                    }
                 }
                 continue;
             }
@@ -12690,9 +12722,15 @@ impl<'w> Server<'w> {
                         n.next_leap = now + l.rest_ticks;
                         n.swing_until = now + l.stand_ticks;
                     }
+                    if let Some(seq) = l.land_sequence {
+                        n.sequence = seq.to_string();
+                    }
                 }
                 if l.retreat > 0.0 && !thrown {
                     self.npc_goto(id, goal, false);
+                    if let (Some(n), Some(seq)) = (self.npcs.get_mut(&id), l.run_sequence) {
+                        n.sequence = seq.to_string();
+                    }
                 }
                 continue;
             }
