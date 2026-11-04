@@ -14815,7 +14815,14 @@ impl<'w> Server<'w> {
                 return None;
             }
             let (enemy_eye, _) = server.eye(p)?;
-            server.npc_los(eye, enemy_eye).then_some(chest)
+            // the sight line runs to the enemy's eyes (server_npc_grenade_soldier_low: the
+            // bot's head stays seen through the seam of the crate wall) and to its feet: the
+            // soldier of server_npc_grenade_soldier loses the bot behind the fridge row on
+            // its way to the reload cover (ops 432..530, turning to its path and running the
+            // plain gait) while the eye and chest lines stay clear and only the line to the
+            // origin clips the fridge tops
+            (server.npc_los(eye, enemy_eye) && server.npc_los(eye, pl.state.origin))
+                .then_some(chest)
         };
         // keep the current target while visible, otherwise the nearest visible player
         let mut target = n.target.and_then(|p| sees(self, p).map(|c| (p, c)));
