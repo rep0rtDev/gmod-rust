@@ -4379,6 +4379,13 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             .map_err(|e| anyhow::anyhow!("navmesh for {map}: {e}"))?;
         server.set_navmesh(std::sync::Arc::new(nav));
         server.set_ai_nodes(gm_server::ai_nodes_from_bsp(&bsp));
+        if let Some(g) = gm_content::Mount::for_install(&inst)
+            .ok()
+            .and_then(|m| m.read(&format!("maps/graphs/{map}.ain")).ok())
+            .and_then(|b| gm_formats::ain::Ain::parse(&b).ok())
+        {
+            server.set_ai_graph(gm_server::AiGraph::from_ain(&g));
+        }
     }
     let loader_mount = gm_content::Mount::for_install(&inst)?;
     let loader: gm_server::ModelLoader =

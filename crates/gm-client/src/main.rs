@@ -7323,6 +7323,7 @@ fn main() -> Result<()> {
         nav,
         spawn_points,
         ai_nodes,
+        ai_graph,
         map_revision,
         sun_direction,
     } = gm_dedicated::load_world(&mount, &map)?;
@@ -7330,6 +7331,9 @@ fn main() -> Result<()> {
     let mut server = gm_server::Server::new(collision, physics, world_body);
     server.set_navmesh(nav);
     server.set_ai_nodes(ai_nodes);
+    if let Some(g) = &ai_graph {
+        server.set_ai_graph(gm_server::AiGraph::from_ain(g));
+    }
     server.spawn_points = spawn_points;
     server.map_revision = map_revision;
     server.sun_direction = sun_direction;

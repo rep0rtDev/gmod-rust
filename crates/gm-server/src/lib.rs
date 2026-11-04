@@ -6389,6 +6389,184 @@ pub struct AiNode {
     pub group: String,
 }
 
+/// The game's compiled node graph (`maps/graphs/<map>.ain`): the engine routes NPCs over
+/// it when no direct route exists (CAI_Pathfinder::BuildRoute: a local route first, then the
+/// node graph), with the links each hull may cross.
+pub struct AiGraph {
+    nodes: Vec<gm_formats::ain::AinNode>,
+    adj: Vec<Vec<(usize, [u8; gm_formats::ain::NUM_HULLS])>>,
+}
+
+/// Index into the graph's hull tables for an NPC class (HULL_HUMAN 0, HULL_SMALL_CENTERED 1
+/// for headcrabs, HULL_WIDE_SHORT 4 for antlions).
+pub fn npc_hull_index(class: &str) -> usize {
+    match class {
+        c if c.starts_with("npc_headcrab") => 1,
+        "npc_antlion" => 4,
+        _ => 0,
+    }
+}
+
+impl AiGraph {
+    pub fn from_ain(ain: &gm_formats::ain::Ain) -> Self {
+        let mut adj = vec![Vec::new(); ain.nodes.len()];
+        for l in &ain.links {
+            adj[l.src as usize].push((l.dst as usize, l.moves));
+            adj[l.dst as usize].push((l.src as usize, l.moves));
+        }
+        Self {
+            nodes: ain.nodes.clone(),
+            adj,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Where `hull` stands on node `i`.
+    pub fn node_pos(&self, i: usize, hull: usize) -> Vec3 {
+        let n = &self.nodes[i];
+        Vec3::new(
+            n.pos[0],
+            n.pos[1],
+            n.pos[2] + n.offsets[hull.min(gm_formats::ain::NUM_HULLS - 1)],
+        )
+    }
+
+    /// Ground nodes within `max` of `p`, nearest first.
+    pub fn ground_near(&self, p: Vec3, hull: usize, max: f32) -> Vec<usize> {
+        let mut v: Vec<(f32, usize)> = (0..self.nodes.len())
+            .filter(|&i| self.nodes[i].node_type == gm_formats::ain::NODE_GROUND)
+            .map(|i| (self.node_pos(i, hull).distance(p), i))
+            .filter(|(d, _)| *d <= max)
+            .collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        v.into_iter().map(|(_, i)| i).collect()
+    }
+
+    /// A* over the links `hull` can walk (CAP_MOVE_GROUND), node indices from `from` to `to`.
+    pub fn route(&self, from: usize, to: usize, hull: usize) -> Option<Vec<usize>> {
+        use std::cmp::Ordering;
+        use std::collections::BinaryHeap;
+        // equal costs resolve in insertion order (the engine's queue; the corner scene's two
+        // 806 u routes from node 493 go the way its earlier link points)
+        #[derive(PartialEq)]
+        struct Item(f32, u32, usize);
+        impl Eq for Item {}
+        impl PartialOrd for Item {
+            fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
+                Some(self.cmp(o))
+            }
+        }
+        impl Ord for Item {
+            fn cmp(&self, o: &Self) -> Ordering {
+                o.0.total_cmp(&self.0).then(o.1.cmp(&self.1))
+            }
+        }
+        let mut seq = 0u32;
+        let hull = hull.min(gm_formats::ain::NUM_HULLS - 1);
+        let goal = self.node_pos(to, hull);
+        let mut best = vec![f32::INFINITY; self.nodes.len()];
+        let mut prev = vec![usize::MAX; self.nodes.len()];
+        let mut open = BinaryHeap::new();
+        best[from] = 0.0;
+        open.push(Item(self.node_pos(from, hull).distance(goal), seq, from));
+        while let Some(Item(_, _, i)) = open.pop() {
+            if i == to {
+                let mut out = vec![to];
+                let mut c = to;
+                while c != from {
+                    c = prev[c];
+                    out.push(c);
+                }
+                out.reverse();
+                return Some(out);
+            }
+            let pi = self.node_pos(i, hull);
+            for &(j, moves) in &self.adj[i] {
+                if moves[hull] & gm_formats::ain::CAP_MOVE_GROUND == 0
+                    || self.nodes[j].node_type != gm_formats::ain::NODE_GROUND
+                {
+                    continue;
+                }
+                let g = best[i] + pi.distance(self.node_pos(j, hull));
+                if g < best[j] {
+                    best[j] = g;
+                    prev[j] = i;
+                    seq += 1;
+                    open.push(Item(g + self.node_pos(j, hull).distance(goal), seq, j));
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Reach of the local route to / from a graph node (the engine's nearest-node search).
+const NPC_GRAPH_NODE_REACH: f32 = 700.0;
+/// MAX_LOCAL_NAV_DIST_GROUND: the engine tries a straight (local) route only to a goal within
+/// 50 ft (600 u) - or 400 ft (4800 u) when the goal is its enemy - and otherwise routes over
+/// the node graph (server_npc_walk_citizen_corner: a 1340 u go-to follows the node row at
+/// y = -491 instead of the open diagonal).
+pub const NPC_LOCAL_ROUTE_GOAL: f32 = 600.0;
+pub const NPC_LOCAL_ROUTE_ENEMY: f32 = 4800.0;
+const NPC_GRAPH_NODE_TRIES: usize = 12;
+
+/// The engine's route order for an NPC: a direct (local) route when the mesh offers a straight
+/// one, else the node graph between the nearest directly reachable nodes, else the mesh's own
+/// route (also when the map has no graph).
+pub fn npc_find_path(
+    nav: Option<&gm_nav::NavMesh>,
+    graph: Option<&AiGraph>,
+    from: Vec3,
+    to: Vec3,
+    extents: Vec3,
+    hull: usize,
+    local_max: f32,
+) -> Option<gm_nav::Path> {
+    let nav = nav?;
+    let direct = nav.find_path(from, to, extents)?;
+    let local = from.truncate().distance(to.truncate()) <= local_max;
+    if direct.partial || (local && direct.points.len() <= 2) {
+        return Some(direct);
+    }
+    let Some(g) = graph.filter(|g| !g.is_empty()) else {
+        return Some(direct);
+    };
+    let straight = |a: Vec3, b: Vec3| {
+        nav.find_path(a, b, extents)
+            .is_some_and(|p| !p.partial && p.points.len() <= 2)
+    };
+    let start = g
+        .ground_near(from, hull, NPC_GRAPH_NODE_REACH)
+        .into_iter()
+        .take(NPC_GRAPH_NODE_TRIES)
+        .find(|&i| straight(from, g.node_pos(i, hull)));
+    let end = g
+        .ground_near(to, hull, NPC_GRAPH_NODE_REACH)
+        .into_iter()
+        .take(NPC_GRAPH_NODE_TRIES)
+        .find(|&i| straight(g.node_pos(i, hull), to));
+    let (Some(s), Some(e)) = (start, end) else {
+        return Some(direct);
+    };
+    let Some(chain) = g.route(s, e, hull) else {
+        return Some(direct);
+    };
+    let mut points = vec![from];
+    points.extend(chain.iter().map(|&i| g.node_pos(i, hull)));
+    points.push(to);
+    Some(gm_nav::Path {
+        points,
+        partial: false,
+    })
+}
+
 pub const HINT_WORLD_WORK_POSITION: u16 = 12;
 pub const HINT_TACTICAL_COVER_MED: u16 = 100;
 pub const HINT_TACTICAL_COVER_LOW: u16 = 101;
@@ -6624,6 +6802,8 @@ pub struct Server<'w> {
     /// First id of each class family's private schedules, handed out in spawn order like the
     /// game's schedule namespace.
     class_sched_bases: BTreeMap<String, u16>,
+    /// The map's compiled node graph (`set_ai_graph`), when it has one.
+    ai_graph: Option<AiGraph>,
     /// The map's `info_node` / `info_node_hint` entities (the game's nodegraph positions).
     ai_nodes: Vec<AiNode>,
     /// Live sound-entity sounds / scents: position, radius, SOUND_* bits, the tick they end,
@@ -6944,6 +7124,7 @@ impl<'w> Server<'w> {
             scripted_entities: Vec::new(),
             sents: HashMap::new(),
             class_sched_bases: BTreeMap::new(),
+            ai_graph: None,
             ai_nodes: Vec::new(),
             ai_sounds: Vec::new(),
             next_class_sched: ai::FIRST_CLASS_SCHEDULE,
@@ -12476,6 +12657,11 @@ impl<'w> Server<'w> {
     /// Navigation mesh for NPC locomotion (built by the host from the map).
     /// The map's AI nodes and hints (`ai_nodes_from_bsp`): cover candidates (tactical cover
     /// hints preferred) and the act-busy hints a map-less goal falls back to.
+    /// The map's node graph: NPC routes with corners follow it (`npc_find_path`).
+    pub fn set_ai_graph(&mut self, graph: AiGraph) {
+        self.ai_graph = Some(graph);
+    }
+
     pub fn set_ai_nodes(&mut self, nodes: Vec<AiNode>) {
         self.ai_nodes = nodes;
     }
@@ -12551,7 +12737,15 @@ impl<'w> Server<'w> {
             return false;
         }
         let extents = Vec3::new(32.0, 32.0, 72.0);
-        let Some(path) = nav.find_path(n.pos, target, extents) else {
+        let Some(path) = npc_find_path(
+            Some(nav),
+            self.ai_graph.as_ref(),
+            n.pos,
+            target,
+            extents,
+            npc_hull_index(&n.class),
+            NPC_LOCAL_ROUTE_GOAL,
+        ) else {
             return false;
         };
         let partial = path.partial;
@@ -12913,11 +13107,15 @@ impl<'w> Server<'w> {
                             let extents = Vec3::new(32.0, 32.0, 72.0);
                             let slot = slots.get(&id).copied().unwrap_or(glam::Vec2::ZERO);
                             let goal = target + slot.extend(0.0);
-                            if let Some(path) = self
-                                .nav
-                                .as_deref()
-                                .and_then(|nav| nav.find_path(n.pos, goal, extents))
-                            {
+                            if let Some(path) = npc_find_path(
+                                self.nav.as_deref(),
+                                self.ai_graph.as_ref(),
+                                n.pos,
+                                goal,
+                                extents,
+                                npc_hull_index(&n.class),
+                                NPC_LOCAL_ROUTE_ENEMY,
+                            ) {
                                 n.goal = Some(NpcPath {
                                     points: path.points,
                                     idx: 1,

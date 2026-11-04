@@ -6,6 +6,7 @@
 //! layouts follow the public Valve Developer Community documentation and are
 //! confirmed by the `fmt_*` parity harnesses against the real game.
 
+pub mod ain;
 pub mod bsp;
 pub mod keyvalues;
 pub mod mdl;
