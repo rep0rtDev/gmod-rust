@@ -6188,9 +6188,14 @@ impl<'w> Server<'w> {
                     sched = ai::SCHED_LEAD_RETRIEVE;
                 }
                 if g.waiting {
+                    // the wait faces the player where it began and holds that: the game's
+                    // citizen keeps yaw 180 for 2500 ticks after the bot teleports 40 u behind
+                    // it (server_npc_lead_citizen_close t2326..), ours used to turn round
                     let to = ppos - pos;
                     if let Some(n) = self.npcs.get_mut(&id) {
-                        n.ideal_yaw = Some(to.y.atan2(to.x).to_degrees());
+                        if n.ideal_yaw.is_none() {
+                            n.ideal_yaw = Some(to.y.atan2(to.x).to_degrees());
+                        }
                     }
                 } else if let Some(n) = self.npcs.get_mut(&id) {
                     n.ideal_yaw = None;
