@@ -498,6 +498,9 @@ pub struct ModelInfo {
     pub inertia: Option<Vec3>,
     /// The `impacthard` sound script of the model's surface property (`Wood_Crate.ImpactHard`).
     pub impact_hard: Option<String>,
+    /// The `impactsoft` script: a slow touch (a player walking into a crate plays
+    /// plastic_box_impact_soft2, move_prop_step_slow t36).
+    pub impact_soft: Option<String>,
     /// The `scraperough` loop of the surface property (`Wood_Crate.ScrapeRough`).
     pub scrape_rough: Option<String>,
     /// The model's `prop_data` through `scripts/propdata.txt`.
@@ -21502,7 +21505,13 @@ impl<'w> Server<'w> {
                 else {
                     continue;
                 };
-                let Some(name) = self.models.get(&model).and_then(|m| m.impact_hard.clone()) else {
+                let Some(name) = self.models.get(&model).and_then(|m| {
+                    if imp.speed < IMPACT_SOUND_FULL_SPEED {
+                        m.impact_soft.clone().or_else(|| m.impact_hard.clone())
+                    } else {
+                        m.impact_hard.clone()
+                    }
+                }) else {
                     continue;
                 };
                 heard.push(id);

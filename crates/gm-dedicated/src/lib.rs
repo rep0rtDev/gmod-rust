@@ -336,6 +336,7 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
         drag_axis_areas: Vec3::from(solid.drag_axis_areas),
         inertia: Some(Vec3::from(solid.rotation_inertia)),
         impact_hard: table.sound(&props.surfaceprop, "impacthard"),
+        impact_soft: table.sound(&props.surfaceprop, "impactsoft"),
         scrape_rough: table.sound(&props.surfaceprop, "scraperough"),
         prop_data: prop_data(mount, &mdl.key_values),
         break_sound: table.sound(&props.surfaceprop, "break"),
