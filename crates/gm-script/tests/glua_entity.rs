@@ -1443,3 +1443,28 @@ fn passes_trigger_filters_gates_the_touch() {
     let log: Vec<String> = rt.actors()[0].eval("return state.log").unwrap();
     assert_eq!(log, ["start10", "end10"].map(String::from).to_vec());
 }
+
+#[test]
+fn npc_keyvalues_reach_the_brain() {
+    let (_, writes) = run("Entity(9):SetKeyValue('squadname', 'alpha')
+         Entity(9):SetKeyValue('HintGroup', 'roof')
+         Entity(5):SetKeyValue('squadname', 'crates')");
+    assert!(
+        writes.iter().any(
+            |w| matches!(w, QueuedWrite::NpcAiSquad { ent: 9, name: Some(n) } if n == "alpha")
+        ),
+        "{writes:?}"
+    );
+    assert!(
+        writes.iter().any(
+            |w| matches!(w, QueuedWrite::NpcAiHintGroup { ent: 9, name: Some(n) } if n == "roof")
+        ),
+        "{writes:?}"
+    );
+    assert!(
+        !writes
+            .iter()
+            .any(|w| matches!(w, QueuedWrite::NpcAiSquad { ent: 5, .. })),
+        "a prop's squadname is only a stored keyvalue: {writes:?}"
+    );
+}

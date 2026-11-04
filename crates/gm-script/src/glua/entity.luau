@@ -1594,7 +1594,9 @@ function ENT:SetNetworkVarsFromMapInput(t) self:RestoreNetworkVars(t) end
 function ENT:CallDTVarProxies(t, slot, v) end
 function ENT:DTVar(t, slot, name) self:NetworkVar(t, slot, name) end
 function ENT:SetNetworkKeyValue(k, v) local n = rawget(self, "__dt_keys") and rawget(self, "__dt_keys")[string.lower(k)]; if n then self["Set" .. n](self, v); return true end return false end
-function ENT:SetKeyValue(k, v) hook.Run("EntityKeyValue", self, k, tostring(v)); local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(self.__id); if si and si.KeyValue then si:KeyValue(k, tostring(v)) end if not self:SetNetworkKeyValue(k, v) then rawset(self, "__kv", rawget(self, "__kv") or {}); rawget(self, "__kv")[k] = v end end
+-- an NPC's map keyvalues the brain reads: squadname (SetSquad) and hintgroup (SetHintGroup)
+local NPC_KEYVALUES = { squadname = "npc_ai_squad", hintgroup = "npc_ai_hint_group" }
+function ENT:SetKeyValue(k, v) hook.Run("EntityKeyValue", self, k, tostring(v)); local nk = NPC_KEYVALUES[string.lower(k)]; if nk and self:IsNPC() then qwrite(nk, self.__id, { name = tostring(v) }) end local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(self.__id); if si and si.KeyValue then si:KeyValue(k, tostring(v)) end if not self:SetNetworkKeyValue(k, v) then rawset(self, "__kv", rawget(self, "__kv") or {}); rawget(self, "__kv")[k] = v end end
 function ENT:GetKeyValues() return rawget(self, "__kv") or {} end
 function ENT:AddCallback(hook, fn) rawset(self, "__cbs", rawget(self, "__cbs") or {}); local c = rawget(self, "__cbs"); c[hook] = c[hook] or {}; table.insert(c[hook], fn); return #c[hook] end
 function ENT:RemoveCallback(hook, id) local c = rawget(self, "__cbs"); if c and c[hook] then c[hook][id] = nil end end
