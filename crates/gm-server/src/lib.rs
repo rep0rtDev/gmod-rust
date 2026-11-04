@@ -2129,6 +2129,17 @@ pub struct Npc {
     pub swat: Option<NpcSwat>,
     /// Next tick the zombie looks for a prop to swat (every 2 s of a chase).
     pub next_swat_scan: u64,
+    /// The hull overlaps a physics prop (spawned into it): the prop is pushed clear while
+    /// the body stands (SCHED_FALL_TO_GROUND).
+    pub in_prop: bool,
+    /// The prop the hull overlapped, shoved on until it is NPC_PUSH_PROP_GAP clear.
+    pub push_prop: Option<u32>,
+    /// The prop the hull was spawned overlapping: once shoved clear it is the one prop the
+    /// zombie stays pressed on (drifting along its face) instead of walking round.
+    pub pressed_prop: Option<u32>,
+    /// The spawn-overlap check ran (only a hull spawned into a prop shoves it; a prop walked
+    /// up to blocks as before).
+    pub push_checked: bool,
     /// SCHED_WAKE_ANGRY: a zombie that just found its enemy stands one think before chasing.
     pub wake_until: u64,
     /// Thinks since a move began with a near-reversal (|yaw error| > 120 deg), 0 when none:
@@ -5166,6 +5177,8 @@ impl<'w> Server<'w> {
                 ai::SCHED_TAKE_COVER_FROM_BEST_SOUND
             } else if n.cover_at.is_some() {
                 ai::SCHED_TAKE_COVER_FROM_ENEMY
+            } else if n.in_prop {
+                ai::SCHED_FALL_TO_GROUND
             } else if n.chase.is_some() {
                 ai::SCHED_CHASE_ENEMY
             } else if n.cover_fire && target.is_some() && !target_dead {
@@ -12955,6 +12968,10 @@ impl<'w> Server<'w> {
             melee_swing: None,
             swat: None,
             next_swat_scan: 0,
+            in_prop: false,
+            push_prop: None,
+            pressed_prop: None,
+            push_checked: false,
             wake_until: 0,
             reversal: 0,
             face_until: 0,
@@ -13888,8 +13905,91 @@ impl<'w> Server<'w> {
         tr
     }
 
+    /// A hull spawned overlapping a physics prop (the swat zombie 13 u from its crate) pushes
+    /// the prop clear, as the game's NPC shadow does (the crate slides ~25 u in 45 ticks and
+    /// rests): each tick the prop is driven to NPC_PUSH_PROP_SPEED away from the hull's centre
+    /// while the centre is inside it, and the body reads SCHED_FALL_TO_GROUND meanwhile.
+    fn npc_push_overlapping_props(&mut self, prop_bodies: &[PropBody]) {
+        let now = self.tick_count;
+        let mut pushes = Vec::new();
+        for (&id, n) in &self.npcs {
+            if n.dead_at.is_some() || n.body.is_some() {
+                continue;
+            }
+            // the shadow starts pushing with the first awake think (the game's crate rests
+            // through the sighting / wake thinks and moves from the think after)
+            if n.target.is_none() || now < n.wake_until {
+                continue;
+            }
+            let centre = n.pos + (n.mins + n.maxs) * 0.5;
+            let half = (n.maxs - n.mins) * 0.5;
+            // hull-against-hull: grow every prop plane by the hull's extent along its normal
+            let grown = |extra: f32| -> Vec<PropBody> {
+                prop_bodies
+                    .iter()
+                    .map(|b| {
+                        let mut b = b.clone();
+                        for hull in &mut b.hulls {
+                            for (normal, dist) in hull.iter_mut() {
+                                *dist += normal.abs().dot(half) + extra;
+                            }
+                        }
+                        b
+                    })
+                    .collect()
+            };
+            let inside = |bodies: &[PropBody]| {
+                gm_sandbox::trace_line(self.collision, bodies, centre, centre)
+                    .filter(|t| t.ent.is_some() && t.fraction <= 0.0)
+                    .and_then(|t| t.ent)
+            };
+            let overlap =
+                inside(&grown(0.0)).filter(|&p| !n.push_checked || Some(p) == n.pressed_prop);
+            // the shove carries on until the prop has slid clear of the hull by the gap (only
+            // the prop that overlapped: walking up to a resting prop does not shove it)
+            let push = overlap.or_else(|| {
+                n.push_prop
+                    .filter(|&p| inside(&grown(NPC_PUSH_PROP_GAP)) == Some(p))
+            });
+            pushes.push((id, overlap, push, centre, n.angles.y));
+        }
+        for (id, overlap, prop, centre, yaw) in pushes {
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.in_prop = overlap.is_some();
+                n.push_prop = prop;
+                n.push_checked = true;
+                if overlap.is_some() {
+                    n.pressed_prop = overlap;
+                }
+            }
+            let Some(prop) = prop else {
+                continue;
+            };
+            let Some(&body) = self.bodies.get(&prop) else {
+                continue;
+            };
+            let st = self.physics.state(body);
+            let mut dir = (st.position - centre).truncate().normalize_or_zero();
+            if dir == glam::Vec2::ZERO {
+                let (sy, cy) = yaw.to_radians().sin_cos();
+                dir = glam::Vec2::new(cy, sy);
+            }
+            let dir = dir.extend(0.0);
+            let along = st.velocity.dot(dir);
+            if along < NPC_PUSH_PROP_SPEED {
+                let mass = self.physics.mass(body);
+                self.physics.add_impulse_at(
+                    body,
+                    st.position,
+                    dir * (mass * (NPC_PUSH_PROP_SPEED - along)),
+                );
+            }
+        }
+    }
+
     fn tick_npc_move(&mut self) {
         let prop_bodies = self.prop_bodies();
+        self.npc_push_overlapping_props(&prop_bodies);
         // the other NPCs' hulls block a move like props (COLLISION_GROUP_NPC is solid to NPCs)
         let npc_bodies: Vec<(u32, gm_sandbox::PropBody)> = self
             .npcs
@@ -14013,7 +14113,13 @@ impl<'w> Server<'w> {
                 }
             }
             let chasing = n.chase.is_some();
+            let zombie_body = ai::class_is_zombie_body(&n.class);
+            let pressed_prop = n.pressed_prop;
             let chase_reach = n.chase_reach;
+            if n.in_prop {
+                n.move_speed = 0.0;
+                continue;
+            }
             if n.flight.is_some() {
                 continue;
             }
@@ -14270,6 +14376,10 @@ impl<'w> Server<'w> {
                 let back = pos + lift - (dir * NPC_SWEEP_BACKOFF).extend(0.0);
                 let hit = gm_sandbox::sweep_hull_props(&prop_bodies, back, want + lift, mins, maxs)
                     .filter(|h| h.ent.is_some());
+                let swattable = zombie_body
+                    && hit
+                        .and_then(|h| h.ent)
+                        .is_some_and(|e| Some(e) == pressed_prop && self.npc_swattable_prop(e));
                 if hit.is_some_and(|h| h.ent.is_some_and(|e| e >= NPC_BODY_ID_BASE)) {
                     // another NPC in the way: no skirting, the move just stops against it
                     if let Some(n) = self.npcs.get_mut(&id) {
@@ -14301,8 +14411,14 @@ impl<'w> Server<'w> {
                         let c = glam::Vec2::new(pb.pos.x + sx * m, pb.pos.y + sy * m);
                         let rel = c - pos.truncate();
                         let side = (dir.x * rel.y - dir.y * rel.x).signum();
+                        // a zombie against the swattable prop it was spawned into aims past
+                        // it (the far corner) and stays pressed on its face, sliding along it
+                        // (the game's zombie drifts 19 u down its crate in 100 ticks until the
+                        // swat scan picks it); blocked by any other prop it stands and melees
+                        // it as before (the swat2 records)
+                        let near_limit = if swattable { m } else { -m };
                         if (detour_side != 0.0 && side != detour_side)
-                            || rel.dot(dir) < -m
+                            || rel.dot(dir) < near_limit
                             || rel.length() < NPC_DETOUR_REACH * 2.0
                         {
                             continue;
@@ -16136,6 +16252,22 @@ impl<'w> Server<'w> {
     /// One within ZOMBIE_SWAT_DIST starts the swat: the body stops, the swat sequence plays
     /// ZOMBIE_SWAT_TICKS and the prop is launched at ZOMBIE_SWAT_HIT_TICK (`tick_npc_swats`).
     /// True while a swat is running or just started.
+    /// A physics prop a zombie may swat: unfrozen, not a ragdoll, ZOMBIE_SWAT_MIN_MASS..=MAX.
+    fn npc_swattable_prop(&self, prop: u32) -> bool {
+        if self.ragdoll_bodies.contains_key(&prop) {
+            return false;
+        }
+        let Some(p) = self.sandbox.props().iter().find(|p| p.id == prop) else {
+            return false;
+        };
+        if p.frozen {
+            return false;
+        }
+        self.bodies.get(&prop).is_some_and(|&b| {
+            (ZOMBIE_SWAT_MIN_MASS..=ZOMBIE_SWAT_MAX_MASS).contains(&self.physics.mass(b))
+        })
+    }
+
     fn npc_swat_think(&mut self, id: u32, now: u64, _player: u32, origin: Vec3) -> bool {
         let Some(n) = self.npcs.get(&id) else {
             return false;
@@ -16703,6 +16835,10 @@ impl<'w> Server<'w> {
                 melee_swing: None,
                 swat: None,
                 next_swat_scan: 0,
+                in_prop: false,
+                push_prop: None,
+                pressed_prop: None,
+                push_checked: false,
                 wake_until: 0,
                 reversal: 0,
                 face_until: 0,
@@ -21550,10 +21686,18 @@ pub struct NpcSwat {
 /// Zombie swat rules measured on the game (server_npc_zombie_swat*): the scan runs at the
 /// wake-angry think and at the first think more than 2.0 s after the last one; the swat
 /// sequence lasts 98 ticks with the launch at tick 35.
+/// Speed (u/s) a prop overlapping an NPC hull is pushed clear at (the game's crate under the
+/// swat zombie: 902 -> 883 over the 28 ticks from the wake think to the hulls parting, then
+/// slides to rest at 875; measured only with an enemy in sight - without one no push).
+pub const NPC_PUSH_PROP_SPEED: f32 = 45.0;
+/// How far past the hull the shove keeps driving the prop (the game's crate slides 883 -> 875
+/// after the hulls part).
+pub const NPC_PUSH_PROP_GAP: f32 = 4.0;
 pub const ZOMBIE_SWAT_SCAN_TICKS: u64 = 134;
-/// A prop nearer than this at the scan is left alone (game: swats at 41.5/46/48/61 u, none at
-/// 30-36 u with the same props).
-pub const ZOMBIE_SWAT_MIN_DIST: f32 = 40.0;
+/// A prop nearer than this at the scan is left alone (game: swats at 41.6/46/48/61 u, none at
+/// 30-36 u with the same props - the bound lies in 36..41.6; 38 lets the zombie pressed on
+/// its spawn crate swat it at 38.6 u as the game does at 41.6 with its 3 u standoff).
+pub const ZOMBIE_SWAT_MIN_DIST: f32 = 38.0;
 pub const ZOMBIE_SWAT_TICKS: u64 = 98;
 pub const ZOMBIE_SWAT_HIT_TICK: u64 = 35;
 /// ZOMBIE_FARTHEST_PHYSICS_OBJECT / ZOMBIE_PHYSOBJ_SWATDIST of the game.

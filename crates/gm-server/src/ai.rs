@@ -454,6 +454,9 @@ pub const SCHED_PATROL_WALK: u16 = 74;
 pub const SCHED_COMBAT_PATROL: u16 = 75;
 pub const SCHED_PATROL_RUN: u16 = 76;
 pub const SCHED_RUN_RANDOM: u16 = 77;
+/// SCHED_FALL_TO_GROUND: the body is not on the ground - here, a hull spawned overlapping a
+/// physics prop while the prop is pushed clear.
+pub const SCHED_FALL_TO_GROUND: u16 = 78;
 pub const SCHED_FAIL: u16 = 81;
 pub const SCHED_FAIL_NOSTOP: u16 = 82;
 /// CAI_AssaultBehavior's private schedules, mirrored while an assault goal owns the NPC: a
