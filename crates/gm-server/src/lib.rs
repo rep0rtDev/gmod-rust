@@ -2592,7 +2592,8 @@ const NPC_GRAVITY: f32 = 600.0;
 pub fn npc_leap(class: &str) -> Option<NpcLeap> {
     match class {
         "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => Some(NpcLeap {
-            speed: 380.0,
+            // run14 golden: the bite lands 34 ticks into a 178 u leap (was 26 at 380 u/s)
+            speed: 345.0,
             aim_height: 62.0,
             damage: 5.0,
             punch: 25.0,
