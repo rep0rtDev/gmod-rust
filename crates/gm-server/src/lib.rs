@@ -2093,6 +2093,9 @@ pub struct Npc {
     /// Tick the current target came back into view after at least a think out of it
     /// (`timeLastReacquired`): the aim refocuses from there.
     pub reacquired_at: u64,
+    /// Tick the round that left a quarter of the magazine was fired: the reload (and its
+    /// cover run) begins the think after (game: 34th round t334, HIDE_AND_RELOAD t341).
+    pub reload_mark: u64,
     /// Tick of the last damage taken from the current target (`GetLastTimeTookDamageFromEnemy`).
     pub last_enemy_damage: u64,
     /// `SetMaxLookDistance`: how far this NPC looks for a target (default `NPC_SIGHT_RANGE`).
@@ -12560,6 +12563,7 @@ impl<'w> Server<'w> {
             target_seen: 0,
             target_first_seen: 0,
             reacquired_at: 0,
+            reload_mark: 0,
             last_enemy_damage: 0,
             sight: NPC_SIGHT_RANGE,
             body: None,
@@ -14342,7 +14346,7 @@ impl<'w> Server<'w> {
             let think = n.think_interval as u64;
             n.next_shot = n.last_shot
                 + NPC_BURST_GAP_LOW_TICKS
-                + think * (NPC_BURST_SHOTS - NPC_COVER_BURST_SHOTS) as u64;
+                + think * (NPC_BURST_SHOTS - NPC_COVER_BURST_SHOTS + 1) as u64;
         }
         n.cover_fire = cover_fire;
         if n.target != Some(player) {
@@ -14439,6 +14443,16 @@ impl<'w> Server<'w> {
             n.next_goal = None;
             n.move_speed = 0.0;
         }
+        if let Some(n) = self.npcs.get_mut(&id) {
+            if n.reload_mark > 0 && now > n.reload_mark && !n.reloading {
+                n.reload_mark = 0;
+                n.reloading = true;
+                n.cover_wanted = true;
+            }
+        }
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
         if n.cover_wanted {
             n.cover_wanted = false;
             if self.npc_take_cover(id, player) {
@@ -14536,9 +14550,11 @@ impl<'w> Server<'w> {
             );
         // COND_LOW_PRIMARY_AMMO: a quarter of the magazine left ends the burst and sends the
         // body to reload (game: the 34th of 45 SMG1 rounds, mid-burst, in every scene)
-        if n.clip as u16 * 4 <= npc_clip_size(&n.weapon) as u16 && !n.reloading {
-            n.reloading = true;
-            n.cover_wanted = true;
+        if n.clip as u16 * 4 <= npc_clip_size(&n.weapon) as u16
+            && !n.reloading
+            && n.reload_mark == 0
+        {
+            n.reload_mark = now;
             n.burst_left = 0;
         }
         if let Some((shoot, _)) = shoot_seqs.as_ref().filter(|_| n.goal.is_none()) {
@@ -15940,6 +15956,7 @@ impl<'w> Server<'w> {
                 target_seen: 0,
                 target_first_seen: 0,
                 reacquired_at: 0,
+                reload_mark: 0,
                 last_enemy_damage: 0,
                 sight: NPC_SIGHT_RANGE,
                 body: None,
