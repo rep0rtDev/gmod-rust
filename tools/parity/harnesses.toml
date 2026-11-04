@@ -5119,3 +5119,30 @@ crates = ["gm-physics"]
 pos = 2.0
 rest = 2.0
 ang = 5.0
+
+[[harness]]
+name = "server_npc_turn_33_y0"
+scenario = "server/npc_turn_33_y0"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_citizen_y180"
+scenario = "server/npc_walk_citizen_y180"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
+name = "server_npc_walk_citizen_y180_face180"
+scenario = "server/npc_walk_citizen_y180_face180"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav"]
+[harness.tolerance]
+pos = 2.0
