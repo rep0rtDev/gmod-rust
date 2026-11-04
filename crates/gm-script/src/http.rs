@@ -46,6 +46,21 @@ pub fn split_url(url: &str) -> Result<(String, u16, String), HttpError> {
 }
 
 pub fn get(url: &str) -> Result<Vec<u8>, HttpError> {
+    let (status, body, _) = request("GET", url, None, &[])?;
+    if status != 200 {
+        return Err(HttpError::Status(status, url.to_string()));
+    }
+    Ok(body)
+}
+
+/// One request with any method, body and extra headers: status, body and response headers
+/// (lower-case names); only the transport and a malformed reply are errors.
+pub fn request(
+    method: &str,
+    url: &str,
+    body: Option<&[u8]>,
+    headers: &[(String, String)],
+) -> Result<(u16, Vec<u8>, Vec<(String, String)>), HttpError> {
     let (host, port, path) = split_url(url)?;
     let addr = (host.as_str(), port)
         .to_socket_addrs()?
@@ -54,10 +69,19 @@ pub fn get(url: &str) -> Result<Vec<u8>, HttpError> {
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
     s.set_read_timeout(Some(Duration::from_secs(30)))?;
     s.set_write_timeout(Some(Duration::from_secs(30)))?;
-    write!(
-        s,
-        "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: gmr\r\nConnection: close\r\n\r\n"
-    )?;
+    let method = method.to_ascii_uppercase();
+    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: gmr\r\nConnection: close\r\n");
+    for (k, v) in headers {
+        req.push_str(&format!("{k}: {v}\r\n"));
+    }
+    if let Some(b) = body {
+        req.push_str(&format!("Content-Length: {}\r\n", b.len()));
+    }
+    req.push_str("\r\n");
+    s.write_all(req.as_bytes())?;
+    if let Some(b) = body {
+        s.write_all(b)?;
+    }
     let mut raw = Vec::new();
     let mut buf = [0u8; 16 * 1024];
     let mut header_end = None;
@@ -84,20 +108,20 @@ pub fn get(url: &str) -> Result<Vec<u8>, HttpError> {
         .and_then(|l| l.split_whitespace().nth(1))
         .and_then(|c| c.parse().ok())
         .ok_or_else(|| HttpError::Malformed(url.to_string()))?;
-    if status != 200 {
-        return Err(HttpError::Status(status, url.to_string()));
-    }
     let mut length = None;
     let mut chunked = false;
+    let mut resp_headers = Vec::new();
     for l in lines {
         let Some((k, v)) = l.split_once(':') else {
             continue;
         };
-        match k.trim().to_ascii_lowercase().as_str() {
+        let key = k.trim().to_ascii_lowercase();
+        match key.as_str() {
             "content-length" => length = v.trim().parse::<usize>().ok(),
             "transfer-encoding" => chunked = v.to_ascii_lowercase().contains("chunked"),
             _ => {}
         }
+        resp_headers.push((key, v.trim().to_string()));
     }
     let body = &raw[he..];
     let out = if chunked {
@@ -131,7 +155,7 @@ pub fn get(url: &str) -> Result<Vec<u8>, HttpError> {
     if out.len() > MAX_BODY {
         return Err(HttpError::TooLarge(url.to_string()));
     }
-    Ok(out)
+    Ok((status, out, resp_headers))
 }
 
 /// Serves a directory over plain HTTP on a loopback port for tests: returns the base url.

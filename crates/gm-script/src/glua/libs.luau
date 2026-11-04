@@ -47,11 +47,10 @@ local function numpad_bind(ply, key, name, kind, ...) numpad_id = numpad_id + 1;
 function numpad.OnDown(ply, key, name, ...) return numpad_bind(ply, key, name, "down", ...) end
 function numpad.OnUp(ply, key, name, ...) return numpad_bind(ply, key, name, "up", ...) end
 function numpad.Remove(id) for _, keys in pairs(numpad_binds) do for _, t in pairs(keys) do t[id] = nil end end end
-local function numpad_fire(ply, key, kind) local uid = IsValid(ply) and ply:UserID() or 0; local t = numpad_binds[uid] and numpad_binds[uid][key]; if not t then return end for _, b in pairs(t) do if b.kind == kind and numpad_fns[b.name] then numpad_fns[b.name](ply, unpack(b.args)) end end end
+local function numpad_fire(ply, key, kind) local uid = IsValid(ply) and ply:UserID() or 0; local t = numpad_binds[uid] and numpad_binds[uid][key]; if not t then return end for _, b in pairs(t) do if b.kind == kind and numpad_fns[b.name] then __numpad_button = key; numpad_fns[b.name](ply, unpack(b.args)); __numpad_button = nil end end end
 function numpad.Activate(ply, key, isButton) numpad_fire(ply, key, "down") end
 function numpad.Deactivate(ply, key, isButton) numpad_fire(ply, key, "up") end
 function numpad.Toggle(ply, key) local uid = IsValid(ply) and ply:UserID() or 0; local st = numpad_binds["toggle" .. uid] or {}; numpad_binds["toggle" .. uid] = st; if st[key] then st[key] = nil; numpad_fire(ply, key, "up") else st[key] = true; numpad_fire(ply, key, "down") end end
-numpad.FromButton = stub("numpad.FromButton")
 
 player_manager = player_manager or {}
 local pm_models, pm_hands, pm_classes, pm_player_class = {}, {}, {}, {}
@@ -110,13 +109,11 @@ function physenv.SetTimeScale(s) RunConsoleCommand("phys_timescale", tostring(to
 function physenv.SetPhysicsPaused(b) RunConsoleCommand("gm_phys_paused", b and "1" or "0") end
 function physenv.GetAirDensity() return 2 end
 function physenv.GetLastSimulationTime() return engine.TickInterval() end
-for _, n in ipairs({ "AddSurfaceData", "GetPerformanceSettings", "SetAirDensity", "SetPerformanceSettings" }) do if physenv[n] == nil then physenv[n] = stub("physenv." .. n) end end
 
 function game.GetAmmoDamageType(id) local d = game.GetAmmoData and game.GetAmmoData(id); return d and d.dmgtype or DMG_BULLET end
 function game.GetAmmoForce(id) local d = game.GetAmmoData and game.GetAmmoData(id); return d and d.force or 1000 end
 function game.GetAmmoNPCDamage(id) local d = game.GetAmmoData and game.GetAmmoData(id); return d and d.npcdmg or 0 end
 function game.GetAmmoPlayerDamage(id) local d = game.GetAmmoData and game.GetAmmoData(id); return d and d.plydmg or 0 end
-for _, n in ipairs({ "Get3DSkyboxInfo", "GetMapChangeCount", "GetWindSpeed", "MapLoadType" }) do if game[n] == nil then game[n] = stub("game." .. n) end end
 
 function util.IntersectRayWithSphere(o, d, c, r)
     local m = o - c; local b = m:Dot(d); local cc = m:Dot(m) - r * r
@@ -142,7 +139,6 @@ function util.GetActivityIDByName(name) local v = _G[tostring(name)]; if type(v)
 local ACT_NAMES = {}
 for k, v in pairs(_G) do if type(k) == "string" and k:sub(1, 4) == "ACT_" and type(v) == "number" then ACT_NAMES[v] = k end end
 function util.GetActivityNameByID(id) return ACT_NAMES[tonumber(id) or -2] or "" end
-for _, n in ipairs({ "GetAnimEventIDByName", "GetAnimEventNameByID", "GetUserGroups", "SHA1", }) do if util[n] == nil then util[n] = stub("util." .. n) end end
 
 function VectorRand(lo, hi) lo, hi = lo or -1, hi or 1; return Vector(math.Rand(lo, hi), math.Rand(lo, hi), math.Rand(lo, hi)) end
 function AngleRand(lo, hi) lo, hi = lo or -90, hi or 90; return Angle(math.Rand(lo, hi), math.Rand(math.max(lo, -180), math.min(hi, 180)), math.Rand(lo, hi)) end
@@ -195,7 +191,6 @@ function IsMounted(name)
     return false
 end
 function SoundDuration(name) return __sound_duration(tostring(name or "")) or 0 end
-for _, n in ipairs({ "AddOriginToPVS", "BroadcastLua", "BuildNetworkedVarsTable", "CompileFile", "CreateSound", "DEFINE_BASECLASS", "DTVar_ReceiveProxyGL", "DebugInfo", "EmitSentence", "GetPredictionPlayer", "HTTP", "IsFirstTimePredicted", "Material", "Particle", "ParticleEffect", "ParticleEffectAttach", "PrecacheParticleSystem", "PrecacheScene", "PrecacheSentenceFile", "PrecacheSentenceGroup", "SentenceDuration", "SetPhysConstraintSystem", "SuppressHostEvents", "TauntCamera" }) do if _G[n] == nil then _G[n] = stub("Global." .. n) end end
 
 
 -- Tool: the tool gun's per-mode state object (ghost entities need the client realm).
@@ -322,7 +317,6 @@ for _, cls in ipairs({ "CUserCmd", "CMoveData", "CNavLadder", "PathFollower", "C
     T.__index = T
     __glua_classes[cls] = T
 end
-for _, n in ipairs({ "GetMouseWheel", "SetMouseWheel" }) do if __glua_classes.CUserCmd[n] == nil then __glua_classes.CUserCmd[n] = stub("CUserCmd:" .. n) end end
 -- CUserCmd: a copy of the command the server processed for the player this tick
 -- (Player:GetCurrentCommand); the command has already run, so writes change the copy only.
 do
@@ -353,7 +347,6 @@ do
     function C:IsForced() return false end
     function C:SelectWeapon(w) if self.__ply and IsValid(w) then self.__ply:SelectWeapon(w:GetClass()) end end
 end
-for _, n in ipairs({ "GetAbsMoveAngles", "GetConstraintCenter", "GetConstraintRadius", "GetConstraintSpeedScale", "GetConstraintWidth", "SetAbsMoveAngles", "SetConstraintCenter", "SetConstraintRadius", "SetConstraintSpeedScale", "SetConstraintWidth" }) do if __glua_classes.CMoveData[n] == nil then __glua_classes.CMoveData[n] = stub("CMoveData:" .. n) end end
 -- CMoveData: the move of a player's command as SetupMove / Move / FinishMove see it; origin,
 -- velocity, buttons, moves, angles and max speed are written back to the server's mover.
 do
@@ -771,15 +764,10 @@ do
     if E and E.Use == nil then function E:Use(activator, caller, useType, value) return self:Input("Use", activator, caller, value) end end
 end
 __glua_classes["CSoundPatch"] = __glua_classes["CSoundPatch"] or {}
-for _, n in ipairs({ "FadeOut", "Stop" }) do if __glua_classes["CSoundPatch"][n] == nil then __glua_classes["CSoundPatch"][n] = stub("CSoundPatch:" .. n) end end
 __glua_classes["IMaterial"] = __glua_classes["IMaterial"] or {}
-for _, n in ipairs({ "GetColor", "GetFloat", "GetInt", "GetKeyValues", "GetMatrix", "GetName", "GetShader", "GetString", "GetTexture", "GetVector", "GetVector4D", "GetVectorLinear", "Height", "IsError", "Recompute", "SetFloat", "SetInt", "SetMatrix", "SetShader", "SetString", "SetTexture", "SetUndefined", "SetVector", "SetVector4D", "Width" }) do if __glua_classes["IMaterial"][n] == nil then __glua_classes["IMaterial"][n] = stub("IMaterial:" .. n) end end
 __glua_classes["IRestore"] = __glua_classes["IRestore"] or {}
-for _, n in ipairs({ "EndBlock", "ReadAngle", "ReadBool", "ReadEntity", "ReadFloat", "ReadInt", "ReadString", "ReadVector", "StartBlock" }) do if __glua_classes["IRestore"][n] == nil then __glua_classes["IRestore"][n] = stub("IRestore:" .. n) end end
 __glua_classes["ISave"] = __glua_classes["ISave"] or {}
-for _, n in ipairs({ "EndBlock", "StartBlock", "WriteAngle", "WriteBool", "WriteEntity", "WriteFloat", "WriteInt", "WriteString", "WriteVector" }) do if __glua_classes["ISave"][n] == nil then __glua_classes["ISave"][n] = stub("ISave:" .. n) end end
 __glua_classes["ITexture"] = __glua_classes["ITexture"] or {}
-for _, n in ipairs({ "Download", "GetColor", "GetMappingHeight", "GetMappingWidth", "GetName", "GetNumAnimationFrames", "Height", "IsError", "IsErrorTexture", "Width" }) do if __glua_classes["ITexture"][n] == nil then __glua_classes["ITexture"][n] = stub("ITexture:" .. n) end end
 __glua_classes["NextBot"] = __glua_classes["NextBot"] or {}
 for _, n in ipairs({ "BecomeRagdoll", "FindSpot", "FindSpots", "GetSolidMask", "SetSolidMask"}) do if __glua_classes["NextBot"][n] == nil then __glua_classes["NextBot"][n] = stub("NextBot:" .. n) end end
 __glua_classes["PhysCollide"] = __glua_classes["PhysCollide"] or {}
@@ -827,7 +815,6 @@ end
 __glua_classes["Schedule"] = __glua_classes["Schedule"] or {}
 for _, n in ipairs({ "AddTask", "EngTask", "GetTask", "NumTasks" }) do if __glua_classes["Schedule"][n] == nil then __glua_classes["Schedule"][n] = stub("Schedule:" .. n) end end
 __glua_classes["SurfaceInfo"] = __glua_classes["SurfaceInfo"] or {}
-for _, n in ipairs({ "GetMaterial", "GetVertices", "IsNoDraw", "IsSky", "IsWater" }) do if __glua_classes["SurfaceInfo"][n] == nil then __glua_classes["SurfaceInfo"][n] = stub("SurfaceInfo:" .. n) end end
 __glua_classes["Task"] = __glua_classes["Task"] or {}
 for _, n in ipairs({ "InitEngine", "InitFunctionName"}) do if __glua_classes["Task"][n] == nil then __glua_classes["Task"][n] = stub("Task:" .. n) end end
 __glua_classes["WorkshopFileBase"] = __glua_classes["WorkshopFileBase"] or {}
@@ -837,40 +824,31 @@ for _, n in ipairs({ "GetNodeCount", "GetScheduleID", "GetSquadLeader", "GetSqua
 construct = construct or {}
 for _, n in ipairs({ "Magnet", "SetPhysProp" }) do if construct[n] == nil then construct[n] = stub("construct." .. n) end end
 coroutine = coroutine or {}
-for _, n in ipairs({ "wait" }) do if coroutine[n] == nil then coroutine[n] = stub("coroutine." .. n) end end
 debug = debug or {}
-for _, n in ipairs({ "Trace", "debug", "getfenv", "gethook", "getinfo", "getlocal", "getmetatable", "getregistry", "getupvalue", "setfenv", "sethook", "setlocal", "setmetatable", "setupvalue", "traceback", "upvalueid", "upvaluejoin" }) do if debug[n] == nil then debug[n] = stub("debug." .. n) end end
 debugoverlay = debugoverlay or {}
 for _, n in ipairs({ "Axis", "Box", "BoxAngles", "Cross", "EntityTextAtPosition", "Grid", "Line", "ScreenText", "Sphere", "SweptBox", "Text", "Triangle" }) do if debugoverlay[n] == nil then debugoverlay[n] = stub("debugoverlay." .. n) end end
 ents = ents or {}
 for _, n in ipairs({ "FindInPVS", "FireTargets" }) do if ents[n] == nil then ents[n] = stub("ents." .. n) end end
 gameevent = gameevent or {}
-for _, n in ipairs({ "Listen" }) do if gameevent[n] == nil then gameevent[n] = stub("gameevent." .. n) end end
 gmsave = gmsave or {}
 for _, n in ipairs({ "LoadMap", "PlayerLoad", "PlayerSave", "SaveMap", "ShouldSaveEntity" }) do if gmsave[n] == nil then gmsave[n] = stub("gmsave." .. n) end end
 hammer = hammer or {}
 for _, n in ipairs({ "SendCommand" }) do if hammer[n] == nil then hammer[n] = stub("hammer." .. n) end end
 http = http or {}
-for _, n in ipairs({ "Fetch", "Post" }) do if http[n] == nil then http[n] = stub("http." .. n) end end
 jit = jit or {}
-for _, n in ipairs({ "arch", "attach", "flush", "off", "on", "os", "status", "version", "version_num" }) do if jit[n] == nil then jit[n] = stub("jit." .. n) end end
 motionsensor = motionsensor or {}
 for _, n in ipairs({ "BuildSkeleton", "ChooseBuilderFromEntity", "ProcessAngle", "ProcessAnglesTable", "ProcessPositionTable" }) do if motionsensor[n] == nil then motionsensor[n] = stub("motionsensor." .. n) end end
 player = player or {}
-for _, n in ipairs({ "GetCountConnecting" }) do if player[n] == nil then player[n] = stub("player." .. n) end end
 properties = properties or {}
 for _, n in ipairs({ "OnScreenClick", "OpenEntityMenu" }) do if properties[n] == nil then properties[n] = stub("properties." .. n) end end
 resource = resource or {}
-for _, n in ipairs({ "AddFile", "AddSingleFile", "AddWorkshop" }) do if resource[n] == nil then resource[n] = stub("resource." .. n) end end
 saverestore = saverestore or {}
 sound = sound or {}
 for _, n in ipairs({ "AddSoundOverrides", "GetLoudestSoundHint", "SetActorGender" }) do if sound[n] == nil then sound[n] = stub("sound." .. n) end end
 sql = sql or {}
-for _, n in ipairs({ "Begin", "Commit", "IndexExists", "LastError", "Query", "QueryRow", "QueryTyped", "QueryValue", "SQLStr", "TableExists" }) do if sql[n] == nil then sql[n] = stub("sql." .. n) end end
 steamworks = steamworks or {}
 for _, n in ipairs({ "FileInfo", "GetList" }) do if steamworks[n] == nil then steamworks[n] = stub("steamworks." .. n) end end
 usermessage = usermessage or {}
-for _, n in ipairs({ "GetTable", "Hook", "IncomingMessage" }) do if usermessage[n] == nil then usermessage[n] = stub("usermessage." .. n) end end
 widgets = widgets or {}
 for _, n in ipairs({ "PlayerTick" }) do if widgets[n] == nil then widgets[n] = stub("widgets." .. n) end end
 

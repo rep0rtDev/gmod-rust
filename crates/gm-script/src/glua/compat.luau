@@ -1,0 +1,1218 @@
+-- The rest of the documented surface that needs no host object of its own: debug / jit over what
+-- Luau exposes, coroutine.wait, usermessage / gameevent over the existing bridges, ISave /
+-- IRestore, SurfaceInfo, IMaterial / ITexture from the mounted VMT / VTF files, the leftover
+-- globals. Loaded last, so it sees both realms' tables.
+local function ply_of(id) return Player and Player(id) or NULL end
+
+------------------------------------------------------------------------ debug (Luau has debug.info / traceback; no hooks, locals or upvalue access)
+debug = debug or {}
+local dinfo, dtrace = __debug_info, __debug_traceback
+debug.info = debug.info or dinfo
+local WHAT = { Lua = "Lua", C = "C" }
+function debug.getinfo(thread, f, what)
+    if type(thread) ~= "thread" then thread, f, what = nil, thread, f end
+    local level = type(f) == "number" and f + 1 or f
+    if type(level) == "number" and level < 1 then return nil end
+    if type(level) ~= "number" and type(level) ~= "function" then return nil end
+    if not dinfo then return nil end
+    local src, line, name, nparams, isvararg, fn = dinfo(level, "slnaf")
+    if src == nil then return nil end
+    local short = tostring(src):gsub("^[=@]", "")
+    local short_src = short:match("([^/\\]+)$") or short
+    return {
+        source = "@" .. short, short_src = short_src, currentline = line or -1, linedefined = line or -1, lastlinedefined = -1,
+        name = name, namewhat = name and "global" or "", what = (short == "[C]") and "C" or "Lua",
+        nparams = nparams or 0, isvararg = isvararg == true, nups = 0, func = fn, activelines = {},
+    }
+end
+function debug.traceback(thread, msg, level)
+    if type(thread) ~= "thread" then thread, msg, level = nil, thread, msg end
+    if msg ~= nil and type(msg) ~= "string" then return msg end
+    local tb = dtrace and dtrace(level or 1) or "stack traceback:"
+    if msg then return tostring(msg) .. "\n" .. tb end
+    return tb
+end
+function debug.Trace()
+    local out = { "Trace:" }
+    for lvl = 2, 32 do
+        if not dinfo then break end
+        local src, line, name = dinfo(lvl, "sln")
+        if src == nil then break end
+        out[#out + 1] = string.format("  %d: Line %d \"%s\" %s", lvl - 1, line or -1, tostring(name or ""), tostring(src))
+    end
+    print(table.concat(out, "\n"))
+end
+function debug.getmetatable(v) return getmetatable(v) end
+function debug.setmetatable(v, mt) setmetatable(v, mt); return v end
+local registry = { _LOADED = {}, _G = _G }
+function debug.getregistry() return registry end
+function debug.getfenv(f) return (getfenv and getfenv(type(f) == "number" and f + 1 or f)) or _G end
+function debug.setfenv(f, env) if setfenv then setfenv(type(f) == "number" and f + 1 or f, env) end return f end
+local hook_fn, hook_mask, hook_count = nil, "", 0
+function debug.sethook(thread, fn, mask, count) if type(thread) ~= "thread" then fn, mask, count = thread, fn, mask end hook_fn, hook_mask, hook_count = fn, mask or "", count or 0 end
+function debug.gethook() return hook_fn, hook_mask, hook_count end
+function debug.getlocal() return nil end
+function debug.setlocal() return nil end
+function debug.getupvalue() return nil end
+function debug.setupvalue() return nil end
+function debug.upvalueid(f, n) return tostring(f) .. ":" .. tostring(n) end
+function debug.upvaluejoin() end
+function debug.debug() end
+
+------------------------------------------------------------------------ jit: Luau runs the actors (no trace JIT to switch)
+jit = jit or {}
+jit.arch = "x64"
+jit.os = (package and package.config and package.config:sub(1, 1) == "\\") and "Windows" or "Linux"
+jit.version = "Luau"
+jit.version_num = 0
+function jit.on() end
+function jit.off() end
+function jit.flush() end
+function jit.attach() end
+function jit.status() return false end
+
+------------------------------------------------------------------------ coroutine.wait: yields until the game time passes
+function coroutine.wait(seconds)
+    local until_t = CurTime() + (tonumber(seconds) or 0)
+    while CurTime() < until_t do coroutine.yield() end
+end
+
+numpad = numpad or {}
+function numpad.FromButton() return __numpad_button end
+
+------------------------------------------------------------------------ CSoundPatch / CUserCmd / CMoveData leftovers
+do
+    local SP = __glua_classes.CSoundPatch
+    function SP:Stop() self.playing = false; if sound and sound.Stop then sound.Stop(self.name) end end
+    function SP:FadeOut(sec) self:ChangeVolume(0, sec); timer.Simple(sec or 0, function() self.playing = false end) end
+    local C = __glua_classes.CUserCmd
+    function C:GetMouseWheel() return self.wheel or 0 end
+    function C:SetMouseWheel(v) self.wheel = tonumber(v) or 0 end
+    local M = __glua_classes.CMoveData
+    function M:GetConstraintCenter() local c = self.constraint_center; return c and Vector(c.x, c.y, c.z) or Vector() end
+    function M:SetConstraintCenter(v) self.constraint_center = { x = v.x, y = v.y, z = v.z } end
+    function M:GetConstraintRadius() return self.constraint_radius or 0 end
+    function M:SetConstraintRadius(r) self.constraint_radius = tonumber(r) or 0 end
+    function M:GetConstraintWidth() return self.constraint_width or 0 end
+    function M:SetConstraintWidth(w) self.constraint_width = tonumber(w) or 0 end
+    function M:GetConstraintSpeedScale() return self.constraint_speed_scale or 0 end
+    function M:SetConstraintSpeedScale(s) self.constraint_speed_scale = tonumber(s) or 0 end
+    function M:GetAbsMoveAngles() local a = self.abs_angles or self.angles; return Angle(a.x, a.y, a.z) end
+    function M:SetAbsMoveAngles(a) self.abs_angles = { x = a.p or a.x or 0, y = a.y or 0, z = a.r or a.z or 0 } end
+end
+
+------------------------------------------------------------------------ ISave / IRestore: the save blocks of ENTITY:OnSave / OnRestore (typed values in order)
+do
+    local SAVE = {}
+    SAVE.__index = SAVE
+    function __glua_isave(out) return setmetatable({ __out = out or {}, __blocks = {} }, SAVE) end
+    local function w(self, kind, v) self.__out[#self.__out + 1] = { kind, v } end
+    function SAVE:StartBlock(name) self.__blocks[#self.__blocks + 1] = name; w(self, "block", name) end
+    function SAVE:EndBlock() self.__blocks[#self.__blocks] = nil; w(self, "end", true) end
+    function SAVE:WriteAngle(a) w(self, "angle", { a.p, a.y, a.r }) end
+    function SAVE:WriteBool(b) w(self, "bool", b == true) end
+    function SAVE:WriteEntity(e) w(self, "entity", IsValid(e) and e:EntIndex() or 0) end
+    function SAVE:WriteFloat(f) w(self, "float", tonumber(f) or 0) end
+    function SAVE:WriteInt(i) w(self, "int", math.floor(tonumber(i) or 0)) end
+    function SAVE:WriteString(s) w(self, "string", tostring(s)) end
+    function SAVE:WriteVector(v) w(self, "vector", { v.x, v.y, v.z }) end
+    __glua_classes.ISave = SAVE
+    local RESTORE = {}
+    RESTORE.__index = RESTORE
+    function __glua_irestore(data) return setmetatable({ __in = data or {}, __p = 1 }, RESTORE) end
+    local function r(self, kind)
+        local e = self.__in[self.__p]
+        if not e then return nil end
+        self.__p = self.__p + 1
+        return e[1] == kind and e[2] or nil
+    end
+    function RESTORE:StartBlock() local name = r(self, "block"); return name or "" end
+    function RESTORE:EndBlock() r(self, "end") end
+    function RESTORE:ReadAngle() local a = r(self, "angle") or { 0, 0, 0 }; return Angle(a[1], a[2], a[3]) end
+    function RESTORE:ReadBool() return r(self, "bool") == true end
+    function RESTORE:ReadEntity() return Entity(r(self, "entity") or 0) end
+    function RESTORE:ReadFloat() return r(self, "float") or 0 end
+    function RESTORE:ReadInt() return r(self, "int") or 0 end
+    function RESTORE:ReadString() return r(self, "string") or "" end
+    function RESTORE:ReadVector() local v = r(self, "vector") or { 0, 0, 0 }; return Vector(v[1], v[2], v[3]) end
+    __glua_classes.IRestore = RESTORE
+end
+
+------------------------------------------------------------------------ SurfaceInfo: one brush face (material, winding, flags) as Entity:GetBrushSurfaces hands it out
+do
+    local SI = {}
+    SI.__index = SI
+    function __glua_surfaceinfo(t) return setmetatable({ __mat = t.material or "", __verts = t.verts or {}, __flags = t.flags or 0 }, SI) end
+    function SI:GetMaterial() return Material(self.__mat) end
+    function SI:GetVertices() local out = {}; for i, v in ipairs(self.__verts) do out[i] = Vector(v.x or v[1], v.y or v[2], v.z or v[3]) end return out end
+    local SURF_SKY, SURF_NODRAW = 0x4, 0x80
+    function SI:IsNoDraw() return bit.band(self.__flags, SURF_NODRAW) ~= 0 end
+    function SI:IsSky() return bit.band(self.__flags, SURF_SKY) ~= 0 end
+    function SI:IsWater() return string.find(string.lower(self.__mat), "water", 1, true) ~= nil end
+    __glua_classes.SurfaceInfo = SI
+end
+
+------------------------------------------------------------------------ util leftovers
+function util.SHA1(s) return __sha1(tostring(s)) end
+function util.MD5(s) return __md5(tostring(s)) end
+-- the shared animation events of the SDK's eventlist (AE_* ids the models' sequences carry)
+local ANIM_EVENTS = {
+    AE_EMPTY = 0, AE_NPC_LEFTFOOT = 2050, AE_NPC_RIGHTFOOT = 2051, AE_NPC_BODYDROP_LIGHT = 2001, AE_NPC_BODYDROP_HEAVY = 2002,
+    AE_NPC_SWISHSOUND = 2010, AE_NPC_180TURN = 2020, AE_NPC_ITEM_PICKUP = 2040, AE_NPC_WEAPON_DROP = 2041,
+    AE_NPC_WEAPON_SET_SEQUENCE_NAME = 2042, AE_NPC_WEAPON_SET_SEQUENCE_NUMBER = 2043, AE_NPC_WEAPON_SET_ACTIVITY = 2044,
+    AE_NPC_HOLSTER = 2045, AE_NPC_DRAW = 2046, AE_NPC_WEAPON_FIRE = 3001, AE_NPC_ATTACK_BROADCAST = 2060,
+    AE_NPC_HURT_INTERACTION_PARTNER = 2061, AE_NPC_SET_INTERACTION_CANTDIE = 2062, AE_NPC_RAGDOLL = 2070,
+    AE_NPC_ADDGESTURE = 2080, AE_NPC_RESTARTGESTURE = 2081, AE_SV_PLAYSOUND = 5005, AE_CL_PLAYSOUND = 5004,
+    AE_CL_STOPSOUND = 5006, AE_START_SCRIPTED_EFFECT = 5007, AE_STOP_SCRIPTED_EFFECT = 5008, AE_CLIENT_EFFECT_ATTACH = 5009,
+    AE_MUZZLEFLASH = 5001, AE_NPC_MUZZLEFLASH = 5002, AE_THUMPER_THUMP = 5003, AE_RAGDOLL = 6001,
+    AE_CL_CREATE_PARTICLE_EFFECT = 6002, AE_CL_STOP_PARTICLE_EFFECT = 6003, AE_CL_ADD_PARTICLE_EFFECT_CP = 6004,
+    AE_CL_CREATE_PARTICLE_BRASS = 6005, AE_CL_ENABLE_BODYGROUP = 6006, AE_CL_DISABLE_BODYGROUP = 6007,
+    AE_CL_BODYGROUP_SET_VALUE = 6008, AE_CL_BODYGROUP_SET_VALUE_CMODEL_WPN = 6009, AE_WPN_PRIMARYATTACK = 7001,
+    AE_WPN_INCREMENTAMMO = 7002, AE_WPN_HIDE = 7003, AE_WPN_UNHIDE = 7004, AE_WPN_PLAYWPNSOUND = 7005,
+}
+local ANIM_EVENT_NAMES = {}
+for k, v in pairs(ANIM_EVENTS) do ANIM_EVENT_NAMES[v] = k; _G[k] = _G[k] or v end
+function util.GetAnimEventIDByName(name) return ANIM_EVENTS[tostring(name)] or -1 end
+function util.GetAnimEventNameByID(id) return ANIM_EVENT_NAMES[tonumber(id) or -1] or "" end
+-- settings/users.txt as the game ships it (groups with their members by SteamID)
+local function parse_users()
+    local groups = { superadmin = {}, admin = {}, user = {} }
+    local text = file and file.Read and file.Read("settings/users.txt", "GAME") or (__content_read and __content_read("settings/users.txt"))
+    if not text then return groups end
+    local kv = util.KeyValuesToTable and util.KeyValuesToTable(text, false, true)
+    if istable(kv) then for g, members in pairs(kv) do if istable(members) then groups[g] = members end end end
+    return groups
+end
+function util.GetUserGroups()
+    local g = parse_users()
+    local out = {}
+    for name in pairs(g) do out[name] = { name = name, members = g[name] } end
+    return out
+end
+
+------------------------------------------------------------------------ game / physenv / player leftovers
+function game.GetAmmoMax(id) local d = game.GetAmmoData(id); return d and d.maxcarry or -1 end
+local map_changes = 0
+function game.GetMapChangeCount() return map_changes end
+function game.MapLoadType() return "newgame" end
+function game.GetWindSpeed()
+    local w = ents and ents.FindByClass and ents.FindByClass("env_wind")[1]
+    if not IsValid(w) then return Vector() end
+    local kv = w.GetKeyValues and w:GetKeyValues() or {}
+    local yaw = tonumber(kv.angles and tostring(kv.angles):match("[-%d.]+ ([-%d.]+)") or 0) or 0
+    local speed = tonumber(kv.minwind or 0) or 0
+    return Angle(0, yaw, 0):Forward() * speed
+end
+function game.Get3DSkyboxInfo()
+    local cam = ents and ents.FindByClass and ents.FindByClass("sky_camera")[1]
+    if not IsValid(cam) then return Vector(), 16 end
+    local kv = cam.GetKeyValues and cam:GetKeyValues() or {}
+    return cam:GetPos(), tonumber(kv.scale) or 16
+end
+local perf = { MaxVelocity = 4000, MaxAngularVelocity = 7200, MaxCollisionsPerObjectPerTimestep = 6, MaxCollisionChecksPerTimestep = 50000,
+    LookAheadTimeObjectsVsWorld = 1, LookAheadTimeObjectsVsObject = 0.5, MinFrictionMass = 10, MaxFrictionMass = 2500 }
+function physenv.GetPerformanceSettings() return table.Copy(perf) end
+function physenv.SetPerformanceSettings(t) for k, v in pairs(t or {}) do if perf[k] ~= nil then perf[k] = tonumber(v) or perf[k] end end
+    if t and t.MaxVelocity and RunConsoleCommand then RunConsoleCommand("sv_maxvelocity", tostring(t.MaxVelocity)) end
+end
+local air_density = 2
+function physenv.GetAirDensity() return air_density end
+function physenv.SetAirDensity(d) air_density = tonumber(d) or air_density end
+local extra_surfaces = {}
+function physenv.AddSurfaceData(text)
+    local kv = util.KeyValuesToTable and util.KeyValuesToTable("\"surfaceprops\" {" .. tostring(text) .. "}", false, true) or {}
+    for name, props in pairs(kv) do if istable(props) then extra_surfaces[string.lower(name)] = props end end
+end
+function physenv.__surface(name) return extra_surfaces[string.lower(tostring(name))] end
+function player.GetCountConnecting() return 0 end
+
+------------------------------------------------------------------------ resource: the server's download list (what every client fetches with the addon)
+resource = resource or {}
+local resources, workshop_ids = {}, {}
+local function add_file(path, single)
+    path = tostring(path)
+    if resources[path] then return end
+    resources[path] = true
+    if single then return end
+    local base = path:gsub("%.mdl$", "")
+    if base ~= path then for _, ext in ipairs({ ".vvd", ".dx90.vtx", ".phy", ".ani" }) do resources[base .. ext] = true end end
+    local vmt = path:gsub("%.vmt$", "")
+    if vmt ~= path and __content_read then
+        local text = __content_read("materials/" .. path:gsub("^materials/", ""))
+        for tex in tostring(text or ""):gmatch('"?%$%w*texture%d*"?%s+"?([^"\n]+)"?') do resources["materials/" .. tex:gsub("%.vtf$", "") .. ".vtf"] = true end
+    end
+end
+function resource.AddFile(path) add_file(path, false) end
+function resource.AddSingleFile(path) add_file(path, true) end
+function resource.AddWorkshop(id) workshop_ids[#workshop_ids + 1] = tostring(id) end
+function resource.__files() local out = {}; for p in pairs(resources) do out[#out + 1] = p end table.sort(out); return out end
+function resource.__workshop() return workshop_ids end
+
+------------------------------------------------------------------------ gameevent.Listen: the engine's game events as tables through hook.Run(eventname, data)
+gameevent = gameevent or {}
+local listened = {}
+local GAME_EVENTS = {
+    player_connect = { "PlayerConnect", function(name) return { name = name, userid = 0, networkid = "", address = "", bot = 0, index = 0 } end },
+    player_activate = { "PlayerInitialSpawn", function(ply) return { userid = ply:UserID() } end },
+    player_spawn = { "PlayerSpawn", function(ply) return { userid = ply:UserID() } end },
+    player_disconnect = { "PlayerDisconnected", function(ply) return { userid = ply:UserID(), name = ply:Nick(), networkid = ply:SteamID(), reason = "Disconnect", bot = ply:IsBot() and 1 or 0 } end },
+    player_hurt = { "PlayerHurt", function(ply, attacker, remaining, dmg) return { userid = ply:UserID(), attacker = IsValid(attacker) and attacker.UserID and attacker:UserID() or 0, health = remaining, priority = 5 } end },
+    player_death = { "PlayerDeath", function(ply, inflictor, attacker) return { userid = ply:UserID(), attacker = IsValid(attacker) and attacker.UserID and attacker:UserID() or 0, entindex_inflictor = IsValid(inflictor) and inflictor:EntIndex() or 0, entindex_attacker = IsValid(attacker) and attacker:EntIndex() or 0, weapon = IsValid(inflictor) and inflictor:GetClass() or "", priority = 7 } end },
+    entity_killed = { "OnNPCKilled", function(npc, attacker, inflictor) return { entindex_killed = npc:EntIndex(), entindex_attacker = IsValid(attacker) and attacker:EntIndex() or 0, entindex_inflictor = IsValid(inflictor) and inflictor:EntIndex() or 0, damagebits = 0 } end },
+    player_say = { "PlayerSay", function(ply, text) return { userid = ply:UserID(), text = text, priority = 1 } end },
+    break_prop = { "PropBreak", function(ply, prop) return { userid = IsValid(ply) and ply:UserID() or 0, entindex = prop:EntIndex() } end },
+    player_changename = { "PlayerChangedName", function(ply, old, new) return { userid = ply:UserID(), oldname = old, newname = new } end },
+    server_cvar = { "__server_cvar", function(name, value) return { cvarname = name, cvarvalue = value } end },
+    player_info = { "PlayerAuthed", function(ply, sid) return { name = ply:Nick(), index = ply:EntIndex() - 1, userid = ply:UserID(), networkid = sid, bot = ply:IsBot() and 1 or 0, friendsid = 0 } end },
+    OnRequestFullUpdate = { "PlayerInitialSpawn", function(ply) return { userid = ply:UserID(), networkid = ply:SteamID(), name = ply:Nick(), index = ply:EntIndex() - 1 } end },
+}
+function gameevent.Listen(name)
+    name = tostring(name)
+    if listened[name] then return end
+    listened[name] = true
+    local ev = GAME_EVENTS[name]
+    if not ev then return end
+    hook.Add(ev[1], "__gameevent_" .. name, function(...) hook.Run(name, ev[2](...)) end)
+end
+function gameevent.__listened() return listened end
+
+------------------------------------------------------------------------ usermessage: the receiving side of umsg (client), over the bf_read reader
+usermessage = usermessage or {}
+local um_hooks = {}
+function usermessage.Hook(name, fn, ...) um_hooks[tostring(name)] = { fn = fn, args = { ... } } end
+function usermessage.GetTable() return um_hooks end
+function usermessage.IncomingMessage(name, msg)
+    local h = um_hooks[tostring(name)]
+    if not h then return end
+    if type(msg) == "string" then msg = __glua_bf_read(msg) end
+    h.fn(msg, unpack(h.args))
+end
+
+------------------------------------------------------------------------ HTTP: one blocking request per call, the callbacks run with the reply
+local function http_request(p)
+    local method = string.upper(tostring(p.method or "GET"))
+    local url = tostring(p.url or "")
+    local body = p.body
+    local headers = {}
+    for k, v in pairs(p.headers or {}) do headers[tostring(k)] = tostring(v) end
+    if p.parameters and next(p.parameters) then
+        local parts = {}
+        for k, v in pairs(p.parameters) do parts[#parts + 1] = tostring(k) .. "=" .. tostring(v):gsub("[^%w%-%._~]", function(c) return string.format("%%%02X", string.byte(c)) end) end
+        local q = table.concat(parts, "&")
+        if method == "GET" or method == "HEAD" then url = url .. (url:find("?", 1, true) and "&" or "?") .. q
+        elseif body == nil then body = q; headers["Content-Type"] = headers["Content-Type"] or "application/x-www-form-urlencoded" end
+    end
+    if p.type and body ~= nil then headers["Content-Type"] = tostring(p.type) end
+    local code, out, rh = __http(method, url, body, headers)
+    if code == nil then
+        if p.failed then p.failed(tostring(out)) end
+        return false
+    end
+    if p.success then p.success(code, out, rh or {}) end
+    return true
+end
+function HTTP(p) return http_request(p) end
+http = http or {}
+function http.Fetch(url, onSuccess, onFailure, headers)
+    return http_request({ url = url, method = "GET", headers = headers,
+        success = function(code, body, h) if onSuccess then onSuccess(body, #body, h, code) end end, failed = onFailure })
+end
+function http.Post(url, parameters, onSuccess, onFailure, headers)
+    return http_request({ url = url, method = "POST", parameters = parameters, headers = headers,
+        success = function(code, body, h) if onSuccess then onSuccess(body, #body, h, code) end end, failed = onFailure })
+end
+
+------------------------------------------------------------------------ leftover globals
+function DEFINE_BASECLASS(name) return baseclass and baseclass.Get and baseclass.Get(name) or nil end
+function IsFirstTimePredicted() return true end
+local prediction_player = nil
+function GetPredictionPlayer() return prediction_player or (CLIENT and LocalPlayer and LocalPlayer()) or NULL end
+function __glua_set_prediction_player(ply) prediction_player = ply end
+function PrecacheScene(scene) return true end
+function PrecacheSentenceFile(file) return true end
+function PrecacheSentenceGroup(group) return true end
+function PrecacheParticleSystem(name) return true end
+local constraint_system = nil
+function SetPhysConstraintSystem(ent) constraint_system = ent end
+function GetPhysConstraintSystem() return constraint_system end
+local suppressed_host = nil
+function SuppressHostEvents(ply) suppressed_host = ply end
+function GetSuppressedHostEvents() return suppressed_host end
+local nw_var_tables = {}
+function BuildNetworkedVarsTable()
+    local out = {}
+    for _, e in ipairs(ents.GetAll()) do local nw = e.GetNWVars and e:GetNWVars(); if nw and next(nw) then out[e:EntIndex()] = nw end end
+    return out
+end
+function DTVar_ReceiveProxyGL(ent, name, old, new) if ent and ent.NetworkVarNotify then ent:NetworkVarNotify(name, old, new) end return new end
+local debug_slots = {}
+function DebugInfo(slot, text) debug_slots[tonumber(slot) or 0] = tostring(text); if world and world.queue then pcall(world.queue, "debug.info", 0, { slot = slot, text = tostring(text) }) end end
+local pvs_origins = {}
+function AddOriginToPVS(pos) pvs_origins[#pvs_origins + 1] = { x = pos.x, y = pos.y, z = pos.z } end
+function __glua_pvs_origins() local t = pvs_origins; pvs_origins = {}; return t end
+function CompileFile(path, identifier)
+    path = tostring(path)
+    local src = (file and file.Read and (file.Read(path, "LUA") or file.Read("lua/" .. path, "GAME"))) or (__content_read and (__content_read("lua/" .. path) or __content_read(path)))
+    if not src then return nil end
+    local fn, err = __compile(src, identifier or path)
+    if not fn then ErrorNoHalt(tostring(err) .. "\n"); return nil end
+    return fn
+end
+function BroadcastLua(code)
+    if net and net.Start and util.AddNetworkString then
+        util.AddNetworkString("__gm_broadcast_lua")
+        net.Start("__gm_broadcast_lua"); net.WriteString(tostring(code)); net.Broadcast()
+    end
+end
+if CLIENT and net and net.Receive then
+    net.Receive("__gm_broadcast_lua", function() RunString(net.ReadString(), "BroadcastLua") end)
+end
+
+-- sentences: scripts/sentences.txt groups (`name  wave,wave,...` lines) -> the first wave of the
+-- named sentence, numbered members of a group round-robin
+local sentences = nil
+local function load_sentences()
+    if sentences then return sentences end
+    sentences = {}
+    local text = __content_read and __content_read("scripts/sentences.txt")
+    for line in tostring(text or ""):gmatch("[^\r\n]+") do
+        line = line:gsub("//.*$", "")
+        local name, rest = line:match("^%s*(%S+)%s+(.-)%s*$")
+        if name and rest and rest ~= "" then
+            local folder, waves = rest:match("^(%S+/)%s*(.*)$")
+            if not folder then folder, waves = "", rest end
+            local list = {}
+            for w in waves:gmatch("%S+") do
+                local file = w:gsub("%(.-%)", ""):gsub("[,.]+$", "")
+                if file ~= "" then list[#list + 1] = folder .. file .. ".wav" end
+            end
+            sentences[string.upper(name)] = list
+        end
+    end
+    return sentences
+end
+local function sentence_waves(name)
+    name = string.upper(tostring(name)):gsub("^!", "")
+    local s = load_sentences()
+    if s[name] then return s[name] end
+    local group = {}
+    for k, v in pairs(s) do if k:match("^" .. name:gsub("%p", "%%%0") .. "%d+$") then group[#group + 1] = v end end
+    if #group == 0 then return nil end
+    return group[math.random(#group)]
+end
+function SentenceDuration(name)
+    local waves = sentence_waves(name)
+    if not waves then return 0 end
+    local total = 0
+    for _, w in ipairs(waves) do total = total + (SoundDuration(w) or 0) end
+    return total
+end
+function EmitSentence(name, pos, entity, channel, volume, level, flags, pitch)
+    local waves = sentence_waves(name)
+    if not waves then return end
+    local p = pos or (IsValid(entity) and entity:GetPos()) or Vector()
+    local at = 0
+    for _, w in ipairs(waves) do
+        if at == 0 then sound.Play(w, p, level or 75, pitch or 100, volume or 1)
+        else timer.Simple(at, function() sound.Play(w, p, level or 75, pitch or 100, volume or 1) end) end
+        at = at + (SoundDuration(w) or 0)
+    end
+end
+
+-- particles: a particle system by name is a client effect; the server sends it, the client realm
+-- raises the effect for its own particle code (`Particle` / `ParticleEffect*` hooks)
+local function particle_send(t)
+    if SERVER and net and net.Start and util.AddNetworkString then
+        util.AddNetworkString("__gm_particle")
+        net.Start("__gm_particle"); net.WriteTable(t); net.Broadcast()
+    elseif CLIENT then hook.Run("__ParticleEffect", t) end
+end
+function ParticleEffect(name, pos, angles, parent)
+    particle_send({ name = tostring(name), pos = { pos.x, pos.y, pos.z }, ang = { angles and angles.p or 0, angles and angles.y or 0, angles and angles.r or 0 }, parent = IsValid(parent) and parent:EntIndex() or 0 })
+end
+function ParticleEffectAttach(name, attachType, entity, attachmentID)
+    particle_send({ name = tostring(name), attach = tonumber(attachType) or 0, parent = IsValid(entity) and entity:EntIndex() or 0, attachment = tonumber(attachmentID) or 0 })
+end
+function Particle(name, pos, angles, parent) return ParticleEffect(name, pos, angles, parent) end
+if CLIENT and net and net.Receive then net.Receive("__gm_particle", function() hook.Run("__ParticleEffect", net.ReadTable()) end) end
+
+-- TauntCamera: the third person camera of a taunt (the game's object for CalcView / ShouldDrawLocalPlayer)
+local TAUNT = {}
+TAUNT.__index = TAUNT
+function TauntCamera() return setmetatable({ enabled = false, dist = 100, start = 0, last_angles = Angle() }, TAUNT) end
+function TAUNT:CalcView(view, ply, origin, angles, fov)
+    if not IsValid(ply) or not ply:IsPlayingTaunt() then
+        if self.enabled then self.enabled = false end
+        return false
+    end
+    if not self.enabled then self.enabled = true; self.start = CurTime(); self.last_angles = Angle(angles.p, angles.y, angles.r) end
+    local ang = self.last_angles
+    local dist = math.min(self.dist, 100)
+    local tr = util.TraceHull({ start = origin, endpos = origin - ang:Forward() * dist, filter = ply, mins = Vector(-8, -8, -8), maxs = Vector(8, 8, 8) })
+    view.origin = tr.HitPos
+    view.angles = ang
+    view.drawviewer = true
+    return true
+end
+function TAUNT:ShouldDrawLocalPlayer(ply) return self.enabled end
+function TAUNT:ShouldDrawThirdPerson(ply) return self.enabled end
+
+------------------------------------------------------------------------ IMaterial / ITexture: the mounted VMT / VTF files (parameters, shader, texture sizes)
+do
+    -- VMT: `"Shader" { "$key" "value" ... "Proxies" { ... } }`, `//` comments, unquoted tokens
+    local function vmt_parse(text)
+        local toks, i, n = {}, 1, #text
+        while i <= n do
+            local c = text:sub(i, i)
+            if c:match("%s") then i = i + 1
+            elseif c == "/" and text:sub(i + 1, i + 1) == "/" then i = (text:find("\n", i, true) or n) + 1
+            elseif c == "{" or c == "}" then toks[#toks + 1] = c; i = i + 1
+            elseif c == '"' then local j = text:find('"', i + 1, true) or n; toks[#toks + 1] = text:sub(i + 1, j - 1); i = j + 1
+            else local j = text:find("[%s{}]", i) or n + 1; toks[#toks + 1] = text:sub(i, j - 1); i = j end
+        end
+        local p = 1
+        local function block()
+            local t = {}
+            while p <= #toks do
+                local k = toks[p]
+                if k == "}" then p = p + 1; return t end
+                p = p + 1
+                if toks[p] == "{" then p = p + 1; t[k] = block() else t[k] = toks[p]; p = p + 1 end
+            end
+            return t
+        end
+        local shader = toks[1] or "VertexLitGeneric"
+        p = 3
+        local params = block()
+        local lower = {}
+        for k, v in pairs(params) do lower[string.lower(k)] = v end
+        return shader, lower
+    end
+    local vtf_cache = {}
+    local function vtf_header(name)
+        name = string.lower(tostring(name or "")):gsub("\\", "/"):gsub("^materials/", ""):gsub("%.vtf$", "")
+        if vtf_cache[name] ~= nil then return vtf_cache[name] or nil end
+        local data = __content_read and __content_read("materials/" .. name .. ".vtf")
+        if not data or #data < 32 or data:sub(1, 4) ~= "VTF\0" then vtf_cache[name] = false; return nil end
+        local function u16(o) local a, b = data:byte(o + 1, o + 2); return a + b * 256 end
+        local h = { width = u16(16), height = u16(18), frames = u16(24), found = true }
+        vtf_cache[name] = h
+        return h
+    end
+
+    local MAT = __glua_classes.IMaterial or {}
+    MAT.__index = MAT
+    __glua_classes.IMaterial = MAT
+    local mats = {}
+    local function load(self)
+        if self.__loaded then return end
+        self.__loaded = true
+        self.__kv = self.__kv or {}
+        self.__shader = self.__shader or "VertexLitGeneric"
+        local text = __content_read and self.__name ~= "" and __content_read("materials/" .. self.__name:gsub("%.vmt$", "") .. ".vmt")
+        if text then
+            local shader, params = vmt_parse(text)
+            self.__shader, self.__found = shader, true
+            for k, v in pairs(params) do if self.__kv[k] == nil then self.__kv[k] = v end end
+        elseif self.__params and self.__params ~= "" then
+            self.__shader, self.__found = "UnlitGeneric", true
+            self.__kv["$basetexture"] = self.__kv["$basetexture"] or self.__name:gsub("%.vtf$", ""):gsub("%.png$", "")
+            for flag in tostring(self.__params):gmatch("%S+") do self.__kv["$" .. flag] = "1" end
+        else
+            self.__found = __content_read == nil
+        end
+    end
+    function Material(name, params)
+        name = tostring(name or ""):gsub("\\", "/")
+        local key = name .. "|" .. tostring(params or "")
+        local m = mats[key]
+        if m then return m, 0 end
+        local t0 = SysTime and SysTime() or 0
+        m = setmetatable({ __name = name, __params = params or "", __kv = {} }, MAT)
+        load(m)
+        mats[key] = m
+        return m, (SysTime and SysTime() or 0) - t0
+    end
+    function CreateMaterial(name, shader, data)
+        local m = setmetatable({ __name = tostring(name), __params = "", __kv = {}, __shader = tostring(shader or "UnlitGeneric"), __loaded = true, __found = true }, MAT)
+        for k, v in pairs(data or {}) do m.__kv[string.lower(tostring(k))] = v end
+        m.__data = data or {}
+        mats[m.__name .. "|"] = m
+        return m
+    end
+    local function key(k) return string.lower(tostring(k or "")) end
+    function MAT:GetName() return self.__name end
+    function MAT:IsError() load(self); return self.__name == "" or self.__found == false end
+    function MAT:GetShader() load(self); return self.__shader end
+    function MAT:SetShader(s) self.__shader = tostring(s) end
+    function MAT:GetKeyValues() load(self); return table.Copy(self.__kv) end
+    function MAT:GetString(k) load(self); local v = self.__kv[key(k)]; if v == nil then return nil end return type(v) == "table" and tostring(v) or tostring(v) end
+    function MAT:GetInt(k) local v = self:GetString(k); return v and math.floor(tonumber(v) or 0) or nil end
+    function MAT:GetFloat(k) local v = self:GetString(k); return v and (tonumber(v) or 0) or nil end
+    local function nums(s) local out = {}; for x in tostring(s):gmatch("[-%d.eE]+") do out[#out + 1] = tonumber(x) or 0 end return out end
+    function MAT:GetVector(k)
+        load(self); local v = self.__kv[key(k)]
+        if v == nil then return nil end
+        if type(v) == "table" and v.x then return Vector(v.x, v.y, v.z) end
+        local s = tostring(v); local a = nums(s)
+        if s:sub(1, 1) == "{" then return Vector((a[1] or 0) / 255, (a[2] or 0) / 255, (a[3] or 0) / 255) end
+        return Vector(a[1] or 0, a[2] or a[1] or 0, a[3] or a[1] or 0)
+    end
+    function MAT:GetVectorLinear(k) local v = self:GetVector(k); if not v then return nil end return Vector(v.x ^ 2.2, v.y ^ 2.2, v.z ^ 2.2) end
+    function MAT:GetVector4D(k)
+        load(self); local v = self.__kv[key(k)]
+        if v == nil then return nil end
+        local a = nums(v); return a[1] or 0, a[2] or 0, a[3] or 0, a[4] or 1
+    end
+    function MAT:GetMatrix(k)
+        load(self); local v = self.__kv[key(k)]
+        if v == nil then return nil end
+        if type(v) == "table" and v.GetTranslation then return v end
+        local m = Matrix()
+        local s = tostring(v)
+        local cx, cy = s:match("center%s+([-%d.]+)%s+([-%d.]+)")
+        local sx, sy = s:match("scale%s+([-%d.]+)%s+([-%d.]+)")
+        local rot = s:match("rotate%s+([-%d.]+)")
+        local tx, ty = s:match("translate%s+([-%d.]+)%s+([-%d.]+)")
+        if not (cx or sx or rot or tx) then local a = nums(s); if #a >= 16 then m:SetUnpacked(unpack(a)) end return m end
+        m:Translate(Vector(tonumber(cx) or 0.5, tonumber(cy) or 0.5, 0))
+        m:Scale(Vector(tonumber(sx) or 1, tonumber(sy) or 1, 1))
+        m:Rotate(Angle(0, tonumber(rot) or 0, 0))
+        m:Translate(Vector(-(tonumber(cx) or 0.5) + (tonumber(tx) or 0), -(tonumber(cy) or 0.5) + (tonumber(ty) or 0), 0))
+        return m
+    end
+    local TEX = {}
+    TEX.__index = TEX
+    __glua_classes.ITexture = TEX
+    local texs = {}
+    local function texture(name)
+        name = tostring(name)
+        if texs[name] then return texs[name] end
+        local t = setmetatable({ __name = name }, TEX)
+        texs[name] = t
+        return t
+    end
+    __glua_texture = texture
+    function MAT:GetTexture(k)
+        load(self); k = key(k)
+        if k == "$basetexture" and self.__dynamic then return self.__dynamic end
+        local v = self.__kv[k]
+        if v == nil then return nil end
+        if type(v) == "table" and v.__name then return v end
+        return texture(v)
+    end
+    function MAT:SetDynamicImage(tex) self.__dynamic = tex end
+    function MAT:Width() local t = self:GetTexture("$basetexture"); return t and t:Width() or 0 end
+    function MAT:Height() local t = self:GetTexture("$basetexture"); return t and t:Height() or 0 end
+    function MAT:GetColor(x, y) local t = self:GetTexture("$basetexture"); return t and t:GetColor(x, y) or Color(255, 255, 255, 255) end
+    function MAT:SetFloat(k, v) load(self); self.__kv[key(k)] = tostring(tonumber(v) or 0) end
+    function MAT:SetInt(k, v) load(self); self.__kv[key(k)] = tostring(math.floor(tonumber(v) or 0)) end
+    function MAT:SetString(k, v) load(self); self.__kv[key(k)] = tostring(v) end
+    function MAT:SetVector(k, v) load(self); self.__kv[key(k)] = string.format("[%s %s %s]", tostring(v.x), tostring(v.y), tostring(v.z)) end
+    function MAT:SetVector4D(k, x, y, z, w) load(self); self.__kv[key(k)] = string.format("[%s %s %s %s]", tostring(x), tostring(y), tostring(z), tostring(w)) end
+    function MAT:SetMatrix(k, m) load(self); self.__kv[key(k)] = m end
+    function MAT:SetTexture(k, t) load(self); self.__kv[key(k)] = type(t) == "table" and t or texture(tostring(t)) end
+    function MAT:SetUndefined(k) load(self); self.__kv[key(k)] = nil end
+    function MAT:Recompute() end
+    function MAT:IsValid() return true end
+    function TEX:GetName() return self.__name end
+    function TEX:Width() local h = vtf_header(self.__name); return h and h.width or 0 end
+    function TEX:Height() local h = vtf_header(self.__name); return h and h.height or 0 end
+    function TEX:GetMappingWidth() return self:Width() end
+    function TEX:GetMappingHeight() return self:Height() end
+    function TEX:GetNumAnimationFrames() local h = vtf_header(self.__name); return h and h.frames or 1 end
+    function TEX:IsError() return __content_read ~= nil and vtf_header(self.__name) == nil end
+    function TEX:IsErrorTexture() return self:IsError() end
+    function TEX:Download() end
+    -- pixel reads need the decoded image: the client's render target reads land here through
+    -- `__texture_color` when the renderer has the texture, otherwise the texture's average is white
+    function TEX:GetColor(x, y)
+        if __texture_color then local r, g, b, a = __texture_color(self.__name, x, y); if r then return Color(r, g, b, a) end end
+        return Color(255, 255, 255, 255)
+    end
+    function TEX:IsValid() return true end
+end
+
+------------------------------------------------------------------------ sql: the sv.db / cl.db of the game as a small SQL interpreter over the actor's storage
+-- (CREATE / DROP TABLE and INDEX, INSERT [OR REPLACE | OR IGNORE], SELECT with WHERE / ORDER BY
+-- / LIMIT and the common functions, UPDATE, DELETE; every value comes back as a string like
+-- sqlite's text results, QueryTyped keeps numbers)
+sql = sql or {}
+do
+    local DB_FILE = (CLIENT or MENU_DLL) and "cl.db.json" or "sv.db.json"
+    local db, dirty, in_tx, last_error = nil, false, false, nil
+    local function load_db()
+        if db then return db end
+        local text = file and file.Read and file.Read(DB_FILE, "DATA")
+        db = text and util.JSONToTable(text) or nil
+        if type(db) ~= "table" then db = { tables = {}, indexes = {} } end
+        db.tables = db.tables or {}; db.indexes = db.indexes or {}
+        return db
+    end
+    local function save()
+        if in_tx then dirty = true; return end
+        if file and file.Write then file.Write(DB_FILE, util.TableToJSON(load_db())) end
+        dirty = false
+    end
+
+    -- tokens: words, numbers, 'strings', punctuation
+    local function lex(q)
+        local toks, i, n = {}, 1, #q
+        while i <= n do
+            local c = q:sub(i, i)
+            if c:match("%s") then i = i + 1
+            elseif c == "'" then
+                local buf, j = {}, i + 1
+                while j <= n do
+                    local d = q:sub(j, j)
+                    if d == "'" then if q:sub(j + 1, j + 1) == "'" then buf[#buf + 1] = "'"; j = j + 2 else break end
+                    else buf[#buf + 1] = d; j = j + 1 end
+                end
+                toks[#toks + 1] = { t = "str", v = table.concat(buf) }; i = j + 1
+            elseif c == '"' or c == "`" or c == "[" then
+                local close = c == "[" and "]" or c
+                local j = q:find(close, i + 1, true) or n
+                toks[#toks + 1] = { t = "id", v = q:sub(i + 1, j - 1) }; i = j + 1
+            elseif c:match("[%d]") or (c == "." and q:sub(i + 1, i + 1):match("%d")) then
+                local j = i; while j <= n and q:sub(j, j):match("[%d%.eE]") do j = j + 1 end
+                toks[#toks + 1] = { t = "num", v = tonumber(q:sub(i, j - 1)) or 0 }; i = j
+            elseif c:match("[%a_]") then
+                local j = i; while j <= n and q:sub(j, j):match("[%w_%.]") do j = j + 1 end
+                toks[#toks + 1] = { t = "word", v = q:sub(i, j - 1) }; i = j
+            else
+                local two = q:sub(i, i + 1)
+                if two == "<=" or two == ">=" or two == "<>" or two == "!=" or two == "==" or two == "||" then toks[#toks + 1] = { t = "op", v = two }; i = i + 2
+                else toks[#toks + 1] = { t = "op", v = c }; i = i + 1 end
+            end
+        end
+        return toks
+    end
+
+    local P = {}
+    P.__index = P
+    local function parser(toks) return setmetatable({ toks = toks, p = 1 }, P) end
+    function P:peek(k) local t = self.toks[self.p + (k or 0)]; return t end
+    function P:next() local t = self.toks[self.p]; self.p = self.p + 1; return t end
+    function P:is(v) local t = self:peek(); return t and (t.t == "word" or t.t == "op") and string.upper(t.v) == v end
+    function P:accept(v) if self:is(v) then self.p = self.p + 1; return true end return false end
+    function P:expect(v) if not self:accept(v) then error("near \"" .. tostring(self:peek() and self:peek().v or "end") .. "\": syntax error", 0) end end
+    function P:ident() local t = self:next(); if not t or (t.t ~= "word" and t.t ~= "id") then error("syntax error: expected a name", 0) end return t.v end
+
+    local function like(s, pat)
+        pat = tostring(pat):gsub("[%^%$%(%)%%%.%[%]%+%-%?]", "%%%0"):gsub("%%%%", "\0"):gsub("%%", ".*"):gsub("_", "."):gsub("%z", "%%%%")
+        return string.find(string.lower(tostring(s)), "^" .. string.lower(pat) .. "$") ~= nil
+    end
+    local function num(v) return tonumber(v) end
+    local function truthy(v) if v == nil then return false end local n = num(v); if n then return n ~= 0 end return v ~= "" end
+    local function cmp(a, b)
+        if a == nil or b == nil then return nil end
+        local na, nb = num(a), num(b)
+        if na and nb then return na < nb and -1 or (na > nb and 1 or 0) end
+        a, b = tostring(a), tostring(b)
+        return a < b and -1 or (a > b and 1 or 0)
+    end
+
+    -- expressions -> closures over (row, agg) where agg is the group for aggregate functions
+    local AGG = { COUNT = true, SUM = true, MAX = true, MIN = true, AVG = true, TOTAL = true, GROUP_CONCAT = true }
+    local FN = {
+        LENGTH = function(a) return a[1] ~= nil and #tostring(a[1]) or nil end,
+        UPPER = function(a) return a[1] ~= nil and string.upper(tostring(a[1])) or nil end,
+        LOWER = function(a) return a[1] ~= nil and string.lower(tostring(a[1])) or nil end,
+        ABS = function(a) local n = num(a[1]); return n and math.abs(n) or nil end,
+        ROUND = function(a) local n = num(a[1]); if not n then return nil end local d = num(a[2]) or 0; local m = 10 ^ d; return math.floor(n * m + 0.5) / m end,
+        COALESCE = function(a) for _, v in ipairs(a) do if v ~= nil then return v end end return nil end,
+        IFNULL = function(a) if a[1] ~= nil then return a[1] end return a[2] end,
+        NULLIF = function(a) if cmp(a[1], a[2]) == 0 then return nil end return a[1] end,
+        TYPEOF = function(a) if a[1] == nil then return "null" end if type(a[1]) == "number" then return math.floor(a[1]) == a[1] and "integer" or "real" end return "text" end,
+        SUBSTR = function(a) local s = tostring(a[1] or ""); local st = num(a[2]) or 1; local len = num(a[3]); if len then return s:sub(st, st + len - 1) end return s:sub(st) end,
+        REPLACE = function(a) return (tostring(a[1] or ""):gsub(tostring(a[2] or ""):gsub("%p", "%%%0"), (tostring(a[3] or ""):gsub("%%", "%%%%")))) end,
+        TRIM = function(a) return (tostring(a[1] or ""):match("^%s*(.-)%s*$")) end,
+        RANDOM = function() return math.random(-2 ^ 31, 2 ^ 31) end,
+        MAX2 = function(a) local best; for _, v in ipairs(a) do if best == nil or cmp(v, best) == 1 then best = v end end return best end,
+        MIN2 = function(a) local best; for _, v in ipairs(a) do if best == nil or cmp(v, best) == -1 then best = v end end return best end,
+        LAST_INSERT_ROWID = function() return db and db.last_rowid or 0 end,
+        CHANGES = function() return db and db.changes or 0 end,
+        DATETIME = function() return os.date("!%Y-%m-%d %H:%M:%S") end,
+        STRFTIME = function(a) local f = tostring(a[1] or ""); if f == "%s" then return tostring(os.time()) end return os.date("!" .. f) end,
+    }
+    local function aggregate(name, argfn, star, distinct, rows)
+        if name == "COUNT" then
+            if star then return #rows end
+            local c, seen = 0, {}
+            for _, r in ipairs(rows) do local v = argfn(r); if v ~= nil and not (distinct and seen[v]) then c = c + 1; seen[v] = true end end
+            return c
+        end
+        local acc, n, parts = nil, 0, {}
+        for _, r in ipairs(rows) do
+            local v = argfn(r)
+            if v ~= nil then
+                n = n + 1
+                if name == "SUM" or name == "TOTAL" or name == "AVG" then acc = (acc or 0) + (num(v) or 0)
+                elseif name == "MAX" then if acc == nil or cmp(v, acc) == 1 then acc = v end
+                elseif name == "MIN" then if acc == nil or cmp(v, acc) == -1 then acc = v end
+                elseif name == "GROUP_CONCAT" then parts[#parts + 1] = tostring(v) end
+            end
+        end
+        if name == "AVG" then return n > 0 and acc / n or nil end
+        if name == "TOTAL" then return acc or 0 end
+        if name == "GROUP_CONCAT" then return n > 0 and table.concat(parts, ",") or nil end
+        return acc
+    end
+
+    local expr
+    local function primary(p, ctx)
+        local t = p:next()
+        if not t then error("syntax error: incomplete input", 0) end
+        if t.t == "num" then local v = t.v; return function() return v end end
+        if t.t == "str" then local v = t.v; return function() return v end end
+        if t.t == "op" and t.v == "(" then
+            local e = expr(p, ctx); p:expect(")"); return e
+        end
+        if t.t == "op" and t.v == "-" then local e = primary(p, ctx); return function(r, g) local v = num(e(r, g)); return v and -v or nil end end
+        if t.t == "op" and t.v == "+" then return primary(p, ctx) end
+        if t.t == "op" and t.v == "*" then return function() return nil end, true end
+        if t.t == "op" and t.v == "?" then return function() return nil end end
+        if t.t == "word" or t.t == "id" then
+            local up = string.upper(t.v)
+            if t.t == "word" and up == "NULL" then return function() return nil end end
+            if t.t == "word" and up == "TRUE" then return function() return 1 end end
+            if t.t == "word" and up == "FALSE" then return function() return 0 end end
+            if t.t == "word" and up == "NOT" then local e = primary(p, ctx); return function(r, g) return truthy(e(r, g)) and 0 or 1 end end
+            if t.t == "word" and up == "CASE" then
+                local base = (not p:is("WHEN")) and expr(p, ctx) or nil
+                local whens = {}
+                while p:accept("WHEN") do local c = expr(p, ctx); p:expect("THEN"); whens[#whens + 1] = { c, expr(p, ctx) } end
+                local els = p:accept("ELSE") and expr(p, ctx) or nil
+                p:expect("END")
+                return function(r, g)
+                    for _, w in ipairs(whens) do
+                        local hit = base and cmp(base(r, g), w[1](r, g)) == 0 or (not base and truthy(w[1](r, g)))
+                        if hit then return w[2](r, g) end
+                    end
+                    return els and els(r, g) or nil
+                end
+            end
+            if p:is("(") and t.t == "word" then
+                p:next()
+                local star, distinct = false, false
+                local args = {}
+                if p:is("*") then p:next(); star = true
+                else
+                    if p:accept("DISTINCT") then distinct = true end
+                    if not p:is(")") then repeat args[#args + 1] = expr(p, ctx) until not p:accept(",") end
+                end
+                p:expect(")")
+                if AGG[up] then
+                    ctx.has_agg = true
+                    local a1 = args[1] or function() return nil end
+                    return function(r, g) return aggregate(up, a1, star, distinct, g or { r }) end
+                end
+                local fn = FN[up] or (up == "MAX" and FN.MAX2) or (up == "MIN" and FN.MIN2)
+                if not fn then error("no such function: " .. t.v, 0) end
+                return function(r, g) local a = {}; for i, e in ipairs(args) do a[i] = e(r, g) end return fn(a) end
+            end
+            local col = t.v
+            if p:is(".") then p:next(); col = p:ident() end
+            local cl = string.lower(col)
+            ctx.cols[#ctx.cols + 1] = col
+            return function(r) if r == nil then return nil end return r[cl] end, false, col
+        end
+        error("near \"" .. tostring(t.v) .. "\": syntax error", 0)
+    end
+    local function mul(p, ctx)
+        local e, star, name = primary(p, ctx)
+        while p:is("*") or p:is("/") or p:is("%") do
+            local op = p:next().v; local r = primary(p, ctx); local l = e
+            e = function(row, g) local a, b = num(l(row, g)), num(r(row, g)); if not a or not b then return nil end
+                if op == "*" then return a * b elseif op == "/" then return b ~= 0 and a / b or nil else return b ~= 0 and math.fmod(a, b) or nil end end
+            star = false
+        end
+        return e, star, name
+    end
+    local function add(p, ctx)
+        local e, star, name = mul(p, ctx)
+        while p:is("+") or p:is("-") or p:is("||") do
+            local op = p:next().v; local r = mul(p, ctx); local l = e
+            if op == "||" then e = function(row, g) local a, b = l(row, g), r(row, g); if a == nil or b == nil then return nil end return tostring(a) .. tostring(b) end
+            else e = function(row, g) local a, b = num(l(row, g)), num(r(row, g)); if not a or not b then return nil end return op == "+" and a + b or a - b end end
+            star = false
+        end
+        return e, star, name
+    end
+    local function comparison(p, ctx)
+        local e, star, name = add(p, ctx)
+        local negate = false
+        if p:is("NOT") and p:peek(1) and (string.upper(p:peek(1).v) == "LIKE" or string.upper(p:peek(1).v) == "IN" or string.upper(p:peek(1).v) == "BETWEEN" or string.upper(p:peek(1).v) == "GLOB") then p:next(); negate = true end
+        local t = p:peek()
+        if not t or (t.t ~= "op" and t.t ~= "word") then return e, star, name end
+        local op = string.upper(t.v)
+        local l = e
+        if op == "=" or op == "==" or op == "!=" or op == "<>" or op == "<" or op == ">" or op == "<=" or op == ">=" then
+            p:next(); local r = add(p, ctx)
+            return function(row, g)
+                local c = cmp(l(row, g), r(row, g))
+                if c == nil then return nil end
+                if op == "=" or op == "==" then return c == 0 and 1 or 0 elseif op == "!=" or op == "<>" then return c ~= 0 and 1 or 0
+                elseif op == "<" then return c < 0 and 1 or 0 elseif op == ">" then return c > 0 and 1 or 0
+                elseif op == "<=" then return c <= 0 and 1 or 0 else return c >= 0 and 1 or 0 end
+            end
+        elseif op == "LIKE" or op == "GLOB" then
+            p:next(); local r = add(p, ctx)
+            return function(row, g) local a, b = l(row, g), r(row, g); if a == nil or b == nil then return nil end local hit = like(a, b); if negate then hit = not hit end return hit and 1 or 0 end
+        elseif op == "IS" then
+            p:next(); local not_ = p:accept("NOT"); p:expect("NULL")
+            return function(row, g) local isnull = l(row, g) == nil; if not_ then isnull = not isnull end return isnull and 1 or 0 end
+        elseif op == "ISNULL" then p:next(); return function(row, g) return l(row, g) == nil and 1 or 0 end
+        elseif op == "NOTNULL" then p:next(); return function(row, g) return l(row, g) ~= nil and 1 or 0 end
+        elseif op == "IN" then
+            p:next(); p:expect("("); local items = {}
+            if not p:is(")") then repeat items[#items + 1] = expr(p, ctx) until not p:accept(",") end
+            p:expect(")")
+            return function(row, g) local v = l(row, g); local hit = false; for _, it in ipairs(items) do if cmp(v, it(row, g)) == 0 then hit = true; break end end if negate then hit = not hit end return hit and 1 or 0 end
+        elseif op == "BETWEEN" then
+            p:next(); local lo = add(p, ctx); p:expect("AND"); local hi = add(p, ctx)
+            return function(row, g) local v = l(row, g); local a, b = cmp(v, lo(row, g)), cmp(v, hi(row, g)); if a == nil or b == nil then return nil end local hit = a >= 0 and b <= 0; if negate then hit = not hit end return hit and 1 or 0 end
+        end
+        return e, star, name
+    end
+    local function not_expr(p, ctx)
+        if p:accept("NOT") then local e = not_expr(p, ctx); return function(r, g) local v = e(r, g); if v == nil then return nil end return truthy(v) and 0 or 1 end end
+        return comparison(p, ctx)
+    end
+    local function and_expr(p, ctx)
+        local e, star, name = not_expr(p, ctx)
+        while p:accept("AND") do local r = not_expr(p, ctx); local l = e; e = function(row, g) return (truthy(l(row, g)) and truthy(r(row, g))) and 1 or 0 end; star = false end
+        return e, star, name
+    end
+    expr = function(p, ctx)
+        local e, star, name = and_expr(p, ctx)
+        while p:accept("OR") do local r = and_expr(p, ctx); local l = e; e = function(row, g) return (truthy(l(row, g)) or truthy(r(row, g))) and 1 or 0 end; star = false end
+        return e, star, name
+    end
+
+    local function table_of(name) local t = load_db().tables[string.lower(name)]; if not t then error("no such table: " .. name, 0) end return t end
+    local function where_clause(p, ctx) if p:accept("WHERE") then return expr(p, ctx) end return nil end
+    local function filter(t, w)
+        local out = {}
+        for _, r in ipairs(t.rows) do if not w or truthy(w(r)) then out[#out + 1] = r end end
+        return out
+    end
+    local function tostr(v) if v == nil then return nil end if type(v) == "number" then if math.floor(v) == v and math.abs(v) < 2 ^ 53 then return string.format("%d", v) end return tostring(v) end if type(v) == "boolean" then return v and "1" or "0" end return tostring(v) end
+
+    local function skip_type(p)
+        -- a column type and its constraints up to the next `,` or `)` at depth 0
+        local flags = {}
+        local depth = 0
+        while p:peek() do
+            local t = p:peek()
+            if depth == 0 and t.t == "op" and (t.v == "," or t.v == ")") then break end
+            if t.t == "op" and t.v == "(" then depth = depth + 1 elseif t.t == "op" and t.v == ")" then depth = depth - 1 end
+            p:next()
+            local up = t.t == "word" and string.upper(t.v) or ""
+            if up == "PRIMARY" then flags.pk = true
+            elseif up == "UNIQUE" then flags.unique = true
+            elseif up == "AUTOINCREMENT" then flags.auto = true
+            elseif up == "NOT" and p:is("NULL") then p:next(); flags.notnull = true
+            elseif up == "DEFAULT" then local ctx = { cols = {} }; local e = expr(p, ctx); flags.default = e
+            elseif up == "INTEGER" or up == "INT" or up == "REAL" or up == "NUMERIC" or up == "FLOAT" or up == "DOUBLE" then flags.numeric = true end
+        end
+        return flags
+    end
+
+    local function create_table(p)
+        local if_not = false
+        if p:accept("IF") then p:expect("NOT"); p:expect("EXISTS"); if_not = true end
+        local name = p:ident()
+        local d = load_db()
+        if d.tables[string.lower(name)] then if if_not then return end error("table " .. name .. " already exists", 0) end
+        local t = { name = name, cols = {}, rows = {}, pk = nil, unique = {}, defaults = {}, numeric = {}, notnull = {} }
+        p:expect("(")
+        repeat
+            if p:is("PRIMARY") then p:next(); p:expect("KEY"); p:expect("("); t.pk = string.lower(p:ident()); while p:accept(",") do p:ident() end p:expect(")")
+            elseif p:is("UNIQUE") then p:next(); p:expect("("); t.unique[#t.unique + 1] = string.lower(p:ident()); while p:accept(",") do p:ident() end p:expect(")")
+            elseif p:is("CONSTRAINT") or p:is("FOREIGN") or p:is("CHECK") then skip_type(p)
+            else
+                local col = p:ident()
+                local f = skip_type(p)
+                local cl = string.lower(col)
+                t.cols[#t.cols + 1] = col
+                if f.pk then t.pk = cl end
+                if f.unique then t.unique[#t.unique + 1] = cl end
+                if f.auto then t.auto = cl end
+                if f.notnull then t.notnull[cl] = true end
+                if f.numeric then t.numeric[cl] = true end
+                if f.default then t.defaults[cl] = f.default(nil) end
+            end
+        until not p:accept(",")
+        p:expect(")")
+        if p:accept("WITHOUT") then p:ident() end
+        d.tables[string.lower(name)] = t
+        save()
+    end
+    local function check_unique(t, row, skip)
+        local keys = {}
+        if t.pk then keys[#keys + 1] = t.pk end
+        for _, u in ipairs(t.unique) do keys[#keys + 1] = u end
+        for _, k in ipairs(keys) do
+            if row[k] ~= nil then
+                for _, other in ipairs(t.rows) do
+                    if other ~= skip and cmp(other[k], row[k]) == 0 then return other, k end
+                end
+            end
+        end
+        return nil
+    end
+    local function insert(p, mode)
+        if mode == "INSERT" and p:accept("OR") then mode = string.upper(p:next().v) == "REPLACE" and "REPLACE" or "IGNORE" end
+        p:expect("INTO")
+        local t = table_of(p:ident())
+        local cols = {}
+        if p:accept("(") then repeat cols[#cols + 1] = string.lower(p:ident()) until not p:accept(",") p:expect(")")
+        else for i, c in ipairs(t.cols) do cols[i] = string.lower(c) end end
+        local d = load_db()
+        local count = 0
+        if p:accept("DEFAULT") then p:expect("VALUES"); local row = {}; for k, v in pairs(t.defaults) do row[k] = v end t.rows[#t.rows + 1] = row; count = 1
+        else
+            p:expect("VALUES")
+            repeat
+                p:expect("(")
+                local row = {}
+                for k, v in pairs(t.defaults) do row[k] = v end
+                local i = 1
+                if not p:is(")") then
+                    repeat
+                        local ctx = { cols = {} }
+                        local e = expr(p, ctx)
+                        local col = cols[i]
+                        if not col then error("table " .. t.name .. " has " .. #cols .. " columns but more values were supplied", 0) end
+                        row[col] = e(nil)
+                        i = i + 1
+                    until not p:accept(",")
+                end
+                p:expect(")")
+                if t.auto and row[t.auto] == nil then
+                    local best = 0
+                    for _, r in ipairs(t.rows) do best = math.max(best, num(r[t.auto]) or 0) end
+                    row[t.auto] = best + 1
+                elseif t.pk and row[t.pk] == nil and t.numeric[t.pk] then
+                    local best = 0
+                    for _, r in ipairs(t.rows) do best = math.max(best, num(r[t.pk]) or 0) end
+                    row[t.pk] = best + 1
+                end
+                for k in pairs(t.notnull) do if row[k] == nil then error("NOT NULL constraint failed: " .. t.name .. "." .. k, 0) end end
+                local clash, key = check_unique(t, row)
+                if clash then
+                    if mode == "REPLACE" then
+                        for i2, r in ipairs(t.rows) do if r == clash then table.remove(t.rows, i2); break end end
+                    elseif mode == "IGNORE" then row = nil
+                    else error("UNIQUE constraint failed: " .. t.name .. "." .. key, 0) end
+                end
+                if row then t.rows[#t.rows + 1] = row; count = count + 1; d.last_rowid = #t.rows end
+            until not p:accept(",")
+        end
+        d.changes = count
+        save()
+    end
+    local function select(p)
+        local distinct = p:accept("DISTINCT")
+        p:accept("ALL")
+        local ctx = { cols = {} }
+        local fields = {}
+        repeat
+            if p:is("*") then p:next(); fields[#fields + 1] = { star = true }
+            else
+                local e, _, colname = expr(p, ctx)
+                local alias = colname
+                if p:accept("AS") then alias = p:ident() elseif p:peek() and (p:peek().t == "id" or (p:peek().t == "word" and not ({ FROM = 1, WHERE = 1, ORDER = 1, LIMIT = 1, GROUP = 1 })[string.upper(p:peek().v)])) then alias = p:ident() end
+                fields[#fields + 1] = { e = e, name = alias or ("column" .. #fields) }
+            end
+        until not p:accept(",")
+        local rows, t = {}, nil
+        if p:accept("FROM") then
+            t = table_of(p:ident())
+            if p:peek() and (p:peek().t == "id" or (p:peek().t == "word" and not ({ WHERE = 1, ORDER = 1, LIMIT = 1, GROUP = 1 })[string.upper(p:peek().v)])) then p:ident() end
+            rows = filter(t, where_clause(p, ctx))
+        else rows = { {} } end
+        local groups = nil
+        if p:accept("GROUP") then
+            p:expect("BY")
+            local keys = {}
+            repeat keys[#keys + 1] = expr(p, ctx) until not p:accept(",")
+            groups = {}
+            local order = {}
+            for _, r in ipairs(rows) do
+                local parts = {}
+                for i, k in ipairs(keys) do parts[i] = tostring(k(r)) end
+                local id = table.concat(parts, "\1")
+                if not groups[id] then groups[id] = {}; order[#order + 1] = id end
+                groups[id][#groups[id] + 1] = r
+            end
+            local g = {}
+            for _, id in ipairs(order) do g[#g + 1] = groups[id] end
+            groups = g
+            if p:accept("HAVING") then local h = expr(p, ctx); local kept = {}; for _, gr in ipairs(groups) do if truthy(h(gr[1], gr)) then kept[#kept + 1] = gr end end groups = kept end
+        elseif ctx.has_agg then groups = { rows }
+        end
+        local out = {}
+        local function emit(r, g)
+            local o = {}
+            for _, f in ipairs(fields) do
+                if f.star then
+                    if t then for _, c in ipairs(t.cols) do o[c] = r[string.lower(c)] end end
+                else o[f.name] = f.e(r, g) end
+            end
+            out[#out + 1] = { o, r }
+        end
+        if groups then for _, g in ipairs(groups) do emit(g[1] or {}, g) end else for _, r in ipairs(rows) do emit(r) end end
+        if p:accept("ORDER") then
+            p:expect("BY")
+            local keys = {}
+            repeat
+                local e, _, colname = expr(p, ctx)
+                local desc = false
+                if p:accept("DESC") then desc = true else p:accept("ASC") end
+                keys[#keys + 1] = { e = e, desc = desc, name = colname }
+            until not p:accept(",")
+            table.sort(out, function(a, b)
+                for _, k in ipairs(keys) do
+                    local va = a[1][k.name] ~= nil and a[1][k.name] or k.e(a[2]); local vb = b[1][k.name] ~= nil and b[1][k.name] or k.e(b[2])
+                    local c = cmp(va, vb)
+                    if c == nil then c = (va == nil and vb ~= nil) and -1 or ((va ~= nil and vb == nil) and 1 or 0) end
+                    if c ~= 0 then if k.desc then return c > 0 end return c < 0 end
+                end
+                return false
+            end)
+        end
+        if p:accept("LIMIT") then
+            local lim = expr(p, ctx)(nil)
+            local off = 0
+            if p:accept("OFFSET") then off = expr(p, ctx)(nil) elseif p:accept(",") then off = lim; lim = expr(p, ctx)(nil) end
+            local sliced = {}
+            for i = (num(off) or 0) + 1, math.min(#out, (num(off) or 0) + (num(lim) or 0)) do sliced[#sliced + 1] = out[i] end
+            if (num(lim) or 0) < 0 then sliced = {}; for i = (num(off) or 0) + 1, #out do sliced[#sliced + 1] = out[i] end end
+            out = sliced
+        end
+        local result = {}
+        local seen = {}
+        for _, pair in ipairs(out) do
+            local row = pair[1]
+            if distinct then
+                local parts = {}
+                for k, v in pairs(row) do parts[#parts + 1] = k .. "=" .. tostring(v) end
+                table.sort(parts)
+                local id = table.concat(parts, "\1")
+                if seen[id] then row = nil else seen[id] = true end
+            end
+            if row then result[#result + 1] = row end
+        end
+        return result
+    end
+    local function update(p)
+        p:accept("OR"); if p:is("REPLACE") or p:is("IGNORE") then p:next() end
+        local t = table_of(p:ident())
+        p:expect("SET")
+        local sets = {}
+        repeat local col = string.lower(p:ident()); p:expect("="); local ctx = { cols = {} }; sets[#sets + 1] = { col, expr(p, ctx) } until not p:accept(",")
+        local ctx = { cols = {} }
+        local rows = filter(t, where_clause(p, ctx))
+        for _, r in ipairs(rows) do
+            local new = {}
+            for k, v in pairs(r) do new[k] = v end
+            for _, s in ipairs(sets) do new[s[1]] = s[2](r) end
+            local clash, key = check_unique(t, new, r)
+            if clash then error("UNIQUE constraint failed: " .. t.name .. "." .. key, 0) end
+            for k in pairs(r) do r[k] = nil end
+            for k, v in pairs(new) do r[k] = v end
+        end
+        load_db().changes = #rows
+        save()
+    end
+    local function delete(p)
+        p:expect("FROM")
+        local t = table_of(p:ident())
+        local ctx = { cols = {} }
+        local w = where_clause(p, ctx)
+        local kept, removed = {}, 0
+        for _, r in ipairs(t.rows) do if w and not truthy(w(r)) then kept[#kept + 1] = r else removed = removed + 1 end end
+        t.rows = kept
+        load_db().changes = removed
+        save()
+    end
+
+    local function run(q)
+        local p = parser(lex(q))
+        local results = nil
+        while p:peek() do
+            if p:accept(";") then
+            else
+                local kw = string.upper(p:next().v)
+                if kw == "CREATE" then
+                    local unique = p:accept("UNIQUE")
+                    if p:accept("TABLE") then create_table(p)
+                    elseif p:accept("INDEX") then
+                        if p:accept("IF") then p:expect("NOT"); p:expect("EXISTS") end
+                        local name = p:ident(); p:expect("ON"); local tn = p:ident(); table_of(tn)
+                        p:expect("("); local cols = {}; repeat cols[#cols + 1] = string.lower(p:ident()); p:accept("ASC"); p:accept("DESC") until not p:accept(",") p:expect(")")
+                        load_db().indexes[string.lower(name)] = { table = string.lower(tn), cols = cols, unique = unique }
+                        if unique then local t = table_of(tn); t.unique[#t.unique + 1] = cols[1] end
+                        save()
+                    else error("syntax error after CREATE", 0) end
+                elseif kw == "DROP" then
+                    local what = string.upper(p:next().v)
+                    local if_exists = false
+                    if p:accept("IF") then p:expect("EXISTS"); if_exists = true end
+                    local name = string.lower(p:ident())
+                    local d = load_db()
+                    if what == "TABLE" then
+                        if not d.tables[name] and not if_exists then error("no such table: " .. name, 0) end
+                        d.tables[name] = nil
+                        for k, ix in pairs(d.indexes) do if ix.table == name then d.indexes[k] = nil end end
+                    elseif what == "INDEX" then
+                        if not d.indexes[name] and not if_exists then error("no such index: " .. name, 0) end
+                        d.indexes[name] = nil
+                    end
+                    save()
+                elseif kw == "INSERT" or kw == "REPLACE" then insert(p, kw)
+                elseif kw == "SELECT" then results = select(p)
+                elseif kw == "UPDATE" then update(p)
+                elseif kw == "DELETE" then delete(p)
+                elseif kw == "BEGIN" or kw == "COMMIT" or kw == "END" or kw == "ROLLBACK" or kw == "VACUUM" then p:accept("TRANSACTION")
+                elseif kw == "PRAGMA" then while p:peek() and not p:is(";") do p:next() end
+                elseif kw == "ALTER" then
+                    p:expect("TABLE"); local t = table_of(p:ident())
+                    if p:accept("ADD") then p:accept("COLUMN"); local col = p:ident(); local f = skip_type(p); t.cols[#t.cols + 1] = col; if f.default then local v = f.default(nil); t.defaults[string.lower(col)] = v; for _, r in ipairs(t.rows) do r[string.lower(col)] = v end end
+                    elseif p:accept("RENAME") then p:expect("TO"); local nn = p:ident(); local d = load_db(); d.tables[string.lower(t.name)] = nil; t.name = nn; d.tables[string.lower(nn)] = t end
+                    save()
+                else error("near \"" .. kw .. "\": syntax error", 0) end
+            end
+        end
+        return results
+    end
+
+    local function query(q, typed)
+        last_error = nil
+        local ok, res = pcall(run, tostring(q))
+        if not ok then last_error = tostring(res); return false end
+        if res == nil then return nil end
+        if #res == 0 then return nil end
+        if not typed then for _, row in ipairs(res) do for k, v in pairs(row) do row[k] = tostr(v) end end end
+        for _, row in ipairs(res) do for k, v in pairs(row) do if v == nil then row[k] = "NULL" end end end
+        return res
+    end
+    function sql.Query(q) return query(q, false) end
+    function sql.QueryTyped(q) return query(q, true) end
+    function sql.QueryRow(q, row) local r = query(q, false); if r == false then return false end return r and r[tonumber(row) or 1] or nil end
+    function sql.QueryValue(q)
+        local r = query(q, false)
+        if r == false then return false end
+        if not r or not r[1] then return nil end
+        local _, v = next(r[1])
+        return v
+    end
+    function sql.LastError() return last_error end
+    function sql.TableExists(name) return load_db().tables[string.lower(tostring(name))] ~= nil end
+    function sql.IndexExists(name) return load_db().indexes[string.lower(tostring(name))] ~= nil end
+    function sql.SQLStr(s, noQuotes) local e = tostring(s):gsub("'", "''"); if noQuotes then return e end return "'" .. e .. "'" end
+    function sql.Begin() in_tx = true end
+    function sql.Commit() in_tx = false; if dirty then save() end end
+end

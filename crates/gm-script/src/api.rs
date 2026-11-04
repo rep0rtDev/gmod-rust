@@ -868,6 +868,8 @@ pub enum DrawCmd {
 /// Shared between the Rust side of an actor and the closures its VM calls.
 /// Host lookup behind `SoundDuration`: sound length in seconds by name.
 pub type SoundDuration = Arc<dyn Fn(&str) -> Option<f32> + Send + Sync>;
+/// Host lookup behind `__content_read`: a mounted game file (VMT / sentences / scripts) by path.
+pub type ContentRead = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 
 pub struct Shared {
     /// `server`, `client` or `menu`: the realm this actor runs in (`CLIENT` / `SERVER` in GLua).
@@ -888,6 +890,7 @@ pub struct Shared {
     pub store: Option<Arc<Mutex<crate::storage::Store>>>,
     /// `SoundDuration`: sound length by name from the host content, if the host offers it.
     pub sound_duration: Option<SoundDuration>,
+    pub content_read: Option<ContentRead>,
 }
 
 fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
@@ -1493,6 +1496,12 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         "getfenv",
         "setfenv",
     ] {
+        if k == "debug" {
+            if let Ok(d) = g.get::<Table>("debug") {
+                g.set("__debug_info", d.get::<Value>("info")?)?;
+                g.set("__debug_traceback", d.get::<Value>("traceback")?)?;
+            }
+        }
         g.set(k, Value::Nil)?;
     }
     let sh = shared.clone();
@@ -3115,6 +3124,51 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                 Err(e) => Ok((Value::Nil, Value::String(lua.create_string(e.to_string())?))),
             }
         })?,
+    )?;
+    let sh = shared.clone();
+    lua.globals().set(
+        "__content_read",
+        lua.create_function(move |lua, path: String| {
+            match sh.content_read.as_ref().and_then(|f| f(&path)) {
+                Some(b) => Ok(Value::String(lua.create_string(&b)?)),
+                None => Ok(Value::Nil),
+            }
+        })?,
+    )?;
+    lua.globals().set(
+        "__sha1",
+        lua.create_function(|_, s: mlua::LuaString| Ok(crate::digest::sha1_hex(&s.as_bytes())))?,
+    )?;
+    lua.globals().set(
+        "__md5",
+        lua.create_function(|_, s: mlua::LuaString| Ok(crate::digest::md5_hex(&s.as_bytes())))?,
+    )?;
+    // `HTTP` / `http.Fetch` / `http.Post`: one blocking request (the actor's callback runs from
+    // the result the same tick); returns status, body, headers or nil, error
+    lua.globals().set(
+        "__http",
+        lua.create_function(
+            |lua, (method, url, body, headers): (String, String, Option<mlua::LuaString>, Option<Table>)| {
+                let mut hs = Vec::new();
+                if let Some(h) = headers {
+                    for pair in h.pairs::<String, String>() {
+                        let (k, v) = pair?;
+                        hs.push((k, v));
+                    }
+                }
+                let body = body.map(|b| b.as_bytes().to_vec());
+                match crate::http::request(&method, &url, body.as_deref(), &hs) {
+                    Ok((status, out, rh)) => {
+                        let ht = lua.create_table()?;
+                        for (k, v) in rh {
+                            ht.set(k, v)?;
+                        }
+                        Ok((Value::Integer(status as i64), Value::String(lua.create_string(&out)?), Value::Table(ht)))
+                    }
+                    Err(e) => Ok((Value::Nil, Value::String(lua.create_string(e.to_string())?), Value::Nil)),
+                }
+            },
+        )?,
     )?;
     lua.globals().set(
         "__sha256",

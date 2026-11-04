@@ -2972,3 +2972,47 @@ fn lua_error_and_load_save_hooks_reach_the_gamemode() {
         ("G\tX\t[]\n", "gm_construct", 1700000000.0, "no such file")
     );
 }
+
+#[test]
+fn compat_sql_debug_digests_and_materials() {
+    let rt = runtime(
+        "state = {}
+         sql.Query('CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, name TEXT, score REAL)')
+         sql.Query(\"INSERT INTO t (name, score) VALUES ('a', 1.5), ('b', 2), ('c', 10)\")
+         sql.Query(\"UPDATE t SET score = score + 1 WHERE name = 'b'\")
+         sql.Query(\"DELETE FROM t WHERE name = 'c'\")
+         state.rows = sql.Query('SELECT name, score FROM t ORDER BY score DESC')
+         state.count = sql.QueryValue('SELECT COUNT(*) FROM t')
+         state.exists = sql.TableExists('t') and not sql.TableExists('nope')
+         state.bad = sql.Query('SELEC nonsense')
+         state.err = sql.LastError()
+         state.sha1 = util.SHA1('abc')
+         state.md5 = util.MD5('abc')
+         local info = debug.getinfo(1, 'S')
+         state.what = info and info.what
+         local m = Material('models/debug/debugwhite', 'noclamp smooth')
+         m:SetFloat('$alpha', 0.5)
+         state.alpha = m:GetFloat('$alpha')
+         state.flag = m:GetInt('$noclamp')
+         state.ev = util.GetAnimEventIDByName('AE_NPC_LEFTFOOT')",
+    );
+    let dump: String = rt.actors()[0]
+        .eval("local t = {} for k, v in pairs(state) do t[#t + 1] = k .. '=' .. tostring(v) end table.sort(t) return table.concat(t, ' ')")
+        .unwrap();
+    let (count, exists, err, sha1, md5): (String, bool, String, String, String) = rt.actors()[0]
+        .eval("return state.count, state.exists, state.err, state.sha1, state.md5")
+        .expect(&dump);
+    assert_eq!(count, "2");
+    assert!(exists);
+    assert!(err.contains("syntax error"), "{err}");
+    assert_eq!(sha1, "a9993e364706816aba3e25717850c26c9cd0d89d");
+    assert_eq!(md5, "900150983cd24fb0d6963f7d28e17f72");
+    let (first, score, bad): (String, String, bool) = rt.actors()[0]
+        .eval("return state.rows[1].name, state.rows[1].score, state.bad")
+        .unwrap();
+    assert_eq!((first.as_str(), score.as_str(), bad), ("b", "3", false));
+    let (what, alpha, flag, ev): (String, f64, i64, i64) = rt.actors()[0]
+        .eval("return state.what, state.alpha, state.flag, state.ev")
+        .unwrap();
+    assert_eq!((what.as_str(), alpha, flag, ev), ("Lua", 0.5, 1, 2050));
+}

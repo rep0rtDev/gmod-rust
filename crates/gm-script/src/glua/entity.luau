@@ -858,7 +858,6 @@ function game.GetAmmoData(id)
     for k, v in pairs(AMMO_DATA[id] or {}) do d[k] = v end
     return d
 end
-game.GetAmmoMax = __glua_stub("game.GetAmmoMax")
 function game.AddDecal() end
 function game.AddParticles() end
 function game.MountGMA() return false end

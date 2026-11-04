@@ -7367,6 +7367,8 @@ fn main() -> Result<()> {
     // reaches the client realm below over the loopback like from a dedicated server
     let mut rt = gm_script::Runtime::new();
     rt.set_sound_duration(sound_duration.clone());
+    let content_mount = gm_content::Mount::for_install(&inst)?;
+    rt.set_content_read(std::sync::Arc::new(move |p| content_mount.read(p).ok()));
     let argv: Vec<String> = std::env::args().collect();
     for (i, a) in argv.iter().enumerate() {
         if a == "--addon" {

@@ -203,6 +203,8 @@ fn main() -> Result<()> {
     if !args.addon.is_empty() {
         let mut rt = gm_script::Runtime::new();
         rt.set_sound_duration(sound_duration.clone());
+        let content_mount = gm_content::Mount::for_install(&inst)?;
+        rt.set_content_read(std::sync::Arc::new(move |p| content_mount.read(p).ok()));
         rt.data_dir = Some(args.data.clone());
         rt.watch = args.watch;
         for t in &args.trust {

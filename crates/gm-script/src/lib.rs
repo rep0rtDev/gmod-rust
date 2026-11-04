@@ -8,6 +8,7 @@
 pub mod actor;
 pub mod api;
 pub mod depends;
+pub mod digest;
 pub mod glua;
 pub mod http;
 pub mod manifest;
@@ -102,6 +103,7 @@ pub struct Runtime {
     pub data_dir: Option<std::path::PathBuf>,
     stores: std::collections::BTreeMap<String, Arc<std::sync::Mutex<storage::Store>>>,
     sound_duration: Option<api::SoundDuration>,
+    content_read: Option<api::ContentRead>,
     /// Poll the loaded addons' files every 33 ticks and hot reload the changed ones.
     pub watch: bool,
     addon_stamps: std::collections::BTreeMap<String, u64>,
@@ -146,6 +148,7 @@ impl Runtime {
             data_dir: None,
             stores: Default::default(),
             sound_duration: None,
+            content_read: None,
             watch: false,
             addon_stamps: Default::default(),
             addon_versions: Default::default(),
@@ -609,7 +612,7 @@ impl Runtime {
     pub fn load(&mut self, spec: ActorSpec) -> Result<usize, mlua::Error> {
         let id = self.actors.len() as u32;
         let store = spec.config.can_storage.then(|| self.store_of(&spec.addon));
-        let actor = Actor::new(id, spec, store, self.sound_duration.clone(), &self.realm)?;
+        let actor = Actor::new(id, spec, store, self.sound_duration.clone(), self.content_read.clone(), &self.realm)?;
         self.actors.push(actor);
         let mut addons: Vec<String> = self.actors.iter().map(|a| a.spec.addon.clone()).collect();
         addons.dedup();
@@ -624,6 +627,12 @@ impl Runtime {
     /// Host lookup behind `SoundDuration` (sound length by name); applies to actors loaded after.
     pub fn set_sound_duration(&mut self, f: api::SoundDuration) {
         self.sound_duration = Some(f);
+    }
+
+    /// Host lookup behind `__content_read` (mounted game files by path); applies to actors
+    /// loaded after.
+    pub fn set_content_read(&mut self, f: api::ContentRead) {
+        self.content_read = Some(f);
     }
 
     fn store_path(&self, addon: &str) -> Option<std::path::PathBuf> {

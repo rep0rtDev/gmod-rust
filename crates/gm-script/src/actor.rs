@@ -84,6 +84,7 @@ impl Actor {
         spec: ActorSpec,
         store: Option<Arc<Mutex<crate::storage::Store>>>,
         sound_duration: Option<crate::api::SoundDuration>,
+        content_read: Option<crate::api::ContentRead>,
         realm: &str,
     ) -> mlua::Result<Self> {
         let shared = Arc::new(Shared {
@@ -99,6 +100,7 @@ impl Actor {
             draws: Mutex::new(Vec::new()),
             store,
             sound_duration,
+            content_read,
         });
         let mut a = Actor {
             id,
@@ -120,7 +122,7 @@ impl Actor {
     }
 
     fn boot(&mut self) -> mlua::Result<()> {
-        let lua = Lua::new();
+        let lua = unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL_SAFE | mlua::StdLib::DEBUG, mlua::LuaOptions::default()) };
         lua.set_memory_limit(self.spec.config.memory_limit)?;
         let deadline = self.deadline.clone();
         let over = self.over_budget.clone();
