@@ -13252,8 +13252,13 @@ impl<'w> Server<'w> {
                 0.0
             };
             let turning = yaw_err > 0.5;
-            if v0 <= 0.0 && yaw_err > NPC_REVERSAL_DEG {
-                reversal = 1;
+            if v0 <= 0.0 && yaw_err > NPC_REVERSAL_DEG && reversal == 0 {
+                // measured (corner_seen, y180): a start that reverses the body loses its first
+                // think - no turn, no step - and walks from the next one
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.reversal = 1;
+                }
+                continue;
             } else if reversal > 0 && v0 >= ideal * 0.98 {
                 reversal = 0;
             } else if reversal > 0 {
@@ -13437,7 +13442,7 @@ impl<'w> Server<'w> {
                     max_yaw.unwrap_or(NPC_YAW_RATE + NPC_YAW_RATE_PER_SPEED * v0),
                 ),
                 // through a reversal the body turns 15.7 / 31.5 deg on alternate thinks
-                _ if reversal > 0 && reversal % 2 == 0 => {
+                _ if reversal > 1 && reversal % 2 == 1 => {
                     (dir, max_yaw.unwrap_or(NPC_YAW_RATE * 2.0))
                 }
                 _ => (dir, max_yaw.unwrap_or(NPC_YAW_RATE)),
