@@ -937,6 +937,10 @@ local prev_move = {}
         if r == "" then return false end
         if type(r) == "string" then return r end
     end)
+    -- @hook GM:PlayerCanHearPlayersVoice
+    events.on("player.voice.hear", function(p)
+        if hook.Run("PlayerCanHearPlayersVoice", Player(p.listener), Player(p.talker)) == false then return "0" end
+    end)
     -- @hook GM:PlayerCanSeePlayersChat
     events.on("player.chat.see", function(p)
         if hook.Run("PlayerCanSeePlayersChat", p.text, false, Player(p.listener), Player(p.speaker)) == false then return "0" end

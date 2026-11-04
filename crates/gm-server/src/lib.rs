@@ -1701,6 +1701,10 @@ pub trait ServerHooks {
     ) -> bool {
         true
     }
+    /// Whether `listener` hears `talker`'s voice (`GM:PlayerCanHearPlayersVoice`).
+    fn player_can_hear_voice(&mut self, _server: &mut Server<'_>, _listener: u32, _talker: u32) -> bool {
+        true
+    }
     /// `save <name>`: the runtime's data for the file - global blobs (`saverestore` save hooks
     /// by name) and one blob per scripted entity (by id); empty by default.
     fn save_data(

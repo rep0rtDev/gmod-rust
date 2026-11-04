@@ -116,6 +116,8 @@ pub struct ServerNet {
     pending_effects: Vec<EffectEvent>,
     /// Voice frames received this tick (speaker, seq, opus), relayed to everyone else.
     pending_voice: Vec<(u32, u16, Vec<u8>)>,
+    /// (listener, talker) pairs the gamemode muted this tick (`PlayerCanHearPlayersVoice`)
+    voice_muted: Vec<(u32, u32)>,
     /// Human-readable connection events (joins, leaves, kicks) since the last `take_log`.
     pub log: Vec<String>,
     /// Where the console's `save` / `load` keep `<name>.rdup`.
@@ -170,6 +172,7 @@ impl ServerNet {
             pending_sounds: Vec::new(),
             pending_effects: Vec::new(),
             pending_voice: Vec::new(),
+            voice_muted: Vec::new(),
             log: Vec::new(),
             saves_dir: None,
             addons: Vec::new(),
@@ -1100,6 +1103,22 @@ impl ServerNet {
                 }
             }
         }
+        self.voice_muted.clear();
+        if !self.pending_voice.is_empty() {
+            let mut talkers: Vec<u32> = self.pending_voice.iter().map(|v| v.0).collect();
+            talkers.sort_unstable();
+            talkers.dedup();
+            let listeners: Vec<u32> = self.clients.values().filter(|c| c.welcomed && !c.closing && c.player != 0).map(|c| c.player).collect();
+            if let Some(h) = self.hooks.as_mut() {
+                for &t in &talkers {
+                    for &l in &listeners {
+                        if l != t && !h.player_can_hear_voice(server, l, t) {
+                            self.voice_muted.push((l, t));
+                        }
+                    }
+                }
+            }
+        }
         if let Some(h) = self.hooks.as_mut() {
             h.after_commands(server);
         }
@@ -1477,7 +1496,7 @@ impl ServerNet {
             }
             let mut unreliable = Vec::new();
             for (speaker, seq, data) in &voice {
-                if *speaker != slot.player && slot.player != 0 {
+                if *speaker != slot.player && slot.player != 0 && !self.voice_muted.contains(&(slot.player, *speaker)) {
                     let mut w = Writer::default();
                     ServerMsg::Voice {
                         player: *speaker,
