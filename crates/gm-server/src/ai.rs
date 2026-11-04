@@ -450,6 +450,22 @@ pub const SCHED_PATROL_RUN: u16 = 76;
 pub const SCHED_RUN_RANDOM: u16 = 77;
 pub const SCHED_FAIL: u16 = 81;
 pub const SCHED_FAIL_NOSTOP: u16 = 82;
+/// CAI_AssaultBehavior's private schedules, mirrored while an assault goal owns the NPC: a
+/// class block translates them (`class_schedule`), elsewhere they read as the shared move /
+/// stand (`shared_alias`).
+pub const SCHED_ASSAULT_MOVE_TO_RALLY: u16 = 1001;
+pub const SCHED_ASSAULT_MOVE_TO_POINT: u16 = 1002;
+pub const SCHED_ASSAULT_HOLD_RALLY: u16 = 1003;
+pub const SCHED_ASSAULT_WAIT_AND_CLEAR: u16 = 1004;
+
+/// The shared schedule a behaviour-private one stands for on a class without a measured block.
+pub fn shared_alias(s: u16) -> u16 {
+    match s {
+        SCHED_ASSAULT_MOVE_TO_RALLY | SCHED_ASSAULT_MOVE_TO_POINT => SCHED_FORCED_GO_RUN,
+        SCHED_ASSAULT_HOLD_RALLY | SCHED_ASSAULT_WAIT_AND_CLEAR => SCHED_IDLE_STAND,
+        _ => s,
+    }
+}
 
 pub const SCHED_NAMES: &[(&str, u16)] = &[
     ("SCHED_NONE", 0),
@@ -571,6 +587,7 @@ pub fn class_sched_family(class: &str) -> Option<&'static str> {
         "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => Some("headcrab"),
         "npc_antlion" => Some("antlion"),
         "npc_combine_s" => Some("combine"),
+        "npc_citizen" => Some("citizen"),
         _ => None,
     }
 }
@@ -592,6 +609,9 @@ pub fn family_sched_reserve(family: &str) -> u16 {
         "headcrab" => 21,
         "antlion" => 46,
         "combine" => 16,
+        // CAI_PlayerAlly's 3 talker schedules, then the behaviours (assault first) and the
+        // citizen's own; only the assault block is measured, the size is the HL2 count
+        "citizen" => 60,
         _ => CLASS_SCHED_RESERVE,
     }
 }
@@ -636,6 +656,15 @@ pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
             SCHED_HIDE_AND_RELOAD => Some(4),
             SCHED_ESTABLISH_LINE_OF_FIRE => Some(9),
             SCHED_RANGE_ATTACK2 => Some(13),
+            _ => None,
+        },
+        // measured on a citizen under ai_goal_assault (server_npc_assault_citizen): 91 running
+        // to the rally point, 96 holding it, 94 running to an assault point, 98 holding one
+        "citizen" => match shared {
+            SCHED_ASSAULT_MOVE_TO_RALLY => Some(3),
+            SCHED_ASSAULT_MOVE_TO_POINT => Some(6),
+            SCHED_ASSAULT_HOLD_RALLY => Some(8),
+            SCHED_ASSAULT_WAIT_AND_CLEAR => Some(10),
             _ => None,
         },
         _ => None,

@@ -5335,3 +5335,12 @@ realm = "server"
 crates = ["gm-server", "gm-nav", "gm-physics"]
 [harness.tolerance]
 pos = 2.0
+
+[[harness]]
+name = "server_npc_assault_citizen"
+scenario = "server/npc_assault_citizen"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0

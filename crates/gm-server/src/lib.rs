@@ -5437,6 +5437,7 @@ impl<'w> Server<'w> {
         n.ai.goal = Some(goal);
         if n.ai.behavior.is_none() {
             n.ai.behavior = Some(behavior.to_string());
+            n.ai.clear();
         }
         true
     }
@@ -5651,6 +5652,9 @@ impl<'w> Server<'w> {
     /// The Assault / Lead / ActBusy behaviours: drive the body through the goal and mirror the
     /// schedule; true while the goal owns the NPC this think.
     fn ai_goal_step(&mut self, id: u32, now: u64, target: Option<u32>) -> bool {
+        if let Some(model) = self.npcs.get(&id).map(|n| n.model.clone()) {
+            self.ensure_model(&model);
+        }
         let Some(n) = self.npcs.get(&id) else {
             return false;
         };
@@ -5665,60 +5669,88 @@ impl<'w> Server<'w> {
         let (goal, state, sched) = match (behavior.as_deref(), goal) {
             (Some("Assault"), ai::NpcGoal::Assault(mut g)) => {
                 let urgent = g.points.get(g.point).is_some_and(|p| p.urgent);
-                let mut sched = ai::SCHED_IDLE_STAND;
+                // the game runs the behaviour's own schedules, stays NPC_STATE_IDLE while
+                // nothing is in sight, stops exactly on the rally / assault point and leaves
+                // it in the same think it decides to (server_npc_assault_citizen)
+                let mut sched;
+                let mut run_to = None;
                 match g.stage {
                     ai::ASSAULT_TO_RALLY | ai::ASSAULT_TO_POINT if target.is_some() && !urgent => {
                         return false;
                     }
                     ai::ASSAULT_TO_RALLY => {
-                        if dist(g.rally) <= NPC_GOAL_ARRIVE {
+                        let d = dist(g.rally);
+                        if d <= NPC_GOAL_EXACT
+                            || (!moving && now > g.stage_since && d <= NPC_GOAL_ARRIVE)
+                        {
                             self.npc_stop(id);
                             if let Some(n) = self.npcs.get_mut(&id) {
                                 n.ideal_yaw = g.rally_yaw;
                             }
-                            if let Some(seq) = g.rally_sequence.clone() {
+                            if let Some(seq) = g
+                                .rally_sequence
+                                .clone()
+                                .or_else(|| self.npc_activity_sequence(id, "ACT_IDLE"))
+                            {
                                 self.set_sequence(id, &seq);
                             }
                             g.stage = ai::ASSAULT_AT_RALLY;
                             g.stage_since = now;
+                            sched = ai::SCHED_ASSAULT_HOLD_RALLY;
                         } else {
                             if !moving {
-                                self.npc_goto(id, g.rally, true);
+                                run_to = Some(g.rally);
                             }
-                            sched = ai::SCHED_FORCED_GO_RUN;
+                            sched = ai::SCHED_ASSAULT_MOVE_TO_RALLY;
                         }
                     }
                     ai::ASSAULT_AT_RALLY => {
+                        sched = ai::SCHED_ASSAULT_HOLD_RALLY;
                         if g.cue && now >= g.stage_since + (g.delay * 66.0) as u64 {
-                            g.stage = if g.points.is_empty() {
-                                ai::ASSAULT_DONE
-                            } else {
-                                ai::ASSAULT_TO_POINT
-                            };
-                            g.stage_since = now;
                             if let Some(n) = self.npcs.get_mut(&id) {
                                 n.ideal_yaw = None;
+                            }
+                            g.stage_since = now;
+                            if let Some(p) = g.points.first() {
+                                g.stage = ai::ASSAULT_TO_POINT;
+                                run_to = Some(p.pos);
+                                sched = ai::SCHED_ASSAULT_MOVE_TO_POINT;
+                            } else {
+                                g.stage = ai::ASSAULT_DONE;
                             }
                         }
                     }
                     ai::ASSAULT_TO_POINT => {
                         let p = g.points[g.point.min(g.points.len() - 1)].clone();
-                        if dist(p.pos) <= p.tolerance {
+                        let d = dist(p.pos);
+                        if d <= NPC_GOAL_EXACT
+                            || (!moving && now > g.stage_since && d <= p.tolerance)
+                        {
                             self.npc_stop(id);
                             if let Some(n) = self.npcs.get_mut(&id) {
                                 n.force_crouch = p.force_crouch.then_some(true);
                             }
+                            if let Some(seq) = p
+                                .force_crouch
+                                .then(|| self.npc_activity_sequence(id, "ACT_CROUCHIDLE"))
+                                .flatten()
+                                .or_else(|| self.npc_activity_sequence(id, "ACT_IDLE"))
+                            {
+                                self.set_sequence(id, &seq);
+                            }
                             g.stage = ai::ASSAULT_AT_POINT;
                             g.stage_since = now;
+                            sched = ai::SCHED_ASSAULT_WAIT_AND_CLEAR;
                         } else {
                             if !moving {
-                                self.npc_goto(id, p.pos, true);
+                                run_to = Some(p.pos);
                             }
-                            sched = ai::SCHED_FORCED_GO_RUN;
+                            sched = ai::SCHED_ASSAULT_MOVE_TO_POINT;
                         }
                     }
                     ai::ASSAULT_AT_POINT => {
                         let p = g.points[g.point.min(g.points.len() - 1)].clone();
+                        sched = ai::SCHED_ASSAULT_WAIT_AND_CLEAR;
                         let timed_out =
                             p.timeout > 0.0 && now >= g.stage_since + (p.timeout * 66.0) as u64;
                         if timed_out || (p.clear_on_contact && target.is_some()) {
@@ -5726,12 +5758,14 @@ impl<'w> Server<'w> {
                                 n.force_crouch = None;
                             }
                             g.point += 1;
-                            g.stage = if g.point >= g.points.len() {
-                                ai::ASSAULT_DONE
-                            } else {
-                                ai::ASSAULT_TO_POINT
-                            };
                             g.stage_since = now;
+                            if let Some(next) = g.points.get(g.point) {
+                                g.stage = ai::ASSAULT_TO_POINT;
+                                run_to = Some(next.pos);
+                                sched = ai::SCHED_ASSAULT_MOVE_TO_POINT;
+                            } else {
+                                g.stage = ai::ASSAULT_DONE;
+                            }
                         } else if target.is_some() {
                             // holding the point in contact: the body fights from it
                             if let Some(n) = self.npcs.get_mut(&id) {
@@ -5744,7 +5778,18 @@ impl<'w> Server<'w> {
                         return false;
                     }
                 }
-                (ai::NpcGoal::Assault(g), ai::NPC_STATE_ALERT, sched)
+                if let Some(to) = run_to {
+                    self.npc_goto(id, to, true);
+                    if let Some(seq) = self.npc_activity_sequence(id, "ACT_RUN") {
+                        self.set_sequence(id, &seq);
+                    }
+                }
+                let state = if target.is_some() {
+                    ai::NPC_STATE_ALERT
+                } else {
+                    ai::NPC_STATE_IDLE
+                };
+                (ai::NpcGoal::Assault(g), state, sched)
             }
             (Some("Lead"), ai::NpcGoal::Lead(mut g)) => {
                 if g.done {
@@ -10708,6 +10753,19 @@ impl<'w> Server<'w> {
     }
 
     /// Whether an entity has a physics body right now (none for `SOLID_NONE` script shapes).
+    /// The NPC model's heaviest sequence for an activity name (ACT_RUN / ACT_IDLE ...).
+    fn npc_activity_sequence(&self, id: u32, act: &str) -> Option<String> {
+        let n = self.npcs.get(&id)?;
+        let m = self.models.get(&n.model)?;
+        let mut best: Option<(i32, usize)> = None;
+        for (i, (a, w)) in m.script.sequence_activity.iter().enumerate() {
+            if a == act && !best.is_some_and(|(bw, _)| *w <= bw) {
+                best = Some((*w, i));
+            }
+        }
+        m.script.sequences.get(best?.1).cloned()
+    }
+
     /// `(duration, looping)` of `seq` on `model`, from the sequence's first animation.
     fn seq_duration(&self, model: &str, seq: &str) -> Option<(f32, bool)> {
         let m = self.models.get(model)?;
@@ -13977,7 +14035,8 @@ impl<'w> Server<'w> {
             return 0;
         };
         let Some(s) = n.ai.schedule else {
-            return 0;
+            // a goal just took the NPC: no schedule until its next think (the game reads -1)
+            return if n.ai.goal.is_some() { -1 } else { 0 };
         };
         let translated = ai::class_sched_family(&n.class).and_then(|fam| {
             let base = *self.class_sched_bases.get(fam)?;
@@ -14008,7 +14067,7 @@ impl<'w> Server<'w> {
                     .or_else(|| ai::class_schedule(fam, s).map(|o| base + o)),
             }
         });
-        translated.unwrap_or(s) as i64
+        translated.unwrap_or(ai::shared_alias(s)) as i64
     }
 
     /// A zombie in a chase looks for a prop to swat at its enemy every ZOMBIE_SWAT_SCAN_TICKS:
@@ -19373,6 +19432,8 @@ pub const NPC_DETOUR_FALLBACK_RADIUS: f32 = 24.0;
 /// (`assaulttolerance` 36), the lead behaviour's lead / retrieve / success distances
 /// (`ai_goal_lead` 64 / 128 / 32), and the act-busy search period and default busy time.
 pub const NPC_GOAL_ARRIVE: f32 = 36.0;
+/// A goal point is reached outright this close; farther, the body's own arrival counts.
+pub const NPC_GOAL_EXACT: f32 = 4.0;
 pub const NPC_LEAD_DISTANCE: f32 = 64.0;
 pub const NPC_RETRIEVE_DISTANCE: f32 = 128.0;
 pub const NPC_LEAD_SUCCESS: f32 = 32.0;

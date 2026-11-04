@@ -1304,6 +1304,49 @@ SCENARIOS.toolgun = function(scn, done)
 			rec.trace = { hit = tr.Hit, pos = vec(tr.HitPos), normal = vec(tr.HitNormal) }
 			rec.bot_ang = { bot:GetAngles().p, bot:GetAngles().y, bot:GetAngles().r }
 			concommand.Run(bot, "gmod_spawnnpc", { op.class, op.weapon or "none" }, op.class)
+		elseif op.op == "npcgoal" then
+			-- the bot's latest NPC becomes the actor of an ai_goal_assault built from op.settings
+			-- (rally / rally_yaw / delay / cue / points[] as the runner's goal json)
+			local npc
+			for _, e in ipairs(ents.FindByClass("npc_*")) do
+				if e:GetCreator() == bot and (not IsValid(npc) or e:EntIndex() > npc:EntIndex()) then npc = e end
+			end
+			local st = op.settings or {}
+			if IsValid(npc) and st.rally then
+				npc:SetName("parity_act")
+				local pts = st.points or {}
+				for i, pt in ipairs(pts) do
+					local e = ents.Create("assault_assaultpoint")
+					e:SetName("parity_ap" .. i)
+					e:SetPos(Vector(pt.pos[1], pt.pos[2], pt.pos[3]))
+					e:SetKeyValue("AssaultTolerance", tostring(pt.tolerance or 36))
+					e:SetKeyValue("AssaultTimeout", tostring(pt.timeout or 0))
+					e:SetKeyValue("ClearOnContact", pt.clear_on_contact and "1" or "0")
+					e:SetKeyValue("ForceCrouch", pt.force_crouch and "1" or "0")
+					e:SetKeyValue("Urgent", pt.urgent and "1" or "0")
+					if pts[i + 1] then e:SetKeyValue("NextAssaultPoint", "parity_ap" .. (i + 1)) end
+					e:Spawn()
+				end
+				local r = ents.Create("assault_rallypoint")
+				r:SetName("parity_rally")
+				r:SetPos(Vector(st.rally[1], st.rally[2], st.rally[3]))
+				r:SetAngles(Angle(0, st.rally_yaw or 0, 0))
+				r:SetKeyValue("AssaultPoint", "parity_ap1")
+				r:SetKeyValue("AssaultDelay", tostring(st.delay or 0))
+				if st.rally_sequence then r:SetKeyValue("RallySequence", st.rally_sequence) end
+				r:Spawn()
+				local g = ents.Create("ai_goal_assault")
+				g:SetName("parity_goal")
+				g:SetKeyValue("Actor", "parity_act")
+				g:SetKeyValue("RallyPoint", "parity_rally")
+				g:SetKeyValue("AssaultCue", st.cue and "3" or "1")
+				g:Spawn()
+				g:Activate()
+				g:Fire("Activate")
+				rec.goal = { npc = npc:EntIndex(), points = #pts }
+			else
+				rec.goal = { npc = IsValid(npc) and npc:EntIndex() or 0, points = -1 }
+			end
 		elseif op.op == "npcgoto" then
 			-- the bot's latest NPC walks (SCHED_FORCED_GO) or runs (SCHED_FORCED_GO_RUN) to op.pos
 			local npc

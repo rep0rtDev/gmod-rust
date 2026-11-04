@@ -4716,6 +4716,21 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 rec["class"] = json!(key);
                 server.spawn_npc(player, &key, op.weapon.as_deref().unwrap_or("none"));
             }
+            "npcgoal" => {
+                // the probe builds ai_goal_assault + rally / assault points from op.settings and
+                // activates it on the latest NPC; ours hands the same goal to the brain
+                if let Some(&id) = server.npcs.keys().last() {
+                    let mut goal = serde_json::Map::new();
+                    goal.insert("kind".into(), json!("assault"));
+                    if let Some(st) = &op.settings {
+                        for (k, v) in st {
+                            goal.insert(k.clone(), v.clone());
+                        }
+                    }
+                    rec["started"] =
+                        json!(server.npc_set_goal(id, &Value::Object(goal).to_string()));
+                }
+            }
             "npcgoto" => {
                 let target = Vec3::from(op.pos.unwrap_or_default());
                 if let Some(&id) = server.npcs.keys().last() {
