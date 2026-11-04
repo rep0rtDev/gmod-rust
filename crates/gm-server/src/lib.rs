@@ -6937,6 +6937,15 @@ pub fn npc_find_route(
     let mut links = vec![0];
     links.extend(chain.iter().map(|&(_, bit)| bit));
     links.push(0);
+    // the start node behind the body is skipped when the next one is in a straight walk (the
+    // game's citizen turned from (645,-500) straight for the second node (729,-255), never
+    // stepping back to the first at (493,-491)); only one node, as the game kept the rest
+    let walked =
+        |bit: u8| bit & (gm_formats::ain::CAP_MOVE_JUMP | gm_formats::ain::CAP_MOVE_CLIMB) == 0;
+    if points.len() >= 4 && walked(links[2]) && straight(from, points[2]) {
+        points.remove(1);
+        links.remove(1);
+    }
     Some((
         gm_nav::Path {
             points,
