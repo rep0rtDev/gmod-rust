@@ -2117,6 +2117,10 @@ pub struct Npc {
     pub next_swat_scan: u64,
     /// SCHED_WAKE_ANGRY: a zombie that just found its enemy stands one think before chasing.
     pub wake_until: u64,
+    /// Thinks since a move began with a near-reversal (|yaw error| > 120 deg), 0 when none:
+    /// the game then turns at twice NPC_YAW_RATE on every other think and its speed ramp dips
+    /// mid-turn (server_npc_walk_citizen_corner_seen).
+    pub reversal: u8,
     /// Until when the body only faces a re-acquired enemy (COMBAT_FACE) before chasing it.
     pub face_until: u64,
     /// Whether the body moved since it first saw its enemy: the game's soldier fires crouched
@@ -2800,6 +2804,9 @@ pub fn npc_melee(class: &str) -> Option<NpcMelee> {
 }
 const NPC_YAW_RATE_PER_SPEED: f32 = 0.267;
 const NPC_TURN_ACCEL: f32 = 0.89;
+const NPC_REVERSAL_DEG: f32 = 120.0;
+const NPC_REVERSAL_MID_ACCEL: f32 = 0.12;
+const NPC_REVERSAL_END_ACCEL: f32 = 0.65;
 const NPC_BRAKE_CURVE: f32 = 0.755;
 const NPC_MOVE_CITIZEN: NpcMoveDef = NpcMoveDef {
     walk: 79.92,
@@ -12382,6 +12389,7 @@ impl<'w> Server<'w> {
             swat: None,
             next_swat_scan: 0,
             wake_until: 0,
+            reversal: 0,
             face_until: 0,
             combat_moved: false,
             wander: None,
@@ -13193,6 +13201,7 @@ impl<'w> Server<'w> {
                 (def.walk, def.walk_accel)
             };
             let (pos, mins, maxs, v0, yaw0) = (n.pos, n.mins, n.maxs, n.move_speed, n.angles.y);
+            let mut reversal = n.reversal;
             // a corner within reach is passed only when the hull can already sweep to the
             // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
             while idx + 1 < points.len()
@@ -13208,10 +13217,28 @@ impl<'w> Server<'w> {
                 idx += 1;
             }
             let head = points[idx].truncate() - pos.truncate();
-            let turning = head.length_squared() > 1e-6
-                && wrap_deg(head.y.atan2(head.x).to_degrees() - yaw0).abs() > 0.5;
+            let yaw_err = if head.length_squared() > 1e-6 {
+                wrap_deg(head.y.atan2(head.x).to_degrees() - yaw0).abs()
+            } else {
+                0.0
+            };
+            let turning = yaw_err > 0.5;
+            if v0 <= 0.0 && yaw_err > NPC_REVERSAL_DEG {
+                reversal = 1;
+            } else if reversal > 0 && v0 >= ideal * 0.98 {
+                reversal = 0;
+            } else if reversal > 0 {
+                reversal = reversal.saturating_add(1);
+            }
             let a_halt = accel * dt * dt;
-            let accel = if turning {
+            // the game's ramp through a reversal: 0.71 / 2.01 / 3.15 / 4.25 / 5.11 / 5.29 / 5.54
+            // / 6.12 / 7.05 / 7.92 u per think as the yaw error falls 165 -> 0 deg - the growth
+            // collapses while the error is 80..20 deg and only half returns under 20
+            let accel = if reversal > 0 && (20.0..90.0).contains(&yaw_err) {
+                accel * NPC_REVERSAL_MID_ACCEL
+            } else if reversal > 0 && yaw_err < 20.0 {
+                accel * NPC_REVERSAL_END_ACCEL
+            } else if turning {
                 accel * NPC_TURN_ACCEL
             } else {
                 accel
@@ -13380,6 +13407,10 @@ impl<'w> Server<'w> {
                     (g.truncate() - floor.truncate()).normalize(),
                     max_yaw.unwrap_or(NPC_YAW_RATE + NPC_YAW_RATE_PER_SPEED * v0),
                 ),
+                // through a reversal the body turns 15.7 / 31.5 deg on alternate thinks
+                _ if reversal > 0 && reversal % 2 == 0 => {
+                    (dir, max_yaw.unwrap_or(NPC_YAW_RATE * 2.0))
+                }
                 _ => (dir, max_yaw.unwrap_or(NPC_YAW_RATE)),
             };
             let mut swap = None;
@@ -13392,6 +13423,7 @@ impl<'w> Server<'w> {
                     0
                 };
                 n.pos = floor;
+                n.reversal = reversal;
                 let max_turn = rate * dt;
                 let turn = wrap_deg(face.y.atan2(face.x).to_degrees() - n.angles.y);
                 let yaw = if n.move_yaw_locked {
@@ -15131,6 +15163,7 @@ impl<'w> Server<'w> {
                 swat: None,
                 next_swat_scan: 0,
                 wake_until: 0,
+                reversal: 0,
                 face_until: 0,
                 combat_moved: false,
                 wander: None,
