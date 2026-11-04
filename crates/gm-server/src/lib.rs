@@ -2117,6 +2117,8 @@ pub struct Npc {
     pub next_swat_scan: u64,
     /// SCHED_WAKE_ANGRY: a zombie that just found its enemy stands one think before chasing.
     pub wake_until: u64,
+    /// Until when the body only faces a re-acquired enemy (COMBAT_FACE) before chasing it.
+    pub face_until: u64,
     /// Whether the body moved since it first saw its enemy: the game's soldier fires crouched
     /// (ACT_RANGE_ATTACK1_LOW) from the spot it met the enemy on and standing after any run.
     pub combat_moved: bool,
@@ -2543,6 +2545,8 @@ const NPC_POISON_WARNING_TICKS: u64 = 77;
 /// SCHED_COMBINE_SUPPRESS lasts the first volley: the game read 88 for 40 ticks after the
 /// sight think and 100 from 43..46 on (server_npc_grenade_soldier); 40 on our 7-tick grid.
 const NPC_SUPPRESS_TICKS: u64 = 40;
+/// Thinks of COMBAT_FACE a zombie spends on its respawned enemy before chasing again.
+const NPC_REACQUIRE_FACE_TICKS: u64 = 21;
 
 const MELEE_PLAIN: NpcMelee = NpcMelee {
     damage: 0.0,
@@ -12151,6 +12155,7 @@ impl<'w> Server<'w> {
             swat: None,
             next_swat_scan: 0,
             wake_until: 0,
+            face_until: 0,
             combat_moved: false,
             wander: None,
             auto_seq: None,
@@ -13397,11 +13402,14 @@ impl<'w> Server<'w> {
                 if !enemy_alive {
                     return;
                 }
+                // the game faces the returned enemy for three thinks (COMBAT_FACE, t438..t459)
+                // before the chase resumes
                 if let Some(n) = self.npcs.get_mut(&id) {
                     n.wander = None;
                     n.goal = None;
                     n.next_goal = None;
                     n.move_speed = 0.0;
+                    n.face_until = now + NPC_REACQUIRE_FACE_TICKS;
                 }
             }
         }
@@ -13850,7 +13858,7 @@ impl<'w> Server<'w> {
             if to.length_squared() > 1e-6 {
                 n.angles.y = to.y.atan2(to.x).to_degrees();
             }
-        } else if n.chase != Some(player) {
+        } else if n.chase != Some(player) && now >= n.face_until {
             self.npc_chase(id, player, m.run);
         }
     }
@@ -14875,6 +14883,7 @@ impl<'w> Server<'w> {
                 swat: None,
                 next_swat_scan: 0,
                 wake_until: 0,
+                face_until: 0,
                 combat_moved: false,
                 wander: None,
                 auto_seq: None,
