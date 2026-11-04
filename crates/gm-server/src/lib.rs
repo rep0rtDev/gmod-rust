@@ -2373,10 +2373,17 @@ impl MoveOverride {
     }
 }
 pub const NPC_BURST_SHOTS: u8 = 5;
+/// The suppress volley on first contact: two rounds (game: t323 and t330 after the sight
+/// think t320), the first full burst 55 ticks after the second (t385), then every 49.
+pub const NPC_FIRST_BURST_SHOTS: u8 = 2;
+pub const NPC_FIRST_BURST_GAP_TICKS: u64 = 55;
 pub const NPC_BURST_GAP_TICKS: u64 = 28;
 /// The crouched body's gap (49-tick volley period against 56 standing).
 pub const NPC_BURST_GAP_LOW_TICKS: u64 = 21;
-pub const NPC_RELOAD_DELAY_TICKS: u64 = 11;
+/// From the think the cover goal clears (within `NPC_COVER_ARRIVE`, two thinks before the body
+/// stops) to the reload sequence: the game stands idle three thinks after stopping
+/// (server_npc_grenade_soldier: stop op670, reload op691).
+pub const NPC_RELOAD_DELAY_TICKS: u64 = 35;
 pub const NPC_RELOAD_TICKS: u64 = 133;
 
 /// The NPC clip of a weapon (HL2 weapon scripts' clip_size).
@@ -2676,6 +2683,8 @@ pub const NPC_LEAP_RANGE: f32 = 256.0;
 pub const NPC_COVER_RANGE: f32 = 512.0;
 /// CAI_BaseNPC::CoverRadius: how far from the threat the node graph is searched for cover.
 pub const NPC_COVER_RADIUS: f32 = 1024.0;
+/// Within this of the cover point the body counts as arrived (the reload starts there).
+pub const NPC_COVER_ARRIVE: f32 = 24.0;
 pub const NPC_COVER_HEALTH: f32 = 0.4;
 pub const NPC_COVER_SPACING: f32 = 32.0;
 pub const NPC_COVER_TICKS: u64 = 200;
@@ -13784,6 +13793,41 @@ impl<'w> Server<'w> {
         if n.dead_at.is_some() || n.passive || !npc_hostile_to_players(n) || n.ai.scripted {
             return;
         }
+        // cover and reload timers run whether or not the enemy is in sight (the run to the
+        // reload cover usually loses it)
+        if let Some(n) = self.npcs.get_mut(&id) {
+            if n.cover_at.is_some() && n.goal.is_none() && n.cover_until == 0 {
+                n.cover_until = now + NPC_COVER_TICKS;
+            }
+            // at cover the reload starts after a think and a half and runs its sequence
+            // (server_npc_grenade_soldier: arrival t680, reload t691..t824), the cover held for it
+            let at_cover = n
+                .cover_at
+                .is_some_and(|c| c.truncate().distance(n.pos.truncate()) < NPC_COVER_ARRIVE);
+            if n.reloading
+                && n.reload_until == 0
+                && !n.cover_wanted
+                && n.goal.is_none()
+                && (at_cover || n.cover_at.is_none())
+            {
+                n.reload_until = now + NPC_RELOAD_DELAY_TICKS + NPC_RELOAD_TICKS;
+                if n.cover_at.is_some() {
+                    n.cover_until = n.reload_until;
+                }
+            }
+            if n.reloading && n.reload_until != 0 && now >= n.reload_until {
+                n.clip = npc_clip_size(&n.weapon);
+                n.reloading = false;
+                n.reload_until = 0;
+            }
+            if n.cover_at.is_some() && now >= n.cover_until && n.cover_until != 0 {
+                n.cover_at = None;
+                n.cover_until = 0;
+            }
+        }
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
         if ai::class_sched_family(&n.class) == Some("zombie") {
             // the game's zombie, its enemy dead: SCHED_ZOMBIE_WANDER_MEDIUM from the kill tick
             // (the swing ends there), NPC_STATE_ALERT, a walk to a spot 48..384 u away, then it
@@ -13972,8 +14016,9 @@ impl<'w> Server<'w> {
                 n.last_enemy_damage = 0;
             }
             n.target = Some(player);
-            n.burst_left = NPC_BURST_SHOTS;
-            // the game opens fire one think after it enters combat
+            // the game opens fire one think after it enters combat: the suppress volley is
+            // two rounds (server_npc_grenade_soldier: t323, t330; the first full burst t385)
+            n.burst_left = NPC_FIRST_BURST_SHOTS;
             n.next_shot = now + n.think_interval as u64;
         }
         n.target_seen = now;
@@ -14001,7 +14046,13 @@ impl<'w> Server<'w> {
         }
         // a soldier lobs a frag at a visible enemy 256..1024 u away ~12 s into the fight
         // (server_npc_grenade_soldier_wall: grenThrow at t719, released 42 ticks in)
-        let grenade_due = n.next_grenade != 0 && now >= n.next_grenade && n.cover_at.is_none();
+        // SCHED_COMBINE_ESTABLISH_LINE_OF_FIRE is not interrupted by COND_CAN_RANGE_ATTACK2:
+        // the toss waits for the body to stand still (server_npc_grenade_soldier: the run to
+        // (1345,-55) ends before any throw)
+        let grenade_due = n.next_grenade != 0
+            && now >= n.next_grenade
+            && n.cover_at.is_none()
+            && n.goal.is_none();
         if grenade_due && self.npc_start_grenade(id, now, eye, chest) {
             return;
         }
@@ -14013,26 +14064,6 @@ impl<'w> Server<'w> {
             n.goal = None;
             n.next_goal = None;
             n.move_speed = 0.0;
-        }
-        if n.cover_at.is_some() && n.goal.is_none() && n.cover_until == 0 {
-            n.cover_until = now + NPC_COVER_TICKS;
-        }
-        // at cover the reload starts after a think and a half and runs its sequence
-        // (server_npc_grenade_soldier: arrival t680, reload t691..t824), the cover held for it
-        if n.reloading && n.reload_until == 0 && n.goal.is_none() {
-            n.reload_until = now + NPC_RELOAD_DELAY_TICKS + NPC_RELOAD_TICKS;
-            if n.cover_at.is_some() {
-                n.cover_until = n.reload_until;
-            }
-        }
-        if n.reloading && n.reload_until != 0 && now >= n.reload_until {
-            n.clip = npc_clip_size(&n.weapon);
-            n.reloading = false;
-            n.reload_until = 0;
-        }
-        if n.cover_at.is_some() && now >= n.cover_until && n.cover_until != 0 {
-            n.cover_at = None;
-            n.cover_until = 0;
         }
         if n.cover_wanted {
             n.cover_wanted = false;
@@ -14110,16 +14141,21 @@ impl<'w> Server<'w> {
         n.shots += 1;
         n.clip = n.clip.saturating_sub(1);
         n.last_shot = now;
+        // COND_LOW_PRIMARY_AMMO: a quarter of the magazine left ends the burst and sends the
+        // body to reload (game: the 34th of 45 SMG1 rounds, mid-burst, in every scene)
+        if n.clip as u16 * 4 <= npc_clip_size(&n.weapon) as u16 && !n.reloading {
+            n.reloading = true;
+            n.cover_wanted = true;
+            n.burst_left = 0;
+        }
         if let Some((shoot, _)) = shoot_seqs.as_ref() {
             n.sequence = shoot.clone();
         }
         // measured volley period: 49 ticks crouched (shootSMG1c), 56 standing (shootSMG1s)
         n.next_shot = if n.burst_left == 0 {
-            if n.clip as u16 * 8 <= npc_clip_size(&n.weapon) as u16 && !n.reloading {
-                n.reloading = true;
-                n.cover_wanted = true;
-            }
-            now + if n.combat_moved {
+            now + if now < n.target_first_seen + NPC_SUPPRESS_TICKS {
+                NPC_FIRST_BURST_GAP_TICKS
+            } else if n.combat_moved {
                 NPC_BURST_GAP_TICKS
             } else {
                 NPC_BURST_GAP_LOW_TICKS
@@ -14310,12 +14346,21 @@ impl<'w> Server<'w> {
         // out from the NPC's own whose eye position the threat cannot see, within
         // CoverRadius (1024 u) of the threat
         let hull = npc_hull_index(&n.class);
-        let from_graph = self.ai_graph.as_ref().and_then(|g| {
-            g.cover_node(feet, hull, |p| {
-                p.distance(eye) <= NPC_COVER_RADIUS
-                    && p.truncate().distance(feet.truncate()) >= 48.0
-                    && !taken.iter().any(|t| t.distance(p) < NPC_COVER_SPACING)
-                    && !self.npc_los(eye, p + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT))
+        let hidden = |p: Vec3| {
+            !taken.iter().any(|t| t.distance(p) < NPC_COVER_SPACING)
+                && !self.npc_los(eye, p + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT))
+        };
+        // FindLateralCover runs before the node search (server_npc_grenade_soldier_low: the
+        // first step, 48 u north, is already out of the enemy's sight)
+        let from_lateral = self.npc_lateral_point(feet, eye, hidden);
+        let from_graph = from_lateral.or_else(|| {
+            self.ai_graph.as_ref().and_then(|g| {
+                g.cover_node(feet, hull, |p| {
+                    p.distance(eye) <= NPC_COVER_RADIUS
+                        && p.truncate().distance(feet.truncate()) >= 48.0
+                        && !taken.iter().any(|t| t.distance(p) < NPC_COVER_SPACING)
+                        && !self.npc_los(eye, p + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT))
+                })
             })
         });
         if let Some(p) = from_graph {
@@ -15039,10 +15084,82 @@ impl<'w> Server<'w> {
 
     /// SCHED_ESTABLISH_LINE_OF_FIRE: the nearest navmesh vertex at least NPC_FLANK_MIN_STEP from
     /// the NPC and within NPC_FLANK_RANGE whose eye point sees `known`.
+    /// The engine's lateral search (FindLateralCover / FindLateralLos): `NPC_LATERAL_CHECKS`
+    /// steps of `NPC_LATERAL_DELTA` u to the left and right of the line from `feet` to
+    /// `threat`, the nearer first; a step counts when a human hull can slide there along
+    /// the floor and `ok` accepts it.
+    fn npc_lateral_point(
+        &self,
+        feet: Vec3,
+        threat: Vec3,
+        mut ok: impl FnMut(Vec3) -> bool,
+    ) -> Option<Vec3> {
+        let fwd = (threat - feet).truncate().try_normalize()?;
+        let right = Vec3::new(fwd.y, -fwd.x, 0.0);
+        let (mins, maxs) = (Vec3::new(-16.0, -16.0, 0.0), Vec3::new(16.0, 16.0, 72.0));
+        let lift = Vec3::new(0.0, 0.0, 8.0);
+        for i in 1..=NPC_LATERAL_CHECKS {
+            for side in [1.0, -1.0] {
+                let p = feet + right * (side * NPC_LATERAL_DELTA * i as f32);
+                let Some(floor) = self.npc_floor(p + lift, mins, maxs) else {
+                    continue;
+                };
+                if (floor.z - feet.z).abs() > 18.0 {
+                    continue;
+                }
+                let tr = self.collision.trace_box(
+                    feet + lift,
+                    floor + lift,
+                    mins,
+                    maxs,
+                    gm_collision::MASK_PLAYERSOLID,
+                );
+                if tr.start_solid || tr.fraction < 1.0 {
+                    continue;
+                }
+                if ok(floor) {
+                    return Some(floor);
+                }
+            }
+        }
+        None
+    }
+
     fn npc_flank_point(&self, id: u32, known: Vec3) -> Option<Vec3> {
         let n = self.npcs.get(&id)?;
         let nav = self.nav.as_deref()?;
         let feet = n.pos;
+        // TASK_GET_PATH_TO_ENEMY_LOS: distances against the last known position, the line
+        // of sight against the enemy's eye where it is now (server_npc_grenade_soldier_wall:
+        // the sideways points still see the spot in front of the wall, not the player)
+        let threat_eye = n.target.and_then(|p| self.eye(p)).map_or(known, |(e, _)| e);
+        // the engine's line-of-fire search steps sideways first (FindLateralLos: five 48 u
+        // steps to either side of the line to the enemy; server_npc_grenade_soldier: the
+        // fourth step right of the reload cover, (1345,-55)), then walks the node graph like
+        // its cover search: from the nearest node outwards, the first node that sees the
+        // enemy past the minimum range
+        let lateral = self.npc_lateral_point(feet, known, |p| {
+            let to_enemy = p.truncate().distance(known.truncate());
+            to_enemy >= NPC_LOF_MIN_ENEMY
+                && to_enemy <= NPC_FLANK_RANGE
+                && self.npc_los(p + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT), threat_eye)
+        });
+        if lateral.is_some() {
+            return lateral;
+        }
+        if let Some(g) = self.ai_graph.as_ref() {
+            let hull = npc_hull_index(&n.class);
+            let found = g.cover_node(feet, hull, |p| {
+                let to_enemy = p.truncate().distance(known.truncate());
+                p.truncate().distance(feet.truncate()) >= 1.0
+                    && to_enemy >= NPC_LOF_MIN_ENEMY
+                    && to_enemy <= NPC_FLANK_RANGE
+                    && self.npc_los(p + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT), threat_eye)
+            });
+            if found.is_some() {
+                return found;
+            }
+        }
         let mut best: Option<(f32, Vec3)> = None;
         // the map's AI nodes (where the game's search runs) and the navmesh vertices
         let candidates: Vec<Vec3> = self
@@ -15071,7 +15188,7 @@ impl<'w> Server<'w> {
                 continue;
             }
             let eye = *v + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT);
-            if self.npc_los(eye, known) {
+            if self.npc_los(eye, threat_eye) {
                 best = Some((cost, *v));
             }
         }
@@ -20208,6 +20325,9 @@ pub const NPC_FLANK_TICKS: u64 = 330;
 pub const NPC_FLANK_MIN_STEP: f32 = 200.0;
 pub const NPC_FLANK_RANGE: f32 = 1200.0;
 pub const NPC_LOF_MIN_ENEMY: f32 = 200.0;
+/// FindLateralCover / FindLateralLos: COVER_CHECKS steps of COVER_DELTA u to either side.
+pub const NPC_LATERAL_CHECKS: usize = 5;
+pub const NPC_LATERAL_DELTA: f32 = 48.0;
 /// Soldier frag tosses: `Numgrenades` 5, the first ~12 s after the enemy was first seen
 /// (measured once: grenThrow at t719 for a t5 sighting), at a visible enemy 256..1024 u away;
 /// the sequence lasts 63 ticks and releases at tick 42 from the hand 35 u ahead / 22 u below
