@@ -2245,7 +2245,7 @@ pub struct NpcMoveDef {
 pub const NPC_THINK_TICKS: u8 = 7;
 pub const NPC_THINK_PHASE: u64 = 3;
 pub const NPC_THINK_TICKS_FAR: u8 = 13;
-/// Outside a player's view cone an NPC farther than this thinks every `NPC_THINK_TICKS_FAR`
+/// Outside a player's view cone an NPC farther than this, with no enemy, thinks every `NPC_THINK_TICKS_FAR`
 /// (in the walk recordings the deciding think at ~292 u still ran at 7 ticks, at ~300 u at 13).
 pub const NPC_EFFICIENT_DIST: f32 = 296.0;
 /// cos of the player's half field of view the efficiency test uses (VIEW_FIELD_WIDE).
@@ -13375,6 +13375,10 @@ impl<'w> Server<'w> {
                     to.normalize_or_zero().dot(glam::Vec2::new(cy, sy)) >= NPC_VIEW_CONE_COS;
                 !in_cone && to.length() > NPC_EFFICIENT_DIST
             });
+            // a fighting NPC keeps the normal think wherever the players look: the soldier's
+            // cover and line-of-fire runs step every 7 ticks 500 u behind the bot
+            // (server_npc_grenade_soldier t2092..2120), where an idle one would step every 13
+            let far = far && n.target.is_none();
             let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
             n.think_interval = n.move_interval.unwrap_or(if far {
                 NPC_THINK_TICKS_FAR
