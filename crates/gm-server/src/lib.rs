@@ -12845,6 +12845,10 @@ impl<'w> Server<'w> {
             if d < NPC_FLANK_MIN_STEP || d > NPC_FLANK_RANGE {
                 continue;
             }
+            // the game's point kept its distance (255 u from the enemy for a 150 u wall)
+            if v.truncate().distance(known.truncate()) < NPC_LOF_MIN_ENEMY {
+                continue;
+            }
             if best.is_some_and(|(bd, _)| d >= bd) {
                 continue;
             }
@@ -17866,6 +17870,7 @@ pub const NPC_LOF_RANGE: f32 = 1024.0;
 pub const NPC_FLANK_TICKS: u64 = 330;
 pub const NPC_FLANK_MIN_STEP: f32 = 200.0;
 pub const NPC_FLANK_RANGE: f32 = 1200.0;
+pub const NPC_LOF_MIN_ENEMY: f32 = 200.0;
 /// Soldier frag tosses: `Numgrenades` 5, the first ~12 s after the enemy was first seen
 /// (measured once: grenThrow at t719 for a t5 sighting), at a visible enemy 256..1024 u away;
 /// the sequence lasts 63 ticks and releases at tick 42 from the hand 35 u ahead / 22 u below
