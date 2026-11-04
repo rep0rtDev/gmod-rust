@@ -2121,6 +2121,11 @@ pub struct Npc {
     pub last_known: Option<Vec3>,
     /// A run for a line of fire (SCHED_ESTABLISH_LINE_OF_FIRE) is under way until this tick.
     pub flank_until: u64,
+    /// Local detour round a prop that blocked the move: the corner aimed at, which side of the
+    /// path it lies (kept while skirting a wall of props) and when it is given up.
+    pub detour: Option<Vec3>,
+    pub detour_side: f32,
+    pub detour_until: u64,
     /// Frag grenades tossed so far (`Numgrenades` 5 for a soldier) and the next toss check.
     pub grenades_used: u8,
     pub next_grenade: u64,
@@ -11237,6 +11242,9 @@ impl<'w> Server<'w> {
             wake_until: 0,
             last_known: None,
             flank_until: 0,
+            detour: None,
+            detour_side: 0.0,
+            detour_until: 0,
             grenades_used: 0,
             next_grenade: 0,
             grenade: None,
@@ -12099,7 +12107,20 @@ impl<'w> Server<'w> {
                 at = points[points.len() - 1].truncate();
             }
             let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
-            let want = at.extend(pos.z);
+            let mut want = at.extend(pos.z);
+            let (detour, detour_side, detour_until) =
+                self.npcs.get(&id).map_or((None, 0.0, 0), |n| {
+                    (n.detour, n.detour_side, n.detour_until)
+                });
+            if let Some(dp) = detour.filter(|_| now < detour_until) {
+                let to = dp.truncate() - pos.truncate();
+                let dd = to.length();
+                if dd > NPC_DETOUR_REACH {
+                    let step = (want.truncate() - pos.truncate()).length();
+                    dir = to / dd;
+                    want = (pos.truncate() + dir * step.min(dd)).extend(pos.z);
+                }
+            }
             let mut tr = self.npc_sweep(&prop_bodies, pos + lift, want + lift, mins, maxs);
             if tr.fraction < 0.999 && !tr.start_solid {
                 // the step past a corner runs into a wall end: take the corner itself this
@@ -12128,6 +12149,52 @@ impl<'w> Server<'w> {
                     if !ts.start_solid {
                         tr.end = ts.end;
                     }
+                }
+            }
+            // a prop in the way: skirt it by its nearest useful corner, keeping to one side so a
+            // wall of props is walked along to its end
+            let mut new_detour: Option<(Vec3, f32)> = None;
+            if tr.fraction < 0.999 {
+                let back = pos + lift - (dir * NPC_SWEEP_BACKOFF).extend(0.0);
+                let hit = gm_sandbox::sweep_hull_props(&prop_bodies, back, want + lift, mins, maxs)
+                    .filter(|h| h.ent.is_some());
+                if let Some(pb) = hit.and_then(|h| prop_bodies.iter().find(|p| Some(p.id) == h.ent))
+                {
+                    let r = self
+                        .sandbox
+                        .props()
+                        .iter()
+                        .find(|p| p.id == pb.id)
+                        .and_then(|p| self.models.get(&p.model))
+                        .map(|info| {
+                            info.hulls
+                                .iter()
+                                .flatten()
+                                .map(|v| v.truncate().length())
+                                .fold(0.0f32, f32::max)
+                        })
+                        .unwrap_or(NPC_DETOUR_FALLBACK_RADIUS);
+                    let m = r + maxs.x + NPC_DETOUR_MARGIN;
+                    // corners are costed against the path's next waypoint, not the step ahead,
+                    // so the far corner wins at the end of a wall instead of the one just rounded
+                    let aim = points[idx.min(points.len() - 1)].truncate();
+                    let mut best: Option<(f32, Vec3, f32)> = None;
+                    for (sx, sy) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+                        let c = glam::Vec2::new(pb.pos.x + sx * m, pb.pos.y + sy * m);
+                        let rel = c - pos.truncate();
+                        let side = (dir.x * rel.y - dir.y * rel.x).signum();
+                        if (detour_side != 0.0 && side != detour_side)
+                            || rel.dot(dir) < -m
+                            || rel.length() < NPC_DETOUR_REACH * 2.0
+                        {
+                            continue;
+                        }
+                        let cost = rel.length() + c.distance(aim);
+                        if best.is_none_or(|b| cost < b.0) {
+                            best = Some((cost, c.extend(pos.z), side));
+                        }
+                    }
+                    new_detour = best.map(|(_, c, side)| (c, side));
                 }
             }
             let reached = if tr.start_solid { pos + lift } else { tr.end };
@@ -12174,9 +12241,21 @@ impl<'w> Server<'w> {
                     n.cover_at = None;
                     n.cover_until = 0;
                 }
+                if let Some((c, side)) = new_detour {
+                    n.detour = Some(c);
+                    n.detour_side = side;
+                    n.detour_until = now + NPC_DETOUR_TICKS;
+                } else if n.detour.is_some_and(|d| {
+                    d.truncate().distance(floor.truncate()) <= NPC_DETOUR_REACH
+                        || now >= n.detour_until
+                }) {
+                    n.detour = None;
+                }
                 let (arrived, stopped) = (arrived || jammed, stopped);
                 n.move_speed = if arrived || stopped { 0.0 } else { v1 };
                 if arrived || stopped {
+                    n.detour = None;
+                    n.detour_side = 0.0;
                     n.goal = None;
                     swap = n.next_goal.take().map(|g| (g, n.run));
                 } else if let Some(g) = n.goal.as_mut() {
@@ -13611,6 +13690,9 @@ impl<'w> Server<'w> {
                 wake_until: 0,
                 last_known: None,
                 flank_until: 0,
+                detour: None,
+                detour_side: 0.0,
+                detour_until: 0,
                 grenades_used: 0,
                 next_grenade: 0,
                 grenade: None,
@@ -18510,3 +18592,9 @@ pub const PROP_HIT_KEEP: f32 = 0.17;
 pub const PROP_HIT_PUSH_MAX: f32 = 150.0;
 /// How far an NPC hull sweep steps back to find the face of a prop it is touching.
 pub const NPC_SWEEP_BACKOFF: f32 = 4.0;
+/// Local detour round a blocking prop: corner clearance beyond the hull half-width, how
+/// close counts as reaching the corner, and how long a corner is pursued.
+pub const NPC_DETOUR_MARGIN: f32 = 4.0;
+pub const NPC_DETOUR_REACH: f32 = 12.0;
+pub const NPC_DETOUR_TICKS: u64 = 200;
+pub const NPC_DETOUR_FALLBACK_RADIUS: f32 = 24.0;

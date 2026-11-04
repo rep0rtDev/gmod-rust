@@ -1937,17 +1937,26 @@ fn npc_walk_is_blocked_by_a_frozen_crate_wall() {
         server.npcs[&id].pos
     );
     assert!(server.npc_goto(id, Vec3::new(610.0, -500.0, -143.0), true));
+    // the wall spans y -590..-410: the hull never crosses x 740..780 inside that span, and the
+    // walk skirts it corner by corner to its end
     let mut min_x = f32::MAX;
-    for t in 0..300 {
+    for t in 0..400 {
         server.tick(&idle);
         let p = server.npcs[&id].pos;
         min_x = min_x.min(p.x);
-        if t % 50 == 0 {
-            eprintln!("t{t} {p:?} goal {}", server.npcs[&id].goal.is_some());
+        if p.x > 735.0 && p.x < 785.0 {
+            assert!(
+                (p.y + 500.0).abs() > 100.0,
+                "went through the wall at {p:?} (t{t})"
+            );
+        }
+        if t % 25 == 0 {
+            eprintln!(
+                "t{t} {p:?} goal {} detour {:?}",
+                server.npcs[&id].goal.is_some(),
+                server.npcs[&id].detour
+            );
         }
     }
-    assert!(
-        min_x > 760.0 + 20.0 + 13.0 - 2.0,
-        "walked through the wall to x={min_x}"
-    );
+    assert!(min_x < 700.0, "never got round the wall (min x {min_x})");
 }
