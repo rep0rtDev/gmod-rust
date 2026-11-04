@@ -2250,7 +2250,11 @@ pub struct NpcPath {
 /// Ground locomotion per class as measured on the game (server_npc_walk_*): the NPC moves
 /// once per think, its speed ramps at `*_accel` (u/s^2) toward `walk`/`run` (u/s), starts
 /// braking under the curve sqrt(2 * NPC_BRAKE_CURVE * accel * remaining) and then sheds
-/// `accel` per think down a staircase that lands exactly on the goal.
+/// `accel` per think down a staircase that lands exactly on the goal. A body locked on its
+/// enemy moves at an angle to its facing through the all-directions blend: the soldier's
+/// RunAIMALL1 / RunALL plateau at 15.7..16.1 u/think and ramp / shed 2.2..2.4 u/think with the
+/// path 30 deg or more off the facing, 22.6 and 2.8..2.9 along it (NPC_BLEND_*,
+/// server_npc_grenade_soldier* 261104).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NpcMoveDef {
     pub walk: f32,
@@ -2258,6 +2262,13 @@ pub struct NpcMoveDef {
     pub run: f32,
     pub run_accel: f32,
 }
+
+/// Ground speed of the all-directions blend off the facing (15.9 / 22.6 from 20 deg) and its
+/// ramp (2.58 / 2.9 at 15..30 deg, 2.23 / 2.9 from 30 deg).
+const NPC_BLEND_SIDE_SPEED: f32 = 0.71;
+const NPC_BLEND_SIDE_DEG: f32 = 20.0;
+const NPC_BLEND_ACCEL_MID: f32 = 0.88;
+const NPC_BLEND_ACCEL_SIDE: f32 = 0.77;
 
 pub const NPC_THINK_TICKS: u8 = 7;
 pub const NPC_THINK_PHASE: u64 = 3;
@@ -13582,6 +13593,8 @@ impl<'w> Server<'w> {
                 }
                 return true;
             }
+            // a new path starts its own ramp: the reversal of the previous one is over
+            n.reversal = 0;
             n.goal = Some(NpcPath {
                 points: path.points,
                 links,
@@ -13621,6 +13634,7 @@ impl<'w> Server<'w> {
         if let Some(n) = self.npcs.get_mut(&id) {
             n.goal = None;
             n.next_goal = None;
+            n.reversal = 0;
             n.chase = None;
             n.move_speed = 0.0;
         }
@@ -14035,10 +14049,12 @@ impl<'w> Server<'w> {
             // and none of the reversal's lost thinks (server_npc_grenade_soldier_wall: the
             // t1490 run faces its path (yaw 221) from 382 u down to 250 u and turns to the bot
             // the think it clears the wall's end (t1602); the t2260 run faces it throughout)
+            // (the flight from a danger sound faces its path: server_npc_grenade_soldier_wall
+            // t2365 RunALL turning 16 deg a think right after a burst at the visible bot)
             let enemy_face = n
                 .target
                 .and(n.last_known)
-                .filter(|_| n.target_seen + n.think_interval as u64 >= now)
+                .filter(|_| n.target_seen + n.think_interval as u64 >= now && !n.cover_from_sound)
                 .map(|k| k.truncate());
             // a corner within reach is passed only when the hull can already sweep to the
             // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
@@ -14095,6 +14111,22 @@ impl<'w> Server<'w> {
                 wrap_deg(head.y.atan2(head.x).to_degrees() - yaw0).abs()
             } else {
                 0.0
+            };
+            // a body locked on its enemy moves through the blend: slower and softer off its facing
+            let (ideal, accel) = if enemy_face.is_some() && yaw_err >= 15.0 {
+                let speed = if yaw_err >= NPC_BLEND_SIDE_DEG {
+                    NPC_BLEND_SIDE_SPEED
+                } else {
+                    1.0
+                };
+                let ramp = if yaw_err >= 30.0 {
+                    NPC_BLEND_ACCEL_SIDE
+                } else {
+                    NPC_BLEND_ACCEL_MID
+                };
+                (ideal * speed, accel * ramp)
+            } else {
+                (ideal, accel)
             };
             let yaw_err = if enemy_face.is_some() { 0.0 } else { yaw_err };
             let turning = yaw_err > 0.5;
@@ -14413,7 +14445,7 @@ impl<'w> Server<'w> {
         // an armed body's first think takes over from the spawn pose (Idle1_SMG1 at t4)
         let own =
             n.auto_seq.as_deref() == Some(n.sequence.as_str()) || (armed && n.auto_seq.is_none());
-        let sees_enemy = n.target.is_some() && n.target_seen == now;
+        let sees_enemy = n.target.is_some() && n.target_seen == now && !n.cover_from_sound;
         // classes whose swings are measured by name (server_npc_melee_*): the antlion's
         // pounce2 / pounce / attack3, the poison zombie's ThrowWarning then Throw, the fast
         // zombie's BR2_Roar once both scratches landed
