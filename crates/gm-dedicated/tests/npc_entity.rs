@@ -1652,4 +1652,16 @@ fn npc_sequence_playback_fires_the_models_animation_events() {
     for (_, _, cycle, time) in &feet {
         assert!((0.0..=1.0).contains(cycle) && *time >= 0.0);
     }
+    // the citizen's HandleAnimEvent voices the footsteps the event names
+    let sounds = server.take_sounds();
+    let steps: Vec<&str> = sounds
+        .iter()
+        .filter(|s| s.ent == id && s.name.starts_with("NPC_Citizen.Footstep"))
+        .map(|s| s.name.as_str())
+        .collect();
+    assert!(
+        steps.contains(&"NPC_Citizen.FootstepLeft") && steps.contains(&"NPC_Citizen.FootstepRight"),
+        "{sounds:?}"
+    );
+    assert_eq!(steps.len(), feet.len(), "{steps:?}");
 }

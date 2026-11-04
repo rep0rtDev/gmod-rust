@@ -9674,8 +9674,41 @@ impl<'w> Server<'w> {
             .unwrap_or_default()
     }
 
+    /// The NPC footstep of an animation event, as the HL2 NPC classes' `HandleAnimEvent`:
+    /// `NPC_EVENT_LEFTFOOT` / `RIGHTFOOT` (6006 / 6007, the options string naming the sound
+    /// prefix, `NPC_Citizen`) voice `<prefix>.FootstepLeft/Right`; soldiers and metrocops always
+    /// their `RunFootstep*`, the zombies' named `AE_ZOMBIE_STEP_*` their own `*.Footstep*` scripts.
+    fn npc_anim_event_footstep(class: &str, e: &FiredAnimEvent) -> Option<String> {
+        let (left, zombie) = match (e.event, e.name.as_str()) {
+            (6006, _) => (true, false),
+            (6007, _) => (false, false),
+            (_, "AE_NPC_LEFTFOOT") => (true, false),
+            (_, "AE_NPC_RIGHTFOOT") => (false, false),
+            (_, "AE_ZOMBIE_STEP_LEFT") => (true, true),
+            (_, "AE_ZOMBIE_STEP_RIGHT") => (false, true),
+            _ => return None,
+        };
+        let side = if left { "Left" } else { "Right" };
+        let name = match class {
+            "npc_combine_s" => format!("NPC_CombineS.RunFootstep{side}"),
+            "npc_metropolice" => format!("NPC_MetroPolice.RunFootstep{side}"),
+            "npc_poisonzombie" => format!("NPC_PoisonZombie.Footstep{side}"),
+            "npc_fastzombie" | "npc_fastzombie_torso" => format!("NPC_FastZombie.Footstep{side}"),
+            _ if zombie => format!("Zombie.Footstep{side}"),
+            _ if !e.options.is_empty() => format!("{}.Footstep{side}", e.options),
+            _ => return None,
+        };
+        Some(name)
+    }
+
     fn push_anim_events(&mut self, ent: u32, player: bool, fired: Vec<FiredAnimEvent>) {
         for e in fired {
+            if !player {
+                let class = self.npcs.get(&ent).map(|n| n.class.clone());
+                if let Some(snd) = class.and_then(|c| Self::npc_anim_event_footstep(&c, &e)) {
+                    self.emit_sound(ent, snd, 1.0);
+                }
+            }
             self.game_events.push(GameEvent::AnimEvent {
                 ent,
                 player,
