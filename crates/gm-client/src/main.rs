@@ -1329,131 +1329,7 @@ impl App {
         let fx_splash = world.sprite_material(&gpu, &self.mount, "effects/splash2");
         let ui = UiRenderer::new(&gpu, &self.mount, format, quality.msaa)?;
         let mut ui = ui;
-        {
-            // the HL2 HUD fonts of resource/ClientScheme.res, scaled from the 480-line layout
-            let fs = config.height as f32 / 480.0;
-            ui.register_font(&gpu, &self.mount, "HudNumbers", "HalfLife2", 32.0 * fs);
-            ui.register_font(&gpu, &self.mount, "HudNumbersSmall", "HalfLife2", 16.0 * fs);
-            if !ui.register_font(&gpu, &self.mount, "HudDefault", "Verdana", 9.0 * fs) {
-                ui.register_font(&gpu, &self.mount, "HudDefault", "Roboto-Bold", 9.0 * fs);
-            }
-            // TargetID / TargetIDSmall: Verdana 12 / 11 bold (the 480-599 line variants)
-            ui.register_font(&gpu, &self.mount, "HL2MPTypeDeath", "csd", 64.0 * fs);
-            // gmod_tool/cl_init.lua: the toolgun HUD's fonts (Roboto Bk 80 / 24 / 17)
-            for (name, px) in [
-                ("GModToolName", 80.0),
-                ("GModToolSubtitle", 24.0),
-                ("GModToolHelp", 17.0),
-            ] {
-                if !ui.register_font(&gpu, &self.mount, name, "Roboto Black", px) {
-                    ui.register_font(&gpu, &self.mount, name, "Roboto-Bold", px);
-                }
-            }
-            // DermaDefaultBold: Tahoma 13 weight 800 (derma/init.lua), not scaled by yres
-            if !ui.register_font(&gpu, &self.mount, "DermaDefaultBold", "Tahoma", 13.0) {
-                ui.register_font(&gpu, &self.mount, "DermaDefaultBold", "Roboto-Bold", 13.0);
-            }
-            // ContentHeader: Helvetica 50 weight 1000 (contentheader.lua)
-            if !ui.register_font(&gpu, &self.mount, "ContentHeader", "Helvetica", 50.0) {
-                ui.register_font(&gpu, &self.mount, "ContentHeader", "Roboto-Bold", 50.0);
-            }
-            ui.load_image(&gpu, &self.mount, "gui/corner8");
-            // GModNotify: Arial max(12, ceil(ScreenScaleH(9))) weight 500
-            let text_h = (9.0 * config.height as f32 / 480.0).ceil().max(12.0);
-            if !ui.register_font(&gpu, &self.mount, "GModNotify", "Arial", text_h) {
-                ui.register_font(&gpu, &self.mount, "GModNotify", "Roboto-Regular", text_h);
-            }
-            for n in ["generic", "error", "undo", "hint", "cleanup"] {
-                ui.load_image(&gpu, &self.mount, &format!("vgui/notices/{n}"));
-            }
-            // HL2 weapon selection and crosshair: halflife2.ttf glyph fonts, Verdana labels
-            ui.register_font(&gpu, &self.mount, "WeaponIcons", "HalfLife2", 64.0 * fs);
-            ui.register_font(&gpu, &self.mount, "Crosshairs", "HalfLife2", 40.0 * fs);
-            for (name, tall) in [("HudSelectionNumbers", 11.0), ("HudSelectionText", 8.0)] {
-                if !ui.register_font(&gpu, &self.mount, name, "Verdana", tall * fs) {
-                    ui.register_font(&gpu, &self.mount, name, "Roboto-Bold", tall * fs);
-                }
-            }
-            ui.load_image(&gpu, &self.mount, "weapons/swep");
-            ui.load_image(&gpu, &self.mount, "gui/speech_lid");
-            // Derma (derma/init.lua): DermaDefault = Tahoma 13 on Windows, DejaVu Sans 14
-            // elsewhere (500 / 800); system fonts, Roboto from the content when missing
-            let (derma_family, derma_px) = if cfg!(windows) {
-                ("Tahoma", 13.0)
-            } else {
-                ("DejaVu Sans", 14.0)
-            };
-            if !ui.register_font(&gpu, &self.mount, derma::FONT, derma_family, derma_px) {
-                ui.register_font(&gpu, &self.mount, derma::FONT, "Roboto-Medium", derma_px);
-            }
-            let derma_bold = format!("{derma_family}-Bold");
-            if !ui.register_font(&gpu, &self.mount, derma::FONT_BOLD, &derma_bold, derma_px) {
-                ui.register_font(&gpu, &self.mount, derma::FONT_BOLD, "Roboto-Bold", derma_px);
-            }
-            ui.load_image(&gpu, &self.mount, derma::ATLAS);
-            ui.load_image(&gpu, &self.mount, derma::HOVER_MAT);
-            ui.load_image(&gpu, &self.mount, derma::GENERATING_MAT);
-            // menu.html: Helvetica / Arial (the system's; Liberation Sans via fontconfig on
-            // Linux, as the game's browser gets), options 23 / 16 px bold, body 12
-            let html = |ui: &mut UiRenderer, name: &str, bold: bool, px: f32| {
-                let (family, fallback) = if bold {
-                    ("Arial-Bold", "Roboto-Bold")
-                } else {
-                    ("Arial", "Roboto-Regular")
-                };
-                if !ui.register_font(&gpu, &self.mount, name, family, px) {
-                    ui.register_font(&gpu, &self.mount, name, fallback, px);
-                }
-            };
-            html(&mut ui, derma::MENU_FONT_23, true, 23.0);
-            html(&mut ui, derma::MENU_FONT_16, true, 16.0);
-            html(&mut ui, derma::NAV_FONT, false, 12.0);
-            // cl_worldtips.lua: GModWorldtip = Helvetica 20 weight 700
-            html(&mut ui, "GModWorldtip", true, 20.0);
-            // SourceScheme: Tahoma [$WINDOWS] / Verdana elsewhere, Default 13 / bold / Large 15
-            let scheme = if cfg!(windows) { "Tahoma" } else { "Verdana" };
-            let scheme_bold = format!("{scheme}-Bold");
-            if !ui.register_font(&gpu, &self.mount, options::FONT, scheme, 13.0) {
-                ui.register_font(&gpu, &self.mount, options::FONT, "Roboto-Regular", 13.0);
-            }
-            for (name, px) in [(options::FONT_BOLD, 13.0), (options::FONT_LARGE, 15.0)] {
-                if !ui.register_font(&gpu, &self.mount, name, &scheme_bold, px) {
-                    ui.register_font(&gpu, &self.mount, name, "Roboto-Bold", px);
-                }
-            }
-            ui.load_image(&gpu, &self.mount, "vgui/logos/garrysmod.png");
-            // newgame.html: body 12, labels 11 / 11 bold, category header 32 + 14, button 20
-            for (name, bold, size) in [
-                (newgame::F10, false, 10.0),
-                (newgame::F11, false, 11.0),
-                (newgame::F11B, true, 11.0),
-                (newgame::F13, false, 13.0),
-                (newgame::F14, false, 14.0),
-                (newgame::F20, false, 20.0),
-                (newgame::F32, false, 32.0),
-                (servers::F20B, true, 20.0),
-                (servers::F13B, true, 13.0),
-                (ugc::F14B, true, 14.0),
-                (ugc::F48B, true, 48.0),
-            ] {
-                html(&mut ui, name, bold, size);
-            }
-            for name in derma::MENU_IMAGES {
-                ui.load_image(&gpu, &self.mount, name);
-            }
-            for name in derma::IMAGES {
-                ui.load_image(&gpu, &self.mount, name);
-            }
-            for (name, tall) in [
-                ("TargetID", 12.0),
-                ("TargetIDSmall", 11.0),
-                ("ChatFont", 12.0),
-            ] {
-                if !ui.register_font(&gpu, &self.mount, name, "Verdana", tall * fs) {
-                    ui.register_font(&gpu, &self.mount, name, "Roboto-Bold", tall * fs);
-                }
-            }
-        }
+        register_ui_fonts(&self.mount, &mut ui, &gpu, config.height);
         for (_, _, icon, _) in derma::PROPERTIES {
             if !icon.is_empty() {
                 ui.load_image(&gpu, &self.mount, icon);
@@ -6793,6 +6669,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => el.exit(),
             WindowEvent::Resized(s) => {
                 if let Some(g) = &mut self.gfx {
+                    let old_height = g.config.height;
                     g.config.width = s.width.max(1);
                     g.config.height = s.height.max(1);
                     g.surface.configure(&g.gpu.device, &g.config);
@@ -6805,6 +6682,18 @@ impl ApplicationHandler for App {
                     g.depth = depth_view(&g.gpu, w, h, f, n);
                     g.msaa_color = msaa_view(&g.gpu, w, h, f, n);
                     g.post.resize(&g.gpu, g.config.width, g.config.height);
+                    if g.config.height != old_height {
+                        register_ui_fonts(&self.mount, &mut g.ui, &g.gpu, g.config.height);
+                        let m = g.ui.font_metrics(None);
+                        gm_script::set_font_metrics(
+                            "",
+                            gm_script::TextMetrics {
+                                line_height: m.line_height,
+                                advances: m.advances,
+                                fallback: m.fallback,
+                            },
+                        );
+                    }
                 }
             }
             WindowEvent::KeyboardInput {
@@ -8698,5 +8587,134 @@ mod fade_tests {
         assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 0.5), Some(0.8));
         assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 2.0), Some(0.4));
         assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 3.1), None);
+    }
+}
+
+/// The HUD / menu fonts rasterised for a `height`-line screen: GMod sizes its HUD from the
+/// 480-line layout (ScreenScaleH), so every atlas is rebuilt whenever the window height
+/// changes - a 720-line atlas stretched to a 1440-line desktop is the blur it would show.
+fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, height: u32) {
+    // the HL2 HUD fonts of resource/ClientScheme.res, scaled from the 480-line layout
+    let fs = height as f32 / 480.0;
+    ui.register_font(gpu, mount, "HudNumbers", "HalfLife2", 32.0 * fs);
+    ui.register_font(gpu, mount, "HudNumbersSmall", "HalfLife2", 16.0 * fs);
+    if !ui.register_font(gpu, mount, "HudDefault", "Verdana", 9.0 * fs) {
+        ui.register_font(gpu, mount, "HudDefault", "Roboto-Bold", 9.0 * fs);
+    }
+    // TargetID / TargetIDSmall: Verdana 12 / 11 bold (the 480-599 line variants)
+    ui.register_font(gpu, mount, "HL2MPTypeDeath", "csd", 64.0 * fs);
+    // gmod_tool/cl_init.lua: the toolgun HUD's fonts (Roboto Bk 80 / 24 / 17)
+    for (name, px) in [
+        ("GModToolName", 80.0),
+        ("GModToolSubtitle", 24.0),
+        ("GModToolHelp", 17.0),
+    ] {
+        if !ui.register_font(gpu, mount, name, "Roboto Black", px) {
+            ui.register_font(gpu, mount, name, "Roboto-Bold", px);
+        }
+    }
+    // DermaDefaultBold: Tahoma 13 weight 800 (derma/init.lua), not scaled by yres
+    if !ui.register_font(gpu, mount, "DermaDefaultBold", "Tahoma", 13.0) {
+        ui.register_font(gpu, mount, "DermaDefaultBold", "Roboto-Bold", 13.0);
+    }
+    // ContentHeader: Helvetica 50 weight 1000 (contentheader.lua)
+    if !ui.register_font(gpu, mount, "ContentHeader", "Helvetica", 50.0) {
+        ui.register_font(gpu, mount, "ContentHeader", "Roboto-Bold", 50.0);
+    }
+    ui.load_image(gpu, mount, "gui/corner8");
+    // GModNotify: Arial max(12, ceil(ScreenScaleH(9))) weight 500
+    let text_h = (9.0 * height as f32 / 480.0).ceil().max(12.0);
+    if !ui.register_font(gpu, mount, "GModNotify", "Arial", text_h) {
+        ui.register_font(gpu, mount, "GModNotify", "Roboto-Regular", text_h);
+    }
+    for n in ["generic", "error", "undo", "hint", "cleanup"] {
+        ui.load_image(gpu, mount, &format!("vgui/notices/{n}"));
+    }
+    // HL2 weapon selection and crosshair: halflife2.ttf glyph fonts, Verdana labels
+    ui.register_font(gpu, mount, "WeaponIcons", "HalfLife2", 64.0 * fs);
+    ui.register_font(gpu, mount, "Crosshairs", "HalfLife2", 40.0 * fs);
+    for (name, tall) in [("HudSelectionNumbers", 11.0), ("HudSelectionText", 8.0)] {
+        if !ui.register_font(gpu, mount, name, "Verdana", tall * fs) {
+            ui.register_font(gpu, mount, name, "Roboto-Bold", tall * fs);
+        }
+    }
+    ui.load_image(gpu, mount, "weapons/swep");
+    ui.load_image(gpu, mount, "gui/speech_lid");
+    // Derma (derma/init.lua): DermaDefault = Tahoma 13 on Windows, DejaVu Sans 14
+    // elsewhere (500 / 800); system fonts, Roboto from the content when missing
+    let (derma_family, derma_px) = if cfg!(windows) {
+        ("Tahoma", 13.0)
+    } else {
+        ("DejaVu Sans", 14.0)
+    };
+    if !ui.register_font(gpu, mount, derma::FONT, derma_family, derma_px) {
+        ui.register_font(gpu, mount, derma::FONT, "Roboto-Medium", derma_px);
+    }
+    let derma_bold = format!("{derma_family}-Bold");
+    if !ui.register_font(gpu, mount, derma::FONT_BOLD, &derma_bold, derma_px) {
+        ui.register_font(gpu, mount, derma::FONT_BOLD, "Roboto-Bold", derma_px);
+    }
+    ui.load_image(gpu, mount, derma::ATLAS);
+    ui.load_image(gpu, mount, derma::HOVER_MAT);
+    ui.load_image(gpu, mount, derma::GENERATING_MAT);
+    // menu.html: Helvetica / Arial (the system's; Liberation Sans via fontconfig on
+    // Linux, as the game's browser gets), options 23 / 16 px bold, body 12
+    let html = |ui: &mut UiRenderer, name: &str, bold: bool, px: f32| {
+        let (family, fallback) = if bold {
+            ("Arial-Bold", "Roboto-Bold")
+        } else {
+            ("Arial", "Roboto-Regular")
+        };
+        if !ui.register_font(gpu, mount, name, family, px) {
+            ui.register_font(gpu, mount, name, fallback, px);
+        }
+    };
+    html(ui, derma::MENU_FONT_23, true, 23.0);
+    html(ui, derma::MENU_FONT_16, true, 16.0);
+    html(ui, derma::NAV_FONT, false, 12.0);
+    // cl_worldtips.lua: GModWorldtip = Helvetica 20 weight 700
+    html(ui, "GModWorldtip", true, 20.0);
+    // SourceScheme: Tahoma [$WINDOWS] / Verdana elsewhere, Default 13 / bold / Large 15
+    let scheme = if cfg!(windows) { "Tahoma" } else { "Verdana" };
+    let scheme_bold = format!("{scheme}-Bold");
+    if !ui.register_font(gpu, mount, options::FONT, scheme, 13.0) {
+        ui.register_font(gpu, mount, options::FONT, "Roboto-Regular", 13.0);
+    }
+    for (name, px) in [(options::FONT_BOLD, 13.0), (options::FONT_LARGE, 15.0)] {
+        if !ui.register_font(gpu, mount, name, &scheme_bold, px) {
+            ui.register_font(gpu, mount, name, "Roboto-Bold", px);
+        }
+    }
+    ui.load_image(gpu, mount, "vgui/logos/garrysmod.png");
+    // newgame.html: body 12, labels 11 / 11 bold, category header 32 + 14, button 20
+    for (name, bold, size) in [
+        (newgame::F10, false, 10.0),
+        (newgame::F11, false, 11.0),
+        (newgame::F11B, true, 11.0),
+        (newgame::F13, false, 13.0),
+        (newgame::F14, false, 14.0),
+        (newgame::F20, false, 20.0),
+        (newgame::F32, false, 32.0),
+        (servers::F20B, true, 20.0),
+        (servers::F13B, true, 13.0),
+        (ugc::F14B, true, 14.0),
+        (ugc::F48B, true, 48.0),
+    ] {
+        html(ui, name, bold, size);
+    }
+    for name in derma::MENU_IMAGES {
+        ui.load_image(gpu, mount, name);
+    }
+    for name in derma::IMAGES {
+        ui.load_image(gpu, mount, name);
+    }
+    for (name, tall) in [
+        ("TargetID", 12.0),
+        ("TargetIDSmall", 11.0),
+        ("ChatFont", 12.0),
+    ] {
+        if !ui.register_font(gpu, mount, name, "Verdana", tall * fs) {
+            ui.register_font(gpu, mount, name, "Roboto-Bold", tall * fs);
+        }
     }
 }
