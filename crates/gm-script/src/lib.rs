@@ -1914,6 +1914,13 @@ impl Runtime {
                     p.ints.push(("entity", ent as i64));
                     "entity.break"
                 }
+                E::EntityEdited { player, ent, key, value } => {
+                    p.ints.push(("player", player as i64));
+                    p.ints.push(("entity", ent as i64));
+                    p.strs.push(("key", key));
+                    p.strs.push(("value", value));
+                    "entity.edited"
+                }
                 E::Unfroze { player, count } => {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("count", count as i64));

@@ -690,6 +690,13 @@ pub enum GameEvent {
     PropBreak {
         ent: u32,
     },
+    /// A player's property-sheet edit of an editable entity's variable was applied.
+    EntityEdited {
+        player: u32,
+        ent: u32,
+        key: String,
+        value: String,
+    },
     /// Health damage applied (after the armour share, fall damage included), damage type bits.
     PlayerDamaged {
         player: u32,
@@ -8810,7 +8817,8 @@ impl<'w> Server<'w> {
         let Some(vars) = self.editor_vars.get_mut(&ent) else {
             return false;
         };
-        vars.insert(key.to_string(), value);
+        vars.insert(key.to_string(), value.clone());
+        self.game_events.push(GameEvent::EntityEdited { player, ent, key: key.to_string(), value });
         true
     }
 

@@ -685,6 +685,9 @@ local prev_move = {}
     events.on("entity.spawned", function(p) if not p.tag then local e = Entity(p.entity); if e:GetClass() == "prop_ragdoll" then hook.Run("PlayerSpawnedRagdoll", Player(p.player), e:GetModel(), e) else hook.Run("PlayerSpawnedProp", Player(p.player), e:GetModel(), e) end end end)
     events.on("entity.removed", function(p) hook.Run("EntityRemoved", Entity(p.entity), false) end)
     events.on("entity.break", function(p) hook.Run("PropBreak", NULL, Entity(p.entity)) end)
+    -- a property-sheet edit the server applied: the gamemode hears it as the engine's callback
+    -- @hook GM:VariableEdited
+    events.on("entity.edited", function(p) hook.Run("VariableEdited", Entity(p.entity), Player(p.player), p.key, p.value, nil) end)
     events.on("npc.killed", function(p) hook.Run("OnNPCKilled", Entity(p.npc), p.attacker ~= 0 and Player(p.attacker) or NULL, NULL) end)
     events.on("player.damaged", function(p) local ply = Player(p.player); hook.Run("PlayerHurt", ply, p.attacker and p.attacker ~= 0 and Player(p.attacker) or NULL, ply:Health(), p.amount) end)
     events.on("player.death", function(p)

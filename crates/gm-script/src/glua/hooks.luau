@@ -373,7 +373,11 @@ if SERVER then
     end))
     events.on("entity.fired_bullets", safe(function(p)
         local e = Entity(p.entity or p.attacker or 0)
-        if IsValid(e) and e.DoImpactEffect and p.tr then e:DoImpactEffect(p.tr, p.damage_type or DMG_BULLET) end -- @hook ENTITY:DoImpactEffect / WEAPON:DoImpactEffect
+        if IsValid(e) and e.DoImpactEffect and p.tr then e:DoImpactEffect(p.tr, p.damage_type or DMG_BULLET) end -- @hook ENTITY:DoImpactEffect
+        -- a player's shot: the scripted weapon in hand gets the impact
+        -- @hook WEAPON:DoImpactEffect
+        local held = IsValid(e) and not e:IsWeapon() and e.GetActiveWeapon and e:GetActiveWeapon()
+        if IsValid(held) and held.DoImpactEffect and p.tr then held:DoImpactEffect(p.tr, p.damage_type or DMG_BULLET) end
         if IsValid(e) and e.ShootEffects and e:IsWeapon() then e:ShootEffects() end -- @hook WEAPON:ShootEffects
         local owner = IsValid(e) and e.GetOwner and e:GetOwner()
         if IsValid(owner) and owner:IsPlayer() then hook.Run("DoAnimationEvent", owner, PLAYERANIMEVENT_ATTACK_PRIMARY) end
