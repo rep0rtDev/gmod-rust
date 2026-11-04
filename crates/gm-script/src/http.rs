@@ -55,12 +55,15 @@ pub fn get(url: &str) -> Result<Vec<u8>, HttpError> {
 
 /// One request with any method, body and extra headers: status, body and response headers
 /// (lower-case names); only the transport and a malformed reply are errors.
+/// `(status, body, headers)` of a finished request.
+pub type HttpResponse = (u16, Vec<u8>, Vec<(String, String)>);
+
 pub fn request(
     method: &str,
     url: &str,
     body: Option<&[u8]>,
     headers: &[(String, String)],
-) -> Result<(u16, Vec<u8>, Vec<(String, String)>), HttpError> {
+) -> Result<HttpResponse, HttpError> {
     let (host, port, path) = split_url(url)?;
     let addr = (host.as_str(), port)
         .to_socket_addrs()?
