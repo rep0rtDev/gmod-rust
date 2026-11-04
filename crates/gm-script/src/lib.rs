@@ -612,7 +612,14 @@ impl Runtime {
     pub fn load(&mut self, spec: ActorSpec) -> Result<usize, mlua::Error> {
         let id = self.actors.len() as u32;
         let store = spec.config.can_storage.then(|| self.store_of(&spec.addon));
-        let actor = Actor::new(id, spec, store, self.sound_duration.clone(), self.content_read.clone(), &self.realm)?;
+        let actor = Actor::new(
+            id,
+            spec,
+            store,
+            self.sound_duration.clone(),
+            self.content_read.clone(),
+            &self.realm,
+        )?;
         self.actors.push(actor);
         let mut addons: Vec<String> = self.actors.iter().map(|a| a.spec.addon.clone()).collect();
         addons.dedup();
@@ -1043,7 +1050,12 @@ impl Runtime {
     }
 
     /// `GM:PlayerCanHearPlayersVoice` for one listener: an actor answering "0" mutes the talker.
-    pub fn player_can_hear_voice(&mut self, server: &mut Server<'_>, listener: u32, talker: u32) -> bool {
+    pub fn player_can_hear_voice(
+        &mut self,
+        server: &mut Server<'_>,
+        listener: u32,
+        talker: u32,
+    ) -> bool {
         let mut p = api::Payload::default();
         p.ints.push(("listener", listener as i64));
         p.ints.push(("talker", talker as i64));
@@ -1068,7 +1080,13 @@ impl Runtime {
         hear
     }
     /// `GM:PlayerCanSeePlayersChat` for one listener: an actor answering "0" hides the line.
-    pub fn player_can_see_chat(&mut self, server: &mut Server<'_>, listener: u32, speaker: u32, text: &str) -> bool {
+    pub fn player_can_see_chat(
+        &mut self,
+        server: &mut Server<'_>,
+        listener: u32,
+        speaker: u32,
+        text: &str,
+    ) -> bool {
         let mut p = api::Payload::default();
         p.ints.push(("listener", listener as i64));
         p.ints.push(("speaker", speaker as i64));
@@ -1914,7 +1932,16 @@ impl Runtime {
                     p.ints.push(("entity", ent as i64));
                     "entity.break"
                 }
-                E::AnimEvent { ent, player, event, kind, time, cycle, options, name } => {
+                E::AnimEvent {
+                    ent,
+                    player,
+                    event,
+                    kind,
+                    time,
+                    cycle,
+                    options,
+                    name,
+                } => {
                     p.ints.push(("entity", ent as i64));
                     p.ints.push(("event", event as i64));
                     p.ints.push(("type", kind as i64));
@@ -1928,7 +1955,12 @@ impl Runtime {
                         "entity.anim_event"
                     }
                 }
-                E::EntityEdited { player, ent, key, value } => {
+                E::EntityEdited {
+                    player,
+                    ent,
+                    key,
+                    value,
+                } => {
                     p.ints.push(("player", player as i64));
                     p.ints.push(("entity", ent as i64));
                     p.strs.push(("key", key));
@@ -2075,10 +2107,21 @@ impl gm_server::ServerHooks for Runtime {
     fn player_chat(&mut self, server: &mut Server<'_>, player: u32, text: &str) -> Option<String> {
         Runtime::player_chat(self, server, player, text)
     }
-    fn player_can_see_chat(&mut self, server: &mut Server<'_>, listener: u32, speaker: u32, text: &str) -> bool {
+    fn player_can_see_chat(
+        &mut self,
+        server: &mut Server<'_>,
+        listener: u32,
+        speaker: u32,
+        text: &str,
+    ) -> bool {
         Runtime::player_can_see_chat(self, server, listener, speaker, text)
     }
-    fn player_can_hear_voice(&mut self, server: &mut Server<'_>, listener: u32, talker: u32) -> bool {
+    fn player_can_hear_voice(
+        &mut self,
+        server: &mut Server<'_>,
+        listener: u32,
+        talker: u32,
+    ) -> bool {
         Runtime::player_can_hear_voice(self, server, listener, talker)
     }
     fn player_command(

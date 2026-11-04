@@ -124,7 +124,12 @@ impl Actor {
     }
 
     fn boot(&mut self) -> mlua::Result<()> {
-        let lua = unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL_SAFE | mlua::StdLib::DEBUG, mlua::LuaOptions::default()) };
+        let lua = unsafe {
+            Lua::unsafe_new_with(
+                mlua::StdLib::ALL_SAFE | mlua::StdLib::DEBUG,
+                mlua::LuaOptions::default(),
+            )
+        };
         lua.set_memory_limit(self.spec.config.memory_limit)?;
         let deadline = self.deadline.clone();
         let over = self.over_budget.clone();

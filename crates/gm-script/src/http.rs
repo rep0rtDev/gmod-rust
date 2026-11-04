@@ -70,7 +70,9 @@ pub fn request(
     s.set_read_timeout(Some(Duration::from_secs(30)))?;
     s.set_write_timeout(Some(Duration::from_secs(30)))?;
     let method = method.to_ascii_uppercase();
-    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: gmr\r\nConnection: close\r\n");
+    let mut req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: gmr\r\nConnection: close\r\n"
+    );
     for (k, v) in headers {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
