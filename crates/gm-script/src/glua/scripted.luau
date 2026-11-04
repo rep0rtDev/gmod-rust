@@ -471,10 +471,106 @@ function AIM:DoSchedule(sched)
     if (self.CurrentTaskID or 0) > sched:NumTasks() then self:ScheduleFinished() end
 end
 function AIM:RunAI()
+    if self:IsRunningBehavior() then return true end
+    if self:__EngineThink() or self:DoingEngineSchedule() then return true end
     local s = self.CurrentSchedule
     if s then self:DoSchedule(s) else local n = self:SelectSchedule(); if n then self:StartSchedule(n) end end
+    self:MaintainActivity()
 end
 scripted_ents.__is_ai = function(ENT) return ENT ~= nil and ENT.Type == "ai" end
+-- @hook ENTITY:OnCondition
+-- @hook ENTITY:OnTaskComplete
+-- @hook ENTITY:OnTaskFailed
+-- @hook ENTITY:StartEngineSchedule
+-- @hook ENTITY:EngineScheduleFinish
+-- @hook ENTITY:DoingEngineSchedule
+-- @hook ENTITY:StartEngineTask
+-- @hook ENTITY:RunEngineTask
+-- @hook ENTITY:TranslateSchedule
+-- @hook ENTITY:TranslateActivity
+-- @hook ENTITY:TranslateNavGoal
+-- @hook ENTITY:GetRelationship
+-- @hook ENTITY:GetSoundInterests
+-- @hook ENTITY:GetAttackSpread
+-- @hook ENTITY:OverrideMove
+-- @hook ENTITY:OverrideMoveFacing
+-- @hook ENTITY:OnChangeActivity
+-- @hook ENTITY:OnChangeActiveWeapon
+-- @hook ENTITY:ExpressionFinished
+-- @hook ENTITY:SetNPCClass
+-- @hook ENTITY:GetNPCClass
+-- @hook ENTITY:CreateSchedulesInternal
+-- @hook ENTITY:MaintainActivity
+-- @hook ENTITY:IsRunningBehavior
+-- The engine side of base_ai: the server brain's conditions / schedule / tasks reach the
+-- scripted NPC through these callbacks every think (OnCondition on each newly set condition,
+-- StartEngineSchedule when a SetSchedule() schedule begins, Start/RunEngineTask per engine task,
+-- EngineScheduleFinish at its end, OnTaskComplete/Failed, activity and weapon change).
+function AIM:OnCondition(cond) end
+function AIM:OnTaskComplete() end
+function AIM:OnTaskFailed() end
+function AIM:StartEngineSchedule(sched) self:ScheduleFinished(); self.bDoingEngineSchedule = true end
+function AIM:EngineScheduleFinish() self.bDoingEngineSchedule = nil end
+function AIM:DoingEngineSchedule() return self.bDoingEngineSchedule end
+function AIM:StartEngineTask(task, data) end
+function AIM:RunEngineTask(task, data) end
+function AIM:TranslateSchedule(sched) return sched end
+function AIM:TranslateActivity(act) return act end
+function AIM:TranslateNavGoal(goal) return goal end
+function AIM:GetRelationship(ent) end
+function AIM:GetSoundInterests() return 0 end
+function AIM:GetAttackSpread(wep, target) return 0.1 end
+function AIM:OverrideMove(interval) end
+function AIM:OverrideMoveFacing(interval, data) end
+function AIM:OnChangeActivity(act) end
+function AIM:OnChangeActiveWeapon(old, new) end
+function AIM:ExpressionFinished(name) end
+function AIM:SetNPCClass(c) local e = self.Entity or self; if e then rawset(e, "__npc_class", c) end end
+function AIM:GetNPCClass() local e = self.Entity or self; return (e and rawget(e, "__npc_class")) or (e and e.Classify and e:Classify()) or CLASS_NONE end
+function AIM:CreateSchedulesInternal() end
+function AIM:IsRunningBehavior() local e = self.Entity; return e and e.IsRunningBehavior and e:IsRunningBehavior() or false end
+function AIM:MaintainActivity()
+    local e = self.Entity
+    if not e then return end
+    local act = e.GetActivity and e:GetActivity()
+    if act ~= nil and act ~= rawget(self, "__last_act") then rawset(self, "__last_act", act); self:OnChangeActivity(self:TranslateActivity(act)) end
+    if e.MaintainActivity then e:MaintainActivity() end
+end
+-- per-think engine state diff -> callbacks; returns true while an engine schedule owns the NPC
+function AIM:__EngineThink()
+    local e = self.Entity
+    if not (e and e.HasCondition) then return false end
+    local s = world and world.get(e.__id) or nil
+    if not s then return false end
+    local prev = rawget(self, "__conds") or {}
+    local now = {}
+    for _, c in ipairs(s.npc_ai_conditions or {}) do now[c] = true; if not prev[c] then self:OnCondition(c) end end
+    rawset(self, "__conds", now)
+    local w = s.weapon
+    if w ~= rawget(self, "__last_wep") then local old = rawget(self, "__last_wep"); rawset(self, "__last_wep", w); if old ~= nil then self:OnChangeActiveWeapon(old, w) end end
+    if s.npc_ai_scripted then
+        local sched = s.npc_ai_schedule
+        if sched ~= rawget(self, "__eng_sched") then
+            if rawget(self, "__eng_sched") ~= nil then self:EngineScheduleFinish() end
+            rawset(self, "__eng_sched", sched); rawset(self, "__eng_task", nil)
+            if sched ~= nil then self:StartEngineSchedule(self:TranslateSchedule(sched)) end
+        end
+        local task = s.npc_ai_task
+        if sched ~= nil and task ~= nil then
+            if task ~= rawget(self, "__eng_task") then
+                if rawget(self, "__eng_task") ~= nil then self:OnTaskComplete() end
+                rawset(self, "__eng_task", task); self:StartEngineTask(task, 0)
+            else
+                self:RunEngineTask(task, 0)
+            end
+        end
+        if now[COND_TASK_FAILED] and not prev[COND_TASK_FAILED] then self:OnTaskFailed() end
+        return sched ~= nil
+    elseif rawget(self, "__eng_sched") ~= nil then
+        rawset(self, "__eng_sched", nil); rawset(self, "__eng_task", nil); self:EngineScheduleFinish()
+    end
+    return false
+end
 -- @hook ENTITY:OnStateChange
 -- NPC state of a scripted NPC is derived from the server AI (dead / enemy = combat / path = alert /
 -- idle); the callback fires on the think where it changed

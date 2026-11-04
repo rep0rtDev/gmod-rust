@@ -1794,3 +1794,19 @@ do
         end
     end
 end
+
+-- ---------------------------------------------------------------- ai.*
+if SERVER then
+    ai = ai or {}
+    function ai.GetScheduleID(name) local v = _G[name]; if type(v) == "number" then return v end return -1 end
+    function ai.GetTaskID(name) local v = _G[name]; if type(v) == "number" and string.sub(name, 1, 5) == "TASK_" then return v end return -1 end
+    function ai.GetNodeCount() if navmesh and navmesh.GetNavAreaCount then return navmesh.GetNavAreaCount() end return 0 end
+    local function squad_members(name)
+        local out = {}
+        for _, e in ipairs(ents.FindByClass("npc_*")) do if e.GetSquad and e:GetSquad() == name then out[#out + 1] = e end end
+        return out
+    end
+    function ai.GetSquadMembers(name) return squad_members(name) end
+    function ai.GetSquadMemberCount(name) return #squad_members(name) end
+    function ai.GetSquadLeader(name) local m = squad_members(name); return m[1] or NULL end
+end

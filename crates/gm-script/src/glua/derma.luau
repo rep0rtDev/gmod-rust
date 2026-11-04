@@ -15,10 +15,7 @@ local stub = __glua_stub
 
 if not CLIENT then
 	vgui = vgui or {}
-	for _, n in ipairs({ "Create", "CreateFromTable", "Register", "RegisterTable", "GetControlTable", "GetWorldPanel", "GetHoveredPanel", "CursorVisible", "IsHoveringWorld", "GetKeyboardFocus", "FocusedHasParent", "GetAll" }) do vgui[n] = stub("vgui." .. n) end
 	derma = derma or {}
-	for _, n in ipairs({ "DefineControl", "GetControlList", "Color", "SkinHook", "SkinTexture", "GetDefaultSkin", "GetSkinTable", "GetNamedSkin", "RefreshSkins", "DefineSkin", "SkinChangeIndex", "SkinList" }) do derma[n] = stub("derma." .. n) end
-	for _, n in ipairs({ "DermaMenu", "Derma_Message", "Derma_Query", "Derma_StringRequest", "Derma_Anim", "Derma_DrawBackgroundBlur", "Derma_Hook", "Derma_Install_Convar_Functions", "CloseDermaMenus", "RegisterDermaMenuForClose", "DermaSkin", "SetDermaSkin" }) do _G[n] = stub("Global." .. n) end
 	return
 end
 

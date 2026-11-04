@@ -2,6 +2,7 @@
 //! props and constraints the sandbox owns mirrored into the Jolt world of `gm-physics`
 //! (weld -> fixed, rope -> distance, axis -> hinge). Nothing here is networked yet.
 
+pub mod ai;
 pub mod finger_skeletons;
 pub mod projectile;
 pub mod save;
@@ -2088,6 +2089,7 @@ pub struct Npc {
     /// Tick of the last shot (the shoot sequence runs 7 ticks past it) and the sequence to
     /// return to when combat ends.
     pub last_shot: u64,
+    pub ai: ai::AiState,
     pub rest_sequence: Option<String>,
     pub spawn_tick: u64,
     pub next_think: u64,
@@ -4567,6 +4569,281 @@ pub fn parse_armor_split(text: &str) -> Option<(f32, i32)> {
     }
 }
 
+impl<'w> Server<'w> {
+    // ---------------------------------------------------------------- HL2-style AI brain
+    /// Gather conditions and step the engine schedule of one NPC (before the native combat
+    /// think). A script-owned schedule (`NPC:SetSchedule`) drives the body through the same
+    /// goto / chase / cover / stop operations; otherwise the schedule mirrors what the native
+    /// brain is doing so `GetCurrentSchedule` / `HasCondition` describe it.
+    fn ai_step(&mut self, id: u32, now: u64) {
+        let Some(n) = self.npcs.get(&id) else { return };
+        if n.dead_at.is_some() {
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.ai.state = ai::NPC_STATE_DEAD;
+                n.ai.clear();
+            }
+            return;
+        }
+        let eye = n.pos + n.view_offset.unwrap_or(Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT));
+        let target = n.target;
+        let sight = n.sight;
+        let (seen_now, los, too_far, dist) = match target.and_then(|p| self.players.get(&p)) {
+            Some(pl) if pl.alive => {
+                let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
+                let d = chest.distance(eye);
+                let tr = self.collision.trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
+                let los = tr.fraction >= 1.0 && !tr.start_solid;
+                (los && d <= sight, los, d > sight, d)
+            }
+            _ => (false, false, false, 0.0),
+        };
+        let any_player_seen = self.players.values().any(|pl| {
+            pl.alive && {
+                let chest = pl.state.origin + Vec3::new(0.0, 0.0, NPC_CHEST_HEIGHT);
+                chest.distance(eye) <= sight && {
+                    let tr = self.collision.trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
+                    tr.fraction >= 1.0 && !tr.start_solid
+                }
+            }
+        });
+        let melee = npc_melee_moves(&n.class).map(|(m, _)| m[0].reach);
+        let ranged = npc_weapon_shot_in(&n.weapon, &self.scripted_weapons).is_some();
+        let target_dead = target.map(|p| self.players.get(&p).map_or(true, |pl| !pl.alive)).unwrap_or(false);
+        let last_enemy_damage = n.last_enemy_damage;
+        let moving = n.goal.is_some();
+        let hostile = npc_hostile_to_players(n);
+        let Some(n) = self.npcs.get_mut(&id) else { return };
+        let a = &mut n.ai;
+        a.damage_ticks.retain(|t| now.saturating_sub(*t) <= 66 * 2);
+        let keep = a.conditions & ((1u128 << ai::COND_TASK_FAILED) | (1u128 << ai::COND_SCHEDULE_DONE) | (1u128 << ai::COND_LIGHT_DAMAGE) | (1u128 << ai::COND_HEAVY_DAMAGE) | (1u128 << ai::COND_HEAR_DANGER) | (1u128 << ai::COND_HEAR_COMBAT) | (1u128 << ai::COND_HEAR_PLAYER) | (1u128 << ai::COND_HEAR_BULLET_IMPACT));
+        a.conditions = keep;
+        a.set(ai::COND_REPEATED_DAMAGE, a.damage_ticks.len() >= 3);
+        a.set(ai::COND_NO_WEAPON, n.weapon.is_empty() && melee.is_none());
+        a.set(ai::COND_SEE_PLAYER, any_player_seen);
+        if let Some(t) = target {
+            a.set(ai::COND_NEW_ENEMY, a.last_enemy != t);
+            a.last_enemy = t;
+            a.set(ai::COND_SEE_ENEMY, seen_now);
+            a.set(ai::COND_SEE_HATE, seen_now && hostile);
+            a.set(ai::COND_HAVE_ENEMY_LOS, los);
+            a.set(ai::COND_ENEMY_OCCLUDED, !los && !target_dead);
+            a.set(ai::COND_ENEMY_TOO_FAR, too_far);
+            a.set(ai::COND_ENEMY_DEAD, target_dead);
+            a.set(ai::COND_LOST_ENEMY, !seen_now && now.saturating_sub(n.target_seen) > 66 * 10);
+            a.set(ai::COND_ENEMY_UNREACHABLE, n.stuck >= 3);
+            if let Some(reach) = melee {
+                a.set(ai::COND_CAN_MELEE_ATTACK1, seen_now && dist <= reach + 16.0);
+                a.set(ai::COND_TOO_FAR_TO_ATTACK, seen_now && dist > reach + 16.0);
+            }
+            if ranged {
+                a.set(ai::COND_CAN_RANGE_ATTACK1, los && dist <= sight);
+                a.set(ai::COND_WEAPON_HAS_LOS, los);
+                a.set(ai::COND_TOO_CLOSE_TO_ATTACK, los && dist < 64.0);
+                a.set(ai::COND_TOO_FAR_TO_ATTACK, dist > sight);
+            }
+            let _ = last_enemy_damage;
+        } else {
+            a.set(ai::COND_ENEMY_WENT_NULL, a.last_enemy != 0);
+            a.last_enemy = 0;
+        }
+        // NPC state follows the enemy / path like the engine's SelectIdealState
+        if !a.scripted || a.schedule.is_none() {
+            a.state = if a.state == ai::NPC_STATE_SCRIPT && a.scripted {
+                ai::NPC_STATE_SCRIPT
+            } else if target.is_some() && !target_dead {
+                ai::NPC_STATE_COMBAT
+            } else if moving || a.has(ai::COND_HEAR_COMBAT) || a.has(ai::COND_HEAR_DANGER) || now.saturating_sub(n.target_seen) < 66 * 20 && n.target_seen > 0 {
+                ai::NPC_STATE_ALERT
+            } else {
+                ai::NPC_STATE_IDLE
+            };
+        }
+        if !a.scripted {
+            // the mirror: name the schedule the native body is running
+            let sched = if n.cover_at.is_some() {
+                ai::SCHED_TAKE_COVER_FROM_ENEMY
+            } else if n.chase.is_some() {
+                ai::SCHED_CHASE_ENEMY
+            } else if target.is_some() && !target_dead && ranged && los {
+                ai::SCHED_RANGE_ATTACK1
+            } else if target.is_some() && !target_dead && melee.is_some() && a.has(ai::COND_CAN_MELEE_ATTACK1) {
+                ai::SCHED_MELEE_ATTACK1
+            } else if target.is_some() && !target_dead {
+                ai::SCHED_COMBAT_FACE
+            } else if moving {
+                if a.state == ai::NPC_STATE_ALERT { ai::SCHED_ALERT_WALK } else { ai::SCHED_IDLE_WANDER }
+            } else if a.state == ai::NPC_STATE_ALERT {
+                ai::SCHED_ALERT_STAND
+            } else {
+                ai::SCHED_IDLE_STAND
+            };
+            if a.schedule != Some(sched) {
+                a.start(sched, now);
+            }
+            return;
+        }
+        // script-owned schedule
+        if let Some(c) = a.interrupted_by() {
+            let _ = c;
+            a.schedule_done = true;
+        }
+        if a.schedule_done || a.schedule.is_none() {
+            if a.has(ai::COND_TASK_FAILED) {
+                if let Some(f) = a.fail_schedule.take() {
+                    a.start(f, now);
+                } else {
+                    a.clear();
+                    return;
+                }
+            } else {
+                a.clear();
+                return;
+            }
+        }
+        let Some((task, data)) = a.current_task() else { return };
+        let started = a.task_status == ai::TASKSTATUS_NEW;
+        if started {
+            a.task_status = ai::TASKSTATUS_RUN_TASK;
+            a.task_started = now;
+        }
+        let elapsed = now.saturating_sub(a.task_started) as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
+        let save = a.save_position;
+        let run_sched = matches!(a.schedule, Some(ai::SCHED_FORCED_GO_RUN | ai::SCHED_SCRIPTED_RUN | ai::SCHED_CHASE_ENEMY | ai::SCHED_PATROL_RUN | ai::SCHED_RUN_RANDOM | ai::SCHED_COMBAT_PATROL | ai::SCHED_TAKE_COVER_FROM_ENEMY | ai::SCHED_RUN_FROM_ENEMY));
+        let mut done = false;
+        let mut fail = false;
+        match task {
+            ai::TASK_STOP_MOVING => { self.npc_stop(id); done = true; }
+            ai::TASK_WAIT | ai::TASK_WAIT_FACE_ENEMY => { done = elapsed >= data; }
+            ai::TASK_WAIT_RANDOM => { done = elapsed >= data * 0.5 + (id % 7) as f32 * data / 14.0; }
+            ai::TASK_WAIT_INDEFINITE => {}
+            ai::TASK_WAIT_FOR_MOVEMENT => { done = !moving; if n_stuck(self, id) { fail = true; } }
+            ai::TASK_SET_ACTIVITY | ai::TASK_RELOAD | ai::TASK_PLAY_SEQUENCE | ai::TASK_FACE_IDEAL | ai::TASK_FACE_REASONABLE | ai::TASK_FACE_LASTPOSITION | ai::TASK_SET_FAIL_SCHEDULE | ai::TASK_CLEAR_FAIL_SCHEDULE | ai::TASK_SET_SCHEDULE | ai::TASK_RANGE_ATTACK1 | ai::TASK_MELEE_ATTACK1 => {
+                if task == ai::TASK_SET_FAIL_SCHEDULE { if let Some(n) = self.npcs.get_mut(&id) { n.ai.fail_schedule = Some(data as u16); } }
+                if task == ai::TASK_CLEAR_FAIL_SCHEDULE { if let Some(n) = self.npcs.get_mut(&id) { n.ai.fail_schedule = None; } }
+                if task == ai::TASK_SET_SCHEDULE { if let Some(n) = self.npcs.get_mut(&id) { n.ai.start(data as u16, now); } return; }
+                if task == ai::TASK_RANGE_ATTACK1 || task == ai::TASK_MELEE_ATTACK1 { self.npc_combat_think_forced(id, now); done = elapsed >= 0.4 || !seen_now; }
+                else { done = true; }
+            }
+            ai::TASK_FACE_ENEMY | ai::TASK_FACE_PLAYER | ai::TASK_FACE_TARGET => {
+                let who = if task == ai::TASK_FACE_ENEMY { target } else { self.players.keys().next().copied() };
+                if let Some(pl) = who.and_then(|p| self.players.get(&p)) {
+                    let d = pl.state.origin - eye;
+                    let yaw = d.y.atan2(d.x).to_degrees();
+                    self.npc_set_ideal_yaw(id, Some(yaw), true);
+                    done = true;
+                } else { fail = true; }
+            }
+            ai::TASK_GET_PATH_TO_ENEMY | ai::TASK_GET_CHASE_PATH_TO_ENEMY | ai::TASK_GET_PATH_TO_ENEMY_LKP | ai::TASK_GET_PATH_TO_ENEMY_LOS | ai::TASK_GET_PATH_TO_PLAYER | ai::TASK_GET_PATH_TO_TARGET | ai::TASK_MOVE_TO_TARGET_RANGE => {
+                let who = if matches!(task, ai::TASK_GET_PATH_TO_PLAYER | ai::TASK_GET_PATH_TO_TARGET | ai::TASK_MOVE_TO_TARGET_RANGE) { target.or_else(|| self.players.keys().next().copied()) } else { target };
+                match who { Some(p) => { if self.npc_chase(id, p, run_sched) { done = true; } else { fail = true; } } None => fail = true }
+            }
+            ai::TASK_GET_PATH_TO_SAVEPOSITION => {
+                match save { Some(pos) => { if self.npc_goto(id, pos, run_sched) { done = true; } else { fail = true; } } None => fail = true }
+            }
+            ai::TASK_GET_PATH_TO_RANDOM_NODE | ai::TASK_WANDER => { if self.npc_wander_goal(id, 128.0, data.max(256.0)) { done = true; } else { fail = true; } }
+            ai::TASK_RUN_PATH | ai::TASK_WALK_PATH | ai::TASK_RUN_PATH_FLEE => { self.npc_set_run(id, task != ai::TASK_WALK_PATH); done = true; }
+            ai::TASK_FIND_COVER_FROM_ENEMY => { match target { Some(p) => { if self.npc_take_cover(id, p) { done = true; } else { fail = true; } } None => fail = true } }
+            _ => { done = true; }
+        }
+        if let Some(n) = self.npcs.get_mut(&id) {
+            if fail { n.ai.fail_task(); } else if done { n.ai.complete_task(now); }
+        }
+    }
+
+    /// Script hands the body a schedule (`NPC:SetSchedule`); `None` (`ClearSchedule`) gives the
+    /// native brain its decisions back.
+    pub fn npc_set_schedule(&mut self, id: u32, sched: Option<u16>) -> bool {
+        let now = self.tick_count;
+        let Some(n) = self.npcs.get_mut(&id) else { return false };
+        if n.dead_at.is_some() { return false; }
+        match sched {
+            Some(s) => { n.ai.scripted = true; n.ai.start(s, now); if ai::schedule_tasks(s).is_none() { n.ai.schedule_done = true; } }
+            None => { n.ai.scripted = false; n.ai.clear(); }
+        }
+        true
+    }
+    pub fn npc_set_caps(&mut self, id: u32, caps: u32) -> bool {
+        match self.npcs.get_mut(&id) { Some(n) => { n.ai.caps_override = Some(caps); true } None => false }
+    }
+    pub fn npc_set_condition(&mut self, id: u32, cond: u8, on: bool) -> bool {
+        match self.npcs.get_mut(&id) { Some(n) => { n.ai.set(cond, on); true } None => false }
+    }
+    pub fn npc_set_ignore_conditions(&mut self, id: u32, conds: &[u8], clear: bool) -> bool {
+        let Some(n) = self.npcs.get_mut(&id) else { return false };
+        for c in conds { if *c < 128 { if clear { n.ai.ignore_conditions &= !(1u128 << c); } else { n.ai.ignore_conditions |= 1u128 << c; } } }
+        true
+    }
+    pub fn npc_task_status(&mut self, id: u32, status: u8) -> bool {
+        let now = self.tick_count;
+        let Some(n) = self.npcs.get_mut(&id) else { return false };
+        match status { ai::TASKSTATUS_COMPLETE => n.ai.complete_task(now), s => n.ai.task_status = s }
+        true
+    }
+    pub fn npc_task_fail(&mut self, id: u32) -> bool {
+        match self.npcs.get_mut(&id) { Some(n) => { n.ai.fail_task(); true } None => false }
+    }
+    pub fn npc_set_state(&mut self, id: u32, state: u8) -> bool {
+        match self.npcs.get_mut(&id) { Some(n) => { n.ai.state = state; if state == ai::NPC_STATE_SCRIPT { n.ai.scripted = true; } true } None => false }
+    }
+    pub fn npc_set_proficiency(&mut self, id: u32, p: u8) -> bool {
+        match self.npcs.get_mut(&id) { Some(n) => { n.ai.proficiency = p.min(4); true } None => false }
+    }
+    pub fn npc_set_squad(&mut self, id: u32, name: Option<&str>) -> bool {
+        if !self.npcs.contains_key(&id) { return false; }
+        self.squads.leave(id);
+        if let Some(n) = name.filter(|n| !n.is_empty()) { self.squads.join(n, id); }
+        if let Some(n) = self.npcs.get_mut(&id) { n.ai.squad = name.filter(|n| !n.is_empty()).map(str::to_string); }
+        true
+    }
+    pub fn npc_set_save_position(&mut self, id: u32, pos: Vec3) -> bool {
+        match self.npcs.get_mut(&id) { Some(n) => { n.ai.save_position = Some(pos); true } None => false }
+    }
+    pub fn npc_set_misc(&mut self, id: u32, expression: Option<String>, behavior: Option<Option<String>>, unforgettable: Option<bool>, route_rebuild: Option<f32>, move_delay: Option<f32>, npc_class: Option<u8>) -> bool {
+        let Some(n) = self.npcs.get_mut(&id) else { return false };
+        if let Some(e) = expression { n.ai.expression = e; }
+        if let Some(b) = behavior { n.ai.behavior = b; }
+        if let Some(u) = unforgettable { n.ai.unforgettable = u; }
+        if let Some(r) = route_rebuild { n.ai.max_route_rebuild = r; }
+        if let Some(d) = move_delay { n.ai.move_delay = d; }
+        if let Some(c) = npc_class { n.ai.npc_class = Some(c); }
+        true
+    }
+    /// `NPC:AddEntityRelationship` / `AddRelationship("class disp prio")`: players also feed the
+    /// native hostility flag so the body hunts or ignores them accordingly.
+    pub fn npc_add_relationship(&mut self, id: u32, ent: Option<u32>, class: Option<&str>, disp: u8, prio: i32) -> bool {
+        let Some(n) = self.npcs.get_mut(&id) else { return false };
+        if let Some(e) = ent { n.ai.relationships.retain(|(x, _, _)| *x != e); n.ai.relationships.push((e, disp, prio)); }
+        if let Some(c) = class { n.ai.class_relationships.retain(|(x, _, _)| x != c); n.ai.class_relationships.push((c.to_string(), disp, prio)); if c == "player" { n.relation = Some(disp); } }
+        true
+    }
+    /// A hit landed: light / heavy damage conditions as the engine's (heavy = more than 20 or
+    /// a fifth of max health in one hit) plus the repeated-damage window.
+    pub fn npc_note_damage(&mut self, id: u32, amount: f32) {
+        let tick = self.tick_count;
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.ai.damage_ticks.push(tick);
+            let heavy = amount >= 20.0 || amount >= n.max_health as f32 * 0.2;
+            n.ai.set(if heavy { ai::COND_HEAVY_DAMAGE } else { ai::COND_LIGHT_DAMAGE }, true);
+        }
+    }
+    /// A loud event near NPCs: the matching COND_HEAR_* condition for this think.
+    pub fn npc_hear(&mut self, pos: Vec3, radius: f32, cond: u8) {
+        for n in self.npcs.values_mut() {
+            if n.dead_at.is_none() && n.pos.distance(pos) <= radius { n.ai.set(cond, true); }
+        }
+    }
+    fn npc_combat_think_forced(&mut self, id: u32, now: u64) {
+        let was = self.npcs.get(&id).map(|n| n.ai.scripted).unwrap_or(false);
+        if let Some(n) = self.npcs.get_mut(&id) { n.ai.scripted = false; }
+        self.npc_combat_think(id, now);
+        if let Some(n) = self.npcs.get_mut(&id) { n.ai.scripted = was; }
+    }
+}
+
+fn n_stuck(server: &Server, id: u32) -> bool {
+    server.npcs.get(&id).map(|n| n.stuck >= 3).unwrap_or(false)
+}
+
 #[cfg(test)]
 mod armor_split_tests {
     #[test]
@@ -5105,6 +5382,7 @@ pub struct Server<'w> {
     pub ai_disabled: bool,
     /// NPCs spawned from the NPCs tab (`Spawn_NPC`), by sandbox id (foreign to the prop list).
     pub npcs: BTreeMap<u32, Npc>,
+    pub squads: ai::Squads,
     nav: Option<std::sync::Arc<gm_nav::NavMesh>>,
     /// `Entity:SetParent` links: child prop id -> parent and the child pose in parent space.
     parents: HashMap<u32, ParentLink>,
@@ -5276,6 +5554,7 @@ impl<'w> Server<'w> {
             world_weapons: HashMap::new(),
             ai_disabled: false,
             npcs: BTreeMap::new(),
+            squads: ai::Squads::default(),
             nav: None,
             parents: HashMap::new(),
             vehicles: BTreeMap::new(),
@@ -10321,6 +10600,7 @@ impl<'w> Server<'w> {
             stuck: 0,
             passive: false,
             last_shot: 0,
+            ai: ai::AiState::default(),
             rest_sequence: None,
             spawn_tick: self.tick_count,
             next_think: self.tick_count + NPC_THINK_PHASE,
@@ -10463,6 +10743,10 @@ impl<'w> Server<'w> {
         }
         let class_scale = if n.class == "npc_zombie" { 0.5 } else { 1.0 };
         n.health -= amount * weapons::npc_hitgroup_scale(group) * class_scale;
+        let dealt = amount * weapons::npc_hitgroup_scale(group) * class_scale;
+        n.ai.damage_ticks.push(tick);
+        let heavy = dealt >= 20.0 || dealt >= n.max_health as f32 * 0.2;
+        n.ai.set(if heavy { ai::COND_HEAVY_DAMAGE } else { ai::COND_LIGHT_DAMAGE }, true);
         if n.health > 0.0
             && n.target.is_some()
             && npc_weapon_shot_in(&n.weapon, &self.scripted_weapons).is_some()
@@ -11192,6 +11476,7 @@ impl<'w> Server<'w> {
         }
         self.npc_share_targets(&thought, now);
         for id in thought {
+            self.ai_step(id, now);
             self.npc_combat_think(id, now);
         }
     }
@@ -11206,7 +11491,7 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
-        if n.dead_at.is_some() || n.passive || !npc_hostile_to_players(n) {
+        if n.dead_at.is_some() || n.passive || !npc_hostile_to_players(n) || n.ai.scripted {
             return;
         }
         if let Some(l) = npc_leap(&n.class) {
@@ -12234,6 +12519,7 @@ impl<'w> Server<'w> {
                 stuck: 0,
                 passive: false,
                 last_shot: 0,
+            ai: ai::AiState::default(),
                 rest_sequence: None,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,

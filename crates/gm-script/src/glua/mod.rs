@@ -70,12 +70,63 @@ pub fn stub(lua: &Lua, address: &str) -> Result<mlua::Function> {
         }
     };
     stubs.set(address, true)?;
-    let address = address.to_owned();
-    lua.create_function(move |_, _: mlua::Variadic<Value>| -> Result<()> {
+    let fns: Table = match g.get::<Value>("__glua_stub_fns")? {
+        Value::Table(t) => t,
+        _ => {
+            let t = lua.create_table()?;
+            g.set("__glua_stub_fns", t.clone())?;
+            t
+        }
+    };
+    let owned = address.to_owned();
+    let f = lua.create_function(move |_, _: mlua::Variadic<Value>| -> Result<()> {
         Err(mlua::Error::runtime(format!(
-            "{address}: not available in this realm yet"
+            "{owned}: not available in this realm yet"
         )))
-    })
+    })?;
+    fns.set(address, f.clone())?;
+    Ok(f)
+}
+
+/// What a documented address resolves to in this VM: `Class:Name` through `__glua_classes`
+/// (and the `__index` chain), `lib.Name` / `Global.Name` through the globals.
+fn resolve_address(g: &Table, address: &str) -> Option<Value> {
+    if let Some((class, name)) = address.split_once(':') {
+        let Ok(Value::Table(classes)) = g.get::<Value>("__glua_classes") else {
+            return None;
+        };
+        let mut table = classes.get::<Value>(class).ok().and_then(|v| match v {
+            Value::Table(t) => Some(t),
+            _ => None,
+        });
+        let mut depth = 0;
+        while let Some(t) = table.take() {
+            match t.get::<Value>(name) {
+                Ok(Value::Nil) | Err(_) => {}
+                Ok(v) => return Some(v),
+            }
+            depth += 1;
+            if depth > 16 {
+                break;
+            }
+            table = t
+                .metatable()
+                .and_then(|m| m.get::<Value>("__index").ok())
+                .and_then(|v| match v {
+                    Value::Table(b) => Some(b),
+                    _ => None,
+                });
+        }
+        return None;
+    }
+    let (lib, name) = address.split_once('.')?;
+    if lib == "Global" {
+        return g.get::<Value>(name).ok();
+    }
+    match g.get::<Value>(lib).ok()? {
+        Value::Table(t) => t.get::<Value>(name).ok(),
+        _ => None,
+    }
 }
 
 pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
@@ -227,10 +278,25 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
         present.sort();
         present.dedup();
     }
+    // a stub an implementation later replaced at its address is no stub any more
     let mut stubs = Vec::new();
+    let stub_fns = match g.get::<Value>("__glua_stub_fns")? {
+        Value::Table(t) => Some(t),
+        _ => None,
+    };
     if let Value::Table(t) = g.get::<Value>("__glua_stubs")? {
         for pair in t.pairs::<String, bool>() {
-            stubs.push(pair?.0);
+            let addr = pair?.0;
+            let replaced = match (&stub_fns, resolve_address(&g, &addr)) {
+                (Some(fns), Some(Value::Function(cur))) => match fns.get::<Value>(addr.as_str())? {
+                    Value::Function(orig) => orig != cur,
+                    _ => false,
+                },
+                _ => false,
+            };
+            if !replaced {
+                stubs.push(addr);
+            }
         }
     }
     // A gamemode default on `GM` whose trigger no bridge raises is only a stub.

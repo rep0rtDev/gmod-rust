@@ -291,6 +291,7 @@ function NPC:GetNPCState()
     local s = snap(self.__id)
     if s == nil then return NPC_STATE_INVALID end
     if s.health ~= nil and s.health <= 0 then return NPC_STATE_DEAD end
+    if s.npc_ai_state ~= nil and s.npc_ai_state ~= 0 then return s.npc_ai_state end
     if s.npc_target ~= nil and s.npc_target ~= 0 then return NPC_STATE_COMBAT end
     if s.npc_goal ~= nil then return NPC_STATE_ALERT end
     return NPC_STATE_IDLE
@@ -1980,8 +1981,8 @@ function NPC:HasEnemyMemory(e) return IsValid(self:GetEnemy()) and (e == nil or 
 function NPC:HasEnemyEluded(e) return false end
 function NPC:ClearEnemyMemory(e) self:SetEnemy(NULL) end
 function NPC:IsInViewCone(v) local p = IsEntity(v) and v:GetPos() or v; return (p - self:GetPos()):GetNormalized():Dot(self:GetEyeDirection()) > 0 end
-function NPC:GetSquad() return rawget(self, "__squad") end
-function NPC:SetSquad(name) rawset(self, "__squad", name) end
+function NPC:GetSquad() local s = snap(self.__id); if s and s.npc_ai_squad then return s.npc_ai_squad end return rawget(self, "__squad") end
+function NPC:SetSquad(name) rawset(self, "__squad", name); qwrite("npc_ai_squad", self.__id, { name = name }) end
 function NPC:IsSquadLeader() return false end
 function NPC:GetNearestSquadMember() return NULL end
 function NPC:GetStepHeight() return 18 end
@@ -2001,25 +2002,59 @@ function NPC:MoveOrder(pos) self:NavSetGoalPos(pos) end
 function NPC:Classify() local c = self:GetClass(); if string.find(c, "zombie") or string.find(c, "headcrab") then return CLASS_ZOMBIE elseif string.find(c, "antlion") then return CLASS_ANTLION elseif string.find(c, "combine") or string.find(c, "metropolice") or string.find(c, "manhack") or string.find(c, "stalker") then return CLASS_COMBINE elseif string.find(c, "citizen") or string.find(c, "alyx") or string.find(c, "barney") or string.find(c, "kleiner") or string.find(c, "eli") or string.find(c, "mossman") or string.find(c, "monk") or string.find(c, "gman") or string.find(c, "vortigaunt") or string.find(c, "dog") then return CLASS_PLAYER_ALLY end return CLASS_NONE end
 -- disposition toward players: the scripted one (AddRelationship / AddEntityRelationship) when
 -- set, else from the class; other entities are not targets of our AI (the class answer)
+local function class_of(e)
+    if not IsValid(e) then return CLASS_NONE end
+    if e.IsPlayer and e:IsPlayer() then return CLASS_PLAYER end
+    if e.IsNPC and e:IsNPC() and e.Classify then return e:Classify() end
+    return CLASS_NONE
+end
+local function default_disposition(a, b)
+    if a == b and a ~= CLASS_NONE then return D_LI end
+    local human = function(c) return c == CLASS_PLAYER or c == CLASS_PLAYER_ALLY or c == CLASS_PLAYER_ALLY_VITAL or c == CLASS_VORTIGAUNT end
+    local combine = function(c) return c == CLASS_COMBINE or c == CLASS_METROPOLICE end
+    local monster = function(c) return c == CLASS_ZOMBIE or c == CLASS_HEADCRAB or c == CLASS_ANTLION or c == CLASS_BARNACLE end
+    if a == CLASS_NONE or a == CLASS_BULLSEYE then return D_NU end
+    if a == CLASS_EARTH_FAUNA then return D_FR end
+    if human(a) then if human(b) then return D_LI elseif combine(b) or monster(b) then return D_HT end return D_NU end
+    if combine(a) then if combine(b) then return D_LI elseif human(b) or monster(b) then return D_HT end return D_NU end
+    if a == CLASS_ZOMBIE or a == CLASS_HEADCRAB then if b == CLASS_ZOMBIE or b == CLASS_HEADCRAB then return D_LI elseif human(b) or combine(b) or b == CLASS_ANTLION then return D_HT end return D_NU end
+    if a == CLASS_ANTLION then if human(b) or combine(b) or b == CLASS_ZOMBIE or b == CLASS_HEADCRAB then return D_HT end return D_NU end
+    if a == CLASS_BARNACLE then if b == CLASS_BARNACLE then return D_LI end return D_HT end
+    return D_NU
+end
+-- per-entity row, then the class row ("player", an npc_* class), then the game's class table
 function NPC:Disposition(e)
+    if not IsValid(e) then return D_ER end
+    local er = rawget(self, "__ent_rel"); if er and er[e.__id] then return er[e.__id] end
+    local cr = rawget(self, "__class_rel")
+    if cr then
+        local key = (e.IsPlayer and e:IsPlayer()) and "player" or e:GetClass()
+        if cr[key] then return cr[key] end
+    end
     local s = snap(self.__id)
-    if s and s.npc_relation and e and e.IsPlayer and e:IsPlayer() then return s.npc_relation end
-    local c = self:Classify(); if c == CLASS_PLAYER_ALLY or c == CLASS_NONE then return D_LI end return D_HT
+    if s and s.npc_relation and e.IsPlayer and e:IsPlayer() then return s.npc_relation end
+    local own = rawget(self, "__npc_class") or self:Classify()
+    return default_disposition(own, class_of(e))
 end
 local function disp_code(d)
     if type(d) == "number" then return math.floor(d) end
     if type(d) == "string" then local g = _G[d]; if type(g) == "number" then return g end return tonumber(d) end
     return nil
 end
--- "player D_HT 99": only the player relationship has a backend (our AI targets players)
+-- "player D_HT 99" / AddEntityRelationship: the server keeps per-entity and per-class rows over
+-- the game's class table (hl2 relationship matrix); a player row also drives who the body hunts
 function NPC:AddRelationship(str)
-    local target, disp = tostring(str):match("^%s*(%S+)%s+(%S+)")
-    if target ~= "player" then return end
-    qwrite("npc_relation", self.__id, { disp = disp_code(disp) })
+    local target, disp, prio = tostring(str):match("^%s*(%S+)%s+(%S+)%s*(%S*)")
+    if not target then return end
+    local d = disp_code(disp); if d == nil then return end
+    local rows = rawget(self, "__class_rel") or {}; rows[target] = d; rawset(self, "__class_rel", rows)
+    qwrite("npc_ai_relationship", self.__id, { class = target, disp = d, prio = tonumber(prio) or 0 })
 end
 function NPC:AddEntityRelationship(e, disp, prio)
-    if not (e and e.IsPlayer and e:IsPlayer()) then return end
-    qwrite("npc_relation", self.__id, { disp = disp_code(disp) })
+    if not IsValid(e) then return end
+    local d = disp_code(disp); if d == nil then return end
+    local rows = rawget(self, "__ent_rel") or {}; rows[e.__id] = d; rawset(self, "__ent_rel", rows)
+    qwrite("npc_ai_relationship", self.__id, { other = e.__id, disp = d, prio = tonumber(prio) or 0 })
 end
 function NPC:GetWeapon() local w = rawget(self, "__weapon"); if w then return w end return NULL end
 function NPC:GetWeapons() local w = self:GetWeapon(); if IsValid(w) then return { w } end return {} end
@@ -2038,9 +2073,6 @@ function NPC:UpdateYaw() qwrite("npc_ideal_yaw", self.__id, { update = true }) e
 function NPC:SetIdealYawAndUpdate(y) qwrite("npc_ideal_yaw", self.__id, { yaw = tonumber(y) or 0, update = true }) end
 function NPC:SetMoveYawLocked(b) qwrite("npc_move_yaw_locked", self.__id, { on = b ~= false }) end
 function NPC:IsMoveYawLocked() local s = snap(self.__id); return s ~= nil and s.npc_move_yaw_locked == true end
-for _, name in ipairs({ "AdvancePath", "AlertSound", "AutoMovement", "BecomeRagdoll", "CapabilitiesAdd", "CapabilitiesClear", "CapabilitiesRemove", "ClearBlockingEntity", "ClearCondition", "ClearExpression", "ClearSchedule", "ConditionID", "ConditionName", "ExitScriptedSequence", "FearSound", "FoundEnemySound", "GetArrivalActivity", "GetArrivalDirection", "GetArrivalSequence", "GetArrivalSpeed", "GetBestSoundHint", "GetBlockingEntity", "GetCurrentSchedule", "GetCurrentWeaponProficiency", "GetExpression", "GetIdealActivity", "GetIdealMoveAcceleration", "GetIdealSequence", "GetMinMoveCheckDist", "GetMinMoveStopDist", "GetMoveDelay", "GetMovementActivity", "GetMovementSequence", "GetTaskStatus", "HasCondition", "IdleSound", "IsCurrentSchedule", "IsRunningBehavior", "IsUnforgettable", "LostEnemySound", "MaintainActivity", "MoveClimbExec", "MoveClimbStart", "MoveClimbStop", "MoveGroundStep", "MoveJumpExec", "MoveJumpStart", "MoveJumpStop", "PlaySentence", "RemoveIgnoreConditions", "ResetIdealActivity", "ResetMoveCalc", "RunEngineTask", "SentenceStop", "SetActivity", "SetArrivalActivity", "SetArrivalDirection", "SetArrivalSequence", "SetArrivalSpeed", "SetCondition", "SetCurrentWeaponProficiency", "SetExpression", "SetFOV", "SetIdealActivity", "SetIdealSequence", "SetIgnoreConditions", "SetMaxRouteRebuildTime", "SetMoveDelay", "SetMovementSequence", "SetNPCState", "SetSchedule", "SetTaskStatus", "SetUnforgettable", "StartEngineTask", "TaskComplete", "TaskFail", "UpdateTurnActivity", "UseActBusyBehavior", "UseAssaultBehavior", "UseFollowBehavior", "UseFuncTankBehavior", "UseLeadBehavior", "UseNoBehavior" }) do
-    if NPC[name] == nil then NPC[name] = stub("NPC:" .. name) end
-end
 
 
 ------------------------------------------------------------------------ PhysObj: the rest
@@ -2661,3 +2693,116 @@ end
 function PLY:SimulateGravGunPickup(ent, lightning) if IsValid(ent) and ent.GravGunOnPickedUp then ent:GravGunOnPickedUp(self) end hook.Run("GravGunOnPickedUp", self, ent) end
 function PLY:SimulateGravGunDrop(ent) if IsValid(ent) and ent.GravGunOnDropped then ent:GravGunOnDropped(self) end hook.Run("GravGunOnDropped", self, ent) end
 function PLY:DetonateTripmines() for _, e in ipairs(ents.FindByClass("npc_tripmine")) do if e:GetOwner() == self then e:Fire("Explode", "", 0) end end end
+
+-- ---------------------------------------------------------------- HL2 brain: schedules / conditions
+-- The server runs the NPC's schedule (engine tasks over the native goto / chase / cover / stop
+-- operations) and gathers conditions every think; SetSchedule hands it a schedule, ClearSchedule
+-- gives the native decisions back. Conditions set from script live until the next gather.
+local function ai_snap(self) return snap(self.__id) or {} end
+function NPC:SetSchedule(sched) qwrite("npc_ai_schedule", self.__id, { sched = sched }) end
+function NPC:ClearSchedule() qwrite("npc_ai_schedule", self.__id, { sched = nil }) end
+function NPC:GetCurrentSchedule() local s = ai_snap(self); return s.npc_ai_schedule or SCHED_NONE end
+function NPC:IsCurrentSchedule(sched) return self:GetCurrentSchedule() == sched end
+function NPC:GetTaskStatus() local s = ai_snap(self); return s.npc_ai_task_status or TASKSTATUS_NEW end
+function NPC:SetTaskStatus(status) qwrite("npc_ai_task_status", self.__id, { status = status }) end
+function NPC:TaskComplete() qwrite("npc_ai_task_status", self.__id, { status = TASKSTATUS_COMPLETE }) end
+function NPC:TaskFail(task) qwrite("npc_ai_task_fail", self.__id) end
+function NPC:HasCondition(cond)
+    local s = ai_snap(self)
+    for _, c in ipairs(s.npc_ai_conditions or {}) do if c == cond then return true end end
+    return false
+end
+function NPC:SetCondition(cond) qwrite("npc_ai_condition", self.__id, { cond = cond, on = true }) end
+function NPC:ClearCondition(cond) qwrite("npc_ai_condition", self.__id, { cond = cond, on = false }) end
+function NPC:ConditionName(cond) return __glua_cond_names and __glua_cond_names[cond] or "" end
+function NPC:ConditionID(name) for id, n in pairs(__glua_cond_names or {}) do if n == name then return id end end return -1 end
+function NPC:SetIgnoreConditions(conds, duration)
+    qwrite("npc_ai_ignore_conds", self.__id, { conds = conds })
+    if duration and duration > 0 and timer then
+        local id = self.__id
+        timer.Simple(duration, function() qwrite("npc_ai_ignore_conds", id, { conds = conds, clear = true }) end)
+    end
+end
+function NPC:RemoveIgnoreConditions(conds) qwrite("npc_ai_ignore_conds", self.__id, { conds = conds, clear = true }) end
+function NPC:SetNPCState(state) qwrite("npc_ai_state", self.__id, { state = state }) end
+function NPC:GetCurrentWeaponProficiency() local s = ai_snap(self); return s.npc_ai_proficiency or WEAPON_PROFICIENCY_POOR end
+function NPC:SetCurrentWeaponProficiency(p) qwrite("npc_ai_proficiency", self.__id, { level = p }) end
+function NPC:IsUnforgettable() return ai_snap(self).npc_ai_unforgettable == true end
+function NPC:SetUnforgettable(on) qwrite("npc_ai_misc", self.__id, { unforgettable = on ~= false }) end
+function NPC:GetExpression() return ai_snap(self).npc_ai_expression or "" end
+function NPC:SetExpression(scene) qwrite("npc_ai_misc", self.__id, { expression = tostring(scene or "") }); return 0 end
+function NPC:ClearExpression() qwrite("npc_ai_misc", self.__id, { expression = "" }) end
+function NPC:SetMaxRouteRebuildTime(t) qwrite("npc_ai_misc", self.__id, { route_rebuild = t }) end
+function NPC:GetMoveDelay() return rawget(self, "__move_delay") or 0 end
+function NPC:SetMoveDelay(t) rawset(self, "__move_delay", t); qwrite("npc_ai_misc", self.__id, { move_delay = t }) end
+function NPC:IsRunningBehavior() return ai_snap(self).npc_ai_behavior ~= nil end
+local function use_behavior(self, name) qwrite("npc_ai_misc", self.__id, { behavior_set = true, behavior = name }) end
+function NPC:UseActBusyBehavior() use_behavior(self, "ActBusy") end
+function NPC:UseAssaultBehavior() use_behavior(self, "Assault") end
+function NPC:UseFollowBehavior() use_behavior(self, "Follow") end
+function NPC:UseFuncTankBehavior() use_behavior(self, "FuncTank") end
+function NPC:UseLeadBehavior() use_behavior(self, "Lead") end
+function NPC:UseNoBehavior() use_behavior(self, nil) end
+function NPC:CapabilitiesAdd(c) qwrite("npc_caps", self.__id, { caps = bit.bor(self:CapabilitiesGet(), c or 0) }) end
+function NPC:CapabilitiesRemove(c) qwrite("npc_caps", self.__id, { caps = bit.band(self:CapabilitiesGet(), bit.bnot(c or 0)) }) end
+function NPC:CapabilitiesClear() qwrite("npc_caps", self.__id, { caps = 0 }) end
+function NPC:SetFOV(deg) rawset(self, "__fov", deg) end
+local base_fov = NPC.GetFOV
+function NPC:GetFOV() return rawget(self, "__fov") or base_fov(self) end
+-- activity / sequence bookkeeping the engine keeps on the brain (the body plays what the
+-- native animation picks; these hold the ideal the script asked for)
+function NPC:GetIdealActivity() return rawget(self, "__ideal_act") or self:GetActivity() end
+function NPC:SetIdealActivity(a) rawset(self, "__ideal_act", a) end
+function NPC:ResetIdealActivity(a) rawset(self, "__ideal_act", a) end
+function NPC:SetActivity(a) rawset(self, "__ideal_act", a); if a ~= nil and self.SetSequence and self.SelectWeightedSequence then local seq = self:SelectWeightedSequence(a); if seq and seq >= 0 then self:SetSequence(seq) end end end
+function NPC:MaintainActivity() local a = rawget(self, "__ideal_act"); if a ~= nil and a ~= self:GetActivity() and self.SelectWeightedSequence and self.SetSequence then local seq = self:SelectWeightedSequence(a); if seq and seq >= 0 then self:SetSequence(seq) end end end
+function NPC:GetIdealSequence() return rawget(self, "__ideal_seq") or (self.GetSequence and self:GetSequence()) or 0 end
+function NPC:SetIdealSequence(seq) rawset(self, "__ideal_seq", seq) end
+function NPC:GetMovementActivity() return self:GetVelocity():Length() > 1 and (rawget(self, "__move_act") or ACT_RUN) or ACT_IDLE end
+function NPC:GetMovementSequence() return rawget(self, "__move_seq") or (self.GetSequence and self:GetSequence()) or 0 end
+function NPC:SetMovementSequence(seq) rawset(self, "__move_seq", seq) end
+function NPC:GetIdealMoveAcceleration() return 500 end
+function NPC:GetMinMoveCheckDist() return 36 end
+function NPC:GetMinMoveStopDist() return 10 end
+function NPC:UpdateTurnActivity() local y = self:GetIdealYaw() - self:GetAngles().y; y = ((y + 180) % 360) - 180; if math.abs(y) > 45 then rawset(self, "__ideal_act", y > 0 and ACT_TURN_LEFT or ACT_TURN_RIGHT) end end
+-- arrival: what the NPC does at the end of the current path
+function NPC:GetArrivalActivity() return rawget(self, "__arr_act") or ACT_INVALID end
+function NPC:SetArrivalActivity(a) rawset(self, "__arr_act", a) end
+function NPC:GetArrivalSequence() return rawget(self, "__arr_seq") or -1 end
+function NPC:SetArrivalSequence(s) rawset(self, "__arr_seq", s) end
+function NPC:GetArrivalDirection() return rawget(self, "__arr_dir") or Vector(0, 0, 0) end
+function NPC:SetArrivalDirection(d) rawset(self, "__arr_dir", d) end
+function NPC:GetArrivalSpeed() return rawget(self, "__arr_speed") or 0 end
+function NPC:SetArrivalSpeed(s) rawset(self, "__arr_speed", s) end
+function NPC:ResetMoveCalc() rawset(self, "__arr_act", nil); rawset(self, "__arr_seq", nil); rawset(self, "__arr_dir", nil); rawset(self, "__arr_speed", nil) end
+function NPC:AdvancePath() local s = ai_snap(self); return s.npc_goal ~= nil end
+function NPC:AutoMovement(interval, target) local s = ai_snap(self); return s.npc_goal ~= nil or (s.npc_move_speed or 0) > 0 end
+function NPC:MoveGroundStep(move, target) if move then self:NavSetGoalPos(self:GetPos() + move) end return 0 end
+function NPC:MoveJumpStart(vel) if self.SetVelocity then self:SetVelocity(vel) end end
+function NPC:MoveJumpExec() return self:IsOnGround() and 0 or 1 end
+function NPC:MoveJumpStop() return 0 end
+function NPC:MoveClimbStart(dest, dir, yaw) self:NavSetGoalPos(dest) end
+function NPC:MoveClimbExec(dest, dir, yaw, left) return self:GetPos():Distance(dest) < 16 and 0 or 1 end
+function NPC:MoveClimbStop() return 0 end
+function NPC:GetBlockingEntity() local b = rawget(self, "__blocking"); if b and IsValid(b) then return b end return NULL end
+function NPC:ClearBlockingEntity() rawset(self, "__blocking", nil) end
+function NPC:GetBestSoundHint(types) return NULL end
+function NPC:ExitScriptedSequence() self:ClearSchedule(); return true end
+function NPC:BecomeRagdoll(dmg) self:TakeDamageInfo(dmg or DamageInfo()); if self.Kill then self:Kill() end return self.GetRagdollEntity and self:GetRagdollEntity() or NULL end
+-- the sentence sounds, played through EmitSound by class as the game's sound scripts name them
+local function npc_sound(self, kind)
+    local c = self:GetClass()
+    local base = ({ npc_combine_s = "NPC_Combine", npc_metropolice = "NPC_MetroPolice", npc_zombie = "Zombie", npc_fastzombie = "NPC_FastZombie", npc_poisonzombie = "NPC_PoisonZombie", npc_headcrab = "NPC_HeadCrab", npc_antlion = "NPC_Antlion", npc_citizen = "NPC_Citizen", npc_vortigaunt = "NPC_Vortigaunt" })[c]
+    if base and self.EmitSound then self:EmitSound(base .. "." .. kind) end
+end
+function NPC:IdleSound() npc_sound(self, "Idle") end
+function NPC:AlertSound() npc_sound(self, "Alert") end
+function NPC:FearSound() npc_sound(self, "Fear") end
+function NPC:FoundEnemySound() npc_sound(self, "FoundEnemy") end
+function NPC:LostEnemySound() npc_sound(self, "LostEnemy") end
+function NPC:PlaySentence(name, delay, volume) if self.EmitSound then self:EmitSound(tostring(name), 75, 100, volume or 1) end return 0 end
+function NPC:SentenceStop() if self.StopSound then self:StopSound("") end end
+function NPC:StartEngineTask(task, data) qwrite("npc_ai_task_status", self.__id, { status = TASKSTATUS_RUN_TASK }) end
+function NPC:RunEngineTask(task, data) end
+-- schedule-local save position the FORCED_GO / SAVEPOSITION tasks walk to
+function NPC:SetLastPosition(pos) rawset(self, "__last_pos", pos); qwrite("npc_ai_save_pos", self.__id, { x = pos.x, y = pos.y, z = pos.z }) end
