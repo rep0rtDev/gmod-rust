@@ -190,6 +190,7 @@ fn snapshot() -> Arc<Snapshot> {
             ducked: true,
             vehicle: 0,
             driving: 0,
+            ragdoll: 0,
             use_target: 5,
             flashlight: true,
             punch: Vec3::ZERO,

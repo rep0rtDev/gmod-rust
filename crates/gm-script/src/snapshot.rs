@@ -143,6 +143,8 @@ pub struct PlayerSnap {
     /// Vehicle seat / driven prop / `+use` target entity, 0 for none.
     pub vehicle: u32,
     pub driving: u32,
+    /// The player's death ragdoll (`Player:GetRagdollEntity`), 0 while alive.
+    pub ragdoll: u32,
     pub use_target: u32,
     pub flashlight: bool,
     pub punch: Vec3,
@@ -816,6 +818,7 @@ impl Snapshot {
                             ducked: p.state.ducked,
                             vehicle: p.seat.unwrap_or(0),
                             driving: p.driving.map_or(0, |d| d.prop),
+                            ragdoll: p.ragdoll_ent.unwrap_or(0),
                             use_target: p.use_target.unwrap_or(0),
                             flashlight: p.flashlight,
                             punch: p.state.punch,

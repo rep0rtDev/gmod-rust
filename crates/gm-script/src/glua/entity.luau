@@ -2172,7 +2172,7 @@ function PLY:GetCurrentCommand()
         tick = p and p.cmd_tick or 0,
     }, __glua_classes.CUserCmd)
 end
-for _, name in ipairs({  "AddPlayerOption", "AddVCDSequenceToGestureSlot", "AllowFlashlight", "AllowImmediateDecalPainting", "AnimRestartMainSequence", "CanUseFlashlight", "CreateRagdoll", "CrosshairDisable", "CrosshairEnable", "DetonateTripmines", "DisableWorldClicking", "DrawViewModel", "DrawWorldModel", "DropNamedWeapon", "DropObject", "DropWeapon", "EnterVehicle", "ExitVehicle", "Flashlight", "FlashlightIsOn", "GetActivity", "GetAllowFullRotation", "GetAllowWeaponsInVehicle", "GetAmmo", "GetAmmoCount", "GetAvoidPlayers", "GetCanWalk", "GetCanZoom", "GetClassID", "GetEntityInUse", "GetFlashlightColor", "GetFriendStatus", "GetHands", "GetHoveredWidget", "GetNoCollideWithTeammates", "GetObserverTarget", "GetPlayerColor", "GetPlayerInfo", "GetPreferredCarryAngles", "GetPressedWidget", "GetRagdollEntity", "GetRenderAngles", "GetSuitPower", "GetUseEntity", "GetViewModel", "GetVoiceVolumeScale", "GetWeaponColor", "GiveAmmo", "IsMuted", "IsPlayingTaunt", "IsVoiceAudible", "IsWalking", "IsWorldClickingDisabled", "KeyDownLast", "KeyPressed", "KeyReleased", "Kick", "LagCompensation", "LastHitGroup", "Lock", "UnLock", "MotionSensorPos", "RemoveAllAmmo", "RemoveAmmo", "Say", "SetActivity", "SetAllowFullRotation", "SetAllowWeaponsInVehicle", "SetAmmo", "SetAvoidPlayers", "SetCanWalk", "SetCanZoom", "SetClassID", "SetCurrentViewOffset", "SetDSP", "SetDeaths", "SetDrivingEntity", "SetFlashlightColor", "SetFrags", "SetHands", "SetHoveredWidget", "SetMaxArmor", "SetMuted", "SetNoCollideWithTeammates", "SetNoTarget", "SetObserverMode", "SetPlayerColor", "SetPressedWidget", "SetRenderAngles", "SetSlowWalkSpeed", "SetSuitPower", "SetSuppressPickupNotices", "SetViewEntity", "SetVoiceVolumeScale", "SetWeaponColor", "SetupHands", "ShouldDrawLocalPlayer", "ShowProfile", "SimulateGravGunDrop", "SimulateGravGunPickup", "Spectate", "SpectateEntity", "SprayDecal", "StartWalking", "StopWalking", "StopZooming", "StripAmmo", "SuppressHint", "TimeConnected", "TranslateWeaponActivity", "UnSpectate", "VoiceVolume" }) do
+for _, name in ipairs({ "AllowFlashlight", "CanUseFlashlight", "DropNamedWeapon", "DropObject", "DropWeapon", "EnterVehicle", "ExitVehicle", "Flashlight", "FlashlightIsOn", "GetAmmo", "GetAmmoCount", "GetEntityInUse", "GetPlayerColor", "GetUseEntity", "GetWeaponColor", "GiveAmmo", "IsWalking", "KeyDownLast", "KeyPressed", "KeyReleased", "Kick", "LastHitGroup", "Lock", "UnLock", "RemoveAllAmmo", "RemoveAmmo", "Say", "SetAmmo", "SetDeaths", "SetFrags", "SetMaxArmor", "SetNoTarget", "SetPlayerColor", "SetSlowWalkSpeed", "SetWeaponColor", "StripAmmo", "TimeConnected" }) do
     if PLY[name] == nil then PLY[name] = stub("Player:" .. name) end
 end
 
@@ -2492,3 +2492,172 @@ function WEP:SendWeaponAnim(act)
     evars(self).__activity = act
     if self.SelectWeightedSequence and self.SetSequence then local s = self:SelectWeightedSequence(act); if s and s >= 0 then self:SetSequence(s) end end
 end
+
+------------------------------------------------------------------------ Player: suit, hands / viewmodels, observer, walking / zoom, flashlight colour, DSP, ragdoll, voice, widgets
+local function plv(self) local v = rawget(self, "__vars"); if not v then v = {}; rawset(self, "__vars", v) end return v end
+-- a non-networked entity owned by a player (the game's predicted_viewmodel / gmod_hands)
+local VENT = {}
+VENT.__index = VENT
+VENT.__tostring = function(self) return "Entity [-1][" .. self.__class .. "]" end
+local function new_vent(class, owner, model)
+    return setmetatable({ __valid = true, __class = class, __owner = owner, __model = model or "", __skin = 0, __body = {}, __nodraw = false, __vars = {}, __parent = owner, __wep_model = "" }, VENT)
+end
+function VENT:IsValid() return self.__valid == true end
+function VENT:Remove() self.__valid = false end
+function VENT:EntIndex() return -1 end
+function VENT:GetClass() return self.__class end
+function VENT:GetOwner() return self.__owner end
+function VENT:GetParent() return self.__parent end
+function VENT:SetParent(p) self.__parent = p end
+function VENT:GetModel() return self.__model end
+function VENT:SetModel(m) self.__model = m or "" end
+function VENT:GetSkin() return self.__skin end
+function VENT:SetSkin(s) self.__skin = s or 0 end
+function VENT:GetBodygroup(i) return self.__body[i] or 0 end
+function VENT:SetBodygroup(i, v) self.__body[i] = v end
+function VENT:SetBodyGroups(s) for i = 1, #tostring(s) do self.__body[i - 1] = tonumber(string.sub(s, i, i)) or 0 end end
+function VENT:GetPos() local o = self.__owner; if IsValid(o) then return o:EyePos() end return Vector(0, 0, 0) end
+function VENT:GetAngles() local o = self.__owner; if IsValid(o) then return o:EyeAngles() end return Angle(0, 0, 0) end
+function VENT:SetPos() end
+function VENT:SetAngles() end
+function VENT:SetNoDraw(b) self.__nodraw = b == true end
+function VENT:GetNoDraw() return self.__nodraw end
+function VENT:IsPlayer() return false end
+function VENT:IsNPC() return false end
+function VENT:IsWeapon() return false end
+function VENT:IsWorld() return false end
+function VENT:IsVehicle() return false end
+function VENT:GetTable() return self.__vars end
+function VENT:GetWeaponModel() return self.__wep_model end
+function VENT:SetWeaponModel(m, wep) self.__wep_model = m or ""; self.__weapon = wep end
+function VENT:GetWeapon() return self.__weapon or NULL end
+function VENT:GetSequence() return self.__seq or 0 end
+function VENT:SetSequence(s) self.__seq = s end
+function VENT:SendViewModelMatchingSequence(s) self.__seq = s end
+function VENT:ResetSequence(s) self.__seq = s end
+function VENT:SetPlaybackRate(r) self.__rate = r end
+function VENT:GetPlaybackRate() return self.__rate or 1 end
+function VENT:SetColor(c) self.__color = c end
+function VENT:GetColor() return self.__color or Color(255, 255, 255) end
+function VENT:SetMaterial(m) self.__material = m end
+function VENT:GetMaterial() return self.__material or "" end
+function VENT:SetRenderMode(m) self.__render_mode = m end
+function VENT:GetRenderMode() return self.__render_mode or 0 end
+function VENT:LookupAttachment() return 0 end
+function VENT:GetAttachment() return nil end
+function VENT:LookupBone() return nil end
+function VENT:GetBoneCount() return 0 end
+function VENT:SetPoseParameter() end
+function VENT:GetPoseParameter() return 0 end
+function PLY:GetViewModel(i)
+    local v = plv(self); v.__viewmodels = v.__viewmodels or {}
+    i = i or 0
+    if not v.__viewmodels[i] then
+        local vm = new_vent("viewmodel", self, "")
+        local w = self:GetActiveWeapon()
+        if IsValid(w) and w.GetWeaponViewModel then vm.__model = w:GetWeaponViewModel() or "" end
+        v.__viewmodels[i] = vm
+    end
+    return v.__viewmodels[i]
+end
+function PLY:GetHands() local v = plv(self); if not v.__hands then v.__hands = new_vent("gmod_hands", self, "models/weapons/c_arms_citizen.mdl") end return v.__hands end
+function PLY:SetHands(h) plv(self).__hands = h end
+function PLY:SetupHands()
+    local hands = self:GetHands()
+    if not IsValid(hands) then return end
+    local pm = player_manager
+    local info = pm and pm.TranslatePlayerHands and pm.TranslatePlayerHands(pm.TranslateToPlayerModelName and pm.TranslateToPlayerModelName(self:GetModel()) or self:GetModel())
+    if info then hands:SetModel(info.model or hands:GetModel()); hands:SetSkin(info.skin or 0); hands:SetBodyGroups(info.body or "0000000") end
+    hands.__weapon = self:GetActiveWeapon()
+end
+function PLY:GetSuitPower() return plv(self).__suit_power or 100 end
+function PLY:SetSuitPower(p) plv(self).__suit_power = math.Clamp(tonumber(p) or 0, 0, 100) end
+-- observer / spectate: stored mode and target, the view entity is the target while spectating
+local OBS_NONE = OBS_MODE_NONE or 0
+function PLY:SetObserverMode(m) plv(self).__observer = m or OBS_NONE end
+local base_obs = PLY.GetObserverMode
+function PLY:GetObserverMode() local m = plv(self).__observer; if m ~= nil then return m end return base_obs(self) end
+function PLY:Spectate(m) local v = plv(self); v.__observer = m or OBS_MODE_ROAMING or 6; v.__spectating = true end
+function PLY:SpectateEntity(e) plv(self).__spectate_target = e end
+function PLY:GetObserverTarget() local t = plv(self).__spectate_target; if t ~= nil and IsValid(t) then return t end return NULL end
+function PLY:UnSpectate() local v = plv(self); v.__observer = OBS_NONE; v.__spectating = false; v.__spectate_target = nil end
+function PLY:SetViewEntity(e) plv(self).__view_entity = e end
+function PLY:GetViewEntity()
+    local e = plv(self).__view_entity
+    if e ~= nil and IsValid(e) then return e end
+    local t = self:GetObserverTarget()
+    if IsValid(t) and self:GetObserverMode() ~= OBS_NONE then return t end
+    return self
+end
+local function pset(name, key) PLY["Set" .. name] = function(self, val) plv(self)[key] = val end end
+local function pget(name, key, default) PLY["Get" .. name] = function(self) local v = plv(self)[key]; if v == nil then return default end return v end end
+pset("CanWalk", "__can_walk"); pget("CanWalk", "__can_walk", true)
+pset("CanZoom", "__can_zoom"); pget("CanZoom", "__can_zoom", true)
+pset("FlashlightColor", "__flashlight_color"); pget("FlashlightColor", "__flashlight_color", Vector(1, 1, 1))
+pset("AllowFullRotation", "__full_rot"); pget("AllowFullRotation", "__full_rot", false)
+pset("AllowWeaponsInVehicle", "__wep_vehicle"); pget("AllowWeaponsInVehicle", "__wep_vehicle", false)
+pset("AvoidPlayers", "__avoid"); pget("AvoidPlayers", "__avoid", true)
+pset("ClassID", "__class_id"); pget("ClassID", "__class_id", 0)
+pset("NoCollideWithTeammates", "__nocollide_team"); pget("NoCollideWithTeammates", "__nocollide_team", false)
+pset("Activity", "__activity"); pget("Activity", "__activity", ACT_INVALID or -1)
+pset("HoveredWidget", "__hovered_widget"); pget("HoveredWidget", "__hovered_widget", NULL)
+pset("PressedWidget", "__pressed_widget"); pget("PressedWidget", "__pressed_widget", NULL)
+pset("VoiceVolumeScale", "__voice_scale"); pget("VoiceVolumeScale", "__voice_scale", 1)
+pset("SuppressPickupNotices", "__suppress_pickup")
+pset("CurrentViewOffset", "__cur_view_offset")
+function PLY:SetDSP(dsp, fast) plv(self).__dsp = dsp end
+function PLY:SetRenderAngles(a) plv(self).__render_angles = a end
+function PLY:GetRenderAngles() return plv(self).__render_angles or self:GetAngles() end
+function PLY:SetDrivingEntity(e, mode) local v = plv(self); v.__driving, v.__driving_mode = e, mode end
+local base_driving = PLY.GetDrivingEntity
+function PLY:GetDrivingEntity() local e = plv(self).__driving; if e ~= nil and IsValid(e) then return e end return base_driving(self) end
+function PLY:StartWalking() plv(self).__walking = true end
+function PLY:StopWalking() plv(self).__walking = false end
+local base_walking = PLY.IsWalking
+function PLY:IsWalking() if plv(self).__walking then return true end return base_walking(self) end
+function PLY:StopZooming() self:SetFOV(0, 0) end
+function PLY:SetMuted(m) plv(self).__muted = m == true end
+function PLY:IsMuted() return plv(self).__muted == true end
+function PLY:VoiceVolume() return 0 end
+function PLY:IsVoiceAudible() return false end
+function PLY:IsPlayingTaunt() return plv(self).__taunt == true end
+function PLY:MotionSensorPos(bone) return Vector(0, 0, 0) end
+function PLY:ShouldDrawLocalPlayer() return plv(self).__draw_local == true end
+function PLY:GetFriendStatus() return "none" end
+function PLY:GetPlayerInfo() return { name = self:Nick(), userid = self:UserID(), friendsid = 0, fakeplayer = self:IsBot(), ishltv = false, networkid = self.SteamID and self:SteamID() or "" } end
+function PLY:GetPreferredCarryAngles(ent) if IsValid(ent) and ent.GetPreferredCarryAngles then return ent:GetPreferredCarryAngles() end return Angle(0, 0, 0) end
+function PLY:ShowProfile() end
+function PLY:SuppressHint(name) local v = plv(self); v.__hints = v.__hints or {}; v.__hints[name] = true end
+function PLY:AddPlayerOption(name, timeout, vote, draw) return false end
+function PLY:AllowImmediateDecalPainting(on) plv(self).__decal_now = on ~= false end
+function PLY:AnimRestartMainSequence() if self.GetSequence and self.ResetSequence then self:ResetSequence(self:GetSequence()) end end
+function PLY:AddVCDSequenceToGestureSlot(slot, seq, cycle, autokill) if self.AnimRestartGesture then self:AnimRestartGesture(slot, seq, autokill) end end
+function PLY:TranslateWeaponActivity(act) local w = self:GetActiveWeapon(); if IsValid(w) and w.TranslateActivity then local t = w:TranslateActivity(act); if t and t >= 0 then return t end end return act end
+function PLY:CrosshairDisable() plv(self).__crosshair_off = true end
+function PLY:CrosshairEnable() plv(self).__crosshair_off = false end
+function PLY:DisableWorldClicking(b) plv(self).__no_world_click = b == true end
+function PLY:IsWorldClickingDisabled() return plv(self).__no_world_click == true end
+function PLY:DrawViewModel(b, i) local vm = self:GetViewModel(i); if vm then vm:SetNoDraw(b == false) end end
+function PLY:DrawWorldModel(b) plv(self).__draw_world_model = b ~= false end
+function PLY:GetRagdollEntity()
+    local r = plv(self).__ragdoll
+    if r ~= nil and IsValid(r) then return r end
+    local p = psnap(self.__pid)
+    if p and (p.ragdoll or 0) ~= 0 then return Entity(p.ragdoll) end
+    return NULL
+end
+function PLY:CreateRagdoll()
+    local r = ents.Create("prop_ragdoll")
+    if not IsValid(r) then return end
+    r:SetModel(self:GetModel()); r:SetPos(self:GetPos()); r:SetAngles(self:GetAngles()); r:SetSkin(self:GetSkin()); r:Spawn()
+    r:SetOwner(self)
+    plv(self).__ragdoll = r
+end
+function PLY:LagCompensation(on) plv(self).__lag_comp = on == true end
+function PLY:SprayDecal()
+    local tr = self:GetEyeTrace()
+    if tr and tr.Hit and util and util.Decal then util.Decal("Spray", tr.HitPos + tr.HitNormal, tr.HitPos - tr.HitNormal, self) end
+end
+function PLY:SimulateGravGunPickup(ent, lightning) if IsValid(ent) and ent.GravGunOnPickedUp then ent:GravGunOnPickedUp(self) end hook.Run("GravGunOnPickedUp", self, ent) end
+function PLY:SimulateGravGunDrop(ent) if IsValid(ent) and ent.GravGunOnDropped then ent:GravGunOnDropped(self) end hook.Run("GravGunOnDropped", self, ent) end
+function PLY:DetonateTripmines() for _, e in ipairs(ents.FindByClass("npc_tripmine")) do if e:GetOwner() == self then e:Fire("Explode", "", 0) end end end

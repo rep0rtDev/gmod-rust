@@ -948,6 +948,7 @@ fn player_table(lua: &Lua, p: &crate::snapshot::PlayerSnap) -> Result<Table> {
     t.set("ducked", p.ducked)?;
     t.set("vehicle", p.vehicle)?;
     t.set("driving", p.driving)?;
+    t.set("ragdoll", p.ragdoll)?;
     t.set("use_target", p.use_target)?;
     t.set("flashlight", p.flashlight)?;
     t.set("punch", vec3_table(lua, p.punch)?)?;
