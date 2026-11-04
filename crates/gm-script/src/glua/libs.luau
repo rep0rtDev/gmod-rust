@@ -200,7 +200,8 @@ TOOL.__index = TOOL
 -- addons are manifest actors, there is no stools/<mode>.lua loader, so `TOOL.Mode = "x"` is
 -- required); the server's click on a mode no Rust stool owns reaches it through the host `__tool`
 local glua_tools = {}
-local tool_inst_meta = { __index = TOOL, __newindex = function(t, k, v) rawset(t, k, v) if k == "Mode" and type(v) == "string" then glua_tools[v] = t end end }
+-- @hook GM:PreRegisterTOOL
+local tool_inst_meta = { __index = TOOL, __newindex = function(t, k, v) rawset(t, k, v) if k == "Mode" and type(v) == "string" then if hook and hook.Run and hook.Run("PreRegisterTOOL", t, v) == false then return end glua_tools[v] = t end end }
 function TOOL:Create() return setmetatable({ Mode = nil, SWEP = nil, Owner = nil, ClientConVar = {}, ServerConVar = {}, Objects = {}, Stage = 0, Operation = 0, Message = "start", LastMessage = 0, AllowedCVar = 0 }, tool_inst_meta) end
 function TOOL:GetMode() return self.Mode end
 function TOOL:GetOwner() return self.Owner or (self.SWEP and self.SWEP.Owner) or NULL end

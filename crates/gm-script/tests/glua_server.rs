@@ -2616,13 +2616,18 @@ fn npc_relationship_write_and_disposition() {
         .unwrap();
     let writes: Vec<QueuedWrite> = rt.drain_writes().into_iter().map(|w| w.3).collect();
     let text = format!("{writes:?}");
-    assert_eq!(text.matches("NpcRelation").count(), 2, "{text}");
+    // one relationship row per call; a player row is the "player" class row
+    assert_eq!(text.matches("NpcAiRelationship").count(), 3, "{text}");
     assert!(
-        text.contains("NpcRelation { ent: 5, disp: Some(1) }"),
+        text.contains("NpcAiRelationship { ent: 5, other: None, class: Some(\"player\"), disp: 1, prio: 99 }"),
         "{text}"
     );
     assert!(
-        text.contains("NpcRelation { ent: 5, disp: Some(3) }"),
+        text.contains("NpcAiRelationship { ent: 5, other: None, class: Some(\"npc_zombie\"), disp: 3, prio: 99 }"),
+        "{text}"
+    );
+    assert!(
+        text.contains("NpcAiRelationship { ent: 5, other: None, class: Some(\"player\"), disp: 3, prio: 99 }"),
         "{text}"
     );
     let disp: f64 = rt.actors()[0].eval("return state.disp").unwrap();

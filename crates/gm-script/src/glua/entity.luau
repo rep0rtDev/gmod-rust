@@ -2003,7 +2003,7 @@ function NPC:Classify() local c = self:GetClass(); if string.find(c, "zombie") o
 -- disposition toward players: the scripted one (AddRelationship / AddEntityRelationship) when
 -- set, else from the class; other entities are not targets of our AI (the class answer)
 local function class_of(e)
-    if not IsValid(e) then return CLASS_NONE end
+    if e == nil then return CLASS_NONE end
     if e.IsPlayer and e:IsPlayer() then return CLASS_PLAYER end
     if e.IsNPC and e:IsNPC() and e.Classify then return e:Classify() end
     return CLASS_NONE
@@ -2024,7 +2024,7 @@ local function default_disposition(a, b)
 end
 -- per-entity row, then the class row ("player", an npc_* class), then the game's class table
 function NPC:Disposition(e)
-    if not IsValid(e) then return D_ER end
+    if e == nil then return D_ER end
     local er = rawget(self, "__ent_rel"); if er and er[e.__id] then return er[e.__id] end
     local cr = rawget(self, "__class_rel")
     if cr then
@@ -2053,6 +2053,12 @@ end
 function NPC:AddEntityRelationship(e, disp, prio)
     if not IsValid(e) then return end
     local d = disp_code(disp); if d == nil then return end
+    if e.IsPlayer and e:IsPlayer() then
+        -- players are keyed as the "player" class row (the body's hostility flag follows it)
+        local rows = rawget(self, "__class_rel") or {}; rows.player = d; rawset(self, "__class_rel", rows)
+        qwrite("npc_ai_relationship", self.__id, { class = "player", disp = d, prio = tonumber(prio) or 0 })
+        return
+    end
     local rows = rawget(self, "__ent_rel") or {}; rows[e.__id] = d; rawset(self, "__ent_rel", rows)
     qwrite("npc_ai_relationship", self.__id, { other = e.__id, disp = d, prio = tonumber(prio) or 0 })
 end

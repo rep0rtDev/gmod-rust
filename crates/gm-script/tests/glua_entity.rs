@@ -468,7 +468,7 @@ fn npc_and_datatable_methods() {
          n:TakeDamage(30, Entity(1))
          state.r = {
             n:GetEnemy():UserID(), n:IsGoalActive(), n:GetGoalPos().x, n:GetPathDistanceToGoal(), n:GetCurGoalType(),
-            n:Classify() == CLASS_ZOMBIE, n:Disposition(Entity(1)) == D_HT, e:GetCount(), #state.seen, state.seen[1], state.seen[2],
+            n:Classify() == CLASS_ZOMBIE, n:Disposition(Entity(1)) == D_NU, e:GetCount(), #state.seen, state.seen[1], state.seen[2],
             e:GetNetworkVars().Count, e:GetMoveType() == MOVETYPE_NONE, n:GetEnemyLastKnownPos().x, e:IsConstrained(),
             e:GetPhysicsObject():GetEntity() == e, e:GetPhysicsObject():IsGravityEnabled(), select(2, Player(1):GetHull()).z, Player(1):GetMaxSpeed(),
             e:GetPhysicsObject():GetInvMass(),

@@ -1599,8 +1599,18 @@ do
     function steamworks.ShouldMountAddon(id) local m = mount[tostring(id)]; if m ~= nil then return m end for _, a in ipairs(addon_list()) do if tostring(a.wsid) == tostring(id) then return a.mounted ~= false end end return false end
     function steamworks.ApplyAddons() end
     function steamworks.GetList(kind, tags, offset, num, days, userid, cb) local results = {}; for _, a in ipairs(addon_list()) do results[#results + 1] = tonumber(a.wsid) or 0 end if cb then cb({ results = results, totalresults = #results, numresults = #results }) end end
-    function steamworks.Download(previewid, uncompress, cb) if cb then cb(nil) end end
-    function steamworks.DownloadUGC(id, cb) if cb then cb(nil, nil) end end
+    -- downloads resolve against the local addon registry (no Workshop connection): the menu's
+    -- Workshop* callbacks fire around the lookup in the game's order
+    -- @hook GM:WorkshopStart @hook GM:WorkshopDownloadTotals @hook GM:WorkshopDownloadFile @hook GM:WorkshopDownloadProgress @hook GM:WorkshopDownloadedFile @hook GM:WorkshopExtractProgress @hook GM:WorkshopEnd
+    local function local_file(id) for _, a in ipairs(addon_list()) do if tostring(a.wsid) == tostring(id) then return a.file end end return nil end
+    local function ws_hooks(id, path)
+        local function run(n, ...) if hook and hook.Run then hook.Run(n, ...) end end
+        run("WorkshopStart"); run("WorkshopDownloadTotals", 1, 1); run("WorkshopDownloadFile", id, 1, 1, "")
+        run("WorkshopDownloadProgress", id, 1, 1, path and 1 or 0, 1); run("WorkshopDownloadedFile", id, path or "")
+        run("WorkshopExtractProgress", id, 1, 1, 1); run("WorkshopEnd")
+    end
+    function steamworks.Download(previewid, uncompress, cb) local path = local_file(previewid); ws_hooks(previewid, path); if cb then cb(path) end end
+    function steamworks.DownloadUGC(id, cb) local path = local_file(id); ws_hooks(id, path); if cb then cb(path, path and file and file.Open and file.Open(path, "rb", "GAME") or nil) end end
     function steamworks.OpenWorkshop() if gui and gui.OpenURL then gui.OpenURL("https://steamcommunity.com/app/4000/workshop/") end end
     function steamworks.ViewFile(id) if gui and gui.OpenURL then gui.OpenURL("https://steamcommunity.com/sharedfiles/filedetails/?id=" .. tostring(id)) end end
     function steamworks.Publish(image, gma, title, desc, tags, cb) if cb then cb(0, "Publishing needs a Workshop connection") end end
