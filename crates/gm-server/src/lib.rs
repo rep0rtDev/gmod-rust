@@ -10673,7 +10673,7 @@ impl<'w> Server<'w> {
             stuck: 0,
             passive: false,
             last_shot: 0,
-            ai: ai::AiState { state: ai::spawn_state(def.class), ..Default::default() },
+            ai: ai::AiState { state: ai::spawn_state(def.class), proficiency: ai::default_proficiency(def.class), ..Default::default() },
             rest_sequence: None,
             spawn_tick: self.tick_count,
             next_think: self.tick_count + NPC_THINK_PHASE,
@@ -11716,6 +11716,18 @@ impl<'w> Server<'w> {
                 return;
             }
         }
+        // the squad's two attack slots (SQUAD_SLOT_ATTACK1/2): with two squadmates already
+        // firing this half second, this one holds its fire
+        let slots_taken = {
+            let Some(n) = self.npcs.get(&id) else { return };
+            let (pos, key) = (n.pos, n.key.clone());
+            let squad = self.squads.of(id).map(str::to_string);
+            self.npcs.iter().filter(|(i, o)| {
+                **i != id && o.dead_at.is_none() && now.saturating_sub(o.last_shot) <= 33
+                    && ((o.key == key && o.pos.distance(pos) <= NPC_SQUAD_RANGE)
+                        || squad.as_deref().is_some_and(|sq| self.squads.of(**i) == Some(sq)))
+            }).count() >= 2
+        };
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
@@ -11743,6 +11755,9 @@ impl<'w> Server<'w> {
         if err.abs() > NPC_FIRE_FACING_DEG || now < n.next_shot {
             return;
         }
+        if slots_taken && now.saturating_sub(n.last_shot) > 33 {
+            return;
+        }
         if n.burst_left == 0 {
             n.burst_left = NPC_BURST_SHOTS;
         }
@@ -11762,8 +11777,11 @@ impl<'w> Server<'w> {
         let Some(dmg) = weapons::npc_shot_damage(&ammo) else {
             return;
         };
+        // the measured cone is the class's default proficiency; SetCurrentWeaponProficiency
+        // scales it by the engine's proficiency table
+        let prof = self.npcs.get(&id).map(|n| (n.ai.proficiency, ai::default_proficiency(&n.class))).unwrap_or((1, 1));
+        let mut cone = NPC_AIM_CONE_DEG * ai::proficiency_spread(prof.0) / ai::proficiency_spread(prof.1);
         // a scripted SWEP is asked for its NPC spread and may fire itself (`NPCShoot_Primary`)
-        let mut cone = NPC_AIM_CONE_DEG;
         if npc_weapon_shot(&n_weapon).is_none() {
             if let Verdict::Text(t) = self.ask(Request::NpcShoot {
                 npc: id,
@@ -12598,7 +12616,7 @@ impl<'w> Server<'w> {
                 stuck: 0,
                 passive: false,
                 last_shot: 0,
-            ai: ai::AiState { state: ai::spawn_state(def.class), ..Default::default() },
+            ai: ai::AiState { state: ai::spawn_state(def.class), proficiency: ai::default_proficiency(def.class), ..Default::default() },
                 rest_sequence: None,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,

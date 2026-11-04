@@ -309,6 +309,15 @@ pub fn proficiency_spread(p: u8) -> f32 {
     }
 }
 
+/// The proficiency an NPC class starts with (CAI_BaseNPC::CalcWeaponProficiency per class:
+/// soldiers good, metrocops / citizens average, the rest average).
+pub fn default_proficiency(class: &str) -> u8 {
+    match class {
+        "npc_combine_s" => 2,
+        _ => 1,
+    }
+}
+
 /// The HL2 class an NPC class name belongs to (Enums/CLASS, as the game's Classify()).
 pub fn classify(class: &str) -> u8 {
     match class {
