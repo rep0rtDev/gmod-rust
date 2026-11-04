@@ -2111,6 +2111,8 @@ pub struct Npc {
     /// this sandbox body; the hull never moves on its own.
     pub body: Option<u32>,
     pub burst_left: u8,
+    /// The spread sample's seed, drawn when a burst begins and held through it.
+    pub burst_seed: u64,
     pub next_shot: u64,
     pub shots: u32,
     /// How close a chase brings the NPC to its player (NPC_CHASE_REACH, or the melee reach).
@@ -2490,7 +2492,7 @@ pub fn npc_clip_size(weapon: &str) -> u8 {
 /// Ticks without line of sight after which the target is dropped (5 s).
 pub const NPC_TARGET_LOSE_TICKS: u64 = 330;
 /// Half-angle of the aim cone, degrees (the game's soldier passes ~15 u beside a player at 178 u).
-pub const NPC_AIM_CONE_DEG: f32 = 5.0;
+pub const NPC_AIM_CONE_DEG: f32 = 4.0;
 /// ai_spread_cone_focus_time 0.6 s / ai_spread_defocused_cone_multiplier 3 /
 /// ai_spread_pattern_focus_time 0.8 s (engine defaults).
 pub const NPC_SPREAD_DEFOCUS_TICKS: u64 = 40;
@@ -12979,6 +12981,7 @@ impl<'w> Server<'w> {
             body: None,
             ignore: Vec::new(),
             burst_left: 0,
+            burst_seed: 0,
             next_shot: 0,
             cover_fire: false,
             reload_in_place: false,
@@ -15329,12 +15332,19 @@ impl<'w> Server<'w> {
         if slots_taken && now.saturating_sub(n.last_shot) > 33 {
             return;
         }
+        let new_burst = n.burst_left == 0 || n.shots == 0 || n.burst_left == NPC_BURST_SHOTS;
         if n.burst_left == 0 {
             n.burst_left = if cover_fire {
                 NPC_COVER_BURST_SHOTS
             } else {
                 NPC_BURST_SHOTS
             };
+        }
+        // the game's ray holds through a burst and beyond with nothing moving (main scene
+        // t406..462 one ray, 4.9 deg right of the bot at 292 u; squad: five rounds one ray):
+        // one spread sample per burst, not per round
+        if new_burst {
+            n.burst_seed = (id as u64) ^ now.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         }
         n.burst_left -= 1;
         n.shots += 1;
@@ -15384,7 +15394,7 @@ impl<'w> Server<'w> {
         } else {
             now + n.think_interval as u64
         };
-        let seed = (id as u64) ^ now.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let seed = n.burst_seed;
         let aim = to.normalize();
         let Some(dmg) = weapons::npc_shot_damage(&ammo) else {
             return;
@@ -15412,7 +15422,9 @@ impl<'w> Server<'w> {
         if since < NPC_SPREAD_DEFOCUS_TICKS {
             cone *= NPC_SPREAD_DEFOCUS_MULT;
         }
-        let bias = (since as f32 / NPC_SPREAD_FOCUS_TICKS as f32).min(1.0);
+        // measured: every ray of the four soldier recordings sits at the rim (lateral miss
+        // 17-42 u at 190-380 u, 0 hits in 141), so the bias stays at the rim
+        let bias = 0.0;
         // a scripted SWEP is asked for its NPC spread and may fire itself (`NPCShoot_Primary`)
         if npc_weapon_shot(&n_weapon).is_none() {
             if let Verdict::Text(t) = self.ask(Request::NpcShoot {
@@ -16854,6 +16866,7 @@ impl<'w> Server<'w> {
                 body: None,
                 ignore: Vec::new(),
                 burst_left: 0,
+                burst_seed: 0,
                 next_shot: 0,
                 cover_fire: false,
                 reload_in_place: false,
