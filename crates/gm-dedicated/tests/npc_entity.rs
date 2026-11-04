@@ -409,16 +409,19 @@ fn soldier_chases_a_target_out_of_sight_then_gives_up() {
         hidden.distance(npc_pos)
     );
     server.teleport_player(1, hidden);
+    // the game's soldier first suppresses the last known position (NPC_SUPPRESS_TICKS), then
+    // goes after the enemy: a line-of-fire point when the navmesh offers one, else the chase
     let mut chasing = None;
-    for t in 0..40 {
+    for t in 0..(gm_server::NPC_SUPPRESS_TICKS as usize + 40) {
         server.tick(&idle);
         let n = &server.npcs[&id];
-        if n.chase == Some(1) && n.goal.is_some() {
+        if n.goal.is_some() && (n.chase == Some(1) || n.flank_until > 0) {
             chasing = Some(t);
             break;
         }
     }
-    assert!(chasing.is_some(), "never chased the hidden player");
+    let chasing = chasing.expect("never went after the hidden player");
+    assert!(chasing >= gm_server::NPC_SUPPRESS_TICKS as usize - 7, "left the suppression early at {chasing}");
     let shots = server.npcs[&id].shots;
     for _ in 0..21 {
         server.tick(&idle);
