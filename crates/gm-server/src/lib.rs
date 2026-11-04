@@ -11873,12 +11873,30 @@ impl<'w> Server<'w> {
         if props.is_empty() {
             return tr;
         }
-        if let Some(h) = gm_sandbox::trace_hull(self.collision, props, start, end, mins, maxs) {
-            // a hull already inside a prop (spawned onto it) walks out of it as before
-            if h.ent.is_some() && h.fraction > 0.0 && h.fraction < tr.fraction {
+        let Some(h) = gm_sandbox::trace_hull(self.collision, props, start, end, mins, maxs) else {
+            return tr;
+        };
+        if h.ent.is_none() {
+            return tr;
+        }
+        if h.fraction > 0.0 {
+            if h.fraction < tr.fraction {
                 tr.fraction = h.fraction;
                 tr.end = h.pos;
                 tr.normal = h.normal;
+            }
+            return tr;
+        }
+        // the hull starts touching a prop: pressed against a face it stays blocked and slides
+        // along it (the sweep is retried from a step back), while a hull well inside a prop
+        // (spawned onto it) walks out as before
+        let dir = (end - start).normalize_or_zero();
+        let back = start - dir * NPC_SWEEP_BACKOFF;
+        if let Some(h2) = gm_sandbox::sweep_hull_props(props, back, end, mins, maxs) {
+            if h2.fraction > 0.0 && h2.pos.distance(start) <= NPC_SWEEP_BACKOFF + 0.5 {
+                tr.fraction = 0.0;
+                tr.end = start;
+                tr.normal = h2.normal;
             }
         }
         tr
@@ -13298,8 +13316,12 @@ impl<'w> Server<'w> {
             if d < NPC_FLANK_MIN_STEP || d > NPC_FLANK_RANGE {
                 continue;
             }
-            // the game's point kept its distance (255 u from the enemy for a 150 u wall)
-            if v.truncate().distance(known.truncate()) < NPC_LOF_MIN_ENEMY {
+            // the game's point kept its distance (255 u from the enemy for a 150 u wall) but
+            // closed in (263 u out, 256 u from the enemy that had been 382 u away)
+            let to_enemy = v.truncate().distance(known.truncate());
+            if to_enemy < NPC_LOF_MIN_ENEMY
+                || to_enemy >= feet.truncate().distance(known.truncate())
+            {
                 continue;
             }
             if best.is_some_and(|(bd, _)| d >= bd) {
@@ -18470,3 +18492,5 @@ pub const PROP_HIT_COOLDOWN: u64 = 33;
 /// 130 u/s of its ~780).
 pub const PROP_HIT_KEEP: f32 = 0.17;
 pub const PROP_HIT_PUSH_MAX: f32 = 150.0;
+/// How far an NPC hull sweep steps back to find the face of a prop it already touches.
+pub const NPC_SWEEP_BACKOFF: f32 = 4.0;
