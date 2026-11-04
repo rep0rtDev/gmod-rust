@@ -7,6 +7,28 @@ fn main() {
             println!("{path}: missing");
             continue;
         };
+        if std::env::var_os("ACTS").is_some() {
+            // ACTS=1: the sequence -> activity / weight table of the model and its $includemodel
+            // files, as the server's activity lookup sees it
+            let mut files = vec![path.clone()];
+            if let Ok(mdl) = gm_formats::mdl::Mdl::parse(&bytes) {
+                files.extend(gm_formats::mdl::include_models(&bytes, &mdl.header));
+            }
+            for f in files {
+                let Ok(b) = mount.read(&f) else {
+                    println!("{f}: missing");
+                    continue;
+                };
+                let Ok(m) = gm_formats::mdl::Mdl::parse(&b) else {
+                    continue;
+                };
+                println!("{f}:");
+                for q in gm_formats::mdl::sequences(&b, &m.header) {
+                    println!("  {:<28} {:<36} {}", q.name, q.activity_name, q.act_weight);
+                }
+            }
+            continue;
+        }
         match gm_render::props::load_model(&mount, &path, 0) {
             Err(e) => {
                 println!("{path}: no mesh ({e})");

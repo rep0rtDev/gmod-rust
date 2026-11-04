@@ -2117,6 +2117,9 @@ pub struct Npc {
     pub next_swat_scan: u64,
     /// SCHED_WAKE_ANGRY: a zombie that just found its enemy stands one think before chasing.
     pub wake_until: u64,
+    /// Whether the body moved since it first saw its enemy: the game's soldier fires crouched
+    /// (ACT_RANGE_ATTACK1_LOW) from the spot it met the enemy on and standing after any run.
+    pub combat_moved: bool,
     /// Where a zombie wanders after its enemy died (SCHED_ZOMBIE_WANDER_MEDIUM), until a live
     /// enemy shows up again.
     pub wander: Option<Vec3>,
@@ -2408,6 +2411,66 @@ pub fn npc_combat_sequences(class: &str) -> Option<(&'static str, &'static str)>
     }
 }
 
+/// The HL2 weapons' activity tables (`acttable_t` of weapon_smg1 / ar2 / shotgun / pistol /
+/// 357): the activity an armed NPC's base activity becomes, which is what its model carries
+/// (combine_soldier_anims has ACT_IDLE_SMG1 / ACT_RUN_RIFLE, no plain ACT_IDLE / ACT_RUN).
+pub fn npc_weapon_activity(weapon: &str, act: &str) -> Option<&'static str> {
+    let rifle = |smg: &'static str, ar2: &'static str, sg: &'static str| match weapon {
+        "weapon_smg1" => Some(smg),
+        "weapon_ar2" => Some(ar2),
+        "weapon_shotgun" => Some(sg),
+        _ => None,
+    };
+    let pistol = |p: &'static str| matches!(weapon, "weapon_pistol" | "weapon_357").then_some(p);
+    match act {
+        "ACT_IDLE" => rifle("ACT_IDLE_SMG1", "ACT_IDLE_SMG1", "ACT_IDLE_SMG1")
+            .or_else(|| pistol("ACT_IDLE_PISTOL")),
+        "ACT_IDLE_ANGRY" => rifle(
+            "ACT_IDLE_ANGRY_SMG1",
+            "ACT_IDLE_ANGRY_SMG1",
+            "ACT_IDLE_ANGRY_SHOTGUN",
+        )
+        .or_else(|| pistol("ACT_IDLE_ANGRY_PISTOL")),
+        "ACT_RANGE_ATTACK1" => rifle(
+            "ACT_RANGE_ATTACK_SMG1",
+            "ACT_RANGE_ATTACK_AR2",
+            "ACT_RANGE_ATTACK_SHOTGUN",
+        )
+        .or_else(|| pistol("ACT_RANGE_ATTACK_PISTOL")),
+        "ACT_RANGE_ATTACK1_LOW" => rifle(
+            "ACT_RANGE_ATTACK_SMG1_LOW",
+            "ACT_RANGE_ATTACK_AR2_LOW",
+            "ACT_RANGE_ATTACK_SHOTGUN_LOW",
+        )
+        .or_else(|| pistol("ACT_RANGE_ATTACK_PISTOL_LOW")),
+        "ACT_RUN" => rifle("ACT_RUN_RIFLE", "ACT_RUN_RIFLE", "ACT_RUN_RIFLE")
+            .or_else(|| pistol("ACT_RUN_PISTOL")),
+        "ACT_WALK" => rifle("ACT_WALK_RIFLE", "ACT_WALK_RIFLE", "ACT_WALK_RIFLE")
+            .or_else(|| pistol("ACT_WALK_PISTOL")),
+        "ACT_RUN_AIM" => rifle(
+            "ACT_RUN_AIM_RIFLE",
+            "ACT_RUN_AIM_RIFLE",
+            "ACT_RUN_AIM_SHOTGUN",
+        )
+        .or_else(|| pistol("ACT_RUN_AIM_PISTOL")),
+        "ACT_WALK_AIM" => rifle(
+            "ACT_WALK_AIM_RIFLE",
+            "ACT_WALK_AIM_RIFLE",
+            "ACT_WALK_AIM_SHOTGUN",
+        )
+        .or_else(|| pistol("ACT_WALK_AIM_PISTOL")),
+        "ACT_RELOAD" => rifle("ACT_RELOAD_SMG1", "ACT_RELOAD_SMG1", "ACT_RELOAD_SHOTGUN")
+            .or_else(|| pistol("ACT_RELOAD_PISTOL")),
+        "ACT_COVER_LOW" => rifle(
+            "ACT_COVER_SMG1_LOW",
+            "ACT_COVER_SMG1_LOW",
+            "ACT_COVER_SMG1_LOW",
+        )
+        .or_else(|| pistol("ACT_COVER_PISTOL_LOW")),
+        _ => None,
+    }
+}
+
 /// Hitscan weapon an NPC fires: (ammo, pellets per shot). Melee and projectile weapons give None.
 pub fn npc_weapon_shot(weapon: &str) -> Option<(&'static str, u8)> {
     match weapon {
@@ -2477,6 +2540,9 @@ const ZOMBIE_WANDER_MAX: u32 = 384;
 /// Poison on top of the bite (the game's poison headcrab leaves the player at 1 hp).
 const NPC_POISON_DAMAGE: f32 = 94.0;
 const NPC_POISON_WARNING_TICKS: u64 = 77;
+/// SCHED_COMBINE_SUPPRESS lasts the first volley: the game read 88 for 40 ticks after the
+/// sight think and 100 from 43..46 on (server_npc_grenade_soldier); 40 on our 7-tick grid.
+const NPC_SUPPRESS_TICKS: u64 = 40;
 
 const MELEE_PLAIN: NpcMelee = NpcMelee {
     damage: 0.0,
@@ -4939,7 +5005,12 @@ impl<'w> Server<'w> {
             } else if n.chase.is_some() {
                 ai::SCHED_CHASE_ENEMY
             } else if target.is_some() && !target_dead && ranged && los {
-                ai::SCHED_RANGE_ATTACK1
+                // the first volley is the suppress schedule (88), later ones RANGE_ATTACK1 (100)
+                if n.target_first_seen > 0 && now < n.target_first_seen + NPC_SUPPRESS_TICKS {
+                    ai::SCHED_COMBINE_SUPPRESS
+                } else {
+                    ai::SCHED_RANGE_ATTACK1
+                }
             } else if target.is_some()
                 && !target_dead
                 && melee.is_some()
@@ -10796,6 +10867,45 @@ impl<'w> Server<'w> {
         m.script.sequences.get(best?.1).cloned()
     }
 
+    /// `act` through the NPC's weapon table (`npc_weapon_activity`) when the model carries the
+    /// translated activity, else the base one.
+    fn npc_translated_sequence(&self, id: u32, act: &str) -> Option<String> {
+        let n = self.npcs.get(&id)?;
+        npc_weapon_activity(&n.weapon, act)
+            .and_then(|t| self.npc_activity_sequence(id, t))
+            .or_else(|| self.npc_activity_sequence(id, act))
+    }
+
+    /// The firing body's (shoot, between bursts) sequences: the weapon-translated
+    /// ACT_RANGE_ATTACK1 (LOW until the body moved in combat) and ACT_IDLE_ANGRY of the model
+    /// (server_npc_grenade_soldier_wall: shootSMG1c at first contact, shootSMG1s /
+    /// CombatIdle1_SMG1 after the run), the class table when the model lacks them.
+    fn npc_shoot_sequences(&mut self, id: u32) -> Option<(String, String)> {
+        let n = self.npcs.get(&id)?;
+        let (shoot, between) = npc_combat_sequences(&n.class)?;
+        let model = n.model.clone();
+        let low = !n.combat_moved;
+        if self.ensure_model(&model) {
+            let attack = if low {
+                self.npc_translated_sequence(id, "ACT_RANGE_ATTACK1_LOW")
+            } else {
+                None
+            }
+            .or_else(|| self.npc_translated_sequence(id, "ACT_RANGE_ATTACK1"));
+            // crouched, the soldier idles in ACT_CROUCHIDLE between volleys (CrouchIdle)
+            let between = if low {
+                self.npc_activity_sequence(id, "ACT_CROUCHIDLE")
+            } else {
+                None
+            }
+            .or_else(|| self.npc_translated_sequence(id, "ACT_IDLE_ANGRY"));
+            if let (Some(a), Some(b)) = (attack, between) {
+                return Some((a, b));
+            }
+        }
+        Some((shoot.to_string(), between.to_string()))
+    }
+
     /// `(duration, looping)` of `seq` on `model`, from the sequence's first animation.
     fn seq_duration(&self, model: &str, seq: &str) -> Option<(f32, bool)> {
         let m = self.models.get(model)?;
@@ -12041,6 +12151,7 @@ impl<'w> Server<'w> {
             swat: None,
             next_swat_scan: 0,
             wake_until: 0,
+            combat_moved: false,
             wander: None,
             auto_seq: None,
             last_known: None,
@@ -13066,6 +13177,9 @@ impl<'w> Server<'w> {
                 }
                 let (arrived, stopped) = (arrived || jammed, stopped);
                 n.move_speed = if arrived || stopped { 0.0 } else { v1 };
+                if n.target.is_some() && moved > 0.5 {
+                    n.combat_moved = true;
+                }
                 if arrived || stopped {
                     n.detour = None;
                     n.detour_side = 0.0;
@@ -13121,8 +13235,13 @@ impl<'w> Server<'w> {
             return;
         };
         let swinging = n.melee_swing.is_some() && now < n.swing_until;
-        let moving = n.goal.is_some() && n.move_speed > 0.0;
-        let own = n.auto_seq.as_deref() == Some(n.sequence.as_str());
+        // the gait shows from the think the path is set (RunALL at the run's first think)
+        let moving = n.goal.as_ref().is_some_and(|g| !g.halt);
+        let armed = npc_weapon_activity(&n.weapon, "ACT_IDLE").is_some();
+        // an armed body's first think takes over from the spawn pose (Idle1_SMG1 at t4)
+        let own =
+            n.auto_seq.as_deref() == Some(n.sequence.as_str()) || (armed && n.auto_seq.is_none());
+        let sees_enemy = n.target.is_some() && n.target_seen == now;
         // classes whose swings are measured by name (server_npc_melee_*): the antlion's
         // pounce2 / pounce / attack3, the poison zombie's ThrowWarning then Throw, the fast
         // zombie's BR2_Roar once both scratches landed
@@ -13160,25 +13279,38 @@ impl<'w> Server<'w> {
         let act = if swinging {
             "ACT_MELEE_ATTACK1"
         } else if moving {
-            if n.run {
-                "ACT_RUN"
-            } else {
-                "ACT_WALK"
+            match (n.run, sees_enemy) {
+                (true, true) => "ACT_RUN_AIM",
+                (true, false) => "ACT_RUN",
+                (false, true) => "ACT_WALK_AIM",
+                (false, false) => "ACT_WALK",
             }
         } else if own {
             "ACT_IDLE"
         } else {
             return;
         };
-        if !swinging && !moving && npc_combat_sequences(&n.class).is_some() && n.target.is_some() {
+        if !swinging
+            && !moving
+            && npc_combat_sequences(&n.class).is_some()
+            && n.target.is_some()
+            && n.target_first_seen != now
+        {
             // a firing body's shoot / between-bursts sequences take over when it stands
             return;
         }
-        let Some(seq) = self.npc_activity_sequence(id, act) else {
+        let Some(seq) = self.npc_translated_sequence(id, act).or_else(|| {
+            // RUN_AIM / WALK_AIM fall back to the plain gait
+            match act {
+                "ACT_RUN_AIM" => self.npc_translated_sequence(id, "ACT_RUN"),
+                "ACT_WALK_AIM" => self.npc_translated_sequence(id, "ACT_WALK"),
+                _ => None,
+            }
+        }) else {
             return;
         };
         let idle = (act != "ACT_IDLE")
-            .then(|| self.npc_activity_sequence(id, "ACT_IDLE"))
+            .then(|| self.npc_translated_sequence(id, "ACT_IDLE"))
             .flatten();
         if let Some(n) = self.npcs.get_mut(&id) {
             if n.sequence != seq {
@@ -13510,6 +13642,7 @@ impl<'w> Server<'w> {
                 .count()
                 >= 2
         };
+        let shoot_seqs = self.npc_shoot_sequences(id);
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
@@ -13525,13 +13658,19 @@ impl<'w> Server<'w> {
             n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
         }
         if n.goal.is_none() {
-            if let Some((shoot, between)) = npc_combat_sequences(&n.class) {
+            // the think that first sees the enemy keeps the idle pose (Idle1_SMG1 at t4)
+            if let Some((shoot, between)) =
+                shoot_seqs.as_ref().filter(|_| n.target_first_seen != now)
+            {
                 let firing = n.shots > 0 && now < n.last_shot + n.think_interval as u64;
                 let seq = if firing { shoot } else { between };
-                if n.sequence != shoot && n.sequence != between {
+                if n.sequence != *shoot
+                    && n.sequence != *between
+                    && n.auto_seq.as_ref() != Some(&n.sequence)
+                {
                     n.rest_sequence = Some(n.sequence.clone());
                 }
-                n.sequence = seq.to_string();
+                n.sequence = seq.clone();
             }
         }
         if err.abs() > NPC_FIRE_FACING_DEG || now < n.next_shot {
@@ -13546,8 +13685,8 @@ impl<'w> Server<'w> {
         n.burst_left -= 1;
         n.shots += 1;
         n.last_shot = now;
-        if let Some((shoot, _)) = npc_combat_sequences(&n.class) {
-            n.sequence = shoot.to_string();
+        if let Some((shoot, _)) = shoot_seqs.as_ref() {
+            n.sequence = shoot.clone();
         }
         n.next_shot = if n.burst_left == 0 {
             now + NPC_BURST_GAP_TICKS
@@ -13656,6 +13795,7 @@ impl<'w> Server<'w> {
         n.target_seen = now;
         if n.target_first_seen == 0 {
             n.target_first_seen = now;
+            n.combat_moved = false;
             if ai::class_sched_family(&n.class) == Some("zombie") {
                 // the game: a new enemy in combat runs SCHED_WAKE_ANGRY for one think (7 ticks)
                 // before the chase starts (server_npc_zombie_swat2_*: sched 4 at tick 12, 93 at 19)
@@ -14735,6 +14875,7 @@ impl<'w> Server<'w> {
                 swat: None,
                 next_swat_scan: 0,
                 wake_until: 0,
+                combat_moved: false,
                 wander: None,
                 auto_seq: None,
                 last_known: None,

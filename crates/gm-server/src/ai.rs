@@ -464,6 +464,9 @@ pub const SCHED_ASSAULT_WAIT_AND_CLEAR: u16 = 1014;
 /// CAI_LeadBehavior's first two schedules (its block starts with them in the game's enum).
 pub const SCHED_LEAD_RETRIEVE: u16 = 1015;
 pub const SCHED_LEAD_RETRIEVE_WAIT: u16 = 1016;
+/// SCHED_COMBINE_SUPPRESS: the soldier's first volley, the think after it first saw the enemy
+/// (server_npc_grenade_soldier*: 88 at t5, then 100 = SCHED_COMBINE_RANGE_ATTACK1).
+pub const SCHED_COMBINE_SUPPRESS: u16 = 1021;
 
 /// The shared schedule a behaviour-private one stands for on a class without a measured block.
 pub fn shared_alias(s: u16) -> u16 {
@@ -473,6 +476,7 @@ pub fn shared_alias(s: u16) -> u16 {
         SCHED_LEAD_RETRIEVE => SCHED_FORCED_GO,
         SCHED_LEAD_RETRIEVE_WAIT => SCHED_IDLE_STAND,
         SCHED_ZOMBIE_WANDER_MEDIUM => SCHED_IDLE_WANDER,
+        SCHED_COMBINE_SUPPRESS => SCHED_RANGE_ATTACK1,
         _ => s,
     }
 }
@@ -663,7 +667,8 @@ pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
         // measured on a soldier: 88 while shooting, 92 running to reload, 97 running to a line
         // of fire, 101 the grenade toss
         "combine" => match shared {
-            SCHED_RANGE_ATTACK1 => Some(0),
+            SCHED_COMBINE_SUPPRESS => Some(0),
+            SCHED_RANGE_ATTACK1 => Some(12),
             SCHED_HIDE_AND_RELOAD => Some(4),
             SCHED_ESTABLISH_LINE_OF_FIRE => Some(9),
             SCHED_RANGE_ATTACK2 => Some(13),
