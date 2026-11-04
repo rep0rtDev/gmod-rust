@@ -347,7 +347,7 @@ fn armed_soldier_fires_bursts_at_a_visible_player() {
     let burst = gm_server::NPC_BURST_SHOTS as usize;
     for (i, g) in gaps.iter().enumerate() {
         let expect = if (i + 1) % burst == 0 {
-            gm_server::NPC_BURST_GAP_TICKS
+            gm_server::NPC_BURST_GAP_LOW_TICKS
         } else {
             7
         };
@@ -668,17 +668,17 @@ fn soldier_hit_mid_burst_ends_it_and_crouches() {
     eprintln!("shots {shots:?}\ngaps {gaps:?}\nseqs {seqs:?}");
     // burst 1: 5 shots, burst 2 cut to 3, burst 3: 5 shots, then the delayed burst 4
     assert_eq!(&gaps[..4], &[7, 7, 7, 7]);
-    assert_eq!(gaps[4], gm_server::NPC_BURST_GAP_TICKS);
+    assert_eq!(gaps[4], gm_server::NPC_BURST_GAP_LOW_TICKS);
     assert_eq!(&gaps[5..7], &[7, 7], "burst 2 before the hit");
     assert_eq!(
         gaps[7],
-        gm_server::NPC_BURST_GAP_TICKS,
+        gm_server::NPC_BURST_GAP_LOW_TICKS,
         "the hit ended burst 2"
     );
     assert_eq!(&gaps[8..12], &[7, 7, 7, 7], "burst 3");
     assert_eq!(
         gaps[12],
-        gm_server::NPC_BURST_GAP_TICKS + 7,
+        gm_server::NPC_BURST_GAP_LOW_TICKS + 7,
         "the gap hit delays one think"
     );
     // pose: crouch sequences in combat, the shoot one while firing
@@ -1941,8 +1941,11 @@ fn soldier_tosses_a_grenade_at_a_visible_player() {
     assert_eq!(seq, "grenThrow");
     let late = throw_tick - first_seen;
     let first = gm_server::NPC_GRENADE_FIRST_TICKS as usize;
+    // a low clip sends the soldier to reload first (40 shots in, NPC_RELOAD_TICKS at cover and
+    // the run back), which defers the toss by that much
+    let reload = gm_server::NPC_RELOAD_DELAY_TICKS as usize + gm_server::NPC_RELOAD_TICKS as usize;
     assert!(
-        (first..=first + 14).contains(&late),
+        (first..=first + 14 + reload).contains(&late),
         "toss {late} ticks after the sighting"
     );
     let (hit_tick, origin, v) = toss.expect("no grenade was released");
@@ -1951,8 +1954,14 @@ fn soldier_tosses_a_grenade_at_a_visible_player() {
         gm_server::NPC_GRENADE_RELEASE_TICK as usize
     );
     let n = &server.npcs[&id];
+    // released 35 u ahead along the line to the player (the soldier stands wherever its
+    // reload cover run left it) and 42 u above the feet
+    let forward = (server.players[&1].state.origin - n.pos)
+        .truncate()
+        .normalize();
+    let expect = n.pos.truncate() + forward * 35.0;
     assert!(
-        (origin.x - (n.pos.x - 35.0)).abs() < 2.0 && (origin.z - (n.pos.z + 42.0)).abs() < 2.0,
+        origin.truncate().distance(expect) < 2.0 && (origin.z - (n.pos.z + 42.0)).abs() < 2.0,
         "released at {origin} for {}",
         n.pos
     );
@@ -1965,11 +1974,11 @@ fn soldier_tosses_a_grenade_at_a_visible_player() {
     );
     // apex 255 u: vz 553, 1.84 s of flight, the horizontal speed lands it on the player
     let flight = 2.0 * 553.0 / 600.0;
+    let horizontal = v.truncate();
     assert!(
-        v.x < 0.0
-            && v.y.abs() < 10.0
+        horizontal.normalize().dot(forward) > 0.99
             && (v.z - 553.0).abs() < 10.0
-            && (v.x.abs() - range / flight).abs() < 10.0,
+            && (horizontal.length() - range / flight).abs() < 10.0,
         "toss velocity {v:?} for {range:.0} u"
     );
 }

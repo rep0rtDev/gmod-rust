@@ -2163,6 +2163,11 @@ pub struct Npc {
     pub cover_wanted: bool,
     pub cover_at: Option<Vec3>,
     pub cover_until: u64,
+    /// Rounds left in the weapon; at a quarter of the clip (COND_LOW_PRIMARY_AMMO) the body
+    /// hides and reloads (server_npc_grenade_soldier: after 7 volleys).
+    pub clip: u8,
+    pub reloading: bool,
+    pub reload_until: u64,
     pub cover_cooldown: u64,
     pub suppress_hits: u8,
     pub suppress_since: u64,
@@ -2369,6 +2374,20 @@ impl MoveOverride {
 }
 pub const NPC_BURST_SHOTS: u8 = 5;
 pub const NPC_BURST_GAP_TICKS: u64 = 28;
+/// The crouched body's gap (49-tick volley period against 56 standing).
+pub const NPC_BURST_GAP_LOW_TICKS: u64 = 21;
+pub const NPC_RELOAD_DELAY_TICKS: u64 = 11;
+pub const NPC_RELOAD_TICKS: u64 = 133;
+
+/// The NPC clip of a weapon (HL2 weapon scripts' clip_size).
+pub fn npc_clip_size(weapon: &str) -> u8 {
+    match weapon {
+        "weapon_ar2" => 30,
+        "weapon_pistol" => 18,
+        "weapon_shotgun" => 6,
+        _ => 45,
+    }
+}
 /// Ticks without line of sight after which the target is dropped (5 s).
 pub const NPC_TARGET_LOSE_TICKS: u64 = 330;
 /// Half-angle of the aim cone, degrees (the game's soldier passes ~15 u beside a player at 178 u).
@@ -5011,6 +5030,8 @@ impl<'w> Server<'w> {
                 ai::SCHED_RANGE_ATTACK2
             } else if now < n.flank_until && n.goal.is_some() {
                 ai::SCHED_ESTABLISH_LINE_OF_FIRE
+            } else if n.reloading {
+                ai::SCHED_HIDE_AND_RELOAD
             } else if n.cover_at.is_some() {
                 ai::SCHED_TAKE_COVER_FROM_ENEMY
             } else if n.chase.is_some() {
@@ -12412,6 +12433,9 @@ impl<'w> Server<'w> {
             cover_wanted: false,
             cover_at: None,
             cover_until: 0,
+            clip: 45,
+            reloading: false,
+            reload_until: 0,
             cover_cooldown: 0,
             suppress_hits: 0,
             suppress_since: 0,
@@ -12585,7 +12609,12 @@ impl<'w> Server<'w> {
             // burst by one think
             if n.burst_left > 0 && n.burst_left < NPC_BURST_SHOTS {
                 n.burst_left = 0;
-                n.next_shot = n.last_shot + NPC_BURST_GAP_TICKS;
+                n.next_shot = n.last_shot
+                    + if n.combat_moved {
+                        NPC_BURST_GAP_TICKS
+                    } else {
+                        NPC_BURST_GAP_LOW_TICKS
+                    };
             } else if n.next_shot > tick {
                 n.next_shot += n.think_interval as u64;
             }
@@ -13558,6 +13587,17 @@ impl<'w> Server<'w> {
             }
             return;
         }
+        if n.reloading && n.reload_until != 0 && now + NPC_RELOAD_TICKS >= n.reload_until {
+            if let Some(seq) = self.npc_translated_sequence(id, "ACT_RELOAD") {
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    if n.sequence != seq {
+                        n.sequence = seq.clone();
+                    }
+                    n.auto_seq = Some(seq);
+                }
+                return;
+            }
+        }
         let act = if swinging {
             "ACT_MELEE_ATTACK1"
         } else if moving {
@@ -13900,6 +13940,19 @@ impl<'w> Server<'w> {
         if n.cover_at.is_some() && n.goal.is_none() && n.cover_until == 0 {
             n.cover_until = now + NPC_COVER_TICKS;
         }
+        // at cover the reload starts after a think and a half and runs its sequence
+        // (server_npc_grenade_soldier: arrival t680, reload t691..t824), the cover held for it
+        if n.reloading && n.reload_until == 0 && n.goal.is_none() {
+            n.reload_until = now + NPC_RELOAD_DELAY_TICKS + NPC_RELOAD_TICKS;
+            if n.cover_at.is_some() {
+                n.cover_until = n.reload_until;
+            }
+        }
+        if n.reloading && n.reload_until != 0 && now >= n.reload_until {
+            n.clip = npc_clip_size(&n.weapon);
+            n.reloading = false;
+            n.reload_until = 0;
+        }
         if n.cover_at.is_some() && now >= n.cover_until && n.cover_until != 0 {
             n.cover_at = None;
             n.cover_until = 0;
@@ -13908,6 +13961,12 @@ impl<'w> Server<'w> {
             n.cover_wanted = false;
             if self.npc_take_cover(id, player) {
                 return;
+            }
+            // no cover in reach: the reload happens where it stands
+            if let Some(n) = self.npcs.get_mut(&id) {
+                if n.reloading && n.reload_until == 0 {
+                    n.reload_until = now + NPC_RELOAD_TICKS;
+                }
             }
         }
         // the squad's two attack slots (SQUAD_SLOT_ATTACK1/2): with two squadmates already
@@ -13972,12 +14031,22 @@ impl<'w> Server<'w> {
         }
         n.burst_left -= 1;
         n.shots += 1;
+        n.clip = n.clip.saturating_sub(1);
         n.last_shot = now;
         if let Some((shoot, _)) = shoot_seqs.as_ref() {
             n.sequence = shoot.clone();
         }
+        // measured volley period: 49 ticks crouched (shootSMG1c), 56 standing (shootSMG1s)
         n.next_shot = if n.burst_left == 0 {
-            now + NPC_BURST_GAP_TICKS
+            if n.clip as u16 * 8 <= npc_clip_size(&n.weapon) as u16 && !n.reloading {
+                n.reloading = true;
+                n.cover_wanted = true;
+            }
+            now + if n.combat_moved {
+                NPC_BURST_GAP_TICKS
+            } else {
+                NPC_BURST_GAP_LOW_TICKS
+            }
         } else {
             now + n.think_interval as u64
         };
@@ -15186,6 +15255,9 @@ impl<'w> Server<'w> {
                 cover_wanted: false,
                 cover_at: None,
                 cover_until: 0,
+                clip: 45,
+                reloading: false,
+                reload_until: 0,
                 cover_cooldown: 0,
                 suppress_hits: 0,
                 suppress_since: 0,
