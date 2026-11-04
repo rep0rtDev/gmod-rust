@@ -1084,8 +1084,17 @@ impl ServerNet {
             if let Some(text) = text {
                 let line = format!("{name}: {text}");
                 self.log.push(format!("chat {line}"));
+                let listeners: Vec<u32> = self.clients.values().filter(|c| c.welcomed && !c.closing).map(|c| c.player).collect();
+                let mut hidden = Vec::new();
+                if let Some(h) = self.hooks.as_mut() {
+                    for &l in &listeners {
+                        if !h.player_can_see_chat(server, l, player, &text) {
+                            hidden.push(l);
+                        }
+                    }
+                }
                 for c in self.clients.values_mut() {
-                    if c.welcomed && !c.closing {
+                    if c.welcomed && !c.closing && !hidden.contains(&c.player) {
                         c.pending_events.push(line.clone());
                     }
                 }

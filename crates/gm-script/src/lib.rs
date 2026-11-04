@@ -1042,6 +1042,32 @@ impl Runtime {
         self.run_event(server, "game.restore_failed", p);
     }
 
+    /// `GM:PlayerCanSeePlayersChat` for one listener: an actor answering "0" hides the line.
+    pub fn player_can_see_chat(&mut self, server: &mut Server<'_>, listener: u32, speaker: u32, text: &str) -> bool {
+        let mut p = api::Payload::default();
+        p.ints.push(("listener", listener as i64));
+        p.ints.push(("speaker", speaker as i64));
+        p.strs.push(("text", text.to_string()));
+        let snap = self.snapshot(server);
+        let mut see = true;
+        for i in 0..self.actors.len() {
+            let a = &mut self.actors[i];
+            if !a.may_run(self.tick) {
+                continue;
+            }
+            match a.dispatch_reply(&snap, "player.chat.see", &p, self.tick) {
+                Ok(Reply::Cancel) => see = false,
+                Ok(Reply::Text(t)) if t == "0" => see = false,
+                Ok(_) => {}
+                Err(e) => {
+                    let label = a.label();
+                    self.actor_failed(label, format!("{e}"));
+                }
+            }
+        }
+        self.serial(server);
+        see
+    }
     pub fn player_chat(
         &mut self,
         server: &mut Server<'_>,
@@ -2002,6 +2028,9 @@ impl gm_server::ServerHooks for Runtime {
     }
     fn player_chat(&mut self, server: &mut Server<'_>, player: u32, text: &str) -> Option<String> {
         Runtime::player_chat(self, server, player, text)
+    }
+    fn player_can_see_chat(&mut self, server: &mut Server<'_>, listener: u32, speaker: u32, text: &str) -> bool {
+        Runtime::player_can_see_chat(self, server, listener, speaker, text)
     }
     fn player_command(
         &mut self,

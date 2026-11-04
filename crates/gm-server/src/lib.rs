@@ -1691,6 +1691,16 @@ pub trait ServerHooks {
     ) -> Option<String> {
         Some(text.to_owned())
     }
+    /// Whether `listener` sees `speaker`'s chat line (`GM:PlayerCanSeePlayersChat`).
+    fn player_can_see_chat(
+        &mut self,
+        _server: &mut Server<'_>,
+        _listener: u32,
+        _speaker: u32,
+        _text: &str,
+    ) -> bool {
+        true
+    }
     /// `save <name>`: the runtime's data for the file - global blobs (`saverestore` save hooks
     /// by name) and one blob per scripted entity (by id); empty by default.
     fn save_data(
