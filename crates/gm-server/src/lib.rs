@@ -15011,8 +15011,11 @@ impl<'w> Server<'w> {
             // soldier of server_npc_grenade_soldier loses the bot behind the fridge row on
             // its way to the reload cover (ops 432..530, turning to its path and running the
             // plain gait) while the eye and chest lines stay clear and only the line to the
-            // origin clips the fridge tops
-            (server.npc_los(eye, enemy_eye) && server.npc_los(eye, pl.state.origin))
+            // origin clips the fridge tops - an armed body's line; an unarmed one sees by the
+            // eye line alone (server_npc_zombie_swat3_a_drum875: the zombie takes the bot over
+            // the upright drum between them, which blocks only the line to the feet)
+            let armed = !(n.weapon.is_empty() || n.weapon == "none");
+            (server.npc_los(eye, enemy_eye) && (!armed || server.npc_los(eye, pl.state.origin)))
                 .then_some(chest)
         };
         // keep the current target while visible, otherwise the nearest visible player
@@ -15503,7 +15506,11 @@ impl<'w> Server<'w> {
             if chest.distance(eye) > sight {
                 return None;
             }
-            server.npc_los(eye, chest).then_some(pl.state.origin)
+            // the sight line runs to the enemy's eyes (FVisible): the zombie of
+            // server_npc_zombie_swat3_a_drum875 takes the bot over the upright drum between
+            // them, which hides the chest and feet but not the head
+            let (enemy_eye, _) = server.eye(p)?;
+            server.npc_los(eye, enemy_eye).then_some(pl.state.origin)
         };
         let mut target = n.target.and_then(|p| sees(self, p).map(|o| (p, o)));
         if target.is_none() {
@@ -15916,7 +15923,11 @@ impl<'w> Server<'w> {
             if chest.distance(eye) > sight {
                 return None;
             }
-            server.npc_los(eye, chest).then_some(pl.state.origin)
+            // the sight line runs to the enemy's eyes (FVisible): the zombie of
+            // server_npc_zombie_swat3_a_drum875 takes the bot over the upright drum between
+            // them, which hides the chest and feet but not the head
+            let (enemy_eye, _) = server.eye(p)?;
+            server.npc_los(eye, enemy_eye).then_some(pl.state.origin)
         };
         let mut target = n.target.and_then(|p| sees(self, p).map(|o| (p, o)));
         if target.is_none() {
