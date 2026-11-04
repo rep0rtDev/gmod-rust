@@ -2229,6 +2229,11 @@ pub struct NpcMoveDef {
 pub const NPC_THINK_TICKS: u8 = 7;
 pub const NPC_THINK_PHASE: u64 = 3;
 pub const NPC_THINK_TICKS_FAR: u8 = 13;
+/// Outside a player's view cone an NPC farther than this thinks every `NPC_THINK_TICKS_FAR`
+/// (in the walk recordings the deciding think at ~292 u still ran at 7 ticks, at ~300 u at 13).
+pub const NPC_EFFICIENT_DIST: f32 = 296.0;
+/// cos of the player's half field of view the efficiency test uses (VIEW_FIELD_WIDE).
+pub const NPC_VIEW_CONE_COS: f32 = 0.766;
 /// A chasing NPC comes to rest this far from its target and re-paths once the target has
 /// moved this much off the end of its path.
 pub const NPC_CHASE_REACH: f32 = 64.0;
@@ -13248,10 +13253,13 @@ impl<'w> Server<'w> {
             .map(|(id, _)| *id)
             .collect();
         let now = self.tick_count;
-        let eyes: Vec<i32> = self
+        let eyes: Vec<(i32, Vec3, f32)> = self
             .players
             .keys()
-            .filter_map(|&p| self.eye(p).map(|e| self.collision.cluster_at(e.0)))
+            .filter_map(|&p| {
+                self.eye(p)
+                    .map(|e| (self.collision.cluster_at(e.0), e.0, e.1.y))
+            })
             .collect();
         let slots = self.formation_slots();
         let mut thought = Vec::new();
@@ -13262,9 +13270,20 @@ impl<'w> Server<'w> {
             if now < n.next_think {
                 continue;
             }
-            // out of every player's PVS the game thinks every 13 ticks instead of 7
+            // out of every player's PVS, or behind every player (outside the +-40 deg view
+            // cone) and more than NPC_EFFICIENT_DIST away, the game thinks every 13 ticks
+            // instead of 7 (AIE_EFFICIENT; walk recordings switch between 271 and 308 u)
             let cluster = self.collision.cluster_at(n.pos + Vec3::new(0.0, 0.0, 36.0));
-            let far = eyes.iter().all(|&e| !self.collision.visible(e, cluster));
+            let far = eyes.iter().all(|&(e, eye, yaw)| {
+                if !self.collision.visible(e, cluster) {
+                    return true;
+                }
+                let to = (n.pos - eye).truncate();
+                let (sy, cy) = yaw.to_radians().sin_cos();
+                let in_cone =
+                    to.normalize_or_zero().dot(glam::Vec2::new(cy, sy)) >= NPC_VIEW_CONE_COS;
+                !in_cone && to.length() > NPC_EFFICIENT_DIST
+            });
             let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
             n.think_interval = n.move_interval.unwrap_or(if far {
                 NPC_THINK_TICKS_FAR
