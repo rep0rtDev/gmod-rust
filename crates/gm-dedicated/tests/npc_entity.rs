@@ -1454,3 +1454,51 @@ fn npc_runs_a_scripted_engine_schedule() {
     let n = &server.npcs[&id];
     assert!(!n.ai.scripted && n.ai.schedule == Some(ai::SCHED_IDLE_STAND), "{:?}", n.ai);
 }
+
+// Gunfire is a combat sound: an NPC in the weapon's hearing radius gets COND_HEAR_COMBAT and
+// remembers the origin as its best sound for ~3 s, then forgets both.
+#[test]
+fn npc_hears_gunfire_and_forgets_it() {
+    use gm_server::ai;
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_navmesh(world.nav.clone());
+    let start = Vec3::new(823.235, -500.0, -143.0);
+    server.add_player(1, start, Vec3::new(20.0, 0.0, 0.0));
+    server.set_weapons(1, &["weapon_pistol"]);
+    let look = gm_server::PlayerCmd {
+        cmd: gm_move::UserCmd {
+            view_angles: Vec3::new(20.0, 0.0, 0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let idle = std::collections::BTreeMap::from([(1, look)]);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let id = server.spawn_npc(1, "npc_citizen", "none").unwrap();
+    for _ in 0..8 {
+        server.tick(&idle);
+    }
+    assert!(!server.npcs[&id].ai.has(ai::COND_HEAR_COMBAT));
+    server.fire_bullets(1, Vec3::new(0.0, 0.0, -1.0), "Pistol", None);
+    for _ in 0..8 {
+        server.tick(&idle);
+    }
+    let a = &server.npcs[&id].ai;
+    assert!(a.has(ai::COND_HEAR_COMBAT), "{a:?}");
+    let (pos, kind, _) = a.last_sound.expect("best sound");
+    assert_eq!(kind, ai::COND_HEAR_COMBAT);
+    assert!(pos.distance(start) < 80.0, "sound at {pos}");
+    for _ in 0..(66 * 3 + 8) {
+        server.tick(&idle);
+    }
+    let a = &server.npcs[&id].ai;
+    assert!(!a.has(ai::COND_HEAR_COMBAT) && a.last_sound.is_none(), "{a:?}");
+}

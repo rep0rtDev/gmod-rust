@@ -115,6 +115,7 @@ pub const TASK_GET_PATH_TO_PLAYER: u16 = 24;
 pub const TASK_GET_PATH_TO_SAVEPOSITION: u16 = 25;
 pub const TASK_GET_PATH_TO_TARGET: u16 = 26;
 pub const TASK_GET_PATH_TO_RANDOM_NODE: u16 = 27;
+pub const TASK_GET_PATH_TO_BESTSOUND: u16 = 28;
 pub const TASK_RUN_PATH: u16 = 30;
 pub const TASK_WALK_PATH: u16 = 31;
 pub const TASK_RUN_PATH_FLEE: u16 = 35;
@@ -122,6 +123,7 @@ pub const TASK_FACE_IDEAL: u16 = 43;
 pub const TASK_FACE_REASONABLE: u16 = 44;
 pub const TASK_FACE_PLAYER: u16 = 46;
 pub const TASK_FACE_ENEMY: u16 = 47;
+pub const TASK_FACE_BESTSOUND_: u16 = 44;
 pub const TASK_FACE_TARGET: u16 = 49;
 pub const TASK_FACE_LASTPOSITION: u16 = 50;
 pub const TASK_RANGE_ATTACK1: u16 = 54;
@@ -250,7 +252,7 @@ pub fn schedule_tasks(id: u16) -> Option<(&'static [(u16, f32)], &'static [u8])>
             &[COND_NEW_ENEMY, COND_SEE_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_HEAR_DANGER, COND_PROVOKED_],
         ),
         SCHED_INVESTIGATE_SOUND => (
-            &[(TASK_STOP_MOVING, 0.0), (TASK_GET_PATH_TO_ENEMY_LKP, 0.0), (TASK_WALK_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0), (TASK_WAIT, 5.0)],
+            &[(TASK_STOP_MOVING, 0.0), (TASK_GET_PATH_TO_BESTSOUND, 0.0), (TASK_WALK_PATH, 0.0), (TASK_WAIT_FOR_MOVEMENT, 0.0), (TASK_WAIT, 5.0)],
             &[COND_NEW_ENEMY, COND_SEE_ENEMY, COND_LIGHT_DAMAGE, COND_HEAVY_DAMAGE, COND_HEAR_DANGER],
         ),
         SCHED_COMBAT_FACE => (&[(TASK_STOP_MOVING, 0.0), (TASK_FACE_ENEMY, 0.0), (TASK_WAIT, 1.5)], &[COND_CAN_RANGE_ATTACK1, COND_CAN_MELEE_ATTACK1, COND_NEW_ENEMY, COND_ENEMY_DEAD]),
@@ -429,6 +431,9 @@ pub struct AiState {
     pub last_enemy: u32,
     /// `NPC:CapabilitiesAdd/Remove/Clear` replaced the class capabilities.
     pub caps_override: Option<u32>,
+    /// The loudest sound heard lately (origin, COND_HEAR_* kind, tick): what INVESTIGATE_SOUND
+    /// / ALERT_FACE_BESTSOUND walk to or face (the engine's best sound, kept ~3 s).
+    pub last_sound: Option<(glam::Vec3, u8, u64)>,
 }
 
 impl AiState {

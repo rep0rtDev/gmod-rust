@@ -4182,7 +4182,7 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
         QueuedWrite::NpcAiSavePos { ent, pos } => server.npc_set_save_position(*ent, *pos),
         QueuedWrite::NpcAiMisc { ent, expression, behavior, unforgettable, route_rebuild, move_delay, npc_class } => server.npc_set_misc(*ent, expression.clone(), behavior.clone(), *unforgettable, *route_rebuild, *move_delay, *npc_class),
         QueuedWrite::NpcAiRelationship { ent, other, class, disp, prio } => server.npc_add_relationship(*ent, *other, class.as_deref(), *disp, *prio),
-        QueuedWrite::NpcAiHear { pos, radius, cond } => { server.npc_hear(*pos, *radius, *cond); true }
+        QueuedWrite::NpcAiHear { pos, radius, cond } => { server.npc_hear(*pos, *radius, *cond, None); true }
         QueuedWrite::NpcTarget { ent, player } => server.npc_target(*ent, *player),
         QueuedWrite::NpcStop { ent } => {
             if !server.npcs.contains_key(ent) {

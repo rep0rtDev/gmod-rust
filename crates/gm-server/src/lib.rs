@@ -4615,6 +4615,14 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get_mut(&id) else { return };
         let a = &mut n.ai;
         a.damage_ticks.retain(|t| now.saturating_sub(*t) <= 66 * 2);
+        if a.last_sound.is_some_and(|(_, _, t)| now.saturating_sub(t) > 66 * 3) {
+            a.last_sound = None;
+        }
+        if a.last_sound.is_none() {
+            for c in [ai::COND_HEAR_DANGER, ai::COND_HEAR_COMBAT, ai::COND_HEAR_PLAYER, ai::COND_HEAR_BULLET_IMPACT] {
+                a.set(c, false);
+            }
+        }
         let keep = a.conditions & ((1u128 << ai::COND_TASK_FAILED) | (1u128 << ai::COND_SCHEDULE_DONE) | (1u128 << ai::COND_LIGHT_DAMAGE) | (1u128 << ai::COND_HEAVY_DAMAGE) | (1u128 << ai::COND_HEAR_DANGER) | (1u128 << ai::COND_HEAR_COMBAT) | (1u128 << ai::COND_HEAR_PLAYER) | (1u128 << ai::COND_HEAR_BULLET_IMPACT));
         a.conditions = keep;
         a.set(ai::COND_REPEATED_DAMAGE, a.damage_ticks.len() >= 3);
@@ -4708,6 +4716,8 @@ impl<'w> Server<'w> {
         }
         let elapsed = now.saturating_sub(a.task_started) as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
         let save = a.save_position;
+        let sound = a.last_sound.map(|(p, _, _)| p);
+        let face_sound = matches!(a.schedule, Some(ai::SCHED_ALERT_FACE_BESTSOUND | ai::SCHED_ALERT_REACT_TO_COMBAT_SOUND));
         let run_sched = matches!(a.schedule, Some(ai::SCHED_FORCED_GO_RUN | ai::SCHED_SCRIPTED_RUN | ai::SCHED_CHASE_ENEMY | ai::SCHED_PATROL_RUN | ai::SCHED_RUN_RANDOM | ai::SCHED_COMBAT_PATROL | ai::SCHED_TAKE_COVER_FROM_ENEMY | ai::SCHED_RUN_FROM_ENEMY));
         let mut done = false;
         let mut fail = false;
@@ -4717,6 +4727,12 @@ impl<'w> Server<'w> {
             ai::TASK_WAIT_RANDOM => { done = elapsed >= data * 0.5 + (id % 7) as f32 * data / 14.0; }
             ai::TASK_WAIT_INDEFINITE => {}
             ai::TASK_WAIT_FOR_MOVEMENT => { done = !moving; if n_stuck(self, id) { fail = true; } }
+            ai::TASK_FACE_REASONABLE if face_sound && sound.is_some() => {
+                let d = sound.unwrap() - eye;
+                self.npc_set_ideal_yaw(id, Some(d.y.atan2(d.x).to_degrees()), true);
+                done = true;
+            }
+
             ai::TASK_SET_ACTIVITY | ai::TASK_RELOAD | ai::TASK_PLAY_SEQUENCE | ai::TASK_FACE_IDEAL | ai::TASK_FACE_REASONABLE | ai::TASK_FACE_LASTPOSITION | ai::TASK_SET_FAIL_SCHEDULE | ai::TASK_CLEAR_FAIL_SCHEDULE | ai::TASK_SET_SCHEDULE | ai::TASK_RANGE_ATTACK1 | ai::TASK_MELEE_ATTACK1 => {
                 if task == ai::TASK_SET_FAIL_SCHEDULE { if let Some(n) = self.npcs.get_mut(&id) { n.ai.fail_schedule = Some(data as u16); } }
                 if task == ai::TASK_CLEAR_FAIL_SCHEDULE { if let Some(n) = self.npcs.get_mut(&id) { n.ai.fail_schedule = None; } }
@@ -4724,7 +4740,7 @@ impl<'w> Server<'w> {
                 if task == ai::TASK_RANGE_ATTACK1 || task == ai::TASK_MELEE_ATTACK1 { self.npc_combat_think_forced(id, now); done = elapsed >= 0.4 || !seen_now; }
                 else { done = true; }
             }
-            ai::TASK_FACE_ENEMY | ai::TASK_FACE_PLAYER | ai::TASK_FACE_TARGET => {
+                        ai::TASK_FACE_ENEMY | ai::TASK_FACE_PLAYER | ai::TASK_FACE_TARGET => {
                 let who = if task == ai::TASK_FACE_ENEMY { target } else { self.players.keys().next().copied() };
                 if let Some(pl) = who.and_then(|p| self.players.get(&p)) {
                     let d = pl.state.origin - eye;
@@ -4736,6 +4752,9 @@ impl<'w> Server<'w> {
             ai::TASK_GET_PATH_TO_ENEMY | ai::TASK_GET_CHASE_PATH_TO_ENEMY | ai::TASK_GET_PATH_TO_ENEMY_LKP | ai::TASK_GET_PATH_TO_ENEMY_LOS | ai::TASK_GET_PATH_TO_PLAYER | ai::TASK_GET_PATH_TO_TARGET | ai::TASK_MOVE_TO_TARGET_RANGE => {
                 let who = if matches!(task, ai::TASK_GET_PATH_TO_PLAYER | ai::TASK_GET_PATH_TO_TARGET | ai::TASK_MOVE_TO_TARGET_RANGE) { target.or_else(|| self.players.keys().next().copied()) } else { target };
                 match who { Some(p) => { if self.npc_chase(id, p, run_sched) { done = true; } else { fail = true; } } None => fail = true }
+            }
+            ai::TASK_GET_PATH_TO_BESTSOUND => {
+                match sound { Some(pos) => { if self.npc_goto(id, pos, run_sched) { done = true; } else { fail = true; } } None => fail = true }
             }
             ai::TASK_GET_PATH_TO_SAVEPOSITION => {
                 match save { Some(pos) => { if self.npc_goto(id, pos, run_sched) { done = true; } else { fail = true; } } None => fail = true }
@@ -4827,9 +4846,18 @@ impl<'w> Server<'w> {
         }
     }
     /// A loud event near NPCs: the matching COND_HEAR_* condition for this think.
-    pub fn npc_hear(&mut self, pos: Vec3, radius: f32, cond: u8) {
-        for n in self.npcs.values_mut() {
-            if n.dead_at.is_none() && n.pos.distance(pos) <= radius { n.ai.set(cond, true); }
+    pub fn npc_hear(&mut self, pos: Vec3, radius: f32, cond: u8, except: Option<u32>) {
+        let tick = self.tick_count;
+        for (id, n) in self.npcs.iter_mut() {
+            if Some(*id) == except || n.dead_at.is_some() || n.pos.distance(pos) > radius {
+                continue;
+            }
+            n.ai.set(cond, true);
+            // danger outranks combat outranks the rest, a newer sound of the same rank wins
+            let rank = |c: u8| match c { ai::COND_HEAR_DANGER => 3, ai::COND_HEAR_COMBAT => 2, ai::COND_HEAR_BULLET_IMPACT => 1, _ => 0 };
+            if n.ai.last_sound.map_or(true, |(_, c, t)| rank(cond) >= rank(c) || tick.saturating_sub(t) > 66 * 3) {
+                n.ai.last_sound = Some((pos, cond, tick));
+            }
         }
     }
     fn npc_combat_think_forced(&mut self, id: u32, now: u64) {
@@ -6999,6 +7027,9 @@ impl<'w> Server<'w> {
     /// see takes nothing.
     fn explode(&mut self, at: Vec3, attacker: u32, base: f32, radius: f32, class: &'static str) {
         let src = at + Vec3::new(0.0, 0.0, 1.0);
+        // env_explosion: SOUND_COMBAT at the blast (1024) and SOUND_DANGER around it (400)
+        self.npc_hear(src, 1024.0, ai::COND_HEAR_COMBAT, None);
+        self.npc_hear(src, 400.0, ai::COND_HEAR_DANGER, None);
         // the `Explosion` effect's sound (`BaseExplosionEffect.Sound`, CHAN_STATIC, 140 dB)
         self.sounds.push(WorldSound {
             name: "BaseExplosionEffect.Sound".to_owned(),
@@ -10869,6 +10900,8 @@ impl<'w> Server<'w> {
             ammo,
         };
         let tick = self.tick_count;
+        let loud = if matches!(ammo, "SMG1" | "AR2") { 2000.0 } else { 1500.0 };
+        self.npc_hear(eye, loud, ai::COND_HEAR_COMBAT, None);
         self.resolve_shot_with(player, eye, dir, shot, "", tick as u32, damage);
     }
 
@@ -12404,6 +12437,7 @@ impl<'w> Server<'w> {
     /// NPCs do not hit each other.
     fn npc_fire_bullet(&mut self, shooter: u32, eye: Vec3, dir: Vec3, dmg: f32) {
         const MAX_TRACE: f32 = 56755.84;
+        self.npc_hear(eye, 2000.0, ai::COND_HEAR_COMBAT, Some(shooter));
         let end = eye + dir * MAX_TRACE;
         let world = self
             .collision
