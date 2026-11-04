@@ -2053,14 +2053,92 @@ function language.FormatPhrase(token, ...) local ok, s = pcall(string.format, la
 
 -- client effects: util.Effect runs a registered EFFECT (Init, Think until false, Render each frame)
 local active_effects = {}
+-- the clientside entity behind an effect: position / angles / model / bounds / velocity, and
+-- the collision an effect with collision bounds gets - its move between Thinks is swept
+-- against the world (PhysicsCollide) and its box checked for overlapping entities
+-- (StartTouch / Touch / EndTouch)
+local EFFECT_BASE = {}
+function EFFECT_BASE:SetPos(p) self.__pos = Vector(p.x, p.y, p.z) end
+function EFFECT_BASE:GetPos() return self.__pos or Vector() end
+function EFFECT_BASE:SetAngles(a) self.__ang = Angle(a.p or a.x or 0, a.y or 0, a.r or a.z or 0) end
+function EFFECT_BASE:GetAngles() return self.__ang or Angle() end
+function EFFECT_BASE:SetModel(m) self.__model = m end
+function EFFECT_BASE:GetModel() return self.__model or "" end
+function EFFECT_BASE:SetParent(e, a) self.__parent = e end
+function EFFECT_BASE:GetParent() return self.__parent or NULL end
+function EFFECT_BASE:SetParentPhysNum(n) self.__parent_phys = n end
+function EFFECT_BASE:SetCollisionBounds(mins, maxs) self.__cmins, self.__cmaxs = mins, maxs end
+function EFFECT_BASE:GetCollisionBounds() return self.__cmins or Vector(), self.__cmaxs or Vector() end
+function EFFECT_BASE:SetRenderBounds(mins, maxs) self.__rmins, self.__rmaxs = mins, maxs end
+function EFFECT_BASE:SetRenderBoundsWS(mins, maxs) self.__rmins, self.__rmaxs = mins - self:GetPos(), maxs - self:GetPos() end
+function EFFECT_BASE:GetRenderBounds() return self.__rmins or Vector(), self.__rmaxs or Vector() end
+function EFFECT_BASE:SetVelocity(v) self.__vel = Vector(v.x, v.y, v.z) end
+function EFFECT_BASE:GetVelocity() return self.__vel or Vector() end
+function EFFECT_BASE:SetNoDraw(b) self.__nodraw = b end
+function EFFECT_BASE:GetNoDraw() return self.__nodraw == true end
+function EFFECT_BASE:SetModelScale(s) self.__scale = s end
+function EFFECT_BASE:SetSkin(s) self.__skin = s end
+function EFFECT_BASE:SetBodygroup() end
+function EFFECT_BASE:SetColor(c) self.__color = c end
+function EFFECT_BASE:GetColor() return self.__color or Color(255, 255, 255) end
+function EFFECT_BASE:SetMaterial(m) self.__material = m end
+function EFFECT_BASE:SetRenderMode() end
+function EFFECT_BASE:SetRenderFX() end
+function EFFECT_BASE:SetupBones() end
+function EFFECT_BASE:EntIndex() return -1 end
+function EFFECT_BASE:GetClass() return self.__class end
+function EFFECT_BASE:IsEffectActive() return true end
+function EFFECT_BASE:IsValid() return self.__valid == true end
+function EFFECT_BASE:Remove() self.__valid = false end
+function EFFECT_BASE:DrawModel()
+	if self.__nodraw or not self.__model or self.__model == "" or not render or not render.Model then return end
+	render.Model({ model = self.__model, pos = self:GetPos(), angle = self:GetAngles() }, self)
+end
+function EFFECT_BASE:PhysicsInitSphere(r) self.__cmins, self.__cmaxs = Vector(-r, -r, -r), Vector(r, r, r) return true end
+function EFFECT_BASE:PhysicsInitBox(mins, maxs) self.__cmins, self.__cmaxs = mins, maxs return true end
+function EFFECT_BASE:PhysicsInit() return true end
+function EFFECT_BASE:GetPhysicsObject() return NULL end
 function util.Effect(name, data, allowOverride, ignorePrediction)
 	local def = effects.__registry and effects.__registry[name]
 	if not def then return end
-	local e = setmetatable({ __valid = true, __class = name }, { __index = def })
-	e.IsValid = function(s) return s.__valid end
-	e.Remove = function(s) s.__valid = false end
+	local e = setmetatable({ __valid = true, __class = name }, { __index = function(_, k) local v = def[k] if v ~= nil then return v end return EFFECT_BASE[k] end })
 	if e.Init then e:Init(data) end
+	e.__last = e:GetPos()
+	e.__touching = {}
 	active_effects[#active_effects + 1] = e
+end
+-- the move since the last Think swept against the world, the collision box against entities
+local function effect_collide(e)
+	local pos = e:GetPos()
+	local last = e.__last or pos
+	e.__last = pos
+	if e.PhysicsCollide and (pos.x ~= last.x or pos.y ~= last.y or pos.z ~= last.z) and util and util.TraceLine and phys and phys.trace then
+		local tr = util.TraceLine({ start = last, endpos = pos })
+		if tr and tr.Hit then
+			local dt = FrameTime and FrameTime() or (1 / 66)
+			local vel = (pos - last) / (dt > 0 and dt or 1 / 66)
+			-- @hook EFFECT:PhysicsCollide
+			e:PhysicsCollide({ HitPos = tr.HitPos, HitNormal = tr.HitNormal, HitEntity = tr.Entity or NULL, Speed = vel:Length(), OurOldVelocity = vel, OurNewVelocity = Vector(), TheirOldVelocity = Vector(), DeltaTime = dt, HitObject = NULL, OurEntity = e }, nil)
+			e:SetPos(tr.HitPos)
+			e.__last = tr.HitPos
+		end
+	end
+	if not e.__cmins or not (e.StartTouch or e.Touch or e.EndTouch) or not ents or not ents.FindInBox then return end
+	local now, was = {}, e.__touching or {}
+	for _, o in ipairs(ents.FindInBox(pos + e.__cmins, pos + e.__cmaxs)) do
+		if o ~= e then
+			local id = o.EntIndex and o:EntIndex() or tostring(o)
+			now[id] = o
+			-- @hook EFFECT:StartTouch @hook EFFECT:Touch
+			if not was[id] and e.StartTouch then e:StartTouch(o) end
+			if e.Touch then e:Touch(o) end
+		end
+	end
+	for id, o in pairs(was) do
+		-- @hook EFFECT:EndTouch
+		if not now[id] and e.EndTouch then e:EndTouch(o) end
+	end
+	e.__touching = now
 end
 function __glua_run_effects()
 	for i = #active_effects, 1, -1 do
@@ -2068,8 +2146,9 @@ function __glua_run_effects()
 		if not e.__valid or (e.Think and e:Think() == false) then
 			e.__valid = false
 			table.remove(active_effects, i)
-		elseif e.Render then
-			e:Render()
+		else
+			effect_collide(e)
+			if e.__valid and e.Render then e:Render() end
 		end
 	end
 end

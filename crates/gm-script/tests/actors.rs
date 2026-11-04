@@ -1820,3 +1820,53 @@ fn glua_props_fields_remainder() {
         )
     );
 }
+
+/// A client EFFECT is an entity: it keeps the position / bounds its Init sets, and an effect
+/// with collision bounds gets StartTouch / Touch while an entity of the world sits in its box
+/// and EndTouch once it has moved off it.
+#[test]
+fn glua_client_effect_touch_callbacks() {
+    let mut rt = Runtime::client();
+    rt.load(ActorSpec {
+        addon: "fx".into(),
+        name: "fx".into(),
+        priority: 0,
+        source: r##"
+            got = { start = 0, touch = 0, stop = 0 }
+            effects.Register({
+                Init = function(self, data) self:SetPos(data:GetOrigin()) self:SetCollisionBounds(Vector(-8, -8, -8), Vector(8, 8, 8)) self.n = 0 end,
+                Think = function(self) self.n = self.n + 1 if self.n == 2 then self:SetPos(self:GetPos() + Vector(100, 0, 0)) end return self.n < 4 end,
+                StartTouch = function(self, e) got.start = got.start + 1 got.who = e:EntIndex() end,
+                Touch = function(self, e) got.touch = got.touch + 1 end,
+                EndTouch = function(self, e) got.stop = got.stop + 1 got.pos = self:GetPos().x end,
+            }, "touchy")
+            local d = EffectData() d:SetOrigin(Vector(1, 2, 3)) util.Effect("touchy", d)
+        "##
+        .into(),
+        config: ActorConfig {
+            cpu_budget: Duration::from_millis(500),
+            ..ActorConfig::default()
+        },
+    })
+    .expect("actor");
+    let mut world = gm_net::ClientWorld::default();
+    world.entities.insert(
+        3,
+        gm_net::EntityState {
+            id: 3,
+            model: "crate".into(),
+            pos: glam::Vec3::new(1.0, 2.0, 3.5),
+            ..Default::default()
+        },
+    );
+    world.own.count = 1;
+    rt.client_tick(&world, true);
+    for _ in 0..4 {
+        rt.client_render(&world, 1280, 720);
+    }
+    let (start, touch, stop, who, pos): (u64, u64, u64, u64, f64) = rt.actors()[0]
+        .eval("return got.start, got.touch, got.stop, got.who, got.pos")
+        .expect("eval");
+    // one frame in the box (StartTouch + Touch), the move of the second Think leaves it
+    assert_eq!((start, touch, stop, who, pos), (1, 1, 1, 3, 101.0));
+}
