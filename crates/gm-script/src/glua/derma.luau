@@ -4152,7 +4152,14 @@ function DHTMLControls:UpdateNavButtonStatus()
 	self.BackButton:SetEnabled(pos > 1); self.ForwardButton:SetEnabled(pos < #hist)
 end
 local UGCPublishWindow = derma.DefineControl("UGCPublishWindow", "Workshop publish window (Steam only)", {}, "DFrame")
-for _, n in ipairs({ "CheckInput", "DisplayError", "DoPublish", "FitContents", "GetChosenTag", "OnPublishFinished", "Setup", "UpdateWorkshopItems" }) do UGCPublishWindow[n] = stub("UGCPublishWindow:" .. n) end
+function UGCPublishWindow:Setup(kind, filename, image, info) self.Type, self.Filename, self.Image, self.Info = kind, filename, image, info or {} end
+function UGCPublishWindow:FitContents() if self.SizeToChildren then self:SizeToChildren(false, true) end end
+function UGCPublishWindow:GetChosenTag() return self.ChosenTag or "" end
+function UGCPublishWindow:CheckInput() if not self.Info or (self.Info.title or "") == "" then self:DisplayError("#ugc.title_required") return false end return true end
+function UGCPublishWindow:DisplayError(err) self.Error = err end
+function UGCPublishWindow:DoPublish() if not self:CheckInput() then return end if steamworks and steamworks.Publish then steamworks.Publish(self.Image, self.Filename, self.Info.title or "", self.Info.description or "", { self:GetChosenTag() }, function(id, e) self:OnPublishFinished(id, e) end) end end
+function UGCPublishWindow:OnPublishFinished(id, err) if err and err ~= "" then self:DisplayError(err) end end
+function UGCPublishWindow:UpdateWorkshopItems() end
 
 ------------------------------------------------------------------------ chat / notification / frame_blend
 chat = chat or {}

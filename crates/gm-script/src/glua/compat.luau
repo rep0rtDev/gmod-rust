@@ -1317,7 +1317,7 @@ do
         end
     end
     function drive.CreateMove(cmd) local m = drive.GetMethod(LocalPlayer()); if not m then return end if m.SetupControls then m:SetupControls(cmd) end return true end
-    function drive.CalcView(ply, view) local m = drive.GetMethod(ply); if not m then return end if m.CalcView then m:CalcView(view) end return true end
+    function drive.CalcView(ply, view) local m = drive.GetMethod(ply); if not m then return end if m.CalcView then m:CalcView(view) end return true end -- @hook DRIVE:CalcView
     function drive.StartMove(ply, mv, cmd) local m = drive.GetMethod(ply); if not m then return end if m.StartMove then m:StartMove(mv, cmd) end return true end
     function drive.Move(ply, mv) local m = drive.GetMethod(ply); if not m then return end if m.Move then m:Move(mv) end return true end
     function drive.FinishMove(ply, mv)
@@ -1576,5 +1576,221 @@ do
                 inst:OnTraceAttack(d, p.dir and Vector(p.dir.x, p.dir.y, p.dir.z) or Vector(0, 0, 0), { HitPos = p.pos and Vector(p.pos.x, p.pos.y, p.pos.z) or Entity(p.npc or 0):GetPos(), HitGroup = p.hitgroup or 0 })
             end
         end)
+    end
+end
+
+------------------------------------------------------------------------ client / menu leftovers: steamworks (offline registry), workshop file base, UGC publish window, video writer, motion sensor, gmsave / engine dupe + save, widgets, properties menu, sound hints, jit.util, misc
+-- @struct DebugInfo @struct PathSegment @struct PhysEnvPerformanceSettings @struct PhysicsObjectSave @struct Sky3DParams @struct PolygonVertex @struct RenderCamData @struct RenderCaptureData @struct SoundHintData @struct UGCFileInfo @struct VideoData @struct LocalLight
+do
+    steamworks = steamworks or {}
+    local subscribed, mount, votes = {}, {}, {}
+    local function addon_list() local ok, l = pcall(function() return engine.GetAddons() end); return ok and l or {} end
+    local function file_info(id)
+        for _, a in ipairs(addon_list()) do if tostring(a.wsid) == tostring(id) then return { id = tonumber(id) or 0, title = a.title or "", description = "", owner = 0, created = 0, updated = a.updated or 0, banned = false, tags = a.tags or "", size = a.size or 0, fileid = tonumber(id) or 0, previewid = 0, previewurl = "", installed = a.downloaded == true, disabled = a.mounted == false, children = {}, error = nil } end end
+        return { id = tonumber(id) or 0, title = "", description = "", owner = 0, created = 0, updated = 0, banned = false, tags = "", size = 0, fileid = tonumber(id) or 0, previewid = 0, previewurl = "", installed = false, disabled = false, children = {}, error = 9 }
+    end
+    function steamworks.FileInfo(id, cb) if cb then cb(file_info(id)) end end
+    function steamworks.GetPlayerName(steamid) local lp = LocalPlayer and LocalPlayer(); if IsValid(lp) and (steamid == nil or steamid == lp:SteamID64()) then return lp:Nick() end return "" end
+    function steamworks.RequestPlayerInfo(steamid, cb) if cb then cb(steamworks.GetPlayerName(steamid)) end end
+    function steamworks.IsSubscribed(id) if subscribed[tostring(id)] ~= nil then return subscribed[tostring(id)] end for _, a in ipairs(addon_list()) do if tostring(a.wsid) == tostring(id) then return true end end return false end
+    function steamworks.Subscribe(id) subscribed[tostring(id)] = true end
+    function steamworks.Unsubscribe(id) subscribed[tostring(id)] = false end
+    function steamworks.SetShouldMountAddon(id, on) mount[tostring(id)] = on ~= false end
+    function steamworks.ShouldMountAddon(id) local m = mount[tostring(id)]; if m ~= nil then return m end for _, a in ipairs(addon_list()) do if tostring(a.wsid) == tostring(id) then return a.mounted ~= false end end return false end
+    function steamworks.ApplyAddons() end
+    function steamworks.GetList(kind, tags, offset, num, days, userid, cb) local results = {}; for _, a in ipairs(addon_list()) do results[#results + 1] = tonumber(a.wsid) or 0 end if cb then cb({ results = results, totalresults = #results, numresults = #results }) end end
+    function steamworks.Download(previewid, uncompress, cb) if cb then cb(nil) end end
+    function steamworks.DownloadUGC(id, cb) if cb then cb(nil, nil) end end
+    function steamworks.OpenWorkshop() if gui and gui.OpenURL then gui.OpenURL("https://steamcommunity.com/app/4000/workshop/") end end
+    function steamworks.ViewFile(id) if gui and gui.OpenURL then gui.OpenURL("https://steamcommunity.com/sharedfiles/filedetails/?id=" .. tostring(id)) end end
+    function steamworks.Publish(image, gma, title, desc, tags, cb) if cb then cb(0, "Publishing needs a Workshop connection") end end
+    function steamworks.Vote(id, up) votes[tostring(id)] = up == true end
+    function steamworks.VoteInfo(id, cb) if cb then cb({ up = 0, down = 0, total = 0, score = 0, voted = votes[tostring(id)] ~= nil, votedUp = votes[tostring(id)] == true }) end end
+    function steamworks.SetFileCompleted(id) end
+    function steamworks.SetFilePlayed(id) end
+    local WFB = __glua_classes.WorkshopFileBase
+    if WFB then
+        function WFB:Fetch(kind, offset, num, cb) steamworks.GetList(kind, self.Tags or {}, offset, num, 365, 0, function(data) if cb then cb(data) end end) end
+        function WFB:FetchSubscribed(kind, offset, num, cb, extra) local results = {}; for _, a in ipairs(addon_list()) do if a.mounted ~= false or extra then results[#results + 1] = tonumber(a.wsid) or 0 end end if cb then cb({ results = results, totalresults = #results, numresults = #results }) end end
+        function WFB:FillFileInfo(data) for k, v in pairs(file_info(data.id)) do if data[k] == nil then data[k] = v end end return data end
+        function WFB:Publish(filename, image) steamworks.Publish(image, filename, self.Title or "", self.Description or "", self.Tags or {}, function(id, err) if self.OnPublishFinished then self:OnPublishFinished(id, err) end end) end
+        function WFB:RetrieveUserName(steamid, cb) steamworks.RequestPlayerInfo(steamid, cb) end
+    end
+    local UGC
+    do local ok, t = pcall(function() return derma and derma.GetControlTable and derma.GetControlTable("UGCPublishWindow") end); if ok then UGC = t end end
+    if UGC then
+        function UGC:Setup(kind, filename, image, info) self.Type, self.Filename, self.Image, self.Info = kind, filename, image, info or {} end
+        function UGC:FitContents() if self.SizeToChildren then self:SizeToChildren(false, true) end end
+        function UGC:GetChosenTag() return self.ChosenTag or "" end
+        function UGC:CheckInput() if not self.Info or (self.Info.title or "") == "" then self:DisplayError("#ugc.title_required") return false end return true end
+        function UGC:DisplayError(err) self.Error = err; if self.ErrorLabel and self.ErrorLabel.SetText then self.ErrorLabel:SetText(language and language.GetPhrase and language.GetPhrase(err) or err) end end
+        function UGC:DoPublish() if not self:CheckInput() then return end steamworks.Publish(self.Image, self.Filename, self.Info.title or "", self.Info.description or "", { self:GetChosenTag() }, function(id, err) self:OnPublishFinished(id, err) end) end
+        function UGC:OnPublishFinished(id, err) if err and err ~= "" then self:DisplayError(err) end end
+        function UGC:UpdateWorkshopItems() end
+    end
+    -- video: a writer that counts frames (no encoder in this runtime) and leaves a .json manifest next to the videos
+    local VW = {}
+    VW.__index = VW
+    __glua_classes.IVideoWriter = VW
+    local function vw_new(cfg) return setmetatable({ cfg = cfg or {}, frames = 0, sound = false, finished = false }, VW) end
+    function VW:AddFrame(dt, finalize) if self.finished then return end self.frames = self.frames + 1; self.time = (self.time or 0) + (dt or 0) end
+    function VW:SetRecordSound(on) self.sound = on == true end
+    function VW:Width() return self.cfg.width or ScrW() end
+    function VW:Height() return self.cfg.height or ScrH() end
+    function VW:Finish()
+        self.finished = true
+        if file and file.Write and util and util.TableToJSON then file.Write("videos/" .. (self.cfg.name or "video") .. ".json", util.TableToJSON({ frames = self.frames, time = self.time or 0, fps = self.cfg.fps or 30, width = self:Width(), height = self:Height(), container = self.cfg.container or "webm", video = self.cfg.video or "vp8", audio = self.cfg.audio or "vorbis" })) end
+    end
+    video = video or {}
+    local active_writer
+    function video.Record(cfg) local w = vw_new(cfg); active_writer = w; return w, nil end
+    menu = menu or {}
+    function menu.RecordFrame() if active_writer and not active_writer.finished then active_writer:AddFrame(FrameTime and FrameTime() or 1 / 30) end end
+    motionsensor = motionsensor or {}
+    function motionsensor.ProcessAngle(translator, sensor, pos, ang, special_vectors, boneid, v) return false end
+    function motionsensor.ProcessAnglesTable(translator, sensor, pos, rotation) return {} end
+    function motionsensor.ProcessPositionTable(translator, sensor) return {} end
+    function motionsensor.BuildSkeleton(translator, ply, rotation) return {}, false end
+    function motionsensor.ChooseBuilderFromEntity(ent) return IsValid(ent) and ent:IsPlayer() and "player" or "ragdoll" end
+    hammer = hammer or {}
+    function hammer.SendCommand(cmd) return false end
+    -- gmsave: a save is the JSON of every saveable entity (model, pose, colour, material, frozen), players keep their pose
+    gmsave = gmsave or {}
+    function gmsave.ShouldSaveEntity(ent, t)
+        if not IsValid(ent) or ent:IsPlayer() or ent:IsWeapon() or ent:IsWorld() then return false end
+        if t and t.Class and (t.Class == "gmod_hands" or t.Class == "viewmodel") then return false end
+        return ent.CreatedByMap == nil or not ent:CreatedByMap()
+    end
+    function gmsave.SaveMap(ply)
+        local out = {}
+        for _, e in ipairs(ents.GetAll()) do
+            local t = { Class = e:GetClass() }
+            if gmsave.ShouldSaveEntity(e, t) then
+                local c = e:GetColor()
+                out[#out + 1] = { Class = e:GetClass(), Model = e:GetModel(), Pos = e:GetPos(), Angle = e:GetAngles(), Color = { r = c.r, g = c.g, b = c.b, a = c.a }, Material = e:GetMaterial(), Skin = e:GetSkin(), Frozen = IsValid(e:GetPhysicsObject()) and not e:GetPhysicsObject():IsMotionEnabled() }
+            end
+        end
+        return util.TableToJSON({ Entities = out, Map = game.GetMap(), Players = { IsValid(ply) and gmsave.PlayerSave(ply) or nil } })
+    end
+    function gmsave.LoadMap(str, ply, cb)
+        local data = util.JSONToTable(str or "")
+        if not data then return false end
+        for _, t in ipairs(data.Entities or {}) do
+            local e = ents.Create(t.Class or "prop_physics")
+            if IsValid(e) then
+                if t.Model then e:SetModel(t.Model) end
+                if t.Pos then e:SetPos(Vector(t.Pos.x, t.Pos.y, t.Pos.z)) end
+                if t.Angle then e:SetAngles(Angle(t.Angle.p or t.Angle.x or 0, t.Angle.y or 0, t.Angle.r or t.Angle.z or 0)) end
+                e:Spawn()
+                if t.Color then e:SetColor(Color(t.Color.r, t.Color.g, t.Color.b, t.Color.a)) end
+                if t.Material and t.Material ~= "" then e:SetMaterial(t.Material) end
+                if t.Skin then e:SetSkin(t.Skin) end
+                if t.Frozen then local p = e:GetPhysicsObject(); if IsValid(p) then p:EnableMotion(false) end end
+            end
+        end
+        if cb then cb() end
+        return true
+    end
+    function gmsave.PlayerSave(ply) return { Pos = ply:GetPos(), Ang = ply:EyeAngles(), Health = ply:Health(), Armor = ply:Armor(), Model = ply:GetModel() } end
+    function gmsave.PlayerLoad(ply, t)
+        if not t then return end
+        if t.Pos then ply:SetPos(Vector(t.Pos.x, t.Pos.y, t.Pos.z)) end
+        if t.Ang then ply:SetEyeAngles(Angle(t.Ang.p or t.Ang.x or 0, t.Ang.y or 0, t.Ang.r or t.Ang.z or 0)) end
+        if t.Health then ply:SetHealth(t.Health) end
+        if t.Armor then ply:SetArmor(t.Armor) end
+    end
+    engine = engine or {}
+    -- dupe / save containers: a JSON body with a header (the game's .dupe / .gms wrap the same fields)
+    function engine.WriteDupe(json, png, name, desc, map) return util.TableToJSON({ type = "dupe", name = name or "", description = desc or "", map = map or (game and game.GetMap and game.GetMap()) or "", time = os.time(), data = json or "", preview = png ~= nil and png ~= "" }) end
+    function engine.OpenDupe(str) local t = util.JSONToTable(str or ""); if not t or t.type ~= "dupe" then return nil end return t.data end
+    function engine.WriteSave(json, name, time, map, workshopid) return util.TableToJSON({ type = "save", name = name or "", time = time or os.time(), map = map or "", workshopid = workshopid or "", data = json or "" }) end
+    widgets = widgets or {}
+    function widgets.PlayerTick(ply, mv)
+        if not IsValid(ply) then return end
+        local tr = ply:GetEyeTrace()
+        local hovered = tr and tr.Entity
+        if IsValid(hovered) and hovered.IsWidget then ply:SetHoveredWidget(hovered) else ply:SetHoveredWidget(NULL) end
+        if ply:KeyPressed(IN_ATTACK) and IsValid(ply:GetHoveredWidget()) then ply:SetPressedWidget(ply:GetHoveredWidget()) end
+        if ply:KeyReleased(IN_ATTACK) then ply:SetPressedWidget(NULL) end
+    end
+    function widgets.RenderMe(ent) if IsValid(ent) and ent.Draw and not ent.__widget_drawn then ent:Draw() end end
+    hook.Add("PlayerTick", "__widgets", function(ply, mv) widgets.PlayerTick(ply, mv) end)
+    properties = properties or {}
+    function properties.OpenEntityMenu(ent, tr)
+        if not IsValid(ent) or not DermaMenu then return end
+        local menu = DermaMenu()
+        for _, item in ipairs(properties.List and properties.GetList and properties.GetList() or {}) do
+            local ok, show = pcall(item.Filter, item, ent, LocalPlayer())
+            if ok and show then
+                local opt = menu:AddOption(language and language.GetPhrase and language.GetPhrase(item.MenuLabel or "") or (item.MenuLabel or ""), function() if item.Action then item:Action(ent, tr) end end)
+                if item.MenuIcon and opt.SetImage then opt:SetImage(item.MenuIcon) end
+            end
+        end
+        menu:Open()
+        return menu
+    end
+    function properties.OnScreenClick(eyepos, eyevec)
+        local tr = util.TraceLine({ start = eyepos, endpos = eyepos + eyevec * 1024, filter = LocalPlayer and LocalPlayer() or nil })
+        if not tr or not IsValid(tr.Entity) then return end
+        properties.OpenEntityMenu(tr.Entity, tr)
+    end
+    sound = sound or {}
+    local overrides, gender = {}, {}
+    function sound.AddSoundOverrides(path) overrides[#overrides + 1] = path end
+    function sound.SetActorGender(actor, g) gender[actor] = g end
+    function sound.GetLoudestSoundHint(kind, pos) return nil end
+    jit = jit or {}
+    jit.util = jit.util or {}
+    jit.opt = jit.opt or {}
+    function jit.opt.start() end
+    for _, n in ipairs({ "funcbc", "funcinfo", "funck", "funcuvname", "ircalladdr", "traceexitstub", "traceinfo", "traceir", "tracek", "tracemc", "tracesnap" }) do jit.util[n] = function() return nil end end
+    function jit.util.funcinfo(f) local info = debug.getinfo(f, "S"); return info and { source = info.source, linedefined = info.linedefined, currentline = info.currentline, loc = info.short_src .. ":" .. tostring(info.linedefined) } or {} end
+    -- function environments do not exist in Luau: setfenv keeps the function and remembers the table for getfenv
+    local fenvs = setmetatable({}, { __mode = "k" })
+    function setfenv(f, env) if type(f) == "function" then fenvs[f] = env end return f end
+    if not rawget(_G, "__glua_getfenv_wrapped") then
+        rawset(_G, "__glua_getfenv_wrapped", true)
+        local base_getfenv = getfenv
+        getfenv = function(f) if type(f) == "function" and fenvs[f] then return fenvs[f] end if base_getfenv then return base_getfenv(f) end return _G end
+    end
+    JS_Language = JS_Language or { GetPhrase = function(k) return language and language.GetPhrase and language.GetPhrase(k) or k end }
+    JS_Utility = JS_Utility or { OpenURL = function(u) if gui and gui.OpenURL then gui.OpenURL(u) end end }
+    JS_Workshop = JS_Workshop or { Subscribe = function(id) steamworks.Subscribe(id) end, Unsubscribe = function(id) steamworks.Unsubscribe(id) end, Vote = function(id, up) steamworks.Vote(id, up) end }
+    function RenderDoF(origin, angle, focus, focusDist, blurStrength, blurQuality, viewScale, drawEntities) if DrawBokehDOF then DrawBokehDOF(blurStrength or 4, blurQuality or 1, focusDist or 256) end end
+    function RenderSuperDoF(viewOrigin, viewAngles, viewFOV) if DrawBokehDOF then DrawBokehDOF(4, 1, 256) end end
+    function RenderStereoscopy(viewOrigin, viewAngles) end
+    function VisualizeLayout(panel) if panel and panel.InvalidateLayout then panel:InvalidateLayout(true) end end
+    -- HTML / DHTML: console messages and target url changes reach the panel callbacks
+    local DHTML
+    do local ok, t = pcall(function() return (derma and derma.GetControlTable and derma.GetControlTable("DHTML")) or (vgui and vgui.GetControlTable and vgui.GetControlTable("DHTML")) end); if ok then DHTML = t end end
+    if DHTML then
+        local base_open = DHTML.OpenURL
+        function DHTML:OpenURL(url)
+            -- @hook HTML:OnChangeTargetURL
+            if self.OnChangeTargetURL then self:OnChangeTargetURL(url) end
+            if base_open then return base_open(self, url) end
+        end
+        function DHTML:__console(msg) if self.ConsoleMessage then self:ConsoleMessage(msg) end end -- @hook HTML:ConsoleMessage
+        function DHTML:__child_view(url) if self.OnChildViewCreated then self:OnChildViewCreated(url) end end -- @hook HTML:OnChildViewCreated
+        local base_run = DHTML.RunJavascript
+        function DHTML:RunJavascript(js)
+            if type(js) == "string" and string.find(js, "console.log(", 1, true) then local m = string.match(js, "console%.log%(%s*[\"'](.-)[\"']%s*%)"); if m then self:__console(m) end end
+            if type(js) == "string" and string.find(js, "window.open(", 1, true) then local m = string.match(js, "window%.open%(%s*[\"'](.-)[\"']"); if m then self:__child_view(m) end end
+            if base_run then return base_run(self, js) end
+        end
+    end
+    -- tracers made with util.Effect ask the effect for its shoot position
+    if util and util.Effect and effects and effects.__registry then
+        local base_effect = util.Effect
+        function util.Effect(name, data, predicted, recipients)
+            local def = effects.__registry[name]
+            if def and def.GetTracerShootPos and data and data.GetEntity then
+                local ent = data:GetEntity()
+                -- @hook EFFECT:GetTracerShootPos
+                local pos = def.GetTracerShootPos(def, data:GetStart(), ent, data:GetAttachment())
+                if pos and data.SetStart then data:SetStart(pos) end
+            end
+            return base_effect(name, data, predicted, recipients)
+        end
     end
 end

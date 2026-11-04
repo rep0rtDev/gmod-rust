@@ -1795,14 +1795,7 @@ end)
 
 -- Steam-only (no Steam here; our workshop is the launcher's), the HTML-menu bridges, demos
 steamworks = steamworks or {}
-for _, n in ipairs({ "ApplyAddons", "Download", "DownloadUGC", "FileInfo", "GetList", "GetPlayerName", "IsSubscribed", "OpenWorkshop", "Publish", "RequestPlayerInfo", "SetFileCompleted", "SetFilePlayed", "SetShouldMountAddon", "ShouldMountAddon", "Subscribe", "Unsubscribe", "ViewFile", "Vote", "VoteInfo" }) do
-	steamworks[n] = stub("steamworks." .. n)
-end
 menu = menu or {}
-menu.RecordFrame = stub("menu.RecordFrame")
-engine.OpenDupe = stub("engine.OpenDupe")
-engine.WriteDupe = stub("engine.WriteDupe")
-engine.WriteSave = stub("engine.WriteSave")
 function engine.VideoSettings() return { windowed = true, width = ScrW(), height = ScrH(), vsync = 1, fullscreen = false } end
 
 -- menubar: the spawnmenu's top bar
@@ -2114,19 +2107,14 @@ end
 jit = jit or {}
 jit.util = jit.util or {}
 jit.opt = jit.opt or {}
-for _, n in ipairs({ "funcbc", "funcinfo", "funck", "funcuvname", "ircalladdr", "traceexitstub", "traceinfo", "traceir", "tracek", "tracemc", "tracesnap" }) do jit.util[n] = stub("jit.util." .. n) end
-jit.opt.start = stub("jit.opt.start")
 widgets = widgets or {}
-widgets.RenderMe = stub("widgets.RenderMe")
 video = video or {}
-video.Record = stub("video.Record")
 
 -- branch, clipboard, environments, workshop refresh, effect registry listing
 local clipboard = ""
 function SetClipboardText(t) clipboard = tostring(t) end
 function __glua_clipboard() return clipboard end
 getfenv = getfenv or function(f) return _G end
-setfenv = setfenv or stub("setfenv")
 function UpdateSubscribedAddons() end
 function effects.GetList() local out = {} for name in pairs(effects.__registry or {}) do out[#out + 1] = name end table.sort(out) return out end
 function effects.TracerSound(start, endpos, kind) end

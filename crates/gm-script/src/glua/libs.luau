@@ -812,7 +812,6 @@ __glua_classes["SurfaceInfo"] = __glua_classes["SurfaceInfo"] or {}
 __glua_classes["Task"] = __glua_classes["Task"] or {}
 for _, n in ipairs({ "InitEngine", "InitFunctionName"}) do if __glua_classes["Task"][n] == nil then __glua_classes["Task"][n] = stub("Task:" .. n) end end
 __glua_classes["WorkshopFileBase"] = __glua_classes["WorkshopFileBase"] or {}
-for _, n in ipairs({ "Fetch", "FetchSubscribed", "FillFileInfo", "Publish", "RetrieveUserName" }) do if __glua_classes["WorkshopFileBase"][n] == nil then __glua_classes["WorkshopFileBase"][n] = stub("WorkshopFileBase:" .. n) end end
 ai = ai or {}
 for _, n in ipairs({ "GetNodeCount", "GetScheduleID", "GetSquadLeader", "GetSquadMemberCount", "GetSquadMembers", "GetTaskID" }) do if ai[n] == nil then ai[n] = stub("ai." .. n) end end
 construct = construct or {}
@@ -822,26 +821,19 @@ debugoverlay = debugoverlay or {}
 ents = ents or {}
 gameevent = gameevent or {}
 gmsave = gmsave or {}
-for _, n in ipairs({ "LoadMap", "PlayerLoad", "PlayerSave", "SaveMap", "ShouldSaveEntity" }) do if gmsave[n] == nil then gmsave[n] = stub("gmsave." .. n) end end
 hammer = hammer or {}
-for _, n in ipairs({ "SendCommand" }) do if hammer[n] == nil then hammer[n] = stub("hammer." .. n) end end
 http = http or {}
 jit = jit or {}
 motionsensor = motionsensor or {}
-for _, n in ipairs({ "BuildSkeleton", "ChooseBuilderFromEntity", "ProcessAngle", "ProcessAnglesTable", "ProcessPositionTable" }) do if motionsensor[n] == nil then motionsensor[n] = stub("motionsensor." .. n) end end
 player = player or {}
 properties = properties or {}
-for _, n in ipairs({ "OnScreenClick", "OpenEntityMenu" }) do if properties[n] == nil then properties[n] = stub("properties." .. n) end end
 resource = resource or {}
 saverestore = saverestore or {}
 sound = sound or {}
-for _, n in ipairs({ "AddSoundOverrides", "GetLoudestSoundHint", "SetActorGender" }) do if sound[n] == nil then sound[n] = stub("sound." .. n) end end
 sql = sql or {}
 steamworks = steamworks or {}
-for _, n in ipairs({ "FileInfo", "GetList" }) do if steamworks[n] == nil then steamworks[n] = stub("steamworks." .. n) end end
 usermessage = usermessage or {}
 widgets = widgets or {}
-for _, n in ipairs({ "PlayerTick" }) do if widgets[n] == nil then widgets[n] = stub("widgets." .. n) end end
 
 function DropEntityIfHeld(e) if IsValid(e) then e:ForcePlayerDrop() end end
 
