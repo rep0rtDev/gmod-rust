@@ -36,6 +36,7 @@ const DERMA: &str = include_str!("derma.luau");
 /// The rest of the documented surface that needs no host object: debug / jit / sql / usermessage /
 /// gameevent, IMaterial / ITexture / ISave / IRestore / SurfaceInfo, the leftover globals.
 const COMPAT: &str = include_str!("compat.luau");
+const HOOKS: &str = include_str!("hooks.luau");
 
 /// Registers a class metatable under `__glua_classes[name]` so the coverage listing (and
 /// `FindMetaTable`) can reach it.
@@ -122,6 +123,7 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
     lua.load(CLIENT).set_name("glua/client").exec()?;
     lua.load(DERMA).set_name("glua/derma").exec()?;
     lua.load(COMPAT).set_name("glua/compat").exec()?;
+    lua.load(HOOKS).set_name("glua/hooks").exec()?;
     let classes = classes(lua)?;
     g.set(
         "FindMetaTable",
@@ -165,7 +167,7 @@ pub fn list(lua: &Lua) -> Result<(Vec<String>, Vec<String>)> {
     // (`hook.Run("Name"`), a scripted ENTITY / WEAPON callback when the dispatcher that calls it
     // is annotated `-- @hook CLASS:Name`.
     for src in [
-        CORE, ENUMS, ACT, ENTITY, SERVER, CLASSES, SCRIPTED, LIBS, CLIENT, DERMA, COMPAT,
+        CORE, ENUMS, ACT, ENTITY, SERVER, CLASSES, SCRIPTED, LIBS, CLIENT, DERMA, COMPAT, HOOKS,
     ] {
         for (marker, prefix) in [
             ("hook.Run(\"", "GM:"),

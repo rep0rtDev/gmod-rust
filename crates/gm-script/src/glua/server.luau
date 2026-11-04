@@ -649,6 +649,8 @@ local prev_move = {}
         for _, ply in ipairs(player.GetAll()) do
             if first_sight and not seen_players[ply:UserID()] then
                 seen_players[ply:UserID()] = true
+                local sv_pass = GetConVar and GetConVar("sv_password") and GetConVar("sv_password"):GetString() or ""
+                hook.Run("CheckPassword", ply:SteamID64() or "", ply:IPAddress(), sv_pass, "", ply:Nick())
                 hook.Run("PlayerConnect", ply:Nick(), "")
                 hook.Run("PlayerAuthed", ply, ply:SteamID(), ply:UniqueID())
                 hook.Run("NetworkIDValidated", ply:Nick(), ply:SteamID())
