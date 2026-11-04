@@ -4684,15 +4684,28 @@ impl<'w> Server<'w> {
     /// goto / chase / cover / stop operations; otherwise the schedule mirrors what the native
     /// brain is doing so `GetCurrentSchedule` / `HasCondition` describe it.
     fn ai_step(&mut self, id: u32, now: u64) {
-        if let Some(fam) = self
+        if let Some((fam, class)) = self
             .npcs
             .get(&id)
-            .and_then(|n| ai::class_sched_family(&n.class))
+            .and_then(|n| Some((ai::class_sched_family(&n.class)?, n.class.clone())))
         {
             if !self.class_sched_bases.contains_key(fam) {
+                if ai::family_sched_blended(fam) && !self.class_sched_bases.contains_key("blended")
+                {
+                    self.class_sched_bases
+                        .insert("blended".to_string(), self.next_class_sched);
+                    self.next_class_sched += ai::BLENDED_SCHED_PREFIX;
+                }
                 let base = self.next_class_sched;
-                self.next_class_sched += ai::CLASS_SCHED_RESERVE;
+                self.next_class_sched += ai::family_sched_reserve(fam);
                 self.class_sched_bases.insert(fam.to_string(), base);
+            }
+            let ext = ai::class_sched_ext_reserve(&class);
+            let key = format!("class:{class}");
+            if ext > 0 && !self.class_sched_bases.contains_key(&key) {
+                let base = self.next_class_sched;
+                self.next_class_sched += ext;
+                self.class_sched_bases.insert(key, base);
             }
         }
         let Some(n) = self.npcs.get(&id) else { return };
@@ -13241,14 +13254,35 @@ impl<'w> Server<'w> {
         let Some(s) = n.ai.schedule else {
             return 0;
         };
-        let translated = ai::class_sched_family(&n.class)
-            .and_then(|fam| {
-                Some((
-                    self.class_sched_bases.get(fam)?,
-                    ai::class_schedule(fam, s)?,
-                ))
-            })
-            .map(|(base, off)| base + off);
+        let translated = ai::class_sched_family(&n.class).and_then(|fam| {
+            let base = *self.class_sched_bases.get(fam)?;
+            let ext = self
+                .class_sched_bases
+                .get(&format!("class:{}", n.class))
+                .copied();
+            let swing = n.melee_swing.as_ref();
+            match fam {
+                // the antlion's pounce schedules (the ground attack3 stays MELEE_ATTACK1)
+                "antlion" if s == ai::SCHED_MELEE_ATTACK1 => swing
+                    .filter(|m| m.lunge > 0.0)
+                    .map(|m| base + if m.damage == 0.0 { 33 } else { 32 }),
+                // the headcrab's own jump attack while winding up or airborne
+                "headcrab" if n.jump_at.is_some() || (n.flight.is_some() && !n.thrown) => {
+                    Some(base)
+                }
+                // the poison zombie's crab throw sits first in its extension block
+                "zombie"
+                    if n.class == "npc_poisonzombie"
+                        && s == ai::SCHED_MELEE_ATTACK1
+                        && swing.is_some_and(|m| m.poison) =>
+                {
+                    ext
+                }
+                _ => ext
+                    .and_then(|e| ai::class_ext_schedule(&n.class, s).map(|o| e + o))
+                    .or_else(|| ai::class_schedule(fam, s).map(|o| base + o)),
+            }
+        });
         translated.unwrap_or(s) as i64
     }
 
@@ -13262,7 +13296,7 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get(&id) else {
             return false;
         };
-        if ai::class_sched_family(&n.class) != Some("zombie") {
+        if !ai::class_is_zombie_body(&n.class) {
             return false;
         }
         if n.swat.is_some() {

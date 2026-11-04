@@ -693,7 +693,8 @@ fn fast_zombie_runs_in_and_claws_twice() {
         .pos
         .truncate()
         .distance(server.players[&1].state.origin.truncate());
-    assert!(d < 60.0, "ended {d} u away");
+    // t400 falls in the run-in of the third cycle (the game: Run from t382, Melee at t410)
+    assert!(d < 80.0, "ended {d} u away");
 }
 
 /// Headcrab (server_npc_melee_headcrab): leaps at the player on a ballistic arc, lands 5 hp
@@ -1774,11 +1775,14 @@ fn zombie_swats_a_crate_at_the_player() {
     }
     assert_eq!(
         chased_as,
-        ai::FIRST_CLASS_SCHEDULE as i64,
+        (ai::FIRST_CLASS_SCHEDULE + ai::BLENDED_SCHED_PREFIX) as i64,
         "CHASE_ENEMY reports as the zombie's own id"
     );
     let (swat_tick, swat_id, seq) = swat_at.expect("the zombie never swatted the crate");
-    assert_eq!(swat_id, ai::FIRST_CLASS_SCHEDULE as i64 + 2);
+    assert_eq!(
+        swat_id,
+        (ai::FIRST_CLASS_SCHEDULE + ai::BLENDED_SCHED_PREFIX) as i64 + 2
+    );
     assert!(seq.starts_with("swat") && seq.ends_with("low"), "{seq}");
     let (hit_tick, v) = launched.expect("the crate was never launched");
     assert_eq!(

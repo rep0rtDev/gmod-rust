@@ -344,10 +344,15 @@ pub const SCHED_FORCED_GO: u16 = 71;
 /// class after the shared ones, so their ids are session-dependent (see `class_schedule`).
 pub const SCHED_ZOMBIE_MOVE_SWATITEM: u16 = 1001;
 pub const SCHED_ZOMBIE_SWATITEM: u16 = 1002;
-/// The first id the game hands a class's private schedules on a fresh server (measured: a
-/// zombie spawned first reports CHASE_ENEMY as 93, SWATITEM 95, MELEE_ATTACK1 103).
-pub const FIRST_CLASS_SCHEDULE: u16 = 93;
-/// Ids reserved per class family once it has spawned.
+/// The first id the game hands class-private schedules on a fresh server: blocks are handed
+/// out in the order the classes first think (measured: a soldier spawned first reports its
+/// block from 88; a zombie or antlion spawned first from 93 - the blended-animation classes
+/// are preceded by a 5-id block allocated once; run14: antlion 93..138, zombie family
+/// 139..166, fast zombie extension 167..168, headcrab 169..189, poison zombie extension
+/// 190..191).
+pub const FIRST_CLASS_SCHEDULE: u16 = 88;
+pub const BLENDED_SCHED_PREFIX: u16 = 5;
+/// Ids reserved for a class family without a measured block size.
 pub const CLASS_SCHED_RESERVE: u16 = 12;
 pub const SCHED_FORCED_GO_RUN: u16 = 72;
 pub const SCHED_NPC_FREEZE: u16 = 73;
@@ -469,7 +474,58 @@ pub fn sched_id(name: &str) -> Option<u16> {
 /// schedules).
 pub fn class_sched_family(class: &str) -> Option<&'static str> {
     match class {
-        "npc_zombie" | "npc_zombie_torso" | "npc_zombine" | "npc_poisonzombie" => Some("zombie"),
+        "npc_zombie"
+        | "npc_zombie_torso"
+        | "npc_zombine"
+        | "npc_poisonzombie"
+        | "npc_fastzombie"
+        | "npc_fastzombie_torso" => Some("zombie"),
+        "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => Some("headcrab"),
+        "npc_antlion" => Some("antlion"),
+        "npc_combine_s" => Some("combine"),
+        _ => None,
+    }
+}
+
+/// The zombies that swat props at their enemy (the fast zombie never does, though it shares
+/// the family's wake-angry think and schedule table).
+pub fn class_is_zombie_body(class: &str) -> bool {
+    matches!(
+        class,
+        "npc_zombie" | "npc_zombie_torso" | "npc_zombine" | "npc_poisonzombie"
+    )
+}
+
+/// Private schedule ids a family's block takes (measured block sizes; the soldier's is a
+/// lower bound - nothing has been spawned after it on a measured server).
+pub fn family_sched_reserve(family: &str) -> u16 {
+    match family {
+        "zombie" => 28,
+        "headcrab" => 21,
+        "antlion" => 46,
+        "combine" => 16,
+        _ => CLASS_SCHED_RESERVE,
+    }
+}
+
+/// Families whose first block is preceded by the blended-animation 5-id block.
+pub fn family_sched_blended(family: &str) -> bool {
+    matches!(family, "zombie" | "headcrab" | "antlion")
+}
+
+/// Ids a subclass adds after its family block (the fast zombie's and poison zombie's own
+/// schedules).
+pub fn class_sched_ext_reserve(class: &str) -> u16 {
+    match class {
+        "npc_fastzombie" | "npc_fastzombie_torso" | "npc_poisonzombie" => 2,
+        _ => 0,
+    }
+}
+
+/// Offset of a schedule inside a subclass's extension block.
+pub fn class_ext_schedule(class: &str, shared: u16) -> Option<u16> {
+    match (class, shared) {
+        ("npc_fastzombie" | "npc_fastzombie_torso", SCHED_MELEE_ATTACK1) => Some(0),
         _ => None,
     }
 }
@@ -483,6 +539,15 @@ pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
             SCHED_ZOMBIE_MOVE_SWATITEM => Some(1),
             SCHED_ZOMBIE_SWATITEM => Some(2),
             SCHED_MELEE_ATTACK1 => Some(10),
+            _ => None,
+        },
+        // measured on a soldier: 88 while shooting, 92 running to reload, 97 running to a line
+        // of fire, 101 the grenade toss
+        "combine" => match shared {
+            SCHED_RANGE_ATTACK1 => Some(0),
+            SCHED_HIDE_AND_RELOAD => Some(4),
+            SCHED_ESTABLISH_LINE_OF_FIRE => Some(9),
+            SCHED_RANGE_ATTACK2 => Some(13),
             _ => None,
         },
         _ => None,
