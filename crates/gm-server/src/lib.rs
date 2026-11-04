@@ -158,6 +158,9 @@ pub struct BonePose {
     pub frozen: bool,
 }
 
+/// `(cycle, event id, type, options, name)` of one animation event of a sequence.
+pub type SequenceEvent = (f32, i32, i32, String, String);
+
 /// Model data the script layer reads (`Entity:GetBodyGroups`, `LookupBone`, `GetAttachments`,
 /// `GetSequenceList`, `GetFlexNum`, `GetModelBounds`): names and counts straight from the MDL.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -182,7 +185,7 @@ pub struct ModelScriptData {
     /// Per sequence: root movement over its first animation (model units).
     pub sequence_move: Vec<[f32; 3]>,
     /// Per sequence: its animation events `(cycle, event, type, options, name)` in file order.
-    pub sequence_events: Vec<Vec<(f32, i32, i32, String, String)>>,
+    pub sequence_events: Vec<Vec<SequenceEvent>>,
     /// Flex controllers: `(name, min, max, kind)`.
     pub flex_info: Vec<(String, f32, f32, String)>,
     /// Model materials as `dir/name` (first texture directory).
@@ -4884,7 +4887,7 @@ impl<'w> Server<'w> {
         let melee = npc_melee_moves(&n.class).map(|(m, _)| m[0].reach);
         let ranged = npc_weapon_shot_in(&n.weapon, &self.scripted_weapons).is_some();
         let target_dead = target
-            .map(|p| self.players.get(&p).map_or(true, |pl| !pl.alive))
+            .map(|p| self.players.get(&p).is_none_or(|pl| !pl.alive))
             .unwrap_or(false);
         let last_enemy_damage = n.last_enemy_damage;
         let moving = n.goal.is_some();
@@ -5789,6 +5792,7 @@ impl<'w> Server<'w> {
                     }
                 }
             }
+            #[allow(clippy::collapsible_match)]
             ai::SCRIPT_PLAY => {
                 if (finished && !sc.loop_action) || now >= sc.stage_since + NPC_SCRIPT_MAX_TICKS {
                     sc.stage_since = now;
@@ -6010,6 +6014,7 @@ impl<'w> Server<'w> {
                 let ppos = self.players[&p].state.origin;
                 let d_player = dist(ppos);
                 let range = (g.lead_distance - NPC_LEAD_RANGE_SLACK).max(0.0);
+                #[allow(clippy::needless_late_init)]
                 let sched;
                 if g.waiting && d_player <= g.lead_distance {
                     sched = ai::SCHED_LEAD_RETRIEVE_WAIT;
@@ -6027,7 +6032,7 @@ impl<'w> Server<'w> {
                     let to = pos + (ppos - pos).normalize_or_zero() * (d_player - range);
                     if !moving
                         || g.retrieve_to
-                            .map_or(true, |(t, r)| r != run || t.distance(to) > 16.0)
+                            .is_none_or(|(t, r)| r != run || t.distance(to) > 16.0)
                     {
                         self.npc_goto(id, to, run);
                         let act = if run { "ACT_RUN" } else { "ACT_WALK" };
@@ -6113,6 +6118,7 @@ impl<'w> Server<'w> {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn npc_set_misc(
         &mut self,
         id: u32,
@@ -6254,9 +6260,10 @@ impl<'w> Server<'w> {
                 ai::COND_HEAR_BULLET_IMPACT => 1,
                 _ => 0,
             };
-            if n.ai.last_sound.map_or(true, |(_, c, t)| {
-                rank(cond) >= rank(c) || tick.saturating_sub(t) > 66 * 3
-            }) {
+            if n.ai
+                .last_sound
+                .is_none_or(|(_, c, t)| rank(cond) >= rank(c) || tick.saturating_sub(t) > 66 * 3)
+            {
                 n.ai.last_sound = Some((pos, cond, tick));
             }
         }
@@ -15267,8 +15274,7 @@ impl<'w> Server<'w> {
         // enemy past the minimum range
         let lateral = self.npc_lateral_point(feet, known, |p| {
             let to_enemy = p.truncate().distance(known.truncate());
-            to_enemy >= NPC_LOF_MIN_ENEMY
-                && to_enemy <= NPC_FLANK_RANGE
+            (NPC_LOF_MIN_ENEMY..=NPC_FLANK_RANGE).contains(&to_enemy)
                 && self.npc_los(p + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT), threat_eye)
         });
         if lateral.is_some() {
@@ -15279,8 +15285,7 @@ impl<'w> Server<'w> {
             let found = g.cover_node(feet, hull, |p| {
                 let to_enemy = p.truncate().distance(known.truncate());
                 p.truncate().distance(feet.truncate()) >= 1.0
-                    && to_enemy >= NPC_LOF_MIN_ENEMY
-                    && to_enemy <= NPC_FLANK_RANGE
+                    && (NPC_LOF_MIN_ENEMY..=NPC_FLANK_RANGE).contains(&to_enemy)
                     && self.npc_los(p + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT), threat_eye)
             });
             if found.is_some() {

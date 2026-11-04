@@ -694,7 +694,10 @@ pub fn class_schedule(family: &str, shared: u16) -> Option<u16> {
 /// The engine's shared schedules: the task list each runs and the conditions that interrupt
 /// it (ai_default.cpp). Only the schedules the native body can carry are listed; the rest
 /// resolve to the nearest one through `fallback`.
-pub fn schedule_tasks(id: u16) -> Option<(&'static [(u16, f32)], &'static [u8])> {
+/// A schedule's task list `(task, data)` and the conditions that interrupt it.
+pub type ScheduleTasks = (&'static [(u16, f32)], &'static [u8]);
+
+pub fn schedule_tasks(id: u16) -> Option<ScheduleTasks> {
     use self::*;
     Some(match id {
         SCHED_IDLE_STAND => (
