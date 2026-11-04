@@ -329,6 +329,14 @@ pub fn classify(class: &str) -> u8 {
         _ => 0,
     }
 }
+/// The NPC state an NPC has before its first think: NONE for most, IDLE for the player-ally
+/// actors (npc_alyx and friends set it in Spawn) - measured with `ai_disabled 1`.
+pub fn spawn_state(class: &str) -> u8 {
+    match class {
+        "npc_alyx" | "npc_barney" | "npc_kleiner" | "npc_eli" | "npc_mossman" | "npc_magnusson" | "npc_monk" | "npc_gman" | "npc_breen" | "npc_odessa" | "npc_fisherman" | "npc_dog" | "npc_vortigaunt" => NPC_STATE_IDLE,
+        _ => NPC_STATE_NONE,
+    }
+}
 pub const CLASS_PLAYER: u8 = 17;
 pub const CLASS_PLAYER_ALLY: u8 = 18;
 pub const CLASS_PLAYER_ALLY_VITAL: u8 = 19;

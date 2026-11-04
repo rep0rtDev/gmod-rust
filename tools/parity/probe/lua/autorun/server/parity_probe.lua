@@ -1077,7 +1077,7 @@ SCENARIOS.toolgun = function(scn, done)
 					pos = vec(p), ang = { a.p, a.y, a.r }, health = e:Health(), maxhealth = e:GetMaxHealth(), mins = vec(mn), maxs = vec(mx),
 					weapon = IsValid(w) and w:GetClass() or "", movetype = e:GetMoveType(), solid = e:GetSolid(), blood = e:GetBloodColor(),
 					sequence = e:GetSequenceName(e:GetSequence()), squad = e.GetSquad and e:GetSquad() or "", flags = e:GetSpawnFlags(), hull = e.GetHullType and e:GetHullType() or -1,
-					npcstate = e.GetNPCState and e:GetNPCState() or -1, eyes = vec(e:EyePos()) }
+					npcstate = e.GetNPCState and e:GetNPCState() or -1, sched = e.GetCurrentSchedule and e:GetCurrentSchedule() or -1, eyes = vec(e:EyePos()) }
 			end
 		end
 		table.sort(out.npcs, function(a, b) return a.index < b.index end)

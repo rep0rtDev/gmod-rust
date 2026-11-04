@@ -4660,7 +4660,7 @@ impl<'w> Server<'w> {
                 ai::NPC_STATE_SCRIPT
             } else if target.is_some() && !target_dead {
                 ai::NPC_STATE_COMBAT
-            } else if moving || a.has(ai::COND_HEAR_COMBAT) || a.has(ai::COND_HEAR_DANGER) || now.saturating_sub(n.target_seen) < 66 * 20 && n.target_seen > 0 {
+            } else if a.has(ai::COND_HEAR_COMBAT) || a.has(ai::COND_HEAR_DANGER) || now.saturating_sub(n.target_seen) < 66 * 20 && n.target_seen > 0 {
                 ai::NPC_STATE_ALERT
             } else {
                 ai::NPC_STATE_IDLE
@@ -4708,7 +4708,9 @@ impl<'w> Server<'w> {
             } else if target.is_some() && !target_dead {
                 ai::SCHED_COMBAT_FACE
             } else if moving {
-                if a.state == ai::NPC_STATE_ALERT { ai::SCHED_ALERT_WALK } else { ai::SCHED_IDLE_WANDER }
+                // the native brain never wanders: a goal without an enemy is a scripted / console
+                // go-to, which the game runs as SCHED_FORCED_GO in whatever state it was in
+                ai::SCHED_FORCED_GO
             } else if a.state == ai::NPC_STATE_ALERT {
                 ai::SCHED_ALERT_STAND
             } else {
@@ -4737,7 +4739,13 @@ impl<'w> Server<'w> {
                 return;
             }
         }
-        let Some((task, data)) = a.current_task() else { return };
+        // the engine's MaintainSchedule: tasks that finish at once chain within one think (up to 10)
+        for _ in 0..10 {
+        let moving = self.npcs.get(&id).is_some_and(|n| n.goal.is_some());
+        let Some(n) = self.npcs.get_mut(&id) else { return };
+        let a = &mut n.ai;
+        if a.schedule_done || a.schedule.is_none() { break; }
+        let Some((task, data)) = a.current_task() else { break };
         let started = a.task_status == ai::TASKSTATUS_NEW;
         if started {
             a.task_status = ai::TASKSTATUS_RUN_TASK;
@@ -4793,8 +4801,8 @@ impl<'w> Server<'w> {
             ai::TASK_FIND_COVER_FROM_ENEMY => { match target { Some(p) => { if self.npc_take_cover(id, p) { done = true; } else { fail = true; } } None => fail = true } }
             _ => { done = true; }
         }
-        if let Some(n) = self.npcs.get_mut(&id) {
-            if fail { n.ai.fail_task(); } else if done { n.ai.complete_task(now); }
+        let Some(n) = self.npcs.get_mut(&id) else { return };
+        if fail { n.ai.fail_task(); break; } else if done { n.ai.complete_task(now); } else { break; }
         }
     }
 
@@ -4807,6 +4815,11 @@ impl<'w> Server<'w> {
         match sched {
             Some(s) => { n.ai.scripted = true; n.ai.start(s, now); if ai::schedule_tasks(s).is_none() { n.ai.schedule_done = true; } }
             None => { n.ai.scripted = false; n.ai.clear(); }
+        }
+        // the new schedule's immediate tasks run now (a path set by SetSchedule starts on the
+        // NPC's next think, as measured on the game's FORCED_GO walks)
+        if sched.is_some() {
+            self.ai_step(id, now);
         }
         true
     }
@@ -10660,7 +10673,7 @@ impl<'w> Server<'w> {
             stuck: 0,
             passive: false,
             last_shot: 0,
-            ai: ai::AiState::default(),
+            ai: ai::AiState { state: ai::spawn_state(def.class), ..Default::default() },
             rest_sequence: None,
             spawn_tick: self.tick_count,
             next_think: self.tick_count + NPC_THINK_PHASE,
@@ -12585,7 +12598,7 @@ impl<'w> Server<'w> {
                 stuck: 0,
                 passive: false,
                 last_shot: 0,
-            ai: ai::AiState::default(),
+            ai: ai::AiState { state: ai::spawn_state(def.class), ..Default::default() },
                 rest_sequence: None,
                 spawn_tick: self.tick_count,
                 next_think: self.tick_count + NPC_THINK_PHASE,

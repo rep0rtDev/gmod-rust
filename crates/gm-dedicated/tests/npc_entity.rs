@@ -1421,6 +1421,10 @@ fn npc_runs_a_scripted_engine_schedule() {
     let goal = from + Vec3::new(-400.0, 0.0, 0.0);
     assert!(server.npc_set_save_position(id, goal));
     assert!(server.npc_set_schedule(id, Some(ai::SCHED_FORCED_GO)));
+    // GET_PATH / WALK_PATH chain at once (the engine's MaintainSchedule): the path exists
+    // right after SetSchedule and the schedule waits for the movement
+    assert!(server.npcs[&id].goal.is_some(), "{:?}", server.npcs[&id].ai);
+    assert_eq!(server.npcs[&id].ai.current_task().map(|t| t.0), Some(ai::TASK_WAIT_FOR_MOVEMENT));
     let mut ticks = 0;
     let mut seen_tasks = Vec::new();
     while server.npcs[&id].ai.scripted && !server.npcs[&id].ai.schedule_done {
@@ -1442,10 +1446,7 @@ fn npc_runs_a_scripted_engine_schedule() {
         "ended {} for goal {goal}",
         n.pos
     );
-    assert!(
-        seen_tasks.contains(&ai::TASK_WALK_PATH) && seen_tasks.contains(&ai::TASK_WAIT_FOR_MOVEMENT),
-        "tasks seen: {seen_tasks:?}"
-    );
+    assert!(seen_tasks.contains(&ai::TASK_WAIT_FOR_MOVEMENT), "tasks seen: {seen_tasks:?}");
     eprintln!("forced go in {ticks} ticks through {seen_tasks:?}");
     assert!(server.npc_set_schedule(id, None));
     for _ in 0..8 {
