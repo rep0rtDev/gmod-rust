@@ -2668,6 +2668,9 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
             run: true,
             start_range: 95.0,
             lunge: 63.0,
+            // the game's gap after a pounce is ~60 u with the player knocked 30 u; our player
+            // slides less, so the antlion steps back to the attack3 distance
+            recoil: 30.0,
             ..MELEE_PLAIN
         },
     ];
