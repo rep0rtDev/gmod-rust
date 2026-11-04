@@ -2213,6 +2213,10 @@ pub struct Npc {
     /// ends, and the earliest tick of the next leap.
     pub flight: Option<Vec3>,
     pub hung_until: u64,
+    /// The gait keeps playing until here after the path ended: the game's body walks on
+    /// through two more thinks before its idle (21 / 14 ticks after arrival in the walk and
+    /// assault recordings, `server_npc_walk_*`, `server_npc_assault_citizen`).
+    pub gait_until: u64,
     /// The flight crosses a jump link of the route; landing resumes the route.
     pub link_jump: bool,
     pub next_leap: u64,
@@ -13062,6 +13066,7 @@ impl<'w> Server<'w> {
             flight: None,
             link_jump: false,
             hung_until: 0,
+            gait_until: 0,
             next_leap: 0,
             jump_at: None,
             thrown: false,
@@ -14599,6 +14604,9 @@ impl<'w> Server<'w> {
                     n.detour = None;
                     n.detour_side = 0.0;
                     n.goal = None;
+                    if arrived && n.next_goal.is_none() && n.chase.is_none() {
+                        n.gait_until = now + 2 * u64::from(n.think_interval);
+                    }
                     swap = n.next_goal.take().map(|g| (g, n.run));
                 } else if let Some(g) = n.goal.as_mut() {
                     g.idx = idx.min(points.len() - 1);
@@ -14654,7 +14662,8 @@ impl<'w> Server<'w> {
         };
         let swinging = n.melee_swing.is_some() && now < n.swing_until;
         // the gait shows from the think the path is set (RunALL at the run's first think)
-        let moving = n.goal.as_ref().is_some_and(|g| !g.halt);
+        let moving = n.goal.as_ref().is_some_and(|g| !g.halt)
+            || (now < n.gait_until && n.goal.is_none() && n.target.is_none());
         let armed = npc_weapon_activity(&n.weapon, "ACT_IDLE").is_some();
         // an armed body's first think takes over from the spawn pose (Idle1_SMG1 at t4)
         let own =
@@ -16980,6 +16989,7 @@ impl<'w> Server<'w> {
                 flight: None,
                 link_jump: false,
                 hung_until: 0,
+                gait_until: 0,
                 next_leap: 0,
                 jump_at: None,
                 thrown: false,
