@@ -1116,6 +1116,8 @@ struct App {
     grabbed: bool,
     /// `gui.EnableScreenClicker` from a script: the cursor stays visible over the game.
     screen_clicker: bool,
+    /// Fonts the scripts created (`surface.CreateFont`), rebuilt with the HUD fonts on resize.
+    script_fonts: Vec<(String, String, f32)>,
     /// Script audio channels (`sound.PlayFile`) by the script's id: the mixer voice behind each.
     audio_channels: std::collections::BTreeMap<u32, AudioChan>,
     /// Script server browser requests (`serverlist`) still being answered on a thread.
@@ -5402,6 +5404,9 @@ impl App {
                 for d in &self.sim.hud_draws {
                     match d {
                         gm_script::DrawCmd::Font { name, family, size } => {
+                            self.script_fonts.retain(|(n, _, _)| n != name);
+                            self.script_fonts
+                                .push((name.clone(), family.clone(), *size));
                             if gm
                                 .ui
                                 .register_font(&gm.gpu, &self.mount, name, family, *size)
@@ -6684,6 +6689,19 @@ impl ApplicationHandler for App {
                     g.post.resize(&g.gpu, g.config.width, g.config.height);
                     if g.config.height != old_height {
                         register_ui_fonts(&self.mount, &mut g.ui, &g.gpu, g.config.height);
+                        for (name, family, size) in &self.script_fonts {
+                            if g.ui.register_font(&g.gpu, &self.mount, name, family, *size) {
+                                let m = g.ui.font_metrics(Some(name));
+                                gm_script::set_font_metrics(
+                                    name,
+                                    gm_script::TextMetrics {
+                                        line_height: m.line_height,
+                                        advances: m.advances,
+                                        fallback: m.fallback,
+                                    },
+                                );
+                            }
+                        }
                         let m = g.ui.font_metrics(None);
                         gm_script::set_font_metrics(
                             "",
@@ -7416,6 +7434,7 @@ fn main() -> Result<()> {
         panel_text: None,
         grabbed: false,
         screen_clicker: false,
+        script_fonts: Vec::new(),
         audio_channels: Default::default(),
         script_servers: Vec::new(),
         main_menu: !started_at_launch,
