@@ -2114,7 +2114,7 @@ pub struct Npc {
     pub wake_until: u64,
     /// Where the enemy's chest was last seen (suppression fire / flank target).
     pub last_known: Option<Vec3>,
-    /// A flanking run (SCHED_ESTABLISH_LINE_OF_FIRE) is under way until this tick.
+    /// Non-zero once the suppression of the last known position is over (cleared on sight).
     pub flank_until: u64,
     /// Leap attack (headcrabs): velocity while airborne, the tick a hang on the player's hull
     /// ends, and the earliest tick of the next leap.
@@ -4778,8 +4778,6 @@ impl<'w> Server<'w> {
                 } else {
                     ai::SCHED_WAKE_ANGRY
                 }
-            } else if now < n.flank_until && n.goal.is_some() {
-                ai::SCHED_ESTABLISH_LINE_OF_FIRE
             } else if n.cover_at.is_some() {
                 ai::SCHED_TAKE_COVER_FROM_ENEMY
             } else if n.chase.is_some() {
@@ -11845,24 +11843,22 @@ impl<'w> Server<'w> {
         let Some((player, chest)) = target else {
             let (old, seen) = (n.target, n.target_seen);
             if let (Some(p), Some(known)) = (old, n.last_known) {
+                // suppression over: the enemy memory runs from here, the chase follows
                 if npc_combat_sequences(&n.class).is_some()
                     && n.flank_until == 0
-                    && n.cover_at.is_none()
-                    && now.saturating_sub(seen) <= NPC_SUPPRESS_TICKS + NPC_TARGET_LOSE_TICKS
                     && known.distance(eye) <= NPC_SUPPRESS_RANGE
+                    && now.saturating_sub(seen) > NPC_SUPPRESS_TICKS
                     && self.players.get(&p).is_some_and(|pl| pl.alive)
                 {
-                    if let Some(v) = self.npc_flank_point(id, known) {
-                        self.npc_goto(id, v, true);
-                        if let Some(n) = self.npcs.get_mut(&id) {
-                            n.flank_until = now + NPC_FLANK_TICKS;
-                            n.burst_left = 0;
-                            if let Some(rest) = n.rest_sequence.take() {
-                                n.sequence = rest;
-                            }
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.flank_until = 1;
+                        n.target_seen = now;
+                        n.burst_left = 0;
+                        if let Some(rest) = n.rest_sequence.take() {
+                            n.sequence = rest;
                         }
-                        return;
                     }
+                    return;
                 }
             }
             if old.is_some() && n.cover_at.is_some() {
@@ -11894,7 +11890,7 @@ impl<'w> Server<'w> {
                 return;
             }
             if let Some(p) = old {
-                if now.saturating_sub(seen) > NPC_TARGET_LOSE_TICKS && now >= n.flank_until {
+                if now.saturating_sub(seen) > NPC_TARGET_LOSE_TICKS {
                     self.npc_stop(id);
                     if let Some(n) = self.npcs.get_mut(&id) {
                         n.target = None;
@@ -12795,30 +12791,6 @@ impl<'w> Server<'w> {
                 }
             }
         }
-    }
-
-    /// SCHED_ESTABLISH_LINE_OF_FIRE: the nearest navmesh vertex at least NPC_FLANK_MIN_STEP from
-    /// the NPC and within NPC_FLANK_RANGE whose eye point sees `known`.
-    fn npc_flank_point(&self, id: u32, known: Vec3) -> Option<Vec3> {
-        let n = self.npcs.get(&id)?;
-        let nav = self.nav.as_deref()?;
-        let feet = n.pos;
-        let mut best: Option<(f32, Vec3)> = None;
-        for v in nav.vertices() {
-            let d = v.truncate().distance(feet.truncate());
-            if d < NPC_FLANK_MIN_STEP || d > NPC_FLANK_RANGE {
-                continue;
-            }
-            if best.is_some_and(|(bd, _)| d >= bd) {
-                continue;
-            }
-            let eye = *v + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT);
-            let tr = self.collision.trace_ray(eye, known, gm_collision::MASK_PLAYERSOLID);
-            if tr.fraction >= 1.0 && !tr.start_solid {
-                best = Some((d, *v));
-            }
-        }
-        best.map(|(_, v)| v)
     }
 
     fn tick_npc_melee_hits(&mut self) {
@@ -17761,13 +17733,10 @@ pub const PLAYER_CENTER_HEIGHT: f32 = 36.0;
 /// (SCHED_WAKE_ANGRY) and chases from the third (server_npc_zombie_swat2_*: sched 1 at tick
 /// 5, 4 at 12, 93 at 19).
 pub const NPC_WAKE_ANGRY_TICKS: u64 = 7;
-/// A soldier keeps suppressing the enemy's last known position this long after losing sight
-/// (game: 335 ticks in server_npc_grenade_soldier, 783 in _low) before it goes for a line of
-/// fire; the flanking run is given this long.
-pub const NPC_SUPPRESS_TICKS: u64 = 335;
-pub const NPC_FLANK_TICKS: u64 = 660;
-pub const NPC_FLANK_MIN_STEP: f32 = 200.0;
-pub const NPC_FLANK_RANGE: f32 = 1200.0;
+/// A soldier keeps firing at the enemy's last known position this long after losing sight
+/// (game: 335 ticks in server_npc_grenade_soldier, 783 in _low), two thinks short of the
+/// NPC_TARGET_LOSE_TICKS memory measured on a vanished target, which then drops it.
+pub const NPC_SUPPRESS_TICKS: u64 = 316;
 /// Suppression / line-of-fire hunting only for an enemy lost within this range (measured at
 /// 290 u; a target that vanished 1120 u away is chased as before).
 pub const NPC_SUPPRESS_RANGE: f32 = 1024.0;

@@ -445,14 +445,15 @@ fn soldier_chases_a_target_out_of_sight_then_gives_up() {
     server.teleport_player(1, far);
     let seen_at = server.npcs[&id].target_seen;
     let mut dropped = None;
-    for t in 0..(gm_server::NPC_TARGET_LOSE_TICKS + 40) {
+    // suppression of the last known position first, then the memory runs out
+    for t in 0..(gm_server::NPC_SUPPRESS_TICKS + gm_server::NPC_TARGET_LOSE_TICKS + 40) {
         server.tick(&idle);
         let n = &server.npcs[&id];
         if n.target.is_none() {
             dropped = Some(t);
             break;
         }
-        assert_eq!(n.target_seen, seen_at, "saw the player at {far}");
+        assert!(n.target_seen == seen_at || n.flank_until > 0, "saw the player at {far}");
     }
     let n = &server.npcs[&id];
     eprintln!(
