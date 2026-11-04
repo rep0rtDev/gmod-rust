@@ -5593,7 +5593,7 @@ impl<'w> Server<'w> {
         let map_hints: Vec<ai::ActBusyHint> = self
             .ai_nodes
             .iter()
-            .filter(|n| n.hint == HINT_WORLD_WORK_POSITION)
+            .filter(|n| n.hint == HINT_WORLD_WORK_POSITION && n.hint_usable(ai::NPC_STATE_IDLE))
             .map(|n| ai::ActBusyHint {
                 pos: n.pos,
                 sequence: (!n.activity.is_empty()).then(|| n.activity.clone()),
@@ -6554,6 +6554,20 @@ pub struct AiNode {
     pub hint: u16,
     pub activity: String,
     pub group: String,
+    /// `MinimumState` / `MaximumState`: the NPC states (NPC_STATE_IDLE..COMBAT) the hint
+    /// serves, 1..3 by default.
+    pub min_state: u8,
+    pub max_state: u8,
+    /// `StartHintDisabled`: the hint is ignored until an input enables it.
+    pub disabled: bool,
+}
+
+impl AiNode {
+    /// Whether the node's hint serves an NPC in `state` (CAI_Hint::HintMatchesCriteria: the
+    /// state range and the disabled flag; a plain node carries no hint).
+    pub fn hint_usable(&self, state: u8) -> bool {
+        self.hint != 0 && !self.disabled && (self.min_state..=self.max_state).contains(&state)
+    }
 }
 
 /// The game's compiled node graph (`maps/graphs/<map>.ain`): the engine routes NPCs over
@@ -6789,6 +6803,15 @@ pub fn ai_nodes_from_bsp(bsp: &gm_formats::bsp::Bsp) -> Vec<AiNode> {
                     .unwrap_or(0),
                 activity: e.get("hintactivity").unwrap_or("").to_string(),
                 group: e.get("Group").unwrap_or("").to_string(),
+                min_state: e
+                    .get("MinimumState")
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(ai::NPC_STATE_IDLE),
+                max_state: e
+                    .get("MaximumState")
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(ai::NPC_STATE_COMBAT),
+                disabled: e.get("StartHintDisabled").is_some_and(|v| v.trim() == "1"),
             })
         })
         .collect()
@@ -14838,11 +14861,17 @@ impl<'w> Server<'w> {
         let mut best: Option<(f32, Vec3)> = None;
         // then the map's AI nodes by path length (tactical cover hints before plain nodes),
         // navmesh vertices where the nodes are sparse
+        let state = self
+            .npcs
+            .get(&id)
+            .map_or(ai::NPC_STATE_COMBAT, |n| n.ai.state);
         let candidates: Vec<(Vec3, f32)> = self
             .ai_nodes
             .iter()
             .map(|n| {
-                let w = if matches!(n.hint, HINT_TACTICAL_COVER_MED | HINT_TACTICAL_COVER_LOW) {
+                let w = if matches!(n.hint, HINT_TACTICAL_COVER_MED | HINT_TACTICAL_COVER_LOW)
+                    && n.hint_usable(state)
+                {
                     NPC_COVER_HINT_BONUS
                 } else {
                     NPC_COVER_NODE_BONUS
@@ -20952,3 +20981,30 @@ pub const NPC_ACTBUSY_TICKS: u64 = 660;
 /// an entry / action waits for its sequence to finish.
 pub const NPC_SCRIPT_ARRIVE: f32 = 16.0;
 pub const NPC_SCRIPT_MAX_TICKS: u64 = 66 * 60;
+
+#[cfg(test)]
+mod ai_node_hint_tests {
+    use super::*;
+
+    #[test]
+    fn hint_state_range_and_disabled_flag_gate_a_hint() {
+        let mut n = AiNode {
+            pos: Vec3::ZERO,
+            yaw: 0.0,
+            hint: HINT_TACTICAL_COVER_MED,
+            activity: String::new(),
+            group: String::new(),
+            min_state: ai::NPC_STATE_ALERT,
+            max_state: ai::NPC_STATE_COMBAT,
+            disabled: false,
+        };
+        assert!(!n.hint_usable(ai::NPC_STATE_IDLE));
+        assert!(n.hint_usable(ai::NPC_STATE_ALERT));
+        assert!(n.hint_usable(ai::NPC_STATE_COMBAT));
+        n.disabled = true;
+        assert!(!n.hint_usable(ai::NPC_STATE_COMBAT));
+        n.disabled = false;
+        n.hint = 0;
+        assert!(!n.hint_usable(ai::NPC_STATE_COMBAT));
+    }
+}
