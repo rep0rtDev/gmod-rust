@@ -11467,7 +11467,26 @@ impl<'w> Server<'w> {
     /// exactly, never braking harder than the accel per think; it is walked corner by corner, hull-swept
     /// `step_height` above the feet and dropped to the floor; the yaw turns toward the motion
     /// at NPC_YAW_RATE.
+    /// An NPC hull sweep: the world (`MASK_PLAYERSOLID`) and the sandbox props' collision
+    /// hulls; the nearer hit wins (NPCs walked through props before).
+    fn npc_sweep(&self, props: &[PropBody], start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3) -> gm_collision::Trace {
+        let mut tr = self.collision.trace_box(start, end, mins, maxs, gm_collision::MASK_PLAYERSOLID);
+        if props.is_empty() {
+            return tr;
+        }
+        if let Some(h) = gm_sandbox::trace_hull(self.collision, props, start, end, mins, maxs) {
+            // a hull already inside a prop (spawned onto it) walks out of it as before
+            if h.ent.is_some() && h.fraction > 0.0 && h.fraction < tr.fraction {
+                tr.fraction = h.fraction;
+                tr.end = h.pos;
+                tr.normal = h.normal;
+            }
+        }
+        tr
+    }
+
     fn tick_npc_move(&mut self) {
+        let prop_bodies = self.prop_bodies();
         if self.ai_disabled {
             return;
         }
@@ -11567,12 +11586,11 @@ impl<'w> Server<'w> {
                 let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
                 let next = points[idx + 1];
                 let to = Vec3::new(next.x, next.y, pos.z) + lift;
-                let tr = self.collision.trace_box(
+                let tr = self.npc_sweep(&prop_bodies, 
                     pos + lift,
                     to,
                     mins,
                     maxs,
-                    gm_collision::MASK_PLAYERSOLID,
                 );
                 if tr.fraction < 0.999 && !tr.start_solid {
                     break;
@@ -11653,23 +11671,21 @@ impl<'w> Server<'w> {
             }
             let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
             let want = at.extend(pos.z);
-            let mut tr = self.collision.trace_box(
+            let mut tr = self.npc_sweep(&prop_bodies, 
                 pos + lift,
                 want + lift,
                 mins,
                 maxs,
-                gm_collision::MASK_PLAYERSOLID,
             );
             if tr.fraction < 0.999 && !tr.start_solid {
                 // the step past a corner runs into a wall end: take the corner itself this
                 // think, the next heads for the following corner from there
                 if let Some(c) = passed.filter(|c| c.distance(pos.truncate()) > 1e-3) {
-                    let tc = self.collision.trace_box(
+                    let tc = self.npc_sweep(&prop_bodies, 
                         pos + lift,
                         c.extend(pos.z) + lift,
                         mins,
                         maxs,
-                        gm_collision::MASK_PLAYERSOLID,
                     );
                     if tc.fraction > tr.fraction {
                         tr = tc;
@@ -11683,12 +11699,11 @@ impl<'w> Server<'w> {
                 let n2 = Vec3::new(tr.normal.x, tr.normal.y, 0.0);
                 let slide = rest - n2 * rest.dot(n2);
                 if slide.length_squared() > 1e-4 {
-                    let ts = self.collision.trace_box(
+                    let ts = self.npc_sweep(&prop_bodies, 
                         tr.end,
                         tr.end + slide,
                         mins,
                         maxs,
-                        gm_collision::MASK_PLAYERSOLID,
                     );
                     if !ts.start_solid {
                         tr.end = ts.end;
