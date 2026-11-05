@@ -89,6 +89,7 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   scan 45), the game's at the wake think spawn+12 - the trace `t` of our runs is the op row,
   not the server tick.
 - Open, measured: swat2_crate stays 73 u: the game's chase turns south at x 951 (51 u before the crate) and
+- Measured on the oracle (frozen crate variants, same spawn (992,-500)): the swat2_crate detour is a graph route, not a prop skirt. With the box across the chase line 91 u ahead (original, frozen, y -490/-510, rotated 45 deg) the zombie heads 162 deg straight at AIN node 591 (965,-491), reaches it on row 75, then crawls south at 2.6 u/think (body on the bot, ~75 deg off the step) to (941,-533) and walks west along y -536..-541 past the box - identical to 0.1 u whatever the crate's y, so the apex is not taken from the box's faces. A box 7 u in front of the bot (x 850) or overlapping the line by 3 u (y -530) is walked at straight and handled on contact (slide north round x 850, like the drum). What makes the game drop to the graph (local route failure vs triangulation) is not derivable from these; frozen variants at x 870/930 and y -470 are no use - the frozen box nudges the zombie's spawn. Open.
   skirts it at 48..50 u, so the second scan finds the crate at 50 u; ours walks straight to
   36 u (inside the 38 u minimum) and never picks it. The game's 15 u lateral stand-off
   (y -515 in both crate scenes) belongs to that early side-step, not to the swat position.
