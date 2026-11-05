@@ -161,3 +161,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   standing turn): grenade_soldier 48 → 85, squad_soldier 219 → 228 - reverted. The arrival
   heading alone does not reproduce the three standing thinks; the gap is in which think the
   face task starts, not in the turn rate.
+
+### NPC: fast zombie scratches (server_npc_melee_fastzombie, 35 u) - measured, open
+
+- Per cycle the game's fast zombie scratches twice from 866..869 (3 hp each), roars
+  (BR2_Roar, ~100 rows) while backing off ~20 u (869 → 873 → 889), runs back in and scratches
+  again. Each scratch shoves the bot ~1..2 u back and ~4 u sideways, alternating (y -504, -505,
+  -502, -501): the bot drifts only 823 → 811 over four cycles.
+- Ours scratches from 860..875, stands through the roar, idles a think, then runs in; each
+  scratch pushes the bot straight back, 12..13 u a cycle (823 → 811 → 798 → 785) - that drift
+  is the 35 u. To do: the scratch's lateral shove with the small backward share, and the
+  back-off during the roar.
