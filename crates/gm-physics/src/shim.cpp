@@ -825,7 +825,13 @@ public:
 					JPH::Vec3 axis = rb.GetRotation() * (rmp->GetInertiaRotation() * e);
 					ax_dot = std::fabs(axis.Dot(line));
 					i_ratio = i_min / i_mid;
-					if (i_min > 0.6f * i_mid || std::fabs(axis.Dot(line)) < 0.96f) on_line = false;
+					// a sphere (the hoverball: three equal inertias) rolls about any axis - the game's
+					// ball dropped from 100 u rolls 100 u over 170 ticks at -676 -> -335 deg/s
+					// (`constraint_device_hoverball_drop_m40`), ours stopped after 25
+					float i_max = 0.0f;
+					for (int k = 0; k < 3; ++k) i_max = std::max(i_max, 1.0f / std::max(inv_d[k], 1e-9f));
+					bool sphere_like = i_max < 1.1f * i_min;
+					if (!sphere_like && (i_min > 0.6f * i_mid || std::fabs(axis.Dot(line)) < 0.96f)) on_line = false;
 				}
 				// the centre of mass stands over the line (a rolling cylinder's does, within half a
 				// facet; the upright drum tipping over its bottom rim has it 35 cm off the pivot)
