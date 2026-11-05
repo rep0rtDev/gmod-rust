@@ -2933,12 +2933,14 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
     const ANTLION: [NpcMelee; 3] = [
         NpcMelee {
             damage: 0.0,
-            reach: 140.0,
+            reach: 170.0,
             swing_ticks: 49,
             hit_tick: 49,
             run: true,
-            start_range: 140.0,
-            lunge: 28.0,
+            // the game jumps in right after the run starts, ~170 u out, 66 u of flight
+            // (server_npc_melee_antlion rows 39..95: 998 → 956 → 932)
+            start_range: 170.0,
+            lunge: 66.0,
             ..MELEE_PLAIN
         },
         NpcMelee {
@@ -2955,14 +2957,15 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         },
         NpcMelee {
             damage: 5.0,
-            // the chase stops at min(start_range, reach) - 3: the game pounces from ~90 u
-            reach: 100.0,
+            reach: 130.0,
             swing_ticks: 63,
             hit_tick: 34,
             punch: 280.0,
             run: true,
-            start_range: 95.0,
-            lunge: 63.0,
+            // the game pounces from 115..122 u (916 → 832 at the bot 794, 853 → 769 at 734,
+            // 790 → 738 at 675): 84 u of flight
+            start_range: 130.0,
+            lunge: 84.0,
             // the game's gap after a pounce is ~60 u with the player knocked 30 u; our player
             // slides less, so the antlion steps back to the attack3 distance
             recoil: 30.0,
@@ -15937,10 +15940,21 @@ impl<'w> Server<'w> {
         if n.target_first_seen == 0 {
             n.target_first_seen = now;
             n.combat_moved = false;
-            if ai::class_sched_family(&n.class) == Some("zombie") {
+            let antlion = n.class == "npc_antlion";
+            if ai::class_sched_family(&n.class) == Some("zombie") || antlion {
                 // the game: a new enemy in combat runs SCHED_WAKE_ANGRY for one think (7 ticks)
-                // before the chase starts (server_npc_zombie_swat2_*: sched 4 at tick 12, 93 at 19)
-                n.wake_until = now + NPC_WAKE_ANGRY_TICKS;
+                // before the chase starts (server_npc_zombie_swat2_*: sched 4 at tick 12, 93 at 19);
+                // the antlion idles four thinks first (server_npc_melee_antlion: `Idle` sched 1
+                // to spawn+30, DistractIdle4 sched 4 to +37, run_all from +37)
+                n.wake_until = now
+                    + if antlion {
+                        ANTLION_WAKE_TICKS
+                    } else {
+                        NPC_WAKE_ANGRY_TICKS
+                    };
+                if antlion {
+                    n.sequence = "Idle".to_string();
+                }
                 // the swat scan runs at the wake think and every 2 s after it
                 n.next_swat_scan = now + NPC_WAKE_ANGRY_TICKS;
                 n.swing_until = n.swing_until.max(n.wake_until);
@@ -22427,6 +22441,9 @@ pub const PLAYER_CENTER_HEIGHT: f32 = 36.0;
 /// (SCHED_WAKE_ANGRY) and chases from the third (server_npc_zombie_swat2_*: sched 1 at tick
 /// 5, 4 at 12, 93 at 19).
 pub const NPC_WAKE_ANGRY_TICKS: u64 = 7;
+/// The antlion idles four thinks after sighting its enemy before SCHED_WAKE_ANGRY
+/// (server_npc_melee_antlion: Idle to spawn+30, DistractIdle4 to +37).
+pub const ANTLION_WAKE_TICKS: u64 = 28;
 /// A soldier that loses sight of an enemy within this range runs for a line of fire to its
 /// last known position (server_npc_grenade_soldier_wall: one think after, 263 u to a point
 /// past the wall's end); the run is given the enemy memory's length.

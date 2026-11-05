@@ -105,3 +105,19 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 - Now the 36 u/s lift applies only when the bot's origin is above the zombie's. 53-scene sweep
   2200 → 2146: swat2_bluebarrel 56 → 29, swat2_heavy 55 → 30, melee_zombie 10 → 8.5, nothing
   worse. swat_far (81 u) is still open: the game's bot dies and respawns at a random point.
+
+### NPC: antlion wake and pounce ranges (server_npc_melee_antlion 83 → 63)
+
+- The game's antlion idles four thinks after the spawn (`Idle`, sched 1, to spawn+30), wakes
+  angry for one (DistractIdle4, sched 4) and runs from spawn+37; ours alerted at the spawn and
+  ran 28 ticks early, which shifted the whole fight. `ANTLION_WAKE_TICKS` 28 before the wake
+  think, the `Idle` sequence meanwhile.
+- The opening pounce2 comes right after the run starts, ~170 u out, 66 u of flight (998 → 956 →
+  932); ours ran to 140 u and jumped 28. The standing pounce starts from 115..122 u (916 at the
+  bot 794, 853 at 734, 790 at 675) with 84 u of flight; ours needed 95 u and flew 63, so it ran
+  in first (Idle → run_all → pounce) where the game pounces out of attack3.
+- 53-scene sweep 2146 → 2126, only the antlion moved. Tried and dropped: a constant per-tick
+  dash (the dash is `remaining / 21` per tick, a decaying step, so an 84 u lunge covers 62 by
+  the hit): the antlion went 63 → 80 - the decaying profile is the better fit for the game's
+  flight. Open: an extra idle think after every lunge before the run back (rows 95, 270, 452:
+  the game runs in the think the pounce ends), and the flight still 62 of 84 u.
