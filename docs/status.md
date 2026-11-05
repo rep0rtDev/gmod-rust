@@ -300,5 +300,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   plays `pickup` from row 110 until it dies - it is taking the soldier's SMG1 dropped at
   (940,-526) on row 58..60 (a dropped NPC weapon is no cleanup type and survives the row-99
   `gmod_cleanup`; our `drop_npc_weapon` already survives ours). Ours has no weapon-seeking
-  schedule (SCHED_NEW_WEAPON): it stands idle_subtle at (926,-500) and dies on row 110. Next:
-  the unarmed-citizen weapon pickup (run to the weapon, `pickup`, equip).
+  schedule (SCHED_NEW_WEAPON): it stood idle_subtle at (926,-500) and died on row 110. Done:
+  `npc_weapon_seek` - an unarmed weapon-user (`npc_uses_weapons`) scans the world weapons it
+  can use within `NPC_WEAPON_SEARCH` (1024 u, radius unmeasured) every `NPC_WEAPON_SCAN_TICKS`
+  (66), runs to the nearest (`npc_goto`, run), stands `NPC_PICKUP_DELAY_TICKS` (24) at it,
+  plays `pickup` for `NPC_PICKUP_TICKS` (40, unmeasured: the game's citizen died in the pose)
+  and takes the weapon (`npc_pickup_weapon`). Trace now matches row for row: run_all rows
+  100..106 (ours 926 → 902, the game's 940 → 919 - the weapon lies where the soldier's throw
+  put it), idle_subtle 107..108, pickup from 109, 8 then 16 in the pose (the `pickup` shift
+  waits for `NPC_POSE_BLEND_TICKS` like the arm pose). Open: row 108 - the game's citizen at
+  the weapon faces yaw 79 (side-on, 2 of 8), ours faces along its run (8); which way an NPC
+  turns at the weapon (TASK_FACE?) is unmeasured, as is the SMG1's exact landing point.
+  Scene figure 36.4 (positions only), sweep 2005.1 → 2005.1 (no other scene has an unarmed
+  weapon-user near a dropped weapon).

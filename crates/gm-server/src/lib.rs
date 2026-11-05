@@ -2273,6 +2273,11 @@ pub struct Npc {
     pub spawn_tick: u64,
     /// Tick the current idle pose was taken (hitboxes blend into it over `NPC_POSE_BLEND_TICKS`).
     pub pose_since: u64,
+    /// World weapon an unarmed weapon-user is running to (SCHED_NEW_WEAPON).
+    pub weapon_goal: Option<u32>,
+    /// While set, the `pickup` pose plays; at this tick the weapon is taken.
+    pub pickup_until: u64,
+    pub next_weapon_scan: u64,
     pub next_think: u64,
     pub think_interval: u8,
     /// `NPC:SetMoveInterval`: a fixed think interval (ticks) instead of the measured near / far one.
@@ -2606,8 +2611,10 @@ pub fn npc_sequence_crouched(sequence: &str) -> bool {
 /// How far a pose lowers the body's hitboxes into a centre shot: the crouched poses and the
 /// bent-over `pickup` (the citizen in server_npc_damage took 8 then 16 from the hull-centre
 /// shot while picking a weapon up - its head came down into the ray).
-pub fn npc_pose_hit_shift(sequence: &str) -> f32 {
-    if npc_sequence_crouched(sequence) || sequence.eq_ignore_ascii_case("pickup") {
+pub fn npc_pose_hit_shift(sequence: &str, held: u64) -> f32 {
+    if npc_sequence_crouched(sequence)
+        || (sequence.eq_ignore_ascii_case("pickup") && held >= NPC_POSE_BLEND_TICKS)
+    {
         NPC_CROUCH_HITBOX_DROP
     } else {
         0.0
@@ -2644,6 +2651,26 @@ pub fn npc_regenerates(class: &str) -> bool {
     )
 }
 pub const NPC_ALLY_REGEN_TICKS: f32 = 200.0 / 15.0;
+
+/// Classes that carry and use weapons (the game's CAP_USE_WEAPONS humanoids).
+pub fn npc_uses_weapons(class: &str) -> bool {
+    matches!(
+        class,
+        "npc_citizen" | "npc_alyx" | "npc_barney" | "npc_combine_s" | "npc_metropolice"
+    )
+}
+/// SCHED_NEW_WEAPON: an unarmed weapon-user looks for a usable world weapon this far away
+/// (search radius unmeasured) once a second, runs to it (server_npc_damage: the citizen runs
+/// `run_all` from its first think to the soldier's dropped SMG1), plays `pickup` at
+/// `NPC_WEAPON_PICKUP_REACH` and takes the weapon when the pose ends (the game's citizen died
+/// in the pose, so its length is unmeasured).
+pub const NPC_WEAPON_SEARCH: f32 = 1024.0;
+pub const NPC_WEAPON_SCAN_TICKS: u64 = 66;
+pub const NPC_WEAPON_PICKUP_REACH: f32 = 40.0;
+pub const NPC_PICKUP_TICKS: u64 = 40;
+/// At the weapon the game's citizen stood idle (idle_subtle) for two rows before the pose:
+/// arrival row 105, `pickup` from row 109 (server_npc_damage).
+pub const NPC_PICKUP_DELAY_TICKS: u64 = 24;
 /// The game grants the point at the think after the deadline: measured +5..10 ticks late.
 pub const NPC_ALLY_REGEN_DELAY: f32 = 7.0;
 /// A pose's hitboxes reach it only after the sequence blend (Alyx's hit 6 ticks after taking
@@ -9198,7 +9225,10 @@ impl<'w> Server<'w> {
                     .and_then(|n| {
                         let h = n.maxs.z - n.mins.z;
                         let rel = (hit.z - (n.pos.z + n.mins.z)) * 72.0 / h.max(1.0)
-                            + npc_pose_hit_shift(&n.sequence);
+                            + npc_pose_hit_shift(
+                                &n.sequence,
+                                self.tick_count.saturating_sub(n.pose_since),
+                            );
                         let facing =
                             gm_sandbox::rotation(Vec3::new(0.0, n.angles.y, 0.0)) * Vec3::X;
                         let to_shooter = -d.truncate().normalize_or_zero();
@@ -13373,6 +13403,9 @@ impl<'w> Server<'w> {
             rest_sequence: None,
             spawn_tick: self.tick_count,
             pose_since: 0,
+            weapon_goal: None,
+            pickup_until: 0,
+            next_weapon_scan: 0,
             next_think: self.tick_count + NPC_THINK_PHASE,
             think_interval: NPC_THINK_TICKS,
             move_speed: 0.0,
@@ -15115,6 +15148,7 @@ impl<'w> Server<'w> {
             || n.grenade.is_some()
             || n.jump_at.is_some()
             || now < n.hung_until
+            || now < n.pickup_until
         {
             return;
         }
@@ -15339,7 +15373,104 @@ impl<'w> Server<'w> {
         true
     }
 
+    /// The weapon-pickup schedule (see `NPC_WEAPON_SEARCH`); true while it owns the think.
+    fn npc_weapon_seek(&mut self, id: u32, now: u64) -> bool {
+        let Some(n) = self.npcs.get(&id) else {
+            return false;
+        };
+        if n.dead_at.is_some()
+            || n.ai.scripted
+            || n.ai.goal.is_some()
+            || !n.weapon.is_empty()
+            || !npc_uses_weapons(&n.class)
+        {
+            return false;
+        }
+        if n.pickup_until > 0 {
+            if now >= n.pickup_until {
+                let ent = n.weapon_goal;
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.pickup_until = 0;
+                    n.weapon_goal = None;
+                }
+                if let Some(ent) = ent {
+                    self.npc_pickup_weapon(id, ent);
+                }
+            }
+            return true;
+        }
+        let weapon_pos = |me: &Self, ent: u32| -> Option<Vec3> {
+            me.world_weapons.contains_key(&ent).then(|| {
+                me.sandbox
+                    .props()
+                    .iter()
+                    .find(|p| p.id == ent)
+                    .map(|p| p.pos)
+            })?
+        };
+        if let Some(ent) = n.weapon_goal {
+            let Some(pos) = weapon_pos(self, ent) else {
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.weapon_goal = None;
+                }
+                return false;
+            };
+            if n.goal.is_none() {
+                if pos.truncate().distance(n.pos.truncate()) <= NPC_WEAPON_PICKUP_REACH {
+                    if n.path_done_at > 0 && now < n.path_done_at + NPC_PICKUP_DELAY_TICKS {
+                        return true;
+                    }
+                    self.npc_stop(id);
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.sequence = "pickup".to_string();
+                        n.pose_since = now;
+                        n.pickup_until = now + NPC_PICKUP_TICKS;
+                    }
+                } else if !self.npc_goto(id, pos, true) {
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.weapon_goal = None;
+                    }
+                    return false;
+                }
+            }
+            return true;
+        }
+        if now < n.next_weapon_scan {
+            return false;
+        }
+        let from = n.pos.truncate();
+        let mut best: Option<(f32, u32, Vec3)> = None;
+        for (ent, class) in &self.world_weapons {
+            if npc_weapon_shot_in(class, &self.scripted_weapons).is_none() {
+                continue;
+            }
+            let Some(pos) = weapon_pos(self, *ent) else {
+                continue;
+            };
+            let d = pos.truncate().distance(from);
+            if d <= NPC_WEAPON_SEARCH && best.is_none_or(|b| d < b.0) {
+                best = Some((d, *ent, pos));
+            }
+        }
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.next_weapon_scan = now + NPC_WEAPON_SCAN_TICKS;
+        }
+        let Some((_, ent, pos)) = best else {
+            return false;
+        };
+        if !self.npc_goto(id, pos, true) {
+            return false;
+        }
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.weapon_goal = Some(ent);
+        }
+        true
+    }
+
     fn npc_combat_think(&mut self, id: u32, now: u64) {
+        if !self.ai_disabled && self.npc_weapon_seek(id, now) {
+            return;
+        }
         let prev_cover = self.npcs.get(&id).is_some_and(|n| n.cover_fire);
         if let Some(n) = self.npcs.get_mut(&id) {
             n.cover_fire = false;
@@ -17678,6 +17809,9 @@ impl<'w> Server<'w> {
                 rest_sequence: None,
                 spawn_tick: self.tick_count,
                 pose_since: 0,
+                weapon_goal: None,
+                pickup_until: 0,
+                next_weapon_scan: 0,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,
                 move_speed: 0.0,
