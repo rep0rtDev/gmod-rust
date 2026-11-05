@@ -121,3 +121,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   the hit): the antlion went 63 → 80 - the decaying profile is the better fit for the game's
   flight. Open: an extra idle think after every lunge before the run back (rows 95, 270, 452:
   the game runs in the think the pounce ends), and the flight still 62 of 84 u.
+
+### NPC: a zombie spawned on a crate (server_npc_zombie_swat, 40 u) - tried, rejected
+
+- The game drops the spawned zombie onto the crate it was aimed at (z -104 at (916,-500)); the
+  crate slides out west under it (901 → 874 by row 60) and the zombie sinks with it (-107 at row
+  24, -134 at 40, -144 at 60) and only then walks. Ours drops it to the floor inside the crate
+  and the overlap push moves the crate (to 877); the 40 u is the z offset on rows 3..40.
+- Tried a hull drop that also stands on props, at the spawn and in the walk's floor: sum
+  2126 → 2180 (zombie_swat 40 → 70: ours rides the crate top and never comes down, since
+  nothing pushes a crate the zombie stands on; swat2_drum 6 → 36: the walk climbs the drum at
+  row 210). Spawn-only: zombie_swat 40 → 137. Both reverted. Needs the crate to slide from
+  under a body standing on it (the game's shadow pushes it out), not a floor rule.
