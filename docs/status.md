@@ -219,6 +219,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   think, the leader after the window), pace from the yaw-vs-step angle, and the mate's
   zero-length window (its magazine is empty after the suppress volley) to be confirmed.
 
+- Pace against facing, measured per think (two rows) over rows 390..690: the leader makes
+  15.8 u at 0..15 deg between step and facing, 14.7 at 15, 13.7 at 30, 8.6 at 75, 13.2 at
+  90, 15.7 at 105; the mate 11.8 at 0, 10.5 at 15, 8.3 at 30, 10.4 at 45, 11.2 at 60, 9.1 at
+  75. The mate's pace (8..12) does not follow the step/facing angle at all and the leader's
+  barely - so the blend bands of dd6ff00 (speed from the angle to the enemy) are a surrogate
+  that happened to land in the right range, not the mechanism. Both run RunAIMALL1; why the
+  mate is a third slower than the leader on the same gait is unmeasured (candidates: the
+  zigzag within a think around the house eating net displacement, or a per-NPC speed from
+  the sequence's blend) - the facing model (16f093f: route-goal yaw, leader after its
+  window) stays the next thing to build, with the pace fitted after it.
 ### NPC: server_npc_damage (55 → 36.4 u @23) - measured, open
 
 - Zombie (rows 3..24, the scene's first spawn; every damage op is `firebullets` Pistol): the
