@@ -21372,7 +21372,7 @@ impl<'w> Server<'w> {
         if players.is_empty() {
             return;
         }
-        let mut hits: Vec<(u32, u32, Vec3, Vec3, f32, Vec3)> = Vec::new();
+        let mut hits: Vec<(u32, u32, Vec3, Vec3, f32, Vec3, Vec3)> = Vec::new();
         let props: Vec<(u32, String)> = self
             .sandbox
             .props()
@@ -21407,22 +21407,23 @@ impl<'w> Server<'w> {
             for &(pid, lo, hi) in &players {
                 // the hull face of least overlap is the contact face; its normal points from
                 // the player to the prop
-                let mut face: Option<(f32, Vec3)> = None;
+                let mut face: Option<(f32, Vec3, Vec3)> = None;
                 for (a, b) in &aabbs {
-                    let over = (b.min(hi) - a.max(lo)).to_array();
+                    let (olo, ohi) = (a.max(lo), b.min(hi));
+                    let over = (ohi - olo).to_array();
                     if over.iter().any(|&o| o < 0.0) {
                         continue;
                     }
                     let centre = ((*a + *b) - (lo + hi)) * 0.5;
                     for (axis, o) in over.into_iter().enumerate() {
-                        if face.is_none_or(|(best, _)| o < best) {
+                        if face.is_none_or(|(best, _, _)| o < best) {
                             let mut n = Vec3::ZERO;
                             n[axis] = if centre[axis] >= 0.0 { 1.0 } else { -1.0 };
-                            face = Some((o, n));
+                            face = Some((o, n, (olo + ohi) * 0.5));
                         }
                     }
                 }
-                if let Some((_, n)) = face {
+                if let Some((_, n, point)) = face {
                     hits.push((
                         id,
                         pid,
@@ -21430,12 +21431,13 @@ impl<'w> Server<'w> {
                         st.angular_velocity,
                         self.physics.mass(b),
                         n,
+                        point,
                     ));
                     break;
                 }
             }
         }
-        for (id, pid, velocity, angular, mass, n) in hits {
+        for (id, pid, velocity, angular, mass, n, point) in hits {
             if mass < PROP_HIT_MIN_MASS {
                 continue;
             }
@@ -21463,8 +21465,13 @@ impl<'w> Server<'w> {
             let vt = rel - n * vn;
             let jt = (PROP_HIT_FRICTION * jn).min(vt.length() * reduced);
             let t = vt.normalize_or_zero();
-            self.physics
-                .set_velocity(b, velocity + n * (jn / mass) - t * (jt / mass), angular);
+            // the normal impulse acts at the overlap's centre: off the prop's centre of mass it
+            // spins the prop (the game's crate leaves the hull turning 242 deg/s in yaw); the
+            // friction acts through the centre (the game's crate does not pitch over)
+            let _ = angular;
+            self.physics.set_asleep(b, false);
+            self.physics.add_impulse_at(b, point, n * jn);
+            self.physics.add_impulse(b, -t * jt);
             if damage <= 0.0 {
                 continue;
             }
