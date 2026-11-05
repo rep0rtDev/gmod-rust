@@ -313,14 +313,20 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   schedule (SCHED_NEW_WEAPON): it stood idle_subtle at (926,-500) and died on row 110. Done:
   `npc_weapon_seek` - an unarmed weapon-user (`npc_uses_weapons`) scans the world weapons it
   can use within `NPC_WEAPON_SEARCH` (1024 u, radius unmeasured) every `NPC_WEAPON_SCAN_TICKS`
-  (66), runs to the nearest (`npc_goto`, run), stands `NPC_PICKUP_DELAY_TICKS` (24) at it,
-  plays `pickup` for `NPC_PICKUP_TICKS` (40, unmeasured: the game's citizen died in the pose)
-  and takes the weapon (`npc_pickup_weapon`). Trace now matches row for row: run_all rows
-  100..106 (ours 926 → 902, the game's 940 → 919 - the weapon lies where the soldier's throw
-  put it), idle_subtle 107..108, pickup from 109, 8 then 16 in the pose (the `pickup` shift
-  waits for `NPC_POSE_BLEND_TICKS` like the arm pose). Open: row 108 - the game's citizen at
-  the weapon faces yaw 79 (side-on, 2 of 8), ours faces along its run (8); which way an NPC
-  turns at the weapon (TASK_FACE?) is unmeasured, as is the SMG1's exact landing point.
+  (133: an oracle scene placed an SMG1 60 u beside an idle citizen 13 ticks after its spawn and
+  it ran at +146, i.e. on the next 2 s scan; in server_npc_damage the weapon already lay there
+  and it ran on its first think), runs to the weapon itself (stops `NPC_WEAPON_PICKUP_REACH`
+  12 u off - the game stopped 4..5 u from three placed SMG1s), turns to `NPC_PICKUP_FACE_YAW`
+  0 (the game's citizen faced yaw 0 before every pickup: three placed weapons on either side
+  of it and the dropped one, via 79 a think earlier - the schedule's unset ideal yaw, not the
+  weapon's bearing), plays `pickup` and takes the weapon after `NPC_PICKUP_TICKS` (20: the
+  oracle's `weapon` field filled 20..30 ticks into the pose; the pose itself persists). Trace
+  now matches row for row: run_all rows 100..106, idle_subtle 107..108, pickup from 109 at
+  yaw 0, 8 then 16 in the pose (the `pickup` shift waits for `NPC_POSE_BLEND_TICKS`). Open:
+  row 108 - the game's citizen is still turning (yaw 79, side-on, 2 of 8) where ours already
+  reads 58 (8): ours arrives two rows earlier because our dropped SMG1 lands at (902,-495)
+  against the game's (919,-523) - the drop's landing point (the corpse's throw and the
+  weapon's physics), not the pickup rule.
   Scene figure 36.4 (positions only), sweep 2005.1 → 2005.1 (no other scene has an unarmed
   weapon-user near a dropped weapon).
 - The soldier's two-op-early crouch (ours CrouchIdle on row 45, the game Idle1_SMG1 / CombatIdle

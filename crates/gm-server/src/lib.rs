@@ -2665,12 +2665,13 @@ pub fn npc_uses_weapons(class: &str) -> bool {
 /// `NPC_WEAPON_PICKUP_REACH` and takes the weapon when the pose ends (the game's citizen died
 /// in the pose, so its length is unmeasured).
 pub const NPC_WEAPON_SEARCH: f32 = 1024.0;
-pub const NPC_WEAPON_SCAN_TICKS: u64 = 66;
-pub const NPC_WEAPON_PICKUP_REACH: f32 = 40.0;
-pub const NPC_PICKUP_TICKS: u64 = 40;
-/// At the weapon the game's citizen stood idle (idle_subtle) for two rows before the pose:
-/// arrival row 105, `pickup` from row 109 (server_npc_damage).
-pub const NPC_PICKUP_DELAY_TICKS: u64 = 24;
+pub const NPC_WEAPON_SCAN_TICKS: u64 = 133;
+pub const NPC_WEAPON_PICKUP_REACH: f32 = 12.0;
+pub const NPC_PICKUP_TICKS: u64 = 20;
+/// The body turns to this yaw before the pickup (the schedule's unset ideal yaw); within
+/// `NPC_PICKUP_FACE_DEG` of it the pickup starts.
+pub const NPC_PICKUP_FACE_YAW: f32 = 0.0;
+pub const NPC_PICKUP_FACE_DEG: f32 = 15.0;
 /// The game grants the point at the think after the deadline: measured +5..10 ticks late.
 pub const NPC_ALLY_REGEN_DELAY: f32 = 7.0;
 /// A pose's hitboxes reach it only after the sequence blend (Alyx's hit 6 ticks after taking
@@ -15417,11 +15418,17 @@ impl<'w> Server<'w> {
             };
             if n.goal.is_none() {
                 if pos.truncate().distance(n.pos.truncate()) <= NPC_WEAPON_PICKUP_REACH {
-                    if n.path_done_at > 0 && now < n.path_done_at + NPC_PICKUP_DELAY_TICKS {
-                        return true;
-                    }
+                    // at the weapon the body turns to yaw 0 - the game's citizen faced 0 before
+                    // every pickup (three lua-placed SMG1s on either side and the dropped one
+                    // in server_npc_damage, via 79 a think earlier): the schedule's unset ideal
+                    // yaw, not the weapon's bearing - and picks up once it faces it
                     self.npc_stop(id);
+                    self.npc_set_ideal_yaw(id, Some(NPC_PICKUP_FACE_YAW), true);
                     if let Some(n) = self.npcs.get_mut(&id) {
+                        if wrap_deg(NPC_PICKUP_FACE_YAW - n.angles.y).abs() > NPC_PICKUP_FACE_DEG {
+                            return true;
+                        }
+                        n.ideal_yaw = None;
                         n.sequence = "pickup".to_string();
                         n.pose_since = now;
                         n.pickup_until = now + NPC_PICKUP_TICKS;
