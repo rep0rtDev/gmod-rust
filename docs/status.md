@@ -162,7 +162,7 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   heading alone does not reproduce the three standing thinks; the gap is in which think the
   face task starts, not in the turn rate.
 
-### NPC: fast zombie scratches and roar (server_npc_melee_fastzombie 35 → 6.6)
+### NPC: fast zombie scratches and roar (server_npc_melee_fastzombie 35 → 5.8)
 
 - Per cycle the game's fast zombie scratches twice from 866..869 (3 hp each), roars
   (BR2_Roar, ~100 rows) while backing off ~20 u (869 → 873 → 889), runs back in and scratches
@@ -173,8 +173,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 - The roar, measured by row: the hits land at the swing's tick and +14 in both, but the game's
   `BR2_Roar` and its slide start 35 ticks into the 133-tick swing (rows 88 / 102 / 123), not at
   the second hit; the slide is 3.3, 3.0, 2.7 .. 1.0 u a think over the 98 ticks of roar, ~20 u.
-  `NpcMelee::roar_at` (35) and `roar_slide` (0.47 u/tick, decaying `NPC_ROAR_SLIDE_DECAY`
-  0.982 a tick while the swing lasts, hull-swept in the dash pass) reproduce 875 → 897.
+  `NpcMelee::roar_at` (35) and `roar_slide` (0.42 u/tick, decaying `NPC_ROAR_SLIDE_DECAY`
+  0.982 a tick while the swing lasts, hull-swept in the dash pass: 19.4 u a cycle - the game's
+  869.3 → 889, 866.4 → 886, 863.6 → 883; 0.47 ran 21.7 u and the fourth run back needed a
+  fifth think, landing at 853 against 861).
   `recoil: 20` (a 21-tick dash from the hit) had been tried twice and dropped (35 / 25.5).
 - The run back: the game runs the think its roar ends (rows 221 / 382 / 543), ours idled a
   think - `npc_chase` only flags the chase and the path was built in the next think's
@@ -208,14 +210,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   which comes straight from the walk at row 81, and not a lunge), and a zombie-family running
   chase does not clamp its step to `chase_reach` - the melee think stops it. The fast zombie's
   sequence rows now match the game's exactly: idle 81, Melee 88, Roar 123, Run 221, idle 242,
-  Melee 249, Roar 284, Run 382, Melee 410, Roar 445, Run 543, Melee 571; its figure is 7.5
-  (stop 868 against 869, the bot's drift over four cycles). The antlion swipes in the think
+  Melee 249, Roar 284, Run 382, Melee 410, Roar 445, Run 543, Melee 571; its figure is 5.8
+  (stops 868.0 / 865.4 / 862.9 / 860.4 against 869.3 / 866.4 / 863.6 / 860.8; the bot's y at
+  every scratch within 0.3 u of the game's, so the lateral position is no longer an item). The antlion swipes in the think
   after its run (rows 95 -> 109, 270 -> 277) and lunges from the run, so it keeps the old
   path (the stand gated to the antlion: 41.6 -> 53..90). Sweep 2023.3 -> 2003.4: poison_long
   344.3 -> 309.5, swat_far 85.4 -> 81.1, melee_zombie 5.8 -> 8.0, poisonzombie 166.1 ->
   176.5, gascan 29.9 -> 34.6 (a re-swing after a re-approach at row 278 now stands a think -
   whether the game's does there is unmeasured).
-- Open: the ~8 u of lateral position. The zombie's melee trigger distance is not
+- Not items: the lateral position (above). The zombie's melee trigger distance is not
   an item: across every zombie recording the first claw comes at 50..54 u of 2D origin
   distance (45 once, the bot off-axis in swat2_heavy) - the "39 u" of server_npc_melee_zombie
   261031 was an x-only reading with the bot at y -536.

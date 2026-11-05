@@ -2827,7 +2827,8 @@ pub struct NpcMelee {
     pub poison: bool,
     /// After the last hit the body slides back from the player at this pace (u/tick), decaying
     /// `NPC_ROAR_SLIDE_DECAY` a tick while the swing lasts: the fast zombie's roar
-    /// (server_npc_melee_fastzombie rows 116..193: 3.3, 3.0, 2.7 .. 1.0 u a think, ~20 u).
+    /// (server_npc_melee_fastzombie rows 116..193: 3.3, 3.0, 2.7 .. 1.0 u a think; 19.4..19.7 u
+    /// a cycle: 869.3 -> 889, 866.4 -> 886, 863.6 -> 883).
     pub roar_slide: f32,
     /// Ticks into the swing when the roar (its sequence and the slide) begins: the fast zombie
     /// scratches at 0 and 14 and roars from 35 (server_npc_melee_fastzombie rows 88/102/123).
@@ -3044,7 +3045,7 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         side: 60.0,
         run: true,
         start_range: 52.0,
-        roar_slide: 0.47,
+        roar_slide: 0.42,
         roar_at: 35,
         ..MELEE_PLAIN
     }];
