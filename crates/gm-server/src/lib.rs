@@ -2172,8 +2172,6 @@ pub struct Npc {
     /// Whether the body moved since it first saw its enemy: the game's soldier fires crouched
     /// (ACT_RANGE_ATTACK1_LOW) from the spot it met the enemy on and standing after any run.
     pub combat_moved: bool,
-    /// The squad mate's SCHED_COMBINE_SUPPRESS is a single crouched round; it ends with it.
-    pub suppress_once: bool,
     /// Where a zombie wanders after its enemy died (SCHED_ZOMBIE_WANDER_MEDIUM), until a live
     /// enemy shows up again.
     pub wander: Option<Vec3>,
@@ -2499,7 +2497,7 @@ pub const NPC_MUZZLE_UP_STANDING: f32 = 57.0;
 /// think t320), the first full burst 55 ticks after the second (t385), then every 49.
 pub const NPC_FIRST_BURST_SHOTS: u8 = 2;
 pub const NPC_FIRST_BURST_GAP_TICKS: u64 = 55;
-/// A squad mate's first burst: 59 ticks after its sighting think (server_npc_squad_soldier).
+/// The standing squad leader's first burst: 59 ticks after its sighting think (server_npc_squad_soldier).
 pub const NPC_MATE_FIRST_BURST_TICKS: u64 = 59;
 /// From the opening volley's last round to the first full burst: t357 -> t385 in
 /// server_npc_grenade_soldier (the game's shot probes), the 49-tick cycle from there.
@@ -5286,11 +5284,7 @@ impl<'w> Server<'w> {
             } else if target.is_some() && !target_dead && ranged && (los || n.blind_fire) {
                 // the first volley is the suppress schedule (88), later ones RANGE_ATTACK1 (100)
                 if n.target_first_seen > 0
-                    && ((now < n.target_first_seen + NPC_SUPPRESS_TICKS
-                        && !n.combat_moved
-                        && !(n.suppress_once
-                            && n.last_shot >= n.target_first_seen
-                            && now > n.target_first_seen))
+                    && ((now < n.target_first_seen + NPC_SUPPRESS_TICKS && !n.combat_moved)
                         || (n.blind_fire && n.shots <= NPC_BURST_SHOTS as u32))
                 {
                     // a volley cut by losing sight completes blind under the same schedule
@@ -13181,7 +13175,6 @@ impl<'w> Server<'w> {
             reversal: 0,
             face_until: 0,
             combat_moved: false,
-            suppress_once: false,
             wander: None,
             auto_seq: None,
             last_known: None,
@@ -15435,7 +15428,6 @@ impl<'w> Server<'w> {
             if n.target != Some(player) {
                 n.target_first_seen = 0;
                 n.last_enemy_damage = 0;
-                n.suppress_once = false;
             }
             n.target = Some(player);
             let think = n.think_interval as u64;
@@ -15456,28 +15448,21 @@ impl<'w> Server<'w> {
             }
         }
         // a mate that joins before the first round is fired makes this one the standing
-        // member too (server_npc_squad_soldier: the second soldier spawns one op after the
-        // first sights the bot, and the first never fires its volley)
+        // member: no volley, its first full burst 59 ticks after its sighting think
+        // (server_npc_squad_soldier: the second soldier spawns one op after the first sights
+        // the bot; the first's rounds t385..413, then 28-tick rests)
         if leads && !n.combat_moved && n.last_shot < n.target_first_seen.max(1) {
-            // the squad's first member fires five rounds from its second think
-            // (server_npc_squad_soldier: sighting t323, rounds t332..360), standing
-            let think = n.think_interval as u64;
             n.combat_moved = true;
             n.burst_left = NPC_BURST_SHOTS;
-            n.next_shot = (n.target_first_seen + think).max(now);
-        } else if !leads
-            && has_mate
-            && !n.combat_moved
-            && !n.suppress_once
-            && n.last_shot < n.target_first_seen.max(1)
+            n.next_shot = (n.target_first_seen + NPC_MATE_FIRST_BURST_TICKS).max(now);
+        } else if !leads && has_mate && !n.combat_moved && n.last_shot < n.target_first_seen.max(1)
         {
-            // the mate takes SQUAD_SLOT_ATTACK1 first and runs SCHED_COMBINE_SUPPRESS from the
-            // crouch (TASK_COMBINE_SET_STANDING 0): one round on the sighting think, then
-            // crouched bursts on the 49-tick cycle (server_npc_squad_soldier: round t6, bursts
-            // t27..55 / t76..104 against the leader's standing t24..52 / t80..108)
-            n.suppress_once = true;
-            n.burst_left = 1;
-            n.next_shot = now;
+            // the mate takes SQUAD_SLOT_ATTACK1 and runs SCHED_COMBINE_SUPPRESS from the crouch
+            // (TASK_COMBINE_SET_STANDING 0): a full five-round volley from its second think,
+            // then the volley's 28-tick gap and crouched bursts on the 49-tick cycle
+            // (server_npc_squad_soldier: rounds t332..360, t388..416, t437..)
+            n.burst_left = NPC_BURST_SHOTS;
+            n.next_shot = (n.target_first_seen + n.think_interval as u64).max(now);
         }
         if n.target_seen != 0 && now > n.target_seen + n.think_interval as u64 {
             n.reacquired_at = now;
@@ -15663,7 +15648,7 @@ impl<'w> Server<'w> {
         }
         // measured volley period: 49 ticks crouched (shootSMG1c), 56 standing (shootSMG1s)
         n.next_shot = if n.burst_left == 0 {
-            now + if now < n.target_first_seen + NPC_SUPPRESS_TICKS && !n.suppress_once {
+            now + if now < n.target_first_seen + NPC_SUPPRESS_TICKS {
                 NPC_VOLLEY_BURST_GAP_TICKS
             } else if n.combat_moved {
                 NPC_BURST_GAP_TICKS
@@ -17193,7 +17178,6 @@ impl<'w> Server<'w> {
                 reversal: 0,
                 face_until: 0,
                 combat_moved: false,
-                suppress_once: false,
                 wander: None,
                 auto_seq: None,
                 last_known: None,
