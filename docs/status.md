@@ -228,8 +228,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 - Later spawns (pitch 20 aim trace) land on the previous corpse: the game's zombie ragdoll
   rests at (948,-522) and the soldier spawns at (940,-526); ours stays at (926,-500) and the
   soldier spawns there - the 26 u in y is the ragdoll's rest position, not the spawn rule.
-- Soldier: the game takes 8 standing (CombatIdle) then 16 per op crouched (CrouchIdle) and is
-  dead by row 60; ours 8 x4, then runs (RunAIMALL1 from row 61) taking 4 per op and dies at 70.
+- Soldier: the game takes 4 per `firebullets` op standing (rows 46, 48: Idle1 / CombatIdle1)
+  and 8 per op from row 50 (shootSMG1c, crouched) - dead by row 60; ours 4 per op throughout
+  (the crouched hull stays 72 u), then runs (RunAIMALL1 from row 61) and dies at 70. The ray
+  (eye 64, pitch 20, 103..117 u) lands ~21..27 u above the feet, so the doubling is not the
+  head hitgroup; the crouched hitboxes or a two-bullet op are the candidates.
   To check: the crouched head hitgroup (sk_npc_head x2) and why ours halves (one of two
   bullets missing a moving body).
 - Rows 104..116: the game's third NPC runs (run_all) and plays `pickup` (a weapon pickup)
