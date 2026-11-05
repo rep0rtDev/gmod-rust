@@ -4518,6 +4518,9 @@ fn run_server(scn: &Scenario) -> Result<Value> {
                 "decals": decal_rows(server.decals(p.id)),
             })).collect::<Vec<_>>(),
             "world_decals": decal_rows(server.decals(0)),
+            "world_weapons": sb.props().iter().filter(|p| p.owner == 0).filter_map(|p| Some(json!({
+                "class": server.world_weapon_class(p.id)?, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
+            }))).collect::<Vec<_>>(),
             // creator: what the player spawned during the ops (scenario props have no owner)
             "spawned": sb.props().iter().filter(|p| (all_props || server.world_weapon_class(p.id).is_some()) && p.owner == player && !server.vehicles.contains_key(&p.id)).map(|p| json!({
                 "model": p.model, "pos": [p.pos.x, p.pos.y, p.pos.z], "ang": [p.angles.x, p.angles.y, p.angles.z],
@@ -4785,29 +4788,56 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }
             "press" => {}
             // the probe's free Lua: only the `ents.FindByClass('<class>') ... SetAngles(Angle(p,
-            // y, r))` form (the face180 walks) is understood here
+            // y, r))` form (the face180 walks) and `ents.Create('weapon_x') ... SetPos(Vector(x,
+            // y, z)) ... SetAngles(Angle(p, y, r)) ... Spawn()` (a weapon laid in the world) are
+            // understood here
             "lua" => {
                 let code = op.code.clone().unwrap_or_default();
-                let class = code
-                    .split_once("FindByClass('")
+                let triple = |key: &str| {
+                    code.split_once(key)
+                        .and_then(|(_, r)| r.split_once(')'))
+                        .map(|(a, _)| {
+                            a.split(',')
+                                .filter_map(|v| v.trim().parse::<f32>().ok())
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|v| v.len() == 3)
+                        .map(|v| Vec3::new(v[0], v[1], v[2]))
+                };
+                if let Some(class) = code
+                    .split_once("ents.Create('")
                     .and_then(|(_, r)| r.split_once('\''))
-                    .map(|(c, _)| c.to_string());
-                let ang = code
-                    .split_once("SetAngles(Angle(")
-                    .and_then(|(_, r)| r.split_once(')'))
-                    .map(|(a, _)| {
-                        a.split(',')
-                            .filter_map(|v| v.trim().parse::<f32>().ok())
-                            .collect::<Vec<_>>()
-                    })
-                    .filter(|v| v.len() == 3);
-                match (class, ang) {
-                    (Some(class), Some(ang)) => {
-                        for n in server.npcs.values_mut().filter(|n| n.class == class) {
-                            n.angles = Vec3::new(ang[0], ang[1], ang[2]);
-                        }
+                    .map(|(c, _)| c.to_string())
+                {
+                    let pos = triple("SetPos(Vector(").context("lua Create without SetPos")?;
+                    let ang = triple("SetAngles(Angle(").unwrap_or(Vec3::ZERO);
+                    if class.starts_with("weapon_") {
+                        server.lay_world_weapon(&class, pos, ang);
+                    } else {
+                        bail!("unknown server op lua Create {class}");
                     }
-                    _ => bail!("unknown server op lua"),
+                } else {
+                    let class = code
+                        .split_once("FindByClass('")
+                        .and_then(|(_, r)| r.split_once('\''))
+                        .map(|(c, _)| c.to_string());
+                    let ang = code
+                        .split_once("SetAngles(Angle(")
+                        .and_then(|(_, r)| r.split_once(')'))
+                        .map(|(a, _)| {
+                            a.split(',')
+                                .filter_map(|v| v.trim().parse::<f32>().ok())
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|v| v.len() == 3);
+                    match (class, ang) {
+                        (Some(class), Some(ang)) => {
+                            for n in server.npcs.values_mut().filter(|n| n.class == class) {
+                                n.angles = Vec3::new(ang[0], ang[1], ang[2]);
+                            }
+                        }
+                        _ => bail!("unknown server op lua"),
+                    }
                 }
             }
             "undo" => server.undo(player),

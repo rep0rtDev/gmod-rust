@@ -1545,6 +1545,14 @@ impl World {
         unsafe { gmp_deactivate(self.system.as_raw(), body.0) }
     }
 
+    /// `PhysObj:Wake()`: a sleeping body simulates again.
+    pub fn activate(&mut self, body: BodyHandle) {
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_ActivateBody(bi, body.0);
+        }
+    }
+
     pub fn set_surface(&mut self, body: BodyHandle, surface: Surface) {
         unsafe {
             let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());

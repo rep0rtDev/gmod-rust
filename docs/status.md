@@ -138,6 +138,52 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   landing think reads `run_all` like the game's and the zombie's stand think `walk`. Open: the
   last pounce lands 6 u short (the bot's slide over four knocks).
 
+### NPC: a dead NPC's weapon, and the spawn aimed over it (server_npc_drop 32.7 → 28.4)
+
+- Standing death (the trace): the soldier dies at t333 and its SMG1 appears 8.2 u in front of
+  the feet, 1.7 left and 45.6 up at (16, yaw + 67, 10), velocity (107 backward, 0, −44) - and
+  does not move for two more ticks (t336 shows one tick of flight); then 107 u/s east under
+  gravity 600, spinning 345 deg/s (pitch +2.3, yaw +3.8, roll +4.6 a tick), lands at x≈1015 on
+  t343, the spin reverses it (velocity (−27, 28, −116)) and it rests at (1001.7, −492.9, −141.4)
+  ang (−2, −93, −90) by t353. Ours threw it forward (toward the bot) at 130 with no spin from
+  24 u up and it stopped where it landed - which is why its spawn ray never hit the weapon.
+- Crouched death (oracle `server_npc_dropcrouch`, the npc_damage soldier section alone, run
+  twice: identical to 0.1 u, so the throw is deterministic): the SMG1 appears 24.9 in front,
+  3.5 right, 35.8 up at (2, yaw + 12, 9), velocity (7 backward, 0, −28); it drops nearly
+  straight (Euler rates +5.3 / +6.7 / +7.3 a tick) and rests at (979.8, −497.5, −143.7) ang
+  (2, −84, 90) - 22 u in front of the corpse, which is the npc_damage citizen's run (its
+  stop at 918.6 against the soldier at 940.5). So pose and velocity are the hand at the
+  death frame: the standing animation flings the hand backward, the crouched one barely
+  moves it. Spin is the same in both: the game's constant angular impulse (200, 200, 200)
+  about the weapon's own axes (|…| = 346 against the 345 measured).
+- Now `NpcDropPose` × `NPC_DROP_STAND` / `NPC_DROP_CROUCH` (picked by `npc_sequence_crouched`
+  at death), `NPC_DROP_SPIN` (200, 200, 200) rotated by the weapon's angles,
+  `NPC_DROP_HOLD_TICKS` 3: the weapon is laid with `lay_world_weapon`, held asleep in
+  `pending_drops`, then given the velocity (`drop_tick`). Standing flight matches row for row
+  with angles (995.2 / 996.9 / 998.6 … 1005.6; (18, −109, 14) against (19, −110, 14) …),
+  landing (1015.7, −499.4) against (1015.8, −499.7); the bounce differs (impact roll 142
+  against 119) and ours rests at (1003.8, −500.5) against (1001.7, −492.9): same lie, 7 u
+  south - bounce physics. npc_damage unchanged at 36.7 with the crouched pose (99.2 with the
+  standing pose applied to the crouched death: the SMG1 flew 77 u east and the citizen ran
+  after it).
+- Why the next spawn moved: six oracle scenes (`server_npc_dropfix_*`, ai_disabled, an SMG1
+  laid by Lua at the rest spot ± offsets, then `spawnnpc npc_metropolice` at pitch 20).
+  Weapon 7.1 u north of the aim line (the trace's spot) → metrocop at (985.6, −528.5), the
+  trace's figure exactly; the same with the weapon's motion disabled → not a physics shove;
+  4 north or 7 south → (964.5, −501); 10 north → no shift; 7 west (under the ray) → NPC at
+  the weapon's x and through the floor. So it is the spawn ray: it hits the lying weapon
+  before the floor (ray z −139 at x≈989), the NPC goes to hit + normal × 32 and drops to the
+  floor - a slanted face of the gun gives (−16, −28.5), a west face −32..−37. Ours already
+  does this: the n7 scene run on ours (the runner's `lua` op now understands
+  `ents.Create('weapon_x') … SetPos … SetAngles … Spawn()`) spawns the metrocop at
+  (985.6, −528.5, −144.0) too. The scene's residual is the rest spot (ours under the aim
+  line → metrocop at (967.1, −507.1)).
+- Open: the metrocop's own pistol leaves at (1000.6, −523.2, −122.4) ang (−70, 103, −36)
+  moving east-south - a third hand pose (its death animation); only the soldier's standing
+  and crouched frames are measured, every other class gets the soldier's.
+- The runner's server snapshot now lists `world_weapons` (ownerless weapon props: class,
+  pos, ang) like the probe does.
+
 ### NPC: a zombie spawned on a crate (server_npc_zombie_swat, 40 u) - tried, rejected
 
 - The game drops the spawned zombie onto the crate it was aimed at (z -104 at (916,-500)); the
@@ -435,9 +481,9 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   now matches row for row: run_all rows 100..106, idle_subtle 107..108, pickup from 109 at
   yaw 0, 8 then 16 in the pose (the `pickup` shift waits for `NPC_POSE_BLEND_TICKS`). Open:
   row 108 - the game's citizen is still turning (yaw 79, side-on, 2 of 8) where ours already
-  reads 58 (8): ours arrives two rows earlier because our dropped SMG1 lands at (902,-495)
+  reads 58 (8): ours arrives two rows earlier because our dropped SMG1 landed at (902,-495)
   against the game's (919,-523) - the drop's landing point (the corpse's throw and the
-  weapon's physics), not the pickup rule.
+  weapon's physics, since measured - see the server_npc_drop section), not the pickup rule.
   Scene figure 36.4 (positions only), sweep 2005.1 → 2005.1 (no other scene has an unarmed
   weapon-user near a dropped weapon).
 - The soldier's two-op-early crouch (ours CrouchIdle on row 45, the game Idle1_SMG1 / CombatIdle

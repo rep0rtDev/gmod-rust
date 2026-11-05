@@ -7920,6 +7920,9 @@ pub struct Server<'w> {
     pub sents: HashMap<u32, SentState>,
     /// Weapon entities lying in the world (`Spawn_Weapon`): prop id -> weapon class.
     pub world_weapons: HashMap<u32, String>,
+    /// Dropped NPC weapons still held in the air: prop id, the tick they start flying, their
+    /// linear and angular velocity then.
+    pending_drops: Vec<(u32, u64, Vec3, Vec3)>,
     /// `ai_disabled 1`: no NPC thinks at all (no movement, no combat), as in the game.
     pub ai_disabled: bool,
     /// NPCs spawned from the NPCs tab (`Spawn_NPC`), by sandbox id (foreign to the prop list).
@@ -8105,6 +8108,7 @@ impl<'w> Server<'w> {
             ai_sounds: Vec::new(),
             next_class_sched: ai::FIRST_CLASS_SCHEDULE,
             world_weapons: HashMap::new(),
+            pending_drops: Vec::new(),
             ai_disabled: false,
             npcs: BTreeMap::new(),
             squads: ai::Squads::default(),
@@ -11098,9 +11102,10 @@ impl<'w> Server<'w> {
         };
         let old = std::mem::replace(&mut n.weapon, class.to_string());
         let (pos, yaw, alive) = (n.pos, n.angles.y, n.dead_at.is_none());
+        let crouched = npc_sequence_crouched(&n.sequence);
         // `NPC:DropWeapon` (empty class) drops the carried one as a world weapon, as the death path does
         if class.is_empty() && alive && !old.is_empty() {
-            self.drop_npc_weapon(0, &old, pos, yaw);
+            self.drop_npc_weapon(0, &old, pos, yaw, crouched);
         }
         true
     }
@@ -13652,6 +13657,7 @@ impl<'w> Server<'w> {
             let dropped = std::mem::take(&mut n.weapon);
             let (key, class) = (n.key.clone(), n.class.clone());
             let (pos, yaw) = (n.pos, n.angles.y);
+            let crouched = npc_sequence_crouched(&n.sequence);
             self.game_events.push(GameEvent::NpcKilled {
                 npc: id,
                 attacker,
@@ -13659,7 +13665,7 @@ impl<'w> Server<'w> {
                 class,
             });
             if !dropped.is_empty() {
-                self.drop_npc_weapon(attacker, &dropped, pos, yaw);
+                self.drop_npc_weapon(attacker, &dropped, pos, yaw, crouched);
             }
         }
         true
@@ -13670,42 +13676,56 @@ impl<'w> Server<'w> {
     /// down, tumbling, asleep some 10 ticks later; it survives cleanup and has no undo. The
     /// hand comes from the death pose, which we do not animate: the drop starts 24 u over the
     /// feet (the game's 20..46) with the middle of the measured throw.
-    fn drop_npc_weapon(&mut self, owner: u32, class: &str, pos: Vec3, yaw: f32) {
+    /// A weapon entity lying in the world at `pos`/`angles` (`ents.Create('weapon_x')`): its
+    /// world model as an ownerless prop (the game's cleanup and undo leave it alone, the probe
+    /// does not list it under the creator).
+    pub fn lay_world_weapon(&mut self, class: &str, pos: Vec3, angles: Vec3) -> Option<u32> {
         let model = match self.scripted_weapons.iter().find(|w| w.class == class) {
             Some(sw) => sw.world_model.clone(),
-            None => match hl2_world_model(class) {
-                Some(m) => m.to_string(),
-                None => return,
-            },
+            None => hl2_world_model(class)?.to_string(),
         };
         if model.is_empty() {
-            return;
+            return None;
         }
         if !self.models.contains_key(&model) {
-            let Some(loaded) = self.model_loader.as_mut().and_then(|f| f(&model)) else {
-                return;
-            };
+            let loaded = self.model_loader.as_mut().and_then(|f| f(&model))?;
             self.register_model(&model, loaded);
         }
-        let fwd = gm_sandbox::rotation(Vec3::new(0.0, yaw, 0.0)) * Vec3::X;
-        // no creator: the game's cleanup and undo leave it alone, the probe does not list it
-        let id = self.sandbox.restore_prop(
-            0,
-            &model,
-            pos + Vec3::new(0.0, 0.0, 24.0),
-            Vec3::new(0.0, yaw, 0.0),
-            false,
-        );
+        let id = self.sandbox.restore_prop(0, &model, pos, angles, false);
+        self.world_weapons.insert(id, class.to_string());
+        Some(id)
+    }
+
+    fn drop_npc_weapon(&mut self, owner: u32, class: &str, pos: Vec3, yaw: f32, crouched: bool) {
+        let drop = if crouched {
+            NPC_DROP_CROUCH
+        } else {
+            NPC_DROP_STAND
+        };
+        let body_rot = gm_sandbox::rotation(Vec3::new(0.0, yaw, 0.0));
+        let (fwd, left) = (body_rot * Vec3::X, body_rot * Vec3::Y);
+        let angles = Vec3::new(drop.angles.x, yaw + drop.angles.y, drop.angles.z);
+        let Some(id) = self.lay_world_weapon(
+            class,
+            pos + fwd * drop.forward + left * drop.left + Vec3::new(0.0, 0.0, drop.height),
+            angles,
+        ) else {
+            return;
+        };
         self.game_events.push(GameEvent::NpcDrop {
             npc: owner,
             ent: id,
         });
         self.sync_physics();
         if let Some(&body) = self.bodies.get(&id) {
-            self.physics
-                .set_velocity(body, fwd * 130.0 + Vec3::new(0.0, 0.0, -70.0), Vec3::ZERO);
+            self.physics.deactivate(body);
+            self.pending_drops.push((
+                id,
+                self.tick_count + NPC_DROP_HOLD_TICKS,
+                fwd * -drop.back + Vec3::new(0.0, 0.0, -drop.fall),
+                gm_sandbox::rotation(angles) * NPC_DROP_SPIN,
+            ));
         }
-        self.world_weapons.insert(id, class.to_string());
     }
 
     /// Ally regeneration and the alert idle pose (see `npc_regenerates`, `npc_alert_idle`).
@@ -19926,6 +19946,7 @@ impl<'w> Server<'w> {
         self.fire_tick();
         self.sent_tick();
         self.item_tick();
+        self.drop_tick();
         let upright: Vec<(BodyHandle, Vec3)> = self
             .sandbox
             .props()
@@ -20957,6 +20978,24 @@ impl<'w> Server<'w> {
                 _ => None,
             })
             .collect()
+    }
+
+    /// A dropped weapon hangs where the hand let go for `NPC_DROP_HOLD_TICKS`, then flies.
+    fn drop_tick(&mut self) {
+        let now = self.tick_count;
+        let due: Vec<_> = self
+            .pending_drops
+            .iter()
+            .filter(|d| d.1 <= now)
+            .cloned()
+            .collect();
+        self.pending_drops.retain(|d| d.1 > now);
+        for (id, _, lin, ang) in due {
+            if let Some(&body) = self.bodies.get(&id) {
+                self.physics.activate(body);
+                self.physics.set_velocity(body, lin, ang);
+            }
+        }
     }
 
     fn item_tick(&mut self) {
@@ -23013,6 +23052,45 @@ pub const PROP_HIT_FRICTION: f32 = 0.4;
 pub const PROP_HIT_PLAYER_MASS: f32 = 60.0;
 pub const PROP_HIT_PUSH_MAX: f32 = 400.0;
 /// How far an NPC hull sweep steps back to find the face of a prop it is touching.
+/// Where a dead NPC's weapon leaves the hand, relative to the feet and the body yaw, and the
+/// hand's velocity at that frame (both oracle-measured, deterministic: two identical scenes
+/// gave the same drop to 0.1 u). Standing (server_npc_drop, soldier at yaw 180): 8.2 u in
+/// front, 1.7 left, 45.6 up at (16, yaw + 67, 10), moving 107 u/s backward and 44 down - it
+/// lands behind the corpse, bounces back and rests 7 u to its right, where the next spawn's aim
+/// ray hits it. Crouched (`CrouchIdle`, server_npc_dropcrouch oracle): 24.9 in front, 3.5
+/// right, 35.8 up at (2, yaw + 12, 9), moving 7 backward and 28 down - it drops nearly straight
+/// and rests 22 u in front of the corpse (the citizen's run to it in server_npc_damage).
+#[derive(Clone, Copy, Debug)]
+pub struct NpcDropPose {
+    pub forward: f32,
+    pub left: f32,
+    pub height: f32,
+    pub angles: Vec3,
+    pub back: f32,
+    pub fall: f32,
+}
+pub const NPC_DROP_STAND: NpcDropPose = NpcDropPose {
+    forward: 8.2,
+    left: 1.7,
+    height: 45.6,
+    angles: Vec3::new(16.0, 67.0, 10.0),
+    back: 107.0,
+    fall: 44.0,
+};
+pub const NPC_DROP_CROUCH: NpcDropPose = NpcDropPose {
+    forward: 24.9,
+    left: -3.5,
+    height: 35.8,
+    angles: Vec3::new(2.0, 12.0, 9.0),
+    back: 7.0,
+    fall: 28.0,
+};
+/// The dropped weapon's spin, deg/s about its own axes - the game's constant angular impulse
+/// (200, 200, 200): 345 deg/s in both traces (standing: pitch +2.3, yaw +3.8, roll +4.6 a
+/// tick; crouched +5.3 / +6.7 / +7.3) - and the three ticks it hangs before flying (the
+/// standing trace's weapon has moved one tick's worth three ticks after the shot).
+pub const NPC_DROP_SPIN: Vec3 = Vec3::new(200.0, 200.0, 200.0);
+pub const NPC_DROP_HOLD_TICKS: u64 = 3;
 pub const NPC_SWEEP_BACKOFF: f32 = 4.0;
 /// Local detour round a blocking prop: corner clearance beyond the hull half-width, how
 /// close counts as reaching the corner, and how long a corner is pursued.
