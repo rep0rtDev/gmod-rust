@@ -251,3 +251,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   leg in npc_damage has no node on it (the nearest, 591 at (965,-491), lies 8 u off and at
   166 deg) and ends at (929,-468) where nothing is - that drift is not a graph route; a local
   detour or an offset chase goal are the candidates to measure next.
+- The leg is a straight 154.5 deg heading (constant to 0.1 deg over rows 5..15) to a waypoint
+  near (931,-469): 79 u from the spawn, 44 % of the 179-u line to the bot, and one hull width
+  (~32 u) beside that line; after it the heading settles on the bot exactly (201.8 = the
+  bearing from row 24). No node is there, so this is the local route's triangulation apex:
+  the straight segment to the enemy is blocked by the enemy's own hull and Source routes
+  spawn → apex → goal. Ours ignores the bot's hull in the local route and walks the line. To
+  build and measure next: the apex rule (side, offset, fraction) in the local route.
