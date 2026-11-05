@@ -148,3 +148,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   earlier measurement that the node route via (979,72) and (1201,72) arrived 51 thinks late)
   and arrives ~24 rows early; the 70 u is the lateral gap of the arc at row 443. Open: the
   node path plus a bounded forward scan instead of either extreme.
+
+### NPC: the turn at the reload cover (server_npc_grenade_soldier, 48 u) - measured, open
+
+- The game's soldier reaches the cover node (1201,72) at row 670 still facing its approach
+  (yaw 111.5), stands in CombatIdle turning 37 deg a think (148 → 185 → 222 → 229) and starts
+  the reload at 691 once aligned; ours pre-turns toward the bot during the run's last braking
+  thinks (298 → 261 while RunALL) and reloads the think it arrives, so it leaves 21 rows early
+  and the whole run to (1345,-55) is 21 rows ahead (the 48 u). The reload itself is 133 rows
+  in both.
+- Tried: no enemy-facing halt turn while running to a reload cover (face the path, then the
+  standing turn): grenade_soldier 48 → 85, squad_soldier 219 → 228 - reverted. The arrival
+  heading alone does not reproduce the three standing thinks; the gap is in which think the
+  face task starts, not in the turn rate.
