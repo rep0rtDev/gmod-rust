@@ -38,3 +38,27 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 ## AI / navigation
 
 - gm-nav: Recast/Detour navmesh from BSP brushes + displacements (tiled 2048 u, human hull params), path queries; gm_construct 5517 polys. NPC path following (`npc_goto(id, target, run)`, corner 8 u, hull sweep + floor drop, yaw = motion) with the measured gait law: a think every 7 ticks on the spawn-locked grid, trapezoid ramp at the class accel (0.89 while turning), yaw 150 deg/s toward the motion, brake onset curve and an exact arrival staircase; a new goal while moving halts along the old path first, 13-tick thinks out of every player's PVS; citizen / metropolice / combine soldier walk and run, goal-tick phase, a 90 deg turn and a redirect measured (`server_npc_walk_*` 13 equal; the two round-the-building walks red: node-graph route vs Detour route; navmesh now built from the world model's brushes only, brush-entity slabs no longer wall gm_construct in two), other classes take the citizen gait; own chase behaviour (`npc_chase`: re-path per think without halting, rests 64 u short of the player); own combat (`npc_combat_think`: hostile hitscan NPCs engage the nearest visible player within 2048 u, turn at 150 deg/s, fire the measured 5 x 7-tick bursts with 28-tick gaps, 3 hp per hit through the damage hooks, chase on lost sight, drop the target after 330 ticks unseen; measured `server_npc_fire_soldier`: the game's soldier misses a standing player at 178 u for 1200 ticks, ours hits - documented divergence); own melee (`npc_melee_think`: zombie/zombine walk up at the measured 44.6 u/s, swing inside 55 u, 25 DMG_SLASH at tick 48 of an 84-tick swing with a 325 u/s launch, measured `server_npc_melee_zombie`; our re-hit gap 154-161 ticks vs 196 is a friction residual); measured crouch-to-fire pose (eyes +40, shootSMG1c / CrouchIdle) and hit reaction (no flinch; a hit ends the burst or delays the next by a think, `server_npc_flinch_soldier`); addon `npc_target` to force / clear the target; fast zombie measured and in (run 201.5 u/s, double claw 3 + 3 fourteen ticks apart, 161-tick period equal); headcrab leap in (ballistic 380 u/s arc swept per tick, 5 dmg on touching the hull 26 ticks in, hang, drop, 150 u run-away, re-leap; period 308 vs 328 - instant turn); own squads (same spawn key within 512 u share the target; chasers fan out into 96 u slots left/right of the player) and cover (hit under 40% hp, 3 near misses within 48 u in 66 ticks, or a live grenade/rocket within 256 u -> nearest navmesh vertex by path the target cannot see, hold 200 ticks); locomotion: corner pass needs a clear sweep, blocked steps retry to the corner and slide along the wall, three jammed thinks drop the path; antlion (100 u swipe alternating with an 84 u pounce, 5 each; period 182 vs 168; run 354.9 u/s and the 483 u/s long jump from inside 600 u measured on an 1100 u approach, ours lands on the player, the game 120 u past) and poison zombie (the throw releases a real poison headcrab entity that flies to 48 u short and leaps for the 1-hp bite, 3 crabs, 860-tick cooldown; 25 claw) measured and in as melee move lists. See docs/spec/ai.md.
+
+### NPC: a lone prop in the way is passed abeam (swat2_drum)
+
+- Root (swat2_drum 90 u): the local detour chose its corner from the walker's side sign
+  (`cross(dir, corner - pos)`); skirting the drum at y -471 toward the far corner at -469 the
+  sign is ~0 and flipped, the side lock rejected the far corner, the back corner was taken and
+  the zombie turned round at x 900 every 10 rows. The game rounds the drum abeam of its centre
+  ((930,-483) → (914,-471) → (888,-471), m = 14 + 13 + ~2 off centre) and attacks from
+  (871,-478) at row 271 (CAI_Pathfinder triangulation).
+- Now: a non-swattable prop with no other prop body within 2 m of it is passed by an apex abeam
+  of its centre (prop ± perp(aim) * m), side lock from the prop's centre; once level with the
+  prop the far-side points (± perp * m + along * m) are candidates too, else the leg to the goal
+  grazed the crate's corner at y -467 and re-chose the passed apex (another loop). Props beside
+  others (the frozen crate wall test) and the zombie's own swattable prop keep the four corners
+  with the walker-relative side as before.
+- 53-scene sweep: sum 2409 → 2295. drum 90.2 → 6.4, gascan 61 → 34.6, swat3_a_drum875 86 → 56.
+  Worse, open: swat2_crate 55 → 73 - the game turns south at x 951 (50 u from the crate) and
+  swats it from (948,-515) at row 170; ours used to press the crate's face at 33 u heading for
+  the near corner and the scan picked it at (938,-480); now it passes abeam north at 45 u, the
+  scan never falls inside 38..80 u on the crate and the zombie claws the bot instead (row 330).
+  The game's earlier turn (51 u before the crate, 34 u before the drum) and its side choice
+  (north at the drum, south at the crate, both from (992,-500) → bot at 823) are not derived.
+  swat2_drumside 75 → 83: the game swats the side-lying drum at row 100 from the spawn (992,-500),
+  92 u from its centre; ours walks to (958,-517) and swats at 160 - separate swat-at-spawn item.

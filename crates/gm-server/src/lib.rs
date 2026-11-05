@@ -14773,10 +14773,53 @@ impl<'w> Server<'w> {
                     // so the far corner wins at the end of a wall instead of the one just rounded
                     let aim = points[idx.min(points.len() - 1)].truncate();
                     let mut best: Option<(f32, Vec3, f32)> = None;
-                    for (sx, sy) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
-                        let c = glam::Vec2::new(pb.pos.x + sx * m, pb.pos.y + sy * m);
+                    // a prop merely in the way is passed abeam (the game's triangulation
+                    // apex: the drum in swat2_drum is rounded at (914,-471) → (888,-471), m
+                    // off its centre); the swattable prop keeps its corners, the far one
+                    // holding the zombie pressed on its face
+                    let centre = pb.pos.truncate();
+                    let to_aim = aim - centre;
+                    let along = if to_aim.length_squared() > 1e-6 {
+                        to_aim.normalize()
+                    } else {
+                        dir
+                    };
+                    let perp = glam::Vec2::new(-along.y, along.x);
+                    // beside other props (a wall of crates) abeam points are no use: the wall
+                    // is walked corner by corner to its end as before
+                    let isolated = !prop_bodies
+                        .iter()
+                        .any(|o| o.id != pb.id && o.pos.truncate().distance(centre) < 2.0 * m);
+                    let mut abeam: Vec<glam::Vec2> = Vec::new();
+                    if !swattable && isolated {
+                        abeam.extend([centre + perp * m, centre - perp * m]);
+                        // level with the prop the leg on to the goal can still graze a box's
+                        // corner (the crate in swat2_crate at y -467): the far-side points
+                        // then lead out instead of the apex just passed
+                        if (pos.truncate() - centre).dot(along) >= -m * 0.25 {
+                            abeam.extend([
+                                centre + perp * m + along * m,
+                                centre - perp * m + along * m,
+                            ]);
+                        }
+                    }
+                    let abeam_used = !abeam.is_empty();
+                    let candidates: Vec<glam::Vec2> = if abeam.is_empty() {
+                        [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)]
+                            .iter()
+                            .map(|(sx, sy)| centre + glam::Vec2::new(sx * m, sy * m))
+                            .collect()
+                    } else {
+                        abeam
+                    };
+                    for c in candidates {
                         let rel = c - pos.truncate();
-                        let side = (dir.x * rel.y - dir.y * rel.x).signum();
+                        // the side is the corner's side of the prop, not of the walker: taken
+                        // from the walker it flips to the other sign when the walker comes in
+                        // line with the far corner (the zombie skirting the drum at y -471 for
+                        // the corner at -469 in swat2_drum) and the lock then rejected it
+                        let off = if abeam_used { c - centre } else { rel };
+                        let side = (dir.x * off.y - dir.y * off.x).signum();
                         // a zombie against the swattable prop it was spawned into aims past
                         // it (the far corner) and stays pressed on its face, sliding along it
                         // (the game's zombie drifts 19 u down its crate in 100 ticks until the
