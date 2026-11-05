@@ -183,10 +183,17 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   period 161 rows like the game.
 - The run in: pace identical to row 60 (929 / 931), then the game keeps 21 u a think to 869 and
   stops dead - the think that finds the bot inside 52 u - where ours braked over 35 rows toward
-  `chase_reach`. A running chase (`chasing && run`) now skips the brake curve and staircase;
-  a walking chase keeps them (the game's zombie does slow 4.9 → 4.2 u a think over its last
-  66 u, server_npc_melee_zombie rows 139..249, and ungated the walkers arrived 7 rows early:
-  can 12.6 → 17.4, swat_far 81 → 90, poison_long 310 → 320).
+  `chase_reach`. A zombie's chase, running or walking, now skips the brake curve, the
+  staircase and the `chase_reach` clamp - the walker too keeps a constant 4.4 / 4.7 u a think
+  to its last step and stops at 52..53 u in every recording (server_npc_melee_zombie 261104 /
+  261105 rows 102..214; the earlier "slows 4.9 → 4.2" was an average over the stand think);
+  before the stand think existed, the unbraked walkers arrived a think early (can 12.6 →
+  17.4, swat_far 81 → 90, poison_long 310 → 320), which is why the brake was first kept for
+  them. With the stand think the walker's rows now match the game's too (server_npc_melee_zombie
+  261105: Idle0 214, attackA 221). Sweep 2003.4 → 2040.0 for it: poison_long 309.5 → 347.6
+  (the chaotic tail again), swat2 bluebarrel / crate / plastic +2, heavy +2.7, swat_far +2.9 -
+  each a ≤3 u shift of the arrival in scenes where the game's zombie already swung 20..27 u
+  east of ours (its bot had moved) - gascan 34.6 → 29.9, poisonzombie 176.5 → 167.3.
 - 53-scene sweep 2037.8 → 2023.3: fastzombie 20.6 → 6.6, antlion 63.2 → 41.6, poisonzombie
   176.9 → 166.1, melee_zombie 8.5 → 5.8, gascan 34.6 → 29.9, heavy 29.6 → 28.9; poison_long
   309.5 → 344.3 and swat_far 80.8 → 85.4 move downstream of pre-existing divergences (their
@@ -208,8 +215,7 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   344.3 -> 309.5, swat_far 85.4 -> 81.1, melee_zombie 5.8 -> 8.0, poisonzombie 166.1 ->
   176.5, gascan 29.9 -> 34.6 (a re-swing after a re-approach at row 278 now stands a think -
   whether the game's does there is unmeasured).
-- Open: the ~8 u of lateral position; the walking zombie's slower last 66 u (4.9 -> 4.2 u a
-  think) that the brake curve only stands in for. The zombie's melee trigger distance is not
+- Open: the ~8 u of lateral position. The zombie's melee trigger distance is not
   an item: across every zombie recording the first claw comes at 50..54 u of 2D origin
   distance (45 once, the bot off-axis in swat2_heavy) - the "39 u" of server_npc_melee_zombie
   261031 was an x-only reading with the bot at y -536.

@@ -14682,9 +14682,11 @@ impl<'w> Server<'w> {
                 continue;
             };
             let chasing = n.chase.is_some();
-            // measured on the fast zombie; the antlion and armed runners keep the reach clamp
-            // and the brake
-            let run_chase = chasing && n.run && ai::class_sched_family(&n.class) == Some("zombie");
+            // a zombie's chase, walking or running, keeps whole steps to the last (the fast
+            // zombie 21 u a think to 46 u, the zombie a constant 4.4 / 4.7 u a think to 52 u in
+            // every recording); the melee think stops it. The antlion and armed runners keep
+            // the reach clamp and the brake.
+            let zombie_chase = chasing && ai::class_sched_family(&n.class) == Some("zombie");
             let zombie_body = ai::class_is_zombie_body(&n.class);
             let pressed_prop = n.pressed_prop;
             let chase_reach = n.chase_reach;
@@ -14863,7 +14865,7 @@ impl<'w> Server<'w> {
             // a walking chase paces itself to the reach; a running one keeps full steps until
             // the melee think stops it in range (the game's fast zombie lands at 46 u, the
             // last 21 u step whole)
-            if chasing && !run_chase {
+            if chasing && !zombie_chase {
                 remaining = (remaining - chase_reach).max(0.0);
             }
             let s0 = v0 * dt;
@@ -14874,17 +14876,15 @@ impl<'w> Server<'w> {
                 ((0.5 * (s0 + v)).min(remaining), v / dt, true)
             } else {
                 let ramp = 0.5 * (s0 + (s0 + a).min(ideal * dt));
-                // a running chase keeps full pace into the reach and stops dead (the game's
-                // fast zombie keeps 21 u a think to 46 u from the bot, server_npc_melee_fastzombie
-                // rows 60..81); a walking chase slows over its last ~60 u (the zombie's 4.9 ->
-                // 4.2 u a think, server_npc_melee_zombie rows 139..249), which the brake curve
-                // stands in for
-                let curve = if braking || run_chase {
+                // a zombie's chase keeps full pace into the reach and stops dead (the fast
+                // zombie 21 u a think to 46 u, server_npc_melee_fastzombie rows 60..81; the
+                // zombie 4.7 u a think to 52 u, server_npc_melee_zombie 261105 rows 102..214)
+                let curve = if braking || zombie_chase {
                     f32::INFINITY
                 } else {
                     (2.0 * NPC_BRAKE_CURVE * a * remaining).sqrt()
                 };
-                let staircase = if run_chase {
+                let staircase = if zombie_chase {
                     f32::INFINITY
                 } else {
                     brake_staircase(remaining, a)
