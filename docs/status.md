@@ -323,3 +323,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   turns at the weapon (TASK_FACE?) is unmeasured, as is the SMG1's exact landing point.
   Scene figure 36.4 (positions only), sweep 2005.1 → 2005.1 (no other scene has an unarmed
   weapon-user near a dropped weapon).
+- The soldier's two-op-early crouch (ours CrouchIdle on row 45, the game Idle1_SMG1 / CombatIdle
+  until the hit and shootSMG1c from row 49) is the spawn-to-first-combat spread, measured with
+  two oracle-only scenes on the real srcds (sbox_godmode/ai_disabled/ai_ignoreplayers 0 set
+  first, bot 176 u in front, no shots): soldiers spawned after a zombie killed at range, after
+  a zombie that clawed the bot, and after teleporting the bot back all went COMBAT between +13
+  and +23 ticks; in a second session a first-spawned soldier, a second, a metrocop and a last
+  soldier all at +30 and a zombie at +9; the grenade/squad/wall goldens' soldiers at +3 (which
+  ours matches). The delay is per-session, class-independent and unrelated to cleanup, the
+  claw or the bot position - the NPC init think spread (random 0.1..0.5 s), not a rule. While
+  still IDLE the hit made the game's soldier ALERT (CombatIdle1) on its next think and COMBAT
+  one think later; ours is in COMBAT by sight before the hit, so the later rows match. Not
+  modelled; ai_ignoreplayers leaking from an earlier scene was checked and ruled out (the
+  scene's zombie saw the bot at +3; npc_ally was recorded after npc_damage).
