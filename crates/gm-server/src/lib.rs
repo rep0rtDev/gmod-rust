@@ -14564,10 +14564,6 @@ impl<'w> Server<'w> {
 
     fn tick_npc_move(&mut self) {
         let prop_bodies = self.prop_bodies();
-        // squad members keep the enemy in the face through their whole run to a reload cover
-        // (server_npc_squad_soldier rows 560..714: the mate RunAIMALL1 backward at 7..9 u a
-        // think, the leader at 12..15), the lone soldier turns to its path after the aim-run
-        // window (server_npc_grenade_soldier)
         let squad_mates: std::collections::HashSet<u32> = self
             .npcs
             .keys()
@@ -14761,11 +14757,21 @@ impl<'w> Server<'w> {
                 .and(n.last_known)
                 .filter(|_| n.target_seen + n.think_interval as u64 >= now && !n.cover_from_sound)
                 .filter(|_| {
-                    !armed
-                        || (n.reloading && n.cover_at.is_some() && squad_mates.contains(&id))
-                        || now <= n.goal_started.max(n.reacquired_at) + NPC_AIM_RUN_TICKS
+                    !armed || now <= n.goal_started.max(n.reacquired_at) + NPC_AIM_RUN_TICKS
                 })
                 .map(|k| k.truncate());
+            // a run to cover faces its route goal, not its step: the squad mate of
+            // server_npc_squad_soldier looks at its node (1201,72) from its first run think
+            // (yaw 56 -> 14 as the bearing 59 -> 14) while its steps zigzag round the house,
+            // the leader after its aim window turns to its wait point (953,7) (92, 86, 80, 71
+            // as the bearing 94 -> 67)
+            let route_face = n
+                .cover_at
+                .filter(|_| enemy_face.is_none())
+                .and(points.last())
+                .map(|g| g.truncate())
+                .filter(|g| g.distance_squared(pos.truncate()) > 1e-6);
+            let (has_target, last_known) = (n.target.is_some(), n.last_known);
             // a corner within reach is passed only when the hull can already sweep to the
             // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
             // a node route is simplified ahead of its corner: the game's soldier leaves the
@@ -14832,21 +14838,43 @@ impl<'w> Server<'w> {
                 0.0
             };
             // a body locked on its enemy moves through the blend: slower and softer off its facing
-            let (ideal, accel) = if enemy_face.is_some() && yaw_err >= 15.0 {
+            // the blend bands: the enemy-locked run's pace from the step/facing angle, and - a
+            // surrogate, kept because nothing measured replaces it - a squad member's
+            // route-facing run to cover slowed by the step/enemy angle (the game's mate makes
+            // 8..12 u a think and the leader 13..16 where RunAIMALL1 peaks at 22.6 like RunALL
+            // in every soldier recording: net displacement of a zigzag round the house, not
+            // a gait speed; the lone soldier runs its cover route at full pace)
+            let faced = enemy_face.is_some() || route_face.is_some();
+            let squad_band = route_face.is_some() && has_target && squad_mates.contains(&id);
+            let band_err = if enemy_face.is_some() {
+                yaw_err
+            } else if squad_band {
+                match last_known {
+                    Some(k) if head.length_squared() > 1e-6 => {
+                        let e = k.truncate() - pos.truncate();
+                        wrap_deg(e.y.atan2(e.x).to_degrees() - head.y.atan2(head.x).to_degrees())
+                            .abs()
+                    }
+                    _ => 0.0,
+                }
+            } else {
+                0.0
+            };
+            let (ideal, accel) = if (enemy_face.is_some() || squad_band) && band_err >= 15.0 {
                 // the all-directions blend runs slower the further the path is behind the
                 // facing: the squad mate running for cover with its back to the bot (169 deg
                 // off) makes 7..9 u a think, the leader at 145 deg 12..15, the side 15.7
                 // (server_npc_squad_soldier rows 560..680)
-                let speed = if yaw_err >= NPC_BLEND_BACK_DEG {
+                let speed = if band_err >= NPC_BLEND_BACK_DEG {
                     NPC_BLEND_BACK_SPEED
-                } else if yaw_err >= NPC_BLEND_REAR_DEG {
+                } else if band_err >= NPC_BLEND_REAR_DEG {
                     NPC_BLEND_REAR_SPEED
-                } else if yaw_err >= NPC_BLEND_SIDE_DEG {
+                } else if band_err >= NPC_BLEND_SIDE_DEG {
                     NPC_BLEND_SIDE_SPEED
                 } else {
                     1.0
                 };
-                let ramp = if yaw_err >= 30.0 {
+                let ramp = if band_err >= 30.0 {
                     NPC_BLEND_ACCEL_SIDE
                 } else {
                     NPC_BLEND_ACCEL_MID
@@ -14855,7 +14883,7 @@ impl<'w> Server<'w> {
             } else {
                 (ideal, accel)
             };
-            let yaw_err = if enemy_face.is_some() { 0.0 } else { yaw_err };
+            let yaw_err = if faced { 0.0 } else { yaw_err };
             let turning = yaw_err > 0.5;
             if v0 <= 0.0 && yaw_err > NPC_REVERSAL_DEG && reversal == 0 {
                 // measured (corner_seen, y180): a start that reverses the body loses its first
@@ -15115,6 +15143,10 @@ impl<'w> Server<'w> {
                 _ if enemy_face.is_some_and(|k| k.distance_squared(floor.truncate()) > 1e-6) => (
                     (enemy_face.unwrap() - floor.truncate()).normalize(),
                     max_yaw.unwrap_or(NPC_AIM_YAW_RATE),
+                ),
+                _ if route_face.is_some_and(|g| g.distance_squared(floor.truncate()) > 1e-6) => (
+                    (route_face.unwrap() - floor.truncate()).normalize(),
+                    max_yaw.unwrap_or(NPC_YAW_RATE),
                 ),
                 // through a reversal the body turns 15.7 / 31.5 deg on alternate thinks
                 _ if reversal > 1 && reversal % 2 == 1 => {
@@ -16604,8 +16636,6 @@ impl<'w> Server<'w> {
         slots
     }
 
-    /// The first member (lowest id) of a squad of at least two: NPCs of one kind within
-    /// NPC_SQUAD_RANGE or of one named squad.
     /// A squad member with a live mate (by named squad, or the same kind within
     /// NPC_SQUAD_RANGE as `npc_leads_squad` counts them).
     fn npc_has_squad_mate(&self, id: u32) -> bool {

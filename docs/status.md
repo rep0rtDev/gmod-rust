@@ -283,6 +283,21 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   zigzag within a think around the house eating net displacement, or a per-NPC speed from
   the sequence's blend) - the facing model (16f093f: route-goal yaw, leader after its
   window) stays the next thing to build, with the pace fitted after it.
+
+- The facing model, built: a run to cover with no enemy lock (`route_face`: `cover_at` set,
+  `enemy_face` None) faces the path's last point at `NPC_YAW_RATE` instead of its step; the
+  dd6ff00 term that kept a squad member's enemy lock through its whole run is gone (the
+  game's mate never looks at the bot on that run). Ours now: mate yaw 187 → 61 → 28 → 15 as
+  the node bearing 57 → 46 → 28 → 15 (game 104 → 56 → 42 → 25 → 14); leader on the bot to
+  ~row 470, then 129 → 47 → 30 → 10 toward its goal (game 133 → 92 → 80 → 36). The pace:
+  with the bands gone from a route-facing run the mate ran 22 u a think and the scene went
+  164 → 219 (measured and dropped), so the blend bands stay for a squad member's
+  route-facing combat run, keyed off the step/enemy angle - an explicit surrogate: RunAIMALL1
+  peaks at 22.6 u a think like RunALL in every soldier recording (grenade_soldier mean 17.6,
+  max 22.6), so the mate's 8..12 mean is net displacement (a zigzag round the house, local
+  avoidance) and not a gait speed; the lone soldier's cover run keeps full pace (the bands on
+  its route-facing run took grenade_soldier 47.9 → 109.7, dropped). Sweep 2035.7 → 2033.2:
+  squad 164.2 → 162.4, grenade_soldier_low 10.7 → 10.0. Open: the zigzag itself.
 ### NPC: server_npc_damage (55 → 36.4 u @23) - measured, open
 
 - Zombie (rows 3..24, the scene's first spawn; every damage op is `firebullets` Pistol): the
