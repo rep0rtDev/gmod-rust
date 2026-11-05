@@ -18965,6 +18965,14 @@ impl<'w> Server<'w> {
             .sandbox
             .props()
             .iter()
+            .filter(|p| {
+                // the prop that just hit a player is being shoved away: the game keeps the two
+                // apart with the physics shadow, our overlap test would leave the player stuck
+                !self
+                    .prop_hit_at
+                    .get(&p.id)
+                    .is_some_and(|&t| self.tick_count < t + PROP_HIT_COOLDOWN)
+            })
             .filter_map(|p| {
                 let b = *self.bodies.get(&p.id)?;
                 let info = self.models.get(&p.model)?;
@@ -21364,7 +21372,7 @@ impl<'w> Server<'w> {
         if players.is_empty() {
             return;
         }
-        let mut hits: Vec<(u32, u32, Vec3, Vec3, f32)> = Vec::new();
+        let mut hits: Vec<(u32, u32, Vec3, Vec3, f32, Vec3)> = Vec::new();
         let props: Vec<(u32, String)> = self
             .sandbox
             .props()
@@ -21397,47 +21405,77 @@ impl<'w> Server<'w> {
                 })
                 .collect();
             for &(pid, lo, hi) in &players {
-                let hit = aabbs.iter().any(|(a, b)| {
-                    lo.x <= b.x
-                        && hi.x >= a.x
-                        && lo.y <= b.y
-                        && hi.y >= a.y
-                        && lo.z <= b.z
-                        && hi.z >= a.z
-                });
-                if hit {
+                // the hull face of least overlap is the contact face; its normal points from
+                // the player to the prop
+                let mut face: Option<(f32, Vec3)> = None;
+                for (a, b) in &aabbs {
+                    let over = (b.min(hi) - a.max(lo)).to_array();
+                    if over.iter().any(|&o| o < 0.0) {
+                        continue;
+                    }
+                    let centre = ((*a + *b) - (lo + hi)) * 0.5;
+                    for (axis, o) in over.into_iter().enumerate() {
+                        if face.is_none_or(|(best, _)| o < best) {
+                            let mut n = Vec3::ZERO;
+                            n[axis] = if centre[axis] >= 0.0 { 1.0 } else { -1.0 };
+                            face = Some((o, n));
+                        }
+                    }
+                }
+                if let Some((_, n)) = face {
                     hits.push((
                         id,
                         pid,
                         st.velocity,
                         st.angular_velocity,
                         self.physics.mass(b),
+                        n,
                     ));
                     break;
                 }
             }
         }
-        for (id, pid, velocity, angular, mass) in hits {
+        for (id, pid, velocity, angular, mass, n) in hits {
             if mass < PROP_HIT_MIN_MASS {
                 continue;
             }
             let speed = velocity.length();
             let damage = player_impact_damage(mass, speed);
             self.prop_hit_at.insert(id, now);
-            if let Some(&b) = self.bodies.get(&id) {
-                let slowed = Vec3::new(
-                    velocity.x * PROP_HIT_KEEP,
-                    velocity.y * PROP_HIT_KEEP,
-                    velocity.z,
-                );
-                self.physics.set_velocity(b, slowed, angular);
+            // measured (`server_npc_zombie_swat`, 30 kg crate into the standing hull's side):
+            // the crate arrives at (-738, -89, 428) and leaves at (-130, 16, 217), the player is
+            // shoved (-297, -46, 106) and takes to the air. Along the face normal that is a
+            // restitution of 0.24 against a 60 kg player; the sideways/upward exchange (crate
+            // -211 z, player +106 z) is Coulomb friction at ~0.4 of the normal impulse.
+            let Some(&b) = self.bodies.get(&id) else {
+                continue;
+            };
+            let Some(pvel) = self.players.get(&pid).map(|p| p.state.velocity) else {
+                continue;
+            };
+            let rel = velocity - pvel;
+            let vn = rel.dot(n);
+            if vn >= 0.0 {
+                continue;
             }
+            let reduced = mass * PROP_HIT_PLAYER_MASS / (mass + PROP_HIT_PLAYER_MASS);
+            let jn = (1.0 + PROP_HIT_RESTITUTION) * -vn * reduced;
+            let vt = rel - n * vn;
+            let jt = (PROP_HIT_FRICTION * jn).min(vt.length() * reduced);
+            let t = vt.normalize_or_zero();
+            self.physics
+                .set_velocity(b, velocity + n * (jn / mass) - t * (jt / mass), angular);
             if damage <= 0.0 {
                 continue;
             }
             if let Some(p) = self.players.get_mut(&pid) {
-                let push = Vec3::new(velocity.x, velocity.y, 0.0) * (mass / PLAYER_MASS);
-                p.state.impulse += push.clamp_length_max(PROP_HIT_PUSH_MAX);
+                let push = (t * (jt / PROP_HIT_PLAYER_MASS) - n * (jn / PROP_HIT_PLAYER_MASS))
+                    .clamp_length_max(PROP_HIT_PUSH_MAX);
+                p.state.impulse += push;
+                if push.z > 0.0 {
+                    p.state.on_ground = false;
+                    p.state.phys_lift = true;
+                }
                 p.last_damage = (0, "prop_physics");
             }
             self.damage_player(pid, damage, weapons::DMG_CRUSH);
@@ -21965,8 +22003,14 @@ pub const PROP_HIT_MIN_MASS: f32 = 2.0;
 pub const PROP_HIT_COOLDOWN: u64 = 33;
 /// Horizontal speed a prop keeps after hitting a player (the swatted crate left the bot at
 /// 130 u/s of its ~780).
-pub const PROP_HIT_KEEP: f32 = 0.17;
-pub const PROP_HIT_PUSH_MAX: f32 = 150.0;
+/// Restitution and friction of a prop/player hit, from the one measured crate hit
+/// (`server_npc_zombie_swat`, 30 kg crate).
+pub const PROP_HIT_RESTITUTION: f32 = 0.24;
+pub const PROP_HIT_FRICTION: f32 = 0.4;
+/// The player's effective mass in a prop hit (the crate's and the player's velocity changes
+/// agree on 60 kg both along the normal and along the friction direction).
+pub const PROP_HIT_PLAYER_MASS: f32 = 60.0;
+pub const PROP_HIT_PUSH_MAX: f32 = 400.0;
 /// How far an NPC hull sweep steps back to find the face of a prop it is touching.
 pub const NPC_SWEEP_BACKOFF: f32 = 4.0;
 /// Local detour round a blocking prop: corner clearance beyond the hull half-width, how

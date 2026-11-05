@@ -736,6 +736,7 @@ fn w_state(w: &mut Writer, s: &gm_move::PlayerState) {
 fn r_state(r: &mut Reader) -> Result<gm_move::PlayerState, Truncated> {
     Ok(gm_move::PlayerState {
         ground_push: false,
+        phys_lift: false,
         game_moved: false,
         origin: r.vec3()?,
         velocity: r.vec3()?,

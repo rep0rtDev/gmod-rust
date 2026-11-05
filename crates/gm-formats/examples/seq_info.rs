@@ -25,9 +25,14 @@ fn main() {
                 continue;
             }
             let a = anims.get(usize::try_from(q.anim).unwrap_or(usize::MAX));
-            let (fps, frames, flags, speed) =
-                a.map_or((0.0, 0, 0, 0.0), |a| (a.fps, a.frames, a.flags, a.ground_speed()));
-            let period = if fps > 0.0 { (frames - 1).max(1) as f32 / fps } else { 0.0 };
+            let (fps, frames, flags, speed) = a.map_or((0.0, 0, 0, 0.0), |a| {
+                (a.fps, a.frames, a.flags, a.ground_speed())
+            });
+            let period = if fps > 0.0 {
+                (frames - 1).max(1) as f32 / fps
+            } else {
+                0.0
+            };
             println!(
                 "{file} {} act={} w={} fps={fps} frames={frames} period={period:.4}s loop={} speed={speed:.1}",
                 q.name,

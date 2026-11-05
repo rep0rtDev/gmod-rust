@@ -150,6 +150,10 @@ pub struct PlayerState {
     /// vertical push of up to 250 u/s shows in that tick's velocity but does not lift the
     /// player; `categorize` keeps the ground once and clears it.
     pub ground_push: bool,
+    /// Set by a physics push that lifts the player (`server_npc_zombie_swat`: a swatted crate
+    /// sends the player up at ~106 u/s and the game keeps it off the ground until the apex,
+    /// although that is below the jump limit); cleared once the rise ends.
+    pub phys_lift: bool,
     /// Set when game code placed the player (spawn, teleport, seat): the next tick starts
     /// with a ground check, like `m_bGameCodeMovedPlayer`.
     pub game_moved: bool,
@@ -192,6 +196,7 @@ impl Default for PlayerState {
             velocity: Vec3::ZERO,
             impulse: Vec3::ZERO,
             ground_push: false,
+            phys_lift: false,
             game_moved: true,
             on_ground: false,
             ground_normal: Vec3::Z,
@@ -707,6 +712,13 @@ impl<'a> Mover<'a> {
         if st.velocity.z > NON_JUMP_VELOCITY && !st.ground_push {
             st.on_ground = false;
             return;
+        }
+        if st.phys_lift {
+            if st.velocity.z > 0.0 {
+                st.on_ground = false;
+                return;
+            }
+            st.phys_lift = false;
         }
         st.ground_push = false;
         let (t, ent) = self.trace_ent(
