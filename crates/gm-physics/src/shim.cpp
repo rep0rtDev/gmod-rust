@@ -1107,7 +1107,13 @@ public:
 		// (least distance, ties keep hull order), fully resolved, then the others are re-tested
 		// with the new velocities; the game shows two impacts for a flat crate (a corner, then
 		// the opposite one) and one rim vertex for the barrel
-		const float tie_eps = 0.0005f;
+		// two vertices reaching the plane within 0.2 ms of each other are one arrival and the
+		// hull order below picks between them: the drum tipping onto its side lands on a flat
+		// whose two straddling rim vertices arrive 0.16 ms apart, and the game strikes the one
+		// 0.3 mm nearer the plane, not the one 0.14 m/s faster (`phys_slide_barrel_v100`: its
+		// axial spin -54 -> -122 deg/s, 73 -> 8.6 u; a 5 us window struck the other and killed
+		// the spin; over the 249-recording sweep 2341 -> 2270, `phys_slip_lockers_v200` 21 -> 28)
+		const float tie_eps = 0.02f;
 		JPH::uint64 pair_key = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
 		std::vector<size_t> &cps = contact_points[pair_key];
 		// the second step of a landing takes the vertex chain (the antipode), not a face
