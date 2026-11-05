@@ -2271,6 +2271,8 @@ pub struct Npc {
     pub ai: ai::AiState,
     pub rest_sequence: Option<String>,
     pub spawn_tick: u64,
+    /// Tick the current idle pose was taken (hitboxes blend into it over `NPC_POSE_BLEND_TICKS`).
+    pub pose_since: u64,
     pub next_think: u64,
     pub think_interval: u8,
     /// `NPC:SetMoveInterval`: a fixed think interval (ticks) instead of the measured near / far one.
@@ -2599,6 +2601,62 @@ pub const NPC_CROUCH_HITBOX_DROP: f32 = 22.0;
 /// Whether a sequence name is one of the crouched combat poses (`CrouchIdle`, `shootSMG1c`).
 pub fn npc_sequence_crouched(sequence: &str) -> bool {
     sequence.starts_with("Crouch") || (sequence.starts_with("shoot") && sequence.ends_with('c'))
+}
+
+/// How far a pose lowers the body's hitboxes into a centre shot: the crouched poses and the
+/// bent-over `pickup` (the citizen in server_npc_damage took 8 then 16 from the hull-centre
+/// shot while picking a weapon up - its head came down into the ray).
+pub fn npc_pose_hit_shift(sequence: &str) -> f32 {
+    if npc_sequence_crouched(sequence) || sequence.eq_ignore_ascii_case("pickup") {
+        NPC_CROUCH_HITBOX_DROP
+    } else {
+        0.0
+    }
+}
+
+/// Poses that hold the arms in front of the torso, so a shot into the chest/stomach band
+/// lands on an arm (x0.25): Alyx's alert idle with the pistol up (server_npc_damage: 8 per
+/// hull-centre shot standing idle, 2 per shot in `Idle_p_stimulated`).
+pub fn npc_pose_arm_cover(sequence: &str) -> bool {
+    sequence.eq_ignore_ascii_case("Idle_p_stimulated")
+}
+
+/// A body turned side-on to the shooter (|cos| of the facing/shooter angle under this) takes
+/// a torso-band shot on the near arm: the citizen idling at yaw 79 under fire from the west
+/// took 2 of 8 (server_npc_damage row 108) where it took 8 running along the line.
+pub const NPC_SIDE_ON_COS: f32 = 0.5;
+
+/// Player-ally NPCs that regenerate: 1 hp every `NPC_ALLY_REGEN_TICKS` from spawn while alive
+/// and hurt (measured on Alyx in server_npc_damage: 49 -> 56 over 91 ticks, 72 -> 65 across
+/// an 8-damage hit; the citizen there showed none). The other vital allies follow Alyx
+/// unmeasured; the game applies the point at the think after the deadline (+5..10 ticks).
+pub fn npc_regenerates(class: &str) -> bool {
+    matches!(
+        class,
+        "npc_alyx"
+            | "npc_barney"
+            | "npc_kleiner"
+            | "npc_eli"
+            | "npc_mossman"
+            | "npc_monk"
+            | "npc_magnusson"
+            | "npc_dog"
+    )
+}
+pub const NPC_ALLY_REGEN_TICKS: f32 = 200.0 / 15.0;
+/// The game grants the point at the think after the deadline: measured +5..10 ticks late.
+pub const NPC_ALLY_REGEN_DELAY: f32 = 7.0;
+/// A pose's hitboxes reach it only after the sequence blend (Alyx's hit 6 ticks after taking
+/// `Idle_p_stimulated` was still a full torso hit, the one 15 ticks after was an arm hit).
+pub const NPC_POSE_BLEND_TICKS: u64 = 13;
+
+/// The idle an armed ally settles into once alert: Alyx raises the pistol (`Idle_p_stimulated`
+/// three ticks after the first hit in server_npc_damage); other classes are unmeasured.
+pub fn npc_alert_idle(class: &str, weapon: &str) -> Option<&'static str> {
+    match class {
+        "npc_alyx" if !weapon.is_empty() => Some("Idle_p_stimulated"),
+        _ => None,
+    }
 }
 
 pub fn npc_combat_sequences(class: &str) -> Option<(&'static str, &'static str)> {
@@ -9139,14 +9197,23 @@ impl<'w> Server<'w> {
                     .get(&npc)
                     .and_then(|n| {
                         let h = n.maxs.z - n.mins.z;
-                        let drop = if npc_sequence_crouched(&n.sequence) {
-                            NPC_CROUCH_HITBOX_DROP
-                        } else {
-                            0.0
-                        };
-                        weapons::hitgroup_at(
-                            (hit.z - (n.pos.z + n.mins.z)) * 72.0 / h.max(1.0) + drop,
-                        )
+                        let rel = (hit.z - (n.pos.z + n.mins.z)) * 72.0 / h.max(1.0)
+                            + npc_pose_hit_shift(&n.sequence);
+                        let facing =
+                            gm_sandbox::rotation(Vec3::new(0.0, n.angles.y, 0.0)) * Vec3::X;
+                        let to_shooter = -d.truncate().normalize_or_zero();
+                        let side_on = facing.truncate().dot(to_shooter).abs() < NPC_SIDE_ON_COS;
+                        weapons::hitgroup_at(rel).map(|g| {
+                            if g != weapons::HITGROUP_HEAD
+                                && (side_on
+                                    || (npc_pose_arm_cover(&n.sequence)
+                                        && self.tick_count >= n.pose_since + NPC_POSE_BLEND_TICKS))
+                            {
+                                weapons::HITGROUP_LEFTARM
+                            } else {
+                                g
+                            }
+                        })
                     })
                     .unwrap_or(weapons::HITGROUP_CHEST);
                 for _ in 0..shot.pellets {
@@ -13305,6 +13372,7 @@ impl<'w> Server<'w> {
             },
             rest_sequence: None,
             spawn_tick: self.tick_count,
+            pose_since: 0,
             next_think: self.tick_count + NPC_THINK_PHASE,
             think_interval: NPC_THINK_TICKS,
             move_speed: 0.0,
@@ -13539,6 +13607,36 @@ impl<'w> Server<'w> {
                 .set_velocity(body, fwd * 130.0 + Vec3::new(0.0, 0.0, -70.0), Vec3::ZERO);
         }
         self.world_weapons.insert(id, class.to_string());
+    }
+
+    /// Ally regeneration and the alert idle pose (see `npc_regenerates`, `npc_alert_idle`).
+    fn tick_npc_regen(&mut self) {
+        if self.ai_disabled {
+            return;
+        }
+        let tick = self.tick_count;
+        for n in self.npcs.values_mut() {
+            if n.dead_at.is_some() || n.ai.scripted {
+                continue;
+            }
+            if npc_regenerates(&n.class) && n.health < n.max_health as f32 && tick > n.spawn_tick {
+                let age = (tick - n.spawn_tick) as f32 - NPC_ALLY_REGEN_DELAY;
+                if age > 0.0
+                    && (age / NPC_ALLY_REGEN_TICKS).floor()
+                        != ((age - 1.0) / NPC_ALLY_REGEN_TICKS).floor()
+                {
+                    n.health = (n.health + 1.0).min(n.max_health as f32);
+                }
+            }
+            if n.ai.state == ai::NPC_STATE_ALERT && n.goal.is_none() && n.move_speed == 0.0 {
+                if let Some(seq) = npc_alert_idle(&n.class, &n.weapon) {
+                    if n.sequence.eq_ignore_ascii_case("Idle_subtle") {
+                        n.sequence = seq.to_string();
+                        n.pose_since = tick;
+                    }
+                }
+            }
+        }
     }
 
     /// Bodies whose corpse time ran out leave the world (undo / cleanup entries go dead).
@@ -17579,6 +17677,7 @@ impl<'w> Server<'w> {
                 },
                 rest_sequence: None,
                 spawn_tick: self.tick_count,
+                pose_since: 0,
                 next_think: self.tick_count + NPC_THINK_PHASE,
                 think_interval: NPC_THINK_TICKS,
                 move_speed: 0.0,
@@ -19856,6 +19955,7 @@ impl<'w> Server<'w> {
         self.prop_player_impacts();
         self.weapon_pickups();
         self.settle_npcs();
+        self.tick_npc_regen();
         self.tick_npc_move();
         let bodied: Vec<(u32, u32)> = self
             .npcs

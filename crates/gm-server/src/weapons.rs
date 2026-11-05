@@ -1085,6 +1085,7 @@ pub fn bullet_dmg_type(ammo: &str) -> u32 {
 /// Hit groups as the game numbers them.
 pub const HITGROUP_GENERIC: u8 = 0;
 pub const HITGROUP_HEAD: u8 = 1;
+pub const HITGROUP_LEFTARM: u8 = 4;
 pub const HITGROUP_CHEST: u8 = 2;
 pub const HITGROUP_STOMACH: u8 = 3;
 

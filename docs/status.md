@@ -278,3 +278,27 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   chases straight. Deterministic leftovers in this scene: the crouched soldier's doubled
   damage per op, the citizen's run + `pickup`, and Alyx losing 2..3 hp per four rows where
   ours loses 16.
+- Alyx (rows 121..151, `firebullets` AR2 at the hull centre every 6 ticks) - done. Game: 80 →
+  72 on the first hit (Idle_subtle), `Idle_p_stimulated` three ticks later, then 65, 63, 62,
+  61, 59, 58, 56 ... 48 and 56 after the final 90-tick wait: the pistol-up pose takes the
+  centre shot on an arm (x0.25 → 2) and she regenerates 1 hp per 13.3 ticks
+  (`sk_ally_regen_time 0.2`), the point landing at the think after the deadline (+5..10
+  ticks); the hit 6 ticks after the pose switch was still a full 8 (blend). Ours now:
+  `npc_alert_idle` (alyx, armed → Idle_p_stimulated once ALERT and standing),
+  `npc_pose_arm_cover` (torso-band hit → `HITGROUP_LEFTARM` after `NPC_POSE_BLEND_TICKS` 13),
+  `npc_regenerates` (Alyx and the other vital allies, `NPC_ALLY_REGEN_TICKS` 13.33 from spawn
+  + `NPC_ALLY_REGEN_DELAY` 7). Trace: 72, 65, 64, 62, 61, 60, 58, 57, 56, 54, 53, 52, 50, 49,
+  56 against the game's 72, 65, 63, 62, 61, 59, 58, 56, 55, 54, 52, 51, 50, 48, 56 - the ±1 is
+  our fixed +7 against the game's think quantisation. Scene figure unchanged (36.4: positions
+  only), sweep 2005.1 → 2005.1 (no scene moved). Other allies' regen is unmeasured (same rule).
+  Also from this scene: a body side-on to the shooter (`NPC_SIDE_ON_COS` 0.5) takes a
+  torso-band shot on the arm (the citizen idling at yaw 79 took 2 of 8 on row 108) and the
+  bent `pickup` pose drops the head into the centre ray like a crouch (`npc_pose_hit_shift`:
+  8 then 16 on rows 110/112).
+- Citizen (rows 100..116) - open: the game's unarmed citizen runs (run_all) from its first
+  think at (940,-526) to (919,-523) by row 106 (49 ticks, with the turn), idles one row, and
+  plays `pickup` from row 110 until it dies - it is taking the soldier's SMG1 dropped at
+  (940,-526) on row 58..60 (a dropped NPC weapon is no cleanup type and survives the row-99
+  `gmod_cleanup`; our `drop_npc_weapon` already survives ours). Ours has no weapon-seeking
+  schedule (SCHED_NEW_WEAPON): it stands idle_subtle at (926,-500) and dies on row 110. Next:
+  the unarmed-citizen weapon pickup (run to the weapon, `pickup`, equip).
