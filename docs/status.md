@@ -258,3 +258,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   the straight segment to the enemy is blocked by the enemy's own hull and Source routes
   spawn → apex → goal. Ours ignores the bot's hull in the local route and walks the line. To
   build and measure next: the apex rule (side, offset, fraction) in the local route.
+- Not a triangulation after all: in melee_zombie / fastzombie / poisonzombie / swat_far the
+  game's zombie leaves the same spawn straight at the bot (heading 180 = bearing), and only
+  after its idle wake (rows 18..25). In npc_damage the first pistol hit lands 10 ticks after
+  the spawn, before the wake, and the zombie walks at once on the 154.5 deg leg - the leg is
+  the damage-wake behaviour (an early enemy set by the hit and its first schedule's move),
+  not a route rule; a general apex beside the player's hull would break every melee scene.
+  To measure next: what the zombie does when hit before it has acquired an enemy (the
+  schedule and the 79-u leg), and whether npc_flinch_soldier shows the same.
