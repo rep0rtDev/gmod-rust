@@ -2148,6 +2148,8 @@ pub struct Npc {
     pub melee_dash: f32,
     /// The roar's slide back from the player (u/tick), see `NpcMelee::roar_slide`.
     pub melee_slide: f32,
+    /// The think that arrived in melee range and only stopped (the swing follows next think).
+    pub melee_stood: u64,
     /// A zombie's swat of a physics prop at its enemy (SCHED_ZOMBIE_SWATITEM).
     pub swat: Option<NpcSwat>,
     /// The prop a zombie is walking to a swat position for (SCHED_ZOMBIE_MOVE_SWATITEM).
@@ -13386,6 +13388,7 @@ impl<'w> Server<'w> {
             grenade: None,
             melee_dash: 0.0,
             melee_slide: 0.0,
+            melee_stood: 0,
             flight: None,
             link_jump: false,
             hung_until: 0,
@@ -14679,7 +14682,9 @@ impl<'w> Server<'w> {
                 continue;
             };
             let chasing = n.chase.is_some();
-            let run_chase = chasing && n.run;
+            // measured on the fast zombie; the antlion and armed runners keep the reach clamp
+            // and the brake
+            let run_chase = chasing && n.run && ai::class_sched_family(&n.class) == Some("zombie");
             let zombie_body = ai::class_is_zombie_body(&n.class);
             let pressed_prop = n.pressed_prop;
             let chase_reach = n.chase_reach;
@@ -14855,7 +14860,10 @@ impl<'w> Server<'w> {
             for w in points[idx..].windows(2) {
                 remaining += w[0].truncate().distance(w[1].truncate());
             }
-            if chasing {
+            // a walking chase paces itself to the reach; a running one keeps full steps until
+            // the melee think stops it in range (the game's fast zombie lands at 46 u, the
+            // last 21 u step whole)
+            if chasing && !run_chase {
                 remaining = (remaining - chase_reach).max(0.0);
             }
             let s0 = v0 * dt;
@@ -16309,6 +16317,25 @@ impl<'w> Server<'w> {
             }
         }
         if dist <= m.start_range {
+            // a zombie's think whose step arrives in range only stops; the swing starts the
+            // next think (the game's fast zombie stands at 869 from row 81 and claws at 88,
+            // the zombie / can / gascan show `walk` at the claw spot a think before
+            // `attackA`); the antlion swipes in the think after its run (rows 95 -> 109,
+            // 270 -> 277) and lunges from the run, the poison zombie throws straight from
+            // its walk (server_npc_melee_poisonzombie row 81)
+            if (n.path_done_at == now || n.move_speed > 0.0)
+                && m.lunge <= 0.0
+                && !m.poison
+                && ai::class_sched_family(&n.class) == Some("zombie")
+                && now > n.melee_stood + u64::from(n.think_interval)
+            {
+                n.melee_stood = now;
+                n.chase = None;
+                n.goal = None;
+                n.next_goal = None;
+                n.move_speed = 0.0;
+                return;
+            }
             n.chase = None;
             n.goal = None;
             n.next_goal = None;
@@ -17861,6 +17888,7 @@ impl<'w> Server<'w> {
                 grenade: None,
                 melee_dash: 0.0,
                 melee_slide: 0.0,
+                melee_stood: 0,
                 flight: None,
                 link_jump: false,
                 hung_until: 0,

@@ -192,11 +192,27 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   309.5 → 344.3 and swat_far 80.8 → 85.4 move downstream of pre-existing divergences (their
   bot ends at (969,722) against the game's (704,-32); the swat_far bot walks to 845 by row 45
   in the game and stays at 823 in ours), so the deltas there are chaos, not these rules.
-- Open: ours now runs the whole cycle 7 rows early (Melee 81 / 242 / 403 vs 88 / 249 / 410,
-  stop 872 vs 869) - the first arrival; the ~8 u of lateral position; and the walking zombie's
-  reach - the game's zombie in server_npc_melee_zombie walks in to 39 u (862 against the bot's
-  823) before its first claw where ours swings at 54 u (877), yet in swat2_can both swing at
-  52 u (875) - the melee range is not a plain origin distance.
+- The stand think and the full-step stop: in every zombie recording the body shows `walk` /
+  `Run` at the claw spot one think before `attackA` / `Melee` (fast zombie 869 from row 81,
+  Melee at 88; zombie, can, gascan likewise) - the think whose step arrives in range only
+  stops, the swing starts the next think. And the game's runner does not pace itself to the
+  reach: its last step is whole (21 u, landing at 46 u). Now a zombie-family body that arrived
+  or is still moving in range stands one think (`melee_stood`; not the poison zombie's throw,
+  which comes straight from the walk at row 81, and not a lunge), and a zombie-family running
+  chase does not clamp its step to `chase_reach` - the melee think stops it. The fast zombie's
+  sequence rows now match the game's exactly: idle 81, Melee 88, Roar 123, Run 221, idle 242,
+  Melee 249, Roar 284, Run 382, Melee 410, Roar 445, Run 543, Melee 571; its figure is 7.5
+  (stop 868 against 869, the bot's drift over four cycles). The antlion swipes in the think
+  after its run (rows 95 -> 109, 270 -> 277) and lunges from the run, so it keeps the old
+  path (the stand gated to the antlion: 41.6 -> 53..90). Sweep 2023.3 -> 2003.4: poison_long
+  344.3 -> 309.5, swat_far 85.4 -> 81.1, melee_zombie 5.8 -> 8.0, poisonzombie 166.1 ->
+  176.5, gascan 29.9 -> 34.6 (a re-swing after a re-approach at row 278 now stands a think -
+  whether the game's does there is unmeasured).
+- Open: the ~8 u of lateral position; the walking zombie's slower last 66 u (4.9 -> 4.2 u a
+  think) that the brake curve only stands in for. The zombie's melee trigger distance is not
+  an item: across every zombie recording the first claw comes at 50..54 u of 2D origin
+  distance (45 once, the bot off-axis in swat2_heavy) - the "39 u" of server_npc_melee_zombie
+  261031 was an x-only reading with the bot at y -536.
 ### NPC: the squad mate's run to cover (server_npc_squad_soldier, 219 u) - measured, open
 
 - The game's mate runs RunAIMALL1 with its back to the bot (path 169 deg off its facing) at
