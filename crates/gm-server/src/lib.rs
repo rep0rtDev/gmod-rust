@@ -2591,6 +2591,16 @@ pub fn npc_hostile(class: &str) -> bool {
 /// Sequences an armed NPC shows in combat: (firing, between bursts). Measured on the soldier
 /// (server_npc_fire_soldier: `shootSMG1c` for 7 ticks per shot, `CrouchIdle` for the rest of
 /// the gap); other classes are unmeasured and keep their sequence.
+/// How far a crouched body's hitboxes sit below their standing height: measured on the
+/// soldier (server_npc_damage): the bot's shot at the hull centre (36 u) takes 4 standing
+/// (CombatIdle1) and 8 crouched (shootSMG1c / CrouchIdle) - the head (x2) drops into it.
+pub const NPC_CROUCH_HITBOX_DROP: f32 = 22.0;
+
+/// Whether a sequence name is one of the crouched combat poses (`CrouchIdle`, `shootSMG1c`).
+pub fn npc_sequence_crouched(sequence: &str) -> bool {
+    sequence.starts_with("Crouch") || (sequence.starts_with("shoot") && sequence.ends_with('c'))
+}
+
 pub fn npc_combat_sequences(class: &str) -> Option<(&'static str, &'static str)> {
     match class {
         "npc_combine_s" => Some(("shootSMG1c", "CrouchIdle")),
@@ -2864,7 +2874,6 @@ pub const NPC_COVER_ARRIVE: f32 = 24.0;
 /// A squadmate's cover is avoided only this long after it chose it (the engine's node lock;
 /// the leader took the mate's node 84 ticks later in server_npc_squad_soldier 261104).
 pub const NPC_COVER_LOCK_TICKS: u64 = 66;
-pub const NPC_COVER_HEALTH: f32 = 0.4;
 pub const NPC_COVER_SPACING: f32 = 32.0;
 pub const NPC_COVER_TICKS: u64 = 200;
 pub const NPC_COVER_COOLDOWN: u64 = 660;
@@ -9130,7 +9139,14 @@ impl<'w> Server<'w> {
                     .get(&npc)
                     .and_then(|n| {
                         let h = n.maxs.z - n.mins.z;
-                        weapons::hitgroup_at((hit.z - (n.pos.z + n.mins.z)) * 72.0 / h.max(1.0))
+                        let drop = if npc_sequence_crouched(&n.sequence) {
+                            NPC_CROUCH_HITBOX_DROP
+                        } else {
+                            0.0
+                        };
+                        weapons::hitgroup_at(
+                            (hit.z - (n.pos.z + n.mins.z)) * 72.0 / h.max(1.0) + drop,
+                        )
                     })
                     .unwrap_or(weapons::HITGROUP_CHEST);
                 for _ in 0..shot.pellets {
@@ -13460,14 +13476,6 @@ impl<'w> Server<'w> {
                     };
             } else if n.next_shot > tick {
                 n.next_shot += n.think_interval as u64;
-            }
-            // the game's soldier at 60% kept firing (server_npc_flinch_soldier); ours runs
-            // for cover once a hit leaves it at NPC_COVER_HEALTH of its max or less
-            if tick >= n.cover_cooldown
-                && n.cover_at.is_none()
-                && n.health <= n.max_health as f32 * NPC_COVER_HEALTH
-            {
-                n.cover_wanted = true;
             }
         }
         if n.health <= 0.0 {

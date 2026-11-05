@@ -904,7 +904,7 @@ fn squad_shares_the_target() {
 /// NPC_COVER_RANGE the player cannot see, holds NPC_COVER_TICKS without chasing, then
 /// re-engages.
 #[test]
-fn soldier_takes_cover_when_hit() {
+fn soldier_keeps_firing_when_hit() {
     let world = combat_server!(world);
     let (mut server, idle, start) = combat_server!(world, server);
     let id = server.spawn_npc(1, "npc_combine_s", "weapon_smg1").unwrap();
@@ -960,63 +960,17 @@ fn soldier_takes_cover_when_hit() {
     assert_eq!(server.npcs[&id].target, Some(1));
     let shots = server.npcs[&id].shots;
     assert!(shots > 0, "no fire from the vantage");
-    // 50 -> 15 hp: under NPC_COVER_HEALTH
+    // 50 -> 15 hp: the game's soldier hit down to 36% / 20% / 4% stays crouched and firing
+    // (server_npc_damage), there is no low-health run for cover
     assert!(server.damage_npc(id, 1, 35.0, 0));
-    let mut covered = None;
-    for t in 0..20 {
+    for _ in 0..120 {
         server.tick(&idle);
-        if let Some(c) = server.npcs[&id].cover_at {
-            covered = Some((t, c));
-            break;
-        }
+        assert!(
+            server.npcs[&id].cover_at.is_none(),
+            "ran for cover when hit"
+        );
     }
-    let (_, cover) = covered.expect("never took cover");
-    let eye = server.eye(1).unwrap().0;
-    assert!(
-        !sees(eye, cover + Vec3::new(0.0, 0.0, 36.0)),
-        "cover {cover} is in view"
-    );
-    assert!(cover.distance(s_pos) <= gm_server::NPC_COVER_RANGE);
-    // runs there without firing, then holds
-    let shots_at_hit = server.npcs[&id].shots;
-    let mut arrived = None;
-    for t in 0..400 {
-        server.tick(&idle);
-        let n = &server.npcs[&id];
-        if n.goal.is_none() && n.move_speed == 0.0 {
-            arrived = Some(t);
-            break;
-        }
-        assert_eq!(n.shots, shots_at_hit, "fired on the way to cover");
-    }
-    let arrived = arrived.expect("never reached cover");
-    let n = &server.npcs[&id];
-    let at = n.pos;
-    eprintln!("cover {cover} reached after {arrived} ticks at {at}");
-    assert!(
-        at.truncate().distance(cover.truncate()) < 8.0,
-        "stopped at {at}"
-    );
-    for _ in 0..(gm_server::NPC_COVER_TICKS - 20) {
-        server.tick(&idle);
-    }
-    let n = &server.npcs[&id];
-    assert_eq!(n.target, Some(1));
-    assert!(
-        n.chase.is_none() && n.cover_at.is_some(),
-        "left cover early"
-    );
-    // after the stay the usual rules return: unseen target -> chase
-    let mut back = false;
-    for _ in 0..60 {
-        server.tick(&idle);
-        let n = &server.npcs[&id];
-        if n.chase == Some(1) || n.shots > shots_at_hit {
-            back = true;
-            break;
-        }
-    }
-    assert!(back, "never re-engaged");
+    assert!(server.npcs[&id].shots > shots, "stopped firing when hit");
 }
 
 /// Antlion (server_npc_melee_antlion): a ~100 u reach swipe for 5 alternating with an 84 u

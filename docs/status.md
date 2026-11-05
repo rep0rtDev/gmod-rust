@@ -219,7 +219,7 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   think, the leader after the window), pace from the yaw-vs-step angle, and the mate's
   zero-length window (its magazine is empty after the suppress volley) to be confirmed.
 
-### NPC: server_npc_damage (55 u @68) - measured, open
+### NPC: server_npc_damage (55 → 36.4 u @23) - measured, open
 
 - Zombie (rows 3..24, the scene's first spawn; every damage op is `firebullets` Pistol): the
   game's walks north-west off the firing line (y -500 → -471) and the ops hit for 2..3 or miss
@@ -231,12 +231,17 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   its zombie having come in from the north-east. The root is the zombie's drift off the line
   on rows 3..24 (row 27 is a `cleanup`, so no corpse is involved).
 - Soldier: the game takes 4 per `firebullets` op standing (rows 46, 48: Idle1 / CombatIdle1)
-  and 8 per op from row 50 (shootSMG1c, crouched) - dead by row 60; ours 4 per op throughout
-  (the crouched hull stays 72 u), then runs (RunAIMALL1 from row 61) and dies at 70. The ray
-  (eye 64, pitch 20, 103..117 u) lands ~21..27 u above the feet, so the doubling is not the
-  head hitgroup; the crouched hitboxes or a two-bullet op are the candidates.
-  To check: the crouched head hitgroup (sk_npc_head x2) and why ours halves (one of two
-  bullets missing a moving body).
+  and 8 per op from row 50 (shootSMG1c, crouched); it stays crouched and firing at 36% / 20% /
+  4% and dies at row 60. Both `firebullets` ends aim at the hull centre (Lua `WorldSpaceCenter`,
+  runner `pos + (mins + maxs) / 2` = 36 u above the feet), so the doubling is the head (x2):
+  the crouched hitboxes drop it into the ray. Done: `NPC_CROUCH_HITBOX_DROP` (22 u, the
+  standing head band 58 → 36) is added to the hit height while the sequence is a crouched pose
+  (`npc_sequence_crouched`: `Crouch*`, `shoot*c`), and the unmeasured low-health cover run
+  (`NPC_COVER_HEALTH` 40%, which made ours stand up and run RunAIMALL1 at 18 hp) is removed -
+  the recording contradicts it. Scene 55.0 → 36.4, sweep 2056.4 → 2005.1 (no other scene moved).
+  Open: ours crouches from row 46 (the game stands two more ops), so it dies at row 58 instead
+  of 60; our corpse keeps `shootSMG1c`, the game's `CrouchIdle`. The 22 u is fitted to one ray
+  height (centre shots only); the real crouched hitbox bands are unmeasured.
 - Rows 104..116: the game's third NPC runs (run_all) and plays `pickup` (a weapon pickup)
   before dying at -10; ours idles. Rows 124..148: the game's fourth (Idle_p_s) loses 72 → 50 at
   2..3 hp per four rows, ours (Idle_sub) 72 → 0 at 16 - a different damage path.
