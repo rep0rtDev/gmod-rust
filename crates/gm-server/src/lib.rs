@@ -2240,6 +2240,14 @@ pub struct Npc {
     /// tick of the next cover run.
     pub cover_wanted: bool,
     pub cover_at: Option<Vec3>,
+    /// Tick the cover was chosen: a squadmate's cover is avoided only this fresh
+    /// (NPC_COVER_LOCK_TICKS).
+    pub cover_taken_at: u64,
+    /// First think standing at the cover (goal done); the reload waits for the enemy facing
+    /// from here.
+    pub cover_arrived_at: u64,
+    /// Yaw error to the enemy after the last standing turn (deg).
+    pub face_err: f32,
     pub cover_until: u64,
     /// Rounds left in the weapon; at a quarter of the clip (COND_LOW_PRIMARY_AMMO) the body
     /// hides and reloads (server_npc_grenade_soldier: after 7 volleys).
@@ -2304,6 +2312,10 @@ pub struct NpcMoveDef {
     pub walk_accel: f32,
     pub run: f32,
     pub run_accel: f32,
+    /// Yaw rate of the body standing and turning to its enemy (deg/s): the engine's
+    /// MaxYawSpeed x 10 - the soldier's 35 turns 37 deg a think at its reload cover
+    /// (server_npc_grenade_soldier 261104 yaw 112 -> 148 -> 185 -> 222 -> 229).
+    pub idle_yaw: f32,
 }
 
 /// Ground speed of the all-directions blend off the facing (15.9 / 22.6 from 20 deg) and its
@@ -2832,6 +2844,9 @@ pub const NPC_COVER_RANGE: f32 = 512.0;
 pub const NPC_COVER_RADIUS: f32 = 1024.0;
 /// Within this of the cover point the body counts as arrived (the reload starts there).
 pub const NPC_COVER_ARRIVE: f32 = 24.0;
+/// A squadmate's cover is avoided only this long after it chose it (the engine's node lock;
+/// the leader took the mate's node 84 ticks later in server_npc_squad_soldier 261104).
+pub const NPC_COVER_LOCK_TICKS: u64 = 66;
 pub const NPC_COVER_HEALTH: f32 = 0.4;
 pub const NPC_COVER_SPACING: f32 = 32.0;
 pub const NPC_COVER_TICKS: u64 = 200;
@@ -2990,12 +3005,14 @@ const NPC_MOVE_CITIZEN: NpcMoveDef = NpcMoveDef {
     walk_accel: 129.9,
     run: 209.79,
     run_accel: 259.8,
+    idle_yaw: NPC_YAW_RATE,
 };
 const NPC_MOVE_METROPOLICE: NpcMoveDef = NpcMoveDef {
     walk: 57.69,
     walk_accel: 115.4,
     run: 184.56,
     run_accel: 369.2,
+    idle_yaw: NPC_YAW_RATE,
 };
 
 /// Angle difference folded into (-180, 180].
@@ -3070,6 +3087,7 @@ const NPC_MOVE_COMBINE: NpcMoveDef = NpcMoveDef {
     walk_accel: 121.8,
     run: 214.78,
     run_accel: 264.8,
+    idle_yaw: 350.0,
 };
 /// Fast zombie measured in server_npc_melee_fastzombie: always runs, 21.37 u per think.
 const NPC_MOVE_FASTZOMBIE: NpcMoveDef = NpcMoveDef {
@@ -3077,6 +3095,7 @@ const NPC_MOVE_FASTZOMBIE: NpcMoveDef = NpcMoveDef {
     walk_accel: 262.0,
     run: 201.5,
     run_accel: 262.0,
+    idle_yaw: NPC_YAW_RATE,
 };
 /// Headcrab run-away after a leap, measured in server_npc_melee_headcrab (5.25 u per think).
 const NPC_MOVE_HEADCRAB: NpcMoveDef = NpcMoveDef {
@@ -3084,6 +3103,7 @@ const NPC_MOVE_HEADCRAB: NpcMoveDef = NpcMoveDef {
     walk_accel: 100.0,
     run: 49.5,
     run_accel: 100.0,
+    idle_yaw: NPC_YAW_RATE,
 };
 /// Antlion run measured in server_npc_run_antlion (1100 u approach): 3.91, 11.7, 19.49,
 /// 27.32, 34.05, 36.15, 37.23 then 37.26 u per 7-tick think (0.105 s) = 354.9 u/s, 7.79 u
@@ -3093,6 +3113,7 @@ const NPC_MOVE_ANTLION: NpcMoveDef = NpcMoveDef {
     walk_accel: 706.0,
     run: 354.9,
     run_accel: 706.0,
+    idle_yaw: NPC_YAW_RATE,
 };
 /// Poison zombie walk measured in server_npc_melee_poisonzombie (5.85 u per think).
 const NPC_MOVE_POISONZOMBIE: NpcMoveDef = NpcMoveDef {
@@ -3100,6 +3121,7 @@ const NPC_MOVE_POISONZOMBIE: NpcMoveDef = NpcMoveDef {
     walk_accel: 104.0,
     run: 55.2,
     run_accel: 104.0,
+    idle_yaw: NPC_YAW_RATE,
 };
 /// Zombie approach measured in server_npc_melee_zombie (4.73 u per think); it never runs.
 const NPC_MOVE_ZOMBIE: NpcMoveDef = NpcMoveDef {
@@ -3107,6 +3129,7 @@ const NPC_MOVE_ZOMBIE: NpcMoveDef = NpcMoveDef {
     walk_accel: 93.0,
     run: 44.6,
     run_accel: 93.0,
+    idle_yaw: NPC_YAW_RATE,
 };
 
 /// Measured for citizens, metropolice and combine soldiers; every other class walks like a
@@ -3126,6 +3149,10 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
 /// An intermediate corner counts as passed within this horizontal distance; the final
 /// point is walked onto exactly.
 const NPC_CORNER_REACH: f32 = 8.0;
+/// A node-route corner within this is cut when the hull can already sweep to the next one
+/// (the game's soldier cut (979,72) from 51 u, server_npc_grenade_soldier 261104; the y180
+/// citizen kept a corner 73+ u out).
+const NPC_NODE_SIMPLIFY_REACH: f32 = 64.0;
 /// The hull is swept this far above the feet (the step height) when it moves along a path.
 const NPC_STEP_LIFT: f32 = 18.0;
 /// How far out along the turn's outer bisector a route corner the hull catches on is pushed,
@@ -13216,6 +13243,9 @@ impl<'w> Server<'w> {
             crabs: npc_crabs(def.class),
             cover_wanted: false,
             cover_at: None,
+            cover_taken_at: 0,
+            cover_arrived_at: 0,
+            face_err: 0.0,
             cover_until: 0,
             clip: 45,
             reloading: false,
@@ -14480,9 +14510,18 @@ impl<'w> Server<'w> {
                 .map(|k| k.truncate());
             // a corner within reach is passed only when the hull can already sweep to the
             // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
+            // a node route is simplified ahead of its corner: the game's soldier leaves the
+            // node row for its cover node the think the straight sweep clears the house corner
+            // ((1003,27) -> (1201,72) in server_npc_grenade_soldier 261104, 51 u before the
+            // (979,72) node it never visits); not from afar - the y180 citizen keeps its first
+            // node 73+ u out
             let mut jumped = false;
             while idx + 1 < points.len()
-                && points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
+                && (points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
+                    || (points[idx].truncate().distance(pos.truncate()) < NPC_NODE_SIMPLIFY_REACH
+                        && links
+                            .get(idx + 1)
+                            .is_some_and(|&l| l == gm_formats::ain::CAP_MOVE_GROUND)))
             {
                 let link = links.get(idx + 1).copied().unwrap_or(0);
                 if link == gm_formats::ain::CAP_MOVE_JUMP {
@@ -15147,8 +15186,38 @@ impl<'w> Server<'w> {
                 && !n.cover_wanted
                 && n.goal.is_none()
                 && (at_cover || n.cover_at.is_none())
+                && n.cover_arrived_at == 0
             {
-                n.reload_until = now + NPC_RELOAD_DELAY_TICKS + NPC_RELOAD_TICKS;
+                n.cover_arrived_at = now;
+            }
+            // TASK_FACE_ENEMY before TASK_RELOAD: the reload starts the think the body faces
+            // its enemy, a think after the arrival at the earliest (server_npc_grenade_soldier
+            // 261104: arrival 663, 4 thinks of 37 deg, reload 691..824; _low already facing:
+            // arrival 852, reload 859..992)
+            if n.reloading && n.reload_until == 0 && n.cover_arrived_at != 0 {
+                // from the think after the arrival the body turns to the enemy's last known
+                // position at its standing rate
+                n.face_err = 0.0;
+                if let Some(k) = n.last_known.filter(|_| now > n.cover_arrived_at) {
+                    let to = (k - n.pos).truncate();
+                    if to.length_squared() > 1e-6 {
+                        let want = to.y.atan2(to.x).to_degrees();
+                        let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
+                        let max_turn = n.max_yaw.unwrap_or(npc_move_def(&n.class).idle_yaw) * dt;
+                        let err = wrap_deg(want - n.angles.y);
+                        n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
+                        n.face_err = wrap_deg(want - n.angles.y).abs();
+                    }
+                }
+            }
+            if n.reloading
+                && n.reload_until == 0
+                && n.cover_arrived_at != 0
+                && now > n.cover_arrived_at
+                && (n.face_err < 1.0 || n.target.is_none())
+            {
+                n.reload_until = now + NPC_RELOAD_TICKS;
+                n.cover_arrived_at = 0;
                 if n.cover_at.is_some() {
                     n.cover_until = n.reload_until;
                 }
@@ -15594,8 +15663,9 @@ impl<'w> Server<'w> {
         let want = to.y.atan2(to.x).to_degrees();
         let err = wrap_deg(want - n.angles.y);
         if n.goal.is_none() {
-            let max_turn = n.max_yaw.unwrap_or(NPC_YAW_RATE) * dt;
+            let max_turn = n.max_yaw.unwrap_or(npc_move_def(&n.class).idle_yaw) * dt;
             n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
+            n.face_err = wrap_deg(want - n.angles.y).abs();
         }
         if n.goal.is_none() {
             // the think that first sees the enemy keeps the idle pose (Idle1_SMG1 at t4)
@@ -15882,10 +15952,14 @@ impl<'w> Server<'w> {
             Some(d) => (d, false),
             None => (eye, true),
         };
+        let now = self.tick_count;
         let taken: Vec<Vec3> = self
             .npcs
             .iter()
             .filter(|(i, o)| **i != id && o.key == key && o.dead_at.is_none())
+            // the engine locks a cover node briefly: the squad leader takes the mate's node
+            // 84 ticks after it (server_npc_squad_soldier 261104, both for (1201,72))
+            .filter(|(_, o)| now < o.cover_taken_at + NPC_COVER_LOCK_TICKS)
             .filter_map(|(_, o)| o.cover_at)
             .collect();
         let extents = Vec3::new(32.0, 32.0, 72.0);
@@ -15917,6 +15991,7 @@ impl<'w> Server<'w> {
                 let now = self.tick_count;
                 if let Some(n) = self.npcs.get_mut(&id) {
                     n.cover_at = Some(p);
+                    n.cover_taken_at = now;
                     n.cover_until = 0;
                     n.cover_cooldown = now + NPC_COVER_COOLDOWN;
                     n.chase = None;
@@ -15990,6 +16065,7 @@ impl<'w> Server<'w> {
         let now = self.tick_count;
         if let Some(n) = self.npcs.get_mut(&id) {
             n.cover_at = Some(p);
+            n.cover_taken_at = now;
             n.cover_until = 0;
             n.cover_cooldown = now + NPC_COVER_COOLDOWN;
             n.chase = None;
@@ -17243,6 +17319,9 @@ impl<'w> Server<'w> {
                 crabs: npc_crabs(def.class),
                 cover_wanted: false,
                 cover_at: None,
+                cover_taken_at: 0,
+                cover_arrived_at: 0,
+                face_err: 0.0,
                 cover_until: 0,
                 clip: 45,
                 reloading: false,

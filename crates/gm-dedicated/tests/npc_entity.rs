@@ -356,7 +356,7 @@ fn armed_soldier_fires_bursts_at_a_visible_player() {
             assert!((want..want + 7).contains(g), "gap {i} of {gaps:?}");
             continue;
         }
-        let expect = if i >= first && (i + 1 - first) % burst == 0 {
+        let expect = if i >= first && (i + 1 - first).is_multiple_of(burst) {
             gm_server::NPC_BURST_GAP_LOW_TICKS
         } else {
             7
@@ -598,7 +598,7 @@ fn zombie_wanders_after_killing_the_player_until_the_respawn() {
         "states {:?}",
         states.iter().collect::<std::collections::BTreeSet<_>>()
     );
-    assert!(max_d >= 40.0 && max_d <= 400.0, "wandered {max_d} u");
+    assert!((40.0..=400.0).contains(&max_d), "wandered {max_d} u");
     assert!(server.npcs[&id].wander.is_some() || server.npcs[&id].target.is_some());
 }
 
@@ -2428,11 +2428,10 @@ fn scripted_range_attack2_tosses_a_grenade() {
     assert_eq!(server.npcs[&id].grenades_used, 1);
 }
 
-/// Measured on two sandbox soldiers (server_npc_squad_soldier, both in the `overwatch`
-/// squad): the first-spawned member fights standing - CombatIdle1_SMG1 / shootSMG1s, no
-/// two-round volley, its first burst 65 ticks after it sighted the bot, when its mate's first
-/// full burst comes - while the mate opens as a lone soldier does (crouched volley, then
-/// bursts).
+/// Measured on two sandbox soldiers (server_npc_squad_soldier 261104, both in the `overwatch`
+/// squad, compared by tick): the second-spawned mate takes the attack slot and runs the
+/// crouched suppress volley (rounds t332..360), while the first-spawned leader fights
+/// standing - no volley, its first full burst at t385, 53 ticks after the mate's first round.
 #[test]
 fn squad_first_member_stands_and_skips_the_volley() {
     let world = combat_server!(world);
@@ -2458,18 +2457,18 @@ fn squad_first_member_stands_and_skips_the_volley() {
     }
     let (na, nb) = (&server.npcs[&a], &server.npcs[&b]);
     assert!(
-        na.combat_moved && nb.combat_moved,
-        "both squad members fight standing, without the volley"
+        na.combat_moved && !nb.combat_moved,
+        "the leader fights standing without the volley, the mate volleys"
     );
     // (the standing / crouched sequence names need the model's activity table, which this
     // test world does not mount; server_npc_squad_soldier checks them)
     assert!(!seqs[0].is_empty() && !seqs[1].is_empty());
     let (sa, sb) = (first_shot[0].unwrap(), first_shot[1].unwrap());
-    // the leader fires from its second think, the mate 59 ticks after its own sighting
-    // (game: t332 and t385 after sightings at t323 / t326)
-    let mate = gm_server::NPC_MATE_FIRST_BURST_TICKS;
+    // the mate's volley first, the leader's burst NPC_MATE_FIRST_BURST_TICKS after its
+    // sighting (game: t332 and t385)
+    let lead = gm_server::NPC_MATE_FIRST_BURST_TICKS;
     assert!(
-        sb > sa + 40 && sb <= sa + mate + 7,
-        "leader's first round {sa}, mate's {sb} (want the mate ~{mate} after its sighting)"
+        sa > sb + 40 && sa <= sb + lead + 7,
+        "leader's first round {sa}, mate's {sb} (want the leader ~{lead} after its sighting)"
     );
 }
