@@ -517,7 +517,7 @@ public:
 	std::unordered_map<JPH::uint64, std::vector<size_t>> contact_points; // pair -> hull vertex indices that already impacted
 	// resting contact anchors: a body pushed while at rest keeps its tangential velocity in the
 	// push step (no friction) and is caught at its leading edge the step after
-	struct RestState { float vt_prev = 0.0f; float vn_in = 0.0f; int phase = 0; int landed_tick = -1; float land_vn = 0.0f; };
+	struct RestState { float vt_prev = 0.0f; float vn_in = 0.0f; int phase = 0; int landed_tick = -1; float land_vn = 0.0f; bool ring_land = false; };
 	std::unordered_map<JPH::uint64, RestState> rest;
 	// the game integrates up to the moment of impact with the old velocity and the rest of the
 	// step with the new one; Jolt integrates the whole step with the new one, so after the step
@@ -1042,6 +1042,15 @@ public:
 			}
 			if (debug) fprintf(stderr, "DBGFACE t=%d id=%u pts=%zu approaching=%d vn_face=%.3f lv=(%.3f %.3f %.3f) n=(%.2f %.2f %.2f)\n", tick, dyn.GetID().GetIndex(), pts.size(), approaching, vn_face, lv0.GetX(), lv0.GetY(), lv0.GetZ(), n.GetX(), n.GetY(), n.GetZ());
 		}
+		// the second corner of a fast landing (the step after the first strike, body still
+		// turning from it) takes 0.6 of the friction tilt: the game's lockers at 400 u/s lose
+		// 153 u/s of slide on it where the full tilt took 206 (`phys_slip_lockers_v400` 68 -> 38,
+		// `phys_slip_filecab_v400` 35 -> 13.5, `phys_slip_lockers_v200` 27.5 -> 10.8, the drum's
+		// second rim strike `phys_spin_barrel_x400` 61 -> 31; costs `phys_drop_tilted_filecab`
+		// 8 -> 23 and `phys_slide_barrel_v400` 48 -> 59, sum over the 249 recordings 2056 -> 1959);
+		// a ring landing's second step (the drum's antipode chain) keeps the full tilt - with
+		// 0.6 `phys_slide_barrel` went 34 -> 152 and `phys_slide_barrel_v200` 7.7 -> 65
+		bool second_step = false;
 		float c = std::cos(tilt), sn = std::sin(tilt);
 		auto direction = [&](JPH::Vec3Arg vrel, JPH::Vec3Arg prev) {
 			float len = vrel.Length();
@@ -1064,6 +1073,7 @@ public:
 				impacts.push_back(GmpImpactRec{b1.GetID().GetIndexAndSequenceNumber(), b2.GetID().GetIndexAndSequenceNumber(),
 				                               float(pt.p.GetX()), float(pt.p.GetY()), float(pt.p.GetZ()), -vn});
 			}
+			{ float tk = second_step ? tilt * 0.6f : tilt; c = std::cos(tk); sn = std::sin(tk); }
 			pt.dir = direction(v, n);
 			if (flat_ring) pt.dir = n;
 			float jn_total = 0.0f;
@@ -1151,6 +1161,7 @@ public:
 			tick - rest[pair_key].landed_tick <= 60 &&
 			(b1.IsDynamic() ? b1 : b2).GetAngularVelocity().Length() > 0.3f;
 		bool landing_in_progress = (rest[pair_key].phase == 3 && rest[pair_key].landed_tick == tick - 1 && rest[pair_key].land_vn > 2.0f) || rocking;
+		second_step = landing_in_progress && !rest[pair_key].ring_land;
 		rest[pair_key].phase = 3; // landing in progress: the resting branch must not read it as a push
 		if (verts_of_b2_used) cps.clear();
 		for (int round = 0; round < 8; ++round) {
@@ -1204,6 +1215,7 @@ public:
 				// 16-gon); the locker's ten feet put 40 vertices on the plane in a rectangle and
 				// land as a face
 				bool ring = face.size() > 8;
+				if (ring) rest[pair_key].ring_land = true;
 				if (ring) {
 					JPH::Vec3 c = JPH::Vec3::sZero();
 					for (const Pt *f : face) c += JPH::Vec3(f->p);
