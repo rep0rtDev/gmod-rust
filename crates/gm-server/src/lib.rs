@@ -3281,7 +3281,21 @@ const NPC_MOVE_POISONZOMBIE: NpcMoveDef = NpcMoveDef {
     run_accel: 104.0,
     idle_yaw: NPC_YAW_RATE,
 };
-/// Zombie approach measured in server_npc_melee_zombie (4.73 u per think); it never runs.
+/// Which of a model's equally weighted sequences the game actually plays, where measured:
+/// the classic zombie's ACT_WALK is `walk` three times in four and `walk4` otherwise across
+/// every zombie recording (721 / 231 thinks, never walk2 / walk3), all four weigh 1 in the mdl.
+fn npc_sequence_weight(class: &str, sequence: &str) -> Option<u32> {
+    match (class, sequence) {
+        ("npc_zombie" | "npc_zombine", "walk") => Some(3),
+        ("npc_zombie" | "npc_zombine", "walk4") => Some(1),
+        ("npc_zombie" | "npc_zombine", "walk2" | "walk3") => Some(0),
+        _ => None,
+    }
+}
+
+/// Zombie approach measured in server_npc_melee_zombie (4.73 u per think); it never runs. The
+/// recordings also show `walk` at 4.4 u a think for whole stretches (261104 from x≈940 on) -
+/// what switches it is unmeasured.
 const NPC_MOVE_ZOMBIE: NpcMoveDef = NpcMoveDef {
     walk: 44.6,
     walk_accel: 93.0,
@@ -12060,7 +12074,14 @@ impl<'w> Server<'w> {
             .iter()
             .enumerate()
             .filter(|(_, (a, _))| a == act)
-            .map(|(i, (_, w))| (i, (*w).max(1) as u32))
+            .map(|(i, (_, w))| {
+                let seq = m.script.sequences.get(i).map_or("", String::as_str);
+                (
+                    i,
+                    npc_sequence_weight(&n.class, seq).unwrap_or((*w).max(1) as u32),
+                )
+            })
+            .filter(|(_, w)| *w > 0)
             .collect();
         if cands
             .iter()

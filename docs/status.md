@@ -300,6 +300,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   its route-facing run took grenade_soldier 47.9 → 109.7, dropped). Sweep 2035.7 → 2033.2:
   squad 164.2 → 162.4, grenade_soldier_low 10.7 → 10.0. Open: the zigzag itself.
 
+- The classic zombie's walk label, across every zombie recording: `walk` (721 thinks) and
+  `walk4` (231), never `walk2` / `walk3`, though all four weigh 1 as ACT_WALK in classic.mdl
+  (dumped through our loader); the game re-rolls at each walk start and mixes both inside one
+  recording (melee_zombie 377 / 105). Ours now rolls `walk` 3 : `walk4` 1 and never the other
+  two (`npc_sequence_weight`, zero weights skipped) - label only, no position moved. A pace
+  per label (walk 4.45 u a think, walk4 4.70, the medians) was built and refuted by rows: the
+  same `walk` runs 4.7 u a think for a whole approach (261105) or switches to 4.4 mid-run
+  (261104 from x≈940 on), so the medians were a mixture inside `walk`; the 4.7 → 4.4 switch
+  is open and unmeasured (sum 2033 → 2058 with the per-label pace, back to 2033 without).
+
 - The leader's wait, by row (game 637..714): the leader reaches (953,7) at 637 (14 u a think,
   then 1.0 at 644), creeps east from rest at 3.0 / 5.1 / 7.1 u a think (651..665), stops
   again (0.8 at 672) and restarts 3.0 / 5.9 / 8.8 / 11.7 / 14.6 / 17.5 (679..714) - a second
