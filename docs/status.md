@@ -174,5 +174,8 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 - Now (`NpcMelee::side`): each scratch shoves 15 u/s back and 60 u/s sideways, the side
   alternating per hit (first to the zombie's right, as the game's y -504 then -505 / -502):
   the bot drifts 823 → 808 over four cycles like the game. 53-scene sweep 2126 → 2111,
-  fastzombie 35 → 21. Open: the ~20 u back-off during the roar (ours stands, then idles a
-  think before the run in) and the remaining ~8 u of lateral position.
+  fastzombie 35 → 21. Open: the ~20 u back-off during the roar - a slide of 3.3, 3.0, 2.7
+  ... 1.0 u a think (decay ~0.9 a think, rows 116..193) after the second scratch, the roar one
+  think later than ours and the run in the think the roar ends (ours stands, then idles a
+  think); `recoil: 20` on the FAST move was tried and dropped (it fires on both scratches from
+  the hit: 20.6 → 35). Also the remaining ~8 u of lateral position.
