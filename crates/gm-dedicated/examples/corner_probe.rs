@@ -14,7 +14,10 @@ fn main() -> anyhow::Result<()> {
             Vec3::new(nums[3], nums[4], nums[2]),
         )
     } else {
-        (Vec3::new(1008.0, 16.0, -144.0), Vec3::new(1064.0, 24.0, -144.0))
+        (
+            Vec3::new(1008.0, 16.0, -144.0),
+            Vec3::new(1064.0, 24.0, -144.0),
+        )
     };
     let inst = gm_content::find_install().expect("GMOD_DIR");
     let mount = gm_content::Mount::for_install(&inst)?;
@@ -38,7 +41,11 @@ fn main() -> anyhow::Result<()> {
     }
     // solid map at hull height: '#' point solid, '.' free (x across, y down from north)
     let (x0, x1, y0, y1) = (from.x - 20.0, from.x + 50.0, from.y - 30.0, from.y + 60.0);
-    println!("point solids z {:.0}..{:.0}, x {x0}..{x1} step 2, y {y1}..{y0}", from.z + 18.0, from.z + 60.0);
+    println!(
+        "point solids z {:.0}..{:.0}, x {x0}..{x1} step 2, y {y1}..{y0}",
+        from.z + 18.0,
+        from.z + 60.0
+    );
     let mut y = y1;
     while y >= y0 {
         let mut line = String::new();
@@ -52,7 +59,11 @@ fn main() -> anyhow::Result<()> {
                 Vec3::ZERO,
                 gm_collision::MASK_PLAYERSOLID,
             );
-            line.push(if tr.start_solid || tr.fraction < 1.0 { '#' } else { '.' });
+            line.push(if tr.start_solid || tr.fraction < 1.0 {
+                '#'
+            } else {
+                '.'
+            });
             x += 2.0;
         }
         println!("y {y:6.1} {line}");
@@ -61,8 +72,14 @@ fn main() -> anyhow::Result<()> {
     let verts = world.nav.vertices();
     for (i, p) in world.nav.polys().iter().enumerate() {
         let vs: Vec<Vec3> = p.verts.iter().map(|&v| verts[v as usize]).collect();
-        if vs.iter().any(|v| (x0..=x1).contains(&v.x) && (y0..=y1).contains(&v.y)) {
-            let s: Vec<String> = vs.iter().map(|v| format!("({:.0},{:.0})", v.x, v.y)).collect();
+        if vs
+            .iter()
+            .any(|v| (x0..=x1).contains(&v.x) && (y0..=y1).contains(&v.y))
+        {
+            let s: Vec<String> = vs
+                .iter()
+                .map(|v| format!("({:.0},{:.0})", v.x, v.y))
+                .collect();
             println!("poly {i}: {}", s.join(" "));
         }
     }

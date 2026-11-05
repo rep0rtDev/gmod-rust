@@ -2186,6 +2186,8 @@ pub struct Npc {
     /// three more thinks of ESTABLISH_LINE_OF_FIRE before RANGE_ATTACK1 (wall t2316..2330,
     /// main t2400..2414), the first burst 42 ticks after arriving in both.
     pub lof_arrived: u64,
+    /// The tick the body finished its last path (`npc_goal_done`).
+    pub path_done_at: u64,
     /// SCHED_SHOOT_ENEMY_COVER: the enemy is out of sight and the body shoots its cover.
     pub cover_fire: bool,
     /// SCHED_RELOAD: the run to the reload cover was blocked by another NPC, reload in place.
@@ -3113,6 +3115,8 @@ const NPC_STEP_LIFT: f32 = 18.0;
 /// smallest first (`npc_widen_corners`); the bracket from server_npc_assault_citizen is the
 /// mesh corner (1008,16) stalling against the wall corner (1024,10) and the game's ~(1010,26).
 const NPC_CORNER_WIDEN: [f32; 4] = [4.0, 8.0, 13.0, 16.0];
+/// A goal this far off the mesh's end point is walked to itself when the hull can reach it.
+const NPC_GOAL_OFF_MESH: f32 = 8.0;
 
 /// Ticks a dead NPC stays on the server before it is removed (measured 66..106 for the
 /// metropolice, 76..96 for the headcrab); the corpse itself is the client's ragdoll.
@@ -6041,15 +6045,21 @@ impl<'w> Server<'w> {
                 // it in the same think it decides to (server_npc_assault_citizen)
                 let mut sched;
                 let mut run_to = None;
+                // the game lands on the rally / assault point and switches to holding it two
+                // thinks after the last step (TASK_WAIT_FOR_MOVEMENT ends the think after, the
+                // schedule the think after that: rows 156 -> 170 and 506 -> 520 in
+                // server_npc_assault_citizen)
+                let goal_done = self
+                    .npcs
+                    .get(&id)
+                    .is_some_and(|n| now >= n.path_done_at + 2 * u64::from(n.think_interval));
                 match g.stage {
                     ai::ASSAULT_TO_RALLY | ai::ASSAULT_TO_POINT if target.is_some() && !urgent => {
                         return false;
                     }
                     ai::ASSAULT_TO_RALLY => {
                         let d = dist(g.rally);
-                        if d <= NPC_GOAL_EXACT
-                            || (!moving && now > g.stage_since && d <= NPC_GOAL_ARRIVE)
-                        {
+                        if !moving && now > g.stage_since && goal_done && d <= NPC_GOAL_ARRIVE {
                             self.npc_stop(id);
                             if let Some(n) = self.npcs.get_mut(&id) {
                                 n.ideal_yaw = g.rally_yaw;
@@ -6069,7 +6079,7 @@ impl<'w> Server<'w> {
                             g.stage_since = now;
                             sched = ai::SCHED_ASSAULT_HOLD_RALLY;
                         } else {
-                            if !moving {
+                            if !moving && goal_done {
                                 run_to = Some(g.rally);
                             }
                             sched = ai::SCHED_ASSAULT_MOVE_TO_RALLY;
@@ -6094,9 +6104,7 @@ impl<'w> Server<'w> {
                     ai::ASSAULT_TO_POINT => {
                         let p = g.points[g.point.min(g.points.len() - 1)].clone();
                         let d = dist(p.pos);
-                        if d <= NPC_GOAL_EXACT
-                            || (!moving && now > g.stage_since && d <= p.tolerance)
-                        {
+                        if !moving && now > g.stage_since && goal_done && d <= p.tolerance {
                             self.npc_stop(id);
                             if let Some(n) = self.npcs.get_mut(&id) {
                                 n.force_crouch = p.force_crouch.then_some(true);
@@ -6123,7 +6131,7 @@ impl<'w> Server<'w> {
                             g.stage_since = now;
                             sched = ai::SCHED_ASSAULT_WAIT_AND_CLEAR;
                         } else {
-                            if !moving {
+                            if !moving && goal_done {
                                 run_to = Some(p.pos);
                             }
                             sched = ai::SCHED_ASSAULT_MOVE_TO_POINT;
@@ -13115,6 +13123,7 @@ impl<'w> Server<'w> {
             last_known: None,
             flank_until: 0,
             lof_arrived: 0,
+            path_done_at: 0,
             detour: None,
             detour_side: 0.0,
             detour_until: 0,
@@ -13739,6 +13748,26 @@ impl<'w> Server<'w> {
         let mut points = path.points;
         let (mins, maxs) = (n.mins, n.maxs);
         self.npc_widen_corners(&mut points, mins, maxs);
+        // a goal a little off the mesh (the rally (992,-200) sits 0.8 u outside its polygon
+        // in server_npc_assault_citizen) is walked to itself, as the engine's local move
+        if let Some(last) = points.last_mut().filter(|_| !partial) {
+            let gap = last.truncate().distance(target.truncate());
+            if gap > 1e-3 && gap <= NPC_GOAL_OFF_MESH {
+                let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
+                let to = Vec3::new(target.x, target.y, last.z) + lift;
+                let tr = self.collision.trace_box(
+                    *last + lift,
+                    to,
+                    mins,
+                    maxs,
+                    gm_collision::MASK_PLAYERSOLID,
+                );
+                if tr.fraction >= 0.999 && !tr.start_solid {
+                    last.x = target.x;
+                    last.y = target.y;
+                }
+            }
+        }
         if let Some(n) = self.npcs.get_mut(&id) {
             n.run = run;
             if n.goal.is_some() && n.move_speed > 0.0 {
@@ -14708,6 +14737,7 @@ impl<'w> Server<'w> {
                     n.detour = None;
                     n.detour_side = 0.0;
                     n.goal = None;
+                    n.path_done_at = now;
                     if arrived && n.next_goal.is_none() && n.chase.is_none() {
                         n.gait_until = now + 2 * u64::from(n.think_interval);
                     }
@@ -17093,6 +17123,7 @@ impl<'w> Server<'w> {
                 last_known: None,
                 flank_until: 0,
                 lof_arrived: 0,
+                path_done_at: 0,
                 detour: None,
                 detour_side: 0.0,
                 detour_until: 0,
@@ -22123,8 +22154,6 @@ pub const NPC_DETOUR_FALLBACK_RADIUS: f32 = 24.0;
 /// (`assaulttolerance` 36), the lead behaviour's lead / retrieve / success distances
 /// (`ai_goal_lead` 64 / 128 / 32), and the act-busy search period and default busy time.
 pub const NPC_GOAL_ARRIVE: f32 = 36.0;
-/// A goal point is reached outright this close; farther, the body's own arrival counts.
-pub const NPC_GOAL_EXACT: f32 = 4.0;
 pub const NPC_LEAD_DISTANCE: f32 = 64.0;
 pub const NPC_RETRIEVE_DISTANCE: f32 = 128.0;
 /// A retrieving leader stops this far inside the lead distance (game: 103 u at 128, 40 at
