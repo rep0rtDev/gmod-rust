@@ -240,3 +240,9 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 - Rows 104..116: the game's third NPC runs (run_all) and plays `pickup` (a weapon pickup)
   before dying at -10; ours idles. Rows 124..148: the game's fourth (Idle_p_s) loses 72 → 50 at
   2..3 hp per four rows, ours (Idle_sub) 72 → 0 at 16 - a different damage path.
+- The zombie's drift is a route, not a shove: it walks on heading 155 deg from its first
+  step (yaw turning slowly 170 → 186), reaches (929,-468) on row 17, then heads 189..202 at the
+  bot and claws from (873,-478); ours heads 180 straight down the line. The first leg points
+  at a node near (930,-468) - the same node-route pattern as assault_citizen's arc. The hit
+  tally follows from it: the game's pistol takes 3, 0, 2, 1, 2, 3, 2, 3, 0, 3 (misses and
+  partial hits while the body is off the line), ours 3 / 2 alternating on every op.
