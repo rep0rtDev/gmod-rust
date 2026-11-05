@@ -178,4 +178,6 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   ... 1.0 u a think (decay ~0.9 a think, rows 116..193) after the second scratch, the roar one
   think later than ours and the run in the think the roar ends (ours stands, then idles a
   think); `recoil: 20` on the FAST move was tried and dropped (it fires on both scratches from
-  the hit: 20.6 → 35). Also the remaining ~8 u of lateral position.
+  the hit: 20.6 → 35); the same recoil only after the second scratch: 20.6 → 25.5 - our dash
+  spends it over 21 ticks from the hit where the game's slide takes ~67 ticks of the roar
+  (0.3 u a tick decaying 0.985 a tick). Also the remaining ~8 u of lateral position.
