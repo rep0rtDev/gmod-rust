@@ -85,9 +85,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
     enemy line first (SCHED_ZOMBIE_MOVE_SWATITEM; `Npc::swat_goal`) and swats on arrival.
 - 53-scene sweep 2295 → 2200: swat2_drumside 83 → 50, swat3_a_drum875 56 → 7, swat3_c_drumside930
   25 → 12; nothing else moved.
-- Open, measured: our first scan runs at t45 (spawn+40): the melee think's `sees()` only passes
-  at t38 although the chase walk starts at t20 - the game scans at the wake think (spawn+12).
-  swat2_crate stays 73 u: the game's chase turns south at x 951 (51 u before the crate) and
+- Checked, not a gap: our first scan is at spawn+10 (spawn tick 35, first combat think 38,
+  scan 45), the game's at the wake think spawn+12 - the trace `t` of our runs is the op row,
+  not the server tick.
+- Open, measured: swat2_crate stays 73 u: the game's chase turns south at x 951 (51 u before the crate) and
   skirts it at 48..50 u, so the second scan finds the crate at 50 u; ours walks straight to
   36 u (inside the 38 u minimum) and never picks it. The game's 15 u lateral stand-off
   (y -515 in both crate scenes) belongs to that early side-step, not to the swat position.
