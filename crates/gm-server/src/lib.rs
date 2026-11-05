@@ -15191,8 +15191,9 @@ impl<'w> Server<'w> {
             // eye line alone (server_npc_zombie_swat3_a_drum875: the zombie takes the bot over
             // the upright drum between them, which blocks only the line to the feet)
             let armed = !(n.weapon.is_empty() || n.weapon == "none");
-            (server.npc_los(eye, enemy_eye) && (!armed || server.npc_los(eye, pl.state.origin)))
-                .then_some(chest)
+            (server.npc_los(eye, enemy_eye)
+                && (!armed || n.goal.is_none() || server.npc_los(eye, pl.state.origin)))
+            .then_some(chest)
         };
         // keep the current target while visible, otherwise the nearest visible player
         let mut target = n.target.and_then(|p| sees(self, p).map(|c| (p, c)));
