@@ -184,6 +184,30 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 - The runner's server snapshot now lists `world_weapons` (ownerless weapon props: class,
   pos, ang) like the probe does.
 
+### NPC: a zombie's approach to a prop in its way (swat2_crate 75, swat3_a 7, drum 6) - measured, open
+
+- All the game's swats start at spawn + 147 ticks (the second scan: first at +14, period 133;
+  swat 150, crate 152, swat3_a 152, drumside 153), and only when the zombie stands 41..50 u
+  from the prop at that scan - the skirting zombie 33 u from a drum (swat2_drum at tick 153)
+  is left alone, as `ZOMBIE_SWAT_MIN_DIST` already says.
+- What differs is where the zombie is at that scan. Crate at 900 (261105): it walks straight at
+  4.5 u/row to x 951 by row 103 - 12 u short of contact (crate half ~20 + hull 16) - and holds
+  there 49 rows, drifting south 16 u (−499 → −515, yaw 184 → 180), then swats from
+  (948, −515). Drum at 875 (swat3_a): walks to 921 (46 u) by row 139, holds 14 rows drifting
+  back to the line (−493 → −499), swats at 153. Drum at 900 (swat2_drum, gascan): never
+  stops - from x≈952 the feet veer north to y≈−470 (prop radius + hull) and round it, body
+  facing the bot (yaw 181..187 while moving north), melee from (871, −478) at 272. So the
+  game either builds a route round the prop (and skirts it 50 u early) or fails to and
+  stands blocked ~12 u short of it until the scan swats it; which of the two happens is not
+  decidable from these three cases (same drum at 875 stops, at 900 goes round; the crate
+  stops).
+- Ours walks to contact (933 for the crate, 914 for the drum) and skirts from there: crate -
+  pressed at 33 u, slides north and goes round at row 210, never swats (75 u); drum875 - swats
+  at 146 from 38.8 u (the game 153 from 46); drum900 - the same corner skirt, melee from
+  (871, −474) at 272 as the game (6.4 u). Not changed: a standoff rule needs the oracle series
+  (prop at 875/900/925, crate against drum, with the route-build outcome) before it is more
+  than a fit to the crate scene.
+
 ### NPC: a zombie spawned on a crate (server_npc_zombie_swat, 40 u) - tried, rejected
 
 - The game drops the spawned zombie onto the crate it was aimed at (z -104 at (916,-500)); the
