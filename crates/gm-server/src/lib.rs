@@ -15276,8 +15276,12 @@ impl<'w> Server<'w> {
         };
         let swinging = n.melee_swing.is_some() && now < n.swing_until;
         // the gait shows from the think the path is set (RunALL at the run's first think)
+        // the stand think before a swing keeps the approach gait's label (the game's antlion
+        // reads run_all at its landing think, the zombie walk at the claw spot a think before
+        // attackA)
         let moving = n.goal.as_ref().is_some_and(|g| !g.halt)
-            || (now < n.gait_until && n.goal.is_none() && n.target.is_none());
+            || (now < n.gait_until && n.goal.is_none() && n.target.is_none())
+            || n.melee_stood == now;
         let armed = npc_weapon_activity(&n.weapon, "ACT_IDLE").is_some();
         // an armed body's first think takes over from the spawn pose (Idle1_SMG1 at t4)
         let own =

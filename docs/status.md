@@ -132,9 +132,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   zombie's) for the antlion too, including the think a lunge lands in range (`swing_until ==
   now`): the rows are the game's - pounce2 46, landing 95, attack3 109, pounce 207, landing
   270 at 851 (game 853), attack3 277, pounce 375, landing 438 at 784 (790), attack3 445, pounce
-  543. Sweep 2040.0 → 2035.7 (antlion 41.6 → 39.0, nothing else moved). Open: the landing think
-  reads `DistractIdle` where the game shows `run_all` (its chase schedule's label on a standing
-  think) and the last pounce lands 6 u short (the bot's slide over four knocks).
+  543. Sweep 2040.0 → 2035.7 (antlion 41.6 → 39.0, nothing else moved). The stand think keeps
+  the approach gait's label (`npc_anim_step`: `melee_stood == now` counts as moving), so the
+  landing think reads `run_all` like the game's and the zombie's stand think `walk`. Open: the
+  last pounce lands 6 u short (the bot's slide over four knocks).
 
 ### NPC: a zombie spawned on a crate (server_npc_zombie_swat, 40 u) - tried, rejected
 
