@@ -2150,6 +2150,10 @@ pub struct Npc {
     pub melee_slide: f32,
     /// The think that arrived in melee range and only stopped (the swing follows next think).
     pub melee_stood: u64,
+    /// The dash's per-tick step (u), linear over the lunge's ticks.
+    pub melee_dash_step: f32,
+    /// The recoil waits until this tick (`NpcMelee::recoil_delay`).
+    pub melee_recoil_at: Option<u64>,
     /// A zombie's swat of a physics prop at its enemy (SCHED_ZOMBIE_SWATITEM).
     pub swat: Option<NpcSwat>,
     /// The prop a zombie is walking to a swat position for (SCHED_ZOMBIE_MOVE_SWATITEM).
@@ -2833,11 +2837,21 @@ pub struct NpcMelee {
     /// Ticks into the swing when the roar (its sequence and the slide) begins: the fast zombie
     /// scratches at 0 and 14 and roars from 35 (server_npc_melee_fastzombie rows 88/102/123).
     pub roar_at: u64,
+    /// Ticks into the swing when the lunge leaves the ground (the antlion's pounce stands 13
+    /// ticks first, server_npc_melee_antlion rows 207..220) and how many ticks it flies
+    /// (0 = `NPC_LUNGE_TICKS`).
+    pub lunge_at: u64,
+    pub lunge_ticks: u64,
+    /// Ticks after the hit before the recoil step back begins (the antlion stands 21 ticks at
+    /// 832 before stepping back to 853).
+    pub recoil_delay: u64,
 }
 
 const NPC_ROAR_SLIDE_DECAY: f32 = 0.982;
 
 const NPC_LUNGE_TICKS: u64 = 21;
+/// The recoil's step back takes this long (the antlion's 832 -> 844 -> 853 within 12 ticks).
+const NPC_RECOIL_TICKS: u64 = 10;
 /// TASK_WANDER 480384 of SCHED_ZOMBIE_WANDER_MEDIUM: 48..384 u.
 const ZOMBIE_WANDER_MIN: u32 = 48;
 const ZOMBIE_WANDER_MAX: u32 = 384;
@@ -2881,6 +2895,9 @@ const MELEE_PLAIN: NpcMelee = NpcMelee {
     poison: false,
     roar_slide: 0.0,
     roar_at: 0,
+    lunge_at: 0,
+    lunge_ticks: 0,
+    recoil_delay: 0,
 };
 
 /// A leap attack: the NPC throws itself at the player on a ballistic arc (`speed` u/s
@@ -3063,6 +3080,8 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
             // (server_npc_melee_antlion rows 39..95: 998 → 956 → 932)
             start_range: 170.0,
             lunge: 66.0,
+            // 998 -> 956 in the first 7 ticks: the jump-in flies ~6 u a tick
+            lunge_ticks: 11,
             ..MELEE_PLAIN
         },
         NpcMelee {
@@ -3088,9 +3107,11 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
             // 790 → 738 at 675): 84 u of flight
             start_range: 130.0,
             lunge: 84.0,
-            // the game's gap after a pounce is ~60 u with the player knocked 30 u; our player
-            // slides less, so the antlion steps back to the attack3 distance
-            recoil: 30.0,
+            // stands 13 ticks, flies to the hit tick (916 -> 904 -> 863 -> 832 over rows
+            // 220..235), stands 21 ticks at 832 and steps back 21 u in two thinks (844, 853)
+            lunge_at: 13,
+            recoil: 21.0,
+            recoil_delay: 21,
             ..MELEE_PLAIN
         },
     ];
@@ -13390,6 +13411,8 @@ impl<'w> Server<'w> {
             melee_dash: 0.0,
             melee_slide: 0.0,
             melee_stood: 0,
+            melee_dash_step: 0.0,
+            melee_recoil_at: None,
             flight: None,
             link_jump: false,
             hung_until: 0,
@@ -16318,16 +16341,17 @@ impl<'w> Server<'w> {
             }
         }
         if dist <= m.start_range {
-            // a zombie's think whose step arrives in range only stops; the swing starts the
-            // next think (the game's fast zombie stands at 869 from row 81 and claws at 88,
-            // the zombie / can / gascan show `walk` at the claw spot a think before
-            // `attackA`); the antlion swipes in the think after its run (rows 95 -> 109,
-            // 270 -> 277) and lunges from the run, the poison zombie throws straight from
-            // its walk (server_npc_melee_poisonzombie row 81)
-            if (n.path_done_at == now || n.move_speed > 0.0)
+            // the think whose step arrives in range (or that lands a lunge in range) only
+            // stops; the swing starts the next think (the game's fast zombie stands at 869
+            // from row 81 and claws at 88, the zombie / can / gascan show `walk` at the claw
+            // spot a think before `attackA`, the antlion lands its pounce at 270 and swipes
+            // at 277). A lunge itself goes from the run (pounce at attack3's last tick), the
+            // poison zombie throws straight from its walk (server_npc_melee_poisonzombie
+            // row 81)
+            if (n.path_done_at == now || n.move_speed > 0.0 || n.swing_until == now)
                 && m.lunge <= 0.0
                 && !m.poison
-                && ai::class_sched_family(&n.class) == Some("zombie")
+                && matches!(ai::class_sched_family(&n.class), Some("zombie" | "antlion"))
                 && now > n.melee_stood + u64::from(n.think_interval)
             {
                 n.melee_stood = now;
@@ -16345,7 +16369,14 @@ impl<'w> Server<'w> {
             n.melee_hit_at = Some(now + m.hit_tick);
             n.melee_hits_left = if m.hit_gap.is_some() { 2 } else { 1 };
             n.melee_swing = Some(m);
-            n.melee_dash = m.lunge;
+            n.melee_dash = if m.lunge_at == 0 { m.lunge } else { 0.0 };
+            let flight = if m.lunge_ticks == 0 {
+                NPC_LUNGE_TICKS
+            } else {
+                m.lunge_ticks
+            };
+            n.melee_dash_step = m.lunge / flight as f32;
+            n.melee_recoil_at = None;
             if let Some((moves, repeat)) = npc_melee_moves(&n.class) {
                 n.melee_move = if n.melee_move + 1 < moves.len() {
                     n.melee_move + 1
@@ -17671,19 +17702,28 @@ impl<'w> Server<'w> {
                 }
                 if m.recoil > 0.0 {
                     if let Some(n) = self.npcs.get_mut(&id) {
-                        n.melee_dash = -m.recoil;
+                        n.melee_recoil_at = Some(now + m.recoil_delay);
                     }
                 }
             }
         }
-        // the roar's slide starts `roar_at` ticks into the swing
+        // the roar's slide starts `roar_at` ticks into the swing, a delayed lunge at
+        // `lunge_at`, the recoil `recoil_delay` after the hit
         for n in self.npcs.values_mut() {
-            if let Some(m) = n.melee_swing.filter(|m| m.roar_slide > 0.0) {
-                if n.dead_at.is_none()
-                    && now == n.swing_until.saturating_sub(m.swing_ticks) + m.roar_at
-                {
-                    n.melee_slide = m.roar_slide;
-                }
+            let Some(m) = n.melee_swing.filter(|_| n.dead_at.is_none()) else {
+                continue;
+            };
+            let start = n.swing_until.saturating_sub(m.swing_ticks);
+            if m.roar_slide > 0.0 && now == start + m.roar_at {
+                n.melee_slide = m.roar_slide;
+            }
+            if m.lunge_at > 0 && now == start + m.lunge_at {
+                n.melee_dash = m.lunge;
+            }
+            if n.melee_recoil_at == Some(now) {
+                n.melee_recoil_at = None;
+                n.melee_dash = -m.recoil;
+                n.melee_dash_step = m.recoil / NPC_RECOIL_TICKS as f32;
             }
         }
         // lunges and recoils: the dash toward (or away from) the target, spread over
@@ -17715,7 +17755,7 @@ impl<'w> Server<'w> {
             let per_tick = if sliding {
                 -slide
             } else {
-                dash / NPC_LUNGE_TICKS as f32
+                n.melee_dash_step.abs().copysign(dash)
             };
             let step = (to.normalize() * per_tick).extend(0.0);
             let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
@@ -17890,6 +17930,8 @@ impl<'w> Server<'w> {
                 melee_dash: 0.0,
                 melee_slide: 0.0,
                 melee_stood: 0,
+                melee_dash_step: 0.0,
+                melee_recoil_at: None,
                 flight: None,
                 link_jump: false,
                 hung_until: 0,

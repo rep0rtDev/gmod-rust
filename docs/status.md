@@ -106,7 +106,7 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   2200 → 2146: swat2_bluebarrel 56 → 29, swat2_heavy 55 → 30, melee_zombie 10 → 8.5, nothing
   worse. swat_far (81 u) is still open: the game's bot dies and respawns at a random point.
 
-### NPC: antlion wake and pounce ranges (server_npc_melee_antlion 83 → 63)
+### NPC: antlion wake, pounce ranges and the pounce's flight (server_npc_melee_antlion 83 → 39)
 
 - The game's antlion idles four thinks after the spawn (`Idle`, sched 1, to spawn+30), wakes
   angry for one (DistractIdle4, sched 4) and runs from spawn+37; ours alerted at the spawn and
@@ -116,11 +116,25 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   932); ours ran to 140 u and jumped 28. The standing pounce starts from 115..122 u (916 at the
   bot 794, 853 at 734, 790 at 675) with 84 u of flight; ours needed 95 u and flew 63, so it ran
   in first (Idle → run_all → pounce) where the game pounces out of attack3.
-- 53-scene sweep 2146 → 2126, only the antlion moved. Tried and dropped: a constant per-tick
-  dash (the dash is `remaining / 21` per tick, a decaying step, so an 84 u lunge covers 62 by
-  the hit): the antlion went 63 → 80 - the decaying profile is the better fit for the game's
-  flight. Open: an extra idle think after every lunge before the run back (rows 95, 270, 452:
-  the game runs in the think the pounce ends), and the flight still 62 of 84 u.
+- 53-scene sweep 2146 → 2126, only the antlion moved. A constant per-tick dash from the
+  swing's first tick was tried then and dropped (63 → 80); the decaying `remaining / 21` step
+  looked like the better fit - wrongly, see below.
+- The pounce by row (rows 205..280): the game stands at 916 for 13 ticks after the swing
+  starts, flies 84 u in ~21 ticks (904 at 223, 863 at 229, 832 at 235 - the hit tick), stands
+  21 ticks at 832 while the bot slides 30 u, then steps back 21 u in two thinks (844 at 256, 853
+  at 265) and stands; the swing ends at 270 and attack3 comes at 277. Ours flew a decaying step
+  from tick 0 (70 u in 33 ticks, 850 at the hit), recoiled 30 u from the hit at once and ended
+  at 873 - 20 u east of the game - so it had to run before attack3 and lost a think per
+  pounce (270 Distra, 277 run, 284 attack; pounces at 382 / 557 against 375 / 543). Now
+  `NpcMelee::lunge_at` (13), `lunge_ticks` (0 = `NPC_LUNGE_TICKS` 21; the jump-in pounce2 flies
+  its 66 u in 11, 998 → 956 in the first 7 ticks), a linear dash (`melee_dash_step`), `recoil`
+  21 after `recoil_delay` 21 over `NPC_RECOIL_TICKS` 10, and the stand think (above, the fast
+  zombie's) for the antlion too, including the think a lunge lands in range (`swing_until ==
+  now`): the rows are the game's - pounce2 46, landing 95, attack3 109, pounce 207, landing
+  270 at 851 (game 853), attack3 277, pounce 375, landing 438 at 784 (790), attack3 445, pounce
+  543. Sweep 2040.0 → 2035.7 (antlion 41.6 → 39.0, nothing else moved). Open: the landing think
+  reads `DistractIdle` where the game shows `run_all` (its chase schedule's label on a standing
+  think) and the last pounce lands 6 u short (the bot's slide over four knocks).
 
 ### NPC: a zombie spawned on a crate (server_npc_zombie_swat, 40 u) - tried, rejected
 
