@@ -207,3 +207,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   at the 26.2 cap. The pace-vs-angle bands are in the right range; the open part is the yaw
   rule itself - it wanders between the path and the bot (the leader faces the path exactly
   where the house hides the bot, rows 496..540).
+- Per-row yaw (84ef93c + 1): the mate's yaw through the cover run is the direction to its goal
+  node (1201,72) - 58 deg from (1004,-242), 35 from (979,-80), 14 from (1026,29) - and it turns
+  off the bot at 37 deg a think from the first run think (214 → 177 → 141 → 104 → 67 → 58, rows
+  384..419): its aim-run window is 0. The leader faces the bot rows 391..475 (84 ticks, the
+  lone soldier's 91-tick window) and then turns 37 deg a think to ~92 deg, toward (953,7) where
+  it waits on rows 643..664. The step headings zigzag (87 / 133 / 88 / 125, local avoidance
+  around the house) while the yaw stays on the goal - that 40..70 deg step-vs-yaw angle is the
+  7..9 u a think. So dd6ff00's "keep the bot in the face" is a proxy that helps through the
+  pace only; the model to build: yaw = route goal / corner direction (the mate from its first
+  think, the leader after the window), pace from the yaw-vs-step angle, and the mate's
+  zero-length window (its magazine is empty after the suppress volley) to be confirmed.
