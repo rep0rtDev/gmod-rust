@@ -308,6 +308,12 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   13.1 u a think north along x≈975 past (978,63) with no stop and no second start; the mate
   at full 13 u a think reaches its node by 672 where the game's gets there near 770. Open:
   the leader's two-stage restart and the follow gap, and the mate's zigzag pace.
+  Against gm_construct.ain: the leader's wait point (953,7) is no node - the nearest is 654 at
+  (965,-19), 29 u off - while node 627 at (979,72), 70 u off, is the cover node ours runs to
+  (north along x≈975); the mate's (1201,72) is node 460 exactly. So the game's leader took a
+  lateral cover point (hull trace, not the graph) and then followed the mate; ours takes the
+  graph's node. The lateral point is `npc_lateral_point`'s job (it ran first and found none
+  here) - its search against the game's (953,7) is the next thing to measure.
 ### NPC: server_npc_damage (55 → 36.4 u @23) - measured, open
 
 - Zombie (rows 3..24, the scene's first spawn; every damage op is `firebullets` Pistol): the
