@@ -225,9 +225,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   game's walks north-west off the firing line (y -500 → -471) and the ops hit for 2..3 or miss
   (hp 48, 45, 45, 42, 37, 32, 29); ours walks straight west down the line and takes 5 every
   op (48 → 20).
-- Later spawns (pitch 20 aim trace) land on the previous corpse: the game's zombie ragdoll
-  rests at (948,-522) and the soldier spawns at (940,-526); ours stays at (926,-500) and the
-  soldier spawns there - the 26 u in y is the ragdoll's rest position, not the spawn rule.
+- Later spawns (pitch 20 aim trace, 176 u in front of the bot's eye) differ by 26 u in y -
+  game (948,-522) / (940,-526), ours (926,-500) - because the zombie's claw shoved the bot
+  differently: ours straight back (823 → 750 on y -500), the game's diagonally (≈ (772,-522)),
+  its zombie having come in from the north-east. The root is the zombie's drift off the line
+  on rows 3..24 (row 27 is a `cleanup`, so no corpse is involved).
 - Soldier: the game takes 4 per `firebullets` op standing (rows 46, 48: Idle1 / CombatIdle1)
   and 8 per op from row 50 (shootSMG1c, crouched) - dead by row 60; ours 4 per op throughout
   (the crouched hull stays 72 u), then runs (RunAIMALL1 from row 61) and dies at 70. The ray
