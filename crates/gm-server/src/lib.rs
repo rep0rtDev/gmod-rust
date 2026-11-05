@@ -5652,6 +5652,7 @@ impl<'w> Server<'w> {
             clear_on_contact: bool,
             force_crouch: bool,
             urgent: bool,
+            yaw: f32,
         }
         #[derive(Default, serde::Deserialize)]
         #[serde(default)]
@@ -5734,6 +5735,7 @@ impl<'w> Server<'w> {
                             clear_on_contact: p.clear_on_contact,
                             force_crouch: p.force_crouch,
                             urgent: p.urgent,
+                            yaw: p.yaw,
                         })
                         .collect(),
                     point: 0,
@@ -6090,6 +6092,12 @@ impl<'w> Server<'w> {
                             self.npc_stop(id);
                             if let Some(n) = self.npcs.get_mut(&id) {
                                 n.force_crouch = p.force_crouch.then_some(true);
+                                // the body holds the point facing the point's angles (the
+                                // game's citizen arrives at yaw 357 and stands at 0 from the
+                                // first hold tick); facing the arrival leg instead (yaw 31)
+                                // made the next leg's 90 deg turn a reversal and its ramp
+                                // crawl (5.3 / 5.6 / 6.0 u a think against the game's 9 / 12 / 14)
+                                n.ideal_yaw = Some(p.yaw);
                             }
                             if let Some(seq) = p
                                 .force_crouch
@@ -6121,6 +6129,7 @@ impl<'w> Server<'w> {
                         if timed_out || (p.clear_on_contact && target.is_some()) {
                             if let Some(n) = self.npcs.get_mut(&id) {
                                 n.force_crouch = None;
+                                n.ideal_yaw = None;
                             }
                             g.point += 1;
                             g.stage_since = now;

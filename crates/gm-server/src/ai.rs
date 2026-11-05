@@ -1291,6 +1291,8 @@ pub struct AssaultPoint {
     pub clear_on_contact: bool,
     pub force_crouch: bool,
     pub urgent: bool,
+    /// The point's angles: the body faces them while it holds the point.
+    pub yaw: f32,
 }
 
 /// `ai_goal_assault`: run to the rally point, wait for the cue (and the rally delay), then
