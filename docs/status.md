@@ -318,7 +318,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   starts (~(974,-317), row 492). The leader faces (953,7) exactly once its aim window ends
   (yaw 92 / 86 / 80 / 71 = the bearing), so it is the route goal itself: a non-node cover
   position 29 u from node 654 - a squad-slot or cover position taken relative to the mate or
-  the enemy's last known position rather than FindCoverPos's node. Open.
+  the enemy's last known position rather than FindCoverPos's node. Its geometry gives no
+  clean relation yet: 523 u from the bot's last known position (bearing 76 from it), 256 u
+  from the mate's node 460 (bearing 195 from the node), 158 u from the mate at the decision
+  (~(990,-147)), 171 u off the bot → node line. Open.
 ### NPC: server_npc_damage (55 → 36.4 u @23) - measured, open
 
 - Zombie (rows 3..24, the scene's first spawn; every damage op is `firebullets` Pistol): the
