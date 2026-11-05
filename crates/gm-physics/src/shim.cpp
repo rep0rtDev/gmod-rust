@@ -780,6 +780,74 @@ public:
 				if (level) arriving = true;
 			}
 		}
+		// a round body rolling on the world: its touching points' tangential velocity is near
+		// zero while its centre moves, and the hull's next vertex row is within 5 cm of the plane
+		// (the drum's 16-gon: 2.7 cm; a crate pivoting on an edge has its next row 1 m up). The
+		// game rolls it on at a steady rate (`phys_slide_barrel_v100`: 23 u/s at 95 deg/s over
+		// 130 ticks); Jolt's contact on the flats and vertex rows braked ours to rest in 40 ticks
+		// and the leading-edge anchor below in 25 - the floor carries a rolling body without
+		// torque or friction
+		if (!touch.empty() && !(b1.IsDynamic() && b2.IsDynamic())) {
+			const JPH::Body &rb = b1.IsDynamic() ? b1 : b2;
+			const JPH::Body &ob = b1.IsDynamic() ? b2 : b1;
+			JPH::Vec3 rn = b1.IsDynamic() ? n : -n;
+			JPH::Vec3 rv = rb.GetLinearVelocity() - ob.GetLinearVelocity();
+			rv -= rn * rv.Dot(rn);
+			float rvt = rv.Length();
+			if (rvt > 0.25f && rb.GetAngularVelocity().Length() > 1.0f) {
+				JPH::RVec3 cen = JPH::RVec3::sZero();
+				for (const Pt *u : touch) cen += u->p;
+				cen /= float(touch.size());
+				JPH::Vec3 vc = point_velocity(rb, cen) - point_velocity(ob, cen);
+				vc -= rn * vc.Dot(rn);
+				float h = std::fabs(JPH::Vec3(rb.GetCenterOfMassPosition() - cen).Dot(rn));
+				int next_row = 0;
+				for (const Pt &pt : pts) if (pt.d > 0.001f && pt.d < 0.15f * h) ++next_row;
+				
+				// the contact line is the rotation axis laid in the plane (the touching points
+				// themselves come one or two at a time on a vertex row)
+				JPH::Vec3 line = rb.GetAngularVelocity();
+				line -= rn * line.Dot(rn);
+				bool on_line = line.Length() > 0.3f && std::fabs(line.Normalized().Dot(rb.GetAngularVelocity().Normalized())) > 0.9f;
+				if (on_line) line = line.Normalized();
+				// and it is the body's own axis: the principal axis of least inertia, well below the
+				// next (the drum's 1.31 against 3.41; a crate's three are equal and a crate never rolls)
+				float ax_dot = 0.0f, i_ratio = 0.0f;
+				if (on_line) {
+					const JPH::MotionProperties *rmp = rb.GetMotionProperties();
+					JPH::Vec3 inv_d = rmp->GetInverseInertiaDiagonal();
+					int imin = 0;
+					for (int k = 1; k < 3; ++k) if (inv_d[k] > inv_d[imin]) imin = k;
+					float i_min = 1.0f / std::max(inv_d[imin], 1e-9f), i_mid = 1e30f;
+					for (int k = 0; k < 3; ++k) if (k != imin) i_mid = std::min(i_mid, 1.0f / std::max(inv_d[k], 1e-9f));
+					JPH::Vec3 e = JPH::Vec3::sZero();
+					e.SetComponent(imin, 1.0f);
+					JPH::Vec3 axis = rb.GetRotation() * (rmp->GetInertiaRotation() * e);
+					ax_dot = std::fabs(axis.Dot(line));
+					i_ratio = i_min / i_mid;
+					if (i_min > 0.6f * i_mid || std::fabs(axis.Dot(line)) < 0.96f) on_line = false;
+				}
+				// the centre of mass stands over the line (a rolling cylinder's does, within half a
+				// facet; the upright drum tipping over its bottom rim has it 35 cm off the pivot)
+				if (on_line) {
+					JPH::Vec3 off = JPH::Vec3(rb.GetCenterOfMassPosition() - cen);
+					off -= rn * off.Dot(rn);
+					off -= line * off.Dot(line);
+					if (off.Length() > 0.25f * h) on_line = false;
+				}
+				if (debug) fprintf(stderr, "rolltest t=%d touching=%d vt=%.3f vc=%.3f next_row=%d on_line=%d ax_dot=%.3f i_ratio=%.3f h=%.3f invd=(%.3f %.3f %.3f) line=(%.2f %.2f %.2f)\n", tick, touching, rvt, vc.Length(), next_row, (int)on_line, ax_dot, i_ratio, h, rb.GetMotionProperties()->GetInverseInertiaDiagonal().GetX(), rb.GetMotionProperties()->GetInverseInertiaDiagonal().GetY(), rb.GetMotionProperties()->GetInverseInertiaDiagonal().GetZ(), line.GetX(), line.GetY(), line.GetZ());
+				if (on_line && vc.Length() < 0.35f * rvt && next_row >= 2) {
+					if (b1.IsDynamic()) s.mInvInertiaScale1 = 0.0f; else s.mInvInertiaScale2 = 0.0f;
+					JPH::uint64 rkey = (JPH::uint64(b1.GetID().GetIndexAndSequenceNumber()) << 32) | b2.GetID().GetIndexAndSequenceNumber();
+					RestState &rrs = rest[rkey];
+					rrs.phase = 0;
+					rrs.vn_in = 0.0f;
+					rrs.vt_prev = rvt;
+					if (rrs.landed_tick < 0) rrs.landed_tick = tick;
+					return;
+				}
+			}
+		}
 		if (touching >= 3 && !arriving) {
 			// resting contact anchors (`phys_push_drum_*`, `shoot_prop_*_drum`): a sliding resting
 			// face is held by its leading bottom edge - the impulse that stops that edge's
