@@ -6951,11 +6951,38 @@ const NPC_GRAPH_NODE_REACH: f32 = 700.0;
 /// y = -491 instead of the open diagonal).
 pub const NPC_LOCAL_ROUTE_GOAL: f32 = 600.0;
 pub const NPC_LOCAL_ROUTE_ENEMY: f32 = 4800.0;
+/// How far aside of the straight line a local route may go round a blocker before the engine
+/// routes over the node graph instead: the engine triangulates round one apex, eight steps of
+/// half a hull width out (144 u for a human), and the bracket from the records is 224 u
+/// (server_npc_assault_citizen's rally -> point leg goes round the small building, the game
+/// via node 654 and its path simplification) against 516 u (server_npc_walk_citizen_y180's
+/// detour round the whole building, a node route in the game).
+pub const NPC_LOCAL_ROUTE_DETOUR: f32 = 256.0;
+
+/// The farthest a route's corners sit aside of the straight line from its first to its last point.
+fn route_detour(points: &[Vec3]) -> f32 {
+    let (Some(&a), Some(&b)) = (points.first(), points.last()) else {
+        return 0.0;
+    };
+    let (a, b) = (a.truncate(), b.truncate());
+    let dir = b - a;
+    let len = dir.length();
+    if len <= f32::EPSILON {
+        return points
+            .iter()
+            .map(|p| p.truncate().distance(a))
+            .fold(0.0, f32::max);
+    }
+    points
+        .iter()
+        .map(|p| (p.truncate() - a).perp_dot(dir).abs() / len)
+        .fold(0.0, f32::max)
+}
 const NPC_GRAPH_NODE_TRIES: usize = 12;
 
-/// The engine's route order for an NPC: a direct (local) route when the mesh offers a straight
-/// one, else the node graph between the nearest directly reachable nodes, else the mesh's own
-/// route (also when the map has no graph).
+/// The engine's route order for an NPC: the mesh's local route to a goal within `local_max`
+/// (straight, or round a blocker), else the node graph between the nearest directly reachable
+/// nodes, else the mesh's own route (also when the map has no graph).
 pub fn npc_find_path(
     nav: Option<&gm_nav::NavMesh>,
     graph: Option<&AiGraph>,
@@ -6985,7 +7012,12 @@ pub fn npc_find_route(
     let nav = nav?;
     let direct = nav.find_path(from, to, extents)?;
     let local = from.truncate().distance(to.truncate()) <= local_max;
-    if direct.partial || (local && direct.points.len() <= 2) {
+    // within local reach the engine's local route goes round a blocker (its triangulation) and
+    // the node graph is only the fallback: server_npc_assault_citizen's rally -> point leg
+    // (300 u) runs round the building in 639 u where the node route via (979,72) and
+    // (1201,72) took 881 u and arrived 51 thinks late; a detour round the whole building
+    // (server_npc_walk_citizen_y180: 516 u aside for a 400 u goal) is a node route
+    if direct.partial || (local && route_detour(&direct.points) <= NPC_LOCAL_ROUTE_DETOUR) {
         return Some((direct, Vec::new()));
     }
     let Some(g) = graph.filter(|g| !g.is_empty()) else {

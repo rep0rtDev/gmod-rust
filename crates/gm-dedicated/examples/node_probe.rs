@@ -22,6 +22,44 @@ fn main() -> anyhow::Result<()> {
             .collect();
         println!("near ({},{}): {}", p.x, p.y, near.join(", "));
     }
+    if std::env::var_os("NODE_BOX").is_some() {
+        let (lo, hi) = pts.iter().fold(
+            (glam::Vec2::splat(f32::MAX), glam::Vec2::splat(f32::MIN)),
+            |(lo, hi), p| (lo.min(p.truncate()), hi.max(p.truncate())),
+        );
+        let (lo, hi) = (lo - 64.0, hi + 64.0);
+        let inside = |p: [f32; 3]| (lo.x..=hi.x).contains(&p[0]) && (lo.y..=hi.y).contains(&p[1]);
+        for (i, n) in ain.nodes.iter().enumerate() {
+            if inside(n.pos) {
+                let links: Vec<String> = ain
+                    .links
+                    .iter()
+                    .filter_map(|l| {
+                        let o = if l.src as usize == i {
+                            l.dst
+                        } else if l.dst as usize == i {
+                            l.src
+                        } else {
+                            return None;
+                        };
+                        Some(format!("{o}:{:x}", l.moves[hull]))
+                    })
+                    .collect();
+                println!(
+                    "node #{i} wc{} {:?} type {} -> {}",
+                    ain.wc_ids[i],
+                    n.pos,
+                    n.node_type,
+                    links.join(" ")
+                );
+            }
+        }
+        if pts.len() >= 2 {
+            let ext = glam::Vec3::new(13.0, 13.0, 72.0);
+            let d = world.nav.find_path(pts[0], pts[pts.len() - 1], ext);
+            println!("nav direct: {:?}", d.map(|p| (p.partial, p.points)));
+        }
+    }
     if pts.len() >= 2 {
         let s = g.ground_near(pts[0], hull, 200.0);
         let e = g.ground_near(pts[pts.len() - 1], hull, 200.0);
