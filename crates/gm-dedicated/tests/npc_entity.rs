@@ -636,8 +636,12 @@ fn npc_target_overrides_and_clears_the_combat_target() {
     // force the farther player 2
     assert!(server.npc_target(id, Some(2)));
     let hp2 = server.players[&2].health;
-    for _ in 0..100 {
+    // the rounds spread over the 10 deg cone: fire until one lands
+    for _ in 0..400 {
         server.tick(&cmds);
+        if server.players[&2].health < hp2 {
+            break;
+        }
     }
     let n = &server.npcs[&id];
     assert_eq!(n.target, Some(2));

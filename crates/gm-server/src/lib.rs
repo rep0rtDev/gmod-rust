@@ -2227,6 +2227,8 @@ pub struct Npc {
     /// The flight crosses a jump link of the route; landing resumes the route.
     pub link_jump: bool,
     pub next_leap: u64,
+    /// Tick the leap's flight starts: the leap sequence plays a think first.
+    pub leap_at: Option<u64>,
     /// The tick a wound-up jump (antlion) leaves the ground.
     pub jump_at: Option<u64>,
     /// In flight because it was thrown (a poison zombie's crab): the landing is a plain
@@ -3097,12 +3099,14 @@ const NPC_MOVE_FASTZOMBIE: NpcMoveDef = NpcMoveDef {
     run_accel: 262.0,
     idle_yaw: NPC_YAW_RATE,
 };
-/// Headcrab run-away after a leap, measured in server_npc_melee_headcrab (5.25 u per think).
+/// Headcrab run-away after a leap, measured in server_npc_melee_headcrab (5.25 u per think):
+/// full speed within the first think (2.6 then 5.2 u, golden 261104 rows 108/115) and a
+/// stop on the remainder step (1.9 u at row 269).
 const NPC_MOVE_HEADCRAB: NpcMoveDef = NpcMoveDef {
     walk: 49.5,
-    walk_accel: 100.0,
+    walk_accel: 467.0,
     run: 49.5,
-    run_accel: 100.0,
+    run_accel: 467.0,
     idle_yaw: NPC_YAW_RATE,
 };
 /// Antlion run measured in server_npc_run_antlion (1100 u approach): 3.91, 11.7, 19.49,
@@ -13237,6 +13241,7 @@ impl<'w> Server<'w> {
             gait_until: 0,
             pending_seq: None,
             next_leap: 0,
+            leap_at: None,
             jump_at: None,
             thrown: false,
             throw_done: 0,
@@ -16299,6 +16304,28 @@ impl<'w> Server<'w> {
             // third (server_npc_melee_headcrab: t4 / t11 / t18)
             n.next_leap = n.next_leap.max(now + 2 * n.think_interval as u64);
         }
+        // standing between leaps the crab turns in place to its enemy at the normal yaw rate
+        // (server_npc_melee_headcrab 261104: TurnRight 0 -> 187 deg over rows 278..339 after
+        // its run-away, Idle01 once facing, the leap at its rest's end)
+        if n.goal.is_none() && n.chase.is_none() && n.leap_at.is_none() && dist > 1e-3 {
+            let want = to.y.atan2(to.x).to_degrees();
+            let err = wrap_deg(want - n.angles.y);
+            // dead behind it the crab turns right (the game's 0 -> 180 turn runs 344, 328 ...)
+            let err = if err >= 179.5 { err - 360.0 } else { err };
+            let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
+            let step = n.max_yaw.unwrap_or(NPC_YAW_RATE) * dt;
+            if err.abs() > step {
+                n.angles.y = wrap_deg(n.angles.y + err.clamp(-step, step));
+                n.sequence = if err < 0.0 { "TurnRight" } else { "TurnLeft" }.to_string();
+                n.auto_seq = None;
+                n.next_leap = n.next_leap.max(now + n.think_interval as u64);
+                return;
+            }
+            if n.sequence.starts_with("Turn") {
+                n.angles.y = want;
+                n.auto_seq = Some(n.sequence.clone());
+            }
+        }
         if now < n.next_leap {
             return;
         }
@@ -16307,6 +16334,26 @@ impl<'w> Server<'w> {
                 self.npc_chase(id, player, false);
             }
             return;
+        }
+        // the leap sequence plays a think before the body leaves the ground (rows 18 -> 25 and
+        // 346 -> 353 in server_npc_melee_headcrab)
+        match n.leap_at {
+            None => {
+                n.leap_at = Some(now + n.think_interval as u64);
+                n.goal = None;
+                n.next_goal = None;
+                n.chase = None;
+                n.move_speed = 0.0;
+                if let Some(seq) = l.leap_sequence {
+                    n.sequence = seq.to_string();
+                }
+                if !n.move_yaw_locked && dist > 1e-3 {
+                    n.angles.y = to.y.atan2(to.x).to_degrees();
+                }
+                return;
+            }
+            Some(t) if now < t => return,
+            Some(_) => n.leap_at = None,
         }
         // the arc: constant horizontal speed, the vertical speed that meets the aim point
         let t = (dist / l.speed).max(1.0 / 66.0);
@@ -16594,10 +16641,8 @@ impl<'w> Server<'w> {
                     // a thrown crab's throw ends with its bite: it drops, rests and retreats
                     // like any crab after (golden 261105: off the bot's head at row 280, the
                     // zombie makes the kill)
+                    // the leap sequence plays on through the hang to the floor (IdleB at row 96)
                     n.thrown = false;
-                    if let Some(seq) = l.land_sequence {
-                        n.sequence = seq.to_string();
-                    }
                 }
                 continue;
             }
@@ -17313,6 +17358,7 @@ impl<'w> Server<'w> {
                 gait_until: 0,
                 pending_seq: None,
                 next_leap: 0,
+                leap_at: None,
                 jump_at: None,
                 thrown: false,
                 throw_done: 0,
