@@ -94,3 +94,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   (y -515 in both crate scenes) belongs to that early side-step, not to the swat position.
   Masses are the `.phy` defaults we parse (crate 30, drum 30, gascan 10, can 1); unverified
   against the game's.
+
+### NPC: the zombie's claw lifts the bot only when the bot stands higher (swat2_bluebarrel/heavy)
+
+- The game's claw force runs from the zombie's origin to the bot's: server_npc_melee_zombie has
+  the bot 1 u above the zombie and a force of [-7499, 0, +130] (1 deg up), the bot leaves the
+  ground and flies 63 u; swat2_bluebarrel hits level, force [-6296, 4075, -9], the bot slides
+  31 u along the floor and stays inside the claw's reach (the game keeps clawing and kills the
+  bot in swat_far by row 244). Ours lifted on every hit, the bot went 60+ u and out of reach.
+- Now the 36 u/s lift applies only when the bot's origin is above the zombie's. 53-scene sweep
+  2200 → 2146: swat2_bluebarrel 56 → 29, swat2_heavy 55 → 30, melee_zombie 10 → 8.5, nothing
+  worse. swat_far (81 u) is still open: the game's bot dies and respawns at a random point.

@@ -17268,7 +17268,11 @@ impl<'w> Server<'w> {
             if self.damage_player(player, m.damage, weapons::DMG_SLASH) > 0.0 {
                 if let Some(p) = self.players.get_mut(&player) {
                     p.state.velocity += dir.extend(0.0) * m.punch;
-                    if m.lift > 0.0 {
+                    // the claw's force runs from the zombie's origin to the bot's: only a bot
+                    // standing higher gets an upward share and leaves the ground
+                    // (server_npc_melee_zombie: bot 1 u up, force z +130 of 7500, 63 u flight;
+                    // swat2_bluebarrel: level, force z -9, 31 u along the floor)
+                    if m.lift > 0.0 && p.state.origin.z > feet.z {
                         p.state.velocity.z += m.lift;
                         p.state.phys_lift = true;
                         p.state.on_ground = false;
