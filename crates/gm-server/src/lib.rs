@@ -2706,6 +2706,12 @@ const ZOMBIE_WANDER_MIN: u32 = 48;
 const ZOMBIE_WANDER_MAX: u32 = 384;
 /// Poison on top of the bite (the game's poison headcrab leaves the player at 1 hp).
 const NPC_POISON_DAMAGE: f32 = 94.0;
+/// A poison zombie's crab throw: released NPC_CRAB_THROW_HEIGHT above the zombie's origin at
+/// NPC_CRAB_THROW_SPEED u/s horizontal and NPC_CRAB_THROW_VZ up (golden 261105: 4.7 u/tick,
+/// apex +24 u after 17 ticks under NPC_GRAVITY).
+const NPC_CRAB_THROW_HEIGHT: f32 = 64.0;
+const NPC_CRAB_THROW_SPEED: f32 = 310.0;
+const NPC_CRAB_THROW_VZ: f32 = 170.0;
 const NPC_POISON_WARNING_TICKS: u64 = 77;
 /// SCHED_COMBINE_SUPPRESS lasts the first volley: the game read 88 for 40 ticks after the
 /// sight think and 100 from 43..46 on (server_npc_grenade_soldier); 40 on our 7-tick grid.
@@ -2815,9 +2821,6 @@ pub const NPC_CRAB_THROW_COOLDOWN: u64 = 860;
 /// The throw starts once the enemy is this close: the game's zombie walks in from 179 u and
 /// throws at 141 u (server_npc_melee_poisonzombie).
 pub const NPC_CRAB_THROW_RANGE: f32 = 145.0;
-/// The thrown crab lands this far short of the player and leaps from there.
-const NPC_CRAB_THROW_SHORT: f32 = 48.0;
-const NPC_CRAB_FLIGHT_TICKS: u64 = 23;
 
 pub const NPC_LEAP_RANGE: f32 = 256.0;
 /// Cover and squads (our rules): a cover point lies within this of the NPC, is a navmesh
@@ -16253,11 +16256,12 @@ impl<'w> Server<'w> {
     }
 
     /// The poison on top of a poison headcrab's bite: NPC_POISON_DAMAGE, never below 1 hp.
-    fn poison_bite(&mut self, player: u32) {
+    fn poison_bite(&mut self, player: u32, from: Vec3) {
         let left = self.players.get(&player).map_or(0, |p| p.health);
         let dose = NPC_POISON_DAMAGE.min((left - 1).max(0) as f32);
         if dose > 0.0 {
             self.damage_player(player, dose, weapons::DMG_POISON);
+            self.push_player(player, from, dose);
         }
     }
 
@@ -16352,8 +16356,7 @@ impl<'w> Server<'w> {
         z.next_leap = now + NPC_CRAB_THROW_COOLDOWN;
         let to = (p.state.origin - z.pos).truncate();
         let dir = to.normalize_or_zero();
-        let start = z.pos + (dir * 16.0).extend(60.0);
-        let land = p.state.origin - (dir * NPC_CRAB_THROW_SHORT.min(to.length() * 0.5)).extend(0.0);
+        let start = z.pos + Vec3::new(0.0, 0.0, NPC_CRAB_THROW_HEIGHT);
         let yaw = z.angles.y;
         let id = self.sandbox.alloc_foreign();
         let mut crab = self.fresh_npc(
@@ -16368,10 +16371,17 @@ impl<'w> Server<'w> {
         crab.target_seen = now;
         crab.thrown = true;
         self.npcs.insert(id, crab);
-        // the bite lands 187-188 ticks after the throw starts whether thrown from 179 u or
-        // 141 u (server_npc_melee_poisonzombie*): the flight takes NPC_CRAB_FLIGHT_TICKS
-        let flight = (land - start).truncate().length() / (NPC_CRAB_FLIGHT_TICKS as f32 / 66.0);
-        self.launch_npc(id, land, flight.max(1.0), 0.0);
+        // one ballistic throw (server_npc_melee_poisonzombie_long, golden 261105): released
+        // 64 u above the zombie's origin at 310 u/s horizontal, rising 24 u in 17 ticks, it
+        // clears the bot's head by 7 u and comes down on the hull top 20 u past its centre
+        if let Some(c) = self.npcs.get_mut(&id) {
+            c.flight = Some((dir * NPC_CRAB_THROW_SPEED).extend(NPC_CRAB_THROW_VZ));
+            c.hung_until = 0;
+            c.move_speed = 0.0;
+            if !c.move_yaw_locked {
+                c.angles.y = dir.y.atan2(dir.x).to_degrees();
+            }
+        }
     }
 
     /// One tick of a route jump: the arc under gravity swept against the world; the floor
@@ -16469,12 +16479,19 @@ impl<'w> Server<'w> {
                     let inside = (0..3).all(|a| next[a] >= lo[a] && next[a] <= hi[a]);
                     if inside {
                         hit = target;
-                        // stay on the hull face it came from
-                        let back = (pos - p.state.origin).truncate();
-                        if back.length_squared() > 1e-6 {
-                            let b = back.normalize() * (px.x + maxs.x);
-                            next.x = p.state.origin.x + b.x;
-                            next.y = p.state.origin.y + b.y;
+                        if pos.z >= hi.z - 1.0 {
+                            // came down on the hull top: rests 1 u above it like the game's
+                            // (golden 261105: crab z -70 on a head top of -71), clear of the
+                            // player's own move trace
+                            next.z = hi.z + 1.0;
+                        } else {
+                            // stay on the hull face it came from
+                            let back = (pos - p.state.origin).truncate();
+                            if back.length_squared() > 1e-6 {
+                                let b = back.normalize() * (px.x + maxs.x);
+                                next.x = p.state.origin.x + b.x;
+                                next.y = p.state.origin.y + b.y;
+                            }
                         }
                     }
                 }
@@ -16485,7 +16502,10 @@ impl<'w> Server<'w> {
                     .normalize_or_zero();
                 if self.damage_player(player, l.damage, weapons::DMG_SLASH) > 0.0 {
                     if l.poison {
-                        self.poison_bite(player);
+                        // the bite's knockback is the player's push away from the crab (on the
+                        // bot's head, 20 u past its centre: 205 u/s toward the zombie, 25 u slide)
+                        self.push_player(player, next, l.damage);
+                        self.poison_bite(player, next);
                     }
                     if let Some(p) = self.players.get_mut(&player) {
                         p.state.velocity -= (dir * l.punch).extend(0.0);
@@ -16495,6 +16515,10 @@ impl<'w> Server<'w> {
                     n.pos = next;
                     n.flight = Some(Vec3::ZERO);
                     n.hung_until = now + l.hang_ticks;
+                    // a thrown crab's throw ends with its bite: it drops, rests and retreats
+                    // like any crab after (golden 261105: off the bot's head at row 280, the
+                    // zombie makes the kill)
+                    n.thrown = false;
                     if let Some(seq) = l.land_sequence {
                         n.sequence = seq.to_string();
                     }
