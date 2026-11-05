@@ -181,3 +181,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   the hit: 20.6 → 35); the same recoil only after the second scratch: 20.6 → 25.5 - our dash
   spends it over 21 ticks from the hit where the game's slide takes ~67 ticks of the roar
   (0.3 u a tick decaying 0.985 a tick). Also the remaining ~8 u of lateral position.
+
+### NPC: the squad mate's run to cover (server_npc_squad_soldier, 219 u) - measured, open
+
+- The game's mate runs RunAIMALL1 with its back to the bot (path 169 deg off its facing) at
+  7..9 u a think from (977,-74) to (1041,33), then 13 → 19 and RunALL for the last ~100 u; the
+  leader runs 12..15 u a think (145 deg off) and slows to 1..7 behind the mate on rows 644..686.
+  Ours: both at the full 22.6 u a think, the mate at the node by row 560.
+- Tried: keep the enemy in the face through a run to a reload cover while in view, plus blend
+  bands for the rear (0.58 from 120 deg) and back (0.36 from 155 deg): squad 219 → 164 (mate
+  13 u a think, leader 26 → 16 behind it) but grenade_soldier 48 → 192 - the lone soldier's
+  cover run faces its path (the earlier measurement), only the mate keeps the bot in view.
+  Reverted; the rule needs the squad role (mate with a firing leader), then the bands can be
+  measured.
