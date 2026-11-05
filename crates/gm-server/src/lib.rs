@@ -2148,6 +2148,8 @@ pub struct Npc {
     pub melee_dash: f32,
     /// A zombie's swat of a physics prop at its enemy (SCHED_ZOMBIE_SWATITEM).
     pub swat: Option<NpcSwat>,
+    /// The prop a zombie is walking to a swat position for (SCHED_ZOMBIE_MOVE_SWATITEM).
+    pub swat_goal: Option<u32>,
     /// Next tick the zombie looks for a prop to swat (every 2 s of a chase).
     pub next_swat_scan: u64,
     /// The hull overlaps a physics prop (spawned into it): the prop is pushed clear while
@@ -13219,6 +13221,7 @@ impl<'w> Server<'w> {
             melee_swing: None,
             swat: None,
             next_swat_scan: 0,
+            swat_goal: None,
             in_prop: false,
             push_prop: None,
             pressed_prop: None,
@@ -14140,6 +14143,11 @@ impl<'w> Server<'w> {
                 n.target_seen = now;
                 if n.target_first_seen == 0 {
                     n.target_first_seen = now;
+                    if ai::class_sched_family(&n.class) == Some("zombie") && n.next_swat_scan == 0 {
+                        // the swat scan runs at the wake think (spawn+12 in the game) and every
+                        // 2 s after it, whichever path acquired the enemy first
+                        n.next_swat_scan = now + NPC_WAKE_ANGRY_TICKS;
+                    }
                 }
                 n.passive = false;
                 true
@@ -16821,6 +16829,27 @@ impl<'w> Server<'w> {
         if n.swat.is_some() {
             return true;
         }
+        if let Some(prop) = n.swat_goal {
+            let (feet, yaw, walking) = (n.pos, n.angles.y, n.goal.is_some());
+            let center = self
+                .bodies
+                .get(&prop)
+                .filter(|_| self.npc_swattable_prop(prop))
+                .map(|&b| self.physics.center_of_mass(b));
+            let d = center.map_or(f32::MAX, |c| (c - feet).truncate().length());
+            if center.is_some() && walking && d > ZOMBIE_SWAT_DIST * 0.75 {
+                return true;
+            }
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.swat_goal = None;
+            }
+            if let Some(center) =
+                center.filter(|_| (ZOMBIE_SWAT_MIN_DIST..=ZOMBIE_SWAT_DIST).contains(&d))
+            {
+                return self.npc_swat_start(id, now, prop, center, feet, yaw);
+            }
+            return false;
+        }
         if n.next_swat_scan == 0 || now < n.next_swat_scan {
             return false;
         }
@@ -16846,10 +16875,14 @@ impl<'w> Server<'w> {
             if !(ZOMBIE_SWAT_MIN_MASS..=ZOMBIE_SWAT_MAX_MASS).contains(&mass) {
                 continue;
             }
-            let center = self.physics.state(b).position;
+            let center = self.physics.center_of_mass(b);
             let to = (center - feet).truncate();
             let d = to.length();
-            if d < 1e-3 || d > ZOMBIE_SWAT_SEARCH || d >= enemy_dist {
+            // the game skips an object farther from the zombie than from the enemy
+            // (FindNearestPhysicsObject: flDist >= DistApprox2D(center, enemy)): the crate at
+            // 900 is not taken from the spawn at 992 (92 vs 77 u) but at 951 (51 u)
+            let to_enemy_from_prop = (origin - center).truncate().length();
+            if d < 1e-3 || d > ZOMBIE_SWAT_SEARCH || d >= to_enemy_from_prop {
                 continue;
             }
             if (to / d).dot(enemy_dir) < 0.8 {
@@ -16862,9 +16895,35 @@ impl<'w> Server<'w> {
         let Some((d, prop, center)) = best else {
             return false;
         };
-        if !(ZOMBIE_SWAT_MIN_DIST..=ZOMBIE_SWAT_DIST).contains(&d) {
+        if d > ZOMBIE_SWAT_DIST {
+            // too far to swing: walk to ZOMBIE_SWAT_MOVE_DIST behind the prop on the enemy's
+            // line first (the game's zombie at (951,-497) walks to (948,-515) for the crate
+            // at (900,-500) and swats from there)
+            let goal = (center.truncate() - enemy_dir * ZOMBIE_SWAT_MOVE_DIST).extend(feet.z);
+            if self.npc_goto(id, goal, false) {
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.swat_goal = Some(prop);
+                    n.chase = None;
+                }
+                return true;
+            }
             return false;
         }
+        if d < ZOMBIE_SWAT_MIN_DIST {
+            return false;
+        }
+        self.npc_swat_start(id, now, prop, center, feet, yaw)
+    }
+
+    fn npc_swat_start(
+        &mut self,
+        id: u32,
+        now: u64,
+        prop: u32,
+        center: Vec3,
+        feet: Vec3,
+        yaw: f32,
+    ) -> bool {
         self.npc_stop(id);
         let Some(n) = self.npcs.get_mut(&id) else {
             return false;
@@ -17384,6 +17443,7 @@ impl<'w> Server<'w> {
                 melee_swing: None,
                 swat: None,
                 next_swat_scan: 0,
+                swat_goal: None,
                 in_prop: false,
                 push_prop: None,
                 pressed_prop: None,
@@ -22338,7 +22398,7 @@ pub const NPC_PUSH_PROP_SPEED: f32 = 45.0;
 /// How far past the hull the shove keeps driving the prop (the game's crate slides 883 -> 875
 /// after the hulls part).
 pub const NPC_PUSH_PROP_GAP: f32 = 4.0;
-pub const ZOMBIE_SWAT_SCAN_TICKS: u64 = 134;
+pub const ZOMBIE_SWAT_SCAN_TICKS: u64 = 133;
 /// A prop nearer than this at the scan is left alone (game: swats at 41.6/46/48/61 u, none at
 /// 30-36 u with the same props on the scans that pass them - bound 36..41.6; 38 lets the zombie pressed on
 /// its spawn crate swat it at 38.6 u as the game does at 41.6 with its 3 u standoff).
@@ -22348,6 +22408,8 @@ pub const ZOMBIE_SWAT_HIT_TICK: u64 = 35;
 /// ZOMBIE_FARTHEST_PHYSICS_OBJECT / ZOMBIE_PHYSOBJ_SWATDIST of the game.
 pub const ZOMBIE_SWAT_SEARCH: f32 = 480.0;
 pub const ZOMBIE_SWAT_DIST: f32 = 80.0;
+/// ZOMBIE_PHYSOBJ_MOVE_TO_DIST: the swat position behind the prop (game: x 948 for the crate at 900).
+pub const ZOMBIE_SWAT_MOVE_DIST: f32 = 48.0;
 /// A 1 kg can is left alone, a fridge too (ZOMBIE_MAX_PHYSOBJ_MASS).
 pub const ZOMBIE_SWAT_MIN_MASS: f32 = 5.0;
 pub const ZOMBIE_SWAT_MAX_MASS: f32 = 200.0;

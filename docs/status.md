@@ -62,3 +62,34 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   (north at the drum, south at the crate, both from (992,-500) → bot at 823) are not derived.
   swat2_drumside 75 → 83: the game swats the side-lying drum at row 100 from the spawn (992,-500),
   92 u from its centre; ours walks to (958,-517) and swats at 160 - separate swat-at-spawn item.
+
+### NPC: which prop a zombie swats, and when (swat2_drumside, swat3_a_drum875)
+
+- Measured from the clean goldens (zombie spawn (992,-500), bot at 823): the game swats the
+  crate at 900 (picked at ≈spawn+147 from (948,-515), 51 u), the standing drum at 875 (picked at
+  the same tick from (921,-499), 46 u) and the lying drum at 900 (picked at the first scan,
+  spawn+12, swat at once), but never the standing drum at 900, the gascan, the plastic crate or
+  the can, although at the spawn all of them are 92 u ahead on the bot's line and 10..30 kg.
+  All props are asleep at every scan (golden `asleep`), so that is not the filter.
+- Rules now in `npc_swat_think`, each from those numbers:
+  - a prop farther from the zombie than from the enemy is skipped (HL2
+    `FindNearestPhysicsObject`: `flDist >= DistApprox2D(center, enemy)`): 92 vs 77 at the spawn
+    for everything at 900, 51 vs 77 for the crate at 951, 46 vs 52 for the drum at 921;
+  - distances and the between-test use the body's centre of mass, not its origin: the lying
+    drum's centre is 22 u east of its origin, 70 u from the spawn (< 80 swat distance) and
+    nearer to the zombie than to the bot (99), hence the swat at spawn;
+  - the scan period is 133 ticks (2.0 s at 66.67) from the wake think: with 134 the second scan
+    fell one think late and the drum at 875 was already too close (30 u, inside the 38 u
+    minimum);
+  - a pick farther than 80 u walks to `ZOMBIE_SWAT_MOVE_DIST` (48 u) behind the prop on the
+    enemy line first (SCHED_ZOMBIE_MOVE_SWATITEM; `Npc::swat_goal`) and swats on arrival.
+- 53-scene sweep 2295 → 2200: swat2_drumside 83 → 50, swat3_a_drum875 56 → 7, swat3_c_drumside930
+  25 → 12; nothing else moved.
+- Open, measured: our first scan runs at t45 (spawn+40): the melee think's `sees()` only passes
+  at t38 although the chase walk starts at t20 - the game scans at the wake think (spawn+12).
+  swat2_crate stays 73 u: the game's chase turns south at x 951 (51 u before the crate) and
+  skirts it at 48..50 u, so the second scan finds the crate at 50 u; ours walks straight to
+  36 u (inside the 38 u minimum) and never picks it. The game's 15 u lateral stand-off
+  (y -515 in both crate scenes) belongs to that early side-step, not to the swat position.
+  Masses are the `.phy` defaults we parse (crate 30, drum 30, gascan 10, can 1); unverified
+  against the game's.
