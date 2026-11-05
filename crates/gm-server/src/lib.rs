@@ -2172,6 +2172,8 @@ pub struct Npc {
     /// Whether the body moved since it first saw its enemy: the game's soldier fires crouched
     /// (ACT_RANGE_ATTACK1_LOW) from the spot it met the enemy on and standing after any run.
     pub combat_moved: bool,
+    /// The squad mate's SCHED_COMBINE_SUPPRESS is a single crouched round; it ends with it.
+    pub suppress_once: bool,
     /// Where a zombie wanders after its enemy died (SCHED_ZOMBIE_WANDER_MEDIUM), until a live
     /// enemy shows up again.
     pub wander: Option<Vec3>,
@@ -2522,8 +2524,10 @@ pub fn npc_clip_size(weapon: &str) -> u8 {
 }
 /// Ticks without line of sight after which the target is dropped (5 s).
 pub const NPC_TARGET_LOSE_TICKS: u64 = 330;
-/// Half-angle of the aim cone, degrees (the game's soldier passes ~15 u beside a player at 178 u).
-pub const NPC_AIM_CONE_DEG: f32 = 4.0;
+/// Half-angle of the aim cone, degrees: the game's SMG1 soldier rays sit 5..11 deg off the
+/// chest line per axis once focused (yaw 3.1..7.2, pitch 1.5..10 across four recordings), so a
+/// 4 deg cone still hit the 72 u hull vertically and killed the bot the game never scratches.
+pub const NPC_AIM_CONE_DEG: f32 = 10.0;
 /// ai_spread_cone_focus_time 0.6 s / ai_spread_defocused_cone_multiplier 3 /
 /// ai_spread_pattern_focus_time 0.8 s (engine defaults).
 pub const NPC_SPREAD_DEFOCUS_TICKS: u64 = 40;
@@ -3129,6 +3133,61 @@ const VEHICLE_EXIT_Z: f32 = 11.4;
 const VEHICLE_EXIT_TOP: f32 = 90.9;
 
 /// Where `Spawn_NPC` puts an NPC class relative to the hit point.
+/// `SquadName` from the sandbox NPC list's `KeyValues` (lua/autorun/base_npcs.lua), applied by
+/// Spawn_NPC with `SetKeyValue`: every soldier spawned from the menu joins "overwatch", so two of
+/// them share squad slots (server_npc_squad_soldier records both with squad "overwatch").
+pub fn sandbox_squad(key: &str) -> Option<&'static str> {
+    match key {
+        "npc_alyx" => Some("resistance"),
+        "npc_barney" => Some("resistance"),
+        "npc_vortigaunt" => Some("resistance"),
+        "npc_citizen" => Some("resistance"),
+        "Rebel" => Some("resistance"),
+        "npc_odessa" => Some("resistance"),
+        "Medic" => Some("resistance"),
+        "Refugee" => Some("resistance"),
+        "VortigauntUriah" => Some("resistance"),
+        "npc_turret_floor_resistance" => Some("resistance"),
+        "npc_rollermine_hacked" => Some("resistance"),
+        "npc_manhack_hacked" => Some("resistance"),
+        "npc_zombie" => Some("zombies"),
+        "npc_zombie_torso" => Some("zombies"),
+        "npc_poisonzombie" => Some("poison"),
+        "npc_antlion" => Some("antlions"),
+        "npc_antlionguard" => Some("antlions"),
+        "npc_fastzombie" => Some("zombies"),
+        "npc_headcrab" => Some("zombies"),
+        "npc_headcrab_black" => Some("poison"),
+        "npc_headcrab_fast" => Some("zombies"),
+        "npc_fastzombie_torso" => Some("zombies"),
+        "npc_zombine" => Some("zombies"),
+        "npc_antlionguardian" => Some("antlions"),
+        "npc_antlion_worker" => Some("antlions"),
+        "npc_metropolice" => Some("overwatch"),
+        "npc_rollermine" => Some("overwatch"),
+        "npc_rollermine_friendly" => Some("overwatch"),
+        "npc_turret_floor" => Some("overwatch"),
+        "npc_combine_s" => Some("overwatch"),
+        "ShotgunSoldier" => Some("overwatch"),
+        "CombinePrison" => Some("novaprospekt"),
+        "PrisonShotgunner" => Some("novaprospekt"),
+        "CombineElite" => Some("overwatch"),
+        "npc_cscanner" => Some("overwatch"),
+        "npc_clawscanner" => Some("overwatch"),
+        "npc_combinegunship" => Some("overwatch"),
+        "npc_combinedropship" => Some("overwatch"),
+        "npc_helicopter" => Some("overwatch"),
+        "npc_combine_camera" => Some("overwatch"),
+        "npc_turret_ceiling" => Some("overwatch"),
+        "npc_strider" => Some("overwatch"),
+        "npc_stalker" => Some("npc_stalker_squad"),
+        "npc_manhack" => Some("overwatch"),
+        "npc_citizen_rebel_enemy" => Some("overwatch"),
+        "npc_hunter" => Some("overwatch"),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NpcDef {
     pub key: &'static str,
@@ -5227,7 +5286,11 @@ impl<'w> Server<'w> {
             } else if target.is_some() && !target_dead && ranged && (los || n.blind_fire) {
                 // the first volley is the suppress schedule (88), later ones RANGE_ATTACK1 (100)
                 if n.target_first_seen > 0
-                    && ((now < n.target_first_seen + NPC_SUPPRESS_TICKS && !n.combat_moved)
+                    && ((now < n.target_first_seen + NPC_SUPPRESS_TICKS
+                        && !n.combat_moved
+                        && !(n.suppress_once
+                            && n.last_shot >= n.target_first_seen
+                            && now > n.target_first_seen))
                         || (n.blind_fire && n.shots <= NPC_BURST_SHOTS as u32))
                 {
                     // a volley cut by losing sight completes blind under the same schedule
@@ -13118,6 +13181,7 @@ impl<'w> Server<'w> {
             reversal: 0,
             face_until: 0,
             combat_moved: false,
+            suppress_once: false,
             wander: None,
             auto_seq: None,
             last_known: None,
@@ -13221,6 +13285,9 @@ impl<'w> Server<'w> {
         let angles = Vec3::new(0.0, yaw + 180.0 + def.rotate_yaw, 0.0);
         self.npcs
             .insert(id, self.fresh_npc(&def, model, pos, angles, weapon, settle));
+        if let Some(squad) = sandbox_squad(key) {
+            self.npc_set_squad(id, Some(squad));
+        }
         self.sandbox.add_count(player, "npcs", id);
         self.sandbox.add_cleanup(player, "npcs", id);
         if npc_physics_class(def.class) {
@@ -15368,6 +15435,7 @@ impl<'w> Server<'w> {
             if n.target != Some(player) {
                 n.target_first_seen = 0;
                 n.last_enemy_damage = 0;
+                n.suppress_once = false;
             }
             n.target = Some(player);
             let think = n.think_interval as u64;
@@ -15397,13 +15465,19 @@ impl<'w> Server<'w> {
             n.combat_moved = true;
             n.burst_left = NPC_BURST_SHOTS;
             n.next_shot = (n.target_first_seen + think).max(now);
-        } else if !leads && has_mate && !n.combat_moved && n.last_shot < n.target_first_seen.max(1)
+        } else if !leads
+            && has_mate
+            && !n.combat_moved
+            && !n.suppress_once
+            && n.last_shot < n.target_first_seen.max(1)
         {
-            // the mate fires no volley either: its first full burst 59 ticks after its
-            // sighting think (t385 after t326), with 28-tick rests
-            n.combat_moved = true;
-            n.burst_left = NPC_BURST_SHOTS;
-            n.next_shot = (n.target_first_seen + NPC_MATE_FIRST_BURST_TICKS).max(now);
+            // the mate takes SQUAD_SLOT_ATTACK1 first and runs SCHED_COMBINE_SUPPRESS from the
+            // crouch (TASK_COMBINE_SET_STANDING 0): one round on the sighting think, then
+            // crouched bursts on the 49-tick cycle (server_npc_squad_soldier: round t6, bursts
+            // t27..55 / t76..104 against the leader's standing t24..52 / t80..108)
+            n.suppress_once = true;
+            n.burst_left = 1;
+            n.next_shot = now;
         }
         if n.target_seen != 0 && now > n.target_seen + n.think_interval as u64 {
             n.reacquired_at = now;
@@ -15589,7 +15663,7 @@ impl<'w> Server<'w> {
         }
         // measured volley period: 49 ticks crouched (shootSMG1c), 56 standing (shootSMG1s)
         n.next_shot = if n.burst_left == 0 {
-            now + if now < n.target_first_seen + NPC_SUPPRESS_TICKS {
+            now + if now < n.target_first_seen + NPC_SUPPRESS_TICKS && !n.suppress_once {
                 NPC_VOLLEY_BURST_GAP_TICKS
             } else if n.combat_moved {
                 NPC_BURST_GAP_TICKS
@@ -17119,6 +17193,7 @@ impl<'w> Server<'w> {
                 reversal: 0,
                 face_until: 0,
                 combat_moved: false,
+                suppress_once: false,
                 wander: None,
                 auto_seq: None,
                 last_known: None,
