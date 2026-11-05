@@ -2702,6 +2702,10 @@ pub struct NpcMelee {
     /// A second hit this many ticks after the first (the fast zombie's double claw).
     pub hit_gap: Option<u64>,
     pub punch: f32,
+    /// Upward speed the hit adds, lifting the player off the floor for its rise (no friction
+    /// meanwhile): the zombie claw (server_npc_melee_zombie 261105: ~320 u/s for ~6 ticks
+    /// before friction, 63 u of slide).
+    pub lift: f32,
     /// Closes in at the run gait.
     pub run: bool,
     /// The move begins once the player is within this 2D distance (the reach by default).
@@ -2749,6 +2753,7 @@ const MELEE_PLAIN: NpcMelee = NpcMelee {
     hit_tick: 0,
     hit_gap: None,
     punch: 0.0,
+    lift: 0.0,
     run: false,
     start_range: 0.0,
     lunge: 0.0,
@@ -2904,7 +2909,8 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         reach: 55.0,
         swing_ticks: 84,
         hit_tick: 48,
-        punch: 325.0,
+        punch: 320.0,
+        lift: 36.0,
         start_range: 55.0,
         ..MELEE_PLAIN
     }];
@@ -17160,6 +17166,11 @@ impl<'w> Server<'w> {
             if self.damage_player(player, m.damage, weapons::DMG_SLASH) > 0.0 {
                 if let Some(p) = self.players.get_mut(&player) {
                     p.state.velocity += dir.extend(0.0) * m.punch;
+                    if m.lift > 0.0 {
+                        p.state.velocity.z += m.lift;
+                        p.state.phys_lift = true;
+                        p.state.on_ground = false;
+                    }
                 }
                 if m.recoil > 0.0 {
                     if let Some(n) = self.npcs.get_mut(&id) {
