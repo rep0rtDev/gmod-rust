@@ -191,6 +191,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 - Tried: keep the enemy in the face through a run to a reload cover while in view, plus blend
   bands for the rear (0.58 from 120 deg) and back (0.36 from 155 deg): squad 219 → 164 (mate
   13 u a think, leader 26 → 16 behind it) but grenade_soldier 48 → 192 - the lone soldier's
-  cover run faces its path (the earlier measurement), only the mate keeps the bot in view.
-  Reverted; the rule needs the squad role (mate with a firing leader), then the bands can be
-  measured.
+  cover run faces its path (the earlier measurement).
+- Now: the rule is gated on having a live squad mate (`npc_has_squad_mate`: named squad or the
+  same kind within NPC_SQUAD_RANGE) - both the mate and the leader keep the bot in the face
+  through the cover run (the game's leader runs RunAIMALL1 at 12..15 u a think the whole way
+  too), the lone soldier is untouched. 53-scene sweep 2111 → 2056, squad 219 → 164,
+  grenade_soldier / low / wall unchanged (47.9 / 10.7 / 25.9). Open: the mate still makes 13 u a
+  think against the game's 7..9 (the blend's backward pace is a first fit at 0.36 / 0.58), and
+  the leader's wait behind the mate on rows 644..686.

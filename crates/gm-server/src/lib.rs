@@ -2326,6 +2326,10 @@ pub struct NpcMoveDef {
 /// ramp (2.58 / 2.9 at 15..30 deg, 2.23 / 2.9 from 30 deg).
 const NPC_BLEND_SIDE_SPEED: f32 = 0.71;
 const NPC_BLEND_SIDE_DEG: f32 = 20.0;
+const NPC_BLEND_REAR_DEG: f32 = 120.0;
+const NPC_BLEND_REAR_SPEED: f32 = 0.58;
+const NPC_BLEND_BACK_DEG: f32 = 155.0;
+const NPC_BLEND_BACK_SPEED: f32 = 0.36;
 const NPC_BLEND_ACCEL_MID: f32 = 0.88;
 const NPC_BLEND_ACCEL_SIDE: f32 = 0.77;
 
@@ -14333,6 +14337,16 @@ impl<'w> Server<'w> {
 
     fn tick_npc_move(&mut self) {
         let prop_bodies = self.prop_bodies();
+        // squad members keep the enemy in the face through their whole run to a reload cover
+        // (server_npc_squad_soldier rows 560..714: the mate RunAIMALL1 backward at 7..9 u a
+        // think, the leader at 12..15), the lone soldier turns to its path after the aim-run
+        // window (server_npc_grenade_soldier)
+        let squad_mates: std::collections::HashSet<u32> = self
+            .npcs
+            .keys()
+            .filter(|&&i| self.npc_has_squad_mate(i))
+            .copied()
+            .collect();
         self.npc_push_overlapping_props(&prop_bodies);
         // the other NPCs' hulls block a move like props (COLLISION_GROUP_NPC is solid to NPCs)
         let npc_bodies: Vec<(u32, gm_sandbox::PropBody)> = self
@@ -14532,7 +14546,9 @@ impl<'w> Server<'w> {
                 .and(n.last_known)
                 .filter(|_| n.target_seen + n.think_interval as u64 >= now && !n.cover_from_sound)
                 .filter(|_| {
-                    !armed || now <= n.goal_started.max(n.reacquired_at) + NPC_AIM_RUN_TICKS
+                    !armed
+                        || (n.reloading && n.cover_at.is_some() && squad_mates.contains(&id))
+                        || now <= n.goal_started.max(n.reacquired_at) + NPC_AIM_RUN_TICKS
                 })
                 .map(|k| k.truncate());
             // a corner within reach is passed only when the hull can already sweep to the
@@ -14602,7 +14618,15 @@ impl<'w> Server<'w> {
             };
             // a body locked on its enemy moves through the blend: slower and softer off its facing
             let (ideal, accel) = if enemy_face.is_some() && yaw_err >= 15.0 {
-                let speed = if yaw_err >= NPC_BLEND_SIDE_DEG {
+                // the all-directions blend runs slower the further the path is behind the
+                // facing: the squad mate running for cover with its back to the bot (169 deg
+                // off) makes 7..9 u a think, the leader at 145 deg 12..15, the side 15.7
+                // (server_npc_squad_soldier rows 560..680)
+                let speed = if yaw_err >= NPC_BLEND_BACK_DEG {
+                    NPC_BLEND_BACK_SPEED
+                } else if yaw_err >= NPC_BLEND_REAR_DEG {
+                    NPC_BLEND_REAR_SPEED
+                } else if yaw_err >= NPC_BLEND_SIDE_DEG {
                     NPC_BLEND_SIDE_SPEED
                 } else {
                     1.0
@@ -16228,6 +16252,21 @@ impl<'w> Server<'w> {
 
     /// The first member (lowest id) of a squad of at least two: NPCs of one kind within
     /// NPC_SQUAD_RANGE or of one named squad.
+    /// A squad member with a live mate (by named squad, or the same kind within
+    /// NPC_SQUAD_RANGE as `npc_leads_squad` counts them).
+    fn npc_has_squad_mate(&self, id: u32) -> bool {
+        let Some(n) = self.npcs.get(&id) else {
+            return false;
+        };
+        let squad = self.squads.of(id);
+        self.npcs.iter().any(|(i, o)| {
+            *i != id
+                && o.dead_at.is_none()
+                && ((o.key == n.key && o.pos.distance(n.pos) <= NPC_SQUAD_RANGE)
+                    || squad.is_some_and(|sq| self.squads.of(*i) == Some(sq)))
+        })
+    }
+
     fn npc_leads_squad(&self, id: u32) -> bool {
         let Some(n) = self.npcs.get(&id) else {
             return false;
