@@ -1119,11 +1119,12 @@ SCENARIOS.toolgun = function(scn, done)
 		table.sort(out.spawned, function(a, b) return a.index < b.index end)
 		out.npcs = {}
 		for _, e in ipairs(ents.FindByClass("npc_*")) do
-			if e:GetCreator() == bot then
+			-- the bot's NPCs and what they spawn (a poison zombie's thrown crab has no creator)
+			if e:GetCreator() == bot or not e:CreatedByMap() then
 				local p, a = e:GetPos(), e:GetAngles()
 				local mn, mx = e:OBBMins(), e:OBBMaxs()
 				local w = e.GetActiveWeapon and e:GetActiveWeapon() or NULL
-				out.npcs[#out.npcs + 1] = { index = e:EntIndex(), class = e:GetClass(), key = e.NPCName, model = e:GetModel(), skin = e:GetSkin(),
+				out.npcs[#out.npcs + 1] = { index = e:EntIndex(), class = e:GetClass(), key = e.NPCName, model = e:GetModel(), skin = e:GetSkin(), spawned = e:GetCreator() == bot,
 					pos = vec(p), ang = { a.p, a.y, a.r }, health = e:Health(), maxhealth = e:GetMaxHealth(), mins = vec(mn), maxs = vec(mx),
 					weapon = IsValid(w) and w:GetClass() or "", movetype = e:GetMoveType(), solid = e:GetSolid(), blood = e:GetBloodColor(),
 					sequence = e:GetSequenceName(e:GetSequence()), squad = e.GetSquad and e:GetSquad() or "", flags = e:GetSpawnFlags(), hull = e.GetHullType and e:GetHullType() or -1,
