@@ -2146,6 +2146,8 @@ pub struct Npc {
     pub melee_move: usize,
     pub melee_swing: Option<NpcMelee>,
     pub melee_dash: f32,
+    /// The roar's slide back from the player (u/tick), see `NpcMelee::roar_slide`.
+    pub melee_slide: f32,
     /// A zombie's swat of a physics prop at its enemy (SCHED_ZOMBIE_SWATITEM).
     pub swat: Option<NpcSwat>,
     /// The prop a zombie is walking to a swat position for (SCHED_ZOMBIE_MOVE_SWATITEM).
@@ -2821,7 +2823,16 @@ pub struct NpcMelee {
     pub recoil: f32,
     /// The hit is a poison bite: after the damage the player is left with at least 1 hp.
     pub poison: bool,
+    /// After the last hit the body slides back from the player at this pace (u/tick), decaying
+    /// `NPC_ROAR_SLIDE_DECAY` a tick while the swing lasts: the fast zombie's roar
+    /// (server_npc_melee_fastzombie rows 116..193: 3.3, 3.0, 2.7 .. 1.0 u a think, ~20 u).
+    pub roar_slide: f32,
+    /// Ticks into the swing when the roar (its sequence and the slide) begins: the fast zombie
+    /// scratches at 0 and 14 and roars from 35 (server_npc_melee_fastzombie rows 88/102/123).
+    pub roar_at: u64,
 }
+
+const NPC_ROAR_SLIDE_DECAY: f32 = 0.982;
 
 const NPC_LUNGE_TICKS: u64 = 21;
 /// TASK_WANDER 480384 of SCHED_ZOMBIE_WANDER_MEDIUM: 48..384 u.
@@ -2865,6 +2876,8 @@ const MELEE_PLAIN: NpcMelee = NpcMelee {
     lunge: 0.0,
     recoil: 0.0,
     poison: false,
+    roar_slide: 0.0,
+    roar_at: 0,
 };
 
 /// A leap attack: the NPC throws itself at the player on a ballistic arc (`speed` u/s
@@ -3029,6 +3042,8 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         side: 60.0,
         run: true,
         start_range: 52.0,
+        roar_slide: 0.47,
+        roar_at: 35,
         ..MELEE_PLAIN
     }];
     // server_npc_melee_antlion: a `pounce2` jump-in from 133 u (49 ticks, 28 u of ground, no
@@ -13370,6 +13385,7 @@ impl<'w> Server<'w> {
             next_grenade: 0,
             grenade: None,
             melee_dash: 0.0,
+            melee_slide: 0.0,
             flight: None,
             link_jump: false,
             hung_until: 0,
@@ -14476,6 +14492,49 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// The chase's path: (re)built when the enemy moved `NPC_CHASE_REPATH` from the path's end
+    /// and is beyond `chase_reach`; the think's pre-pass.
+    fn npc_chase_repath(&mut self, id: u32, slot: glam::Vec2) {
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
+        if let Some(p) = n.chase {
+            match self.players.get(&p).map(|pl| pl.state.origin) {
+                Some(target) => {
+                    let stale = n.goal.as_ref().is_none_or(|g| {
+                        g.points.last().is_none_or(|e| {
+                            e.truncate().distance(target.truncate()) > NPC_CHASE_REPATH
+                        })
+                    });
+                    let away = n.pos.truncate().distance(target.truncate()) > n.chase_reach;
+                    if stale && away {
+                        let extents = Vec3::new(32.0, 32.0, 72.0);
+                        let goal = target + slot.extend(0.0);
+                        if let Some(path) = npc_find_path(
+                            self.nav.as_deref(),
+                            self.ai_graph.as_ref(),
+                            n.pos,
+                            goal,
+                            extents,
+                            npc_hull_index(&n.class),
+                            NPC_LOCAL_ROUTE_ENEMY,
+                        ) {
+                            n.goal = Some(NpcPath {
+                                points: path.points,
+                                links: Vec::new(),
+                                idx: 1,
+                                partial: path.partial,
+                                braking: false,
+                                halt: false,
+                            });
+                        }
+                    }
+                }
+                None => n.chase = None,
+            }
+        }
+    }
+
     fn tick_npc_move(&mut self) {
         let prop_bodies = self.prop_bodies();
         // squad members keep the enemy in the face through their whole run to a reload cover
@@ -14600,43 +14659,27 @@ impl<'w> Server<'w> {
                     n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
                 }
             }
-            if let Some(p) = n.chase {
-                match self.players.get(&p).map(|pl| pl.state.origin) {
-                    Some(target) => {
-                        let stale = n.goal.as_ref().is_none_or(|g| {
-                            g.points.last().is_none_or(|e| {
-                                e.truncate().distance(target.truncate()) > NPC_CHASE_REPATH
-                            })
-                        });
-                        let away = n.pos.truncate().distance(target.truncate()) > n.chase_reach;
-                        if stale && away {
-                            let extents = Vec3::new(32.0, 32.0, 72.0);
-                            let slot = slots.get(&id).copied().unwrap_or(glam::Vec2::ZERO);
-                            let goal = target + slot.extend(0.0);
-                            if let Some(path) = npc_find_path(
-                                self.nav.as_deref(),
-                                self.ai_graph.as_ref(),
-                                n.pos,
-                                goal,
-                                extents,
-                                npc_hull_index(&n.class),
-                                NPC_LOCAL_ROUTE_ENEMY,
-                            ) {
-                                n.goal = Some(NpcPath {
-                                    points: path.points,
-                                    links: Vec::new(),
-                                    idx: 1,
-                                    partial: path.partial,
-                                    braking: false,
-                                    halt: false,
-                                });
-                            }
-                        }
-                    }
-                    None => n.chase = None,
-                }
+            // a finished swing resumes the chase in this very think, path and first step
+            // included (the game's fast zombie runs back the think its roar ends,
+            // server_npc_melee_fastzombie rows 221/382/543); the melee think may still swing
+            // again or leap instead
+            if n.chase.is_none()
+                && n.goal.is_none()
+                && n.melee_swing.is_some()
+                && now >= n.swing_until
+                && n.jump_at.is_none()
+                && n.flight.is_none()
+                && !n.ai.scripted
+            {
+                n.chase = n.target;
             }
+            let slot = slots.get(&id).copied().unwrap_or(glam::Vec2::ZERO);
+            self.npc_chase_repath(id, slot);
+            let Some(n) = self.npcs.get_mut(&id) else {
+                continue;
+            };
             let chasing = n.chase.is_some();
+            let run_chase = chasing && n.run;
             let zombie_body = ai::class_is_zombie_body(&n.class);
             let pressed_prop = n.pressed_prop;
             let chase_reach = n.chase_reach;
@@ -14823,17 +14866,23 @@ impl<'w> Server<'w> {
                 ((0.5 * (s0 + v)).min(remaining), v / dt, true)
             } else {
                 let ramp = 0.5 * (s0 + (s0 + a).min(ideal * dt));
-                let curve = if braking {
+                // a running chase keeps full pace into the reach and stops dead (the game's
+                // fast zombie keeps 21 u a think to 46 u from the bot, server_npc_melee_fastzombie
+                // rows 60..81); a walking chase slows over its last ~60 u (the zombie's 4.9 ->
+                // 4.2 u a think, server_npc_melee_zombie rows 139..249), which the brake curve
+                // stands in for
+                let curve = if braking || run_chase {
                     f32::INFINITY
                 } else {
                     (2.0 * NPC_BRAKE_CURVE * a * remaining).sqrt()
                 };
+                let staircase = if run_chase {
+                    f32::INFINITY
+                } else {
+                    brake_staircase(remaining, a)
+                };
                 let floor = if braking { s0 - a } else { s0 - 0.5 * a };
-                let step = ramp
-                    .min(curve)
-                    .min(brake_staircase(remaining, a))
-                    .max(floor)
-                    .min(remaining);
+                let step = ramp.min(curve).min(staircase).max(floor).min(remaining);
                 let braking = braking || step < ramp;
                 // the ramp is a trapezoid of the end-of-think speed, braking moves at the step
                 let v1 = if braking {
@@ -15188,7 +15237,8 @@ impl<'w> Server<'w> {
                     },
                 ),
                 Some("zombie")
-                    if n.class.starts_with("npc_fastzombie") && n.melee_hits_left == 0 =>
+                    if n.class.starts_with("npc_fastzombie")
+                        && now >= n.swing_until.saturating_sub(m.swing_ticks) + m.roar_at =>
                 {
                     Some("BR2_Roar")
                 }
@@ -17598,12 +17648,24 @@ impl<'w> Server<'w> {
                 }
             }
         }
+        // the roar's slide starts `roar_at` ticks into the swing
+        for n in self.npcs.values_mut() {
+            if let Some(m) = n.melee_swing.filter(|m| m.roar_slide > 0.0) {
+                if n.dead_at.is_none()
+                    && now == n.swing_until.saturating_sub(m.swing_ticks) + m.roar_at
+                {
+                    n.melee_slide = m.roar_slide;
+                }
+            }
+        }
         // lunges and recoils: the dash toward (or away from) the target, spread over
         // NPC_LUNGE_TICKS, hull-swept and dropped to the floor
         let dashing: Vec<(u32, u32)> = self
             .npcs
             .iter()
-            .filter(|(_, n)| n.dead_at.is_none() && n.melee_dash.abs() > 1e-3)
+            .filter(|(_, n)| {
+                n.dead_at.is_none() && (n.melee_dash.abs() > 1e-3 || n.melee_slide > 1e-3)
+            })
             .filter_map(|(id, n)| Some((*id, n.target?)))
             .collect();
         for (id, player) in dashing {
@@ -17614,12 +17676,19 @@ impl<'w> Server<'w> {
             let Some(n) = self.npcs.get(&id) else {
                 continue;
             };
-            let (pos, mins, maxs, dash) = (n.pos, n.mins, n.maxs, n.melee_dash);
+            let (pos, mins, maxs, dash, slide) =
+                (n.pos, n.mins, n.maxs, n.melee_dash, n.melee_slide);
+            let sliding = dash.abs() <= 1e-3;
+            let swinging = now < n.swing_until;
             let to = (origin - pos).truncate();
             if to.length_squared() < 1e-6 {
                 continue;
             }
-            let per_tick = dash / NPC_LUNGE_TICKS as f32;
+            let per_tick = if sliding {
+                -slide
+            } else {
+                dash / NPC_LUNGE_TICKS as f32
+            };
             let step = (to.normalize() * per_tick).extend(0.0);
             let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
             let tr = self.collision.trace_box(
@@ -17635,11 +17704,19 @@ impl<'w> Server<'w> {
                 .unwrap_or(reached - lift);
             if let Some(n) = self.npcs.get_mut(&id) {
                 n.pos = floor;
-                n.melee_dash = if dash.abs() <= per_tick.abs() + 1e-3 || tr.fraction < 0.999 {
-                    0.0
+                if sliding {
+                    n.melee_slide = if swinging && tr.fraction >= 0.999 {
+                        slide * NPC_ROAR_SLIDE_DECAY
+                    } else {
+                        0.0
+                    };
                 } else {
-                    dash - per_tick
-                };
+                    n.melee_dash = if dash.abs() <= per_tick.abs() + 1e-3 || tr.fraction < 0.999 {
+                        0.0
+                    } else {
+                        dash - per_tick
+                    };
+                }
             }
         }
     }
@@ -17783,6 +17860,7 @@ impl<'w> Server<'w> {
                 next_grenade: 0,
                 grenade: None,
                 melee_dash: 0.0,
+                melee_slide: 0.0,
                 flight: None,
                 link_jump: false,
                 hung_until: 0,

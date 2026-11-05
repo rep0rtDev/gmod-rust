@@ -162,26 +162,41 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   heading alone does not reproduce the three standing thinks; the gap is in which think the
   face task starts, not in the turn rate.
 
-### NPC: fast zombie scratches (server_npc_melee_fastzombie, 35 u) - measured, open
+### NPC: fast zombie scratches and roar (server_npc_melee_fastzombie 35 → 6.6)
 
 - Per cycle the game's fast zombie scratches twice from 866..869 (3 hp each), roars
   (BR2_Roar, ~100 rows) while backing off ~20 u (869 → 873 → 889), runs back in and scratches
   again. Each scratch shoves the bot ~1..2 u back and ~4 u sideways, alternating (y -504, -505,
   -502, -501): the bot drifts only 823 → 811 over four cycles.
-- Ours scratches from 860..875, stands through the roar, idles a think, then runs in; each
-  scratch pushed the bot straight back, 12..13 u a cycle (823 → 811 → 798 → 785) - that drift
-  was the 35 u.
-- Now (`NpcMelee::side`): each scratch shoves 15 u/s back and 60 u/s sideways, the side
-  alternating per hit (first to the zombie's right, as the game's y -504 then -505 / -502):
-  the bot drifts 823 → 808 over four cycles like the game. 53-scene sweep 2126 → 2111,
-  fastzombie 35 → 21. Open: the ~20 u back-off during the roar - a slide of 3.3, 3.0, 2.7
-  ... 1.0 u a think (decay ~0.9 a think, rows 116..193) after the second scratch, the roar one
-  think later than ours and the run in the think the roar ends (ours stands, then idles a
-  think); `recoil: 20` on the FAST move was tried and dropped (it fires on both scratches from
-  the hit: 20.6 → 35); the same recoil only after the second scratch: 20.6 → 25.5 - our dash
-  spends it over 21 ticks from the hit where the game's slide takes ~67 ticks of the roar
-  (0.3 u a tick decaying 0.985 a tick). Also the remaining ~8 u of lateral position.
-
+- `NpcMelee::side`: each scratch shoves 15 u/s back and 60 u/s sideways, the side alternating
+  per hit; the bot drifts 823 → 808 over four cycles like the game (35 → 21).
+- The roar, measured by row: the hits land at the swing's tick and +14 in both, but the game's
+  `BR2_Roar` and its slide start 35 ticks into the 133-tick swing (rows 88 / 102 / 123), not at
+  the second hit; the slide is 3.3, 3.0, 2.7 .. 1.0 u a think over the 98 ticks of roar, ~20 u.
+  `NpcMelee::roar_at` (35) and `roar_slide` (0.47 u/tick, decaying `NPC_ROAR_SLIDE_DECAY`
+  0.982 a tick while the swing lasts, hull-swept in the dash pass) reproduce 875 → 897.
+  `recoil: 20` (a 21-tick dash from the hit) had been tried twice and dropped (35 / 25.5).
+- The run back: the game runs the think its roar ends (rows 221 / 382 / 543), ours idled a
+  think - `npc_chase` only flags the chase and the path was built in the next think's
+  pre-pass. Now the pre-pass restores `chase = target` for an expired melee swing (not
+  leaping, not scripted), so the path and the first step land in the swing-end think. Cycle
+  period 161 rows like the game.
+- The run in: pace identical to row 60 (929 / 931), then the game keeps 21 u a think to 869 and
+  stops dead - the think that finds the bot inside 52 u - where ours braked over 35 rows toward
+  `chase_reach`. A running chase (`chasing && run`) now skips the brake curve and staircase;
+  a walking chase keeps them (the game's zombie does slow 4.9 → 4.2 u a think over its last
+  66 u, server_npc_melee_zombie rows 139..249, and ungated the walkers arrived 7 rows early:
+  can 12.6 → 17.4, swat_far 81 → 90, poison_long 310 → 320).
+- 53-scene sweep 2037.8 → 2023.3: fastzombie 20.6 → 6.6, antlion 63.2 → 41.6, poisonzombie
+  176.9 → 166.1, melee_zombie 8.5 → 5.8, gascan 34.6 → 29.9, heavy 29.6 → 28.9; poison_long
+  309.5 → 344.3 and swat_far 80.8 → 85.4 move downstream of pre-existing divergences (their
+  bot ends at (969,722) against the game's (704,-32); the swat_far bot walks to 845 by row 45
+  in the game and stays at 823 in ours), so the deltas there are chaos, not these rules.
+- Open: ours now runs the whole cycle 7 rows early (Melee 81 / 242 / 403 vs 88 / 249 / 410,
+  stop 872 vs 869) - the first arrival; the ~8 u of lateral position; and the walking zombie's
+  reach - the game's zombie in server_npc_melee_zombie walks in to 39 u (862 against the bot's
+  823) before its first claw where ours swings at 54 u (877), yet in swat2_can both swing at
+  52 u (875) - the melee range is not a plain origin distance.
 ### NPC: the squad mate's run to cover (server_npc_squad_soldier, 219 u) - measured, open
 
 - The game's mate runs RunAIMALL1 with its back to the bot (path 169 deg off its facing) at
