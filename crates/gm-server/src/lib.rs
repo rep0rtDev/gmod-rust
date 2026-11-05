@@ -2316,8 +2316,12 @@ pub const NPC_THINK_TICKS_FAR: u8 = 13;
 pub const NPC_EFFICIENT_DIST: f32 = 296.0;
 /// An NPC's wide view field (VIEW_FIELD_WIDE): a player inside it keeps the normal think.
 pub const NPC_SEE_PLAYER_COS: f32 = -0.7;
-/// cos of the player's half field of view the efficiency test uses (VIEW_FIELD_WIDE).
-pub const NPC_VIEW_CONE_COS: f32 = 0.766;
+/// cos of the player's half field of view the efficiency test uses: VIEW_FIELD_WIDE, since the
+/// records only drop to the efficient think with the NPC 155 deg or more off the player's facing
+/// (server_npc_walk_citizen_corner*) and keep the normal think up to 89 deg off at 300..620 u
+/// (server_npc_assault_citizen 56..70 deg at 306..521 u, walk_citizen_turn90 54..60 deg,
+/// grenade/squad soldiers 42..60 deg, melee_poisonzombie 74..88 deg).
+pub const NPC_VIEW_CONE_COS: f32 = -0.7;
 /// A chasing NPC comes to rest this far from its target and re-paths once the target has
 /// moved this much off the end of its path.
 pub const NPC_CHASE_REACH: f32 = 64.0;
