@@ -1,6 +1,6 @@
 //! cargo run -p gm-formats --example seq_info -- <dir.vpk> <model.mdl> [name-filter]: every
 //! sequence of a model and its include models with the animation's fps / frames / period /
-//! loop flag / ground speed.
+//! loop flag / ground speed, and each blend animation's ground speed.
 fn main() {
     let mut args = std::env::args().skip(1);
     let vpk = gm_formats::vpk::Archive::open(args.next().unwrap()).unwrap();
@@ -40,6 +40,28 @@ fn main() {
                 q.act_weight,
                 flags & 1 != 0
             );
+            if q.blends.len() > 1 {
+                let row: Vec<String> = q
+                    .blends
+                    .iter()
+                    .map(|&b| {
+                        anims
+                            .get(usize::try_from(b).unwrap_or(usize::MAX))
+                            .map_or_else(
+                                || format!("{b}:?"),
+                                |a| format!("{}={:.1}", a.name, a.ground_speed()),
+                            )
+                    })
+                    .collect();
+                println!(
+                    "    blend {:?} param {:?} {:?}..{:?}: {}",
+                    q.group_size,
+                    q.param,
+                    q.param_start,
+                    q.param_end,
+                    row.join(" ")
+                );
+            }
         }
     }
 }
