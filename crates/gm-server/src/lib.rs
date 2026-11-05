@@ -3109,6 +3109,10 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
 const NPC_CORNER_REACH: f32 = 8.0;
 /// The hull is swept this far above the feet (the step height) when it moves along a path.
 const NPC_STEP_LIFT: f32 = 18.0;
+/// How far out along the turn's outer bisector a route corner the hull catches on is pushed,
+/// smallest first (`npc_widen_corners`); the bracket from server_npc_assault_citizen is the
+/// mesh corner (1008,16) stalling against the wall corner (1024,10) and the game's ~(1010,26).
+const NPC_CORNER_WIDEN: [f32; 4] = [4.0, 8.0, 13.0, 16.0];
 
 /// Ticks a dead NPC stays on the server before it is removed (measured 66..106 for the
 /// metropolice, 76..96 for the headcrab); the corpse itself is the client's ragdoll.
@@ -13732,6 +13736,9 @@ impl<'w> Server<'w> {
             return false;
         };
         let partial = path.partial;
+        let mut points = path.points;
+        let (mins, maxs) = (n.mins, n.maxs);
+        self.npc_widen_corners(&mut points, mins, maxs);
         if let Some(n) = self.npcs.get_mut(&id) {
             n.run = run;
             if n.goal.is_some() && n.move_speed > 0.0 {
@@ -13745,7 +13752,7 @@ impl<'w> Server<'w> {
             // a new path starts its own ramp: the reversal of the previous one is over
             n.reversal = 0;
             n.goal = Some(NpcPath {
-                points: path.points,
+                points,
                 links,
                 idx: 1,
                 partial,
@@ -13754,6 +13761,47 @@ impl<'w> Server<'w> {
             });
         }
         true
+    }
+
+    /// A route corner the box hull cannot take: the mesh keeps its corners one agent radius
+    /// (16 u) off a wall end, the hull's half-diagonal (18.4 u for a human) reaches past that
+    /// on a diagonal pass and the step past the corner catches the wall end (the assault
+    /// citizen's (1008,16) by the wall corner (1024,10): two thinks of 4 and 2 u sliding north
+    /// where the game ran 22 u round a corner ~10 u wider). The engine's local route is
+    /// triangulated round the blocker's apex with hull-sized clearance, so a corner whose
+    /// legs the hull catches on is pushed out along the turn's outer bisector by the smallest
+    /// of NPC_CORNER_WIDEN that frees both legs; one the hull passes anyway stays put.
+    fn npc_widen_corners(&self, points: &mut [Vec3], mins: Vec3, maxs: Vec3) {
+        let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
+        let clear = |a: Vec3, b: Vec3| {
+            let tr = self.collision.trace_box(
+                a + lift,
+                Vec3::new(b.x, b.y, a.z) + lift,
+                mins,
+                maxs,
+                gm_collision::MASK_PLAYERSOLID,
+            );
+            tr.fraction >= 0.999 && !tr.start_solid
+        };
+        for i in 1..points.len().saturating_sub(1) {
+            let (a, b, c) = (points[i - 1], points[i], points[i + 1]);
+            if clear(a, b) && clear(b, c) {
+                continue;
+            }
+            let ab = (b - a).truncate().normalize_or_zero();
+            let cb = (b - c).truncate().normalize_or_zero();
+            let out = (ab + cb).normalize_or_zero();
+            if out.length_squared() < 0.5 {
+                continue;
+            }
+            for w in NPC_CORNER_WIDEN {
+                let b2 = b + (out * w).extend(0.0);
+                if clear(a, b2) && clear(b2, c) {
+                    points[i] = b2;
+                    break;
+                }
+            }
+        }
     }
 
     /// Own behaviour, no oracle: the NPC follows `player`, re-pathing on its think whenever
