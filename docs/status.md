@@ -221,11 +221,13 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 
 ### NPC: server_npc_damage (55 u @68) - measured, open
 
-- Metrocop (rows 3..24): the game's walks north-west off the firing line (y -500 → -471) and
-  the `firebullets` ops hit for 2..3 or miss (hp 48, 45, 45, 42, 37, 32, 29); ours walks
-  straight west down the line and takes 5 every op (48 → 20).
-- Second spawn: the game's corpse lies at (948,-522) and the soldier spawns at (940,-526); ours
-  (926,-500) and (926,-500) - the spawn trace lands on the corpse line, 26 u off in y.
+- Zombie (rows 3..24, the scene's first spawn; every damage op is `firebullets` Pistol): the
+  game's walks north-west off the firing line (y -500 → -471) and the ops hit for 2..3 or miss
+  (hp 48, 45, 45, 42, 37, 32, 29); ours walks straight west down the line and takes 5 every
+  op (48 → 20).
+- Later spawns (pitch 20 aim trace) land on the previous corpse: the game's zombie ragdoll
+  rests at (948,-522) and the soldier spawns at (940,-526); ours stays at (926,-500) and the
+  soldier spawns there - the 26 u in y is the ragdoll's rest position, not the spawn rule.
 - Soldier: the game takes 8 standing (CombatIdle) then 16 per op crouched (CrouchIdle) and is
   dead by row 60; ours 8 x4, then runs (RunAIMALL1 from row 61) taking 4 per op and dies at 70.
   To check: the crouched head hitgroup (sk_npc_head x2) and why ours halves (one of two
