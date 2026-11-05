@@ -308,7 +308,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   per label (walk 4.45 u a think, walk4 4.70, the medians) was built and refuted by rows: the
   same `walk` runs 4.7 u a think for a whole approach (261105) or switches to 4.4 mid-run
   (261104 from x≈940 on), so the medians were a mixture inside `walk`; the 4.7 → 4.4 switch
-  is open and unmeasured (sum 2033 → 2058 with the per-label pace, back to 2033 without).
+  was then found (sum 2033 → 2058 with the per-label pace, back to 2033 without): only in
+  261104 the bot shifted 37 u south at ~row 100 ((823,-500) → (823,-537); not in the
+  scenario - ours and 261105 keep it still), and the game's zombie kept walking its y = -500
+  path while its body turned to the bot (yaw tracks the bearing with a ~2 deg lag: 184 / 192
+  / 195 / 200 against 185 / 196 / 198 / 202), so its step along the path fell as 4.73 · cos
+  of the yaw error (20 deg → 4.44). Session noise, not a rule to build; the observation that a
+  walking zombie faces its moved enemy while its feet keep the path, with the step projected,
+  is the general part and unbuilt (ours faces its step: yaw 180 throughout).
 
 - The leader's wait, by row (game 637..714): the leader reaches (953,7) at 637 (14 u a think,
   then 1.0 at 644), creeps east from rest at 3.0 / 5.1 / 7.1 u a think (651..665), stops
