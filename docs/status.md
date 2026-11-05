@@ -299,6 +299,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   avoidance) and not a gait speed; the lone soldier's cover run keeps full pace (the bands on
   its route-facing run took grenade_soldier 47.9 → 109.7, dropped). Sweep 2035.7 → 2033.2:
   squad 164.2 → 162.4, grenade_soldier_low 10.7 → 10.0. Open: the zigzag itself.
+
+- The leader's wait, by row (game 637..714): the leader reaches (953,7) at 637 (14 u a think,
+  then 1.0 at 644), creeps east from rest at 3.0 / 5.1 / 7.1 u a think (651..665), stops
+  again (0.8 at 672) and restarts 3.0 / 5.9 / 8.8 / 11.7 / 14.6 / 17.5 (679..714) - a second
+  run start - then holds a constant ~128 u gap behind the mate: a follow, not a node run. The
+  mate makes 8..13 u a think to (1041,33) at 672 and 16..19 after. Ours: the leader runs
+  13.1 u a think north along x≈975 past (978,63) with no stop and no second start; the mate
+  at full 13 u a think reaches its node by 672 where the game's gets there near 770. Open:
+  the leader's two-stage restart and the follow gap, and the mate's zigzag pace.
 ### NPC: server_npc_damage (55 → 36.4 u @23) - measured, open
 
 - Zombie (rows 3..24, the scene's first spawn; every damage op is `firebullets` Pistol): the
