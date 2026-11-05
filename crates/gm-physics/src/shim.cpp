@@ -1053,6 +1053,7 @@ public:
 			return c * n - sn * (vh - n * dot);
 		};
 		bool logged = false;
+		bool flat_ring = false; // slow flat ring landing: normal push at the vertex, friction at the centre
 		auto resolve = [&](Pt &pt) {
 			JPH::Vec3 v = rel(pt.p);
 			float vn = v.Dot(n);
@@ -1064,6 +1065,8 @@ public:
 				                               float(pt.p.GetX()), float(pt.p.GetY()), float(pt.p.GetZ()), -vn});
 			}
 			pt.dir = direction(v, n);
+			if (flat_ring) pt.dir = n;
+			float jn_total = 0.0f;
 			float mv1 = virt_mass(b1, pt.p, pt.dir, m2, static_mass_factor);
 			float mv2 = virt_mass(b2, pt.p, pt.dir, m1, static_mass_factor);
 			pt.step = push_fraction * (-2.0f * vn * (mv1 * mv2 / (mv1 + mv2)));
@@ -1072,13 +1075,15 @@ public:
 			// normal part induces - the game's lockers (2000 kg) take 0.41 of the normal impulse
 			// tangentially where the full Coulomb tilt gives 0.78; a corner that slides in keeps
 			// the full tilt (the tilted crate's second corner)
-			bool stick = true; // measured on the slip series: the lockers stick at every entry slip
+			bool stick = !flat_ring; // measured on the slip series: the lockers stick at every entry slip
 			for (int it = 0; it < 100 && vn < 0.0f; ++it) {
 				push(b1, pt.p, pt.dir * pt.step);
 				push(b2, pt.p, -pt.dir * pt.step);
+				jn_total += pt.step;
 				v = rel(pt.p);
 				vn = v.Dot(n);
 				pt.dir = direction(v, pt.dir);
+				if (flat_ring) pt.dir = n;
 				if (!stick) continue;
 				JPH::Vec3 vt = v - n * vn;
 				float vt_len = vt.Length();
@@ -1105,6 +1110,17 @@ public:
 				if (std::fabs(dvn) > 1e-4f) {
 					push(b1, pt.p, pt.dir * (wanted / dvn));
 					push(b2, pt.p, -pt.dir * (wanted / dvn));
+				}
+			}
+			if (flat_ring) {
+				const JPH::Body &dyn = b1.IsDynamic() ? b1 : b2;
+				float mdyn = b1.IsDynamic() ? m1 : m2;
+				JPH::Vec3 vc = dyn.GetLinearVelocity();
+				JPH::Vec3 vt = vc - n * vc.Dot(n);
+				float vt_len = vt.Length();
+				if (vt_len > 1e-6f) {
+					float jt = std::min(friction * jn_total, vt_len * mdyn);
+					push(dyn, dyn.GetCenterOfMassPosition(), -(vt / vt_len) * jt);
 				}
 			}
 			return true;
@@ -1216,6 +1232,15 @@ public:
 					if (dyn.GetAngularVelocity().Length() < 0.5f) {
 						face.clear();
 						ring = false;
+						JPH::Vec3 vc0 = dyn.GetLinearVelocity();
+						float vt0 = (vc0 - n * vc0.Dot(n)).Length();
+						// a flat ring landing that slides slowly (the drum kicked 50 u/s: 1.27 m/s) takes
+						// its friction through the centre: the game's drum leaves the strike at 104 deg/s
+						// and rocks back from -17 deg where the vertex friction with its 0.36 m lever gave
+						// 120 deg/s about the slip axis and tipped it (`phys_slide_barrel_v50` 45 -> 6.2 u);
+						// at 100 u/s and above the game tips exactly as the vertex friction does (v100 8.6,
+						// v200 7.7, both 85+ u with centre friction), so the gate sits between the two
+						flat_ring = vt0 > 0.3f && vt0 < 2.0f;
 					}
 				}
 				if (ring) {
