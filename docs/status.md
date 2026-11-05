@@ -199,3 +199,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   grenade_soldier / low / wall unchanged (47.9 / 10.7 / 25.9). Open: the mate still makes 13 u a
   think against the game's 7..9 (the blend's backward pace is a first fit at 0.36 / 0.58), and
   the leader's wait behind the mate on rows 644..686.
+- Measured after dd6ff00 (14-row steps, `off` = angle between the path step and the recorded
+  yaw): the game's body yaw in RunAIMALL1 is not locked on the bot. The leader runs rows
+  398..482 at 80..112 deg off (14..32 u a step), 496..540 at 0..13 deg - facing its path - at
+  41..45, 552..636 at 19..42 deg at 24..29; the mate 398..552 at 20..80 deg (14..21), 566..664
+  at 30..77 (13..24), then 74..137 deg in RunALL (31..35). Ours hold 120..158 deg (the bot)
+  at the 26.2 cap. The pace-vs-angle bands are in the right range; the open part is the yaw
+  rule itself - it wanders between the path and the bot (the leader faces the path exactly
+  where the house hides the bot, rows 496..540).
