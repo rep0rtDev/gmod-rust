@@ -266,3 +266,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   not a route rule; a general apex beside the player's hull would break every melee scene.
   To measure next: what the zombie does when hit before it has acquired an enemy (the
   schedule and the 79-u leg), and whether npc_flinch_soldier shows the same.
+- Resolved as random: a zombie hit in ALERT with no enemy yet runs the game's
+  SCHED_ZOMBIE_WANDER_ANGRILY (TASK_WANDER, a random point 48..240 u away) and only then
+  chases the bot it sees on the way - the 79-u leg's direction is a random draw, like the
+  post-death respawns, so it is not reproducible from the trace; ours wakes on the hit and
+  chases straight. Deterministic leftovers in this scene: the crouched soldier's doubled
+  damage per op, the citizen's run + `pickup`, and Alyx losing 2..3 hp per four rows where
+  ours loses 16.
