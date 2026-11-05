@@ -246,3 +246,8 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   at a node near (930,-468) - the same node-route pattern as assault_citizen's arc. The hit
   tally follows from it: the game's pistol takes 3, 0, 2, 1, 2, 3, 2, 3, 0, 3 (misses and
   partial hits while the body is off the line), ours 3 / 2 alternating on every op.
+- Checked against `gm_construct.ain` (959 nodes): assault_citizen's corners are exact nodes
+  (460 at (1201,72), 141 at (1201,-255)), so that arc is a graph route; the zombie's 155 deg
+  leg in npc_damage has no node on it (the nearest, 591 at (965,-491), lies 8 u off and at
+  166 deg) and ends at (929,-468) where nothing is - that drift is not a graph route; a local
+  detour or an offset chase goal are the candidates to measure next.
