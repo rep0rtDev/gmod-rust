@@ -13582,6 +13582,7 @@ impl<'w> Server<'w> {
         }
         if n.health <= 0.0 {
             n.dead_at = Some(tick);
+            n.ai.state = ai::NPC_STATE_DEAD;
             n.movetype = 0;
             // the weapon leaves the dead hands: the game drops it as a world entity
             let dropped = std::mem::take(&mut n.weapon);
