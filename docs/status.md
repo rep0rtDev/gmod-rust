@@ -133,3 +133,18 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   nothing pushes a crate the zombie stands on; swat2_drum 6 → 36: the walk climbs the drum at
   row 210). Spawn-only: zombie_swat 40 → 137. Both reverted. Needs the crate to slide from
   under a body standing on it (the game's shadow pushes it out), not a floor rule.
+
+### NPC: the assault citizen's arc round the building (server_npc_assault_citizen, 70 u)
+
+- Measured from the golden: the run from the rally to the assault point (1292,-200) is the node
+  path (1201,72) → (1201,-255) → (1292,-200) with its corners cut progressively, never an exact
+  waypoint: heading 13 deg at (1073,46) (straight at (1201,72)), 4 at (1095,47), 335 at
+  (1128,25), 298 at (1147,-10), 281 at (1166,-71) and (1174,-115) (straight at (1201,-255),
+  187 u out), 298 at (1189,-155), 313 at (1206,-163), 337 from (1242,-178) (straight at the
+  point). That is the engine's forward path simplification: each think the body heads for the
+  farthest point of the remaining polyline it can reach in a straight hull move within a
+  look-ahead; the last cut (toward the point) starts between 145 and 112 u from it.
+- Ours takes the direct navmesh diagonal (1132,23) → (1292,-200) (the local-route rule from the
+  earlier measurement that the node route via (979,72) and (1201,72) arrived 51 thinks late)
+  and arrives ~24 rows early; the 70 u is the lateral gap of the arc at row 443. Open: the
+  node path plus a bounded forward scan instead of either extreme.
