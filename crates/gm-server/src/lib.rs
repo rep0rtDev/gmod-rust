@@ -2704,6 +2704,9 @@ pub struct NpcMelee {
     /// A second hit this many ticks after the first (the fast zombie's double claw).
     pub hit_gap: Option<u64>,
     pub punch: f32,
+    /// A sideways shove on the hit (u/s), alternating left / right per hit: the fast
+    /// zombie's scratches move the bot ~4 u aside and 1..2 u back (server_npc_melee_fastzombie).
+    pub side: f32,
     /// Upward speed the hit adds, lifting the player off the floor for its rise (no friction
     /// meanwhile): the zombie claw (server_npc_melee_zombie 261105: ~320 u/s for ~6 ticks
     /// before friction, 63 u of slide).
@@ -2755,6 +2758,7 @@ const MELEE_PLAIN: NpcMelee = NpcMelee {
     hit_tick: 0,
     hit_gap: None,
     punch: 0.0,
+    side: 0.0,
     lift: 0.0,
     run: false,
     start_range: 0.0,
@@ -2922,7 +2926,8 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         swing_ticks: 133,
         hit_tick: 0,
         hit_gap: Some(14),
-        punch: 60.0,
+        punch: 15.0,
+        side: 60.0,
         run: true,
         start_range: 52.0,
         ..MELEE_PLAIN
@@ -17279,9 +17284,19 @@ impl<'w> Server<'w> {
                 self.throw_crab(id, player);
                 continue;
             }
+            let hits_left = self.npcs.get(&id).map_or(0, |n| n.melee_hits_left);
             if self.damage_player(player, m.damage, weapons::DMG_SLASH) > 0.0 {
                 if let Some(p) = self.players.get_mut(&player) {
                     p.state.velocity += dir.extend(0.0) * m.punch;
+                    if m.side > 0.0 {
+                        let sign = if hits_left.is_multiple_of(2) {
+                            -1.0
+                        } else {
+                            1.0
+                        };
+                        p.state.velocity +=
+                            glam::Vec2::new(-dir.y, dir.x).extend(0.0) * m.side * sign;
+                    }
                     // the claw's force runs from the zombie's origin to the bot's: only a bot
                     // standing higher gets an upward share and leaves the ground
                     // (server_npc_melee_zombie: bot 1 u up, force z +130 of 7500, 63 u flight;

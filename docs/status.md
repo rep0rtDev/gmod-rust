@@ -169,6 +169,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   again. Each scratch shoves the bot ~1..2 u back and ~4 u sideways, alternating (y -504, -505,
   -502, -501): the bot drifts only 823 → 811 over four cycles.
 - Ours scratches from 860..875, stands through the roar, idles a think, then runs in; each
-  scratch pushes the bot straight back, 12..13 u a cycle (823 → 811 → 798 → 785) - that drift
-  is the 35 u. To do: the scratch's lateral shove with the small backward share, and the
-  back-off during the roar.
+  scratch pushed the bot straight back, 12..13 u a cycle (823 → 811 → 798 → 785) - that drift
+  was the 35 u.
+- Now (`NpcMelee::side`): each scratch shoves 15 u/s back and 60 u/s sideways, the side
+  alternating per hit (first to the zombie's right, as the game's y -504 then -505 / -502):
+  the bot drifts 823 → 808 over four cycles like the game. 53-scene sweep 2126 → 2111,
+  fastzombie 35 → 21. Open: the ~20 u back-off during the roar (ours stands, then idles a
+  think before the run in) and the remaining ~8 u of lateral position.
