@@ -313,7 +313,12 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   (north along x≈975); the mate's (1201,72) is node 460 exactly. So the game's leader took a
   lateral cover point (hull trace, not the graph) and then followed the mate; ours takes the
   graph's node. The lateral point is `npc_lateral_point`'s job (it ran first and found none
-  here) - its search against the game's (953,7) is the next thing to measure.
+  here) - but (953,7) is no lateral point either: `npc_lateral_point` steps perpendicular to
+  the threat from the body's own feet, and (953,7) lies 324 u north of where the leader's run
+  starts (~(974,-317), row 492). The leader faces (953,7) exactly once its aim window ends
+  (yaw 92 / 86 / 80 / 71 = the bearing), so it is the route goal itself: a non-node cover
+  position 29 u from node 654 - a squad-slot or cover position taken relative to the mate or
+  the enemy's last known position rather than FindCoverPos's node. Open.
 ### NPC: server_npc_damage (55 → 36.4 u @23) - measured, open
 
 - Zombie (rows 3..24, the scene's first spawn; every damage op is `firebullets` Pistol): the
