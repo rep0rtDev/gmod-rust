@@ -2188,6 +2188,9 @@ pub struct Npc {
     pub lof_arrived: u64,
     /// The tick the body finished its last path (`npc_goal_done`).
     pub path_done_at: u64,
+    /// Tick the current path was handed out (`npc_goto`): an armed body faces its enemy for
+    /// NPC_AIM_RUN_TICKS of a run, then turns to its path.
+    pub goal_started: u64,
     /// SCHED_SHOOT_ENEMY_COVER: the enemy is out of sight and the body shoots its cover.
     pub cover_fire: bool,
     /// SCHED_RELOAD: the run to the reload cover was blocked by another NPC, reload in place.
@@ -2707,6 +2710,15 @@ const NPC_POISON_WARNING_TICKS: u64 = 77;
 /// SCHED_COMBINE_SUPPRESS lasts the first volley: the game read 88 for 40 ticks after the
 /// sight think and 100 from 43..46 on (server_npc_grenade_soldier); 40 on our 7-tick grid.
 const NPC_SUPPRESS_TICKS: u64 = 40;
+/// An armed body running with its enemy in sight faces it (RunAIMALL1, the all-directions
+/// blend) for 13 thinks of the run and then turns to its path: the lone soldier of
+/// server_npc_grenade_soldier and the squad leader both leave (992,-499) for the reload cover
+/// facing the bot and turn at (975,-332), rows 341 -> 432 and 388 -> 479; the squad mate
+/// 300 -> 398. Nothing blocks a sight line there (eye, chest and feet lines stay clear).
+/// An enemy sighted again on the way restarts the window (server_npc_grenade_soldier_wall: the
+/// bot teleports back into view at row 138 of the line-of-fire run, RunAIMALL1 and a burst on
+/// the move follow until the spot is reached at 201).
+const NPC_AIM_RUN_TICKS: u64 = 91;
 /// Thinks of COMBAT_FACE a zombie spends on its respawned enemy before chasing again.
 const NPC_REACQUIRE_FACE_TICKS: u64 = 21;
 
@@ -13181,6 +13193,7 @@ impl<'w> Server<'w> {
             flank_until: 0,
             lof_arrived: 0,
             path_done_at: 0,
+            goal_started: 0,
             detour: None,
             detour_side: 0.0,
             detour_until: 0,
@@ -13792,6 +13805,7 @@ impl<'w> Server<'w> {
         }
         let extents = Vec3::new(32.0, 32.0, 72.0);
         let caps = npc_move_caps(&n.class);
+        let started = self.tick_count;
         let Some((path, links)) = npc_find_route(
             Some(nav),
             self.ai_graph.as_ref(),
@@ -13840,6 +13854,7 @@ impl<'w> Server<'w> {
             }
             // a new path starts its own ramp: the reversal of the previous one is over
             n.reversal = 0;
+            n.goal_started = started;
             n.goal = Some(NpcPath {
                 points,
                 links,
@@ -14451,10 +14466,14 @@ impl<'w> Server<'w> {
             // the think it clears the wall's end (t1602); the t2260 run faces it throughout)
             // (the flight from a danger sound faces its path: server_npc_grenade_soldier_wall
             // t2365 RunALL turning 16 deg a think right after a burst at the visible bot)
+            let armed = !(n.weapon.is_empty() || n.weapon == "none");
             let enemy_face = n
                 .target
                 .and(n.last_known)
                 .filter(|_| n.target_seen + n.think_interval as u64 >= now && !n.cover_from_sound)
+                .filter(|_| {
+                    !armed || now <= n.goal_started.max(n.reacquired_at) + NPC_AIM_RUN_TICKS
+                })
                 .map(|k| k.truncate());
             // a corner within reach is passed only when the hull can already sweep to the
             // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
@@ -15243,17 +15262,13 @@ impl<'w> Server<'w> {
             }
             let (enemy_eye, _) = server.eye(p)?;
             // the sight line runs to the enemy's eyes (server_npc_grenade_soldier_low: the
-            // bot's head stays seen through the seam of the crate wall) and to its feet: the
-            // soldier of server_npc_grenade_soldier loses the bot behind the fridge row on
-            // its way to the reload cover (ops 432..530, turning to its path and running the
-            // plain gait) while the eye and chest lines stay clear and only the line to the
-            // origin clips the fridge tops - an armed body's line; an unarmed one sees by the
-            // eye line alone (server_npc_zombie_swat3_a_drum875: the zombie takes the bot over
-            // the upright drum between them, which blocks only the line to the feet)
-            let armed = !(n.weapon.is_empty() || n.weapon == "none");
-            (server.npc_los(eye, enemy_eye)
-                && (!armed || n.goal.is_none() || server.npc_los(eye, pl.state.origin)))
-            .then_some(chest)
+            // bot's head stays seen through the seam of the crate wall;
+            // server_npc_zombie_swat3_a_drum875: the zombie takes the bot over the upright drum
+            // between them, which blocks only the line to the feet). The soldier turning to
+            // its path on the reload run (server_npc_grenade_soldier rows 432..530) is the end
+            // of its aim-run window (NPC_AIM_RUN_TICKS), not a lost line: the squad leader turns
+            // at the same spot with every line clear
+            server.npc_los(eye, enemy_eye).then_some(chest)
         };
         // keep the current target while visible, otherwise the nearest visible player
         let mut target = n.target.and_then(|p| sees(self, p).map(|c| (p, c)));
@@ -17184,6 +17199,7 @@ impl<'w> Server<'w> {
                 flank_until: 0,
                 lof_arrived: 0,
                 path_done_at: 0,
+                goal_started: 0,
                 detour: None,
                 detour_side: 0.0,
                 detour_until: 0,
