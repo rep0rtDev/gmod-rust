@@ -149,3 +149,36 @@ fn moving_brushes_are_networked_and_left_out_of_the_baked_world() {
         "the client draws it as a dynamic model"
     );
 }
+
+#[test]
+fn a_pressed_button_plays_its_buttons_snd_sound() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_map_entities(world.map_entities.clone(), world.surface);
+    let button = server
+        .map_io
+        .entities
+        .iter()
+        .find(|e| e.classname == "func_button")
+        .cloned()
+        .expect("gm_construct has a func_button");
+    assert_eq!(button.def.get("sounds"), Some("14"));
+    server.take_sounds();
+    assert!(server.fire_input_id(button.id, "Press", "", 0));
+    let sounds = server.take_sounds();
+    let snd = sounds
+        .iter()
+        .find(|s| s.name == "Buttons.snd14")
+        .expect("the press plays Buttons.snd14");
+    assert!((snd.pos - button.center()).length() < 1e-3);
+    assert!(server.fire_input_id(button.id, "Press", "", 0));
+    assert!(
+        server
+            .take_sounds()
+            .iter()
+            .all(|s| s.name != "Buttons.snd14"),
+        "a button already travelling does not play again"
+    );
+}

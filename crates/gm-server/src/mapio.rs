@@ -187,7 +187,70 @@ pub struct MapEntity {
     last_pos: Vec3,
 }
 
+/// A brush entity's sound events.
+#[derive(Clone, Copy, PartialEq)]
+enum EntSound {
+    Move,
+    Arrive,
+    Locked,
+}
+
 impl MapEntity {
+    /// The entity is travelling or spinning.
+    pub fn moving(&self) -> bool {
+        match &self.kind {
+            Kind::Mover { state, .. } | Kind::Rotator { state, .. } => {
+                matches!(state, Toggle::GoingUp | Toggle::GoingDown)
+            }
+            Kind::Spinner { on, .. } => *on,
+            _ => false,
+        }
+    }
+
+    /// World centre of the brush model.
+    pub fn center(&self) -> Vec3 {
+        self.pos + self.rot * ((self.def.mins + self.def.maxs) * 0.5)
+    }
+
+    /// The sound script of the event as the SDK picks it: doors `noise1` / `noise2` /
+    /// `locked_sound` with the `DoorSound.*` (`RotDoorSound.*`) defaults, buttons
+    /// `Buttons.snd<sounds>` / `<locked_sound>`, func_movelinear `startsound` / `stopsound`,
+    /// func_rotating `message`, plats and trains `noise1` / `noise2`.
+    fn sound(&self, which: EntSound) -> Option<String> {
+        let kv = |k: &str| {
+            self.def
+                .get(k)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        };
+        let button = |k: &str| {
+            self.def
+                .get(k)
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .filter(|&n| n > 0)
+                .map(|n| format!("Buttons.snd{n}"))
+        };
+        let door = |prefix: &str| match which {
+            EntSound::Move => kv("noise1").or_else(|| Some(format!("{prefix}.DefaultMove"))),
+            EntSound::Arrive => kv("noise2").or_else(|| Some(format!("{prefix}.DefaultArrive"))),
+            EntSound::Locked => {
+                button("locked_sound").or_else(|| Some(format!("{prefix}.DefaultLocked")))
+            }
+        };
+        match (self.classname.as_str(), which) {
+            ("func_door_rotating", _) => door("RotDoorSound"),
+            ("func_door", _) => door("DoorSound"),
+            ("func_movelinear", EntSound::Move) => kv("startsound"),
+            ("func_movelinear", EntSound::Arrive) => kv("stopsound"),
+            ("func_button" | "func_rot_button", EntSound::Move) => button("sounds"),
+            ("func_button" | "func_rot_button", EntSound::Locked) => button("locked_sound"),
+            ("func_rotating", EntSound::Move) => kv("message"),
+            ("func_plat" | "func_platrot" | "func_tracktrain", EntSound::Move) => kv("noise1"),
+            ("func_plat" | "func_platrot" | "func_tracktrain", EntSound::Arrive) => kv("noise2"),
+            _ => None,
+        }
+    }
+
     /// The entity blocks the player trace right now.
     pub fn solid(&self) -> bool {
         self.alive
@@ -617,6 +680,7 @@ impl Server<'_> {
         }
         let mut events: Vec<&'static str> = Vec::new();
         let e = &mut self.map_io.entities[idx];
+        let was_moving = e.moving();
         match &mut e.kind {
             Kind::Mover {
                 state,
@@ -727,6 +791,20 @@ impl Server<'_> {
             },
             Kind::Logic => {}
         }
+        // the SDK's door / button sounds: the move sound as the travel starts, the locked
+        // sound on a locked use
+        let e = &self.map_io.entities[idx];
+        let center = e.center();
+        let mut sounds: Vec<String> = Vec::new();
+        if !was_moving && e.moving() {
+            sounds.extend(e.sound(EntSound::Move));
+        }
+        if events.contains(&"OnUseLocked") {
+            sounds.extend(e.sound(EntSound::Locked));
+        }
+        for name in sounds {
+            self.play_sound(name, center, 1.0);
+        }
         for name in events {
             self.map_io.fire_output(now, idx, name, activator);
         }
@@ -753,6 +831,7 @@ impl Server<'_> {
                 continue;
             }
             let mut ev = MoveEvent::None;
+            let was_moving = e.moving();
             match &mut e.kind {
                 Kind::Mover {
                     pos1,
@@ -874,6 +953,21 @@ impl Server<'_> {
                     self.map_io.fire_output(now, idx, "OnTimer", 0);
                 }
                 _ => {}
+            }
+            let e = &self.map_io.entities[idx];
+            let center = e.center();
+            let start = if !was_moving && e.moving() {
+                e.sound(EntSound::Move)
+            } else {
+                None
+            };
+            let arrive = if matches!(ev, MoveEvent::None) {
+                None
+            } else {
+                e.sound(EntSound::Arrive)
+            };
+            for name in start.into_iter().chain(arrive) {
+                self.play_sound(name, center, 1.0);
             }
             match ev {
                 MoveEvent::Opened => self.map_io.fire_output(now, idx, "OnFullyOpen", 0),
