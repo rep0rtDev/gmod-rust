@@ -39,3 +39,6 @@ path = "src/bin/gmr.rs"
 [[bin]]
 name = "gm-master"
 path = "src/bin/master.rs"
+
+[dev-dependencies]
+gm-render = { path = "../gm-render" }

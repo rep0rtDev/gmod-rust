@@ -119,3 +119,33 @@ fn logic_auto_fires_on_map_spawn() {
     assert!(server.map_io.get(MAP_ENT_ID_BASE).is_some());
     let _ = Vec3::ZERO;
 }
+
+#[test]
+fn moving_brushes_are_networked_and_left_out_of_the_baked_world() {
+    let Some((world, mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_map_entities(world.map_entities.clone(), world.surface);
+    let button = server
+        .map_io
+        .entities
+        .iter()
+        .find(|e| e.classname == "func_button")
+        .cloned()
+        .expect("gm_construct has a func_button");
+    let states = server.map_entity_states();
+    let (_, model, pos, _) = states
+        .iter()
+        .find(|s| s.0 == button.id)
+        .expect("the button is in the snapshot");
+    assert!(model.starts_with('*'), "{model}");
+    assert_eq!(*pos, button.pos);
+    let bytes = mount.read("maps/gm_construct.bsp").unwrap();
+    let bsp = gm_formats::bsp::Bsp::parse(&bytes).unwrap();
+    let idx: usize = model[1..].parse().unwrap();
+    assert!(
+        gm_render::world::movable_brush_models(&bsp).contains(&idx),
+        "the client draws it as a dynamic model"
+    );
+}

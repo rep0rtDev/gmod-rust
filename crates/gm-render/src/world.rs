@@ -1614,6 +1614,17 @@ fn face_lm_uv(bsp: &Bsp<'_>, face: &Face, p: [f32; 3], pl: &Placement, atlas: f3
 /// Brush entities store their faces relative to the entity `origin` (the model's
 /// bounds are centred on zero); faces of model 0 and of entities without an
 /// origin are already in world space.
+/// The brush models (`*N`) of the entities the server moves or toggles: drawn as dynamic
+/// models at their networked pose, not baked into the world mesh.
+pub fn movable_brush_models(bsp: &Bsp<'_>) -> Vec<usize> {
+    bsp.entities
+        .iter()
+        .filter(|e| !gm_collision::brush_entity_is_static(e))
+        .filter_map(|e| e.get("model")?.strip_prefix('*')?.parse::<usize>().ok())
+        .filter(|&i| i > 0 && i < bsp.models.len())
+        .collect()
+}
+
 fn brush_entity_offsets(bsp: &Bsp<'_>) -> HashMap<usize, [f32; 3]> {
     let mut out = HashMap::new();
     for e in &bsp.entities {
@@ -1814,8 +1825,13 @@ impl WorldRenderer {
         });
         let mut mirror_cache: HashMap<String, bool> = HashMap::new();
         let mut mirrors: Vec<Mirror> = Vec::new();
+        let movable_faces: HashSet<usize> = movable_brush_models(bsp)
+            .into_iter()
+            .filter_map(|i| bsp.models.get(i))
+            .flat_map(|m| m.first_face as usize..(m.first_face + m.num_faces) as usize)
+            .collect();
         for (fi, face) in bsp.faces.iter().enumerate() {
-            if skip_face(bsp, face) {
+            if skip_face(bsp, face) || movable_faces.contains(&fi) {
                 continue;
             }
             let Some(name) = bsp.face_material(face) else {
@@ -3471,6 +3487,182 @@ impl WorldRenderer {
         self.exposure += (goal - self.exposure) * (rate * dt).min(1.0);
     }
 
+    /// One drawn material of a dynamic model: its params buffer, textures and bind group.
+    fn material_part(
+        &self,
+        gpu: &Gpu,
+        key: &str,
+        mat: &material::Material,
+        rgba: &material::Rgba,
+        bump: Option<&material::Rgba>,
+    ) -> (wgpu::BindGroup, wgpu::Texture) {
+        let device = &gpu.device;
+        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("model material params"),
+            contents: bytemuck::bytes_of(&MaterialParams {
+                alpha_test: mat.alpha_test as u32,
+                unlit: is_unlit(&mat.shader) as u32,
+                translucent: mat.translucent as u32,
+                blend: 0,
+                detail: detail_params(mat),
+                uv2_m: [1.0, 0.0, 0.0, 1.0],
+                uv2_t: [0.0; 4],
+                water_color: [0.0; 4],
+                water_range: [0.0; 4],
+                envmap: envmap_params(mat),
+                envmap2: envmap2_params(mat),
+                envmap3: envmap3_params(mat),
+                selfillum_tint: selfillum_tint(mat, self.weapon_color),
+                phong: phong_params(mat),
+                phong_fresnel: phong_fresnel_params(mat),
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let t = upload_rgba_mips(gpu, rgba, wgpu::TextureFormat::Rgba8UnormSrgb, key);
+        let bump_t = bump.map(|b| upload_rgba_mips(gpu, b, wgpu::TextureFormat::Rgba8Unorm, key));
+        let bump_view = bump_t.as_ref().map(|t| t.create_view(&Default::default()));
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(key),
+            layout: &self.material_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &t.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.base_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(
+                        bump_view.as_ref().unwrap_or(&self.bump_fallback),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+
+                    resource: wgpu::BindingResource::TextureView(&self.white_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+
+                    resource: wgpu::BindingResource::TextureView(&self.white_fallback),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params.as_entire_binding(),
+                },
+            ],
+        });
+        (bg, t)
+    }
+
+    /// A brush model (`*N`, a moving brush entity) as a dynamic model in its own space
+    /// (the BSP stores brush entity geometry relative to the entity origin), one part per
+    /// material, drawn by `draw_models` at the entity's pose.
+    pub fn brush_model_dyn(
+        &self,
+        gpu: &Gpu,
+        mount: &Mount,
+        bsp: &Bsp<'_>,
+        idx: usize,
+    ) -> Option<DynModel> {
+        let m = bsp.models.get(idx)?;
+        let mut by_mat: HashMap<String, (Vec<DynVertex>, Vec<u32>)> = HashMap::new();
+        let mut sizes: HashMap<String, (material::Material, material::Rgba)> = HashMap::new();
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for fi in m.first_face..m.first_face + m.num_faces {
+            let Some(face) = bsp.faces.get(fi as usize) else {
+                continue;
+            };
+            if skip_face(bsp, face) {
+                continue;
+            }
+            let name = bsp
+                .tex_infos
+                .get(face.tex_info as usize)
+                .and_then(|ti| bsp.tex_datas.get(usize::try_from(ti.tex_data).ok()?))
+                .and_then(|td| {
+                    bsp.tex_names
+                        .get(usize::try_from(td.name_string_table_id).ok()?)
+                })
+                .map(|n| material::canonical_name(n))?;
+            if !sizes.contains_key(&name) {
+                let Ok(mat) = material::load(mount, &name) else {
+                    continue;
+                };
+                let tex = mat.base_texture.clone().unwrap_or_else(|| name.clone());
+                let Ok(rgba) = material::load_texture(mount, &tex, 2048) else {
+                    continue;
+                };
+                sizes.insert(name.clone(), (mat, rgba));
+            }
+            let (_, rgba) = &sizes[&name];
+            let (tw, th) = (rgba.width as f32, rgba.height as f32);
+            let plane = &bsp.planes[face.plane_num as usize];
+            let mut normal = Vec3::from(plane.normal);
+            if face.side != 0 {
+                normal = -normal;
+            }
+            let verts = bsp.face_vertices(face);
+            if verts.len() < 3 {
+                continue;
+            }
+            let (vs, is) = by_mat.entry(name.clone()).or_default();
+            let base = vs.len() as u32;
+            for v in &verts {
+                let p = Vec3::from(*v);
+                lo = lo.min(p);
+                hi = hi.max(p);
+                vs.push(DynVertex {
+                    position: *v,
+                    normal: normal.to_array(),
+                    uv: face_uv(bsp, face, *v, tw, th),
+                    bones: [0; 3],
+                    weights: [1.0, 0.0, 0.0],
+                    num_bones: 1,
+                });
+            }
+            for k in 1..verts.len() as u32 - 1 {
+                is.extend([base, base + k, base + k + 1]);
+            }
+        }
+        if by_mat.is_empty() {
+            return None;
+        }
+        let mut parts = Vec::new();
+        let mut part_textures = Vec::new();
+        for (name, (verts, idx)) in by_mat {
+            let (mat, rgba) = &sizes[&name];
+            let (bg, t) = self.material_part(gpu, &name, mat, rgba, None);
+            part_textures.push((name.clone(), t));
+            parts.push((bg, verts, idx, mat.half_lambert, is_unlit(&mat.shader)));
+        }
+        Some(DynModel {
+            parts,
+            part_textures,
+            bounds: (lo, hi),
+            unlit: false,
+            skeleton: None,
+            bodygroups: Vec::new(),
+        })
+    }
+
     pub fn load_model(&self, gpu: &Gpu, mount: &Mount, path: &str) -> Option<DynModel> {
         self.load_model_variant(gpu, mount, path, 0, "")
     }
@@ -3546,81 +3738,7 @@ impl WorldRenderer {
                     }
                     idx.push(li);
                 }
-                let device = &gpu.device;
-                let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("model material params"),
-                    contents: bytemuck::bytes_of(&MaterialParams {
-                        alpha_test: mat.alpha_test as u32,
-                        unlit: is_unlit(&mat.shader) as u32,
-                        translucent: mat.translucent as u32,
-                        blend: 0,
-                        detail: detail_params(mat),
-                        uv2_m: [1.0, 0.0, 0.0, 1.0],
-                        uv2_t: [0.0; 4],
-                        water_color: [0.0; 4],
-                        water_range: [0.0; 4],
-                        envmap: envmap_params(mat),
-                        envmap2: envmap2_params(mat),
-                        envmap3: envmap3_params(mat),
-                        selfillum_tint: selfillum_tint(mat, self.weapon_color),
-                        phong: phong_params(mat),
-                        phong_fresnel: phong_fresnel_params(mat),
-                    }),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                });
-                let t = upload_rgba_mips(gpu, rgba, wgpu::TextureFormat::Rgba8UnormSrgb, key);
-                let bump_t = bump
-                    .as_ref()
-                    .map(|b| upload_rgba_mips(gpu, b, wgpu::TextureFormat::Rgba8Unorm, key));
-                let bump_view = bump_t.as_ref().map(|t| t.create_view(&Default::default()));
-                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(key),
-                    layout: &self.material_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(
-                                &t.create_view(&Default::default()),
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.base_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 5,
-                            resource: wgpu::BindingResource::TextureView(&self.detail_fallback),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 6,
-                            resource: wgpu::BindingResource::TextureView(
-                                bump_view.as_ref().unwrap_or(&self.bump_fallback),
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 7,
-
-                            resource: wgpu::BindingResource::TextureView(&self.white_fallback),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 8,
-
-                            resource: wgpu::BindingResource::TextureView(&self.white_fallback),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: params.as_entire_binding(),
-                        },
-                    ],
-                });
+                let (bg, t) = self.material_part(gpu, key, mat, rgba, bump.as_ref());
                 part_textures.push((key.to_string(), t));
                 parts.push((bg, verts, idx, mat.half_lambert, is_unlit(&mat.shader)));
             }

@@ -526,6 +526,37 @@ impl Server<'_> {
         self.map_io = io;
     }
 
+    /// The solid movable brush entities for the snapshot: id, model `*N`, position and
+    /// angles (the rotators' turn about their axis folded into the yaw / pitch / roll).
+    pub fn map_entity_states(&self) -> Vec<(u32, String, Vec3, Vec3)> {
+        self.map_io
+            .entities
+            .iter()
+            .filter(|e| e.solid())
+            .filter_map(|e| {
+                let model = e.def.get("model")?;
+                if !model.starts_with('*') {
+                    return None;
+                }
+                let (axis, angle) = match &e.kind {
+                    Kind::Rotator { axis, angle, .. } | Kind::Spinner { axis, angle, .. } => {
+                        (*axis, *angle)
+                    }
+                    _ => (Vec3::Z, 0.0),
+                };
+                let mut angles = e.def.angles;
+                if axis == Vec3::X {
+                    angles.x += angle;
+                } else if axis == Vec3::Y {
+                    angles.z += angle;
+                } else {
+                    angles.y += angle;
+                }
+                Some((e.id, model.to_string(), e.pos, angles))
+            })
+            .collect()
+    }
+
     /// `ent_fire <target> <input> [param]` and Lua `Entity:Fire` on a map entity.
     pub fn fire_input(&mut self, target: &str, input: &str, param: &str, activator: u32) {
         let now = self.tick_count;

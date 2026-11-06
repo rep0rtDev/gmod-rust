@@ -1373,6 +1373,7 @@ dependencies = [
  "gm-nav",
  "gm-net",
  "gm-physics",
+ "gm-render",
  "gm-sandbox",
  "gm-script",
  "gm-server",

@@ -1382,6 +1382,12 @@ impl App {
             glow2,
             ui,
         });
+        if let Some(g) = &mut self.gfx {
+            for idx in gm_render::world::movable_brush_models(&bsp) {
+                let m = g.world.brush_model_dyn(&g.gpu, &self.mount, &bsp, idx);
+                g.models.insert(format!("*{idx}"), m);
+            }
+        }
         // in the main menu at launch the pointer stays free
         self.set_grab(!self.main_menu);
         Ok(())

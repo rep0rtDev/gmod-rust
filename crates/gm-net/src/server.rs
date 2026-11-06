@@ -1175,6 +1175,34 @@ impl ServerNet {
                 },
             );
         }
+        for (id, model, pos, angles) in server.map_entity_states() {
+            if self.use_pvs {
+                clusters.insert(id, server.collision.cluster_at(pos));
+            }
+            let model_id = match self.model_ids.get(model.as_str()) {
+                Some(&id) => id,
+                None => {
+                    self.models.push(model.clone());
+                    let id = self.models.len() as u32;
+                    self.model_ids.insert(model.clone(), id);
+                    id
+                }
+            };
+            world.insert(
+                id,
+                EntityState {
+                    id,
+                    model: model.clone(),
+                    model_id,
+                    pos,
+                    angles,
+                    color: [255; 4],
+                    model_scale: 1.0,
+                    playback_rate: 1.0,
+                    ..Default::default()
+                },
+            );
+        }
         for (id, n) in &server.npcs {
             if self.use_pvs {
                 clusters.insert(*id, server.collision.cluster_at(n.pos));
