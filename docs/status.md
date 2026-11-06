@@ -624,3 +624,20 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   one think later; ours is in COMBAT by sight before the hit, so the later rows match. Not
   modelled; ai_ignoreplayers leaking from an earlier scene was checked and ruled out (the
   scene's zombie saw the bot at +3; npc_ally was recorded after npc_damage).
+- Zombie family after a kill: the swing that killed the enemy plays out before the alert wander
+  (server_npc_melee_zombie: bot dead on t298, attackE held to t333 and only then walk4 in
+  NPC_STATE_ALERT; server_npc_melee_poisonzombie: bot dead on t389, melee_02 to t424, then
+  Walk / ALERT). Ours started SCHED_ZOMBIE_WANDER_MEDIUM on the kill think and cut the swing -
+  now the wander waits for `swing_until` and the brain stays COMBAT / SCHED_MELEE_ATTACK1 until
+  then. The poison zombie's melee is `melee_02` in all three recorded swings (poisonzombie,
+  poisonzombie_long twice) though the GMod poison.mdl weighs melee_01 / 02 / 03 equally -
+  `npc_sequence_weight` picks it. melee_poisonzombie 167.1 → 73.1 (melee_02 to 424 row for
+  row); melee_poisonzombie_long 347.7 → 463.5 is the known chaotic tail (it has swung
+  310 / 344 / 488 on unrelated changes).
+  Open: the direction of the post-kill wander - the game's poison zombie walked west from
+  (914,−500) to (844,−489) / (843,−517), both within 17 u of the corpse at (848,−500), but
+  the classic zombie of the same recording walked north-east from (862,−500) to (887,−446),
+  away from its corpse at (823,−541), so "alert walk to the last enemy position" is not the
+  rule and nothing is built (ours picks a hashed wander point, here yaw 114 vs the game's 171).
+  Also the poison throw lands one think early (bot 100 → 1 on row 256 vs 269): ThrowWarning
+  starts on row 74 where the game's headcrab2Leap starts on 81.

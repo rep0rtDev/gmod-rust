@@ -3290,6 +3290,11 @@ fn npc_sequence_weight(class: &str, sequence: &str) -> Option<u32> {
         ("npc_zombie" | "npc_zombine", "walk") => Some(3),
         ("npc_zombie" | "npc_zombine", "walk4") => Some(1),
         ("npc_zombie" | "npc_zombine", "walk2" | "walk3") => Some(0),
+        // the poison zombie's ACT_MELEE_ATTACK1 is melee_02 in every recorded swing (3 of 3
+        // across server_npc_melee_poisonzombie / _long), never melee_01 / melee_03 - all three
+        // weigh 1 in the GMod poison.mdl
+        ("npc_poisonzombie", "melee_02") => Some(1),
+        ("npc_poisonzombie", "melee_01" | "melee_03") => Some(0),
         _ => None,
     }
 }
@@ -5359,7 +5364,11 @@ impl<'w> Server<'w> {
         if !a.scripted || a.schedule.is_none() {
             a.state = if a.state == ai::NPC_STATE_SCRIPT && a.scripted {
                 ai::NPC_STATE_SCRIPT
-            } else if target.is_some() && !target_dead && n.target_first_seen != now {
+            } else if target.is_some()
+                && n.target_first_seen != now
+                && (!target_dead || (n.melee_swing.is_some() && now < n.swing_until))
+            {
+                // still COMBAT while the swing that killed the enemy finishes
                 ai::NPC_STATE_COMBAT
             } else if a.has(ai::COND_HEAR_COMBAT)
                 || a.has(ai::COND_HEAR_DANGER)
@@ -5454,9 +5463,12 @@ impl<'w> Server<'w> {
                 // SCHED_IDLE_STAND in NPC_STATE_IDLE there for every class
                 a.state = ai::NPC_STATE_IDLE;
                 ai::SCHED_IDLE_STAND
-            } else if n.melee_swing.is_some() && now < n.swing_until && !target_dead {
+            } else if n.melee_swing.is_some() && now < n.swing_until {
                 // the swing's schedule lasts the whole sequence (the fast zombie's roar after
-                // its scratches, the zombie's follow-through): 167 / 149 until the chase resumes
+                // its scratches, the zombie's follow-through): 167 / 149 until the chase resumes;
+                // a swing that killed its enemy still finishes (the poison zombie holds melee_02
+                // to 424 after the bot died on 389, the zombie attackE to 333 after 298) and only
+                // then goes alert
                 ai::SCHED_MELEE_ATTACK1
             } else if now < n.wake_until + NPC_WAKE_ANGRY_TICKS && target.is_some() && !target_dead
             {
@@ -15798,16 +15810,18 @@ impl<'w> Server<'w> {
             return;
         };
         if ai::class_sched_family(&n.class) == Some("zombie") {
-            // the game's zombie, its enemy dead: SCHED_ZOMBIE_WANDER_MEDIUM from the kill tick
-            // (the swing ends there), NPC_STATE_ALERT, a walk to a spot 48..384 u away, then it
-            // stands until the player respawns (server_npc_melee_zombie: walk4 t333..t438)
+            // the game's zombie, its enemy dead: the swing that killed it still plays out
+            // (attackE to t333 after the kill on t298 in server_npc_melee_zombie, the poison
+            // zombie's melee_02 to t424 after t389), then SCHED_ZOMBIE_WANDER_MEDIUM:
+            // NPC_STATE_ALERT, a walk to a spot 48..384 u away, then it stands until the player
+            // respawns (walk4 t333..t438)
             let enemy_dead = n
                 .target
                 .is_some_and(|p| self.players.get(&p).is_some_and(|pl| !pl.alive));
             let enemy_alive = n
                 .target
                 .is_some_and(|p| self.players.get(&p).is_some_and(|pl| pl.alive));
-            if enemy_dead && n.wander.is_none() && n.swat.is_none() {
+            if enemy_dead && n.wander.is_none() && n.swat.is_none() && now >= n.swing_until {
                 let dest = self.npc_wander_point(id, now);
                 if let Some(n) = self.npcs.get_mut(&id) {
                     n.chase = None;

@@ -548,9 +548,10 @@ fn zombie_closes_in_and_claws_the_player() {
     );
 }
 
-/// The game's zombie after a kill (server_npc_melee_zombie): SCHED_ZOMBIE_WANDER_MEDIUM (the
-/// family block + 7 = 100 on a fresh server) in NPC_STATE_ALERT from the kill tick, a walk to
-/// a spot 48..384 u away, standing there until the player is back.
+/// The game's zombie after a kill (server_npc_melee_zombie): the killing swing still plays out
+/// (attackE to t333 after the kill on t298, COMBAT), then SCHED_ZOMBIE_WANDER_MEDIUM (the
+/// family block + 7 = 100 on a fresh server) in NPC_STATE_ALERT, a walk to a spot 48..384 u
+/// away, standing there until the player is back.
 #[test]
 fn zombie_wanders_after_killing_the_player_until_the_respawn() {
     let world = combat_server!(world);
@@ -563,6 +564,8 @@ fn zombie_wanders_after_killing_the_player_until_the_respawn() {
     let mut states = Vec::new();
     let mut max_d = 0.0f32;
     let mut respawned_at = None;
+    let mut wander_at = None;
+    let mut swing_states = Vec::new();
     for tick in 0..900u64 {
         server.tick(&idle);
         let p = &server.players[&1];
@@ -574,9 +577,14 @@ fn zombie_wanders_after_killing_the_player_until_the_respawn() {
         if let (Some(d), Some(f)) = (died_at, from) {
             if respawned_at.is_none() {
                 max_d = max_d.max(n.pos.truncate().distance(f.truncate()));
-                if tick > d + 7 {
+                if wander_at.is_none() && tick > d && server.npc_schedule_id(id) == 100 {
+                    wander_at = Some(tick);
+                }
+                if wander_at.is_some() {
                     scheds.push(server.npc_schedule_id(id));
                     states.push(n.ai.state);
+                } else if tick > d + 7 {
+                    swing_states.push(n.ai.state);
                 }
                 if p.alive {
                     respawned_at = Some(tick);
@@ -588,6 +596,20 @@ fn zombie_wanders_after_killing_the_player_until_the_respawn() {
     let died = died_at.expect("the zombie never killed the 20 hp player");
     let respawned = respawned_at.expect("no respawn");
     assert!(respawned > died + 100, "respawn at {respawned}");
+    let wander = wander_at.expect("no wander after the kill");
+    assert!(
+        wander > died + 7 && wander <= died + 100,
+        "wander from {wander} after the kill on {died}: the swing finishes first"
+    );
+    assert!(
+        swing_states
+            .iter()
+            .all(|s| *s == gm_server::ai::NPC_STATE_COMBAT),
+        "states during the finishing swing {:?}",
+        swing_states
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+    );
     assert!(
         scheds.iter().all(|s| *s == 100),
         "wander schedule ids {:?}",
