@@ -416,6 +416,30 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   reverted: landing the spawn and the walker's floor on props too (gm_sandbox::trace_hull) -
   the zombie then stands on the crate and nothing pushes it out, 40 -> 137. Needs the
   penetration push of a prop overlapping an NPC hull and the think-stepped fall together.
+- Route simplification, measured on four scenes and built (replacing the 64-u corner reach
+  and the one-off forward-scan experiments): (1) a corner is cut for the node after it when
+  the hull can walk straight there and that node is within 1.8 s of the gait speed
+  (NPC_SIMPLIFY_CUT_TIME: the running citizen of server_npc_assault_citizen cuts (1201,72) for
+  (1201,-255) 316 u out = 1.5 s and (1201,-255) for its point 112 u out; the soldiers keep
+  their start node with (965,-19) 480 u out = 2.23 s; the walking citizen keeps (21,-491) with
+  (-215,-255) 334 u out = 4.2 s); (2) otherwise, within 0.9 s of the gait speed of the corner
+  (NPC_FORWARD_SCAN_TIME) the corner is swapped for the point 0.9 s past it along the next leg
+  when the hull can walk straight there, and that point is kept until reached: the citizen's
+  72 u (server_npc_walk_citizen_corner leaves (1001,-500) at 175 for (893,-491) and holds it
+  to the row - now row for row to 1 u; server_npc_walk_citizen_corner_seen walks the row to
+  68 u from (21,-491), turns 156 for (-30,-440) - 20.0 -> 17.1), the soldier's 193 u
+  (server_npc_grenade_soldier and server_npc_squad_soldier leave (992,-499) at 97..99 for the
+  point 193 past (965,-491) on the leg to (965,-19), bearing 97.6 - their first 100 rows now
+  1..3 u off). Open: corner_seen's third corner - the game leaves its scan point (-30,-440)
+  23 u early for (-215,-255) (140 at (-8,-445)), ours walks to 8 u of it; the assault citizen
+  still runs the local navmesh route, not the node route the game runs (the node route plus
+  these cuts should give the game's 351 -> 281 -> 336 arc); server_npc_squad_soldier 69 ->
+  153: the leader now reaches the mate's node (1201,72) at row ~780 like the game, but ours
+  then reloads at 800 and walks 150 u west during the reload to (1027,22), where the game's
+  stays within 30 u of the node ((1169,98) -> (1175,46), reload at (1179,46) from row 900) -
+  the squad's post-arrival spacing is the next measurement; the leader's earlier non-cut of
+  (965,-19) for (1201,72) 360 u out (1.7 s, the hull line clear in ours) still contradicts
+  the cut rule unless its first cover was the unexplained (953,7).
 
 ### NPC: the turn at the reload cover (server_npc_grenade_soldier, 48 u) - measured, open
 

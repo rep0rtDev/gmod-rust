@@ -3470,12 +3470,26 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
 /// An intermediate corner counts as passed within this horizontal distance; the final
 /// point is walked onto exactly.
 const NPC_CORNER_REACH: f32 = 8.0;
-/// A node-route corner within this is cut when the hull can already sweep to the next one
-/// (the game's soldier cut (979,72) from 51 u, server_npc_grenade_soldier 261104; the y180
-/// citizen kept a corner 73+ u out).
-const NPC_NODE_SIMPLIFY_REACH: f32 = 64.0;
 /// The hull is swept this far above the feet (the step height) when it moves along a path.
 const NPC_STEP_LIFT: f32 = 18.0;
+/// The forward path simplification fires within this many seconds of the body's gait speed
+/// of the current corner and swaps it for the point as far past it along the next leg: 72 u at
+/// the citizen's 79.9 walk (server_npc_walk_citizen_corner: 37 u from (965,-491) it leaves at
+/// once at 175 for (893,-491), 72 past; server_npc_walk_citizen_corner_seen: still 180 along
+/// the row 83 u from (21,-491), at 68 u it turns 156 for (-30,-440), 72 past on the leg to
+/// (-215,-255)); 193 u at the soldier's 214.8 run (server_npc_grenade_soldier and
+/// server_npc_squad_soldier leave (992,-499) at 97..99 - the point 193 past (965,-491) on the
+/// leg to (965,-19) bears 97.6).
+const NPC_FORWARD_SCAN_TIME: f32 = 0.9;
+/// Route link tag of a waypoint set by the forward scan (no graph link bit).
+const NPC_LINK_SCAN: u8 = 0x80;
+/// A route corner is cut for the node after it when the hull can walk straight there and it
+/// is within this many seconds of the gait speed: the running citizen of
+/// server_npc_assault_citizen (209.8) cuts (1201,72) for (1201,-255) 316 u out and (1201,-255)
+/// for its point 112 u out, the walking one (79.9) keeps (21,-491) with (-215,-255) 334 u out
+/// and (965,-491) with (493,-491) 508 u out; the soldiers (214.8) keep their start node with
+/// (965,-19) 480 u out (2.23 s) and scan past it instead - between 1.5 and 2.23 s.
+const NPC_SIMPLIFY_CUT_TIME: f32 = 1.8;
 /// How far out along the turn's outer bisector a route corner the hull catches on is pushed,
 /// smallest first (`npc_widen_corners`); the bracket from server_npc_assault_citizen is the
 /// mesh corner (1008,16) stalling against the wall corner (1024,10) and the game's ~(1010,26).
@@ -14983,8 +14997,8 @@ impl<'w> Server<'w> {
             };
             let braking = goal.braking;
             let halt = goal.halt;
-            let points = goal.points.clone();
-            let links = goal.links.clone();
+            let mut points = goal.points.clone();
+            let mut links = goal.links.clone();
             let next_goal = n.next_goal;
             let max_yaw = n.max_yaw;
             let class_yaw = npc_class_yaw(&n.class);
@@ -15056,7 +15070,8 @@ impl<'w> Server<'w> {
             let mut jumped = false;
             while idx + 1 < points.len()
                 && (points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
-                    || (points[idx].truncate().distance(pos.truncate()) < NPC_NODE_SIMPLIFY_REACH
+                    || (points[idx + 1].truncate().distance(pos.truncate())
+                        <= ideal * NPC_SIMPLIFY_CUT_TIME
                         && links
                             .get(idx + 1)
                             .is_some_and(|&l| l == gm_formats::ain::CAP_MOVE_GROUND)))
@@ -15104,6 +15119,38 @@ impl<'w> Server<'w> {
             }
             if jumped {
                 continue;
+            }
+            // the engine's forward path simplification: a corner the body is within
+            // NPC_FORWARD_SCAN_TIME of and does not cut is swapped for the point as far past it
+            // along the next leg when the hull can walk straight there, and that point is kept
+            // until reached (the citizen's 72 u: server_npc_walk_citizen_corner leaves at 175 for
+            // (893,-491) and holds it to the row; server_npc_walk_citizen_corner_seen walks the
+            // row to 68 u from (21,-491), then 156 for (-30,-440) on the leg to (-215,-255))
+            if links.len() == points.len()
+                && idx + 1 < points.len()
+                && links[idx] != NPC_LINK_SCAN
+                && links[idx + 1] == gm_formats::ain::CAP_MOVE_GROUND
+                && points[idx].truncate().distance(pos.truncate()) <= ideal * NPC_FORWARD_SCAN_TIME
+            {
+                let leg = points[idx + 1] - points[idx];
+                let len = leg.truncate().length();
+                let past = ideal * NPC_FORWARD_SCAN_TIME;
+                if len > past {
+                    let t = points[idx] + leg * (past / len);
+                    let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
+                    let to = Vec3::new(t.x, t.y, pos.z) + lift;
+                    let tr = self.npc_sweep(&prop_bodies, pos + lift, to, mins, maxs);
+                    if tr.fraction >= 0.999 && !tr.start_solid {
+                        points[idx] = t;
+                        links[idx] = NPC_LINK_SCAN;
+                        if let Some(g) = self.npcs.get_mut(&id).and_then(|n| n.goal.as_mut()) {
+                            if g.points.len() == points.len() {
+                                g.points[idx] = t;
+                                g.links[idx] = NPC_LINK_SCAN;
+                            }
+                        }
+                    }
+                }
             }
             let head = points[idx].truncate() - pos.truncate();
             let yaw_err = if head.length_squared() > 1e-6 {
