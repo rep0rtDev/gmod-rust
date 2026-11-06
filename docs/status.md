@@ -434,12 +434,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   23 u early for (-215,-255) (140 at (-8,-445)), ours walks to 8 u of it; the assault citizen
   still runs the local navmesh route, not the node route the game runs (the node route plus
   these cuts should give the game's 351 -> 281 -> 336 arc); server_npc_squad_soldier 69 ->
-  153: the leader now reaches the mate's node (1201,72) at row ~780 like the game, but ours
-  then reloads at 800 and walks 150 u west during the reload to (1027,22), where the game's
-  stays within 30 u of the node ((1169,98) -> (1175,46), reload at (1179,46) from row 900) -
-  the squad's post-arrival spacing is the next measurement; the leader's earlier non-cut of
-  (965,-19) for (1201,72) 360 u out (1.7 s, the hull line clear in ours) still contradicts
-  the cut rule unless its first cover was the unexplained (953,7).
+  155: the leader now reaches the mate's node (1201,72) at row ~780 like the game. It then
+  reloads in place (two rules: a body already hidden at the cover it reached reloads there
+  instead of searching cover again, and a pending or running reload comes before the
+  lost-enemy chase - the Combine's SelectCombatSchedule order; before them ours chased the
+  bot 150 u west during the reload) - rows 780..910 within 2..29 u of the game. Open: the
+  game loops 60 u north and back along x 1175 for 123 ticks before reloading ((1154,87) ->
+  (1175,94) -> (1175,46), reload at (1179,46) from row 900 to the end), and ours chases
+  south-east after its reload (920 on) where the game still reloads; the leader's earlier
+  non-cut of (965,-19) for (1201,72) 360 u out (1.7 s, the hull line clear in ours) still
+  contradicts the cut rule unless its first cover was the unexplained (953,7).
 
 ### NPC: the turn at the reload cover (server_npc_grenade_soldier, 48 u) - measured, open
 

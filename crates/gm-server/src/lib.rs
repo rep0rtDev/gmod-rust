@@ -16295,7 +16295,15 @@ impl<'w> Server<'w> {
                             n.sequence = rest;
                         }
                     }
-                } else if self.npcs.get(&id).is_some_and(|n| n.chase != Some(p)) {
+                } else if self
+                    .npcs
+                    .get(&id)
+                    .is_some_and(|n| n.chase != Some(p) && !n.reloading && n.reload_mark == 0)
+                {
+                    // a reload comes before the lost enemy is sought (the Combine's
+                    // SelectCombatSchedule reloads first): server_npc_squad_soldier's leader
+                    // reloads in place 26 u off the mate's node where ours ran 150 u west
+                    // after the bot during its reload
                     self.npc_chase(id, p, true);
                     if let Some(n) = self.npcs.get_mut(&id) {
                         if let Some(rest) = n.rest_sequence.take() {
@@ -16447,7 +16455,23 @@ impl<'w> Server<'w> {
         };
         if n.cover_wanted {
             n.cover_wanted = false;
-            if self.npc_take_cover(id, player) {
+            // a body already hidden at the cover it reached reloads there: the squad leader
+            // of server_npc_squad_soldier reloads 26 u off the mate's node (1179,46) where
+            // ours ran for the next free node 210 u west
+            let in_cover = {
+                let held = self
+                    .npcs
+                    .get(&id)
+                    .filter(|n| n.cover_at.is_some() && n.goal.is_none())
+                    .map(|n| n.pos);
+                match (held, self.eye(player)) {
+                    (Some(p), Some((eye, _))) => {
+                        !self.npc_los(eye, p + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT))
+                    }
+                    _ => false,
+                }
+            };
+            if !in_cover && self.npc_take_cover(id, player) {
                 return;
             }
             // no cover in reach: the reload happens where it stands
