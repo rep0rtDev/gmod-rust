@@ -2754,6 +2754,11 @@ pub fn npc_alert_idle(class: &str, weapon: &str) -> Option<&'static str> {
     }
 }
 
+/// Classes whose idle at ease is the relaxed readiness (CNPC_PlayerCompanion).
+pub fn npc_relaxed_idle(class: &str) -> bool {
+    matches!(class, "npc_citizen" | "npc_barney" | "npc_alyx")
+}
+
 pub fn npc_combat_sequences(class: &str) -> Option<(&'static str, &'static str)> {
     match class {
         "npc_combine_s" => Some(("shootSMG1c", "CrouchIdle")),
@@ -2775,6 +2780,14 @@ pub fn npc_weapon_activity(weapon: &str, act: &str) -> Option<&'static str> {
     match act {
         "ACT_IDLE" => rifle("ACT_IDLE_SMG1", "ACT_IDLE_SMG1", "ACT_IDLE_SMG1")
             .or_else(|| pistol("ACT_IDLE_PISTOL")),
+        // a companion's relaxed idle (golden 261031 server_npc_spawn: barney Idle_Relaxed_SMG1_3,
+        // the citizen's pistol Pistol_idle)
+        "ACT_IDLE_RELAXED" => rifle(
+            "ACT_IDLE_SMG1_RELAXED",
+            "ACT_IDLE_SMG1_RELAXED",
+            "ACT_IDLE_SHOTGUN_RELAXED",
+        )
+        .or_else(|| pistol("ACT_IDLE_PISTOL")),
         "ACT_IDLE_ANGRY" => rifle(
             "ACT_IDLE_ANGRY_SMG1",
             "ACT_IDLE_ANGRY_SMG1",
@@ -15605,6 +15618,10 @@ impl<'w> Server<'w> {
                 (false, true) => "ACT_WALK_AIM",
                 (false, false) => "ACT_WALK",
             }
+        } else if own && n.target.is_none() && npc_relaxed_idle(&n.class) {
+            // a player companion at ease idles relaxed (barney Idle_Relaxed_SMG1_3, the
+            // citizen's Pistol_idle in server_npc_spawn; the soldier keeps Idle1_SMG1)
+            "ACT_IDLE_RELAXED"
         } else if own {
             "ACT_IDLE"
         } else {
@@ -15626,13 +15643,16 @@ impl<'w> Server<'w> {
                 match act {
                     "ACT_RUN_AIM" => self.npc_translated_sequence_weighted(id, "ACT_RUN", now),
                     "ACT_WALK_AIM" => self.npc_translated_sequence_weighted(id, "ACT_WALK", now),
+                    "ACT_IDLE_RELAXED" => {
+                        self.npc_translated_sequence_weighted(id, "ACT_IDLE", now)
+                    }
                     _ => None,
                 }
             })
         else {
             return;
         };
-        let idle = (act != "ACT_IDLE")
+        let idle = (act != "ACT_IDLE" && act != "ACT_IDLE_RELAXED")
             .then(|| self.npc_translated_sequence(id, "ACT_IDLE"))
             .flatten();
         if let Some(n) = self.npcs.get_mut(&id) {

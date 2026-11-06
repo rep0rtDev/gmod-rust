@@ -202,6 +202,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   202 - direction unexplained); without it our run-away bears east instead of 22 deg and the
   second landing's geometry (the game's crab slid 70 u down the bot's hull to 74 u away and
   leaped again) is not reproduced, so the figure's tail is geometry, not rules.
+- A player companion at ease (citizen / barney / alyx, no enemy) idles in ACT_IDLE_RELAXED
+  through the weapon table (SMG1 / AR2 -> ACT_IDLE_SMG1_RELAXED, shotgun -> _SHOTGUN_RELAXED,
+  pistol -> ACT_IDLE_PISTOL): barney's Idle_Relaxed_SMG1_N like the game's (the variant is the
+  model's random pick, 6 vs 3). Open: the citizen's pistol idle (game Pistol_idle, ours stays
+  on the spawn pose idle_subtle - the ACT_IDLE_PISTOL lookup finds nothing on its model), the
+  monk's Idle_Angry_SMG1 with annabelle, the manhack's / scanners' fly, the black crab's
+  Idle01fast -> Threatdisplay, the worker's Idle, the hunter's walk_all; and our fast crab leaps
+  at spawn+13 in server_npc_spawn where the game's only runs (its spawn-think Run1 step).
 - A spawned NPC whose hull starts in a wall is moved out along the shortest axis direction
   before it settles to the floor (`npc_out_of_solid`): the antlion guard spawned at x 1001.7
   sits at 984.0 = the wall at 1024 minus its 40 u half width, on the floor, like the game
