@@ -2,6 +2,7 @@
 //! the content pipeline; this module reads geometry, formats and mip counts.
 
 pub mod decode;
+pub mod sheet;
 
 use crate::{FormatError, Reader, Result};
 

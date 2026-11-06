@@ -4486,6 +4486,29 @@ impl WorldRenderer {
         (verts, vec![0, 1, 2, 0, 2, 3])
     }
 
+    /// `sprite_quad_var` over a sub-rectangle `uv` (`[u_min, v_min, u_max, v_max]`) of the
+    /// material: one frame of a sprite sheet.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sprite_quad_uv(
+        &self,
+        pos: Vec3,
+        size: f32,
+        rgba: [f32; 4],
+        roll: f32,
+        axis: Option<Vec3>,
+        uv: [f32; 4],
+        camera: &Camera,
+    ) -> (Vec<Vertex>, Vec<u32>) {
+        let (mut verts, idx) = self.sprite_quad_var(pos, size, rgba, roll, axis, camera);
+        for v in &mut verts {
+            v.uv = [
+                uv[0] + (uv[2] - uv[0]) * v.uv[0],
+                uv[1] + (uv[3] - uv[1]) * v.uv[1],
+            ];
+        }
+        (verts, idx)
+    }
+
     /// Camera-facing square of `size` units at `pos` (a `vp_parallel` sprite).
     pub fn sprite_quad(
         &self,
