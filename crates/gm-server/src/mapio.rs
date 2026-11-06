@@ -1582,7 +1582,8 @@ impl Server<'_> {
         }
         // physics bodies follow the poses; the players riding a mover take its step, the ones
         // in its way are pushed by it, and a mover that cannot clear a player reverses
-        let mut blocked: Vec<usize> = Vec::new();
+        // the movers blocked this tick with who blocked them: (is an NPC, id)
+        let mut blocked: Vec<(usize, Vec<(bool, u32)>)> = Vec::new();
         for idx in 0..self.map_io.entities.len() {
             let e = &mut self.map_io.entities[idx];
             if !e.dirty {
@@ -1630,6 +1631,7 @@ impl Server<'_> {
                     p.state.origin += step;
                 }
             }
+            let mut hit: Vec<(bool, u32)> = Vec::new();
             for (pid, h) in pushed {
                 let Some(p) = self.players.get_mut(&pid) else {
                     continue;
@@ -1640,11 +1642,54 @@ impl Server<'_> {
                     o + Vec3::new(-16.0, -16.0, 0.0),
                     o + Vec3::new(16.0, 16.0, h),
                 ) {
-                    blocked.push(idx);
+                    hit.push((false, pid));
                 }
             }
+            // NPCs in the way go along the same way and block when still inside
+            let npc_ids: Vec<u32> = self
+                .npcs
+                .iter()
+                .filter(|(_, n)| {
+                    n.dead_at.is_none() && e.overlaps_box(n.pos + n.mins, n.pos + n.maxs)
+                })
+                .map(|(id, _)| *id)
+                .collect();
+            for nid in npc_ids {
+                let Some(n) = self.npcs.get_mut(&nid) else {
+                    continue;
+                };
+                n.pos += step;
+                if e.overlaps_box(n.pos + n.mins, n.pos + n.maxs) {
+                    hit.push((true, nid));
+                }
+            }
+            if !hit.is_empty() {
+                blocked.push((idx, hit));
+            }
         }
-        for idx in blocked {
+        for (idx, hit) in blocked {
+            // `CBaseDoor::Blocked`: the blocker takes `dmg` (`blockdamage` on func_movelinear)
+            // as crush damage, then the door turns back unless `forceclosed`
+            let (dmg, force) = {
+                let e = &self.map_io.entities[idx];
+                (
+                    e.def.num("dmg", e.def.num("blockdamage", 0.0)),
+                    e.def.get("forceclosed").is_some_and(|v| v.trim() == "1"),
+                )
+            };
+            if dmg > 0.0 {
+                for (npc, id) in &hit {
+                    if *npc {
+                        self.damage_npc_typed(*id, 0, dmg, crate::weapons::HITGROUP_CHEST, false);
+                    } else {
+                        self.damage_player(*id, dmg, crate::weapons::DMG_CRUSH);
+                    }
+                }
+            }
+            if force {
+                self.map_io.fire_output(now, idx, "OnBlocked", 0);
+                continue;
+            }
             let e = &mut self.map_io.entities[idx];
             match &mut e.kind {
                 Kind::Mover {

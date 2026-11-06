@@ -633,3 +633,76 @@ fn a_path_track_alternate_path_branches_the_train_and_a_disabled_node_ends_the_t
         "a disabled next node ends the track at b"
     );
 }
+
+#[test]
+fn a_door_crushes_a_player_blocking_it_and_turns_back() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let kv = [
+        ("targetname", "crusher"),
+        ("movedir", "0 0 0"),
+        ("speed", "100"),
+        ("dmg", "10"),
+        ("wait", "-1"),
+    ];
+    let (lo, hi) = (Vec3::new(-16.0, -16.0, 0.0), Vec3::new(16.0, 16.0, 64.0));
+    let mut points = Vec::new();
+    for x in [lo.x, hi.x] {
+        for y in [lo.y, hi.y] {
+            for z in [lo.z, hi.z] {
+                points.push(Vec3::new(x, y, z));
+            }
+        }
+    }
+    let hull = gm_server::mapio::HullDef {
+        planes: vec![
+            (Vec3::X, hi.x),
+            (-Vec3::X, -lo.x),
+            (Vec3::Y, hi.y),
+            (-Vec3::Y, -lo.y),
+            (Vec3::Z, hi.z),
+            (-Vec3::Z, -lo.z),
+        ],
+        phys_points: points.clone(),
+        points,
+    };
+    let def = gm_server::mapio::MapEntityDef {
+        classname: "func_door".into(),
+        kv: kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        origin: Vec3::ZERO,
+        angles: Vec3::ZERO,
+        hulls: vec![hull],
+        mins: lo,
+        maxs: hi,
+    };
+    server.set_map_entities(vec![def], world.surface);
+    // the player stands inside the door's volume: the door cannot clear them
+    server.add_player(1, Vec3::ZERO, Vec3::ZERO);
+    let idle = std::collections::BTreeMap::new();
+    server.tick(&idle);
+    let health = server.players[&1].health;
+    server.fire_input("crusher", "Open", "", 0);
+    server.tick(&idle);
+    server.tick(&idle);
+    let door = server
+        .map_io
+        .entities
+        .iter()
+        .find(|e| e.classname == "func_door")
+        .cloned()
+        .unwrap();
+    let Kind::Mover { state, .. } = door.kind else {
+        panic!("a func_door is a mover");
+    };
+    assert_eq!(state, Toggle::GoingDown, "blocked: it turns back");
+    let lost = health - server.players[&1].health;
+    assert!(
+        (10..=20).contains(&lost),
+        "dmg 10 per blocked tick, {lost} lost"
+    );
+}
