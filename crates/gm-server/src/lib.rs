@@ -4,6 +4,7 @@
 
 pub mod ai;
 pub mod finger_skeletons;
+pub mod mapio;
 pub mod projectile;
 pub mod save;
 pub mod tool_panels;
@@ -8213,6 +8214,8 @@ pub struct Server<'w> {
     /// Solid static props of the map (`LoadedWorld::static_convexes`), always in the player
     /// and NPC sweeps.
     pub static_convexes: Vec<gm_collision::Convex>,
+    /// The map's brush / logic entities (`mapio`).
+    pub map_io: mapio::MapIo,
     pub step_loader: Option<StepLoader>,
     /// Host hook: the `$surfaceprop` of a brush material (impact decals); cached below.
     pub surfaceprop_loader: Option<SurfacepropLoader>,
@@ -8423,6 +8426,7 @@ impl<'w> Server<'w> {
             projectiles: Vec::new(),
             model_loader: None,
             static_convexes: Vec::new(),
+            map_io: Default::default(),
             step_loader: None,
             surfaceprop_loader: None,
             brush_surfaceprops: BTreeMap::new(),
@@ -20759,6 +20763,7 @@ impl<'w> Server<'w> {
         } else if use_alive {
             if use_pressed && self.players.get(&player).is_some_and(|p| p.carry.is_some()) {
                 self.drop_carry(player);
+            } else if use_pressed && self.map_use(player, eye, view) {
             } else if let Some(ent) = self.find_use_target(player, eye, view) {
                 if self.ask(Request::PlayerUse { player, ent }) != Verdict::Cancel {
                     self.game_events.push(GameEvent::Use { player, ent });
@@ -21227,6 +21232,7 @@ impl<'w> Server<'w> {
         let tick = self.tick_count;
         let mut respawn = Vec::new();
         // the props as solids for the player hull this tick (`move_prop_block/step`)
+        let map_convexes = self.map_io.convexes().to_vec();
         let prop_convexes: Vec<gm_collision::Convex> = self
             .sandbox
             .props()
@@ -21284,6 +21290,7 @@ impl<'w> Server<'w> {
                     }),
             )
             .chain(self.static_convexes.iter().cloned())
+            .chain(map_convexes)
             .collect();
         self.mover.set_props(prop_convexes);
         for (id, p) in self.players.iter_mut() {
@@ -21548,6 +21555,7 @@ impl<'w> Server<'w> {
         // hurts a target that has already moved (its velocity shows the push raw)
         self.tick_projectiles(launches);
         self.tick_devices();
+        self.tick_map_io();
         self.tick_vehicles();
         self.tick_ai_sounds();
         self.tick_anims();

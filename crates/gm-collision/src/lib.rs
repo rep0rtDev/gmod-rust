@@ -212,6 +212,54 @@ struct BrushModel {
 /// origin)` of every `*N` entity whose class is solid at spawn (`func_brush` unless
 /// `Solidity 1` / `StartDisabled 1`, doors, buttons, walls, breakables, movers, glass).
 /// `func_illusionary`, `func_vehicleclip`, triggers, areaportals and occluders are not.
+/// Brush entity classes whose pose or solidity changes at run time (doors, platforms,
+/// toggled walls, buttons): the server poses them itself as convexes, they are not part of
+/// the static world.
+pub fn movable_brush_class(class: &str) -> bool {
+    matches!(
+        class,
+        "func_brush"
+            | "func_wall_toggle"
+            | "func_button"
+            | "func_rot_button"
+            | "func_door"
+            | "func_door_rotating"
+            | "func_movelinear"
+            | "func_rotating"
+            | "func_platrot"
+            | "func_train"
+            | "func_tracktrain"
+            | "func_tanktrain"
+            | "func_physbox"
+            | "func_physbox_multiplayer"
+    )
+}
+
+/// A brush entity the server never moves or toggles: not a movable class, or a `func_brush`
+/// / `func_wall_toggle` without a targetname (nothing can send it an input) that starts
+/// solid. These stay in the static world; the rest are the server's (`gm-server::mapio`).
+pub fn brush_entity_is_static(e: &gm_formats::bsp::lumps::Entity) -> bool {
+    let class = e.classname();
+    if !movable_brush_class(class) {
+        return true;
+    }
+    let unnamed = e.get("targetname").is_none_or(|n| n.is_empty());
+    match class {
+        "func_brush" => {
+            unnamed && e.get("Solidity") != Some("1") && e.get("StartDisabled") != Some("1")
+        }
+        "func_wall_toggle" => {
+            unnamed
+                && e.get("spawnflags")
+                    .and_then(|f| f.parse::<u32>().ok())
+                    .unwrap_or(0)
+                    & 1
+                    == 0
+        }
+        _ => false,
+    }
+}
+
 pub fn solid_brush_models(bsp: &Bsp<'_>) -> Vec<(usize, Vec3)> {
     const SOLID: &[&str] = &[
         "func_brush",
@@ -239,11 +287,7 @@ pub fn solid_brush_models(bsp: &Bsp<'_>) -> Vec<(usize, Vec3)> {
     ];
     bsp.entities
         .iter()
-        .filter(|e| SOLID.contains(&e.classname()))
-        .filter(|e| {
-            !(e.classname() == "func_brush"
-                && (e.get("Solidity") == Some("1") || e.get("StartDisabled") == Some("1")))
-        })
+        .filter(|e| SOLID.contains(&e.classname()) && brush_entity_is_static(e))
         .filter_map(|e| {
             let idx: usize = e.get("model")?.strip_prefix('*')?.parse().ok()?;
             let origin = e

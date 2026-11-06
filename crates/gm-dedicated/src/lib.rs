@@ -24,6 +24,9 @@ pub struct LoadedWorld {
     /// PHY hulls at the prop's pose (`entity` `u32::MAX`, no entity behind them); the same
     /// hulls sit in the physics world as part of the static map body.
     pub static_convexes: Vec<gm_collision::Convex>,
+    /// Brush and logic entities for `Server::set_map_entities`, with the world's surface.
+    pub map_entities: Vec<gm_server::mapio::MapEntityDef>,
+    pub surface: Surface,
 }
 
 /// Default Jolt solver settings used by all harnesses (`tools/parity/runner` mirrors this).
@@ -68,6 +71,51 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
             }
         }
     }
+    let map_entities: Vec<gm_server::mapio::MapEntityDef> = bsp
+        .entities
+        .iter()
+        .filter(|e| {
+            let c = e.classname();
+            (gm_collision::movable_brush_class(c) && !gm_collision::brush_entity_is_static(e))
+                || c.starts_with("trigger_")
+                || c.starts_with("logic_")
+                || e.get("targetname").is_some_and(|n| !n.is_empty())
+        })
+        .filter(|e| e.classname() != "worldspawn")
+        .map(|e| {
+            let model = e
+                .get("model")
+                .and_then(|m| m.strip_prefix('*'))
+                .and_then(|n| n.parse::<usize>().ok());
+            let (hulls, mins, maxs) = match model {
+                Some(idx) => {
+                    let raw = gm_physics::brush::model_hull_planes(&bsp, idx, 0.0);
+                    let fat = gm_physics::brush::model_hull_planes(&bsp, idx, gm_physics::REST_GAP);
+                    let hulls = raw
+                        .into_iter()
+                        .zip(fat)
+                        .map(|(h, fat)| gm_server::mapio::HullDef {
+                            planes: h.planes,
+                            points: h.points,
+                            phys_points: fat.points,
+                        })
+                        .collect();
+                    let m = &bsp.models[idx];
+                    (hulls, Vec3::from(m.mins), Vec3::from(m.maxs))
+                }
+                None => (Vec::new(), Vec3::ZERO, Vec3::ZERO),
+            };
+            gm_server::mapio::MapEntityDef {
+                classname: e.classname().to_string(),
+                kv: e.pairs.clone(),
+                origin: e.origin().map(Vec3::from).unwrap_or(Vec3::ZERO),
+                angles: e.angles().map(Vec3::from).unwrap_or(Vec3::ZERO),
+                hulls,
+                mins,
+                maxs,
+            }
+        })
+        .collect();
     for (idx, origin) in gm_collision::solid_brush_models(&bsp) {
         world_hulls.extend(
             gm_physics::brush::model_hulls(&bsp, idx, gm_physics::REST_GAP)
@@ -121,6 +169,8 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
                 -Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin())
             }),
         static_convexes,
+        map_entities,
+        surface,
     })
 }
 
