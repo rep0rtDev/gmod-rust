@@ -183,6 +183,8 @@ pub struct MapEntity {
     pub alive: bool,
     /// Pose changed since the physics body was last placed.
     dirty: bool,
+    /// Position after the previous tick, for the step the riders and the pushed take.
+    last_pos: Vec3,
 }
 
 impl MapEntity {
@@ -408,6 +410,7 @@ fn build(def: MapEntityDef, id: u32) -> MapEntity {
         flags,
         alive: true,
         dirty: true,
+        last_pos: pos,
     }
 }
 
@@ -847,8 +850,11 @@ impl Server<'_> {
                 MoveEvent::None => {}
             }
         }
-        // physics bodies follow the poses
-        for e in self.map_io.entities.iter_mut() {
+        // physics bodies follow the poses; the players riding a mover take its step, the ones
+        // in its way are pushed by it, and a mover that cannot clear a player reverses
+        let mut blocked: Vec<usize> = Vec::new();
+        for idx in 0..self.map_io.entities.len() {
+            let e = &mut self.map_io.entities[idx];
             if !e.dirty {
                 continue;
             }
@@ -862,6 +868,71 @@ impl Server<'_> {
                 };
                 self.physics.teleport(b, pos, e.rot);
             }
+            let step = e.pos - e.last_pos;
+            e.last_pos = e.pos;
+            if step.length_squared() < 1e-8 || !e.solid() {
+                continue;
+            }
+            let e = &self.map_io.entities[idx];
+            let mut riders = Vec::new();
+            let mut pushed = Vec::new();
+            for (pid, p) in self.players.iter() {
+                if !p.alive {
+                    continue;
+                }
+                let h = if p.state.ducked {
+                    gm_physics::pickup::DUCK_HULL_HEIGHT
+                } else {
+                    gm_physics::pickup::HULL_HEIGHT
+                };
+                let o = p.state.origin;
+                if p.state.ground_ent == e.id {
+                    riders.push(*pid);
+                } else if e.overlaps_box(
+                    o + Vec3::new(-16.0, -16.0, 0.0),
+                    o + Vec3::new(16.0, 16.0, h),
+                ) {
+                    pushed.push((*pid, h));
+                }
+            }
+            for pid in riders {
+                if let Some(p) = self.players.get_mut(&pid) {
+                    p.state.origin += step;
+                }
+            }
+            for (pid, h) in pushed {
+                let Some(p) = self.players.get_mut(&pid) else {
+                    continue;
+                };
+                p.state.origin += step;
+                let o = p.state.origin;
+                if e.overlaps_box(
+                    o + Vec3::new(-16.0, -16.0, 0.0),
+                    o + Vec3::new(16.0, 16.0, h),
+                ) {
+                    blocked.push(idx);
+                }
+            }
+        }
+        for idx in blocked {
+            let e = &mut self.map_io.entities[idx];
+            match &mut e.kind {
+                Kind::Mover {
+                    state, return_at, ..
+                }
+                | Kind::Rotator {
+                    state, return_at, ..
+                } => {
+                    *state = match *state {
+                        Toggle::GoingUp => Toggle::GoingDown,
+                        Toggle::GoingDown => Toggle::GoingUp,
+                        s => s,
+                    };
+                    *return_at = None;
+                }
+                _ => {}
+            }
+            self.map_io.fire_output(now, idx, "OnBlocked", 0);
         }
         // triggers: players (flag 1), NPCs (flag 2), props (flag 8)
         let players: Vec<(u32, Vec3, Vec3)> = self
