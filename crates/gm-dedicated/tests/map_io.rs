@@ -182,3 +182,58 @@ fn a_pressed_button_plays_its_buttons_snd_sound() {
         "a button already travelling does not play again"
     );
 }
+
+#[test]
+fn ambient_generic_plays_revolumes_and_fades_through_its_inputs() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let kv = [
+        ("targetname", "hum"),
+        ("message", "ambient/machines/wall_loop1.wav"),
+        ("health", "5"),
+        ("pitch", "100"),
+        ("spawnflags", "16"),
+    ];
+    let def = gm_server::mapio::MapEntityDef {
+        classname: "ambient_generic".into(),
+        kv: kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        origin: Vec3::new(1.0, 2.0, 3.0),
+        angles: Vec3::ZERO,
+        hulls: Vec::new(),
+        mins: Vec3::ZERO,
+        maxs: Vec3::ZERO,
+    };
+    server.set_map_entities(vec![def], world.surface);
+    server.tick(&std::collections::BTreeMap::new());
+    assert!(
+        server.take_sounds().iter().all(|s| !s.looping),
+        "spawnflag 16 starts silent"
+    );
+    server.fire_input("hum", "PlaySound", "", 0);
+    server.tick(&std::collections::BTreeMap::new());
+    let sounds = server.take_sounds();
+    let snd = sounds
+        .iter()
+        .find(|s| s.name == "ambient/machines/wall_loop1.wav")
+        .expect("PlaySound plays the message");
+    assert!(snd.looping, "looped unless spawnflag 32");
+    assert!((snd.volume - 0.5).abs() < 1e-6, "health 5 -> 0.5");
+    assert_eq!(snd.pos, Vec3::new(1.0, 2.0, 3.0));
+    server.fire_input("hum", "Volume", "10", 0);
+    server.tick(&std::collections::BTreeMap::new());
+    assert!(server
+        .take_sounds()
+        .iter()
+        .any(|s| s.looping && s.ent == snd.ent && (s.volume - 1.0).abs() < 1e-6));
+    server.fire_input("hum", "FadeOut", "2", 0);
+    server.tick(&std::collections::BTreeMap::new());
+    assert!(server
+        .take_sounds()
+        .iter()
+        .any(|s| s.stop && s.ent == snd.ent && (s.fade - 2.0).abs() < 1e-6));
+}

@@ -144,7 +144,9 @@ pub enum Kind {
         angle: f32,
     },
     /// `func_brush` / `func_wall_toggle`: solid while enabled.
-    Toggled { enabled: bool },
+    Toggled {
+        enabled: bool,
+    },
     /// `trigger_*`: fires on touch.
     Trigger {
         enabled: bool,
@@ -164,6 +166,14 @@ pub enum Kind {
         next_at: u64,
     },
     /// `logic_auto` and anything else: outputs only.
+    /// `ambient_generic`: `message` at `health` / 10 volume and `pitch`, looped unless
+    /// spawnflag 32, silent at start with spawnflag 16.
+    Ambient {
+        playing: bool,
+        volume: f32,
+        pitch: f32,
+        looped: bool,
+    },
     Logic,
 }
 
@@ -257,9 +267,11 @@ impl MapEntity {
             && !self.def.hulls.is_empty()
             && match &self.kind {
                 Kind::Toggled { enabled } => *enabled,
-                Kind::Trigger { .. } | Kind::Relay { .. } | Kind::Timer { .. } | Kind::Logic => {
-                    false
-                }
+                Kind::Trigger { .. }
+                | Kind::Relay { .. }
+                | Kind::Timer { .. }
+                | Kind::Ambient { .. }
+                | Kind::Logic => false,
                 _ => true,
             }
     }
@@ -453,6 +465,12 @@ fn build(def: MapEntityDef, id: u32) -> MapEntity {
             refire: def.num("RefireTime", 1.0).max(TICK),
             next_at: 0,
         },
+        "ambient_generic" => Kind::Ambient {
+            playing: false,
+            volume: (def.num("health", 10.0) / 10.0).clamp(0.0, 1.0),
+            pitch: def.num("pitch", 100.0),
+            looped: flags & 32 == 0,
+        },
         _ => Kind::Logic,
     };
     let pos = match &kind {
@@ -591,6 +609,44 @@ impl Server<'_> {
 
     /// The solid movable brush entities for the snapshot: id, model `*N`, position and
     /// angles (the rotators' turn about their axis folded into the yaw / pitch / roll).
+    /// An `ambient_generic` starts (`PlaySound`: its `message` on its own channel, looped as
+    /// the entity is) or stops (`StopSound` / `FadeOut` over `fade` seconds).
+    fn ambient_sound(&mut self, idx: usize, play: bool, fade: f32) {
+        let e = &mut self.map_io.entities[idx];
+        let Kind::Ambient {
+            playing,
+            volume,
+            pitch,
+            looped,
+        } = &mut e.kind
+        else {
+            return;
+        };
+        if play {
+            let Some(name) = e.def.get("message").filter(|m| !m.is_empty()) else {
+                return;
+            };
+            *playing = *looped;
+            self.sounds.push(crate::WorldSound {
+                name: name.to_string(),
+                pos: e.pos,
+                volume: *volume,
+                ent: e.id,
+                looping: *looped,
+                pitch: *pitch,
+                ..Default::default()
+            });
+        } else {
+            *playing = false;
+            self.sounds.push(crate::WorldSound {
+                ent: e.id,
+                stop: true,
+                fade,
+                ..Default::default()
+            });
+        }
+    }
+
     pub fn map_entity_states(&self) -> Vec<(u32, String, Vec3, Vec3)> {
         self.map_io
             .entities
@@ -681,6 +737,7 @@ impl Server<'_> {
         let mut events: Vec<&'static str> = Vec::new();
         let e = &mut self.map_io.entities[idx];
         let was_moving = e.moving();
+        let mut ambient: Option<(bool, f32)> = None;
         match &mut e.kind {
             Kind::Mover {
                 state,
@@ -789,6 +846,33 @@ impl Server<'_> {
                 "firetimer" => events.push("OnTimer"),
                 _ => {}
             },
+            Kind::Ambient {
+                playing,
+                volume,
+                pitch,
+                ..
+            } => {
+                let p: f32 = param.trim().parse().unwrap_or(0.0);
+                match input_lc.as_str() {
+                    "playsound" | "fadein" => ambient = Some((true, 0.0)),
+                    "stopsound" => ambient = Some((false, 0.0)),
+                    "fadeout" => ambient = Some((false, p.max(0.0))),
+                    "togglesound" | "use" => ambient = Some((!*playing, 0.0)),
+                    "volume" => {
+                        *volume = (p / 10.0).clamp(0.0, 1.0);
+                        if *playing {
+                            ambient = Some((true, 0.0));
+                        }
+                    }
+                    "pitch" => {
+                        *pitch = p.clamp(1.0, 255.0);
+                        if *playing {
+                            ambient = Some((true, 0.0));
+                        }
+                    }
+                    _ => {}
+                }
+            }
             Kind::Logic => {}
         }
         // the SDK's door / button sounds: the move sound as the travel starts, the locked
@@ -804,6 +888,9 @@ impl Server<'_> {
         }
         for name in sounds {
             self.play_sound(name, center, 1.0);
+        }
+        if let Some((play, fade)) = ambient {
+            self.ambient_sound(idx, play, fade);
         }
         for name in events {
             self.map_io.fire_output(now, idx, name, activator);
@@ -821,6 +908,12 @@ impl Server<'_> {
             for idx in 0..self.map_io.entities.len() {
                 if self.map_io.entities[idx].classname == "logic_auto" {
                     self.map_io.fire_output(now, idx, "OnMapSpawn", 0);
+                }
+            }
+            for idx in 0..self.map_io.entities.len() {
+                let e = &self.map_io.entities[idx];
+                if matches!(e.kind, Kind::Ambient { .. }) && e.flags & 16 == 0 {
+                    self.ambient_sound(idx, true, 0.0);
                 }
             }
         }
