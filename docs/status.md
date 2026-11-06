@@ -275,8 +275,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   the straight diagonal (977, −16) → (1201, 72) at 8..19 u a think, no node on the way.
   Ours: the leader runs north on x≈975 to the (979, 72) node and east along y 72 at 9 u a
   think; the mate at 16+ u a think is at (1141, 56) by 616 where the game's is at (977, −16).
-  The mate's pace and the leader's follow are the two halves of the 162; the (953, 7) point
-  itself (not a node, not a lateral point) is still unexplained.
+  The mate's half is now built: a fighting squad mate's cover run is the straight line to
+  its node with the hull sliding along what it meets (`cover_goto` carried from
+  `npc_take_cover` into `npc_goto`), not the navmesh corner - ours now hugs x 1011 north at
+  11..18 u a think and clears at (1011, 10) → (1033, 29) on 552 (the game x 1005 → 969 at
+  10.5 then 6..11, clearing at (1013, 26) on 657); squad_soldier 162.4 → 69.3, nothing else
+  moved. The pace bands no longer apply to that run (a two-point path); they still cover
+  the leader's graph route. Left: the game's slower slide and westward drift along the face
+  (ours keeps the face at a constant 1011), the leader's follow, and the (953, 7) point
+  itself (not a node, not a lateral point).
 
 ### NPC: a zombie's approach to a prop in its way (swat2_crate 75, swat3_a 7, drum 6) - measured, open
 

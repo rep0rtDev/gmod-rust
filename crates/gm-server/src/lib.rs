@@ -2251,6 +2251,7 @@ pub struct Npc {
     /// Cover: a hit asks for it, the point chosen, the tick the stay there ends, the earliest
     /// tick of the next cover run.
     pub cover_wanted: bool,
+    pub cover_goto: bool,
     pub cover_at: Option<Vec3>,
     /// Tick the cover was chosen: a squadmate's cover is avoided only this fresh
     /// (NPC_COVER_LOCK_TICKS).
@@ -13451,6 +13452,7 @@ impl<'w> Server<'w> {
             throw_done: 0,
             crabs: npc_crabs(def.class),
             cover_wanted: false,
+            cover_goto: false,
             cover_at: None,
             cover_taken_at: 0,
             cover_arrived_at: 0,
@@ -14104,6 +14106,23 @@ impl<'w> Server<'w> {
         };
         let partial = path.partial;
         let mut points = path.points;
+        // a fighting squad mate runs straight at its cover node and slides along whatever
+        // it meets instead of taking the mesh corner (the game's mate hugs the house's west
+        // face north at 10.5 then 6..11 u a think and clears it at (1013,26),
+        // server_npc_squad_soldier 349..657; ours took the (1002,20) corner at a capped pace)
+        let cover_goto = n.cover_goto;
+        let straight_mate = cover_goto
+            && n.target.is_some()
+            && !partial
+            && self.npc_has_squad_mate(id)
+            && !self.npc_leads_squad(id);
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.cover_goto = false;
+        }
+        let n = self.npcs.get(&id).expect("npc");
+        if straight_mate {
+            points = vec![n.pos, Vec3::new(target.x, target.y, n.pos.z)];
+        }
         let (mins, maxs) = (n.mins, n.maxs);
         self.npc_widen_corners(&mut points, mins, maxs);
         // a goal a little off the mesh (the rally (992,-200) sits 0.8 u outside its polygon
@@ -14914,7 +14933,8 @@ impl<'w> Server<'w> {
             // in every soldier recording: net displacement of a zigzag round the house, not
             // a gait speed; the lone soldier runs its cover route at full pace)
             let faced = enemy_face.is_some() || route_face.is_some();
-            let squad_band = route_face.is_some() && has_target && squad_mates.contains(&id);
+            let squad_band =
+                route_face.is_some() && has_target && squad_mates.contains(&id) && points.len() > 2;
             let band_err = if enemy_face.is_some() {
                 yaw_err
             } else if squad_band {
@@ -16565,6 +16585,9 @@ impl<'w> Server<'w> {
             })
         });
         if let Some(p) = from_graph {
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.cover_goto = true;
+            }
             if self.npc_goto(id, p, true) {
                 let now = self.tick_count;
                 if let Some(n) = self.npcs.get_mut(&id) {
@@ -16637,6 +16660,9 @@ impl<'w> Server<'w> {
         let Some((_, p)) = best else {
             return false;
         };
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.cover_goto = true;
+        }
         if !self.npc_goto(id, p, true) {
             return false;
         }
@@ -18061,6 +18087,7 @@ impl<'w> Server<'w> {
                 throw_done: 0,
                 crabs: npc_crabs(def.class),
                 cover_wanted: false,
+                cover_goto: false,
                 cover_at: None,
                 cover_taken_at: 0,
                 cover_arrived_at: 0,
