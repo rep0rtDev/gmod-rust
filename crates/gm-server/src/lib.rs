@@ -2165,6 +2165,10 @@ pub struct Npc {
     pub melee_slide: f32,
     /// The think that arrived in melee range and only stopped (the swing follows next think).
     pub melee_stood: u64,
+    /// Waiting in cover with the squad after a reload until the enemy shows again.
+    pub cover_wait: bool,
+    /// Tick from which a ranged move may start again (the hunter's volley).
+    pub ranged_after: u64,
     /// The dash's per-tick step (u), linear over the lunge's ticks.
     pub melee_dash_step: f32,
     /// The recoil waits until this tick (`NpcMelee::recoil_delay`).
@@ -2763,6 +2767,8 @@ pub fn npc_alert_idle(class: &str, weapon: &str) -> Option<&'static str> {
 pub fn npc_class_activity<'a>(class: &str, act: &'a str) -> &'a str {
     match (class, act) {
         ("npc_manhack", "ACT_IDLE" | "ACT_WALK" | "ACT_RUN") => "ACT_FLY",
+        // the hunter closes on its enemy at the angry prowl (prowl_all), never the walk
+        ("npc_hunter", "ACT_WALK_AIM" | "ACT_RUN_AIM" | "ACT_RUN") => "ACT_HUNTER_WALK_ANGRY",
         _ => act,
     }
 }
@@ -2902,6 +2908,8 @@ pub struct NpcMelee {
     pub hit_tick: u64,
     /// A second hit this many ticks after the first (the fast zombie's double claw).
     pub hit_gap: Option<u64>,
+    /// Hits the move lands `hit_gap` apart (the hunter's flechette volley is 8).
+    pub hits: u8,
     pub punch: f32,
     /// A sideways shove on the hit (u/s), alternating left / right per hit: the fast
     /// zombie's scratches move the bot ~4 u aside and 1..2 u back (server_npc_melee_fastzombie).
@@ -2983,6 +2991,7 @@ const MELEE_PLAIN: NpcMelee = NpcMelee {
     swing_ticks: 0,
     hit_tick: 0,
     hit_gap: None,
+    hits: 1,
     punch: 0.0,
     side: 0.0,
     lift: 0.0,
@@ -3195,6 +3204,7 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         swing_ticks: 133,
         hit_tick: 0,
         hit_gap: Some(14),
+        hits: 2,
         punch: 15.0,
         side: 60.0,
         run: true,
@@ -3275,14 +3285,74 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
             ..MELEE_PLAIN
         },
     ];
+    // the hunter (server_npc_melee_hunter 261106): the flechette volley `plant` from the
+    // prowl - 8 flechettes of 4 at 0.1 s from +39 (plant 0..56, shoot_minigun 56..84,
+    // idle_planted 84..119), the bot nudged ~2 u a hit; the slash `meleeleft` within 70 u,
+    // 20 at +42 with a knockback that slides the bot 11 u/tick decaying (790 -> 702 over
+    // 80 ticks), the prowl resumes 84 ticks in. The move is picked by range each think
+    // (`npc_hunter_move`), not in turn.
+    const HUNTER: [NpcMelee; 2] = [
+        NpcMelee {
+            damage: NPC_HUNTER_FLECHETTE_DAMAGE,
+            reach: 1024.0,
+            swing_ticks: NPC_HUNTER_VOLLEY_TICKS,
+            hit_tick: 39,
+            hit_gap: Some(7),
+            hits: 8,
+            punch: NPC_HUNTER_FLECHETTE_PUNCH,
+            start_range: 1024.0,
+            ..MELEE_PLAIN
+        },
+        NpcMelee {
+            damage: 20.0,
+            reach: 70.0,
+            swing_ticks: 84,
+            hit_tick: 42,
+            punch: NPC_HUNTER_SLASH_PUNCH,
+            start_range: 70.0,
+            ..MELEE_PLAIN
+        },
+    ];
     match class {
         "npc_zombie" | "npc_zombine" => Some((&ZOMBIE, 0)),
         "npc_fastzombie" => Some((&FAST, 0)),
         "npc_antlion" => Some((&ANTLION, 1)),
         "npc_poisonzombie" => Some((&POISON, 1)),
+        "npc_hunter" => Some((&HUNTER, 1)),
         _ => None,
     }
 }
+
+const NPC_HUNTER_FLECHETTE_DAMAGE: f32 = 4.0;
+/// `hunter_flechette_min_range`: no volley at an enemy closer than this.
+const NPC_HUNTER_FLECHETTE_MIN_RANGE: f32 = 100.0;
+const NPC_HUNTER_FLECHETTE_PUNCH: f32 = 20.0;
+const NPC_HUNTER_SLASH_PUNCH: f32 = 800.0;
+/// The volley from `plant` to the end of idle_planted (t462 -> 581, t623 -> 742).
+const NPC_HUNTER_VOLLEY_TICKS: u64 = 119;
+/// The found-enemy intro: 4 thinks of walk_all side-stepping right of the facing (2.8 /
+/// 3.9 / 4.9 u, yaw +15.5 a think), a think of idle_3, then hunter_respond_1; the prowl is
+/// issued at +112 so its first step lands on the think the game's does (t441 = +121).
+const NPC_HUNTER_INTRO_WALK_TICKS: u64 = 28;
+const NPC_HUNTER_INTRO_IDLE_TICKS: u64 = 35;
+const NPC_HUNTER_INTRO_TICKS: u64 = 112;
+/// hunter_respond_1 shows until the first prowl step (t441).
+const NPC_HUNTER_INTRO_LABEL_TICKS: u64 = 119;
+const NPC_HUNTER_INTRO_STEPS: [f32; 4] = [1.1, 2.8, 3.9, 4.9];
+const NPC_HUNTER_INTRO_YAW: f32 = 15.5;
+/// Prowl before the first volley after the intro (t441 -> 462, from the +112 issue) and
+/// after a volley (t581 -> 623); a volley follows a slash at once (t882).
+const NPC_HUNTER_PROWL_AFTER_INTRO: u64 = 28;
+const NPC_HUNTER_PROWL_AFTER_VOLLEY: u64 = 42;
+/// The hunter's prowl (prowl_all): 148 u/s reached in 6 thinks (1.3 / 4.2 / 7.0 / 9.9 /
+/// 12.6 / 15.5 u a think, server_npc_melee_hunter 261106).
+const NPC_MOVE_HUNTER: NpcMoveDef = NpcMoveDef {
+    walk: 148.0,
+    walk_accel: 260.0,
+    run: 148.0,
+    run_accel: 260.0,
+    idle_yaw: NPC_YAW_RATE,
+};
 
 /// The class's first melee move (its approach gait and reach).
 pub fn npc_melee(class: &str) -> Option<NpcMelee> {
@@ -3468,6 +3538,7 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
         "npc_poisonzombie" => NPC_MOVE_POISONZOMBIE,
         "npc_headcrab" | "npc_headcrab_black" => NPC_MOVE_HEADCRAB,
         "npc_headcrab_fast" => NPC_MOVE_HEADCRAB_FAST,
+        "npc_hunter" => NPC_MOVE_HUNTER,
         _ => NPC_MOVE_CITIZEN,
     }
 }
@@ -13627,6 +13698,8 @@ impl<'w> Server<'w> {
             melee_dash: 0.0,
             melee_slide: 0.0,
             melee_stood: 0,
+            cover_wait: false,
+            ranged_after: 0,
             melee_dash_step: 0.0,
             melee_recoil_at: None,
             flight: None,
@@ -15660,7 +15733,17 @@ impl<'w> Server<'w> {
         // pounce2 / pounce / attack3, the poison zombie's ThrowWarning then Throw, the fast
         // zombie's BR2_Roar once both scratches landed
         let named = n.melee_swing.filter(|_| swinging).and_then(|m| {
+            let swing_at = n.swing_until.saturating_sub(m.swing_ticks);
             match ai::class_sched_family(&n.class) {
+                // the hunter's volley: plant, the minigun loop from +56, idle_planted from +84
+                Some("hunter") if m.hits > 1 => Some(if now < swing_at + 56 {
+                    "plant"
+                } else if now < swing_at + 84 {
+                    "shoot_minigun"
+                } else {
+                    "idle_planted"
+                }),
+                Some("hunter") => Some("meleeleft"),
                 Some("antlion") if m.lunge > 0.0 && m.damage == 0.0 => Some("pounce2"),
                 Some("antlion") if m.lunge > 0.0 => Some("pounce"),
                 Some("antlion") => Some("attack3"),
@@ -15681,6 +15764,24 @@ impl<'w> Server<'w> {
                 }
                 _ => None,
             }
+        });
+        // the hunter's found-enemy intro before its first prowl
+        let named = named.or_else(|| {
+            (n.class == "npc_hunter"
+                && n.target_first_seen != 0
+                && n.melee_swing.is_none()
+                && !moving
+                && now < n.target_first_seen + NPC_HUNTER_INTRO_LABEL_TICKS)
+                .then(|| {
+                    let since = now - n.target_first_seen;
+                    if since < NPC_HUNTER_INTRO_WALK_TICKS {
+                        "walk_all"
+                    } else if since < NPC_HUNTER_INTRO_IDLE_TICKS {
+                        "idle_3"
+                    } else {
+                        "hunter_respond_1"
+                    }
+                })
         });
         if let Some(seq) = named {
             if let Some(n) = self.npcs.get_mut(&id) {
@@ -16073,16 +16174,23 @@ impl<'w> Server<'w> {
                 n.reloading = false;
                 n.reload_in_place = false;
                 n.reload_until = 0;
+                if squad_mate && !enemy_seen {
+                    n.cover_wait = true;
+                }
             }
-            if n.cover_at.is_some()
-                && now >= n.cover_until
-                && n.cover_until != 0
-                && !(squad_mate && !enemy_seen)
-            {
-                n.cover_at = None;
-                n.cover_until = 0;
-                n.cover_from_sound = false;
-                n.danger_at = None;
+            if enemy_seen {
+                n.cover_wait = false;
+            }
+            if n.cover_at.is_some() && now >= n.cover_until && n.cover_until != 0 {
+                if squad_mate && !enemy_seen {
+                    // the Combine waits in cover with its squad until the enemy shows
+                    n.cover_wait = true;
+                } else {
+                    n.cover_at = None;
+                    n.cover_until = 0;
+                    n.cover_from_sound = false;
+                    n.danger_at = None;
+                }
             }
         }
         if stop_for_reload {
@@ -16269,7 +16377,7 @@ impl<'w> Server<'w> {
                     && n.flank_until == 0
                     && n.cover_at.is_none()
                     && !n.reloading
-                    && !self.npc_squad_mate_alive(id)
+                    && !n.cover_wait
                     && n.grenade.is_none()
                     && now >= n.throw_done + 2 * n.think_interval as u64
                     && known.distance(eye) <= NPC_LOF_RANGE
@@ -16329,12 +16437,9 @@ impl<'w> Server<'w> {
                             n.sequence = rest;
                         }
                     }
-                } else if self
-                    .npcs
-                    .get(&id)
-                    .is_some_and(|n| n.chase != Some(p) && !n.reloading && n.reload_mark == 0)
-                    && !self.npc_squad_mate_alive(id)
-                {
+                } else if self.npcs.get(&id).is_some_and(|n| {
+                    n.chase != Some(p) && !n.reloading && n.reload_mark == 0 && !n.cover_wait
+                }) {
                     // a reload comes before the lost enemy is sought (the Combine's
                     // SelectCombatSchedule reloads first): server_npc_squad_soldier's leader
                     // reloads in place 26 u off the mate's node where ours ran 150 u west
@@ -16696,16 +16801,61 @@ impl<'w> Server<'w> {
     /// reach), swings when the player is inside `reach`, stands through the swing and
     /// swings again if the player is still in reach, otherwise closes in again. Sight is
     /// lost and the target dropped exactly as for armed NPCs.
+    /// A think of the hunter's found-enemy intro (server_npc_melee_hunter 261106 t320..441):
+    /// the body side-steps left of its facing 1.1 / 2.8 / 3.9 / 4.9 u a think while the yaw
+    /// drifts NPC_HUNTER_INTRO_YAW a think (184 -> 231), the idle think swings it back 37, and
+    /// hunter_respond_1 faces the enemy.
+    fn npc_hunter_intro(&mut self, id: u32, now: u64) {
+        let enemy = self
+            .npcs
+            .get(&id)
+            .and_then(|n| n.target)
+            .and_then(|p| self.players.get(&p))
+            .map(|p| p.state.origin);
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
+        if n.target_first_seen == 0 || now < n.target_first_seen {
+            return;
+        }
+        let since = now - n.target_first_seen;
+        let think = u64::from(n.think_interval).max(1);
+        if !since.is_multiple_of(think) {
+            return;
+        }
+        let k = (since / think) as usize;
+        if since < NPC_HUNTER_INTRO_WALK_TICKS {
+            let facing = n.angles.y - NPC_HUNTER_INTRO_YAW * k.saturating_sub(1) as f32;
+            let dir = (facing + 90.0).to_radians();
+            let step = NPC_HUNTER_INTRO_STEPS[k.min(NPC_HUNTER_INTRO_STEPS.len() - 1)];
+            n.pos += Vec3::new(dir.cos(), dir.sin(), 0.0) * step;
+            if k > 0 {
+                n.angles.y += NPC_HUNTER_INTRO_YAW;
+            }
+        } else if since < NPC_HUNTER_INTRO_IDLE_TICKS {
+            n.angles.y -= 37.0;
+        } else if let Some(o) = enemy {
+            let to = (o - n.pos).truncate();
+            if to.length_squared() > 1e-6 {
+                n.angles.y = to.y.atan2(to.x).to_degrees();
+            }
+        }
+    }
+
     fn npc_melee_think(&mut self, id: u32, now: u64, m: NpcMelee) {
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
         if now < n.swing_until || n.jump_at.is_some() || n.flight.is_some() {
+            if n.class == "npc_hunter" && n.melee_swing.is_none() {
+                self.npc_hunter_intro(id, now);
+            }
             return;
         }
         let eye = n.pos + n.view_offset.unwrap_or(Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT));
         let sight = n.sight;
         let feet = n.pos;
+        let hunter = (n.class == "npc_hunter").then(|| (n.class.clone(), n.ranged_after));
         let sees = |server: &Self, p: u32| -> Option<Vec3> {
             if server.npc_ignores(id, p, now) {
                 return None;
@@ -16748,6 +16898,26 @@ impl<'w> Server<'w> {
             return;
         }
         let dist = origin.truncate().distance(feet.truncate());
+        let m = if let Some((class, ranged_after)) = &hunter {
+            // the hunter picks its move by range each think: the slash within reach, the
+            // volley once the prowl has lasted (ranged_after) at an enemy past the flechette
+            // min range (the third prowl of 261106 passes 99 u at t784 without a volley and
+            // slashes at 71 u)
+            let (moves, _) = npc_melee_moves(class).unwrap_or((&[], 0));
+            match moves {
+                [volley, slash] if dist > slash.start_range => {
+                    if now >= *ranged_after && dist >= NPC_HUNTER_FLECHETTE_MIN_RANGE {
+                        *volley
+                    } else {
+                        *slash
+                    }
+                }
+                [_, slash] => *slash,
+                _ => m,
+            }
+        } else {
+            m
+        };
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
@@ -16761,6 +16931,22 @@ impl<'w> Server<'w> {
             n.target_first_seen = now;
             n.combat_moved = false;
             let antlion = n.class == "npc_antlion";
+            if n.class == "npc_hunter" {
+                // the hunter's found-enemy intro (server_npc_melee_hunter 261106): walk_all
+                // side-steps, a think of idle_3, hunter_respond_1, the prowl from +119 and
+                // the first volley NPC_HUNTER_PROWL_AFTER_INTRO later
+                n.swing_until = now + NPC_HUNTER_INTRO_TICKS;
+                n.ranged_after = now + NPC_HUNTER_INTRO_TICKS + NPC_HUNTER_PROWL_AFTER_INTRO;
+                n.chase = None;
+                n.goal = None;
+                n.next_goal = None;
+                n.move_speed = 0.0;
+                if !n.ai.scripted {
+                    n.ai.start(ai::SCHED_IDLE_STAND, now);
+                }
+                self.npc_hunter_intro(id, now);
+                return;
+            }
             if ai::class_sched_family(&n.class) == Some("zombie") || antlion {
                 // the game: a new enemy in combat runs SCHED_WAKE_ANGRY for one think (7 ticks)
                 // before the chase starts (server_npc_zombie_swat2_*: sched 4 at tick 12, 93 at 19);
@@ -16830,8 +17016,11 @@ impl<'w> Server<'w> {
             n.move_speed = 0.0;
             n.swing_until = now + m.swing_ticks;
             n.melee_hit_at = Some(now + m.hit_tick);
-            n.melee_hits_left = if m.hit_gap.is_some() { 2 } else { 1 };
+            n.melee_hits_left = m.hits;
             n.melee_swing = Some(m);
+            if n.class == "npc_hunter" && m.hits > 1 {
+                n.ranged_after = now + m.swing_ticks + NPC_HUNTER_PROWL_AFTER_VOLLEY;
+            }
             n.melee_dash = if m.lunge_at == 0 { m.lunge } else { 0.0 };
             let flight = if m.lunge_ticks == 0 {
                 NPC_LUNGE_TICKS
@@ -18721,6 +18910,8 @@ impl<'w> Server<'w> {
                 melee_dash: 0.0,
                 melee_slide: 0.0,
                 melee_stood: 0,
+                cover_wait: false,
+                ranged_after: 0,
                 melee_dash_step: 0.0,
                 melee_recoil_at: None,
                 flight: None,

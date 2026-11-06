@@ -652,6 +652,7 @@ pub fn class_sched_family(class: &str) -> Option<&'static str> {
         | "npc_fastzombie_torso" => Some("zombie"),
         "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => Some("headcrab"),
         "npc_antlion" => Some("antlion"),
+        "npc_hunter" => Some("hunter"),
         "npc_combine_s" => Some("combine"),
         "npc_citizen" => Some("citizen"),
         _ => None,

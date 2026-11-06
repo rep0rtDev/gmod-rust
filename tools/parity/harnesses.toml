@@ -5319,6 +5319,15 @@ crates = ["gm-server", "gm-nav", "gm-physics"]
 pos = 2.0
 
 [[harness]]
+name = "server_npc_melee_hunter"
+scenario = "server/npc_melee_hunter"
+compare = "server"
+realm = "server"
+crates = ["gm-server", "gm-nav", "gm-physics"]
+[harness.tolerance]
+pos = 2.0
+
+[[harness]]
 name = "server_npc_melee_poisonzombie"
 scenario = "server/npc_melee_poisonzombie"
 compare = "server"

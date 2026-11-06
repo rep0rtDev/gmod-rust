@@ -211,11 +211,26 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   citizen's Pistol_idle is in female_shared only (the game's random citizen was female_04,
   ours male_04 - the male set has no pistol idle). The black crab standing on its enemy shows
   Threatdisplay from the think after the sighting (game: Idle01fast on the spawn row,
-  Threatdisplay on the next; the classic idles there). Open: the hunter's walk_all at spawn
-  (it walks off at once - its combat behaviour, not a spawn pose), our soldier flickering
+  Threatdisplay on the next; the classic idles there). Open: our soldier flickering
   into CrouchIdle (state 3) within 13 ticks where the game's stays Idle1_SMG1 (state 1) - its
   first sighting takes longer; and our fast crab leaps
   at spawn+13 in server_npc_spawn where the game's only runs (its spawn-think Run1 step).
+- Hunter combat (server_npc_melee_hunter, recorded 261106; its sequences live in
+  models/Hunter_animations.mdl, listed with the `seq_list` example): the found-enemy intro -
+  the sighting think and three more of walk_all side-stepping left of the facing 1.1 / 2.8 /
+  3.9 / 4.9 u while the yaw drifts 15.5 a think away from the enemy, a think of idle_3 (yaw
+  back 37), hunter_respond_1 facing the enemy until the prowl at +119; the prowl
+  (ACT_HUNTER_WALK_ANGRY prowl_all) at 148 u/s reached over six thinks (accel 260); the
+  flechette volley once the prowl has lasted 21 ticks after the intro / 42 after a volley at
+  an enemy past hunter_flechette_min_range 100 - plant, shoot_minigun from +56, idle_planted
+  from +84 to +119, 8 hits of 4 at +39 then every 7 ticks nudging the bot ~2 u each; the slash
+  meleeleft within 70 u, 20 at +42 with a knockback that slides the bot ~88 u, the prowl back
+  at +84 and a volley at once if the enemy is past 100 u (the game's third prowl passes 99 u
+  without a volley and slashes at 71). Ours matches the game's rows for every phase change
+  (plant 144 / 305, shoot 200 / 361, idle_planted 228 / 389, prowl 263 / 424) within 1 u;
+  open: the slash lands a think late (487 vs 480 - our brake into the 70 u stop takes two
+  short steps where the game's takes one of 12.6), the knockback 76 vs 88 u, and the intro's
+  side-step itself is only measured (why a hunter walks sideways away from its first enemy).
 - A spawned NPC whose hull starts in a wall is moved out along the shortest axis direction
   before it settles to the floor (`npc_out_of_solid`): the antlion guard spawned at x 1001.7
   sits at 984.0 = the wall at 1024 minus its 40 u half width, on the floor, like the game
@@ -470,7 +485,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   sight (the Combine's wait in cover) where ours ran for a line of fire / after the lost
   enemy - now a squad soldier with a living squad mate and its enemy unseen holds (no
   cover release, no line-of-fire run, no lost-enemy chase): rows 798..1008 stand like the
-  game, squad_soldier 155 -> 77. The give-up is in as a contact timer: a run blocked by
+  game, squad_soldier 155 -> 77. The hold is the body's own state (`cover_wait`, set when its
+  reload ends with a living squadmate and the enemy unseen, cleared on sight), not the squad
+  itself: a squadmate just told of an enemy it has not seen still runs for a line of fire
+  (test squad_shares_the_target). The give-up is in as a contact timer: a run blocked by
   another NPC fails after NPC_PEER_BLOCK_TICKS (112, the game's t1139 first contact ->
   t1251 halt) of contact and the body reloads where it stands (ours reloads from 834, the
   game 904, before 792). Open: the slide itself - the game met the mate at an angle
