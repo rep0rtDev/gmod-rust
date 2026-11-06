@@ -612,6 +612,8 @@ pub struct ServerConfig {
     pub server_key: Option<std::path::PathBuf>,
     pub timeout: Option<f32>,
     pub log: Option<bool>,
+    /// Echo the event log to stdout as `sv_logecho` does (default on).
+    pub log_echo: Option<bool>,
     pub registry: Option<String>,
     pub master: Option<String>,
     pub addon: Vec<std::path::PathBuf>,
@@ -795,10 +797,11 @@ mod wav_tests {
 /// UTC (srcds writes local time) and `Started map` carries no CRC.
 pub struct EventLog {
     file: std::fs::File,
+    echo: bool,
 }
 
 impl EventLog {
-    pub fn open(data: &std::path::Path, map: &str) -> Result<Self> {
+    pub fn open(data: &std::path::Path, map: &str, echo: bool) -> Result<Self> {
         std::fs::create_dir_all(data.join("logs"))?;
         let (date, _) = stamp_at(unix_now());
         let (rel, path) = (0..1000)
@@ -810,7 +813,7 @@ impl EventLog {
             .find(|(_, p)| !p.exists())
             .context("no free log file name")?;
         let file = std::fs::File::create(&path).with_context(|| path.display().to_string())?;
-        let mut log = Self { file };
+        let mut log = Self { file, echo };
         log.line(&format!(
             "Log file started (file \"{rel}\") (game \"garrysmod\") (version \"{}\")",
             env!("CARGO_PKG_VERSION")
@@ -833,6 +836,9 @@ impl EventLog {
         use std::io::Write;
         let (_, when) = stamp_at(unix_now());
         let _ = writeln!(self.file, "L {when}: {body}");
+        if self.echo {
+            println!("L {when}: {body}");
+        }
     }
 }
 

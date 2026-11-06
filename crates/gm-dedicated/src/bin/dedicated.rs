@@ -123,7 +123,11 @@ fn main() -> Result<()> {
     let t0 = Instant::now();
     let world = gm_dedicated::load_world(&mount, &args.map)?;
     let mut event_log = if args.log {
-        Some(gm_dedicated::EventLog::open(&args.data, &args.map)?)
+        Some(gm_dedicated::EventLog::open(
+            &args.data,
+            &args.map,
+            config.log_echo.unwrap_or(true),
+        )?)
     } else {
         None
     };
