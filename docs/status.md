@@ -459,6 +459,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   19.6 / 17.9 / 16.4 / 14.8 into (953,7) - our bands (0.71 side) already read the same. Open:
   what (953,7) is (a route corner off the graph, a lateral cover point or a squad slot) and the
   five-think drift there.
+  Checked: it is not the local-route limit - NPC_LOCAL_ROUTE_GOAL 600 -> 300 (HL2's shorter
+  MAX_LOCAL_NAV_DIST_GROUND for position goals) leaves the leader's run unchanged and breaks
+  the walk scenes (walk_citizen 0.1 -> 44, walk_metrocop 1.3 -> 57); the leader's run route is
+  built elsewhere than npc_goto's local/graph choice (the squad's straight cover run?).
 - server_npc_zombie_swat (40.0): the game's spawn trace from the eye (823,-500,-79) at pitch
   15 clears the crate's west face (z -94 at x 880) and meets its top at (916,-500,-104); the
   zombie is placed there (-103.9, the hull's rear 20 u over the crate), the crate lifts 1.8 u
