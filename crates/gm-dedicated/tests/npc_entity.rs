@@ -2491,3 +2491,28 @@ fn the_antlion_guard_charges_a_player_down_a_clear_line() {
         server.players[&1].health
     );
 }
+
+#[test]
+fn a_friendly_vortigaunt_tops_up_a_players_suit() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let floor = -143.6;
+    server.add_player(
+        1,
+        Vec3::new(823.0, -500.0, floor),
+        Vec3::new(0.0, 90.0, 0.0),
+    );
+    server.players.get_mut(&1).unwrap().armor = 0;
+    let id = server.spawn_npc(1, "npc_vortigaunt", "none").unwrap();
+    server.npcs.get_mut(&id).unwrap().pos = Vec3::new(823.0, -420.0, floor);
+    let idle = std::collections::BTreeMap::new();
+    for _ in 0..330 {
+        server.tick(&idle);
+    }
+    assert_eq!(server.players[&1].armor, 30, "sk_vortigaunt_armor_charge");
+}

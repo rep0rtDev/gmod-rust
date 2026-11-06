@@ -32,6 +32,13 @@ pub fn npc_stationary_class(class: &str) -> bool {
 
 const TICK: f32 = gm_core::tick::DEFAULT_TICK_INTERVAL;
 
+/// `sk_vortigaunt_armor_charge`: the suit level the vortigaunt's heal tops an ally up to.
+const VORT_ARMOR_CHARGE: i32 = 30;
+/// Reach of the heal and the `heal_start` sequence's length; a heal every 10 s.
+const VORT_HEAL_RANGE: f32 = 160.0;
+const VORT_HEAL_TIME: f32 = 3.9333;
+const VORT_HEAL_COOLDOWN: f32 = 10.0;
+
 fn ticks(seconds: f32) -> u64 {
     (seconds / TICK).round().max(1.0) as u64
 }
@@ -504,8 +511,50 @@ impl Server<'_> {
             }
             return;
         }
+        // the heal (`CNPC_Vortigaunt` on an ally whose suit is under
+        // `sk_vortigaunt_armor_charge` 30): `heal_start`, then the suit topped up to 30
+        if phase == 2 {
+            if now >= n.special.until {
+                let target = n.special.target;
+                if let Some(pl) = target.and_then(|t| self.players.get_mut(&t)) {
+                    if pl.alive && pl.state.origin.distance(pos) <= VORT_HEAL_RANGE {
+                        pl.armor = pl.armor.max(VORT_ARMOR_CHARGE.min(pl.max_armor));
+                    }
+                }
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.special.phase = 0;
+                    n.special.next_hit = now + ticks(VORT_HEAL_COOLDOWN);
+                }
+            }
+            return;
+        }
         if now < n.special.next_hit || n.goal.is_some() {
             return;
+        }
+        if !npc_hostile_to_players(n) {
+            let patient = self
+                .players
+                .iter()
+                .filter(|(_, pl)| pl.alive && pl.armor < VORT_ARMOR_CHARGE.min(pl.max_armor))
+                .filter(|(_, pl)| pl.state.origin.distance(pos) <= VORT_HEAL_RANGE)
+                .min_by(|a, b| {
+                    a.1.state
+                        .origin
+                        .distance(pos)
+                        .total_cmp(&b.1.state.origin.distance(pos))
+                })
+                .map(|(pid, pl)| (*pid, pl.state.origin));
+            if let Some((pid, ppos)) = patient {
+                self.set_sequence(id, "heal_start");
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    let d = ppos - pos;
+                    n.angles.y = d.y.atan2(d.x).to_degrees();
+                    n.special.target = Some(pid);
+                    n.special.phase = 2;
+                    n.special.until = now + ticks(VORT_HEAL_TIME);
+                }
+                return;
+            }
         }
         let enemy = self
             .npcs
