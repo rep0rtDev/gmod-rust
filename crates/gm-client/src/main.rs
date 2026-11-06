@@ -673,6 +673,85 @@ fn player_sequence(p: &PlayerSnap) -> (String, Vec<(&'static str, f32)>) {
     (seq, params)
 }
 
+/// `AngleVectors`: forward, right, up of (pitch, yaw, roll) in degrees.
+fn angle_vectors(angles: Vec3) -> (Vec3, Vec3, Vec3) {
+    let m = gm_render::props::angle_matrix(angles.to_array());
+    (m * Vec3::X, -(m * Vec3::Y), m * Vec3::Z)
+}
+
+/// The viewmodel's bob and sway state: `CBaseHLCombatWeapon::CalcViewmodelBob`'s bob time
+/// (advances with the player's speed) and `CBaseViewModel::CalcViewModelLag`'s last facing.
+struct VmView {
+    bob_time: f32,
+    at: Instant,
+    last_facing: Vec3,
+}
+
+impl VmView {
+    fn new() -> Self {
+        Self {
+            bob_time: 0.0,
+            at: Instant::now(),
+            last_facing: Vec3::X,
+        }
+    }
+
+    /// `CBaseViewModel::CalcViewModelView`: the viewmodel's origin and angles from the eye
+    /// position and view angles - the HL2 weapon bob (`AddViewmodelBob`), then the sway behind
+    /// the facing and the pitch offset (`CalcViewModelLag`, `cl_wpn_sway_interp` 0.1,
+    /// `cl_wpn_sway_scale` 1). `speed` is the player's 2D speed.
+    fn view(&mut self, speed: f32, eye: Vec3, angles: Vec3) -> (Vec3, Vec3) {
+        use std::f32::consts::PI;
+        let now = Instant::now();
+        let dt = now.duration_since(self.at).as_secs_f32().min(0.1);
+        self.at = now;
+        let (mut origin, mut ang) = (eye, angles);
+        // HL2_BOB_CYCLE_MAX 0.45, HL2_BOB_UP 0.5: the vertical cycle, the lateral one twice as long
+        let speed = speed.clamp(0.0, 320.0);
+        self.bob_time += dt * speed / 320.0;
+        let bob_time = self.bob_time;
+        let cycle = |period: f32| {
+            let c = (bob_time - (bob_time / period).trunc() * period) / period;
+            if c < 0.5 {
+                PI * c / 0.5
+            } else {
+                PI + PI * (c - 0.5) / 0.5
+            }
+        };
+        let bob = |c: f32| {
+            let b = speed * 0.005;
+            (b * 0.3 + b * 0.7 * c.sin()).clamp(-7.0, 4.0)
+        };
+        let vertical = bob(cycle(0.45));
+        let lateral = bob(cycle(0.9));
+        let (fwd, right, _) = angle_vectors(ang);
+        origin += fwd * (vertical * 0.1);
+        origin.z += vertical * 0.1;
+        ang.z += vertical * 0.5;
+        ang.x -= vertical * 0.4;
+        ang.y -= lateral * 0.3;
+        origin += right * (lateral * 0.8);
+        // the lag: the facing catches up at 5/s (faster once more than a unit behind)
+        let (facing, _, _) = angle_vectors(ang);
+        if dt > 0.0 {
+            let diff = facing - self.last_facing;
+            let d = diff.length();
+            let rate = if d > 1.0 { 5.0 * d } else { 5.0 };
+            self.last_facing = (self.last_facing + diff * (rate * dt)).normalize_or_zero();
+            origin -= diff * 5.0;
+        }
+        let (fwd, right, up) = angle_vectors(angles);
+        let mut pitch = angles.x;
+        if pitch > 180.0 {
+            pitch -= 360.0;
+        } else if pitch < -180.0 {
+            pitch += 360.0;
+        }
+        origin += fwd * (-pitch * 0.035) + right * (-pitch * 0.03) + up * (-pitch * 0.02);
+        (origin, ang)
+    }
+}
+
 /// The m_anm gesture another player plays for a viewmodel event (`PlayerSnap::vm_act`), by hold
 /// type: `range_*` on a shot, `reload_*` where the animation model has one.
 fn gesture_for(act: u8, hold: &str) -> Option<&'static str> {
@@ -1038,6 +1117,8 @@ struct App {
     /// Last frame's viewmodel (sequence, seconds into it) and the sequence left before it with
     /// the time it was left at and when (`CSequenceTransitioner` fade-out).
     vm_last: Option<(&'static str, f32)>,
+    /// The viewmodel's bob and sway state (`CalcViewModelView`).
+    vm_view: VmView,
     vm_prev: Option<(&'static str, f32, Instant)>,
     /// `PlayerSnap::vm_serial` of the last server viewmodel event played.
     vm_serial_seen: u8,
@@ -5374,7 +5455,18 @@ impl App {
                     far: 512.0,
                     ..camera
                 };
-                let transform = gm_render::world::model_transform(camera.position, self.view);
+                let me = self.sim.client.player_id;
+                let speed = self
+                    .sim
+                    .client
+                    .world
+                    .players
+                    .iter()
+                    .find(|p| Some(p.id) == me)
+                    .map(|p| p.velocity.truncate().length())
+                    .unwrap_or(0.0);
+                let (vm_pos, vm_ang) = self.vm_view.view(speed, camera.position, self.view);
+                let transform = gm_render::world::model_transform(vm_pos, vm_ang);
                 let mut vm_items = vec![DrawItem {
                     model: m,
                     transform,
@@ -7455,6 +7547,7 @@ fn main() -> Result<()> {
         impulse: 0,
         vm_anim: None,
         vm_last: None,
+        vm_view: VmView::new(),
         vm_prev: None,
         vm_serial_seen: 0,
         fx_tracers: Vec::new(),
