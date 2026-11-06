@@ -359,10 +359,10 @@ struct CameraUniform {
     sky_sun_color: [f32; 4],
     sky_dusk: [f32; 4],
     sky_dusk_scale: [f32; 4],
-    /// The flashlight's view-projection for its shadow map, and (x) whether it is set, (y)
-    /// which dynamic light it is.
-    flashlight_vp: [[f32; 4]; 4],
-    flashlight: [f32; 4],
+    /// The view-projection of each flashlight shadow map, and per dynamic light the shadow
+    /// map that shades it (-1: none).
+    flashlight_vp: [[[f32; 4]; 4]; SHADOW_LAYERS],
+    shadow_slot: [[f32; 4]; 2],
 }
 
 /// Dynamic lights lit per frame.
@@ -370,8 +370,10 @@ pub const MAX_DLIGHTS: usize = 8;
 
 /// A dynamic point light for this frame (the physgun beam's end, a muzzle flash): colour times
 /// `(1 - d / radius)^2` times the surface's facing, added to the baked light.
-/// Side of the flashlight's shadow map.
+/// Side of a flashlight's shadow map, and how many flashlights (the local player's first)
+/// get one.
 const SHADOW_SIZE: u32 = 2048;
+pub const SHADOW_LAYERS: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DLight {
@@ -702,11 +704,12 @@ pub struct WorldRenderer {
     /// Alpha-blended, no depth write: models drawn with `ModelTarget::alpha` below 1 (ghosts).
     translucent_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
-    /// The local flashlight (its index among the dynamic lights) whose shadow map is drawn.
-    flashlight: Option<(usize, DLight)>,
-    flashlight_vp: std::cell::Cell<Option<Mat4>>,
+    /// The flashlights (index among the dynamic lights, light) whose shadow maps are drawn,
+    /// the local player's first; the first `SHADOW_LAYERS` get one.
+    flashlights: Vec<(usize, DLight)>,
+    flashlight_vp: std::cell::Cell<[Option<Mat4>; SHADOW_LAYERS]>,
     shadow_pipeline: wgpu::RenderPipeline,
-    shadow_view: wgpu::TextureView,
+    shadow_layers: Vec<wgpu::TextureView>,
     camera_bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -2202,7 +2205,7 @@ impl WorldRenderer {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
                         multisampled: false,
                     },
                     count: None,
@@ -2313,23 +2316,34 @@ impl WorldRenderer {
             mapped_at_creation: false,
         });
         // the flashlight's shadow map: depth from the light, compared in the world shader
-        let shadow_view = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("flashlight depth"),
-                size: wgpu::Extent3d {
-                    width: SHADOW_SIZE,
-                    height: SHADOW_SIZE,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Depth32Float,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("flashlight depth"),
+            size: wgpu::Extent3d {
+                width: SHADOW_SIZE,
+                height: SHADOW_SIZE,
+                depth_or_array_layers: SHADOW_LAYERS as u32,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let shadow_layers: Vec<wgpu::TextureView> = (0..SHADOW_LAYERS as u32)
+            .map(|layer| {
+                shadow_texture.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: layer,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
             })
-            .create_view(&Default::default());
+            .collect();
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("flashlight depth"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -3006,10 +3020,10 @@ impl WorldRenderer {
             modulate_pipeline,
             translucent_pipeline,
             camera_buffer,
-            flashlight: None,
-            flashlight_vp: std::cell::Cell::new(None),
+            flashlights: Vec::new(),
+            flashlight_vp: std::cell::Cell::new([None; SHADOW_LAYERS]),
             shadow_pipeline,
-            shadow_view,
+            shadow_layers,
             camera_bind_group,
             vertex_buffer,
             index_buffer,
@@ -3049,10 +3063,12 @@ impl WorldRenderer {
         scene_src: Option<&wgpu::Texture>,
         reflect_items: &[DrawItem<'_>],
     ) {
-        match self.flashlight {
-            Some((_, l)) => self.draw_flashlight_depth(gpu, &l, reflect_items),
-            None => self.flashlight_vp.set(None),
+        let mut vps = [None; SHADOW_LAYERS];
+        for (slot, (_, l)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
+            vps[slot] =
+                Some(self.draw_flashlight_depth(gpu, l, &self.shadow_layers[slot], reflect_items));
         }
+        self.flashlight_vp.set(vps);
         self.draw_reflection(gpu, camera, aspect, reflect_items);
         self.draw_inner(
             gpu,
@@ -3288,14 +3304,19 @@ impl WorldRenderer {
             sky_sun: sp.map_or([0.0; 4], |s| v4(s.sun_normal, s.sun_size)),
             sky_sun_color: sp.map_or([0.0; 4], |s| v4(s.sun_color, s.star_drift)),
             sky_dusk: sp.map_or([0.0; 4], |s| v4(s.dusk_color, s.dusk_intensity)),
-            flashlight_vp: self
-                .flashlight_vp
-                .get()
-                .unwrap_or(Mat4::IDENTITY)
-                .to_cols_array_2d(),
-            flashlight: match (self.flashlight_vp.get(), self.flashlight) {
-                (Some(_), Some((i, _))) => [1.0, i as f32, 0.0, 0.0],
-                _ => [0.0; 4],
+            flashlight_vp: {
+                let vps = self.flashlight_vp.get();
+                std::array::from_fn(|s| vps[s].unwrap_or(Mat4::IDENTITY).to_cols_array_2d())
+            },
+            shadow_slot: {
+                let vps = self.flashlight_vp.get();
+                let mut slots = [[-1.0f32; 4]; 2];
+                for (s, (i, _)) in self.flashlights.iter().take(SHADOW_LAYERS).enumerate() {
+                    if vps[s].is_some() && *i < MAX_DLIGHTS {
+                        slots[i / 4][i % 4] = s as f32;
+                    }
+                }
+                slots
             },
             sky_dusk_scale: sp.map_or([0.0; 4], |s| {
                 [s.dusk_scale, s.star_scale, s.star_fade, s.star_layers]
@@ -3737,15 +3758,21 @@ impl WorldRenderer {
         }
     }
 
-    /// The local player's flashlight among the dynamic lights (index, light): its shadow map
-    /// is drawn each frame and shades that light.
-    pub fn set_flashlight(&mut self, flashlight: Option<(usize, DLight)>) {
-        self.flashlight = flashlight;
+    /// The flashlights among the dynamic lights (index, light), the local player's first:
+    /// the first `SHADOW_LAYERS` of them cast shadows from their own shadow map.
+    pub fn set_flashlights(&mut self, flashlights: &[(usize, DLight)]) {
+        self.flashlights = flashlights.to_vec();
     }
 
     /// Depth of the opaque world from the flashlight (`r_flashlightfov` 53.7 over its
     /// radius) into the shadow map; models do not cast yet.
-    fn draw_flashlight_depth(&self, gpu: &Gpu, light: &DLight, items: &[DrawItem<'_>]) {
+    fn draw_flashlight_depth(
+        &self,
+        gpu: &Gpu,
+        light: &DLight,
+        view: &wgpu::TextureView,
+        items: &[DrawItem<'_>],
+    ) -> Mat4 {
         let dir = light.dir.normalize_or_zero();
         let cam = Camera {
             position: light.pos,
@@ -3791,7 +3818,7 @@ impl WorldRenderer {
                 label: Some("flashlight depth"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_view,
+                    view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -3821,7 +3848,7 @@ impl WorldRenderer {
             }
         }
         gpu.queue.submit(Some(encoder.finish()));
-        self.flashlight_vp.set(Some(vp));
+        vp
     }
 
     /// Auto-exposure step from a frame probe: `bright` is the brightness (linear, 0..1 of

@@ -5544,7 +5544,7 @@ impl App {
         }
         // flashlights (`r_flashlightfov` 53.7, `r_flashlightfar` 750): a spot from each lit
         // player's eye along the view
-        let mut local_flashlight: Option<(usize, gm_render::world::DLight)> = None;
+        let mut flashlights: Vec<(usize, gm_render::world::DLight)> = Vec::new();
         for p in &self.sim.client.world.players {
             if !p.flashlight {
                 continue;
@@ -5570,7 +5570,9 @@ impl App {
                 cone: 26.85f32.to_radians().cos(),
             };
             if Some(p.id) == me {
-                local_flashlight = Some((dlights.len(), light));
+                flashlights.insert(0, (dlights.len(), light));
+            } else {
+                flashlights.push((dlights.len(), light));
             }
             dlights.push(light);
         }
@@ -5585,7 +5587,7 @@ impl App {
             );
         }
         g.world.set_dlights(&dlights);
-        g.world.set_flashlight(local_flashlight);
+        g.world.set_flashlights(&flashlights);
         let target = ModelTarget {
             color: &attach,
             resolve,
