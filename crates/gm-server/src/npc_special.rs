@@ -111,7 +111,10 @@ impl Server<'_> {
             .filter(|(_, n)| {
                 npc_stationary_class(&n.class)
                     || bird_class(&n.class)
-                    || matches!(n.class.as_str(), "npc_vortigaunt" | "npc_stalker")
+                    || matches!(
+                        n.class.as_str(),
+                        "npc_vortigaunt" | "npc_stalker" | "npc_antlionguard"
+                    )
             })
             .map(|(id, _)| *id)
             .collect();
@@ -131,9 +134,123 @@ impl Server<'_> {
                 "npc_rollermine" => self.tick_rollermine(id, now),
                 "npc_vortigaunt" => self.tick_vortigaunt(id, now),
                 "npc_stalker" => self.tick_stalker(id, now),
+                "npc_antlionguard" => self.tick_guard(id, now),
                 c if bird_class(c) => self.tick_bird(id, now),
                 _ => {}
             }
+        }
+    }
+
+    /// `CNPC_AntlionGuard`'s charge (HL2's rule, not measured): an enemy player 256..2048 u
+    /// away down a clear line starts a 1 s wind-up facing them, then the guard runs that line
+    /// at 700 u/s for up to 2 s; the player caught within 80 u ahead takes
+    /// `sk_antlionguard_dmg_charge` (20) and is launched, a wall ends the run; 4 s before the
+    /// next. Phases in `special`: 0 idle, 1 wind-up, 2 running, 3 cooling down.
+    fn tick_guard(&mut self, id: u32, now: u64) {
+        const WINDUP: f32 = 1.0;
+        const RUN: f32 = 2.0;
+        const COOLDOWN: f32 = 4.0;
+        const SPEED: f32 = 700.0;
+        const REACH: f32 = 80.0;
+        const DAMAGE: f32 = 20.0;
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        if !npc_hostile_to_players(n) || n.ai.scripted {
+            return;
+        }
+        let (pos, mins, maxs) = (n.pos, n.mins, n.maxs);
+        let (phase, until, dir, target) = (
+            n.special.phase,
+            n.special.until,
+            n.special.dir,
+            n.special.target,
+        );
+        let lift = Vec3::new(0.0, 0.0, crate::NPC_STEP_LIFT);
+        match phase {
+            0 | 3 => {
+                if phase == 3 && now < until {
+                    return;
+                }
+                let Some((p, origin)) = self
+                    .players
+                    .iter()
+                    .filter(|(_, pl)| pl.alive)
+                    .map(|(i, pl)| (*i, pl.state.origin))
+                    .min_by(|a, b| {
+                        a.1.distance_squared(pos)
+                            .total_cmp(&b.1.distance_squared(pos))
+                    })
+                else {
+                    return;
+                };
+                let flat = (origin - pos).truncate();
+                let dist = flat.length();
+                if !(256.0..=2048.0).contains(&dist) {
+                    return;
+                }
+                let d = flat.normalize_or_zero().extend(0.0);
+                let props = self.prop_bodies();
+                let line_end = origin.truncate().extend(pos.z);
+                let tr = self.npc_sweep(&props, pos + lift, line_end + lift, mins, maxs);
+                if tr.fraction < 0.9 {
+                    return;
+                }
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.special.phase = 1;
+                    n.special.until = now + ticks(WINDUP);
+                    n.special.dir = d;
+                    n.special.target = Some(p);
+                    n.angles.y = d.y.atan2(d.x).to_degrees();
+                }
+            }
+            1 => {
+                if now >= until {
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.special.phase = 2;
+                        n.special.until = now + ticks(RUN);
+                    }
+                }
+            }
+            2 => {
+                let step = dir * (SPEED * gm_core::tick::DEFAULT_TICK_INTERVAL);
+                let props = self.prop_bodies();
+                let tr = self.npc_sweep(&props, pos + lift, pos + step + lift, mins, maxs);
+                let reached = if tr.start_solid { pos + lift } else { tr.end };
+                let floor = self
+                    .npc_floor(reached, mins, maxs)
+                    .unwrap_or(reached - lift);
+                let moved = floor.truncate().distance(pos.truncate());
+                let mut done = now >= until || moved < step.length() * 0.5;
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.pos = floor;
+                    n.angles.y = dir.y.atan2(dir.x).to_degrees();
+                }
+                if let Some(p) = target {
+                    let caught = self.players.get(&p).is_some_and(|pl| {
+                        let rel = pl.state.origin - floor;
+                        pl.alive
+                            && rel.dot(dir) > 0.0
+                            && rel.truncate().length() < REACH + maxs.x
+                            && rel.z.abs() < 80.0
+                    });
+                    if caught {
+                        if self.damage_player(p, DAMAGE, crate::weapons::DMG_CRUSH) > 0.0 {
+                            if let Some(pl) = self.players.get_mut(&p) {
+                                pl.state.velocity += dir * 500.0 + Vec3::Z * 250.0;
+                            }
+                        }
+                        done = true;
+                    }
+                }
+                if done {
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.special.phase = 3;
+                        n.special.until = now + ticks(COOLDOWN);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

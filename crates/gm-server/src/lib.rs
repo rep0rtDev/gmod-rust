@@ -3242,7 +3242,7 @@ pub fn npc_leap(class: &str) -> Option<NpcLeap> {
 /// (a ~100 u swipe alternating with an 84 u pounce, 168-tick period), poison zombie (a
 /// headcrab throw whose bite lands 187 ticks later, then a 25-damage claw from ~66 u).
 pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
-    // the guard's shove (`sk_antlionguard_dmg_shove` 10) with its launch; the charge is not built
+    // the guard's shove (`sk_antlionguard_dmg_shove` 10) with its launch; the charge is npc_special::tick_guard
     const GUARD: [NpcMelee; 1] = [NpcMelee {
         damage: 10.0,
         reach: 80.0,
@@ -15354,6 +15354,10 @@ impl<'w> Server<'w> {
                 continue;
             };
             if now < n.next_think {
+                continue;
+            }
+            // the antlion guard winding up or running its charge is driven by tick_guard
+            if n.class == "npc_antlionguard" && matches!(n.special.phase, 1 | 2) {
                 continue;
             }
             // an idle brain decides before the body moves: a route it issues this think is
