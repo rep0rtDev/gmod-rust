@@ -2406,9 +2406,26 @@ const NPC_TURN_ACT_DEG: f32 = 45.0;
 fn npc_class_yaw(class: &str) -> f32 {
     match class {
         "npc_headcrab_black" => 300.0,
+        // golden 261106: 23 -> 257 -> 203 in two thinks (MaxYawSpeed 120 x 10)
+        "npc_headcrab_fast" => 1200.0,
         _ => NPC_YAW_RATE,
     }
 }
+/// A headcrab's turn rate on the run, deg/s: MaxYawSpeed 20 (classic) / 150 (fast) x 10.
+fn npc_crab_run_yaw(class: &str) -> f32 {
+    match class {
+        "npc_headcrab_fast" => 1500.0,
+        _ => NPC_CRAB_RUN_YAW,
+    }
+}
+/// A running crab turns this fraction of its yaw error a think (golden 261104 rows 150..171:
+/// errors 54 / 32 / 19 turn 22 / 13 / 8; 261106 rows 94..136: 105 / 61 / 36 / 21 turn 44 /
+/// 25 / 15 / 9), snapping the last NPC_CRAB_SNAP_DEG.
+const NPC_CRAB_TURN_FRACTION: f32 = 0.42;
+const NPC_CRAB_SNAP_DEG: f32 = 12.0;
+/// A landed crab runs 120 u away only with its enemy nearer than this (golden 261106: 29 and
+/// 46 u ran, 74 u leaped again; the bound lies between).
+const NPC_CRAB_RUN_AWAY_DIST: f32 = 60.0;
 /// A fighting NPC turning toward a sighted enemy while it runs: 44..46 deg per think
 /// (server_npc_grenade_soldier_wall: yaw 221 -> 177 -> 131 over t1602..1616).
 const NPC_AIM_YAW_RATE: f32 = 430.0;
@@ -2966,6 +2983,12 @@ pub struct NpcLeap {
     pub poison: bool,
     /// Ticks the NPC stands where it landed before its next decision (the antlion jump).
     pub stand_ticks: u64,
+    /// Thinks between the sighting think and the leap's pre-think (classic crab: 2).
+    pub sight_thinks: u64,
+    /// The pre-think already shows the leap's label (classic); the fast crab keeps its label.
+    pub pre_label: bool,
+    /// The label of a turn in place (None: TurnLeft / TurnRight by direction).
+    pub turn_sequence: Option<&'static str>,
     /// Sequences played in flight, on the hull / the floor, and on the run-away.
     pub leap_sequence: Option<&'static str>,
     pub land_sequence: Option<&'static str>,
@@ -3008,6 +3031,9 @@ pub fn npc_jump(class: &str) -> Option<NpcJump> {
                 rest_ticks: NPC_JUMP_COOLDOWN,
                 poison: false,
                 stand_ticks: 70,
+                sight_thinks: 0,
+                pre_label: false,
+                turn_sequence: None,
                 leap_sequence: None,
                 land_sequence: None,
                 run_sequence: None,
@@ -3066,7 +3092,27 @@ const NPC_GRAVITY: f32 = 600.0;
 /// after the landing (328 after the previous leap; run14 goldens).
 pub fn npc_leap(class: &str) -> Option<NpcLeap> {
     match class {
-        "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => Some(NpcLeap {
+        // the fast crab (golden 261106): the same arc and fall, the leap launched on its
+        // label think two thinks after the sighting, Idle02 on the floor, a 187 u/s run-away,
+        // 126 deg turn steps under Idle01, the next leap 77 ticks after the floor think
+        "npc_headcrab_fast" => Some(NpcLeap {
+            speed: 383.5,
+            aim_height: 66.0,
+            damage: 5.0,
+            punch: 25.0,
+            hang_ticks: 0,
+            retreat: 120.0,
+            rest_ticks: 0,
+            poison: false,
+            stand_ticks: 7,
+            sight_thinks: 0,
+            pre_label: false,
+            turn_sequence: Some("Idle01"),
+            leap_sequence: Some("attack"),
+            land_sequence: Some("Idle02"),
+            run_sequence: Some("Run1"),
+        }),
+        "npc_headcrab" | "npc_headcrab_black" => Some(NpcLeap {
             // golden 261104/261106 (classic and fast crab alike): 5.753 u/tick over rows
             // 26..45, the bite on the hull-contact tick 34 ticks after the leap's first row
             speed: 383.5,
@@ -3076,11 +3122,17 @@ pub fn npc_leap(class: &str) -> Option<NpcLeap> {
             punch: 25.0,
             hang_ticks: 0,
             retreat: 120.0,
-            rest_ticks: 252,
+            // no rest timer: the next leap follows the run-away and the turn (golden 261104:
+            // floor 94, Run1 108, run end 269, turn to 339, label 346, launch 353)
+            rest_ticks: 0,
             poison: class == "npc_headcrab_black",
-            // two thinks on the floor before the run-away (golden 261104: floor 94, Run1 108;
-            // fast crab 261106: 398 / 412)
-            stand_ticks: 14,
+            // a think on the floor, then the decision think: the run-away (first step a think
+            // later, 108 = 94 + 14) or, with the enemy beyond NPC_CRAB_RUN_AWAY_DIST, the leap's
+            // pre-think (fast crab 261106: floor 224, launch 238)
+            stand_ticks: 7,
+            sight_thinks: 2,
+            pre_label: true,
+            turn_sequence: None,
             leap_sequence: Some("jumpattack_broadcast"),
             land_sequence: Some("IdleB"),
             run_sequence: Some("Run1"),
@@ -3317,6 +3369,15 @@ const NPC_MOVE_HEADCRAB: NpcMoveDef = NpcMoveDef {
     run_accel: 467.0,
     idle_yaw: NPC_YAW_RATE,
 };
+/// Fast headcrab run-away (golden 261106 rows 94..136): 19.7 u per think (187 u/s) from the
+/// second step, 9.8 on the first.
+const NPC_MOVE_HEADCRAB_FAST: NpcMoveDef = NpcMoveDef {
+    walk: 187.0,
+    walk_accel: 1781.0,
+    run: 187.0,
+    run_accel: 1781.0,
+    idle_yaw: NPC_YAW_RATE,
+};
 /// Antlion run measured in server_npc_run_antlion (1100 u approach): 3.91, 11.7, 19.49,
 /// 27.32, 34.05, 36.15, 37.23 then 37.26 u per 7-tick think (0.105 s) = 354.9 u/s, 7.79 u
 /// per think² = 706 u/s²; the last two ramp steps are the game's soft cap again.
@@ -3373,7 +3434,8 @@ pub fn npc_move_def(class: &str) -> NpcMoveDef {
         "npc_fastzombie" => NPC_MOVE_FASTZOMBIE,
         "npc_antlion" => NPC_MOVE_ANTLION,
         "npc_poisonzombie" => NPC_MOVE_POISONZOMBIE,
-        "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => NPC_MOVE_HEADCRAB,
+        "npc_headcrab" | "npc_headcrab_black" => NPC_MOVE_HEADCRAB,
+        "npc_headcrab_fast" => NPC_MOVE_HEADCRAB_FAST,
         _ => NPC_MOVE_CITIZEN,
     }
 }
@@ -14900,6 +14962,7 @@ impl<'w> Server<'w> {
             // turns into its steps at the run's yaw rate (golden 261104: 2.6 u east on the
             // Run1 think 108 with yaw 180 -> 201, then 5.2 u and 21 deg a think to yaw 0)
             let crab_run = npc_leap(&n.class).is_some();
+            let crab_run_yaw = npc_crab_run_yaw(&n.class);
             let (pos, mins, maxs, v0, yaw0) = (n.pos, n.mins, n.maxs, n.move_speed, n.angles.y);
             let prop_bodies: Vec<gm_sandbox::PropBody> = prop_bodies
                 .iter()
@@ -15332,7 +15395,7 @@ impl<'w> Server<'w> {
                 _ if reversal > 1 && reversal % 2 == 1 => {
                     (dir, max_yaw.unwrap_or(NPC_YAW_RATE * 2.0))
                 }
-                _ if crab_run => (dir, max_yaw.unwrap_or(NPC_CRAB_RUN_YAW)),
+                _ if crab_run => (dir, max_yaw.unwrap_or(crab_run_yaw)),
                 _ => (dir, max_yaw.unwrap_or(NPC_YAW_RATE)),
             };
             let mut swap = None;
@@ -15346,8 +15409,12 @@ impl<'w> Server<'w> {
                 };
                 n.pos = floor;
                 n.reversal = reversal;
-                let max_turn = rate * dt;
                 let turn = wrap_deg(face.y.atan2(face.x).to_degrees() - n.angles.y);
+                let max_turn = if crab_run && turn.abs() > NPC_CRAB_SNAP_DEG {
+                    (turn.abs() * NPC_CRAB_TURN_FRACTION).min(rate * dt)
+                } else {
+                    rate * dt
+                };
                 let yaw = if n.move_yaw_locked {
                     n.angles.y
                 } else {
@@ -17014,18 +17081,19 @@ impl<'w> Server<'w> {
             n.target_first_seen = now;
             // the game's headcrab idles the sighting think and an alert think, leaping on the
             // third (server_npc_melee_headcrab: t4 / t11 / t18)
-            n.next_leap = n.next_leap.max(now + 2 * n.think_interval as u64);
+            n.next_leap = n
+                .next_leap
+                .max(now + l.sight_thinks * n.think_interval as u64);
         }
         // standing between leaps the crab turns in place to its enemy at the normal yaw rate
         // (server_npc_melee_headcrab 261104: TurnRight 0 -> 187 deg over rows 278..339 after
         // its run-away, Idle01 once facing, the leap at its rest's end)
-        // (the think that ends the run only stops: TurnRight from the next, 269 -> 276)
-        if n.goal.is_none()
-            && n.chase.is_none()
-            && n.leap_at.is_none()
-            && n.path_done_at != now
-            && dist > 1e-3
-        {
+        // the run-away runs to its end and the think that ends it only stops (TurnRight from
+        // the next, 269 -> 276)
+        if (n.goal.is_some() && n.chase.is_none()) || n.path_done_at == now {
+            return;
+        }
+        if n.goal.is_none() && n.chase.is_none() && n.leap_at.is_none() && dist > 1e-3 {
             let want = to.y.atan2(to.x).to_degrees();
             let err = wrap_deg(want - n.angles.y);
             // dead behind it the crab turns right (the game's 0 -> 180 turn runs 344, 328 ...)
@@ -17046,6 +17114,8 @@ impl<'w> Server<'w> {
                 n.angles.y = wrap_deg(n.angles.y + err.clamp(-step, step));
                 n.sequence = if !turning {
                     "Idle01"
+                } else if let Some(seq) = l.turn_sequence {
+                    seq
                 } else if err < 0.0 {
                     "TurnRight"
                 } else {
@@ -17058,6 +17128,10 @@ impl<'w> Server<'w> {
             }
             if n.sequence.starts_with("Turn") || n.sequence == "Idle01" {
                 n.angles.y = want;
+                // faced, a crab without a pre-label idles the pre-think (fast: Idle02 at 150)
+                if let Some(seq) = l.land_sequence.filter(|_| !l.pre_label) {
+                    n.sequence = seq.to_string();
+                }
                 n.auto_seq = Some(n.sequence.clone());
             }
         }
@@ -17079,7 +17153,7 @@ impl<'w> Server<'w> {
                 n.next_goal = None;
                 n.chase = None;
                 n.move_speed = 0.0;
-                if let Some(seq) = l.leap_sequence {
+                if let Some(seq) = l.leap_sequence.filter(|_| l.pre_label) {
                     n.sequence = seq.to_string();
                 }
                 if !n.move_yaw_locked && dist > 1e-3 {
@@ -17466,7 +17540,16 @@ impl<'w> Server<'w> {
                         // down the hull face in think steps, the thinks re-anchored to the
                         // contact tick (golden 261104: 851.3 from row 52, z -79.1 / -78.6 /
                         // -84.7 / -97.5 / -116.8 / -142.8 on rows 52 + 7k, the floor on 94)
-                        n.flight = Some(Vec3::new(0.0, 0.0, vel.z));
+                        // ... keeping the speed along the hull face (golden 261106: y +2.2 a
+                        // think down the bot's west face, -14.5 on the second contact)
+                        let rel = next - self.players[&player].state.origin;
+                        let mut slide = vel;
+                        if rel.x.abs() >= rel.y.abs() {
+                            slide.x = 0.0;
+                        } else {
+                            slide.y = 0.0;
+                        }
+                        n.flight = Some(slide);
                         n.step_flight = true;
                         n.leap_land = 1;
                         n.hung_until = now + u64::from(n.think_interval);
@@ -17491,17 +17574,39 @@ impl<'w> Server<'w> {
                     }
                     continue;
                 }
-                if leaper && n.leap_land != 0 {
-                    // ... and stands `stand_ticks` there before the run-away (Run1 on 108)
+                if leaper && n.leap_land == 2 {
+                    // the run-away decided a think ago starts now (first step this think)
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.leap_land = 0;
+                    }
+                } else if leaper && n.hung_until != 0 && n.leap_land == 0 {
+                    // the decision think: near its enemy the crab runs away from the next
+                    // think, else the leap's pre-think follows (the flight ends here)
+                    let near = target.and_then(|t| self.players.get(&t)).is_some_and(|p| {
+                        p.state.origin.truncate().distance(floor.truncate())
+                            < NPC_CRAB_RUN_AWAY_DIST
+                    });
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        if near {
+                            n.leap_land = 2;
+                            n.hung_until = now + u64::from(n.think_interval);
+                            continue;
+                        }
+                        n.pos = floor;
+                        n.flight = None;
+                        n.hung_until = 0;
+                        n.step_flight = false;
+                    }
+                    continue;
+                } else if leaper && n.leap_land != 0 {
+                    // ... and stands `stand_ticks` there before the decision think
                     if let Some(n) = self.npcs.get_mut(&id) {
                         n.pos = floor;
                         n.flight = Some(Vec3::ZERO);
                         n.leap_land = 0;
                         n.step_flight = false;
-                        // the rest to the next leap counts from this think (346 = 94 + 252)
-                        n.next_leap = now + l.rest_ticks;
-                        // the run-away is issued the tick before the think that steps it (the
-                        // flight settles after the walk phase; the game's think does both)
+                        // the decision is taken the tick before its think (the flight settles
+                        // after the walk phase; the game's think decides and steps at once)
                         n.hung_until = now + l.stand_ticks - 1;
                         if let Some(seq) = l.land_sequence {
                             n.sequence = seq.to_string();

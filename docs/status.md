@@ -189,12 +189,19 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   think after (first step on that think, no reversal ramp) turning into its steps at 200 deg/s;
   the turn in place plays TurnRight at 150 deg/s while the error exceeds 45 deg and finishes
   at the idle rate 300 deg/s with Idle01; the next leap counts 252 ticks from the floor think,
-  its label a think before the launch. New scene `server_npc_melee_headcrab_fast` (golden
-  261106): the fast crab shares the arc and the fall; open there (measured, not built):
-  its leap launches on its label think, a 9.8 u Run1 step on its spawn think, Idle02 / Idle01
-  labels, 187 u/s run-away turning in proportion to the error (0.42 of it a think, cap
-  1260 deg/s), 126 deg turn steps in place, the next leap 77 ticks after the floor; and the
-  hull-contact fall keeps the velocity along the hull face (both crabs).
+  its label a think before the launch. No rest timer: a think on the floor, then the decision
+  think - the enemy nearer than 60 u (measured 29 / 46 ran, 74 leaped; the bound lies between)
+  starts the 120 u run-away from the next think, else the leap's pre-think follows; after the
+  run the crab turns to its enemy and leaps on the faced think's successor. New scene
+  `server_npc_melee_headcrab_fast` (golden 261106, 279 -> 277, row-exact to its second landing):
+  the fast crab shares the arc and fall, launches on its label think right after the sighting,
+  Idle02 / Idle01 labels, a 187 u/s run-away (9.8 u first step), 126 deg turn steps in place
+  (MaxYawSpeed 120 x 10); a running crab turns 0.42 of its yaw error a think (cap 200 deg/s
+  classic, 1500 fast; the last 12 deg snap); the hull-contact fall keeps the velocity along the
+  hull face. Open: the fast crab's 9.8 u Run1 step on its spawn think (to (1000.2,-509.7), yaw
+  202 - direction unexplained); without it our run-away bears east instead of 22 deg and the
+  second landing's geometry (the game's crab slid 70 u down the bot's hull to 74 u away and
+  leaped again) is not reproduced, so the figure's tail is geometry, not rules.
 - A spawned NPC whose hull starts in a wall is moved out along the shortest axis direction
   before it settles to the floor (`npc_out_of_solid`): the antlion guard spawned at x 1001.7
   sits at 984.0 = the wall at 1024 minus its 40 u half width, on the floor, like the game
