@@ -650,6 +650,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   throw's range left it standing a think. A landed lunge keeps its reach (the antlion stands
   its landing think: run_all 95, attack3 109). melee_poisonzombie row for row to the kill
   (ThrowWarning 81, Walk 249, melee_02 326, Walk 424), antlion 39.0 → 28.7.
+  The landed lunge refreshes the reach too (the antlion runs on from its landing: run_all 95).
+  The think that starts a swing takes no step of the walk it ends: the antlion leaves its run on
+  t46 with pounce2 alone (997.8 → 956.4 → 934.9 → 931.7 = the lunge's 66 u; ours ran 6.7 u
+  first and landed at 925.1). And the antlion's chase keeps whole steps like the zombie family
+  (931.7 → 927.7 → 916.0, 92.8 u from the bot inside the 97 u reach). Antlion sequences and
+  stops now row for row (pounce2 46, run_all 95, attack3 109 at 916.3 vs 916.0, 277 at 853.3 vs
+  853.2, 445 at 790.3 vs 790.3); the figure 28.7 → 35.4 is the mid-flight profile alone: the
+  game moves the antlion only on its thinks and unevenly (pounce2 41.4 / 21.5 / 3.2 - the
+  ACT_ANTLION_POUNCE_MOVING sequence's own motion, 70.9 u/s × 0.933 s = 66.2 u; pounce 11.9 /
+  40.9 / 31.6), ours dashes 6 / 4 u a tick.
   Open: the thrown crab lands on the bot at row 263 vs the game's 269 - the goldens do not
-  record the crab entity, so release tick vs flight speed needs an oracle recording; the
-  antlion's landing think reads DistractIdle at 95 where the game reads run_all (95 and 102).
+  record the crab entity, so release tick vs flight speed needs an oracle recording; the lunge
+  flight profile (sequence motion segments, think-stepped).

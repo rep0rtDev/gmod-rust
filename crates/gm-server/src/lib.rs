@@ -14689,6 +14689,7 @@ impl<'w> Server<'w> {
             .collect();
         let slots = self.formation_slots();
         let mut thought = Vec::new();
+        let mut thought_from = HashMap::new();
         let mut pre = Vec::new();
         let mut pre_combat = Vec::new();
         for id in ids {
@@ -14768,6 +14769,7 @@ impl<'w> Server<'w> {
             });
             n.next_think = now + n.think_interval as u64;
             thought.push(id);
+            thought_from.insert(id, n.pos);
             if n.goal.is_none() && n.chase.is_none() && n.target.is_none() {
                 if let Some(want) = n.ideal_yaw {
                     let max_turn = n.max_yaw.unwrap_or(NPC_YAW_RATE) * dt;
@@ -14791,13 +14793,10 @@ impl<'w> Server<'w> {
                 // the resumed chase rests at the reach of the move that comes next, not of
                 // the swing that just ended (the poison zombie walks on from its throw the
                 // think it ends, row 249, with the bite's 70 u ahead - the throw's range would
-                // keep it standing a think); a landed lunge keeps the lunge's reach - the
-                // antlion stands its landing think (run_all 95, attack3 109)
-                if n.melee_swing.as_ref().is_some_and(|m| m.lunge <= 0.0) {
-                    if let Some((moves, _)) = npc_melee_moves(&n.class) {
-                        if let Some(m) = moves.get(n.melee_move) {
-                            n.chase_reach = m.start_range.min(m.reach) - 3.0;
-                        }
+                // keep it standing a think; the antlion runs on from its landing, run_all 95)
+                if let Some((moves, _)) = npc_melee_moves(&n.class) {
+                    if let Some(m) = moves.get(n.melee_move) {
+                        n.chase_reach = m.start_range.min(m.reach) - 3.0;
                     }
                 }
             }
@@ -14809,9 +14808,11 @@ impl<'w> Server<'w> {
             let chasing = n.chase.is_some();
             // a zombie's chase, walking or running, keeps whole steps to the last (the fast
             // zombie 21 u a think to 46 u, the zombie a constant 4.4 / 4.7 u a think to 52 u in
-            // every recording); the melee think stops it. The antlion and armed runners keep
-            // the reach clamp and the brake.
-            let zombie_chase = chasing && ai::class_sched_family(&n.class) == Some("zombie");
+            // every recording), and so does the antlion's (931.7 -> 927.7 -> 916.0 after its
+            // landing, 92.8 u from the bot inside the 97 u reach); the melee think stops it.
+            // Armed runners keep the reach clamp and the brake.
+            let zombie_chase =
+                chasing && matches!(ai::class_sched_family(&n.class), Some("zombie" | "antlion"));
             let zombie_body = ai::class_is_zombie_body(&n.class);
             let pressed_prop = n.pressed_prop;
             let chase_reach = n.chase_reach;
@@ -15344,6 +15345,17 @@ impl<'w> Server<'w> {
             // game's SelectSchedule and the task that starts the attack fall in one think
             if !pre_combat.contains(&id) {
                 self.npc_combat_think(id, now);
+                // the think that starts a swing takes no step of the walk it ends (the game's
+                // antlion leaves the run on t46 with its pounce2 alone: 997.8 -> 956.4 -> 934.9
+                // -> 931.7 is the lunge's 66 u, ours ran 6.7 u first and landed at 925.1)
+                if let (Some(n), Some(from)) = (self.npcs.get_mut(&id), thought_from.get(&id)) {
+                    let started = n
+                        .melee_swing
+                        .is_some_and(|m| n.swing_until == now + m.swing_ticks);
+                    if started && n.dead_at.is_none() {
+                        n.pos = *from;
+                    }
+                }
             }
             if !pre.contains(&id) {
                 self.ai_step(id, now);
