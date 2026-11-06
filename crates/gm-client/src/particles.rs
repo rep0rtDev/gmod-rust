@@ -11,6 +11,9 @@ use gm_render::{Camera, Gpu, WorldRenderer};
 use std::collections::HashMap;
 
 const MAX_CP: usize = 4;
+/// An entity's bone world transforms and hit boxes, for the initializers and operators that
+/// place particles on the model (`Position on Model Random`, `Movement Lock to Bone`).
+pub type EntBones = (Vec<glam::Mat4>, Vec<gm_formats::mdl::HitBox>);
 /// An effect nobody stops (an endless emitter without an entity) ends after this long.
 const ORPHAN_LIFE: f32 = 30.0;
 
@@ -76,6 +79,9 @@ struct Particle {
     sequence: i32,
     trail: f32,
     seed: u32,
+    /// Hit box bone the particle was placed on: bone index, the point in bone space and
+    /// where that point was last frame.
+    bone: Option<(usize, Vec3, Vec3)>,
 }
 
 struct Instance {
@@ -325,11 +331,17 @@ impl Particles {
 
     /// Advances every effect by `dt`; `pose(ent)` is an entity's (origin, forward) when it
     /// still exists, `trace(start, end)` the world hit (point, normal) on that segment.
-    pub fn tick(&mut self, dt: f32, pose: &dyn Fn(u32) -> Option<(Vec3, Vec3)>, trace: Tracer<'_>) {
+    pub fn tick(
+        &mut self,
+        dt: f32,
+        pose: &dyn Fn(u32) -> Option<(Vec3, Vec3)>,
+        bones: &HashMap<u32, EntBones>,
+        trace: Tracer<'_>,
+    ) {
         let dt = dt.clamp(0.0, 0.1);
         let defs = std::mem::take(&mut self.defs);
         for inst in &mut self.instances {
-            tick_instance(inst, &defs, dt, pose, trace, None);
+            tick_instance(inst, &defs, dt, pose, bones, trace, None);
         }
         self.defs = defs;
         self.instances.retain(|i| !finished(i));
@@ -572,6 +584,7 @@ fn tick_instance(
     defs: &HashMap<String, SystemDef>,
     dt: f32,
     pose: &dyn Fn(u32) -> Option<(Vec3, Vec3)>,
+    bones: &HashMap<u32, EntBones>,
     trace: Tracer<'_>,
     parent_cps: Option<&[(Vec3, Vec3); MAX_CP]>,
 ) {
@@ -640,7 +653,7 @@ fn tick_instance(
     }
     let room = def.max_particles.saturating_sub(inst.particles.len());
     for _ in 0..to_emit.min(room) {
-        let p = spawn_particle(def, inst, t);
+        let p = spawn_particle(def, inst, t, bones);
         inst.particles.push(p);
     }
     // operators
@@ -650,6 +663,7 @@ fn tick_instance(
         cp_delta[k] = cps[k].0 - inst.prev_cps[k];
         inst.prev_cps[k] = cps[k].0;
     }
+    let model = inst.parent.and_then(|(e, _)| bones.get(&e));
     let seed = &mut inst.seed;
     for p in &mut inst.particles {
         let age = t - p.born;
@@ -697,6 +711,27 @@ fn tick_instance(
                 }
                 "lifespan decay" => {}
                 // cull operators end the particle now (`life` 0 drops it this tick)
+                // C_OP_LockToBone: the particle rides its hit box's bone, the ride fading out
+                // over the lifetime fraction [fade start, fade end]
+                "movement lock to bone" => {
+                    if let (Some((bone, local, last)), Some((mats, _))) = (p.bone.as_mut(), model) {
+                        if let Some(m) = mats.get(*bone) {
+                            let now = m.transform_point3(*local);
+                            let fs = op.f("lifetime fade start", 0.0);
+                            let fe = op.f("lifetime fade end", 1.0);
+                            let frac = age / p.life.max(1e-3);
+                            let w = if fe > fs {
+                                (1.0 - (frac - fs) / (fe - fs)).clamp(0.0, 1.0)
+                            } else {
+                                1.0
+                            };
+                            let d = (now - *last) * w;
+                            p.pos += d;
+                            p.prev += d;
+                            *last = now;
+                        }
+                    }
+                }
                 "cull when crossing sphere" => {
                     let cp = (op.i("control_point", 0).max(0) as usize).min(MAX_CP - 1);
                     let inside = op.b("cull inside", false);
@@ -874,11 +909,17 @@ fn tick_instance(
         if inst.stopped {
             c.stopped = true;
         }
-        tick_instance(c, defs, dt, pose, trace, Some(&cps));
+        tick_instance(c, defs, dt, pose, bones, trace, Some(&cps));
     }
 }
 
-fn spawn_particle(def: &SystemDef, inst: &mut Instance, t: f32) -> Particle {
+fn spawn_particle(
+    def: &SystemDef,
+    inst: &mut Instance,
+    t: f32,
+    bones: &HashMap<u32, EntBones>,
+) -> Particle {
+    let model = inst.parent.and_then(|(e, _)| bones.get(&e));
     let seed = &mut inst.seed;
     let cps = inst.cps;
     let cp0 = cps[0];
@@ -899,6 +940,7 @@ fn spawn_particle(def: &SystemDef, inst: &mut Instance, t: f32) -> Particle {
         sequence: def.sequence,
         trail: 1.0,
         seed: (rng(seed) * u32::MAX as f32) as u32,
+        bone: None,
     };
     for op in &def.initializers {
         match op.func.as_str() {
@@ -1032,6 +1074,34 @@ fn spawn_particle(def: &SystemDef, inst: &mut Instance, t: f32) -> Particle {
                     p.pos += off;
                 }
                 p.prev = p.pos;
+            }
+            // C_INIT_CreateOnModel: a random point in a random hit box of the entity the effect
+            // follows (any control point: the game binds them all to that entity here), the
+            // boxes scaled about their centres; the particle drifts out from the box centre
+            // plus the bias. `force to be inside model` is not checked.
+            "position on model random" => {
+                if let Some((mats, hbs)) = model.filter(|(_, h)| !h.is_empty()) {
+                    let hb = &hbs[((hbs.len() as f32 * rng(seed)) as usize).min(hbs.len() - 1)];
+                    let scale = op.f("hitbox scale", 1.0);
+                    let (lo, hi) = (Vec3::from(hb.mins), Vec3::from(hb.maxs));
+                    let c = (lo + hi) * 0.5;
+                    let r = Vec3::new(
+                        range(seed, -1.0, 1.0),
+                        range(seed, -1.0, 1.0),
+                        range(seed, -1.0, 1.0),
+                    );
+                    let local = c + r * (hi - lo) * 0.5 * scale;
+                    if let Some((bone, m)) = usize::try_from(hb.bone)
+                        .ok()
+                        .and_then(|b| mats.get(b).map(|m| (b, m)))
+                    {
+                        p.pos = m.transform_point3(local);
+                        p.prev = p.pos;
+                        p.bone = Some((bone, local, p.pos));
+                        let out = m.transform_vector3(local - c).normalize_or_zero();
+                        p.vel += out + op.v("direction bias", Vec3::ZERO);
+                    }
+                }
             }
             "position within box random" => {
                 let lo = op.v("min", Vec3::ZERO);

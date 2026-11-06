@@ -4729,6 +4729,8 @@ impl App {
         let mut player_poses: Vec<PlayerPose<'_>> = Vec::new();
         // prop_ragdoll: skinning from the networked physics objects (world space, so the draw
         // transform is the identity), bone manipulations on top
+        let mut ent_bones: std::collections::HashMap<u32, particles::EntBones> =
+            std::collections::HashMap::new();
         let rag_poses: Vec<(u32, Vec<glam::Mat4>)> = ents
             .values()
             .filter(|e| !e.bones.is_empty() || !e.sequence.is_empty())
@@ -4764,11 +4766,13 @@ impl App {
                     let place = gm_render::world::model_transform(pos, ang)
                         * glam::Mat4::from_scale(Vec3::splat(e.model_scale.max(0.01)));
                     let world: Vec<glam::Mat4> = local.iter().map(|b| place * *b).collect();
+                    ent_bones.insert(e.id, (world.clone(), m.hitboxes().to_vec()));
                     return Some((e.id, m.skin_matrices(&world)));
                 }
                 let m = g.models.get(&e.model)?.as_ref()?;
                 let parts = p.as_ref().map_or(&e.bones, |p| &p.bones);
                 let world = ragdoll_bone_matrices(m, parts, pos, ang, &e.manips)?;
+                ent_bones.insert(e.id, (world.clone(), m.hitboxes().to_vec()));
                 Some((e.id, m.skin_matrices(&world)))
             })
             .collect();
@@ -5261,7 +5265,7 @@ impl App {
                 let tr = collision.trace_ray(start, end, gm_collision::MASK_SOLID);
                 (tr.fraction < 1.0 && !tr.start_solid).then_some((tr.end, tr.normal))
             };
-            g.particles.tick(dt, &pose, &trace);
+            g.particles.tick(dt, &pose, &ent_bones, &trace);
             g.particles.prepare(&g.gpu, &self.mount, &g.world);
         }
         g.particles_tick = Some(now);

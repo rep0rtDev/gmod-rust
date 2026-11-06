@@ -1018,6 +1018,7 @@ struct Skeleton {
     attachments: Vec<gm_formats::mdl::Attachment>,
     /// The model's own animations first, then those of its include models.
     anims: Vec<AnimSource>,
+    hitboxes: Vec<gm_formats::mdl::HitBox>,
 }
 
 impl Skeleton {
@@ -1502,6 +1503,13 @@ impl DynModel {
     /// The model's bones (hierarchy, bind pose, `physics_bone` of each), when it has a skeleton.
     pub fn skeleton_bones(&self) -> Option<&[gm_formats::mdl::Bone]> {
         self.skeleton.as_ref().map(|sk| sk.bones.as_slice())
+    }
+
+    /// The model's default hit box set (particles placed on the model).
+    pub fn hitboxes(&self) -> &[gm_formats::mdl::HitBox] {
+        self.skeleton
+            .as_ref()
+            .map_or(&[], |sk| sk.hitboxes.as_slice())
     }
 
     /// Skinning matrices from bone transforms: bone world times pose-to-bone.
@@ -4174,6 +4182,7 @@ impl WorldRenderer {
         let skeleton = mount.read(path).ok().map(|bytes| Skeleton {
             bones: mdl.bones.clone(),
             attachments: mdl.attachments.clone(),
+            hitboxes: gm_formats::mdl::hitboxes(&bytes, &mdl.header),
             anims: AnimSource::for_model(mount, bytes, &mdl),
         });
         let mut bounds = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
