@@ -182,14 +182,18 @@ fn sequence_frame0(
         .into_iter()
         .nth(seq.anim.max(0) as usize)?;
     let delta = desc.flags & 0x04 != 0;
+    // some models carry a negative animation offset (no frame data for the pose)
+    let index = usize::try_from(desc.index).ok()?;
     if desc.block == 0 {
-        let start = mdl.header.local_anim_offset as usize + desc.index as usize;
+        let start = usize::try_from(mdl.header.local_anim_offset)
+            .ok()?
+            .checked_add(index)?;
         return gm_formats::mdl::anim_pose(data, start, &mdl.bones, 0, delta);
     }
     let ani = mount.read(&model.replace(".mdl", ".ani")).ok()?;
     let (_, blocks) = gm_formats::mdl::anim_blocks(data);
-    let (start, _) = *blocks.get(desc.block as usize)?;
-    gm_formats::mdl::anim_pose(&ani, start + desc.index as usize, &mdl.bones, 0, delta)
+    let (start, _) = *blocks.get(usize::try_from(desc.block).ok()?)?;
+    gm_formats::mdl::anim_pose(&ani, start.checked_add(index)?, &mdl.bones, 0, delta)
 }
 
 pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::ModelInfo> {
