@@ -664,7 +664,7 @@ impl Server<'_> {
                     .iter()
                     .map(|h| h.phys_points.iter().map(|p| e.rot * *p + e.pos).collect())
                     .collect();
-                if let Ok(b) = self.physics.add_static_hulls(&hulls, surface) {
+                if let Ok(b) = self.physics.add_kinematic_hulls(&hulls, surface) {
                     e.body = Some(b);
                     if !e.solid() {
                         self.physics.teleport(b, Vec3::new(0.0, 0.0, -1.0e6), e.rot);
@@ -1450,12 +1450,12 @@ impl Server<'_> {
             e.dirty = false;
             self.map_io.convexes_dirty = true;
             if let Some(b) = e.body {
-                let pos = if e.solid() {
-                    e.pos
+                if e.solid() {
+                    // kinematic: the props in the way are pushed, the ones on it carried
+                    self.physics.move_kinematic(b, e.pos, e.rot);
                 } else {
-                    Vec3::new(0.0, 0.0, -1.0e6)
-                };
-                self.physics.teleport(b, pos, e.rot);
+                    self.physics.teleport(b, Vec3::new(0.0, 0.0, -1.0e6), e.rot);
+                }
             }
             let step = e.pos - e.last_pos;
             e.last_pos = e.pos;

@@ -657,6 +657,60 @@ impl World {
         }
     }
 
+    /// A brush entity that moves (door, platform, train): a kinematic compound of hulls in
+    /// the moving layer, driven by [`World::move_kinematic`] so the props it meets are pushed
+    /// and the ones on it carried by the contact solver.
+    pub fn add_kinematic_hulls(
+        &mut self,
+        hulls: &[Vec<Vec3>],
+        surface: Surface,
+    ) -> Result<BodyHandle> {
+        let mut parts = Vec::with_capacity(hulls.len());
+        for h in hulls {
+            parts.push(self.convex_shape(h, 1000.0)?);
+        }
+        if parts.is_empty() {
+            return Err(Error::EmptyShape);
+        }
+        let shape = self.compound(&parts)?;
+        unsafe {
+            let mut settings: JPC_BodyCreationSettings = std::mem::zeroed();
+            JPC_BodyCreationSettings_default(&mut settings);
+            settings.Position = jv(Vec3::ZERO);
+            settings.Rotation = jq(Quat::IDENTITY);
+            settings.ObjectLayer = LAYER_MOVING;
+            settings.MotionType = JPC_MOTION_TYPE_KINEMATIC;
+            settings.Friction = surface.friction * surface.friction;
+            settings.Restitution = 0.0;
+            settings.Shape = shape;
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            let id = JPC_BodyInterface_CreateAndAddBody(bi, &settings, JPC_ACTIVATION_ACTIVATE);
+            gmp_set_surface(
+                self.system.as_raw(),
+                id,
+                surface.friction,
+                surface.elasticity,
+            );
+            Ok(BodyHandle(id))
+        }
+    }
+
+    /// A kinematic body's pose for the end of the next step: Jolt gives it the velocity that
+    /// gets it there, so the bodies in contact are pushed along or carried.
+    pub fn move_kinematic(&mut self, body: BodyHandle, position: Vec3, rotation: Quat) {
+        unsafe {
+            let bi = JPC_PhysicsSystem_GetBodyInterface(self.system.as_raw());
+            JPC_BodyInterface_ActivateBody(bi, body.0);
+            JPC_BodyInterface_MoveKinematic(
+                bi,
+                body.0,
+                jv(to_jolt(position)),
+                jq(quat_to_jolt(rotation)),
+                self.tick_interval,
+            );
+        }
+    }
+
     /// Static triangle soup (displacement ground), Source units and axes like the hulls.
     pub fn add_static_mesh(
         &mut self,
@@ -1868,6 +1922,60 @@ mod tests {
         let b = quat_to_jolt(q) * to_jolt(v);
         assert!(a.distance(b) < 1e-5, "{a} {b}");
         assert!((quat_from_jolt(quat_to_jolt(q)).dot(q).abs() - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_kinematic_platform_carries_and_pushes_a_crate() {
+        let mut w = World::new(600.0, 0.015, 1);
+        let floor = box_hull(Vec3::new(0.0, 0.0, -160.0), Vec3::new(512.0, 512.0, 16.0));
+        w.add_static_hulls(&[floor], Surface::default()).unwrap();
+        let plate = box_hull(Vec3::new(0.0, 0.0, -100.0), Vec3::new(64.0, 64.0, 8.0));
+        let lift = w.add_kinematic_hulls(&[plate], Surface::default()).unwrap();
+        let hull = box_hull(Vec3::ZERO, Vec3::splat(20.0));
+        let desc = PropDesc {
+            hulls: std::slice::from_ref(&hull),
+            mass: 30.0,
+            volume: 64000.0,
+            position: Vec3::new(0.0, 0.0, -72.0),
+            angles: (0.0, 0.0, 0.0),
+            velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            surface: Surface::default(),
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+            drag_axis_areas: Vec3::ONE,
+            inertia: None,
+            mass_center: None,
+        };
+        let crate_ = w.add_prop(&desc).unwrap();
+        w.optimize();
+        for _ in 0..40 {
+            w.step();
+        }
+        let rest = w.state(crate_).position.z;
+        assert!((rest - -72.0).abs() < 2.0, "rests on the plate: {rest}");
+        // the plate rises 100 u/s for a second: the crate rides up
+        for i in 1..=66 {
+            let z = 1.5 * i as f32;
+            w.move_kinematic(lift, Vec3::new(0.0, 0.0, z), Quat::IDENTITY);
+            w.step();
+        }
+        for _ in 0..20 {
+            w.move_kinematic(lift, Vec3::new(0.0, 0.0, 99.0), Quat::IDENTITY);
+            w.step();
+        }
+        let z = w.state(crate_).position.z;
+        assert!(
+            (z - (-72.0 + 99.0)).abs() < 6.0,
+            "carried up with the plate: {z}"
+        );
+        // then slides east: the crate goes along
+        for i in 1..=66 {
+            w.move_kinematic(lift, Vec3::new(1.5 * i as f32, 0.0, 99.0), Quat::IDENTITY);
+            w.step();
+        }
+        let p = w.state(crate_).position;
+        assert!(p.x > 40.0, "pushed along: {p}");
     }
 
     #[test]
