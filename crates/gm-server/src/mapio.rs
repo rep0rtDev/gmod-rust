@@ -181,6 +181,16 @@ pub enum Kind {
         style: u8,
         pattern: String,
     },
+    /// `func_tracktrain` on its `path_track` chain: signed speed along the track, the node
+    /// it heads to and the one it left, `height` above the track.
+    Train {
+        speed: f32,
+        max: f32,
+        last_speed: f32,
+        height: f32,
+        next: Option<u32>,
+        prev: Option<u32>,
+    },
     Logic,
 }
 
@@ -220,6 +230,7 @@ impl MapEntity {
                 matches!(state, Toggle::GoingUp | Toggle::GoingDown)
             }
             Kind::Spinner { on, .. } => *on,
+            Kind::Train { speed, .. } => *speed != 0.0,
             _ => false,
         }
     }
@@ -280,6 +291,7 @@ impl MapEntity {
                 | Kind::Ambient { .. }
                 | Kind::Light { .. }
                 | Kind::Logic => false,
+                Kind::Train { .. } => self.flags & 8 == 0,
                 _ => true,
             }
     }
@@ -351,6 +363,21 @@ pub struct MapIo {
 }
 
 const TICK: f32 = gm_core::tick::DEFAULT_TICK_INTERVAL;
+
+/// A train faces its travel: yaw, and pitch unless spawnflag 1 (no pitch); spawnflag 16
+/// keeps the spawn orientation.
+fn train_rot(dir: Vec3, flags: u32) -> Quat {
+    if flags & 16 != 0 || dir.length_squared() < 1e-6 {
+        return Quat::IDENTITY;
+    }
+    let yaw = dir.y.atan2(dir.x).to_degrees();
+    let pitch = if flags & 1 != 0 {
+        0.0
+    } else {
+        -dir.z.atan2(dir.truncate().length()).to_degrees()
+    };
+    gm_physics::quat_from_angles(pitch, yaw, 0.0)
+}
 
 /// Mean brightness of a light pattern (`a` = 0, `m` = 1, `z` = 2).
 fn pattern_mean(pattern: &str) -> f32 {
@@ -472,6 +499,14 @@ fn build(def: MapEntityDef, id: u32) -> MapEntity {
                 pattern: def.get("pattern").unwrap_or("").trim().to_string(),
             }
         }
+        "func_tracktrain" => Kind::Train {
+            speed: def.num("startspeed", 0.0),
+            max: def.num("speed", 100.0).max(1.0),
+            last_speed: def.num("speed", 100.0).max(1.0),
+            height: def.num("height", 4.0),
+            next: None,
+            prev: None,
+        },
         "func_brush" => Kind::Toggled {
             enabled: def.get("Solidity") != Some("1") && def.get("StartDisabled") != Some("1"),
         },
@@ -639,6 +674,140 @@ impl Server<'_> {
 
     /// The solid movable brush entities for the snapshot: id, model `*N`, position and
     /// angles (the rotators' turn about their axis folded into the yaw / pitch / roll).
+    /// A `path_track` by name.
+    fn path_idx(&self, name: &str) -> Option<usize> {
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        self.map_io.entities.iter().position(|e| {
+            e.alive && e.classname == "path_track" && e.targetname.eq_ignore_ascii_case(name)
+        })
+    }
+
+    /// The node before `idx` on the track: the `path_track` whose `target` it is.
+    fn path_prev(&self, idx: usize) -> Option<usize> {
+        let name = &self.map_io.entities[idx].targetname;
+        self.map_io.entities.iter().position(|e| {
+            e.alive
+                && e.classname == "path_track"
+                && e.def
+                    .get("target")
+                    .is_some_and(|t| t.trim().eq_ignore_ascii_case(name))
+        })
+    }
+
+    /// The train teleports to its first `path_track` (`target`) at spawn, `height` above it,
+    /// facing the node after it.
+    fn train_start(&mut self, idx: usize) {
+        let target = self.map_io.entities[idx]
+            .def
+            .get("target")
+            .unwrap_or("")
+            .to_string();
+        let Some(first) = self.path_idx(&target) else {
+            return;
+        };
+        let node_pos = self.map_io.entities[first].pos;
+        let first_id = self.map_io.entities[first].id;
+        let after = self.map_io.entities[first]
+            .def
+            .get("target")
+            .map(str::to_string)
+            .and_then(|t| self.path_idx(&t));
+        let after_id = after.map(|i| self.map_io.entities[i].id);
+        let after_pos = after.map(|i| self.map_io.entities[i].pos);
+        let e = &mut self.map_io.entities[idx];
+        let Kind::Train {
+            height, next, prev, ..
+        } = &mut e.kind
+        else {
+            return;
+        };
+        e.pos = node_pos + Vec3::new(0.0, 0.0, *height);
+        e.last_pos = e.pos;
+        *prev = Some(first_id);
+        *next = after_id;
+        if let Some(a) = after_pos {
+            e.rot = train_rot(a - node_pos, e.flags);
+        }
+        e.dirty = true;
+    }
+
+    /// The train runs `speed` along the track; reaching a node fires its `OnPass` and the
+    /// train's `OnNextPoint`, takes the node's `speed` when it has one and stops at a node
+    /// with spawnflag 8 or at the end of the track.
+    fn train_step(&mut self, idx: usize, now: u64) {
+        let (speed, height, next_id) = match &self.map_io.entities[idx].kind {
+            Kind::Train {
+                speed,
+                height,
+                next,
+                ..
+            } if *speed != 0.0 => (*speed, *height, *next),
+            _ => return,
+        };
+        let Some(next_id) = next_id else {
+            return;
+        };
+        let Some(n) = self.map_io.entities.iter().position(|e| e.id == next_id) else {
+            return;
+        };
+        let node_pos = self.map_io.entities[n].pos;
+        let goal = node_pos + Vec3::new(0.0, 0.0, height);
+        let step = speed.abs() * TICK;
+        let to = goal - self.map_io.entities[idx].pos;
+        let dist = to.length();
+        if dist > step {
+            let e = &mut self.map_io.entities[idx];
+            e.pos += to / dist * step;
+            e.rot = train_rot(to, e.flags);
+            e.dirty = true;
+            return;
+        }
+        let node_speed = self.map_io.entities[n].def.num("speed", 0.0);
+        let node_flags = self.map_io.entities[n].flags;
+        let following = if speed > 0.0 {
+            self.map_io.entities[n]
+                .def
+                .get("target")
+                .map(str::to_string)
+                .and_then(|t| self.path_idx(&t))
+        } else {
+            self.path_prev(n)
+        };
+        let following_id = following.map(|i| self.map_io.entities[i].id);
+        let following_pos = following.map(|i| self.map_io.entities[i].pos);
+        self.map_io.fire_output(now, n, "OnPass", 0);
+        self.map_io.fire_output(now, idx, "OnNextPoint", 0);
+        let e = &mut self.map_io.entities[idx];
+        let Kind::Train {
+            speed: sp,
+            max,
+            last_speed,
+            next,
+            prev,
+            ..
+        } = &mut e.kind
+        else {
+            return;
+        };
+        e.pos = goal;
+        e.dirty = true;
+        *prev = Some(next_id);
+        *next = following_id;
+        if node_speed > 0.0 {
+            *sp = node_speed.min(*max).copysign(*sp);
+            *last_speed = *sp;
+        }
+        if node_flags & 8 != 0 || following_id.is_none() {
+            *sp = 0.0;
+        }
+        if let Some(fp) = following_pos {
+            e.rot = train_rot(fp - node_pos, e.flags);
+        }
+    }
+
     /// An `ambient_generic` starts (`PlaySound`: its `message` on its own channel, looped as
     /// the entity is) or stops (`StopSound` / `FadeOut` over `fade` seconds).
     fn ambient_sound(&mut self, idx: usize, play: bool, fade: f32) {
@@ -722,6 +891,12 @@ impl Server<'_> {
                 } else {
                     angles.y += angle;
                 }
+                let angles = if matches!(e.kind, Kind::Train { .. }) {
+                    let (p, y, r) = gm_physics::angles_from_quat(e.rot);
+                    Vec3::new(p, y, r)
+                } else {
+                    angles
+                };
                 Some((e.id, model.to_string(), e.pos, angles))
             })
             .collect()
@@ -897,6 +1072,47 @@ impl Server<'_> {
                 "firetimer" => events.push("OnTimer"),
                 _ => {}
             },
+            Kind::Train {
+                speed,
+                max,
+                last_speed,
+                next,
+                prev,
+                ..
+            } => {
+                let p: f32 = param.trim().parse().unwrap_or(0.0);
+                let dir = |speed: f32, last: f32| if speed != 0.0 { speed } else { last }.signum();
+                let before = *speed;
+                let old_dir = dir(*speed, *last_speed);
+                match input_lc.as_str() {
+                    "setspeed" => *speed = *max * p.clamp(0.0, 1.0) * old_dir,
+                    "setspeeddir" => *speed = *max * p.clamp(-1.0, 1.0),
+                    "setspeedreal" => *speed = p.clamp(-*max, *max),
+                    "setmaxspeed" => *max = p.max(1.0),
+                    "stop" => *speed = 0.0,
+                    "startforward" => *speed = *max,
+                    "startbackward" => *speed = -*max,
+                    "resume" => *speed = *last_speed,
+                    "reverse" => {
+                        if *speed != 0.0 {
+                            *speed = -*speed;
+                        } else {
+                            *last_speed = -*last_speed;
+                        }
+                    }
+                    "toggle" => *speed = if *speed != 0.0 { 0.0 } else { *last_speed },
+                    _ => {}
+                }
+                if *speed != 0.0 {
+                    *last_speed = *speed;
+                }
+                if dir(*speed, *last_speed) != old_dir {
+                    std::mem::swap(next, prev);
+                }
+                if before == 0.0 && *speed != 0.0 {
+                    events.push("OnStart");
+                }
+            }
             Kind::Light { on, pattern, .. } => match input_lc.as_str() {
                 "turnon" => *on = true,
                 "turnoff" => *on = false,
@@ -972,6 +1188,11 @@ impl Server<'_> {
                 let e = &self.map_io.entities[idx];
                 if matches!(e.kind, Kind::Ambient { .. }) && e.flags & 16 == 0 {
                     self.ambient_sound(idx, true, 0.0);
+                }
+            }
+            for idx in 0..self.map_io.entities.len() {
+                if matches!(self.map_io.entities[idx].kind, Kind::Train { .. }) {
+                    self.train_start(idx);
                 }
             }
         }
@@ -1124,6 +1345,12 @@ impl Server<'_> {
                 MoveEvent::Opened => self.map_io.fire_output(now, idx, "OnFullyOpen", 0),
                 MoveEvent::Closed => self.map_io.fire_output(now, idx, "OnFullyClosed", 0),
                 MoveEvent::None => {}
+            }
+        }
+        for idx in 0..self.map_io.entities.len() {
+            let e = &self.map_io.entities[idx];
+            if e.alive && matches!(e.kind, Kind::Train { .. }) {
+                self.train_step(idx, now);
             }
         }
         // physics bodies follow the poses; the players riding a mover take its step, the ones

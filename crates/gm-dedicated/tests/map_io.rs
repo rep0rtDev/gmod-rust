@@ -272,3 +272,111 @@ fn the_dark_room_button_toggles_the_colour_room_lights_style() {
     assert_eq!(styles.len(), 1);
     assert!((styles[0].1 - 25.0 / 12.0).abs() < 1e-5, "{styles:?}");
 }
+
+#[test]
+fn a_tracktrain_runs_its_path_tracks_and_takes_their_speed() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let def = |class: &str, kv: &[(&str, &str)], origin: Vec3| gm_server::mapio::MapEntityDef {
+        classname: class.into(),
+        kv: kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        origin,
+        angles: Vec3::ZERO,
+        hulls: Vec::new(),
+        mins: Vec3::ZERO,
+        maxs: Vec3::ZERO,
+    };
+    let defs = vec![
+        def(
+            "path_track",
+            &[("targetname", "t1"), ("target", "t2")],
+            Vec3::ZERO,
+        ),
+        def(
+            "path_track",
+            &[("targetname", "t2"), ("target", "t3"), ("speed", "100")],
+            Vec3::new(100.0, 0.0, 0.0),
+        ),
+        def(
+            "path_track",
+            &[("targetname", "t3")],
+            Vec3::new(100.0, 100.0, 0.0),
+        ),
+        def(
+            "func_tracktrain",
+            &[
+                ("targetname", "train"),
+                ("target", "t1"),
+                ("speed", "200"),
+                ("startspeed", "0"),
+                ("height", "4"),
+            ],
+            Vec3::new(-500.0, -500.0, 0.0),
+        ),
+    ];
+    server.set_map_entities(defs, world.surface);
+    let idle = std::collections::BTreeMap::new();
+    server.tick(&idle);
+    let train = |server: &gm_server::Server| {
+        server
+            .map_io
+            .entities
+            .iter()
+            .find(|e| e.classname == "func_tracktrain")
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(
+        train(&server).pos,
+        Vec3::new(0.0, 0.0, 4.0),
+        "teleports to its first path_track, height above it"
+    );
+    assert!(!train(&server).moving(), "startspeed 0");
+    server.fire_input("train", "StartForward", "", 0);
+    let mut ticks = 0;
+    while train(&server).pos.x < 100.0 - 1e-3 {
+        server.tick(&idle);
+        ticks += 1;
+        assert!(ticks < 100, "100 u at 200 u/s take ~0.5 s");
+        assert!(train(&server).pos.y.abs() < 1e-3);
+    }
+    assert!((28..=40).contains(&ticks), "{ticks} ticks");
+    let t = train(&server);
+    assert!(
+        (t.rot * Vec3::X - Vec3::Y).length() < 1e-3,
+        "faces t3 after t2"
+    );
+    for _ in 0..33 {
+        server.tick(&idle);
+    }
+    let y = train(&server).pos.y;
+    assert!(
+        (42.0..=58.0).contains(&y),
+        "t2's speed 100 (under the train's max) -> ~50 u in 0.5 s, got {y}"
+    );
+    for _ in 0..100 {
+        server.tick(&idle);
+    }
+    let t = train(&server);
+    assert_eq!(
+        t.pos,
+        Vec3::new(100.0, 100.0, 4.0),
+        "stops at the end of the track"
+    );
+    assert!(!t.moving());
+    server.fire_input("train", "StartBackward", "", 0);
+    for _ in 0..20 {
+        server.tick(&idle);
+    }
+    let t = train(&server);
+    assert!(
+        t.pos.y < 100.0 && t.pos.x == 100.0,
+        "runs back towards t2: {:?}",
+        t.pos
+    );
+}
