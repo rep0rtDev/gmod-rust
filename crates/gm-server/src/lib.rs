@@ -66,6 +66,16 @@ pub struct RagdollInfo {
     pub attachments: Vec<AttachmentInfo>,
     /// Flex controllers (`GetFlexNum` / `GetFlexBounds`): the faceposer's sliders.
     pub flex_controllers: Vec<gm_formats::mdl::FlexController>,
+    /// Movement sequences a player's death ragdoll can start from, frames sampled per bone.
+    pub death_poses: Vec<DeathPose>,
+}
+
+/// One sequence's frames as local bone poses (in `RagdollInfo::bones` order), played at `fps`.
+#[derive(Clone, Debug, Default)]
+pub struct DeathPose {
+    pub sequence: String,
+    pub fps: f32,
+    pub frames: Vec<Vec<(Vec3, Quat)>>,
 }
 
 /// Poser stools' per-player state: eyeposer selection / operation (0 none, 1 picked, 2 live
@@ -124,9 +134,13 @@ pub struct AttachmentInfo {
 /// World pose of every bone of a ragdoll model placed with its origin at `pos` rotated by `rot`,
 /// composed down the hierarchy from the model's ragdoll pose.
 fn ragdoll_bone_world(rd: &RagdollInfo, pos: Vec3, rot: Quat) -> (Vec<Vec3>, Vec<Quat>) {
-    let n = rd.bones.len();
+    bones_world(&rd.bones, pos, rot)
+}
+
+fn bones_world(bones: &[BoneInfo], pos: Vec3, rot: Quat) -> (Vec<Vec3>, Vec<Quat>) {
+    let n = bones.len();
     let (mut wpos, mut wrot) = (vec![pos; n], vec![rot; n]);
-    for (i, b) in rd.bones.iter().enumerate() {
+    for (i, b) in bones.iter().enumerate() {
         let (pp, pr) = match usize::try_from(b.parent) {
             Ok(k) if k < i => (wpos[k], wrot[k]),
             _ => (pos, rot),
@@ -7359,6 +7373,51 @@ pub struct Ragdoll {
     pub angles: Vec3,
     pub velocity: Vec3,
     pub tick: u64,
+    pub ducked: bool,
+}
+
+/// The local bone poses a player's death ragdoll starts in: the base gamemode's movement
+/// sequence at death (`CalcMainActivity`: crouched `cwalk_all`/`cidle_all`, else `run_all_01`
+/// above 150 u/s, `walk_all` above 0.5, `idle_all_01`) at the cycle the death tick reads,
+/// interpolated between frames. The game ragdolls the player's current animation frame.
+fn death_pose(
+    rd: &RagdollInfo,
+    velocity: Vec3,
+    ducked: bool,
+    tick: u64,
+) -> Option<Vec<(Vec3, Quat)>> {
+    let moving = velocity.truncate().length();
+    let name = match (ducked, moving > 150.0, moving > 0.5) {
+        (true, _, true) => "cwalk_all",
+        (true, _, false) => "cidle_all",
+        (false, true, _) => "run_all_01",
+        (false, false, true) => "walk_all",
+        _ => "idle_all_01",
+    };
+    let dp = rd
+        .death_poses
+        .iter()
+        .find(|d| d.sequence.eq_ignore_ascii_case(name))?;
+    let n = dp.frames.len();
+    if n == 0 {
+        return None;
+    }
+    let duration = (n.max(2) - 1) as f32 / dp.fps.max(1e-3);
+    let cycle = (tick as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL / duration).fract();
+    let f = cycle * (n - 1) as f32;
+    let f0 = (f.floor() as usize).min(n - 1);
+    let f1 = (f0 + 1).min(n - 1);
+    let w = f - f0 as f32;
+    Some(
+        dp.frames[f0]
+            .iter()
+            .zip(&dp.frames[f1])
+            .map(|(&(pa, qa), &(pb, qb))| {
+                let qb = if qa.dot(qb) < 0.0 { -qb } else { qb };
+                (pa.lerp(pb, w), qa.slerp(qb, w).normalize())
+            })
+            .collect(),
+    )
 }
 
 pub const RAGDOLL_CLASS: &str = "hl2mp_ragdoll";
@@ -8203,6 +8262,8 @@ pub struct Server<'w> {
     next_class_sched: u16,
     /// prop_ragdoll: every bone body (the root is also in `bodies`) and the joints between them.
     ragdoll_bodies: BTreeMap<u32, RagdollRuntime>,
+    /// Local bone poses a ragdoll entity about to get its bodies spawns in (death ragdolls).
+    ragdoll_spawn_pose: BTreeMap<u32, Vec<(Vec3, Quat)>>,
     /// `Entity:ManipulateBoneScale` per model bone (inflator stool), absent = all 1.
     bone_scales: BTreeMap<u32, Vec<Vec3>>,
     /// `Entity:ManipulateBoneAngles` per model bone (finger poser), absent = all zero.
@@ -8451,6 +8512,7 @@ impl<'w> Server<'w> {
             mover: gm_move::Mover::new(gm_move::MoveConfig::default(), collision),
             bodies: BTreeMap::new(),
             ragdoll_bodies: BTreeMap::new(),
+            ragdoll_spawn_pose: BTreeMap::new(),
             bone_scales: BTreeMap::new(),
             bone_angles: BTreeMap::new(),
             bone_positions: BTreeMap::new(),
@@ -8668,6 +8730,7 @@ impl<'w> Server<'w> {
                 angles: Vec3::ZERO,
                 velocity: p.state.velocity,
                 tick,
+                ducked: p.state.ducked,
             });
             p.active_weapon.clear();
             p.held = None;
@@ -10481,6 +10544,7 @@ impl<'w> Server<'w> {
             angles: Vec3::ZERO,
             velocity: p.state.velocity,
             tick,
+            ducked: p.state.ducked,
         });
         p.death_tick = Some(tick);
         p.active_weapon.clear();
@@ -10539,6 +10603,14 @@ impl<'w> Server<'w> {
                 Vec3::new(0.0, yaw, 0.0),
                 false,
             );
+            if let Some(pose) = self
+                .models
+                .get(&rag.model)
+                .and_then(|m| m.ragdoll.as_ref())
+                .and_then(|rd| death_pose(rd, rag.velocity, rag.ducked, rag.tick))
+            {
+                self.ragdoll_spawn_pose.insert(ent, pose);
+            }
             self.sync_physics();
             if let Some(r) = self.ragdoll_bodies.get(&ent) {
                 for &b in &r.bodies.clone() {
@@ -20016,6 +20088,31 @@ impl<'w> Server<'w> {
                 .ragdoll_joint(pb, cb, pivot, frame, j.limits, j.friction)
             {
                 joints.push(c);
+            }
+        }
+        // joints are made in the reference pose (their limits are relative to it), the bodies
+        // then move to the spawn pose
+        let mut root_pose = root_pose;
+        if let Some(pose) = self.ragdoll_spawn_pose.remove(&p.id) {
+            let mut bones = rd.bones.clone();
+            for (b, (pos, quat)) in bones.iter_mut().zip(pose) {
+                b.pos = pos;
+                b.quat = quat;
+            }
+            let (ppos, prot) = bones_world(&bones, p.pos, root_rot);
+            let at = |name: &str| {
+                bones
+                    .iter()
+                    .position(|b| b.name.eq_ignore_ascii_case(name))
+                    .map(|i| (ppos[i], prot[i]))
+            };
+            for (s, &body) in rd.solids.iter().zip(&bodies) {
+                if let Some((pos, rot)) = at(&s.bone) {
+                    self.physics.teleport(body, pos, rot);
+                }
+            }
+            if let Some(r) = rd.solids.first().and_then(|s| at(&s.bone)) {
+                root_pose = r;
             }
         }
         for a in 0..bodies.len() {

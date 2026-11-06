@@ -287,6 +287,113 @@ fn sequence_frame0(
     gm_formats::mdl::anim_pose(&ani, start.checked_add(index)?, &mdl.bones, 0, delta)
 }
 
+/// Sequences a player's death ragdoll can start from (see `gm_server` `death_pose`).
+const DEATH_POSE_SEQUENCES: [&str; 5] = [
+    "idle_all_01",
+    "walk_all",
+    "run_all_01",
+    "cidle_all",
+    "cwalk_all",
+];
+
+/// Every frame of the death-pose sequences the model or its include models (a player model
+/// animates through `m_anm`) carry, as local poses of the model's bones matched by name; bones
+/// the animation lacks keep `reference`. A blended sequence plays its forward cell (`move_x`
+/// 1, other parameters 0).
+fn death_poses(
+    mount: &gm_content::Mount,
+    data: &[u8],
+    mdl: &gm_formats::mdl::Mdl,
+    reference: &[([f32; 3], [f32; 4])],
+) -> Vec<gm_server::DeathPose> {
+    use gm_formats::mdl;
+    let includes: Vec<(Vec<u8>, mdl::Mdl)> = mdl::include_models(data, &mdl.header)
+        .into_iter()
+        .filter_map(|inc| {
+            let b = mount.read(&inc).ok()?;
+            let m = mdl::Mdl::parse(&b).ok()?;
+            Some((b, m))
+        })
+        .collect();
+    let sources: Vec<(&[u8], &mdl::Mdl)> = std::iter::once((data, mdl))
+        .chain(includes.iter().map(|(b, m)| (b.as_slice(), m)))
+        .collect();
+    let mut out = Vec::new();
+    for name in DEATH_POSE_SEQUENCES {
+        let found = sources.iter().find_map(|&(bytes, m)| {
+            let seq = mdl::sequences(bytes, &m.header)
+                .into_iter()
+                .find(|s| s.name.eq_ignore_ascii_case(name))?;
+            Some((bytes, m, seq))
+        });
+        let Some((bytes, m, seq)) = found else {
+            continue;
+        };
+        let params = mdl::pose_params(bytes, &m.header);
+        let cell = |axis: usize| {
+            let value = usize::try_from(seq.param[axis])
+                .ok()
+                .and_then(|i| params.get(i))
+                .map_or(0.0, |p| if p.name == "move_x" { 1.0 } else { 0.0 });
+            let (c, f) = seq.grid_pos(axis, value);
+            c + usize::from(f >= 0.5)
+        };
+        let Some(desc) = seq.blend(cell(0), cell(1)).and_then(|a| {
+            mdl::anim_descs(bytes, &m.header)
+                .into_iter()
+                .nth(a.max(0) as usize)
+        }) else {
+            continue;
+        };
+        if desc.flags & 0x04 != 0 {
+            continue;
+        }
+        let (ani_name, blocks) = mdl::anim_blocks(bytes);
+        let ani = if blocks.len() > 1 {
+            mount.read(&ani_name).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let map: Vec<Option<usize>> = mdl
+            .bones
+            .iter()
+            .map(|b| {
+                m.bones
+                    .iter()
+                    .position(|a| a.name.eq_ignore_ascii_case(&b.name))
+            })
+            .collect();
+        let frames: Option<Vec<Vec<(Vec3, glam::Quat)>>> = (0..desc.frames.clamp(1, 512) as usize)
+            .map(|frame| {
+                let (block, off, fr) = desc.frame_block(bytes, frame)?;
+                let (d, base) = if block == 0 {
+                    (bytes, 0)
+                } else {
+                    (ani.as_slice(), blocks.get(usize::try_from(block).ok()?)?.0)
+                };
+                let local = mdl::anim_pose(d, base + off, &m.bones, fr, false)?;
+                Some(
+                    map.iter()
+                        .zip(reference)
+                        .map(|(j, r)| {
+                            let (p, q) = j.and_then(|j| local.get(j).copied()).unwrap_or(*r);
+                            (Vec3::from(p), glam::Quat::from_array(q).normalize())
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        if let Some(frames) = frames {
+            out.push(gm_server::DeathPose {
+                sequence: seq.name.clone(),
+                fps: desc.fps,
+                frames,
+            });
+        }
+    }
+    out
+}
+
 pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::ModelInfo> {
     let mdl_data = mount.read(model)?;
     let mdl = gm_formats::mdl::Mdl::parse(&mdl_data)?;
@@ -322,7 +429,10 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
                 elasticity: sp.elasticity,
             }
         };
+        let reference: Vec<([f32; 3], [f32; 4])> = ragdoll_pose(mount, model, &mdl_data, &mdl)
+            .unwrap_or_else(|| mdl.bones.iter().map(|b| (b.pos, b.quat)).collect());
         gm_server::RagdollInfo {
+            death_poses: death_poses(mount, &mdl_data, &mdl, &reference),
             solids: phy
                 .solids
                 .iter()
@@ -390,9 +500,9 @@ pub fn model_info(mount: &gm_content::Mount, model: &str) -> Result<gm_server::M
                 }
                 b
             },
-            bones: ragdoll_pose(mount, model, &mdl_data, &mdl)
-                .unwrap_or_else(|| mdl.bones.iter().map(|b| (b.pos, b.quat)).collect())
-                .into_iter()
+            bones: reference
+                .iter()
+                .copied()
                 .zip(&mdl.bones)
                 .map(|((pos, quat), b)| gm_server::BoneInfo {
                     name: b.name.clone(),
