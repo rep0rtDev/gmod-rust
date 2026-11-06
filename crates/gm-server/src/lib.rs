@@ -15461,13 +15461,26 @@ impl<'w> Server<'w> {
             // ((1003,27) -> (1201,72) in server_npc_grenade_soldier 261104, 51 u before the
             // (979,72) node it never visits); not from afar - the y180 citizen keeps its first
             // node 73+ u out
+            // ... and one corner a think: the assault citizen cuts (1201,72) at (1138,8) and
+            // holds 281 for (1201,-255) to (1174,-115) before cutting that for its point at
+            // (1189,-155); ours used to cut both in the think at (1136,15) and run the diagonal
             let mut jumped = false;
-            while idx + 1 < points.len()
-                && (points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
-                    || (points[idx + 1].truncate().distance(pos.truncate())
+            let mut time_cuts = 0;
+            while idx + 1 < points.len() {
+                let reached = points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH;
+                // ... and only once the corner itself is within the forward scan (0.9 s):
+                // (1201,72) is cut 90 u out, (1201,-255) 103 u out, not at (1157,-23) with
+                // (1201,-255) still 236 u = 1.1 s away
+                let time_cut = !reached
+                    && time_cuts == 0
+                    && points[idx].truncate().distance(pos.truncate())
+                        <= ideal * NPC_FORWARD_SCAN_TIME
+                    && points[idx + 1].truncate().distance(pos.truncate())
                         <= ideal * NPC_SIMPLIFY_CUT_TIME
-                        && links.get(idx + 1).is_some_and(|&l| walked_link(l))))
-            {
+                    && links.get(idx + 1).is_some_and(|&l| walked_link(l));
+                if !(reached || time_cut) {
+                    break;
+                }
                 let link = links.get(idx + 1).copied().unwrap_or(0);
                 if link == gm_formats::ain::CAP_MOVE_JUMP {
                     // the launch node of a jump link: fly to the far node, walk on from there
@@ -15506,6 +15519,9 @@ impl<'w> Server<'w> {
                 let tr = self.npc_sweep(&prop_bodies, pos + lift, to, mins, maxs);
                 if tr.fraction < 0.999 && !tr.start_solid {
                     break;
+                }
+                if time_cut {
+                    time_cuts += 1;
                 }
                 idx += 1;
             }

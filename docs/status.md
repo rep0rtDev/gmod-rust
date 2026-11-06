@@ -465,7 +465,12 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 - Route simplification, measured on four scenes and built (replacing the 64-u corner reach
   and the one-off forward-scan experiments): (1) a corner is cut for the node after it when
   the hull can walk straight there and that node is within 1.8 s of the gait speed
-  (NPC_SIMPLIFY_CUT_TIME: the running citizen of server_npc_assault_citizen cuts (1201,72) for
+  (NPC_SIMPLIFY_CUT_TIME; and only once the corner itself is within the 0.9 s forward scan,
+  one such cut a think - the assault citizen holds 281 for (1201,-255) until it is 103 u out
+  and cuts it for the point at (1189,-155), ours used to cut it 236 u out from (1157,-23)
+  and run the diagonal: assault 57 -> 33, the soldiers' routes 0.5..1.5 better; open there:
+  our cut lands a think earlier at (1181,-105) and the arc's peak gap is 33 u at row 448)
+  (the running citizen of server_npc_assault_citizen cuts (1201,72) for
   (1201,-255) 316 u out = 1.5 s and (1201,-255) for its point 112 u out; the soldiers keep
   their start node with (965,-19) 480 u out = 2.23 s; the walking citizen keeps (21,-491) with
   (-215,-255) 334 u out = 4.2 s); (2) otherwise, within 0.9 s of the gait speed of the corner
