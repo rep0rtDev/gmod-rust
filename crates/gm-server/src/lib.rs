@@ -15341,7 +15341,9 @@ impl<'w> Server<'w> {
         // reads run_all at its landing think, the zombie walk at the claw spot a think before
         // attackA)
         let moving = n.goal.as_ref().is_some_and(|g| !g.halt)
-            || (now < n.gait_until && n.goal.is_none() && n.target.is_none())
+            || (now < n.gait_until
+                && n.goal.is_none()
+                && (n.target.is_none() || now < n.lof_arrived + 2 * n.think_interval as u64))
             || n.melee_stood == now;
         let armed = npc_weapon_activity(&n.weapon, "ACT_IDLE").is_some();
         // an armed body's first think takes over from the spawn pose (Idle1_SMG1 at t4)
@@ -16091,6 +16093,10 @@ impl<'w> Server<'w> {
         if n.flank_until > 0 && n.goal.is_none() {
             n.flank_until = 0;
             n.lof_arrived = now;
+            // the node reached, the body stands two thinks under the run's label
+            // (server_npc_grenade_soldier_wall: last step 187, RunAIMALL1 still on 194 and
+            // 201, CombatIdle1_SMG1 from 201)
+            n.gait_until = now + 2 * n.think_interval as u64;
         }
         if n.target_first_seen == 0 {
             n.target_first_seen = now;

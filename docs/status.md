@@ -243,7 +243,12 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   standing (194, 201), takes the idle label on 201 and fires on 215 = A + 28, ours takes the
   idle label on arrival and fires on 208 = A + 21 - the same two-think stop as before the
   reload turn, here before the next schedule; that line-of-fire run also starts with the
-  zero step (the pre-move think covers cover runs only). Both are the next measurements.
+  zero step (the pre-move think covers cover runs only). The label half of _wall's stop is
+  in: the line-of-fire node reached, the body stands two thinks under the run's label
+  (`gait_until` at `lof_arrived`, honoured with a target) - RunAIMALL1 on 187..194,
+  CombatIdle1_SMG1 from 201 as the game; its burst still comes on 208 against 215 (and 859
+  against 894 at the third node) from a site other than the re-sighting one. Both offsets
+  are the next measurements.
 
 ### NPC: a zombie's approach to a prop in its way (swat2_crate 75, swat3_a 7, drum 6) - measured, open
 
