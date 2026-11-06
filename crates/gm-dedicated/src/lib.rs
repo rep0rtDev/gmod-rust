@@ -31,10 +31,18 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
         .with_context(|| format!("map {map}"))?;
     let bsp = gm_formats::bsp::Bsp::parse(&data)?;
     let collision = gm_collision::World::from_bsp(&bsp);
-    let world_hulls: Vec<Vec<Vec3>> = gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
-        .into_iter()
-        .map(|h| h.points)
-        .collect();
+    let mut world_hulls: Vec<Vec<Vec3>> =
+        gm_physics::brush::model_hulls(&bsp, 0, gm_physics::REST_GAP)
+            .into_iter()
+            .map(|h| h.points)
+            .collect();
+    for (idx, origin) in gm_collision::solid_brush_models(&bsp) {
+        world_hulls.extend(
+            gm_physics::brush::model_hulls(&bsp, idx, gm_physics::REST_GAP)
+                .into_iter()
+                .map(|h| h.points.into_iter().map(|p| p + origin).collect()),
+        );
+    }
     let table = gm_physics::surface::SurfaceTable::parse(&[&String::from_utf8_lossy(
         &mount.read("scripts/surfaceproperties.txt")?,
     )]);

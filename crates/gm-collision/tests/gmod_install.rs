@@ -81,3 +81,42 @@ fn walls_block_long_sweeps() {
     let up = world.trace_ray(o, o + Vec3::Z * 20000.0, MASK_SOLID);
     assert!(up.hit());
 }
+
+#[test]
+fn func_brush_walls_are_solid() {
+    let Some((data, _)) = load_construct() else {
+        return;
+    };
+    let bsp = gm_formats::bsp::Bsp::parse(&data).unwrap();
+    let world = World::from_bsp(&bsp);
+    // gm_construct's dark room: `func_brush` `*1` is a 8 x 1936 x 408 wall whose geometry sits
+    // at the entity origin (-804, -3600, -52); the world brushes alone have nothing there
+    let mins = Vec3::new(-16.0, -16.0, 0.0);
+    let maxs = Vec3::new(16.0, 16.0, 72.0);
+    let from = Vec3::new(-900.0, -3600.0, -200.0);
+    let to = Vec3::new(-700.0, -3600.0, -200.0);
+    let t = world.trace_box(from, to, mins, maxs, MASK_PLAYERSOLID);
+    assert!(t.hit(), "the wall stops the player hull");
+    assert!(
+        (t.end.x - (-804.0 - 4.0 - 16.0)).abs() < 0.1,
+        "stops at the wall's west face: {:?}",
+        t.end
+    );
+    assert!(t.normal.x < -0.99, "{:?}", t.normal);
+    assert!(
+        world.point_contents(Vec3::new(-804.0, -3600.0, -200.0))
+            & gm_formats::bsp::lumps::contents::SOLID
+            != 0
+    );
+    assert_eq!(
+        world.point_contents(Vec3::new(-850.0, -3600.0, -200.0))
+            & gm_formats::bsp::lumps::contents::SOLID,
+        0
+    );
+    let ray = world.trace_ray(from, to, MASK_SOLID);
+    assert!(
+        ray.hit() && (ray.end.x + 808.0).abs() < 0.1,
+        "{:?}",
+        ray.end
+    );
+}

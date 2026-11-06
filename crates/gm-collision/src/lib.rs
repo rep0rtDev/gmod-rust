@@ -200,6 +200,62 @@ pub struct Ladder {
     pub top: Vec3,
 }
 
+/// A brush entity's model in the collision world: the head node of its tree and the
+/// entity origin its geometry is stored relative to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BrushModel {
+    head_node: i32,
+    origin: Vec3,
+}
+
+/// Brush entities that are solid to the player and to physics in a fresh map: `(model index,
+/// origin)` of every `*N` entity whose class is solid at spawn (`func_brush` unless
+/// `Solidity 1` / `StartDisabled 1`, doors, buttons, walls, breakables, movers, glass).
+/// `func_illusionary`, `func_vehicleclip`, triggers, areaportals and occluders are not.
+pub fn solid_brush_models(bsp: &Bsp<'_>) -> Vec<(usize, Vec3)> {
+    const SOLID: &[&str] = &[
+        "func_brush",
+        "func_wall",
+        "func_wall_toggle",
+        "func_breakable",
+        "func_button",
+        "func_rot_button",
+        "func_door",
+        "func_door_rotating",
+        "func_movelinear",
+        "func_rotating",
+        "func_platrot",
+        "func_train",
+        "func_tracktrain",
+        "func_tanktrain",
+        "func_lod",
+        "func_monitor",
+        "func_reflective_glass",
+        "func_physbox",
+        "func_physbox_multiplayer",
+        "func_conveyor",
+        "func_guntarget",
+        "func_detail_blocker",
+    ];
+    bsp.entities
+        .iter()
+        .filter(|e| SOLID.contains(&e.classname()))
+        .filter(|e| {
+            !(e.classname() == "func_brush"
+                && (e.get("Solidity") == Some("1") || e.get("StartDisabled") == Some("1")))
+        })
+        .filter_map(|e| {
+            let idx: usize = e.get("model")?.strip_prefix('*')?.parse().ok()?;
+            let origin = e
+                .get("origin")
+                .and_then(gm_formats::bsp::lumps::parse_vec3)
+                .map(Vec3::from)
+                .unwrap_or(Vec3::ZERO);
+            Some((idx, origin))
+        })
+        .collect()
+}
+
 pub struct World {
     disps: Vec<Disp>,
     ladders: Vec<Ladder>,
@@ -216,6 +272,9 @@ pub struct World {
     /// Material names (`concrete/concretefloor001a`, lower case) the brush sides use.
     materials: Vec<String>,
     head_node: i32,
+    /// Solid brush entities (`func_brush`, doors, buttons...): each one's own tree, with its
+    /// geometry relative to the entity's `origin`.
+    brush_models: Vec<BrushModel>,
     /// PVS: `vis[c]` is a bitset over clusters visible from cluster `c`; empty when the map has
     /// no visibility lump.
     vis: Vec<Vec<u64>>,
@@ -383,6 +442,15 @@ impl World {
                 })
                 .collect(),
             head_node: bsp.models.first().map(|m| m.head_node).unwrap_or(0),
+            brush_models: solid_brush_models(bsp)
+                .into_iter()
+                .filter_map(|(idx, origin)| {
+                    Some(BrushModel {
+                        head_node: bsp.models.get(idx)?.head_node,
+                        origin,
+                    })
+                })
+                .collect(),
             vis,
             num_clusters,
         }
@@ -440,6 +508,7 @@ impl World {
             side_material: Vec::new(),
             materials: Vec::new(),
             head_node: -1,
+            brush_models: Vec::new(),
             vis: Vec::new(),
             num_clusters: 0,
         }
@@ -490,6 +559,31 @@ impl World {
         if leaf.num_brushes == 0 {
             return leaf.contents;
         }
+        let mut c = 0;
+        for i in 0..leaf.num_brushes {
+            let b = &self.brushes[self.leaf_brushes[(leaf.first_brush + i) as usize] as usize];
+            if self.brush_contains(b, point) {
+                c |= b.contents;
+            }
+        }
+        for bm in &self.brush_models {
+            c |= self.model_contents(bm, point - bm.origin);
+        }
+        c
+    }
+
+    fn model_contents(&self, bm: &BrushModel, point: Vec3) -> i32 {
+        let mut node = bm.head_node;
+        while node >= 0 {
+            let n = &self.nodes[node as usize];
+            let p = &self.planes[n.plane as usize];
+            node = if p.normal.dot(point) - p.dist >= 0.0 {
+                n.children[0]
+            } else {
+                n.children[1]
+            };
+        }
+        let leaf = &self.leafs[(-node - 1) as usize];
         let mut c = 0;
         for i in 0..leaf.num_brushes {
             let b = &self.brushes[self.leaf_brushes[(leaf.first_brush + i) as usize] as usize];
@@ -654,6 +748,18 @@ impl World {
         }
         let (s0, e0) = (sw.start, sw.end);
         self.trace_node(&mut sw, self.head_node, 0.0, 1.0, s0, e0);
+        for bm in &self.brush_models {
+            let before = sw.fraction;
+            let (s, e) = (s0 - bm.origin, e0 - bm.origin);
+            sw.start = s;
+            sw.end = e;
+            self.trace_node(&mut sw, bm.head_node, 0.0, 1.0, s, e);
+            if sw.fraction < before {
+                sw.plane_dist += sw.normal.dot(bm.origin);
+            }
+        }
+        sw.start = s0;
+        sw.end = e0;
         if sw.mask & contents::SOLID != 0 {
             self.trace_disps(&mut sw);
         }
@@ -1083,6 +1189,7 @@ mod tests {
             side_material: Vec::new(),
             materials: Vec::new(),
             head_node: 0,
+            brush_models: Vec::new(),
             vis: Vec::new(),
             num_clusters: 0,
         }
