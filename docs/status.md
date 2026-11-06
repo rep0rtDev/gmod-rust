@@ -641,3 +641,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   rule and nothing is built (ours picks a hashed wander point, here yaw 114 vs the game's 171).
   Also the poison throw lands one think early (bot 100 → 1 on row 256 vs 269): ThrowWarning
   starts on row 74 where the game's headcrab2Leap starts on 81.
+- Poison zombie throw timing: the think whose step arrives in throw range only stops, like the
+  melee stand think (Walk at 963.8 on row 74, headcrab2Leap on 81; _long: Walk at 818.2 on
+  662, ThrowWarning on 669) - the throw was wrongly excluded from `melee_stood`. And the
+  chase resumed in the swing-end pre-think now rests at the reach of the move that comes next
+  (`chase_reach` refreshed from `melee_move`), not of the swing that ended: the poison zombie
+  walks on from its throw the think it ends (row 249) with the bite's 70 u ahead, where the
+  throw's range left it standing a think. A landed lunge keeps its reach (the antlion stands
+  its landing think: run_all 95, attack3 109). melee_poisonzombie row for row to the kill
+  (ThrowWarning 81, Walk 249, melee_02 326, Walk 424), antlion 39.0 → 28.7.
+  Open: the thrown crab lands on the bot at row 263 vs the game's 269 - the goldens do not
+  record the crab entity, so release tick vs flight speed needs an oracle recording; the
+  antlion's landing think reads DistractIdle at 95 where the game reads run_all (95 and 102).

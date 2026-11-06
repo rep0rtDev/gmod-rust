@@ -14788,6 +14788,18 @@ impl<'w> Server<'w> {
                 && !n.ai.scripted
             {
                 n.chase = n.target;
+                // the resumed chase rests at the reach of the move that comes next, not of
+                // the swing that just ended (the poison zombie walks on from its throw the
+                // think it ends, row 249, with the bite's 70 u ahead - the throw's range would
+                // keep it standing a think); a landed lunge keeps the lunge's reach - the
+                // antlion stands its landing think (run_all 95, attack3 109)
+                if n.melee_swing.as_ref().is_some_and(|m| m.lunge <= 0.0) {
+                    if let Some((moves, _)) = npc_melee_moves(&n.class) {
+                        if let Some(m) = moves.get(n.melee_move) {
+                            n.chase_reach = m.start_range.min(m.reach) - 3.0;
+                        }
+                    }
+                }
             }
             let slot = slots.get(&id).copied().unwrap_or(glam::Vec2::ZERO);
             self.npc_chase_repath(id, slot);
@@ -16498,12 +16510,11 @@ impl<'w> Server<'w> {
             // stops; the swing starts the next think (the game's fast zombie stands at 869
             // from row 81 and claws at 88, the zombie / can / gascan show `walk` at the claw
             // spot a think before `attackA`, the antlion lands its pounce at 270 and swipes
-            // at 277). A lunge itself goes from the run (pounce at attack3's last tick), the
-            // poison zombie throws straight from its walk (server_npc_melee_poisonzombie
-            // row 81)
+            // at 277). The poison zombie's throw stands that think too (Walk at 963.8 on row
+            // 74, headcrab2Leap on 81; _long: Walk at 818.2 on 662, ThrowWarning on 669). A
+            // lunge itself goes from the run (pounce at attack3's last tick)
             if (n.path_done_at == now || n.move_speed > 0.0 || n.swing_until == now)
                 && m.lunge <= 0.0
-                && !m.poison
                 && matches!(ai::class_sched_family(&n.class), Some("zombie" | "antlion"))
                 && now > n.melee_stood + u64::from(n.think_interval)
             {
