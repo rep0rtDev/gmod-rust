@@ -93,6 +93,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   skirts it at 48..50 u, so the second scan finds the crate at 50 u; ours walks straight to
   36 u (inside the 38 u minimum) and never picks it. The game's 15 u lateral stand-off
   (y -515 in both crate scenes) belongs to that early side-step, not to the swat position.
+  Tried and reverted: a zombie holding once within ZOMBIE_SWAT_MOVE_DIST of a swattable prop
+  on its enemy's line until the next scan - swat2_crate 75 -> 36 (the swat lands on row 152
+  like the game's) but drum 6 -> 76, gascan 30 -> 110, plastic 35 -> 70: the game walks up
+  to the smaller props; only the crate's graph detour keeps it 48..50 u off. The fix is that
+  node route for the chase (node 591, then the crawl), not a hold.
   Masses are the `.phy` defaults we parse (crate 30, drum 30, gascan 10, can 1); unverified
   against the game's.
 
