@@ -1631,6 +1631,14 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
                 "eye": [eye.x, eye.y, eye.z],
                 "eye_ang": [sg.pitch, sg.yaw, 0.0],
             }));
+            let mut moved = false;
+            let move_cmd = gm_move::UserCmd {
+                buttons: sg.buttons & !(1 | 32 | 2048),
+                view_angles: Vec3::new(sg.pitch, sg.yaw, 0.0),
+                forward_move: sg.forward,
+                side_move: sg.side,
+                ..Default::default()
+            };
             let (sp, cp) = (sg.pitch.to_radians().sin(), sg.pitch.to_radians().cos());
             let (sy, cy) = (sg.yaw.to_radians().sin(), sg.yaw.to_radians().cos());
             let forward = Vec3::new(cp * cy, cp * sy, -sp);
@@ -1730,7 +1738,12 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
                 if use_key {
                     g.rotate(sg.mouse_x, sg.mouse_y, right);
                 }
-                let (tp, tr): (Vec3, Quat) = g.target(eye, forward, sg.yaw, st.rotation);
+                // the game moves the player (PlayerMove) before the physcannon's ItemPostFrame
+                // sets the shadow target from the eye, then VPhysics simulates
+                mover.tick(&mut player, &move_cmd);
+                moved = true;
+                let eye_now = player.origin + Vec3::new(0.0, 0.0, mover.eye_height(&player));
+                let (tp, tr): (Vec3, Quat) = g.target(eye_now, forward, sg.yaw, st.rotation);
                 world.hold(body, tp, tr, &params);
             }
             if let Some(c) = &carry {
@@ -1753,15 +1766,10 @@ fn run_physgun(scn: &Scenario) -> Result<Value> {
                     &gm_physics::pickup::params(gm_core::tick::DEFAULT_TICK_INTERVAL),
                 );
             }
+            if !moved {
+                mover.tick(&mut player, &move_cmd);
+            }
             world.step();
-            let cmd = gm_move::UserCmd {
-                buttons: sg.buttons & !(1 | 32 | 2048),
-                view_angles: Vec3::new(sg.pitch, sg.yaw, 0.0),
-                forward_move: sg.forward,
-                side_move: sg.side,
-                ..Default::default()
-            };
-            mover.tick(&mut player, &cmd);
             t += 1;
         }
     }
