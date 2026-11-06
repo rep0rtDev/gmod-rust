@@ -455,7 +455,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   lost-enemy chase - the Combine's SelectCombatSchedule order; before them ours chased the
   bot 150 u west during the reload) - rows 780..910 within 2..29 u of the game. Open: the
   game loops 60 u north and back along x 1175 for 123 ticks before reloading ((1154,87) ->
-  (1175,94) -> (1175,46), reload at (1179,46) from row 900 to the end), and ours chases
+  (1175,94) -> (1175,46), reload at (1179,46) from row 900 to the end) - measured by think:
+  NE (1142,80) 778 -> (1164,93) 792 -> (1175,94) 820, then south along x 1175 at ~10 u a
+  think braking to (1175,42) 876, east to (1179,46) 890, CombatIdle1 897, reload 904; the
+  yaw spins the whole way, 233 (the bot's bearing) -> 219 -> ... -> 23 at about -19 deg a
+  think. The only AI node there is #460 (1201,72); (1179,46) and (1175,94) are not nodes,
+  so this reads as a run at #460 sliding along a face at x ~1175 (hull edge) north then
+  south to its end and giving up 34 u short - ours stops at (1175,72), 26 u west of the
+  node, 112 ticks earlier. Open: that slide-and-give-up, and ours chases
   south-east after its reload (920 on) where the game still reloads; the leader's earlier
   non-cut of (965,-19) for (1201,72) 360 u out (1.7 s, the hull line clear in ours) still
   contradicts the cut rule unless its first cover was the unexplained (953,7).
