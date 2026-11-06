@@ -264,6 +264,20 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   dropping the sqrt curve changed nothing), and the post-arrival burst row (208 / 859
   against 215 / 894).
 
+### NPC: the squad leader behind its mate (squad_soldier 162) - measured, open
+
+- The leader reaches (953, 7) on 637 and from there follows the mate's own track to the
+  (1201, 72) node instead of a route of its own: a creep of 1 / 3 / 5 / 7 u a think
+  (644..665) toward the mate's line, a stop on 672 at (961, −7), then a clean ramp 3.6 / 5.8 /
+  8.6 / 11.7 / 14.6 / 17.5 / 20.6 / 21.5 along (976, 3) → (1053, 41). The gap to the mate
+  grows 39 → 44 → 53 → 62 → 74 → 89 → 105 → 115 → 124 and then holds at 128 u (700..714):
+  the real run starts once the mate is ~100 u ahead and keeps 128 u behind it. The mate runs
+  the straight diagonal (977, −16) → (1201, 72) at 8..19 u a think, no node on the way.
+  Ours: the leader runs north on x≈975 to the (979, 72) node and east along y 72 at 9 u a
+  think; the mate at 16+ u a think is at (1141, 56) by 616 where the game's is at (977, −16).
+  The mate's pace and the leader's follow are the two halves of the 162; the (953, 7) point
+  itself (not a node, not a lateral point) is still unexplained.
+
 ### NPC: a zombie's approach to a prop in its way (swat2_crate 75, swat3_a 7, drum 6) - measured, open
 
 - All the game's swats start at spawn + 147 ticks (the second scan: first at +14, period 133;
