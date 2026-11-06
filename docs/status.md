@@ -681,11 +681,20 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   (803.6 vs 803.1; the hull top counts from 1 u above it), rests one think and bites on 269
   like the game; the bite's push comes from the crab's centre (bot slide 823.2 -> 849.9 vs
   848.4). melee_02 back on row 326, the kill 388 vs 389, poisonzombie_long 484 -> 463.
+  After the bite the crab hops off the bot it stands on (TASK_HEADCRAB_HOP_OFF_NPC): a random
+  horizontal direction at 200 u/s and 200 up, as step physics - moved once per think over the
+  think's 0.105 s with gravity half-stepped (rows 276/283/290/...: 21 u in xy, z -52.3 /
+  -41.2 / -36.8 / -38.9 / -47.7 / -63.1 / -85.1 / -113.7 against the game's -52.3 / -41.2 /
+  -36.7 / -38.9 / -47.7 / -63.0 / -85.0 / -113.6, floor on row 332 in both). The landing
+  restarts the crab's thinks (land 262, bite 269, first hop step 276) and it turns into the
+  hop and then to its enemy at 300 deg/s (31.5 per think, `npc_class_yaw`), attacking once it
+  faces: 5 turn thinks in both, the leap telegraph at 374 vs the game's 367 (its hop went
+  south-east and ours north-east - the direction is random; the bearing to turn differs).
+  poisonzombie_long 463 -> 355 (the figure's tail swings with the random hop direction).
   Open: the crab's class is `npc_headcrab_black` in our traces, the game's
-  `npc_headcrab_poison`; after the bite the game's crab steps 5.3 u back (row 271) and
-  flinch-jumps away at 45 degrees, advanced per think (rows 277/283/292/298: +14.9/-14.8 in
-  xy each, z +17.7/+11.1/+4.5/-2.2), while ours drops straight down the hull; the third
-  pounce of
+  `npc_headcrab_poison`; the game's crab also steps 5.3 u back on the bite think (row 269,
+  803.1 -> 797.8) and its first yaw step there is 60 deg (two thinks' worth - a capped
+  yaw-update interval?), ours one step; the third pounce of
   melee_antlion (our bot stands at 672 after the knockbacks, the game's at 675.2, so
   our full step fits where the game's would end inside the hulls): the game's 31.6 u step at 62 u from the bot is refused whole (it
   would end 30.7 u from it, inside the hulls) and taken a think later - our lunge trace does
