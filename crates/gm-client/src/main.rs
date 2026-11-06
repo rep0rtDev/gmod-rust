@@ -1130,6 +1130,9 @@ struct App {
     hint_queue: Vec<(Instant, String)>,
     /// `Player:ScreenFade`: the running full-screen fade.
     screen_fade: Option<ScreenFade>,
+    /// `env_shake`s on the view.
+    shakes: Vec<Shake>,
+    shake_seed: u32,
     /// The Options dialog while open.
     options: Option<options::OptionsState>,
     /// The main menu's New Game page while open (`#/newgame/`).
@@ -3942,6 +3945,20 @@ impl App {
                 if let Some(f) = e.strip_prefix("ScreenFade ").and_then(ScreenFade::parse) {
                     self.screen_fade = Some(f);
                 }
+                if let Some(rest) = e.strip_prefix("Shake ") {
+                    let v: Vec<f32> = rest.split(' ').filter_map(|x| x.parse().ok()).collect();
+                    if let [amplitude, duration, frequency] = v[..] {
+                        self.shakes.push(Shake {
+                            amplitude,
+                            duration,
+                            frequency: frequency.max(0.1),
+                            start: Instant::now(),
+                            next_at: 0.0,
+                            offset: Vec3::ZERO,
+                            roll: 0.0,
+                        });
+                    }
+                }
                 println!("{e}");
                 self.console.log(e);
             }
@@ -4175,6 +4192,9 @@ impl App {
             far: 28000.0,
             gamma: self.settings.mat_monitorgamma,
         };
+        let (shake_offset, shake_roll) = calc_shake(&mut self.shakes, &mut self.shake_seed);
+        camera.position += shake_offset;
+        camera.angles.z += shake_roll;
         // driving a prop: a chase camera on it (the game's observer mode on the entity; the
         // distance is not measured)
         let me = self.sim.client.player_id;
@@ -7486,6 +7506,8 @@ fn main() -> Result<()> {
         fov_blend: None,
         hint_queue: Vec::new(),
         screen_fade: None,
+        shakes: Vec::new(),
+        shake_seed: 0x9E37_79B9,
         options: None,
         newgame: None,
         servers: None,
@@ -8483,6 +8505,42 @@ fn impact_decal(surfaceprop: &str, pos: Vec3) -> String {
     };
     let h = pos.x.to_bits() ^ pos.y.to_bits().rotate_left(11) ^ pos.z.to_bits().rotate_left(22);
     format!("decals/{group}/shot{}", 1 + h % 5)
+}
+
+/// An `env_shake` on the view (`CViewEffects::CalcShake`): a new random offset and roll every
+/// 1 / frequency s, the amplitude fading out over the duration.
+struct Shake {
+    amplitude: f32,
+    duration: f32,
+    frequency: f32,
+    start: Instant,
+    next_at: f32,
+    offset: Vec3,
+    roll: f32,
+}
+
+/// The shakes' eye offset and roll right now; the ones over are dropped.
+fn calc_shake(shakes: &mut Vec<Shake>, seed: &mut u32) -> (Vec3, f32) {
+    let now = Instant::now();
+    let mut offset = Vec3::ZERO;
+    let mut roll = 0.0;
+    shakes.retain_mut(|s| {
+        let t = now.duration_since(s.start).as_secs_f32();
+        if t >= s.duration {
+            return false;
+        }
+        if t >= s.next_at {
+            let amp = s.amplitude * (1.0 - t / s.duration);
+            let r = |seed: &mut u32| fx_rand(seed) * 2.0 - 1.0;
+            s.offset = Vec3::new(r(seed), r(seed), r(seed)) * amp;
+            s.roll = r(seed) * amp * 0.25;
+            s.next_at = t + 1.0 / s.frequency;
+        }
+        offset += s.offset;
+        roll += s.roll;
+        true
+    });
+    (offset, roll)
 }
 
 /// xorshift in [0, 1).

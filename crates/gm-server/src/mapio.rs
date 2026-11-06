@@ -814,6 +814,82 @@ impl Server<'_> {
         }
     }
 
+    /// The `env_*` point entities' inputs: env_explosion `Explode` (iMagnitude, radius
+    /// iRadiusOverride or 2.5 x the magnitude, spawnflag 1 no damage), env_shake `StartShake`
+    /// (amplitude / duration / frequency to the players within `radius`, spawnflag 1 everyone),
+    /// env_fade `Fade` (duration / holdtime / renderamt / rendercolor; spawnflag 1 fade from,
+    /// 2 modulate, 4 the activator only, 8 stay out).
+    fn env_input(&mut self, idx: usize, input: &str, activator: u32) {
+        let e = &self.map_io.entities[idx];
+        let (class, pos, flags, def) = (e.classname.clone(), e.pos, e.flags, e.def.clone());
+        match (class.as_str(), input) {
+            ("env_explosion", "explode") => {
+                let magnitude = def.num("iMagnitude", 100.0);
+                let radius = match def.num("iRadiusOverride", 0.0) {
+                    r if r > 0.0 => r,
+                    _ => magnitude * 2.5,
+                };
+                if flags & 1 == 0 {
+                    self.explode(pos, activator, magnitude, radius, "env_explosion");
+                } else {
+                    self.effects.push(crate::WorldEffect::Explosion {
+                        pos: pos + Vec3::new(0.0, 0.0, 1.0),
+                    });
+                }
+            }
+            ("env_shake", "startshake") => {
+                let amplitude = def.num("amplitude", 4.0);
+                let radius = def.num("radius", 500.0);
+                let duration = def.num("duration", 1.0);
+                let frequency = def.num("frequency", 2.5);
+                let text = format!("Shake {amplitude} {duration} {frequency}");
+                let targets: Vec<u32> = self
+                    .players
+                    .iter()
+                    .filter(|(_, p)| flags & 1 != 0 || (p.state.origin - pos).length() <= radius)
+                    .map(|(id, _)| *id)
+                    .collect();
+                for id in targets {
+                    self.notices.push((id, text.clone()));
+                }
+            }
+            ("env_fade", "fade") => {
+                let duration = def.num("duration", 2.0);
+                let hold = def.num("holdtime", 0.0);
+                let alpha = def.num("renderamt", 255.0);
+                let mut c = def
+                    .get("rendercolor")
+                    .unwrap_or("0 0 0")
+                    .split_whitespace()
+                    .filter_map(|v| v.parse::<f32>().ok());
+                let (r, g, b) = (
+                    c.next().unwrap_or(0.0),
+                    c.next().unwrap_or(0.0),
+                    c.next().unwrap_or(0.0),
+                );
+                let mut f = if flags & 1 != 0 { 1 } else { 2 };
+                if flags & 2 != 0 {
+                    f |= 4;
+                }
+                if flags & 8 != 0 {
+                    f |= 8;
+                }
+                let text = format!("ScreenFade {r} {g} {b} {alpha} {duration} {hold} {f}");
+                let targets: Vec<u32> = if flags & 4 != 0 {
+                    vec![activator]
+                } else {
+                    self.players.keys().copied().collect()
+                };
+                for id in targets {
+                    if self.players.contains_key(&id) {
+                        self.notices.push((id, text.clone()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// An `ambient_generic` starts (`PlaySound`: its `message` on its own channel, looped as
     /// the entity is) or stops (`StopSound` / `FadeOut` over `fade` seconds).
     fn ambient_sound(&mut self, idx: usize, play: bool, fade: f32) {
@@ -970,6 +1046,7 @@ impl Server<'_> {
         let e = &mut self.map_io.entities[idx];
         let was_moving = e.moving();
         let mut ambient: Option<(bool, f32)> = None;
+        let mut env = false;
         match &mut e.kind {
             Kind::Mover {
                 state,
@@ -1153,7 +1230,7 @@ impl Server<'_> {
                     _ => {}
                 }
             }
-            Kind::Logic => {}
+            Kind::Logic => env = true,
         }
         // the SDK's door / button sounds: the move sound as the travel starts, the locked
         // sound on a locked use
@@ -1171,6 +1248,9 @@ impl Server<'_> {
         }
         if let Some((play, fade)) = ambient {
             self.ambient_sound(idx, play, fade);
+        }
+        if env {
+            self.env_input(idx, &input_lc, activator);
         }
         for name in events {
             self.map_io.fire_output(now, idx, name, activator);

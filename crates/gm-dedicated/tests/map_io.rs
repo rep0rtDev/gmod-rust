@@ -380,3 +380,110 @@ fn a_tracktrain_runs_its_path_tracks_and_takes_their_speed() {
         t.pos
     );
 }
+
+#[test]
+fn env_explosion_explodes_on_its_input() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let kv = [("targetname", "boom"), ("iMagnitude", "50")];
+    let def = gm_server::mapio::MapEntityDef {
+        classname: "env_explosion".into(),
+        kv: kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        origin: Vec3::new(700.0, 100.0, -100.0),
+        angles: Vec3::ZERO,
+        hulls: Vec::new(),
+        mins: Vec3::ZERO,
+        maxs: Vec3::ZERO,
+    };
+    server.set_map_entities(vec![def], world.surface);
+    let idle = std::collections::BTreeMap::new();
+    server.tick(&idle);
+    server.take_effects();
+    server.fire_input("boom", "Explode", "", 0);
+    server.tick(&idle);
+    let effects = server.take_effects();
+    assert!(
+        effects.iter().any(|e| matches!(
+            e,
+            gm_server::WorldEffect::Explosion { pos } if (*pos - Vec3::new(700.0, 100.0, -99.0)).length() < 1e-3
+        )),
+        "{effects:?}"
+    );
+}
+
+#[test]
+fn env_shake_and_env_fade_reach_the_players_in_range() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let def = |class: &str, kv: &[(&str, &str)], origin: Vec3| gm_server::mapio::MapEntityDef {
+        classname: class.into(),
+        kv: kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        origin,
+        angles: Vec3::ZERO,
+        hulls: Vec::new(),
+        mins: Vec3::ZERO,
+        maxs: Vec3::ZERO,
+    };
+    let defs = vec![
+        def(
+            "env_shake",
+            &[
+                ("targetname", "quake"),
+                ("amplitude", "8"),
+                ("radius", "300"),
+                ("duration", "2"),
+                ("frequency", "40"),
+            ],
+            Vec3::new(700.0, 100.0, -100.0),
+        ),
+        def(
+            "env_fade",
+            &[
+                ("targetname", "dark"),
+                ("duration", "1.5"),
+                ("holdtime", "0.5"),
+                ("renderamt", "200"),
+                ("rendercolor", "10 20 30"),
+                ("spawnflags", "4"),
+            ],
+            Vec3::ZERO,
+        ),
+    ];
+    server.set_map_entities(defs, world.surface);
+    server.add_player(1, Vec3::new(750.0, 100.0, -100.0), Vec3::ZERO);
+    server.add_player(2, Vec3::new(1500.0, 100.0, -100.0), Vec3::ZERO);
+    let idle = std::collections::BTreeMap::new();
+    server.tick(&idle);
+    server.notices.clear();
+    server.fire_input("quake", "StartShake", "", 0);
+    server.fire_input("dark", "Fade", "", 2);
+    server.tick(&idle);
+    let notices = std::mem::take(&mut server.notices);
+    assert!(
+        notices.contains(&(1, "Shake 8 2 40".to_string())),
+        "the player 50 u away shakes: {notices:?}"
+    );
+    assert!(
+        !notices
+            .iter()
+            .any(|(p, t)| *p == 2 && t.starts_with("Shake")),
+        "the player 800 u away does not: {notices:?}"
+    );
+    assert!(
+        notices.contains(&(2, "ScreenFade 10 20 30 200 1.5 0.5 2".to_string())),
+        "spawnflag 4: the activator only, fading out: {notices:?}"
+    );
+    assert!(!notices
+        .iter()
+        .any(|(p, t)| *p == 1 && t.starts_with("ScreenFade")));
+}
