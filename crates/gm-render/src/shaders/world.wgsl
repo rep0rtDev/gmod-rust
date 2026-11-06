@@ -23,12 +23,30 @@ struct Camera {
     sky_sun_color: vec4<f32>,
     sky_dusk: vec4<f32>,
     sky_dusk_scale: vec4<f32>,
+    flashlight_vp: mat4x4<f32>,
+    flashlight: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var lightmap: texture_2d<f32>;
 @group(0) @binding(2) var lightmap_sampler: sampler;
 @group(0) @binding(3) var cubes: texture_cube_array<f32>;
+@group(0) @binding(4) var flashlight_depth: texture_depth_2d;
+@group(0) @binding(5) var flashlight_sampler: sampler_comparison;
+
+// the flashlight's shadow: 1 lit, 0 in the shadow of the world seen from the light
+fn flashlight_shadow(world: vec3<f32>) -> f32 {
+    let p = camera.flashlight_vp * vec4<f32>(world, 1.0);
+    if p.w <= 0.0 {
+        return 1.0;
+    }
+    let ndc = p.xyz / p.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z >= 1.0 {
+        return 1.0;
+    }
+    return textureSampleCompareLevel(flashlight_depth, flashlight_sampler, uv, ndc.z - 0.0005);
+}
 @group(1) @binding(0) var base: texture_2d<f32>;
 @group(1) @binding(1) var base_sampler: sampler;
 
@@ -170,6 +188,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 let c = dot(-dv / max(d, 1e-3), sd.xyz);
                 k *= smoothstep(sd.w, min(sd.w + 0.08, 1.0), c);
             }
+            if camera.flashlight.x > 0.5 && i == u32(camera.flashlight.y) {
+                k *= flashlight_shadow(in.world);
+            }
             var facing = 1.0;
             if dot(in.normal, in.normal) > 0.0 {
                 facing = max(dot(normalize(in.normal), dv / max(d, 1e-3)), 0.0);
@@ -260,6 +281,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 let sd = camera.dlight_dir[i];
                 if sd.w > 0.0 {
                     k *= smoothstep(sd.w, min(sd.w + 0.08, 1.0), dot(-ld, sd.xyz));
+                }
+                if camera.flashlight.x > 0.5 && i == u32(camera.flashlight.y) {
+                    k *= flashlight_shadow(in.world);
                 }
                 let h = pow(max(dot(nw, normalize(ld + v)), 0.0), exponent);
                 local += camera.dlight_color[i].rgb * (k * k * max(dot(nw, ld), 0.0) * h);

@@ -359,6 +359,10 @@ struct CameraUniform {
     sky_sun_color: [f32; 4],
     sky_dusk: [f32; 4],
     sky_dusk_scale: [f32; 4],
+    /// The flashlight's view-projection for its shadow map, and (x) whether it is set, (y)
+    /// which dynamic light it is.
+    flashlight_vp: [[f32; 4]; 4],
+    flashlight: [f32; 4],
 }
 
 /// Dynamic lights lit per frame.
@@ -366,7 +370,10 @@ pub const MAX_DLIGHTS: usize = 8;
 
 /// A dynamic point light for this frame (the physgun beam's end, a muzzle flash): colour times
 /// `(1 - d / radius)^2` times the surface's facing, added to the baked light.
-#[derive(Clone, Copy, Debug, Default)]
+/// Side of the flashlight's shadow map.
+const SHADOW_SIZE: u32 = 2048;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DLight {
     pub pos: Vec3,
     pub radius: f32,
@@ -695,6 +702,11 @@ pub struct WorldRenderer {
     /// Alpha-blended, no depth write: models drawn with `ModelTarget::alpha` below 1 (ghosts).
     translucent_pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
+    /// The local flashlight (its index among the dynamic lights) whose shadow map is drawn.
+    flashlight: Option<(usize, DLight)>,
+    flashlight_vp: std::cell::Cell<Option<Mat4>>,
+    shadow_pipeline: wgpu::RenderPipeline,
+    shadow_view: wgpu::TextureView,
     camera_bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -2151,6 +2163,22 @@ impl WorldRenderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
             ],
         });
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2250,6 +2278,33 @@ impl WorldRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // the flashlight's shadow map: depth from the light, compared in the world shader
+        let shadow_view = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("flashlight depth"),
+                size: wgpu::Extent3d {
+                    width: SHADOW_SIZE,
+                    height: SHADOW_SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("flashlight depth"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera"),
             layout: &camera_layout,
@@ -2271,6 +2326,14 @@ impl WorldRenderer {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&cube_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
                 },
             ],
         });
@@ -2619,6 +2682,42 @@ impl WorldRenderer {
         let sky_pipeline = make_pipeline("sky", "fs_main", None, true, false);
         let skypaint_pipeline = make_pipeline("skypaint", "fs_skypaint", None, true, false);
         let nocull_pipeline = make_pipeline("world nocull", "fs_main", None, true, false);
+        // depth only, from the flashlight, into the (single-sampled) shadow map
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("flashlight depth"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3],
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: None,
+            multiview_mask: None,
+            cache: None,
+        });
         // water: the scene depth of the main pass, read in a second pass with a read-only
         // depth attachment
         let depth_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2872,6 +2971,10 @@ impl WorldRenderer {
             modulate_pipeline,
             translucent_pipeline,
             camera_buffer,
+            flashlight: None,
+            flashlight_vp: std::cell::Cell::new(None),
+            shadow_pipeline,
+            shadow_view,
             camera_bind_group,
             vertex_buffer,
             index_buffer,
@@ -2911,6 +3014,10 @@ impl WorldRenderer {
         scene_src: Option<&wgpu::Texture>,
         reflect_items: &[DrawItem<'_>],
     ) {
+        match self.flashlight {
+            Some((_, l)) => self.draw_flashlight_depth(gpu, &l),
+            None => self.flashlight_vp.set(None),
+        }
         self.draw_reflection(gpu, camera, aspect, reflect_items);
         self.draw_inner(
             gpu,
@@ -3146,6 +3253,15 @@ impl WorldRenderer {
             sky_sun: sp.map_or([0.0; 4], |s| v4(s.sun_normal, s.sun_size)),
             sky_sun_color: sp.map_or([0.0; 4], |s| v4(s.sun_color, s.star_drift)),
             sky_dusk: sp.map_or([0.0; 4], |s| v4(s.dusk_color, s.dusk_intensity)),
+            flashlight_vp: self
+                .flashlight_vp
+                .get()
+                .unwrap_or(Mat4::IDENTITY)
+                .to_cols_array_2d(),
+            flashlight: match (self.flashlight_vp.get(), self.flashlight) {
+                (Some(_), Some((i, _))) => [1.0, i as f32, 0.0, 0.0],
+                _ => [0.0; 4],
+            },
             sky_dusk_scale: sp.map_or([0.0; 4], |s| {
                 [s.dusk_scale, s.star_scale, s.star_fade, s.star_layers]
             }),
@@ -3584,6 +3700,68 @@ impl WorldRenderer {
                 },
             );
         }
+    }
+
+    /// The local player's flashlight among the dynamic lights (index, light): its shadow map
+    /// is drawn each frame and shades that light.
+    pub fn set_flashlight(&mut self, flashlight: Option<(usize, DLight)>) {
+        self.flashlight = flashlight;
+    }
+
+    /// Depth of the opaque world from the flashlight (`r_flashlightfov` 53.7 over its
+    /// radius) into the shadow map; models do not cast yet.
+    fn draw_flashlight_depth(&self, gpu: &Gpu, light: &DLight) {
+        let dir = light.dir.normalize_or_zero();
+        let cam = Camera {
+            position: light.pos,
+            angles: Vec3::new(
+                (-dir.z).clamp(-1.0, 1.0).asin().to_degrees(),
+                dir.y.atan2(dir.x).to_degrees(),
+                0.0,
+            ),
+            fov_x: 53.7,
+            near: 4.0,
+            far: light.radius.max(8.0),
+            gamma: 2.2,
+        };
+        let vp = cam.view_proj(1.0);
+        let mut u: CameraUniform = bytemuck::Zeroable::zeroed();
+        u.view_proj = vp.to_cols_array_2d();
+        gpu.queue
+            .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&u));
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("flashlight depth"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("flashlight depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.shadow_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.shadow_pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            for b in &self.batches {
+                if b.sky || b.translucent || b.water || b.index_count == 0 {
+                    continue;
+                }
+                pass.set_bind_group(1, &b.bind_group, &[]);
+                pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
+            }
+        }
+        gpu.queue.submit(Some(encoder.finish()));
+        self.flashlight_vp.set(Some(vp));
     }
 
     /// Auto-exposure step from a frame probe: `bright` is the brightness (linear, 0..1 of
