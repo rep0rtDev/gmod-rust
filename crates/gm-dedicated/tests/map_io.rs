@@ -487,3 +487,58 @@ fn env_shake_and_env_fade_reach_the_players_in_range() {
         .iter()
         .any(|(p, t)| *p == 1 && t.starts_with("ScreenFade")));
 }
+
+#[test]
+fn env_sprite_shows_hides_and_recolours_through_its_inputs() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let kv = [
+        ("targetname", "glow"),
+        ("model", "sprites/glow01.spr"),
+        ("scale", "0.5"),
+        ("rendercolor", "255 128 0"),
+        ("renderamt", "200"),
+        ("rendermode", "9"),
+        ("spawnflags", "0"),
+    ];
+    let def = gm_server::mapio::MapEntityDef {
+        classname: "env_sprite".into(),
+        kv: kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        origin: Vec3::new(10.0, 20.0, 30.0),
+        angles: Vec3::ZERO,
+        hulls: Vec::new(),
+        mins: Vec3::ZERO,
+        maxs: Vec3::ZERO,
+    };
+    server.set_map_entities(vec![def], world.surface);
+    let none = std::collections::BTreeMap::new();
+    server.tick(&none);
+    assert!(
+        server.map_sprite_states().is_empty(),
+        "a named sprite without Start On starts hidden"
+    );
+    server.fire_input("glow", "ShowSprite", "", 0);
+    server.tick(&none);
+    let s = server.map_sprite_states();
+    assert_eq!(s.len(), 1, "shown after ShowSprite");
+    let (_, model, pos, scale, color, mode) = &s[0];
+    assert_eq!(model, "sprites/glow01", "the material without its .spr");
+    assert_eq!(*pos, Vec3::new(10.0, 20.0, 30.0));
+    assert_eq!((*scale, *color, *mode), (0.5, [255, 128, 0, 200], 9));
+    server.fire_input("glow", "ColorGreenValue", "0", 0);
+    server.fire_input("glow", "HideSprite", "", 0);
+    server.tick(&none);
+    assert!(server.map_sprite_states().is_empty(), "hidden again");
+    server.fire_input("glow", "ToggleSprite", "", 0);
+    server.tick(&none);
+    assert_eq!(
+        server.map_sprite_states()[0].4,
+        [255, 0, 0, 200],
+        "ToggleSprite shows it with the green channel set to 0"
+    );
+}

@@ -181,6 +181,12 @@ pub enum Kind {
         style: u8,
         pattern: String,
     },
+    /// `env_sprite`: shown or hidden, `rendercolor` + `renderamt`, `scale`.
+    Sprite {
+        on: bool,
+        color: [u8; 4],
+        scale: f32,
+    },
     /// `func_tracktrain` on its `path_track` chain: signed speed along the track, the node
     /// it heads to and the one it left, `height` above the track.
     Train {
@@ -502,6 +508,24 @@ fn build(def: MapEntityDef, id: u32) -> MapEntity {
                 on: flags & 1 == 0,
                 style: def.num("style", 0.0) as u8,
                 pattern: def.get("pattern").unwrap_or("").trim().to_string(),
+            }
+        }
+        "env_sprite" | "env_glow" => {
+            let mut color = [255u8; 4];
+            if let Some(c) = def.get("rendercolor") {
+                for (i, v) in c.split_whitespace().take(3).enumerate() {
+                    color[i] = v
+                        .parse::<f32>()
+                        .map(|v| v.clamp(0.0, 255.0) as u8)
+                        .unwrap_or(255);
+                }
+            }
+            color[3] = def.num("renderamt", 255.0).clamp(0.0, 255.0) as u8;
+            // CSprite::Spawn: a named sprite starts off unless Start On; unnamed ones are on
+            Kind::Sprite {
+                on: flags & 1 != 0 || def.get("targetname").is_none_or(|n| n.trim().is_empty()),
+                color,
+                scale: def.num("scale", 1.0),
             }
         }
         "func_tracktrain" => Kind::Train {
@@ -949,6 +973,34 @@ impl Server<'_> {
         out
     }
 
+    /// The shown `env_sprite`s: id, sprite material (no extension), position, `scale`,
+    /// rgba (`rendercolor`, `renderamt`), `rendermode`.
+    pub fn map_sprite_states(&self) -> Vec<(u32, String, Vec3, f32, [u8; 4], u8)> {
+        self.map_io
+            .entities
+            .iter()
+            .filter(|e| e.alive)
+            .filter_map(|e| {
+                let Kind::Sprite { on, color, scale } = &e.kind else {
+                    return None;
+                };
+                if !*on {
+                    return None;
+                }
+                let model = e.def.get("model")?.replace('\\', "/").to_ascii_lowercase();
+                let model = model.trim_end_matches(".spr").trim_end_matches(".vmt");
+                Some((
+                    e.id,
+                    model.to_string(),
+                    e.pos,
+                    *scale,
+                    *color,
+                    e.def.num("rendermode", 0.0) as u8,
+                ))
+            })
+            .collect()
+    }
+
     pub fn map_entity_states(&self) -> Vec<(u32, String, Vec3, Vec3)> {
         self.map_io
             .entities
@@ -1194,6 +1246,21 @@ impl Server<'_> {
                 }
                 if before == 0.0 && *speed != 0.0 {
                     events.push("OnStart");
+                }
+            }
+            Kind::Sprite { on, color, scale } => {
+                let channel =
+                    |v: &str| v.trim().parse::<f32>().unwrap_or(255.0).clamp(0.0, 255.0) as u8;
+                match input_lc.as_str() {
+                    "showsprite" => *on = true,
+                    "hidesprite" => *on = false,
+                    "togglesprite" => *on = !*on,
+                    "colorredvalue" => color[0] = channel(param),
+                    "colorgreenvalue" => color[1] = channel(param),
+                    "colorbluevalue" => color[2] = channel(param),
+                    "alpha" => color[3] = channel(param),
+                    "setscale" => *scale = param.trim().parse().unwrap_or(*scale),
+                    _ => {}
                 }
             }
             Kind::Light { on, pattern, .. } => match input_lc.as_str() {

@@ -4139,6 +4139,23 @@ impl WorldRenderer {
         self.sprite_material_fmt(gpu, mount, name, wgpu::TextureFormat::Rgba8UnormSrgb)
     }
 
+    /// [`sprite_material`](Self::sprite_material) with the base texture's width in texels (an
+    /// `env_sprite` is its texels times `scale` across).
+    pub fn sprite_material_sized(
+        &self,
+        gpu: &Gpu,
+        mount: &Mount,
+        name: &str,
+    ) -> Option<(wgpu::BindGroup, f32)> {
+        let mat = crate::material::load(mount, name).ok()?;
+        let tex = mat.base_texture.as_deref()?;
+        let rgba = crate::material::load_texture(mount, tex, 512).ok()?;
+        let w = rgba.width as f32;
+        let bind =
+            self.sprite_bind_group(gpu, &rgba, wgpu::TextureFormat::Rgba8UnormSrgb, name, 0.0);
+        Some((bind, w))
+    }
+
     /// A `DecalModulate` material for [`draw_modulate`](Self::draw_modulate): the texture is
     /// kept linear, so its 128 grey is the blend's neutral 0.5 (colour * 2 * decal) as in the
     /// game, which modulates in gamma space; read as sRGB it would darken every decal to a

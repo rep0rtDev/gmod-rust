@@ -248,6 +248,8 @@ struct Gfx {
     fx_laserdot: Option<wgpu::BindGroup>,
     /// `sprites/sent_ball`: the bouncy ball's look (sent_ball.lua `Draw`, a sprite of its size).
     fx_ball: Option<wgpu::BindGroup>,
+    /// `env_sprite` materials by name with their texel width.
+    fx_sprite_mats: std::collections::HashMap<String, Option<(wgpu::BindGroup, f32)>>,
     /// The `env_sun` glow sprite (`sprites/light_glow02_add_noz` unless the map names another).
     fx_sun: Option<wgpu::BindGroup>,
     /// `effects/splash2`: the water splash.
@@ -1466,6 +1468,7 @@ impl App {
             fx_decal_mats: Default::default(),
             fx_laserdot,
             fx_ball,
+            fx_sprite_mats: Default::default(),
             fx_sun,
             fx_splash,
             beam_active_mat,
@@ -4559,6 +4562,10 @@ impl App {
             .chain(held_models)
             .chain(ghost_models)
         {
+            // env_sprite entities carry a sprite material, not a model
+            if model.starts_with("sprites/") {
+                continue;
+            }
             if !g.models.contains_key(model) {
                 let m = g.world.load_model(&g.gpu, &self.mount, model);
                 g.models.insert(model.to_string(), m);
@@ -5397,6 +5404,33 @@ impl App {
                         .world
                         .sprite_quad(pos, width(osize), ocolor.to_array(), &camera);
                     additive.push((bm, v, i));
+                }
+            }
+            // env_sprite: a billboard of its material at the entity, texels times `scale`
+            // across, in its colour; additive for the additive / glow render modes
+            for e in ents.values().filter(|e| e.model.starts_with("sprites/")) {
+                if !g.fx_sprite_mats.contains_key(&e.model) {
+                    let m = g.world.sprite_material_sized(&g.gpu, &self.mount, &e.model);
+                    g.fx_sprite_mats.insert(e.model.clone(), m);
+                }
+            }
+            for e in ents.values().filter(|e| e.model.starts_with("sprites/")) {
+                let Some(Some((bm, w))) = g.fx_sprite_mats.get(&e.model) else {
+                    continue;
+                };
+                let c = |v: u8| v as f32 / 255.0;
+                let (v, i) = g.world.sprite_quad_var(
+                    e.pos,
+                    w * e.model_scale,
+                    [c(e.color[0]), c(e.color[1]), c(e.color[2]), c(e.color[3])],
+                    0.0,
+                    None,
+                    &camera,
+                );
+                if matches!(e.render_mode, 3 | 5 | 9) {
+                    additive.push((bm, v, i));
+                } else {
+                    alpha.push((bm, v, i));
                 }
             }
             // sent_ball.lua `Draw`: a sprite of the ball's size in its colour where its body is

@@ -1218,6 +1218,34 @@ impl ServerNet {
                 },
             );
         }
+        for (id, model, pos, scale, color, mode) in server.map_sprite_states() {
+            if self.use_pvs {
+                clusters.insert(id, server.collision.cluster_at(pos));
+            }
+            let model_id = match self.model_ids.get(model.as_str()) {
+                Some(&id) => id,
+                None => {
+                    self.models.push(model.clone());
+                    let id = self.models.len() as u32;
+                    self.model_ids.insert(model.clone(), id);
+                    id
+                }
+            };
+            world.insert(
+                id,
+                EntityState {
+                    id,
+                    model: model.clone(),
+                    model_id,
+                    pos,
+                    color,
+                    model_scale: scale,
+                    render_mode: mode,
+                    playback_rate: 1.0,
+                    ..Default::default()
+                },
+            );
+        }
         for (id, n) in &server.npcs {
             if self.use_pvs {
                 clusters.insert(*id, server.collision.cluster_at(n.pos));
