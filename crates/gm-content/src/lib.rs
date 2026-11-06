@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use gm_formats::vpk;
 
-mod install;
+pub mod install;
 pub use install::{find_install, Install};
 
 #[derive(Debug, thiserror::Error)]

@@ -1,0 +1,86 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  STEAMAUDIO_VERSION: "4.8.1"
+  CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-x64
+            steamaudio_lib: lib/linux-x64
+          - os: windows-latest
+            name: win-x64
+            steamaudio_lib: lib/windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libclang-dev libasound2-dev
+      # Steam Audio SDK (Valve, Apache 2.0): gm-audio links libphonon; not in the tree
+      - shell: bash
+        run: |
+          curl -fsSL -o steamaudio.zip "https://github.com/ValveSoftware/steam-audio/releases/download/v${STEAMAUDIO_VERSION}/steamaudio_${STEAMAUDIO_VERSION}.zip"
+          mkdir -p "$HOME/steamaudio" && unzip -q steamaudio.zip -d "$HOME/steamaudio"
+          echo "STEAMAUDIO_LIB_DIR=$HOME/steamaudio/steamaudio/${{ matrix.steamaudio_lib }}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$HOME/steamaudio/steamaudio/${{ matrix.steamaudio_lib }}" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p gm-client -p gm-dedicated -p gm-launcher
+      - shell: bash
+        run: |
+          set -e
+          out="gmod-rust-${{ matrix.name }}"
+          mkdir -p "dist-out/$out"
+          for b in gm-client gm-dedicated gm-bot gm-launcher gmr; do
+            cp "target/release/$b"* "dist-out/$out/" 2>/dev/null || true
+          done
+          cp -r addons/examples "dist-out/$out/addons" 2>/dev/null || true
+          cp README.md LICENSE* "dist-out/$out/" 2>/dev/null || true
+          cp "$STEAMAUDIO_LIB_DIR"/*phonon* "dist-out/$out/" 2>/dev/null || true
+          cd dist-out && 7z a -tzip "$out.zip" "$out" > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gmod-rust-${{ matrix.name }}
+          path: dist-out/gmod-rust-${{ matrix.name }}.zip
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      # SHA256SUMS + minisign-form signature by the release key (dist/release.pub verifies it);
+      # without the RELEASE_SIGNING_KEY secret the sums are written unsigned
+      - run: cargo build --release -p gm-launcher
+      - if: env.RELEASE_SIGNING_KEY != ''
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          printf '%s' "$RELEASE_SIGNING_KEY" > release.key
+          target/release/gm-launcher sign --key release.key release
+          rm -f release.key
+          target/release/gm-launcher verify release
+      - if: env.RELEASE_SIGNING_KEY == ''
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: cd release && sha256sum *.zip > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true

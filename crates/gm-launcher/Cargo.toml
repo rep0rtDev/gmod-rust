@@ -1,0 +1,22 @@
+[package]
+name = "gm-launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "gmod-rust launcher: finds the Garry's Mod install, browses servers, verifies signed releases, starts the game"
+
+[dependencies]
+gm-content = { path = "../gm-content" }
+gm-net = { path = "../gm-net" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+sha2 = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand_core = { workspace = true }
+blake2 = "0.10"
+base64 = "0.22"
+
+[[bin]]
+name = "gm-launcher"
+path = "src/bin/launcher.rs"
