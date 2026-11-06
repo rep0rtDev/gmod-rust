@@ -209,8 +209,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   the firing poses): Idle_Angry_SMG1 at spawn like the game. Spawn poses by the game's rows:
   manhack fly, antlion worker Idle, black headcrab Idle01fast. Explained, not a rule: the
   citizen's Pistol_idle is in female_shared only (the game's random citizen was female_04,
-  ours male_04 - the male set has no pistol idle). Open: the black crab's Threatdisplay once
-  in combat, the hunter's walk_all at spawn (it walks off at once), our soldier flickering
+  ours male_04 - the male set has no pistol idle). The black crab standing on its enemy shows
+  Threatdisplay from the think after the sighting (game: Idle01fast on the spawn row,
+  Threatdisplay on the next; the classic idles there). Open: the hunter's walk_all at spawn
+  (it walks off at once - its combat behaviour, not a spawn pose), our soldier flickering
   into CrouchIdle (state 3) within 13 ticks where the game's stays Idle1_SMG1 (state 1) - its
   first sighting takes longer; and our fast crab leaps
   at spawn+13 in server_npc_spawn where the game's only runs (its spawn-think Run1 step).
@@ -221,7 +223,7 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   runner panicked on a negative animation offset in `sequence_frame0`); with both fixes
   75.0 -> 29.6. Open there: fast headcrab runs off on spawn (Run1), grub / floor turret spawn
   offsets of 1..5 u, scanners and manhack rise on spawn, idle labels (barney, citizen pistol,
-  monk, crouched combine_s, antlion worker, black crab Threatdisplay).
+  monk, crouched combine_s, antlion worker).
 - Open: the metrocop's own pistol leaves at (1000.6, −523.2, −122.4) ang (−70, 103, −36)
   moving east-south - a third hand pose (its death animation); only the soldier's standing
   and crouched frames are measured, every other class gets the soldier's.

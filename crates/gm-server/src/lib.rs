@@ -17261,6 +17261,19 @@ impl<'w> Server<'w> {
                 n.auto_seq = Some(n.sequence.clone());
             }
         }
+        // the black crab standing on its enemy shows its threat display where the classic
+        // idles, from the think after the sighting (server_npc_spawn 261104: Idle01fast on
+        // the spawn row, Threatdisplay on the next)
+        if l.poison
+            && n.target_first_seen < now
+            && n.goal.is_none()
+            && n.chase.is_none()
+            && n.leap_at.is_none()
+            && n.sequence != "Threatdisplay"
+        {
+            n.sequence = "Threatdisplay".to_string();
+            n.auto_seq = None;
+        }
         if now < n.next_leap {
             return;
         }
