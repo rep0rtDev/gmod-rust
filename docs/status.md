@@ -178,6 +178,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   `ents.Create('weapon_x') … SetPos … SetAngles … Spawn()`) spawns the metrocop at
   (985.6, −528.5, −144.0) too. The scene's residual is the rest spot (ours under the aim
   line → metrocop at (967.1, −507.1)).
+- A spawned NPC whose hull starts in a wall is moved out along the shortest axis direction
+  before it settles to the floor (`npc_out_of_solid`): the antlion guard spawned at x 1001.7
+  sits at 984.0 = the wall at 1024 minus its 40 u half width, on the floor, like the game
+  (ours stayed at the spawn point 32 u up). `server_npc_spawn` had not run since 11-04 (the
+  runner panicked on a negative animation offset in `sequence_frame0`); with both fixes
+  75.0 -> 29.6. Open there: fast headcrab runs off on spawn (Run1), grub / floor turret spawn
+  offsets of 1..5 u, scanners and manhack rise on spawn, idle labels (barney, citizen pistol,
+  monk, crouched combine_s, antlion worker, black crab Threatdisplay).
 - Open: the metrocop's own pistol leaves at (1000.6, −523.2, −122.4) ang (−70, 103, −36)
   moving east-south - a third hand pose (its death animation); only the soldier's standing
   and crouched frames are measured, every other class gets the soldier's.

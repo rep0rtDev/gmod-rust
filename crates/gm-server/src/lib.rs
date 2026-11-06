@@ -18202,14 +18202,46 @@ impl<'w> Server<'w> {
             .map(|(id, n)| (*id, n.pos, n.mins, n.maxs))
             .collect();
         for (id, pos, mins, maxs) in pending {
+            let pos = self.npc_out_of_solid(pos, mins, maxs);
             let floor = self.npc_floor(pos, mins, maxs);
             if let Some(n) = self.npcs.get_mut(&id) {
-                if let Some(p) = floor {
-                    n.pos = p;
-                }
+                n.pos = floor.unwrap_or(pos);
                 n.settle = false;
             }
         }
+    }
+
+    /// A hull spawned into a wall is moved out along the shortest axis direction before its
+    /// drop (golden 261031: the antlion guard's 80 u hull spawned at x 1001.7 sits at 984.0 =
+    /// the wall at 1024 minus its half width, on the floor).
+    fn npc_out_of_solid(&self, pos: Vec3, mins: Vec3, maxs: Vec3) -> Vec3 {
+        let solid = |p: Vec3| {
+            self.collision
+                .trace_box(p, p, mins, maxs, gm_collision::MASK_PLAYERSOLID)
+                .start_solid
+        };
+        if !solid(pos) {
+            return pos;
+        }
+        let reach = maxs.x.max(maxs.y).max(-mins.x).max(-mins.y).ceil() as i32;
+        for d in 1..=reach {
+            for dir in [Vec3::NEG_X, Vec3::X, Vec3::NEG_Y, Vec3::Y] {
+                if solid(pos + dir * d as f32) {
+                    continue;
+                }
+                let (mut lo, mut hi) = ((d - 1) as f32, d as f32);
+                while hi - lo > 0.01 {
+                    let mid = (lo + hi) * 0.5;
+                    if solid(pos + dir * mid) {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                return pos + dir * hi;
+            }
+        }
+        pos
     }
 
     /// An NPC back from a save (no undo entry, counted and cleaned up as `npcs`).
