@@ -5392,7 +5392,7 @@ impl<'w> Server<'w> {
                 self.class_sched_bases.insert(fam.to_string(), base);
             }
             let ext = ai::class_sched_ext_reserve(&class);
-            let key = format!("class:{class}");
+            let key = format!("class:{}", ai::class_sched_ext_key(&class));
             if ext > 0 && !self.class_sched_bases.contains_key(&key) {
                 let base = self.next_class_sched;
                 self.next_class_sched += ext;
@@ -17727,7 +17727,7 @@ impl<'w> Server<'w> {
             let base = *self.class_sched_bases.get(fam)?;
             let ext = self
                 .class_sched_bases
-                .get(&format!("class:{}", n.class))
+                .get(&format!("class:{}", ai::class_sched_ext_key(&n.class)))
                 .copied();
             let swing = n.melee_swing.as_ref();
             match fam {
@@ -17739,13 +17739,13 @@ impl<'w> Server<'w> {
                 "headcrab" if n.jump_at.is_some() || (n.flight.is_some() && !n.thrown) => {
                     Some(base)
                 }
-                // the poison zombie's crab throw sits first in its extension block
+                // the poison zombie's crab throw is the base block's thirteenth
                 "zombie"
                     if n.class == "npc_poisonzombie"
                         && s == ai::SCHED_MELEE_ATTACK1
                         && swing.is_some_and(|m| m.poison) =>
                 {
-                    ext
+                    Some(base + 12)
                 }
                 _ => ext
                     .and_then(|e| ai::class_ext_schedule(&n.class, s).map(|o| e + o))

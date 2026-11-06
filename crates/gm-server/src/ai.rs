@@ -671,7 +671,9 @@ pub fn class_is_zombie_body(class: &str) -> bool {
 /// lower bound - nothing has been spawned after it on a measured server).
 pub fn family_sched_reserve(family: &str) -> u16 {
     match family {
-        "zombie" => 28,
+        // CNPC_BaseZombie's 25 (server_npc_sched_translate_fastzombie: its own block starts at
+        // family + 25); the classic zombie's own 3 follow it (measured 28 with the classic first)
+        "zombie" => 25,
         "headcrab" => 21,
         "antlion" => 46,
         "combine" => 16,
@@ -691,20 +693,32 @@ pub fn family_sched_blended(family: &str) -> bool {
 /// schedules).
 pub fn class_sched_ext_reserve(class: &str) -> u16 {
     match class {
-        "npc_fastzombie" | "npc_fastzombie_torso" | "npc_poisonzombie" => 2,
+        "npc_zombie" | "npc_zombie_torso" | "npc_zombine" => 3,
+        // range attack, unstick jump, climbing unstick jump, melee, torso melee
+        "npc_fastzombie" | "npc_fastzombie_torso" => 5,
+        "npc_poisonzombie" => 2,
         // the fast headcrab's own range attack (SetSchedule(RANGE_ATTACK1) reads family + 18)
         "npc_headcrab_fast" => 1,
         _ => 0,
     }
 }
 
+/// The class whose extension block a class shares: a torso is the same engine class as its
+/// walker (one schedule id space).
+pub fn class_sched_ext_key(class: &str) -> &str {
+    match class {
+        "npc_fastzombie_torso" => "npc_fastzombie",
+        "npc_zombie_torso" => "npc_zombie",
+        _ => class,
+    }
+}
+
 /// Offset of a schedule inside a subclass's extension block.
 pub fn class_ext_schedule(class: &str, shared: u16) -> Option<u16> {
     match (class, shared) {
-        ("npc_fastzombie" | "npc_fastzombie_torso", SCHED_MELEE_ATTACK1) => Some(0),
-        // the poison zombie's crab throw first, then its own range attack 1
-        ("npc_poisonzombie", SCHED_RANGE_ATTACK2) => Some(0),
-        ("npc_poisonzombie", SCHED_RANGE_ATTACK1) => Some(1),
+        ("npc_fastzombie" | "npc_fastzombie_torso", SCHED_RANGE_ATTACK1) => Some(0),
+        ("npc_fastzombie", SCHED_MELEE_ATTACK1) => Some(3),
+        ("npc_fastzombie_torso", SCHED_MELEE_ATTACK1) => Some(4),
         ("npc_headcrab_fast", SCHED_RANGE_ATTACK1) => Some(0),
         _ => None,
     }
@@ -722,6 +736,10 @@ pub fn class_schedule(family: &str, class: &str, shared: u16) -> Option<u16> {
             // SetSchedule(STANDOFF) reads the family's ninth (server_npc_sched_translate_zombie*)
             SCHED_STANDOFF => Some(9),
             SCHED_MELEE_ATTACK1 => Some(10),
+            // the poison zombie reads its crab throw and range attack from the base block
+            // (server_npc_sched_translate_poisonzombie: 44>+12, 43>+13)
+            SCHED_RANGE_ATTACK2 if class == "npc_poisonzombie" => Some(12),
+            SCHED_RANGE_ATTACK1 if class == "npc_poisonzombie" => Some(13),
             _ => None,
         },
         // SetSchedule on the game: RANGE_ATTACK1 the jump (first of the block), WAKE_ANGRY the
