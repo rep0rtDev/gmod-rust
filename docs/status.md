@@ -465,9 +465,12 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   43 / 39 / 34 / 27 / 29 / 37 / 40 / 34 over 778..904: north side first, then south), and
   gives up 34 u short after ~15 thinks. Ours stops at (1175,72) at once (26 u from the
   mate) and reloads 112 ticks earlier; our mate's reload lasts 764..792 only (the game's
-  806 to past 904) and it runs off south-east from 806. Open: the slide round the mate and
-  its give-up, the mate's cut reload, and ours chases
-  south-east after its reload (920 on) where the game still reloads; the leader's earlier
+  806 to past 904; the gap is the mate's earlier arrival, not a cut reload). After the
+  reload both game bodies stand there to the end of the recording with the bot out of
+  sight (the Combine's wait in cover) where ours ran for a line of fire / after the lost
+  enemy - now a squad soldier with a living squad mate and its enemy unseen holds (no
+  cover release, no line-of-fire run, no lost-enemy chase): rows 798..1008 stand like the
+  game, squad_soldier 155 -> 77. Open: the slide round the mate and its give-up; the leader's earlier
   non-cut of (965,-19) for (1201,72) 360 u out (1.7 s, the hull line clear in ours) still
   contradicts the cut rule unless its first cover was the unexplained (953,7).
 

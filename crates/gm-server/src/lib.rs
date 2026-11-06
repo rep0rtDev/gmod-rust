@@ -15976,6 +15976,16 @@ impl<'w> Server<'w> {
         // cover and reload timers run whether or not the enemy is in sight (the run to the
         // reload cover usually loses it)
         let mut stop_for_reload = false;
+        // a squad soldier whose enemy is out of sight keeps its cover past the reload
+        // (the Combine waits in cover): server_npc_squad_soldier 261104 - the mate reloads
+        // from 798 and the leader from 904 and both still stand there at the end, 100+
+        // ticks after the reload; ours ran off after the bot the think the reload ended
+        let enemy_seen = self.npcs.get(&id).is_some_and(|n| {
+            n.target.and_then(|p| self.eye(p)).is_some_and(|(eye, _)| {
+                self.npc_los(eye, n.pos + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT))
+            })
+        });
+        let squad_mate = self.npc_squad_mate_alive(id);
         if let Some(n) = self.npcs.get_mut(&id) {
             if n.cover_at.is_some() && n.goal.is_none() && n.cover_until == 0 {
                 n.cover_until = now + NPC_COVER_TICKS;
@@ -16051,7 +16061,11 @@ impl<'w> Server<'w> {
                 n.reload_in_place = false;
                 n.reload_until = 0;
             }
-            if n.cover_at.is_some() && now >= n.cover_until && n.cover_until != 0 {
+            if n.cover_at.is_some()
+                && now >= n.cover_until
+                && n.cover_until != 0
+                && !(squad_mate && !enemy_seen)
+            {
                 n.cover_at = None;
                 n.cover_until = 0;
                 n.cover_from_sound = false;
@@ -16235,10 +16249,14 @@ impl<'w> Server<'w> {
             if let (Some(p), Some(known)) = (old, n.last_known) {
                 // the game's soldier runs for a point with a line of fire to the enemy's last
                 // known position one think after losing sight (server_npc_grenade_soldier_wall)
+                // a squad soldier with its enemy out of sight stands instead (the Combine
+                // waits in cover): server_npc_squad_soldier 261104 - after their reloads the
+                // mate (798 on) and the leader (904 on) stand to the end of the recording
                 if npc_combat_sequences(&n.class).is_some()
                     && n.flank_until == 0
                     && n.cover_at.is_none()
                     && !n.reloading
+                    && !self.npc_squad_mate_alive(id)
                     && n.grenade.is_none()
                     && now >= n.throw_done + 2 * n.think_interval as u64
                     && known.distance(eye) <= NPC_LOF_RANGE
@@ -16302,6 +16320,7 @@ impl<'w> Server<'w> {
                     .npcs
                     .get(&id)
                     .is_some_and(|n| n.chase != Some(p) && !n.reloading && n.reload_mark == 0)
+                    && !self.npc_squad_mate_alive(id)
                 {
                     // a reload comes before the lost enemy is sought (the Combine's
                     // SelectCombatSchedule reloads first): server_npc_squad_soldier's leader
@@ -16827,6 +16846,17 @@ impl<'w> Server<'w> {
     /// Our cover rule: the nearest navmesh vertex within NPC_COVER_RANGE that `player`'s eye
     /// cannot see (chest height), reachable, and not already a squadmate's cover; the NPC runs
     /// there. False when no such point exists.
+    /// The body has a living squad mate (ai.* squads; the key/range squad is not counted).
+    fn npc_squad_mate_alive(&self, id: u32) -> bool {
+        self.squads
+            .of(id)
+            .map(|sq| self.squads.list(sq))
+            .is_some_and(|m| {
+                m.iter()
+                    .any(|i| *i != id && self.npcs.get(i).is_some_and(|o| o.dead_at.is_none()))
+            })
+    }
+
     fn npc_take_cover(&mut self, id: u32, player: u32) -> bool {
         let (Some(n), true, Some((eye, _))) =
             (self.npcs.get(&id), self.nav.is_some(), self.eye(player))
