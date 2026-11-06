@@ -23,6 +23,7 @@ clap = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
 serde_json = { workspace = true }
+ctrlc = "3"
 
 [[bin]]
 name = "gm-dedicated"

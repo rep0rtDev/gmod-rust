@@ -73,7 +73,10 @@ struct Args {
     max_players: u16,
 }
 
+static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 fn main() -> Result<()> {
+    ctrlc::set_handler(|| RUNNING.store(false, std::sync::atomic::Ordering::Relaxed))?;
     let matches = <Args as clap::CommandFactory>::command().get_matches();
     let mut args = <Args as clap::FromArgMatches>::from_arg_matches(&matches)?;
     let config = match &args.config {
@@ -334,6 +337,10 @@ fn main() -> Result<()> {
     let heartbeat_every =
         (gm_net::master::HEARTBEAT_S as f32 / gm_core::tick::DEFAULT_TICK_INTERVAL) as u64;
     loop {
+        if !RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
+            drop(event_log);
+            return Ok(());
+        }
         let start = Instant::now();
         net.receive(&mut server, &mut udp);
         net.tick(&mut server);

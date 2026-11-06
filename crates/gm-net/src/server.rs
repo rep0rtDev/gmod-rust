@@ -65,6 +65,8 @@ pub struct ClientSlot {
     pub identity: Option<[u8; 32]>,
     /// Server tick the slot was opened at (`status`'s `connected` column).
     pub joined: u32,
+    /// The `connected` / `entered the game` log lines were written.
+    pub logged: bool,
     welcomed: bool,
     eph: crate::crypto::Ephemeral,
     crypto: Option<crate::crypto::Session>,
@@ -91,6 +93,8 @@ pub const ENTITY_SNAP_SIZE: usize = 44;
 pub const ADDON_CHUNK: usize = 16 * 1024;
 /// 10 seconds at the default tick rate.
 pub const DEFAULT_TIMEOUT_TICKS: u32 = 667;
+/// Ticks an anonymous client gets to answer `Auth` before its `connected` log line is written.
+pub const LOG_AUTH_GRACE_TICKS: u32 = 133;
 /// Reliable fragments in flight above which a client's upload waits (other reliable traffic
 /// keeps flowing between chunks).
 pub const UPLOAD_WINDOW: usize = 24;
@@ -303,6 +307,7 @@ impl ServerNet {
                         nonce: [0; 32],
                         identity: None,
                         welcomed: false,
+                        logged: false,
                         eph: crate::crypto::Ephemeral::generate(),
                         crypto: None,
                         last_heard: self.tick,
@@ -386,7 +391,6 @@ impl ServerNet {
                                     &self.addons,
                                     server,
                                     &mut self.log,
-                                    &mut self.events,
                                 );
                             }
                         }
@@ -430,13 +434,13 @@ impl ServerNet {
                                     &self.addons,
                                     server,
                                     &mut self.log,
-                                    &mut self.events,
                                 );
                             }
                         }
                     }
                     ClientMsg::Disconnect => {
                         slot.closing = true;
+                        log_entered(slot, &mut self.events);
                         self.log.push(format!("{} left", slot.name));
                         self.events.push(format!(
                             "{} disconnected (reason \"Disconnect by user.\")",
@@ -513,6 +517,7 @@ impl ServerNet {
             }
         }
         let name = slot.name.clone();
+        log_entered(slot, &mut self.events);
         let tag = event_tag(&name, player, slot.identity.as_ref(), "");
         refuse(slot, reason);
         self.log.push(format!("{name} (player {player}) {reason}"));
@@ -780,6 +785,10 @@ impl ServerNet {
                 None => vec!["reload: addon id expected".to_string()],
             },
             "say" => {
+                self.events.push(format!(
+                    "\"Console<0><Console><Console>\" say \"{}\"",
+                    rest.join(" ")
+                ));
                 let text = format!("[server] {}", rest.join(" "));
                 for c in self.clients.values_mut() {
                     if c.welcomed && !c.closing {
@@ -849,9 +858,18 @@ impl ServerNet {
                 },
             );
         }
+        // the log's `connected` waits for the identity (Auth follows Welcome) or the grace
+        let tick = self.tick;
+        for s in self.clients.values_mut() {
+            if s.welcomed
+                && !s.closing
+                && (s.identity.is_some() || tick.wrapping_sub(s.joined) >= LOG_AUTH_GRACE_TICKS)
+            {
+                log_entered(s, &mut self.events);
+            }
+        }
         // timeouts and closed connections
         let timeout = self.timeout_ticks;
-        let tick = self.tick;
         let gone: Vec<_> = self
             .clients
             .iter()
@@ -862,6 +880,9 @@ impl ServerNet {
             .map(|(e, s)| (*e, s.player, s.closing, s.name.clone(), s.identity))
             .collect();
         for (endpoint, player, closing, name, identity) in gone {
+            if let Some(s) = self.clients.get_mut(&endpoint) {
+                log_entered(s, &mut self.events);
+            }
             self.clients.remove(&endpoint);
             if !closing {
                 self.log.push(format!("{name} (player {player}) timed out"));
@@ -2021,13 +2042,9 @@ fn welcome(
     addons: &[PublishedAddon],
     server: &gm_server::Server<'_>,
     log: &mut Vec<String>,
-    events: &mut Vec<String>,
 ) {
     slot.welcomed = true;
     log.push(format!("{} joined as player {}", slot.name, slot.player));
-    let tag = event_tag(&slot.name, slot.player, slot.identity.as_ref(), "");
-    events.push(format!("{tag} connected, address \"{}\"", slot.addr));
-    events.push(format!("{tag} entered the game"));
     let mut w = Writer::default();
     ServerMsg::Welcome {
         player_id: slot.player,
@@ -2061,6 +2078,17 @@ fn refuse(slot: &mut ClientSlot, reason: &str) {
     .write(&mut w);
     slot.channel.send_reliable(w.buf);
     slot.closing = true;
+}
+
+/// Writes the `connected` / `entered the game` lines once per slot.
+fn log_entered(slot: &mut ClientSlot, events: &mut Vec<String>) {
+    if slot.logged || !slot.welcomed {
+        return;
+    }
+    slot.logged = true;
+    let tag = event_tag(&slot.name, slot.player, slot.identity.as_ref(), "");
+    events.push(format!("{tag} connected, address \"{}\"", slot.addr));
+    events.push(format!("{tag} entered the game"));
 }
 
 /// srcds's player tag `"Name<userid><id><team>"`; the id is the identity's first 16 hex digits.
