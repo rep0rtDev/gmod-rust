@@ -205,10 +205,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 - A player companion at ease (citizen / barney / alyx, no enemy) idles in ACT_IDLE_RELAXED
   through the weapon table (SMG1 / AR2 -> ACT_IDLE_SMG1_RELAXED, shotgun -> _SHOTGUN_RELAXED,
   pistol -> ACT_IDLE_PISTOL): barney's Idle_Relaxed_SMG1_N like the game's (the variant is the
-  model's random pick, 6 vs 3). Open: the citizen's pistol idle (game Pistol_idle, ours stays
-  on the spawn pose idle_subtle - the ACT_IDLE_PISTOL lookup finds nothing on its model), the
-  monk's Idle_Angry_SMG1 with annabelle, the manhack's / scanners' fly, the black crab's
-  Idle01fast -> Threatdisplay, the worker's Idle, the hunter's walk_all; and our fast crab leaps
+  model's random pick, 6 vs 3). The monk's annabelle translates like the SMG1 (shotgun for
+  the firing poses): Idle_Angry_SMG1 at spawn like the game. Spawn poses by the game's rows:
+  manhack fly, antlion worker Idle, black headcrab Idle01fast. Explained, not a rule: the
+  citizen's Pistol_idle is in female_shared only (the game's random citizen was female_04,
+  ours male_04 - the male set has no pistol idle). Open: the black crab's Threatdisplay once
+  in combat, the hunter's walk_all at spawn (it walks off at once), our soldier flickering
+  into CrouchIdle (state 3) within 13 ticks where the game's stays Idle1_SMG1 (state 1) - its
+  first sighting takes longer; and our fast crab leaps
   at spawn+13 in server_npc_spawn where the game's only runs (its spawn-think Run1 step).
 - A spawned NPC whose hull starts in a wall is moved out along the shortest axis direction
   before it settles to the floor (`npc_out_of_solid`): the antlion guard spawned at x 1001.7

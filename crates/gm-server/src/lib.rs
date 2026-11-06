@@ -2754,6 +2754,15 @@ pub fn npc_alert_idle(class: &str, weapon: &str) -> Option<&'static str> {
     }
 }
 
+/// The class's NPC_TranslateActivity: the manhack flies where a walker idles / walks / runs
+/// (golden 261031 server_npc_spawn: `fly` from its first think).
+pub fn npc_class_activity<'a>(class: &str, act: &'a str) -> &'a str {
+    match (class, act) {
+        ("npc_manhack", "ACT_IDLE" | "ACT_WALK" | "ACT_RUN") => "ACT_FLY",
+        _ => act,
+    }
+}
+
 /// Classes whose idle at ease is the relaxed readiness (CNPC_PlayerCompanion).
 pub fn npc_relaxed_idle(class: &str) -> bool {
     matches!(class, "npc_citizen" | "npc_barney" | "npc_alyx")
@@ -2774,6 +2783,12 @@ pub fn npc_weapon_activity(weapon: &str, act: &str) -> Option<&'static str> {
         "weapon_smg1" => Some(smg),
         "weapon_ar2" => Some(ar2),
         "weapon_shotgun" => Some(sg),
+        // the monk's annabelle: SMG1 poses, shotgun firing (monk Idle_Angry_SMG1 at spawn)
+        "weapon_annabelle" => Some(if sg.starts_with("ACT_RANGE_ATTACK") {
+            sg
+        } else {
+            smg
+        }),
         _ => None,
     };
     let pistol = |p: &'static str| matches!(weapon, "weapon_pistol" | "weapon_357").then_some(p);
@@ -3870,7 +3885,7 @@ pub static NPC_LIST: &[NpcDef] = &[
         drop: false,
         movetype: 6,
         solid: 2,
-        sequence: "idle",
+        sequence: "fly",
         rotate_yaw: 0.0,
         settle: false,
     },
@@ -3970,7 +3985,7 @@ pub static NPC_LIST: &[NpcDef] = &[
         35,
         "",
         2,
-        "IdleSniff"
+        "Idle01fast"
     ),
     npc!(
         "npc_headcrab_fast",
@@ -4055,7 +4070,7 @@ pub static NPC_LIST: &[NpcDef] = &[
         drop: true,
         movetype: 3,
         solid: 2,
-        sequence: "DistractIdle4",
+        sequence: "Idle",
         rotate_yaw: 0.0,
         settle: false,
     },
@@ -4400,7 +4415,7 @@ pub static NPC_LIST: &[NpcDef] = &[
         drop: false,
         movetype: 6,
         solid: 2,
-        sequence: "idle",
+        sequence: "fly",
         rotate_yaw: 0.0,
         settle: false,
     },
@@ -12198,6 +12213,7 @@ impl<'w> Server<'w> {
     /// The NPC model's heaviest sequence for an activity name (ACT_RUN / ACT_IDLE ...).
     fn npc_activity_sequence(&self, id: u32, act: &str) -> Option<String> {
         let n = self.npcs.get(&id)?;
+        let act = npc_class_activity(&n.class, act);
         let m = self.models.get(&n.model)?;
         let mut best: Option<(i32, usize)> = None;
         for (i, (a, w)) in m.script.sequence_activity.iter().enumerate() {
@@ -12213,6 +12229,7 @@ impl<'w> Server<'w> {
     /// carries the activity, so a running pick is not re-rolled every think.
     fn npc_activity_sequence_weighted(&self, id: u32, act: &str, now: u64) -> Option<String> {
         let n = self.npcs.get(&id)?;
+        let act = npc_class_activity(&n.class, act);
         let m = self.models.get(&n.model)?;
         let cands: Vec<(usize, u32)> = m
             .script
