@@ -1341,6 +1341,14 @@ pub type BoneMerge<'a> = &'a dyn Fn(&str) -> Option<Mat4>;
 
 /// A `DynModel` to draw: its placement and, for a skinned pose, one matrix per bone from
 /// [`DynModel::pose`].
+/// A decal ready to place: its bind group, texture rectangle, world size and blend.
+pub struct Decal {
+    pub bind: wgpu::BindGroup,
+    pub uv: [f32; 4],
+    pub size: f32,
+    pub modulate: bool,
+}
+
 pub struct DrawItem<'a> {
     pub model: &'a DynModel,
     pub transform: Mat4,
@@ -4112,6 +4120,51 @@ impl WorldRenderer {
         self.sprite_material_fmt(gpu, mount, name, wgpu::TextureFormat::Rgba8Unorm)
     }
 
+    /// A decal material as the game places it: a `Subrect` resolves to its atlas with the
+    /// sub-rectangle as uvs and `$Size` as its texels, else the base texture whole; the world
+    /// size is the texels times `$decalscale` (1 without); `DecalModulate` ones go through
+    /// [`draw_modulate`](Self::draw_modulate) (kept linear), the rest alpha-blend.
+    pub fn decal(&self, gpu: &Gpu, mount: &Mount, name: &str) -> Option<Decal> {
+        let mat = crate::material::load(mount, name).ok()?;
+        let (tex_mat, uv, texels) = match &mat.subrect {
+            Some((atlas, pos, size)) => {
+                let atlas_mat = crate::material::load(mount, atlas).ok()?;
+                let tex = atlas_mat.base_texture.clone()?;
+                let full = crate::material::load_texture(mount, &tex, 4096).ok()?;
+                let (w, h) = (full.width as f32, full.height as f32);
+                (
+                    atlas_mat,
+                    [
+                        pos[0] / w,
+                        pos[1] / h,
+                        (pos[0] + size[0]) / w,
+                        (pos[1] + size[1]) / h,
+                    ],
+                    size[0],
+                )
+            }
+            None => {
+                let tex = mat.base_texture.clone()?;
+                let full = crate::material::load_texture(mount, &tex, 4096).ok()?;
+                (mat.clone(), [0.0, 0.0, 1.0, 1.0], full.width as f32)
+            }
+        };
+        let modulate = tex_mat.shader.eq_ignore_ascii_case("decalmodulate");
+        let format = if modulate {
+            wgpu::TextureFormat::Rgba8Unorm
+        } else {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        };
+        let tex = tex_mat.base_texture.as_deref()?;
+        let rgba = crate::material::load_texture(mount, tex, 1024).ok()?;
+        Some(Decal {
+            bind: self.sprite_bind_group(gpu, &rgba, format, name, 0.0),
+            uv,
+            size: texels * mat.decal_scale.unwrap_or(1.0),
+            modulate,
+        })
+    }
+
     fn sprite_material_fmt(
         &self,
         gpu: &Gpu,
@@ -4401,6 +4454,18 @@ impl WorldRenderer {
         size: f32,
         color: [f32; 3],
     ) -> (Vec<Vertex>, Vec<u32>) {
+        self.decal_quad_uv(pos, normal, size, color, [0.0, 0.0, 1.0, 1.0])
+    }
+
+    /// [`decal_quad`](Self::decal_quad) over the texture rectangle `uv` (u0, v0, u1, v1).
+    pub fn decal_quad_uv(
+        &self,
+        pos: Vec3,
+        normal: Vec3,
+        size: f32,
+        color: [f32; 3],
+        uv: [f32; 4],
+    ) -> (Vec<Vertex>, Vec<u32>) {
         let n = normal.normalize_or_zero();
         let helper = if n.z.abs() < 0.9 { Vec3::Z } else { Vec3::X };
         let right = n.cross(helper).normalize_or_zero();
@@ -4411,7 +4476,10 @@ impl WorldRenderer {
             .into_iter()
             .map(|(x, y)| Vertex {
                 position: (p + right * (x * h) + up * (y * h)).to_array(),
-                uv: [(x + 1.0) * 0.5, 1.0 - (y + 1.0) * 0.5],
+                uv: [
+                    uv[0] + (uv[2] - uv[0]) * (x + 1.0) * 0.5,
+                    uv[1] + (uv[3] - uv[1]) * (1.0 - (y + 1.0) * 0.5),
+                ],
                 lm_uv: self.white_uv,
                 color,
                 alpha: 0.0,

@@ -42,6 +42,10 @@ pub struct Material {
     pub water_dist: [f32; 4],
     /// Water `$reflectentities`: entities (models) are drawn into the reflection too.
     pub reflect_entities: bool,
+    /// A `Subrect` decal: the atlas material, `$Pos` and `$Size` in its texels.
+    pub subrect: Option<(String, [f32; 2], [f32; 2])>,
+    /// `$decalscale`: world units per texel of a decal.
+    pub decal_scale: Option<f32>,
     /// `$envmap env_cubemap`: the nearest baked cubemap reflected, scaled by `$envmaptint`
     /// and masked by the base alpha (`$basealphaenvmapmask`), the normal map alpha
     /// (`$normalmapalphaenvmapmask`) or nothing.
@@ -248,6 +252,19 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
             mat.bottom_material = get("$bottommaterial");
             mat.bumpmap = get("$normalmap").or_else(|| get("$bumpmap"));
             mat.reflect_entities = matches!(get("$reflectentities").as_deref(), Some("1"));
+            mat.decal_scale = get("$decalscale").and_then(|v| v.trim().parse().ok());
+            if shader == "subrect" {
+                let pair = |k: &str| -> Option<[f32; 2]> {
+                    let v = get(k)?;
+                    let mut it = v.split_whitespace().map(|x| x.parse::<f32>().ok());
+                    Some([it.next()??, it.next()??])
+                };
+                if let (Some(m), Some(pos), Some(size)) =
+                    (get("$material"), pair("$pos"), pair("$size"))
+                {
+                    mat.subrect = Some((m, pos, size));
+                }
+            }
             let amount = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
             let scroll: Vec<f32> = get("$scroll1")
                 .map(|v| {

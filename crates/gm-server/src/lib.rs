@@ -596,6 +596,31 @@ pub const PROPERTY_IGNITE_SECONDS: f32 = 360.0;
 /// A sound the server tells every client to play in the world this tick.
 /// A visual effect the server dispatched this tick (`DispatchEffect` / `UTIL_ImpactTrace`),
 /// sent to the clients with the snapshot.
+/// An NPC class's blood (`BloodColor`): red for people and zombies, yellow for antlions,
+/// green for headcrabs / barnacles / vortigaunts, none for machines (`DONT_BLEED`).
+fn blood_color(class: &str) -> Option<u8> {
+    let c = class.to_ascii_lowercase();
+    if c.contains("antlion") {
+        Some(1)
+    } else if c.contains("headcrab") || c.contains("barnacle") || c.contains("vortigaunt") {
+        Some(2)
+    } else if c.contains("manhack")
+        || c.contains("scanner")
+        || c.contains("turret")
+        || c.contains("rollermine")
+        || c.contains("strider")
+        || c.contains("gunship")
+        || c.contains("helicopter")
+        || c.contains("dropship")
+        || c.contains("combine_camera")
+        || c.contains("dog")
+    {
+        None
+    } else {
+        Some(0)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorldEffect {
     /// A bullet or crowbar hit on the world: decal and impact particles at `pos`. `surface`
@@ -619,6 +644,14 @@ pub enum WorldEffect {
         lpos: Vec3,
         lnormal: Vec3,
         surface: String,
+    },
+    /// A bullet in flesh: the spray at `pos` along `dir` and the blood decals `TraceBleed`
+    /// landed on the world (position, normal). `color`: 0 red, 1 yellow, 2 green.
+    Blood {
+        pos: Vec3,
+        dir: Vec3,
+        color: u8,
+        decals: Vec<(Vec3, Vec3)>,
     },
 }
 
@@ -9674,6 +9707,9 @@ impl<'w> Server<'w> {
                     return;
                 };
                 let hit = eye + d * t;
+                if let Some(color) = self.npcs.get(&npc).and_then(|n| blood_color(&n.class)) {
+                    self.blood(hit, d, dmg, color);
+                }
                 let group = self
                     .npcs
                     .get(&npc)
@@ -9760,6 +9796,7 @@ impl<'w> Server<'w> {
         }
         let damage = base * weapons::hitgroup_scale(group) * shot.pellets as f32;
         let dmg_type = weapons::bullet_dmg_type(shot.ammo);
+        self.blood(pos, d, damage, 0);
         self.hits.push(Hit {
             tick: self.tick_count,
             attacker,
@@ -23451,6 +23488,43 @@ impl<'w> Server<'w> {
 
     pub fn take_effects(&mut self) -> Vec<WorldEffect> {
         std::mem::take(&mut self.effects)
+    }
+
+    /// `CBaseCombatCharacter::TraceBleed` + `SpawnBlood`: a bullet in flesh at `pos` going
+    /// `dir` with `damage` traces 1 / 2 / 4 lines (under 10 / 25 / more damage) 172 u on
+    /// along the shot, jittered by 0.1 / 0.2 / 0.3, and leaves a blood decal where each hits
+    /// the world; the client sprays at the wound. `color` as [`WorldEffect::Blood`].
+    fn blood(&mut self, pos: Vec3, dir: Vec3, damage: f32, color: u8) {
+        let (noise, count) = if damage < 10.0 {
+            (0.1, 1)
+        } else if damage < 25.0 {
+            (0.2, 2)
+        } else {
+            (0.3, 4)
+        };
+        let dir = dir.normalize_or_zero();
+        let mut decals = Vec::new();
+        for _ in 0..count {
+            let jitter = Vec3::new(
+                (self.next_random() * 2.0 - 1.0) * noise,
+                (self.next_random() * 2.0 - 1.0) * noise,
+                (self.next_random() * 2.0 - 1.0) * noise,
+            );
+            let tr = self.collision.trace_ray(
+                pos,
+                pos + (dir + jitter) * 172.0,
+                gm_collision::MASK_SOLID,
+            );
+            if tr.fraction < 1.0 {
+                decals.push((tr.end, tr.normal));
+            }
+        }
+        self.effects.push(WorldEffect::Blood {
+            pos,
+            dir,
+            color,
+            decals,
+        });
     }
 
     /// A shot or swing that ended on the world: the impact effect at the trace end.

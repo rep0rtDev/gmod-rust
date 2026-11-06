@@ -790,6 +790,17 @@ impl ServerNet {
                     lnormal,
                     surface,
                 },
+                gm_server::WorldEffect::Blood {
+                    pos,
+                    dir,
+                    color,
+                    decals,
+                } => EffectEvent::Blood {
+                    pos,
+                    dir,
+                    color,
+                    decals,
+                },
             }));
         let events = std::mem::take(&mut server.game_events);
         for e in &events {

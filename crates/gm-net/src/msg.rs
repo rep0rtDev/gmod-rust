@@ -558,6 +558,15 @@ pub enum EffectEvent {
         lnormal: Vec3,
         surface: String,
     },
+    /// A bullet in flesh at `pos` going `dir`: the spray there and the blood decals the
+    /// server's `TraceBleed` traces landed (position, normal). `color`: 0 red, 1 yellow,
+    /// 2 green.
+    Blood {
+        pos: Vec3,
+        dir: Vec3,
+        color: u8,
+        decals: Vec<(Vec3, Vec3)>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -600,7 +609,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
 /// The editor entities' vars by entity id: key / value pairs (`ServerMsg::EntityEdits`).
 pub type EditVars = Vec<(u32, Vec<(String, String)>)>;
 
-pub const PROTOCOL: u16 = 30;
+pub const PROTOCOL: u16 = 31;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1498,6 +1507,22 @@ impl ServerMsg {
                             w.vec3(*lnormal);
                             w.str(surface);
                         }
+                        EffectEvent::Blood {
+                            pos,
+                            dir,
+                            color,
+                            decals,
+                        } => {
+                            w.u8(5);
+                            w.vec3(*pos);
+                            w.vec3(*dir);
+                            w.u8(*color);
+                            w.varint(decals.len() as u64);
+                            for (p, n) in decals {
+                                w.vec3(*p);
+                                w.vec3(*n);
+                            }
+                        }
                     }
                 }
             }
@@ -1848,6 +1873,22 @@ impl ServerMsg {
                             lnormal: r.vec3()?,
                             surface: r.str()?,
                         },
+                        5 => {
+                            let pos = r.vec3()?;
+                            let dir = r.vec3()?;
+                            let color = r.u8()?;
+                            let n = r.varint()? as usize;
+                            let mut decals = Vec::with_capacity(n.min(64));
+                            for _ in 0..n {
+                                decals.push((r.vec3()?, r.vec3()?));
+                            }
+                            EffectEvent::Blood {
+                                pos,
+                                dir,
+                                color,
+                                decals,
+                            }
+                        }
                         _ => return Err(Truncated),
                     });
                 }

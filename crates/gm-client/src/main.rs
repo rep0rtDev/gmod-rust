@@ -243,7 +243,7 @@ struct Gfx {
     /// `sprites/zerogxplode`: the explosion fireball, its frames played over the burst.
     fx_explosion: Vec<wgpu::BindGroup>,
     fx_spark: Option<wgpu::BindGroup>,
-    fx_decal_mats: std::collections::HashMap<String, Option<wgpu::BindGroup>>,
+    fx_decal_mats: std::collections::HashMap<String, Option<gm_render::world::Decal>>,
     /// `sprites/redglow1`: the RPG's laser dot.
     fx_laserdot: Option<wgpu::BindGroup>,
     /// `sprites/sent_ball`: the bouncy ball's look (sent_ball.lua `Draw`, a sprite of its size).
@@ -4064,6 +4064,77 @@ impl App {
                     }
                     gm_net::msg::EffectEvent::Explosion { pos } => {
                         self.fx_bursts.push((pos, 96.0, now, false));
+                        // `CBaseGrenade::Explode`: a `Scorch` decal where the line from 8 u
+                        // above the blast to 32 u below meets the world
+                        let tr = self.sim.collision.trace_ray(
+                            pos + Vec3::Z * 8.0,
+                            pos - Vec3::Z * 32.0,
+                            gm_collision::MASK_SOLID,
+                        );
+                        if tr.fraction < 1.0 {
+                            if self.fx_decals.len() >= 256 {
+                                self.fx_decals.pop_front();
+                            }
+                            let n = 1 + (pos.x.to_bits() ^ pos.y.to_bits()) % 2;
+                            self.fx_decals.push_back((
+                                tr.end,
+                                tr.normal,
+                                format!("decals/scorch{n}_subrect"),
+                                now,
+                            ));
+                        }
+                    }
+                    gm_net::msg::EffectEvent::Blood {
+                        pos,
+                        dir,
+                        color,
+                        decals,
+                    } => {
+                        // `UTIL_BloodDecalTrace`: the `Blood` / `YellowBlood` groups (green
+                        // bleeds red decals as in the game)
+                        for (p, n) in decals {
+                            if self.fx_decals.len() >= 256 {
+                                self.fx_decals.pop_front();
+                            }
+                            let k = 1 + (p.x.to_bits() ^ p.z.to_bits().rotate_left(7)) % 6;
+                            let group = if color == 1 { "yblood" } else { "blood" };
+                            self.fx_decals.push_back((
+                                p,
+                                n,
+                                format!("decals/{group}{k}_subrect"),
+                                now,
+                            ));
+                        }
+                        // `UTIL_BloodDrips`: a short spray of drops carried on with the bullet
+                        if let Some(g) = self.gfx.as_mut() {
+                            if !g.rope_mats.contains_key(BLOOD_CORE) {
+                                let m = g.world.sprite_material(&g.gpu, &self.mount, BLOOD_CORE);
+                                g.rope_mats.insert(BLOOD_CORE.to_string(), m);
+                            }
+                            let tint = match color {
+                                1 => [0.85, 0.75, 0.2],
+                                2 => [0.3, 0.75, 0.2],
+                                _ => [0.55, 0.02, 0.02],
+                            };
+                            let r = &mut g.fx_rng;
+                            for _ in 0..6 {
+                                let d = fx_vec_rand(r);
+                                g.thruster_fx.push(ThrusterParticle {
+                                    mat: BLOOD_CORE,
+                                    additive: false,
+                                    pos: pos + d * 2.0,
+                                    vel: dir.normalize_or_zero() * 70.0 + d * 40.0,
+                                    grav: Vec3::new(0.0, 0.0, -400.0),
+                                    born: now,
+                                    life: 0.35,
+                                    size: (4.0, 12.0),
+                                    alpha: (0.9, 0.0),
+                                    color: tint,
+                                    roll: d.x * 180.0,
+                                    axis: None,
+                                });
+                            }
+                        }
                     }
                     gm_net::msg::EffectEvent::Splash { pos } => {
                         // TE_WaterSplash: a splashwake ring opening on the surface for 1.5 s
@@ -5273,7 +5344,7 @@ impl App {
                 .retain(|(_, _, _, born)| now.duration_since(*born).as_secs_f32() < 120.0);
             for (_, _, name, _) in &self.fx_decals {
                 if !name.is_empty() && !g.fx_decal_mats.contains_key(name) {
-                    let m = g.world.decal_material(&g.gpu, &self.mount, name);
+                    let m = g.world.decal(&g.gpu, &self.mount, name);
                     g.fx_decal_mats.insert(name.clone(), m);
                 }
             }
@@ -5281,29 +5352,38 @@ impl App {
                 .retain(|(_, _, _, _, born)| now.duration_since(*born).as_secs_f32() < 120.0);
             for (_, _, _, name, _) in &self.fx_prop_decals {
                 if !name.is_empty() && !g.fx_decal_mats.contains_key(name) {
-                    let m = g.world.decal_material(&g.gpu, &self.mount, name);
+                    let m = g.world.decal(&g.gpu, &self.mount, name);
                     g.fx_decal_mats.insert(name.clone(), m);
                 }
             }
             for (pos, normal, name, _) in &self.fx_decals {
-                if let Some(Some(m)) = g.fx_decal_mats.get(name) {
-                    let (v, i) = g.world.decal_quad(*pos, *normal, 6.4, [1.0; 3]);
-                    modulate.push((m, v, i));
+                if let Some(Some(d)) = g.fx_decal_mats.get(name) {
+                    let (v, i) = g.world.decal_quad_uv(*pos, *normal, d.size, [1.0; 3], d.uv);
+                    if d.modulate {
+                        modulate.push((&d.bind, v, i));
+                    } else {
+                        alpha.push((&d.bind, v, i));
+                    }
                 }
             }
             // decals on props ride their entity
             for (ent, lpos, lnormal, name, _) in &self.fx_prop_decals {
-                let (Some(e), Some(Some(m))) = (ents.get(ent), g.fx_decal_mats.get(name)) else {
+                let (Some(e), Some(Some(d))) = (ents.get(ent), g.fx_decal_mats.get(name)) else {
                     continue;
                 };
                 let rot = gm_render::props::angle_matrix(e.angles.to_array());
-                let (v, i) = g.world.decal_quad(
+                let (v, i) = g.world.decal_quad_uv(
                     e.pos + rot * *lpos,
                     (rot * *lnormal).normalize_or_zero(),
-                    6.4,
+                    d.size,
                     [1.0; 3],
+                    d.uv,
                 );
-                modulate.push((m, v, i));
+                if d.modulate {
+                    modulate.push((&d.bind, v, i));
+                } else {
+                    alpha.push((&d.bind, v, i));
+                }
             }
         }
         // flashlights (`r_flashlightfov` 53.7, `r_flashlightfar` 750): a spot from each lit
@@ -8658,6 +8738,9 @@ fn fx_range(s: &mut u32, a: f32, b: f32) -> f32 {
 }
 
 /// `VectorRand()`: each component in [-1, 1].
+/// The blood spray's drop sprite (`UTIL_BloodDrips`).
+const BLOOD_CORE: &str = "effects/blood_core";
+
 fn fx_vec_rand(s: &mut u32) -> Vec3 {
     Vec3::new(
         fx_range(s, -1.0, 1.0),
