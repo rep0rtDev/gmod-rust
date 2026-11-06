@@ -178,6 +178,23 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   `ents.Create('weapon_x') … SetPos … SetAngles … Spawn()`) spawns the metrocop at
   (985.6, −528.5, −144.0) too. The scene's residual is the rest spot (ours under the aim
   line → metrocop at (967.1, −507.1)).
+- Headcrab leap measured end to end (golden 261104, classic crab 26.5 -> 2.5, row-exact
+  through two leaps): the arc is the game's JumpAttack toss - vz = sqrt(2 g h) for h = the
+  enemy's eye height above the crab (16..120 u), horizontal = eye distance / rise time, capped
+  at 650 u/s (5.75 u/tick over 178 u, 4.86 over 149) - integrated with half the tick's gravity
+  before each move; the launch think only lifts the body 1 u, the arc runs from the next tick;
+  the hull contact bites at once, keeps the vertical speed and falls in think steps (half-step
+  gravity) with the thinks re-anchored to the contact tick; the ground contact is settled at
+  the next think (floor + IdleB), the body stands two thinks and runs 120 u away from the
+  think after (first step on that think, no reversal ramp) turning into its steps at 200 deg/s;
+  the turn in place plays TurnRight at 150 deg/s while the error exceeds 45 deg and finishes
+  at the idle rate 300 deg/s with Idle01; the next leap counts 252 ticks from the floor think,
+  its label a think before the launch. New scene `server_npc_melee_headcrab_fast` (golden
+  261106): the fast crab shares the arc and the fall; open there (measured, not built):
+  its leap launches on its label think, a 9.8 u Run1 step on its spawn think, Idle02 / Idle01
+  labels, 187 u/s run-away turning in proportion to the error (0.42 of it a think, cap
+  1260 deg/s), 126 deg turn steps in place, the next leap 77 ticks after the floor; and the
+  hull-contact fall keeps the velocity along the hull face (both crabs).
 - A spawned NPC whose hull starts in a wall is moved out along the shortest axis direction
   before it settles to the floor (`npc_out_of_solid`): the antlion guard spawned at x 1001.7
   sits at 984.0 = the wall at 1024 minus its 40 u half width, on the floor, like the game

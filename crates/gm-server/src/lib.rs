@@ -2310,6 +2310,8 @@ pub struct Npc {
     pub think_interval: u8,
     /// `NPC:SetMoveInterval`: a fixed think interval (ticks) instead of the measured near / far one.
     pub move_interval: Option<u8>,
+    /// The think tick a leap's ground contact is processed on (0: none pending).
+    pub leap_land: u64,
     /// `NPC:SetForceCrouch`: fire from a crouch regardless of the combat state (None: derived).
     pub force_crouch: Option<bool>,
     /// `NPC:SetIdealYaw`: the yaw an idle NPC (no path, no enemy) turns to at its yaw rate.
@@ -2387,6 +2389,16 @@ pub const NPC_VIEW_CONE_COS: f32 = -0.7;
 pub const NPC_CHASE_REACH: f32 = 64.0;
 const NPC_CHASE_REPATH: f32 = 16.0;
 const NPC_YAW_RATE: f32 = 150.0;
+/// A headcrab's turn rate on the run, deg/s (its MaxYawSpeed 20 x 10: golden 261104 yaw
+/// 180 -> 201 -> 222 ... a think on the run-away, 21 deg per 0.105 s).
+const NPC_CRAB_RUN_YAW: f32 = 200.0;
+/// The cap on a headcrab's leap velocity (JumpAttack's 650).
+const NPC_LEAP_MAX_SPEED: f32 = 650.0;
+/// ... and standing (MaxYawSpeed 30 x 10): the poison crab's hop and ground turns, the last
+/// step of a classic crab's turn (golden 261104 row 339: 218 -> 187).
+const NPC_CRAB_IDLE_YAW: f32 = 300.0;
+/// A turn-in-place plays its turn activity only while the yaw error exceeds this.
+const NPC_TURN_ACT_DEG: f32 = 45.0;
 
 /// A class's turn rate in deg/s (`NPC:SetMaxYawSpeed` overrides it): the poison zombie's crab
 /// turns 31.5 deg per 0.105 s think into its hop and to its enemy on the ground (golden
@@ -2895,7 +2907,7 @@ const NPC_POISON_DAMAGE: f32 = 94.0;
 /// apex +24 u after 17 ticks under NPC_GRAVITY).
 const NPC_CRAB_THROW_HEIGHT: f32 = 65.0;
 const NPC_CRAB_THROW_SPEED: f32 = 315.0;
-const NPC_CRAB_THROW_VZ: f32 = 175.0;
+const NPC_CRAB_THROW_VZ: f32 = 170.5;
 /// A crab hopping off the NPC it stands on (TASK_HEADCRAB_HOP_OFF_NPC): a random horizontal
 /// direction at this speed and the same speed up (golden 261105: 21 u in xy per 0.105 s
 /// think, z +17.7 on the first).
@@ -3055,16 +3067,20 @@ const NPC_GRAVITY: f32 = 600.0;
 pub fn npc_leap(class: &str) -> Option<NpcLeap> {
     match class {
         "npc_headcrab" | "npc_headcrab_fast" | "npc_headcrab_black" => Some(NpcLeap {
-            // run14 golden: the bite lands 34 ticks into a 178 u leap (was 26 at 380 u/s)
-            speed: 345.0,
-            aim_height: 62.0,
+            // golden 261104/261106 (classic and fast crab alike): 5.753 u/tick over rows
+            // 26..45, the bite on the hull-contact tick 34 ticks after the leap's first row
+            speed: 383.5,
+            // 289 u/s up at the launch (golden 261104 row 26: z +4.2 in the first tick)
+            aim_height: 66.0,
             damage: 5.0,
             punch: 25.0,
-            hang_ticks: 12,
+            hang_ticks: 0,
             retreat: 120.0,
             rest_ticks: 252,
             poison: class == "npc_headcrab_black",
-            stand_ticks: 0,
+            // two thinks on the floor before the run-away (golden 261104: floor 94, Run1 108;
+            // fast crab 261106: 398 / 412)
+            stand_ticks: 14,
             leap_sequence: Some("jumpattack_broadcast"),
             land_sequence: Some("IdleB"),
             run_sequence: Some("Run1"),
@@ -13450,6 +13466,7 @@ impl<'w> Server<'w> {
             chase_reach: NPC_CHASE_REACH,
             max_yaw: None,
             move_interval: None,
+            leap_land: 0,
             force_crouch: None,
             ideal_yaw: None,
             move_yaw_locked: false,
@@ -14879,6 +14896,10 @@ impl<'w> Server<'w> {
             } else {
                 (def.walk, def.walk_accel)
             };
+            // a headcrab's run-away starts on the think it is issued, facing its enemy, and
+            // turns into its steps at the run's yaw rate (golden 261104: 2.6 u east on the
+            // Run1 think 108 with yaw 180 -> 201, then 5.2 u and 21 deg a think to yaw 0)
+            let crab_run = npc_leap(&n.class).is_some();
             let (pos, mins, maxs, v0, yaw0) = (n.pos, n.mins, n.maxs, n.move_speed, n.angles.y);
             let prop_bodies: Vec<gm_sandbox::PropBody> = prop_bodies
                 .iter()
@@ -15039,7 +15060,7 @@ impl<'w> Server<'w> {
             };
             let yaw_err = if faced { 0.0 } else { yaw_err };
             let turning = yaw_err > 0.5;
-            if v0 <= 0.0 && yaw_err > NPC_REVERSAL_DEG && reversal == 0 {
+            if v0 <= 0.0 && yaw_err > NPC_REVERSAL_DEG && reversal == 0 && !crab_run {
                 // measured (corner_seen, y180): a start that reverses the body loses its first
                 // think - no turn, no step - and walks from the next one
                 if let Some(n) = self.npcs.get_mut(&id) {
@@ -15311,6 +15332,7 @@ impl<'w> Server<'w> {
                 _ if reversal > 1 && reversal % 2 == 1 => {
                     (dir, max_yaw.unwrap_or(NPC_YAW_RATE * 2.0))
                 }
+                _ if crab_run => (dir, max_yaw.unwrap_or(NPC_CRAB_RUN_YAW)),
                 _ => (dir, max_yaw.unwrap_or(NPC_YAW_RATE)),
             };
             let mut swap = None;
@@ -16978,6 +17000,7 @@ impl<'w> Server<'w> {
         };
         let to = (origin - feet).truncate();
         let dist = to.length();
+        let enemy_eye_z = self.eye(player).map(|(e, _)| e.z);
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
@@ -16996,21 +17019,44 @@ impl<'w> Server<'w> {
         // standing between leaps the crab turns in place to its enemy at the normal yaw rate
         // (server_npc_melee_headcrab 261104: TurnRight 0 -> 187 deg over rows 278..339 after
         // its run-away, Idle01 once facing, the leap at its rest's end)
-        if n.goal.is_none() && n.chase.is_none() && n.leap_at.is_none() && dist > 1e-3 {
+        // (the think that ends the run only stops: TurnRight from the next, 269 -> 276)
+        if n.goal.is_none()
+            && n.chase.is_none()
+            && n.leap_at.is_none()
+            && n.path_done_at != now
+            && dist > 1e-3
+        {
             let want = to.y.atan2(to.x).to_degrees();
             let err = wrap_deg(want - n.angles.y);
             // dead behind it the crab turns right (the game's 0 -> 180 turn runs 344, 328 ...)
             let err = if err >= 179.5 { err - 360.0 } else { err };
             let dt = n.think_interval as f32 * gm_core::tick::DEFAULT_TICK_INTERVAL;
-            let step = n.max_yaw.unwrap_or(npc_class_yaw(&n.class)) * dt;
+            // the turn activity plays while the error is over 45 deg; under it the body idles
+            // and finishes the turn at the idle yaw rate (golden 261104: TurnRight 15.7 deg a
+            // think 344 -> 218, then Idle01 at 187 - a 31.5 deg step - and the leap at 180;
+            // the poison crab's 31.5 deg TurnRight 283 -> 189, Idle01 at 163)
+            let turning = err.abs() > NPC_TURN_ACT_DEG;
+            let rate = if turning {
+                npc_class_yaw(&n.class)
+            } else {
+                NPC_CRAB_IDLE_YAW
+            };
+            let step = n.max_yaw.unwrap_or(rate) * dt;
             if err.abs() > step {
                 n.angles.y = wrap_deg(n.angles.y + err.clamp(-step, step));
-                n.sequence = if err < 0.0 { "TurnRight" } else { "TurnLeft" }.to_string();
+                n.sequence = if !turning {
+                    "Idle01"
+                } else if err < 0.0 {
+                    "TurnRight"
+                } else {
+                    "TurnLeft"
+                }
+                .to_string();
                 n.auto_seq = None;
                 n.next_leap = n.next_leap.max(now + n.think_interval as u64);
                 return;
             }
-            if n.sequence.starts_with("Turn") {
+            if n.sequence.starts_with("Turn") || n.sequence == "Idle01" {
                 n.angles.y = want;
                 n.auto_seq = Some(n.sequence.clone());
             }
@@ -17044,17 +17090,29 @@ impl<'w> Server<'w> {
             Some(t) if now < t => return,
             Some(_) => n.leap_at = None,
         }
-        // the arc: constant horizontal speed, the vertical speed that meets the aim point
-        let t = (dist / l.speed).max(1.0 / 66.0);
-        let dz = origin.z + l.aim_height - feet.z;
-        let vz = NPC_GRAVITY * t * 0.5 + dz / t;
+        // the arc (the game's JumpAttack toss): the vertical speed that peaks at the enemy's
+        // eye height (16..120 u up), the horizontal speed that covers the eye's distance in
+        // that rise, the whole capped at 650 u/s (golden 261104: 5.75 u/tick over 178 u,
+        // 4.86 over 149 u, z +4.2 in the first tick either time)
+        let height =
+            (enemy_eye_z.unwrap_or(origin.z + NPC_CHEST_HEIGHT) - feet.z).clamp(16.0, 120.0);
+        let vz = (2.0 * NPC_GRAVITY * height).sqrt();
+        let t = vz / NPC_GRAVITY;
         let dir = if dist > 1e-3 {
             to / dist
         } else {
             glam::Vec2::X
         };
-        n.flight = Some((dir * l.speed).extend(vz));
+        let mut vel = (to / t).extend(vz);
+        if vel.length() > NPC_LEAP_MAX_SPEED {
+            vel *= NPC_LEAP_MAX_SPEED / vel.length();
+        }
+        n.flight = Some(vel);
         n.hung_until = 0;
+        // the launch tick only lifts the body 1 u; the arc starts the tick after (golden
+        // 261104 rows 25/26: z -143.0 at x 1001.7, then 996.0 / -138.8)
+        n.pos.z += 1.0;
+        n.leap_at = Some(now + 1);
         n.goal = None;
         n.next_goal = None;
         n.chase = None;
@@ -17270,9 +17328,8 @@ impl<'w> Server<'w> {
             if hanging {
                 continue;
             }
-            if n.hung_until != 0 && !n.step_flight && vel.truncate().length_squared() > 0.0 {
-                // the hang is over: drop straight down
-                vel = Vec3::new(0.0, 0.0, 0.0);
+            if n.leap_at.is_some_and(|t| now < t) {
+                continue;
             }
             let interval = u64::from(n.think_interval);
             let step = n.step_flight;
@@ -17290,7 +17347,9 @@ impl<'w> Server<'w> {
             let want = if step {
                 pos + (vel - Vec3::new(0.0, 0.0, NPC_GRAVITY * dt * 0.5)) * dt
             } else {
-                pos + (vel - Vec3::new(0.0, 0.0, NPC_GRAVITY * dt)) * dt
+                // the game's z(k) = v k dt - g (k dt)^2 / 2: half the tick's gravity before
+                // the move (golden 261104 leap: +4.2 / 8.1 / 12.0 / 15.7 ... 63.9 at tick 27)
+                pos + (vel - Vec3::new(0.0, 0.0, NPC_GRAVITY * dt * 0.5)) * dt
             };
             vel.z -= NPC_GRAVITY * dt;
             let tr =
@@ -17403,14 +17462,53 @@ impl<'w> Server<'w> {
                         let err = wrap_deg(hop.to_degrees() - n.angles.y);
                         n.angles.y = wrap_deg(n.angles.y + err.clamp(-turn, turn));
                     } else {
-                        n.flight = Some(Vec3::ZERO);
-                        n.hung_until = now + l.hang_ticks;
+                        // stopped by the hull: the crab keeps its vertical speed and falls
+                        // down the hull face in think steps, the thinks re-anchored to the
+                        // contact tick (golden 261104: 851.3 from row 52, z -79.1 / -78.6 /
+                        // -84.7 / -97.5 / -116.8 / -142.8 on rows 52 + 7k, the floor on 94)
+                        n.flight = Some(Vec3::new(0.0, 0.0, vel.z));
+                        n.step_flight = true;
+                        n.leap_land = 1;
+                        n.hung_until = now + u64::from(n.think_interval);
+                        n.next_think = n.hung_until;
                     }
                 }
                 continue;
             }
             if landed {
                 let floor = self.npc_floor(next, mins, maxs).unwrap_or(next);
+                let leaper = l.stand_ticks > 0 && l.retreat > 0.0 && !n.thrown;
+                if leaper && !n.step_flight && n.hung_until == 0 && n.leap_land == 0 {
+                    // down from a leap: the body stops where it touched and is put on the
+                    // floor by its next think (golden 261104: z -142.8 from row 87, -144.0 and
+                    // IdleB on 94)
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.pos = next;
+                        n.flight = Some(Vec3::ZERO);
+                        n.leap_land = n.next_think.max(now + 1);
+                        n.hung_until = n.leap_land;
+                        n.leap_at = None;
+                    }
+                    continue;
+                }
+                if leaper && n.leap_land != 0 {
+                    // ... and stands `stand_ticks` there before the run-away (Run1 on 108)
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.pos = floor;
+                        n.flight = Some(Vec3::ZERO);
+                        n.leap_land = 0;
+                        n.step_flight = false;
+                        // the rest to the next leap counts from this think (346 = 94 + 252)
+                        n.next_leap = now + l.rest_ticks;
+                        // the run-away is issued the tick before the think that steps it (the
+                        // flight settles after the walk phase; the game's think does both)
+                        n.hung_until = now + l.stand_ticks - 1;
+                        if let Some(seq) = l.land_sequence {
+                            n.sequence = seq.to_string();
+                        }
+                    }
+                    continue;
+                }
                 let away = target
                     .and_then(|t| self.players.get(&t))
                     .map(|p| (floor - p.state.origin).truncate().normalize_or_zero())
@@ -17418,13 +17516,16 @@ impl<'w> Server<'w> {
                 let goal = floor + (away * l.retreat).extend(0.0);
                 let mut thrown = false;
                 if let Some(n) = self.npcs.get_mut(&id) {
+                    // after the stand its rest is already counting from the floor think
+                    let stood = n.hung_until != 0;
                     n.pos = floor;
                     n.flight = None;
                     n.hung_until = 0;
+                    n.leap_at = None;
                     // a hop off an NPC ends like a throw: no retreat, the crab turns to its
                     // enemy and attacks (golden 261105: TurnLeft 332..346, Tele_Attack_a 367)
                     thrown = std::mem::take(&mut n.thrown) | std::mem::take(&mut n.step_flight);
-                    if !thrown {
+                    if !thrown && !stood {
                         n.next_leap = now + l.rest_ticks;
                         n.swing_until = now + l.stand_ticks;
                     }
@@ -17443,6 +17544,7 @@ impl<'w> Server<'w> {
             if let Some(n) = self.npcs.get_mut(&id) {
                 n.pos = next;
                 n.flight = Some(vel);
+                n.leap_at = None;
                 if step && vel.truncate().length_squared() > 1e-3 {
                     // a hopping crab turns into its hop at the normal yaw rate
                     let turn = n.max_yaw.unwrap_or(npc_class_yaw(&n.class)) * dt;
@@ -18293,6 +18395,7 @@ impl<'w> Server<'w> {
                 chase_reach: NPC_CHASE_REACH,
                 max_yaw: None,
                 move_interval: None,
+                leap_land: 0,
                 force_crouch: None,
                 ideal_yaw: None,
                 move_yaw_locked: false,

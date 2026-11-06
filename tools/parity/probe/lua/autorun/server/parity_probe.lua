@@ -884,6 +884,11 @@ SCENARIOS.sandbox = function(scn, done)
 		if pressing() then pin = mv:GetOrigin() end
 	end)
 	for _, e in ipairs(ents.FindByClass("prop_physics")) do e:Remove() end
+	-- scene isolation: NPCs, ragdolls and dropped weapons a previous scene left (a scene without a
+	-- leading cleanup op inherited them; 261104 swat_far had a second zombie)
+	for _, e in ipairs(ents.GetAll()) do
+		if IsValid(e) and not e:CreatedByMap() and (e:IsNPC() or e:GetClass() == "prop_ragdoll" or (e:IsWeapon() and not IsValid(e:GetOwner()))) then e:Remove() end
+	end
 	undo.GetTable()[bot:UniqueID()] = nil
 	-- props that are already on the table (not the bot's): spawn targets
 	local placed = {}
