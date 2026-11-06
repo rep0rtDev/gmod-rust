@@ -13,6 +13,7 @@ fn snapshot() -> Arc<Snapshot> {
     s.entities.insert(
         5,
         EntitySnap {
+            name: String::new(),
             id: 5,
             model: "models/props_c17/oildrum001.mdl".into(),
             pos: Vec3::new(100.0, 200.0, 300.0),
@@ -97,6 +98,7 @@ fn snapshot() -> Arc<Snapshot> {
     s.entities.insert(
         9,
         EntitySnap {
+            name: String::new(),
             id: 9,
             model: "models/zombie/classic.mdl".into(),
             pos: Vec3::new(0.0, 0.0, 0.0),

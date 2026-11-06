@@ -55,7 +55,8 @@ fn construct_button_presses_and_returns() {
 
     let idle = std::collections::BTreeMap::new();
     server.tick(&idle);
-    server.map_input(button.id, "Use", "", 1);
+    assert!(!server.fire_input_id(MAP_ENT_ID_BASE + 100_000, "Use", "", 1));
+    assert!(server.fire_input_id(button.id, "Use", "", 1));
     for _ in 0..3 {
         server.tick(&idle);
     }

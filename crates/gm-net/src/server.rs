@@ -902,6 +902,13 @@ impl ServerNet {
                     Command::Kill => {
                         server.player_kill_command(slot.player);
                     }
+                    Command::EntFire {
+                        target,
+                        input,
+                        param,
+                    } => {
+                        server.fire_input(&target, &input, &param, slot.player);
+                    }
                     Command::SelectWeapon { class } => {
                         server.player_select_weapon(slot.player, &class);
                     }

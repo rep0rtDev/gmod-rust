@@ -109,6 +109,12 @@ pub enum Command {
     },
     /// The `kill` console command: the player dies and respawns.
     Kill,
+    /// `ent_fire <target> <input> [param]`: an input at the map entities `target` names.
+    EntFire {
+        target: String,
+        input: String,
+        param: String,
+    },
     PlayerModel {
         name: String,
     },
@@ -884,6 +890,16 @@ impl ClientMsg {
                         w.str(body);
                     }
                     Command::Kill => w.u8(15),
+                    Command::EntFire {
+                        target,
+                        input,
+                        param,
+                    } => {
+                        w.u8(22);
+                        w.str(target);
+                        w.str(input);
+                        w.str(param);
+                    }
                     Command::PropertyList => w.u8(16),
                     Command::EditEntity { ent, key, value } => {
                         w.u8(21);
@@ -992,6 +1008,11 @@ impl ClientMsg {
                         ent: r.u32()?,
                         key: r.str()?,
                         value: r.str()?,
+                    },
+                    22 => Command::EntFire {
+                        target: r.str()?,
+                        input: r.str()?,
+                        param: r.str()?,
                     },
                     17 => Command::Numpad {
                         key: r.u8()?,

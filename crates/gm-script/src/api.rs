@@ -62,6 +62,13 @@ pub enum QueuedWrite {
         ent: u32,
         pos: Vec3,
     },
+    /// `Entity:Fire` / `Entity:Input` on a map entity (`gm_server::mapio`).
+    Fire {
+        ent: u32,
+        input: String,
+        param: String,
+        activator: u32,
+    },
     SetAngles {
         ent: u32,
         angles: Vec3,
@@ -1222,6 +1229,7 @@ fn entity_table(lua: &Lua, e: &crate::snapshot::EntitySnap) -> Result<Table> {
     t.set("body", e.body.as_str())?;
     t.set("owner", e.owner)?;
     t.set("class", e.class.as_str())?;
+    t.set("name", e.name.as_str())?;
     t.set("health", e.health)?;
     t.set("max_health", e.max_health)?;
     t.set("npc_target", e.npc_target)?;
@@ -1958,6 +1966,15 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
                     ent,
                     pos: table_vec3(&table_arg(&arg)?)?,
                 },
+                "fire" => {
+                    let t = table_arg(&arg)?;
+                    QueuedWrite::Fire {
+                        ent,
+                        input: t.get::<Option<String>>("input")?.unwrap_or_default(),
+                        param: t.get::<Option<String>>("param")?.unwrap_or_default(),
+                        activator: t.get::<Option<u32>>("activator")?.unwrap_or(0),
+                    }
+                }
                 "set_angles" => QueuedWrite::SetAngles {
                     ent,
                     angles: table_vec3(&table_arg(&arg)?)?,
@@ -4363,6 +4380,12 @@ pub fn apply(server: &mut Server<'_>, w: &QueuedWrite) -> bool {
     let exists = |server: &Server<'_>, ent: u32| server.sandbox.props().iter().any(|p| p.id == ent);
     match w {
         QueuedWrite::SetOverlayText { ent, text } => server.set_overlay_text(*ent, text),
+        QueuedWrite::Fire {
+            ent,
+            input,
+            param,
+            activator,
+        } => server.fire_input_id(*ent, input, param, *activator),
         QueuedWrite::SetPos { ent, pos } => {
             if !exists(server, *ent) {
                 return false;

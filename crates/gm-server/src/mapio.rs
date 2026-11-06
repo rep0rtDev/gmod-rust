@@ -530,6 +530,20 @@ impl Server<'_> {
             .queue(now, target, input, param, 0.0, activator, 0);
     }
 
+    /// An input at entity `id` (a map entity, or `Kill` on a prop), true when something took it.
+    pub fn fire_input_id(&mut self, id: u32, input: &str, param: &str, activator: u32) -> bool {
+        if (MAP_ENT_ID_BASE..crate::PROJECTILE_ID_BASE).contains(&id) {
+            if self.map_io.get(id).is_none() {
+                return false;
+            }
+            self.map_input(id, input, param, activator);
+            true
+        } else {
+            self.entity_input(id, input, param, activator);
+            true
+        }
+    }
+
     /// Delivers `input` to map entity `id` now.
     pub fn map_input(&mut self, id: u32, input: &str, param: &str, activator: u32) {
         let now = self.tick_count;

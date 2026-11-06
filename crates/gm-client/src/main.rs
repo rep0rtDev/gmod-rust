@@ -6650,6 +6650,11 @@ impl App {
                 self.send_player_skin();
             }
             "kill" => self.sim.client.command(Command::Kill),
+            "ent_fire" if rest.len() >= 2 => self.sim.client.command(Command::EntFire {
+                target: rest[0].to_string(),
+                input: rest[1].to_string(),
+                param: rest[2..].join(" "),
+            }),
             // a weapon by class, scripted ones included (their index follows the stock table)
             "weapon" if !rest.is_empty() => {
                 let class = rest.join(" ");

@@ -4,9 +4,11 @@ use glam::Vec3;
 use gm_server::Server;
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct EntitySnap {
     pub id: u32,
+    /// `targetname` of a map entity (`Entity:GetName`), empty otherwise.
+    pub name: String,
     pub model: String,
     pub pos: Vec3,
     pub angles: Vec3,
@@ -442,6 +444,7 @@ impl Snapshot {
                     (
                         e.id,
                         EntitySnap {
+                            name: String::new(),
                             id: e.id,
                             model: e.model.clone(),
                             pos: e.pos,
@@ -597,6 +600,7 @@ impl Snapshot {
                     (
                         p.id,
                         EntitySnap {
+                            name: String::new(),
                             id: p.id,
                             model: p.model.clone(),
                             pos: p.pos,
@@ -699,6 +703,7 @@ impl Snapshot {
                     (
                         id,
                         EntitySnap {
+                            name: String::new(),
                             id,
                             model: n.model.clone(),
                             pos: n.pos,
@@ -791,6 +796,14 @@ impl Snapshot {
                         },
                     )
                 }))
+                .chain(
+                    server
+                        .map_io
+                        .entities
+                        .iter()
+                        .filter(|e| e.alive)
+                        .map(|e| (e.id, map_entity_snap(e))),
+                )
                 .collect(),
             players: server
                 .players
@@ -951,4 +964,34 @@ fn npc_caps(n: &gm_server::Npc) -> u32 {
         c |= 0x20000;
     }
     c
+}
+
+/// A map entity (`gm_server::mapio`) as scripts see it: class, targetname, model `*N`, pose
+/// and bounds; nothing physical.
+fn map_entity_snap(e: &gm_server::mapio::MapEntity) -> EntitySnap {
+    let (axis, angle) = e.rot.to_axis_angle();
+    let _ = (axis, angle);
+    EntitySnap {
+        id: e.id,
+        name: e.targetname.clone(),
+        model: e.def.get("model").unwrap_or("").to_string(),
+        pos: e.pos,
+        angles: e.def.angles,
+        class: e.classname.clone(),
+        health: e
+            .def
+            .get("health")
+            .and_then(|h| h.parse().ok())
+            .unwrap_or(0),
+        mins: e.def.mins,
+        maxs: e.def.maxs,
+        frozen: true,
+        asleep: true,
+        model_scale: 1.0,
+        playback_rate: 1.0,
+        color: [255, 255, 255, 255],
+        friction: 0.8,
+        elasticity: 0.25,
+        ..Default::default()
+    }
 }

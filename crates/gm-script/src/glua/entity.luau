@@ -151,7 +151,12 @@ function ENT:SetSolid(solid) qwrite("set_collide", self.__id, solid ~= SOLID_NON
 function ENT:NextThink(t) qwrite("next_think", self.__id, math.max(0, t - CurTime())) return true end
 function ENT:SetOwner(ply) rawget(self, "__vars").__owner = ply end
 function ENT:SetName(n) rawget(self, "__vars").__name = n end
-function ENT:GetName() return rawget(self, "__vars").__name or "" end
+function ENT:GetName()
+    local n = rawget(self, "__vars").__name
+    if n and n ~= "" then return n end
+    local s = snap(self.__id)
+    return s and s.name or ""
+end
 function ENT:SetNWString(k, v) self:SetNetworkedVar(k, v) end
 function ENT:SetNWInt(k, v) self:SetNetworkedVar(k, v) end
 function ENT:SetNWFloat(k, v) self:SetNetworkedVar(k, v) end
@@ -1798,7 +1803,7 @@ function ENT:StartLoopingSound(name) return 0 end
 function ENT:StopParticles() end
 function ENT:RemoveAllDecals() end
 -- @hook ENTITY:AcceptInput @hook WEAPON:AcceptInput (a scripted weapon instance takes the input the same way)
-function ENT:Input(name, activator, caller, data) if hook.Run("AcceptInput", self, name, activator, caller, data) == true then return end local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(self.__id); if si and si.AcceptInput and si:AcceptInput(name, activator or NULL, caller or NULL, data) == true then return true end if name == "Kill" then self:Remove() return true end return false end
+function ENT:Input(name, activator, caller, data) if hook.Run("AcceptInput", self, name, activator, caller, data) == true then return end local si = scripted_ents and scripted_ents.__instance and scripted_ents.__instance(self.__id); if si and si.AcceptInput and si:AcceptInput(name, activator or NULL, caller or NULL, data) == true then return true end if self.__id >= 0x20000000 and self.__id < 0x40000000 then qwrite("fire", self.__id, { input = name, param = data == nil and "" or tostring(data), activator = (type(activator) == "table" and rawget(activator, "__id")) or 0 }) return true end if name == "Kill" then self:Remove() return true end return false end
 function ENT:Fire(input, param, delay, activator, caller)
     if (delay or 0) > 0 then local me = self; timer.Simple(delay, function() if IsValid(me) then me:Input(input, activator, caller, param) end end) else self:Input(input, activator, caller, param) end
 end
