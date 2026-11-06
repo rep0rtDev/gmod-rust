@@ -425,7 +425,10 @@ local function particle_send(t)
     if SERVER and net and net.Start and util.AddNetworkString then
         util.AddNetworkString("__gm_particle")
         net.Start("__gm_particle"); net.WriteTable(t); net.Broadcast()
-    elseif CLIENT then hook.Run("__ParticleEffect", t) end
+    elseif CLIENT then
+        if __gm_particle then __gm_particle(t) end
+        hook.Run("__ParticleEffect", t)
+    end
 end
 function ParticleEffect(name, pos, angles, parent)
     particle_send({ name = tostring(name), pos = { pos.x, pos.y, pos.z }, ang = { angles and angles.p or 0, angles and angles.y or 0, angles and angles.r or 0 }, parent = IsValid(parent) and parent:EntIndex() or 0 })

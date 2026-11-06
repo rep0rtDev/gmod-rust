@@ -891,6 +891,14 @@ pub enum AudioOp {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DrawCmd {
+    /// `ParticleEffect` / `ParticleEffectAttach` in the client realm: the client starts the
+    /// named `.pcf` system at `pos` facing `ang`, following entity `parent` when not 0.
+    Particle {
+        name: String,
+        pos: [f32; 3],
+        ang: [f32; 3],
+        parent: u32,
+    },
     Rect {
         x: f32,
         y: f32,
@@ -1636,6 +1644,33 @@ pub fn install(lua: &Lua, shared: Arc<Shared>) -> Result<()> {
         }
         g.set(k, Value::Nil)?;
     }
+    let sh = shared.clone();
+    g.set(
+        "__gm_particle",
+        lua.create_function(move |_, t: Table| {
+            let name: String = t.get("name").unwrap_or_default();
+            let arr = |key: &str| -> [f32; 3] {
+                t.get::<Table>(key)
+                    .ok()
+                    .map(|a| {
+                        [
+                            a.get::<f32>(1).unwrap_or(0.0),
+                            a.get::<f32>(2).unwrap_or(0.0),
+                            a.get::<f32>(3).unwrap_or(0.0),
+                        ]
+                    })
+                    .unwrap_or([0.0; 3])
+            };
+            let parent: u32 = t.get::<i64>("parent").unwrap_or(0).max(0) as u32;
+            sh.draws.lock().unwrap().push(DrawCmd::Particle {
+                name,
+                pos: arr("pos"),
+                ang: arr("ang"),
+                parent,
+            });
+            Ok(())
+        })?,
+    )?;
     let sh = shared.clone();
     g.set(
         "print",

@@ -11,6 +11,7 @@ mod addons;
 mod derma;
 mod newgame;
 mod options;
+mod particles;
 mod presets;
 mod servers;
 mod settings;
@@ -224,6 +225,8 @@ struct Gfx {
     thruster_on: std::collections::HashMap<u32, std::time::Instant>,
     /// Live particles of the magic / rings / smoke thruster effects.
     thruster_fx: Vec<ThrusterParticle>,
+    particles: particles::Particles,
+    particles_tick: Option<std::time::Instant>,
     /// Next emission time per thruster (the effects' 0.01 / 0.015 s timers).
     thruster_emit: std::collections::HashMap<u32, std::time::Instant>,
     fx_rng: u32,
@@ -1457,6 +1460,8 @@ impl App {
             rope_mats: Default::default(),
             thruster_on: Default::default(),
             thruster_fx: Vec::new(),
+            particles: Default::default(),
+            particles_tick: None,
             thruster_emit: Default::default(),
             fx_rng: 0x9E37_79B9,
             gg_core,
@@ -5190,6 +5195,29 @@ impl App {
                 }
             }
         }
+        // `.pcf` particle systems the game asked for
+        let now = std::time::Instant::now();
+        if !g.particles.is_empty() {
+            let dt = g
+                .particles_tick
+                .map(|t| now.duration_since(t).as_secs_f32())
+                .unwrap_or(0.0);
+            let players = &self.sim.client.world.players;
+            let pose = |ent: u32| -> Option<(Vec3, Vec3)> {
+                if let Some(e) = ents.get(&ent) {
+                    return Some((e.pos, particles::forward_of(e.angles)));
+                }
+                players
+                    .iter()
+                    .find(|p| p.id == ent)
+                    .map(|p| (p.origin, particles::forward_of(p.view_angles)))
+            };
+            g.particles.tick(dt, &pose);
+            g.particles.prepare(&g.gpu, &self.mount, &g.world);
+        }
+        g.particles_tick = Some(now);
+        g.particles
+            .draw(&g.world, &camera, &mut additive, &mut alpha);
         // constraint ropes (`keyframe_rope`): a strip between the endpoints, sagging by the
         // slack (rest length over the distance) along a quadratic curve
         for r in &self.sim.client.world.ropes {
@@ -5769,6 +5797,24 @@ impl App {
                     gm_script::DrawCmd::OpenUrl { url } => {
                         let _ = std::process::Command::new("xdg-open").arg(url).spawn();
                     }
+                    gm_script::DrawCmd::Particle {
+                        name,
+                        pos,
+                        ang,
+                        parent,
+                    } => {
+                        if let Some(g) = self.gfx.as_mut() {
+                            g.particles.ensure_loaded(&self.mount);
+                            if !g.particles.spawn(&particles::Spawn {
+                                name: name.clone(),
+                                pos: Vec3::from_array(*pos),
+                                angles: Vec3::from_array(*ang),
+                                parent: *parent,
+                            }) {
+                                eprintln!("ParticleEffect: unknown system {name}");
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -6220,6 +6266,7 @@ impl App {
                     gm_script::DrawCmd::HideHud { .. } => continue,
                     gm_script::DrawCmd::WorldTri { .. } => continue,
                     gm_script::DrawCmd::ScreenClicker { .. }
+                    | gm_script::DrawCmd::Particle { .. }
                     | gm_script::DrawCmd::OpenUrl { .. }
                     | gm_script::DrawCmd::Audio { .. }
                     | gm_script::DrawCmd::Servers { .. } => continue,
