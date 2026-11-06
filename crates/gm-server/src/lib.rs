@@ -2229,6 +2229,8 @@ pub struct Npc {
     pub danger_at: Option<Vec3>,
     /// Last tick a movement sweep was stopped by another NPC's hull.
     pub npc_blocked_at: u64,
+    /// Tick of the first contact of the current run with the blocking NPC (0: none).
+    pub npc_block_since: u64,
     /// Local detour round a prop that blocked the move: the corner aimed at, which side of the
     /// path it lies (kept while skirting a wall of props) and when it is given up.
     pub detour: Option<Vec3>,
@@ -2607,6 +2609,8 @@ pub const NPC_BURST_GAP_LOW_TICKS: u64 = 21;
 /// server_npc_grenade_soldier crawls its last unit for four more thinks first: op649 -> op691).
 pub const NPC_RELOAD_DELAY_TICKS: u64 = 14;
 pub const NPC_RELOAD_TICKS: u64 = 133;
+/// Ticks a run keeps sliding round a blocking NPC before it fails (squad_soldier t1139 -> t1251).
+pub const NPC_PEER_BLOCK_TICKS: u64 = 112;
 
 /// The NPC clip of a weapon (HL2 weapon scripts' clip_size).
 pub fn npc_clip_size(weapon: &str) -> u8 {
@@ -13580,6 +13584,7 @@ impl<'w> Server<'w> {
             cover_from_sound: false,
             danger_at: None,
             npc_blocked_at: 0,
+            npc_block_since: 0,
             shots: 0,
             chase_reach: NPC_CHASE_REACH,
             max_yaw: None,
@@ -15367,8 +15372,14 @@ impl<'w> Server<'w> {
                         .and_then(|h| h.ent)
                         .is_some_and(|e| Some(e) == pressed_prop && self.npc_swattable_prop(e));
                 if hit.is_some_and(|h| h.ent.is_some_and(|e| e >= NPC_BODY_ID_BASE)) {
-                    // another NPC in the way: no skirting, the move just stops against it
+                    // another NPC in the way: no skirting, the step slides along its hull
+                    // and the run fails after NPC_PEER_BLOCK_TICKS of contact
                     if let Some(n) = self.npcs.get_mut(&id) {
+                        if n.npc_block_since == 0
+                            || now > n.npc_blocked_at + 2 * n.think_interval as u64
+                        {
+                            n.npc_block_since = now;
+                        }
                         n.npc_blocked_at = now;
                     }
                 } else if let Some(pb) =
@@ -16001,11 +16012,13 @@ impl<'w> Server<'w> {
                 && !at_cover
                 && n.npc_blocked_at != 0
                 && now <= n.npc_blocked_at + 2 * n.think_interval as u64
+                && now >= n.npc_block_since + NPC_PEER_BLOCK_TICKS
             {
-                // HIDE_AND_RELOAD's run stopped by a squadmate on the cover: the schedule fails to
-                // SCHED_RELOAD and the body reloads where it stands, one think later
-                // (server_npc_squad_soldier: the mate halts 34 u short of the leader's node at
-                // t1253, `reload` from t1260)
+                // HIDE_AND_RELOAD's run blocked by a squadmate on the cover slides round its
+                // hull and fails after NPC_PEER_BLOCK_TICKS of contact to SCHED_RELOAD: the body
+                // reloads where it stands, one think later (server_npc_squad_soldier 261104:
+                // the leader meets the mate at t1139, slides north then south round it and
+                // halts 34 u short of the node at t1251, `reload` from t1265)
                 stop_for_reload = true;
                 n.cover_at = None;
                 n.cover_until = 0;
@@ -18665,6 +18678,7 @@ impl<'w> Server<'w> {
                 cover_from_sound: false,
                 danger_at: None,
                 npc_blocked_at: 0,
+                npc_block_since: 0,
                 shots: 0,
                 chase_reach: NPC_CHASE_REACH,
                 max_yaw: None,

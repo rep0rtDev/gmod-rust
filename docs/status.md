@@ -470,7 +470,12 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   sight (the Combine's wait in cover) where ours ran for a line of fire / after the lost
   enemy - now a squad soldier with a living squad mate and its enemy unseen holds (no
   cover release, no line-of-fire run, no lost-enemy chase): rows 798..1008 stand like the
-  game, squad_soldier 155 -> 77. Open: the slide round the mate and its give-up; the leader's earlier
+  game, squad_soldier 155 -> 77. The give-up is in as a contact timer: a run blocked by
+  another NPC fails after NPC_PEER_BLOCK_TICKS (112, the game's t1139 first contact ->
+  t1251 halt) of contact and the body reloads where it stands (ours reloads from 834, the
+  game 904, before 792). Open: the slide itself - the game met the mate at an angle
+  coming from (1053,41) and slid round its hull, ours arrives along y 72 head-on from its
+  different route and stands; the leader's earlier
   non-cut of (965,-19) for (1201,72) 360 u out (1.7 s, the hull line clear in ours) still
   contradicts the cut rule unless its first cover was the unexplained (953,7).
 
