@@ -40,6 +40,39 @@ fn main() {
                 q.act_weight,
                 flags & 1 != 0
             );
+            for e in &q.events {
+                println!(
+                    "    event cycle={:.3} frame={:.2} event={} kind={} name={} options={}",
+                    e.cycle,
+                    e.cycle * (frames - 1).max(1) as f32,
+                    e.event,
+                    e.kind,
+                    e.name,
+                    e.options
+                );
+            }
+            if let Some(a) = a {
+                // mstudiomovement_t segments: endframe, v0, v1 (u/s), position
+                let o = a.offset;
+                let rd = |at: usize| {
+                    data.get(at..at + 4)
+                        .map_or(0, |b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                };
+                let (n, off) = (rd(o + 20).max(0) as usize, rd(o + 24) as usize);
+                for k in 0..n {
+                    let b = o + off + k * 44;
+                    let f = |at: usize| f32::from_bits(rd(b + at) as u32);
+                    println!(
+                        "    move end={} v0={:.1} v1={:.1} pos=({:.1},{:.1},{:.1})",
+                        rd(b),
+                        f(8),
+                        f(12),
+                        f(32),
+                        f(36),
+                        f(40)
+                    );
+                }
+            }
             if q.blends.len() > 1 {
                 let row: Vec<String> = q
                     .blends

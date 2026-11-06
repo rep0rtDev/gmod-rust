@@ -184,6 +184,8 @@ pub struct ModelScriptData {
     pub sequence_anim: Vec<(f32, i32, i32)>,
     /// Per sequence: root movement over its first animation (model units).
     pub sequence_move: Vec<[f32; 3]>,
+    /// Per sequence: the root's piecewise motion over its first animation.
+    pub sequence_motion: Vec<Vec<gm_formats::mdl::MoveSegment>>,
     /// Per sequence: its animation events `(cycle, event, type, options, name)` in file order.
     pub sequence_events: Vec<Vec<SequenceEvent>>,
     /// Flex controllers: `(name, min, max, kind)`.
@@ -356,6 +358,11 @@ impl ModelScriptData {
                         .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
                         .map_or([0.0; 3], |a| a.movement),
                 );
+                out.sequence_motion.push(
+                    anims
+                        .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
+                        .map_or_else(Vec::new, |a| a.segments.clone()),
+                );
                 out.sequence_events.push(seq_events(q));
             }
         }
@@ -412,6 +419,14 @@ impl ModelScriptData {
                     anims
                         .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
                         .map_or([0.0; 3], |a| a.movement)
+                })
+                .collect(),
+            sequence_motion: seqs
+                .iter()
+                .map(|q| {
+                    anims
+                        .get(usize::try_from(q.anim).unwrap_or(usize::MAX))
+                        .map_or_else(Vec::new, |a| a.segments.clone())
                 })
                 .collect(),
             sequence_events: seqs.iter().map(seq_events).collect(),
@@ -17937,6 +17952,14 @@ impl<'w> Server<'w> {
             } else {
                 n.melee_dash_step.abs().copysign(dash)
             };
+            let per_tick = match (dash > 1e-3 && swinging)
+                .then(|| self.npc_lunge_motion(id, now))
+                .flatten()
+            {
+                Some(None) => continue,
+                Some(Some(d)) => d.min(dash),
+                None => per_tick,
+            };
             let step = (to.normalize() * per_tick).extend(0.0);
             let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
             let tr = self.collision.trace_box(
@@ -17967,6 +17990,50 @@ impl<'w> Server<'w> {
                 }
             }
         }
+    }
+
+    /// A lunge driven by its sequence's own root motion, as the game's: the body moves on its
+    /// thinks only, each by the motion of the interval it starts (server_npc_melee_antlion:
+    /// pounce2 997.8 -> 956.4 -> 934.9 -> 931.7, 41.4 / 21.5 / 3.2 u = the one segment's
+    /// 130.6 -> 1.8 u/s over frames 0..8; pounce 11.9 / 40.9 / 31.6 on 221 / 228 / 235).
+    /// `None` without motion data, `Some(None)` between thinks.
+    fn npc_lunge_motion(&self, id: u32, now: u64) -> Option<Option<f32>> {
+        let n = self.npcs.get(&id)?;
+        let m = n.melee_swing?;
+        let script = &self.models.get(&n.model)?.script;
+        let i = script.sequences.iter().position(|q| *q == n.sequence)?;
+        let segs = script.sequence_motion.get(i)?;
+        let (fps, _, _) = *script.sequence_anim.get(i)?;
+        if fps <= 0.0 || segs.iter().all(|g| Vec3::from(g.position).length() < 1e-3) {
+            return None;
+        }
+        let interval = u64::from(n.think_interval);
+        if n.next_think != now && n.next_think != now + interval {
+            return Some(None);
+        }
+        let start = n.swing_until.saturating_sub(m.swing_ticks);
+        let travel = |t: u64| {
+            let f = t.saturating_sub(start) as f32 * weapons::TICK_DT * fps;
+            let (mut from, mut sum) = (0.0f32, 0.0f32);
+            for g in segs {
+                let (end, len) = (g.end_frame as f32, Vec3::from(g.position).length());
+                if f >= end {
+                    sum += len;
+                    from = end;
+                    continue;
+                }
+                let u = ((f - from) / (end - from).max(1e-3)).clamp(0.0, 1.0);
+                let mean = (g.v0 + g.v1) * 0.5;
+                sum += if mean > 1e-3 {
+                    len * (g.v0 * u + (g.v1 - g.v0) * u * u * 0.5) / mean
+                } else {
+                    len * u
+                };
+                break;
+            }
+            sum
+        };
+        Some(Some((travel(now + interval) - travel(now)).max(0.0)))
     }
 
     /// One hitscan bullet from an NPC: the nearest of the world, a prop and a player hull on

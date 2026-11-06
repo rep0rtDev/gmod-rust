@@ -660,6 +660,17 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   game moves the antlion only on its thinks and unevenly (pounce2 41.4 / 21.5 / 3.2 - the
   ACT_ANTLION_POUNCE_MOVING sequence's own motion, 70.9 u/s × 0.933 s = 66.2 u; pounce 11.9 /
   40.9 / 31.6), ours dashes 6 / 4 u a tick.
+- Lunges move by their sequence's own root motion (`mstudiomovement_t` segments, now parsed:
+  `AnimDesc::segments`, `ModelScriptData::sequence_motion`): the body moves on its thinks only,
+  each by the motion of the interval it starts (frame = ticks since the swing × TICK_DT × fps),
+  capped by the move's `lunge`. pounce2 (one segment, 130.6 → 1.8 u/s over frames 0..8, 66.2 u)
+  gives 41.4 / 21.5 / 3.1 against the game's 41.4 / 21.5 / 3.2; pounce (stand to frame 8, then
+  33.7 → 85.2, 81.7 ...) 12.0 / 40.8 / 31.2 against 11.9 / 40.9 / 31.6 - every antlion flight row
+  for row, melee_antlion 35.4 → 31.3. The pounce stops at 84 u in both full recorded flights
+  whatever the bot's distance (38 / 34 u left), not at its AE_ANTLION_MELEE_POUNCE (frame 18),
+  so the 84 u cap stays measured, not derived.
   Open: the thrown crab lands on the bot at row 263 vs the game's 269 - the goldens do not
-  record the crab entity, so release tick vs flight speed needs an oracle recording; the lunge
-  flight profile (sequence motion segments, think-stepped).
+  record the crab entity, so release tick vs flight speed needs an oracle recording; the third
+  pounce of melee_antlion: the game's 31.6 u step at 62 u from the bot is refused whole (it
+  would end 30.7 u from it, inside the hulls) and taken a think later - our lunge trace does
+  not collide with players.

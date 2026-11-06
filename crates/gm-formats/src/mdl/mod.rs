@@ -484,6 +484,18 @@ pub struct AnimDesc {
     /// Root displacement over the whole animation (the sum of its `mstudiomovement_t`
     /// segments), model space; zero when the animation has no movement data.
     pub movement: [f32; 3],
+    /// The `mstudiomovement_t` segments in order: the root's piecewise motion.
+    pub segments: Vec<MoveSegment>,
+}
+
+/// One `mstudiomovement_t`: up to frame `end_frame` the root speed goes linearly from `v0` to
+/// `v1` (units per second at the animation's fps) and covers `position` (model space).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MoveSegment {
+    pub end_frame: i32,
+    pub v0: f32,
+    pub v1: f32,
+    pub position: [f32; 3],
 }
 
 impl AnimDesc {
@@ -668,14 +680,24 @@ pub fn anim_descs(data: &[u8], header: &Header) -> Vec<AnimDesc> {
         let moves = i32_at(data, o + 20).unwrap_or(0).max(0) as usize;
         let move_off = i32_at(data, o + 24).unwrap_or(0) as usize;
         let mut movement = [0.0f32; 3];
+        let mut segments = Vec::with_capacity(moves);
         for m in 0..moves {
-            let base = o + move_off + m * 44 + 32;
-            for (k, v) in movement.iter_mut().enumerate() {
-                *v += f32::from_bits(i32_at(data, base + k * 4).unwrap_or(0) as u32);
+            let seg = o + move_off + m * 44;
+            let f = |at: usize| f32::from_bits(i32_at(data, seg + at).unwrap_or(0) as u32);
+            let position = [f(32), f(36), f(40)];
+            for (v, p) in movement.iter_mut().zip(position) {
+                *v += p;
             }
+            segments.push(MoveSegment {
+                end_frame: i32_at(data, seg).unwrap_or(0),
+                v0: f(8),
+                v1: f(12),
+                position,
+            });
         }
         out.push(AnimDesc {
             movement,
+            segments,
             name,
             fps,
             flags: i32_at(data, o + 12).unwrap_or(0),
