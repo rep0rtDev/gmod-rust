@@ -1180,11 +1180,25 @@ impl AnimSource {
         params: &[(&str, f32)],
         local: &mut LocalPose,
     ) {
+        // bone_setup's AddSequenceLayers: the ramp runs over the host cycle, or over the pose
+        // parameter named by the layer (STUDIO_AL_POSE), smoothed by STUDIO_AL_SPLINE
         for layer in &seq.autolayers {
-            if layer.flags & 0x4000 != 0 {
+            if layer.flags & 0x1000 != 0 {
                 continue;
             }
-            let w = layer.weight(cycle);
+            let pose_driven = layer.flags & 0x4000 != 0;
+            let index = if pose_driven {
+                self.param(i32::from(layer.pose), params)
+            } else {
+                cycle
+            };
+            let mut w = layer.weight(index);
+            if layer.flags & 0x40 != 0 {
+                w = w * w * (3.0 - 2.0 * w);
+            }
+            if layer.flags & 0x200 != 0 && w > 0.0 {
+                w = 1.0;
+            }
             let Some(lseq) = self.sequences.get(layer.sequence.max(0) as usize) else {
                 continue;
             };
@@ -1194,7 +1208,7 @@ impl AnimSource {
             if w <= 0.0 || lanim.flags & 4 == 0 || lanim.frames <= 0 {
                 continue;
             }
-            let lcycle = if layer.start != layer.end {
+            let lcycle = if layer.start != layer.end && !pose_driven {
                 ((cycle - layer.start) / (layer.end - layer.start)).clamp(0.0, 1.0)
             } else {
                 cycle
