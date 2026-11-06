@@ -44,7 +44,8 @@ struct Args {
     /// Identity (public key hex) that gets admin commands (`Kick`, `Reload`) once authenticated.
     #[arg(long)]
     admin: Vec<String>,
-    /// Banned identity (public key hex); `<data>/bans.txt` (one per line) is loaded and kept too.
+    /// Banned identity (public key hex); `<data>/cfg/banned_user.cfg` (`banid 0 <hex>`, written
+    /// like srcds's) and the older `<data>/bans.txt` (one hex per line) are loaded too.
     #[arg(long)]
     ban: Vec<String>,
     /// Load `<data>/saves/<name>.rdup` into the world at start (owner: player 0, the server).
@@ -218,18 +219,27 @@ fn main() -> Result<()> {
         net.admin_keys
             .insert(parse_key(a).with_context(|| format!("--admin {a}"))?);
     }
-    let bans_path = args.data.join("bans.txt");
+    let bans_path = args.data.join("cfg").join("banned_user.cfg");
     for b in &args.ban {
         net.bans
-            .insert(parse_key(b).with_context(|| format!("--ban {b}"))?);
+            .insert(parse_key(b).with_context(|| format!("--ban {b}"))?, None);
     }
-    if let Ok(text) = std::fs::read_to_string(&bans_path) {
+    for path in [&bans_path, &args.data.join("bans.txt")] {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
         for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-            net.bans
-                .insert(parse_key(line).with_context(|| format!("{}", bans_path.display()))?);
+            // `banid 0 <hex>` as srcds writes it, or a bare hex key
+            let key = line
+                .strip_prefix("banid ")
+                .map_or(line, |r| r.split_once(' ').map_or(r, |(_, k)| k).trim());
+            net.bans.insert(
+                parse_key(key).with_context(|| format!("{}", path.display()))?,
+                None,
+            );
         }
     }
-    let mut bans_known = net.bans.len();
+    let mut bans_known = net.bans_rev;
     if !args.addon.is_empty() {
         let mut rt = gm_script::Runtime::new();
         rt.set_sound_duration(sound_duration.clone());
@@ -336,13 +346,19 @@ fn main() -> Result<()> {
                 log.line(&e);
             }
         }
-        if net.bans.len() != bans_known {
-            bans_known = net.bans.len();
-            let text: String = net.bans.iter().map(|b| hex_of(b) + "\n").collect();
-            if let Err(e) =
-                std::fs::create_dir_all(&args.data).and_then(|_| std::fs::write(&bans_path, text))
+        if net.bans_rev != bans_known {
+            bans_known = net.bans_rev;
+            // like srcds's writeid: only the permanent filters are kept
+            let text: String = net
+                .bans
+                .iter()
+                .filter(|(_, exp)| exp.is_none())
+                .map(|(b, _)| format!("banid 0 {}\n", hex_of(b)))
+                .collect();
+            if let Err(e) = std::fs::create_dir_all(args.data.join("cfg"))
+                .and_then(|_| std::fs::write(&bans_path, text))
             {
-                eprintln!("bans.txt: {e}");
+                eprintln!("banned_user.cfg: {e}");
             }
         }
         if let Some(m) = master {

@@ -108,7 +108,10 @@ pub struct ServerNet {
     /// Identities that become admins when they authenticate.
     pub admin_keys: std::collections::BTreeSet<[u8; 32]>,
     /// Banned identities: refused at `Auth`; with `require_auth` that is before the `Welcome`.
-    pub bans: std::collections::BTreeSet<[u8; 32]>,
+    /// Banned identities: `None` is permanent, `Some(tick)` expires at that server tick.
+    pub bans: std::collections::BTreeMap<[u8; 32], Option<u32>>,
+    /// Bumped whenever the ban list changes or `writeid` asks for it to be written.
+    pub bans_rev: u32,
     /// Connections beyond this are refused with `full`.
     pub max_players: usize,
     /// Ticks without a packet before a client is dropped (`timed out`).
@@ -172,7 +175,8 @@ impl ServerNet {
             hooks: None,
             admins: std::collections::BTreeSet::new(),
             admin_keys: std::collections::BTreeSet::new(),
-            bans: std::collections::BTreeSet::new(),
+            bans: std::collections::BTreeMap::new(),
+            bans_rev: 0,
             max_players: 64,
             timeout_ticks: DEFAULT_TIMEOUT_TICKS,
             pending_sounds: Vec::new(),
@@ -397,7 +401,11 @@ impl ServerNet {
                                     })
                                 })
                             });
-                        if ok && self.bans.contains(&pubkey) {
+                        let banned = self
+                            .bans
+                            .get(&pubkey)
+                            .is_some_and(|exp| exp.is_none_or(|t| t > self.tick));
+                        if ok && banned {
                             refuse(slot, "banned");
                             self.log.push(format!(
                                 "{} refused: banned {}",
@@ -500,7 +508,8 @@ impl ServerNet {
         };
         if ban {
             if let Some(id) = slot.identity {
-                self.bans.insert(id);
+                self.bans.insert(id, None);
+                self.bans_rev += 1;
             }
         }
         let name = slot.name.clone();
@@ -657,10 +666,93 @@ impl ServerNet {
                 None => vec![format!("{verb}: player id expected")],
             },
             "unban" => match rest.first().and_then(|w| parse_hex(w)) {
-                Some(k) if self.bans.remove(&k) => vec!["unban: ok".to_string()],
+                Some(k) if self.bans.remove(&k).is_some() => {
+                    self.bans_rev += 1;
+                    vec!["unban: ok".to_string()]
+                }
                 Some(_) => vec!["unban: not banned".to_string()],
                 None => vec!["unban: public key (32 hex bytes) expected".to_string()],
             },
+            // srcds's id filter: banid <minutes> <userid|id> [kick], removeid, listid, writeid
+            "banid" => {
+                let minutes = rest.first().and_then(|m| m.parse::<f32>().ok());
+                let (Some(minutes), Some(who), true) = (minutes, rest.get(1), rest.len() <= 3)
+                else {
+                    return vec![
+                        "Usage:  banid < minutes > < userid | uniqueid > { kick }".to_string(),
+                        "Use 0 minutes for permanent".to_string(),
+                    ];
+                };
+                let by_userid = who
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(|p| self.clients.values().find(|c| c.player == p));
+                let key = match (by_userid, parse_hex(who)) {
+                    (Some(c), _) => match c.identity {
+                        Some(k) => k,
+                        None => return vec![format!("banid: player {who} has no identity")],
+                    },
+                    (None, Some(k)) => k,
+                    (None, None) => return vec![format!("banid: unknown player or id {who}")],
+                };
+                let expiry = (minutes > 0.0).then(|| {
+                    self.tick
+                        + (minutes * 60.0 / gm_core::tick::DEFAULT_TICK_INTERVAL).ceil() as u32
+                });
+                self.bans.insert(key, expiry);
+                self.bans_rev += 1;
+                if rest.get(2).is_some_and(|k| *k == "kick") {
+                    let kicked: Vec<u32> = self
+                        .clients
+                        .values()
+                        .filter(|c| c.identity == Some(key))
+                        .map(|c| c.player)
+                        .collect();
+                    for p in kicked {
+                        self.kick(server, p, "banned", false);
+                    }
+                }
+                Vec::new()
+            }
+            "removeid" => match rest.first().and_then(|w| parse_hex(w)) {
+                Some(k) => {
+                    if self.bans.remove(&k).is_some() {
+                        self.bans_rev += 1;
+                        vec![format!("removeid: filter removed for {}", hex(&k))]
+                    } else {
+                        vec![format!("removeid: couldn't find {}", hex(&k))]
+                    }
+                }
+                None => vec!["Usage:  removeid < slot | uniqueid >".to_string()],
+            },
+            "listid" => {
+                self.prune_bans();
+                if self.bans.is_empty() {
+                    return vec!["ID filter list: empty".to_string()];
+                }
+                let n = self.bans.len();
+                let mut out = vec![format!(
+                    "ID filter list: {n} {}",
+                    if n == 1 { "entry" } else { "entries" }
+                )];
+                for (i, (k, exp)) in self.bans.iter().enumerate() {
+                    let left = match exp {
+                        None => "permanent".to_string(),
+                        Some(t) => format!(
+                            "{:.3} min",
+                            t.saturating_sub(self.tick) as f32
+                                * gm_core::tick::DEFAULT_TICK_INTERVAL
+                                / 60.0
+                        ),
+                    };
+                    out.push(format!("{} {} : {left}", i + 1, hex(k)));
+                }
+                out
+            }
+            "writeid" => {
+                self.bans_rev += 1;
+                vec!["Writing cfg/banned_user.cfg.".to_string()]
+            }
             "cvar" => match (rest.first(), rest.get(1)) {
                 (Some(n), None) => vec![match server.cvar(n) {
                     Some(v) => format!("{n} = {v}"),
@@ -710,6 +802,21 @@ impl ServerNet {
     }
 
     /// Connection events since the last call (joins, leaves, refusals, kicks, timeouts).
+    pub fn is_banned(&self, key: &[u8; 32]) -> bool {
+        self.bans
+            .get(key)
+            .is_some_and(|exp| exp.is_none_or(|t| t > self.tick))
+    }
+
+    fn prune_bans(&mut self) {
+        let tick = self.tick;
+        let before = self.bans.len();
+        self.bans.retain(|_, exp| exp.is_none_or(|t| t > tick));
+        if self.bans.len() != before {
+            self.bans_rev += 1;
+        }
+    }
+
     pub fn take_events(&mut self) -> Vec<String> {
         std::mem::take(&mut self.events)
     }

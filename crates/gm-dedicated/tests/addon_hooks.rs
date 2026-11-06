@@ -2356,7 +2356,7 @@ fn connections_time_out_get_kicked_banned_refused_when_full_and_leave() {
     assert_eq!(victim.disconnected.as_deref(), Some("banned"));
     assert!(!server.players.contains_key(&victim_id));
     assert_eq!(server.sandbox.props().len(), 1, "the leaver's crate stays");
-    assert!(sn.bans.contains(&victim_public));
+    assert!(sn.bans.contains_key(&victim_public));
     // the banned identity reconnecting is refused
     let mut again = gm_net::ClientNet::new(1, "victim2").with_key(&victim_secret);
     run(
