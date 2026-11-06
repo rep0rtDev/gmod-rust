@@ -146,6 +146,7 @@ mod tests {
             }],
             ropes: Vec::new(),
             thrusters: Vec::new(),
+            lightstyles: Vec::new(),
             removed: vec![1],
             own: OwnSandbox {
                 count: 1,

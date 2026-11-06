@@ -403,6 +403,8 @@ pub enum ServerMsg {
         entities: Vec<EntityState>,
         ropes: Vec<RopeSnap>,
         thrusters: Vec<ThrusterSnap>,
+        /// Named light styles (32..) at their brightness: `light` TurnOn / TurnOff / SetPattern.
+        lightstyles: Vec<(u8, f32)>,
         removed: Vec<u32>,
         own: OwnSandbox,
         local: Option<LocalPlayer>,
@@ -598,7 +600,7 @@ fn sha(r: &mut Reader) -> Result<[u8; 32], Truncated> {
 /// The editor entities' vars by entity id: key / value pairs (`ServerMsg::EntityEdits`).
 pub type EditVars = Vec<(u32, Vec<(String, String)>)>;
 
-pub const PROTOCOL: u16 = 29;
+pub const PROTOCOL: u16 = 30;
 
 /// Usercmds are coded as deltas against the previous one in the batch (the first against the
 /// default): a change mask byte, then only the changed fields. Ticks are consecutive, so only the
@@ -1085,6 +1087,7 @@ impl ServerMsg {
                 entities,
                 ropes,
                 thrusters,
+                lightstyles,
                 removed,
                 own,
                 local,
@@ -1222,6 +1225,11 @@ impl ServerMsg {
                     w.u32(t.ent);
                     w.vec3(t.offset);
                     w.str(&t.effect);
+                }
+                w.varint(lightstyles.len() as u64);
+                for (style, brightness) in lightstyles {
+                    w.u8(*style);
+                    w.f32(*brightness);
                 }
                 w.varint(removed.len() as u64);
                 for id in removed {
@@ -1675,6 +1683,11 @@ impl ServerMsg {
                     });
                 }
                 let n = r.varint()? as usize;
+                let mut lightstyles = Vec::with_capacity(n.min(256));
+                for _ in 0..n {
+                    lightstyles.push((r.u8()?, r.f32()?));
+                }
+                let n = r.varint()? as usize;
                 let mut removed = Vec::with_capacity(n);
                 for _ in 0..n {
                     removed.push(r.u32()?);
@@ -1696,6 +1709,7 @@ impl ServerMsg {
                     entities,
                     ropes,
                     thrusters,
+                    lightstyles,
                     removed,
                     own: OwnSandbox {
                         count,

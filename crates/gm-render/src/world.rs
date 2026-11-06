@@ -589,6 +589,50 @@ pub struct SkyCamera {
     pub scale: f32,
 }
 
+/// A lightmapped face whose light styles can change at runtime.
+struct LmFace {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    bumped: bool,
+    styles: Vec<u8>,
+    /// Linear luxels per style (`nb * w * h`, the bump pages one after another).
+    blocks: Vec<Vec<[f32; 3]>>,
+}
+
+/// The styles' luxel blocks summed at their brightness.
+fn sum_styles(blocks: &[Vec<[f32; 3]>], styles: &[u8], scale: &[f32]) -> Vec<[f32; 3]> {
+    let n = blocks.first().map_or(0, Vec::len);
+    let mut out = vec![[0f32; 3]; n];
+    for (block, &style) in blocks.iter().zip(styles) {
+        let k = scale[style as usize];
+        for (dst, src) in out.iter_mut().zip(block) {
+            for c in 0..3 {
+                dst[c] += src[c] * k;
+            }
+        }
+    }
+    out
+}
+
+/// The atlas layout of a face's summed luxels: the flat page, or a bumped face's four pages
+/// side by side (page 0 first).
+fn lm_strip(samples: &[[f32; 3]], w: u32, h: u32, bumped: bool) -> Vec<[f32; 3]> {
+    let page = (w * h) as usize;
+    if !bumped {
+        return samples[..page].to_vec();
+    }
+    let mut strip = Vec::with_capacity(4 * page);
+    for row in 0..h as usize {
+        for k in 0..4 {
+            let o = k * page + row * w as usize;
+            strip.extend_from_slice(&samples[o..o + w as usize]);
+        }
+    }
+    strip
+}
+
 pub struct WorldRenderer {
     /// Linear light / `lm_scale` is what the lightmap atlas stores.
     pub lm_scale: f32,
@@ -623,6 +667,11 @@ pub struct WorldRenderer {
     bump_fallback: wgpu::TextureView,
     white_fallback: wgpu::TextureView,
     cubes: CubeSet,
+    /// The lightmap atlas texture and, for the faces lit by a named style (32..), their
+    /// per-style luxels: re-summed and rewritten when a `light` is switched.
+    lm_tex: wgpu::Texture,
+    lm_faces: Vec<LmFace>,
+    style_scale: Vec<f32>,
     color_format: wgpu::TextureFormat,
     reflect: Mutex<ReflectState>,
     reflect_sampler: wgpu::Sampler,
@@ -1676,6 +1725,7 @@ impl WorldRenderer {
         let lm_scale: f32 = 1.0;
         let mut atlas = Atlas::new(atlas_size);
         let style_scale = crate::lightmap::style_brightness(bsp);
+        let mut lm_faces: Vec<LmFace> = Vec::new();
         // the map's env_tonemap_controller (set by logic_auto OnMapSpawn): the exposure the
         // auto path may use lies between its min and max; without a luminance readback we
         // hold mat_hdr_tonemapscale 1 clamped into that range
@@ -1881,41 +1931,48 @@ impl WorldRenderer {
                 let nb = if bumped { 4 } else { 1 };
                 // the lump holds one block per light style (each block its bump pages); the
                 // styles sum at their brightness (gm_construct's sun is named: style 33)
-                let mut samples = vec![[0f32; 3]; nb * page];
-                for (si, &style) in face.styles.iter().enumerate().take(face.light_styles()) {
-                    let k = style_scale[style as usize];
-                    for b in 0..nb {
-                        let o = (si * nb + b) * page;
-                        if let Some(block) = raw.get(o..o + page) {
-                            for (dst, src) in
-                                samples[b * page..(b + 1) * page].iter_mut().zip(block)
-                            {
-                                let l = src.to_linear();
-                                for c in 0..3 {
-                                    dst[c] += l[c] * k;
+                let styles: Vec<u8> = face
+                    .styles
+                    .iter()
+                    .copied()
+                    .take(face.light_styles())
+                    .collect();
+                let blocks: Vec<Vec<[f32; 3]>> = (0..styles.len())
+                    .map(|si| {
+                        let mut block_s = vec![[0f32; 3]; nb * page];
+                        for b in 0..nb {
+                            let o = (si * nb + b) * page;
+                            if let Some(block) = raw.get(o..o + page) {
+                                for (dst, src) in
+                                    block_s[b * page..(b + 1) * page].iter_mut().zip(block)
+                                {
+                                    *dst = src.to_linear();
                                 }
                             }
                         }
-                    }
-                }
+                        block_s
+                    })
+                    .collect();
+                let samples = sum_styles(&blocks, &styles, &style_scale);
                 // bumped faces: the four pages side by side, page 0 (flat) first
                 let bumped = bumped && samples.len() >= 4 * page;
-                let placed = if bumped {
-                    let mut strip = Vec::with_capacity(4 * page);
-                    for row in 0..h as usize {
-                        for k in 0..4 {
-                            let o = k * page + row * w as usize;
-                            strip.extend_from_slice(&samples[o..o + w as usize]);
-                        }
-                    }
-                    atlas.place(4 * w, h, &strip)
-                } else {
-                    atlas.place(w, h, &samples[..page])
-                };
+                let strip = lm_strip(&samples, w, h, bumped);
+                let placed = atlas.place(if bumped { 4 * w } else { w }, h, &strip);
                 match placed {
                     Some(p) => {
                         if bumped {
                             lm_page = w as f32 / atlas_size as f32;
+                        }
+                        if styles.iter().any(|&s| s >= 32) {
+                            lm_faces.push(LmFace {
+                                x: p.x,
+                                y: p.y,
+                                w,
+                                h,
+                                bumped,
+                                styles,
+                                blocks,
+                            });
                         }
                         (p, true)
                     }
@@ -2797,6 +2854,9 @@ impl WorldRenderer {
             bump_fallback,
             white_fallback,
             cubes,
+            lm_tex,
+            lm_faces,
+            style_scale,
             color_format,
             reflect: Mutex::new(ReflectState::default()),
             reflect_sampler,
@@ -3479,6 +3539,53 @@ pub fn body_group_choice(body: &str, part: usize, n: usize) -> usize {
 
 impl WorldRenderer {
     /// Loads `path` (body group 0, skin 0) for `draw_models`; `None` if it has no drawable mesh.
+    /// The named light styles at their brightness (`light` TurnOn / TurnOff / SetPattern from
+    /// the server): the faces they light are re-summed and rewritten into the atlas.
+    pub fn set_lightstyles(&mut self, gpu: &Gpu, styles: &[(u8, f32)]) {
+        let mut changed: Vec<u8> = Vec::new();
+        for &(style, b) in styles {
+            if (self.style_scale[style as usize] - b).abs() > 1e-4 {
+                self.style_scale[style as usize] = b;
+                changed.push(style);
+            }
+        }
+        if changed.is_empty() {
+            return;
+        }
+        for f in &self.lm_faces {
+            if !f.styles.iter().any(|s| changed.contains(s)) {
+                continue;
+            }
+            let sum = sum_styles(&f.blocks, &f.styles, &self.style_scale);
+            let strip = lm_strip(&sum, f.w, f.h, f.bumped);
+            let sw = if f.bumped { 4 * f.w } else { f.w };
+            let bytes = crate::lightmap::encode_block(sw, f.h, &strip);
+            gpu.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.lm_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: f.x - 1,
+                        y: f.y - 1,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &bytes,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some((sw + 2) * 8),
+                    rows_per_image: Some(f.h + 2),
+                },
+                wgpu::Extent3d {
+                    width: sw + 2,
+                    height: f.h + 2,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+    }
+
     /// Auto-exposure step from a frame probe: `bright` is the brightness (linear, 0..1 of
     /// the display range) the brightest 2 % of pixels reach, which the tonemap aims at 60 %
     /// (`mat_tonemap_percent_bright_pixels` / `mat_tonemap_percent_target`); the goal is

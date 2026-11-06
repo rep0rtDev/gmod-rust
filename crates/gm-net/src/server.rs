@@ -1732,6 +1732,7 @@ impl ServerNet {
                             effect,
                         })
                         .collect(),
+                    lightstyles: server.lightstyles(),
                     removed,
                     own,
                     local,

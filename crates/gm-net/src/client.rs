@@ -21,6 +21,8 @@ pub struct ClientWorld {
     pub ropes: Vec<crate::msg::RopeSnap>,
     /// The thrusters that are on, with their effects.
     pub thrusters: Vec<crate::msg::ThrusterSnap>,
+    /// Named light styles at their brightness (`light` TurnOn / TurnOff).
+    pub lightstyles: Vec<(u8, f32)>,
     pub entities: BTreeMap<u32, EntityState>,
     pub own: OwnSandbox,
     pub last_cmd_tick: u32,
@@ -545,6 +547,7 @@ impl ClientNet {
                         entities,
                         ropes,
                         thrusters,
+                        lightstyles,
                         removed,
                         own,
                         local,
@@ -593,6 +596,7 @@ impl ClientNet {
                             entities: world,
                             ropes,
                             thrusters,
+                            lightstyles,
                             own,
                             last_cmd_tick,
                             local,

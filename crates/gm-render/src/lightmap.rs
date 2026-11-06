@@ -58,6 +58,26 @@ pub fn style_brightness(bsp: &Bsp<'_>) -> Vec<f32> {
     v
 }
 
+/// A `w` x `h` block of linear luxels as Rgba16Float texels with the atlas's one-texel
+/// clamp border: `(w + 2) * (h + 2)` texels, row-major.
+pub fn encode_block(w: u32, h: u32, samples: &[[f32; 3]]) -> Vec<u8> {
+    let (pw, ph) = (w + 2, h + 2);
+    let mut out = vec![0u8; (pw * ph * 8) as usize];
+    for gy in 0..ph {
+        for gx in 0..pw {
+            let sx = (gx.max(1) - 1).min(w - 1);
+            let sy = (gy.max(1) - 1).min(h - 1);
+            let c = samples[(sy * w + sx) as usize];
+            let i = ((gy * pw + gx) * 8) as usize;
+            for (k, v) in [c[0], c[1], c[2], 1.0].into_iter().enumerate() {
+                let bytes = half::f16::from_f32(v.max(0.0)).to_le_bytes();
+                out[i + k * 2..i + k * 2 + 2].copy_from_slice(&bytes);
+            }
+        }
+    }
+    out
+}
+
 pub struct Atlas {
     pub size: u32,
     /// Rgba16Float texels: linear light as stored in the BSP (HDR values pass through).
@@ -109,17 +129,12 @@ impl Atlas {
         };
         self.cursor_x += pw;
         self.shelf_h = self.shelf_h.max(ph);
+        let block = encode_block(w, h, samples);
+        let row = (pw * 8) as usize;
         for gy in 0..ph {
-            for gx in 0..pw {
-                let sx = (gx.max(1) - 1).min(w - 1);
-                let sy = (gy.max(1) - 1).min(h - 1);
-                let c = samples[(sy * w + sx) as usize];
-                let i = (((p.y - 1 + gy) * self.size + (p.x - 1 + gx)) * 8) as usize;
-                for (k, v) in [c[0], c[1], c[2], 1.0].into_iter().enumerate() {
-                    let h = half::f16::from_f32(v.max(0.0)).to_le_bytes();
-                    self.pixels[i + k * 2..i + k * 2 + 2].copy_from_slice(&h);
-                }
-            }
+            let dst = (((p.y - 1 + gy) * self.size + (p.x - 1)) * 8) as usize;
+            let src = gy as usize * row;
+            self.pixels[dst..dst + row].copy_from_slice(&block[src..src + row]);
         }
         Some(p)
     }

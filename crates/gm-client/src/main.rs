@@ -4103,6 +4103,8 @@ impl App {
         };
         let fov_x = self.camera_fov();
         let Some(g) = &mut self.gfx else { return };
+        g.world
+            .set_lightstyles(&g.gpu, &self.sim.client.world.lightstyles);
         for r in &self.sim.client.world.ropes {
             if !g.rope_mats.contains_key(&r.material) {
                 let m = g.world.sprite_material(&g.gpu, &self.mount, &r.material);

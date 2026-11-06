@@ -174,6 +174,13 @@ pub enum Kind {
         pitch: f32,
         looped: bool,
     },
+    /// A named `light` / `light_spot` on a style of its own (32..): TurnOn / TurnOff / Toggle /
+    /// SetPattern drive the style's brightness on the clients.
+    Light {
+        on: bool,
+        style: u8,
+        pattern: String,
+    },
     Logic,
 }
 
@@ -271,6 +278,7 @@ impl MapEntity {
                 | Kind::Relay { .. }
                 | Kind::Timer { .. }
                 | Kind::Ambient { .. }
+                | Kind::Light { .. }
                 | Kind::Logic => false,
                 _ => true,
             }
@@ -343,6 +351,16 @@ pub struct MapIo {
 }
 
 const TICK: f32 = gm_core::tick::DEFAULT_TICK_INTERVAL;
+
+/// Mean brightness of a light pattern (`a` = 0, `m` = 1, `z` = 2).
+fn pattern_mean(pattern: &str) -> f32 {
+    let n = pattern.len().max(1) as f32;
+    pattern
+        .bytes()
+        .map(|c| c.saturating_sub(b'a') as f32 / 12.0)
+        .sum::<f32>()
+        / n
+}
 
 fn ticks(seconds: f32) -> u64 {
     (seconds / TICK).round().max(0.0) as u64
@@ -440,6 +458,18 @@ fn build(def: MapEntityDef, id: u32) -> MapEntity {
                 speed: def.num("maxspeed", 100.0) * sign,
                 on: flags & 1 != 0,
                 angle: 0.0,
+            }
+        }
+        "light" | "light_spot"
+            if def
+                .get("style")
+                .and_then(|v| v.trim().parse::<u32>().ok())
+                .is_some_and(|v| (32..256).contains(&v)) =>
+        {
+            Kind::Light {
+                on: flags & 1 == 0,
+                style: def.num("style", 0.0) as u8,
+                pattern: def.get("pattern").unwrap_or("").trim().to_string(),
             }
         }
         "func_brush" => Kind::Toggled {
@@ -647,6 +677,27 @@ impl Server<'_> {
         }
     }
 
+    /// The named light styles for the snapshot: style, brightness (the pattern's mean,
+    /// `m` = 1 when none; 0 while every light on the style is off).
+    pub fn lightstyles(&self) -> Vec<(u8, f32)> {
+        let mut out: Vec<(u8, f32)> = Vec::new();
+        for e in self.map_io.entities.iter().filter(|e| e.alive) {
+            let Kind::Light { on, style, pattern } = &e.kind else {
+                continue;
+            };
+            let b = if *on {
+                pattern_mean(if pattern.is_empty() { "m" } else { pattern })
+            } else {
+                0.0
+            };
+            match out.iter_mut().find(|(s, _)| s == style) {
+                Some(slot) => slot.1 = slot.1.max(b),
+                None => out.push((*style, b)),
+            }
+        }
+        out
+    }
+
     pub fn map_entity_states(&self) -> Vec<(u32, String, Vec3, Vec3)> {
         self.map_io
             .entities
@@ -844,6 +895,13 @@ impl Server<'_> {
                 "disable" => *enabled = false,
                 "toggle" => *enabled = !*enabled,
                 "firetimer" => events.push("OnTimer"),
+                _ => {}
+            },
+            Kind::Light { on, pattern, .. } => match input_lc.as_str() {
+                "turnon" => *on = true,
+                "turnoff" => *on = false,
+                "toggle" => *on = !*on,
+                "setpattern" => *pattern = param.trim().to_string(),
                 _ => {}
             },
             Kind::Ambient {

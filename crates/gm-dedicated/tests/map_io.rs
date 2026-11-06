@@ -237,3 +237,38 @@ fn ambient_generic_plays_revolumes_and_fades_through_its_inputs() {
         .iter()
         .any(|s| s.stop && s.ent == snd.ent && (s.fade - 2.0).abs() < 1e-6));
 }
+
+#[test]
+fn the_dark_room_button_toggles_the_colour_room_lights_style() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_map_entities(world.map_entities.clone(), world.surface);
+    assert_eq!(
+        server.lightstyles(),
+        vec![(32, 1.0)],
+        "ColourRoomLights on at spawn"
+    );
+    let button = server
+        .map_io
+        .entities
+        .iter()
+        .find(|e| e.classname == "func_button")
+        .cloned()
+        .expect("gm_construct has a func_button");
+    let idle = std::collections::BTreeMap::new();
+    assert!(server.fire_input_id(button.id, "Press", "", 0));
+    server.tick(&idle);
+    assert_eq!(
+        server.lightstyles(),
+        vec![(32, 0.0)],
+        "OnPressed ColourRoomLights,Toggle"
+    );
+    server.fire_input("ColourRoomLights", "SetPattern", "z", 0);
+    server.fire_input("ColourRoomLights", "TurnOn", "", 0);
+    server.tick(&idle);
+    let styles = server.lightstyles();
+    assert_eq!(styles.len(), 1);
+    assert!((styles[0].1 - 25.0 / 12.0).abs() < 1e-5, "{styles:?}");
+}
