@@ -20,6 +20,10 @@ pub struct LoadedWorld {
     /// `light_environment` (`game.GetSunInfo`), if the map has one.
     pub map_revision: i32,
     pub sun_direction: Option<Vec3>,
+    /// Static props with `solid 6` (VPHYSICS) as the player and NPC traces see them: their
+    /// PHY hulls at the prop's pose (`entity` `u32::MAX`, no entity behind them); the same
+    /// hulls sit in the physics world as part of the static map body.
+    pub static_convexes: Vec<gm_collision::Convex>,
 }
 
 /// Default Jolt solver settings used by all harnesses (`tools/parity/runner` mirrors this).
@@ -36,6 +40,34 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
             .into_iter()
             .map(|h| h.points)
             .collect();
+    let mut static_convexes = Vec::new();
+    if let Ok(props) = gm_formats::bsp::extra::StaticProps::parse(&bsp) {
+        for sp in props.props.iter().filter(|p| p.solid == 6) {
+            let Some(model) = props.models.get(sp.model as usize) else {
+                continue;
+            };
+            let info = match model_info(mount, model) {
+                Ok(i) => i,
+                Err(e) => {
+                    eprintln!("static prop {model}: {e}");
+                    continue;
+                }
+            };
+            let rot = gm_physics::quat_from_angles(sp.angles[0], sp.angles[1], sp.angles[2]);
+            let pos = Vec3::from(sp.origin);
+            for (pl, pts) in info.hull_planes.iter().zip(&info.hulls) {
+                world_hulls.push(pts.iter().map(|p| rot * *p + pos).collect());
+                let (planes, (mins, maxs)) = gm_physics::pickup::world_convex(pl, pts, rot, pos);
+                static_convexes.push(gm_collision::Convex {
+                    entity: u32::MAX,
+                    friction: (info.surface.friction * 1.25).min(1.0),
+                    planes,
+                    mins,
+                    maxs,
+                });
+            }
+        }
+    }
     for (idx, origin) in gm_collision::solid_brush_models(&bsp) {
         world_hulls.extend(
             gm_physics::brush::model_hulls(&bsp, idx, gm_physics::REST_GAP)
@@ -88,6 +120,7 @@ pub fn load_world(mount: &gm_content::Mount, map: &str) -> Result<LoadedWorld> {
                 let (p, y) = (pitch.to_radians(), angles[1].to_radians());
                 -Vec3::new(p.cos() * y.cos(), p.cos() * y.sin(), -p.sin())
             }),
+        static_convexes,
     })
 }
 

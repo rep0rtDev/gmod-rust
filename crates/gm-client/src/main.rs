@@ -7256,10 +7256,12 @@ fn main() -> Result<()> {
         ai_graph,
         map_revision,
         sun_direction,
+        static_convexes,
     } = gm_dedicated::load_world(&mount, &map)?;
     let collision: &'static gm_collision::World = Box::leak(Box::new(collision));
     let mut server = gm_server::Server::new(collision, physics, world_body);
     server.set_navmesh(nav);
+    server.static_convexes = static_convexes;
     server.set_ai_nodes(ai_nodes);
     server.set_func_tanks(func_tanks);
     if let Some(g) = &ai_graph {

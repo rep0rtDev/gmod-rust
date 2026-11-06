@@ -8210,6 +8210,9 @@ pub struct Server<'w> {
     /// Loads a model the first time something spawns it (the dedicated server reads the MDL/PHY
     /// from the mounted content on demand).
     pub model_loader: Option<ModelLoader>,
+    /// Solid static props of the map (`LoadedWorld::static_convexes`), always in the player
+    /// and NPC sweeps.
+    pub static_convexes: Vec<gm_collision::Convex>,
     pub step_loader: Option<StepLoader>,
     /// Host hook: the `$surfaceprop` of a brush material (impact decals); cached below.
     pub surfaceprop_loader: Option<SurfacepropLoader>,
@@ -8419,6 +8422,7 @@ impl<'w> Server<'w> {
             physgun_params: PhysgunParams::default(),
             projectiles: Vec::new(),
             model_loader: None,
+            static_convexes: Vec::new(),
             step_loader: None,
             surfaceprop_loader: None,
             brush_surfaceprops: BTreeMap::new(),
@@ -21279,6 +21283,7 @@ impl<'w> Server<'w> {
                         }
                     }),
             )
+            .chain(self.static_convexes.iter().cloned())
             .collect();
         self.mover.set_props(prop_convexes);
         for (id, p) in self.players.iter_mut() {
