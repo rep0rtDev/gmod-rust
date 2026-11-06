@@ -15415,6 +15415,14 @@ impl<'w> Server<'w> {
                 .npc_floor(reached, mins, maxs)
                 .unwrap_or(reached - lift);
             // while halting the body already turns toward the new goal, faster at speed
+            // an armed body holding an enemy turns to its path at its standing yaw rate: the squad
+            // leader after its aim window 169 -> 133 -> 96 -> 91 (server_npc_squad_soldier rows
+            // 479..500, 37 deg a think like the reload turn); a walker turns at NPC_YAW_RATE
+            let path_yaw = if armed && has_target {
+                def.idle_yaw
+            } else {
+                NPC_YAW_RATE
+            };
             let (face, rate) = match next_goal.filter(|_| halt) {
                 Some(g) if g.truncate().distance_squared(floor.truncate()) > 1e-6 => (
                     (g.truncate() - floor.truncate()).normalize(),
@@ -15426,14 +15434,14 @@ impl<'w> Server<'w> {
                 ),
                 _ if route_face.is_some_and(|g| g.distance_squared(floor.truncate()) > 1e-6) => (
                     (route_face.unwrap() - floor.truncate()).normalize(),
-                    max_yaw.unwrap_or(NPC_YAW_RATE),
+                    max_yaw.unwrap_or(path_yaw),
                 ),
                 // through a reversal the body turns 15.7 / 31.5 deg on alternate thinks
                 _ if reversal > 1 && reversal % 2 == 1 => {
                     (dir, max_yaw.unwrap_or(NPC_YAW_RATE * 2.0))
                 }
                 _ if crab_run => (dir, max_yaw.unwrap_or(crab_run_yaw)),
-                _ => (dir, max_yaw.unwrap_or(NPC_YAW_RATE)),
+                _ => (dir, max_yaw.unwrap_or(path_yaw)),
             };
             let mut swap = None;
             if let Some(n) = self.npcs.get_mut(&id) {
