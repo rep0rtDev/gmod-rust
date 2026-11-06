@@ -96,8 +96,19 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   Tried and reverted: a zombie holding once within ZOMBIE_SWAT_MOVE_DIST of a swattable prop
   on its enemy's line until the next scan - swat2_crate 75 -> 36 (the swat lands on row 152
   like the game's) but drum 6 -> 76, gascan 30 -> 110, plastic 35 -> 70: the game walks up
-  to the smaller props; only the crate's graph detour keeps it 48..50 u off. The fix is that
-  node route for the chase (node 591, then the crawl), not a hold.
+  to the smaller props; only the crate's graph detour keeps it 48..50 u off. Landed instead:
+  a chase whose hull sweep to the enemy stops against a prop centred on its line (the prop's
+  centre within its half-size less the hull's 16 u of the line - a 3 u overlap is walked at),
+  with the stop farther than NPC_PROP_BLOCK_NEAR 32 ahead (the zombie spawned 3 u off the
+  crate in server_npc_zombie_swat slides along its face instead) and NPC_PROP_BLOCK_GOAL_GAP
+  64 short of the goal (a box 7 u before the bot is walked at), builds its route on the node
+  graph (local_max 0: node 591 (965,-491), reached on row 75 like the game); when the leg
+  from the last node still runs into the prop, corner waypoints round it at hull clearance
+  are spliced in, left side first (the game's south-east corner (941,-533), then west along
+  y -536..-541), the first corner never behind the body. swat2_crate 75 -> 23, the swat on
+  row 152 like the game. Open: ours walks the detour leg at full pace and swats from
+  (934,-533) where the game crawls 2.6 u/think facing the bot and swats from (948,-515);
+  the bot is shoved 52 u farther by our crate (hp 73 vs 80).
   Masses are the `.phy` defaults we parse (crate 30, drum 30, gascan 10, can 1); unverified
   against the game's.
 

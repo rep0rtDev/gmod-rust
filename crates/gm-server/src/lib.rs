@@ -7587,6 +7587,15 @@ pub const NPC_LOCAL_ROUTE_ENEMY: f32 = 4800.0;
 /// against 516 u (server_npc_walk_citizen_y180's detour round the whole building, a node route
 /// in the game).
 pub const NPC_LOCAL_ROUTE_DETOUR: f32 = 200.0;
+/// A prop across a chase line counts as blocking it when its centre lies within its own
+/// half-size less this of the line (the NPC hull's half-width: a 3 u overlap is walked at).
+pub const NPC_PROP_BLOCK_CLEARANCE: f32 = 16.0;
+/// ... and the hit is at least this far short of the goal (a box 7 u before the bot is not).
+pub const NPC_PROP_BLOCK_GOAL_GAP: f32 = 64.0;
+/// ... and the hull's stop against it at least this far ahead of the body: a crate the body
+/// stops 3 u short of is walked at and slid along (server_npc_zombie_swat, x 912 = its face
+/// + the hull), one it stops 56 u short of is routed round (swat2_crate from 992).
+pub const NPC_PROP_BLOCK_NEAR: f32 = 32.0;
 
 /// The farthest a route's corners sit aside of the straight line from its first to its last point.
 fn route_detour(points: &[Vec3]) -> f32 {
@@ -14940,43 +14949,142 @@ impl<'w> Server<'w> {
 
     /// The chase's path: (re)built when the enemy moved `NPC_CHASE_REPATH` from the path's end
     /// and is beyond `chase_reach`; the think's pre-pass.
+    /// The prop a hull sweep from `from` to `to` runs into, with the lateral offset of its
+    /// centre from the line and its horizontal half-size.
+    fn npc_prop_across(
+        props: &[PropBody],
+        from: Vec3,
+        to: Vec3,
+        mins: Vec3,
+        maxs: Vec3,
+    ) -> Option<(gm_sandbox::ToolHit, &PropBody, f32, f32)> {
+        let line_to = Vec3::new(to.x, to.y, from.z);
+        let h = gm_sandbox::sweep_hull_props(props, from, line_to, mins, maxs)
+            .filter(|h| h.fraction < 1.0)?;
+        let b = props.iter().find(|b| Some(b.id) == h.ent)?;
+        let dir = (line_to - from).truncate().normalize_or_zero();
+        let rel = (b.pos - from).truncate();
+        let lateral = (rel.x * dir.y - rel.y * dir.x).abs();
+        let half = b
+            .hulls
+            .first()
+            .map(|planes| {
+                planes
+                    .iter()
+                    .filter(|(nrm, _)| nrm.z.abs() < 0.5)
+                    .map(|(_, d)| *d)
+                    .fold(0.0_f32, f32::max)
+            })
+            .unwrap_or(0.0);
+        Some((h, b, lateral, half))
+    }
+
+    /// Corner waypoints round the prop across a route's last leg, at the hull's clearance:
+    /// the left side first, the right when the left legs are blocked themselves.
+    fn npc_prop_detour(
+        props: &[PropBody],
+        points: &[Vec3],
+        mins: Vec3,
+        maxs: Vec3,
+    ) -> Option<Vec<Vec3>> {
+        let (&goal, &from) = (points.last()?, points.get(points.len().checked_sub(2)?)?);
+        let (_, b, _, half) = Self::npc_prop_across(props, from, goal, mins, maxs)?;
+        let d = (goal - from).truncate().normalize_or_zero();
+        let left = glam::Vec2::new(-d.y, d.x);
+        let r = half + NPC_PROP_BLOCK_CLEARANCE;
+        // the first corner never lies behind the body (a zombie spawned 16 u off the crate
+        // side-steps at once, server_npc_zombie_swat: (916,-500) -> (912,-519))
+        let c = b.pos.truncate();
+        let near = (from.truncate() - c).dot(d).max(-r);
+        let corners = |side: glam::Vec2| {
+            vec![
+                (c + side * r + d * near).extend(from.z),
+                (c + side * r + d * r).extend(from.z),
+            ]
+        };
+        let clear = |wps: &[Vec3]| {
+            let mut prev = from;
+            wps.iter().chain(std::iter::once(&goal)).all(|&w| {
+                let ok = Self::npc_prop_across(props, prev, w, mins, maxs).is_none();
+                prev = w;
+                ok
+            })
+        };
+        let l = corners(left);
+        if clear(&l) {
+            return Some(l);
+        }
+        let rt = corners(-left);
+        clear(&rt).then_some(rt)
+    }
+
     fn npc_chase_repath(&mut self, id: u32, slot: glam::Vec2) {
-        let Some(n) = self.npcs.get_mut(&id) else {
+        let Some(n) = self.npcs.get(&id) else {
             return;
         };
-        if let Some(p) = n.chase {
-            match self.players.get(&p).map(|pl| pl.state.origin) {
-                Some(target) => {
-                    let stale = n.goal.as_ref().is_none_or(|g| {
-                        g.points.last().is_none_or(|e| {
-                            e.truncate().distance(target.truncate()) > NPC_CHASE_REPATH
-                        })
-                    });
-                    let away = n.pos.truncate().distance(target.truncate()) > n.chase_reach;
-                    if stale && away {
-                        let extents = Vec3::new(32.0, 32.0, 72.0);
-                        let goal = target + slot.extend(0.0);
-                        if let Some(path) = npc_find_path(
-                            self.nav.as_deref(),
-                            self.ai_graph.as_ref(),
-                            n.pos,
-                            goal,
-                            extents,
-                            npc_hull_index(&n.class),
-                            NPC_LOCAL_ROUTE_ENEMY,
-                        ) {
-                            n.goal = Some(NpcPath {
-                                points: path.points,
-                                links: Vec::new(),
-                                idx: 1,
-                                partial: path.partial,
-                                braking: false,
-                                halt: false,
-                            });
-                        }
-                    }
+        let Some(p) = n.chase else {
+            return;
+        };
+        let Some(target) = self.players.get(&p).map(|pl| pl.state.origin) else {
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.chase = None;
+            }
+            return;
+        };
+        let stale = n.goal.as_ref().is_none_or(|g| {
+            g.points
+                .last()
+                .is_none_or(|e| e.truncate().distance(target.truncate()) > NPC_CHASE_REPATH)
+        });
+        let away = n.pos.truncate().distance(target.truncate()) > n.chase_reach;
+        if !(stale && away) {
+            return;
+        }
+        let extents = Vec3::new(32.0, 32.0, 72.0);
+        let goal = target + slot.extend(0.0);
+        let (feet, mins, maxs, hull) = (n.pos, n.mins, n.maxs, npc_hull_index(&n.class));
+        // a prop sitting across the straight line well short of the enemy fails the local
+        // route and the chase takes the node graph (server_npc_zombie_swat2_crate: the crate
+        // centred on the line 91 u ahead sends the zombie to AIN node 591 (965,-491); a box
+        // overlapping the line by 3 u, or one 7 u in front of the bot, is walked at straight)
+        let props = self.prop_bodies();
+        let blocked = Self::npc_prop_across(&props, feet, goal, mins, maxs).is_some_and(
+            |(h, _, lateral, half)| {
+                lateral < half - NPC_PROP_BLOCK_CLEARANCE
+                    && h.pos.truncate().distance(goal.truncate()) > NPC_PROP_BLOCK_GOAL_GAP
+                    && h.pos.truncate().distance(feet.truncate()) > NPC_PROP_BLOCK_NEAR
+            },
+        );
+        let local_max = if blocked { 0.0 } else { NPC_LOCAL_ROUTE_ENEMY };
+        if let Some(path) = npc_find_path(
+            self.nav.as_deref(),
+            self.ai_graph.as_ref(),
+            feet,
+            goal,
+            extents,
+            hull,
+            local_max,
+        ) {
+            let mut points = path.points;
+            if blocked {
+                // the leg from the last node still runs into the prop: the game triangulates
+                // round it at hull clearance, left side first (swat2_crate: from node 591 the
+                // zombie heads for (941,-533), the crate's south-east corner 36..41 u out, and
+                // walks west along y -536..-541)
+                if let Some(detour) = Self::npc_prop_detour(&props, &points, mins, maxs) {
+                    let at = points.len() - 1;
+                    points.splice(at..at, detour);
                 }
-                None => n.chase = None,
+            }
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.goal = Some(NpcPath {
+                    points,
+                    links: Vec::new(),
+                    idx: 1,
+                    partial: path.partial,
+                    braking: false,
+                    halt: false,
+                });
             }
         }
     }
