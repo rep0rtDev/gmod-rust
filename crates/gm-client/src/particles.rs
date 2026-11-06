@@ -413,7 +413,7 @@ impl Particles {
         let Some(renderer) = def.renderers.first() else {
             return;
         };
-        let trail = renderer.func == "render_sprite_trail" || renderer.func == "render_rope";
+        let trail = renderer.func == "render_sprite_trail";
         let anim_rate = renderer.f("animation rate", 0.1);
         let fit = renderer.b("animation_fit_lifetime", false);
         let orientation = renderer.i("orientation_type", 0);
@@ -421,6 +421,55 @@ impl Particles {
         let min_len = renderer.f("min length", 0.0);
         let max_len = renderer.f("max length", 2000.0);
         let (mut verts, mut idx) = (Vec::new(), Vec::new());
+        if renderer.func == "render_rope" {
+            // one camera-facing strip through the particles in creation order (the game's
+            // CParticleRenderer rope), `texel_size` units of rope per texel row (approximate:
+            // one texture repeat per 8 texels)
+            let texel = renderer.f("texel_size", 4.0).max(0.01) * 8.0;
+            let live: Vec<&Particle> = inst
+                .particles
+                .iter()
+                .filter(|p| p.alpha > 0.0 && p.radius > 0.0)
+                .collect();
+            if live.len() < 2 {
+                return;
+            }
+            let mut along = 0.0f32;
+            for (i, p) in live.iter().enumerate() {
+                let prev = if i > 0 { live[i - 1].pos } else { p.pos };
+                let next = live.get(i + 1).map_or(p.pos, |n| n.pos);
+                let dir = (next - prev).normalize_or_zero();
+                let side = dir.cross(p.pos - camera.position).normalize_or_zero() * p.radius;
+                if i > 0 {
+                    along += (p.pos - prev).length();
+                }
+                let a = p.alpha.clamp(0.0, 1.0);
+                let rgba = if mat.additive {
+                    [p.color[0] * a, p.color[1] * a, p.color[2] * a, 0.0]
+                } else {
+                    [p.color[0], p.color[1], p.color[2], a.max(1e-3)]
+                };
+                let tmpl = world
+                    .sprite_quad_uv(p.pos, 1.0, rgba, 0.0, None, [0.0, 0.0, 1.0, 1.0], camera)
+                    .0[0];
+                for (k, sgn) in [(0usize, -1.0f32), (1, 1.0)] {
+                    let mut v = tmpl;
+                    v.position = (p.pos + side * sgn).to_array();
+                    v.uv = [k as f32, along / texel];
+                    verts.push(v);
+                }
+                if i > 0 {
+                    let b = (i as u32 - 1) * 2;
+                    idx.extend([b, b + 1, b + 2, b + 1, b + 3, b + 2]);
+                }
+            }
+            if mat.additive {
+                additive.push((&mat.bind, verts, idx));
+            } else {
+                alpha.push((&mat.bind, verts, idx));
+            }
+            return;
+        }
         for p in &inst.particles {
             let age = inst.t - p.born;
             let a = p.alpha.clamp(0.0, 1.0);
