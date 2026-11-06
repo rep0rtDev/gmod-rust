@@ -406,6 +406,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   19.6 / 17.9 / 16.4 / 14.8 into (953,7) - our bands (0.71 side) already read the same. Open:
   what (953,7) is (a route corner off the graph, a lateral cover point or a squad slot) and the
   five-think drift there.
+- server_npc_zombie_swat (40.0): the game's spawn trace from the eye (823,-500,-79) at pitch
+  15 clears the crate's west face (z -94 at x 880) and meets its top at (916,-500,-104); the
+  zombie is placed there (-103.9, the hull's rear 20 u over the crate), the crate lifts 1.8 u
+  and slides west out of the hull (900 -> 899.5 by row 24, 894 at 33, 883 at 45, 874 at 60)
+  and the zombie, after 20 ticks still at -103.9, falls think-stepped under 600 u/s^2 (-107.3
+  at t 340, -117.2 at 349, -133.7 at 355, -143.9 at 361). Ours drops through the crate to the
+  floor at spawn (npc_floor sweeps the world only) and pushes the crate west on foot. Tried and
+  reverted: landing the spawn and the walker's floor on props too (gm_sandbox::trace_hull) -
+  the zombie then stands on the crate and nothing pushes it out, 40 -> 137. Needs the
+  penetration push of a prop overlapping an NPC hull and the think-stepped fall together.
 
 ### NPC: the turn at the reload cover (server_npc_grenade_soldier, 48 u) - measured, open
 
