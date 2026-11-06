@@ -346,6 +346,8 @@ impl MapEntity {
 struct Pending {
     due: u64,
     target: String,
+    /// A target by id (`+use`, Lua `Entity:Fire`) instead of by name.
+    target_id: u32,
     input: String,
     param: String,
     activator: u32,
@@ -356,6 +358,9 @@ struct Pending {
 pub struct MapIo {
     pub entities: Vec<MapEntity>,
     pending: Vec<Pending>,
+    /// Inputs due this tick, applied by `Server::apply_due_inputs` or, with `defer_inputs`,
+    /// by `flush_due_inputs` once the `AcceptInput` hook has seen them.
+    ready: Vec<Pending>,
     started: bool,
     /// Convexes of the solid moving brushes, rebuilt when a pose changes.
     convexes: Vec<Convex>,
@@ -613,6 +618,7 @@ impl MapIo {
             param: param.to_string(),
             activator,
             caller,
+            target_id: 0,
         });
     }
 
@@ -1548,17 +1554,48 @@ impl Server<'_> {
             }
         }
         due.sort_by_key(|p| p.due);
-        for p in due {
-            let targets: Vec<u32> = match p.target.as_str() {
-                "!self" | "!caller" => vec![p.caller],
-                "!activator" => vec![p.activator],
-                _ => self.map_io.find_by_name(&p.target),
-            };
-            for t in targets {
-                if (MAP_ENT_ID_BASE..crate::PROJECTILE_ID_BASE).contains(&t) {
-                    self.map_input(t, &p.input, &p.param, p.activator);
-                } else if t != 0 {
-                    self.entity_input(t, &p.input, &p.param, p.activator);
+        self.map_io.ready.extend(due);
+        if !self.defer_inputs {
+            self.apply_due_inputs();
+        }
+    }
+
+    /// The entities a due input addresses.
+    fn input_targets(&self, p: &Pending) -> Vec<u32> {
+        if p.target_id != 0 {
+            return vec![p.target_id];
+        }
+        match p.target.as_str() {
+            "!self" | "!caller" => vec![p.caller],
+            "!activator" => vec![p.activator],
+            _ => self.map_io.find_by_name(&p.target),
+        }
+    }
+
+    fn input_at(&mut self, t: u32, p: &Pending) {
+        if (MAP_ENT_ID_BASE..crate::PROJECTILE_ID_BASE).contains(&t) {
+            self.map_input(t, &p.input, &p.param, p.activator);
+        } else if t != 0 {
+            self.entity_input(t, &p.input, &p.param, p.activator);
+        }
+    }
+
+    /// Applies the inputs that came due this tick.
+    pub fn apply_due_inputs(&mut self) {
+        for p in std::mem::take(&mut self.map_io.ready) {
+            for t in self.input_targets(&p) {
+                self.input_at(t, &p);
+            }
+        }
+    }
+
+    /// Applies the inputs that came due this tick through the `AcceptInput` hook: one the
+    /// hook takes (returns true) is dropped.
+    pub fn flush_due_inputs(&mut self, hooks: &mut dyn crate::ServerHooks) {
+        for p in std::mem::take(&mut self.map_io.ready) {
+            for t in self.input_targets(&p) {
+                if hooks.accept_input(self, t, &p.input, p.activator, p.caller, &p.param) {
+                    self.input_at(t, &p);
                 }
             }
         }
@@ -1585,7 +1622,18 @@ impl Server<'_> {
         let Some(ent) = ent.filter(|_| t.fraction < 1.0) else {
             return false;
         };
-        self.map_input(ent, "Use", "", player);
+        self.map_io.ready.push(Pending {
+            due: self.tick_count,
+            target: String::new(),
+            target_id: ent,
+            input: "Use".into(),
+            param: String::new(),
+            activator: player,
+            caller: player,
+        });
+        if !self.defer_inputs {
+            self.apply_due_inputs();
+        }
         true
     }
 

@@ -1696,6 +1696,18 @@ pub trait ServerHooks {
     fn prop_spawn_request(&mut self, server: &mut Server<'_>, player: u32, model: &str) -> bool;
     /// `entity.spawned` after a prop was created.
     fn entity_spawned(&mut self, server: &mut Server<'_>, player: u32, ent: u32);
+    /// `AcceptInput` on a map input (an output firing, `ent_fire`, `+use`): false drops it.
+    fn accept_input(
+        &mut self,
+        _server: &mut Server<'_>,
+        _ent: u32,
+        _input: &str,
+        _activator: u32,
+        _caller: u32,
+        _value: &str,
+    ) -> bool {
+        true
+    }
     /// `entity.removed` after an entity left the table through a player's command.
     fn entity_removed(&mut self, _server: &mut Server<'_>, _player: u32, _ent: u32) {}
     /// `GetGameDescription`: what the server advertises as its game (None keeps the last).
@@ -8201,6 +8213,9 @@ pub struct Server<'w> {
     pub bounds_override: BTreeMap<u32, (Vec3, Vec3)>,
     /// World sounds of this tick (prop impacts), drained by the network layer.
     sounds: Vec<WorldSound>,
+    /// Hold the map inputs that come due for `flush_due_inputs` (the `AcceptInput` hook)
+    /// instead of applying them in the tick.
+    pub defer_inputs: bool,
     /// Visual effects of this tick (`take_effects`).
     effects: Vec<WorldEffect>,
     /// Projectile entity ids live in their own range above every sandbox id.
@@ -8424,6 +8439,7 @@ impl<'w> Server<'w> {
             poses: BTreeMap::new(),
             bounds_override: BTreeMap::new(),
             sounds: Vec::new(),
+            defer_inputs: false,
             effects: Vec::new(),
             next_projectile_id: PROJECTILE_ID_BASE,
             scrapes: BTreeMap::new(),

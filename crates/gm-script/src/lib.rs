@@ -2093,6 +2093,23 @@ impl Drop for Runtime {
 }
 
 impl gm_server::ServerHooks for Runtime {
+    fn accept_input(
+        &mut self,
+        server: &mut Server<'_>,
+        ent: u32,
+        input: &str,
+        activator: u32,
+        caller: u32,
+        value: &str,
+    ) -> bool {
+        let mut p = api::Payload::default();
+        p.ints.push(("ent", ent as i64));
+        p.ints.push(("activator", activator as i64));
+        p.ints.push(("caller", caller as i64));
+        p.strs.push(("input", input.to_string()));
+        p.strs.push(("value", value.to_string()));
+        self.ask(server, "entity.accept_input", p)
+    }
     fn net_message(&mut self, server: &mut Server<'_>, player: u32, name: &str, data: &[u8]) {
         let mut p = api::Payload::default();
         p.ints.push(("player", player as i64));
@@ -2266,6 +2283,20 @@ pub fn attach(
 }
 
 impl gm_server::ServerHooks for SharedRuntime {
+    fn accept_input(
+        &mut self,
+        server: &mut Server<'_>,
+        ent: u32,
+        input: &str,
+        activator: u32,
+        caller: u32,
+        value: &str,
+    ) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .accept_input(server, ent, input, activator, caller, value)
+    }
     fn restore_failed(&mut self, server: &mut Server<'_>, error: &str) {
         self.0.lock().unwrap().restore_failed(server, error)
     }

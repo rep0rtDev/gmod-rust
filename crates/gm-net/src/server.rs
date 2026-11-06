@@ -745,7 +745,11 @@ impl ServerNet {
             }
             h.pre_tick(server);
         }
+        server.defer_inputs = self.hooks.is_some();
         server.tick(&cmds);
+        if let Some(h) = self.hooks.as_mut() {
+            server.flush_due_inputs(h.as_mut());
+        }
         self.pending_sounds
             .extend(server.take_sounds().into_iter().map(|s| SoundEvent {
                 name: s.name,

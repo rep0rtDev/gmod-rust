@@ -5441,3 +5441,56 @@ fn kleiner_spawns_as_a_jointed_ragdoll_and_settles() {
         );
     }
 }
+
+#[test]
+fn accept_input_sees_map_inputs_and_can_take_them() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    server.set_map_entities(world.map_entities.clone(), world.surface);
+    server.defer_inputs = true;
+    let mut rt = gm_script::Runtime::new();
+    rt.load(gm_script::ActorSpec {
+        addon: "glua".into(),
+        name: "gm".into(),
+        priority: 0,
+        source: "hook.Add(\"AcceptInput\", \"t\", function(ent, input, activator, caller, value)
+                state.n = (state.n or 0) + 1; state.input, state.value = input, tostring(value)
+                return input == \"Toggle\" end)"
+            .into(),
+        config: test_actor_config(),
+    })
+    .unwrap();
+    let idle = BTreeMap::new();
+    server.tick(&idle);
+    server.flush_due_inputs(&mut rt);
+    assert_eq!(server.lightstyles(), vec![(32, 1.0)]);
+    server.fire_input("ColourRoomLights", "Toggle", "", 0);
+    server.tick(&idle);
+    assert_eq!(server.lightstyles(), vec![(32, 1.0)], "held for the hook");
+    server.flush_due_inputs(&mut rt);
+    assert_eq!(
+        server.lightstyles(),
+        vec![(32, 1.0)],
+        "the hook took the Toggle"
+    );
+    let n1: i32 = rt.actors()[0].eval("return state.n").unwrap();
+    assert!(n1 >= 30, "one call per ColourRoomLights light: {n1}");
+    server.fire_input("ColourRoomLights", "SetPattern", "z", 0);
+    server.tick(&idle);
+    server.flush_due_inputs(&mut rt);
+    let styles = server.lightstyles();
+    assert!((styles[0].1 - 25.0 / 12.0).abs() < 1e-5, "{styles:?}");
+    let (n, input, value): (i32, String, String) = rt.actors()[0]
+        .eval("return state.n, state.input, state.value")
+        .unwrap();
+    assert!(
+        n - n1 >= 30,
+        "one call per ColourRoomLights light again: {n} - {n1}"
+    );
+    assert_eq!((input.as_str(), value.as_str()), ("SetPattern", "z"));
+}

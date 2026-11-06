@@ -824,6 +824,14 @@ local prev_move = {}
     events.on("sandbox.check_limit", function(p)
         if hook.Run("PlayerCheckLimit", Player(p.player), p.kind, p.current or 0, p.max or -1) == false then return false end
     end)
+    -- a map input (an output firing, ent_fire, +use on a door or button): the hook takes it with true
+    events.on("entity.accept_input", function(p)
+        local value = p.value
+        if value == "" then value = nil end
+        if hook.Run("AcceptInput", Entity(p.ent), p.input, Entity(p.activator), Entity(p.caller), value) == true then
+            return false
+        end
+    end)
     events.on("gamemode.description", function()
         local d = hook.Run("GetGameDescription")
         if type(d) == "string" then return d end
