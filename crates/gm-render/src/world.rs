@@ -723,6 +723,8 @@ pub struct WorldRenderer {
     pub fog_override: Option<Fog>,
     /// An `edit_sky` entity's painted sky (`env_skypaint`), drawn instead of the skybox.
     pub sky_paint: Option<SkyPaint>,
+    /// The map's own `env_skypaint`, what `sky_paint` falls back to.
+    pub map_sky_paint: Option<SkyPaint>,
     pub water_volumes: Vec<WaterVolume>,
     /// `func_reflective_glass` faces (LightmappedReflective): plane and bounds.
     mirrors: Vec<Mirror>,
@@ -1817,6 +1819,47 @@ impl WorldRenderer {
         let dverts = disp_verts(bsp)?;
         let disp_by_face: HashMap<u16, &DispInfo> = disps.iter().map(|d| (d.map_face, d)).collect();
 
+        // the map's own env_skypaint: the painted sky (`Sky_Painted`) with its colours
+        // as "r g b" floats; an edit_sky entity overrides it on the client
+        let map_sky_paint = bsp
+            .entities
+            .iter()
+            .find(|e| e.classname() == "env_skypaint")
+            .map(|e| {
+                let num =
+                    |k: &str, d: f32| e.get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
+                let color = |k: &str, d: [f32; 3]| {
+                    e.get(k)
+                        .and_then(|v| {
+                            let p: Vec<f32> = v
+                                .split_whitespace()
+                                .filter_map(|x| x.parse().ok())
+                                .collect();
+                            (p.len() == 3).then(|| Vec3::new(p[0], p[1], p[2]))
+                        })
+                        .unwrap_or(Vec3::from(d))
+                };
+                SkyPaint {
+                    top: color("topcolor", [0.2, 0.5, 1.0]),
+                    bottom: color("bottomcolor", [0.8, 1.0, 1.0]),
+                    fade_bias: num("fadebias", 1.0),
+                    hdr_scale: num("hdrscale", 0.66),
+                    sun_normal: color("sunnormal", [0.0, 0.0, 1.0]).normalize_or_zero(),
+                    sun_size: num("sunsize", 2.0),
+                    sun_color: color("suncolor", [0.2, 0.1, 0.0]),
+                    dusk_scale: num("duskscale", 1.0),
+                    dusk_intensity: num("duskintensity", 1.0),
+                    dusk_color: color("duskcolor", [1.0, 0.2, 0.0]),
+                    star_scale: num("starscale", 0.5),
+                    star_fade: num("starfade", 1.5),
+                    star_layers: if num("drawstars", 1.0) > 0.5 {
+                        num("starlayers", 1.0)
+                    } else {
+                        0.0
+                    },
+                    star_drift: 0.0,
+                }
+            });
         let sky_camera = bsp
             .entities
             .iter()
@@ -3032,7 +3075,8 @@ impl WorldRenderer {
             fog,
             sky_fog,
             fog_override: None,
-            sky_paint: None,
+            sky_paint: map_sky_paint,
+            map_sky_paint,
             water_volumes,
             mirrors,
             stats,
@@ -3300,7 +3344,9 @@ impl WorldRenderer {
         CameraUniform {
             sun: [self.sun.x, self.sun.y, self.sun.z, 0.0],
             sky_top: sp.map_or([0.0; 4], |s| v4(s.top, s.fade_bias)),
-            sky_bottom: sp.map_or([0.0; 4], |s| v4(s.bottom, s.hdr_scale)),
+            sky_bottom: sp.map_or([0.0; 4], |s| {
+                v4(s.bottom, if self.hdr { s.hdr_scale } else { 1.0 })
+            }),
             sky_sun: sp.map_or([0.0; 4], |s| v4(s.sun_normal, s.sun_size)),
             sky_sun_color: sp.map_or([0.0; 4], |s| v4(s.sun_color, s.star_drift)),
             sky_dusk: sp.map_or([0.0; 4], |s| v4(s.dusk_color, s.dusk_intensity)),

@@ -5681,7 +5681,8 @@ impl App {
             &self.sim.client.world.classes,
             &self.sim.client.world.edits,
             g.world.env_sun.as_ref().map_or(g.world.sun, |s| s.dir),
-        );
+        )
+        .or(g.world.map_sky_paint);
         // the world draws the entity models itself, between its opaque and translucent
         // surfaces (and into the water reflection)
         g.world.draw(

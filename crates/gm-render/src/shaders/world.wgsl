@@ -412,6 +412,7 @@ fn fs_skypaint(in: VsOut) -> @location(0) vec4<f32> {
         }
         col = col + stars * fade;
     }
-    let out = pow(max(col * camera.exposure, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
+    // env_skypaint `hdrscale`: the painted sky is scaled down in HDR (1 in LDR)
+    let out = pow(max(col * camera.sky_bottom.w * camera.exposure, vec3<f32>(0.0)), vec3<f32>(2.2 / camera.gamma));
     return vec4<f32>(out, camera.alpha);
 }
