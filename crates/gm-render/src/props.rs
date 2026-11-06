@@ -314,6 +314,8 @@ pub fn collect_static_props(
                             lm_page: 0.0,
                             normal: n.to_array(),
                             cube: prop_cube,
+                            spec_dir: [0.0; 3],
+                            spec_color: [0.0; 3],
                         });
                     }
                     local_indices.push(base + li);

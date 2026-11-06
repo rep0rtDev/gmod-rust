@@ -71,6 +71,8 @@ struct VsIn {
     @location(5) lm_page: f32,
     @location(6) normal: vec3<f32>,
     @location(7) cube: f32,
+    @location(8) spec_dir: vec3<f32>,
+    @location(9) spec_color: vec3<f32>,
 };
 
 struct VsOut {
@@ -83,6 +85,8 @@ struct VsOut {
     @location(5) lm_page: f32,
     @location(6) normal: vec3<f32>,
     @location(7) cube: f32,
+    @location(8) spec_dir: vec3<f32>,
+    @location(9) spec_color: vec3<f32>,
 };
 
 @vertex
@@ -97,6 +101,8 @@ fn vs_main(in: VsIn) -> VsOut {
     out.lm_page = in.lm_page;
     out.normal = in.normal;
     out.cube = in.cube;
+    out.spec_dir = in.spec_dir;
+    out.spec_color = in.spec_color;
     return out;
 }
 
@@ -225,7 +231,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if material.phong.x > 0.5 && material.unlit == 0u && dot(in.normal, in.normal) > 0.0 {
         let nw = normalize(in.normal);
         let v = normalize(camera.eye.xyz - in.world);
-        let l = normalize(camera.sun.xyz);
+        // models take the highlight from the brightest light at their origin (the map's
+        // world lights or the sun through the sky), the rest from the sun
+        var l = normalize(camera.sun.xyz);
+        var lc = in.color;
+        if dot(in.spec_dir, in.spec_dir) > 0.0 {
+            l = normalize(in.spec_dir);
+            lc = in.spec_color;
+        }
         let ndl = max(dot(nw, l), 0.0);
         var exponent = material.phong.y;
         var tint_mask = 1.0;
@@ -235,7 +248,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
         let spec = pow(max(dot(nw, normalize(l + v)), 0.0), exponent) * material.phong.z;
         let tint = mix(vec3<f32>(1.0), albedo.rgb, material.phong.w * tint_mask);
-        shaded = shaded + in.color * (spec * phong_fres * ndl * bump_a) * tint * camera.exposure;
+        shaded = shaded + lc * (spec * phong_fres * ndl * bump_a) * tint * camera.exposure;
         var local = vec3<f32>(0.0);
         for (var i = 0u; i < 8u; i++) {
             let lp = camera.dlight_pos[i];

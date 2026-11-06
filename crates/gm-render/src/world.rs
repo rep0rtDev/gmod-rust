@@ -34,6 +34,10 @@ pub struct Vertex {
     pub normal: [f32; 3],
     /// Layer of the nearest `env_cubemap` sample in the cube array, -1 for none.
     pub cube: f32,
+    /// `$phong` on models: direction towards and colour of the brightest light at the model's
+    /// origin (zero direction: the sun).
+    pub spec_dir: [f32; 3],
+    pub spec_color: [f32; 3],
 }
 
 #[repr(C)]
@@ -817,6 +821,8 @@ fn build_sky_cube(
                 lm_page: 0.0,
                 normal: [0.0; 3],
                 cube: -1.0,
+                spec_dir: [0.0; 3],
+                spec_color: [0.0; 3],
             });
         }
         idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -1968,6 +1974,8 @@ impl WorldRenderer {
                         lm_page,
                         normal: face_normal,
                         cube: face_cube,
+                        spec_dir: [0.0; 3],
+                        spec_color: [0.0; 3],
                     });
                 }
                 indices.extend(mesh.indices.iter().map(|i| base + i));
@@ -1995,6 +2003,8 @@ impl WorldRenderer {
                     lm_page,
                     normal: face_normal,
                     cube: face_cube,
+                    spec_dir: [0.0; 3],
+                    spec_color: [0.0; 3],
                 });
             }
             for i in 1..poly.len() as u32 - 1 {
@@ -2512,7 +2522,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -2624,7 +2634,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -2670,7 +2680,7 @@ impl WorldRenderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x3, 4 => Float32, 5 => Float32, 6 => Float32x3, 7 => Float32, 8 => Float32x3, 9 => Float32x3],
                 })],
             },
             primitive: wgpu::PrimitiveState {
@@ -3950,6 +3960,8 @@ impl WorldRenderer {
                     lm_page: 0.0,
                     normal: [0.0; 3],
                     cube: -1.0,
+                    spec_dir: [0.0; 3],
+                    spec_color: [0.0; 3],
                 });
             }
             if i > 0 {
@@ -3990,6 +4002,8 @@ impl WorldRenderer {
                     lm_page: 0.0,
                     normal: [0.0; 3],
                     cube: -1.0,
+                    spec_dir: [0.0; 3],
+                    spec_color: [0.0; 3],
                 });
             }
             if i > 0 {
@@ -4031,6 +4045,8 @@ impl WorldRenderer {
                 lm_page: 0.0,
                 normal: [0.0; 3],
                 cube: -1.0,
+                spec_dir: [0.0; 3],
+                spec_color: [0.0; 3],
             })
             .collect();
         (verts, vec![0, 1, 2, 0, 2, 3])
@@ -4059,6 +4075,8 @@ impl WorldRenderer {
                 lm_page: 0.0,
                 normal: [0.0; 3],
                 cube: -1.0,
+                spec_dir: [0.0; 3],
+                spec_color: [0.0; 3],
             })
             .collect();
         (verts, vec![0, 1, 2, 0, 2, 3])
@@ -4090,6 +4108,8 @@ impl WorldRenderer {
                 lm_page: 0.0,
                 normal: n.to_array(),
                 cube: -1.0,
+                spec_dir: [0.0; 3],
+                spec_color: [0.0; 3],
             })
             .collect();
         (verts, vec![0, 1, 2, 0, 2, 3])
@@ -4555,6 +4575,15 @@ impl WorldRenderer {
                         .clone(),
                 )
             };
+            let spec = match &local {
+                Some(l) => l
+                    .lights
+                    .iter()
+                    .max_by(|a, b| a.0.length_squared().total_cmp(&b.0.length_squared()))
+                    .map(|&(c, d)| (d, c))
+                    .unwrap_or((Vec3::Z, Vec3::ZERO)),
+                None => (Vec3::ZERO, Vec3::ZERO),
+            };
             for (bg, pv, pi, half_lambert, part_unlit) in &m.parts {
                 let base = verts.len() as u32;
                 for v in pv {
@@ -4576,6 +4605,8 @@ impl WorldRenderer {
                         lm_page: 0.0,
                         normal: n.to_array(),
                         cube: model_cube,
+                        spec_dir: spec.0.to_array(),
+                        spec_color: spec.1.to_array(),
                     });
                 }
                 let first = idx.len() as u32;
