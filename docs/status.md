@@ -247,8 +247,22 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   in: the line-of-fire node reached, the body stands two thinks under the run's label
   (`gait_until` at `lof_arrived`, honoured with a target) - RunAIMALL1 on 187..194,
   CombatIdle1_SMG1 from 201 as the game; its burst still comes on 208 against 215 (and 859
-  against 894 at the third node) from a site other than the re-sighting one. Both offsets
-  are the next measurements.
+  against 894 at the third node) from a site other than the re-sighting one.
+- The line-of-fire run now starts the same way (the pre-move think also covers the think
+  the sight was lost a think ago and no run/cover/reload/grenade is under way): _wall steps
+  1.3 on row 26 as the game's 1.5. That exposed the brake: the game sheds a constant ~2.3 u
+  a think from its plateau to a last step of 1.1..1.4 and stops (grenade_soldier 602..665:
+  16.3, 16.8, 15.5, 13.1, 10.7, 8.4, 6.0, 3.7, 1.4; _low 9.8, 7.8, 5.6, 3.3, 1.1; the squad
+  mate 16.2 … 2.2, 0.3), ours shed the full accel step (2.9: 16.7, 13.7, 10.8, 7.9, 5.0,
+  2.1) and arrived three thinks early. A fighting body's braking staircase now steps
+  `NPC_BRAKE_CURVE × accel` (0.755 × 2.92 = 2.2): grenade_soldier 47.9 → 31.4, _wall 45.9 →
+  31.2, _low and the squad unchanged. A plain walk or run keeps the full step - with the
+  softer brake on every body the walk_* recordings slipped (walk_soldier_run 0.4 → 7.9,
+  walk_citizen_run 0.8 → 6.5) while assault_citizen's unarmed run went 69.9 → 60.3; the
+  split by a held target is measured on both sets, not understood. Left: ours still begins braking two thinks before the game on the node
+  run (remaining 60 u at 602 against the game's 59 at 609 - a shorter route, not the brake;
+  dropping the sqrt curve changed nothing), and the post-arrival burst row (208 / 859
+  against 215 / 894).
 
 ### NPC: a zombie's approach to a prop in its way (swat2_crate 75, swat3_a 7, drum 6) - measured, open
 

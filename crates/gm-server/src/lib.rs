@@ -14677,10 +14677,20 @@ impl<'w> Server<'w> {
             // stepped in one think, as the game's (the soldier of server_npc_grenade_soldier_low
             // covers 1.5 u on the think its label turns RunAIMALL1, 789; the squad leader and
             // mate 1.3 and 1.5 on theirs, 388 and 300)
+            // ... and the think it leaves for a line of fire, the sight lost a think ago
+            // (server_npc_grenade_soldier_wall: 1.5 u on row 26, the run's first)
+            let sight_stale =
+                n.target.is_some() && n.target_seen + u64::from(n.think_interval) < now;
             let leaving_for_cover = !unarmed
                 && n.goal.is_none()
                 && n.chase.is_none()
-                && (n.cover_wanted || (n.reload_mark > 0 && now > n.reload_mark && !n.reloading));
+                && (n.cover_wanted
+                    || (n.reload_mark > 0 && now > n.reload_mark && !n.reloading)
+                    || (sight_stale
+                        && n.flank_until == 0
+                        && n.cover_at.is_none()
+                        && !n.reloading
+                        && n.grenade.is_none()));
             if n.goal.is_none() && n.chase.is_none() && n.target.is_none() && unarmed {
                 self.ai_step(id, now);
                 pre.push(id);
@@ -14995,12 +15005,17 @@ impl<'w> Server<'w> {
                 } else {
                     (2.0 * NPC_BRAKE_CURVE * a * remaining).sqrt()
                 };
+                // a fighting body sheds NPC_BRAKE_CURVE of its accel a think while braking (the
+                // soldier 2.3 u/think from 16.8 to a last step of 1.1..1.4 in
+                // server_npc_grenade_soldier 602..665, _low 817..845, the squad mate 721..770);
+                // a plain walk or run brakes by the full step (the walk_* recordings)
+                let ab = if has_target { NPC_BRAKE_CURVE * a } else { a };
                 let staircase = if zombie_chase {
                     f32::INFINITY
                 } else {
-                    brake_staircase(remaining, a)
+                    brake_staircase(remaining, ab)
                 };
-                let floor = if braking { s0 - a } else { s0 - 0.5 * a };
+                let floor = if braking { s0 - ab } else { s0 - 0.5 * a };
                 let step = ramp.min(curve).min(staircase).max(floor).min(remaining);
                 let braking = braking || step < ramp;
                 // the ramp is a trapezoid of the end-of-think speed, braking moves at the step
