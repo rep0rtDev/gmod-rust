@@ -463,6 +463,12 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   MAX_LOCAL_NAV_DIST_GROUND for position goals) leaves the leader's run unchanged and breaks
   the walk scenes (walk_citizen 0.1 -> 44, walk_metrocop 1.3 -> 57); the leader's run route is
   built elsewhere than npc_goto's local/graph choice (the squad's straight cover run?).
+  Decoded further: the leader gets the same graph route (591 -> 654 -> 627 -> 460); the game's
+  leader veers west from row 524 as it closes on its slower mate running the same line, passes
+  it 45..53 u off (hulls 32 wide), halts (step 1.0) at (953,7) while the mate crosses 45 u
+  ahead and runs on when it is 63 u off - squad-mate avoidance and yield, not a route point. A
+  generic 50-u keep-off / yield against every live NPC left the squad rows unchanged and made
+  the poison zombie dodge its own thrown headcrab (67.7 -> 86.3), so it is not in; open.
 - server_npc_zombie_swat (40.0): the game's spawn trace from the eye (823,-500,-79) at pitch
   15 clears the crate's west face (z -94 at x 880) and meets its top at (916,-500,-104); the
   zombie is placed there (-103.9, the hull's rear 20 u over the crate), the crate lifts 1.8 u
