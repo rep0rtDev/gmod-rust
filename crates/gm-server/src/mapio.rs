@@ -111,6 +111,11 @@ pub enum Toggle {
     GoingDown,
 }
 
+/// `path_track` spawnflag set by EnableAlternatePath (`SF_PATH_ALTERNATE`).
+const SF_PATH_ALTERNATE: u32 = 0x8000;
+/// Our marker: the node's `OnPass` fired (spawnflag 2 fires it once).
+const SF_PATH_PASSED: u32 = 0x1_0000;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
     /// `func_door` / `func_movelinear` / `func_button`: slides from `pos1` to `pos2`.
@@ -715,16 +720,56 @@ impl Server<'_> {
         })
     }
 
-    /// The node before `idx` on the track: the `path_track` whose `target` it is.
+    /// The node before `idx` on the track: the `path_track` whose `target` it is, else the
+    /// one whose `altpath` it is (`CPathTrack::Link` sets the alt node's previous too).
     fn path_prev(&self, idx: usize) -> Option<usize> {
         let name = &self.map_io.entities[idx].targetname;
-        self.map_io.entities.iter().position(|e| {
-            e.alive
-                && e.classname == "path_track"
-                && e.def
-                    .get("target")
-                    .is_some_and(|t| t.trim().eq_ignore_ascii_case(name))
-        })
+        let linked = |key: &str| {
+            self.map_io.entities.iter().position(|e| {
+                e.alive
+                    && e.classname == "path_track"
+                    && e.def
+                        .get(key)
+                        .is_some_and(|t| t.trim().eq_ignore_ascii_case(name))
+            })
+        };
+        linked("target").or_else(|| linked("altpath"))
+    }
+
+    /// `CPathTrack::GetNext`: the node's `altpath` while its alternate path is on
+    /// (`SF_PATH_ALTERNATE`, set by EnableAlternatePath) and not reversed (spawnflag 4), else
+    /// its `target`; a disabled node (spawnflag 1, `ValidPath`) ends the track.
+    fn path_next(&self, n: usize) -> Option<usize> {
+        let e = &self.map_io.entities[n];
+        let alt = e.flags & SF_PATH_ALTERNATE != 0 && e.flags & 4 == 0;
+        let by = |key: &str| {
+            e.def
+                .get(key)
+                .map(str::to_string)
+                .and_then(|t| self.path_idx(&t))
+        };
+        let idx = if alt {
+            by("altpath").or_else(|| by("target"))
+        } else {
+            by("target")
+        }?;
+        (self.map_io.entities[idx].flags & 1 == 0).then_some(idx)
+    }
+
+    /// `CPathTrack::GetPrevious`: the `altpath` when the alternate path is on and reversed
+    /// (spawnflag 4), else the node whose `target` this is; disabled nodes end the track.
+    fn path_prev_of(&self, n: usize) -> Option<usize> {
+        let e = &self.map_io.entities[n];
+        let idx = if e.flags & SF_PATH_ALTERNATE != 0 && e.flags & 4 != 0 {
+            e.def
+                .get("altpath")
+                .map(str::to_string)
+                .and_then(|t| self.path_idx(&t))
+                .or_else(|| self.path_prev(n))
+        } else {
+            self.path_prev(n)
+        }?;
+        (self.map_io.entities[idx].flags & 1 == 0).then_some(idx)
     }
 
     /// The train teleports to its first `path_track` (`target`) at spawn, `height` above it,
@@ -740,11 +785,7 @@ impl Server<'_> {
         };
         let node_pos = self.map_io.entities[first].pos;
         let first_id = self.map_io.entities[first].id;
-        let after = self.map_io.entities[first]
-            .def
-            .get("target")
-            .map(str::to_string)
-            .and_then(|t| self.path_idx(&t));
+        let after = self.path_next(first);
         let after_id = after.map(|i| self.map_io.entities[i].id);
         let after_pos = after.map(|i| self.map_io.entities[i].pos);
         let e = &mut self.map_io.entities[idx];
@@ -797,19 +838,40 @@ impl Server<'_> {
         }
         let node_speed = self.map_io.entities[n].def.num("speed", 0.0);
         let node_flags = self.map_io.entities[n].flags;
-        let following = if speed > 0.0 {
-            self.map_io.entities[n]
-                .def
-                .get("target")
-                .map(str::to_string)
-                .and_then(|t| self.path_idx(&t))
+        let mut following = if speed > 0.0 {
+            self.path_next(n)
         } else {
-            self.path_prev(n)
+            self.path_prev_of(n)
         };
+        // spawnflag 16: the train teleports to that node and carries on past it
+        let mut teleport = None;
+        if let Some(f) = following.filter(|&f| self.map_io.entities[f].flags & 16 != 0) {
+            teleport = Some((f, self.map_io.entities[f].pos));
+            following = if speed > 0.0 {
+                self.path_next(f)
+            } else {
+                self.path_prev_of(f)
+            };
+        }
         let following_id = following.map(|i| self.map_io.entities[i].id);
         let following_pos = following.map(|i| self.map_io.entities[i].pos);
-        self.map_io.fire_output(now, n, "OnPass", 0);
+        // spawnflag 2: OnPass fires once
+        if node_flags & 2 == 0 || node_flags & SF_PATH_PASSED == 0 {
+            self.map_io.fire_output(now, n, "OnPass", 0);
+            self.map_io.entities[n].flags |= SF_PATH_PASSED;
+        }
         self.map_io.fire_output(now, idx, "OnNextPoint", 0);
+        if let Some((f, _)) = teleport {
+            self.map_io.fire_output(now, f, "OnTeleport", 0);
+        }
+        let goal = match teleport {
+            Some((_, p)) => p + Vec3::new(0.0, 0.0, height),
+            None => goal,
+        };
+        let next_id = match teleport {
+            Some((f, _)) => self.map_io.entities[f].id,
+            None => next_id,
+        };
         let e = &mut self.map_io.entities[idx];
         let Kind::Train {
             speed: sp,
@@ -1069,6 +1131,18 @@ impl Server<'_> {
             return;
         };
         let input_lc = input.to_ascii_lowercase();
+        if self.map_io.entities[idx].classname == "path_track" {
+            let flags = &mut self.map_io.entities[idx].flags;
+            match input_lc.as_str() {
+                "enablealternatepath" => *flags |= SF_PATH_ALTERNATE,
+                "disablealternatepath" => *flags &= !SF_PATH_ALTERNATE,
+                "togglealternatepath" => *flags ^= SF_PATH_ALTERNATE,
+                "enablepath" => *flags &= !1,
+                "disablepath" => *flags |= 1,
+                "togglepath" => *flags ^= 1,
+                _ => {}
+            }
+        }
         match input_lc.as_str() {
             "kill" => {
                 self.map_io.entities[idx].alive = false;

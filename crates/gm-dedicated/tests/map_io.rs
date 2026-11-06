@@ -542,3 +542,94 @@ fn env_sprite_shows_hides_and_recolours_through_its_inputs() {
         "ToggleSprite shows it with the green channel set to 0"
     );
 }
+
+#[test]
+fn a_path_track_alternate_path_branches_the_train_and_a_disabled_node_ends_the_track() {
+    let Some((world, _mount)) = load() else {
+        return;
+    };
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let def = |class: &str, kv: &[(&str, &str)], origin: Vec3| gm_server::mapio::MapEntityDef {
+        classname: class.into(),
+        kv: kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        origin,
+        angles: Vec3::ZERO,
+        hulls: Vec::new(),
+        mins: Vec3::ZERO,
+        maxs: Vec3::ZERO,
+    };
+    let defs = vec![
+        def(
+            "path_track",
+            &[("targetname", "a"), ("target", "b")],
+            Vec3::ZERO,
+        ),
+        def(
+            "path_track",
+            &[("targetname", "b"), ("target", "c"), ("altpath", "d")],
+            Vec3::new(100.0, 0.0, 0.0),
+        ),
+        def(
+            "path_track",
+            &[("targetname", "c")],
+            Vec3::new(200.0, 0.0, 0.0),
+        ),
+        def(
+            "path_track",
+            &[("targetname", "d")],
+            Vec3::new(100.0, 100.0, 0.0),
+        ),
+        def(
+            "func_tracktrain",
+            &[
+                ("targetname", "train"),
+                ("target", "a"),
+                ("speed", "200"),
+                ("startspeed", "200"),
+                ("height", "0"),
+            ],
+            Vec3::new(-500.0, -500.0, 0.0),
+        ),
+    ];
+    server.set_map_entities(defs, world.surface);
+    let idle = std::collections::BTreeMap::new();
+    let train = |server: &gm_server::Server| {
+        server
+            .map_io
+            .entities
+            .iter()
+            .find(|e| e.classname == "func_tracktrain")
+            .cloned()
+            .unwrap()
+    };
+    server.fire_input("b", "EnableAlternatePath", "", 0);
+    for _ in 0..120 {
+        server.tick(&idle);
+    }
+    let p = train(&server).pos;
+    assert!(
+        (p.x - 100.0).abs() < 1e-3 && (p.y - 100.0).abs() < 1e-3,
+        "the alternate path takes it to d: {p}"
+    );
+    assert!(!train(&server).moving(), "d ends the track");
+    // back to a, then along the main path with c disabled: it stops at b
+    server.fire_input("b", "DisableAlternatePath", "", 0);
+    server.fire_input("c", "DisablePath", "", 0);
+    server.fire_input("train", "StartBackward", "", 0);
+    for _ in 0..120 {
+        server.tick(&idle);
+    }
+    assert_eq!(train(&server).pos, Vec3::ZERO, "back at a");
+    server.fire_input("train", "StartForward", "", 0);
+    for _ in 0..120 {
+        server.tick(&idle);
+    }
+    assert_eq!(
+        train(&server).pos,
+        Vec3::new(100.0, 0.0, 0.0),
+        "a disabled next node ends the track at b"
+    );
+}
