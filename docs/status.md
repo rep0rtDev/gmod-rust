@@ -260,6 +260,13 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   dives over the bot (apex 197 above, 87 over its head) to a random photograph spot 130 u
   beyond and only then settles at 100..110 / 150..170 (rows 340..400 within 15 u of ours);
   mean error 52 u, the dive and the inspect2 pass are open.
+- A zombie's swat is over on the think its swing ends (the swat is cleared in the think, not
+  after the move): the chase is reissued there and the body walks a think later (swat2_drumside
+  117 vs the game's 110, was 124); drumside930 12 -> 8, drumside 50 -> 51, drum875 7 -> 8.
+  Open, physics-side: the side-lying drum of swat2_drumside does 50 to the bot in the game and
+  29 here (oildrum001.phy mass is 30 in both - `vpk_cat` example dumps a vpk file), and the
+  game's drum glances off the bot to the south and rolls 300 u on its side to (609,-518)
+  where ours stops at 751.
 - A spawned NPC whose hull starts in a wall is moved out along the shortest axis direction
   before it settles to the floor (`npc_out_of_solid`): the antlion guard spawned at x 1001.7
   sits at 984.0 = the wall at 1024 minus its 40 u half width, on the floor, like the game

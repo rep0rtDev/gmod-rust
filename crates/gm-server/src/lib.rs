@@ -18445,9 +18445,22 @@ impl<'w> Server<'w> {
         if !ai::class_is_zombie_body(&n.class) {
             return false;
         }
-        if n.swat.is_some() {
-            return true;
+        if let Some(sw) = n.swat {
+            // the swing's last tick: the swat is over for this think, the chase resumes now
+            // (the game's zombie walks on the row its swatrightlow ends, swat2_drumside 110)
+            if now < sw.until {
+                return true;
+            }
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.swat = None;
+                if let Some(rest) = n.rest_sequence.take() {
+                    n.sequence = rest;
+                }
+            }
         }
+        let Some(n) = self.npcs.get(&id) else {
+            return false;
+        };
         if let Some(prop) = n.swat_goal {
             let (feet, yaw, walking) = (n.pos, n.angles.y, n.goal.is_some());
             let center = self
