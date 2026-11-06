@@ -459,10 +459,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   NE (1142,80) 778 -> (1164,93) 792 -> (1175,94) 820, then south along x 1175 at ~10 u a
   think braking to (1175,42) 876, east to (1179,46) 890, CombatIdle1 897, reload 904; the
   yaw spins the whole way, 233 (the bot's bearing) -> 219 -> ... -> 23 at about -19 deg a
-  think. The only AI node there is #460 (1201,72); (1179,46) and (1175,94) are not nodes,
-  so this reads as a run at #460 sliding along a face at x ~1175 (hull edge) north then
-  south to its end and giving up 34 u short - ours stops at (1175,72), 26 u west of the
-  node, 112 ticks earlier. Open: that slide-and-give-up, and ours chases
+  think. The only AI node there is #460 (1201,72), where the mate stands the whole time
+  (CombatIdle 778..792, reload 806 on); the world east of x 1175 is open, so the leader is
+  running at the mate's node and sliding round the mate's hull (leader-mate distance 59 /
+  43 / 39 / 34 / 27 / 29 / 37 / 40 / 34 over 778..904: north side first, then south), and
+  gives up 34 u short after ~15 thinks. Ours stops at (1175,72) at once (26 u from the
+  mate) and reloads 112 ticks earlier; our mate's reload lasts 764..792 only (the game's
+  806 to past 904) and it runs off south-east from 806. Open: the slide round the mate and
+  its give-up, the mate's cut reload, and ours chases
   south-east after its reload (920 on) where the game still reloads; the leader's earlier
   non-cut of (965,-19) for (1201,72) 360 u out (1.7 s, the hull line clear in ours) still
   contradicts the cut rule unless its first cover was the unexplained (953,7).
