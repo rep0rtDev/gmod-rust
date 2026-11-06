@@ -52,6 +52,8 @@ struct SystemDef {
     initializers: Vec<Op>,
     operators: Vec<Op>,
     emitters: Vec<Op>,
+    forces: Vec<Op>,
+    constraints: Vec<Op>,
     renderers: Vec<Op>,
     children: Vec<(String, f32)>,
 }
@@ -104,6 +106,8 @@ pub struct Particles {
     instances: Vec<Instance>,
     seed: u32,
 }
+
+pub type Tracer<'a> = &'a dyn Fn(Vec3, Vec3) -> Option<(Vec3, Vec3)>;
 
 /// A particle effect the game asked for this frame.
 pub struct Spawn {
@@ -244,6 +248,8 @@ impl Particles {
                         initializers: ops("initializers"),
                         operators: ops("operators"),
                         emitters: ops("emitters"),
+                        forces: ops("forces"),
+                        constraints: ops("constraints"),
                         renderers: ops("renderers"),
                         children,
                     },
@@ -318,12 +324,12 @@ impl Particles {
     }
 
     /// Advances every effect by `dt`; `pose(ent)` is an entity's (origin, forward) when it
-    /// still exists.
-    pub fn tick(&mut self, dt: f32, pose: &dyn Fn(u32) -> Option<(Vec3, Vec3)>) {
+    /// still exists, `trace(start, end)` the world hit (point, normal) on that segment.
+    pub fn tick(&mut self, dt: f32, pose: &dyn Fn(u32) -> Option<(Vec3, Vec3)>, trace: Tracer<'_>) {
         let dt = dt.clamp(0.0, 0.1);
         let defs = std::mem::take(&mut self.defs);
         for inst in &mut self.instances {
-            tick_instance(inst, &defs, dt, pose, None);
+            tick_instance(inst, &defs, dt, pose, trace, None);
         }
         self.defs = defs;
         self.instances.retain(|i| !finished(i));
@@ -517,6 +523,7 @@ fn tick_instance(
     defs: &HashMap<String, SystemDef>,
     dt: f32,
     pose: &dyn Fn(u32) -> Option<(Vec3, Vec3)>,
+    trace: Tracer<'_>,
     parent_cps: Option<&[(Vec3, Vec3); MAX_CP]>,
 ) {
     let Some(def) = defs.get(&inst.def) else {
@@ -598,6 +605,36 @@ fn tick_instance(
     for p in &mut inst.particles {
         let age = t - p.born;
         let mut moved = false;
+        for f in &def.forces {
+            match f.func.as_str() {
+                // C_OP_TwistAroundAxis: push around the axis through the control point
+                "twist around axis" => {
+                    let amount = f.f("amount of force", 0.0);
+                    let cp = f.i("control point number", 0).clamp(0, MAX_CP as i32 - 1) as usize;
+                    let mut axis = f.v("twist axis", Vec3::Z).normalize_or_zero();
+                    if f.b("object local space axis 0/1", false) {
+                        let fwd = cps[cp].1;
+                        let right = fwd.cross(Vec3::Z).normalize_or_zero();
+                        let up = right.cross(fwd).normalize_or_zero();
+                        axis = (fwd * axis.x + right * axis.y + up * axis.z).normalize_or_zero();
+                    }
+                    let r = p.pos - cps[cp].0;
+                    let tangent = axis.cross(r).normalize_or_zero();
+                    p.vel += tangent * amount * dt;
+                }
+                // C_OP_RandomForce: a fresh random acceleration every frame
+                "random force" => {
+                    let lo = f.v("min force", Vec3::ZERO);
+                    let hi = f.v("max force", Vec3::ZERO);
+                    p.vel += Vec3::new(
+                        range(seed, lo.x, hi.x),
+                        range(seed, lo.y, hi.y),
+                        range(seed, lo.z, hi.z),
+                    ) * dt;
+                }
+                _ => {}
+            }
+        }
         for op in &def.operators {
             match op.func.as_str() {
                 "movement basic" => {
@@ -729,6 +766,28 @@ fn tick_instance(
             p.prev = p.pos;
         }
         p.roll += p.roll_speed * dt;
+        // C_OP_WorldTraceConstraint: bounce / slide on the world along this frame's motion
+        for c in &def.constraints {
+            if c.func != "collision via traces" || p.pos == p.prev {
+                continue;
+            }
+            let bounce = c.f("amount of bounce", 0.0);
+            let slide = c.f("amount of slide", 0.0);
+            let radius = p.radius * c.f("radius scale", 1.0);
+            let dir = (p.pos - p.prev).normalize_or_zero();
+            if let Some((hit, n)) = trace(p.prev, p.pos + dir * radius) {
+                p.pos = hit + n * radius.max(0.5) - dir * 0.0;
+                let into = p.vel.dot(n);
+                if into < 0.0 {
+                    let normal = n * into;
+                    let tangent = p.vel - normal;
+                    p.vel = tangent * slide.clamp(0.0, 1.0) - normal * bounce.clamp(0.0, 1.0);
+                    if bounce <= 0.0 && slide <= 0.0 {
+                        p.vel = Vec3::ZERO;
+                    }
+                }
+            }
+        }
     }
     inst.particles.retain(|p| t - p.born < p.life);
     let cps = inst.cps;
@@ -736,7 +795,7 @@ fn tick_instance(
         if inst.stopped {
             c.stopped = true;
         }
-        tick_instance(c, defs, dt, pose, Some(&cps));
+        tick_instance(c, defs, dt, pose, trace, Some(&cps));
     }
 }
 

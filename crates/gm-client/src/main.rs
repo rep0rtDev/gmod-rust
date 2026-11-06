@@ -5256,7 +5256,12 @@ impl App {
                     .find(|p| p.id == ent)
                     .map(|p| (p.origin, particles::forward_of(p.view_angles)))
             };
-            g.particles.tick(dt, &pose);
+            let collision = &self.sim.collision;
+            let trace = |start: Vec3, end: Vec3| -> Option<(Vec3, Vec3)> {
+                let tr = collision.trace_ray(start, end, gm_collision::MASK_SOLID);
+                (tr.fraction < 1.0 && !tr.start_solid).then_some((tr.end, tr.normal))
+            };
+            g.particles.tick(dt, &pose, &trace);
             g.particles.prepare(&g.gpu, &self.mount, &g.world);
         }
         g.particles_tick = Some(now);
