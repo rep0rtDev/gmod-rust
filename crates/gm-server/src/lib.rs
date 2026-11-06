@@ -14793,10 +14793,17 @@ impl<'w> Server<'w> {
             // (the flight from a danger sound faces its path: server_npc_grenade_soldier_wall
             // t2365 RunALL turning 16 deg a think right after a burst at the visible bot)
             let armed = !(n.weapon.is_empty() || n.weapon == "none");
+            // a run to cover keeps facing the enemy's last known position whether or not the
+            // line still holds (server_npc_grenade_soldier_low: the soldier running north from
+            // its crouch at 796..845 tracks the bot's bearing 180 -> 187 with RunALL, the sight
+            // gone the think it stood up; _wall: 145 -> 147 to its stop at 572 behind the wall)
             let enemy_face = n
                 .target
                 .and(n.last_known)
-                .filter(|_| n.target_seen + n.think_interval as u64 >= now && !n.cover_from_sound)
+                .filter(|_| {
+                    (n.target_seen + n.think_interval as u64 >= now || n.cover_at.is_some())
+                        && !n.cover_from_sound
+                })
                 .filter(|_| {
                     !armed || now <= n.goal_started.max(n.reacquired_at) + NPC_AIM_RUN_TICKS
                 })

@@ -201,7 +201,27 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   path) where the game runs facing the bot at 187 and so needs no turn; _wall's game soldier
   runs at 145..147 all the way where ours swings 129 → 98 → 147; grenade_soldier's ours
   reaches the node two thinks before the game's (642 against 656) on the last leg; the squad
-  mate's arrival is the zigzag residual. Run-facing on those runs is the next measurement.
+  mate's arrival is the zigzag residual.
+- Run facing, measured next: on a run to cover the game's body faces the enemy's last known
+  position whether or not it still sees it - _low's soldier runs north from its crouch
+  tracking the bot's bearing 180 → 187 (796..845) with the RunALL label (the sight gone the
+  think it stood up, ours too: label and facing are separate), _wall's holds 145 → 147 to
+  its stop at 572 behind the wall; the aim-run window (91 ticks from the run start, the turn
+  to the path at (975, −331) in grenade_soldier, the squad leader and mate at 388 → 479 and
+  304 → 395) still ends it. Ours turned to the path the think the sight went (low 164 → 90,
+  wall 129 → 98) and then back for the reload; now `enemy_face` on a cover run takes the LKP
+  without the sight test. _low faces right (180 → 187) and reloads 866 against 859 because
+  its run is a think behind from the first step (game 5 u at 796 then 6 / 8 / 10, ours 1 then
+  3 / 6 / 8 / 10 - the game's body moves on the think it starts) - 10.0 → 12.2 with that lag
+  now visible in the yaw-banded ramp; open.
+- Tried and dropped: "the braking thinks of a cover run never turn to the path". It fits
+  _wall (window ends 558 as the body slows 852 → 857 over 558..572 holding 145..147, ours
+  swings 129 → 98 → 147 and reloads 593 against 586) but not grenade_soldier, whose body
+  turns 230 → 202 → 172 → 142 → 112 through its own arrival thinks 630..658 at the node;
+  with the clause ours reached the node facing the bot and the tail ran 20 u ahead of the
+  game's (26.9 → 117) - while squad_soldier went 162.4 → 80.4 with it, so the squad's two
+  arrivals at their nodes do hold like _wall's. Why one arrival holds and the other turns
+  is open.
 
 ### NPC: a zombie's approach to a prop in its way (swat2_crate 75, swat3_a 7, drum 6) - measured, open
 
