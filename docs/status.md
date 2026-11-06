@@ -438,8 +438,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   game's; open there: ours chains two cuts in one think at (1136,15) ((1201,72) for (1201,-255)
   and that for the point, a straight 306 diagonal) where the game cut (1201,72) at (1100,45)
   but (1201,-255) only at (1189,-155), 112 u out, not at 145..258 - one cut a think, or its
-  line blocked; and the game's turn onto (1201,-255) runs 351 -> 281 over six thinks where ours
-  snaps. server_npc_squad_soldier 69 ->
+  line blocked; and the game's heading onto (1201,-255) converges 4 -> 342 -> 311 -> 301 ->
+  296 -> 293 -> 289 -> 281 by think (22 / 31 / 10 / 5 / 3 / 4 / 8 deg, the yaw two thinks
+  behind, the step a full 20..22 u) where ours snaps - a smoothed steer, not a yaw rate: the
+  soldier's heading onto (1201,72) from (1003,27) snaps 51 -> 20 -> 15 -> 14 -> 11 while its
+  yaw does the 37-deg enemy turn. corner_seen's third turn (140 at (-8,-445), 23 u short of
+  the scan point (-30,-440)) reads as a re-scan at the scan point - 72 past it on the leg to
+  (-215,-255) is (-81,-389), bearing 142.5 - but the same re-scan at the first scan point
+  would have turned the corner citizen to 177.5 at 67 u out where it held 175 to 8 u; the
+  gate for a re-scan is between 23 and 52 u there and under 8 here, so it stays open. server_npc_squad_soldier 69 ->
   155: the leader now reaches the mate's node (1201,72) at row ~780 like the game. It then
   reloads in place (two rules: a body already hidden at the cover it reached reloads there
   instead of searching cover again, and a pending or running reload comes before the
