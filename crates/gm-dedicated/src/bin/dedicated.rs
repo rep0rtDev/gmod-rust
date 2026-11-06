@@ -168,6 +168,7 @@ fn main() -> Result<()> {
         }
     }
     let mut net = gm_net::ServerNet::new(&args.map, spawn);
+    net.bind = args.bind.clone();
     net.saves_dir = Some(args.data.join("saves"));
     if let Some(name) = &args.load {
         let path = args

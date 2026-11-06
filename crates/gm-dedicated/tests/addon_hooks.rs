@@ -2509,10 +2509,11 @@ fn the_admin_console_answers_status_cvar_say_and_denies_others() {
     run(20, &mut server, &mut admin, &mut peer);
     let a = admin.events.join("\n");
     assert!(
-        a.contains("gm_construct tick") && a.contains("players 2/"),
+        a.contains("map     : gm_construct at:") && a.contains("players : 2 humans"),
         "{a}"
     );
-    assert!(a.contains(&format!("{peer_id} peer anonymous")), "{a}");
+    assert!(a.contains(&format!("#{peer_id:>7} \"peer\"")), "{a}");
+    assert!(a.contains("anonymous"), "{a}");
     assert!(a.contains("admin\n") || a.contains(" admin"), "{a}");
     assert!(a.matches("sbox_maxprops = 25").count() == 2, "{a}");
     assert_eq!(server.sandbox.limits.max_props, 25);

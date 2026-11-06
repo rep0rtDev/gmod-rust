@@ -63,6 +63,8 @@ pub struct ClientSlot {
     nonce: [u8; 32],
     /// Proven identity (ed25519 public key) of this connection.
     pub identity: Option<[u8; 32]>,
+    /// Server tick the slot was opened at (`status`'s `connected` column).
+    pub joined: u32,
     welcomed: bool,
     eph: crate::crypto::Ephemeral,
     crypto: Option<crate::crypto::Session>,
@@ -122,6 +124,8 @@ pub struct ServerNet {
     pub log: Vec<String>,
     /// Event lines in the form of srcds's `logs/L-*.log` (without the timestamp).
     pub events: Vec<String>,
+    /// The UDP address the server listens on, for `status`.
+    pub bind: String,
     /// Where the console's `save` / `load` keep `<name>.rdup`.
     pub saves_dir: Option<std::path::PathBuf>,
     pub addons: Vec<PublishedAddon>,
@@ -177,6 +181,7 @@ impl ServerNet {
             voice_muted: Vec::new(),
             log: Vec::new(),
             events: Vec::new(),
+            bind: String::new(),
             saves_dir: None,
             addons: Vec::new(),
             models: Vec::new(),
@@ -261,6 +266,7 @@ impl ServerNet {
                     ClientSlot {
                         player,
                         name: String::new(),
+                        joined: self.tick,
                         channel: Channel::default(),
                         cmds: BTreeMap::new(),
                         last_cmd: PlayerCmd::default(),
@@ -592,22 +598,40 @@ impl ServerNet {
                     }
                 }
             }
+            // srcds's `status`: header, then `# userid name uniqueid connected ping loss state adr`
             "status" => {
-                let mut out = vec![format!(
-                    "{} tick {} players {}/{} props {} constraints {}",
-                    self.map,
-                    self.tick,
-                    self.clients.values().filter(|c| c.welcomed && !c.closing).count(),
-                    self.max_players,
-                    server.sandbox.props().len(),
-                    server.sandbox.constraints().len()
-                )];
-                for c in self.clients.values().filter(|c| c.welcomed && !c.closing) {
+                let dt = gm_core::tick::DEFAULT_TICK_INTERVAL;
+                let up = uptime((self.tick as f32 * dt) as u64);
+                let humans = self.clients.values().filter(|c| c.welcomed && !c.closing);
+                let mut out = vec![
+                    format!("hostname: {}", self.info.name),
+                    format!("version : {}/{PROTOCOL} insecure", env!("CARGO_PKG_VERSION")),
+                    format!("udp/ip  : {}", self.bind),
+                    format!("map     : {} at: 0 x, 0 y, 0 z", self.map),
+                    format!("uptime  : {up} map, {up} server"),
+                    format!(
+                        "players : {} humans, 0 bots ({} max)",
+                        humans.clone().count(),
+                        self.max_players
+                    ),
+                    "# userid name                uniqueid            connected ping loss state  adr"
+                        .to_string(),
+                ];
+                for c in humans {
+                    let secs = self.tick.saturating_sub(c.joined) as f32 * dt;
+                    let ping = c.channel.rtt_ticks.map_or(0.0, |t| t * 1000.0 * dt);
                     out.push(format!(
-                        "  {} {} {}{}",
+                        "#{:>7} {:<20}{:<20}{:>9} {:>4} {:>4} {:<6} {}{}",
                         c.player,
-                        c.name,
-                        c.identity.map(|k| hex(&k)).unwrap_or_else(|| "anonymous".into()),
+                        format!("\"{}\"", c.name),
+                        c.identity
+                            .map(|k| hex(&k)[..16].to_string())
+                            .unwrap_or_else(|| "anonymous".into()),
+                        format!("{:02}:{:02}", secs as u32 / 60, secs as u32 % 60),
+                        ping.round() as u32,
+                        c.channel.loss_pct().round() as u32,
+                        "active",
+                        c.addr,
                         if self.admins.contains(&c.player) { " admin" } else { "" }
                     ));
                 }
@@ -1936,6 +1960,18 @@ fn event_tag(name: &str, player: u32, identity: Option<&[u8; 32]>, team: &str) -
         .map(|k| hex(k)[..16].to_string())
         .unwrap_or_default();
     format!("\"{name}<{player}><{id}><{team}>\"")
+}
+
+/// srcds's uptime text: `1s`, `1m 35s`, `2h 0m 5s`.
+fn uptime(secs: u64) -> String {
+    let (h, m, s) = (secs / 3600, secs % 3600 / 60, secs % 60);
+    if h > 0 {
+        format!("{h}h {m}m {s}s")
+    } else if m > 0 {
+        format!("{m}m {s}s")
+    } else {
+        format!("{s}s")
+    }
 }
 
 fn hex(b: &[u8; 32]) -> String {
