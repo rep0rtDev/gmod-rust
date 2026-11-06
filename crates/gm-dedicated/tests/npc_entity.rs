@@ -1084,8 +1084,9 @@ fn poison_zombie_throws_then_claws() {
         "threw from {d0}"
     );
     let crab = crab_at.expect("no crab");
+    // golden 261105: the crab appears on row 228, 147 ticks after the throw starts on 81
     assert!(
-        (148..=152).contains(&(crab - t0)),
+        (146..=148).contains(&(crab - t0)),
         "crab released {} after the throw",
         crab - t0
     );

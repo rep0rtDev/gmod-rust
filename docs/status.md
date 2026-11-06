@@ -674,9 +674,19 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   (all three pounces: hit at +34, recoil thinks at 256 / 424 / 592) over 12 ticks: 844.5 /
   853.3 and 781.5 / 790.3 against the game's 844.1 / 852.8 and 781.2 / 789.9 (was 2.1 u a tick
   from hit+21). A lunge step also stops at the target's hull (npc half + 16 u).
-  Open: the thrown crab lands on the bot at row 263 vs the game's 269 - the goldens do not
-  record the crab entity, so release tick vs flight speed needs an oracle recording; the third
-  pounce of melee_antlion (our bot stands at 672 after the knockbacks, the game's at 675.2, so
+- The thrown poison crab by golden 261105 (poisonzombie_long records `npc_headcrab_poison`):
+  released at tick 147 of the throw (row 228, 65 u above the zombie, at rest that tick), flies
+  315 u/s / 175 u/s up (z -79.0 / -71.9 / -66.1 / -54.8 / -63.0 / -68.1 on rows 228..261
+  against -78.9 / -71.9 / -66.1 / -55.0 / -63.3 / -68.4), lands on the bot's head on row 262
+  (803.6 vs 803.1; the hull top counts from 1 u above it), rests one think and bites on 269
+  like the game; the bite's push comes from the crab's centre (bot slide 823.2 -> 849.9 vs
+  848.4). melee_02 back on row 326, the kill 388 vs 389, poisonzombie_long 484 -> 463.
+  Open: the crab's class is `npc_headcrab_black` in our traces, the game's
+  `npc_headcrab_poison`; after the bite the game's crab steps 5.3 u back (row 271) and
+  flinch-jumps away at 45 degrees, advanced per think (rows 277/283/292/298: +14.9/-14.8 in
+  xy each, z +17.7/+11.1/+4.5/-2.2), while ours drops straight down the hull; the third
+  pounce of
+  melee_antlion (our bot stands at 672 after the knockbacks, the game's at 675.2, so
   our full step fits where the game's would end inside the hulls): the game's 31.6 u step at 62 u from the bot is refused whole (it
   would end 30.7 u from it, inside the hulls) and taken a think later - our lunge trace does
   not collide with players.

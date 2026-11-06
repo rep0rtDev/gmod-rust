@@ -2259,6 +2259,8 @@ pub struct Npc {
     /// In flight because it was thrown (a poison zombie's crab): the landing is a plain
     /// landing, no rest or run-away.
     pub thrown: bool,
+    /// A thrown crab resting on its target's head: the bite comes on its next think.
+    pub bite_pending: bool,
     /// Tick a grenade throw ended: one think of WAIT_IN_COVER and one of COMBAT_FACE follow.
     pub throw_done: u64,
     /// Headcrabs left to throw (poison zombie).
@@ -2879,9 +2881,9 @@ const NPC_POISON_DAMAGE: f32 = 94.0;
 /// A poison zombie's crab throw: released NPC_CRAB_THROW_HEIGHT above the zombie's origin at
 /// NPC_CRAB_THROW_SPEED u/s horizontal and NPC_CRAB_THROW_VZ up (golden 261105: 4.7 u/tick,
 /// apex +24 u after 17 ticks under NPC_GRAVITY).
-const NPC_CRAB_THROW_HEIGHT: f32 = 64.0;
-const NPC_CRAB_THROW_SPEED: f32 = 310.0;
-const NPC_CRAB_THROW_VZ: f32 = 170.0;
+const NPC_CRAB_THROW_HEIGHT: f32 = 65.0;
+const NPC_CRAB_THROW_SPEED: f32 = 315.0;
+const NPC_CRAB_THROW_VZ: f32 = 175.0;
 const NPC_POISON_WARNING_TICKS: u64 = 77;
 /// SCHED_COMBINE_SUPPRESS lasts the first volley: the game read 88 for 40 ticks after the
 /// sight think and 100 from 43..46 on (server_npc_grenade_soldier); 40 on our 7-tick grid.
@@ -3142,7 +3144,7 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
             damage: 5.0,
             reach: NPC_CRAB_THROW_RANGE,
             swing_ticks: 168,
-            hit_tick: 150,
+            hit_tick: 147,
             start_range: NPC_CRAB_THROW_RANGE,
             poison: true,
             ..MELEE_PLAIN
@@ -13480,6 +13482,7 @@ impl<'w> Server<'w> {
             leap_at: None,
             jump_at: None,
             thrown: false,
+            bite_pending: false,
             throw_done: 0,
             crabs: npc_crabs(def.class),
             cover_wanted: false,
@@ -17240,6 +17243,11 @@ impl<'w> Server<'w> {
             else {
                 continue;
             };
+            if n.thrown && n.spawn_tick == now {
+                // the throw's first step is the tick after the release (golden 261105: the
+                // crab appears at the zombie's x on row 228, moves from 229)
+                continue;
+            }
             let hanging = now < n.hung_until;
             if hanging {
                 continue;
@@ -17262,12 +17270,31 @@ impl<'w> Server<'w> {
             }
             // touching the target's hull on the way: the hit
             let mut hit = None;
-            if n.hung_until == 0 && l.damage > 0.0 {
+            let mut rest = false;
+            if n.bite_pending {
+                // the rest on the head is over: the bite (golden 261105: the crab lands on
+                // the bot's head at row 262, bites at 269 - its next think)
+                hit = target.filter(|t| self.players.get(t).is_some_and(|p| p.alive));
+                next = pos;
+                if hit.is_none() {
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.bite_pending = false;
+                        n.hung_until = now + l.hang_ticks;
+                        n.thrown = false;
+                    }
+                    continue;
+                }
+            } else if n.hung_until == 0 && l.damage > 0.0 {
                 if let Some(p) = target.and_then(|t| self.players.get(&t).filter(|p| p.alive)) {
                     let (pm, px) = p.move_override.hull(&self.mover.cfg, p.state.ducked);
                     let lo = p.state.origin + pm - Vec3::new(maxs.x, maxs.y, maxs.z);
                     let hi = p.state.origin + px - Vec3::new(mins.x, mins.y, mins.z);
-                    let inside = (0..3).all(|a| next[a] >= lo[a] && next[a] <= hi[a]);
+                    // the top counts from 1 u above it (golden 261105: the crab comes to
+                    // rest at z -70.4 on a hull top of -71)
+                    let inside = (0..3).all(|a| next[a] >= lo[a] && next[a] <= hi[a])
+                        || (next.z <= hi.z + 1.0
+                            && (0..2).all(|a| next[a] >= lo[a] && next[a] <= hi[a])
+                            && next.z >= hi.z - 1.0);
                     if inside {
                         hit = target;
                         if pos.z >= hi.z - 1.0 {
@@ -17275,6 +17302,7 @@ impl<'w> Server<'w> {
                             // (golden 261105: crab z -70 on a head top of -71), clear of the
                             // player's own move trace
                             next.z = hi.z + 1.0;
+                            rest = n.thrown;
                         } else {
                             // stay on the hull face it came from
                             let back = (pos - p.state.origin).truncate();
@@ -17288,15 +17316,26 @@ impl<'w> Server<'w> {
                 }
             }
             if let Some(player) = hit {
+                if rest {
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.pos = next;
+                        n.flight = Some(Vec3::ZERO);
+                        n.hung_until = now + u64::from(n.think_interval);
+                        n.bite_pending = true;
+                    }
+                    continue;
+                }
                 let dir = (next - self.players[&player].state.origin)
                     .truncate()
                     .normalize_or_zero();
                 if self.damage_player(player, l.damage, weapons::DMG_SLASH) > 0.0 {
                     if l.poison {
-                        // the bite's knockback is the player's push away from the crab (on the
-                        // bot's head, 20 u past its centre: 205 u/s toward the zombie, 25 u slide)
-                        self.push_player(player, next, l.damage);
-                        self.poison_bite(player, next);
+                        // the bite's knockback is the player's push away from the crab's
+                        // centre (resting on the bot's head 20 u past its centre: 25 u slide,
+                        // golden 261104 823.2 -> 848.4)
+                        let from = next + Vec3::new(0.0, 0.0, (mins.z + maxs.z) * 0.5);
+                        self.push_player(player, from, l.damage);
+                        self.poison_bite(player, from);
                     }
                     if let Some(p) = self.players.get_mut(&player) {
                         p.state.velocity -= (dir * l.punch).extend(0.0);
@@ -17306,6 +17345,7 @@ impl<'w> Server<'w> {
                     n.pos = next;
                     n.flight = Some(Vec3::ZERO);
                     n.hung_until = now + l.hang_ticks;
+                    n.bite_pending = false;
                     // a thrown crab's throw ends with its bite: it drops, rests and retreats
                     // like any crab after (golden 261105: off the bot's head at row 280, the
                     // zombie makes the kill)
@@ -18206,6 +18246,7 @@ impl<'w> Server<'w> {
                 leap_at: None,
                 jump_at: None,
                 thrown: false,
+                bite_pending: false,
                 throw_done: 0,
                 crabs: npc_crabs(def.class),
                 cover_wanted: false,
