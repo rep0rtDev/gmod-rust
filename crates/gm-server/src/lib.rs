@@ -2865,9 +2865,12 @@ pub struct NpcMelee {
 
 const NPC_ROAR_SLIDE_DECAY: f32 = 0.982;
 
+/// Half width of the player hull a lunge's root motion stops against.
+const NPC_LUNGE_TARGET_HALF: f32 = 16.0;
+
 const NPC_LUNGE_TICKS: u64 = 21;
 /// The recoil's step back takes this long (the antlion's 832 -> 844 -> 853 within 12 ticks).
-const NPC_RECOIL_TICKS: u64 = 10;
+const NPC_RECOIL_TICKS: u64 = 12;
 /// TASK_WANDER 480384 of SCHED_ZOMBIE_WANDER_MEDIUM: 48..384 u.
 const ZOMBIE_WANDER_MIN: u32 = 48;
 const ZOMBIE_WANDER_MAX: u32 = 384;
@@ -3124,10 +3127,11 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
             start_range: 130.0,
             lunge: 84.0,
             // stands 13 ticks, flies to the hit tick (916 -> 904 -> 863 -> 832 over rows
-            // 220..235), stands 21 ticks at 832 and steps back 21 u in two thinks (844, 853)
+            // 220..235), stands at 832 and from the first think 15 after the hit steps back
+            // 21 u in two thinks (844, 853: 12.5 + 8.7, ~1.77 u a tick over 12)
             lunge_at: 13,
             recoil: 21.0,
-            recoil_delay: 21,
+            recoil_delay: 15,
             ..MELEE_PLAIN
         },
     ];
@@ -17947,19 +17951,33 @@ impl<'w> Server<'w> {
             if to.length_squared() < 1e-6 {
                 continue;
             }
+            // a dash, like the game's, moves the body on its thinks only: the step of the
+            // coming interval at once (antlion recoil 844 / 853 on two thinks)
+            let interval = u64::from(n.think_interval);
+            let on_think = n.next_think == now || n.next_think == now + interval;
             let per_tick = if sliding {
                 -slide
+            } else if on_think {
+                (n.melee_dash_step.abs() * interval as f32)
+                    .min(dash.abs())
+                    .copysign(dash)
             } else {
-                n.melee_dash_step.abs().copysign(dash)
+                continue;
             };
-            let per_tick = match (dash > 1e-3 && swinging)
+            let (mut per_tick, motion) = match (dash > 1e-3 && swinging)
                 .then(|| self.npc_lunge_motion(id, now))
                 .flatten()
             {
                 Some(None) => continue,
-                Some(Some(d)) => d.min(dash),
-                None => per_tick,
+                Some(Some(d)) => (d.min(dash), true),
+                None => (per_tick, false),
             };
+            if motion {
+                // the step stops at the target's hull (server_npc_melee_antlion: the third
+                // pounce ends 33.7 u from the bot, the full step would have ended inside)
+                let contact = maxs.x + NPC_LUNGE_TARGET_HALF;
+                per_tick = per_tick.min((to.length() - contact).max(0.0));
+            }
             let step = (to.normalize() * per_tick).extend(0.0);
             let lift = Vec3::new(0.0, 0.0, NPC_STEP_LIFT);
             let tr = self.collision.trace_box(

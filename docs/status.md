@@ -669,8 +669,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   for row, melee_antlion 35.4 → 31.3. The pounce stops at 84 u in both full recorded flights
   whatever the bot's distance (38 / 34 u left), not at its AE_ANTLION_MELEE_POUNCE (frame 18),
   so the 84 u cap stays measured, not derived.
+- Dashes without motion data (the antlion's recoil) move on thinks too, by the step of the
+  coming interval at once, and the recoil starts on the first think 15 ticks after the hit
+  (all three pounces: hit at +34, recoil thinks at 256 / 424 / 592) over 12 ticks: 844.5 /
+  853.3 and 781.5 / 790.3 against the game's 844.1 / 852.8 and 781.2 / 789.9 (was 2.1 u a tick
+  from hit+21). A lunge step also stops at the target's hull (npc half + 16 u).
   Open: the thrown crab lands on the bot at row 263 vs the game's 269 - the goldens do not
   record the crab entity, so release tick vs flight speed needs an oracle recording; the third
-  pounce of melee_antlion: the game's 31.6 u step at 62 u from the bot is refused whole (it
+  pounce of melee_antlion (our bot stands at 672 after the knockbacks, the game's at 675.2, so
+  our full step fits where the game's would end inside the hulls): the game's 31.6 u step at 62 u from the bot is refused whole (it
   would end 30.7 u from it, inside the hulls) and taken a think later - our lunge trace does
   not collide with players.
