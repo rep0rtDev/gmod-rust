@@ -696,6 +696,36 @@ fn tick_instance(
                     moved = true;
                 }
                 "lifespan decay" => {}
+                // cull operators end the particle now (`life` 0 drops it this tick)
+                "cull when crossing sphere" => {
+                    let cp = (op.i("control_point", 0).max(0) as usize).min(MAX_CP - 1);
+                    let inside = op.b("cull inside", false);
+                    let d = (p.pos - cps[cp].0).length();
+                    if (d < op.f("cull distance", 0.0)) == inside {
+                        p.life = 0.0;
+                    }
+                }
+                "cull when crossing plane" => {
+                    let cp = (op.i("control_point", 0).max(0) as usize).min(MAX_CP - 1);
+                    let inside = op.b("cull inside", false);
+                    let (origin, fwd) = cps[cp];
+                    let d = (p.pos - origin).dot(fwd.normalize_or_zero())
+                        - op.f("cull plane offset", 0.0);
+                    if (d < 0.0) == inside {
+                        p.life = 0.0;
+                    }
+                }
+                "cull random" => {
+                    let age = t - p.born;
+                    let start = op.f("cull start time", 0.0);
+                    let end = op.f("cull end time", 1.0);
+                    if age >= start && age - dt < start && start <= end {
+                        let percent = op.f("cull percent", 0.0);
+                        if (p.seed.wrapping_mul(2_654_435_761) as f32 / u32::MAX as f32) < percent {
+                            p.life = 0.0;
+                        }
+                    }
+                }
                 "alpha fade in random" => {
                     let lo = op.f("fade in time min", 0.25);
                     let hi = op.f("fade in time max", 0.25);
