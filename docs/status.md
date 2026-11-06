@@ -231,6 +231,19 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   open: the slash lands a think late (487 vs 480 - our brake into the 70 u stop takes two
   short steps where the game's takes one of 12.6), the knockback 76 vs 88 u, and the intro's
   side-step itself is only measured (why a hunter walks sideways away from its first enemy).
+- Flying NPCs move (`tick_npc_fly`, every tick, `NpcFlyer` per class; recorded 261106
+  server_npc_fly_manhack / _cscanner): the body acquires the nearest player in sight, rises
+  30 ticks, then steers at a goal by the enemy with `v += accel * (max - v)` and a
+  proportional climb. Manhack: charge at the eyes (0.75 / 1.34 / 2.23 / 2.91 / 3.44 / 3.66
+  u/tick at 8 .. 68 ticks like the game), slice for 4 within 28 u, bounce 2.4 u/tick away
+  decaying over 55 ticks, drift back at up to 0.55 sinking to 40 u over the enemy, charge
+  again ~150 ticks after the slice; the first charge and slice land on the game's rows (hp 96
+  on row 104 both; third slice row 445 both), mean error 16 u. Open: the game slices twice on
+  the first contact (7 ticks apart) and its retreat wanders in y. Scanner: climb 0.14 u/tick a
+  tick to 3.9, cruise 1.5, hover 100 u beyond the enemy 160 above it - the game's first pass
+  dives over the bot (apex 197 above, 87 over its head) to a random photograph spot 130 u
+  beyond and only then settles at 100..110 / 150..170 (rows 340..400 within 15 u of ours);
+  mean error 52 u, the dive and the inspect2 pass are open.
 - A spawned NPC whose hull starts in a wall is moved out along the shortest axis direction
   before it settles to the floor (`npc_out_of_solid`): the antlion guard spawned at x 1001.7
   sits at 984.0 = the wall at 1024 minus its 40 u half width, on the floor, like the game

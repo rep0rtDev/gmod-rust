@@ -2165,6 +2165,11 @@ pub struct Npc {
     pub melee_slide: f32,
     /// The think that arrived in melee range and only stopped (the swing follows next think).
     pub melee_stood: u64,
+    /// A flyer's velocity (u/tick) and the tick of its last slice.
+    pub fly_vel: Vec3,
+    pub fly_hit_at: u64,
+    /// The approach direction when the enemy was acquired: the hover goal's line.
+    pub fly_side: Vec3,
     /// Waiting in cover with the squad after a reload until the enemy shows again.
     pub cover_wait: bool,
     /// Tick from which a ranged move may start again (the hunter's volley).
@@ -3353,6 +3358,93 @@ const NPC_MOVE_HUNTER: NpcMoveDef = NpcMoveDef {
     run_accel: 260.0,
     idle_yaw: NPC_YAW_RATE,
 };
+
+/// A flying NPC's motion (MOVETYPE_FLY), in u/tick: the body steers at a goal near its enemy,
+/// its speed closing on `max` by `accel` of the gap a tick (`v += accel * (max - v)`), its
+/// height by a proportional climb `vz = clamp(vz_gain * dz, -sink, climb)`.
+#[derive(Clone, Copy)]
+pub struct NpcFlyer {
+    pub max: f32,
+    pub accel: f32,
+    pub vz_gain: f32,
+    pub climb: f32,
+    pub sink: f32,
+    /// How fast the climb rate changes (u/tick a tick).
+    pub vz_accel: f32,
+    /// Hover goal: this far short of the enemy along the approach (negative: beyond it, 0 =
+    /// at it) and this high above its origin.
+    pub stand_off: f32,
+    pub height: f32,
+    /// The manhack's slice: damage on contact within `reach`, then a bounce of `bounce`
+    /// u/tick away decaying `bounce_decay` a tick, a drift at `drift_max` toward the enemy
+    /// `drift_height` above it, and the next charge `recharge` ticks after the slice.
+    pub slice: f32,
+    pub reach: f32,
+    pub bounce: f32,
+    pub bounce_decay: f32,
+    pub drift_max: f32,
+    pub drift_accel: f32,
+    pub drift_height: f32,
+    pub recharge: u64,
+}
+
+/// server_npc_fly_manhack 261106: 30 ticks of rising after the spawn (0.34 .. 0.48 u/tick),
+/// the charge at the bot's eyes 0.75 / 1.34 / 2.23 / 2.91 / 3.44 / 3.66 u/tick at 8 / 20 /
+/// 32 / 44 / 56 / 68 ticks, the slice at 22..27 u for 4 (t1082), the bounce 2.4 u/tick
+/// decaying to a stop in ~55 ticks, the drift back at up to 0.55 u/tick sinking to 40 u
+/// above the bot, the next charge from ~150 ticks after the slice (hits at +168 and +175).
+const NPC_FLY_MANHACK: NpcFlyer = NpcFlyer {
+    max: 5.0,
+    accel: 0.018,
+    vz_gain: 0.07,
+    climb: 0.48,
+    sink: 0.48,
+    vz_accel: 0.03,
+    stand_off: 0.0,
+    height: 64.0,
+    slice: 4.0,
+    reach: 28.0,
+    bounce: 2.4,
+    bounce_decay: 0.045,
+    drift_max: 0.55,
+    drift_accel: 0.02,
+    drift_height: 40.0,
+    recharge: 148,
+};
+/// server_npc_fly_cscanner 261106: the climb from the spawn gains 0.14 u/tick a tick to 3.9
+/// (260 u/s), the descent runs 1.8, the cruise 1.5 u/tick (100 u/s); it hovers 100..110 u
+/// beyond the bot 150..170 above it before its photograph (inspect2). Its first pass dives
+/// over the bot (apex 197 above, 87 over its head) to a spot 130 u beyond - not modelled.
+const NPC_FLY_SCANNER: NpcFlyer = NpcFlyer {
+    max: 1.5,
+    accel: 0.03,
+    vz_gain: 0.05,
+    climb: 3.9,
+    sink: 1.8,
+    vz_accel: 0.14,
+    stand_off: -100.0,
+    height: 160.0,
+    slice: 0.0,
+    reach: 0.0,
+    bounce: 0.0,
+    bounce_decay: 0.0,
+    drift_max: 0.0,
+    drift_accel: 0.0,
+    drift_height: 0.0,
+    recharge: 0,
+};
+/// Ticks a flyer rises after acquiring its enemy before it moves at it (manhack t982 -> 1012).
+const NPC_FLY_STARTUP_TICKS: u64 = 30;
+/// The bounce after a slice lasts this long before the drift back.
+const NPC_FLY_BOUNCE_TICKS: u64 = 55;
+
+pub fn npc_flyer(class: &str) -> Option<NpcFlyer> {
+    match class {
+        "npc_manhack" => Some(NPC_FLY_MANHACK),
+        "npc_cscanner" | "npc_clawscanner" => Some(NPC_FLY_SCANNER),
+        _ => None,
+    }
+}
 
 /// The class's first melee move (its approach gait and reach).
 pub fn npc_melee(class: &str) -> Option<NpcMelee> {
@@ -13698,6 +13790,9 @@ impl<'w> Server<'w> {
             melee_dash: 0.0,
             melee_slide: 0.0,
             melee_stood: 0,
+            fly_vel: Vec3::ZERO,
+            fly_hit_at: 0,
+            fly_side: Vec3::ZERO,
             cover_wait: false,
             ranged_after: 0,
             melee_dash_step: 0.0,
@@ -14886,6 +14981,113 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// Flying NPCs move every tick on their own law (`NpcFlyer`): acquire the nearest player
+    /// in sight, rise NPC_FLY_STARTUP_TICKS, then steer at the goal by the enemy; the manhack
+    /// slices on contact, bounces, drifts and charges again.
+    fn tick_npc_fly(&mut self) {
+        let now = self.tick_count;
+        let ids: Vec<u32> = self
+            .npcs
+            .iter()
+            .filter(|(_, n)| {
+                n.dead_at.is_none() && n.body.is_none() && npc_flyer(&n.class).is_some()
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let Some(n) = self.npcs.get(&id) else {
+                continue;
+            };
+            let Some(f) = npc_flyer(&n.class) else {
+                continue;
+            };
+            let pos = n.pos;
+            let mut target = n
+                .target
+                .filter(|p| self.players.get(p).is_some_and(|pl| pl.alive));
+            if target.is_none() {
+                let mut ps: Vec<u32> = self.players.keys().copied().collect();
+                ps.sort_unstable();
+                target = ps
+                    .into_iter()
+                    .filter(|&p| {
+                        !self.npc_ignores(id, p, now)
+                            && self.players.get(&p).is_some_and(|pl| pl.alive)
+                            && self.eye(p).is_some_and(|(e, _)| self.npc_los(pos, e))
+                    })
+                    .min_by(|&a, &b| {
+                        let da = self.players[&a].state.origin.distance(pos);
+                        let db = self.players[&b].state.origin.distance(pos);
+                        da.total_cmp(&db)
+                    });
+            }
+            let Some(p) = target else {
+                continue;
+            };
+            let enemy = self.players[&p].state.origin;
+            let Some(n) = self.npcs.get_mut(&id) else {
+                continue;
+            };
+            if n.target != Some(p) {
+                n.target = Some(p);
+                n.target_first_seen = now;
+                n.fly_side = (enemy - pos).truncate().normalize_or_zero().extend(0.0);
+            }
+            n.target_seen = now;
+            let since_hit = now.saturating_sub(n.fly_hit_at);
+            let resting = n.fly_hit_at != 0 && since_hit < f.recharge;
+            let bouncing = resting && since_hit < NPC_FLY_BOUNCE_TICKS;
+            let to = enemy - pos;
+            let flat = to.truncate();
+            let dist = flat.length();
+            let dir = flat.normalize_or_zero();
+            // the goal: the enemy's eyes, or the hover spot stand_off short of it
+            let goal_dz = if resting { f.drift_height } else { f.height };
+            let goal_flat = flat - n.fly_side.truncate() * f.stand_off;
+            let startup = now < n.target_first_seen + NPC_FLY_STARTUP_TICKS;
+            let mut v = n.fly_vel;
+            let speed = v.truncate().length();
+            if startup {
+                v.x = 0.0;
+                v.y = 0.0;
+            } else if bouncing {
+                let s = (speed - f.bounce_decay).max(0.0);
+                v.x = v.truncate().normalize_or_zero().x * s;
+                v.y = v.truncate().normalize_or_zero().y * s;
+            } else {
+                let (max, accel) = if resting {
+                    (f.drift_max, f.drift_accel)
+                } else {
+                    (f.max, f.accel)
+                };
+                let gd = goal_flat.length();
+                let want = max.min(accel * 10.0 * gd).max(0.0);
+                let s = speed + accel * (want - speed);
+                let gdir = goal_flat.normalize_or_zero();
+                v.x = gdir.x * s;
+                v.y = gdir.y * s;
+            }
+            let dz = to.z + goal_dz;
+            let vz_want = (f.vz_gain * dz).clamp(-f.sink, f.climb);
+            v.z += (vz_want - v.z).clamp(-f.vz_accel, f.vz_accel);
+            n.fly_vel = v;
+            n.pos += v;
+            if speed > 0.05 && !bouncing {
+                n.angles.y = v.y.atan2(v.x).to_degrees();
+                n.angles.x = (speed * 6.0).min(36.0);
+            } else if !bouncing {
+                n.angles.y = dir.y.atan2(dir.x).to_degrees();
+            }
+            // the slice: contact with the enemy's hull, then the bounce away
+            if f.slice > 0.0 && !resting && !startup && dist <= f.reach && to.z.abs() < 80.0 {
+                n.fly_hit_at = now;
+                n.fly_vel = Vec3::new(-dir.x * f.bounce, -dir.y * f.bounce, 0.0);
+                let dmg = f.slice;
+                self.damage_player(p, dmg, weapons::DMG_SLASH);
+            }
+        }
+    }
+
     fn tick_npc_move(&mut self) {
         let prop_bodies = self.prop_bodies();
         let squad_mates: std::collections::HashSet<u32> = self
@@ -14924,6 +15126,7 @@ impl<'w> Server<'w> {
         if self.ai_disabled {
             return;
         }
+        self.tick_npc_fly();
         let ids: Vec<u32> = self
             .npcs
             .iter()
@@ -18910,6 +19113,9 @@ impl<'w> Server<'w> {
                 melee_dash: 0.0,
                 melee_slide: 0.0,
                 melee_stood: 0,
+                fly_vel: Vec3::ZERO,
+                fly_hit_at: 0,
+                fly_side: Vec3::ZERO,
                 cover_wait: false,
                 ranged_after: 0,
                 melee_dash_step: 0.0,
