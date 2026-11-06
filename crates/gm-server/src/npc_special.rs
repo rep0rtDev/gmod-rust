@@ -363,6 +363,7 @@ impl Server<'_> {
             return;
         }
         let (pos, anchor, target) = (n.pos, n.special.anchor, n.special.target);
+        let phase = n.special.phase;
         let floor = match anchor {
             Some(f) => f,
             None => {
@@ -398,6 +399,62 @@ impl Server<'_> {
                         n.special.target = Some(p);
                         n.special.phase = 1;
                         n.special.next_hit = now + ticks(1.0);
+                    }
+                    return;
+                }
+                // else an NPC under the tongue (phases 3 / 4 tell it from a player)
+                let victim = self
+                    .npcs
+                    .iter()
+                    .filter(|(vid, v)| {
+                        **vid != id && v.dead_at.is_none() && v.class != "npc_barnacle"
+                    })
+                    .find(|(_, v)| {
+                        v.pos.truncate().distance(pos.truncate()) <= BARNACLE_RADIUS
+                            && v.pos.z >= floor.z - 8.0
+                            && v.pos.z + v.maxs.z <= pos.z
+                    })
+                    .map(|(vid, _)| *vid);
+                if let Some(v) = victim {
+                    self.set_sequence(id, "tongue_wrap");
+                    if let Some(n) = self.npcs.get_mut(&id) {
+                        n.special.target = Some(v);
+                        n.special.phase = 3;
+                        n.special.next_hit = now + ticks(1.0);
+                    }
+                }
+            }
+            Some(v) if matches!(phase, 3 | 4) => {
+                // an NPC: pulled up to the mouth, then bitten to death
+                let Some(victim) = self.npcs.get(&v) else {
+                    self.barnacle_release(id);
+                    return;
+                };
+                if victim.dead_at.is_some() {
+                    self.barnacle_release(id);
+                    return;
+                }
+                let height = victim.maxs.z;
+                let mouth = pos.z - BARNACLE_MOUTH - height;
+                let at_mouth = victim.pos.z >= mouth - 1.0;
+                if let Some(victim) = self.npcs.get_mut(&v) {
+                    let o = victim.pos;
+                    let xy = o.truncate().lerp(pos.truncate(), 0.2);
+                    let z = (o.z + BARNACLE_PULL * TICK).min(mouth);
+                    victim.pos = Vec3::new(xy.x, xy.y, z);
+                }
+                if at_mouth {
+                    if self.npcs[&id].special.phase == 3 {
+                        self.set_sequence(id, "attack_player");
+                        if let Some(n) = self.npcs.get_mut(&id) {
+                            n.special.phase = 4;
+                        }
+                    }
+                    if now >= self.npcs[&id].special.next_hit {
+                        self.damage_npc_typed(v, id, BARNACLE_BITE, 0, false);
+                        if let Some(n) = self.npcs.get_mut(&id) {
+                            n.special.next_hit = now + ticks(1.0);
+                        }
                     }
                 }
             }
