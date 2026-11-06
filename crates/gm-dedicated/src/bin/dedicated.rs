@@ -32,6 +32,9 @@ struct Args {
     /// Hot reload addons whose files change (checked every 33 ticks).
     #[arg(long)]
     watch: bool,
+    /// Write srcds-style event logs to `<data>/logs/L-*.log`.
+    #[arg(long)]
+    log: bool,
     /// Public key (hex) addons must be signed by; repeatable, none means any addon loads
     #[arg(long)]
     trust: Vec<String>,
@@ -94,6 +97,7 @@ fn main() -> Result<()> {
     take!(max_players);
     take!(data);
     take!(watch);
+    take!(log);
     take!(require_auth);
     take!(timeout);
     if defaulted("spawn") {
@@ -118,6 +122,11 @@ fn main() -> Result<()> {
     let mount = gm_content::Mount::for_install(&inst)?;
     let t0 = Instant::now();
     let world = gm_dedicated::load_world(&mount, &args.map)?;
+    let mut event_log = if args.log {
+        Some(gm_dedicated::EventLog::open(&args.data, &args.map)?)
+    } else {
+        None
+    };
     let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
     server.set_navmesh(world.nav.clone());
     server.set_ai_nodes(world.ai_nodes.clone());
@@ -307,6 +316,11 @@ fn main() -> Result<()> {
         net.send(&server, &mut udp);
         for line in net.take_log() {
             println!("{line}");
+        }
+        if let Some(log) = event_log.as_mut() {
+            for e in net.take_events() {
+                log.line(&e);
+            }
         }
         if net.bans.len() != bans_known {
             bans_known = net.bans.len();

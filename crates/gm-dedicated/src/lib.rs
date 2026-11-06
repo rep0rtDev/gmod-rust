@@ -611,6 +611,7 @@ pub struct ServerConfig {
     /// key with `gm-bot --server-key`, the browser shows it.
     pub server_key: Option<std::path::PathBuf>,
     pub timeout: Option<f32>,
+    pub log: Option<bool>,
     pub registry: Option<String>,
     pub master: Option<String>,
     pub addon: Vec<std::path::PathBuf>,
@@ -786,5 +787,95 @@ mod wav_tests {
         b.extend_from_slice(&(44100u32 * 2 * 3).to_le_bytes());
         assert_eq!(super::wav_duration_bytes(&b), Some(3.0));
         assert_eq!(super::wav_duration_bytes(b"RIFX"), None);
+    }
+}
+
+/// The server's event log in srcds's form: `logs/L-YYYY-MM-DD-NNN.log` under the data directory,
+/// one `L mm/dd/yyyy - hh:mm:ss: ...` line per event, a file per map as `log on` does. Times are
+/// UTC (srcds writes local time) and `Started map` carries no CRC.
+pub struct EventLog {
+    file: std::fs::File,
+}
+
+impl EventLog {
+    pub fn open(data: &std::path::Path, map: &str) -> Result<Self> {
+        std::fs::create_dir_all(data.join("logs"))?;
+        let (date, _) = stamp_at(unix_now());
+        let (rel, path) = (0..1000)
+            .map(|n| format!("logs/L-{date}-{n:03}.log"))
+            .map(|rel| {
+                let path = data.join(&rel);
+                (rel, path)
+            })
+            .find(|(_, p)| !p.exists())
+            .context("no free log file name")?;
+        let file = std::fs::File::create(&path).with_context(|| path.display().to_string())?;
+        let mut log = Self { file };
+        log.line(&format!(
+            "Log file started (file \"{rel}\") (game \"garrysmod\") (version \"{}\")",
+            env!("CARGO_PKG_VERSION")
+        ));
+        log.line(&format!("Loading map \"{map}\""));
+        log.line(&format!("Started map \"{map}\""));
+        Ok(log)
+    }
+
+    pub fn line(&mut self, body: &str) {
+        use std::io::Write;
+        let (_, when) = stamp_at(unix_now());
+        let _ = writeln!(self.file, "L {when}: {body}");
+    }
+}
+
+impl Drop for EventLog {
+    fn drop(&mut self) {
+        self.line("Log file closed.");
+    }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// `YYYY-MM-DD` and srcds's `mm/dd/yyyy - hh:mm:ss` of a Unix time (UTC).
+fn stamp_at(secs: u64) -> (String, String) {
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    let (h, m, s) = (rem / 3600, rem % 3600 / 60, rem % 60);
+    // civil-from-days
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(mo <= 2);
+    (
+        format!("{y:04}-{mo:02}-{d:02}"),
+        format!("{mo:02}/{d:02}/{y:04} - {h:02}:{m:02}:{s:02}"),
+    )
+}
+
+#[cfg(test)]
+mod event_log_tests {
+    #[test]
+    fn stamps_match_date() {
+        assert_eq!(
+            super::stamp_at(0),
+            (
+                "1970-01-01".to_string(),
+                "01/01/1970 - 00:00:00".to_string()
+            )
+        );
+        assert_eq!(
+            super::stamp_at(1_762_471_620),
+            (
+                "2025-11-06".to_string(),
+                "11/06/2025 - 23:27:00".to_string()
+            )
+        );
     }
 }

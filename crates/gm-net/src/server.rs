@@ -120,6 +120,8 @@ pub struct ServerNet {
     voice_muted: Vec<(u32, u32)>,
     /// Human-readable connection events (joins, leaves, kicks) since the last `take_log`.
     pub log: Vec<String>,
+    /// Event lines in the form of srcds's `logs/L-*.log` (without the timestamp).
+    pub events: Vec<String>,
     /// Where the console's `save` / `load` keep `<name>.rdup`.
     pub saves_dir: Option<std::path::PathBuf>,
     pub addons: Vec<PublishedAddon>,
@@ -174,6 +176,7 @@ impl ServerNet {
             pending_voice: Vec::new(),
             voice_muted: Vec::new(),
             log: Vec::new(),
+            events: Vec::new(),
             saves_dir: None,
             addons: Vec::new(),
             models: Vec::new(),
@@ -373,6 +376,7 @@ impl ServerNet {
                                     &self.addons,
                                     server,
                                     &mut self.log,
+                                    &mut self.events,
                                 );
                             }
                         }
@@ -412,6 +416,7 @@ impl ServerNet {
                                     &self.addons,
                                     server,
                                     &mut self.log,
+                                    &mut self.events,
                                 );
                             }
                         }
@@ -419,6 +424,10 @@ impl ServerNet {
                     ClientMsg::Disconnect => {
                         slot.closing = true;
                         self.log.push(format!("{} left", slot.name));
+                        self.events.push(format!(
+                            "{} disconnected (reason \"Disconnect by user.\")",
+                            event_tag(&slot.name, slot.player, slot.identity.as_ref(), "")
+                        ));
                     }
                     ClientMsg::Cmds { cmds } => {
                         for c in cmds {
@@ -489,8 +498,11 @@ impl ServerNet {
             }
         }
         let name = slot.name.clone();
+        let tag = event_tag(&name, player, slot.identity.as_ref(), "");
         refuse(slot, reason);
         self.log.push(format!("{name} (player {player}) {reason}"));
+        self.events
+            .push(format!("{tag} disconnected (reason \"{reason}\")"));
         self.drop_player(server, player);
         true
     }
@@ -672,6 +684,10 @@ impl ServerNet {
     }
 
     /// Connection events since the last call (joins, leaves, refusals, kicks, timeouts).
+    pub fn take_events(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.events)
+    }
+
     pub fn take_log(&mut self) -> Vec<String> {
         std::mem::take(&mut self.log)
     }
@@ -703,19 +719,23 @@ impl ServerNet {
         // timeouts and closed connections
         let timeout = self.timeout_ticks;
         let tick = self.tick;
-        let gone: Vec<(usize, u32, bool, String)> = self
+        let gone: Vec<_> = self
             .clients
             .iter()
             .filter(|(_, s)| {
                 tick.wrapping_sub(s.last_heard) > timeout
                     || (s.closing && s.channel.pending_reliable() == 0)
             })
-            .map(|(e, s)| (*e, s.player, s.closing, s.name.clone()))
+            .map(|(e, s)| (*e, s.player, s.closing, s.name.clone(), s.identity))
             .collect();
-        for (endpoint, player, closing, name) in gone {
+        for (endpoint, player, closing, name, identity) in gone {
             self.clients.remove(&endpoint);
             if !closing {
                 self.log.push(format!("{name} (player {player}) timed out"));
+                self.events.push(format!(
+                    "{} disconnected (reason \"{name} timed out\")",
+                    event_tag(&name, player, identity.as_ref(), "")
+                ));
             }
             self.drop_player(server, player);
         }
@@ -1109,6 +1129,15 @@ impl ServerNet {
             if let Some(text) = text {
                 let line = format!("{name}: {text}");
                 self.log.push(format!("chat {line}"));
+                let identity = self
+                    .clients
+                    .values()
+                    .find(|s| s.player == player)
+                    .and_then(|s| s.identity);
+                self.events.push(format!(
+                    "{} say \"{text}\"",
+                    event_tag(&name, player, identity.as_ref(), "Team")
+                ));
                 let listeners: Vec<u32> = self
                     .clients
                     .values()
@@ -1859,9 +1888,13 @@ fn welcome(
     addons: &[PublishedAddon],
     server: &gm_server::Server<'_>,
     log: &mut Vec<String>,
+    events: &mut Vec<String>,
 ) {
     slot.welcomed = true;
     log.push(format!("{} joined as player {}", slot.name, slot.player));
+    let tag = event_tag(&slot.name, slot.player, slot.identity.as_ref(), "");
+    events.push(format!("{tag} connected, address \"{}\"", slot.addr));
+    events.push(format!("{tag} entered the game"));
     let mut w = Writer::default();
     ServerMsg::Welcome {
         player_id: slot.player,
@@ -1895,6 +1928,14 @@ fn refuse(slot: &mut ClientSlot, reason: &str) {
     .write(&mut w);
     slot.channel.send_reliable(w.buf);
     slot.closing = true;
+}
+
+/// srcds's player tag `"Name<userid><id><team>"`; the id is the identity's first 16 hex digits.
+fn event_tag(name: &str, player: u32, identity: Option<&[u8; 32]>, team: &str) -> String {
+    let id = identity
+        .map(|k| hex(k)[..16].to_string())
+        .unwrap_or_default();
+    format!("\"{name}<{player}><{id}><{team}>\"")
 }
 
 fn hex(b: &[u8; 32]) -> String {
