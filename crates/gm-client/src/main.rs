@@ -1117,6 +1117,13 @@ struct App {
     /// Last frame's viewmodel (sequence, seconds into it) and the sequence left before it with
     /// the time it was left at and when (`CSequenceTransitioner` fade-out).
     vm_last: Option<(&'static str, f32)>,
+    /// The viewmodel sequence and time its animation events were last run up to.
+    vm_event_t: Option<(&'static str, f32)>,
+    /// A 6001 event this frame: the brass kind to eject from attachment 2.
+    fx_brass_pending: Option<u8>,
+    /// Ejected shells (`CTempEnts::EjectBrass`): a second of flight, bouncing off the world.
+    fx_shells: Vec<Shell>,
+    fx_shells_at: Instant,
     /// The viewmodel's bob and sway state (`CalcViewModelView`).
     vm_view: VmView,
     vm_prev: Option<(&'static str, f32, Instant)>,
@@ -4234,6 +4241,81 @@ impl App {
         let vm = self.vm_of(self.weapon);
         let vm_seq = vm.as_ref().map(|vm| self.vm_sequence(vm));
         let vm_prev = self.vm_prev;
+        // the viewmodel sequence's animation events as `C_BaseViewModel::FireEvent`: the
+        // muzzle flash (AE_MUZZLEFLASH / 5001), brass out of attachment 2 (6001, the shell by
+        // its option), a sound (AE_CL_PLAYSOUND / 5004); each fires once as the cycle passes
+        if let (Some(vm), Some((seq, t))) = (vm.as_ref(), vm_seq) {
+            let events = self
+                .gfx
+                .as_ref()
+                .and_then(|g| g.models.get(vm.path))
+                .and_then(|m| m.as_ref())
+                .and_then(|m| m.sequence_events(seq));
+            if let Some((len, events)) = events {
+                let prev = match self.vm_event_t {
+                    Some((s, p)) if s == seq && p <= t => Some(p),
+                    _ => None,
+                };
+                self.vm_event_t = Some((seq, t));
+                for (cycle, event, name, options) in &events {
+                    let at = cycle * len;
+                    let fired = match prev {
+                        Some(p) => at > p && at <= t,
+                        None => at <= t,
+                    };
+                    if !fired {
+                        continue;
+                    }
+                    match (*event, name.as_str()) {
+                        (5001, _) | (_, "AE_MUZZLEFLASH") => {
+                            self.fx_muzzle_until =
+                                Some(Instant::now() + std::time::Duration::from_millis(60));
+                        }
+                        (6001, _) => {
+                            self.fx_brass_pending = Some(options.trim().parse().unwrap_or(0));
+                        }
+                        (5004, _) | (_, "AE_CL_PLAYSOUND") if !options.is_empty() => {
+                            self.sounds.emit(&self.mount, options, None);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        // shells fly a second under gravity, tumbling, and bounce off the world
+        {
+            let now = Instant::now();
+            let dt = now.duration_since(self.fx_shells_at).as_secs_f32().min(0.1);
+            self.fx_shells_at = now;
+            self.fx_shells
+                .retain(|s| now.duration_since(s.born).as_secs_f32() < 1.0);
+            for sh in &mut self.fx_shells {
+                sh.vel.z -= 800.0 * dt;
+                let next = sh.pos + sh.vel * dt;
+                let tr = self
+                    .sim
+                    .collision
+                    .trace_ray(sh.pos, next, gm_collision::MASK_SOLID);
+                if tr.fraction < 1.0 {
+                    sh.pos = tr.end + tr.normal * 0.5;
+                    sh.vel = (sh.vel - tr.normal * (2.0 * sh.vel.dot(tr.normal))) * 0.4;
+                    sh.angvel *= 0.5;
+                } else {
+                    sh.pos = next;
+                }
+                sh.ang += sh.angvel * dt;
+            }
+            if !self.fx_shells.is_empty() {
+                if let Some(g) = self.gfx.as_mut() {
+                    for path in BRASS_MODELS {
+                        if !g.models.contains_key(path) {
+                            let m = g.world.load_model(&g.gpu, &self.mount, path);
+                            g.models.insert(path.to_string(), m);
+                        }
+                    }
+                }
+            }
+        }
         let ghost_tool = (self.weapon == 1).then(|| (self.tool.clone(), self.tool_settings_list()));
         // the hands follow the player model (`player_manager`'s hands table: model, skin, body
         // groups), kleiner's citizen hands until the snapshot names one
@@ -4783,6 +4865,15 @@ impl App {
                 }
             }
         }
+        for sh in &self.fx_shells {
+            if let Some(m) = g.models.get(sh.model).and_then(|m| m.as_ref()) {
+                items.push(DrawItem {
+                    model: m,
+                    transform: gm_render::world::model_transform(sh.pos, sh.ang),
+                    bones: None,
+                });
+            }
+        }
         // physgun beam: from the viewmodel's `muzzle` attachment to the held prop, or along the
         // aim; leaves along the barrel and bends to the target (the game's curved beam), drawn
         // additive with the game's `sprites/physbeam`, a glow at each end
@@ -5202,6 +5293,37 @@ impl App {
             let right = fwd.cross(Vec3::Z).normalize_or_zero();
             let own_muzzle = vm_attach("muzzle")
                 .unwrap_or(camera.position + fwd * 16.0 + right * 6.0 - Vec3::Z * 4.0);
+            // `CTempEnts::EjectBrass` out of attachment 2: along its axis with a kick up,
+            // tumbling at random, gone after a second
+            if let Some(kind) = self.fx_brass_pending.take() {
+                let at = (|| {
+                    let (vm, (seq, t)) = (vm.as_ref()?, vm_seq?);
+                    let m = g.models.get(vm.path)?.as_ref()?;
+                    let w = m.bone_world_transition(
+                        seq,
+                        t,
+                        &[],
+                        Self::vm_transition(vm_prev, |s| m.sequence_fade_out(s)),
+                    )?;
+                    let a = m.attachment_at(1, &w)?;
+                    Some(gm_render::world::model_transform(camera.position, self.view) * a)
+                })();
+                if let Some(a) = at {
+                    let r = &mut g.fx_rng;
+                    let dir = a.x_axis.truncate().normalize_or_zero();
+                    let (jitter, spin) = (fx_vec_rand(r), fx_vec_rand(r));
+                    self.fx_shells.push(Shell {
+                        model: BRASS_MODELS[(kind as usize).min(2)],
+                        pos: a.w_axis.truncate(),
+                        vel: dir * fx_range(r, 50.0, 70.0)
+                            + Vec3::Z * fx_range(r, 100.0, 150.0)
+                            + jitter * 16.0,
+                        ang: self.view,
+                        angvel: spin * 1024.0,
+                        born: Instant::now(),
+                    });
+                }
+            }
             let players = &self.sim.client.world.players;
             let mut keep = Vec::new();
             for &(player, end, born) in &self.fx_tracers {
@@ -7627,6 +7749,10 @@ fn main() -> Result<()> {
         impulse: 0,
         vm_anim: None,
         vm_last: None,
+        vm_event_t: None,
+        fx_brass_pending: None,
+        fx_shells: Vec::new(),
+        fx_shells_at: Instant::now(),
         vm_view: VmView::new(),
         vm_prev: None,
         vm_serial_seen: 0,
@@ -8738,6 +8864,23 @@ fn fx_range(s: &mut u32, a: f32, b: f32) -> f32 {
 }
 
 /// `VectorRand()`: each component in [-1, 1].
+/// `CTempEnts::m_pShells`: the brass by 6001's option (pistol, rifle, shotgun).
+const BRASS_MODELS: [&str; 3] = [
+    "models/weapons/shell.mdl",
+    "models/weapons/rifleshell.mdl",
+    "models/weapons/shotgun_shell.mdl",
+];
+
+/// A shell out of the gun: position, velocity, angles and angular velocity (deg/s), birth.
+struct Shell {
+    model: &'static str,
+    pos: Vec3,
+    vel: Vec3,
+    ang: Vec3,
+    angvel: Vec3,
+    born: Instant,
+}
+
 /// The blood spray's drop sprite (`UTIL_BloodDrips`).
 const BLOOD_CORE: &str = "effects/blood_core";
 

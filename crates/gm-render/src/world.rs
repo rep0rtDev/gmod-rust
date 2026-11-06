@@ -1369,6 +1369,32 @@ impl DynModel {
             .attachments
             .iter()
             .find(|a| a.name.eq_ignore_ascii_case(name))?;
+        Self::attachment_matrix(a, bones)
+    }
+
+    /// [`attachment`](Self::attachment) by index (the MDL order; animation events name them
+    /// 1-based, so 6001's brass comes out of index 1).
+    pub fn attachment_at(&self, index: usize, bones: &[Mat4]) -> Option<Mat4> {
+        let a = self.skeleton.as_ref()?.attachments.get(index)?;
+        Self::attachment_matrix(a, bones)
+    }
+
+    /// The animation events of sequence `name` with its length: (cycle, event id, event
+    /// name, options) each.
+    #[allow(clippy::type_complexity)]
+    pub fn sequence_events(&self, name: &str) -> Option<(f32, Vec<(f32, i32, String, String)>)> {
+        let (len, _) = self.sequence_length(name)?;
+        let (_, seq) = self.skeleton.as_ref()?.seq(name)?;
+        Some((
+            len,
+            seq.events
+                .iter()
+                .map(|e| (e.cycle, e.event, e.name.clone(), e.options.clone()))
+                .collect(),
+        ))
+    }
+
+    fn attachment_matrix(a: &gm_formats::mdl::Attachment, bones: &[Mat4]) -> Option<Mat4> {
         let bone = bones.get(usize::try_from(a.bone).ok()?)?;
         let l = a.local;
         let local = Mat4::from_cols_array_2d(&[
