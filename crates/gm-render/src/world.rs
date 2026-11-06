@@ -2806,7 +2806,8 @@ impl WorldRenderer {
                 // BSP faces wind clockwise seen from their front; the 2D sky cube is seen
                 // from inside, so it is the one pass without back-face culling
                 front_face: wgpu::FrontFace::Cw,
-                cull_mode: Some(wgpu::Face::Back),
+                // both sides: the surface is seen from under the water too
+                cull_mode: None,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {

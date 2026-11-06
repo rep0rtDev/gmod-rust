@@ -315,7 +315,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 // water thickness along the view ray, i.e. between the surface and the opaque scene behind
 // it, blended over the already-drawn bottom; the view fog applies on top.
 @fragment
-fn fs_water(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_water(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let ndc = textureLoad(scene_depth, vec2<i32>(in.clip.xy), 0);
     let near = camera.fog_range.z;
     let far = camera.fog_range.w;
@@ -352,6 +352,12 @@ fn fs_water(in: VsOut) -> @location(0) vec4<f32> {
     // water fog; without the copy the already-drawn bottom shows through the fog alpha
     let ruv = in.clip.xy / dims + n.xy * material.envmap.y;
     let refr = textureSample(refraction, reflection_sampler, ruv).rgb;
+    // seen from under the surface ($bottommaterial): the scene above through the refraction,
+    // no reflection, the eye's water fog up to the surface
+    if !front {
+        let above = mix(material.water_color.rgb, refr, has_refr);
+        return vec4<f32>(mix(above, camera.fog_color.rgb, fog), 1.0);
+    }
     let nv = clamp(dot(-ray / surf_len, n), 0.0, 1.0);
     let fr = pow(1.0 - nv, 5.0) * has_refl;
     let under = mix(material.water_color.rgb, mix(refr, material.water_color.rgb, f), has_refr);
