@@ -14659,6 +14659,7 @@ impl<'w> Server<'w> {
         let slots = self.formation_slots();
         let mut thought = Vec::new();
         let mut pre = Vec::new();
+        let mut pre_combat = Vec::new();
         for id in ids {
             let Some(n) = self.npcs.get_mut(&id) else {
                 continue;
@@ -14671,13 +14672,23 @@ impl<'w> Server<'w> {
             // picks LEAD_RETRIEVE, server_npc_lead_citizen_close t326; ours used to start a
             // think later); armed and fighting bodies keep deciding after the move (their
             // combat think acquires the enemy before the brain mirrors the schedule)
-            if n.goal.is_none()
+            let unarmed = n.weapon.is_empty() || n.weapon == "none";
+            // ... except the think an armed body leaves for cover: its run is issued and
+            // stepped in one think, as the game's (the soldier of server_npc_grenade_soldier_low
+            // covers 1.5 u on the think its label turns RunAIMALL1, 789; the squad leader and
+            // mate 1.3 and 1.5 on theirs, 388 and 300)
+            let leaving_for_cover = !unarmed
+                && n.goal.is_none()
                 && n.chase.is_none()
-                && n.target.is_none()
-                && (n.weapon.is_empty() || n.weapon == "none")
-            {
+                && (n.cover_wanted || (n.reload_mark > 0 && now > n.reload_mark && !n.reloading));
+            if n.goal.is_none() && n.chase.is_none() && n.target.is_none() && unarmed {
                 self.ai_step(id, now);
                 pre.push(id);
+            } else if leaving_for_cover {
+                self.npc_combat_think(id, now);
+                self.ai_step(id, now);
+                pre.push(id);
+                pre_combat.push(id);
             }
             let Some(n) = self.npcs.get_mut(&id) else {
                 continue;
@@ -15272,7 +15283,9 @@ impl<'w> Server<'w> {
         for id in thought {
             // the body decides first so the brain's mirror names this think's schedule, as the
             // game's SelectSchedule and the task that starts the attack fall in one think
-            self.npc_combat_think(id, now);
+            if !pre_combat.contains(&id) {
+                self.npc_combat_think(id, now);
+            }
             if !pre.contains(&id) {
                 self.ai_step(id, now);
             }

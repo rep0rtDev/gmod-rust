@@ -223,6 +223,28 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   arrivals at their nodes do hold like _wall's. Why one arrival holds and the other turns
   is open.
 
+### NPC: the first step of a run falls on the think that issues it (grenade_soldier_low 12.2 → 10.0)
+
+- Five soldier runs agree: the think whose label turns RunAIMALL1 already moves the body
+  1.1..1.5 u, the next 3.3..4.2, then 5.6..6.9 and so on (grenade_soldier 341, _low 789,
+  _wall 467 and its line-of-fire run at 26, the squad leader 388 and mate 300). Ours had a
+  zero-step think first: an armed body decided after the walker (its combat think acquires
+  the enemy before the brain mirrors the schedule), so a route issued in a think was first
+  walked in the next. Now an armed, goal-less body about to leave for cover (`cover_wanted`,
+  or its `reload_mark` due) runs `npc_combat_think` + `ai_step` before the walker and steps
+  the same think (`pre_combat` keeps it from deciding twice). _low 12.2 → 10.0, the squad's
+  two run starts on the game's rows.
+- Exposed, not fixed: grenade_soldier 26.9 → 47.9 and _wall 25.9 → 45.9, whose reload runs
+  were a think early all along and were hidden by the zero step. Their bursts end a think
+  early for two different upstream reasons - grenade_soldier's seventh volley starts after
+  three idle thinks in the game (257 → 278) where every other crouched gap is two (ours two;
+  no bot position in that golden to test a cause); _wall's soldier arrives from its
+  line-of-fire run at (729, −727) on 187 like ours, but keeps the run label two thinks
+  standing (194, 201), takes the idle label on 201 and fires on 215 = A + 28, ours takes the
+  idle label on arrival and fires on 208 = A + 21 - the same two-think stop as before the
+  reload turn, here before the next schedule; that line-of-fire run also starts with the
+  zero step (the pre-move think covers cover runs only). Both are the next measurements.
+
 ### NPC: a zombie's approach to a prop in its way (swat2_crate 75, swat3_a 7, drum 6) - measured, open
 
 - All the game's swats start at spawn + 147 ticks (the second scan: first at +14, period 133;
