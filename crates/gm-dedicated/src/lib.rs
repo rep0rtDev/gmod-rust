@@ -820,6 +820,15 @@ impl EventLog {
         Ok(log)
     }
 
+    /// The `server cvars start` .. `server cvars end` dump srcds writes after the map load.
+    pub fn cvars(&mut self, cvars: &[(String, String)]) {
+        self.line("server cvars start");
+        for (n, v) in cvars {
+            self.line(&format!("\"{n}\" = \"{v}\""));
+        }
+        self.line("server cvars end");
+    }
+
     pub fn line(&mut self, body: &str) {
         use std::io::Write;
         let (_, when) = stamp_at(unix_now());

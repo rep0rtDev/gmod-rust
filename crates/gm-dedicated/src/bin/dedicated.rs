@@ -167,6 +167,15 @@ fn main() -> Result<()> {
             anyhow::bail!("[cvars] {name} = {value}: unknown cvar or bad value");
         }
     }
+    if let Some(log) = event_log.as_mut() {
+        let replicated: Vec<(String, String)> = server
+            .cvars
+            .iter()
+            .filter(|(_, c)| c.replicated)
+            .map(|(n, c)| (n.clone(), c.value.clone()))
+            .collect();
+        log.cvars(&replicated);
+    }
     let mut net = gm_net::ServerNet::new(&args.map, spawn);
     net.bind = args.bind.clone();
     net.saves_dir = Some(args.data.join("saves"));

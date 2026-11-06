@@ -668,7 +668,9 @@ impl ServerNet {
                 }],
                 (Some(n), Some(v)) => {
                     if server.set_cvar(n, v) {
-                        vec![format!("{n} = {}", server.cvar(n).unwrap_or_default())]
+                        let v = server.cvar(n).unwrap_or_default();
+                        self.events.push(format!("server_cvar: \"{n}\" \"{v}\""));
+                        vec![format!("{n} = {v}")]
                     } else {
                         vec![format!("{n}: unknown cvar or bad value")]
                     }
