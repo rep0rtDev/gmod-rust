@@ -390,6 +390,22 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   path along the next leg (a plain corner afterwards) - server_npc_squad_soldier 69 -> 161.
   The remaining corner figure (12.7 at row 419) is a think-phase offset of the sampling (the
   game's rows pair up; ours is 1.3 u ahead or 2.6 behind), not a behaviour.
+- An armed body holding an enemy turns from it to its path at its standing yaw rate (37 deg a
+  think, the soldier's MaxYawSpeed 35): server_npc_grenade_soldier 206 -> 170 -> 133 -> 96 -> 92
+  (rows 427..455) and the squad leader 206 -> 169 -> 133 -> 96 -> 91 (472..500); ours turned
+  16 deg a think (NPC_YAW_RATE, the walker's). Ours now matches the turn; the leader then
+  settles on 55 where the game holds 92, because the routes differ: the game's leader runs
+  north on x 975 -> 953 to (953,7) (no node there - the nearest is 654 at (965,-19), 27 u SE;
+  the row has 627 (979,72) and 460 (1201,72)), reaches it at row 637, drifts 20 u back
+  south-east over five thinks (957,-1), (961,-7), (969,-2) and from 686 runs straight
+  north-east at 27..33 deg to (1053,41) by 728 (toward (1201,72), the mate's node, bearing
+  18..27); ours runs north on x 966 straight for (1201,72) from the start. The game's run pace
+  on the way is the all-directions blend's ground speed at the facing/heading angle - 15.7 u a
+  think = 150 u/s facing the bot 105 deg off (a_RunE/W 151..155), 22.5 = 214 u/s facing along
+  (a_RunN 214.8), accelerating 17.2 / 19.9 / 21.9 / 22.5 after the turn and braking 21.4 /
+  19.6 / 17.9 / 16.4 / 14.8 into (953,7) - our bands (0.71 side) already read the same. Open:
+  what (953,7) is (a route corner off the graph, a lateral cover point or a squad slot) and the
+  five-think drift there.
 
 ### NPC: the turn at the reload cover (server_npc_grenade_soldier, 48 u) - measured, open
 
