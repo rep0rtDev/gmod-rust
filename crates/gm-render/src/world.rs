@@ -3015,7 +3015,7 @@ impl WorldRenderer {
         reflect_items: &[DrawItem<'_>],
     ) {
         match self.flashlight {
-            Some((_, l)) => self.draw_flashlight_depth(gpu, &l),
+            Some((_, l)) => self.draw_flashlight_depth(gpu, &l, reflect_items),
             None => self.flashlight_vp.set(None),
         }
         self.draw_reflection(gpu, camera, aspect, reflect_items);
@@ -3710,7 +3710,7 @@ impl WorldRenderer {
 
     /// Depth of the opaque world from the flashlight (`r_flashlightfov` 53.7 over its
     /// radius) into the shadow map; models do not cast yet.
-    fn draw_flashlight_depth(&self, gpu: &Gpu, light: &DLight) {
+    fn draw_flashlight_depth(&self, gpu: &Gpu, light: &DLight, items: &[DrawItem<'_>]) {
         let dir = light.dir.normalize_or_zero();
         let cam = Camera {
             position: light.pos,
@@ -3729,6 +3729,23 @@ impl WorldRenderer {
         u.view_proj = vp.to_cols_array_2d();
         gpu.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&u));
+        let (mverts, midx, mdraws) = self.model_mesh(items);
+        let model_buffers = (!mdraws.is_empty()).then(|| {
+            (
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("flashlight model vertices"),
+                        contents: bytemuck::cast_slice(&mverts),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    }),
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("flashlight model indices"),
+                        contents: bytemuck::cast_slice(&midx),
+                        usage: wgpu::BufferUsages::INDEX,
+                    }),
+            )
+        });
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -3758,6 +3775,14 @@ impl WorldRenderer {
                 }
                 pass.set_bind_group(1, &b.bind_group, &[]);
                 pass.draw_indexed(b.first_index..b.first_index + b.index_count, 0, 0..1);
+            }
+            if let Some((vb, ib)) = &model_buffers {
+                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                for (bg, first, count) in &mdraws {
+                    pass.set_bind_group(1, *bg, &[]);
+                    pass.draw_indexed(*first..*first + *count, 0, 0..1);
+                }
             }
         }
         gpu.queue.submit(Some(encoder.finish()));
@@ -4818,21 +4843,13 @@ impl WorldRenderer {
 
     /// Draws moving models over the frame `draw` left in `color`/`depth`: each item is a model
     /// with its origin and Source angles, transformed on the CPU into one buffer per frame.
-    pub fn draw_models(
+    /// The items skinned, placed and lit into world vertices: the vertices, indices and one
+    /// (material bind group, first index, count) per part.
+    #[allow(clippy::type_complexity)]
+    fn model_mesh<'a>(
         &self,
-        gpu: &Gpu,
-        camera: &Camera,
-        target: &ModelTarget<'_>,
-        items: &[DrawItem<'_>],
-    ) {
-        let ModelTarget {
-            color,
-            depth,
-            aspect,
-            clear_depth,
-            alpha,
-            ..
-        } = *target;
+        items: &[DrawItem<'a>],
+    ) -> (Vec<Vertex>, Vec<u32>, Vec<(&'a wgpu::BindGroup, u32, u32)>) {
         let mut verts: Vec<Vertex> = Vec::new();
         let mut idx: Vec<u32> = Vec::new();
         let mut draws = Vec::new();
@@ -4899,6 +4916,25 @@ impl WorldRenderer {
                 draws.push((bg, first, pi.len() as u32));
             }
         }
+        (verts, idx, draws)
+    }
+
+    pub fn draw_models(
+        &self,
+        gpu: &Gpu,
+        camera: &Camera,
+        target: &ModelTarget<'_>,
+        items: &[DrawItem<'_>],
+    ) {
+        let ModelTarget {
+            color,
+            depth,
+            aspect,
+            clear_depth,
+            alpha,
+            ..
+        } = *target;
+        let (verts, idx, draws) = self.model_mesh(items);
         if draws.is_empty() {
             return;
         }
