@@ -184,6 +184,25 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
 - The runner's server snapshot now lists `world_weapons` (ownerless weapon props: class,
   pos, ang) like the probe does.
 
+### NPC: the stop before the reload turn (grenade_soldier 47.9 → 26.9)
+
+- Four records agree on the soldier's reload at its cover: the think it arrives keeps its run
+  yaw, the next think still holds it (RunALL label, no turn), from the second think after the
+  arrival the body turns to the enemy at 37 deg a think and `reload` starts the think the
+  turn completes. grenade_soldier 261104: at (1201, 72) on 656 at yaw 112, 663 still 112,
+  then 148 / 185 / 222 / 229, reload 691; the squad mate: 762 yaw 90, 769 90, 776 127 …
+  797 229 and reload; _low: at (992, −452) on 845 facing 187 (9 deg off), reload 859; _wall:
+  stop 572 facing 147, reload 586. Ours turned from the think after the arrival (−62 / −99 /
+  −131 while the game held 112) and reloaded 670; now the turn and the reload gate wait two
+  thinks (`cover_arrived_at + 2 × think`). grenade_soldier 47.9 → 26.9 (the whole tail after
+  the reload shifts with it); the other three unchanged in position.
+- Still off by a think or three in the reload row (ours 677 / 873 / 593 / 713 against 691 /
+  859 / 586 / 797): our run yaw at the arrival differs - _low runs north at yaw 90 (its
+  path) where the game runs facing the bot at 187 and so needs no turn; _wall's game soldier
+  runs at 145..147 all the way where ours swings 129 → 98 → 147; grenade_soldier's ours
+  reaches the node two thinks before the game's (642 against 656) on the last leg; the squad
+  mate's arrival is the zigzag residual. Run-facing on those runs is the next measurement.
+
 ### NPC: a zombie's approach to a prop in its way (swat2_crate 75, swat3_a 7, drum 6) - measured, open
 
 - All the game's swats start at spawn + 147 ticks (the second scan: first at +14, period 133;

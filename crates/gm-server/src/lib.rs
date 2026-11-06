@@ -15688,15 +15688,16 @@ impl<'w> Server<'w> {
             {
                 n.cover_arrived_at = now;
             }
-            // TASK_FACE_ENEMY before TASK_RELOAD: the reload starts the think the body faces
-            // its enemy, a think after the arrival at the earliest (server_npc_grenade_soldier
-            // 261104: arrival 663, 4 thinks of 37 deg, reload 691..824; _low already facing:
-            // arrival 852, reload 859..992)
+            // TASK_FACE_ENEMY before TASK_RELOAD: the think after the arrival only stops the
+            // body (its run yaw held), from the second the body turns to the enemy at its
+            // standing rate and the reload starts the think the turn completes
+            // (server_npc_grenade_soldier 261104: at the node 656 at yaw 112, 663 still 112,
+            // then 148/185/222/229 and `reload` at 691; the squad mate 762 → 797 the same
+            // way; _low already facing: arrival 845, reload 859; _wall: stop 572, reload 586)
             if n.reloading && n.reload_until == 0 && n.cover_arrived_at != 0 {
-                // from the think after the arrival the body turns to the enemy's last known
-                // position at its standing rate
                 n.face_err = 0.0;
-                if let Some(k) = n.last_known.filter(|_| now > n.cover_arrived_at) {
+                let turning = now >= n.cover_arrived_at + 2 * n.think_interval as u64;
+                if let Some(k) = n.last_known.filter(|_| turning) {
                     let to = (k - n.pos).truncate();
                     if to.length_squared() > 1e-6 {
                         let want = to.y.atan2(to.x).to_degrees();
@@ -15711,7 +15712,7 @@ impl<'w> Server<'w> {
             if n.reloading
                 && n.reload_until == 0
                 && n.cover_arrived_at != 0
-                && now > n.cover_arrived_at
+                && now >= n.cover_arrived_at + 2 * n.think_interval as u64
                 && (n.face_err < 1.0 || n.target.is_none())
             {
                 n.reload_until = now + NPC_RELOAD_TICKS;
