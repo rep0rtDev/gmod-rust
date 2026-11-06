@@ -10,6 +10,7 @@ pub mod ain;
 pub mod bsp;
 pub mod keyvalues;
 pub mod mdl;
+pub mod pcf;
 pub mod phy;
 pub mod vpk;
 pub mod vtf;
