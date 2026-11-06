@@ -2456,3 +2456,38 @@ fn squad_first_member_stands_and_skips_the_volley() {
         "leader's first round {sa}, mate's {sb} (want the leader ~{lead} after its sighting)"
     );
 }
+
+#[test]
+fn the_antlion_guard_charges_a_player_down_a_clear_line() {
+    let Some(inst) = gm_content::find_install() else {
+        eprintln!("skipped: no Garry's Mod install");
+        return;
+    };
+    let mount = gm_content::Mount::for_install(&inst).unwrap();
+    let world = gm_dedicated::load_world(&mount, "gm_construct").unwrap();
+    let mut server = gm_server::Server::new(&world.collision, world.physics, world.world_body);
+    let floor = -143.6;
+    server.add_player(
+        1,
+        Vec3::new(823.0, -700.0, floor),
+        Vec3::new(0.0, 90.0, 0.0),
+    );
+    let id = server.spawn_npc(1, "npc_antlionguard", "none").unwrap();
+    server.npcs.get_mut(&id).unwrap().pos = Vec3::new(823.0, -300.0, floor);
+    let idle = std::collections::BTreeMap::new();
+    for _ in 0..300 {
+        server.tick(&idle);
+    }
+    let n = &server.npcs[&id];
+    assert_eq!(n.special.phase, 3, "charged and cooling down");
+    assert!(
+        n.pos.y < -350.0,
+        "ran down the line towards the player: {}",
+        n.pos
+    );
+    assert!(
+        server.players[&1].health < 100,
+        "the charge hit: {}",
+        server.players[&1].health
+    );
+}
