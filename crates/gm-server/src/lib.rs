@@ -5,6 +5,7 @@
 pub mod ai;
 pub mod finger_skeletons;
 pub mod mapio;
+pub mod npc_special;
 pub mod projectile;
 pub mod save;
 pub mod tool_panels;
@@ -2145,6 +2146,8 @@ pub struct Npc {
     /// A physics-driven NPC (floor turret, rollermine: VPhysics objects in the game) follows
     /// this sandbox body; the hull never moves on its own.
     pub body: Option<u32>,
+    /// Scratch of the class behaviours in `npc_special`.
+    pub special: npc_special::NpcSpecial,
     pub burst_left: u8,
     /// The spread sample's seed, drawn when a burst begins and held through it.
     pub burst_seed: u64,
@@ -3194,6 +3197,17 @@ pub fn npc_leap(class: &str) -> Option<NpcLeap> {
 /// (a ~100 u swipe alternating with an 84 u pounce, 168-tick period), poison zombie (a
 /// headcrab throw whose bite lands 187 ticks later, then a 25-damage claw from ~66 u).
 pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
+    // the guard's shove (`sk_antlionguard_dmg_shove` 10) with its launch; the charge is not built
+    const GUARD: [NpcMelee; 1] = [NpcMelee {
+        damage: 10.0,
+        reach: 80.0,
+        swing_ticks: 60,
+        hit_tick: 30,
+        punch: 400.0,
+        lift: 200.0,
+        run: true,
+        ..MELEE_PLAIN
+    }];
     const ZOMBIE: [NpcMelee; 1] = [NpcMelee {
         damage: 25.0,
         reach: 55.0,
@@ -3325,6 +3339,7 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         "npc_antlion" => Some((&ANTLION, 1)),
         "npc_poisonzombie" => Some((&POISON, 1)),
         "npc_hunter" => Some((&HUNTER, 1)),
+        "npc_antlionguard" => Some((&GUARD, 0)),
         _ => None,
     }
 }
@@ -13726,6 +13741,7 @@ impl<'w> Server<'w> {
         settle: bool,
     ) -> Npc {
         Npc {
+            special: Default::default(),
             key: def.key.to_string(),
             class: def.class.to_string(),
             model,
@@ -13972,6 +13988,19 @@ impl<'w> Server<'w> {
     /// zombies take half from bullets); health goes below zero and the NPC dies in place
     /// (`MOVETYPE_NONE`, still solid), removed `NPC_CORPSE_TICKS` later.
     pub fn damage_npc(&mut self, id: u32, attacker: u32, amount: f32, group: u8) -> bool {
+        self.damage_npc_typed(id, attacker, amount, group, true)
+    }
+
+    /// `damage_npc` for any damage: `bullet` applies the classes' bullet scale (classic zombies
+    /// take half), a zap / blast / bite does not.
+    pub fn damage_npc_typed(
+        &mut self,
+        id: u32,
+        attacker: u32,
+        amount: f32,
+        group: u8,
+        bullet: bool,
+    ) -> bool {
         let tick = self.tick_count;
         if !self.npcs.get(&id).is_some_and(|n| n.dead_at.is_none()) {
             return false;
@@ -13995,7 +14024,11 @@ impl<'w> Server<'w> {
         if n.dead_at.is_some() {
             return false;
         }
-        let class_scale = if n.class == "npc_zombie" { 0.5 } else { 1.0 };
+        let class_scale = if bullet && n.class == "npc_zombie" {
+            0.5
+        } else {
+            1.0
+        };
         n.health -= amount * weapons::npc_hitgroup_scale(group) * class_scale;
         let dealt = amount * weapons::npc_hitgroup_scale(group) * class_scale;
         n.ai.damage_ticks.push(tick);
@@ -16420,6 +16453,9 @@ impl<'w> Server<'w> {
         if n.dead_at.is_some() || n.passive || !npc_hostile_to_players(n) || n.ai.scripted {
             return;
         }
+        if npc_special::npc_stationary_class(&n.class) {
+            return;
+        }
         // cover and reload timers run whether or not the enemy is in sight (the run to the
         // reload cover usually loses it)
         let mut stop_for_reload = false;
@@ -18641,11 +18677,27 @@ impl<'w> Server<'w> {
     /// An NPC's line of sight from `eye` to `chest`: the world and the sandbox props both block
     /// it (the game loses a player behind a frozen crate wall).
     fn npc_los(&self, eye: Vec3, chest: Vec3) -> bool {
+        self.npc_los_from(eye, chest, None)
+    }
+
+    /// `npc_los` ignoring the prop `skip` (an NPC that is itself a physics prop looks out from
+    /// inside its own body).
+    fn npc_los_from(&self, eye: Vec3, chest: Vec3, skip: Option<u32>) -> bool {
         let tr = self
             .collision
             .trace_ray(eye, chest, gm_collision::MASK_PLAYERSOLID);
         if tr.fraction < 1.0 || tr.start_solid {
             return false;
+        }
+        if let Some(skip) = skip {
+            let bodies: Vec<PropBody> = self
+                .prop_bodies()
+                .into_iter()
+                .filter(|b| b.id != skip)
+                .collect();
+            return gm_sandbox::trace_line(self.collision, &bodies, eye, chest)
+                .filter(|h| h.ent.is_some())
+                .is_none_or(|h| h.fraction >= 1.0);
         }
         // a zero-width line like the engine's: in server_npc_grenade_soldier_low the soldier
         // keeps seeing the bot's eyes through the 0.25 u seam between two crate hulls
@@ -19177,6 +19229,7 @@ impl<'w> Server<'w> {
         self.npcs.insert(
             id,
             Npc {
+                special: Default::default(),
                 key: def.key.to_string(),
                 class: n.class.clone(),
                 model: n.model.clone(),
@@ -21604,6 +21657,7 @@ impl<'w> Server<'w> {
             }
         }
         self.tick_npc_melee_hits();
+        self.tick_npc_special();
         self.tick_npc_grenades();
         self.tick_npc_swats();
         self.tick_npc_jumps();
