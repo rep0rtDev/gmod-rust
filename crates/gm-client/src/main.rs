@@ -227,6 +227,8 @@ struct Gfx {
     thruster_fx: Vec<ThrusterParticle>,
     particles: particles::Particles,
     particles_tick: Option<std::time::Instant>,
+    /// Missiles whose `Rocket_Smoke_Trail` already runs.
+    missile_trails: std::collections::HashSet<u32>,
     /// Next emission time per thruster (the effects' 0.01 / 0.015 s timers).
     thruster_emit: std::collections::HashMap<u32, std::time::Instant>,
     fx_rng: u32,
@@ -1462,6 +1464,7 @@ impl App {
             thruster_fx: Vec::new(),
             particles: Default::default(),
             particles_tick: None,
+            missile_trails: Default::default(),
             thruster_emit: Default::default(),
             fx_rng: 0x9E37_79B9,
             gg_core,
@@ -4105,6 +4108,26 @@ impl App {
                         color,
                         decals,
                     } => {
+                        // `UTIL_BloodImpact` dispatches `blood_impact_<colour>_01` there
+                        if let Some(g) = self.gfx.as_mut() {
+                            g.particles.ensure_loaded(&self.mount);
+                            let name = match color {
+                                1 => "blood_impact_yellow_01",
+                                2 => "blood_impact_green_01",
+                                _ => "blood_impact_red_01",
+                            };
+                            let angles = Vec3::new(
+                                (-dir.z).asin().to_degrees(),
+                                dir.y.atan2(dir.x).to_degrees(),
+                                0.0,
+                            );
+                            g.particles.spawn(&particles::Spawn {
+                                name: name.to_string(),
+                                pos,
+                                angles,
+                                parent: 0,
+                            });
+                        }
                         // `UTIL_BloodDecalTrace`: the `Blood` / `YellowBlood` groups (green
                         // bleeds red decals as in the game)
                         for (p, n) in decals {
@@ -4155,6 +4178,14 @@ impl App {
                         // TE_WaterSplash: a splashwake ring opening on the surface for 1.5 s
                         // and a handful of droplets thrown up and falling back
                         if let Some(g) = self.gfx.as_mut() {
+                            // `FX_GunshotSplash`: the `water_splash_01` system on the surface
+                            g.particles.ensure_loaded(&self.mount);
+                            g.particles.spawn(&particles::Spawn {
+                                name: "water_splash_01".to_string(),
+                                pos,
+                                angles: Vec3::new(-90.0, 0.0, 0.0),
+                                parent: 0,
+                            });
                             for name in [SPLASH_RIPPLE, SPLASH_DROP] {
                                 if !g.rope_mats.contains_key(name) {
                                     let m = g.world.sprite_material(&g.gpu, &self.mount, name);
@@ -5195,8 +5226,21 @@ impl App {
                 }
             }
         }
-        // `.pcf` particle systems the game asked for
+        // `.pcf` particle systems the game asked for; an RPG missile trails
+        // `Rocket_Smoke_Trail` from the moment it appears (`CMissile::CreateSmokeTrail`)
         let now = std::time::Instant::now();
+        g.missile_trails.retain(|id| ents.contains_key(id));
+        for e in ents.values().filter(|e| e.model.contains("w_missile")) {
+            if g.missile_trails.insert(e.id) {
+                g.particles.ensure_loaded(&self.mount);
+                g.particles.spawn(&particles::Spawn {
+                    name: "Rocket_Smoke_Trail".to_string(),
+                    pos: e.pos,
+                    angles: e.angles,
+                    parent: e.id,
+                });
+            }
+        }
         if !g.particles.is_empty() {
             let dt = g
                 .particles_tick
