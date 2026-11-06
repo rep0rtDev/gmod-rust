@@ -7494,10 +7494,17 @@ pub fn npc_find_route(
     links.push(0);
     // the start node behind the body is skipped when the next one is in a straight walk (the
     // game's citizen turned from (645,-500) straight for the second node (729,-255), never
-    // stepping back to the first at (493,-491)); only one node, as the game kept the rest
+    // stepping back to the first at (493,-491)); only one node, as the game kept the rest, and
+    // only behind: a first node ahead is walked to even when the second is in a straight walk
+    // too (server_npc_walk_citizen_corner: (997,-500) heads 175 for (892,-491), then 180)
     let walked =
         |bit: u8| bit & (gm_formats::ain::CAP_MOVE_JUMP | gm_formats::ain::CAP_MOVE_CLIMB) == 0;
-    if points.len() >= 4 && walked(links[2]) && straight(from, points[2]) {
+    let behind = |p: Vec3, next: Vec3| (p - from).truncate().dot((next - from).truncate()) < 0.0;
+    if points.len() >= 4
+        && walked(links[2])
+        && behind(points[1], points[2])
+        && straight(from, points[2])
+    {
         points.remove(1);
         links.remove(1);
     }

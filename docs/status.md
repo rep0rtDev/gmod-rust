@@ -379,6 +379,17 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   earlier measurement that the node route via (979,72) and (1201,72) arrived 51 thinks late)
   and arrives ~24 rows early; the 70 u is the lateral gap of the arc at row 443. Open: the
   node path plus a bounded forward scan instead of either extreme.
+- The scan is bounded, not visibility-limited: server_npc_walk_citizen_corner's citizen leaves
+  (1001,-500) at yaw 175.3 for (893,-491) - no node there (the ground nodes are (965,-491),
+  (493,-491), (729,-255), (729,-727)), 108 u along the route (965,-491) -> (493,-491) - and
+  holds that heading to it, then 180 along the row; the hull sweep straight to (493,-491) is
+  clear, as is y180's (645,-500) -> (729,-255) (a 152-u-behind first node skipped for a node
+  259 u out). Ours cuts the 37-u node for (493,-491) at once (yaw 179, 8 u aside until row
+  120). A first route node ahead of the body is no longer dropped at build (only one behind,
+  as measured). Tried and reverted: cutting a node corner within 64 u to the point 108 u of
+  path along the next leg (a plain corner afterwards) - server_npc_squad_soldier 69 -> 161.
+  The remaining corner figure (12.7 at row 419) is a think-phase offset of the sampling (the
+  game's rows pair up; ours is 1.3 u ahead or 2.6 behind), not a behaviour.
 
 ### NPC: the turn at the reload cover (server_npc_grenade_soldier, 48 u) - measured, open
 
