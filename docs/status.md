@@ -431,9 +431,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   (server_npc_grenade_soldier and server_npc_squad_soldier leave (992,-499) at 97..99 for the
   point 193 past (965,-491) on the leg to (965,-19), bearing 97.6 - their first 100 rows now
   1..3 u off). Open: corner_seen's third corner - the game leaves its scan point (-30,-440)
-  23 u early for (-215,-255) (140 at (-8,-445)), ours walks to 8 u of it; the assault citizen
-  still runs the local navmesh route, not the node route the game runs (the node route plus
-  these cuts should give the game's 351 -> 281 -> 336 arc); server_npc_squad_soldier 69 ->
+  23 u early for (-215,-255) (140 at (-8,-445)), ours walks to 8 u of it. The assault citizen
+  now runs the node route (NPC_LOCAL_ROUTE_DETOUR 256 -> 200: the 224-u navmesh detour round
+  the building is a node route in the game) and the cuts accept the start / goal legs (link 0)
+  too - 69.9 -> 57.2, the north leg row for row to row 308 and the point reached at 504 as the
+  game's; open there: ours chains two cuts in one think at (1136,15) ((1201,72) for (1201,-255)
+  and that for the point, a straight 306 diagonal) where the game cut (1201,72) at (1100,45)
+  but (1201,-255) only at (1189,-155), 112 u out, not at 145..258 - one cut a think, or its
+  line blocked; and the game's turn onto (1201,-255) runs 351 -> 281 over six thinks where ours
+  snaps. server_npc_squad_soldier 69 ->
   155: the leader now reaches the mate's node (1201,72) at row ~780 like the game. It then
   reloads in place (two rules: a body already hidden at the cover it reached reloads there
   instead of searching cover again, and a pending or running reload comes before the

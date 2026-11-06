@@ -3483,6 +3483,10 @@ const NPC_STEP_LIFT: f32 = 18.0;
 const NPC_FORWARD_SCAN_TIME: f32 = 0.9;
 /// Route link tag of a waypoint set by the forward scan (no graph link bit).
 const NPC_LINK_SCAN: u8 = 0x80;
+/// A route leg walked on the ground (a graph ground link, the start / goal legs, a scan point).
+fn walked_link(bit: u8) -> bool {
+    bit & (gm_formats::ain::CAP_MOVE_JUMP | gm_formats::ain::CAP_MOVE_CLIMB) == 0
+}
 /// A route corner is cut for the node after it when the hull can walk straight there and it
 /// is within this many seconds of the gait speed: the running citizen of
 /// server_npc_assault_citizen (209.8) cuts (1201,72) for (1201,-255) 316 u out and (1201,-255)
@@ -7412,9 +7416,10 @@ pub const NPC_LOCAL_ROUTE_ENEMY: f32 = 4800.0;
 /// routes over the node graph instead: the engine triangulates round one apex, eight steps of
 /// half a hull width out (144 u for a human), and the bracket from the records is 224 u
 /// (server_npc_assault_citizen's rally -> point leg goes round the small building, the game
-/// via node 654 and its path simplification) against 516 u (server_npc_walk_citizen_y180's
-/// detour round the whole building, a node route in the game).
-pub const NPC_LOCAL_ROUTE_DETOUR: f32 = 256.0;
+/// via node 654 and its path simplification - a node route, so the bound sits below 224)
+/// against 516 u (server_npc_walk_citizen_y180's detour round the whole building, a node route
+/// in the game).
+pub const NPC_LOCAL_ROUTE_DETOUR: f32 = 200.0;
 
 /// The farthest a route's corners sit aside of the straight line from its first to its last point.
 fn route_detour(points: &[Vec3]) -> f32 {
@@ -15072,9 +15077,7 @@ impl<'w> Server<'w> {
                 && (points[idx].truncate().distance(pos.truncate()) < NPC_CORNER_REACH
                     || (points[idx + 1].truncate().distance(pos.truncate())
                         <= ideal * NPC_SIMPLIFY_CUT_TIME
-                        && links
-                            .get(idx + 1)
-                            .is_some_and(|&l| l == gm_formats::ain::CAP_MOVE_GROUND)))
+                        && links.get(idx + 1).is_some_and(|&l| walked_link(l))))
             {
                 let link = links.get(idx + 1).copied().unwrap_or(0);
                 if link == gm_formats::ain::CAP_MOVE_JUMP {
@@ -15129,7 +15132,7 @@ impl<'w> Server<'w> {
             if links.len() == points.len()
                 && idx + 1 < points.len()
                 && links[idx] != NPC_LINK_SCAN
-                && links[idx + 1] == gm_formats::ain::CAP_MOVE_GROUND
+                && walked_link(links[idx + 1])
                 && points[idx].truncate().distance(pos.truncate()) <= ideal * NPC_FORWARD_SCAN_TIME
             {
                 let leg = points[idx + 1] - points[idx];
