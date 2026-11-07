@@ -40,11 +40,19 @@ pub struct Vertex {
     pub spec_color: [f32; 3],
 }
 
+/// `MaterialParams::unlit` of an unlit material fogged to the fog colour.
+const FOG_NORMAL: u32 = 1;
+/// ... fogged to black: `$additive` sprites and beams, which Source fogs by fading them out.
+const FOG_TO_BLACK: u32 = 2;
+/// ... fogged to 0.5 grey: `DecalModulate`, whose neutral (no change) value that is.
+const FOG_TO_GRAY: u32 = 3;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct MaterialParams {
     alpha_test: u32,
-    /// `UnlitGeneric`: the base texture is shown as is, no lightmap.
+    /// `UnlitGeneric`: the base texture is shown as is, no lightmap (1); 2 / 3: also fogged
+    /// to black / 0.5 grey instead of the fog colour (`FOG_TO_BLACK`, `FOG_TO_GRAY`).
     unlit: u32,
     /// `$translucent`: the base alpha is the output alpha.
     translucent: u32,
@@ -4323,8 +4331,19 @@ impl WorldRenderer {
         let tex = mat.base_texture.as_deref()?;
         let rgba = crate::material::load_texture(mount, tex, 512).ok()?;
         let w = rgba.width as f32;
-        let bind =
-            self.sprite_bind_group(gpu, &rgba, wgpu::TextureFormat::Rgba8UnormSrgb, name, 0.0);
+        let fog = if mat.additive {
+            FOG_TO_BLACK
+        } else {
+            FOG_NORMAL
+        };
+        let bind = self.sprite_bind_group(
+            gpu,
+            &rgba,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            name,
+            0.0,
+            fog,
+        );
         Some((bind, w))
     }
 
@@ -4374,7 +4393,14 @@ impl WorldRenderer {
         let tex = tex_mat.base_texture.as_deref()?;
         let rgba = crate::material::load_texture(mount, tex, 1024).ok()?;
         Some(Decal {
-            bind: self.sprite_bind_group(gpu, &rgba, format, name, 0.0),
+            bind: self.sprite_bind_group(
+                gpu,
+                &rgba,
+                format,
+                name,
+                0.0,
+                if modulate { FOG_TO_GRAY } else { FOG_NORMAL },
+            ),
             uv,
             // a Subrect without its own `$decalscale` takes the atlas material's
             size: texels * mat.decal_scale.or(tex_mat.decal_scale).unwrap_or(1.0),
@@ -4402,7 +4428,7 @@ impl WorldRenderer {
             (mat.base_texture.as_deref()?, format, 0.0)
         };
         let rgba = crate::material::load_texture(mount, tex, 512).ok()?;
-        Some(self.sprite_bind_group(gpu, &rgba, format, name, amount))
+        Some(self.sprite_bind_group(gpu, &rgba, format, name, amount, FOG_NORMAL))
     }
 
     /// The bind group of a sprite image (unlit, no lightmap) in `format`.
@@ -4413,13 +4439,14 @@ impl WorldRenderer {
         format: wgpu::TextureFormat,
         name: &str,
         refract: f32,
+        fog: u32,
     ) -> wgpu::BindGroup {
         let device = &gpu.device;
         let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("sprite params"),
             contents: bytemuck::bytes_of(&MaterialParams {
                 alpha_test: 0,
-                unlit: 1,
+                unlit: fog,
                 translucent: 0,
                 blend: 0,
                 detail: [0.0; 4],
@@ -4496,7 +4523,16 @@ impl WorldRenderer {
         crate::material::load_texture_frames(mount, tex, 512)
             .unwrap_or_default()
             .iter()
-            .map(|f| self.sprite_bind_group(gpu, f, wgpu::TextureFormat::Rgba8UnormSrgb, name, 0.0))
+            .map(|f| {
+                self.sprite_bind_group(
+                    gpu,
+                    f,
+                    wgpu::TextureFormat::Rgba8UnormSrgb,
+                    name,
+                    0.0,
+                    FOG_TO_BLACK,
+                )
+            })
             .collect()
     }
 

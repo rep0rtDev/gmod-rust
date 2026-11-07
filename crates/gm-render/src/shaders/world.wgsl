@@ -310,7 +310,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if material.blend == 0u && in.alpha > 0.0 {
         alpha = alpha * in.alpha;
     }
-    return vec4<f32>(mix(out, camera.fog_color.rgb, fog), alpha);
+    // additive sprites fog to black (they fade out), DecalModulate to its neutral 0.5 grey
+    var fog_to = camera.fog_color.rgb;
+    if material.unlit == 2u {
+        fog_to = vec3<f32>(0.0);
+    } else if material.unlit == 3u {
+        fog_to = vec3<f32>(0.5);
+    }
+    return vec4<f32>(mix(out, fog_to, fog), alpha);
 }
 
 // Water surface: the volume fog of the material ($fogcolor / $fogstart / $fogend) over the

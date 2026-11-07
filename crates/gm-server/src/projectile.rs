@@ -15,7 +15,9 @@ pub const GRAVITY: f32 = 600.0;
 const ROCKET_MUZZLE: (f32, f32, f32) = (12.0, 6.0, -3.0);
 const ROCKET_LAUNCH: f32 = 300.0;
 const ROCKET_KICK: f32 = 119.0;
-const ROCKET_IGNITE_TICKS: u32 = 20;
+pub const ROCKET_IGNITE_TICKS: u32 = 20;
+/// `AccelerateThink` (Missile.Accelerate) 0.5 s after ignition.
+pub const ROCKET_ACCEL_TICKS: u32 = 33;
 /// Half size of the rocket's box before ignition: the game's slow rocket touches a player 4 u
 /// in front of the hull's face and up to 4 u above its top (`hit_rpg_dot50` / `_dot100`); the
 /// ignited rocket is traced against the hit boxes instead (`Server::hitbox_touch`).

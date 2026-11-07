@@ -611,6 +611,14 @@ const WEAPONS: [Viewmodel; 13] = [
 /// the toolgun, 0 for everything else.
 /// Lifetime of a world burst sprite: explosions (over 32 u) hold about as long as the game's
 /// 20-frame fireball, small flashes and splashes a third of a second.
+/// `ScaleFOVByWidthRatio`: a Source fov (fov_desired, a weapon's zoom, the viewmodel's) is
+/// the horizontal fov of a 4:3 screen; a wider screen widens it, keeping the vertical fov.
+fn scale_fov_by_width(fov: f32, aspect: f32) -> f32 {
+    2.0 * ((fov.to_radians() * 0.5).tan() * aspect * 0.75)
+        .atan()
+        .to_degrees()
+}
+
 fn burst_life(size: f32) -> f32 {
     if size > 32.0 {
         0.6
@@ -1144,6 +1152,8 @@ struct App {
     fx_prop_decals: std::collections::VecDeque<(u32, Vec3, Vec3, String, std::time::Instant)>,
     /// Flashes: position, size, birth (impact sparks, explosions).
     fx_bursts: Vec<(Vec3, f32, Instant, bool)>,
+    /// Sounds due later (the crossbow's `BoltElectrify` as the reload seats the bolt).
+    fx_sound_queue: Vec<(Instant, String)>,
     /// Own muzzle flash shows until then.
     fx_muzzle_until: Option<Instant>,
     tool_screen: ToolScreen,
@@ -3756,6 +3766,14 @@ impl App {
                 if let Some(name) = weapon_sound(act, active) {
                     self.sounds.emit(&self.mount, &name, None);
                 }
+                // the crossbow's load effect (`SPECIAL1`, Weapon_Crossbow.BoltElectrify) comes
+                // as the reload seats the bolt, about a second into the sequence
+                if act == 1 && gm_server::LOADOUT.get(active as usize) == Some(&"weapon_crossbow") {
+                    self.fx_sound_queue.push((
+                        Instant::now() + std::time::Duration::from_millis(1000),
+                        "Weapon_Crossbow.BoltElectrify".to_string(),
+                    ));
+                }
             }
         }
         let model = self
@@ -4462,10 +4480,11 @@ impl App {
             p.state.punch
                 + Vec3::Z * gm_move::view_roll(&gm_move::MoveConfig::default(), &p.state, self.view)
         });
+        let aspect = g.config.width as f32 / g.config.height as f32;
         let mut camera = Camera {
             position: o + Vec3::Z * eye,
             angles: self.view + punch,
-            fov_x,
+            fov_x: scale_fov_by_width(fov_x, aspect),
             near: 3.0,
             far: 28000.0,
             gamma: self.settings.mat_monitorgamma,
@@ -5459,6 +5478,16 @@ impl App {
                     ..Default::default()
                 });
             }
+            let due: Vec<String> = self
+                .fx_sound_queue
+                .iter()
+                .filter(|(at, _)| *at <= now)
+                .map(|(_, n)| n.clone())
+                .collect();
+            self.fx_sound_queue.retain(|(at, _)| *at > now);
+            for name in due {
+                self.sounds.emit(&self.mount, &name, None);
+            }
             self.fx_bursts.retain(|(_, size, born, _)| {
                 now.duration_since(*born).as_secs_f32() < burst_life(*size)
             });
@@ -5778,10 +5807,7 @@ impl App {
                     _ => None,
                 };
                 // Source fovs are given for 4:3; wider screens widen the horizontal fov
-                let fov_x = 2.0
-                    * ((VIEWMODEL_FOV.to_radians() * 0.5).tan() * aspect * 0.75)
-                        .atan()
-                        .to_degrees();
+                let fov_x = scale_fov_by_width(VIEWMODEL_FOV, aspect);
                 let vm_camera = Camera {
                     fov_x,
                     near: 1.0,
@@ -7910,6 +7936,7 @@ fn main() -> Result<()> {
         fx_decals: Default::default(),
         fx_prop_decals: Default::default(),
         fx_bursts: Vec::new(),
+        fx_sound_queue: Vec::new(),
         fx_muzzle_until: None,
         tool_screen: ToolScreen::default(),
         weapon_synced: false,

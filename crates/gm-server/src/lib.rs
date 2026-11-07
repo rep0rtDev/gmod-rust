@@ -10537,6 +10537,26 @@ impl<'w> Server<'w> {
             let prev = pr.origin;
             steps.push((prev, pr.step(world, Some(&mut phys))));
         }
+        // CMissile: `IgniteThink` (Missile.Ignite) 0.3 s after launch, `AccelerateThink`
+        // (Missile.Accelerate) 0.5 s later
+        for pr in &self.projectiles {
+            if pr.kind != weapons::Launch::Rocket {
+                continue;
+            }
+            let name = if pr.age == projectile::ROCKET_IGNITE_TICKS {
+                "Missile.Ignite"
+            } else if pr.age == projectile::ROCKET_IGNITE_TICKS + projectile::ROCKET_ACCEL_TICKS {
+                "Missile.Accelerate"
+            } else {
+                continue;
+            };
+            self.sounds.push(WorldSound {
+                name: name.to_string(),
+                pos: pr.origin,
+                volume: 1.0,
+                ..Default::default()
+            });
+        }
         // grenade_frag `BlipSound`: `Grenade.Blip` every second, every 0.3 s over the warn
         // time (the last 1.5 s of the fuse), at 66 ticks/s
         let blips: Vec<Vec3> = self
@@ -10780,6 +10800,23 @@ impl<'w> Server<'w> {
         };
         let mut spawned = Vec::new();
         for (owner, kind, eye, angles) in launches {
+            // the launcher's sound the client cannot take from the viewmodel act: the AR2's
+            // ball (`WPN_DOUBLE` = Weapon_IRifle.Single), the SMG1's grenade (Weapon_SMG1.Double)
+            // and the crossbow's `SPECIAL2` whoosh with its shot (Weapon_Crossbow.BoltFly)
+            let launch_sound = match kind {
+                weapons::Launch::Ball => Some("Weapon_IRifle.Single"),
+                weapons::Launch::Smg1Grenade => Some("Weapon_SMG1.Double"),
+                weapons::Launch::Bolt => Some("Weapon_Crossbow.BoltFly"),
+                _ => None,
+            };
+            if let Some(name) = launch_sound {
+                self.sounds.push(WorldSound {
+                    name: name.to_string(),
+                    pos: eye,
+                    volume: 1.0,
+                    ..Default::default()
+                });
+            }
             if let Some(pr) =
                 projectile::spawn(kind, owner, eye, angles.x, angles.y, world, Some(&mut phys))
             {
@@ -11637,13 +11674,26 @@ impl<'w> Server<'w> {
     }
 
     pub fn set_player_flashlight(&mut self, id: u32, on: bool) -> bool {
-        match self.players.get_mut(&id) {
-            Some(p) => {
-                p.flashlight = on;
-                true
-            }
-            None => false,
+        let Some(p) = self.players.get_mut(&id) else {
+            return false;
+        };
+        let changed = p.flashlight != on;
+        p.flashlight = on;
+        let pos = p.state.origin;
+        if changed {
+            // CHL2_Player::FlashlightTurnOn / Off
+            self.sounds.push(WorldSound {
+                name: if on {
+                    "HL2Player.FlashlightOn".to_string()
+                } else {
+                    "HL2Player.FlashlightOff".to_string()
+                },
+                pos,
+                volume: 1.0,
+                ..Default::default()
+            });
         }
+        true
     }
 
     pub fn set_player_score(&mut self, id: u32, frags: Option<u32>, deaths: Option<u32>) -> bool {
