@@ -2448,12 +2448,28 @@ pub struct NpcMoveDef {
 
 /// Ground speed of the all-directions blend off the facing (15.9 / 22.6 from 20 deg) and its
 /// ramp (2.58 / 2.9 at 15..30 deg, 2.23 / 2.9 from 30 deg).
-const NPC_BLEND_SIDE_SPEED: f32 = 0.71;
-const NPC_BLEND_SIDE_DEG: f32 = 20.0;
-const NPC_BLEND_REAR_DEG: f32 = 120.0;
-const NPC_BLEND_REAR_SPEED: f32 = 0.58;
-const NPC_BLEND_BACK_DEG: f32 = 155.0;
-const NPC_BLEND_BACK_SPEED: f32 = 0.36;
+/// The soldier model's 9-way move_yaw run blend (RunALL / RunAIMALL1 share it): ground speed
+/// of each blend as a fraction of the forward one (214.8 u/s), keys every 45 deg from -180
+/// (moving backward) through 0 (forward) to 180; read from the mdl (a_RunS 165.1, SE 169.1,
+/// E 155.3, NE 179.9, N 214.8, NW 197.3, W 150.9, SW 167.9). The squad recording's leader
+/// runs forward at 22.5 u a think and side/back at 15.7..16.1 - the table within 10 %.
+const NPC_BLEND_TABLE: [f32; 9] = [0.769, 0.787, 0.723, 0.838, 1.0, 0.919, 0.702, 0.782, 0.769];
+/// A body held on a facing (enemy or route node) with its path leg this far off it,
+/// ahead-of-body, weaves round the leg instead of running it: both squad soldiers on the
+/// house-wall leg make 0.45..0.67 of the blend pace at 24..80 deg (server_npc_squad_soldier
+/// 261104 ops 415..653); a leg behind the body (the leader's -80..-114) runs the plain blend.
+const NPC_WEAVE_MIN_DEG: f32 = 25.0;
+const NPC_WEAVE_MAX_DEG: f32 = 80.0;
+const NPC_WEAVE_SPEED: f32 = 0.5;
+
+/// Ground-speed fraction of the run blend at `rel` deg of step direction from body yaw
+/// (positive: the step lies left of the facing), linear between the 45-deg keys.
+fn npc_blend_fraction(rel: f32) -> f32 {
+    let t = ((rel.clamp(-180.0, 180.0) + 180.0) / 45.0).clamp(0.0, 7.999);
+    let i = t as usize;
+    let f = t - i as f32;
+    NPC_BLEND_TABLE[i] + (NPC_BLEND_TABLE[i + 1] - NPC_BLEND_TABLE[i]) * f
+}
 const NPC_BLEND_ACCEL_MID: f32 = 0.88;
 const NPC_BLEND_ACCEL_SIDE: f32 = 0.77;
 
@@ -16153,7 +16169,7 @@ impl<'w> Server<'w> {
                 .and(points.last())
                 .map(|g| g.truncate())
                 .filter(|g| g.distance_squared(pos.truncate()) > 1e-6);
-            let (has_target, last_known) = (n.target.is_some(), n.last_known);
+            let has_target = n.target.is_some();
             // a corner within reach is passed only when the hull can already sweep to the
             // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
             // a node route is simplified ahead of its corner: the game's soldier leaves the
@@ -16275,34 +16291,21 @@ impl<'w> Server<'w> {
             // a gait speed; the lone soldier runs its cover route at full pace)
             let faced = enemy_face.is_some() || route_face.is_some();
             let squad_band = route_face.is_some() && has_target && squad_mates.contains(&id);
-            let band_err = if enemy_face.is_some() {
-                yaw_err
-            } else if squad_band {
-                match last_known {
-                    Some(k) if head.length_squared() > 1e-6 => {
-                        let e = k.truncate() - pos.truncate();
-                        wrap_deg(e.y.atan2(e.x).to_degrees() - head.y.atan2(head.x).to_degrees())
-                            .abs()
-                    }
-                    _ => 0.0,
-                }
+            // the step's angle off the body, signed (the blend's move_yaw)
+            let band_rel = if head.length_squared() > 1e-6 {
+                wrap_deg(head.y.atan2(head.x).to_degrees() - yaw0)
             } else {
                 0.0
             };
+            let band_err = band_rel.abs();
             let (ideal, accel) = if (enemy_face.is_some() || squad_band) && band_err >= 15.0 {
-                // the all-directions blend runs slower the further the path is behind the
-                // facing: the squad mate running for cover with its back to the bot (169 deg
-                // off) makes 7..9 u a think, the leader at 145 deg 12..15, the side 15.7
-                // (server_npc_squad_soldier rows 560..680)
-                let speed = if band_err >= NPC_BLEND_BACK_DEG {
-                    NPC_BLEND_BACK_SPEED
-                } else if band_err >= NPC_BLEND_REAR_DEG {
-                    NPC_BLEND_REAR_SPEED
-                } else if band_err >= NPC_BLEND_SIDE_DEG {
-                    NPC_BLEND_SIDE_SPEED
-                } else {
-                    1.0
-                };
+                // the all-directions blend runs at the model's ground speed for the step's
+                // angle off the facing (NPC_BLEND_TABLE), and a leg ahead-of-body but off the
+                // facing is weaved round at NPC_WEAVE_SPEED of it
+                let mut speed = npc_blend_fraction(band_rel);
+                if (NPC_WEAVE_MIN_DEG..=NPC_WEAVE_MAX_DEG).contains(&band_err) {
+                    speed *= NPC_WEAVE_SPEED;
+                }
                 let ramp = if band_err >= 30.0 {
                     NPC_BLEND_ACCEL_SIDE
                 } else {

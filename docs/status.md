@@ -451,7 +451,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   still cannot show: the mate arrives early (pace residual), its reload ends at 846 and frees
   the node before the 112 ticks, so the leader reaches the node and reloads there under 92;
   rows unchanged (squad 1251, grenade / damage / assault / zombie_swat as before).
-- Squad run pace (same scene, measured, not yet modelled): RunALL and RunAIMALL1 are the same
+- Squad run pace: the run blend's ground-speed table is now the law (`NPC_BLEND_TABLE`,
+  signed step/body angle, replacing the three hand bands), and a body held on a facing with
+  its path leg 25..80° off it ahead weaves the leg at half pace (`NPC_WEAVE_SPEED`). The
+  leader's side/back ramp (401..485) now matches the recording to 1 u/think and the mate's
+  house-wall pace 9.4..9.8 vs 8..10; grenade_soldier 1649 → 1544, _wall 547 → 442, squad
+  1251 → 1265 (worse by count: the game's leader snaps its body to the path at 499 and runs
+  22 u forward while ours keeps facing the final cover node and weaves; the game's mate
+  detours wider west, (971,−35) → (1003,23), still weaving to op 653). Open: which facing
+  the leader holds (path direction until ~570, then the node) and the wider detour.
+- Squad run pace measurement: RunALL and RunAIMALL1 are the same
   9-way move_yaw blend of the soldier model (ground speeds from the mdl: forward 214.8 u/s,
   diagonals 180 / 197 / 169 / 168, sides 155 / 151, backward 165). The leader's 22.5 u/think
   along its node leg is the forward blend exactly and the mate's 16-19 u side steps on the
