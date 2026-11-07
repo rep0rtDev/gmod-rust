@@ -460,6 +460,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   22 u forward while ours keeps facing the final cover node and weaves; the game's mate
   detours wider west, (971,−35) → (1003,23), still weaving to op 653). Open: which facing
   the leader holds (path direction until ~570, then the node) and the wider detour.
+- Cover run, last leg: an armed NPC running to cover turns back onto its enemy on the last
+  path leg to the node and side-steps it at the blend's pace (grenade_soldier: body 346 →
+  309 → 272 → 257 → 233 onto the bot from op 568 on the (965,−19) → (1201,72) leg; the squad
+  leader and mate do the same on their east legs); before it the body runs along the path.
+  Ours now does this (`enemy_face` on the last leg), still ~3 thinks early (our earlier
+  departure and steeper side/back ramp - the game plateaus at 15.7..16.1 u/think for 4
+  thinks), turning twice as fast (45°/think vs ~30) and braking into the node over 11 thinks
+  from 110 u where the game takes 7 from 150 u; at the node the game swings its body 230 →
+  112 and back to 229 over 638..694 (ours holds the enemy). grenade 1544 → 1558, squad
+  1265 → 1279 by count from the timing shift; the facing structure now matches.
 - Squad run pace measurement: RunALL and RunAIMALL1 are the same
   9-way move_yaw blend of the soldier model (ground speeds from the mdl: forward 214.8 u/s,
   diagonals 180 / 197 / 169 / 168, sides 155 / 151, backward 165). The leader's 22.5 u/think

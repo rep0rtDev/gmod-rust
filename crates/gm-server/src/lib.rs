@@ -16155,7 +16155,14 @@ impl<'w> Server<'w> {
                         && !n.cover_from_sound
                 })
                 .filter(|_| {
-                    !armed || now <= n.goal_started.max(n.reacquired_at) + NPC_AIM_RUN_TICKS
+                    // ... and a cover run turns back to its enemy on the last leg to the node
+                    // and side-steps it (server_npc_grenade_soldier 261104: the body swings
+                    // 309 -> 257 -> 233 onto the bot from op 575 on the (965,-19) -> (1201,72)
+                    // leg and holds it to the node, 16 u a think at the blend's 0.70; the
+                    // squad's leader and mate do the same on their east legs)
+                    !armed
+                        || now <= n.goal_started.max(n.reacquired_at) + NPC_AIM_RUN_TICKS
+                        || (n.cover_at.is_some() && idx + 1 >= points.len())
                 })
                 .map(|k| k.truncate());
             // a run to cover faces its route goal, not its step: the squad mate of
