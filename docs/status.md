@@ -519,8 +519,13 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   face (x=1024, 20 u clearance) and alternates an along-the-wall step with an avoidance
   step left of the goal bearing for 300 ops (waypoint unchanged, `GetBlockingEntity` nil);
   the house's west face is low (top below z -80) for y -350..-300 where that leg crosses it,
-  so the route check passed over it. Ours routes via node (965,-19) (local-route threshold
-  144 u). Also read: the first waypoint of a node route slides ahead ~125..142 u along the
+  so the route check passed over it (the wall's top is ~45..50 u over the floor for y
+  -420..-280, full height outside; the eye line from the mate's start and apex to the node is
+  clear, the lone soldier's crosses the full-height part and is blocked, the leader's is
+  clear but its goal lies 609 u out, past the 600 u local reach - so: within local reach the
+  game takes the straight route when the eye line clears a low wall the hull cannot pass).
+  Ours routes via node (965,-19) (local-route threshold 144 u); the straight route with an
+  apex half a hull off the wall is the next change. Also read: the first waypoint of a node route slides ahead ~125..142 u along the
   leg (forward simplification) until it merges into the node; the leader's corner crawl at
   (953,6) (3.5..4.5 u a think stepping back-right, 646..688) has no blocking entity - a
   squad hold-back while the mate is 52..130 u ahead in the corridor. Open.
