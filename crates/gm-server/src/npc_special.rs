@@ -508,6 +508,22 @@ impl Server<'_> {
                 n.ai.schedule = Some(crate::ai::SCHED_IDLE_STAND);
             }
         }
+        // the game's mine sits through the idle reaction delay, reads COMBAT on its fourth
+        // think and only then acts (server_npc_tick_rollermine 261107: IDLE in place to
+        // spawn+30, COMBAT / its own 187 hopping in place from there)
+        let combat_at = self.npcs[&id].spawn_tick
+            + crate::NPC_THINK_PHASE
+            + 3 * u64::from(crate::NPC_THINK_TICKS);
+        if now >= combat_at {
+            if let Some(n) = self.npcs.get_mut(&id) {
+                if npc_hostile_to_players(n) {
+                    n.ai.state = crate::ai::NPC_STATE_COMBAT;
+                }
+            }
+        }
+        if now < combat_at + u64::from(crate::NPC_THINK_TICKS) {
+            return;
+        }
         let Some(n) = self.npcs.get(&id) else {
             return;
         };

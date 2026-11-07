@@ -2730,6 +2730,12 @@ pub fn npc_schedule_less(class: &str) -> bool {
     matches!(class, "npc_helicopter")
 }
 
+/// Attacking classes that never walk at their enemy (the strider stands where it spawned
+/// through server_npc_tick_strider 261107).
+pub fn npc_stands_in_combat(class: &str) -> bool {
+    matches!(class, "npc_strider")
+}
+
 /// Ticks after the sighting think an idle NPC of `class` keeps IDLE before COMBAT
 /// (NPC_REACTION_TICKS); zero for the classes with their own measured wake-up: zombies wake
 /// angry on the second think, the antlion on the fifth, the guard and strider on the fourth
@@ -3300,6 +3306,17 @@ pub fn npc_leap(class: &str) -> Option<NpcLeap> {
 /// headcrab throw whose bite lands 187 ticks later, then a 25-damage claw from ~66 u).
 pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
     // the guard's shove (`sk_antlionguard_dmg_shove` 10) with its launch; the charge is npc_special::tick_guard
+    // the strider has no melee: the entry only makes it an attacking class that wakes to its
+    // enemy and then stands in COMBAT (server_npc_tick_strider 261107: sched 4 at spawn+30,
+    // its own 210 from +37, no move through +60)
+    const STRIDER: [NpcMelee; 1] = [NpcMelee {
+        damage: 0.0,
+        reach: 0.0,
+        swing_ticks: 1,
+        hit_tick: 0,
+        run: false,
+        ..MELEE_PLAIN
+    }];
     const GUARD: [NpcMelee; 1] = [NpcMelee {
         damage: 10.0,
         reach: 80.0,
@@ -3444,6 +3461,7 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         "npc_poisonzombie" => Some((&POISON, 1)),
         "npc_hunter" => Some((&HUNTER, 1)),
         "npc_antlionguard" => Some((&GUARD, 0)),
+        "npc_strider" => Some((&STRIDER, 0)),
         _ => None,
     }
 }
@@ -15571,7 +15589,30 @@ impl<'w> Server<'w> {
         }
     }
 
+    /// NPCInitThink, a tick after the spawn: the brain reads IDLE / SCHED_IDLE_STAND before
+    /// its first think (the game's `after` sample on the spawn row reads 1 / 1 for every AI
+    /// class, server_npc_tick_* 261107; `ai_disabled 1` keeps NONE / -1).
+    fn tick_npc_init(&mut self) {
+        if self.ai_disabled {
+            return;
+        }
+        let now = self.tick_count;
+        for n in self.npcs.values_mut() {
+            if n.ai.state == ai::NPC_STATE_NONE
+                && n.ai.schedule.is_none()
+                && n.dead_at.is_none()
+                && now > n.spawn_tick
+                && now < n.next_think
+                && !npc_non_ai(&n.class)
+            {
+                n.ai.state = ai::NPC_STATE_IDLE;
+                n.ai.schedule = Some(ai::SCHED_IDLE_STAND);
+            }
+        }
+    }
+
     fn tick_npc_move(&mut self) {
+        self.tick_npc_init();
         self.tick_npc_children();
         self.tick_npc_gravity();
         let prop_bodies = self.prop_bodies();
@@ -17605,7 +17646,11 @@ impl<'w> Server<'w> {
                     if let Some(n) = self.npcs.get_mut(&id) {
                         n.target = None;
                     }
-                } else if self.npcs.get(&id).is_some_and(|n| n.chase != Some(p)) {
+                } else if self
+                    .npcs
+                    .get(&id)
+                    .is_some_and(|n| n.chase != Some(p) && !npc_stands_in_combat(&n.class))
+                {
                     self.npc_chase(id, p, m.run);
                 }
             }
@@ -17762,7 +17807,8 @@ impl<'w> Server<'w> {
             if to.length_squared() > 1e-6 {
                 n.angles.y = to.y.atan2(to.x).to_degrees();
             }
-        } else if n.chase != Some(player) && now >= n.face_until {
+        } else if n.chase != Some(player) && now >= n.face_until && !npc_stands_in_combat(&n.class)
+        {
             self.npc_chase(id, player, m.run);
         }
     }
