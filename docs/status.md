@@ -297,6 +297,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   A standing armed body aims within 10 deg of its enemy without turning (`NPC_AIM_IN_PLACE_DEG`,
   bracketed: the squad mate of server_npc_squad_soldier keeps its spawn yaw 205 at 4 and 7 deg
   off the bearing, the grenade_soldier soldier turns at 14): squad_soldier 1607 -> 1314 rows.
+  The zombie's prop scan runs on the sighting think itself (a prop already in reach is swatted
+  there, no WAKE_ANGRY think: swat2_drumside reads SWATITEM + swatrightlow at op 12) and the
+  rescan period is 2.0 s taken by the next think (134 ticks, not 133): zombie_swat2_drum
+  1150 -> 1136, drumside 755 -> 741, swat3_c 786 -> 765, zombie_swat 8562 -> 8554.
   The antlion guard's chase is also private in the game (sched_translate_game.txt 17>222,
   104 in server_npc_tick_antlionguard) but its offset could not be pinned from the recordings
   (the neighbouring blocks don't add up) - it still reads SCHED_CHASE_ENEMY here.

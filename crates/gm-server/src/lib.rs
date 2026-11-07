@@ -17799,9 +17799,6 @@ impl<'w> Server<'w> {
             }
             return;
         };
-        if self.npc_swat_think(id, now, player, origin) {
-            return;
-        }
         let dist = origin.truncate().distance(feet.truncate());
         let m = if let Some((class, ranged_after)) = &hunter {
             // the hunter picks its move by range each think: the slash within reach, the
@@ -17871,8 +17868,10 @@ impl<'w> Server<'w> {
                 if antlion {
                     n.sequence = "Idle".to_string();
                 }
-                // the swat scan runs at the wake think and every 2 s after it
-                n.next_swat_scan = n.wake_until;
+                // the swat scan runs on the sighting think itself and every 2 s after it
+                // (server_npc_zombie_swat2_drumside 261105: SWATITEM + swatrightlow at op 12,
+                // no wake think when the prop is already in reach)
+                n.next_swat_scan = now;
                 if !n.ai.scripted {
                     n.ai.start(ai::SCHED_IDLE_STAND, now);
                 }
@@ -17885,6 +17884,14 @@ impl<'w> Server<'w> {
                 // together at op 18)
             }
         }
+        // the swat scan runs after the enemy is taken (the swing needs the target; a prop in
+        // reach is swatted on the sighting think itself, with no wake think)
+        if self.npc_swat_think(id, now, player, origin) {
+            return;
+        }
+        let Some(n) = self.npcs.get_mut(&id) else {
+            return;
+        };
         n.chase_reach = m.start_range.min(m.reach) - 3.0;
         if let Some(j) = npc_jump(&n.class) {
             if now >= n.next_leap
@@ -19089,11 +19096,6 @@ impl<'w> Server<'w> {
         if !ai::class_is_zombie_body(&n.class) {
             return false;
         }
-        // the wake think neither swats nor picks a prop (server_npc_zombie_swat2_*: sched 4
-        // through the wake, SWATITEM from the think after)
-        if now < n.wake_until {
-            return false;
-        }
         if let Some(sw) = n.swat {
             // the swing's last tick: the swat is over for this think, the chase resumes now
             // (the game's zombie walks on the row its swatrightlow ends, swat2_drumside 110)
@@ -19131,7 +19133,9 @@ impl<'w> Server<'w> {
             }
             return false;
         }
-        if n.next_swat_scan == 0 || now < n.next_swat_scan {
+        // the sighting think scans too: a prop already in reach is swatted there, with no
+        // wake think (server_npc_zombie_swat2_drumside 261105: SWATITEM + swatrightlow at op 12)
+        if n.next_swat_scan != 0 && now < n.next_swat_scan {
             return false;
         }
         let (feet, yaw) = (n.pos, n.angles.y);
@@ -24954,7 +24958,9 @@ pub const NPC_PUSH_PROP_SPEED: f32 = 45.0;
 /// How far past the hull the shove keeps driving the prop (the game's crate slides 883 -> 875
 /// after the hulls part).
 pub const NPC_PUSH_PROP_GAP: f32 = 4.0;
-pub const ZOMBIE_SWAT_SCAN_TICKS: u64 = 133;
+/// The zombie's prop rescan period: 2.0 s = 133.33 ticks, taken by the first think at or past
+/// it (server_npc_zombie_swat2_crate: scans at the sighting think and 140 ticks later).
+pub const ZOMBIE_SWAT_SCAN_TICKS: u64 = 134;
 /// A prop nearer than this at the scan is left alone (game: swats at 41.6/46/48/61 u, none at
 /// 30-36 u with the same props on the scans that pass them - bound 36..41.6; 38 lets the zombie pressed on
 /// its spawn crate swat it at 38.6 u as the game does at 41.6 with its 3 u standoff).
