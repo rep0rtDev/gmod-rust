@@ -341,13 +341,16 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   prefix leaves neither undo entries nor a removal count behind. The NPC rows left are the
   turret's 1.2 u, the hunter's 1.2 u / 3.75 deg, the grub's 5 u, the fast headcrab's
   RNG-seeded patrol on its spawn row and the session's class block ids.
-  The hacked rollermine's inertia roll (tick_rollermine_hacked) heads 155 deg for the game's
-  188: from the 17th tick our mine rises 0.8 u and starts turning (yaw/roll rates growing to 5
-  deg a tick) where the game rolls flat about one axis: our floor is flat there, the lift is
-  the faceted hull climbing an edge. A true Jolt sphere body plus the opposite spin sign
-  matches the roll distance but needs a rolling-resistance law (Jolt has none: the sphere
-  rolls 9 u off its spawn before the hostile hop) and a re-fit of the mine's hop and roll
-  constants, which the hull's drag had absorbed - queued, not done.
+  The rollermine's faceted hull is behind three open rows (the game runs the same .phy on
+  VPhysics): the hacked mine's inertia roll (tick_rollermine_hacked) heads 155 deg for the
+  game's 188 - from the 17th tick it rises 0.8 u and turns (yaw/roll rates growing to 5 deg a
+  tick) on a floor that is flat, the hull climbing an edge; the hostile mine's hop lands on an
+  edge that reverses its spin (-138 -> +164 deg/s) so it rolls 17 u/s away from the player
+  where the game rolls 33 u/s toward him (the hop itself matches within 0.3 u; the spin
+  Z x dir is the rolling sense toward him, traced); and the idle hull creeps 10 u/s^2 on the
+  flat floor where the game's sleeps. A true Jolt sphere matches the roll distance but needs a
+  rolling-resistance law (Jolt has none: the sphere rolls 9 u off its spawn before the hop)
+  and a re-fit of the hop and roll constants the hull's drag had absorbed - queued, not done.
   The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
   and the game's first think follows 7 later (every server_npc_tick_* 261107 and
   server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated

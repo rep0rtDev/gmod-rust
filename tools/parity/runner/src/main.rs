@@ -4450,8 +4450,10 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             for _ in 0..gm_server::NPC_THINK_TICKS {
                 server.tick(&idle);
             }
+            // each class goes before the next spawns: a spawn trace hitting the previous
+            // NPC's hull would land 45 u closer every time (the fifth inside the bot)
+            server.cleanup(player);
         }
-        server.cleanup(player);
         // the recorded scene starts with an empty undo list (the probe's bot spawned nothing
         // the game still lists: server_npc_spawn 261107 reads Alyx as undo id 1)
         server.clear_undo_history();
