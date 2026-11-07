@@ -9294,6 +9294,11 @@ impl<'w> Server<'w> {
         self.sandbox.push_undo(player, name, text, custom, entities);
     }
 
+    /// Forgets every undo entry (a fresh session's list).
+    pub fn clear_undo_history(&mut self) {
+        self.sandbox.clear_undos();
+    }
+
     /// The `kill` console command: the addon runtime may refuse (`CanPlayerSuicide`).
     pub fn player_kill_command(&mut self, id: u32) -> bool {
         if !self.players.get(&id).is_some_and(|p| p.alive) {

@@ -4452,6 +4452,9 @@ fn run_server(scn: &Scenario) -> Result<Value> {
             }
         }
         server.cleanup(player);
+        // the recorded scene starts with an empty undo list (the probe's bot spawned nothing
+        // the game still lists: server_npc_spawn 261107 reads Alyx as undo id 1)
+        server.clear_undo_history();
     }
     if !scn.segments.is_empty() {
         return run_server_segments(scn, &mount, server, player, start, view0);

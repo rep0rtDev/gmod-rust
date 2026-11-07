@@ -2227,6 +2227,11 @@ impl Sandbox {
         });
     }
 
+    /// Forgets every undo entry (ids start from 1 again).
+    pub fn clear_undos(&mut self) {
+        self.undo.clear();
+    }
+
     /// The player whose cleanup lists hold `id`, if any.
     pub fn cleanup_owner(&self, id: u32) -> Option<u32> {
         self.cleanup
