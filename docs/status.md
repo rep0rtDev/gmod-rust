@@ -294,6 +294,9 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   classic crab keeps its pre-think). Open: the game's fast crab spawns 9.8 u aside and turned
   22 deg on the spawn row (1000.2 / -509.7 / yaw 202 where ours and the classic read 1001.7 /
   -500 / 180, both tick_ and melee_headcrab_fast) and idles on PATROL_WALK (74) wandering.
+  A standing armed body aims within 10 deg of its enemy without turning (`NPC_AIM_IN_PLACE_DEG`,
+  bracketed: the squad mate of server_npc_squad_soldier keeps its spawn yaw 205 at 4 and 7 deg
+  off the bearing, the grenade_soldier soldier turns at 14): squad_soldier 1607 -> 1314 rows.
   The antlion guard's chase is also private in the game (sched_translate_game.txt 17>222,
   104 in server_npc_tick_antlionguard) but its offset could not be pinned from the recordings
   (the neighbouring blocks don't add up) - it still reads SCHED_CHASE_ENEMY here.

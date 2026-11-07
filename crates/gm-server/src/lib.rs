@@ -2718,6 +2718,9 @@ pub const NPC_SPREAD_DEFOCUS_TICKS: u64 = 40;
 pub const NPC_SPREAD_DEFOCUS_MULT: f32 = 3.0;
 pub const NPC_SPREAD_FOCUS_TICKS: u64 = 53;
 /// The NPC fires once its body yaw is within this many degrees of the target.
+/// The standing body's aim error the game covers without a body turn (bracketed: 7 deg kept,
+/// 14 deg turned).
+const NPC_AIM_IN_PLACE_DEG: f32 = 10.0;
 const NPC_FIRE_FACING_DEG: f32 = 15.0;
 const NPC_EYE_HEIGHT: f32 = 64.0;
 /// Eye height of an armed NPC firing from the crouch it takes in combat (game: origin + 40).
@@ -17544,10 +17547,16 @@ impl<'w> Server<'w> {
         let to = chest - eye;
         let want = to.y.atan2(to.x).to_degrees();
         let err = wrap_deg(want - n.angles.y);
-        if n.goal.is_none() {
+        // a standing body aims within NPC_AIM_IN_PLACE_DEG without turning (the squad mate of
+        // server_npc_squad_soldier keeps its spawn yaw 205 at 4 and 7 deg off the bearing; the
+        // soldier of server_npc_grenade_soldier turns to the bearing at 14 deg off)
+        let aims_in_place = err.abs() <= NPC_AIM_IN_PLACE_DEG;
+        if n.goal.is_none() && !aims_in_place {
             let max_turn = n.max_yaw.unwrap_or(npc_move_def(&n.class).idle_yaw) * dt;
             n.angles.y = wrap_deg(n.angles.y + err.clamp(-max_turn, max_turn));
             n.face_err = wrap_deg(want - n.angles.y).abs();
+        } else if n.goal.is_none() {
+            n.face_err = 0.0;
         }
         if n.goal.is_none() {
             // the think that first sees the enemy keeps the idle pose (Idle1_SMG1 at t4)
