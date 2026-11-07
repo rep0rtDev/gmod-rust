@@ -2734,10 +2734,10 @@ pub fn npc_non_ai(class: &str) -> bool {
     matches!(class, "npc_antlion_grub" | "npc_helicoptersensor")
 }
 
-/// AI NPCs without schedules: the game's helicopter reads schedule -1 for good while IDLE
-/// (server_npc_spawn 261107; the gunship and dropship read 1 there).
+/// AI NPCs without schedules: the game's helicopter and floor turret read schedule -1 for
+/// good while IDLE (server_npc_spawn 261107; the gunship and dropship read 1 there).
 pub fn npc_schedule_less(class: &str) -> bool {
-    matches!(class, "npc_helicopter")
+    matches!(class, "npc_helicopter" | "npc_turret_floor")
 }
 
 /// Attacking classes that never walk at their enemy (the strider stands where it spawned
@@ -14159,6 +14159,9 @@ impl<'w> Server<'w> {
             last_shot: 0,
             ai: ai::AiState {
                 state: ai::spawn_state(def.class),
+                // the classes that think inside Spawn read their idle stand on the spawn row
+                schedule: (ai::spawn_state(def.class) == ai::NPC_STATE_IDLE)
+                    .then_some(ai::SCHED_IDLE_STAND),
                 proficiency: ai::default_proficiency(def.class),
                 ..Default::default()
             },
