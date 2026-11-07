@@ -765,9 +765,7 @@ impl ServerNet {
                 }],
                 (Some(n), Some(v)) => {
                     if server.set_cvar(n, v) {
-                        let v = server.cvar(n).unwrap_or_default();
-                        self.events.push(format!("server_cvar: \"{n}\" \"{v}\""));
-                        vec![format!("{n} = {v}")]
+                        vec![format!("{n} = {}", server.cvar(n).unwrap_or_default())]
                     } else {
                         vec![format!("{n}: unknown cvar or bad value")]
                     }
@@ -1040,6 +1038,11 @@ impl ServerNet {
             }
         }
         for (name, _, value) in server.take_cvar_changes() {
+            // srcds logs FCVAR_NOTIFY changes from any source; ours are the replicated cvars
+            if server.cvars.get(&name).is_some_and(|c| c.replicated) {
+                self.events
+                    .push(format!("server_cvar: \"{name}\" \"{value}\""));
+            }
             if server.cvars.get(&name).is_some_and(|c| c.replicated) {
                 for slot in self.clients.values_mut() {
                     slot.pending_cvars.push((name.clone(), value.clone()));
