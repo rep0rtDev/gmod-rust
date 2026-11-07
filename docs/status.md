@@ -469,8 +469,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   thinks), turning twice as fast (45°/think vs ~30) and braking into the node over 11 thinks
   where the game takes 7 - fixed: the blend's softer accel ramp had also scaled the braking
   shed (1.7 u/think for the game's 2.3); braking now sheds the full curve while side-stepping
-  (grenade 1558 → 1544, _low 605 → 584). At the node the game swings its body 230 → 112 and
-  back to 229 over 638..694 (ours holds the enemy). squad 1265 → 1286 by count from the
+  (grenade 1558 → 1544, _low 605 → 584). Open: over the last ~20 u into the node the game
+  swings its body away from the enemy at ~29°/think (grenade 230 → 112, squad mate 231 → 90,
+  the turn ends when the body stops) and only then turns back at the standing rate (which we
+  do); the target of that swing is unknown - the ain node yaw is 0 (east), the leg heads 13°,
+  and _low/_wall arrive without it. Ours holds the enemy to the stop. squad 1265 → 1286 by count from the
   timing shift; the facing structure now matches.
 - Squad run pace measurement: RunALL and RunAIMALL1 are the same
   9-way move_yaw blend of the soldier model (ground speeds from the mdl: forward 214.8 u/s,
