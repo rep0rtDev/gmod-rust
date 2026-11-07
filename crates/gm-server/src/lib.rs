@@ -7907,6 +7907,9 @@ pub const NPC_LOCAL_ROUTE_ENEMY: f32 = 4800.0;
 /// rally -> point leg via the same node, 516 u for server_npc_walk_citizen_y180's detour round
 /// the whole building), so the engine's own reach stands.
 pub const NPC_LOCAL_ROUTE_DETOUR: f32 = 144.0;
+/// Range a squad member holds from a squad mate running ahead of it on the same route (the
+/// squad's leader keeps 51..54 u from the mate, server_npc_squad_soldier 261104 ops 569..632).
+pub const NPC_SQUAD_FOLLOW_RANGE: f32 = 52.0;
 /// A prop across a chase line counts as blocking it when its centre lies within its own
 /// half-size less this of the line (the NPC hull's half-width: a 3 u overlap is walked at).
 pub const NPC_PROP_BLOCK_CLEARANCE: f32 = 16.0;
@@ -16467,6 +16470,66 @@ impl<'w> Server<'w> {
                     let step = (want.truncate() - pos.truncate()).length();
                     dir = to / dd;
                     want = (pos.truncate() + dir * step.min(dd)).extend(pos.z);
+                }
+            }
+            // a squad mate ahead on the same run holds its range: the squad's leader closes on
+            // the mate to ~53 u and keeps 51..54 for eleven thinks, sliding round its open
+            // (west) side at that range (server_npc_squad_soldier 261104 ops 569..632), and
+            // only stops behind it where the corner leaves no side (639..681); measured on a
+            // cover run only, a chase keeps the formation rule
+            let cover_run = self.npcs.get(&id).is_some_and(|n| n.cover_at.is_some());
+            if let Some(sq) = self.squads.of(id).filter(|_| cover_run) {
+                let here = pos.truncate();
+                let peer = self
+                    .npcs
+                    .iter()
+                    .filter(|(&i, p)| {
+                        i != id
+                            && p.dead_at.is_none()
+                            && p.goal.is_some()
+                            && self.squads.of(i) == Some(sq)
+                    })
+                    .map(|(_, p)| p.pos.truncate())
+                    .filter(|pp| {
+                        let to = *pp - here;
+                        to.dot(dir) > 0.0 && to.length() < NPC_SQUAD_FOLLOW_RANGE + 30.0
+                    })
+                    .min_by(|a, b| {
+                        a.distance_squared(here)
+                            .partial_cmp(&b.distance_squared(here))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                if let Some(pp) = peer {
+                    let step = want.truncate() - here;
+                    let to = pp - here;
+                    let range = to.length();
+                    let fwd = to / range;
+                    let along = step.dot(fwd);
+                    let excess = along - (range - NPC_SQUAD_FOLLOW_RANGE).max(0.0);
+                    if excess > 0.0 {
+                        let side = glam::Vec2::new(-fwd.y, fwd.x);
+                        let lateral = step - fwd * along;
+                        let sign = if lateral.dot(side) >= 0.0 { 1.0 } else { -1.0 };
+                        let clear = |c: glam::Vec2| {
+                            let t = self.npc_sweep(
+                                &prop_bodies,
+                                pos + lift,
+                                (here + c).extend(pos.z) + lift,
+                                mins,
+                                maxs,
+                            );
+                            t.fraction > 0.999 && !t.start_solid
+                        };
+                        let held = step - fwd * excess;
+                        let cand = if clear(held + side * (sign * excess)) {
+                            held + side * (sign * excess)
+                        } else if clear(held - side * (sign * excess)) {
+                            held - side * (sign * excess)
+                        } else {
+                            held
+                        };
+                        want = (here + cand).extend(pos.z);
+                    }
                 }
             }
             let mut tr = self.npc_sweep(&prop_bodies, pos + lift, want + lift, mins, maxs);

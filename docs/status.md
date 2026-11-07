@@ -475,6 +475,13 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   do); the target of that swing is unknown - the ain node yaw is 0 (east), the leg heads 13°,
   and _low/_wall arrive without it. Ours holds the enemy to the stop. squad 1265 → 1286 by count from the
   timing shift; the facing structure now matches.
+- Squad following range: a squad member running the same route as a mate ahead holds
+  ~52 u from it, deflecting the surplus of its step to the open side (the squad's leader
+  closes on the mate to 53 u and keeps 51..54 u for eleven thinks while sliding round its
+  west side, server_npc_squad_soldier ops 569..632, then stops behind it where the corner
+  leaves no side); `NPC_SQUAD_FOLLOW_RANGE`. Not exercised by our scene yet: our mate runs
+  ~15 thinks ahead on a straight path (early start, no 1003 → 971 drift, no zigzag path
+  length), so the leader never closes on it - rows unchanged everywhere.
 - Squad run pace measurement: RunALL and RunAIMALL1 are the same
   9-way move_yaw blend of the soldier model (ground speeds from the mdl: forward 214.8 u/s,
   diagonals 180 / 197 / 169 / 168, sides 155 / 151, backward 165). The leader's 22.5 u/think
