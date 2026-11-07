@@ -7885,12 +7885,12 @@ pub const NPC_LOCAL_ROUTE_GOAL: f32 = 600.0;
 pub const NPC_LOCAL_ROUTE_ENEMY: f32 = 4800.0;
 /// How far aside of the straight line a local route may go round a blocker before the engine
 /// routes over the node graph instead: the engine triangulates round one apex, eight steps of
-/// half a hull width out (144 u for a human), and the bracket from the records is 224 u
-/// (server_npc_assault_citizen's rally -> point leg goes round the small building, the game
-/// via node 654 and its path simplification - a node route, so the bound sits below 224)
-/// against 516 u (server_npc_walk_citizen_y180's detour round the whole building, a node route
-/// in the game).
-pub const NPC_LOCAL_ROUTE_DETOUR: f32 = 200.0;
+/// half a hull width out (144 u for a human), and the records bracket it at 154 u from above
+/// (server_npc_squad_soldier: both soldiers' 480 u cover run goes round the house via node
+/// 654 at (965,-19) - the mesh corner sits 154 u aside; 224 u for server_npc_assault_citizen's
+/// rally -> point leg via the same node, 516 u for server_npc_walk_citizen_y180's detour round
+/// the whole building), so the engine's own reach stands.
+pub const NPC_LOCAL_ROUTE_DETOUR: f32 = 144.0;
 /// A prop across a chase line counts as blocking it when its centre lies within its own
 /// half-size less this of the line (the NPC hull's half-width: a 3 u overlap is walked at).
 pub const NPC_PROP_BLOCK_CLEARANCE: f32 = 16.0;
@@ -14897,19 +14897,10 @@ impl<'w> Server<'w> {
         // it meets instead of taking the mesh corner (the game's mate hugs the house's west
         // face north at 10.5 then 6..11 u a think and clears it at (1013,26),
         // server_npc_squad_soldier 349..657; ours took the (1002,20) corner at a capped pace)
-        let cover_goto = n.cover_goto;
-        let straight_mate = cover_goto
-            && n.target.is_some()
-            && !partial
-            && self.npc_has_squad_mate(id)
-            && !self.npc_leads_squad(id);
         if let Some(n) = self.npcs.get_mut(&id) {
             n.cover_goto = false;
         }
         let n = self.npcs.get(&id).expect("npc");
-        if straight_mate {
-            points = vec![n.pos, Vec3::new(target.x, target.y, n.pos.z)];
-        }
         let (mins, maxs) = (n.mins, n.maxs);
         self.npc_widen_corners(&mut points, mins, maxs);
         // a goal a little off the mesh (the rally (992,-200) sits 0.8 u outside its polygon
