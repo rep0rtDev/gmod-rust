@@ -5763,6 +5763,7 @@ impl<'w> Server<'w> {
             }
         });
         let melee = npc_melee_moves(&n.class).map(|(m, _)| m[0].reach);
+        let crab = ai::class_sched_family(&n.class) == Some("headcrab");
         let ranged = npc_weapon_shot_in(&n.weapon, &self.scripted_weapons).is_some();
         let target_dead = target
             .map(|p| self.players.get(&p).is_none_or(|pl| !pl.alive))
@@ -5941,6 +5942,17 @@ impl<'w> Server<'w> {
                 ai::SCHED_IDLE_STAND
             } else if target.is_some() && now < n.target_first_seen + npc_reaction_ticks(&n.class) {
                 ai::SCHED_IDLE_STAND
+            } else if crab && (n.leap_at.is_some() || n.flight.is_some()) {
+                // the jump is the crab's RANGE_ATTACK1 from the think that picks it, through
+                // the flight (server_npc_tick_headcrab 261107: 121 from spawn+14, launch +21)
+                ai::SCHED_RANGE_ATTACK1
+            } else if crab
+                && target.is_some()
+                && !target_dead
+                && now < n.target_first_seen + 2 * u64::from(n.think_interval)
+            {
+                // the crab's first COMBAT think is its own wake (WAKE_ANGRY_NO_DISPLAY, 123)
+                ai::SCHED_WAKE_ANGRY
             } else if n.melee_swing.is_some() && now < n.swing_until {
                 // the swing's schedule lasts the whole sequence (the fast zombie's roar after
                 // its scratches, the zombie's follow-through): 167 / 149 until the chase resumes;
@@ -6016,6 +6028,10 @@ impl<'w> Server<'w> {
             } else {
                 ai::SCHED_IDLE_STAND
             };
+            // the class aliases of the shared schedules show on the native brain too (the
+            // manhack reads CHASE_ENEMY while it rises, the fast headcrab PATROL_WALK at rest:
+            // server_npc_tick_manhack / _headcrab_fast 261107)
+            let sched = ai::class_shared_alias(&n.class, sched);
             if a.schedule != Some(sched) {
                 a.start(sched, now);
             }
