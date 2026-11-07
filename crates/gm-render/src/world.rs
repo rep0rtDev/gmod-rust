@@ -2885,7 +2885,12 @@ impl WorldRenderer {
         });
         let water_src = include_str!("shaders/world.wgsl");
         let water_src = if quality.msaa > 1 {
-            water_src.replace("texture_depth_2d", "texture_depth_multisampled_2d")
+            // only the scene depth is multisampled; the flashlight shadow array
+            // (`texture_depth_2d_array`) shares the prefix and has no multisampled form
+            water_src.replace(
+                "scene_depth: texture_depth_2d;",
+                "scene_depth: texture_depth_multisampled_2d;",
+            )
         } else {
             water_src.to_string()
         };
