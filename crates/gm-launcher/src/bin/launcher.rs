@@ -40,6 +40,20 @@ enum Cmd {
         #[arg(long = "pub")]
         public: Option<PathBuf>,
     },
+    /// Fetch the latest release and install it over the launcher's directory after the
+    /// release key has verified it (`--check` only reports; `--from` uses a local release
+    /// directory instead of GitHub).
+    Update {
+        #[arg(long)]
+        check: bool,
+        #[arg(long)]
+        from: Option<PathBuf>,
+        #[arg(long, default_value = "rep0rtDev/gmod-rust")]
+        repo: String,
+        /// Install here instead of next to this binary.
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
     /// Start the client (next to this binary) on a map or against a server.
     Play {
         #[arg(long)]
@@ -147,6 +161,37 @@ fn main() -> Result<()> {
             let pk = gm_launcher::minisign::PublicKey::parse(&text)?;
             let files = gm_launcher::release::verify_dir(&dir, &pk)?;
             println!("ok: {} files verified in {}", files.len(), dir.display());
+        }
+        Cmd::Update {
+            check,
+            from,
+            repo,
+            dir,
+        } => {
+            let source = match from {
+                Some(d) => gm_launcher::update::Source::Dir(d),
+                None => gm_launcher::update::Source::GitHub(repo),
+            };
+            let current = env!("CARGO_PKG_VERSION");
+            let rel = gm_launcher::update::latest(&source)?;
+            let newer = gm_launcher::update::is_newer(&rel.tag, current);
+            println!(
+                "current {current}, latest {}{}",
+                rel.tag,
+                if newer { " (newer)" } else { "" }
+            );
+            if check {
+                return Ok(());
+            }
+            let exe = std::env::current_exe()?;
+            let dir = match dir {
+                Some(d) => d,
+                None => exe.parent().context("launcher path")?.to_path_buf(),
+            };
+            let pk =
+                gm_launcher::minisign::PublicKey::parse(gm_launcher::release::RELEASE_PUBLIC_KEY)?;
+            let tag = gm_launcher::update::install(&source, &dir, &pk, Some(&exe))?;
+            println!("installed {tag} into {}", dir.display());
         }
         Cmd::Play { connect, map, gmod } => {
             let game_dir = match gmod {

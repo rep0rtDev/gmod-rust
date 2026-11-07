@@ -16,6 +16,9 @@ ed25519-dalek = { workspace = true }
 rand_core = { workspace = true }
 blake2 = "0.10"
 base64 = "0.22"
+serde_json = { workspace = true }
+zip = { workspace = true }
+ureq = "2"
 
 [[bin]]
 name = "gm-launcher"

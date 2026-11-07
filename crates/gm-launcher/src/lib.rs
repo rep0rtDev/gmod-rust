@@ -4,5 +4,6 @@
 pub mod minisign;
 pub mod release;
 pub mod servers;
+pub mod update;
 
 pub use gm_content::install::{find_install, steam_roots, Install};
