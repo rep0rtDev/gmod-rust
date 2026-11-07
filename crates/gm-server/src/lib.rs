@@ -3541,26 +3541,27 @@ pub struct NpcFlyer {
 
 /// server_npc_fly_manhack 261106: 30 ticks of rising after the spawn (0.34 .. 0.48 u/tick),
 /// the charge at the bot's eyes 0.75 / 1.34 / 2.23 / 2.91 / 3.44 / 3.66 u/tick at 8 / 20 /
-/// 32 / 44 / 56 / 68 ticks, the slice at 22..27 u for 4 (t1082), the bounce 2.4 u/tick
-/// decaying to a stop in ~55 ticks, the drift back at up to 0.55 u/tick sinking to 40 u
-/// above the bot, the next charge from ~150 ticks after the slice (hits at +168 and +175).
+/// 32 / 44 / 56 / 68 ticks, the slice at 22..27 u for 4 (t1082), a 6-tick stand, the bounce
+/// 2.15 u/tick decaying to a stop in ~60 ticks (61 u), the height held 18 ticks then the sink
+/// at up to 0.32 u/tick toward 40 u above the bot, the drift back at up to 0.55 u/tick, the
+/// next charge from ~140 ticks after the slice (the second slice at +168).
 const NPC_FLY_MANHACK: NpcFlyer = NpcFlyer {
     max: 5.0,
     accel: 0.018,
     vz_gain: 0.07,
     climb: 0.48,
-    sink: 0.48,
+    sink: 0.32,
     vz_accel: 0.03,
     stand_off: 0.0,
     height: 61.5,
     slice: 4.0,
     reach: 28.0,
-    bounce: 2.4,
-    bounce_decay: 0.045,
+    bounce: 2.15,
+    bounce_decay: 0.037,
     drift_max: 0.55,
     drift_accel: 0.02,
     drift_height: 40.0,
-    recharge: 148,
+    recharge: 141,
     pass: false,
 };
 /// server_npc_fly_cscanner 261106: the climb from the spawn gains 0.14 u/tick a tick to 3.9
@@ -3600,7 +3601,10 @@ const NPC_REACTION_TICKS: u64 = 21;
 /// (server_npc_tick_hunter 261107: standing through the scene's 30 combat ticks).
 const NPC_HUNTER_FOUND_TICKS: u64 = 94;
 /// The bounce after a slice lasts this long before the drift back.
-const NPC_FLY_BOUNCE_TICKS: u64 = 55;
+const NPC_FLY_BOUNCE_TICKS: u64 = 65;
+/// The slice think stands before the bounce, and the height holds this long after the slice.
+const NPC_FLY_SLICE_HOLD_TICKS: u64 = 6;
+const NPC_FLY_SINK_AFTER_TICKS: u64 = 18;
 
 pub fn npc_flyer(class: &str) -> Option<NpcFlyer> {
     match class {
@@ -15464,7 +15468,12 @@ impl<'w> Server<'w> {
             n.target_seen = now;
             let since_hit = now.saturating_sub(n.fly_hit_at);
             let resting = n.fly_hit_at != 0 && since_hit < f.recharge;
-            let bouncing = resting && since_hit < NPC_FLY_BOUNCE_TICKS;
+            // the slice think stands, the bounce runs from the think after, and the body
+            // holds its height a while before it sinks to the drift height
+            // (server_npc_fly_manhack 261106: still 103..108, back from 109, level to 121)
+            let held = resting && since_hit < NPC_FLY_SLICE_HOLD_TICKS;
+            let bouncing = resting && since_hit < NPC_FLY_SLICE_HOLD_TICKS + NPC_FLY_BOUNCE_TICKS;
+            let sinking = resting && since_hit >= NPC_FLY_SINK_AFTER_TICKS;
             let to = enemy - pos;
             let flat = to.truncate();
             let dist = flat.length();
@@ -15521,13 +15530,14 @@ impl<'w> Server<'w> {
                     _ => (94.0, flat + ahead * 80.0, f.max),
                 }
             } else {
-                let dz = if resting { f.drift_height } else { f.height };
+                let dz = if sinking { f.drift_height } else { f.height };
                 (dz, flat - ahead * f.stand_off, f.max)
             };
             let speed = v.truncate().length();
             if startup {
                 v.x = 0.0;
                 v.y = 0.0;
+            } else if held {
             } else if bouncing {
                 let s = (speed - f.bounce_decay).max(0.0);
                 v.x = v.truncate().normalize_or_zero().x * s;
@@ -15549,7 +15559,9 @@ impl<'w> Server<'w> {
             let vz_want = (f.vz_gain * dz).clamp(-f.sink, f.climb);
             v.z += (vz_want - v.z).clamp(-f.vz_accel, f.vz_accel);
             n.fly_vel = v;
-            n.pos += v;
+            if !held {
+                n.pos += v;
+            }
             if speed > 0.05 && !bouncing {
                 n.angles.y = v.y.atan2(v.x).to_degrees();
                 n.angles.x = (speed * 6.0).min(36.0);
