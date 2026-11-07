@@ -3675,6 +3675,26 @@ const NPC_MOVE_METROPOLICE: NpcMoveDef = NpcMoveDef {
 /// unit disc are the sum of two uniform draws weighted by `flatness` = |shot bias| / 2, and a
 /// negative shot bias (bias < 0.5) folds them out towards the rim; the disc is scaled by the
 /// tangent of `half_deg` across `axis`.
+/// The game's fixed rays (yaw, pitch deg off the shooter -> chest line, measured against the
+/// bot's centre at 170..380 u): a burst's first round, its other rounds, and the two rounds
+/// of the opening suppress volley.
+const NPC_RAY_BURST_FIRST: (f32, f32) = (3.1, 9.2);
+const NPC_RAY_BURST: (f32, f32) = (-4.9, -1.3);
+const NPC_RAY_VOLLEY_1: (f32, f32) = (-4.3, 16.3);
+const NPC_RAY_VOLLEY_2: (f32, f32) = (-7.1, 12.1);
+const NPC_RAY_VOLLEY_ROUND: u64 = 100;
+
+/// `axis` turned `yaw_deg` about world up and `pitch_deg` up from its elevation.
+fn npc_ray_off(axis: Vec3, yaw_deg: f32, pitch_deg: f32) -> Vec3 {
+    let yaw = axis.y.atan2(axis.x) + yaw_deg.to_radians();
+    let pitch = (axis.z.clamp(-1.0, 1.0).asin() + pitch_deg.to_radians()).clamp(-1.5, 1.5);
+    Vec3::new(
+        pitch.cos() * yaw.cos(),
+        pitch.cos() * yaw.sin(),
+        pitch.sin(),
+    )
+}
+
 fn spread_dir(axis: Vec3, half_deg: f32, bias: f32, seed: u64) -> Vec3 {
     let mut x = seed ^ 0xD1B5_4A32_D192_ED03;
     let mut next = || {
@@ -17747,7 +17767,13 @@ impl<'w> Server<'w> {
         // t406..462 one ray, 4.9 deg right of the bot at 292 u; squad: five rounds one ray):
         // one spread sample per burst, not per round
         if new_burst {
-            n.burst_seed = (id as u64) ^ now.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            n.burst_seed = if n.burst_left == NPC_FIRST_BURST_SHOTS {
+                NPC_RAY_VOLLEY_ROUND
+            } else {
+                0
+            };
+        } else {
+            n.burst_seed += 1;
         }
         n.burst_left -= 1;
         n.shots += 1;
@@ -17797,7 +17823,7 @@ impl<'w> Server<'w> {
         } else {
             now + n.think_interval as u64
         };
-        let seed = n.burst_seed;
+        let round = n.burst_seed;
         let aim = to.normalize();
         let Some(dmg) = weapons::npc_shot_damage(&ammo) else {
             return;
@@ -17847,8 +17873,21 @@ impl<'w> Server<'w> {
                 }
             }
         }
-        for k in 0..pellets {
-            let dir = spread_dir(aim, cone, bias, seed.wrapping_add(k as u64 * 7919));
+        // the game's rounds are not random: the same (yaw, pitch) off the chest line in all
+        // four soldier recordings and for both squad members (server_npc_grenade_soldier*,
+        // server_npc_squad_soldier 261104) - the opening volley's two rounds, then a burst's
+        // first round at the cone's rim and the rest on one ray 4.9 deg right; the game's
+        // rounds never touch the bot
+        let _ = (bias, spread_dir as fn(Vec3, f32, f32, u64) -> Vec3);
+        let (yaw_off, pitch_off) = match round {
+            NPC_RAY_VOLLEY_ROUND => NPC_RAY_VOLLEY_1,
+            r if r == NPC_RAY_VOLLEY_ROUND + 1 => NPC_RAY_VOLLEY_2,
+            0 => NPC_RAY_BURST_FIRST,
+            _ => NPC_RAY_BURST,
+        };
+        let scale = cone / NPC_AIM_CONE_DEG;
+        let dir = npc_ray_off(aim, yaw_off * scale, pitch_off * scale);
+        for _ in 0..pellets {
             self.npc_fire_bullet(id, muzzle, dir, dmg);
         }
     }
