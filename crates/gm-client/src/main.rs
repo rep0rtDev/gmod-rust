@@ -4032,7 +4032,8 @@ impl App {
                 if let Some((text, kind, length)) = Notices::legacy(&named) {
                     // sandbox cl_init `AddUndoNotify`: `buttons/button15.wav` with the notice
                     if matches!(kind, NotifyKind::Undo) {
-                        self.sounds.play_wave(&self.mount, "buttons/button15.wav", 1.0);
+                        self.sounds
+                            .play_wave(&self.mount, "buttons/button15.wav", 1.0);
                     }
                     self.notify(text, kind, length);
                 }
@@ -5588,6 +5589,12 @@ impl App {
             for (_, _, name, _) in &self.fx_decals {
                 if !name.is_empty() && !g.fx_decal_mats.contains_key(name) {
                     let m = g.world.decal(&g.gpu, &self.mount, name);
+                    match &m {
+                        Some(d) => {
+                            println!("decal {name}: {:.1} u, modulate {}", d.size, d.modulate)
+                        }
+                        None => println!("decal {name}: material or texture not loaded"),
+                    }
                     g.fx_decal_mats.insert(name.clone(), m);
                 }
             }

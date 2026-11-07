@@ -247,24 +247,24 @@ pub fn load_path(mount: &Mount, name: &str, vmt_path: &str) -> Result<Material> 
             continue;
         }
         mat.water = shader == "water";
+        mat.decal_scale = get("$decalscale").and_then(|v| v.trim().parse().ok());
+        if shader == "subrect" {
+            let pair = |k: &str| -> Option<[f32; 2]> {
+                let v = get(k)?;
+                let mut it = v.split_whitespace().map(|x| x.parse::<f32>().ok());
+                Some([it.next()??, it.next()??])
+            };
+            if let (Some(m), Some(pos), Some(size)) =
+                (get("$material"), pair("$pos"), pair("$size"))
+            {
+                mat.subrect = Some((m, pos, size));
+            }
+        }
         // Refract (sprites/heatwave) reads the same $normalmap / $refractamount
         if mat.water || shader == "refract" {
             mat.bottom_material = get("$bottommaterial");
             mat.bumpmap = get("$normalmap").or_else(|| get("$bumpmap"));
             mat.reflect_entities = matches!(get("$reflectentities").as_deref(), Some("1"));
-            mat.decal_scale = get("$decalscale").and_then(|v| v.trim().parse().ok());
-            if shader == "subrect" {
-                let pair = |k: &str| -> Option<[f32; 2]> {
-                    let v = get(k)?;
-                    let mut it = v.split_whitespace().map(|x| x.parse::<f32>().ok());
-                    Some([it.next()??, it.next()??])
-                };
-                if let (Some(m), Some(pos), Some(size)) =
-                    (get("$material"), pair("$pos"), pair("$size"))
-                {
-                    mat.subrect = Some((m, pos, size));
-                }
-            }
             let amount = |k: &str, d: f32| get(k).and_then(|v| v.parse::<f32>().ok()).unwrap_or(d);
             let scroll: Vec<f32> = get("$scroll1")
                 .map(|v| {
