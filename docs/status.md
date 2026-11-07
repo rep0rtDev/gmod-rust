@@ -318,6 +318,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   31.62 u a think); its plateau is unrecorded (both records charge again before it), the
   charge's 471 stands in. tick_antlionguard 19 -> 0 rows, run 958 -> 402, mid 479 -> 213; the
   rest is the game's lateral gait sway (2..3.5 u of y over the brake and the chase).
+  Its shove (server_npc_run_antlionguard_near, the bot 241 u off): the chase is not cut short
+  by the melee range - it runs on to the hulls' contact (56 u between the centres) and the
+  shove starts on the arrival think (`NpcMelee::contact_chase`: the brake aims at the enemy's
+  centre, the contact clamps the step, the arrival step is kept); 20 damage 28 ticks in, the
+  bot knocked off its ground and slid 54 u (413 u/s); the next shove 133 ticks after the first
+  from where it stands when the bot is still within 156 u (HL2's melee range, bracketed
+  110..165 by the record), a chase to contact again beyond. near 423 -> 108 rows; the rest is
+  our brake a think later into the first stop (7 u for 7 rows) and the slide 3..7 u short.
   The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
   and the game's first think follows 7 later (every server_npc_tick_* 261107 and
   server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated

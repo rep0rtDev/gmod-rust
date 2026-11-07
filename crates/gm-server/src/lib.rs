@@ -3049,6 +3049,10 @@ pub struct NpcMelee {
     pub run: bool,
     /// The move begins once the player is within this 2D distance (the reach by default).
     pub start_range: f32,
+    /// The chase is not cut short by the range: it runs on to the hulls' contact and the
+    /// swing starts on the arrival think; a standing body swings within `start_range`
+    /// (the antlion guard, server_npc_run_antlionguard_near).
+    pub contact_chase: bool,
     /// A ground dash toward the player over the first NPC_LUNGE_TICKS of the swing (u).
     pub lunge: f32,
     /// A back-step after the hit over NPC_LUNGE_TICKS (u).
@@ -3125,6 +3129,7 @@ const MELEE_PLAIN: NpcMelee = NpcMelee {
     lift: 0.0,
     run: false,
     start_range: 0.0,
+    contact_chase: false,
     lunge: 0.0,
     recoil: 0.0,
     poison: false,
@@ -3328,14 +3333,20 @@ pub fn npc_melee_moves(class: &str) -> Option<(&'static [NpcMelee], usize)> {
         run: false,
         ..MELEE_PLAIN
     }];
+    // the guard's shove measured in server_npc_run_antlionguard_near 261107: the chase runs to
+    // the hulls' contact (56 u between the centres) and the shove starts on the arrival think,
+    // 20 damage 28 ticks in, the bot slid 54 u along the floor (6.2 u a tick at the hit); the
+    // next shove 133 ticks after the first at 110 u, a bot 165 u off is chased again (HL2's
+    // ANTLIONGUARD_MELEE1_RANGE 156 inside that bracket)
     const GUARD: [NpcMelee; 1] = [NpcMelee {
-        damage: 10.0,
-        reach: 80.0,
-        swing_ticks: 60,
-        hit_tick: 30,
-        punch: 400.0,
-        lift: 200.0,
+        damage: 20.0,
+        reach: 140.0,
+        swing_ticks: 133,
+        hit_tick: 28,
+        punch: 413.0,
         run: true,
+        start_range: 156.0,
+        contact_chase: true,
         ..MELEE_PLAIN
     }];
     const ZOMBIE: [NpcMelee; 1] = [NpcMelee {
@@ -7854,6 +7865,16 @@ pub const NPC_PROP_BLOCK_GOAL_GAP: f32 = 64.0;
 /// stops 3 u short of is walked at and slid along (server_npc_zombie_swat, x 912 = its face
 /// + the hull), one it stops 56 u short of is routed round (swat2_crate from 992).
 pub const NPC_PROP_BLOCK_NEAR: f32 = 32.0;
+
+/// Where a melee move's chase rests: 3 u inside the move's range, or at the hulls' contact
+/// for a contact chaser (the player's hull is 16 u wide).
+fn melee_chase_reach(m: &NpcMelee, maxs: Vec3) -> f32 {
+    if m.contact_chase {
+        maxs.x + 16.0
+    } else {
+        m.start_range.min(m.reach) - 3.0
+    }
+}
 
 /// The farthest a route's corners sit aside of the straight line from its first to its last point.
 fn route_detour(points: &[Vec3]) -> f32 {
@@ -15807,6 +15828,11 @@ impl<'w> Server<'w> {
             })
             .collect();
         let slots = self.formation_slots();
+        let player_origins: HashMap<u32, Vec3> = self
+            .players
+            .iter()
+            .map(|(i, p)| (*i, p.state.origin))
+            .collect();
         let mut thought = Vec::new();
         let mut thought_from = HashMap::new();
         let mut pre = Vec::new();
@@ -15922,14 +15948,28 @@ impl<'w> Server<'w> {
                 && n.flight.is_none()
                 && !n.ai.scripted
             {
-                n.chase = n.target;
+                // a contact chaser whose enemy still stands within its range swings again
+                // from where it is (the guard's second shove at 110 u, server_npc_run_antlionguard_near)
+                let stands = npc_melee_moves(&n.class)
+                    .and_then(|(moves, _)| moves.get(n.melee_move))
+                    .is_some_and(|m| {
+                        m.contact_chase
+                            && n.target
+                                .and_then(|p| player_origins.get(&p))
+                                .is_some_and(|o| {
+                                    o.truncate().distance(n.pos.truncate()) <= m.start_range
+                                })
+                    });
+                if !stands {
+                    n.chase = n.target;
+                }
                 // the resumed chase rests at the reach of the move that comes next, not of
                 // the swing that just ended (the poison zombie walks on from its throw the
                 // think it ends, row 249, with the bite's 70 u ahead - the throw's range would
                 // keep it standing a think; the antlion runs on from its landing, run_all 95)
                 if let Some((moves, _)) = npc_melee_moves(&n.class) {
                     if let Some(m) = moves.get(n.melee_move) {
-                        n.chase_reach = m.start_range.min(m.reach) - 3.0;
+                        n.chase_reach = melee_chase_reach(m, n.maxs);
                     }
                 }
             }
@@ -15939,6 +15979,7 @@ impl<'w> Server<'w> {
                 continue;
             };
             let chasing = n.chase.is_some();
+            let chase_player = n.chase;
             // a zombie's chase, walking or running, keeps whole steps to the last (the fast
             // zombie 21 u a think to 46 u, the zombie a constant 4.4 / 4.7 u a think to 52 u in
             // every recording), and so does the antlion's (931.7 -> 927.7 -> 916.0 after its
@@ -15946,6 +15987,13 @@ impl<'w> Server<'w> {
             // Armed runners keep the reach clamp and the brake.
             let zombie_chase =
                 chasing && matches!(ai::class_sched_family(&n.class), Some("zombie" | "antlion"));
+            // a contact chaser brakes toward the enemy's centre and is stopped by the hulls'
+            // contact (the guard's 27.4, 30.8, 27.9, 22.7 u thinks into its stop at 56 u,
+            // server_npc_run_antlionguard_near)
+            let contact_chase = chasing
+                && npc_melee_moves(&n.class)
+                    .and_then(|(moves, _)| moves.get(n.melee_move))
+                    .is_some_and(|m| m.contact_chase);
             let zombie_body = ai::class_is_zombie_body(&n.class);
             let pressed_prop = n.pressed_prop;
             let chase_reach = n.chase_reach;
@@ -16217,15 +16265,32 @@ impl<'w> Server<'w> {
             // a walking chase paces itself to the reach; a running one keeps full steps until
             // the melee think stops it in range (the game's fast zombie lands at 46 u, the
             // last 21 u step whole)
-            if chasing && !zombie_chase {
+            if chasing && !zombie_chase && !contact_chase {
                 remaining = (remaining - chase_reach).max(0.0);
             }
+            // measured from the enemy itself, not the path's end (the nav end sits short of
+            // the enemy and would halt the body there)
+            let contact_left = if contact_chase {
+                chase_player
+                    .and_then(|p| player_origins.get(&p))
+                    .map_or(f32::INFINITY, |o| {
+                        let d = o.truncate().distance(pos.truncate());
+                        remaining = remaining.max(d);
+                        (d - chase_reach).max(0.0)
+                    })
+            } else {
+                f32::INFINITY
+            };
             let s0 = v0 * dt;
             let a = accel * dt * dt;
             let (step, v1, braking) = if halt {
                 // a redirected NPC sheds the accel per think along its old path until it halts
                 let v = (s0 - a_halt).max(0.0);
-                ((0.5 * (s0 + v)).min(remaining), v / dt, true)
+                (
+                    (0.5 * (s0 + v)).min(remaining).min(contact_left),
+                    v / dt,
+                    true,
+                )
             } else {
                 let ramp = 0.5 * (s0 + (s0 + a).min(ideal * dt));
                 // a zombie's chase keeps full pace into the reach and stops dead (the fast
@@ -16247,7 +16312,12 @@ impl<'w> Server<'w> {
                     brake_staircase(remaining, ab)
                 };
                 let floor = if braking { s0 - ab } else { s0 - 0.5 * a };
-                let step = ramp.min(curve).min(staircase).max(floor).min(remaining);
+                let step = ramp
+                    .min(curve)
+                    .min(staircase)
+                    .max(floor)
+                    .min(remaining)
+                    .min(contact_left);
                 let braking = braking || step < ramp;
                 // the ramp is a trapezoid of the end-of-think speed, braking moves at the step
                 let v1 = if braking {
@@ -16258,7 +16328,7 @@ impl<'w> Server<'w> {
                 (step, v1, braking)
             };
             let stopped = halt && v1 <= 0.0;
-            let arrived = step >= remaining - 1e-3;
+            let arrived = step >= remaining.min(contact_left) - 1e-3;
             let mut at = pos.truncate();
             let mut left = step;
             let mut dir = glam::Vec2::X;
@@ -16554,9 +16624,11 @@ impl<'w> Server<'w> {
                 // antlion leaves the run on t46 with its pounce2 alone: 997.8 -> 956.4 -> 934.9
                 // -> 931.7 is the lunge's 66 u, ours ran 6.7 u first and landed at 925.1)
                 if let (Some(n), Some(from)) = (self.npcs.get_mut(&id), thought_from.get(&id)) {
+                    // (a contact chaser arrives and swings on one think: the guard's 22.7 u
+                    // step onto its stop at 56 u with the shove, server_npc_run_antlionguard_near)
                     let started = n
                         .melee_swing
-                        .is_some_and(|m| n.swing_until == now + m.swing_ticks);
+                        .is_some_and(|m| !m.contact_chase && n.swing_until == now + m.swing_ticks);
                     if started && n.dead_at.is_none() {
                         n.pos = *from;
                     }
@@ -17904,7 +17976,7 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get_mut(&id) else {
             return;
         };
-        n.chase_reach = m.start_range.min(m.reach) - 3.0;
+        n.chase_reach = melee_chase_reach(&m, n.maxs);
         if let Some(j) = npc_jump(&n.class) {
             if now >= n.next_leap
                 && n.flight.is_none()
@@ -17924,7 +17996,11 @@ impl<'w> Server<'w> {
                 return;
             }
         }
-        if dist <= m.start_range {
+        // a contact chaser keeps running until its hull meets the player's
+        let arrived = !m.contact_chase
+            || dist <= n.chase_reach + 2.0
+            || (n.goal.is_none() && n.move_speed == 0.0);
+        if dist <= m.start_range && arrived {
             // the wake think stands in range; the swing starts the next think
             // (server_npc_zombie_swat2_*: sched 4 through the wake, 103 from the think after)
             if now < n.wake_until {
@@ -19594,6 +19670,12 @@ impl<'w> Server<'w> {
             if self.damage_player(player, m.damage, weapons::DMG_SLASH) > 0.0 {
                 if let Some(p) = self.players.get_mut(&player) {
                     p.state.velocity += dir.extend(0.0) * m.punch;
+                    // the guard's shove knocks the bot off its ground: two full-speed ticks
+                    // before the floor's friction (server_npc_run_antlionguard_near 134..136:
+                    // 12.4 u at 413 u/s, the bot dropping its 1 u to the floor meanwhile)
+                    if m.contact_chase {
+                        p.state.on_ground = false;
+                    }
                     if m.side > 0.0 {
                         let sign = if hits_left.is_multiple_of(2) {
                             -1.0
