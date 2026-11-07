@@ -258,10 +258,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   again ~150 ticks after the slice; the first charge and slice land on the game's rows (hp 96
   on row 104 both; third slice row 445 both), mean error 16 u. Open: the game slices twice on
   the first contact (7 ticks apart) and its retreat wanders in y. Scanner: climb 0.14 u/tick a
-  tick to 3.9, cruise 1.5, hover 100 u beyond the enemy 160 above it - the game's first pass
-  dives over the bot (apex 197 above, 87 over its head) to a random photograph spot 130 u
-  beyond and only then settles at 100..110 / 150..170 (rows 340..400 within 15 u of ours);
-  mean error 52 u, the dive and the inspect2 pass are open.
+  tick to 3.9, cruise 1.5, and the game's first pass as legs (`NpcFlyer::pass`): a near-vertical
+  climb to the apex 197 above the enemy (the flat speed starts at COMBAT), a dive over its head
+  at 87, on to 125 u beyond at 56, the hover 173 above / 102 beyond held 60 ticks (its
+  photograph, sched 101), then a dive to 80 above at 65 beyond and the perch 94 / 80; errors
+  at the game's turning points 22 / 17 / 27 / 3 / 23 / 13 u (rows 88 / 168 / 252 / 352 / 480 /
+  604; were 40 / 71 / 82 / 19 / 102 / 86 with one hover goal). Open: our horizontal turns are
+  instant where the game's carry on 20 u past the spot, the game's idle drift (0.2 u/tick, yaw
+  1 deg/tick) before COMBAT, and server_npc_tick_cscanner flips to COMBAT a think early (the
+  first-think phase).
 - A zombie's swat is over on the think its swing ends (the swat is cleared in the think, not
   after the move): the chase is reissued there and the body walks a think later (swat2_drumside
   117 vs the game's 110, was 124); drumside930 12 -> 8, drumside 50 -> 51, drum875 7 -> 8.

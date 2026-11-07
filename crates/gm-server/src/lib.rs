@@ -2239,6 +2239,8 @@ pub struct Npc {
     pub fly_hit_at: u64,
     /// The approach direction when the enemy was acquired: the hover goal's line.
     pub fly_side: Vec3,
+    /// The scanner's first-pass leg (see `NpcFlyer::pass`).
+    pub fly_leg: u8,
     /// Waiting in cover with the squad after a reload until the enemy shows again.
     pub cover_wait: bool,
     /// Tick from which a ranged move may start again (the hunter's volley).
@@ -3509,6 +3511,11 @@ pub struct NpcFlyer {
     pub sink: f32,
     /// How fast the climb rate changes (u/tick a tick).
     pub vz_accel: f32,
+    /// Flies the scanner's first pass before hovering (server_npc_fly_cscanner 261106): a
+    /// near-vertical climb to 197 above the enemy, a dive over its head at 87, on to 125 u
+    /// beyond at 56, the hover 173 above and 102 beyond held 60 ticks (its photograph), then
+    /// a dive to 80 above at 65 beyond and the perch 94 above at 80 beyond.
+    pub pass: bool,
     /// Hover goal: this far short of the enemy along the approach (negative: beyond it, 0 =
     /// at it) and this high above its origin.
     pub stand_off: f32,
@@ -3548,11 +3555,12 @@ const NPC_FLY_MANHACK: NpcFlyer = NpcFlyer {
     drift_accel: 0.02,
     drift_height: 40.0,
     recharge: 148,
+    pass: false,
 };
 /// server_npc_fly_cscanner 261106: the climb from the spawn gains 0.14 u/tick a tick to 3.9
 /// (260 u/s), the descent runs 1.8, the cruise 1.5 u/tick (100 u/s); it hovers 100..110 u
 /// beyond the bot 150..170 above it before its photograph (inspect2). Its first pass dives
-/// over the bot (apex 197 above, 87 over its head) to a spot 130 u beyond - not modelled.
+/// over the bot (apex 197 above, 87 over its head) to a spot 125 u beyond - the legs of `pass`.
 const NPC_FLY_SCANNER: NpcFlyer = NpcFlyer {
     max: 1.5,
     accel: 0.03,
@@ -3570,6 +3578,7 @@ const NPC_FLY_SCANNER: NpcFlyer = NpcFlyer {
     drift_accel: 0.0,
     drift_height: 0.0,
     recharge: 0,
+    pass: true,
 };
 /// Ticks a flyer rises after acquiring its enemy before it moves at it (manhack t982 -> 1012).
 const NPC_FLY_STARTUP_TICKS: u64 = 30;
@@ -14044,6 +14053,7 @@ impl<'w> Server<'w> {
             fly_vel: Vec3::ZERO,
             fly_hit_at: 0,
             fly_side: Vec3::ZERO,
+            fly_leg: 0,
             cover_wait: false,
             ranged_after: 0,
             melee_dash_step: 0.0,
@@ -15440,11 +15450,56 @@ impl<'w> Server<'w> {
             let flat = to.truncate();
             let dist = flat.length();
             let dir = flat.normalize_or_zero();
-            // the goal: the enemy's eyes, or the hover spot stand_off short of it
-            let goal_dz = if resting { f.drift_height } else { f.height };
-            let goal_flat = flat - n.fly_side.truncate() * f.stand_off;
             let startup = now < n.target_first_seen + NPC_FLY_STARTUP_TICKS;
             let mut v = n.fly_vel;
+            // the goal: the enemy's eyes, or the hover spot stand_off short of it; the
+            // scanner's first pass walks its legs (game: apex op 88, over the head op 176,
+            // 125 beyond op 252, hover op 352)
+            let ahead = n.fly_side.truncate();
+            let (goal_dz, goal_flat, max_flat) = if f.pass {
+                match n.fly_leg {
+                    0 => {
+                        if to.z + 197.0 < 4.0 {
+                            n.fly_leg = 1;
+                        }
+                        (197.0, flat, f.max)
+                    }
+                    1 => {
+                        if dist < 10.0 {
+                            n.fly_leg = 2;
+                        }
+                        (87.0, flat, f.max)
+                    }
+                    2 => {
+                        let g = flat + ahead * 125.0;
+                        if g.length() < 10.0 || g.dot(ahead) < 0.0 {
+                            n.fly_leg = 3;
+                        }
+                        (56.0, g, f.max)
+                    }
+                    3 => {
+                        let g = flat + ahead * 102.0;
+                        if n.fly_hit_at == 0 && g.length() < 6.0 && (to.z + 173.0).abs() < 6.0 {
+                            n.fly_hit_at = now;
+                        }
+                        if n.fly_hit_at != 0 && now >= n.fly_hit_at + 60 {
+                            n.fly_leg = 4;
+                        }
+                        (173.0, g, f.max)
+                    }
+                    4 => {
+                        let g = flat + ahead * 65.0;
+                        if g.length() < 8.0 && (to.z + 80.0).abs() < 8.0 {
+                            n.fly_leg = 5;
+                        }
+                        (80.0, g, f.max)
+                    }
+                    _ => (94.0, flat + ahead * 80.0, f.max),
+                }
+            } else {
+                let dz = if resting { f.drift_height } else { f.height };
+                (dz, flat - ahead * f.stand_off, f.max)
+            };
             let speed = v.truncate().length();
             if startup {
                 v.x = 0.0;
@@ -15457,7 +15512,7 @@ impl<'w> Server<'w> {
                 let (max, accel) = if resting {
                     (f.drift_max, f.drift_accel)
                 } else {
-                    (f.max, f.accel)
+                    (max_flat, f.accel)
                 };
                 let gd = goal_flat.length();
                 let want = max.min(accel * 10.0 * gd).max(0.0);
@@ -19733,6 +19788,7 @@ impl<'w> Server<'w> {
                 fly_vel: Vec3::ZERO,
                 fly_hit_at: 0,
                 fly_side: Vec3::ZERO,
+                fly_leg: 0,
                 cover_wait: false,
                 ranged_after: 0,
                 melee_dash_step: 0.0,
