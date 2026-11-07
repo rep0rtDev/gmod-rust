@@ -475,6 +475,13 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   do); the target of that swing is unknown - the ain node yaw is 0 (east), the leg heads 13°,
   and _low/_wall arrive without it. Ours holds the enemy to the stop. squad 1265 → 1286 by count from the
   timing shift; the facing structure now matches.
+- Cover-run body on the way: the body runs along the current path leg, not toward the far
+  cover node (server_npc_grenade_soldier: 92 / 88 north on the leg to (965,-19), 78 on the
+  (965,-19) -> (979,72) leg; the squad leader 92..96 on its first leg) - ours now 102 / 92 /
+  88 there. Open: the squad mate instead holds ~0 (the final leg's direction / node yaw) on
+  its 100-deg legs; and on the corner-cut last leg the game turns to the bot the long way
+  round (78 -> 59 -> 23 -> 346 -> 309, clockwise through the move direction) where ours
+  takes the short way (88 -> 117 -> ...), grenade rows 1544 -> 1551 from that leg.
 - Cover-run turn rate: the body coming round to the enemy on the last cover leg turns at the
   class's standing rate (`idle_yaw` 350 deg/s: server_npc_grenade_soldier ops 554..582, 36 /
   37 / 37 / 37 a think in RunAIMALL1, MaxYawSpeed's default 35 x 10), a chase re-acquiring

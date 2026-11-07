@@ -16182,10 +16182,13 @@ impl<'w> Server<'w> {
             // (yaw 56 -> 14 as the bearing 59 -> 14) while its steps zigzag round the house,
             // the leader after its aim window turns to its wait point (953,7) (92, 86, 80, 71
             // as the bearing 94 -> 67)
+            // a cover run's body runs along its current leg (server_npc_grenade_soldier 261107:
+            // 92 / 88 north on the leg to (965,-19), 78 on the (965,-19) -> (979,72) leg; the
+            // squad leader 92..96 on its first leg), not toward the far node
             let route_face = n
                 .cover_at
                 .filter(|_| enemy_face.is_none())
-                .and(points.last())
+                .and(points.get(idx).or(points.last()))
                 .map(|g| g.truncate())
                 .filter(|g| g.distance_squared(pos.truncate()) > 1e-6);
             let has_target = n.target.is_some();
