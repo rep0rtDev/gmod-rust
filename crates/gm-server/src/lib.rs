@@ -14070,6 +14070,14 @@ impl<'w> Server<'w> {
             .insert(id, self.fresh_npc(&def, model, pos, angles, weapon, settle));
         if let Some(squad) = sandbox_squad(key) {
             self.npc_set_squad(id, Some(squad));
+            // the hacked rollermine / manhack and the resistance turret are the player's:
+            // the game's hacked mine sits at its spawn through the first wait where the
+            // hostile one rolls at him (server_npc_spawn 261107)
+            if squad == "resistance" && npc_hostile(def.class) {
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.relation = Some(3);
+                }
+            }
         }
         self.sandbox.add_count(player, "npcs", id);
         self.sandbox.add_cleanup(player, "npcs", id);
