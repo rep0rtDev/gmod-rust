@@ -2405,10 +2405,9 @@ pub struct Npc {
     pub ideal_yaw: Option<f32>,
     /// `NPC:SetMoveYawLocked`: movement no longer turns the body.
     pub move_yaw_locked: bool,
-    /// Set by the move think from the pre-turn yaw: the cover run's enemy lies within
-    /// `NPC_RUN_AIM_POSE_DEG` of the body, so the plain run (RunALL) plays and the body turns
-    /// at the run rate.
-    pub enemy_in_pose: bool,
+    /// Set by the move think: the aim run plays this think - the enemy is in sight, or the body
+    /// is still coming round to its last known position by `NPC_AIM_RUN_FACE_DEG` or more.
+    pub aim_run: bool,
     /// `NPC:SetViewOffset`: the eye position relative to the feet (None: the measured 64 u).
     pub view_offset: Option<Vec3>,
     /// `NPC:AddRelationship` toward players (GLua `D_*` code: 1 hate, 2 fear, 3 like, 4 neutral);
@@ -2462,6 +2461,8 @@ const NPC_BLEND_TABLE: [f32; 9] = [0.769, 0.787, 0.723, 0.838, 1.0, 0.919, 0.702
 /// ahead-of-body, weaves round the leg instead of running it: both squad soldiers on the
 /// house-wall leg make 0.45..0.67 of the blend pace at 24..80 deg (server_npc_squad_soldier
 /// 261104 ops 415..653); a leg behind the body (the leader's -80..-114) runs the plain blend.
+/// A sideways run keeps the side key's speed out to this move/body angle (measured to 116).
+const NPC_BLEND_SIDE_HOLD_DEG: f32 = 120.0;
 const NPC_WEAVE_MIN_DEG: f32 = 25.0;
 const NPC_WEAVE_MAX_DEG: f32 = 80.0;
 const NPC_WEAVE_SPEED: f32 = 0.5;
@@ -2469,6 +2470,22 @@ const NPC_WEAVE_SPEED: f32 = 0.5;
 /// Ground-speed fraction of the run blend at `rel` deg of step direction from body yaw
 /// (positive: the step lies left of the facing), linear between the 45-deg keys.
 fn npc_blend_fraction(rel: f32) -> f32 {
+    // the blend's keys run S, SE, E, NE, N, NW, W, SW, S over -180..180 and the game's
+    // sideways runs land on W (0.702: 15.7..16.1 u a think) with the step clockwise of the
+    // body and on E (0.723: the grenade soldier's 16.3 into its node) counter-clockwise, so
+    // the pose angle is the body-to-step angle, the negative of ours
+    let rel = -rel;
+    // the back-diagonal keys do not lift a sideways run: the squad leader (401..485) and the
+    // lone soldier (427..434) hold a flat 15.7..16.1 = the side key for rel -80..-115, where
+    // a linear blend would rise to 17.1
+    let rel = if rel.abs() > 90.0 && rel.abs() <= NPC_BLEND_SIDE_HOLD_DEG {
+        90.0f32.copysign(rel)
+    } else if rel.abs() > NPC_BLEND_SIDE_HOLD_DEG && rel.abs() < 135.0 {
+        (90.0 + (rel.abs() - NPC_BLEND_SIDE_HOLD_DEG) / (135.0 - NPC_BLEND_SIDE_HOLD_DEG) * 45.0)
+            .copysign(rel)
+    } else {
+        rel
+    };
     let t = ((rel.clamp(-180.0, 180.0) + 180.0) / 45.0).clamp(0.0, 7.999);
     let i = t as usize;
     let f = t - i as f32;
@@ -2539,10 +2556,10 @@ const NPC_CRAB_RUN_AWAY_DIST: f32 = 60.0;
 /// A fighting NPC turning toward a sighted enemy while it runs: 44..46 deg per think
 /// (server_npc_grenade_soldier_wall: yaw 221 -> 177 -> 131 over t1602..1616).
 const NPC_AIM_YAW_RATE: f32 = 430.0;
-/// A cover run plays its aim run only with the enemy outside this many degrees of the body
-/// (server_npc_grenade_soldier ops 554..589 and the squad mate 660..688: RunAIMALL1 at
-/// 76 / 100 deg, RunALL from 39 / 64).
-const NPC_RUN_AIM_POSE_DEG: f32 = 70.0;
+/// A body that lost its sight line keeps the aim run while it is still this far from facing
+/// the last known position (server_npc_grenade_soldier ops 560..589 and the squad mate
+/// 674..688: RunAIMALL1 at 76 / 100 deg, RunALL from 39 / 64).
+const NPC_AIM_RUN_FACE_DEG: f32 = 70.0;
 /// Our combat model. Only the fire cadence and the per-hit damage come from the game
 /// (server_npc_fire_soldier: one shot per 7-tick think, 5 per burst, 28 ticks between bursts,
 /// `sk_npc_dmg_*`); target choice, sight range, aim cone and loss handling are our own rules.
@@ -14147,7 +14164,7 @@ impl<'w> Server<'w> {
             force_crouch: None,
             ideal_yaw: None,
             move_yaw_locked: false,
-            enemy_in_pose: false,
+            aim_run: false,
             view_offset: None,
             relation: None,
             swing_until: 0,
@@ -16490,7 +16507,6 @@ impl<'w> Server<'w> {
             // only stops behind it where the corner leaves no side (639..681); measured on a
             // cover run only, a chase keeps the formation rule
             let cover_run = self.npcs.get(&id).is_some_and(|n| n.cover_at.is_some());
-            let yaw0 = self.npcs.get(&id).map_or(0.0, |n| n.angles.y);
             if let Some(sq) = self.squads.of(id).filter(|_| cover_run) {
                 let here = pos.truncate();
                 let peer = self
@@ -16699,12 +16715,23 @@ impl<'w> Server<'w> {
             } else {
                 NPC_YAW_RATE
             };
-            let enemy_in_pose = enemy_face.is_some_and(|k| {
-                let to = k - floor.truncate();
-                let bearing = to.y.atan2(to.x).to_degrees();
-                let err = (bearing - yaw0 + 540.0).rem_euclid(360.0) - 180.0;
-                err.abs() < NPC_RUN_AIM_POSE_DEG
-            });
+            // the aim run (RunAIMALL1) plays while the enemy is in sight; the plain run turns at
+            // the run rate (MaxYawSpeed by activity: the soldier's 35 x 10 default for the aim
+            // run, 15 x 10 for ACT_RUN)
+            // ... and after the sight line breaks it keeps turning to the last known position
+            // in the aim run until the body is within NPC_AIM_RUN_FACE_DEG of it, then runs plain
+            // (grenade 261107: RunAIMALL1 for four occluded thinks to 76 deg, RunALL from 39;
+            // the squad mate two thinks to 100, RunALL from 64)
+            let yaw0 = self.npcs.get(&id).map_or(0.0, |n| n.angles.y);
+            let aim_run =
+                self.npcs.get(&id).is_some_and(|n| {
+                    n.target.is_some() && n.target_seen == now && !n.cover_from_sound
+                }) || enemy_face.is_some_and(|k| {
+                    let to = k - floor.truncate();
+                    let bearing = to.y.atan2(to.x).to_degrees();
+                    let err = (bearing - yaw0 + 540.0).rem_euclid(360.0) - 180.0;
+                    err.abs() >= NPC_AIM_RUN_FACE_DEG
+                });
             let (face, rate) = match next_goal.filter(|_| halt) {
                 Some(g) if g.truncate().distance_squared(floor.truncate()) > 1e-6 => (
                     (g.truncate() - floor.truncate()).normalize(),
@@ -16718,11 +16745,12 @@ impl<'w> Server<'w> {
                     (enemy_face.unwrap() - floor.truncate()).normalize(),
                     max_yaw.unwrap_or(if !cover_run {
                         NPC_AIM_YAW_RATE
-                    } else if enemy_in_pose {
-                        // ... and finishes the turn in RunALL at the run rate (15 / 16 a think)
-                        NPC_YAW_RATE
-                    } else {
+                    } else if aim_run {
                         def.idle_yaw
+                    } else {
+                        // ... and finishes the turn in RunALL at the run rate (15 / 16 a think:
+                        // grenade 589..603, the squad mate 688..709)
+                        NPC_YAW_RATE
                     }),
                 ),
                 _ if route_face.is_some_and(|g| g.distance_squared(floor.truncate()) > 1e-6) => (
@@ -16738,7 +16766,7 @@ impl<'w> Server<'w> {
             };
             let mut swap = None;
             if let Some(n) = self.npcs.get_mut(&id) {
-                n.enemy_in_pose = cover_run && enemy_in_pose;
+                n.aim_run = aim_run;
                 let moved = floor.truncate().distance(pos.truncate());
                 let intended = v0 * dt;
                 n.stuck = if intended > 1.0 && moved < intended * 0.1 {
@@ -16972,15 +17000,7 @@ impl<'w> Server<'w> {
         let act = if swinging {
             "ACT_MELEE_ATTACK1"
         } else if moving {
-            // a cover run plays the aim run only while its enemy lies outside ~70 deg of the
-            // body (the model's aim pose range): the lone soldier of server_npc_grenade_soldier
-            // and the squad mate drop to RunALL once the body has come round to within 39 /
-            // 64 deg of the bot (still RunAIMALL1 at 76 / 100) and finish the turn at 150 deg/s
-            // (the earlier cover legs run RunAIMALL1 with the body along the path, 140 deg off
-            // the bot, whether or not the sight line holds)
-            let cover_aim = n.cover_at.is_some() && !n.cover_from_sound && n.target.is_some();
-            let aim_in_pose = cover_aim && n.enemy_in_pose;
-            match (n.run, (sees_enemy || cover_aim) && !aim_in_pose) {
+            match (n.run, sees_enemy || n.aim_run) {
                 (true, true) => "ACT_RUN_AIM",
                 (true, false) => "ACT_RUN",
                 (false, true) => "ACT_WALK_AIM",
@@ -20198,7 +20218,7 @@ impl<'w> Server<'w> {
                 force_crouch: None,
                 ideal_yaw: None,
                 move_yaw_locked: false,
-                enemy_in_pose: false,
+                aim_run: false,
                 view_offset: None,
                 relation: None,
                 swing_until: 0,

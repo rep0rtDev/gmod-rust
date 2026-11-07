@@ -487,14 +487,24 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   class's standing rate (`idle_yaw` 350 deg/s: server_npc_grenade_soldier ops 554..582, 36 /
   37 / 37 / 37 a think in RunAIMALL1, MaxYawSpeed's default 35 x 10), a chase re-acquiring
   its enemy at `NPC_AIM_YAW_RATE` 430 (the _wall rows 138/145 it was measured on) - the split
-  between the two is measured, not explained. On the same leg the aim run (RunAIMALL1) plays
-  only while the enemy lies outside `NPC_RUN_AIM_POSE_DEG` 70 of the body at the think's
-  start (the model's aim pose range: grenade RunAIMALL1 at 140 / 105 / 76 deg, RunALL from
-  39; squad mate RunAIMALL1 at 135 / 100, RunALL from 64), sight line or not (the earlier
-  cover legs run RunAIMALL1 with the body 140 deg off the bot), and the rest of the turn runs
-  at the run rate 150 deg/s (15 / 16 a think) - `enemy_in_pose`. Ours now matches the
-  structure one think early (our arrival is a think early there); rows unchanged (those ops
-  already differ in position).
+  between the two is measured, not explained. The aim run (RunAIMALL1) plays while the enemy
+  is in sight (the squad leader runs its first leg backwards at it in RunAIMALL1 at 0 deg
+  error), and after the sight line breaks (both soldiers lose the bot behind the wall face at
+  y=8 from x~1042 on the (965,-19) -> (1201,72) leg) while the body is still
+  `NPC_AIM_RUN_FACE_DEG` 70 or more from facing the last known position (grenade RunAIMALL1
+  for four occluded thinks to 76 deg, RunALL from 39; squad mate two thinks to 100, RunALL
+  from 64 - the move-and-shoot overlay turning to the LKP until it is in the aim cone and the
+  weapon LOS fails); the plain run turns at the run rate 150 deg/s (15 / 16 a think) -
+  `aim_run`. Ours matches the structure one think early (arrival phase); rows unchanged.
+- Run blend: the pose angle is the body-to-step angle (the negative of our step-to-body
+  `rel`): the game's sideways runs land on W (0.702: the squad leader's flat 15.7..16.1 u a
+  think for eleven thinks, the lone soldier's 15.7 / 15.8) with the step clockwise of the
+  body and on E (0.723: the grenade soldier's 16.3 into its node) counter-clockwise, and the
+  back-diagonal keys do not lift a sideways run out to 116 deg (`NPC_BLEND_SIDE_HOLD_DEG`
+  120; a linear blend would rise to 17.1). Ours now a flat 15.8 there. squad 1286 -> 1300:
+  ops 450..499 used to match for 14 ops while our too-fast 16.3 plateau crossed the game's
+  track; at the right plateau the leader stays ~3 u behind from the ramp's first think (3.4
+  vs 3.8 u) - the start phase, recorded open.
 - Squad following range: a squad member running the same route as a mate ahead holds
   ~52 u from it, deflecting the surplus of its step to the open side (the squad's leader
   closes on the mate to 53 u and keeps 51..54 u for eleven thinks while sliding round its
