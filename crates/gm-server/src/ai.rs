@@ -658,6 +658,7 @@ pub fn class_sched_family(class: &str) -> Option<&'static str> {
         "npc_alyx" => Some("alyx"),
         "npc_manhack" => Some("manhack"),
         "npc_strider" => Some("strider"),
+        "npc_rollermine" => Some("rollermine"),
         _ => None,
     }
 }
@@ -692,6 +693,7 @@ pub fn family_sched_reserve(family: &str) -> u16 {
         // `manhack`: 41 three before the idle, 24 one before)
         "manhack" => 22,
         "strider" => 16,
+        "rollermine" => 10,
         _ => CLASS_SCHED_RESERVE,
     }
 }
@@ -745,6 +747,16 @@ pub fn class_schedule(family: &str, class: &str, shared: u16) -> Option<u16> {
         // AGGRESSIVE_COMBAT_STAND, FALL_TO_GROUND (sched_translate_game.txt strider: 12>+13,
         // 17>+12, 41>+5, 42>+6, 43>+0, 44>+1; server_npc_tick_strider 261107 stands in +13 after
         // its WAKE_ANGRY)
+        // npc_rollermine.cpp: RANGE_ATTACK1 (its hop / charge), CHASE_ENEMY, BURIED_WAIT,
+        // BURIED_UNBURROW, FLEE, ALERT_STAND, NUDGE_TOWARDS_NODES, PATH_TO_PLAYER,
+        // ROLL_TO_PLAYER, POWERDOWN (server_npc_tick_rollermine 261107 hops in +0, the block
+        // right before the strider's of that session)
+        "rollermine" => match shared {
+            SCHED_RANGE_ATTACK1 => Some(0),
+            SCHED_CHASE_ENEMY => Some(1),
+            SCHED_ALERT_STAND => Some(5),
+            _ => None,
+        },
         "strider" => match shared {
             SCHED_RANGE_ATTACK1 => Some(0),
             SCHED_RANGE_ATTACK2 => Some(1),

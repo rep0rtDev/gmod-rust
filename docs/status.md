@@ -270,6 +270,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   npc_strider.cpp order): after WAKE_ANGRY it stands in STRIDER_COMBAT_FACE (+13), the game's
   210 in server_npc_tick_strider (session base; 101 alone here), stomps +5/+6, cannon +0/+1,
   chase +12; the Lua translate scene is unchanged.
+  The rollermine has its block too (10 ids, npc_rollermine.cpp order): the hostile mine opens
+  its combat with the game's hop in place (server_npc_tick_rollermine 261107: RANGE_ATTACK1
+  = +0, spikes model, 12.5 u up and back on the floor 29 ticks later, tumbling 330°/s; was a
+  roll at the player from the first combat think) and rolls only once it is down; the hacked
+  mine reads PATH_TO_PLAYER (+7) while it falls in after its spawn, spins up toward its player
+  and coasts 17 u from its first think (server_npc_tick_rollermine_hacked: ours 17.6 u, the
+  early decay is faster - 6.6 vs 4.5 u at tick 15). The roll drive's spin is now in deg/s (was
+  passed in rad/s: 57x too slow).
 - A zombie's swat is over on the think its swing ends (the swat is cleared in the think, not
   after the move): the chase is reissued there and the body walks a think later (swat2_drumside
   117 vs the game's 110, was 124); drumside930 12 -> 8, drumside 50 -> 51, drum875 7 -> 8.

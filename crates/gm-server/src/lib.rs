@@ -5712,7 +5712,9 @@ impl<'w> Server<'w> {
     /// think). A script-owned schedule (`NPC:SetSchedule`) drives the body through the same
     /// goto / chase / cover / stop operations; otherwise the schedule mirrors what the native
     /// brain is doing so `GetCurrentSchedule` / `HasCondition` describe it.
-    fn ai_step(&mut self, id: u32, now: u64) {
+    /// Registers the class's private schedule block (and its extension) the first time one of
+    /// its NPCs thinks, in the game's registration order.
+    pub(crate) fn register_class_sched_block(&mut self, id: u32) {
         if let Some((fam, class)) = self
             .npcs
             .get(&id)
@@ -5737,6 +5739,10 @@ impl<'w> Server<'w> {
                 self.class_sched_bases.insert(key, base);
             }
         }
+    }
+
+    fn ai_step(&mut self, id: u32, now: u64) {
+        self.register_class_sched_block(id);
         let Some(n) = self.npcs.get(&id) else { return };
         if n.dead_at.is_some() {
             if let Some(n) = self.npcs.get_mut(&id) {
@@ -18912,6 +18918,8 @@ impl<'w> Server<'w> {
                 "antlion" if s == ai::SCHED_MELEE_ATTACK1 => swing
                     .filter(|m| m.lunge > 0.0)
                     .map(|m| base + if m.damage == 0.0 { 33 } else { 32 }),
+                // the hacked mine's path to its player while it falls in after its spawn
+                "rollermine" if n.special.phase == 2 => Some(base + 7),
                 // the headcrab's own jump attack while winding up or airborne
                 "headcrab" if n.jump_at.is_some() || (n.flight.is_some() && !n.thrown) => {
                     Some(base)

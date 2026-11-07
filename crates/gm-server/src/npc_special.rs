@@ -65,6 +65,19 @@ const ROLLER_SPEED: f32 = 300.0;
 const ROLLER_RADIUS: f32 = 20.0;
 const ROLLER_SHOCK: f32 = 10.0;
 const ROLLER_SHOCK_REACH: f32 = 48.0;
+/// The hop that opens the mine's combat (server_npc_tick_rollermine 261107: 12.5 u up over 11
+/// ticks and back on the floor 29 ticks later, tumbling ~5°/tick), its spin (deg/s) and its
+/// airborne time.
+const ROLLER_HOP: f32 = 130.0;
+const ROLLER_HOP_SPIN: f32 = 330.0;
+const ROLLER_HOP_TICKS: u64 = 29;
+/// The hacked mine's spin-up toward its player right after its spawn (deg/s), the roll it lands
+/// with (u/s) and the tick of its first think, where it drops to its idle stand and coasts
+/// (server_npc_tick_rollermine_hacked 261107: PATH_TO_PLAYER while falling, then 17 u of roll
+/// over 50 ticks).
+const ROLLER_NUDGE_SPIN: f32 = 180.0;
+const ROLLER_NUDGE_SPEED: f32 = 36.0;
+const ROLLER_FIRST_THINK: u64 = 9;
 
 const VORT_RANGE: f32 = 1000.0;
 const VORT_ZAP: f32 = 50.0;
@@ -501,6 +514,7 @@ impl Server<'_> {
     }
 
     fn tick_rollermine(&mut self, id: u32, now: u64) {
+        self.register_class_sched_block(id);
         // idle stand in NPC_STATE_IDLE from the first think, as the probe reads it
         if let Some(n) = self.npcs.get_mut(&id) {
             if n.ai.state == crate::ai::NPC_STATE_NONE {
@@ -511,6 +525,10 @@ impl Server<'_> {
         // the game's mine sits through the idle reaction delay, reads COMBAT on its fourth
         // think and only then acts (server_npc_tick_rollermine 261107: IDLE in place to
         // spawn+30, COMBAT / its own 187 hopping in place from there)
+        if !npc_hostile_to_players(&self.npcs[&id]) {
+            self.tick_rollermine_friendly(id, now);
+            return;
+        }
         let combat_at = self.npcs[&id].spawn_tick
             + crate::NPC_THINK_PHASE
             + 3 * u64::from(crate::NPC_THINK_TICKS);
@@ -544,11 +562,34 @@ impl Server<'_> {
         let to = (target - centre).truncate();
         let dir = to.normalize_or_zero().extend(0.0);
         let dist = (target - centre).length();
+        // the game's mine opens with a hop in place and only rolls once it is back on the floor
+        if n.special.phase == 0 {
+            self.physics.set_velocity(
+                body,
+                Vec3::new(st.velocity.x, st.velocity.y, ROLLER_HOP),
+                Vec3::Z.cross(dir) * ROLLER_HOP_SPIN,
+            );
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.special.phase = 1;
+                n.special.until = now + ROLLER_HOP_TICKS;
+                n.ai.schedule = Some(crate::ai::SCHED_RANGE_ATTACK1);
+                // the mine opens its spikes with its first attack
+                n.model = "models/roller_spikes.mdl".to_string();
+                n.special.target = Some(p);
+            }
+            return;
+        }
+        if now < n.special.until || st.velocity.z.abs() > 5.0 {
+            return;
+        }
         if dist > ROLLER_SHOCK_REACH {
             let v = dir * ROLLER_SPEED;
-            let angular = Vec3::Z.cross(v) / ROLLER_RADIUS;
+            let angular = Vec3::Z.cross(v) / ROLLER_RADIUS * (180.0 / std::f32::consts::PI);
             self.physics
                 .set_velocity(body, Vec3::new(v.x, v.y, st.velocity.z), angular);
+            if let Some(n) = self.npcs.get_mut(&id) {
+                n.ai.schedule = Some(crate::ai::SCHED_CHASE_ENEMY);
+            }
         } else if now >= n.special.next_hit {
             if self.damage_player(p, ROLLER_SHOCK, weapons::DMG_SHOCK) > 0.0 {
                 if let Some(pl) = self.players.get_mut(&p) {
@@ -564,6 +605,64 @@ impl Server<'_> {
         }
         if let Some(n) = self.npcs.get_mut(&id) {
             n.special.target = Some(p);
+        }
+    }
+
+    /// A hacked / friendly mine heads for its player from its spawn: it spins up toward them
+    /// while still falling (PATH_TO_PLAYER), then idles from its first think and coasts.
+    fn tick_rollermine_friendly(&mut self, id: u32, now: u64) {
+        let Some(n) = self.npcs.get(&id) else {
+            return;
+        };
+        match n.special.phase {
+            0 => {
+                let Some(&body) = n.body.and_then(|prop| self.bodies.get(&prop)) else {
+                    return;
+                };
+                let st = self.physics.state(body);
+                let centre = st.position;
+                let Some(p) = self.special_nearest_player(
+                    centre,
+                    centre + Vec3::Z * 16.0,
+                    ROLLER_RANGE,
+                    n.body,
+                ) else {
+                    return;
+                };
+                let to = (self.players[&p].state.origin - centre).truncate();
+                let dir = to.normalize_or_zero().extend(0.0);
+                self.physics.set_velocity(
+                    body,
+                    st.velocity,
+                    Vec3::Z.cross(dir) * ROLLER_NUDGE_SPIN,
+                );
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.special.phase = 2;
+                    n.special.target = Some(p);
+                }
+            }
+            2 if now >= n.spawn_tick + ROLLER_FIRST_THINK => {
+                if let (Some(&body), Some(p)) = (
+                    n.body.and_then(|prop| self.bodies.get(&prop)),
+                    n.special.target,
+                ) {
+                    if let Some(pl) = self.players.get(&p) {
+                        let st = self.physics.state(body);
+                        let to = (pl.state.origin - st.position).truncate();
+                        let dir = to.normalize_or_zero().extend(0.0);
+                        self.physics.set_velocity(
+                            body,
+                            dir * ROLLER_NUDGE_SPEED + Vec3::Z * st.velocity.z,
+                            Vec3::Z.cross(dir) * ROLLER_NUDGE_SPIN,
+                        );
+                    }
+                }
+                if let Some(n) = self.npcs.get_mut(&id) {
+                    n.special.phase = 3;
+                    n.ai.schedule = Some(crate::ai::SCHED_IDLE_STAND);
+                }
+            }
+            _ => {}
         }
     }
 
