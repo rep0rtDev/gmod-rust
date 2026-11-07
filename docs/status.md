@@ -479,9 +479,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   cover node (server_npc_grenade_soldier: 92 / 88 north on the leg to (965,-19), 78 on the
   (965,-19) -> (979,72) leg; the squad leader 92..96 on its first leg) - ours now 102 / 92 /
   88 there. Open: the squad mate instead holds ~0 (the final leg's direction / node yaw) on
-  its 100-deg legs; and on the corner-cut last leg the game turns to the bot the long way
-  round (78 -> 59 -> 23 -> 346 -> 309, clockwise through the move direction) where ours
-  takes the short way (88 -> 117 -> ...), grenade rows 1544 -> 1551 from that leg.
+  its 100-deg legs. The facing is judged after the think's corner cuts (ours used to spend
+  the cut think turning to the corner it had just passed, 88 -> 117); on the cut last leg
+  both turn to the bot clockwise through the move direction (game 78 -> 59 -> 23 -> 346,
+  ours 88 -> 52 -> 15 -> 338, the onset a think earlier like our arrival).
 - Cover-run turn rate: the body coming round to the enemy on the last cover leg turns at the
   class's standing rate (`idle_yaw` 350 deg/s: server_npc_grenade_soldier ops 554..582, 36 /
   37 / 37 / 37 a think in RunAIMALL1, MaxYawSpeed's default 35 x 10), a chase re-acquiring

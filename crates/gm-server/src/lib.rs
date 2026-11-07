@@ -16159,38 +16159,6 @@ impl<'w> Server<'w> {
             // line still holds (server_npc_grenade_soldier_low: the soldier running north from
             // its crouch at 796..845 tracks the bot's bearing 180 -> 187 with RunALL, the sight
             // gone the think it stood up; _wall: 145 -> 147 to its stop at 572 behind the wall)
-            let enemy_face = n
-                .target
-                .and(n.last_known)
-                .filter(|_| {
-                    (n.target_seen + n.think_interval as u64 >= now || n.cover_at.is_some())
-                        && !n.cover_from_sound
-                })
-                .filter(|_| {
-                    // ... and a cover run turns back to its enemy on the last leg to the node
-                    // and side-steps it (server_npc_grenade_soldier 261104: the body swings
-                    // 309 -> 257 -> 233 onto the bot from op 575 on the (965,-19) -> (1201,72)
-                    // leg and holds it to the node, 16 u a think at the blend's 0.70; the
-                    // squad's leader and mate do the same on their east legs)
-                    !armed
-                        || now <= n.goal_started.max(n.reacquired_at) + NPC_AIM_RUN_TICKS
-                        || (n.cover_at.is_some() && idx + 1 >= points.len())
-                })
-                .map(|k| k.truncate());
-            // a run to cover faces its route goal, not its step: the squad mate of
-            // server_npc_squad_soldier looks at its node (1201,72) from its first run think
-            // (yaw 56 -> 14 as the bearing 59 -> 14) while its steps zigzag round the house,
-            // the leader after its aim window turns to its wait point (953,7) (92, 86, 80, 71
-            // as the bearing 94 -> 67)
-            // a cover run's body runs along its current leg (server_npc_grenade_soldier 261107:
-            // 92 / 88 north on the leg to (965,-19), 78 on the (965,-19) -> (979,72) leg; the
-            // squad leader 92..96 on its first leg), not toward the far node
-            let route_face = n
-                .cover_at
-                .filter(|_| enemy_face.is_none())
-                .and(points.get(idx).or(points.last()))
-                .map(|g| g.truncate())
-                .filter(|g| g.distance_squared(pos.truncate()) > 1e-6);
             let has_target = n.target.is_some();
             // a corner within reach is passed only when the hull can already sweep to the
             // next one; cutting it against a wall end (the mesh keeps 16 u, the hull 13) jams
@@ -16266,6 +16234,38 @@ impl<'w> Server<'w> {
             if jumped {
                 continue;
             }
+            // (both judged after the corner cuts: at the cut the body already turns to the new
+            // leg / its enemy, not to the corner it just passed)
+            let Some(n) = self.npcs.get(&id) else {
+                continue;
+            };
+            let enemy_face = n
+                .target
+                .and(n.last_known)
+                .filter(|_| {
+                    (n.target_seen + n.think_interval as u64 >= now || n.cover_at.is_some())
+                        && !n.cover_from_sound
+                })
+                .filter(|_| {
+                    // ... and a cover run turns back to its enemy on the last leg to the node
+                    // and side-steps it (server_npc_grenade_soldier 261104: the body swings
+                    // 309 -> 257 -> 233 onto the bot from op 575 on the (965,-19) -> (1201,72)
+                    // leg and holds it to the node, 16 u a think at the blend's 0.70; the
+                    // squad's leader and mate do the same on their east legs)
+                    !armed
+                        || now <= n.goal_started.max(n.reacquired_at) + NPC_AIM_RUN_TICKS
+                        || (n.cover_at.is_some() && idx + 1 >= points.len())
+                })
+                .map(|k| k.truncate());
+            // a cover run's body runs along its current leg (server_npc_grenade_soldier 261107:
+            // 92 / 88 north on the leg to (965,-19), 78 on the (965,-19) -> (979,72) leg; the
+            // squad leader 92..96 on its first leg), not toward the far node
+            let route_face = n
+                .cover_at
+                .filter(|_| enemy_face.is_none())
+                .and(points.get(idx).or(points.last()))
+                .map(|g| g.truncate())
+                .filter(|g| g.distance_squared(pos.truncate()) > 1e-6);
             // the engine's forward path simplification: a corner the body is within
             // NPC_FORWARD_SCAN_TIME of and does not cut is swapped for the point as far past it
             // along the next leg when the hull can walk straight there, and that point is kept
