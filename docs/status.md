@@ -285,8 +285,10 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   and is folded into one family: idle +15 (103 as the session's first class, as
   server_npc_fly_cscanner 261106), and on the native brain the first pass reads the game's
   sequence - a hover think (+2) on entering combat and at the turn over the enemy's head, the
-  moving legs +4, the photograph hover +13, the final dive +8. Not matched: the photograph hover
-  begins 38 ticks and the dive 16 ticks earlier than the game's (our legs switch at the corners).
+  moving legs +4, the photograph hover +13 (from 111 above the enemy, row 289 to the game's
+  298), the final dive +8 (row 405 / 410). After 60 ticks of photograph the scanner sinks to
+  143 above / 111 beyond (row 408: 143.6 / 142.7) and dives from there. Open: the game arcs
+  11 u past the 125-beyond turn and dives deeper (78 above on row 480, ours 91).
   The antlion guard's chase is also private in the game (sched_translate_game.txt 17>222,
   104 in server_npc_tick_antlionguard) but its offset could not be pinned from the recordings
   (the neighbouring blocks don't add up) - it still reads SCHED_CHASE_ENEMY here.

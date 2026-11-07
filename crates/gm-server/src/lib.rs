@@ -3605,6 +3605,8 @@ const NPC_FLY_BOUNCE_TICKS: u64 = 65;
 /// The slice think stands before the bounce, and the height holds this long after the slice.
 const NPC_FLY_SLICE_HOLD_TICKS: u64 = 6;
 const NPC_FLY_SINK_AFTER_TICKS: u64 = 18;
+/// The scanner sinks from its photograph this long before its final dive (rows 360..416).
+const NPC_SCANNER_SINK_TICKS: u64 = 56;
 
 pub fn npc_flyer(class: &str) -> Option<NpcFlyer> {
     match class {
@@ -15510,14 +15512,21 @@ impl<'w> Server<'w> {
                     }
                     3 => {
                         let g = flat + ahead * 102.0;
-                        if n.fly_hit_at == 0 && g.length() < 6.0 && (to.z + 173.0).abs() < 6.0 {
+                        // the photograph schedule starts 111 above the enemy (row 298)
+                        if n.fly_hit_at == 0 && -to.z >= 111.0 {
                             n.fly_hit_at = now;
                         }
-                        if n.fly_hit_at != 0 && now >= n.fly_hit_at + 60 {
+                        // the photograph held 60 ticks from there, then a slow sink to 143 above
+                        // / 111 beyond (row 408) before the dive
+                        if n.fly_hit_at != 0 && now >= n.fly_hit_at + 60 + NPC_SCANNER_SINK_TICKS {
                             n.fly_leg = 4;
                             n.fly_leg_at = now;
                         }
-                        (173.0, g, f.max)
+                        if n.fly_hit_at != 0 && now >= n.fly_hit_at + 60 {
+                            (143.0, flat + ahead * 111.0, f.max)
+                        } else {
+                            (173.0, g, f.max)
+                        }
                     }
                     4 => {
                         let g = flat + ahead * 65.0;
@@ -19002,6 +19011,8 @@ impl<'w> Server<'w> {
                             0 if self.tick_count < n.ai.task_started + 7 => 2,
                             2 if self.tick_count < n.fly_leg_at + 14 => 2,
                             0..=2 => 4,
+                            // the photograph hover reads from 111 above the enemy (row 298)
+                            3 if n.fly_hit_at == 0 => 4,
                             3 => 13,
                             _ => 8,
                         },
