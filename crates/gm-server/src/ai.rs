@@ -657,6 +657,7 @@ pub fn class_sched_family(class: &str) -> Option<&'static str> {
         "npc_citizen" => Some("citizen"),
         "npc_alyx" => Some("alyx"),
         "npc_manhack" => Some("manhack"),
+        "npc_strider" => Some("strider"),
         _ => None,
     }
 }
@@ -690,6 +691,7 @@ pub fn family_sched_reserve(family: &str) -> u16 {
         // as the first class of a session, server_npc_fly_manhack; sched_translate_game
         // `manhack`: 41 three before the idle, 24 one before)
         "manhack" => 22,
+        "strider" => 16,
         _ => CLASS_SCHED_RESERVE,
     }
 }
@@ -738,6 +740,20 @@ pub fn class_ext_schedule(class: &str, shared: u16) -> Option<u16> {
 /// (TranslateSchedule): measured on the game with `SetSchedule(shared)` / `GetCurrentSchedule`.
 pub fn class_schedule(family: &str, class: &str, shared: u16) -> Option<u16> {
     match family {
+        // npc_strider.cpp: RANGE_ATTACK1, RANGE_ATTACK2, CROUCH, STAND, DODGE, STOMPL, STOMPR,
+        // FLICKL, FLICKR, HUNT, DIE, ATTACK_CANNON, CHASE_ENEMY, COMBAT_FACE,
+        // AGGRESSIVE_COMBAT_STAND, FALL_TO_GROUND (sched_translate_game.txt strider: 12>+13,
+        // 17>+12, 41>+5, 42>+6, 43>+0, 44>+1; server_npc_tick_strider 261107 stands in +13 after
+        // its WAKE_ANGRY)
+        "strider" => match shared {
+            SCHED_RANGE_ATTACK1 => Some(0),
+            SCHED_RANGE_ATTACK2 => Some(1),
+            SCHED_MELEE_ATTACK1 => Some(5),
+            42 => Some(6),
+            SCHED_CHASE_ENEMY => Some(12),
+            SCHED_COMBAT_FACE => Some(13),
+            _ => None,
+        },
         "zombie" => match shared {
             SCHED_CHASE_ENEMY => Some(0),
             SCHED_ZOMBIE_MOVE_SWATITEM => Some(1),
