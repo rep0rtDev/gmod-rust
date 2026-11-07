@@ -9155,22 +9155,6 @@ fn fx_time() -> f32 {
         .as_secs_f32()
 }
 
-#[cfg(test)]
-mod fade_tests {
-    use super::fade_alpha_at;
-
-    #[test]
-    fn screen_fade_alpha_follows_the_flags() {
-        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 1.0), Some(0.5));
-        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 2.5), Some(1.0));
-        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 3.5), None);
-        assert_eq!(fade_alpha_at(2 | 8, 1.0, 2.0, 1.0, 9.0), Some(1.0));
-        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 0.5), Some(0.8));
-        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 2.0), Some(0.4));
-        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 3.1), None);
-    }
-}
-
 /// The HUD / menu fonts rasterised for a `height`-line screen: GMod sizes its HUD from the
 /// 480-line layout (ScreenScaleH), so every atlas is rebuilt whenever the window height
 /// changes - a 720-line atlas stretched to a 1440-line desktop is the blur it would show.
@@ -9297,5 +9281,21 @@ fn register_ui_fonts(mount: &gm_content::Mount, ui: &mut UiRenderer, gpu: &Gpu, 
         if !ui.register_font(gpu, mount, name, "Verdana", tall * fs) {
             ui.register_font(gpu, mount, name, "Roboto-Bold", tall * fs);
         }
+    }
+}
+
+#[cfg(test)]
+mod fade_tests {
+    use super::fade_alpha_at;
+
+    #[test]
+    fn screen_fade_alpha_follows_the_flags() {
+        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 1.0), Some(0.5));
+        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 2.5), Some(1.0));
+        assert_eq!(fade_alpha_at(2, 1.0, 2.0, 1.0, 3.5), None);
+        assert_eq!(fade_alpha_at(2 | 8, 1.0, 2.0, 1.0, 9.0), Some(1.0));
+        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 0.5), Some(0.8));
+        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 2.0), Some(0.4));
+        assert_eq!(fade_alpha_at(1, 0.8, 2.0, 1.0, 3.1), None);
     }
 }
