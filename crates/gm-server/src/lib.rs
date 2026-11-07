@@ -3520,6 +3520,12 @@ const NPC_FLY_SCANNER: NpcFlyer = NpcFlyer {
 };
 /// Ticks a flyer rises after acquiring its enemy before it moves at it (manhack t982 -> 1012).
 const NPC_FLY_STARTUP_TICKS: u64 = 30;
+/// Thinks after an armed NPC first sights its enemy before it reads COMBAT and acts: the
+/// game's soldier is still IDLE / Idle1_SMG1 at spawn+10 with the player in view
+/// (server_npc_spawn 261107), in COMBAT by +40 (server_npc_squad_soldier); ours used to
+/// crouch into COMBAT on its second think (+10). The burst clock keeps counting from the
+/// sighting.
+const NPC_GUN_STARTUP_TICKS: u64 = 8;
 /// The bounce after a slice lasts this long before the drift back.
 const NPC_FLY_BOUNCE_TICKS: u64 = 55;
 
@@ -5785,6 +5791,11 @@ impl<'w> Server<'w> {
                 // startup (server_npc_spawn 261107: state 1 at the first wait)
                 ai::NPC_STATE_IDLE
             } else if target.is_some()
+                && npc_uses_weapons(&n.class)
+                && now < n.target_first_seen + NPC_GUN_STARTUP_TICKS
+            {
+                ai::NPC_STATE_IDLE
+            } else if target.is_some()
                 && n.target_first_seen != now
                 && (!target_dead || (n.melee_swing.is_some() && now < n.swing_until))
             {
@@ -5884,8 +5895,10 @@ impl<'w> Server<'w> {
                 a.state = ai::NPC_STATE_IDLE;
                 ai::SCHED_IDLE_STAND
             } else if target.is_some()
-                && npc_flyer(&n.class).is_some()
-                && now < n.target_first_seen + NPC_FLY_STARTUP_TICKS
+                && ((npc_flyer(&n.class).is_some()
+                    && now < n.target_first_seen + NPC_FLY_STARTUP_TICKS)
+                    || (npc_uses_weapons(&n.class)
+                        && now < n.target_first_seen + NPC_GUN_STARTUP_TICKS))
             {
                 ai::SCHED_IDLE_STAND
             } else if n.melee_swing.is_some() && now < n.swing_until {
@@ -17079,6 +17092,12 @@ impl<'w> Server<'w> {
         }
         if n.target_first_seen == 0 {
             n.target_first_seen = now;
+        }
+        if npc_uses_weapons(&n.class) && now < n.target_first_seen + NPC_GUN_STARTUP_TICKS {
+            if !n.ai.scripted {
+                n.ai.start(ai::SCHED_IDLE_STAND, now);
+            }
+            return;
         }
         if n.next_grenade == 0 {
             n.next_grenade = n.target_first_seen + NPC_GRENADE_FIRST_TICKS;
