@@ -29,8 +29,15 @@ enum Cmd {
         kind: String,
         dir: PathBuf,
     },
-    /// Publish a signed addon (directory or .gmr) into a registry directory (index.toml + blobs/)
-    Publish { addon: PathBuf, registry: PathBuf },
+    /// Publish a signed addon (directory or .gmr) into a registry: a directory (index.toml +
+    /// blobs/) or the `http://` base url of one served by `gmr serve`
+    Publish { addon: PathBuf, registry: String },
+    /// Serve a registry directory over plain http (index, blobs, `POST /publish`)
+    Serve {
+        registry: PathBuf,
+        #[arg(long, default_value = "127.0.0.1:8750")]
+        listen: String,
+    },
     /// Resolve `id@requirement`s against a registry and print what would be installed, in order
     Resolve {
         /// Registry directory or `http://` base url
@@ -164,17 +171,21 @@ fn main() -> Result<()> {
             } else {
                 std::fs::read(&addon)?
             };
-            let mut reg = gm_script::Registry::open(&registry)?;
+            let mut reg = gm_script::Registry::open_any(&registry)?;
             let e = reg.publish(&bytes)?;
             println!(
                 "published {} {} ({} bytes) sha256 {} signers {:?} into {}",
-                e.id,
-                e.version,
-                e.size,
-                e.sha,
-                e.signers,
-                registry.display()
+                e.id, e.version, e.size, e.sha, e.signers, registry
             );
+        }
+        Cmd::Serve { registry, listen } => {
+            let listener = std::net::TcpListener::bind(&listen)?;
+            println!(
+                "registry {} on http://{}",
+                registry.display(),
+                listener.local_addr()?
+            );
+            gm_script::http::serve(registry, listener);
         }
         Cmd::Resolve { registry, wanted } => {
             let reg = gm_script::Registry::open_any(&registry)?;

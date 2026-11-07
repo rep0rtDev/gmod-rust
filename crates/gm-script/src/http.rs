@@ -165,6 +165,102 @@ pub fn request(
 
 /// Serves a directory over plain HTTP on a loopback port for tests: returns the base url.
 #[doc(hidden)]
+/// A registry over plain http on `listener`, forever: `GET /index.toml` and
+/// `GET /blobs/<sha>.gmr` read the directory, `POST /publish` (body: a signed `.gmr`) runs
+/// `Registry::publish` and answers `200 <id> <version> <sha>` or the error's text with 400
+/// (unsigned / malformed), 409 (version already published), 413 (too large).
+pub fn serve(dir: std::path::PathBuf, listener: std::net::TcpListener) {
+    for stream in listener.incoming() {
+        let Ok(mut s) = stream else { continue };
+        let _ = s.set_read_timeout(Some(Duration::from_secs(30)));
+        let mut req = Vec::new();
+        let mut b = [0u8; 4096];
+        while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+            match s.read(&mut b) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => req.extend_from_slice(&b[..n]),
+            }
+        }
+        let Some(head_end) = req.windows(4).position(|w| w == b"\r\n\r\n") else {
+            continue;
+        };
+        let head = String::from_utf8_lossy(&req[..head_end]).to_string();
+        let mut lines = head.lines();
+        let line = lines.next().unwrap_or_default().to_string();
+        let mut parts = line.split_whitespace();
+        let method = parts.next().unwrap_or("GET").to_ascii_uppercase();
+        let path = parts.next().unwrap_or("/").to_string();
+        let length: usize = lines
+            .filter_map(|l| l.split_once(':'))
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+            .and_then(|(_, v)| v.trim().parse().ok())
+            .unwrap_or(0);
+        let mut body = req[head_end + 4..].to_vec();
+        while body.len() < length {
+            match s.read(&mut b) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => body.extend_from_slice(&b[..n]),
+            }
+        }
+        let (status, text): (u16, Vec<u8>) = match (method.as_str(), path.as_str()) {
+            ("GET", "/index.toml") => match std::fs::read(dir.join("index.toml")) {
+                Ok(bytes) => (200, bytes),
+                Err(_) => (404, Vec::new()),
+            },
+            ("GET", p) if p.starts_with("/blobs/") && p.ends_with(".gmr") => {
+                let name = &p["/blobs/".len()..];
+                if name.contains('/') || name.contains("..") {
+                    (404, Vec::new())
+                } else {
+                    match std::fs::read(dir.join("blobs").join(name)) {
+                        Ok(bytes) => (200, bytes),
+                        Err(_) => (404, Vec::new()),
+                    }
+                }
+            }
+            ("POST", "/publish") => {
+                match crate::Registry::open(&dir).and_then(|mut r| r.publish(&body)) {
+                    Ok(e) => (
+                        200,
+                        format!("{} {} {}", e.id, e.version, e.sha).into_bytes(),
+                    ),
+                    Err(e) => {
+                        let status = match e {
+                            crate::registry::RegistryError::Conflict(..) => 409,
+                            crate::registry::RegistryError::TooLarge(..) => 413,
+                            _ => 400,
+                        };
+                        (status, e.to_string().into_bytes())
+                    }
+                }
+            }
+            _ => (404, Vec::new()),
+        };
+        let reason = match status {
+            200 => "OK",
+            400 => "Bad Request",
+            409 => "Conflict",
+            413 => "Payload Too Large",
+            _ => "Not Found",
+        };
+        let mut r = format!(
+            "HTTP/1.1 {status} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            text.len()
+        )
+        .into_bytes();
+        r.extend_from_slice(&text);
+        let _ = s.write_all(&r);
+    }
+}
+
+/// `serve` on an ephemeral loopback port in a thread; returns the base url.
+pub fn serve_for_tests(dir: std::path::PathBuf) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || serve(dir, listener));
+    format!("http://{addr}")
+}
+
 pub fn serve_dir_for_tests(dir: std::path::PathBuf, chunked: bool) -> String {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();

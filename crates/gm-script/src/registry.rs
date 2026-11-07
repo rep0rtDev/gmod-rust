@@ -58,6 +58,8 @@ pub enum RegistryError {
     Corrupt(String),
     #[error("{0}")]
     Http(#[from] crate::http::HttpError),
+    #[error("registry refused the publish: {0} {1}")]
+    Remote(u16, String),
     #[error("registry {0} is read only (publish into a directory)")]
     ReadOnly(String),
     #[error("addon {0} is {1} bytes, over the {max} byte cap", max = MAX_PACKAGE)]
@@ -146,6 +148,35 @@ impl Registry {
     /// Publishes a signed package (`.gmr` bytes): a version is immutable, publishing the same
     /// id and version again is fine only with the same bytes.
     pub fn publish(&mut self, bytes: &[u8]) -> Result<Entry, RegistryError> {
+        if let Source::Http(base) = &self.source {
+            let (status, body, _) = crate::http::request(
+                "POST",
+                &format!("{base}/publish"),
+                Some(bytes),
+                &[(
+                    "Content-Type".to_string(),
+                    "application/octet-stream".to_string(),
+                )],
+            )?;
+            let text = String::from_utf8_lossy(&body).to_string();
+            if status != 200 {
+                return Err(RegistryError::Remote(status, text));
+            }
+            let sha = text
+                .split_whitespace()
+                .nth(2)
+                .unwrap_or_default()
+                .to_string();
+            let fresh = Registry::open_http(base)?;
+            self.index = fresh.index;
+            return self
+                .index
+                .packages
+                .iter()
+                .find(|e| e.sha == sha)
+                .cloned()
+                .ok_or(RegistryError::Remote(status, text));
+        }
         self.dir()?;
         let pkg = Package::read(bytes)?;
         let (m, _) = pkg.load_realm("server")?;

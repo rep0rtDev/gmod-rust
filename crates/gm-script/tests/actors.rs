@@ -827,13 +827,32 @@ fn registry_publishes_signed_packages_and_resolves_the_highest_fitting_versions(
     assert!(reg.fetch_by_sha("00ff", &cache).is_none());
 
     // the same registry over plain http: read only, same plan, blobs fetched and checked
-    let base = gm_script::http::serve_dir_for_tests(reg_dir.clone(), true);
+    let base = gm_script::http::serve_for_tests(reg_dir.clone());
     let mut http = gm_script::Registry::open_any(&base).unwrap();
     assert_eq!(http.index, reg.index);
+    // publishing over http goes through the served registry: the same package again is fine
+    // (same sha), a different package under a published version is a 409, an unsigned one a
+    // 400, a new signed one lands in the index
+    assert!(http.publish(&base14).is_ok());
     assert!(matches!(
-        http.publish(&base14),
-        Err(gm_script::registry::RegistryError::ReadOnly(_))
+        http.publish(&other),
+        Err(gm_script::registry::RegistryError::Remote(409, _))
     ));
+    assert!(matches!(
+        http.publish(&unsigned),
+        Err(gm_script::registry::RegistryError::Remote(400, _))
+    ));
+    let extra = http.publish(&signed("extra", "1.0.0", &[])).unwrap();
+    assert_eq!(
+        (extra.id.as_str(), extra.version.as_str()),
+        ("extra", "1.0.0")
+    );
+    assert!(gm_script::Registry::open(&reg_dir)
+        .unwrap()
+        .index
+        .packages
+        .iter()
+        .any(|e| e.id == "extra"));
     let http_cache = dir.join("http-cache");
     let got: Vec<_> = http
         .resolve(&["hud".into()])
