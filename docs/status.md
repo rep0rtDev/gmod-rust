@@ -338,6 +338,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   leaves its own undo entries behind (the recorded list starts empty). The NPC rows left are
   the turret's 1.2 u, the hunter's 1.2 u / 3.75 deg, the grub's 5 u, the fast headcrab's
   RNG-seeded patrol on its spawn row and the session's class block ids.
+  The hacked rollermine's inertia roll (tick_rollermine_hacked) heads 155 deg for the game's
+  188: from the 17th tick our mine rises 0.8 u and starts turning (yaw/roll rates growing to 5
+  deg a tick) where the game rolls flat about one axis - the lift's source (floor collision
+  near x 996 or the contact solver) is the next thing to probe; a true Jolt sphere body plus
+  the opposite spin sign matched the roll distance but not the turn.
   The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
   and the game's first think follows 7 later (every server_npc_tick_* 261107 and
   server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated
