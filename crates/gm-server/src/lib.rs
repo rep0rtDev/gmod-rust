@@ -16305,6 +16305,10 @@ impl<'w> Server<'w> {
                 0.0
             };
             let band_err = band_rel.abs();
+            // the blend's softer ramp is acceleration only: braking into the node sheds the
+            // full curve while side-stepping (server_npc_grenade_soldier 589..659: 16.3 ->
+            // 13.1 -> 10.7 -> 8.4 -> 6.0 -> 3.7 -> 1.4, 2.3 u a think)
+            let brake_accel = accel;
             let (ideal, accel) = if (enemy_face.is_some() || squad_band) && band_err >= 15.0 {
                 // the all-directions blend runs at the model's ground speed for the step's
                 // angle off the facing (NPC_BLEND_TABLE), and a leg ahead-of-body but off the
@@ -16396,7 +16400,11 @@ impl<'w> Server<'w> {
                 // soldier 2.3 u/think from 16.8 to a last step of 1.1..1.4 in
                 // server_npc_grenade_soldier 602..665, _low 817..845, the squad mate 721..770);
                 // a plain walk or run brakes by the full step (the walk_* recordings)
-                let ab = if has_target { NPC_BRAKE_CURVE * a } else { a };
+                let ab = if has_target {
+                    NPC_BRAKE_CURVE * brake_accel * dt * dt
+                } else {
+                    a
+                };
                 let staircase = if zombie_chase {
                     f32::INFINITY
                 } else {
