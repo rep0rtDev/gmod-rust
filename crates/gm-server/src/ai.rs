@@ -656,6 +656,7 @@ pub fn class_sched_family(class: &str) -> Option<&'static str> {
         "npc_combine_s" => Some("combine"),
         "npc_citizen" => Some("citizen"),
         "npc_alyx" => Some("alyx"),
+        "npc_manhack" => Some("manhack"),
         _ => None,
     }
 }
@@ -685,6 +686,10 @@ pub fn family_sched_reserve(family: &str) -> u16 {
         // CAI_PlayerAlly + CNPC_PlayerCompanion blocks, then Alyx's own eight (her idle stand
         // reads 177 = 88 + 89 when she is the first class of the session: server_npc_spawn)
         "alyx" => 92,
+        // the flying bot's blocks, then CNPC_Manhack's own (its idle stand reads 107 = 88 + 19
+        // as the first class of a session, server_npc_fly_manhack; sched_translate_game
+        // `manhack`: 41 three before the idle, 24 one before)
+        "manhack" => 22,
         _ => CLASS_SCHED_RESERVE,
     }
 }
@@ -788,6 +793,12 @@ pub fn class_schedule(family: &str, class: &str, shared: u16) -> Option<u16> {
             78 => Some(91),
             28 => Some(67),
             29 => Some(69),
+            _ => None,
+        },
+        "manhack" => match shared {
+            41 => Some(16),
+            24 => Some(18),
+            SCHED_IDLE_STAND | 5 | 9 => Some(19),
             _ => None,
         },
         "citizen" => match shared {

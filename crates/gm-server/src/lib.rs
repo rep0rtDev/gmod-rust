@@ -5768,6 +5768,13 @@ impl<'w> Server<'w> {
             a.state = if a.state == ai::NPC_STATE_SCRIPT && a.scripted {
                 ai::NPC_STATE_SCRIPT
             } else if target.is_some()
+                && npc_flyer(&n.class).is_some()
+                && now < n.target_first_seen + NPC_FLY_STARTUP_TICKS
+            {
+                // the manhack / scanner hovers in IDLE on its own idle schedule through its
+                // startup (server_npc_spawn 261107: state 1 at the first wait)
+                ai::NPC_STATE_IDLE
+            } else if target.is_some()
                 && n.target_first_seen != now
                 && (!target_dead || (n.melee_swing.is_some() && now < n.swing_until))
             {
@@ -5865,6 +5872,11 @@ impl<'w> Server<'w> {
                 // the think that first sees the enemy only gathers senses: the game reads
                 // SCHED_IDLE_STAND in NPC_STATE_IDLE there for every class
                 a.state = ai::NPC_STATE_IDLE;
+                ai::SCHED_IDLE_STAND
+            } else if target.is_some()
+                && npc_flyer(&n.class).is_some()
+                && now < n.target_first_seen + NPC_FLY_STARTUP_TICKS
+            {
                 ai::SCHED_IDLE_STAND
             } else if n.melee_swing.is_some() && now < n.swing_until {
                 // the swing's schedule lasts the whole sequence (the fast zombie's roar after
