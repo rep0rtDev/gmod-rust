@@ -875,11 +875,13 @@ impl World {
                     maxs = maxs.max(*p);
                 }
                 eprintln!(
-                    "drag body mass {} axis_areas {:?} inertia {:?} hull_box {:?}",
+                    "drag body mass {} axis_areas {:?} inertia {:?} hull_box {:?} damping {} / {}",
                     desc.mass,
                     desc.drag_axis_areas,
                     desc.inertia,
-                    maxs - mins
+                    maxs - mins,
+                    desc.linear_damping,
+                    desc.angular_damping
                 );
             }
             self.drags.push(Drag {

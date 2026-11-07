@@ -349,9 +349,9 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   none (with the hull's it reversed the roll on touchdown). The mine now rolls on one axis
   like the game (the hacked mine's +8 u lateral wander is gone: within 1 u along its line,
   tick_rollermine_hacked 59 -> 46 rows, all angle 5..15 deg and 1.4 u of height), the idle
-  hull's creep is gone. Open: after the hostile hop the game rolls 33 u/s at the player
-  where ours settles to 12 - our in-air spin decays 310 -> 140 deg/s under the angular drag
-  the hop constants were fitted with.
+  hull's creep is gone. Through the hop the roller controller keeps the spin at the
+  player (the PHY's rotdamping 2 would halve it by the landing), so the mine lands rolling his
+  way: 23 u/s against the game's 33 (open), the hostile rows left are its session block ids.
   The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
   and the game's first think follows 7 later (every server_npc_tick_* 261107 and
   server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated

@@ -609,19 +609,40 @@ impl Server<'_> {
             .npcs
             .values()
             .filter(|n| n.dead_at.is_none() && n.class == "npc_rollermine")
-            .filter_map(|n| n.body.and_then(|p| self.bodies.get(&p).copied()))
+            .filter_map(|n| {
+                n.body.and_then(|p| self.bodies.get(&p).copied()).map(|b| {
+                    (
+                        b,
+                        n.special.phase == 1 && n.special.until > self.tick_count,
+                        n.special.target,
+                    )
+                })
+            })
             .collect();
-        for body in bodies {
+        for (body, hopping, target) in bodies {
             let st = self.physics.state(body);
-            if st.velocity.z.abs() > 5.0 {
-                continue;
-            }
             let down = self.collision.trace_ray(
                 st.position,
                 st.position - Vec3::Z * (r + 1.0),
                 gm_collision::MASK_PLAYERSOLID,
             );
-            if down.fraction >= 1.0 {
+            if st.velocity.z.abs() > 5.0 || down.fraction >= 1.0 {
+                // the roller controller keeps spinning the mine at its enemy through the hop
+                // (the PHY's rotdamping 2 would halve the spin by the landing): the spin it
+                // lands with becomes its roll at him
+                if hopping {
+                    if let Some(pl) = target.and_then(|p| self.players.get(&p)) {
+                        let dir = (pl.state.origin - st.position)
+                            .truncate()
+                            .normalize_or_zero()
+                            .extend(0.0);
+                        self.physics.set_velocity(
+                            body,
+                            st.velocity,
+                            Vec3::Z.cross(dir) * ROLLER_HOP_SPIN,
+                        );
+                    }
+                }
                 continue;
             }
             let w = st.angular_velocity * (std::f32::consts::PI / 180.0);
