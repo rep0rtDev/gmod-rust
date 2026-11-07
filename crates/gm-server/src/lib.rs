@@ -16655,8 +16655,12 @@ impl<'w> Server<'w> {
                     yaw
                 };
                 // a sweep blocked three thinks running: the path is given up (the think
-                // re-decides), a cover run with it
-                let jammed = n.stuck >= 3;
+                // re-decides), a cover run with it - unless the blocker is another NPC: that
+                // run slides on its hull until NPC_PEER_BLOCK_TICKS (the squad leader behind
+                // its mate on the cover, server_npc_squad_soldier 261104)
+                let peer_blocked =
+                    n.npc_blocked_at != 0 && now <= n.npc_blocked_at + 2 * n.think_interval as u64;
+                let jammed = n.stuck >= 3 && !peer_blocked;
                 if jammed {
                     n.stuck = 0;
                     n.cover_at = None;

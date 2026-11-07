@@ -443,6 +443,14 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   97 a path to the last known position breaks the solo soldiers (grenade_soldier 497 → 554,
   _wall 547 → 1086, plus a 50-tick path stall with label 17), so the squad goal needs a second
   squad recording with another geometry before changing it. Rows 1251 either way.
+- Squad leader blocked by its mate on the cover (same scene): the game's leader slides on the
+  mate's hull for NPC_PEER_BLOCK_TICKS (112) and then reloads where it stands under SCHED_RELOAD
+  (51). Our "jammed" rule (a sweep blocked three thinks running gives the path and the cover
+  up) fired first and turned that into a plain cover reload (92) - it no longer applies while
+  the blocker is an NPC, so the body keeps sliding like the game's. In our run the 51 branch
+  still cannot show: the mate arrives early (pace residual), its reload ends at 846 and frees
+  the node before the 112 ticks, so the leader reaches the node and reloads there under 92;
+  rows unchanged (squad 1251, grenade / damage / assault / zombie_swat as before).
 - Tried and dropped: "the braking thinks of a cover run never turn to the path". It fits
   _wall (window ends 558 as the body slows 852 → 857 over 558..572 holding 145..147, ours
   swings 129 → 98 → 147 and reloads 593 against 586) but not grenade_soldier, whose body
