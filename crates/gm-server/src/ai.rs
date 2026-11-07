@@ -658,6 +658,7 @@ pub fn class_sched_family(class: &str) -> Option<&'static str> {
         "npc_alyx" => Some("alyx"),
         "npc_manhack" => Some("manhack"),
         "npc_strider" => Some("strider"),
+        "npc_cscanner" | "npc_clawscanner" => Some("scanner"),
         "npc_rollermine" => Some("rollermine"),
         _ => None,
     }
@@ -694,6 +695,7 @@ pub fn family_sched_reserve(family: &str) -> u16 {
         "manhack" => 22,
         "strider" => 16,
         "hunter" => 38,
+        "scanner" => 22,
         "rollermine" => 10,
         _ => CLASS_SCHED_RESERVE,
     }
@@ -755,6 +757,14 @@ pub fn class_schedule(family: &str, class: &str, shared: u16) -> Option<u16> {
         // npc_hunter.cpp (sched_translate_game.txt hunter: 43>+0, 44>+1, 41>+2, 12>+6, 36>+8,
         // 9>+14; server_npc_tick_hunter 261107: its idle patrol +14, FOUND_ENEMY +23 on COMBAT,
         // the block of 38 right before the rollermine's of that session)
+        // npc_scanner.cpp behind a 2-id base-scanner block (server_npc_fly_cscanner 261106 base 90
+        // as the session's first class, server_npc_tick_cscanner 107): hover +2, the pass legs +4,
+        // the photograph hover +13, the final dive +8, its idle +15; folded into one block.
+        "scanner" => match shared {
+            SCHED_COMBAT_FACE => Some(2),
+            SCHED_IDLE_STAND => Some(15),
+            _ => None,
+        },
         "hunter" => match shared {
             SCHED_RANGE_ATTACK1 => Some(0),
             SCHED_RANGE_ATTACK2 => Some(1),

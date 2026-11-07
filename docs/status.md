@@ -282,6 +282,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   combat face +6, alert +8, idle wander +14): the native brain reads its patrol (+14) in IDLE
   and FOUND_ENEMY (+23, its roar) through the first 94 ticks of COMBAT, as
   server_npc_tick_hunter 261107 (163 / 172 there, 102 / 111 alone here).
+  The scanners' block (npc_cscanner / npc_clawscanner) sits behind a 2-id base-scanner block
+  and is folded into one family: idle +15 (103 as the session's first class, as
+  server_npc_fly_cscanner 261106), and on the native brain the first pass reads the game's
+  sequence - a hover think (+2) on entering combat and at the turn over the enemy's head, the
+  moving legs +4, the photograph hover +13, the final dive +8. Not matched: the photograph hover
+  begins 38 ticks and the dive 16 ticks earlier than the game's (our legs switch at the corners).
+  The antlion guard's chase is also private in the game (sched_translate_game.txt 17>222,
+  104 in server_npc_tick_antlionguard) but its offset could not be pinned from the recordings
+  (the neighbouring blocks don't add up) - it still reads SCHED_CHASE_ENEMY here.
 - A zombie's swat is over on the think its swing ends (the swat is cleared in the think, not
   after the move): the chase is reissued there and the body walks a think later (swat2_drumside
   117 vs the game's 110, was 124); drumside930 12 -> 8, drumside 50 -> 51, drum875 7 -> 8.

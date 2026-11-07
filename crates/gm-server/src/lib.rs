@@ -2241,6 +2241,8 @@ pub struct Npc {
     pub fly_side: Vec3,
     /// The scanner's first-pass leg (see `NpcFlyer::pass`).
     pub fly_leg: u8,
+    /// The tick the current pass leg began.
+    pub fly_leg_at: u64,
     /// Waiting in cover with the squad after a reload until the enemy shows again.
     pub cover_wait: bool,
     /// Tick from which a ranged move may start again (the hunter's volley).
@@ -14063,6 +14065,7 @@ impl<'w> Server<'w> {
             fly_hit_at: 0,
             fly_side: Vec3::ZERO,
             fly_leg: 0,
+            fly_leg_at: 0,
             cover_wait: false,
             ranged_after: 0,
             melee_dash_step: 0.0,
@@ -15470,12 +15473,14 @@ impl<'w> Server<'w> {
                     0 => {
                         if to.z + 197.0 < 4.0 {
                             n.fly_leg = 1;
+                            n.fly_leg_at = now;
                         }
                         (197.0, flat, f.max)
                     }
                     1 => {
                         if dist < 10.0 {
                             n.fly_leg = 2;
+                            n.fly_leg_at = now;
                         }
                         (87.0, flat, f.max)
                     }
@@ -15483,6 +15488,7 @@ impl<'w> Server<'w> {
                         let g = flat + ahead * 125.0;
                         if g.length() < 10.0 || g.dot(ahead) < 0.0 {
                             n.fly_leg = 3;
+                            n.fly_leg_at = now;
                         }
                         (56.0, g, f.max)
                     }
@@ -15493,6 +15499,7 @@ impl<'w> Server<'w> {
                         }
                         if n.fly_hit_at != 0 && now >= n.fly_hit_at + 60 {
                             n.fly_leg = 4;
+                            n.fly_leg_at = now;
                         }
                         (173.0, g, f.max)
                     }
@@ -15500,6 +15507,7 @@ impl<'w> Server<'w> {
                         let g = flat + ahead * 65.0;
                         if g.length() < 8.0 && (to.z + 80.0).abs() < 8.0 {
                             n.fly_leg = 5;
+                            n.fly_leg_at = now;
                         }
                         (80.0, g, f.max)
                     }
@@ -18921,6 +18929,22 @@ impl<'w> Server<'w> {
                 "antlion" if s == ai::SCHED_MELEE_ATTACK1 => swing
                     .filter(|m| m.lunge > 0.0)
                     .map(|m| base + if m.damage == 0.0 { 33 } else { 32 }),
+                // the scanner's first pass: a hover think on entering combat and at the turn over
+                // the enemy's head, the moving legs, the photograph hover, the final dive
+                "scanner"
+                    if n.ai.state == ai::NPC_STATE_COMBAT
+                        && npc_flyer(&n.class).is_some_and(|f| f.pass) =>
+                {
+                    Some(
+                        base + match n.fly_leg {
+                            0 if self.tick_count < n.ai.task_started + 7 => 2,
+                            2 if self.tick_count < n.fly_leg_at + 14 => 2,
+                            0..=2 => 4,
+                            3 => 13,
+                            _ => 8,
+                        },
+                    )
+                }
                 // the hunter acknowledges a found enemy (its roar) through its first combat ticks
                 "hunter"
                     if n.ai.state == ai::NPC_STATE_COMBAT
@@ -19807,6 +19831,7 @@ impl<'w> Server<'w> {
                 fly_hit_at: 0,
                 fly_side: Vec3::ZERO,
                 fly_leg: 0,
+                fly_leg_at: 0,
                 cover_wait: false,
                 ranged_after: 0,
                 melee_dash_step: 0.0,
