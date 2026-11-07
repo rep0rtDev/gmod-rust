@@ -451,6 +451,15 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   still cannot show: the mate arrives early (pace residual), its reload ends at 846 and frees
   the node before the 112 ticks, so the leader reaches the node and reloads there under 92;
   rows unchanged (squad 1251, grenade / damage / assault / zombie_swat as before).
+- Squad run pace (same scene, measured, not yet modelled): RunALL and RunAIMALL1 are the same
+  9-way move_yaw blend of the soldier model (ground speeds from the mdl: forward 214.8 u/s,
+  diagonals 180 / 197 / 169 / 168, sides 155 / 151, backward 165). The leader's 22.5 u/think
+  along its node leg is the forward blend exactly and the mate's 16-19 u side steps on the
+  straight east leg match the table within 10 %; our constant 13 u/think matches none of it.
+  The mate's slow weave along the house wall (9.4 u/think, ±20° about the path each think)
+  runs at 0.52 of the blended speed with no dependence on the body angle and ends where the
+  waypoints get long - a navigator slow-down on short waypoint turns, to be measured against
+  our own path's turn angles once the run speed is taken from the blend table.
 - Tried and dropped: "the braking thinks of a cover run never turn to the path". It fits
   _wall (window ends 558 as the body slows 852 → 857 over 558..572 holding 145..147, ours
   swings 129 → 98 → 147 and reloads 593 against 586) but not grenade_soldier, whose body
