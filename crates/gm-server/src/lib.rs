@@ -2712,6 +2712,12 @@ const NPC_CROUCH_EYE_HEIGHT: f32 = 40.0;
 const NPC_CHEST_HEIGHT: f32 = 36.0;
 
 /// Classes that engage players on sight.
+/// Sandbox NPC entries that are not AI NPCs in the game (CBaseAnimating): they report no
+/// NPC state and no schedule (server_npc_spawn 261107: the grub reads -1 / -1).
+pub fn npc_non_ai(class: &str) -> bool {
+    matches!(class, "npc_antlion_grub")
+}
+
 pub fn npc_hostile(class: &str) -> bool {
     matches!(
         class,
@@ -18564,6 +18570,9 @@ impl<'w> Server<'w> {
         let Some(n) = self.npcs.get(&id) else {
             return 0;
         };
+        if npc_non_ai(&n.class) {
+            return -1;
+        }
         let Some(s) = n.ai.schedule else {
             // an assault / act-busy goal just took the NPC: no schedule until its next think
             // (the game reads -1 there, while a lead goal's citizen still reads its idle stand)

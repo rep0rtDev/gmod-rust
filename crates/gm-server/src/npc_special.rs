@@ -31,6 +31,9 @@ pub fn npc_stationary_class(class: &str) -> bool {
 }
 
 const TICK: f32 = gm_core::tick::DEFAULT_TICK_INTERVAL;
+/// Ticks a spawned bird idles before it can be scared: the game's is still idle at spawn+10
+/// (the only measured point); two of its 0.1 s thinks.
+const BIRD_STARTUP_TICKS: u64 = 14;
 
 /// `sk_vortigaunt_armor_charge`: the suit level the vortigaunt's heal tops an ally up to.
 const VORT_ARMOR_CHARGE: i32 = 30;
@@ -680,6 +683,12 @@ impl Server<'_> {
         let pos = n.pos;
         match n.special.phase {
             0 => {
+                // a freshly spawned bird sits through its startup: the game's crow and pigeon
+                // still read IDLE at their spawn yaw at spawn+10 with the player 50 u away
+                // (server_npc_spawn 261107); ours used to take off on its first tick
+                if now < n.spawn_tick + BIRD_STARTUP_TICKS {
+                    return;
+                }
                 let scare = self
                     .players
                     .iter()
