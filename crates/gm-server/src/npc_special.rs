@@ -262,6 +262,10 @@ impl Server<'_> {
     }
 
     fn tick_turret(&mut self, id: u32, now: u64) {
+        // the game's turret reads NPC_STATE_IDLE with no schedule from its first think
+        if let Some(n) = self.npcs.get_mut(&id) {
+            n.ai.state = n.ai.state.max(crate::ai::NPC_STATE_IDLE);
+        }
         let Some(n) = self.npcs.get(&id) else {
             return;
         };
@@ -494,6 +498,13 @@ impl Server<'_> {
     }
 
     fn tick_rollermine(&mut self, id: u32, now: u64) {
+        // idle stand in NPC_STATE_IDLE from the first think, as the probe reads it
+        if let Some(n) = self.npcs.get_mut(&id) {
+            if n.ai.state == crate::ai::NPC_STATE_NONE {
+                n.ai.state = crate::ai::NPC_STATE_IDLE;
+                n.ai.schedule = Some(crate::ai::SCHED_IDLE_STAND);
+            }
+        }
         let Some(n) = self.npcs.get(&id) else {
             return;
         };

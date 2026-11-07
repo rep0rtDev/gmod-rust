@@ -18551,7 +18551,8 @@ impl<'w> Server<'w> {
             } else if n.ai.goal.is_some() {
                 i64::from(ai::SCHED_IDLE_STAND)
             } else {
-                0
+                // the game reads -1 before the first think and for turrets
+                -1
             };
         };
         if n.ai.shared_alias {

@@ -1219,13 +1219,13 @@ pub fn classify(class: &str) -> u8 {
         _ => 0,
     }
 }
-/// The NPC state an NPC has before its first think: NONE for most, IDLE for the player-ally
-/// actors (npc_alyx and friends set it in Spawn) - measured with `ai_disabled 1`.
+/// The NPC state an NPC has before its first think: NONE for every class (the probe reads 0
+/// and no schedule right after `spawnnpc`, allies included; with `ai_disabled 1` it stays so),
+/// IDLE only for the gunship, dropship and helicopter, which think inside Spawn
+/// (`server_npc_spawn`, 261107).
 pub fn spawn_state(class: &str) -> u8 {
     match class {
-        "npc_alyx" | "npc_barney" | "npc_kleiner" | "npc_eli" | "npc_mossman" | "npc_magnusson"
-        | "npc_monk" | "npc_gman" | "npc_breen" | "npc_odessa" | "npc_fisherman" | "npc_dog"
-        | "npc_vortigaunt" => NPC_STATE_IDLE,
+        "npc_combinegunship" | "npc_combinedropship" | "npc_helicopter" => NPC_STATE_IDLE,
         _ => NPC_STATE_NONE,
     }
 }
