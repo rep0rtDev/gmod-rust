@@ -18446,7 +18446,11 @@ impl<'w> Server<'w> {
                 if !n.move_yaw_locked && dist > 1e-3 {
                     n.angles.y = to.y.atan2(to.x).to_degrees();
                 }
-                return;
+                // the fast crab's first leap leaves the ground on the sighting think itself
+                // (server_npc_tick_headcrab_fast 261107: its jump read on op 10, airborne on 11)
+                if l.pre_label || n.target_first_seen != now {
+                    return;
+                }
             }
             Some(t) if now < t => return,
             Some(_) => n.leap_at = None,

@@ -289,6 +289,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   298), the final dive +8 (row 405 / 410). After 60 ticks of photograph the scanner sinks to
   143 above / 111 beyond (row 408: 143.6 / 142.7) and dives from there. Open: the game arcs
   11 u past the 125-beyond turn and dives deeper (78 above on row 480, ours 91).
+  The fast headcrab's first leap leaves the ground on the think that sights its enemy
+  (server_npc_tick_headcrab_fast 261107: its jump read on op 10, 5.7 u/tick from op 11; the
+  classic crab keeps its pre-think). Open: the game's fast crab spawns 9.8 u aside and turned
+  22 deg on the spawn row (1000.2 / -509.7 / yaw 202 where ours and the classic read 1001.7 /
+  -500 / 180, both tick_ and melee_headcrab_fast) and idles on PATROL_WALK (74) wandering.
   The antlion guard's chase is also private in the game (sched_translate_game.txt 17>222,
   104 in server_npc_tick_antlionguard) but its offset could not be pinned from the recordings
   (the neighbouring blocks don't add up) - it still reads SCHED_CHASE_ENEMY here.
