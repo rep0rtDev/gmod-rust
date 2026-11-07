@@ -331,6 +331,13 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   bounce 13 deg off the line and 84 u for our straight 62; fly_cscanner: y -520 at row 90,
   -480 at 260, -500 at 380, -482 at 510 against our constant -500) - the flight noise of the
   game's movers (HL2 m_vNoiseMod, random), not a law to copy; our lines stay straight.
+  server_npc_spawn's 218 rows are mostly undo bookkeeping notes: the game keeps the dead undo
+  entries of NPCs removed by the cleanup (16 -> 58 over the scene, no purge) where the weapon
+  records (f0602ce) had undo.lua purge all-dead lists every 16 removing ticks - the two kinds
+  of removal differ in the game and the rule is not pinned yet. A session prefix no longer
+  leaves its own undo entries behind (the recorded list starts empty). The NPC rows left are
+  the turret's 1.2 u, the hunter's 1.2 u / 3.75 deg, the grub's 5 u, the fast headcrab's
+  RNG-seeded patrol on its spawn row and the session's class block ids.
   The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
   and the game's first think follows 7 later (every server_npc_tick_* 261107 and
   server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated
