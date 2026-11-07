@@ -4125,6 +4125,42 @@ impl App {
                             ));
                         }
                     }
+                    gm_net::msg::EffectEvent::EntityRemove { mins, maxs } => {
+                        // `entity_remove` (sandbox/entities/effects): BoundingRadius * 4
+                        // sparks (32..256) at random points of the box, flung from its
+                        // centre at 5x, 2 -> 0 u over 0.5..1 s under 700 u/s^2 gravity
+                        if let Some(g) = self.gfx.as_mut() {
+                            if !g.rope_mats.contains_key(REMOVE_SPARK) {
+                                let m = g.world.sprite_material(&g.gpu, &self.mount, REMOVE_SPARK);
+                                g.rope_mats.insert(REMOVE_SPARK.to_string(), m);
+                            }
+                            let center = (mins + maxs) * 0.5;
+                            let radius = (maxs - mins).length() * 0.5;
+                            let n = ((radius * 4.0) as usize).clamp(32, 256);
+                            let r = &mut g.fx_rng;
+                            for _ in 0..=n {
+                                let p = Vec3::new(
+                                    fx_range(r, mins.x, maxs.x),
+                                    fx_range(r, mins.y, maxs.y),
+                                    fx_range(r, mins.z, maxs.z),
+                                );
+                                g.thruster_fx.push(ThrusterParticle {
+                                    mat: REMOVE_SPARK,
+                                    additive: true,
+                                    pos: p,
+                                    vel: (p - center) * 5.0,
+                                    grav: Vec3::new(0.0, 0.0, -700.0),
+                                    born: now,
+                                    life: fx_range(r, 0.5, 1.0),
+                                    size: (2.0, 0.0),
+                                    alpha: (fx_range(r, 200.0, 255.0) / 255.0, 0.0),
+                                    color: [1.0, 1.0, 1.0],
+                                    roll: fx_range(r, 0.0, 360.0),
+                                    axis: None,
+                                });
+                            }
+                        }
+                    }
                     gm_net::msg::EffectEvent::Blood {
                         pos,
                         dir,
@@ -9060,6 +9096,8 @@ struct Shell {
 
 /// The blood spray's drop sprite (`UTIL_BloodDrips`).
 const BLOOD_CORE: &str = "effects/blood_core";
+/// The remover's `entity_remove` spark sprite.
+const REMOVE_SPARK: &str = "effects/spark";
 
 fn fx_vec_rand(s: &mut u32) -> Vec3 {
     Vec3::new(

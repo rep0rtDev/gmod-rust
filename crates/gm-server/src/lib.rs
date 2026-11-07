@@ -659,6 +659,8 @@ pub enum WorldEffect {
         lnormal: Vec3,
         surface: String,
     },
+    /// The remover's `entity_remove` effect: sparks over the entity's world-space box.
+    EntityRemove { mins: Vec3, maxs: Vec3 },
     /// A bullet in flesh: the spray at `pos` along `dir` and the blood decals `TraceBleed`
     /// landed on the world (position, normal). `color`: 0 red, 1 yellow, 2 green.
     Blood {
@@ -21149,6 +21151,16 @@ impl<'w> Server<'w> {
                 }
             }
         }
+        let removing_before: Vec<u32> = if tool == "remover" {
+            self.sandbox
+                .props()
+                .iter()
+                .filter(|p| self.sandbox.is_removing(p.id))
+                .map(|p| p.id)
+                .collect()
+        } else {
+            Vec::new()
+        };
         let ret = if right {
             self.sandbox
                 .tool_right_click(player, tool, &hit, &mut events)
@@ -21157,6 +21169,38 @@ impl<'w> Server<'w> {
                 .tool_left_click(player, tool, &hit, &mut events)
         };
         self.events.extend(events);
+        if tool == "remover" {
+            // `DoRemoveEntity` dispatches `entity_remove` over the entity's `WorldSpaceAABB`
+            let boxes: Vec<(Vec3, Vec3)> = self
+                .sandbox
+                .props()
+                .iter()
+                .filter(|p| self.sandbox.is_removing(p.id) && !removing_before.contains(&p.id))
+                .filter_map(|p| {
+                    let (mins, maxs) = self.collision_bounds(p.id)?;
+                    let a = p.angles * std::f32::consts::PI / 180.0;
+                    let rot = glam::Mat3::from_rotation_z(a.y)
+                        * glam::Mat3::from_rotation_y(a.x)
+                        * glam::Mat3::from_rotation_x(a.z);
+                    let mut lo = Vec3::splat(f32::MAX);
+                    let mut hi = Vec3::splat(f32::MIN);
+                    for i in 0..8 {
+                        let c = Vec3::new(
+                            if i & 1 == 0 { mins.x } else { maxs.x },
+                            if i & 2 == 0 { mins.y } else { maxs.y },
+                            if i & 4 == 0 { mins.z } else { maxs.z },
+                        );
+                        let w = p.pos + rot * c;
+                        lo = lo.min(w);
+                        hi = hi.max(w);
+                    }
+                    Some((lo, hi))
+                })
+                .collect();
+            for (mins, maxs) in boxes {
+                self.effects.push(WorldEffect::EntityRemove { mins, maxs });
+            }
+        }
         self.sync_physics();
         ToolClick::Done(ret)
     }

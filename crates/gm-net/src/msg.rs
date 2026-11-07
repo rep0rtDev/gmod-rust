@@ -558,6 +558,11 @@ pub enum EffectEvent {
         lnormal: Vec3,
         surface: String,
     },
+    /// The remover's `entity_remove`: sparks over the removed entity's world-space box.
+    EntityRemove {
+        mins: Vec3,
+        maxs: Vec3,
+    },
     /// A bullet in flesh at `pos` going `dir`: the spray there and the blood decals the
     /// server's `TraceBleed` traces landed (position, normal). `color`: 0 red, 1 yellow,
     /// 2 green.
@@ -1507,6 +1512,11 @@ impl ServerMsg {
                             w.vec3(*lnormal);
                             w.str(surface);
                         }
+                        EffectEvent::EntityRemove { mins, maxs } => {
+                            w.u8(6);
+                            w.vec3(*mins);
+                            w.vec3(*maxs);
+                        }
                         EffectEvent::Blood {
                             pos,
                             dir,
@@ -1889,6 +1899,10 @@ impl ServerMsg {
                                 decals,
                             }
                         }
+                        6 => EffectEvent::EntityRemove {
+                            mins: r.vec3()?,
+                            maxs: r.vec3()?,
+                        },
                         _ => return Err(Truncated),
                     });
                 }

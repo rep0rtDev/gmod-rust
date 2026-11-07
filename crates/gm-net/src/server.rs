@@ -1048,6 +1048,9 @@ impl ServerNet {
                     lnormal,
                     surface,
                 },
+                gm_server::WorldEffect::EntityRemove { mins, maxs } => {
+                    EffectEvent::EntityRemove { mins, maxs }
+                }
                 gm_server::WorldEffect::Blood {
                     pos,
                     dir,
