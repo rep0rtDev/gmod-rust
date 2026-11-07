@@ -430,6 +430,19 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   its run is a think behind from the first step (game 5 u at 796 then 6 / 8 / 10, ours 1 then
   3 / 6 / 8 / 10 - the game's body moves on the think it starts) - 10.0 → 12.2 with that lag
   now visible in the yaw-banded ramp; open.
+- Squad soldier after its reload (server_npc_squad_soldier 261104): the game's mate leaves the
+  cover the think its reload ends and runs for the enemy under combine 97 (RunAIMALL1, then
+  RunALL; HL2's +9 of the block is PRESS_ATTACK - a path to the enemy's last known position,
+  our label map calls the same id ESTABLISH_LINE_OF_FIRE). Ours parked a squad mate in
+  WAIT_IN_COVER (99) at cover expiry / reload end for the rest of the scene - that rule was a
+  misread of the reload periods (99 shows in the goldens only for 7 ops before the wall
+  soldier's grenade). Cover expiry now always releases the cover: the mate runs 97 on the
+  game's op (846 in ours vs 930 in the game, the offset is the earlier arrival). Open: the
+  run's goal - the game's mate runs west along y=72 toward the last known position by the
+  graph, ours runs to its east line-of-fire point (1345, −54) and idles there; making every
+  97 a path to the last known position breaks the solo soldiers (grenade_soldier 497 → 554,
+  _wall 547 → 1086, plus a 50-tick path stall with label 17), so the squad goal needs a second
+  squad recording with another geometry before changing it. Rows 1251 either way.
 - Tried and dropped: "the braking thinks of a cover run never turn to the path". It fits
   _wall (window ends 558 as the body slows 852 → 857 over 558..572 holding 145..147, ours
   swings 129 → 98 → 147 and reloads 593 against 586) but not grenade_soldier, whose body

@@ -17150,7 +17150,6 @@ impl<'w> Server<'w> {
                 self.npc_los(eye, n.pos + Vec3::new(0.0, 0.0, NPC_EYE_HEIGHT))
             })
         });
-        let squad_mate = self.npc_squad_mate_alive(id);
         if let Some(n) = self.npcs.get_mut(&id) {
             if n.cover_at.is_some() && n.goal.is_none() && n.cover_until == 0 {
                 n.cover_until = now + NPC_COVER_TICKS;
@@ -17227,23 +17226,17 @@ impl<'w> Server<'w> {
                 n.reloading = false;
                 n.reload_in_place = false;
                 n.reload_until = 0;
-                if squad_mate && !enemy_seen {
-                    n.cover_wait = true;
-                }
             }
             if enemy_seen {
                 n.cover_wait = false;
             }
             if n.cover_at.is_some() && now >= n.cover_until && n.cover_until != 0 {
-                if squad_mate && !enemy_seen {
-                    // the Combine waits in cover with its squad until the enemy shows
-                    n.cover_wait = true;
-                } else {
-                    n.cover_at = None;
-                    n.cover_until = 0;
-                    n.cover_from_sound = false;
-                    n.danger_at = None;
-                }
+                // measured on the squad: the mate leaves its cover for a line of fire the
+                // think its reload ends (97 RunAIMALL1) instead of waiting there
+                n.cover_at = None;
+                n.cover_until = 0;
+                n.cover_from_sound = false;
+                n.danger_at = None;
             }
         }
         if stop_for_reload {
@@ -17428,7 +17421,6 @@ impl<'w> Server<'w> {
                 // mate (798 on) and the leader (904 on) stand to the end of the recording
                 if npc_combat_sequences(&n.class).is_some()
                     && n.flank_until == 0
-                    && n.cover_at.is_none()
                     && !n.reloading
                     && !n.cover_wait
                     && n.grenade.is_none()
@@ -17440,6 +17432,7 @@ impl<'w> Server<'w> {
                         self.npc_goto(id, v, true);
                         if let Some(n) = self.npcs.get_mut(&id) {
                             n.flank_until = now + NPC_FLANK_TICKS;
+                            n.cover_at = None;
                             n.burst_left = 0;
                             if let Some(rest) = n.rest_sequence.take() {
                                 n.sequence = rest;
@@ -18164,20 +18157,6 @@ impl<'w> Server<'w> {
         {
             self.npc_chase(id, player, m.run);
         }
-    }
-
-    /// Our cover rule: the nearest navmesh vertex within NPC_COVER_RANGE that `player`'s eye
-    /// cannot see (chest height), reachable, and not already a squadmate's cover; the NPC runs
-    /// there. False when no such point exists.
-    /// The body has a living squad mate (ai.* squads; the key/range squad is not counted).
-    fn npc_squad_mate_alive(&self, id: u32) -> bool {
-        self.squads
-            .of(id)
-            .map(|sq| self.squads.list(sq))
-            .is_some_and(|m| {
-                m.iter()
-                    .any(|i| *i != id && self.npcs.get(i).is_some_and(|o| o.dead_at.is_none()))
-            })
     }
 
     fn npc_take_cover(&mut self, id: u32, player: u32) -> bool {
