@@ -3552,7 +3552,7 @@ const NPC_FLY_MANHACK: NpcFlyer = NpcFlyer {
     sink: 0.48,
     vz_accel: 0.03,
     stand_off: 0.0,
-    height: 64.0,
+    height: 61.5,
     slice: 4.0,
     reach: 28.0,
     bounce: 2.4,
@@ -18938,6 +18938,14 @@ impl<'w> Server<'w> {
         if npc_non_ai(&n.class) || npc_schedule_less(&n.class) {
             return -1;
         }
+        // the manhack's slice think has no schedule (server_npc_fly_manhack 261106: -1 for the
+        // 7 ticks from each slice, its bounce schedule from the think after)
+        if n.class == "npc_manhack"
+            && n.fly_hit_at > 0
+            && self.tick_count < n.fly_hit_at + u64::from(NPC_THINK_TICKS)
+        {
+            return -1;
+        }
         let Some(s) = n.ai.schedule else {
             // an assault / act-busy goal just took the NPC: no schedule until its next think
             // (the game reads -1 there, while a lead goal's citizen still reads its idle stand)
@@ -18968,6 +18976,9 @@ impl<'w> Server<'w> {
                 "antlion" if s == ai::SCHED_MELEE_ATTACK1 => swing
                     .filter(|m| m.lunge > 0.0)
                     .map(|m| base + if m.damage == 0.0 { 33 } else { 32 }),
+                // the manhack after a slice: its bounce and drift back read the block's 21st
+                // (server_npc_fly_manhack 261106: 108 from the think after each slice to the next)
+                "manhack" if n.fly_hit_at > 0 => Some(base + 20),
                 // the scanner's first pass: a hover think on entering combat and at the turn over
                 // the enemy's head, the moving legs, the photograph hover, the final dive
                 "scanner"

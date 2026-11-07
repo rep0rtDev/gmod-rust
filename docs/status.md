@@ -303,6 +303,12 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   zombie, headcrab, grenade and antlion scenes keep their rows. Open: the squad mate's yaw on
   its first think (7 rows) and a steering swerve in zombie_swat2_drum / _drumside /
   swat3_c_drumside930 (14 rows each).
+  The manhack's schedule cycle reads as the game's: the slice think has no schedule (-1) and
+  the bounce and drift back read the block's 21st (108 in server_npc_fly_manhack 261106) until
+  the next slice (ours 102 / 272 / 444 to the game's 102 / 270 / 445); it levels 61.5 above
+  the enemy's origin (was 64; the game holds 61). Open there: our bounce covers 14 u in the
+  first 10 ticks where the game's covers 3, and we sink to the drift height faster (z 20 vs
+  the game's 28.6 on row 130).
 - A zombie's swat is over on the think its swing ends (the swat is cleared in the think, not
   after the move): the chase is reissued there and the body walks a think later (swat2_drumside
   117 vs the game's 110, was 124); drumside930 12 -> 8, drumside 50 -> 51, drum875 7 -> 8.
