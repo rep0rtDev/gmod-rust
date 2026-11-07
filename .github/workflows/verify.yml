@@ -14,7 +14,7 @@ env:
 
 jobs:
   public-tree:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,8 +24,10 @@ jobs:
           python-version: "3.12"
       - run: python3 tools/check_public_tree.py --history
 
+  # 22.04's libclang 14: with 24.04's libclang 18 bindgen leaves recastnavigation-sys without
+  # the dtNavMeshQuery method bindings gm-nav calls
   rust:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

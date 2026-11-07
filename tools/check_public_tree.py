@@ -47,6 +47,9 @@ FORBIDDEN_PATHS = [
 ]
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
+# parity recordings (JSON traces of long srcds scenes) may be larger
+GOLDEN_MAX_FILE_BYTES = 32 * 1024 * 1024
+GOLDEN_DIR = "tools/parity/golden/"
 TEXT_EXT = {".rs", ".py", ".lua", ".luau", ".md", ".toml", ".txt", ".json", ".yml", ".yaml", ".wgsl", ".wit", ".c", ".h", ".cpp", ".hpp", ".sh", ".cfg", ".res"}
 
 
@@ -59,8 +62,9 @@ def check_blob(path: str, data: bytes, problems: list[str]) -> None:
         if pat.search(path):
             problems.append(f"{path}: forbidden path or extension")
             break
-    if len(data) > MAX_FILE_BYTES:
-        problems.append(f"{path}: {len(data)} bytes, larger than {MAX_FILE_BYTES}")
+    limit = GOLDEN_MAX_FILE_BYTES if GOLDEN_DIR in path else MAX_FILE_BYTES
+    if len(data) > limit:
+        problems.append(f"{path}: {len(data)} bytes, larger than {limit}")
     head = data[:16]
     for magic, what in MAGIC.items():
         if head.startswith(magic):
