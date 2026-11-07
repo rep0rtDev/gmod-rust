@@ -340,9 +340,11 @@ Scores: 0 absent, 0.25 started, 0.5 playable, 0.75 harnesses green within tolera
   RNG-seeded patrol on its spawn row and the session's class block ids.
   The hacked rollermine's inertia roll (tick_rollermine_hacked) heads 155 deg for the game's
   188: from the 17th tick our mine rises 0.8 u and starts turning (yaw/roll rates growing to 5
-  deg a tick) where the game rolls flat about one axis - the lift's source (floor collision
-  near x 996 or the contact solver) is the next thing to probe; a true Jolt sphere body plus
-  the opposite spin sign matched the roll distance but not the turn.
+  deg a tick) where the game rolls flat about one axis: our floor is flat there, the lift is
+  the faceted hull climbing an edge. A true Jolt sphere body plus the opposite spin sign
+  matches the roll distance but needs a rolling-resistance law (Jolt has none: the sphere
+  rolls 9 u off its spawn before the hostile hop) and a re-fit of the mine's hop and roll
+  constants, which the hull's drag had absorbed - queued, not done.
   The first think runs 10 ticks after the spawn (`NPC_THINK_PHASE`): the spawnnpc op takes 3
   and the game's first think follows 7 later (every server_npc_tick_* 261107 and
   server_npc_melee_zombie 261105), not on the spawn row as before. The rules that compensated
